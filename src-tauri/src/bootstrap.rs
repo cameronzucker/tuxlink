@@ -286,6 +286,10 @@ fn drain_step(
 /// buffer lock (append → seq 0) or an emit error is swallowed — the phase
 /// transition is the primary signal; the log line is the explanatory detail.
 fn emit_backend_line(app_handle: &AppHandle, level: LogLevel, message: String) {
+    if !bootstrap_line_visible_in_session_log(level) {
+        return;
+    }
+
     let mut line = LogLine {
         seq: 0,
         timestamp_iso: now_iso8601_utc(),
@@ -296,6 +300,10 @@ fn emit_backend_line(app_handle: &AppHandle, level: LogLevel, message: String) {
     let buffer = app_handle.state::<Arc<SessionLogState>>();
     line.seq = buffer.append(line.clone());
     let _ = app_handle.emit("session_log:line", crate::ui_commands::LogLineDto::from(line));
+}
+
+fn bootstrap_line_visible_in_session_log(level: LogLevel) -> bool {
+    matches!(level, LogLevel::Warn | LogLevel::Error)
 }
 
 /// Whole-second UTC ISO-8601 timestamp (`YYYY-MM-DDTHH:MM:SSZ`). A local copy
@@ -454,6 +462,15 @@ mod tests {
             }
             other => panic!("expected Spawn, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn bootstrap_session_log_lines_are_problem_only() {
+        assert!(!bootstrap_line_visible_in_session_log(LogLevel::Info));
+        assert!(!bootstrap_line_visible_in_session_log(LogLevel::Debug));
+        assert!(!bootstrap_line_visible_in_session_log(LogLevel::Trace));
+        assert!(bootstrap_line_visible_in_session_log(LogLevel::Warn));
+        assert!(bootstrap_line_visible_in_session_log(LogLevel::Error));
     }
 
     // ========================================================================

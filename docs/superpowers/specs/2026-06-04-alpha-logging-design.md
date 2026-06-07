@@ -25,7 +25,7 @@
 - Real-corpus-trained zstd dictionary — v1 (asset swap)
 - Allowlist-based redaction promotion — beta or later
 - Per-subsystem verbosity sliders — post-alpha
-- Dedicated in-app log viewer with filter/query — separate UI work; the existing radio-panel session-log strip handles live-tail
+- Dedicated in-app diagnostic log viewer with filter/query — separate UI work; the radio-panel session-log strip is reserved for explicit connection/session narration, not general diagnostic live-tail
 - `gh` CLI detection / GitHub PAT integration — post-alpha if URL-pre-fill friction surfaces
 
 ---
@@ -34,9 +34,9 @@
 
 ### 2.1 Stream model
 
-**One `tracing` stream, two renderings.** Emission sites use `tracing` macros (`info!`, `debug!`, `warn!`, `error!`); the subscriber composition routes the same events to both the UI's existing `SessionLogState` ring buffer (no schema change to UI) and to disk as JSONL.
+**One diagnostic `tracing` stream, disk/export as the default rendering.** Emission sites use `tracing` macros (`info!`, `debug!`, `warn!`, `error!`); the subscriber composition routes diagnostic events to disk as JSONL. The radio-panel `SessionLogState` ring buffer is not a diagnostic catch-all: events reach it only through explicit session-log APIs, or through a tracing event that deliberately opts in with `session_log=true`.
 
-This unifies the existing `src-tauri/src/session_log.rs` ring buffer with the new diagnostic-log infrastructure. The UI's radio-panel session-log strip continues to receive its existing `LogLine` shape via a thin adapter layer that consumes tracing events and calls `SessionLogState::append()`.
+2026-06-07 smoke correction (`tuxlink-pzak`): routing every `tracing` event into `SessionLogState` made the connection log show startup diagnostics like `gpsd connected`, `bootstrap action decided`, and env-probe snapshots. That is the wrong operator surface. The connection log remains connection/session narration; diagnostic startup context belongs in the logging archive/window.
 
 ### 2.2 Pipeline
 
@@ -66,16 +66,16 @@ This unifies the existing `src-tauri/src/session_log.rs` ring buffer with the ne
                   ▼                                  ▼
          ┌──────────────────┐               ┌───────────────────┐
          │ UI consumer task │               │ Disk consumer task│
-         │ - calls          │               │ - writes redacted │
-         │   SessionLogState│               │   JSONL line to   │
-         │   ::append_with_ │               │   tracing-appender│
-         │   seq()          │               │   (non-blocking)  │
+         │ - opt-in only:   │               │ - writes redacted │
+         │   session_log=   │               │   JSONL line to   │
+         │   true events    │               │   tracing-appender│
+         │   may append     │               │   (non-blocking)  │
          └────────┬─────────┘               └──────────┬────────┘
                   ▼                                    ▼
         Existing radio panel              $XDG_STATE_HOME/tuxlink/logs/
-        session-log strip                 tuxlink.YYYY-MM-DD-HH.jsonl
-        (LogLine adapter; no              (perms 0600, dir perms 0700)
-         React-side change)                       │
+        connection/session log            tuxlink.YYYY-MM-DD-HH.jsonl
+        strip, not diagnostic             (perms 0600, dir perms 0700)
+        general live-tail                         │
                                                   │
                                                   ▼
                                         ┌───────────────────────────┐
@@ -194,7 +194,7 @@ Repo root:
 
 The existing `SessionLogState` ring buffer (`src-tauri/src/session_log.rs`) is unchanged in its public read API. The radio-panel session-log strip continues to read from `SessionLogState` via `session_log_snapshot` and the existing broadcast channel — no React-side changes.
 
-The `SessionLogState` impl gains a new `append_with_seq(seq: u64, line: LogLine)` method that appends without bumping the internal `next_seq` counter. The new `Fanout Layer` (see §2.2) is the SINGLE allocator of `seq`: it bumps via a new `allocate_seq()` helper exactly once per event, stamps the value on the `LoggedEvent` broadcast payload, and the UI consumer task calls `append_with_seq(stamped_seq, line)` to write it into the ring buffer without re-allocating.
+The `SessionLogState` impl gains a new `append_with_seq(seq: u64, line: LogLine)` method that appends without bumping the internal `next_seq` counter. The `Fanout Layer` (see §2.2) is the SINGLE allocator of diagnostic `seq`: it bumps via a new `allocate_seq()` helper exactly once per event, stamps the value on the `LoggedEvent` broadcast payload, and the UI consumer task may call `append_with_seq(stamped_seq, line)` only for events that explicitly opt in to the connection/session log with `session_log=true`.
 
 This eliminates the v1-spec race where independent UI and disk Layers could both touch the counter (Codex §8 Finding 1).
 
@@ -1349,7 +1349,7 @@ Explicitly NOT in the first-slice PR:
 
 - **Real-corpus dictionary retraining** — v1 (single asset swap).
 - **Per-subsystem verbosity sliders** — post-alpha; depends on operator demand surfacing.
-- **In-app log viewer** — separate UI work; existing radio-panel session-log strip handles live tailing.
+- **In-app diagnostic log viewer** — separate UI work; the existing radio-panel session-log strip is not a general diagnostic live tail.
 - **Allowlist-based redaction promotion** — beta or later; depends on surface area becoming too big for per-callsite review.
 - **`gh` CLI detection / GitHub PAT integration** — post-alpha if URL-pre-fill friction surfaces.
 - **Per-attempt level elevation** — earlier brainstorm proposal; explicitly rejected in favor of the simpler Off/On/Bounded operator-facing model.
