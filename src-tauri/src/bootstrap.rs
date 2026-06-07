@@ -22,6 +22,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::app_backend::{BackendPhase, BackendState};
 use crate::config::{Config, ConfigReadError};
 use crate::session_log::SessionLogState;
+use crate::session_log_emit;
 use crate::winlink_backend::{LogLevel, LogLine, LogSource, MailboxChangeSink, NativeBackend, ProgressSink, WireSink};
 
 /// What the bootstrap should do, decided purely from `read_config()`'s result.
@@ -161,15 +162,7 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
     let progress_app = app_handle.clone();
     let progress: ProgressSink = Arc::new(move |msg: &str| {
         let buffer = progress_app.state::<Arc<SessionLogState>>();
-        let mut line = LogLine {
-            seq: 0,
-            timestamp_iso: now_iso8601_utc(),
-            level: LogLevel::Info,
-            source: LogSource::Transport,
-            message: msg.to_string(),
-        };
-        line.seq = buffer.append(line.clone());
-        let _ = progress_app.emit("session_log:line", crate::ui_commands::LogLineDto::from(line));
+        session_log_emit::emit(&progress_app, &buffer, LogLevel::Info, LogSource::Transport, msg);
     });
 
     // tuxlink-nki: raw B2F wire lines. The native connect tees every on-wire
@@ -181,15 +174,7 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
     let wire_app = app_handle.clone();
     let wire: WireSink = Arc::new(move |msg: &str| {
         let buffer = wire_app.state::<Arc<SessionLogState>>();
-        let mut line = LogLine {
-            seq: 0,
-            timestamp_iso: now_iso8601_utc(),
-            level: LogLevel::Trace,
-            source: LogSource::Wire,
-            message: msg.to_string(),
-        };
-        line.seq = buffer.append(line.clone());
-        let _ = wire_app.emit("session_log:line", crate::ui_commands::LogLineDto::from(line));
+        session_log_emit::emit(&wire_app, &buffer, LogLevel::Trace, LogSource::Wire, msg);
     });
 
     // tuxlink-b2sk: mailbox mutations should reach the shell immediately. The
@@ -290,55 +275,12 @@ fn emit_backend_line(app_handle: &AppHandle, level: LogLevel, message: String) {
         return;
     }
 
-    let mut line = LogLine {
-        seq: 0,
-        timestamp_iso: now_iso8601_utc(),
-        level,
-        source: LogSource::Backend,
-        message,
-    };
     let buffer = app_handle.state::<Arc<SessionLogState>>();
-    line.seq = buffer.append(line.clone());
-    let _ = app_handle.emit("session_log:line", crate::ui_commands::LogLineDto::from(line));
+    session_log_emit::emit(app_handle, &buffer, level, LogSource::Backend, message);
 }
 
 fn bootstrap_line_visible_in_session_log(level: LogLevel) -> bool {
     matches!(level, LogLevel::Warn | LogLevel::Error)
-}
-
-/// Whole-second UTC ISO-8601 timestamp (`YYYY-MM-DDTHH:MM:SSZ`). A local copy
-/// of the same minimal formatter in `winlink_backend.rs` / `ui_commands.rs` /
-/// `wizard.rs` (each is self-contained by design; a shared util module is out
-/// of scope for v0.0.1 — see `winlink_backend::now_iso8601_utc`'s note). Used
-/// only for the bootstrap's synthetic `LogSource::Backend` lines.
-fn now_iso8601_utc() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let sec = secs % 60;
-    let min = (secs / 60) % 60;
-    let hour = (secs / 3600) % 24;
-    let days = secs / 86400;
-    let (year, month, day) = days_to_ymd(days);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
-}
-
-/// Days since 1970-01-01 → (year, month, day), proleptic Gregorian (Howard
-/// Hinnant's `civil_from_days`). Same algorithm as the sibling modules' copies.
-fn days_to_ymd(days: u64) -> (u64, u64, u64) {
-    let z = days as i64 + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y as u64, m, d)
 }
 
 #[cfg(test)]

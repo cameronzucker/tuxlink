@@ -34,9 +34,9 @@
 
 ### 2.1 Stream model
 
-**One diagnostic `tracing` stream, disk/export as the default rendering.** Emission sites use `tracing` macros (`info!`, `debug!`, `warn!`, `error!`); the subscriber composition routes diagnostic events to disk as JSONL. The radio-panel `SessionLogState` ring buffer is not a diagnostic catch-all: events reach it only through explicit session-log APIs, or through a tracing event that deliberately opts in with `session_log=true`.
+**One diagnostic `tracing` stream, disk/export as the default rendering.** Emission sites use `tracing` macros (`info!`, `debug!`, `warn!`, `error!`); the subscriber composition routes diagnostic events to disk as JSONL. The radio-panel `SessionLogState` ring buffer is not a diagnostic catch-all: events reach it only through explicit session-log APIs that append operator-visible connection/session narration.
 
-2026-06-07 smoke correction (`tuxlink-pzak`): routing every `tracing` event into `SessionLogState` made the connection log show startup diagnostics like `gpsd connected`, `bootstrap action decided`, and env-probe snapshots. That is the wrong operator surface. The connection log remains connection/session narration; diagnostic startup context belongs in the logging archive/window.
+2026-06-07 smoke correction (`tuxlink-h1gh`): routing `tracing` events into `SessionLogState` made the connection log show startup diagnostics like `gpsd connected`, `bootstrap action decided`, and env-probe snapshots. That is the wrong operator surface. Diagnostic fanout never writes to `SessionLogState`; only explicit human/session-log APIs append there. The retained operator transcript is exported separately as `operator_session_log.jsonl` for bug-report evidence.
 
 ### 2.2 Pipeline
 
@@ -57,45 +57,44 @@
                   │ - Fanout Layer (single point that  │
                   │   formats each event ONCE through  │
                   │   a redacting `Visit`, allocates a │
-                  │   monotonic seq ONCE, then         │
-                  │   broadcasts the redacted          │
-                  │   `LoggedEvent` to consumers)      │
+                  │   diagnostic seq, then broadcasts  │
+                  │   the redacted `LoggedEvent`)      │
                   └──────────────┬─────────────────────┘
                                  │ broadcast::Sender<LoggedEvent>
-                  ┌──────────────┴───────────────────┐
-                  ▼                                  ▼
-         ┌──────────────────┐               ┌───────────────────┐
-         │ UI consumer task │               │ Disk consumer task│
-         │ - opt-in only:   │               │ - writes redacted │
-         │   session_log=   │               │   JSONL line to   │
-         │   true events    │               │   tracing-appender│
-         │   may append     │               │   (non-blocking)  │
-         └────────┬─────────┘               └──────────┬────────┘
-                  ▼                                    ▼
-        Existing radio panel              $XDG_STATE_HOME/tuxlink/logs/
-        connection/session log            tuxlink.YYYY-MM-DD-HH.jsonl
-        strip, not diagnostic             (perms 0600, dir perms 0700)
-        general live-tail                         │
-                                                  │
-                                                  ▼
-                                        ┌───────────────────────────┐
-                                        │ Export builder            │
-                                        │ - flush barrier across the│
-                                        │   fanout/appender pipeline│
-                                        │ - read closed files; tail │
-                                        │   active file safely      │
-                                        │ - render summary.txt      │
-                                        │ - render manifest         │
-                                        │ - inner: zstd+dict        │
-                                        │ - outer: tar.zst          │
-                                        └────────────┬──────────────┘
-                                                     ▼
-                                        tuxlink-logs-{ts}-{corr-id}.tar.zst
+                                 ▼
+                        ┌───────────────────┐
+                        │ Disk consumer task│
+                        │ - writes redacted │
+                        │   JSONL line to   │
+                        │   tracing-appender│
+                        │   (non-blocking)  │
+                        └──────────┬────────┘
+                                   ▼
+                      $XDG_STATE_HOME/tuxlink/logs/
+                      tuxlink.YYYY-MM-DD-HH.jsonl
+                      (perms 0600, dir perms 0700)
+                                   │
+                                   ▼
+                        ┌───────────────────────────┐
+                        │ Export builder            │
+                        │ - flush barrier across the│
+                        │   fanout/appender pipeline│
+                        │ - read closed files; tail │
+                        │   active file safely      │
+                        │ - snapshot SessionLogState│
+                        │   as operator transcript  │
+                        │ - render summary.txt      │
+                        │ - render manifest         │
+                        │ - inner: zstd+dict        │
+                        │ - outer: tar.zst          │
+                        └────────────┬──────────────┘
+                                     ▼
+                        tuxlink-logs-{ts}-{corr-id}.tar.zst
 ```
 
-**Architectural property: single-format, single-fanout.** `tracing` events are immutable once emitted; a `Layer` cannot mutate fields that downstream Layers see. The pipeline therefore formats each event **exactly once** through a redacting `tracing::field::Visit` implementation, producing a `LoggedEvent` struct (the post-redaction representation). That single redacted representation is broadcast to UI and disk consumers. There is NO architectural path where the disk consumer can see a different set of field values than the UI consumer. There is NO path where a credential value bypasses redaction by reaching one consumer first.
+**Architectural property: single-format, single-fanout.** `tracing` events are immutable once emitted; a `Layer` cannot mutate fields that downstream Layers see. The pipeline therefore formats each event **exactly once** through a redacting `tracing::field::Visit` implementation, producing a `LoggedEvent` struct (the post-redaction representation). That single redacted representation is broadcast to diagnostic consumers. There is NO architectural path where credential values bypass the diagnostic redaction layer by reaching one consumer first.
 
-**Allocation property: seq is assigned once before fanout.** The Fanout Layer allocates the monotonic `seq` (using the existing `SessionLogState::next_seq` counter via a dedicated `allocate_seq()` helper that bumps without appending), stamps it on the `LoggedEvent`, and broadcasts. The UI consumer calls `SessionLogState::append_with_seq(seq, line)` (new API) which appends WITHOUT re-allocating. The disk consumer writes the same seq into the JSONL line. UI strip and archive cross-reference correctly with no double-bump risk.
+**Allocation property: diagnostic and operator cursors are separate.** The Fanout Layer owns a monotonic diagnostic `seq` for `LoggedEvent` JSONL. `SessionLogState` owns its independent operator-log `seq` for connection/session narration. Diagnostic events never advance the operator cursor, so startup probes and internal tracing cannot create gaps or entries in the user-visible connection log.
 
 ### 2.3 Crates
 
@@ -119,8 +118,8 @@ src-tauri/src/logging/
 ├── mod.rs                   Public init() + Tauri command handlers
 ├── subscriber.rs            Subscriber composition
 ├── redact.rs                Field blocklist regex + Visitor implementation
-├── ui_layer.rs              Layer that forwards into SessionLogState
-├── disk_layer.rs            Wraps tracing-appender rolling output
+├── fanout.rs                Redacting Fanout Layer + diagnostic seq allocator
+├── disk_consumer.rs         Writes broadcast LoggedEvent JSONL to appender
 ├── filter_layer.rs          Per-target level rules + Detailed-mode toggle
 ├── retention.rs             Sweep logic (days + size caps)
 ├── free_disk_guard.rs       5-minute poll + warn-event when filesystem tight
@@ -194,13 +193,13 @@ Repo root:
 - `.github/ISSUE_TEMPLATE/bug.md` (NEW) — mirrors the in-app GitHub URL template.
 - `scripts/tuxlink-logging-smoke.sh` (NEW) — agent-runnable smoke per §10.4.
 
-### 2.5 Reuse of `session_log.rs`
+### 2.5 `session_log.rs` boundary
 
-The existing `SessionLogState` ring buffer (`src-tauri/src/session_log.rs`) is unchanged in its public read API. The radio-panel session-log strip continues to read from `SessionLogState` via `session_log_snapshot` and the existing broadcast channel — no React-side changes.
+The existing `SessionLogState` ring buffer (`src-tauri/src/session_log.rs`) remains the operator-facing connection/session transcript. The radio-panel session-log strip continues to read from `SessionLogState` via `session_log_snapshot` and live `session_log:line` events — no React-side change is required for the boundary correction.
 
-The `SessionLogState` impl gains a new `append_with_seq(seq: u64, line: LogLine)` method that appends without bumping the internal `next_seq` counter. The `Fanout Layer` (see §2.2) is the SINGLE allocator of diagnostic `seq`: it bumps via a new `allocate_seq()` helper exactly once per event, stamps the value on the `LoggedEvent` broadcast payload, and the UI consumer task may call `append_with_seq(stamped_seq, line)` only for events that explicitly opt in to the connection/session log with `session_log=true`.
+`SessionLogState` is **not** part of diagnostic fanout. It exposes normal append/snapshot APIs and a redacting append helper used by explicit session-log emitters. Diagnostic `tracing` events do not append to it and do not consume its `next_seq` cursor.
 
-This eliminates the v1-spec race where independent UI and disk Layers could both touch the counter (Codex §8 Finding 1).
+The export builder snapshots this retained transcript and writes it as `operator_session_log.jsonl` in the bug-report archive. That preserves operator-visible evidence without polluting the connection log with internal startup diagnostics.
 
 ### 2.6 Lifecycle and init ownership (Codex §9 Finding 1, §12 Finding 3)
 
@@ -253,7 +252,7 @@ For very-early-startup tracing (before Tauri builder is ready), `lib.rs::run()` 
 | `v` | integer | Schema version. `1` for first release. Bumped on breaking change. Additive field additions within `v:1` are permitted; type changes require `v:2`. |
 | `ts` | string (RFC3339) | UTC, microsecond precision. Required. |
 | `boot` | string (UUID v7) | Minted at process start in `logging::init()`. Lives on the `Subscriber`. Unique per process launch. Required. |
-| `seq` | integer | Monotonic; allocated by the Fanout Layer's `allocate_seq()` (Codex §8 Finding 1 — single allocator, never double-bumped). Required. |
+| `seq` | integer | Monotonic diagnostic event sequence allocated by the Fanout Layer's internal counter. Required. |
 | `level` | string enum | `trace` \| `debug` \| `info` \| `warn` \| `error`. Required. |
 | `target` | string | Tracing target string. Required. |
 | `module` | string | `module_path!()` from the emission callsite. Optional; same as `target` in most cases but differs for re-exports. |
@@ -291,11 +290,14 @@ tuxlink-logs-{UTC-ts}-{attempt-id}.tar.zst       ← outer tarball, zstd level 2
 └── (after `zstd -d` + `tar xf`):
     ├── summary.txt              ~200–500 B    paste-friendly headline, plaintext
     ├── events.jsonl.zst         variable      inner zstd, level 22, WITH dictionary
+    ├── operator_session_log.jsonl variable    retained operator-visible connection/session transcript
     ├── dict.zdict               ~16 KB        the dictionary used for events.jsonl.zst (also recoverable from the bundled tuxlink binary)
     └── manifest.json            ~700 B        build / OS / policy / counts
 ```
 
 **Two-layer compression rationale:** the outer `.tar.zst` uses dictionary-free zstd so the agent decompresses with stock `zstd -d` and no extra arguments. The inner `events.jsonl.zst` uses dictionary compression for the win, and ships its dictionary alongside so `zstd -d -D dict.zdict events.jsonl.zst` works on any system with `zstd` installed — no tuxlink-specific tools required.
+
+`operator_session_log.jsonl` is intentionally not part of `events.jsonl.zst`: it is the bounded operator transcript retained by `SessionLogState`, not diagnostic fanout. Each line has `{ "v": 1, "seq", "timestampIso", "level", "source", "message" }`; messages are ANSI-stripped, control-character-cleaned, credential-token-redacted, and capped at 4096 Unicode scalar values at export time.
 
 **Archive filename:**
 
@@ -314,6 +316,7 @@ correlation_id: att-xyz1
 exported_at: 2026-06-04T12:34:56Z
 window: 2026-05-21T18:21:00Z .. 2026-06-04T12:34:56Z (13d 18h)
 events: 3,847 (info: 3,512, warn: 312, error: 23)
+operator_session_log: 42 retained lines (8120 bytes, truncated: 0)
 
 build: tuxlink 0.0.1 (git 5fd6cc2, release, linux x86_64)
 os: Linux 6.18.29+rpt-rpi-2712 (debian-12)
@@ -374,7 +377,15 @@ Plaintext, `grep`-able, no JSON, no escape sequences. The summary.txt is designe
     "inner_level": 22,
     "inner_dict_version": 1
   },
-  "counts": { "events": 3847, "info": 3512, "warn": 312, "error": 23 }
+  "counts": {
+    "events": 3847,
+    "info": 3512,
+    "warn": 312,
+    "error": 23,
+    "operator_session_log_lines": 42,
+    "operator_session_log_bytes": 8120,
+    "operator_session_log_truncated": 0
+  }
 }
 ```
 
@@ -938,7 +949,7 @@ Telemetry lets us (and the agent) judge whether v0 dictionary is delivering valu
 ### 7.6 Outer tarball normalization (Codex §3 Finding 2)
 
 Tar archive member metadata is normalized for portability + reproducibility:
-- All member names are fixed and relative: `summary.txt`, `events.jsonl.zst`, `dict.zdict`, `manifest.json`. No directory members. No `..` components.
+- All member names are fixed and relative: `summary.txt`, `events.jsonl.zst`, `operator_session_log.jsonl`, `dict.zdict`, `manifest.json`. No directory members. No `..` components.
 - All members have mode `0600` (owner read/write; no group/other access).
 - All members have uid=0, gid=0, owner_name=empty, group_name=empty.
 - All members have mtime = the `exported_at` timestamp (deterministic across runs of the same export).
@@ -951,7 +962,7 @@ Implementation uses the `tar` crate's `HeaderBuilder` with explicit settings, no
 ```bash
 zstd -d tuxlink-logs-XXX.tar.zst -o tuxlink-logs-XXX.tar
 tar xf tuxlink-logs-XXX.tar
-# yields: summary.txt, events.jsonl.zst, dict.zdict, manifest.json
+# yields: summary.txt, events.jsonl.zst, operator_session_log.jsonl, dict.zdict, manifest.json
 zstd -d -D dict.zdict events.jsonl.zst -o events.jsonl
 jq '.target' events.jsonl | sort -u   # see which clusters emitted
 ```
@@ -1279,7 +1290,7 @@ Each Logging-window control has a concrete expected-state test:
 
 ### 10.5 Smoke artifacts
 
-28. `scripts/tuxlink-logging-smoke.sh` exists, exits 0 on success, exercises: app starts → env probes emit (after first paint) → synthetic event sequence (including a secure-login flow with known credentials) → Export → unpack archive → verify summary.txt + events.jsonl content → grep for credential bytes → assert NOT FOUND. Agent-runnable, **EXPLICITLY zero RADIO-1 risk** (see §10.7).
+28. `scripts/tuxlink-logging-smoke.sh` exists, exits 0 on success, exercises: app starts → env probes emit (after first paint) → synthetic event sequence (including a secure-login flow with known credentials) → Export → unpack archive → verify summary.txt + events.jsonl + operator_session_log.jsonl content → grep for credential bytes → assert NOT FOUND. Agent-runnable, **EXPLICITLY zero RADIO-1 risk** (see §10.7).
 
 ### 10.6 Build pipeline
 
@@ -1368,7 +1379,7 @@ These each become bd-issue follow-ups during `superpowers:writing-plans` decompo
 - **Big-bang PR shape is heavy.** Mitigation: comprehensive acceptance criteria above, runnable smoke script, redaction unit + integration tests, env probes covered explicitly as alpha-gate requirements. Per Codex §6 Finding 3: active worktrees touching VARA / ARDOP / forms / packet / tuxmodem / docs / UI areas create real merge-conflict risk. Coordination plan: pause new branches in those areas during the PR's review-and-merge window OR rebase the logging PR onto main after each significant integration. Per operator framing this session: "ships as a working feature or it doesn't."
 - **Synthetic-corpus-trained dictionary may compress real logs worse than ideal.** Mitigation: zstd dictionary mode falls back to dictionary-free compression on unmatched patterns — floor is "dict is wasted weight," not "dict actively hurts." v1 retraining from real corpus is a single asset swap. Compression-ratio telemetry in `manifest.json` (added per §7.5) makes the v1 retrain trigger decision data-driven.
 - **Codex adversarial round is mandatory** (one already completed against this spec; build-phase round still required). Redaction logic + dictionary training corpus + env-probe allowlists each warrant independent scrutiny. Per memory `[[no-carveout-on-cross-provider-adrev]]` this is correctness-critical territory, not plumbing.
-- **Existing `SessionLogState` ring buffer reuse** keeps the radio-panel session-log strip working without React-side change, but the new ui_consumer task must construct `LogLine` identically to the existing winlink_backend bridge or live-events will diverge in shape. Mitigation: a parity test asserts that the new consumer's output for a given tracing event equals the existing bridge's output for the equivalent legacy emission.
+- **Existing `SessionLogState` ring buffer remains load-bearing** for the radio-panel session-log strip. It must stay explicit-session-log-only; diagnostic fanout must not append there. Mitigation: boundary tests assert no production `ui_consumer`/`session_log=true` bridge exists, fanout does not advance the operator cursor, and export includes the retained operator transcript as `operator_session_log.jsonl`.
 - **Wire-text leak surface remains the highest-risk path.** Even with the WireSanitizer in place (§5.6), a new wire-emitting callsite that forgets to route through `sanitize_wire_line()` would leak credentials. Mitigation: the §10.2 "no secret bytes in archive" end-to-end test catches this for the currently-known credential flows; the per-callsite-discipline requires code-review vigilance for future wire-emitting code.
 - **Pre-first-paint events are not captured to disk.** Per §2.6, the temporary stderr subscriber covers the early startup window. Errors during config-parse or Tauri-builder construction don't reach the archive. Mitigation: those errors fall into the OS shell stderr capture (operator running `pnpm tauri dev` sees them in the terminal); a future enhancement could append a captured-stderr file to the archive.
 
@@ -1491,7 +1502,7 @@ This spec underwent a Codex adversarial review in this session; the full transcr
 | §7 Finding 1 | Matrix omits orchestration modules | §4.1 orchestration cluster added |
 | §7 Finding 2 | Message-body callsite policy undefined | §4.4.1 added (never log full body) |
 | §7 Finding 3 | Cross-process surfaces (helper bins, tuxmodem) unscoped | §2.4 + §12 explicit OUT OF SCOPE |
-| §8 Finding 1 | Seq race between UI/disk allocators | §2.2 single Fanout allocator + §2.5 append_with_seq |
+| §8 Finding 1 | Seq race between UI/disk allocators | §2.2 diagnostic/operator cursor split + §2.5 explicit session-log boundary |
 | §8 Finding 2 | Retention sweep can delete active file | §6.3 active-file protection rule |
 | §8 Finding 3 | Export-during-write race | §6.5 flush barrier + partial-line tolerance |
 | §8 Finding 4 | Reload of filter state non-atomic | §6.5 `tracing_subscriber::reload` for atomic swap |

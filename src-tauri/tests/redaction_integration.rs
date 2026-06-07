@@ -9,17 +9,14 @@
 //! Test 16 is documented as a smoke-script responsibility (spec §10.5 #16;
 //! requires a #[cfg(test)]-gated CLI helper not yet built).
 
-use std::sync::Arc;
+use tracing_subscriber::{layer::SubscriberExt, Registry};
 use tuxlink_lib::logging::fanout::FanoutLayer;
 use tuxlink_lib::logging::wire_sanitize::{sanitize_wire_line, WireContext};
-use tuxlink_lib::session_log::SessionLogState;
 use tuxlink_lib::winlink::secure::secure_login_response;
-use tracing_subscriber::{layer::SubscriberExt, Registry};
 
 /// Helper: capture one event emitted inside a closure with a fresh Fanout subscriber.
 fn capture_one(emit: impl FnOnce()) -> tuxlink_lib::logging::event::LoggedEvent {
-    let session_log = Arc::new(SessionLogState::new(100));
-    let (layer, mut rx) = FanoutLayer::create(session_log);
+    let (layer, mut rx) = FanoutLayer::create();
     let subscriber = Registry::default().with(layer);
     tracing::subscriber::with_default(subscriber, emit);
     rx.try_recv().expect("event must be broadcast")
@@ -124,7 +121,9 @@ fn redact_13a_blocklisted_bytes_field_is_redacted() {
 #[test]
 fn redact_13b_nonblocklisted_bytes_field_gets_256_byte_preview_cap() {
     // Create a byte slice larger than 256 bytes.
-    let large_bytes: Vec<u8> = (0u8..=255u8).chain(b"extra_not_previewed".iter().copied()).collect();
+    let large_bytes: Vec<u8> = (0u8..=255u8)
+        .chain(b"extra_not_previewed".iter().copied())
+        .collect();
     let ev = capture_one(|| {
         tracing::debug!(
             target: "tuxlink::winlink::wire",
@@ -133,7 +132,10 @@ fn redact_13b_nonblocklisted_bytes_field_gets_256_byte_preview_cap() {
         );
     });
 
-    let field_val = ev.fields.get("raw_data").expect("raw_data field must exist");
+    let field_val = ev
+        .fields
+        .get("raw_data")
+        .expect("raw_data field must exist");
     let field_str = field_val.as_str().expect("raw_data must be a string");
 
     // The preview is "N bytes; preview: <hex>" where hex is ≤256 bytes = ≤512 hex chars.
@@ -223,7 +225,8 @@ fn redact_15_opaque_container_lint_test_exists() {
         test_file.exists(),
         "tests/no_opaque_container_emissions.rs must exist (spec §10.2 #15)"
     );
-    let source = std::fs::read_to_string(&test_file).expect("read no_opaque_container_emissions.rs");
+    let source =
+        std::fs::read_to_string(&test_file).expect("read no_opaque_container_emissions.rs");
     assert!(
         source.contains("no_opaque_container_types_emitted_in_tracing_macros"),
         "no_opaque_container_emissions.rs must contain the required test function"

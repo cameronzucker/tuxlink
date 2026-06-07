@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use tokio::sync::{mpsc, Notify};
 
 use crate::config::{self, VaraUiConfig};
@@ -36,10 +36,9 @@ use crate::modem_status::{
     ExchangeState, ShutdownableStream, TransportOwner, ARBITER_YIELD_TIMEOUT,
 };
 use crate::session_log::SessionLogState;
-use crate::ui_commands::LogLineDto;
 use crate::winlink::listener::transport::TransportKind;
 use crate::winlink::session::SessionIntent;
-use crate::winlink_backend::{LogLevel, LogLine, LogSource};
+use crate::winlink_backend::{LogLevel, LogSource};
 
 use super::command::{Bandwidth, OutboundCommand};
 use super::transport::{VaraConfig, VaraTransport};
@@ -56,15 +55,7 @@ fn emit_vara_log(
     level: LogLevel,
     message: String,
 ) {
-    let mut line = LogLine {
-        seq: 0,
-        timestamp_iso: chrono::Utc::now().to_rfc3339(),
-        level,
-        source: LogSource::Transport,
-        message,
-    };
-    line.seq = buffer.append(line.clone());
-    let _ = app.emit("session_log:line", LogLineDto::from(line));
+    crate::session_log_emit::emit(app, buffer, level, LogSource::Transport, message);
 }
 
 /// Coarse VARA transport state. `Connecting` is the in-flight window between

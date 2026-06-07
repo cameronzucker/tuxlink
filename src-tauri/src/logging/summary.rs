@@ -18,6 +18,9 @@ pub struct SummaryInputs<'a> {
     pub counts_info: u64,
     pub counts_warn: u64,
     pub counts_error: u64,
+    pub operator_session_log_lines: u64,
+    pub operator_session_log_bytes: u64,
+    pub operator_session_log_truncated: u64,
 }
 
 pub fn render(inputs: SummaryInputs<'_>) -> String {
@@ -38,6 +41,13 @@ pub fn render(inputs: SummaryInputs<'_>) -> String {
         s,
         "events: {} (info: {}, warn: {}, error: {})",
         inputs.counts_total, inputs.counts_info, inputs.counts_warn, inputs.counts_error
+    );
+    let _ = writeln!(
+        s,
+        "operator_session_log: {} retained lines ({} bytes, truncated: {})",
+        inputs.operator_session_log_lines,
+        inputs.operator_session_log_bytes,
+        inputs.operator_session_log_truncated
     );
     let _ = writeln!(s);
     let _ = writeln!(s, "build: {}", inputs.build_line);
@@ -85,11 +95,20 @@ mod tests {
 
     fn sample_event(level: &str, target: &str, msg: &str) -> LoggedEvent {
         LoggedEvent {
-            v: 1, ts: "2026-06-04T12:34:56.789012Z".into(),
-            boot: "01927a8b".into(), seq: 1,
-            level: level.into(), target: target.into(),
-            module: None, file: None, line: None, pid: None, thread: None,
-            attempt_id: None, spans: vec![], msg: msg.into(),
+            v: 1,
+            ts: "2026-06-04T12:34:56.789012Z".into(),
+            boot: "01927a8b".into(),
+            seq: 1,
+            level: level.into(),
+            target: target.into(),
+            module: None,
+            file: None,
+            line: None,
+            pid: None,
+            thread: None,
+            attempt_id: None,
+            spans: vec![],
+            msg: msg.into(),
             fields: Default::default(),
         }
     }
@@ -122,13 +141,20 @@ mod tests {
             runtime_line: "tokio 1.41, tauri 2.x",
             recent_errors: vec![&e1],
             recent_events: vec![&e1, &e2],
-            counts_total: 100, counts_info: 80, counts_warn: 18, counts_error: 2,
+            counts_total: 100,
+            counts_info: 80,
+            counts_warn: 18,
+            counts_error: 2,
+            operator_session_log_lines: 1,
+            operator_session_log_bytes: 128,
+            operator_session_log_truncated: 0,
         });
         assert!(out.contains("att-xyz1"));
         assert!(out.contains("13d 18h"));
         assert!(out.contains("dial failed"));
         assert!(out.contains("last 3 errors:"));
         assert!(out.contains("last 5 events:"));
+        assert!(out.contains("operator_session_log: 1 retained lines"));
         assert!(!out.contains('\x1b'), "no ANSI escapes in summary");
     }
 }

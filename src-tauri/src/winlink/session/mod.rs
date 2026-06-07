@@ -764,7 +764,8 @@ fn answer_line(answers: &[Answer]) -> String {
 /// If `line` is a remote error line (`*** message`), return the message. The
 /// CMS reports failures this way (e.g. authentication or client-type rejection).
 fn remote_error(line: &str) -> Option<String> {
-    line.strip_prefix("***").map(|rest| rest.trim().to_string())
+    line.strip_prefix("***")
+        .map(|rest| crate::winlink::redaction::redact_freeform(rest.trim()).into_owned())
 }
 
 fn write_bytes<W: Write>(writer: &mut W, bytes: &[u8]) -> Result<(), ExchangeError> {
@@ -1254,6 +1255,17 @@ mod tests {
         let mut writer = Vec::new();
         let result = send_turn(&mut reader, &mut writer, std::slice::from_ref(&out), false, None);
         assert!(matches!(result, Err(ExchangeError::RemoteError(_))));
+    }
+
+    #[test]
+    fn remote_error_line_redacts_wire_credentials() {
+        let message = remote_error("*** saw ;PQ: 23753528 and ;PR: 72768415\r")
+            .expect("remote error should parse");
+
+        assert!(!message.contains("23753528"));
+        assert!(!message.contains("72768415"));
+        assert!(message.contains(";PQ:"));
+        assert!(message.contains(";PR:"));
     }
 
     #[test]

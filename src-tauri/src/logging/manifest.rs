@@ -17,7 +17,10 @@ pub struct Manifest {
 }
 
 #[derive(Serialize)]
-pub struct Window { pub start: String, pub end: String }
+pub struct Window {
+    pub start: String,
+    pub end: String,
+}
 
 #[derive(Serialize)]
 pub struct Build {
@@ -72,15 +75,26 @@ pub struct Counts {
     pub info: u64,
     pub warn: u64,
     pub error: u64,
+    pub operator_session_log_lines: u64,
+    pub operator_session_log_bytes: u64,
+    pub operator_session_log_truncated: u64,
 }
 
 /// Compile-time metadata baked at build time via env macros.
 pub fn build_info() -> Build {
     Build {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        git_sha: option_env!("TUXLINK_GIT_SHA").unwrap_or("unknown").to_string(),
-        profile: if cfg!(debug_assertions) { "debug".into() } else { "release".into() },
-        rust_version: option_env!("TUXLINK_RUST_VERSION").unwrap_or("unknown").to_string(),
+        git_sha: option_env!("TUXLINK_GIT_SHA")
+            .unwrap_or("unknown")
+            .to_string(),
+        profile: if cfg!(debug_assertions) {
+            "debug".into()
+        } else {
+            "release".into()
+        },
+        rust_version: option_env!("TUXLINK_RUST_VERSION")
+            .unwrap_or("unknown")
+            .to_string(),
         tauri_version: "2".to_string(),
     }
 }

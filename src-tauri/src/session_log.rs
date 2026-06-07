@@ -11,7 +11,8 @@
 use std::collections::VecDeque;
 use std::sync::RwLock;
 
-use crate::winlink_backend::LogLine;
+use crate::winlink::redaction::redact_freeform;
+use crate::winlink_backend::{LogLevel, LogLine, LogSource};
 
 /// Durable, bounded, seq-stamped session-log history. The bridge appends here
 /// (durable) AND broadcasts (live notify); `session_log_snapshot` reads here so
@@ -60,6 +61,26 @@ impl SessionLogState {
         seq
     }
 
+    /// Redact credential-equivalent tokens, append the line, and return the
+    /// stored line with its assigned sequence. Explicit operator-log APIs use
+    /// this path before emitting live `session_log:line` notifications.
+    pub fn append_redacted(
+        &self,
+        level: LogLevel,
+        source: LogSource,
+        message: impl AsRef<str>,
+    ) -> LogLine {
+        let mut line = LogLine {
+            seq: 0,
+            timestamp_iso: chrono::Utc::now().to_rfc3339(),
+            level,
+            source,
+            message: redact_freeform(message.as_ref()).into_owned(),
+        };
+        line.seq = self.append(line.clone());
+        line
+    }
+
     /// Return a snapshot (clone) of all currently retained lines, oldest first.
     pub fn snapshot(&self) -> Vec<LogLine> {
         self.inner
@@ -76,38 +97,8 @@ impl SessionLogState {
     pub fn snapshot_since(&self, after: u64) -> Vec<LogLine> {
         self.inner
             .read()
-            .map(|g| {
-                g.buf
-                    .iter()
-                    .filter(|l| l.seq > after)
-                    .cloned()
-                    .collect()
-            })
+            .map(|g| g.buf.iter().filter(|l| l.seq > after).cloned().collect())
             .unwrap_or_default()
-    }
-
-    /// Allocate a fresh monotonic seq WITHOUT appending. The Fanout Layer
-    /// uses this to stamp a single seq onto every LoggedEvent before fanning
-    /// out to UI and disk consumers (so UI + disk events share the same seq;
-    /// spec §2.5).
-    ///
-    /// Returns 0 on a poisoned lock (no-op).
-    pub fn allocate_seq(&self) -> u64 {
-        let Ok(mut g) = self.inner.write() else { return 0; };
-        let seq = g.next_seq;
-        g.next_seq += 1;
-        seq
-    }
-
-    /// Append a line that already has its seq assigned (by `allocate_seq`).
-    /// Used by the Fanout Layer's UI consumer task — the seq comes from the
-    /// LoggedEvent, not from a fresh allocation.
-    pub fn append_with_seq(&self, line: LogLine) {
-        let Ok(mut g) = self.inner.write() else { return; };
-        if g.buf.len() == self.cap {
-            g.buf.pop_front();
-        }
-        g.buf.push_back(line);
     }
 
     /// Drop every retained line. The `next_seq` counter is preserved so
@@ -126,5 +117,36 @@ impl SessionLogState {
         if let Ok(mut g) = self.inner.write() {
             g.buf.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_redacted_scrubs_wire_credentials_before_retention() {
+        let ring = SessionLogState::new(8);
+
+        let line = ring.append_redacted(
+            LogLevel::Info,
+            LogSource::Transport,
+            "server saw ;PQ: 23753528 and ;PR: 72768415",
+        );
+
+        assert_eq!(line.seq, 1);
+        assert!(!line.message.contains("23753528"));
+        assert!(!line.message.contains("72768415"));
+        assert_eq!(ring.snapshot()[0].message, line.message);
+    }
+
+    #[test]
+    fn append_redacted_preserves_source() {
+        let ring = SessionLogState::new(8);
+
+        let line = ring.append_redacted(LogLevel::Trace, LogSource::Wire, "< ;FW: header");
+
+        assert_eq!(line.source, LogSource::Wire);
+        assert_eq!(ring.snapshot()[0].source, LogSource::Wire);
     }
 }
