@@ -72,7 +72,6 @@ If the code can be executed concurrently, test it concurrently. Single-threaded 
 - [ ] **Rate-limit enforcement under concurrency.** Count-then-insert rate limits can be bypassed by concurrent requests that all read the same count before any insert. Test with burst requests.
 - [ ] **Idempotency under retry/concurrency.** If an operation should be idempotent (accepting an invitation twice, retrying a failed payment), test concurrent execution — the second attempt must not produce a 500 from a constraint violation.
 - [ ] **Bootstrap / first-time races.** First-user, first-org, or any "only if none exist" flow tested with concurrent attempts. Exactly one must win.
-- [ ] **🔥 Found in logging-reactor-panic: production runtime-boundary spawns are tested from their real caller context.** Unit tests under `#[tokio::test]` can hide bare `tokio::spawn` calls that panic when reached from Tauri `.setup(...)`, event listeners, or sync commands; startup/event smoke tests must exercise the production entry point or assert workers spawn through the app runtime abstraction.
 
 ---
 
@@ -85,7 +84,6 @@ Configuration errors, bad boundaries, and missing validation are a surprisingly 
 - [ ] **Environment-specific behavior.** If code behaves differently in dev vs. prod (feature flags, degraded modes), test both paths. Don't assume dev-tested code works in prod.
 - [ ] **Feature flag flip behavior.** Test both flag-on and flag-off paths. A feature behind a flag that's never tested with the flag off can't be safely rolled back.
 - [ ] **Timeout and retry boundaries.** If a caller retries 3 times with 5s timeouts, test what happens on the 4th call and on a request that takes 4.9s. The edges matter.
-- [ ] **🔥 Found in logging-reactor-panic: runtime setting changes reach long-lived workers after the immediate command path.** A command test that only verifies "save + immediate sweep" can pass while a background worker keeps using a startup-captured config; tests must mutate settings, trigger the next scheduled/rotated worker action, and assert the new value governs that later action.
 
 ---
 
