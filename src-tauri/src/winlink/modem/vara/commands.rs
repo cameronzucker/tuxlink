@@ -1752,6 +1752,16 @@ fn run_vara_b2f_with_transport(
         LogLevel::Info,
         format!("VARA: connected to {target}; running B2F exchange"),
     );
+    let app_for_progress = app.clone();
+    let log_for_progress = log.clone();
+    let progress = move |line: &str| {
+        emit_vara_log(
+            &app_for_progress,
+            &log_for_progress,
+            LogLevel::Info,
+            line.to_string(),
+        );
+    };
 
     // ─── Run the B2F exchange over the data socket ───────────────────
     crate::winlink_backend::run_vara_b2f_exchange(
@@ -1761,6 +1771,7 @@ fn run_vara_b2f_with_transport(
         &cfg,
         &mailbox,
         Some(&arbiter),
+        Some(&progress),
     )
     .map_err(|e| format!("VARA B2F exchange failed: {e}"))
 }

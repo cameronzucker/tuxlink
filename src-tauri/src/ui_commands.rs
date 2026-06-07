@@ -3734,6 +3734,7 @@ fn ardop_listener_consumer_task(
                         &cfg,
                         mb,
                         Some(arbiter.as_ref()),
+                        Some(&progress),
                     ),
                     None => {
                         // Codex review 2026-06-03 [P2 #7] (tuxlink-61yg): the
@@ -3756,6 +3757,7 @@ fn ardop_listener_consumer_task(
                                     &cfg,
                                     &tmp_mb,
                                     Some(arbiter.as_ref()),
+                                    Some(&progress),
                                 );
                                 // `tmp` drops here → directory deletes.
                                 r
@@ -4426,6 +4428,7 @@ fn vara_listener_consumer_task(
                         &cfg,
                         mb,
                         Some(arbiter.as_ref()),
+                        Some(&progress),
                     ),
                     None => {
                         progress(
@@ -4441,6 +4444,7 @@ fn vara_listener_consumer_task(
                                     &cfg,
                                     &tmp_mb,
                                     Some(arbiter.as_ref()),
+                                    Some(&progress),
                                 );
                                 r
                             }

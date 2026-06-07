@@ -1675,6 +1675,7 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
             }
         }
     }
+    let outbound_log = outbound_log_items(&outbound);
 
     let exchange_config = session::ExchangeConfig {
         mycall: base_mycall.to_string(), // BASE call — no SSID in B2F identity
@@ -1707,6 +1708,7 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     for mid in &result.sent {
         mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
     }
+    emit_exchange_result_progress(&result, &outbound_log, progress);
     if !result.rejected.is_empty() {
         return Err(BackendError::MessageRejected(format!(
             "CMS rejected mid(s): {}",
@@ -2094,6 +2096,7 @@ fn native_connect(
             }
         }
     }
+    let outbound_log = outbound_log_items(&outbound);
 
     // P1.3 (Codex post-impl review): defer read_password until after all config
     // validation and outbox-building steps have succeeded. Placing it here — just
@@ -2186,6 +2189,7 @@ fn native_connect(
     // next connection (duplicate send). Moving them to Sent is idempotent even
     // when `result.sent` is empty (all-rejected batch); the error still surfaces.
     file_exchange_result(mailbox, &result, mailbox_change)?;
+    emit_exchange_result_progress(&result, &outbound_log, progress);
     if !result.rejected.is_empty() {
         return Err(BackendError::MessageRejected(format!(
             "CMS rejected mid(s): {}",
@@ -2193,6 +2197,107 @@ fn native_connect(
         )));
     }
     Ok(())
+}
+
+/// Emit operator-facing movement details after a B2F exchange completes.
+///
+/// This is intentionally separate from `wire_log`: raw B2F traffic already
+/// exists for detailed debugging, while these lines answer the practical
+/// operator question "what mail moved?" in the plain session log.
+pub(crate) fn emit_exchange_result_progress(
+    result: &session::ExchangeResult,
+    outbound: &[(String, String)],
+    progress: &dyn Fn(&str),
+) {
+    if result.received.is_empty()
+        && result.sent.is_empty()
+        && result.rejected.is_empty()
+        && result.deferred.is_empty()
+    {
+        progress("No messages exchanged.");
+        return;
+    }
+
+    for message in &result.received {
+        let subject = message_log_header(message, "Subject", "(no subject)", 80);
+        let from = message_log_header(message, "From", "(unknown sender)", 48);
+        let mid = message_log_header(message, "Mid", "(no MID)", 64);
+        progress(&format!(
+            "Received \"{subject}\" from {from} (MID {mid}) -> Inbox."
+        ));
+    }
+
+    for mid in &result.sent {
+        let title = outbound_title_for_mid(outbound, mid);
+        progress(&format!("Sent \"{title}\" (MID {mid}) -> Sent."));
+    }
+
+    for mid in &result.rejected {
+        let title = outbound_title_for_mid(outbound, mid);
+        progress(&format!("Remote rejected \"{title}\" (MID {mid})."));
+    }
+
+    for mid in &result.deferred {
+        let title = outbound_title_for_mid(outbound, mid);
+        progress(&format!("Remote deferred \"{title}\" (MID {mid})."));
+    }
+}
+
+pub(crate) fn outbound_log_items(outbound: &[session::OutboundMessage]) -> Vec<(String, String)> {
+    outbound
+        .iter()
+        .map(|message| (message.proposal.mid.clone(), message.title.clone()))
+        .collect()
+}
+
+fn outbound_title_for_mid(outbound: &[(String, String)], mid: &str) -> String {
+    outbound
+        .iter()
+        .find(|(message_mid, _)| message_mid == mid)
+        .map(|(_, title)| compact_log_field(title, 80))
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| "(unknown subject)".to_string())
+}
+
+fn message_log_header(message: &Message, name: &str, fallback: &str, max_chars: usize) -> String {
+    let value = message.header(name).unwrap_or(fallback);
+    let compact = compact_log_field(value, max_chars);
+    if compact.is_empty() {
+        fallback.to_string()
+    } else {
+        compact
+    }
+}
+
+fn compact_log_field(value: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    let mut prev_space = false;
+    let mut used = 0usize;
+    let mut truncated = false;
+
+    for ch in value.chars() {
+        if used >= max_chars {
+            truncated = true;
+            break;
+        }
+        let normalized = if ch.is_control() || ch.is_whitespace() { ' ' } else { ch };
+        if normalized == ' ' {
+            if prev_space {
+                continue;
+            }
+            prev_space = true;
+        } else {
+            prev_space = false;
+        }
+        out.push(normalized);
+        used += 1;
+    }
+
+    let mut compact = out.trim().to_string();
+    if truncated {
+        compact.push_str("...");
+    }
+    compact
 }
 
 /// Persist a completed exchange into the mailbox and emit one change
@@ -2246,6 +2351,7 @@ pub fn run_ardop_b2f_exchange(
     config: &Config,
     mailbox: &Mailbox,
     position: Option<&crate::position::PositionArbiter>,
+    progress: Option<&dyn Fn(&str)>,
 ) -> Result<(), BackendError> {
     use crate::winlink::modem::ardop::b2f;
 
@@ -2293,6 +2399,7 @@ pub fn run_ardop_b2f_exchange(
         );
         Vec::new()
     });
+    let outbound_log = outbound_log_items(&outbound);
 
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
@@ -2330,6 +2437,9 @@ pub fn run_ardop_b2f_exchange(
             &MessageId(mid.clone()),
         )?;
     }
+    if let Some(progress) = progress {
+        emit_exchange_result_progress(&result, &outbound_log, progress);
+    }
     Ok(())
 }
 
@@ -2348,6 +2458,7 @@ pub fn run_ardop_b2f_answer(
     config: &Config,
     mailbox: &Mailbox,
     position: Option<&crate::position::PositionArbiter>,
+    progress: Option<&dyn Fn(&str)>,
 ) -> Result<(), BackendError> {
     use crate::winlink::modem::ardop::b2f;
     let callsign = config
@@ -2370,6 +2481,7 @@ pub fn run_ardop_b2f_answer(
         );
         Vec::new()
     });
+    let outbound_log = outbound_log_items(&outbound);
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
         targetcall: peer_callsign.to_string(),
@@ -2401,6 +2513,9 @@ pub fn run_ardop_b2f_answer(
             &MessageId(mid.clone()),
         )?;
     }
+    if let Some(progress) = progress {
+        emit_exchange_result_progress(&result, &outbound_log, progress);
+    }
     Ok(())
 }
 
@@ -2429,6 +2544,7 @@ pub fn run_vara_b2f_answer(
     config: &Config,
     mailbox: &Mailbox,
     position: Option<&crate::position::PositionArbiter>,
+    progress: Option<&dyn Fn(&str)>,
 ) -> Result<(), BackendError> {
     use std::io::BufReader;
 
@@ -2452,6 +2568,7 @@ pub fn run_vara_b2f_answer(
         );
         Vec::new()
     });
+    let outbound_log = outbound_log_items(&outbound);
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
         targetcall: peer_callsign.to_string(),
@@ -2510,6 +2627,9 @@ pub fn run_vara_b2f_answer(
             &MessageId(mid.clone()),
         )?;
     }
+    if let Some(progress) = progress {
+        emit_exchange_result_progress(&result, &outbound_log, progress);
+    }
     Ok(())
 }
 
@@ -2560,6 +2680,7 @@ pub fn run_vara_b2f_exchange(
     config: &Config,
     mailbox: &Mailbox,
     position: Option<&crate::position::PositionArbiter>,
+    progress: Option<&dyn Fn(&str)>,
 ) -> Result<(), BackendError> {
     use std::io::BufReader;
 
@@ -2600,6 +2721,7 @@ pub fn run_vara_b2f_exchange(
         );
         Vec::new()
     });
+    let outbound_log = outbound_log_items(&outbound);
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
         targetcall: target.to_string(),
@@ -2662,6 +2784,9 @@ pub fn run_vara_b2f_exchange(
             MailboxFolder::Sent,
             &MessageId(mid.clone()),
         )?;
+    }
+    if let Some(progress) = progress {
+        emit_exchange_result_progress(&result, &outbound_log, progress);
     }
     Ok(())
 }
@@ -2818,6 +2943,69 @@ mod mailbox_change_tests {
             .expect("empty exchange is valid");
 
         assert_eq!(notified.load(Ordering::SeqCst), 0);
+    }
+
+    fn outbound_log_fixture(mid: &str, subject: &str) -> session::OutboundMessage {
+        let mut msg = Message::new();
+        msg.set_header("Mid", mid);
+        msg.set_header("Subject", subject);
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"body\r\n".to_vec());
+        let (proposal, compressed) = msg.to_proposal().expect("valid outbound proposal");
+        session::OutboundMessage {
+            proposal,
+            title: subject.to_string(),
+            compressed,
+        }
+    }
+
+    #[test]
+    fn exchange_result_progress_lists_message_movement() {
+        let sent = outbound_log_fixture("SENTMID0001", "Outbound\r\nsubject");
+        let rejected = outbound_log_fixture("REJMID00001", "Already there");
+
+        let mut received = Message::new();
+        received.set_header("Mid", "INMID000001");
+        received.set_header("Subject", "Incoming\nweather");
+        received.set_header("From", "W1AW");
+        received.set_body(b"body\r\n".to_vec());
+
+        let result = session::ExchangeResult {
+            received: vec![received],
+            sent: vec![sent.proposal.mid.clone()],
+            rejected: vec![rejected.proposal.mid.clone()],
+            deferred: vec!["DEFMID00001".to_string()],
+        };
+        let outbound_messages = vec![sent, rejected];
+        let outbound = outbound_log_items(&outbound_messages);
+        let lines = std::cell::RefCell::new(Vec::new());
+
+        emit_exchange_result_progress(&result, &outbound, &|line| {
+            lines.borrow_mut().push(line.to_string());
+        });
+
+        assert_eq!(
+            lines.into_inner(),
+            vec![
+                "Received \"Incoming weather\" from W1AW (MID INMID000001) -> Inbox.",
+                "Sent \"Outbound subject\" (MID SENTMID0001) -> Sent.",
+                "Remote rejected \"Already there\" (MID REJMID00001).",
+                "Remote deferred \"(unknown subject)\" (MID DEFMID00001).",
+            ]
+        );
+    }
+
+    #[test]
+    fn exchange_result_progress_reports_no_traffic() {
+        let lines = std::cell::RefCell::new(Vec::new());
+
+        emit_exchange_result_progress(
+            &session::ExchangeResult::default(),
+            &[],
+            &|line| lines.borrow_mut().push(line.to_string()),
+        );
+
+        assert_eq!(lines.into_inner(), vec!["No messages exchanged."]);
     }
 }
 
