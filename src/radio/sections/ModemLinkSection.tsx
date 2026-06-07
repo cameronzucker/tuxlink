@@ -317,10 +317,11 @@ export function ModemLinkSection({
             />
           </label>
           <label className="radio-panel-input-row">
-            <span>Baud</span>
+            <span>Serial baud</span>
             <select
               className="radio-panel-input"
               data-testid="modem-baud"
+              aria-describedby="modem-baud-help"
               value={baudInput}
               onChange={(e) => {
                 const next = Number(e.target.value);
@@ -333,6 +334,9 @@ export function ModemLinkSection({
               ))}
             </select>
           </label>
+          <p className="modem-link-help" id="modem-baud-help" data-testid="modem-baud-help">
+            USB/KISS host-link rate, not the AX.25 over-air packet rate (1200 baud).
+          </p>
         </>
       ) : (
         <>
