@@ -16,6 +16,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.35.4](https://github.com/cameronzucker/tuxlink/compare/v0.35.3...v0.35.4) (2026-06-07)
+
+
+### Bug Fixes
+
+* **logging:** spawn startup workers on tauri runtime ([1014bad](https://github.com/cameronzucker/tuxlink/commit/1014bad67a57d92a92e9d9865b37644de9b61798))
+
 ## [0.35.3](https://github.com/cameronzucker/tuxlink/compare/v0.35.2...v0.35.3) (2026-06-06)
 
 
