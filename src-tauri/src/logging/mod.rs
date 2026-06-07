@@ -89,7 +89,11 @@ pub fn init(session_log: Arc<SessionLogState>) -> InitOutcome {
     let settings = Arc::new(Mutex::new(settings_loaded));
 
     let (subscriber, handles) = subscriber::build(session_log.clone());
-    let _ = tracing::subscriber::set_global_default(subscriber);
+    if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
+        return InitOutcome::Degraded {
+            reason: format!("logging subscriber install failed: {e}"),
+        };
+    }
 
     let active_file_path = Arc::new(tokio::sync::Mutex::new(None::<std::path::PathBuf>));
     let free_disk_guard = free_disk_guard::FreeDiskGuard::spawn(log_dir.clone());

@@ -18,7 +18,7 @@ impl FreeDiskGuard {
     pub fn spawn(log_dir: PathBuf) -> Self {
         let paused = Arc::new(AtomicBool::new(false));
         let paused_for_task = paused.clone();
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             loop {
                 let free = available_bytes(&log_dir).unwrap_or(u64::MAX);
                 let currently_paused = paused_for_task.load(Ordering::Acquire);

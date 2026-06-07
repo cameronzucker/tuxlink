@@ -72,7 +72,7 @@ pub fn spawn(
     // broadcast stops enqueuing events that the appender can't write. The
     // free-disk guard's recover threshold clears the flag when space returns.
     let paused_flag_for_poll = paused_flag.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let mut last_count: usize = 0;
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
@@ -99,7 +99,7 @@ pub fn spawn(
     let log_dir_for_task = log_dir.clone();
     let active_tracker_for_task = active_file_tracker.clone();
 
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         // Amendment B: track the hour we're currently writing to.
         // None = first event; triggers active-file init without rotation log.
         let mut current_hour: Option<(i32, u32, u32, u32)> = None; // (year, month, day, hour)

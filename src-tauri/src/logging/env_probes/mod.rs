@@ -198,7 +198,7 @@ pub fn spawn_runner(
     let app2 = app.clone();
     let event_id = app.listen("first_paint_complete", move |_| {
         let a = app2.clone();
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             // Gate each probe with try_claim() / release() to enforce the 60s
             // cooldown + single-flight invariant. Without gating, a double
             // first_paint_complete (frontend dev-mode hot reload or rapid
