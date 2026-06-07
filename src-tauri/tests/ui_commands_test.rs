@@ -278,6 +278,36 @@ fn test_parse_non_utf8_body_decodes_lossily_no_panic() {
     );
 }
 
+#[test]
+fn test_parse_b2f_body_decodes_windows_1252_text() {
+    // Native Winlink B2F carries a byte-counted body without a MIME charset.
+    // Some WLE-era text arrives as Windows-1252/Latin-1 bytes; MessageView
+    // should render characters, not U+FFFD replacement glyphs.
+    let body_bytes =
+        b"Weather: Caf\xe9, temp 72\xb0, wind \x93east\x94 \x96 clear\r\n";
+
+    let mut raw: Vec<u8> = Vec::new();
+    raw.extend_from_slice(b"Mid: LEGACY-ENCODING\r\n");
+    raw.extend_from_slice(format!("Body: {}\r\n", body_bytes.len()).as_bytes());
+    raw.extend_from_slice(b"Date: 2026/06/06 12:34\r\n");
+    raw.extend_from_slice(b"From: SERVICE\r\n");
+    raw.extend_from_slice(b"Subject: Weather note\r\n");
+    raw.extend_from_slice(b"To: N7CPZ\r\n");
+    raw.extend_from_slice(b"\r\n");
+    raw.extend_from_slice(body_bytes);
+
+    let dto = parse_raw_rfc5322("LEGACY-ENCODING", &raw).expect("B2F parse succeeds");
+    assert_eq!(
+        dto.body,
+        "Weather: Café, temp 72°, wind “east” – clear\r\n"
+    );
+    assert!(
+        !dto.body.contains('\u{FFFD}'),
+        "legacy single-byte B2F text should not render replacement glyphs: {:?}",
+        dto.body
+    );
+}
+
 // ============================================================================
 // Task-13 test (6): oversized input → parse_raw_rfc5322 returns UiError
 // Spec §5.3 (Codex verdict V3): cap parse input; surface a parser-failure state.

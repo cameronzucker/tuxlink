@@ -524,7 +524,7 @@ pub struct ParsedMessageDto {
     pub to: Vec<String>,
     pub cc: Vec<String>,
     pub date: String, // RFC 3339 UTC
-    pub body: String, // decoded text/plain (lossy UTF-8)
+    pub body: String, // decoded display text
     pub attachments: Vec<AttachmentMetaDto>,
     pub is_form: bool,
     pub routing: Option<String>,
@@ -549,9 +549,10 @@ pub struct ParsedMessageDto {
 /// - `mail-parser` fails to parse the message → `UiError::Internal`
 ///   (the frontend renders a "could not parse" state).
 ///
-/// Body: the `text/plain` part is decoded lossily (invalid UTF-8 bytes
-/// become U+FFFD; no panic). Form detection: an attachment whose filename
-/// matches `RMS_Express_Form_*.xml` sets `is_form = true`.
+/// Body: MIME `text/plain` is decoded by `mail-parser`; native B2F body bytes
+/// are decoded as UTF-8 when valid and Windows-1252 otherwise. Form detection:
+/// an attachment whose filename matches `RMS_Express_Form_*.xml` sets
+/// `is_form = true`.
 ///
 /// Attachments: all non-inline, named MIME parts are listed by name + size
 /// in bytes. In v0.0.1 attachment bytes are never fetched or previewed (spec
@@ -723,7 +724,9 @@ fn addr_to_string(a: &mail_parser::Addr<'_>) -> String {
 ///    blob, surfacing as a wall of REPLACEMENT CHARACTER glyphs in the UI
 ///    (tuxlink-9ylw smoke walk → this is the real fix, tuxlink-2hyf).
 ///    When B2F is detected, defer to `winlink::message::Message::body()`
-///    which respects the declared body byte-count and excludes attachments.
+///    which respects the declared body byte-count and excludes attachments,
+///    then decode the body as UTF-8 with a Windows-1252 fallback for legacy
+///    Winlink/WLE text.
 ///
 /// 2. **`mail_parser::body_text(0)`** — the first text/plain part of a true
 ///    MIME message, already decoded for charset + CTE.
@@ -737,7 +740,7 @@ fn addr_to_string(a: &mail_parser::Addr<'_>) -> String {
 fn find_text_plain_body(msg: &mail_parser::Message<'_>, raw: &[u8]) -> String {
     // Step 1 — B2F detection + dispatch.
     if let Some(b2f) = parse_as_b2f(raw) {
-        return String::from_utf8_lossy(b2f.body()).into_owned();
+        return decode_b2f_body_text(b2f.body());
     }
 
     // Step 2 — true MIME text/plain happy path.
@@ -753,6 +756,55 @@ fn find_text_plain_body(msg: &mail_parser::Message<'_>, raw: &[u8]) -> String {
             format!("[Binary content ({} bytes) — see attachments]", b.len())
         }
         _ => String::new(),
+    }
+}
+
+/// Decode native B2F body bytes for UI display.
+///
+/// Winlink B2F does not carry a MIME charset on the body itself. Inbound
+/// bodies are commonly ASCII/UTF-8, but legacy WLE-era content may arrive as a
+/// single-byte Windows code page. Prefer valid UTF-8; otherwise use
+/// Windows-1252, which preserves ISO-8859-1 printable bytes and the smart
+/// punctuation commonly produced by Windows clients.
+fn decode_b2f_body_text(bytes: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_string();
+    }
+
+    bytes.iter().map(|&b| windows_1252_char(b)).collect()
+}
+
+fn windows_1252_char(byte: u8) -> char {
+    match byte {
+        0x80 => '\u{20AC}',
+        0x82 => '\u{201A}',
+        0x83 => '\u{0192}',
+        0x84 => '\u{201E}',
+        0x85 => '\u{2026}',
+        0x86 => '\u{2020}',
+        0x87 => '\u{2021}',
+        0x88 => '\u{02C6}',
+        0x89 => '\u{2030}',
+        0x8A => '\u{0160}',
+        0x8B => '\u{2039}',
+        0x8C => '\u{0152}',
+        0x8E => '\u{017D}',
+        0x91 => '\u{2018}',
+        0x92 => '\u{2019}',
+        0x93 => '\u{201C}',
+        0x94 => '\u{201D}',
+        0x95 => '\u{2022}',
+        0x96 => '\u{2013}',
+        0x97 => '\u{2014}',
+        0x98 => '\u{02DC}',
+        0x99 => '\u{2122}',
+        0x9A => '\u{0161}',
+        0x9B => '\u{203A}',
+        0x9C => '\u{0153}',
+        0x9E => '\u{017E}',
+        0x9F => '\u{0178}',
+        0x81 | 0x8D | 0x8F | 0x90 | 0x9D => char::REPLACEMENT_CHARACTER,
+        _ => char::from(byte),
     }
 }
 
