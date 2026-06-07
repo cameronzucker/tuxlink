@@ -683,14 +683,14 @@ export function Compose({ draftId }: ComposeProps) {
       {/* ------------------------------------------------------------------ */}
       <div className="compose-fields">
 
-        {/* From — disabled (single callsign; multi-callsign deferred) */}
+        {/* From — read-only configured callsign; multi-callsign selection deferred */}
         <div className="compose-field-row">
           <label htmlFor="compose-from" className="compose-label">From</label>
           <input
             id="compose-from"
             className="compose-input compose-input--disabled"
             type="text"
-            value=""
+            value={callsign}
             readOnly
             disabled
             aria-describedby="compose-from-hint"
