@@ -1108,7 +1108,7 @@ fn run_b2f_with_transport(
             &session_log,
             crate::winlink_backend::LogLevel::Info,
             crate::winlink_backend::LogSource::Transport,
-            line.to_string(),
+            line,
         );
     };
 
