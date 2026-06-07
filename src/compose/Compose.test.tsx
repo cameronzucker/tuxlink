@@ -7,12 +7,57 @@
 //
 // Plan: docs/superpowers/plans/2026-06-01-html-forms-p1-webview-infra.md Task 10.
 
-import { describe, expect, it } from 'vitest';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  win: {
+    onCloseRequested: vi.fn(),
+    minimize: vi.fn(async () => {}),
+    toggleMaximize: vi.fn(async () => {}),
+  },
+}));
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => mocks.win }));
+
 import {
+  Compose,
   closePromptShape,
   isSaveDraftAvailable,
   parsedBodyToFieldValues,
 } from './Compose';
+
+const DEFAULT_INVOKE = async (cmd: string) => {
+  if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+  return null;
+};
+
+beforeEach(() => {
+  localStorage.clear();
+  mocks.invoke.mockReset();
+  mocks.invoke.mockImplementation(DEFAULT_INVOKE);
+  mocks.win.onCloseRequested.mockReset();
+  mocks.win.onCloseRequested.mockResolvedValue(vi.fn());
+  mocks.win.minimize.mockClear();
+  mocks.win.toggleMaximize.mockClear();
+});
+
+afterEach(() => {
+  cleanup();
+});
+
+describe('<Compose> sender identity', () => {
+  it('shows the configured callsign in the read-only From field', async () => {
+    render(<Compose draftId="from-identity-test" />);
+    const from = screen.getByLabelText(/^From$/i) as HTMLInputElement;
+
+    await waitFor(() => expect(from).toHaveValue('N0CALL'));
+    expect(from).toBeDisabled();
+    expect(screen.getByText(/Multi-callsign.*coming soon/i)).toBeInTheDocument();
+  });
+});
 
 describe('parsedBodyToFieldValues', () => {
   it('collapses single-value fields to bare strings', () => {
