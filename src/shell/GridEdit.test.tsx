@@ -67,6 +67,42 @@ test('Escape cancels edit without committing', () => {
   expect(screen.queryByTestId('grid-input')).not.toBeInTheDocument();
 });
 
+test('blurring a valid grid commits the normalized value and exits edit mode', async () => {
+  const onCommit = vi.fn().mockResolvedValue(undefined);
+  render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} onUseManual={vi.fn()} />);
+  fireEvent.click(screen.getByTestId('grid-value-display'));
+  const input = screen.getByTestId('grid-input') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'dm33AB' } });
+  fireEvent.blur(input);
+  await act(async () => {});
+  expect(onCommit).toHaveBeenCalledWith('DM33ab');
+  expect(screen.queryByTestId('grid-input')).not.toBeInTheDocument();
+});
+
+test('blurring an invalid grid reverts to the configured display value without committing', () => {
+  const onCommit = vi.fn();
+  render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} onUseManual={vi.fn()} />);
+  fireEvent.click(screen.getByTestId('grid-value-display'));
+  const input = screen.getByTestId('grid-input') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'NOPE' } });
+  fireEvent.blur(input);
+  expect(onCommit).not.toHaveBeenCalled();
+  expect(screen.queryByTestId('grid-input')).not.toBeInTheDocument();
+  expect(screen.getByTestId('grid-value-display')).toHaveTextContent('CN87');
+});
+
+test('blurring an empty grid reverts to the configured display value without committing', () => {
+  const onCommit = vi.fn();
+  render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} onUseManual={vi.fn()} />);
+  fireEvent.click(screen.getByTestId('grid-value-display'));
+  const input = screen.getByTestId('grid-input') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: '   ' } });
+  fireEvent.blur(input);
+  expect(onCommit).not.toHaveBeenCalled();
+  expect(screen.queryByTestId('grid-input')).not.toBeInTheDocument();
+  expect(screen.getByTestId('grid-value-display')).toHaveTextContent('CN87');
+});
+
 test('backend rejection shows the error detail and stays in edit mode', async () => {
   const onCommit = vi.fn().mockRejectedValue({ kind: 'Rejected', detail: 'Grid must be a 4- or 6-char Maidenhead locator.' });
   render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} onUseManual={vi.fn()} />);
