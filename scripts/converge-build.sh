@@ -33,7 +33,7 @@
 #     tuxlink-21j8 lift to refuse at commit/push time)
 #   - Audit log at dev/scratch/converge-build.log (json-lines, jq-friendly)
 #   - lockfile-change-detect for node_modules wipe
-#   - HEAD-change-detect for src-tauri/target wipe
+#   - HEAD-change-detect for Cargo workspace target/ wipe
 #   - --fresh / --dry-run / --skip-launch flags
 #   - Process kill + port 1420 verification
 #
@@ -127,7 +127,7 @@ WHAT IT DOES:
 
 OPTIONS:
   --fresh                  Wipe disposable worktree's node_modules +
-                           src-tauri/target before install. Default: wipe
+                           target/ before install. Default: wipe
                            on lockfile change OR HEAD change since the
                            previous run.
   --skip-launch            Converge (sync + install + build deps) but do
@@ -149,7 +149,7 @@ KNOWN FAILURE MODES THIS HANDLES:
   4. Untracked vs tracked path collision in operator's checkout
      → disposable worktree is freshly-checked-out from origin/main;
      no untracked overlay possible.
-  5. Stale src-tauri/target/debug/tuxlink binary
+  5. Stale target/debug/tuxlink binary
      → wipe when disposable worktree's HEAD changes (effectively
      whenever origin/main moves forward).
   6. Parallel \`tauri dev\` on port 1420 (strictPort)
@@ -255,16 +255,31 @@ fetch_prune() {
 # Subsequent runs: `git checkout --detach origin/main` from inside it (this
 # is safe — detached HEAD updates do not affect any branch).
 # Helper: is the disposable worktree dirty? Tracks staged + tracked changes
-# plus non-ignored untracked files. Ignores node_modules/ + target/ (the
-# tracked-but-gitignored build caches). Returns 0 if clean, 1 if dirty.
+# plus non-cache untracked files. Ignores known generated build caches even if
+# the disposable checkout predates the .gitignore entry for the root Cargo
+# workspace target/. Returns 0 if clean, 1 if dirty.
+_disposable_untracked_source_paths() {
+  git -C "${DISPOSABLE_WT_DIR}" ls-files --others --exclude-standard 2>/dev/null \
+    | while IFS= read -r path; do
+        case "${path}" in
+          target|target/*|node_modules|node_modules/*|src-tauri/target|src-tauri/target/*|src-tauri/gen|src-tauri/gen/*)
+            ;;
+          *)
+            printf '%s\n' "${path}"
+            ;;
+        esac
+      done
+}
+
 _disposable_is_clean() {
   [[ -d "${DISPOSABLE_WT_DIR}" ]] || return 0
   if ! git -C "${DISPOSABLE_WT_DIR}" diff --quiet 2>/dev/null; then return 1; fi
   if ! git -C "${DISPOSABLE_WT_DIR}" diff --quiet --cached 2>/dev/null; then return 1; fi
-  # Untracked NON-gitignored files (the cached node_modules + target/
-  # are gitignored, so --exclude-standard hides them).
+  # Untracked NON-cache files. Keep this path-level allowlist narrow: source
+  # dirt remains a hard refusal, but root target/ from the workspace build no
+  # longer blocks the next sync.
   local untracked
-  untracked="$(git -C "${DISPOSABLE_WT_DIR}" ls-files --others --exclude-standard 2>/dev/null || true)"
+  untracked="$(_disposable_untracked_source_paths || true)"
   [[ -z "${untracked}" ]]
 }
 
@@ -331,7 +346,8 @@ ensure_disposable_worktree() {
     warn "inspect with: git -C ${DISPOSABLE_WT_DIR} status"
     warn "agents should never write here; this likely indicates a misbehaving process"
     warn "or a manual edit. If intentional, commit + push elsewhere; if accidental,"
-    warn "manually clean (cached node_modules/ + target/ are fine — they're gitignored)."
+    warn "manually clean the specific source paths. Build caches (node_modules/,"
+    warn "target/, src-tauri/target/, src-tauri/gen/) are ignored by this guard."
     audit "disposable_dirty" "$(printf '{"path":"%s"}' "${DISPOSABLE_WT_DIR}")"
     exit 4
   fi
@@ -415,13 +431,13 @@ maybe_wipe_build_artifacts() {
 
   if [[ -n "${target_reason}" ]]; then
     if [[ "${dry}" -eq 1 ]]; then
-      dim "  [dry-run] would wipe ${DISPOSABLE_WT_DIR}/src-tauri/target (${target_reason})"
+      dim "  [dry-run] would wipe ${DISPOSABLE_WT_DIR}/target and src-tauri/target (${target_reason})"
     else
-      step "wiping ${DISPOSABLE_WT_DIR}/src-tauri/target (${target_reason})"
-      rm -rf "${DISPOSABLE_WT_DIR}/src-tauri/target"
+      step "wiping ${DISPOSABLE_WT_DIR}/target and src-tauri/target (${target_reason})"
+      rm -rf "${DISPOSABLE_WT_DIR}/target" "${DISPOSABLE_WT_DIR}/src-tauri/target"
     fi
   else
-    dim "src-tauri/target: keep (HEAD unchanged)"
+    dim "target: keep (HEAD unchanged)"
   fi
 
   printf '{"node_modules":"%s","node_modules_reason":"%s","target":"%s","target_reason":"%s"}\n' \
