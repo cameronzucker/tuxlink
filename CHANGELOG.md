@@ -16,6 +16,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.35.5](https://github.com/cameronzucker/tuxlink/compare/v0.35.4...v0.35.5) (2026-06-07)
+
+
+### Bug Fixes
+
+* **logging:** keep startup diagnostics out of connection log ([d9d71f4](https://github.com/cameronzucker/tuxlink/commit/d9d71f4fecfa43b9ae86e7bba8c72459669db637))
+* make tracing-to-session-log opt-in via session_log=true and restrict bootstrap synthetic backend session-log lines to warn/error. Update the alpha-logging spec to preserve that surface boundary. ([d9d71f4](https://github.com/cameronzucker/tuxlink/commit/d9d71f4fecfa43b9ae86e7bba8c72459669db637))
+
 ## [0.35.4](https://github.com/cameronzucker/tuxlink/compare/v0.35.3...v0.35.4) (2026-06-07)
 
 
