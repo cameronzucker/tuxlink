@@ -117,6 +117,27 @@ describe('<DashboardRibbon> — transport label accuracy (tuxlink-989)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// tuxlink-9osg: UTC/local clock derives local timezone from live/config grid
+// ---------------------------------------------------------------------------
+
+describe('<DashboardRibbon> — grid-derived local clock (tuxlink-9osg)', () => {
+  it('uses the ribbon grid to choose the local timezone', () => {
+    render(<DashboardRibbon data={makeData({ grid: 'DM33' })} />);
+    const el = screen.getByTestId('ribbon-time');
+    expect(el).toHaveAttribute('data-time-source', 'grid');
+    expect(el).toHaveAttribute('title', expect.stringContaining('DM33'));
+    expect(el).toHaveAttribute('title', expect.stringContaining('America/Phoenix'));
+  });
+
+  it('falls back to the device timezone when no grid is available', () => {
+    render(<DashboardRibbon data={makeData({ grid: null })} />);
+    const el = screen.getByTestId('ribbon-time');
+    expect(el).toHaveAttribute('data-time-source', 'device');
+    expect(el).toHaveAttribute('title', expect.stringContaining('No grid'));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // tuxlink-9z2: Abort control appears while connecting and cancels the connect
 // ---------------------------------------------------------------------------
 
