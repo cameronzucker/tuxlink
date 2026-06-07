@@ -341,17 +341,18 @@ select.radio-panel-input option {
   background: color-mix(in srgb, var(--modem-accent) 18%, transparent);
   border-color: var(--modem-accent);
 }
-/* Danger / Abort action. Filled-error mirrors the primary pattern so the
- * contrast holds across themes (the prior outlined-red faded on light). */
+/* Danger / Abort action. Mirror the primary outlined pattern so Stop is
+ * visible at rest without becoming the only filled action in the row. */
 .radio-panel-btn-bad {
-  background: var(--error);
-  border-color: var(--error);
-  color: var(--tux-danger-fg);
+  background: var(--tux-danger-surface);
+  border-color: color-mix(in srgb, var(--error) 35%, transparent);
+  color: var(--error);
   flex: 0 0 auto;
   padding: 8px 14px;
 }
 .radio-panel-btn-bad:hover:not(:disabled) {
-  filter: brightness(1.1);
+  background: color-mix(in srgb, var(--error) 18%, transparent);
+  border-color: var(--error);
 }
 .radio-panel-btn:disabled {
   opacity: 0.5;
