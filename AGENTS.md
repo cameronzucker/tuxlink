@@ -5,6 +5,12 @@
 > CLAUDE.md; this file points at them. When CLAUDE.md changes, update the
 > summary line here only if the change is something a non-Claude agent reading
 > just this file needs to see.
+>
+> **Codex / non-Claude agents:** do not treat this file as a complete operating
+> manual. It is the entry point. Before substantive work, open CLAUDE.md and the
+> linked ADR/spec/pitfall sections that govern the request. If you cannot load
+> or follow a referenced local skill/workflow, stop and diagnose that failure;
+> do not silently substitute an ad-hoc process.
 
 > **Project framing is pending.** This repo has just been initialized. The
 > project structure, commands, testing, and hardware sections below are
@@ -23,6 +29,35 @@ _TBD: populate after office-hours kickoff._
 ## Testing
 
 _TBD: populate after office-hours kickoff._
+
+## Codex / non-Claude startup contract
+
+For every fresh Codex/non-Claude session, complete this checklist before code,
+git, bd status changes, PRs, or release claims:
+
+1. Generate or adopt the session moniker. Normal path: run
+   `python3 .claude/scripts/get_agent_moniker.py`, state `Agent: <moniker>` in
+   the first user-facing message, and persist that moniker for the whole
+   session. If resuming a session that already made commits/PRs with a moniker,
+   keep the existing moniker for continuity.
+2. Read this file and CLAUDE.md. Treat CLAUDE.md as authoritative; this file is
+   a non-Claude summary and routing layer.
+3. Establish repository provenance before making claims: current branch,
+   `git status --short`, worktree path, local HEAD, and relationship to
+   `origin/main`. Local checkouts may be stale; inspect `origin/main` directly
+   for remote workflow/release facts.
+4. Read the most recent relevant handoffs under `dev/handoffs/`, the bd issue
+   being worked, the applicable ADRs/specs/pitfalls, and Claude memory files at
+   `~/.claude/projects/-home-administrator-Code-tuxlink/memory/` when the work
+   is more than a trivial one-command answer.
+5. Inspect recent PR precedent before opening or editing a PR. Match title,
+   body, verification, moniker, and merge-discipline conventions unless an ADR
+   or explicit operator instruction says otherwise.
+6. If the user is reporting a bug, failed build, failing CI, broken release, or
+   surprising runtime behavior, follow the investigate/bug-hunt workflow before
+   fixing. Evidence first, fix second.
+
+Detailed checklist: [docs/agent-workflows/codex-primary-agent-parity.md](docs/agent-workflows/codex-primary-agent-parity.md).
 
 ## Skill routing
 
@@ -43,6 +78,27 @@ Key routing rules:
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
 
+Codex fallback rule: if the native harness does not expose Claude's Skill tool
+or does not list a named project skill, read the local `SKILL.md` and follow it
+manually. Common local roots include `/home/administrator/.claude/skills/` and
+`/home/administrator/Code/agent-skills/plugins/`. A missing or unreadable skill
+is a blocker to surface, not permission to improvise.
+
+When a skill prescribes subagents, use the available subagent mechanism or
+operator-delegated Codex windows exactly as the skill requires. Do not collapse
+a required multi-agent bug hunt, adversarial review, or plan review into a
+single-agent pass for convenience. Persist the reports where the skill says to
+persist them, then keep PR scope reviewable.
+
+Project-specific high-friction routes:
+- `bug-hunt-cycle` means the full phased workflow: scope, parallel exploratory
+  / holistic / multipass hunters, consolidated validation, test-gap analysis,
+  presentation, fix plan, plan review, and committed reports when required.
+- `investigate` means no code fix until symptoms, recent changes, reproduction,
+  root cause, and regression coverage are established.
+- `build-robust-features` means the project's robust feature discipline,
+  including required adversarial review rounds when the work is non-trivial.
+
 ## Brainstorming preferences
 
 - Always use the visual companion (browser mockups) during brainstorming. Don't ask, just launch it.
@@ -60,7 +116,7 @@ Implications:
 
 ## Agent identity
 
-Generate a moniker via `python3 .claude/scripts/get_agent_moniker.py` at session start (3-word hyphenated form drawn from a 100-word pool of plant / animal / geographic nouns; auto-pre-flighted against git history). Include `Agent: <moniker>` as a commit trailer on every commit. Pass the moniker through to every subagent you dispatch. Legacy single-word monikers in older commits remain valid; the new format applies to forward commits. See [CLAUDE.md](CLAUDE.md#agent-identity--pick-a-moniker-at-session-start) for the full rationale and workflow.
+Generate a moniker via `python3 .claude/scripts/get_agent_moniker.py` at session start (3-word hyphenated form drawn from a 100-word pool of plant / animal / geographic nouns; auto-pre-flighted against git history). State it in the first user-facing message. Include `Agent: <moniker>` as a commit trailer on every commit; the repo `commit-msg` hook enforces this for local commits when `.githooks` is active. Include the moniker in PR titles as `[moniker] <subject>`. Pass the moniker through to every subagent you dispatch. Legacy single-word monikers in older commits remain valid; the new format applies to forward commits. See [CLAUDE.md](CLAUDE.md#agent-identity--pick-a-moniker-at-session-start) for the full rationale and workflow.
 
 ## Git workflow: worktrees mandatory under bd-issue ownership (ADR 0008); destructive commands BANNED
 
@@ -69,6 +125,24 @@ See [CLAUDE.md](CLAUDE.md#git-workflow--worktrees-mandatory-under-bd-issue-owner
 ## Git workflow: branch lifecycle state machine (ADR 0017)
 
 See [CLAUDE.md](CLAUDE.md#git-workflow--branch-lifecycle-state-machine-adr-0017) and [docs/adr/0017-branch-state-machine.md](docs/adr/0017-branch-state-machine.md). Summary: a branch with a merged or closed-without-merge PR is **dead**. `.githooks/pre-commit` and `.githooks/pre-push` refuse further commits/pushes on it (the orphan-post-merge anti-pattern from the 2026-06-01 v1p incident). Activate the hooks on any fresh clone with `bash scripts/install-githooks.sh`. The hooks employ `gh pr list` for state classification and degrade gracefully (warn + allow) when `gh` is unavailable; the CI nightly audit (tuxlink-ui3i) is the independent backstop. Documented escape hatch: `TUXLINK_BRANCH_LIFECYCLE_OVERRIDE=I-know-what-Im-doing git commit ...`; loud + audited at `dev/scratch/branch-lifecycle-overrides.log`.
+
+## Disposable / converged build worktree quarantine
+
+`.local/converge-build-worktree/` is operator tooling state, not an agent task
+worktree. Agents must not edit source, stage files, commit, stash, rebase, or
+run cleanup commands there. Use bd-bound worktrees under `worktrees/` for agent
+code changes.
+
+If a converged-build script refuses to run because the disposable worktree has
+dirty or untracked source changes:
+- Inspect only with read-only commands such as
+  `git -C .local/converge-build-worktree status --short`.
+- Report the exact paths and whether they are tracked, untracked, or ignored.
+- Do not delete, restore, clean, stash, or overwrite anything there unless the
+  operator explicitly authorizes the exact path-level cleanup.
+
+Build-cache directories such as `target/` and `node_modules/` may exist there,
+but they must not be treated as a license for agents to work in that tree.
 
 ## Live radio network operations: READ BEFORE ANY TRANSMISSION
 
@@ -82,6 +156,35 @@ This is Part 97 regulatory compliance, not a style rule.
 ## Commit and release discipline
 
 Conventional commit types (`feat:`, `fix:`, `docs:`, etc.). Breaking changes get `!` + `BREAKING CHANGE:` footer. Update `dev/implementation-log.md` (once created) after any significant work item. **Squash-merge is banned** ([ADR 0010](docs/adr/0010-no-squash-merge.md)); all PRs into integration branches merge as merge-commit (no-ff) via `gh pr merge <#> --merge --delete-branch`. **Polish before push:** clean up WIP commits via non-interactive `git rebase <base>` on local un-pushed commits; once pushed, commits are immutable.
+
+## Remote, CI, release, and artifact evidence discipline
+
+Remote-state claims are evidence-bound. Before asserting anything about GitHub
+Actions, PR checks, release assets, tags, deleted branches, or workflow
+contents, inspect the remote source of truth with `gh` and/or `git show
+origin/main:<path>`.
+
+Required distinctions:
+- PR merge checks are not the same as post-merge push/tag workflows.
+- A release-please PR can pass CI without proving release artifacts were built
+  as a merge gate.
+- A GitHub Release page's current asset list may differ from what the operator
+  observed earlier; compare timestamps instead of contradicting the operator.
+- Local workflow files may be hundreds of commits stale. Do not infer remote
+  behavior from local files until the branch relationship to `origin/main` is
+  known.
+
+When a user challenges a factual claim, stop the line of argument, verify the
+claim against primary evidence, and surface the commands/results that support
+the corrected conclusion.
+
+## Verification provenance
+
+Every verification report must say what was tested and where: worktree path,
+branch, commit SHA when available, local vs CI, and whether the run exercised a
+branch build, converged build, packaged artifact, or release asset. Do not let a
+successful branch-local run imply that the operator's converged build or a
+published release artifact has been verified.
 
 ## Tool referee (overrides bd's CLAUDE.md defaults)
 
