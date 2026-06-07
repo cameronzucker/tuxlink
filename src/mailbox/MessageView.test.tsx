@@ -272,7 +272,7 @@ describe('<MessageViewLoaded>', () => {
     expect(screen.queryByTestId('message-form-unknown')).toBeNull();
   });
 
-  // Attachment strip lists names + sizes; no download/preview yet.
+  // Attachment strip lists names + sizes; Save/Preview actions need folder context.
   it('lists attachment names and sizes', () => {
     render(
       <MessageViewLoaded

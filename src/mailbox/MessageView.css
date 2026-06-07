@@ -148,7 +148,7 @@
   font-weight: 600;
 }
 
-/* 5 — attachment strip (names + sizes only for now) */
+/* 5 — attachment strip (names + sizes + explicit actions) */
 .reading-pane .msg-attachments {
   margin-top: 18px;
   padding-top: 12px;
@@ -169,22 +169,33 @@
 }
 .reading-pane .msg-attachment-item {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  max-width: min(100%, 480px);
   padding: 4px 10px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: var(--surface-2);
   font-size: 12px;
 }
+.reading-pane .msg-attachment-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
 .reading-pane .msg-attachment-name {
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 .reading-pane .msg-attachment-size {
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
-/* tuxlink-0fyj — Save As button + status pills */
+/* tuxlink-0fyj — Save As button; tuxlink-ewtb — Preview button + status pills */
+.reading-pane .msg-attachment-preview,
 .reading-pane .msg-attachment-save {
   font: inherit;
   font-size: 11px;
@@ -195,12 +206,30 @@
   color: var(--text);
   cursor: pointer;
 }
+.reading-pane .msg-attachment-preview:hover:not(:disabled),
 .reading-pane .msg-attachment-save:hover:not(:disabled) {
   background: var(--surface-3, var(--surface-1));
 }
+.reading-pane .msg-attachment-preview:disabled,
 .reading-pane .msg-attachment-save:disabled {
   opacity: 0.6;
   cursor: progress;
+}
+.reading-pane .msg-attachment-preview-frame {
+  width: 100%;
+  max-width: 456px;
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-1);
+}
+.reading-pane .msg-attachment-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 340px;
+  object-fit: contain;
 }
 .reading-pane .msg-attachment-status {
   font-size: 11px;

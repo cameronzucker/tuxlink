@@ -647,6 +647,7 @@ describe('AppShell.css print stylesheet (tuxlink-zdfj)', () => {
       '.layout-b .statusbar',
       '.layout-b .radio-panel',
       '.layout-b .reading-pane .actions',
+      '.layout-b .reading-pane .msg-attachment-preview',
       '.layout-b .reading-pane .msg-attachment-save',
       '.tux-dropdown',
       '.message-list-sort-menu',
