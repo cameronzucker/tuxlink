@@ -61,10 +61,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        // tuxlink-0fyj: native Save As dialog for attachment download. Frontend
-        // shows the dialog, then invokes `message_attachment_save` which writes
-        // the decoded bytes to the chosen path on the Rust side (no IPC of the
-        // attachment body).
+        // tuxlink-0fyj/tuxlink-ewtb: native Save As dialog for attachment
+        // download plus explicit image preview. Save writes decoded bytes to
+        // the chosen path; preview returns a bounded image payload on demand.
         .plugin(tauri_plugin_dialog::init())
         // Task 14 (tuxlink-dm8): per-compose-window geometry persistence.
         // `tauri-plugin-window-state` hooks the WebviewWindow lifecycle to
@@ -334,6 +333,7 @@ pub fn run() {
             crate::ui_commands::folder_delete,         // tuxlink-f62f
             crate::ui_commands::folder_rename,         // tuxlink-ejph (Phase 3)
             crate::ui_commands::message_read,          // Task 13 (tuxlink-y5c)
+            crate::ui_commands::message_attachment_preview, // tuxlink-ewtb (image attachment preview)
             crate::ui_commands::message_attachment_save, // tuxlink-0fyj (Save As attachment)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
             crate::ui_commands::send_form,             // HTML Forms v0.1 (tuxlink-v1p Task 3.1)

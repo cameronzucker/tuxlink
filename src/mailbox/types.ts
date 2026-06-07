@@ -37,8 +37,8 @@ export interface MessageMeta {
 
 /// Reading-pane parsed view (Task 13 produces this from raw RFC5322 at the
 /// Rust command boundary; declared here as the shared contract). The current
-/// surface lists attachment names only; form rendering + attachment open are
-/// deferred.
+/// surface lists attachment names/sizes; attachment bytes are fetched lazily
+/// by explicit Save As / Preview commands.
 export interface ParsedMessage {
   id: string;
   subject: string;
@@ -47,7 +47,7 @@ export interface ParsedMessage {
   cc: string[];
   date: string; // RFC 3339 UTC
   body: string; // decoded text/plain
-  attachments: AttachmentMeta[]; // names + sizes; bytes fetched lazily (deferred)
+  attachments: AttachmentMeta[]; // names + sizes; bytes fetched lazily
   isForm: boolean; // body is a Winlink form payload → placeholder for now
   routing: string | null; // e.g. "via CMS-SSL"; null if unknown
   /// Form ID extracted from RMS_Express_Form_<id>.xml attachment name (T2.2).
@@ -61,6 +61,12 @@ export interface ParsedMessage {
 export interface AttachmentMeta {
   filename: string;
   size: number;
+}
+
+export interface AttachmentPreview {
+  filename: string;
+  mimeType: string;
+  dataBase64: string;
 }
 
 /// Sidebar folder identifiers. `drafts` is a local (localStorage) store, not

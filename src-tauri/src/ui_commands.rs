@@ -495,13 +495,27 @@ pub async fn mailbox_list(
 pub const MAX_RFC5322_BYTES: usize = 2 * 1024 * 1024;
 
 /// Serializable attachment name/size. Mirrors `AttachmentMeta` in
-/// `src/mailbox/types.ts`. v0.0.1 lists names + sizes only; bytes are NOT
-/// downloaded or previewed in v0.0.1 (spec §5.3 — no attachment open, no
-/// browser spawn).
+/// `src/mailbox/types.ts`. The message-read DTO lists names + sizes only;
+/// bytes are fetched lazily by explicit Save As / Preview commands.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct AttachmentMetaDto {
     pub filename: String,
     pub size: u64,
+}
+
+/// Maximum decoded attachment payload returned through the preview IPC path.
+/// Keep the ordinary message-read path byte-free, and bound the explicit
+/// preview path so a malformed store cannot push unbounded binary through JSON.
+pub const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 2 * 1024 * 1024;
+
+/// Serializable image-preview payload. Mirrors `AttachmentPreview` in
+/// `src/mailbox/types.ts`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentPreviewDto {
+    pub filename: String,
+    pub mime_type: String,
+    pub data_base64: String,
 }
 
 /// Serializable parsed message. Mirrors `ParsedMessage` in
@@ -555,8 +569,8 @@ pub struct ParsedMessageDto {
 /// `is_form = true`.
 ///
 /// Attachments: all non-inline, named MIME parts are listed by name + size
-/// in bytes. In v0.0.1 attachment bytes are never fetched or previewed (spec
-/// §5.3 — no download, no browser spawn).
+/// in bytes. Attachment bytes are fetched only by explicit Save As / Preview
+/// commands.
 pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiError> {
     if raw.len() > MAX_RFC5322_BYTES {
         return Err(UiError::Internal {
@@ -899,6 +913,81 @@ fn extract_attachment_bytes(
     })
 }
 
+fn image_mime_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some("image/png");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    if bytes.starts_with(b"BM") {
+        return Some("image/bmp");
+    }
+    None
+}
+
+fn build_attachment_preview(
+    filename: &str,
+    bytes: Vec<u8>,
+) -> Result<AttachmentPreviewDto, UiError> {
+    if bytes.len() > MAX_ATTACHMENT_PREVIEW_BYTES {
+        return Err(UiError::Rejected(format!(
+            "attachment '{filename}' is too large to preview ({} bytes; cap is {} bytes)",
+            bytes.len(),
+            MAX_ATTACHMENT_PREVIEW_BYTES
+        )));
+    }
+    let mime_type = image_mime_type(&bytes).ok_or_else(|| {
+        UiError::Rejected(format!(
+            "attachment '{filename}' is not a supported image preview type"
+        ))
+    })?;
+    Ok(AttachmentPreviewDto {
+        filename: filename.to_string(),
+        mime_type: mime_type.to_string(),
+        data_base64: base64_encode_standard(&bytes),
+    })
+}
+
+fn base64_encode_standard(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let mut i = 0;
+    while i + 3 <= bytes.len() {
+        let n = ((bytes[i] as u32) << 16)
+            | ((bytes[i + 1] as u32) << 8)
+            | (bytes[i + 2] as u32);
+        encoded.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
+        encoded.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
+        encoded.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
+        encoded.push(ALPHABET[(n & 0x3f) as usize] as char);
+        i += 3;
+    }
+    if i < bytes.len() {
+        let rem = bytes.len() - i;
+        let b0 = bytes[i] as u32;
+        let b1 = if rem > 1 { bytes[i + 1] as u32 } else { 0 };
+        let n = (b0 << 16) | (b1 << 8);
+        encoded.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
+        encoded.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
+        if rem == 2 {
+            encoded.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
+            encoded.push('=');
+        } else {
+            encoded.push('=');
+            encoded.push('=');
+        }
+    }
+    encoded
+}
+
 /// Extract a routing string from known Winlink transport-info headers.
 /// Checks a prioritized list of custom headers; returns `None` when absent.
 ///
@@ -1076,6 +1165,43 @@ pub async fn message_read(
         let _ = backend.mark_read(*f, &mid).await;
     }
     parse_raw_rfc5322(&id, &body.raw_rfc5322)
+}
+
+// ---- message_attachment_preview command (tuxlink-ewtb) ---------------------
+
+/// Return a safe inline preview payload for a named image attachment.
+///
+/// Reads the stored message, extracts attachment bytes via the same B2F/MIME
+/// ladder as Save As, verifies supported image magic bytes, and returns a
+/// bounded base64 payload for the frontend's data URL. Unsupported attachment
+/// types remain downloadable through `message_attachment_save`.
+#[tauri::command]
+pub async fn message_attachment_preview(
+    folder: String,
+    id: String,
+    filename: String,
+    state: State<'_, BackendState>,
+) -> Result<AttachmentPreviewDto, UiError> {
+    use crate::native_mailbox::FolderRef;
+    let parsed = parse_folder_ref(&folder)?;
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let body = match &parsed {
+        FolderRef::System(f) => backend.read_message_in(*f, &mid).await?,
+        FolderRef::User(slug) => backend.read_user_message(slug, &mid).await?,
+    };
+    let msg = mail_parser::MessageParser::new()
+        .parse(body.raw_rfc5322.as_slice())
+        .ok_or_else(|| UiError::Internal {
+            detail: format!("could not parse message {id}"),
+        })?;
+    let bytes = extract_attachment_bytes(&msg, body.raw_rfc5322.as_slice(), &filename)
+        .ok_or_else(|| {
+            UiError::NotFound(format!("attachment '{filename}' not in message {id}"))
+        })?;
+    build_attachment_preview(&filename, bytes)
 }
 
 // ---- message_attachment_save command (tuxlink-0fyj) ------------------------
@@ -6045,6 +6171,19 @@ hw:CARD=Device,DEV=0
         assert_eq!(v["attachments"][0]["size"], 10);
     }
 
+    #[test]
+    fn attachment_preview_dto_serializes_camel_case() {
+        let dto = AttachmentPreviewDto {
+            filename: "map.jpg".into(),
+            mime_type: "image/jpeg".into(),
+            data_base64: "/9j/AA==".into(),
+        };
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["filename"], "map.jpg");
+        assert_eq!(v["mimeType"], "image/jpeg");
+        assert_eq!(v["dataBase64"], "/9j/AA==");
+    }
+
     // format_unix_ts sanity: epoch → 1970-01-01T00:00:00Z, a known date.
     #[test]
     fn format_unix_ts_epoch_and_known_date() {
@@ -6268,6 +6407,30 @@ hw:CARD=Device,DEV=0
         let raw = build_mime_with_attachment("a.bin", b"abc");
         let msg = mail_parser::MessageParser::new().parse(raw.as_slice()).unwrap();
         assert!(extract_attachment_bytes(&msg, raw.as_slice(), "missing.bin").is_none());
+    }
+
+    #[test]
+    fn build_attachment_preview_accepts_safe_image_magic_and_base64_encodes() {
+        let jpeg: Vec<u8> = vec![0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, b'J', b'F', b'I', b'F'];
+        let dto = build_attachment_preview("map.jpg", jpeg).expect("JPEG preview accepted");
+        assert_eq!(dto.filename, "map.jpg");
+        assert_eq!(dto.mime_type, "image/jpeg");
+        assert_eq!(dto.data_base64, "/9j/4AAQSkZJRg==");
+    }
+
+    #[test]
+    fn build_attachment_preview_rejects_non_image_content() {
+        let err = build_attachment_preview("notes.txt", b"plain text".to_vec())
+            .expect_err("text attachment is not previewable");
+        assert!(matches!(err, UiError::Rejected(detail) if detail.contains("supported image")));
+    }
+
+    #[test]
+    fn build_attachment_preview_rejects_oversized_payloads() {
+        let too_large = vec![0u8; MAX_ATTACHMENT_PREVIEW_BYTES + 1];
+        let err = build_attachment_preview("huge.jpg", too_large)
+            .expect_err("oversized attachment is rejected");
+        assert!(matches!(err, UiError::Rejected(detail) if detail.contains("too large")));
     }
 
     /// tuxlink-4or5: real CMS Catalog image messages arrive as B2F format —

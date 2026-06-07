@@ -8,7 +8,7 @@
 //   2. `h1.subject-line` — the subject
 //   3. `dl.msg-meta`     — From / To / Date (+ Via when routing is known)
 //   4. `pre.msg-body`    — the decoded body (form → placeholder box)
-//   5. attachment strip  — names + sizes only (open/preview is deferred)
+//   5. attachment strip  — names + sizes + Save / image Preview
 //
 // The reply→compose wiring (replyActions.ts) is unchanged — it is sound; only
 // the markup/labels are reshaped to the mock. State (empty/loading/not-found/
@@ -23,7 +23,13 @@ import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { MessageViewEmpty } from './MessageViewEmpty';
-import type { ParsedMessage, AttachmentMeta, MailboxFolderRef, UserFolder } from './types';
+import type {
+  ParsedMessage,
+  AttachmentMeta,
+  AttachmentPreview,
+  MailboxFolderRef,
+  UserFolder,
+} from './types';
 import type { FormPayload } from '../forms/types';
 import { useMessage, type MessageSelection } from './useMessage';
 import { asUiError, isNotConfigured } from './types';
@@ -94,6 +100,32 @@ function formatAttachSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isPreviewableImageName(filename: string): boolean {
+  return /\.(?:jpe?g|png|gif|webp|bmp)$/i.test(filename);
+}
+
+function attachmentErrorDetail(e: unknown): string {
+  const uiError = asUiError(e);
+  if (!uiError) {
+    return e instanceof Error ? e.message : String(e);
+  }
+
+  switch (uiError.kind) {
+    case 'NotConfigured':
+    case 'NotFound':
+    case 'Rejected':
+      return uiError.detail;
+    case 'AuthFailed':
+    case 'Transport':
+    case 'Unavailable':
+      return uiError.detail.reason;
+    case 'Internal':
+      return uiError.detail.detail;
+    case 'Cancelled':
+      return 'Cancelled';
+  }
 }
 
 /** Format a UTC ISO-8601 date-time to the mock's "<date> <HH:MM> UTC · <HH:MM tz>"
@@ -407,7 +439,7 @@ export function MessageViewLoaded({
         </pre>
       )}
 
-      {/* 5 — attachment strip — names + sizes + Save (tuxlink-0fyj) */}
+      {/* 5 — attachment strip — names + sizes + Save / image Preview */}
       {message.attachments.length > 0 && (
         <AttachmentStrip
           attachments={message.attachments}
@@ -420,7 +452,7 @@ export function MessageViewLoaded({
 }
 
 // ============================================================================
-// Attachment strip (tuxlink-0fyj — Save As)
+// Attachment strip (tuxlink-0fyj — Save As; tuxlink-ewtb — image Preview)
 // ============================================================================
 
 /**
@@ -433,10 +465,18 @@ type AttachStatus =
   | { kind: 'saved'; path: string }
   | { kind: 'error'; detail: string };
 
+type PreviewStatus =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'shown'; filename: string; mimeType: string; dataUrl: string }
+  | { kind: 'error'; detail: string };
+
 /**
  * Click-to-save attachment strip. Each item is a button that opens the
  * native Save As dialog, then routes through `message_attachment_save`
- * to write the decoded bytes to the chosen path.
+ * to write the decoded bytes to the chosen path. Common image files also
+ * expose an on-demand preview that fetches bytes through
+ * `message_attachment_preview` only after the operator asks for them.
  *
  * Disabled when `folder` is undefined (tests injecting bare ParsedMessage
  * without selection context). The Save button is also suppressed for
@@ -452,6 +492,7 @@ export function AttachmentStrip({
   folder: MailboxFolderRef | undefined;
 }) {
   const [status, setStatus] = useState<Record<number, AttachStatus>>({});
+  const [preview, setPreview] = useState<Record<number, PreviewStatus>>({});
 
   async function handleSave(index: number, a: AttachmentMeta) {
     if (!folder) return;
@@ -484,7 +525,42 @@ export function AttachmentStrip({
     } catch (e) {
       setStatus((s) => ({
         ...s,
-        [index]: { kind: 'error', detail: String(e) },
+        [index]: { kind: 'error', detail: attachmentErrorDetail(e) },
+      }));
+    }
+  }
+
+  async function handlePreview(index: number, a: AttachmentMeta) {
+    if (!folder) return;
+    if (preview[index]?.kind === 'shown') {
+      setPreview((s) => {
+        const next = { ...s };
+        delete next[index];
+        return next;
+      });
+      return;
+    }
+
+    setPreview((s) => ({ ...s, [index]: { kind: 'loading' } }));
+    try {
+      const result = await invoke<AttachmentPreview>('message_attachment_preview', {
+        folder,
+        id: messageId,
+        filename: a.filename,
+      });
+      setPreview((s) => ({
+        ...s,
+        [index]: {
+          kind: 'shown',
+          filename: result.filename,
+          mimeType: result.mimeType,
+          dataUrl: `data:${result.mimeType};base64,${result.dataBase64}`,
+        },
+      }));
+    } catch (e) {
+      setPreview((s) => ({
+        ...s,
+        [index]: { kind: 'error', detail: attachmentErrorDetail(e) },
       }));
     }
   }
@@ -495,38 +571,77 @@ export function AttachmentStrip({
       <ul className="msg-attachment-list">
         {attachments.map((a: AttachmentMeta, i: number) => {
           const st = status[i] ?? { kind: 'idle' };
+          const previewStatus = preview[i] ?? { kind: 'idle' };
           const safeName = sanitizeAttachmentName(a.filename);
+          const canPreview = folder && isPreviewableImageName(a.filename);
           return (
             <li key={i} className="msg-attachment-item">
-              <span className="msg-attachment-name">{safeName}</span>
-              <span className="msg-attachment-size">{formatAttachSize(a.size)}</span>
-              {folder && (
-                <button
-                  type="button"
-                  className="msg-attachment-save"
-                  data-testid={`attachment-save-${i}`}
-                  disabled={st.kind === 'saving'}
-                  onClick={() => handleSave(i, a)}
-                  title={`Save ${safeName} to disk`}
-                >
-                  {st.kind === 'saving' ? 'Saving…' : 'Save'}
-                </button>
+              <div className="msg-attachment-row">
+                <span className="msg-attachment-name">{safeName}</span>
+                <span className="msg-attachment-size">{formatAttachSize(a.size)}</span>
+                {canPreview && (
+                  <button
+                    type="button"
+                    className="msg-attachment-preview"
+                    data-testid={`attachment-preview-${i}`}
+                    disabled={previewStatus.kind === 'loading'}
+                    onClick={() => handlePreview(i, a)}
+                    title={`${previewStatus.kind === 'shown' ? 'Hide' : 'Preview'} ${safeName}`}
+                  >
+                    {previewStatus.kind === 'loading'
+                      ? 'Loading...'
+                      : previewStatus.kind === 'shown'
+                        ? 'Hide'
+                        : 'Preview'}
+                  </button>
+                )}
+                {folder && (
+                  <button
+                    type="button"
+                    className="msg-attachment-save"
+                    data-testid={`attachment-save-${i}`}
+                    disabled={st.kind === 'saving'}
+                    onClick={() => handleSave(i, a)}
+                    title={`Save ${safeName} to disk`}
+                  >
+                    {st.kind === 'saving' ? 'Saving…' : 'Save'}
+                  </button>
+                )}
+                {st.kind === 'saved' && (
+                  <span
+                    className="msg-attachment-status msg-attachment-status--ok"
+                    data-testid={`attachment-status-${i}`}
+                  >
+                    ✓ Saved
+                  </span>
+                )}
+                {st.kind === 'error' && (
+                  <span
+                    className="msg-attachment-status msg-attachment-status--err"
+                    data-testid={`attachment-status-${i}`}
+                    title={st.detail}
+                  >
+                    ✗ Failed
+                  </span>
+                )}
+              </div>
+              {previewStatus.kind === 'shown' && (
+                <div className="msg-attachment-preview-frame" data-testid={`attachment-preview-frame-${i}`}>
+                  <img
+                    className="msg-attachment-preview-image"
+                    data-testid={`attachment-preview-image-${i}`}
+                    src={previewStatus.dataUrl}
+                    alt={previewStatus.filename}
+                  />
+                </div>
               )}
-              {st.kind === 'saved' && (
-                <span
-                  className="msg-attachment-status msg-attachment-status--ok"
-                  data-testid={`attachment-status-${i}`}
-                >
-                  ✓ Saved
-                </span>
-              )}
-              {st.kind === 'error' && (
+              {previewStatus.kind === 'error' && (
                 <span
                   className="msg-attachment-status msg-attachment-status--err"
-                  data-testid={`attachment-status-${i}`}
-                  title={st.detail}
+                  data-testid={`attachment-preview-status-${i}`}
+                  title={previewStatus.detail}
                 >
-                  ✗ Failed
+                  Preview failed
                 </span>
               )}
             </li>
