@@ -16,6 +16,16 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.35.10](https://github.com/cameronzucker/tuxlink/compare/v0.35.9...v0.35.10) (2026-06-07)
+
+
+### Bug Fixes
+
+* **about:** replace placeholder product copy ([d2ab4c4](https://github.com/cameronzucker/tuxlink/commit/d2ab4c437df729a6301fe1059c71dab4b5911c86))
+* **compose:** show configured From identity ([51d78f7](https://github.com/cameronzucker/tuxlink/commit/51d78f774be2214bd477b98966daccf2f04cd4e3))
+* **menu:** move Print to File menu ([239197e](https://github.com/cameronzucker/tuxlink/commit/239197ea25abf621ff68807cbd8f8d9152d36017))
+* **radio:** clarify AX.25 serial baud control ([2a6b550](https://github.com/cameronzucker/tuxlink/commit/2a6b5505321eab3c98bf4948f4bce9710319297f))
+
 ## [0.35.9](https://github.com/cameronzucker/tuxlink/compare/v0.35.8...v0.35.9) (2026-06-07)
 
 
