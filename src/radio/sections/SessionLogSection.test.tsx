@@ -1,7 +1,11 @@
 // src/radio/sections/SessionLogSection.test.tsx
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within, fireEvent } from '@testing-library/react';
-import { SessionLogSection, type SessionLogEntry } from './SessionLogSection';
+import {
+  SESSION_LOG_VISIBLE_ENTRY_LIMIT,
+  SessionLogSection,
+  type SessionLogEntry,
+} from './SessionLogSection';
 
 const FIXTURE: SessionLogEntry[] = [
   { ts: '05:35:58', level: 'info', message: 'Connecting to cms.winlink.org:8773 (CMS-SSL)' },
@@ -47,8 +51,45 @@ describe('<SessionLogSection>', () => {
     expect(screen.queryByText('[B2F] FQ')).not.toBeInTheDocument();
   });
 
-  // Operator smoke 2026-05-31: Clear button alongside Copy. Local-only reset;
-  // does NOT touch the backend snapshot buffer.
+  it('caps rendered rows to the latest visible entries and makes the display cap explicit', () => {
+    const manyEntries: SessionLogEntry[] = Array.from(
+      { length: SESSION_LOG_VISIBLE_ENTRY_LIMIT + 2 },
+      (_, idx) => ({ ts: '05:36:02', level: 'info', message: `line ${idx + 1}` }),
+    );
+
+    render(<SessionLogSection entries={manyEntries} />);
+
+    expect(screen.getByTestId('session-log-limit-note')).toHaveTextContent(
+      `Showing latest ${SESSION_LOG_VISIBLE_ENTRY_LIMIT} of ${SESSION_LOG_VISIBLE_ENTRY_LIMIT + 2} lines`,
+    );
+    expect(screen.queryByText('line 1')).toBeNull();
+    expect(screen.queryByText('line 2')).toBeNull();
+    expect(screen.getByText('line 3')).toBeInTheDocument();
+    expect(screen.getByText(`line ${SESSION_LOG_VISIBLE_ENTRY_LIMIT + 2}`)).toBeInTheDocument();
+  });
+
+  it('copies the full filtered history even when older rows are not rendered', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+    const manyEntries: SessionLogEntry[] = Array.from(
+      { length: SESSION_LOG_VISIBLE_ENTRY_LIMIT + 2 },
+      (_, idx) => ({ ts: '05:36:02', level: 'info', message: `line ${idx + 1}` }),
+    );
+
+    render(<SessionLogSection entries={manyEntries} />);
+    fireEvent.click(screen.getByTestId('log-copy-btn'));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const copied = writeText.mock.calls[0][0] as string;
+    expect(copied).toContain('line 1');
+    expect(copied).toContain(`line ${SESSION_LOG_VISIBLE_ENTRY_LIMIT + 2}`);
+  });
+
+  // Operator smoke 2026-05-31: Clear button alongside Copy. The owning hook
+  // decides whether clear is local-only or also drains backend history.
   describe('Clear control', () => {
     it('does NOT render a Clear button when onClear is omitted', () => {
       render(<SessionLogSection entries={FIXTURE} />);

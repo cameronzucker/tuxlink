@@ -14,6 +14,8 @@
 import { useEffect, useRef, useState } from 'react';
 import './SessionLogSection.css';
 
+export const SESSION_LOG_VISIBLE_ENTRY_LIMIT = 500;
+
 export type SessionLogLevel = 'info' | 'ok' | 'warn' | 'alert' | 'raw';
 
 export interface SessionLogEntry {
@@ -35,8 +37,7 @@ export interface SessionLogSectionProps {
   onCopy?: () => void;
   /** Optional clear handler (operator smoke 2026-05-31). When provided, a
    *  Clear button renders next to Copy; clicking it invokes onClear and the
-   *  log view resets. The backend snapshot buffer is NOT cleared — clear is
-   *  panel-local; new lines after the clear repopulate the view normally. */
+   *  log view resets according to the owning hook. */
   onClear?: () => void;
 }
 
@@ -60,6 +61,10 @@ export function SessionLogSection({
   }, [entries, autoScroll, showRaw]);
 
   const filtered = showRaw ? entries : entries.filter(e => e.level !== 'raw');
+  const hiddenCount = Math.max(0, filtered.length - SESSION_LOG_VISIBLE_ENTRY_LIMIT);
+  const visibleEntries = hiddenCount > 0
+    ? filtered.slice(-SESSION_LOG_VISIBLE_ENTRY_LIMIT)
+    : filtered;
 
   return (
     <section className="radio-panel-sec session-log-section"
@@ -69,7 +74,16 @@ export function SessionLogSection({
         <span className="live">live tail</span>
       </h5>
       <div className="log-scroll" ref={scrollRef}>
-        {filtered.map((e, i) => (
+        {hiddenCount > 0 && (
+          <div className="log-entry log-entry-info log-entry-limit-note"
+               data-testid="session-log-limit-note">
+            <span className="log-ts">...</span>
+            <span className="log-msg">
+              Showing latest {SESSION_LOG_VISIBLE_ENTRY_LIMIT} of {filtered.length} lines. Copy includes all filtered lines.
+            </span>
+          </div>
+        )}
+        {visibleEntries.map((e, i) => (
           <div key={i} className={`log-entry log-entry-${e.level}`}>
             <span className="log-ts">{e.ts}</span>
             <span className="log-msg">

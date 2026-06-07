@@ -591,4 +591,71 @@ mod tests {
         assert!(manifest_text.contains("\"operator_session_log_lines\": 1"));
         assert!(summary_text.contains("operator_session_log: 1 retained lines"));
     }
+
+    #[test]
+    fn export_preserves_complete_unbounded_operator_session_log() {
+        let tmp = tempdir().unwrap();
+        let log_dir = tmp.path().join("logs");
+        std::fs::create_dir(&log_dir).unwrap();
+
+        write_event(&log_dir, 10, "info", "first");
+        let session_log = SessionLogState::unbounded();
+        for idx in 0..=500 {
+            session_log.append_redacted(
+                LogLevel::Info,
+                LogSource::Transport,
+                format!("operator line {idx}"),
+            );
+        }
+
+        let out_path = tmp.path().join("export.tar.zst");
+        build_archive(ExportInputs {
+            log_dir: &log_dir,
+            active_file_path: None,
+            output_path: &out_path,
+            session_log: &session_log,
+            correlation_id: Some("att-unbounded"),
+            boot_id: "test-boot",
+            boot_at: "2026-06-04T10:00:00Z",
+            detailed_mode: "off",
+            retention_days: 14,
+            retention_mb_cap: 500,
+            flush_barrier: None,
+        })
+        .expect("export should succeed");
+
+        let archive_bytes = std::fs::read(&out_path).unwrap();
+        let tar_bytes =
+            zstd::stream::decode_all(archive_bytes.as_slice()).expect("outer zstd should decode");
+        let mut archive = tar::Archive::new(tar_bytes.as_slice());
+        let mut operator_text = String::new();
+        let mut manifest_text = String::new();
+        let mut summary_text = String::new();
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap().to_path_buf();
+            let name = path.to_string_lossy().to_string();
+            if name == "operator_session_log.jsonl" {
+                let mut raw = Vec::new();
+                entry.read_to_end(&mut raw).unwrap();
+                operator_text = String::from_utf8(raw).unwrap();
+            }
+            if name == "manifest.json" {
+                let mut raw = Vec::new();
+                entry.read_to_end(&mut raw).unwrap();
+                manifest_text = String::from_utf8(raw).unwrap();
+            }
+            if name == "summary.txt" {
+                let mut raw = Vec::new();
+                entry.read_to_end(&mut raw).unwrap();
+                summary_text = String::from_utf8(raw).unwrap();
+            }
+        }
+
+        assert_eq!(operator_text.lines().count(), 501);
+        assert!(operator_text.contains("operator line 0"));
+        assert!(operator_text.contains("operator line 500"));
+        assert!(manifest_text.contains("\"operator_session_log_lines\": 501"));
+        assert!(summary_text.contains("operator_session_log: 501 retained lines"));
+    }
 }

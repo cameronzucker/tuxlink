@@ -144,6 +144,32 @@ describe('mergeLogLines (snapshot ingestion)', () => {
   });
 });
 
+describe('useSessionLog() retained history', () => {
+  beforeEach(async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  it('returns the full snapshot so only the rendered panel owns the visible cap', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const snapshot = Array.from({ length: 501 }, (_, idx) =>
+      at('2026-05-31T00:00:00Z', 'info', 'transport', `line ${idx}`, idx + 1),
+    );
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'session_log_snapshot') return snapshot;
+      return undefined;
+    });
+
+    const { result } = renderHook(() => useSessionLog());
+
+    await waitFor(() => {
+      expect(result.current.entries).toHaveLength(501);
+    });
+    expect(result.current.entries[0].message).toBe('line 0');
+    expect(result.current.entries[500].message).toBe('line 500');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // useSessionLog.clear() — backend drain + local-state reset (round-2 fix)
 // Operator smoke 2026-05-31: prior `clear()` only reset React state, so a

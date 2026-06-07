@@ -34,3 +34,16 @@ fn bounded_capacity_evicts_oldest_but_seq_keeps_climbing() {
     assert_eq!(snap.len(), 2, "ring buffer is bounded");
     assert_eq!(snap.iter().map(|l| l.seq).collect::<Vec<_>>(), vec![2, 3], "oldest evicted; seq never resets");
 }
+
+#[test]
+fn unbounded_history_retains_more_than_visible_panel_limit() {
+    let log = SessionLogState::unbounded();
+    for idx in 0..=500 {
+        log.append(line(&format!("line {idx}")));
+    }
+
+    let snap = log.snapshot();
+    assert_eq!(snap.len(), 501, "unbounded production history must not evict at the 500-line UI limit");
+    assert_eq!(snap.first().map(|l| (l.seq, l.message.as_str())), Some((1, "line 0")));
+    assert_eq!(snap.last().map(|l| (l.seq, l.message.as_str())), Some((501, "line 500")));
+}

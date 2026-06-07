@@ -73,6 +73,14 @@
 .log-entry-warn .log-msg::before { content: '⚠ '; }
 .log-entry-raw  .log-msg  { color: var(--text-faint, #94a3b8); font-style: italic; opacity: 0.75; }
 
+.session-log-section .log-entry-limit-note {
+  color: var(--text-faint, #94a3b8);
+  font-style: italic;
+}
+.session-log-section .log-entry-limit-note .log-msg {
+  color: var(--text-faint, #94a3b8);
+}
+
 .log-entry-alert {
   background: var(--tux-danger-surface);
   border-left: 3px solid var(--error, #f87171);

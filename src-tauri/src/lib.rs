@@ -107,17 +107,17 @@ pub fn run() {
         // `mailbox_list` returns `NotConfigured` (the UI's "not connected"
         // empty state) and `backend_status` returns `None`.
         .manage(crate::app_backend::BackendState::new())
-        // Task A (tuxlink-22l): durable session-log ring buffer. The bridge
-        // The backend appends here AND broadcasts on `session_log:line`; this
-        // managed state lets `session_log_snapshot` serve late-mounting UIs
-        // without losing startup lines (spec §11.1 / adrev #1,#2,#3).
-        // Cap 500: ≈ one extended CMS session's worth of log lines.
+        // Task A (tuxlink-22l): durable session-log history. The bridge
+        // appends here AND broadcasts on `session_log:line`; this managed
+        // state lets `session_log_snapshot` and logging export retain the
+        // complete operator-visible session history. The radio panel applies
+        // the visible-row cap; retention stays complete until Clear.
         //
         // Wrapped in an `Arc` (Task C, tuxlink-22l §11.2) so the backend's
         // bridge thread can hold a clone of the SAME buffer that
         // `session_log_snapshot` reads. Tauri's `State` derefs through the
         // `Arc`, so the command sees an identical surface.
-        .manage(std::sync::Arc::new(crate::session_log::SessionLogState::new(500)))
+        .manage(std::sync::Arc::new(crate::session_log::SessionLogState::unbounded()))
         // tuxlink-4ek Phase 3: the shared modem session — current ARDOP status
         // snapshot + the RADIO-1 consent token. Stored as `Arc<ModemSession>`
         // so command handlers and the broadcaster (Task 3.4) reference the

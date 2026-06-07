@@ -2457,9 +2457,9 @@ impl From<LogLine> for LogLineDto {
 }
 
 /// Return the current session-log snapshot for late subscribers / pane re-open
-/// (spec §3.3 / §11.1: "returns the current ring buffer (last N lines)").
+/// (spec §3.3 / §11.1: retained operator-session history).
 ///
-/// Reads the durable `SessionLogState` ring buffer managed by the app.
+/// Reads the durable `SessionLogState` managed by the app.
 /// Each line carries a monotonic `seq` so the frontend can implement
 /// snapshot-then-tail without losing lines in the subscribe-before-listen
 /// window (adrev #1, #2, #3):
@@ -2471,8 +2471,8 @@ impl From<LogLine> for LogLineDto {
 ///
 /// Task D (the drain task in `lib.rs`) manages the `SessionLogState` and
 /// calls `append` before broadcasting. Until Task D is wired, the managed
-/// state starts empty (cap 500) and this command returns `[]` — the same
-/// contract as before, now future-proof.
+/// state starts empty and this command returns `[]` — the same contract as
+/// before, now future-proof.
 #[tauri::command]
 pub async fn session_log_snapshot(
     // Task C (tuxlink-22l §11.2): the managed buffer is an `Arc<SessionLogState>`
