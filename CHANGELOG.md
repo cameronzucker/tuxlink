@@ -16,6 +16,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.35.8](https://github.com/cameronzucker/tuxlink/compare/v0.35.7...v0.35.8) (2026-06-07)
+
+
+### Bug Fixes
+
+* **logging:** repair logging window chrome and clear history ([9da09d6](https://github.com/cameronzucker/tuxlink/commit/9da09d60d906d4801a851af104f3fa7547f58509))
+
 ## [0.35.7](https://github.com/cameronzucker/tuxlink/compare/v0.35.6...v0.35.7) (2026-06-07)
 
 
