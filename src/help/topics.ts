@@ -46,6 +46,7 @@ export const SECTIONS: readonly HelpSection[] = [
       '05-cms-and-rms',
       '06-the-b2f-protocol',
       '07-mailbox-model',
+      '33-operating-modes',
       '08-picking-a-transport',
     ],
   },

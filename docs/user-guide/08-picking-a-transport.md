@@ -1,8 +1,13 @@
 # Picking a transport
 
-A *connection* in Tuxlink is the specific transport-and-endpoint pairing
-used for one CMS exchange. The folder sidebar lists every configured
-connection; clicking one selects it as the next CMS connect's transport.
+A *connection* in Tuxlink combines an operating mode with a transport and
+endpoint. Pick the operating mode first - Winlink (CMS), Peer-to-peer,
+Radio-only, Post Office, or Network Post Office - then pick the transport
+that can reach the target for that mode. See
+[Operating modes](33-operating-modes.md) for the routing semantics.
+
+This topic covers the transport half of that choice: Telnet, Packet,
+ARDOP, and VARA.
 
 ## Telnet (CMS over internet)
 
@@ -95,5 +100,6 @@ For an emergency RF stop, the right call is the radio's power switch.
 
 ## Where next
 
+- [Operating modes](33-operating-modes.md) — CMS, P2P, Radio-only, and Post Office semantics.
 - [The mailbox](18-the-mailbox.md) — Inbox, Outbox, Sent, Drafts, Archive.
 - [Settings](27-settings.md) — GPS, privacy, ARDOP, connection.

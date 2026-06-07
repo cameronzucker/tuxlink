@@ -156,6 +156,12 @@ HTML Forms
     check-ins, etc.) rendered as HTML in compliant clients. See
     [HTML forms](20-html-forms.md).
 
+Hybrid network
+:   Winlink's RF-forwarding network used by Radio-only operation. Hybrid
+    stations can store mail locally, forward by radio, or route toward a
+    recipient's pickup station when ordinary CMS backhaul is not the plan.
+    See [Operating modes](33-operating-modes.md).
+
 ## I
 
 IC-7300 / IC-705
@@ -207,11 +213,21 @@ MID
 :   Message ID. A 10–12 character opaque string identifying a Winlink
     message uniquely. See [Mailbox model](07-mailbox-model.md).
 
+MPS
+:   Message pickup station. In Radio-only/Hybrid operation, the station
+    where a recipient retrieves held mail. See
+    [Operating modes](33-operating-modes.md).
+
 ## N
 
 NCS
 :   Net Control Station. The operator running a Winlink net. See
     [Net check-ins](25-net-check-ins.md).
+
+Network Post Office
+:   A network of local Post Office servers, often on LAN or AREDN-style
+    deployments, that synchronize messages between sites. See
+    [Operating modes](33-operating-modes.md).
 
 NMEA
 :   National Marine Electronics Association. The serial protocol most GPS
@@ -221,6 +237,14 @@ NVIS
 :   Near Vertical Incidence Skywave. A propagation mode where HF signals
     reflect off the ionosphere nearly straight up and come down within a
     few hundred miles. Useful for regional emcomm.
+
+## O
+
+Operating mode
+:   The Winlink session type or routing intent: Winlink (CMS), Peer-to-
+    peer, Radio-only, Post Office, or Network Post Office. Distinct from
+    the transport used to carry it. See
+    [Operating modes](33-operating-modes.md).
 
 ## P
 
@@ -241,6 +265,16 @@ Pat
 :   The open-source Go Winlink client (cross-platform). Tuxlink's prior
     art for Linux Winlink. See
     [Migration from Express or Pat](32-from-express-or-pat.md).
+
+Peer-to-peer / P2P
+:   Direct station-to-station Winlink B2F with no CMS in the path. One
+    station listens and the other connects. See
+    [Operating modes](33-operating-modes.md).
+
+Post Office
+:   Local RMS Relay store-and-forward operation for a served area or
+    exercise. Post Office messages use a different message pool from
+    ordinary CMS mail. See [Operating modes](33-operating-modes.md).
 
 PR_
 :   Position Report. A Winlink catalog query returning recently-reported
@@ -273,6 +307,11 @@ QSB
 
 ## R
 
+Radio-only
+:   The Winlink Hybrid-network operating mode for RF-only or RF-forwarded
+    message movement. Distinct from normal CMS-over-RF. See
+    [Operating modes](33-operating-modes.md).
+
 `rigctld`
 :   The Hamlib rig-control daemon. See
     [CAT and rigctld](12-cat-and-rigctld.md).
@@ -280,6 +319,16 @@ QSB
 RMS
 :   Radio Mail Server. A volunteer-operated gateway between RF and the
     CMS. See [CMS and RMS gateways](05-cms-and-rms.md).
+
+RMS Relay
+:   Winlink gateway/server software that can support Radio-only and Post
+    Office operation, including local store-and-forward behavior. See
+    [Operating modes](33-operating-modes.md).
+
+Routing intent
+:   Tuxlink's implementation term for the selected operating mode. It
+    controls which message pool a session should exchange. See
+    [Operating modes](33-operating-modes.md).
 
 RTS / DTR
 :   Serial port control lines (Request To Send / Data Terminal Ready).
@@ -295,6 +344,10 @@ SignaLink
 :   Tigertronics radio interface (USB audio + optional VOX or hardware
     PTT). See
     [SignaLink and other soundcards](11-signalink-and-others.md).
+
+Session type
+:   Winlink Express's operator-facing term for operating mode. See
+    [Operating modes](33-operating-modes.md).
 
 SNR
 :   Signal-to-Noise Ratio. The fundamental measure of HF channel quality.
@@ -318,6 +371,11 @@ TLS
 TNC
 :   Terminal Node Controller. The device or software that handles the
     packet modem layer. Dire Wolf is a software TNC. See KISS.
+
+Transport
+:   The pipe used to carry a Winlink session: Telnet, Packet, ARDOP,
+    VARA, PACTOR, and similar paths. Distinct from the operating mode.
+    See [Picking a transport](08-picking-a-transport.md).
 
 TS-590
 :   Kenwood HF transceiver. See
