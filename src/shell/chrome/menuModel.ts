@@ -24,6 +24,10 @@ export interface TopMenu {
 
 export const MENU_TREE: TopMenu[] = [
   { label: 'File', items: [
+    // tuxlink-d9ry: Print lives in File for desktop-app IA, but keeps the
+    // existing action id so Ctrl+P and the message-focused handler remain stable.
+    { id: 'menu:message:print', label: 'Print', accel: 'Ctrl+P' },
+    { separator: true },
     { id: 'menu:file:quit', label: 'Quit', accel: 'Ctrl+Q' },
   ] },
   { label: 'Message', items: [
@@ -45,12 +49,6 @@ export const MENU_TREE: TopMenu[] = [
     // Opens GribRequestPanel; routes through outgoing rails to
     // query@saildocs.com.
     { id: 'menu:message:grib_request', label: 'GRIB File Request…' },
-    { separator: true },
-    // tuxlink-j0m3: Print fires window.print() via the openMessage-gated
-    // handler in AppShell. No-op when nothing is selected, which keeps
-    // Ctrl+P from opening the print dialog on an empty reading pane.
-    // @media print stylesheet follow-up tracked at tuxlink-zdfj.
-    { id: 'menu:message:print', label: 'Print', accel: 'Ctrl+P' },
   ] },
   { label: 'Session', items: [
     { id: 'menu:session:connect', label: 'Connect', accel: 'F5' },

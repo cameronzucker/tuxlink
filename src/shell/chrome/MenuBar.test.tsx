@@ -82,16 +82,22 @@ describe('MenuBar', () => {
     expect(onAction).not.toHaveBeenCalled();
   });
 
-  // tuxlink-j0m3: Print is wired — enabled, fires the action id. The
-  // open-message gate lives in the handler (AppShell), not the menu.
-  it('Message → Print is enabled and fires menu:message:print', () => {
+  // tuxlink-d9ry: Print lives in File, still firing the existing message-print
+  // action id; the open-message gate lives in the handler (AppShell).
+  it('File → Print is enabled and fires menu:message:print', () => {
     const onAction = vi.fn();
     render(<MenuBar onAction={onAction} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Message' }));
+    fireEvent.click(screen.getByRole('button', { name: 'File' }));
     const print = screen.getByRole('button', { name: /Print/ });
     expect(print).not.toBeDisabled();
     fireEvent.click(print);
     expect(onAction).toHaveBeenCalledWith('menu:message:print');
+  });
+
+  it('Message no longer includes Print', () => {
+    render(<MenuBar onAction={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Message' }));
+    expect(screen.queryByRole('button', { name: /Print/ })).not.toBeInTheDocument();
   });
 
   it('keeps top-app dropdown layers above message-list scroll content', () => {
