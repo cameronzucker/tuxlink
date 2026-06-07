@@ -82,6 +82,10 @@ describe('<ModemLinkSection>', () => {
     );
     // The manual-fallback input echoes the persisted path.
     expect(screen.getByTestId('modem-device')).toHaveValue('/dev/ttyUSB0');
+    expect(screen.getByText('Serial baud')).toBeInTheDocument();
+    expect(screen.getByTestId('modem-baud-help')).toHaveTextContent(
+      /host-link rate, not the AX\.25 over-air packet rate/i,
+    );
     // Baud is now a <select> — the selected option's value is reflected in
     // the select element's displayValue.
     const baudSelect = screen.getByTestId('modem-baud') as HTMLSelectElement;

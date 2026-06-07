@@ -60,3 +60,10 @@
   background: rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.95);
 }
+
+.modem-link-help {
+  margin: -2px 0 8px 80px;
+  color: var(--text-faint, #94a3b8);
+  font-size: 12px;
+  line-height: 1.35;
+}
