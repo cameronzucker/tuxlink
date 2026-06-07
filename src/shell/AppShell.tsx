@@ -24,6 +24,7 @@ import { MessageList } from '../mailbox/MessageList';
 import type { HighlightRange } from '../mailbox/MessageList';
 import { type SortState, loadSortState, saveSortState } from '../mailbox/messageSort';
 import { useMailbox, useMailboxChangeEvents } from '../mailbox/useMailbox';
+import { DRAFTS_CHANGED_EVENT, listDraftMessages } from '../mailbox/draftMailbox';
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
 import { useUserFolders } from '../mailbox/useUserFolders';
@@ -356,6 +357,22 @@ export function AppShell() {
   // Folders section. Backend reads `<root>/.folders.json`.
   const { folders: userFolders } = useUserFolders();
   const notConnected = isNotConfigured(error);
+  const [draftMessages, setDraftMessages] = useState<MessageMeta[]>(() => listDraftMessages());
+
+  useEffect(() => {
+    const refreshDrafts = () => setDraftMessages(listDraftMessages());
+    refreshDrafts();
+    window.addEventListener(DRAFTS_CHANGED_EVENT, refreshDrafts);
+    window.addEventListener('storage', refreshDrafts);
+    window.addEventListener('focus', refreshDrafts);
+    const interval = window.setInterval(refreshDrafts, 2000);
+    return () => {
+      window.removeEventListener(DRAFTS_CHANGED_EVENT, refreshDrafts);
+      window.removeEventListener('storage', refreshDrafts);
+      window.removeEventListener('focus', refreshDrafts);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   // Search-result wiring (tuxlink-c7qz): when search is active, swap the
   // folder-scoped messages for search results. When search is active but
@@ -384,11 +401,12 @@ export function AppShell() {
       (search.spec.filters.folder.kind === 'folder' &&
         search.spec.filters.folder.value === 'all'));
 
-  const visibleMessages = searchResultMessages ?? messages;
+  const folderMessages = selectedFolder === 'drafts' ? draftMessages : messages;
+  const visibleMessages = searchResultMessages ?? folderMessages;
 
   // Sidebar badges (mock B): Inbox = unread count ("3"), Outbox = queue depth
   // ("1 to send" mirrored from the status bar — same `outbox.messages.length`),
-  // Sent = total ("87"). tuxlink-gp8b: Outbox was wired into the sidebar by
+  // Drafts = local draft count, Sent = total ("87"). tuxlink-gp8b: Outbox was wired into the sidebar by
   // tuxlink-su2h (PR #219) but its count never made it into this object, so the
   // sidebar showed no badge while the status bar showed the same number — same
   // source data, two surfaces, only one rendered.
@@ -398,10 +416,11 @@ export function AppShell() {
     () => ({
       inbox: inbox.messages.filter((m) => m.unread).length,
       outbox: outbox.messages.length,
+      drafts: draftMessages.length,
       sent: sent.messages.length,
       archive: archive.messages.length,
     }),
-    [inbox.messages, outbox.messages, sent.messages, archive.messages],
+    [inbox.messages, outbox.messages, draftMessages, sent.messages, archive.messages],
   );
 
   // Status data (callsign / grid / connection) — single poll, shared by the
@@ -706,6 +725,11 @@ export function AppShell() {
       // regular folder-scoped browse case.
       const hit = searchResultMessages?.find((m) => m.id === id);
       const folder = (hit?.folder as MailboxFolder | undefined) ?? selectedFolder;
+      if (folder === 'drafts') {
+        setSelectedMessage(null);
+        void invoke('compose_window_open', { draftId: id });
+        return;
+      }
       setSelectedMessage({ folder, id });
     },
     [selectedFolder, searchResultMessages],

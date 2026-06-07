@@ -15,7 +15,18 @@
 // DRAFT_INDEX_KEY so counts are correct before Task 14 merges.
 
 export const DRAFT_INDEX_KEY = 'tuxlink.drafts.index';
+export const DRAFTS_CHANGED_EVENT = 'tuxlink:drafts-changed';
 const draftKey = (id: string) => `tuxlink.drafts.${id}`;
+
+function notifyDraftsChanged(): void {
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(DRAFTS_CHANGED_EVENT));
+    }
+  } catch {
+    // Notification is best-effort; draft persistence is the source of truth.
+  }
+}
 
 /// Shape of a saved draft. All fields optional (user may not have filled
 /// them yet). `savedAt` is the ISO timestamp of the last autosave.
@@ -74,6 +85,7 @@ export function saveDraft(data: Omit<DraftData, 'savedAt'>): DraftData {
     if (!ids.includes(data.draftId)) {
       persistIndex([...ids, data.draftId]);
     }
+    notifyDraftsChanged();
   } catch {
     // localStorage unavailable — best-effort
   }
@@ -108,6 +120,7 @@ export function clearDraft(draftId: string): void {
   try {
     globalThis.localStorage?.removeItem(draftKey(draftId));
     persistIndex(listDraftIds().filter((id) => id !== draftId));
+    notifyDraftsChanged();
   } catch {
     // localStorage unavailable — best-effort
   }

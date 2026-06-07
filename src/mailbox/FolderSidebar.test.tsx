@@ -12,17 +12,19 @@ describe('<FolderSidebar> (Mock B)', () => {
     expect(screen.getByTestId('folder-inbox')).toBeInTheDocument();
     expect(screen.getByTestId('folder-sent')).toBeInTheDocument();
     expect(screen.getByTestId('folder-outbox')).toBeInTheDocument();
+    expect(screen.getByTestId('folder-drafts')).toBeInTheDocument();
     expect(screen.getByTestId('folder-archive')).toBeInTheDocument();
     // Connections accordion: session-type headers replace old static items
     expect(screen.getByTestId('sess-cms')).toBeInTheDocument();
     expect(screen.getByTestId('sess-radio-only')).toBeInTheDocument();
   });
 
-  it('Inbox + Sent + Outbox + Archive are all enabled (tuxlink-ca5x)', () => {
+  it('Inbox + Sent + Outbox + Drafts + Archive are all enabled (tuxlink-n8gm)', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />);
     expect(screen.getByTestId('folder-inbox')).not.toBeDisabled();
     expect(screen.getByTestId('folder-sent')).not.toBeDisabled();
     expect(screen.getByTestId('folder-outbox')).not.toBeDisabled();
+    expect(screen.getByTestId('folder-drafts')).not.toBeDisabled();
     expect(screen.getByTestId('folder-archive')).not.toBeDisabled();
   });
 
@@ -31,6 +33,13 @@ describe('<FolderSidebar> (Mock B)', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={onSelect} />);
     fireEvent.click(screen.getByTestId('folder-outbox'));
     expect(onSelect).toHaveBeenCalledWith('outbox');
+  });
+
+  it('clicking Drafts fires onSelectFolder with the drafts id', () => {
+    const onSelect = vi.fn();
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={onSelect} />);
+    fireEvent.click(screen.getByTestId('folder-drafts'));
+    expect(onSelect).toHaveBeenCalledWith('drafts');
   });
 
   it('marks the selected folder with aria-current', () => {
