@@ -45,7 +45,7 @@ pub fn schedule_revert(handle: Arc<LoggingHandle>) {
     }
 
     let handle_for_task = handle.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let now = Utc::now();
         let wait = (expires_at - now)
             .to_std()

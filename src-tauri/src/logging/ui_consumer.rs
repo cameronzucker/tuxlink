@@ -14,7 +14,7 @@ pub fn spawn(
     mut rx: broadcast::Receiver<LoggedEvent>,
     session_log: Arc<SessionLogState>,
 ) {
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         loop {
             match rx.recv().await {
                 Ok(event) => {
