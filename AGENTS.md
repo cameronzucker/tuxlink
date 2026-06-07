@@ -59,6 +59,31 @@ git, bd status changes, PRs, or release claims:
 
 Detailed checklist: [docs/agent-workflows/codex-primary-agent-parity.md](docs/agent-workflows/codex-primary-agent-parity.md).
 
+## Evidence-first behavior protocol
+
+This protocol is mandatory for Codex / non-Claude agents. It applies to
+behavior questions, bug analysis, logging/session/user-visible surface changes,
+CI/release workflow changes, and any user-visible regression.
+
+1. Do not propose an implementation shape until the exact current call paths
+   involved have been inspected in `origin/main`.
+2. Do not rely on PR titles, PR bodies, memory, summaries, handoffs, or prior
+   agent claims as evidence. Inspect the merged diff and current code.
+3. Answer behavior questions in this order:
+   - Observed code facts, with file/function references.
+   - Uncertainty or unverified areas.
+   - Implications.
+4. If the user asks "does this mean X," verify X directly before answering.
+5. For logging/session/user-visible surfaces, trace both directions before
+   proposing a fix:
+   - What reaches the UI/operator-visible surface.
+   - What reaches diagnostic/export/archive surfaces.
+6. Say "I have not verified that yet" instead of making a confident
+   architectural inference.
+7. Any PR touching these areas must include an `Evidence Checked` section that
+   lists the inspected call paths and remaining uncertainty. A vague or missing
+   evidence section is grounds to reject the PR.
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill
