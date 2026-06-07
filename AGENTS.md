@@ -143,6 +143,16 @@ Implications:
 
 Generate a moniker via `python3 .claude/scripts/get_agent_moniker.py` at session start (3-word hyphenated form drawn from a 100-word pool of plant / animal / geographic nouns; auto-pre-flighted against git history). State it in the first user-facing message. Include `Agent: <moniker>` as a commit trailer on every commit; the repo `commit-msg` hook enforces this for local commits when `.githooks` is active. Include the moniker in PR titles as `[moniker] <subject>`. Pass the moniker through to every subagent you dispatch. Legacy single-word monikers in older commits remain valid; the new format applies to forward commits. See [CLAUDE.md](CLAUDE.md#agent-identity--pick-a-moniker-at-session-start) for the full rationale and workflow.
 
+Codex commits must also include the GitHub-recognized co-author trailer:
+`Co-authored-by: Codex <noreply@openai.com>`. This is the Codex equivalent of
+Claude's `noreply@anthropic.com` attribution: GitHub maps it to `@codex`, while
+the existing `Agent: <moniker>` trailer remains the session-level forensic key.
+The project-scoped `.codex/config.toml` enables Codex's built-in trailer
+injection for trusted Codex checkouts. If the active harness does not inject it
+automatically, add it manually before committing. Do not change the primary Git
+author only to obtain Codex attribution, and do not rewrite already-pushed
+commits for attribution cleanup.
+
 ## Git workflow: worktrees mandatory under bd-issue ownership (ADR 0008); destructive commands BANNED
 
 See [CLAUDE.md](CLAUDE.md#git-workflow--worktrees-mandatory-under-bd-issue-ownership-adr-0008), [CLAUDE.md](CLAUDE.md#git-workflow--destructive-commands-are-banned), [docs/adr/0008-worktrees-mandatory-under-bd-issue-ownership.md](docs/adr/0008-worktrees-mandatory-under-bd-issue-ownership.md), and [docs/adr/0007-lift-worktree-ban.md](docs/adr/0007-lift-worktree-ban.md) for full context. Summary: when the `.claude/hooks/block-main-checkout-race.sh` hook denies a write op citing "another live session is active," create a worktree per the QUICK FIX in the deny message and re-run there. The hook's determination is authoritative; agents do not re-decide it via `get_tuxlink_sessions.py` or any other source. Every worktree binds to a bd issue (`bd show <id>` answers "what is `worktrees/X` for?"). When the hook does NOT deny, main-checkout writes are fine. Destructive git commands remain banned regardless of worktree topology: no `reset --hard`, no force push, no `--amend` on pushed commits, no `--no-verify`, no `git worktree remove`, no `git rebase -i`. If you think you need a banned command, stop and ask.

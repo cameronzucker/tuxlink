@@ -1,0 +1,10 @@
+# Project-scoped Codex settings. Codex loads this file only for trusted
+# checkouts/worktrees.
+#
+# Keep Codex involvement visible in GitHub commit and contributor surfaces.
+# Codex turns this value into:
+#   Co-authored-by: Codex <noreply@openai.com>
+commit_attribution = "Codex <noreply@openai.com>"
+
+[features]
+codex_git_commit = true
