@@ -1,7 +1,7 @@
 /**
  * GridEdit — inline-edit cell for the ribbon Grid value + source segmented control.
  *
- * Click the grid cell → inline input; Enter validates + commits; Esc cancels.
+ * Click the grid cell → inline input; Enter/blur validates + commits; Esc cancels.
  *
  * Source surface (tuxlink-z5pz, 2026-06-02): a radio-group segmented control
  * with two `<button role="radio">` segments rendered side-by-side — the GPS
@@ -69,38 +69,47 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps, onUseManu
     setError(null);
   }
 
+  function finishEdit(invalidInput: 'show-error' | 'revert') {
+    const trimmed = inputValue.trim();
+    // Empty → treat as cancel; backend rejects empty grids anyway.
+    if (!trimmed) {
+      cancelEdit();
+      return;
+    }
+
+    const validationError = validateGrid(trimmed);
+    if (validationError) {
+      if (invalidInput === 'show-error') {
+        setError(validationError);
+      } else {
+        cancelEdit();
+      }
+      return;
+    }
+
+    const normalized = normalizeGrid(trimmed);
+    const result = onCommit(normalized);
+    if (result instanceof Promise) {
+      result.then(() => {
+        setEditing(false);
+        setError(null);
+      }).catch((err: unknown) => {
+        setError(extractErrorMessage(err));
+        // Stay in edit mode so the operator can correct
+      });
+    } else {
+      setEditing(false);
+      setError(null);
+    }
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Escape') {
       cancelEdit();
       return;
     }
     if (e.key === 'Enter') {
-      const trimmed = inputValue.trim();
-      // Empty → treat as cancel; backend rejects empty grids anyway
-      if (!trimmed) {
-        cancelEdit();
-        return;
-      }
-      const validationError = validateGrid(trimmed);
-      if (validationError) {
-        setError(validationError);
-        return;
-      }
-      // Valid and non-empty — normalize and commit
-      const normalized = normalizeGrid(trimmed);
-      const result = onCommit(normalized);
-      if (result instanceof Promise) {
-        result.then(() => {
-          setEditing(false);
-          setError(null);
-        }).catch((err: unknown) => {
-          setError(extractErrorMessage(err));
-          // Stay in edit mode so the operator can correct
-        });
-      } else {
-        setEditing(false);
-        setError(null);
-      }
+      finishEdit('show-error');
     }
   }
 
@@ -129,6 +138,7 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps, onUseManu
             setError(null);
           }}
           onKeyDown={handleKeyDown}
+          onBlur={() => finishEdit('revert')}
         />
         {error && (
           <div className="dash-grid-error" data-testid="grid-error" role="alert">
