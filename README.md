@@ -147,8 +147,8 @@ The shipped surface area as of the latest pre-alpha build:
 
 In-app documentation lives at **Help → Documentation**; bundled topics
 cover the wizard, every transport, the mailbox, composing, HTML forms,
-search, settings, color schemes, keyboard shortcuts, and
-troubleshooting. The source markdown resides in
+operating modes, search, settings, color schemes, keyboard shortcuts,
+and troubleshooting. The source markdown resides in
 [`docs/user-guide/`](docs/user-guide/) for reading outside the app.
 
 **Help → About Tuxlink** displays the running build's version,

@@ -71,6 +71,20 @@ All three speak the same protocol on the wire (B2F, see
 user surface, the install footprint, and the bundled modem support. From the
 CMS's perspective, a session from any of them looks the same.
 
+## Operating modes versus transports
+
+Winlink operators choose both an **operating mode** and a **transport**.
+The operating mode is the routing intent: normal Winlink/CMS mail,
+direct peer-to-peer mail, Radio-only Hybrid network mail, or local Post
+Office mail. The transport is the pipe: Telnet, Packet, ARDOP, VARA, and
+similar modem paths.
+
+That distinction matters because two sessions can use the same transport
+but carry different message pools. For example, Packet to a CMS gateway,
+Packet peer-to-peer, and Packet to a Post Office are not the same
+operating mode. See [Operating modes](33-operating-modes.md) before
+choosing a transport.
+
 ## A typical session, end to end
 
 A connect from tuxlink runs through this sequence:
@@ -106,4 +120,5 @@ per-mode topics ([ARDOP](15-ardop-deep-dive.md), [VARA HF](16-vara-hf-deep-dive.
 - [CMS and RMS gateways](05-cms-and-rms.md) — how the call routes.
 - [The B2F protocol](06-the-b2f-protocol.md) — what runs underneath every session.
 - [The mailbox model](07-mailbox-model.md) — Inbox, Outbox, Sent, persistence.
+- [Operating modes](33-operating-modes.md) — CMS, P2P, Radio-only, and Post Office semantics.
 - [Picking a transport](08-picking-a-transport.md) — which transport when.

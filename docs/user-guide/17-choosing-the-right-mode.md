@@ -1,10 +1,15 @@
 # Choosing the right mode
 
-Four transports cover every Winlink session tuxlink can run: Telnet, Packet,
-ARDOP, and VARA HF. They differ on bandwidth, license tier, RF path, and
-the operator effort involved in keeping them working. This topic walks the
-decision so the operator picks the right mode quickly under operating
-pressure.
+This topic uses "mode" in the radio-transport sense: Telnet, Packet,
+ARDOP, and VARA HF. Winlink also has operating modes such as Winlink
+(CMS), Peer-to-peer, Radio-only, and Post Office. Choose the operating
+mode first, then use this page to pick the transport. See
+[Operating modes](33-operating-modes.md) for that routing layer.
+
+The four transports Tuxlink can run differ on bandwidth, license tier,
+RF path, and the operator effort involved in keeping them working. This
+topic walks the decision so the operator picks the right transport quickly
+under operating pressure.
 
 ## The decision tree
 
@@ -181,4 +186,5 @@ the failures that otherwise burn 5 minutes of operating time.
 - [Packet on AX.25](14-packet-on-ax25.md) — Packet's deep dive.
 - [ARDOP deep dive](15-ardop-deep-dive.md) — ARDOP details.
 - [VARA HF deep dive](16-vara-hf-deep-dive.md) — VARA details.
+- [Operating modes](33-operating-modes.md) — CMS, P2P, Radio-only, and Post Office semantics.
 - [Picking a transport](08-picking-a-transport.md) — the per-transport configuration entry point.
