@@ -1,9 +1,11 @@
 pub mod app_backend;
 pub mod bootstrap;
 pub mod catalog;
+pub mod contacts;
 pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
+pub mod favorites;
 pub mod forms;
 pub mod grib;
 pub mod help_window;
@@ -207,6 +209,30 @@ pub fn run() {
             // degrades gracefully (empty results); the app always launches.
             match app.path().app_data_dir() {
                 Ok(data_dir) => {
+                    // contacts (tuxlink-raez, Task A2): the contacts.json address
+                    // book store. `ContactsStore::open` is INFALLIBLE (degrades to
+                    // an empty store on a read/parse error, preserving the corrupt
+                    // bytes) so it is UNCONDITIONALLY managed — no guard branch,
+                    // never blocks startup. Reuses the already-resolved `data_dir`
+                    // (C2: app_data_dir resolved ONCE here, not per-command).
+                    app.manage(std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::contacts::store::ContactsStore::open(
+                            data_dir.join("contacts.json"),
+                        ),
+                    )));
+
+                    // favorites (tuxlink-egmp, Task B2): the stations.json
+                    // per-radio-mode Favorites/Recents store. `FavoritesStore::open`
+                    // is INFALLIBLE (same degrade-and-preserve contract as
+                    // ContactsStore) so it is UNCONDITIONALLY managed — no guard
+                    // branch, no startup block. Reuses the already-resolved
+                    // `data_dir` (C2: app_data_dir resolved ONCE here).
+                    app.manage(std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::favorites::store::FavoritesStore::open(
+                            data_dir.join("stations.json"),
+                        ),
+                    )));
+
                     let search_root = data_dir.join("native-mbox");
                     // Ensure the directory exists before opening SQLite (Index::open
                     // calls Connection::open, which creates the .db file but expects
@@ -511,6 +537,33 @@ pub fn run() {
             crate::ui_commands::auth_diagnostic_clear,      // spec §4.3 (v) — banner Dismiss
             // tuxlink-7do4 Task 14: auth-only credential test command.
             crate::ui_commands::cms_connect_test,           // spec §4.3 (iii) — "Check this password works"
+            // contacts (tuxlink-raez, Task A2): address-book CRUD over the
+            // managed `Arc<Mutex<ContactsStore>>`. Mutations stamp id/timestamps
+            // in the command layer and emit the `contacts:changed` cross-window
+            // event (H9). KEEP THIS BLOCK CONTIGUOUS + LABELED — the favorites
+            // (tuxlink-egmp) block appends adjacent; the merge is a clean
+            // concatenation.
+            crate::contacts::commands::contacts_read,
+            crate::contacts::commands::contact_upsert,
+            crate::contacts::commands::contact_delete,
+            crate::contacts::commands::group_upsert,
+            crate::contacts::commands::group_delete,
+            crate::contacts::commands::contacts_suggestions, // Task A3: suggest-from-history
+            // favorites (tuxlink-egmp, Task B2): per-radio-mode Favorites/Recents
+            // CRUD + the honest connection record, over the managed
+            // `Arc<Mutex<FavoritesStore>>`. `favorite_upsert` MERGES only
+            // operator-editable fields (M12) so a stale whole-object upsert can't
+            // clobber a concurrent star; `favorite_star` /
+            // `favorite_record_attempt` are the only writers of starred /
+            // last_attempt_at / the log. No cross-window event (single-window
+            // radio-dock surface). KEEP THIS BLOCK CONTIGUOUS + LABELED.
+            crate::favorites::commands::favorites_read,
+            crate::favorites::commands::favorite_upsert,
+            crate::favorites::commands::favorite_delete,
+            crate::favorites::commands::favorite_star,
+            crate::favorites::commands::favorite_record_attempt,
+            crate::favorites::commands::favorites_recents,
+            crate::favorites::commands::favorite_tod_hint,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

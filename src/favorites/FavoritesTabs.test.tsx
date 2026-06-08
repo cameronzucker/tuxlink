@@ -1,0 +1,285 @@
+// FavoritesTabs + FavoriteRow tests (Task B5).
+//
+// Covers: per-mode tabs (M7 — RF/telnet get Favorites/Recent/Manual; VARA gets
+// Manual-only with NO tabs + NO Connect), FavoriteRow head/detail lines
+// (gateway·band, freq·grid·distance), telnet head (gateway·transport, no
+// freq/band, H7), C4 distance source (position_current_fix NOT position_status)
+// + null-grid safety, star-to-promote, and the RADIO-1 purity of Connect
+// (onPrefill only — never a *_connect / transmit / record-attempt invoke).
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createElement, type ReactNode } from 'react';
+
+import { invoke } from '@tauri-apps/api/core';
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+
+import { FavoritesTabs } from './FavoritesTabs';
+import { FavoriteRow } from './FavoriteRow';
+import type { Favorite, FavoriteDial, RadioMode, StationsFile } from './types';
+import { FIXTURE_FAVORITES, FIXTURE_RECENTS, FIXTURE_ATTEMPTS } from './favorites-fixture';
+
+const invokeMock = invoke as ReturnType<typeof vi.fn>;
+
+// Routed mock: every command FavoritesTabs/FavoriteRow/ConnectionRecord touch
+// MUST return a Promise. position_current_fix is the C4 operator-grid source.
+function routeInvoke(opts: {
+  favorites?: Favorite[];
+  recents?: Favorite[];
+  log?: StationsFile['log'];
+  grid?: string | null;
+} = {}) {
+  const stations: StationsFile = {
+    schema_version: 1,
+    favorites: opts.favorites ?? FIXTURE_FAVORITES,
+    log: opts.log ?? FIXTURE_ATTEMPTS,
+  };
+  invokeMock.mockImplementation((cmd: string) => {
+    if (cmd === 'favorites_read') return Promise.resolve(stations);
+    if (cmd === 'favorites_recents') return Promise.resolve(opts.recents ?? FIXTURE_RECENTS);
+    if (cmd === 'position_current_fix')
+      return Promise.resolve({ grid: opts.grid === undefined ? 'CN87us' : opts.grid });
+    if (cmd === 'favorite_tod_hint') return Promise.resolve(null);
+    if (cmd === 'favorite_star') return Promise.resolve(undefined);
+    return Promise.resolve(undefined);
+  });
+}
+
+function renderTabs(props: {
+  mode: RadioMode;
+  onPrefill?: (dial: FavoriteDial) => void;
+  manualContent?: ReactNode;
+}) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: qc }, children);
+  return render(
+    createElement(FavoritesTabs, {
+      mode: props.mode,
+      onPrefill: props.onPrefill ?? (() => {}),
+      manualContent:
+        props.manualContent ??
+        createElement('div', { 'data-testid': 'manual-content' }, 'MANUAL FORM'),
+    }),
+    { wrapper },
+  );
+}
+
+beforeEach(() => {
+  invokeMock.mockReset();
+  routeInvoke();
+});
+
+describe('<FavoritesTabs> — per-mode chrome (M7)', () => {
+  it('ardop-hf renders Favorites/Recent/Manual triggers; Recent shows recents; Manual shows manualContent', async () => {
+    renderTabs({ mode: 'ardop-hf' });
+
+    // All three triggers present.
+    expect(await screen.findByRole('tab', { name: 'Favorites' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Recent' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Manual' })).toBeInTheDocument();
+
+    // Default tab = Favorites → a starred favorite is visible.
+    expect(await screen.findByTestId('favorite-row-fav-w7dxg')).toBeInTheDocument();
+
+    // Switch to Recent → a recent row is visible. (Radix Tabs selects on
+    // mouseDown with button 0 — fireEvent.click alone does not switch it.)
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Recent' }), { button: 0 });
+    expect(await screen.findByTestId('favorite-row-rec-w6drz')).toBeInTheDocument();
+
+    // Switch to Manual → the passthrough content shows.
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Manual' }), { button: 0 });
+    expect(await screen.findByTestId('manual-content')).toBeInTheDocument();
+  });
+
+  it('packet and telnet also get the three-tab chrome', async () => {
+    routeInvoke({ favorites: FIXTURE_FAVORITES });
+    renderTabs({ mode: 'telnet' });
+    expect(await screen.findByRole('tab', { name: 'Favorites' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Recent' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Manual' })).toBeInTheDocument();
+  });
+
+  it('VARA (vara-hf) renders manualContent and NO Favorites/Recent triggers and NO Connect button', async () => {
+    renderTabs({ mode: 'vara-hf' });
+
+    // Manual content is shown directly.
+    expect(await screen.findByTestId('manual-content')).toBeInTheDocument();
+
+    // No tab chrome at all.
+    expect(screen.queryByRole('tab', { name: 'Favorites' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Recent' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Manual' })).not.toBeInTheDocument();
+
+    // No FavoriteRow, hence no Connect button, anywhere.
+    expect(screen.queryByText('Connect')).not.toBeInTheDocument();
+  });
+
+  it('VARA (vara-fm) is also Manual-only', async () => {
+    renderTabs({ mode: 'vara-fm' });
+    expect(await screen.findByTestId('manual-content')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Favorites' })).not.toBeInTheDocument();
+  });
+});
+
+describe('<FavoritesTabs> — C4 distance source', () => {
+  it('invokes position_current_fix and NOT position_status for the operator grid', async () => {
+    renderTabs({ mode: 'ardop-hf' });
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.some(([cmd]) => cmd === 'position_current_fix'),
+      ).toBe(true);
+    });
+    expect(
+      invokeMock.mock.calls.some(([cmd]) => cmd === 'position_status'),
+    ).toBe(false);
+  });
+
+  it('does not crash and shows no distance segment when the operator grid is null (C4)', async () => {
+    routeInvoke({ grid: null });
+    renderTabs({ mode: 'ardop-hf' });
+    const row = await screen.findByTestId('favorite-row-fav-w7dxg');
+    // freq + grid still show; distance segment absent (no "km", no "null").
+    const detail = within(row).getByTestId('favorite-detail-fav-w7dxg');
+    expect(detail.textContent).toContain('14105.0');
+    expect(detail.textContent).toContain('CN87');
+    expect(detail.textContent).not.toContain('km');
+    expect(detail.textContent?.toLowerCase()).not.toContain('null');
+  });
+});
+
+describe('<FavoritesTabs> — star-to-promote', () => {
+  it('clicking a Recent row star invokes favorite_star with {id, starred:true}', async () => {
+    renderTabs({ mode: 'ardop-hf' });
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Recent' }), { button: 0 });
+
+    const star = await screen.findByTestId('favorite-star-rec-w6drz');
+    fireEvent.click(star);
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([cmd]) => cmd === 'favorite_star');
+      expect(call).toBeTruthy();
+      const args = call?.[1] as { id: string; starred: boolean };
+      expect(args.id).toBe('rec-w6drz');
+      expect(args.starred).toBe(true);
+    });
+  });
+});
+
+// ---- FavoriteRow focused tests ----
+
+const RF_FAV: Favorite = {
+  id: 'rf1',
+  mode: 'ardop-hf',
+  gateway: 'W7DXG',
+  freq: '14105.0',
+  band: '20m',
+  grid: 'CN87',
+  starred: true,
+  created_at: '2026-06-01T00:00:00-07:00',
+  updated_at: '2026-06-01T00:00:00-07:00',
+};
+
+const TELNET_FAV: Favorite = {
+  id: 'tn1',
+  mode: 'telnet',
+  gateway: 'cms.winlink.org',
+  transport: 'CmsSsl',
+  starred: false,
+  created_at: '2026-06-01T00:00:00-07:00',
+  updated_at: '2026-06-01T00:00:00-07:00',
+};
+
+function renderRow(props: {
+  favorite: Favorite;
+  operatorGrid: string | null;
+  onPrefill?: (d: FavoriteDial) => void;
+  onToggleStar?: (id: string, s: boolean) => void;
+}) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: qc }, children);
+  return render(
+    createElement(FavoriteRow, {
+      favorite: props.favorite,
+      operatorGrid: props.operatorGrid,
+      onPrefill: props.onPrefill ?? (() => {}),
+      onToggleStar: props.onToggleStar ?? (() => {}),
+    }),
+    { wrapper },
+  );
+}
+
+describe('<FavoriteRow>', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'favorite_tod_hint') return Promise.resolve(null);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  it('RF row shows gateway · band and freq · grid · distance with a valid grid pair', async () => {
+    renderRow({ favorite: RF_FAV, operatorGrid: 'CN85nx' });
+    expect(screen.getByText('W7DXG')).toBeInTheDocument();
+    expect(screen.getByText(/20m/)).toBeInTheDocument();
+    const detail = screen.getByTestId('favorite-detail-rf1');
+    expect(detail.textContent).toContain('14105.0');
+    expect(detail.textContent).toContain('CN87');
+    expect(detail.textContent).toMatch(/\d+ km/); // a distance string appears
+  });
+
+  it('RF row OMITS distance (no crash, no "null") when favorite.grid is absent (C4)', async () => {
+    const noGrid: Favorite = { ...RF_FAV, grid: undefined };
+    renderRow({ favorite: noGrid, operatorGrid: 'CN85nx' });
+    const detail = screen.getByTestId('favorite-detail-rf1');
+    expect(detail.textContent).toContain('14105.0');
+    expect(detail.textContent).not.toContain('km');
+    expect(detail.textContent?.toLowerCase()).not.toContain('null');
+  });
+
+  it('RF row OMITS distance when operatorGrid is null (C4)', async () => {
+    renderRow({ favorite: RF_FAV, operatorGrid: null });
+    const detail = screen.getByTestId('favorite-detail-rf1');
+    expect(detail.textContent).not.toContain('km');
+  });
+
+  it('telnet row shows gateway · transport and NO freq/band/distance (H7)', async () => {
+    renderRow({ favorite: TELNET_FAV, operatorGrid: 'CN85nx' });
+    expect(screen.getByText('cms.winlink.org')).toBeInTheDocument();
+    expect(screen.getByText(/CmsSsl/)).toBeInTheDocument();
+    // No RF detail line at all for telnet.
+    expect(screen.queryByTestId('favorite-detail-tn1')).not.toBeInTheDocument();
+  });
+
+  it('clicking the star calls onToggleStar(id, !starred)', async () => {
+    const onToggleStar = vi.fn();
+    renderRow({ favorite: TELNET_FAV, operatorGrid: null, onToggleStar });
+    fireEvent.click(screen.getByTestId('favorite-star-tn1'));
+    expect(onToggleStar).toHaveBeenCalledWith('tn1', true); // was unstarred → true
+  });
+
+  it('Connect calls onPrefill with the dial and invokes NO connect/transmit/record-attempt command (RADIO-1)', async () => {
+    const onPrefill = vi.fn();
+    renderRow({ favorite: RF_FAV, operatorGrid: 'CN85nx', onPrefill });
+    fireEvent.click(screen.getByTestId('favorite-connect-rf1'));
+
+    expect(onPrefill).toHaveBeenCalledTimes(1);
+    const dial = onPrefill.mock.calls[0][0] as FavoriteDial;
+    expect(dial).toEqual({
+      mode: 'ardop-hf',
+      gateway: 'W7DXG',
+      freq: '14105.0',
+      transport: undefined,
+      band: '20m',
+      grid: 'CN87',
+    });
+
+    // RADIO-1: the row must never have invoked a connect/transmit/record path.
+    const forbidden = invokeMock.mock.calls.filter(([cmd]) =>
+      /_connect$|connect_|transmit|record_attempt/.test(cmd),
+    );
+    expect(forbidden).toEqual([]);
+  });
+});

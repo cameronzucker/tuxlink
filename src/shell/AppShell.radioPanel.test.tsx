@@ -47,7 +47,17 @@ vi.mock('@tauri-apps/api/core', () => ({
     // ArdopRadioPanel calls config_get_ardop when Open WebGUI is clicked,
     // but it's safe to return a benign default here so test-time imports
     // don't hit `undefined` and surface noisy errors.
-    if (cmd === 'config_get_ardop') return { cmd_port: 8515 };
+    if (cmd === 'config_get_ardop') {
+      return {
+        binary: 'ardopcf',
+        capture_device: '',
+        playback_device: '',
+        ptt_serial_path: null,
+        cmd_port: 8515,
+        bandwidth_hz: null,
+        webgui_port: null,
+      };
+    }
     // tuxlink-dfmf: VARA panel benign defaults so the panel can mount in
     // shell tests without touching the live VaraSession.
     if (cmd === 'config_get_vara') {
@@ -85,6 +95,18 @@ vi.mock('@tauri-apps/api/core', () => ({
     // the useSavedSearches hook that mounts inside the SearchBar in the ribbon.
     if (cmd === 'tauri_search_list_saved') return [];
     if (cmd === 'tauri_search_list_recent') return [];
+    // Favorites surface defaults (B7): FavoritesTabs/useFavorites mount inside
+    // ArdopRadioPanel when the modem is stopped. Benign empty defaults so queries
+    // resolve cleanly across all tests that select ARDOP HF.
+    if (cmd === 'favorites_read') return { schema_version: 1, favorites: [], log: [] };
+    if (cmd === 'favorites_recents') return [];
+    if (cmd === 'position_current_fix') return { grid: null };
+    if (cmd === 'favorite_tod_hint') return null;
+    // ArdopRadioPanel listener state (useListenerState) — benign defaults.
+    if (cmd === 'ardop_allowed_stations_get') return { allow_all: true, callsigns: [] };
+    // ArdopRadioPanel Radio section device pickers — empty lists are valid.
+    if (cmd === 'ardop_list_audio_devices') return { captures: [], playbacks: [] };
+    if (cmd === 'packet_list_serial_devices') return [];
     return undefined;
   }),
 }));
@@ -329,6 +351,158 @@ describe('<AppShell> radio panel', () => {
 
     fireEvent.keyDown(window, { key: 'm', ctrlKey: true, shiftKey: true });
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
+  });
+
+  // ── Task B7: App-level (production-provider-stack) mount test for Favorites ──
+  //
+  // The B6 tests wrapped ArdopRadioPanel in a bare QueryClient scaffold. B7
+  // mounts the REAL AppShell tree (QueryClientProvider + routing + full shell)
+  // so the FavoritesTabs connect surface is exercised through the production
+  // provider stack. Mirrors the "ARDOP HF selected, modem stopped" test above
+  // for the panel-selection mechanic; adds favorites-data routing (M9) and
+  // asserts RADIO-1 safety (no connect/exchange invoke on favorite click).
+  describe('B7: Favorites surface via production AppShell stack', () => {
+    it(
+      'renders Favorites surface and is RADIO-1-safe (prefill-only) through the production path',
+      async () => {
+        // Override the module-level invoke mock with favorites data so
+        // FavoritesTabs renders a starred ardop-hf row. All other commands
+        // fall through to the same benign defaults declared in the module-level
+        // mock above (the base impl is captured and forwarded for anything not
+        // overridden here).
+        const core = await import('@tauri-apps/api/core');
+        const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+
+        // Snapshot the module-level impl so we can delegate non-favorites
+        // commands. We use mockImplementation to overlay favorites data only.
+        invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+          // M9: route all favorites commands the panel fires.
+          if (cmd === 'favorites_read') {
+            return {
+              schema_version: 1,
+              favorites: [
+                {
+                  id: 'fav-1',
+                  mode: 'ardop-hf',
+                  gateway: 'W7RMS-10',
+                  freq: '14105.0',
+                  transport: null,
+                  band: '20m',
+                  grid: 'CN87',
+                  note: null,
+                  starred: true,
+                  last_attempt_at: null,
+                  created_at: '2026-06-01T00:00:00+00:00',
+                  updated_at: '2026-06-01T00:00:00+00:00',
+                },
+              ],
+              log: [],
+            };
+          }
+          if (cmd === 'favorites_recents') return [];
+          // C4: full-precision operator grid for distance (used by FavoritesTabs).
+          if (cmd === 'position_current_fix') return { grid: 'CN88', source: 'Gps', fresh: true };
+          if (cmd === 'favorite_tod_hint') return null;
+
+          // Delegate to the benign module-level defaults for everything else.
+          if (cmd === 'config_read') return null;
+          if (cmd === 'backend_status') return null;
+          if (cmd === 'session_log_snapshot') return [];
+          if (cmd === 'message_read') return null;
+          if (cmd === 'config_get_ardop') {
+            return {
+              binary: 'ardopcf',
+              capture_device: '',
+              playback_device: '',
+              ptt_serial_path: null,
+              cmd_port: 8515,
+              bandwidth_hz: null,
+              webgui_port: null,
+            };
+          }
+          if (cmd === 'config_get_vara') {
+            return { host: '127.0.0.1', cmd_port: 8300, data_port: 8301, bandwidth_hz: null };
+          }
+          if (cmd === 'vara_status') {
+            return { state: 'closed', lastError: null, boundHost: null, boundCmdPort: null };
+          }
+          if (cmd === 'platform_info') {
+            return { arch: 'x86_64', os: 'linux', varaSupported: true };
+          }
+          if (cmd === 'packet_config_get') {
+            return {
+              ssid: 7,
+              listenDefault: true,
+              linkKind: 'Tcp',
+              tcpHost: '127.0.0.1',
+              tcpPort: 8001,
+              serialDevice: null,
+              serialBaud: null,
+              txdelay: 30,
+              persistence: 63,
+              slotTime: 10,
+              paclen: 128,
+              maxframe: 4,
+              t1Ms: 3000,
+              n2Retries: 10,
+            };
+          }
+          if (cmd === 'position_status') return { gps_ready: false, broadcast_grid: '', ui_grid: '' };
+          if (cmd === 'tauri_search_list_saved') return [];
+          if (cmd === 'tauri_search_list_recent') return [];
+          if (cmd === 'ardop_allowed_stations_get') return { allow_all: true, callsigns: [] };
+          if (cmd === 'ardop_list_audio_devices') return { captures: [], playbacks: [] };
+          if (cmd === 'packet_list_serial_devices') return [];
+          // Suppress unused-args lint warning (args is part of the mock signature).
+          void args;
+          return undefined;
+        });
+
+        // 1. Mount the production AppShell via renderShell(), modem stopped.
+        mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+        renderShell();
+        expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
+
+        // 2. Select ARDOP HF — same mechanic as the existing "ARDOP HF selected,
+        //    modem stopped" test. This causes the panel to mount via the real
+        //    AppShell routing + provider stack.
+        fireEvent.click(screen.getByTestId('sess-cms'));
+        fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
+        expect(
+          await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 }),
+        ).toBeInTheDocument();
+
+        // 3. Assert the Favorites surface rendered through the production stack.
+        //    FavoritesTabs renders Radix Tabs with three triggers: Favorites / Recent
+        //    / Manual. The Favorites tab is the default, so the favorite row is
+        //    already visible without a tab-switch.
+        expect(
+          await screen.findByRole('tab', { name: 'Favorites' }, { timeout: 10000 }),
+        ).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: 'Recent' })).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: 'Manual' })).toBeInTheDocument();
+
+        // The starred ardop-hf favorite's row must appear in the default
+        // Favorites tab (no tab-switch required — defaultValue="favorites").
+        const connectBtn = await screen.findByTestId('favorite-connect-fav-1', undefined, {
+          timeout: 10000,
+        });
+        expect(connectBtn).toBeInTheDocument();
+
+        // 4. RADIO-1 safety through the production path: clicking the favorite's
+        //    Connect must ONLY prefill (onPrefill) and NEVER fire a modem connect
+        //    or b2f exchange command. This is the production-stack analog of B6's
+        //    consent-non-bypass test.
+        invokeMock.mockClear(); // isolate: only watch calls FROM this point on.
+        fireEvent.click(connectBtn);
+        // Allow one async tick for any (forbidden) async invoke to settle.
+        await new Promise((r) => setTimeout(r, 30));
+
+        const callsAfterClick = invokeMock.mock.calls.map(([c]) => c as string);
+        expect(callsAfterClick).not.toContain('modem_ardop_connect');
+        expect(callsAfterClick).not.toContain('modem_ardop_b2f_exchange');
+      },
+    );
   });
 });
 

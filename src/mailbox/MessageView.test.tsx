@@ -12,7 +12,7 @@
 // M2) — only the rendering logic driven by synthetic ParsedMessage data.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import {
   MessageViewLoaded,
   MessageViewEmpty,
@@ -31,6 +31,24 @@ vi.mock('./useMessage', () => ({
   useMessage: vi.fn(),
 }));
 import { useMessage } from './useMessage';
+
+// G1 (Task A8): the default-export MessageView now consumes useContacts to wire
+// the "Add to contacts" sender action. The error-routing integration tests
+// render MessageView without a QueryClientProvider, so stub the hook to an
+// empty-contacts no-op (those tests never reach the loaded view + add-contact
+// path; the loaded-view G1 behavior is exercised directly against
+// MessageViewLoaded with explicit props below).
+vi.mock('../contacts/useContacts', () => ({
+  useContacts: () => ({
+    contacts: [],
+    groups: [],
+    isLoading: false,
+    upsertContact: vi.fn().mockResolvedValue(undefined),
+    deleteContact: vi.fn().mockResolvedValue(undefined),
+    upsertGroup: vi.fn().mockResolvedValue(undefined),
+    deleteGroup: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
 
 // Reply/forward open a compose window via openReplyWindow — mock that side
 // effect so the action-bar tests assert wiring, not Tauri behavior. Keep
@@ -544,5 +562,68 @@ describe('<MessageViewLoaded> body wrap', () => {
     // The pre must carry the Mock D class (CSS sets white-space: pre-wrap +
     // overflow-wrap: anywhere to wrap long radio/Base64 lines — Codex #4).
     expect(pre.className).toContain('msg-body');
+  });
+});
+
+// ============================================================================
+// G1 (Task A8) — "Add to contacts" on a message sender.
+// ============================================================================
+describe('<MessageViewLoaded> add-to-contacts (G1)', () => {
+  it('shows the action only when contacts state + handler are supplied', () => {
+    // Without the G1 props (existing unit-test path) → no button.
+    render(<MessageViewLoaded message={parsed({ from: 'KE7XYZ@winlink.org' })} />);
+    expect(screen.queryByTestId('add-to-contacts-btn')).toBeNull();
+  });
+
+  it('renders the action for a sender that is NOT already a contact', () => {
+    render(
+      <MessageViewLoaded
+        message={parsed({ from: 'KE7XYZ@winlink.org' })}
+        contacts={[]}
+        onAddContact={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('add-to-contacts-btn')).toBeInTheDocument();
+  });
+
+  it('hides the action when the sender is already a contact', () => {
+    render(
+      <MessageViewLoaded
+        message={parsed({ from: 'KE7XYZ@winlink.org' })}
+        contacts={[
+          {
+            id: 'c1',
+            name: 'Bob',
+            callsign: 'KE7XYZ',
+            created_at: 'x',
+            updated_at: 'x',
+          },
+        ]}
+        onAddContact={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('add-to-contacts-btn')).toBeNull();
+  });
+
+  it('opens an inline ContactEditor prefilled with the sender callsign and saves via onAddContact', async () => {
+    const onAddContact = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MessageViewLoaded
+        message={parsed({ from: 'Bob Relay <KE7XYZ@winlink.org>' })}
+        contacts={[]}
+        onAddContact={onAddContact}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('add-to-contacts-btn'));
+
+    const editor = await screen.findByTestId('message-add-contact');
+    // Prefilled with the bare callsign (winlink.org stripped).
+    expect((screen.getByTestId('editor-callsign') as HTMLInputElement).value).toBe('KE7XYZ');
+
+    fireEvent.click(within(editor).getByTestId('editor-save'));
+    await waitFor(() => expect(onAddContact).toHaveBeenCalled());
+    const saved = onAddContact.mock.calls[0][0];
+    expect(saved.callsign).toBe('KE7XYZ');
   });
 });

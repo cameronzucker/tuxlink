@@ -84,6 +84,13 @@ vi.mock('@tauri-apps/api/core', () => ({
     // Search IPC stubs (Task 17 — find-messages wiring)
     if (cmd === 'tauri_search_list_saved') return [];
     if (cmd === 'tauri_search_list_recent') return [];
+    // Contacts IPC stubs (tuxlink-raez — A7 sidebar count + A8 ContactsPanel).
+    // useContacts (mounted by AppShell) reads contacts_read; the ContactsPanel
+    // (when the Contacts pseudo-folder is selected) also reads
+    // contacts_suggestions. Both MUST return a real value (never undefined —
+    // react-query rejects undefined query data).
+    if (cmd === 'contacts_read') return { schema_version: 1, contacts: [], groups: [] };
+    if (cmd === 'contacts_suggestions') return [];
     return undefined;
   }),
 }));
@@ -703,5 +710,204 @@ describe('AppShell.css print stylesheet (tuxlink-zdfj)', () => {
     expect(printCss).toMatch(
       /\.layout-b \.reading-pane \.msg-meta\s*\{[\s\S]*break-before:\s*avoid;[\s\S]*break-inside:\s*avoid;[\s\S]*page-break-inside:\s*avoid;/,
     );
+  });
+});
+
+// ============================================================================
+// Contacts pseudo-folder routing (tuxlink-raez / Task A8 — M8 + Codex#11).
+//
+// Selecting the Address → Contacts sidebar item swaps the main content for the
+// inline ContactsPanel, REPLACING BOTH the MessageList column and the reading
+// pane (M8). The mailbox query must NOT fire for the `'contacts'` pseudo-folder
+// (Codex#11). (`useMailbox` is mocked above; `isBackendFolder('contacts')`
+// returns false here, mirroring the real guard — so the panel is asserted to
+// render WITHOUT the rows-pane MessageList alongside it.)
+// ============================================================================
+describe('<AppShell> — Contacts pseudo-folder (M8 + Codex#11)', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    vi.mocked(invoke).mockClear();
+  });
+
+  it('selecting Contacts renders ContactsPanel and removes the MessageList', async () => {
+    renderShell();
+    // Baseline: the mailbox rows-pane (MessageList root) is present.
+    expect(screen.getByTestId('rows-pane')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('folder-contacts'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('contacts-panel')).toBeInTheDocument(),
+    );
+    // M8: MessageList (rows-pane) MUST NOT render alongside the ContactsPanel.
+    expect(screen.queryByTestId('rows-pane')).toBeNull();
+  });
+
+  it('does NOT fire mailbox_list for the contacts pseudo-folder (Codex#11)', async () => {
+    renderShell();
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(screen.getByTestId('folder-contacts'));
+    await waitFor(() =>
+      expect(screen.getByTestId('contacts-panel')).toBeInTheDocument(),
+    );
+
+    const firedContactsMailbox = vi
+      .mocked(invoke)
+      .mock.calls.some(
+        ([cmd, args]) =>
+          cmd === 'mailbox_list' &&
+          (args as { folder?: string } | undefined)?.folder === 'contacts',
+      );
+    expect(firedContactsMailbox).toBe(false);
+  });
+});
+
+// ============================================================================
+// Contacts App-level mount path — routed data through the production stack
+// (tuxlink-raez / Task A9 — M9 + Codex#11 + M8).
+//
+// The describe block above asserts the M8 topology (panel replaces MessageList)
+// and the Codex#11 guard against the contacts-folder mailbox query, but it runs
+// against the TOP-LEVEL invoke mock, which returns an EMPTY contacts file and an
+// EMPTY suggestions list. So neither the routed contact/group data NOR — the key
+// A9 gap — the `contacts_suggestions` query's render path is exercised through
+// the real provider stack.
+//
+// This block routes NON-EMPTY `contacts_read` (≥1 contact, ≥1 group) AND
+// NON-EMPTY `contacts_suggestions` (≥1 Suggestion) and mounts the REAL AppShell
+// through the production `QueryClientProvider` (renderShell). Selecting Contacts
+// must then render:
+//   · the routed contact + group (data flows contacts_read → useContacts →
+//     ContactsPanel through the real stack), AND
+//   · the routed suggestion in the "Suggested" section — proving
+//     `contacts_suggestions` flows end-to-end through the production providers
+//     (ContactsPanel owns that useQuery; A8's component test scaffolds its own
+//     provider, so this is the production-path coverage A9 adds).
+//
+// Every routed command returns `Promise.resolve(...)` (M9 — react-query rejects a
+// raw/undefined read). The override is restored to the top-level factory default
+// in afterEach so it does not leak into sibling describe blocks.
+// ============================================================================
+describe('<AppShell> — Contacts App-level mount with routed data (A9: M9 + Codex#11)', () => {
+  // Capture the factory default so the per-test override can be restored. Set in
+  // beforeEach (the implementation reference is stable across the suite).
+  let defaultInvoke:
+    | ((cmd: string, args?: unknown) => Promise<unknown>)
+    | undefined;
+
+  const seededContact = {
+    id: 'c-w6abc',
+    name: 'Alice Example',
+    callsign: 'W6ABC',
+    email: 'alice@example.org',
+    tactical: undefined,
+    notes: undefined,
+    created_at: '2026-06-07T00:00:00Z',
+    updated_at: '2026-06-07T00:00:00Z',
+  };
+  const seededGroup = {
+    id: 'g-netcontrol',
+    name: 'Net Control',
+    members: [{ type: 'contact', contact_id: 'c-w6abc' }],
+    created_at: '2026-06-07T00:00:00Z',
+    updated_at: '2026-06-07T00:00:00Z',
+  };
+  const seededSuggestion = { callsign: 'KK4XYZ', message_count: 4 };
+
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    defaultInvoke = vi.mocked(invoke).getMockImplementation() as typeof defaultInvoke;
+    vi.mocked(invoke).mockImplementation((cmd: string, args?: unknown): Promise<unknown> => {
+      // Contacts data — the A9 focus. Both routed NON-EMPTY through the real
+      // useContacts / ContactsPanel queries (M9 — Promise.resolve, never raw).
+      if (cmd === 'contacts_read') {
+        return Promise.resolve({
+          schema_version: 1,
+          contacts: [seededContact],
+          groups: [seededGroup],
+        });
+      }
+      if (cmd === 'contacts_suggestions') return Promise.resolve([seededSuggestion]);
+      // Everything else the production mount fires — mirror the top-level factory
+      // so the shell mounts identically. (A custom mockImplementation fully
+      // replaces the factory default, so each command must be routed here.)
+      if (cmd === 'config_read') return Promise.resolve(null);
+      if (cmd === 'backend_status') return Promise.resolve(null);
+      if (cmd === 'session_log_snapshot') return Promise.resolve([]);
+      if (cmd === 'modem_get_status') {
+        return Promise.resolve({
+          state: 'stopped',
+          peer: null, mode: null, widthHz: null, pttBackend: null,
+          snDb: null, vuDbfs: null, throughputBps: null,
+          bytesRx: 0, bytesTx: 0, uptimeSec: 0,
+          arqFlags: { busy: false, rx: false, tx: false },
+          lastError: null,
+        });
+      }
+      if (cmd === 'position_status') {
+        return Promise.resolve({ gps_ready: false, broadcast_grid: '', ui_grid: '' });
+      }
+      if (cmd === 'tauri_search_list_saved') return Promise.resolve([]);
+      if (cmd === 'tauri_search_list_recent') return Promise.resolve([]);
+      if (cmd === 'message_read') {
+        return Promise.resolve({
+          id: 'INBOX1', subject: 's', from: 'f', to: [], cc: [],
+          date: '2026-05-19T00:00:00Z', body: 'b', attachments: [],
+          isForm: false, routing: null,
+        });
+      }
+      void args;
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    // Restore the top-level factory default so the override does not leak.
+    if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+  });
+
+  it('renders the routed contact, group, and — critically — the routed suggestion through the production provider stack', async () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('folder-contacts'));
+
+    // The inline panel mounts through the real providers (M8: it replaces the
+    // MessageList / reading pane).
+    await waitFor(() =>
+      expect(screen.getByTestId('contacts-panel')).toBeInTheDocument(),
+    );
+    // M8 — MessageList (rows-pane) is gone; only the ContactsPanel remains.
+    expect(screen.queryByTestId('rows-pane')).toBeNull();
+
+    // contacts_read → useContacts → ContactsPanel: the routed contact + group
+    // render through the production stack.
+    expect(await screen.findByTestId('person-row-c-w6abc')).toHaveTextContent('W6ABC');
+    expect(screen.getByTestId('group-row-g-netcontrol')).toHaveTextContent('Net Control');
+
+    // KEY A9 COVERAGE — contacts_suggestions flows end-to-end through the real
+    // providers: the Suggested section (gated on suggestions.length > 0) renders
+    // the routed suggestion AND its message count. A8's ContactsPanel test
+    // scaffolds its own provider; this proves the PRODUCTION mount path wires the
+    // suggestions query.
+    const suggested = await screen.findByTestId('contacts-suggested');
+    expect(suggested).toBeInTheDocument();
+    const suggestionCard = screen.getByTestId('suggestion-KK4XYZ');
+    expect(suggestionCard).toHaveTextContent('KK4XYZ');
+    expect(suggestionCard).toHaveTextContent('exchanged 4 messages with KK4XYZ');
+
+    // Codex#11 — no mailbox_list({folder:'contacts'}) fired during the mount.
+    const firedContactsMailbox = vi
+      .mocked(invoke)
+      .mock.calls.some(
+        ([cmd, args]) =>
+          cmd === 'mailbox_list' &&
+          (args as { folder?: string } | undefined)?.folder === 'contacts',
+      );
+    expect(firedContactsMailbox).toBe(false);
+
+    // And contacts_suggestions actually fired through the production path.
+    expect(
+      vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'contacts_suggestions'),
+    ).toBe(true);
   });
 });

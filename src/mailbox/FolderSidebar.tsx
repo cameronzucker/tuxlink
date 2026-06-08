@@ -22,6 +22,31 @@ interface MailboxItem {
   v01?: boolean;
 }
 
+/// A sidebar nav-item whose selection key is a `MailboxFolderRef` rather than a
+/// concrete `MailboxFolder`. The "Address" section's Contacts entry uses this
+/// shape: `'contacts'` is a PSEUDO-folder string (never added to the
+/// `MailboxFolder` enum), so its `id` is a plain `MailboxFolderRef`. Sharing
+/// the `{ id, label, icon, enabled }` shape with `MAILBOX_ITEMS` lets the
+/// icon-rail compact mode (FZ-M1) pick the row up generically rather than via a
+/// hardcoded one-off path. The count is NOT sourced from the mailbox `counts`
+/// memo (that map is keyed by `MailboxFolder`); it is passed per-item.
+interface PseudoFolderItem {
+  id: MailboxFolderRef; // a pseudo-folder selection key (e.g. 'contacts')
+  label: string;
+  icon: string;
+  enabled: boolean;
+  v01?: boolean;
+}
+
+/// Address section (tuxlink-raez, Task A7). A single Contacts pseudo-folder
+/// row. Declared as a list (mirroring `MAILBOX_ITEMS`) so the icon-rail picks
+/// it up generically; the count is supplied at render time from the
+/// `contactsCount` prop (sourced from `useContacts` in AppShell), never the
+/// mailbox `counts` memo.
+const ADDRESS_ITEMS: readonly PseudoFolderItem[] = [
+  { id: 'contacts', label: 'Contacts', icon: '◉', enabled: true },
+];
+
 /// Mailbox section (mock B order). All four folders functional as of
 /// tuxlink-ca5x (user-folders Phase 1). The Phase 2 open-set folder model
 /// (tuxlink-f62f) will lift Archive into a dedicated "Folders" section
@@ -48,6 +73,12 @@ export interface FolderSidebarProps {
   /// Missing/zero → no count. User-folder counts are deferred to Phase 2.5
   /// (N+1 query optimization — backend `user_folders_list_with_counts`).
   counts?: Partial<Record<MailboxFolder, number>>;
+  /** Contacts count for the Address section's Contacts pseudo-folder badge
+   *  (tuxlink-raez, Task A7). Sourced from `useContacts().contacts.length` in
+   *  AppShell — deliberately SEPARATE from `counts` (the mailbox memo keyed by
+   *  `MailboxFolder`), since `'contacts'` is not a mailbox folder. Zero/missing
+   *  → no badge. */
+  contactsCount?: number;
   /** User-created folders (tuxlink-f62f). Rendered in a dedicated "Folders"
    *  section below "Mailbox", with a `+` button that fires `onCreateFolder`. */
   userFolders?: UserFolder[];
@@ -109,6 +140,7 @@ export const FolderSidebar = memo(function FolderSidebar({
   selectedFolder,
   onSelectFolder,
   counts = {},
+  contactsCount = 0,
   userFolders = [],
   onCreateFolder,
   onDropMessage,
@@ -372,6 +404,43 @@ export const FolderSidebar = memo(function FolderSidebar({
         </div>
       )}
 
+      {/* Address section (tuxlink-raez / FZ-M1 coordination). Mirrors the desktop
+          Address section in the compact flyout so Contacts is reachable when the
+          rail is expanded. `flyout-`-prefixed testids avoid colliding with the
+          rail's `folder-<id>`; selecting collapses the flyout. */}
+      <div className="section-label">
+        <span className="section-label-text">Address</span>
+      </div>
+      {ADDRESS_ITEMS.map((item) => {
+        const active = item.id === selectedFolder;
+        const count = item.id === 'contacts' ? contactsCount : undefined;
+        const className = ['nav-item', active ? 'active' : '', item.enabled ? '' : 'disabled']
+          .filter(Boolean)
+          .join(' ');
+        return (
+          <button
+            key={item.id}
+            type="button"
+            data-testid={`flyout-folder-${item.id}`}
+            className={className}
+            disabled={!item.enabled}
+            aria-current={active ? 'true' : undefined}
+            onClick={() => {
+              if (item.enabled) selectFolderAndCollapse(item.id);
+            }}
+          >
+            <span className="icon" aria-hidden="true">{item.icon}</span>
+            <span className="nav-label">{item.label}</span>
+            {typeof count === 'number' && count > 0 && (
+              <span className="count" data-testid={`flyout-folder-count-${item.id}`}>
+                {count}
+              </span>
+            )}
+            {item.v01 && <span className="v01-badge">soon</span>}
+          </button>
+        );
+      })}
+
       <div className="section-label">
         <span className="section-label-text">Connections</span>
       </div>
@@ -542,6 +611,50 @@ export const FolderSidebar = memo(function FolderSidebar({
         </div>
       )}
 
+      {/* Address section (tuxlink-raez, Task A7). The Contacts pseudo-folder
+          row. `'contacts'` is NOT a MailboxFolder — it never enters the
+          mailbox `counts` memo (that map is keyed by MailboxFolder), and it is
+          not drag-droppable (no message can be filed into Contacts). The count
+          comes from the dedicated `contactsCount` prop (useContacts in
+          AppShell). Declared as a list (ADDRESS_ITEMS) so the icon-rail compact
+          mode picks the row up generically. */}
+      <div className="section-label">
+        <span className="section-label-text">Address</span>
+      </div>
+      {ADDRESS_ITEMS.map((item) => {
+        const active = item.id === selectedFolder;
+        // Per-item count: only Contacts has one, from `contactsCount`. Kept off
+        // the mailbox `counts` memo on purpose (M-scope: pseudo-folder).
+        const count = item.id === 'contacts' ? contactsCount : undefined;
+        const className = ['nav-item', active ? 'active' : '', item.enabled ? '' : 'disabled']
+          .filter(Boolean)
+          .join(' ');
+        return (
+          <button
+            key={item.id}
+            type="button"
+            data-testid={`folder-${item.id}`}
+            className={className}
+            disabled={!item.enabled}
+            aria-current={active ? 'true' : undefined}
+            onClick={() => {
+              if (item.enabled) onSelectFolder(item.id);
+            }}
+          >
+            <span className="icon" aria-hidden="true">
+              {item.icon}
+            </span>
+            {item.label}
+            {typeof count === 'number' && count > 0 && (
+              <span className="count" data-testid={`folder-count-${item.id}`}>
+                {count}
+              </span>
+            )}
+            {item.v01 && <span className="v01-badge">soon</span>}
+          </button>
+        );
+      })}
+
       <div className="section-label">
         <span className="section-label-text">Connections</span>
       </div>
@@ -663,6 +776,22 @@ export const FolderSidebar = memo(function FolderSidebar({
                 onFolderContextMenu(uf.slug, e.clientX, e.clientY);
               }
             },
+          }),
+        )}
+
+        {/* Address pseudo-folder(s) in the compact rail (tuxlink-raez / FZ-M1
+            coordination). Mirrors the desktop Address section so Contacts is
+            reachable in compact mode too; the count comes from `contactsCount`,
+            never the mailbox `counts` memo. Shares the `folder-<id>` testid with
+            the desktop nav — they never co-render (rail is compact-only). */}
+        {ADDRESS_ITEMS.map((item) =>
+          renderRailTab({
+            key: item.label,
+            testId: `folder-${item.id}`,
+            label: item.label,
+            folderRef: item.enabled ? item.id : undefined,
+            active: item.id === selectedFolder,
+            count: item.id === 'contacts' ? contactsCount : undefined,
           }),
         )}
       </nav>

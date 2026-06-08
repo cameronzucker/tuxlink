@@ -21,6 +21,9 @@
 import './MessageView.css';
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { ContactEditor, emptyContact } from '../contacts/ContactEditor';
+import { useContacts } from '../contacts/useContacts';
+import type { Contact } from '../contacts/types';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { MessageViewEmpty } from './MessageViewEmpty';
 import type {
@@ -166,6 +169,19 @@ function parseAddress(s: string): { name: string; addr: string } {
   return { name: '', addr: s.trim() };
 }
 
+/// Derive the bare callsign to prefill an "Add to contacts" editor from a
+/// sender address (G1). Strips a trailing `@winlink.org` (the Winlink email
+/// form is the bare callsign) but preserves any other SMTP address verbatim and
+/// keeps the SSID — the callsign is the SSID-bearing identity.
+export function senderCallsign(from: string): string {
+  const { addr } = parseAddress(from);
+  const at = addr.indexOf('@');
+  if (at >= 0 && addr.slice(at + 1).toLowerCase() === 'winlink.org') {
+    return addr.slice(0, at);
+  }
+  return addr;
+}
+
 // ============================================================================
 // Form-body rendering (Tasks 13 + 11)
 // ============================================================================
@@ -275,6 +291,8 @@ export function MessageViewLoaded({
   currentFolder,
   userFolders,
   onMove,
+  contacts,
+  onAddContact,
   radioDrawerOpen = false,
 }: {
   message: ParsedMessage;
@@ -289,12 +307,28 @@ export function MessageViewLoaded({
   /// Move-to-folder callback. When supplied + `currentFolder` is present,
   /// the reading-pane toolbar renders a "Move ▾" dropdown alongside Archive.
   onMove?: (to: MailboxFolderRef) => void;
+  /// G1 (Task A8) — the operator's saved contacts. When supplied (with
+  /// `onAddContact`), the action bar renders an "Add to contacts" button for a
+  /// sender that is NOT already a contact; clicking it opens an inline
+  /// ContactEditor prefilled with the sender callsign. Omitted by the
+  /// presentational unit tests, which keeps the contacts UI off and avoids the
+  /// QueryClient dependency.
+  contacts?: Contact[];
+  /// Persist an added-from-sender contact (routes through `contact_upsert`).
+  onAddContact?: (contact: Contact) => Promise<void> | void;
   /// When true, any open form-viewer webview is hidden while the radio
   /// drawer is open. Threaded from AppShell via MessageView (tuxlink-813d).
   radioDrawerOpen?: boolean;
 }) {
   const from = parseAddress(message.from);
   const toAddrs = message.to.map(parseAddress);
+  // G1 — add-from-sender. Active only when contacts state + handler are wired.
+  const [addingContact, setAddingContact] = useState(false);
+  const senderCs = senderCallsign(message.from);
+  const alreadyContact =
+    !!contacts &&
+    contacts.some((c) => c.callsign.toLowerCase() === senderCs.toLowerCase());
+  const canAddContact = !!contacts && !!onAddContact && senderCs.length > 0 && !alreadyContact;
   // Form metadata (the Mock B "Form" row + form-attached box). Dev-only today;
   // ParsedMessage carries `isForm` but not the form kind/payload yet.
   const formMeta = message.isForm ? devFormMeta(message.id) : null;
@@ -359,7 +393,35 @@ export function MessageViewLoaded({
             onMove={onMove}
           />
         )}
+        {/* G1 — Add the sender to contacts (suggest-only counterpart for an
+            individual message). Hidden when the sender is already a contact. */}
+        {canAddContact && !addingContact && (
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="add-to-contacts-btn"
+            title={`Add ${senderCs} to contacts`}
+            onClick={() => setAddingContact(true)}
+          >
+            Add to contacts
+          </button>
+        )}
       </div>
+
+      {/* G1 — inline ContactEditor prefilled with the sender callsign. Inline
+          (no popup window); replaces nothing — sits below the action bar. */}
+      {addingContact && onAddContact && (
+        <div className="message-add-contact" data-testid="message-add-contact">
+          <ContactEditor
+            contact={emptyContact(senderCs)}
+            onSave={async (c) => {
+              await onAddContact(c);
+              setAddingContact(false);
+            }}
+            onCancel={() => setAddingContact(false)}
+          />
+        </div>
+      )}
 
       <div className="message-print-header">
         {/* 2 — subject heading */}
@@ -718,6 +780,9 @@ export default function MessageView({
   radioDrawerOpen = false,
 }: MessageViewProps) {
   const { data, isLoading, isError, error } = useMessage(selectedMessage);
+  // G1 (Task A8) — wire the real contacts state so a sender that isn't already
+  // a contact gets an "Add to contacts" action in the loaded reading pane.
+  const { contacts, upsertContact } = useContacts();
 
   if (!selectedMessage) {
     return <MessageViewEmpty />;
@@ -760,6 +825,8 @@ export default function MessageView({
       currentFolder={selectedMessage.folder}
       userFolders={userFolders}
       onMove={onMove}
+      contacts={contacts}
+      onAddContact={upsertContact}
       radioDrawerOpen={radioDrawerOpen}
     />
   );

@@ -140,3 +140,117 @@ export function splitAddrs(raw: string): string[] {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }
+
+// ============================================================================
+// Group expansion + wire-key dedup (Task A6)
+//
+// CORRECTNESS-CRITICAL: this transform produces the exact recipient list that
+// reaches the B2F builder (`message_send` / `send_form` / `send_webview_form`).
+// Expansion runs ONLY at send time — never on autosave — so the `to`/`cc`
+// draft state stays the raw semicolon string with `group:<id>` sentinels.
+//
+// Adversarial safety properties:
+//   - H5 — NO `group:<id>` token survives. A group resolves to its members; an
+//          unresolvable group id resolves to nothing and is DROPPED (it is never
+//          emitted as a literal `group:<id>` string).
+//   - H6/M5 — dedup on a normalized WIRE KEY: trim → strip a trailing
+//          `@winlink.org` (case-insensitive) → UPPERCASE, PRESERVING SSID. A
+//          non-`@winlink.org` SMTP address keeps its own key (distinct
+//          identity). The first occurrence's DISPLAY form is kept on the wire.
+//   - M6 — a deleted-contact group member resolves to nothing (no crash, no
+//          empty token); surviving members expand normally.
+// ============================================================================
+
+import type { Contact, Group } from '../contacts/types';
+import {
+  GROUP_SENTINEL_PREFIX,
+  resolveGroupMemberCallsigns,
+} from '../contacts/recipients';
+
+/// Compute the dedup wire-key for a recipient token. This MUST mirror the Rust
+/// `normalize_address` SSID-preserving identity (winlink/compose.rs:146): a
+/// bare callsign and its `<call>@winlink.org` email form are the SAME wire
+/// identity; an arbitrary SMTP address (`@gmail.com`, etc.) is a DISTINCT
+/// identity. The SSID is part of the callsign identity and is NEVER stripped.
+// NOTE: this uppercases the whole SMTP address, so it is intentionally STRICTER
+// than Rust `normalize_address` on SMTP-local-part case — a benign over-dedup of
+// two spellings of the same mailbox (e.g. Bob@x.com vs bob@x.com). Acceptable:
+// the worst case is collapsing two display forms of one real recipient.
+function wireKey(token: string): string {
+  const trimmed = token.trim();
+  const at = trimmed.lastIndexOf('@');
+  if (at >= 0) {
+    const domain = trimmed.slice(at + 1);
+    if (domain.toLowerCase() === 'winlink.org') {
+      // `<call>@winlink.org` → bare callsign (SSID intact), uppercased.
+      return trimmed.slice(0, at).toUpperCase();
+    }
+    // Any other SMTP address keeps a distinct, full-address key (uppercased so
+    // a case variant of the same address still dedups).
+    return trimmed.toUpperCase();
+  }
+  // Bare callsign (SSID intact), uppercased.
+  return trimmed.toUpperCase();
+}
+
+/// Expand `group:<id>` sentinels to member callsigns and dedup the result on
+/// the wire key (H5/H6/M5/M6). Non-group tokens pass through as literals.
+///
+/// `seedKeys` (optional) pre-seeds the dedup set with wire-keys already
+/// committed elsewhere — used to remove a Cc recipient that is already in the
+/// expanded To (Codex#6), so a recipient present in both To and Cc is not
+/// double-sent.
+///
+/// @param recipients raw tokens (post-`splitAddrs`): `group:<id>` sentinels or
+///                   literal callsigns/emails.
+/// @param contacts   live address book (resolves contact-id group members).
+/// @param groups     live groups list (resolves `group:<id>` sentinels).
+/// @param seedKeys   wire-keys to treat as already-present (Cc-from-To seed).
+export function expandGroupsAndDedup(
+  recipients: string[],
+  contacts: Contact[],
+  groups: Group[],
+  seedKeys?: string[],
+): string[] {
+  // Flatten: each group token → its resolved member callsigns; literals as-is.
+  // An unresolvable group token resolves to nothing and is dropped (H5).
+  const flattened: string[] = [];
+  for (const token of recipients) {
+    const t = token.trim();
+    if (t.length === 0) continue;
+    if (t.startsWith(GROUP_SENTINEL_PREFIX)) {
+      const id = t.slice(GROUP_SENTINEL_PREFIX.length);
+      const group = groups.find((g) => g.id === id);
+      if (group) {
+        // Same resolver as the chip's member count (M6) — a deleted-contact
+        // member resolves to nothing, so the chip count == expansion length.
+        flattened.push(...resolveGroupMemberCallsigns(group, contacts));
+      }
+      // No matching group → drop the sentinel entirely (H5: never leak it).
+      continue;
+    }
+    flattened.push(t);
+  }
+
+  // Dedup on the wire key, preserving first-occurrence display form. The seed
+  // set (expanded To) removes Cc recipients already present in To (Codex#6).
+  const seen = new Set<string>(seedKeys?.map(wireKey));
+  const out: string[] = [];
+  for (const token of flattened) {
+    const key = wireKey(token);
+    if (key.length === 0 || seen.has(key)) continue;
+    seen.add(key);
+    out.push(token);
+  }
+  return out;
+}
+
+/// Return the `group:<id>` sentinel tokens in `recipients` whose group no
+/// longer exists in `groups` (e.g. deleted mid-compose). Used to BLOCK a send
+/// rather than silently drop the recipients (H5). Non-group tokens are ignored.
+export function findUnknownGroupTokens(recipients: string[], groups: Group[]): string[] {
+  const ids = new Set(groups.map((g) => g.id));
+  return recipients
+    .map((t) => t.trim())
+    .filter((t) => t.startsWith(GROUP_SENTINEL_PREFIX) && !ids.has(t.slice(GROUP_SENTINEL_PREFIX.length)));
+}

@@ -63,6 +63,19 @@
   border-color: var(--accent-2);
 }
 
+/* G1 (Task A8) — inline add-from-sender ContactEditor, mounted below the
+   action bar. A bordered card so it reads as a distinct affordance over the
+   reading pane. */
+.reading-pane .message-add-contact {
+  margin: 0 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.reading-pane .message-add-contact .contact-editor {
+  padding: 14px 16px;
+}
+
 /* 2 — subject heading */
 .reading-pane h1.subject-line {
   margin: 0 0 18px;

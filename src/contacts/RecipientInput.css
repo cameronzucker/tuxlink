@@ -1,0 +1,130 @@
+/* RecipientInput — chips + inline autocomplete (Task A5).
+ * Tokens mirror ChipStrip.css / SearchDropdown.css but the selectors are
+ * scoped to `.recipient-input` (NOT `.layout-b`) so the component styles
+ * correctly inside the Compose window, which is not under a layout-b root. */
+
+.recipient-input {
+  position: relative;
+  width: 100%;
+}
+
+.recipient-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  min-height: 34px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+.recipient-chips:focus-within {
+  border-color: var(--accent);
+}
+
+/* Chips — ChipStrip's pill shape + accent-soft active fill. */
+.recipient-chip {
+  font-size: 12px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.2;
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.recipient-chip.is-group {
+  /* Group chips read distinctly: filled accent so the expanded recipient
+   * count chip is obviously not a single callsign. */
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+}
+.recipient-chip.is-unknown-group {
+  /* H5 — an unresolvable group: token must read as a problem, not a normal
+   * recipient, while STILL being visible (never silently dropped). */
+  background: color-mix(in srgb, var(--danger, #c0392b) 16%, transparent);
+  color: var(--danger, #e06c5e);
+  border-color: color-mix(in srgb, var(--danger, #c0392b) 42%, transparent);
+  font-family: inherit;
+}
+.recipient-chip-x {
+  background: transparent;
+  border: 0;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+}
+.recipient-chip-x:hover {
+  color: var(--accent-2);
+}
+.recipient-chip.is-unknown-group .recipient-chip-x:hover {
+  color: var(--danger, #e06c5e);
+}
+
+/* The text input grows to fill remaining row space. */
+.recipient-text {
+  flex: 1 1 120px;
+  min-width: 120px;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 2px 2px;
+}
+.recipient-text::placeholder {
+  color: var(--text-faint);
+}
+
+/* Inline dropdown — SearchDropdown's surface + focused-row treatment. */
+.recipient-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin-top: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.65);
+}
+.recipient-row {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.recipient-row:last-child {
+  border-bottom: 0;
+}
+.recipient-row:hover,
+.recipient-row.focused {
+  background: var(--accent-soft);
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+}
+.recipient-row-label {
+  font-size: 13px;
+  color: var(--text);
+  font-family: var(--mono);
+}
+.recipient-row.kind-group .recipient-row-label {
+  font-family: inherit;
+  font-weight: 500;
+}
+.recipient-row-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+}

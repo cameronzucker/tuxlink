@@ -1,0 +1,85 @@
+/* ContactEditor — inline New/Edit contact form (Task A8). */
+
+.contact-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 480px;
+  padding: 20px 24px;
+  color: var(--text);
+}
+
+.contact-editor-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.contact-editor-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.contact-editor-row > span {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+
+.contact-editor-row input,
+.contact-editor-row textarea {
+  padding: 6px 9px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.contact-editor-row input:focus,
+.contact-editor-row textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.contact-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.contact-editor-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.contact-editor-btn:hover:not(:disabled) {
+  background: var(--elevated);
+}
+
+.contact-editor-btn-primary {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.contact-editor-btn-primary:hover:not(:disabled) {
+  background: var(--accent-2);
+}
+
+.contact-editor-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

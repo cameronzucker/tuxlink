@@ -28,6 +28,8 @@ import { DRAFTS_CHANGED_EVENT, listDraftMessages } from '../mailbox/draftMailbox
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
 import { useUserFolders } from '../mailbox/useUserFolders';
+import { useContacts } from '../contacts/useContacts';
+import { ContactsPanel } from '../contacts/ContactsPanel';
 import { FolderContextMenu } from '../mailbox/FolderContextMenu';
 import type { UserFolder } from '../mailbox/types';
 import type { MessageMetaDto } from '../search/types';
@@ -373,6 +375,10 @@ export function AppShell() {
   // tuxlink-f62f: operator-created user folders, rendered in the sidebar's
   // Folders section. Backend reads `<root>/.folders.json`.
   const { folders: userFolders } = useUserFolders();
+  // tuxlink-raez (A7): contacts count for the sidebar's Address → Contacts
+  // pseudo-folder badge. Sourced from useContacts, NOT the mailbox `counts`
+  // memo — `'contacts'` is a pseudo-folder, not a MailboxFolder.
+  const { contacts } = useContacts();
   const notConnected = isNotConfigured(error);
   const [draftMessages, setDraftMessages] = useState<MessageMeta[]>(() => listDraftMessages());
 
@@ -893,6 +899,7 @@ export function AppShell() {
           selectedFolder={selectedFolder}
           onSelectFolder={onSelectFolder}
           counts={counts}
+          contactsCount={contacts.length}
           userFolders={userFolders}
           onCreateFolder={onCreateFolder}
           onDropMessage={moveByIdToFolder}
@@ -900,6 +907,15 @@ export function AppShell() {
           selectedConnection={selectedConnection}
           onSelectConnection={onSelectConnection}
         />
+        {/* M8 (tuxlink-raez / A8): the Contacts pseudo-folder replaces BOTH the
+            MessageList column AND the reading pane with the inline ContactsPanel
+            list/detail surface. The early-return wraps both — placing it inside
+            the reading-pane ternary alone would leave MessageList rendered to the
+            left (two list columns). */}
+        {selectedFolder === 'contacts' ? (
+          <ContactsPanel />
+        ) : (
+          <>
         <MessageList
           folder={selectedFolder}
           messages={visibleMessages}
@@ -975,6 +991,8 @@ export function AppShell() {
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
+          </>
+        )}
         {/* FZ-M1 compact (tuxlink-h7q7): wrap the radio-panel mount in the
             push-drawer. Desktop (>=1366px): RadioDrawer is display:contents, so
             the panel is the 4th grid column exactly as before. Compact: the
@@ -990,6 +1008,7 @@ export function AppShell() {
               modemIsActive,
             })}
           >
+
         {/* Per-mode radio panels. Telnet (P2), Packet (P3), ARDOP HF (P4),
             and VARA HF/FM (Phase 2 — tuxlink-dfmf) ship their real
             implementations; any other mode (none today) would fall through
