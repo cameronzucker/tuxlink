@@ -492,7 +492,11 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   // subsequent connection re-records.
   const isConnected =
     status.state === 'connected-irs' || status.state === 'connected-iss';
-  const recordedConnRef = useRef(false);
+  // Initialize from the mount-time connection state: if the panel mounts INTO an
+  // already-connected session (e.g. a remount mid-session), treat it as already
+  // recorded so we don't log a `reached` for a connection that happened earlier.
+  // A real STOPPED→connected transition during this mount still records once.
+  const recordedConnRef = useRef(isConnected);
   useEffect(() => {
     if (isConnected && status.peer && !recordedConnRef.current) {
       recordedConnRef.current = true;
@@ -592,6 +596,9 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
       // gateway failure. The guard at the top (isExchangeReady / effectiveTarget
       // null) returns before any record path, so only a real exchange attempt
       // that threw reaches here.
+      // Note: a session that already reached connected-* logged a `reached`; a later
+      // exchange failure logs an additional `failed`. Both are intentional, distinct
+      // empirical facts (link reached vs. message exchange failed) — not a double-count.
       const dial = buildRecordDial();
       if (dial) void recordAttempt(dial, 'failed', tsLocal());
     } finally {

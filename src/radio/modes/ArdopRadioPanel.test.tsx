@@ -226,7 +226,7 @@ describe('<ArdopRadioPanel>', () => {
 
   it('does not open WebGUI when cmd_port is below 2 (surfaces an error instead)', async () => {
     const core = await import('@tauri-apps/api/core');
-    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'config_get_ardop') {
         return {
           binary: 'ardopcf',
@@ -238,8 +238,7 @@ describe('<ArdopRadioPanel>', () => {
           webgui_port: null,
         };
       }
-      if (cmd === 'session_log_snapshot') return [];
-      return undefined;
+      return defaultInvokeImpl(cmd, args);
     });
     mockUseModemStatus.mockReturnValue({
       status: RUNNING,
@@ -277,7 +276,7 @@ describe('<ArdopRadioPanel>', () => {
     // The button MUST open the override port, not the cmd_port-1 default,
     // so it matches what the spawn passed to `-G`.
     const core = await import('@tauri-apps/api/core');
-    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'config_get_ardop') {
         return {
           binary: 'ardopcf',
@@ -289,8 +288,7 @@ describe('<ArdopRadioPanel>', () => {
           webgui_port: 9080,
         };
       }
-      if (cmd === 'session_log_snapshot') return [];
-      return undefined;
+      return defaultInvokeImpl(cmd, args);
     });
     mockUseModemStatus.mockReturnValue({ status: RUNNING, loading: false, error: null });
     const shell = await import('@tauri-apps/plugin-shell');
@@ -332,7 +330,7 @@ describe('<ArdopRadioPanel>', () => {
     const core = await import('@tauri-apps/api/core');
     const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
     // Seed with an override so we can clear it.
-    invokeMock.mockImplementation(async (cmd: string) => {
+    invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'config_get_ardop') {
         return {
           binary: 'ardopcf',
@@ -344,8 +342,7 @@ describe('<ArdopRadioPanel>', () => {
           webgui_port: 9080,
         };
       }
-      if (cmd === 'session_log_snapshot') return [];
-      return undefined;
+      return defaultInvokeImpl(cmd, args);
     });
     renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     await waitFor(() => {
@@ -463,7 +460,7 @@ describe('<ArdopRadioPanel>', () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
       // Seed with a non-empty PTT path so we can clear it.
-      invokeMock.mockImplementation(async (cmd: string) => {
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
         if (cmd === 'config_get_ardop') {
           return {
             binary: 'ardopcf',
@@ -474,8 +471,7 @@ describe('<ArdopRadioPanel>', () => {
             bandwidth_hz: null,
           };
         }
-        if (cmd === 'session_log_snapshot') return [];
-        return undefined;
+        return defaultInvokeImpl(cmd, args);
       });
       renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() => {
@@ -645,7 +641,7 @@ describe('<ArdopRadioPanel>', () => {
     it('loads ALSA capture + playback lists on mount via ardop_list_audio_devices', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      invokeMock.mockImplementation(async (cmd: string) => {
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
         if (cmd === 'config_get_ardop') {
           return {
             binary: 'ardopcf',
@@ -669,8 +665,7 @@ describe('<ArdopRadioPanel>', () => {
           };
         }
         if (cmd === 'packet_list_serial_devices') return [];
-        if (cmd === 'session_log_snapshot') return [];
-        return undefined;
+        return defaultInvokeImpl(cmd, args);
       });
       renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() => {
@@ -693,7 +688,7 @@ describe('<ArdopRadioPanel>', () => {
     it('Capture/Playback dropdowns hide ALSA plugin chains, keeping plughw/hw:CARD only', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      invokeMock.mockImplementation(async (cmd: string) => {
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
         if (cmd === 'config_get_ardop') {
           return {
             binary: 'ardopcf',
@@ -724,8 +719,7 @@ describe('<ArdopRadioPanel>', () => {
           };
         }
         if (cmd === 'packet_list_serial_devices') return [];
-        if (cmd === 'session_log_snapshot') return [];
-        return undefined;
+        return defaultInvokeImpl(cmd, args);
       });
       renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const captureSel = await screen.findByTestId('ardop-capture-select') as HTMLSelectElement;
@@ -749,7 +743,7 @@ describe('<ArdopRadioPanel>', () => {
     it('selecting a capture device persists capture_device via config_set_ardop', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      invokeMock.mockImplementation(async (cmd: string) => {
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
         if (cmd === 'config_get_ardop') {
           return {
             binary: 'ardopcf',
@@ -770,8 +764,7 @@ describe('<ArdopRadioPanel>', () => {
           };
         }
         if (cmd === 'packet_list_serial_devices') return [];
-        if (cmd === 'session_log_snapshot') return [];
-        return undefined;
+        return defaultInvokeImpl(cmd, args);
       });
       renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const captureSel = await screen.findByTestId('ardop-capture-select') as HTMLSelectElement;
@@ -813,7 +806,7 @@ describe('<ArdopRadioPanel>', () => {
     it('PTT picker filters to USB serial entries + includes (none = VOX) option', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      invokeMock.mockImplementation(async (cmd: string) => {
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
         if (cmd === 'config_get_ardop') {
           return {
             binary: 'ardopcf',
@@ -833,8 +826,7 @@ describe('<ArdopRadioPanel>', () => {
             { path: '/dev/ttyAMA0', kind: 'uart', label: 'On-board UART' },
           ];
         }
-        if (cmd === 'session_log_snapshot') return [];
-        return undefined;
+        return defaultInvokeImpl(cmd, args);
       });
       renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const pttSel = await screen.findByTestId('ardop-ptt-select') as HTMLSelectElement;
@@ -851,7 +843,7 @@ describe('<ArdopRadioPanel>', () => {
     it('selecting (none) in PTT picker persists ptt_serial_path=null (VOX)', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      invokeMock.mockImplementation(async (cmd: string) => {
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
         if (cmd === 'config_get_ardop') {
           return {
             binary: 'ardopcf',
@@ -867,8 +859,7 @@ describe('<ArdopRadioPanel>', () => {
         if (cmd === 'packet_list_serial_devices') {
           return [{ path: '/dev/ttyUSB0', kind: 'usb', label: 'USB serial' }];
         }
-        if (cmd === 'session_log_snapshot') return [];
-        return undefined;
+        return defaultInvokeImpl(cmd, args);
       });
       renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const pttSel = await screen.findByTestId('ardop-ptt-select') as HTMLSelectElement;
@@ -1123,15 +1114,24 @@ describe('<ArdopRadioPanel>', () => {
         }
         return defaultInvokeImpl(cmd, args);
       });
-      // Connected so Send/Receive is enabled and effectiveTarget is the peer.
+      // Mount NOT connected, then transition to connected-*, so the on-air
+      // `reached` is logged via a genuine STOPPED→connected transition (the
+      // record-on-transition guard ignores a mount that begins already
+      // connected — see ArdopRadioPanel's recordedConnRef init).
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      const { rerender } = renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       mockUseModemStatus.mockReturnValue({
         status: connectedStatus('W7RMS-10'),
         loading: false,
         error: null,
       });
-      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
-      // The on-air transition already records ONE `reached` (the panel mounts
-      // straight into connected-*). Clear so we isolate the failed record.
+      rerender(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <ArdopRadioPanel onClose={() => {}} />
+        </QueryClientProvider>,
+      );
+      // The on-air transition records ONE `reached`. Clear so we isolate the
+      // failed record from the exchange below.
       await waitFor(() => expect(findRecordCalls(invokeMock).length).toBeGreaterThanOrEqual(1));
       invokeMock.mockClear();
       // Re-install the throwing impl (mockClear wipes the implementation).
@@ -1221,12 +1221,21 @@ describe('<ArdopRadioPanel>', () => {
     it('records an offset-bearing ts_local (M4) — not a UTC Z timestamp', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      // Mount NOT connected, then transition to connected-* so the `reached`
+      // record fires via a genuine transition (a mount that begins already
+      // connected is treated as already-recorded — see recordedConnRef init).
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      const { rerender } = renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       mockUseModemStatus.mockReturnValue({
         status: connectedStatus('W7RMS-10'),
         loading: false,
         error: null,
       });
-      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      rerender(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <ArdopRadioPanel onClose={() => {}} />
+        </QueryClientProvider>,
+      );
       await waitFor(() => {
         const calls = findRecordCalls(invokeMock);
         expect(calls.length).toBeGreaterThanOrEqual(1);
