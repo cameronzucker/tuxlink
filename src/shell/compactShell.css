@@ -80,11 +80,17 @@
     font-weight: 550;
     line-height: 1;
   }
-  /* Active tab uses the raised-surface tier `--elevated`. */
+  /* Active tab: an Outlook-style colored underline beneath the (vertical) label
+   * + brighter text. Replaces the folder-tab edge bar + raised background
+   * (tuxlink-813d operator polish — visually cleaner). */
   .layout-b .sidebar .vtab.active {
-    background: var(--elevated);
     color: var(--text);
-    border-left-color: var(--accent);
+  }
+  .layout-b .sidebar .vtab.active .vlabel {
+    text-decoration: underline;
+    text-decoration-color: var(--accent);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
   }
   .layout-b .sidebar .vtab:hover:not(.active) {
     background: var(--surface-2);
