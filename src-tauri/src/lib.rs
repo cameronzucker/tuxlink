@@ -523,6 +523,7 @@ pub fn run() {
             crate::contacts::commands::contact_delete,
             crate::contacts::commands::group_upsert,
             crate::contacts::commands::group_delete,
+            crate::contacts::commands::contacts_suggestions, // Task A3: suggest-from-history
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
