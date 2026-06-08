@@ -139,6 +139,9 @@ import type { RadioPanelMode } from '../radio/types';
 import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
 import './AppShell.css';
 import './compactShell.css'; // FZ-M1 compact rules (tuxlink-h7q7) — must follow AppShell.css for equal-specificity overrides to win on order
+import { useViewport } from './useViewport';
+import { RadioDrawer } from './RadioDrawer';
+import { deriveDrawerSessionState } from './drawerSessionState';
 
 /// Human label for a system folder (titlebar). Mirrors the sidebar labels.
 const FOLDER_LABELS: Record<MailboxFolder, string> = {
@@ -241,6 +244,13 @@ export function AppShell() {
   // (radio-panel-shell P1.7: renamed from pinRadioDock — the dock-vs-panel
   // distinction is dropped per spec §3.2 + §3.7.)
   const [pinRadioPanel, setPinRadioPanel] = useState(false);
+  // FZ-M1 compact mode (tuxlink-h7q7): the radio panel becomes a collapsible
+  // push-drawer below the breakpoint. `isCompact` drives the `.compact` root
+  // class (non-layout signal); `drawerOpen` toggles the drawer's 4th-column
+  // width (closed=44px grip, open=400px panel). Manual open only (operator
+  // chose plain Option A — no auto-open).
+  const { isCompact } = useViewport();
+  const [drawerOpen, setDrawerOpen] = useState(false);
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Inline theme designer overlay (tuxlink-vgth), opened from View → Color
@@ -481,6 +491,23 @@ export function AppShell() {
     activeModem,
     togglePinned: pinRadioPanel,
   });
+
+  // Close the radio panel entirely (drop the connection + unpin). Shared by the
+  // per-mode panels' close buttons (DRY) and also collapses the compact drawer
+  // so a re-opened panel starts closed (tuxlink-h7q7).
+  const closeRadioPanel = useCallback(() => {
+    setSelectedConnection(null);
+    setPinRadioPanel(false);
+    setDrawerOpen(false);
+  }, []);
+
+  // F8 (Claude adrev): radioPanelMode is DERIVED — it can go null when a modem
+  // session ends on its own (not only via the close button). Reset the compact
+  // drawer whenever the panel unmounts so the next panel opens collapsed
+  // (manual-default-closed contract). Single correctness backstop.
+  useEffect(() => {
+    if (radioPanelMode === null) setDrawerOpen(false);
+  }, [radioPanelMode]);
 
   // CMS connect: run one exchange (send outbox + receive), then refresh the
   // mailbox so any downloaded messages appear. The button lives in the ribbon;
@@ -782,7 +809,7 @@ export function AppShell() {
   }, [activeConnection, statusData.status]);
 
   return (
-    <div className="layout-b" data-testid="app-shell-root">
+    <div className={`layout-b${isCompact ? ' compact' : ''}`} data-testid="app-shell-root">
       <TitleBar folderLabel={folderLabel(selectedFolder, userFolders)} />
       <MenuBar onAction={onMenuAction} />
       <ResizeHandles />
@@ -839,7 +866,7 @@ export function AppShell() {
       </div>
 
       <div
-        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}`}
+        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}${drawerOpen ? ' drawer-open' : ''}`}
         data-testid="shell-panes"
       >
         <FolderSidebar
@@ -928,6 +955,21 @@ export function AppShell() {
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
+        {/* FZ-M1 compact (tuxlink-h7q7): wrap the radio-panel mount in the
+            push-drawer. Desktop (>=1366px): RadioDrawer is display:contents, so
+            the panel is the 4th grid column exactly as before. Compact: the
+            wrapper is the collapsible 4th column (44px grip / 400px open). The
+            inner per-mode conditionals are unchanged. */}
+        {radioPanelMode !== null && (
+          <RadioDrawer
+            open={drawerOpen}
+            onToggle={() => setDrawerOpen((o) => !o)}
+            sessionState={deriveDrawerSessionState({
+              connecting,
+              status: statusData.status,
+              modemIsActive,
+            })}
+          >
         {/* Per-mode radio panels. Telnet (P2), Packet (P3), ARDOP HF (P4),
             and VARA HF/FM (Phase 2 — tuxlink-dfmf) ship their real
             implementations; any other mode (none today) would fall through
@@ -937,20 +979,14 @@ export function AppShell() {
         {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'cms' && (
           <Suspense fallback={null}>
             <TelnetRadioPanel
-              onClose={() => {
-                setSelectedConnection(null);
-                setPinRadioPanel(false);
-              }}
+              onClose={closeRadioPanel}
             />
           </Suspense>
         )}
         {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'p2p' && (
           <Suspense fallback={null}>
             <TelnetP2pRadioPanel
-              onClose={() => {
-                setSelectedConnection(null);
-                setPinRadioPanel(false);
-              }}
+              onClose={closeRadioPanel}
             />
           </Suspense>
         )}
@@ -959,20 +995,14 @@ export function AppShell() {
             <PacketRadioPanel
               intent={radioPanelMode.intent}
               baseCall={statusData.callsign}
-              onClose={() => {
-                setSelectedConnection(null);
-                setPinRadioPanel(false);
-              }}
+              onClose={closeRadioPanel}
             />
           </Suspense>
         )}
         {radioPanelMode && radioPanelMode.kind === 'ardop-hf' && (
           <Suspense fallback={null}>
             <ArdopRadioPanel
-              onClose={() => {
-                setSelectedConnection(null);
-                setPinRadioPanel(false);
-              }}
+              onClose={closeRadioPanel}
             />
           </Suspense>
         )}
@@ -981,10 +1011,7 @@ export function AppShell() {
             <Suspense fallback={null}>
               <VaraRadioPanel
                 mode={radioPanelMode}
-                onClose={() => {
-                  setSelectedConnection(null);
-                  setPinRadioPanel(false);
-                }}
+                onClose={closeRadioPanel}
               />
             </Suspense>
           )}
@@ -996,12 +1023,11 @@ export function AppShell() {
           radioPanelMode.kind !== 'vara-fm' && (
             <PlaceholderRadioPanel
               mode={radioPanelMode}
-              onClose={() => {
-                setSelectedConnection(null);
-                setPinRadioPanel(false);
-              }}
+              onClose={closeRadioPanel}
             />
           )}
+          </RadioDrawer>
+        )}
       </div>
 
       <StatusBar

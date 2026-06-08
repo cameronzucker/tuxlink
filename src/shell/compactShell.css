@@ -7,7 +7,185 @@
  * test path can't see @import'ed rules; Codex adrev R1 #7). tuxlink-h7q7.
  */
 @media (max-width: 1365px) {
-  /* panes grid + rail + ribbon + chrome compact rules — Phases 1-2 */
+  /* ====================================================================
+   * Panes grid (Task 6). 200px sidebar → 48px rail. The radio panel is a
+   * COLLAPSIBLE 4th column (push drawer): 44px grip when closed, 400px when
+   * open. NOT an absolute overlay (a child webview would paint over it —
+   * Codex adrev R1 #5). The legacy 5th column (dead today) collapses into the
+   * same template. Reader 1fr at 1280px: ~808px (closed) / ~452px (open) —
+   * both beat the desktop dock's ~300px.
+   * ==================================================================== */
+  .layout-b .panes {
+    grid-template-columns: 48px 380px 1fr;
+  }
+  .layout-b .panes--with-dock,
+  .layout-b .panes--with-dock.panes--with-legacy-dock {
+    grid-template-columns: 48px 380px 1fr 44px; /* closed: grip only */
+  }
+  .layout-b .panes--with-dock.drawer-open,
+  .layout-b .panes--with-dock.panes--with-legacy-dock.drawer-open {
+    grid-template-columns: 48px 380px 1fr 400px; /* open: panel */
+  }
+
+  /* ====================================================================
+   * Icon rail (Task 10). Layout is @media-driven (NOT gated on the .compact
+   * JS class) so CSS and JS can't disagree about the mode (Codex adrev R1 #2).
+   * The 48px width comes from the panes grid above; these rules hide label
+   * TEXT (kept in the a11y tree via clip — Claude adrev F1/F4), center icons,
+   * and pin >=44px rows. Only the EXPANDED state is JS (.is-expanded).
+   * ==================================================================== */
+  .layout-b .sidebar {
+    padding: 8px 0;
+    overflow: visible;
+  }
+  /* Hide label text but KEEP it in the accessibility tree (clip, not
+   * display:none — else icon-only buttons are nameless to AT, F1). Wrapping
+   * the section heading text in its own span (F4) keeps the Folders `+`
+   * create-folder button visible. */
+  .layout-b .sidebar .nav-label,
+  .layout-b .sidebar .section-label-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  /* Counts/badges are decorative — safe to drop entirely in the rail. */
+  .layout-b .sidebar .nav-item .count,
+  .layout-b .sidebar .nav-item .v01-badge {
+    display: none;
+  }
+  .layout-b .sidebar .nav-item {
+    justify-content: center;
+    min-height: 44px;
+    padding: 7px 0;
+    gap: 0;
+  }
+  .layout-b .sidebar .nav-item .icon {
+    width: auto;
+    font-size: 18px;
+  }
+  /* F5 — inset focus ring (the default outline is clipped by .panes overflow). */
+  .layout-b .sidebar .nav-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  /* Expanded overlay — floats the full labeled sidebar over the list (overlay,
+   * not push: the list is HTML so no webview-occlusion concern). */
+  .layout-b .sidebar.is-expanded {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 220px;
+    z-index: 6;
+    background: var(--surface);
+    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.35);
+    overflow: auto;
+    padding: 12px 0;
+  }
+  .layout-b .sidebar.is-expanded .nav-label,
+  .layout-b .sidebar.is-expanded .section-label-text {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+  .layout-b .sidebar.is-expanded .nav-item .count {
+    display: revert;
+  }
+  .layout-b .sidebar.is-expanded .nav-item {
+    justify-content: flex-start;
+    padding: 7px 18px;
+    gap: 10px;
+  }
+  .layout-b .sidebar.is-expanded .nav-item .icon {
+    width: 14px;
+    font-size: 11px;
+  }
+  /* Rail expand toggle (a rail header button) — shown only in compact. */
+  .layout-b .rail-expand-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 44px;
+    margin-bottom: 4px;
+    background: none;
+    border: 0;
+    color: var(--text-faint);
+    font-size: 18px;
+    cursor: pointer;
+  }
+  .layout-b .rail-expand-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  /* ====================================================================
+   * Ribbon clip fix + chrome/menubar/titlebar/statusbar touch + font floors
+   * (Task 11). Density, not uniform shrink: tighten wasteful spacing; raise
+   * sub-floor chrome text to >=12px; pin >=44px touch targets.
+   * ==================================================================== */
+  /* Ribbon clip: the 560px search-zone + 260px connection + 28px gaps overflow
+   * the 1280px ribbon under overflow:hidden, clipping the Connect button. */
+  .layout-b .search-zone {
+    flex: 0 0 360px;
+  }
+  .layout-b .dashboard {
+    gap: 16px;
+  }
+  .layout-b .dashboard .dash-connection {
+    max-width: 180px;
+  }
+  /* Ribbon touch targets >=44px (height). */
+  .layout-b .dashboard .connect-button,
+  .layout-b .dashboard .abort-button,
+  .layout-b .dashboard .dash-ssid-select,
+  .layout-b .dashboard .dash-grid-value-btn,
+  .layout-b .dashboard .dash-source-segment,
+  .layout-b .dashboard .dash-set-manually {
+    min-height: 44px;
+  }
+  /* Ribbon font floors (>=12px chrome text at 216 PPI). */
+  .layout-b .dashboard .dash-label,
+  .layout-b .dashboard .dash-source-segment {
+    font-size: 12px;
+  }
+  /* Sidebar section labels (when expanded) + MenuBar + status floors. */
+  .layout-b .sidebar .section-label {
+    font-size: 12px;
+  }
+  /* MenuBar trigger buttons + dropdown menu items >=44px touch. */
+  .tux-menu > button,
+  .tux-dropdown .tux-mi {
+    min-height: 44px;
+  }
+  /* Titlebar window controls 24x24 → 44x44 (rugged-tablet mis-tap cost). The
+   * compose titlebar scopes its own bump (R4); this is the shell titlebar. */
+  .tux-titlebar .tux-ctrl {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* Status bar text floor + item touch height. */
+  .layout-b .statusbar {
+    font-size: 12px;
+  }
+  .layout-b .statusbar .status-item {
+    min-height: 44px;
+  }
+}
+
+/* Rail expand toggle is hidden at desktop (the rest is inside the @media). */
+.rail-expand-btn {
+  display: none;
 }
 
 /* Rail expand toggle is hidden at desktop (the rest is inside the @media). */
