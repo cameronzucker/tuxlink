@@ -1,6 +1,10 @@
 // Inbound pending-message selection panel — WLE "Review Pending Messages"
-// parity (tuxlink-bsiy). Inline overlay panel (no pop-up window), modeled on
-// CatalogBuilderPanel: a fixed-position backdrop + ESC-to-close.
+// parity (tuxlink-bsiy). Inline overlay panel (no pop-up window). The overlay
+// STRUCTURE (fixed-position backdrop, role="dialog", design-token CSS, lazy +
+// Suspense mount) is modeled on CatalogBuilderPanel. ESC-to-close is an
+// improvement this panel adds; CatalogBuilderPanel has neither ESC-close nor
+// backdrop-click-close. There is no backdrop onClick here either — accidental
+// dismissal of a modal selection dialog is undesirable.
 //
 // Columns are MID / uncompressed / compressed — the only fields available
 // pre-download (the proposal phase carries no sender/subject). All rows are
@@ -55,7 +59,7 @@ export function InboundSelectionPanel({
   // tick `remaining` below 0 before the clear-on-unmount runs.
   const autoSubmitted = useRef(false);
 
-  // ESC closes (matches the chrome's click-away/ESC affordances).
+  // ESC closes (an improvement over CatalogBuilderPanel, which has no keyboard dismiss).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -103,6 +107,7 @@ export function InboundSelectionPanel({
     <div
       className="inbound-selection-overlay"
       role="dialog"
+      aria-modal="true"
       aria-label="Review Pending Messages"
     >
       <div className="inbound-selection">
