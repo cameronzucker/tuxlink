@@ -16,6 +16,17 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.35.13](https://github.com/cameronzucker/tuxlink/compare/v0.35.12...v0.35.13) (2026-06-08)
+
+
+### Bug Fixes
+
+* **compose:** show offline identifier in read-only From field ([2204c09](https://github.com/cameronzucker/tuxlink/commit/2204c096a7f6c4a57d70d63b0a99c7ff8c0f9b89))
+* **forms:** cap standout native forms at a readable width ([9d65154](https://github.com/cameronzucker/tuxlink/commit/9d65154b8a87b1cf92d688ee006c7635fa64e91e))
+* **logging:** list per-message movement on Telnet P2P exchanges ([030330d](https://github.com/cameronzucker/tuxlink/commit/030330d00690747d9555b326bb8abef635ad77f1))
+* **mailbox:** decode mixed-encoding B2F bodies byte-wise ([56a3346](https://github.com/cameronzucker/tuxlink/commit/56a33462ee3d1891cfadf34624077cf57ffd4307))
+* **shell:** reflect active ARDOP/VARA transport in ribbon idle label ([c12a53b](https://github.com/cameronzucker/tuxlink/commit/c12a53b7cbd4cf00316620b76a1209dfa2b47ae2))
+
 ## [0.35.12](https://github.com/cameronzucker/tuxlink/compare/v0.35.11...v0.35.12) (2026-06-07)
 
 
