@@ -29,6 +29,7 @@ import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
 import { useUserFolders } from '../mailbox/useUserFolders';
 import { useContacts } from '../contacts/useContacts';
+import { ContactsPanel } from '../contacts/ContactsPanel';
 import { FolderContextMenu } from '../mailbox/FolderContextMenu';
 import type { UserFolder } from '../mailbox/types';
 import type { MessageMetaDto } from '../search/types';
@@ -858,6 +859,15 @@ export function AppShell() {
           selectedConnection={selectedConnection}
           onSelectConnection={onSelectConnection}
         />
+        {/* M8 (tuxlink-raez / A8): the Contacts pseudo-folder replaces BOTH the
+            MessageList column AND the reading pane with the inline ContactsPanel
+            list/detail surface. The early-return wraps both — placing it inside
+            the reading-pane ternary alone would leave MessageList rendered to the
+            left (two list columns). */}
+        {selectedFolder === 'contacts' ? (
+          <ContactsPanel />
+        ) : (
+          <>
         <MessageList
           folder={selectedFolder}
           messages={visibleMessages}
@@ -933,6 +943,8 @@ export function AppShell() {
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
+          </>
+        )}
         {/* Per-mode radio panels. Telnet (P2), Packet (P3), ARDOP HF (P4),
             and VARA HF/FM (Phase 2 — tuxlink-dfmf) ship their real
             implementations; any other mode (none today) would fall through

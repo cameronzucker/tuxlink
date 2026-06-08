@@ -84,6 +84,13 @@ vi.mock('@tauri-apps/api/core', () => ({
     // Search IPC stubs (Task 17 — find-messages wiring)
     if (cmd === 'tauri_search_list_saved') return [];
     if (cmd === 'tauri_search_list_recent') return [];
+    // Contacts IPC stubs (tuxlink-raez — A7 sidebar count + A8 ContactsPanel).
+    // useContacts (mounted by AppShell) reads contacts_read; the ContactsPanel
+    // (when the Contacts pseudo-folder is selected) also reads
+    // contacts_suggestions. Both MUST return a real value (never undefined —
+    // react-query rejects undefined query data).
+    if (cmd === 'contacts_read') return { schema_version: 1, contacts: [], groups: [] };
+    if (cmd === 'contacts_suggestions') return [];
     return undefined;
   }),
 }));
@@ -689,5 +696,55 @@ describe('AppShell.css print stylesheet (tuxlink-zdfj)', () => {
     expect(printCss).toMatch(
       /\.layout-b \.reading-pane \.msg-meta\s*\{[\s\S]*break-before:\s*avoid;[\s\S]*break-inside:\s*avoid;[\s\S]*page-break-inside:\s*avoid;/,
     );
+  });
+});
+
+// ============================================================================
+// Contacts pseudo-folder routing (tuxlink-raez / Task A8 — M8 + Codex#11).
+//
+// Selecting the Address → Contacts sidebar item swaps the main content for the
+// inline ContactsPanel, REPLACING BOTH the MessageList column and the reading
+// pane (M8). The mailbox query must NOT fire for the `'contacts'` pseudo-folder
+// (Codex#11). (`useMailbox` is mocked above; `isBackendFolder('contacts')`
+// returns false here, mirroring the real guard — so the panel is asserted to
+// render WITHOUT the rows-pane MessageList alongside it.)
+// ============================================================================
+describe('<AppShell> — Contacts pseudo-folder (M8 + Codex#11)', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    vi.mocked(invoke).mockClear();
+  });
+
+  it('selecting Contacts renders ContactsPanel and removes the MessageList', async () => {
+    renderShell();
+    // Baseline: the mailbox rows-pane (MessageList root) is present.
+    expect(screen.getByTestId('rows-pane')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('folder-contacts'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('contacts-panel')).toBeInTheDocument(),
+    );
+    // M8: MessageList (rows-pane) MUST NOT render alongside the ContactsPanel.
+    expect(screen.queryByTestId('rows-pane')).toBeNull();
+  });
+
+  it('does NOT fire mailbox_list for the contacts pseudo-folder (Codex#11)', async () => {
+    renderShell();
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(screen.getByTestId('folder-contacts'));
+    await waitFor(() =>
+      expect(screen.getByTestId('contacts-panel')).toBeInTheDocument(),
+    );
+
+    const firedContactsMailbox = vi
+      .mocked(invoke)
+      .mock.calls.some(
+        ([cmd, args]) =>
+          cmd === 'mailbox_list' &&
+          (args as { folder?: string } | undefined)?.folder === 'contacts',
+      );
+    expect(firedContactsMailbox).toBe(false);
   });
 });
