@@ -52,7 +52,7 @@ pub struct Config {
     pub telnet_listen: TelnetListenUiConfig,
     /// Opt-in: prompt the operator to select which pending inbound messages to
     /// download on a CMS connect (WLE "Review Pending Messages" parity), instead
-    /// of auto-downloading all. Default false = auto-download-all (today's behavior).
+    /// of auto-downloading all. Default false = auto-download-all (the default, WLE parity).
     /// `#[serde(default)]` migrates configs that predate this field (absent → false),
     /// satisfying `deny_unknown_fields` (the field is now KNOWN).
     #[serde(default)]

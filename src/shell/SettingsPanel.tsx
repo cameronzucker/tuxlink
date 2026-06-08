@@ -64,7 +64,9 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [gpsState, setGpsState] = useState<GpsState | null>(null);
   const [precision, setPrecision] = useState<PositionPrecision | null>(null);
   // tuxlink-bsiy: opt-in Review-Pending-Messages preference (WLE parity).
-  const [reviewInbound, setReviewInbound] = useState<boolean>(false);
+  // null = config not yet loaded (mirrors the GPS null-init pattern so a click
+  // before config_read resolves cannot persist a stale pre-load value).
+  const [reviewInbound, setReviewInbound] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Load the current values each time the panel opens (live config, not cached).
@@ -200,8 +202,8 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
             <input
               type="checkbox"
               name="review-inbound"
-              checked={reviewInbound}
-              onChange={(e) => persistReviewInbound(e.target.checked)}
+              checked={reviewInbound === true}
+              onChange={() => reviewInbound !== null && persistReviewInbound(!reviewInbound)}
             />
             <span className="tux-settings-opt-text">
               <span className="tux-settings-opt-label">

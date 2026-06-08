@@ -5163,8 +5163,8 @@ pub async fn config_set_connect(
 // ============================================================================
 
 /// Persist the opt-in `review_inbound_before_download` preference (WLE "Review
-/// Pending Messages" parity). Default false = auto-download-all (today's
-/// behavior). Mirrors `config_set_connect`'s read → mutate → persist ordering
+/// Pending Messages" parity). Default false = auto-download-all (the default,
+/// WLE parity). Mirrors `config_set_connect`'s read → mutate → persist ordering
 /// and its `UiError` handling exactly.
 ///
 /// The live-refresh `set_config` call is load-bearing: the connect path reads
