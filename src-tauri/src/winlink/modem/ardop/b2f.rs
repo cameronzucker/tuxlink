@@ -74,7 +74,7 @@ pub fn run_b2f_exchange<F>(
     decide: F,
 ) -> Result<ExchangeResult, B2fOverArdopError>
 where
-    F: Fn(&[Proposal]) -> Vec<Answer>,
+    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
 {
     let data: &mut dyn ReadWrite = transport
         .data_stream()
@@ -252,7 +252,7 @@ mod tests {
             ExchangeRole::Dial,
             &dial_config(),
             vec![],
-            |_| vec![],
+            |_| Ok(vec![]),
         );
         assert!(
             matches!(result, Err(B2fOverArdopError::DataStream(_))),
@@ -289,7 +289,7 @@ mod tests {
             ExchangeRole::Dial,
             &dial_config(),
             vec![],
-            |_| vec![],
+            |_| Ok(vec![]),
         )
         .expect("empty exchange must succeed");
         assert!(result.received.is_empty());
@@ -345,10 +345,10 @@ mod tests {
             vec![],
             |proposals| {
                 *decide_calls.lock().unwrap() += 1;
-                proposals
+                Ok(proposals
                     .iter()
                     .map(|_| Answer::Accept { resume_offset: 0 })
-                    .collect()
+                    .collect())
             },
         )
         .expect("exchange must succeed");
@@ -406,7 +406,7 @@ mod tests {
             ExchangeRole::Dial,
             &dial_config(),
             outbound,
-            |_| vec![],
+            |_| Ok(vec![]),
         )
         .expect("outbound exchange must succeed");
 
@@ -446,7 +446,7 @@ mod tests {
             ExchangeRole::Dial,
             &dial_config(),
             vec![],
-            |_| vec![],
+            |_| Ok(vec![]),
         )
         .expect("exchange must succeed");
 

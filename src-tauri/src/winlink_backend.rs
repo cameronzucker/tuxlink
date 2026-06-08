@@ -1692,7 +1692,7 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
         role,
         &exchange_config,
         outbound,
-        |proposals| proposals.iter().map(|_| Answer::Accept { resume_offset: 0 }).collect(),
+        |proposals| Ok(proposals.iter().map(|_| Answer::Accept { resume_offset: 0 }).collect()),
         Some(wire_log),
     )
     .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
@@ -2154,10 +2154,10 @@ fn native_connect(
         wire_log,
         &register_socket,
         |proposals| {
-            proposals
+            Ok(proposals
                 .iter()
                 .map(|_| Answer::Accept { resume_offset: 0 })
-                .collect()
+                .collect())
         },
     )
     .map_err(|e| {
@@ -2414,10 +2414,10 @@ pub fn run_ardop_b2f_exchange(
         &exchange_config,
         outbound,
         |proposals| {
-            proposals
+            Ok(proposals
                 .iter()
                 .map(|_| Answer::Accept { resume_offset: 0 })
-                .collect()
+                .collect())
         },
     )
     .map_err(|e| BackendError::TransportFailed {
@@ -2494,10 +2494,10 @@ pub fn run_ardop_b2f_answer(
         &exchange_config,
         outbound,
         |proposals| {
-            proposals
+            Ok(proposals
                 .iter()
                 .map(|_| Answer::Accept { resume_offset: 0 })
-                .collect()
+                .collect())
         },
     )
     .map_err(|e| BackendError::TransportFailed { reason: format!("{e}"), source: None })?;
@@ -2607,10 +2607,10 @@ pub fn run_vara_b2f_answer(
         &exchange_config,
         outbound,
         |proposals| {
-            proposals
+            Ok(proposals
                 .iter()
                 .map(|_| Answer::Accept { resume_offset: 0 })
-                .collect()
+                .collect())
         },
         None,
     )
@@ -2760,10 +2760,10 @@ pub fn run_vara_b2f_exchange(
         &exchange_config,
         outbound,
         |proposals| {
-            proposals
+            Ok(proposals
                 .iter()
                 .map(|_| Answer::Accept { resume_offset: 0 })
-                .collect()
+                .collect())
         },
         None,
     )
@@ -3437,7 +3437,7 @@ mod native_read_state_tests {
             &|_| {},
             &|_| {},
             &|_| {},
-            |_| vec![],
+            |_| Ok(vec![]),
         )
         .expect("dial to the local listener should connect and complete a clean exchange");
 

@@ -72,7 +72,7 @@ fn main() {
             if !proposals.is_empty() {
                 println!("CMS offered {} message(s); deferring all", proposals.len());
             }
-            proposals.iter().map(|_| Answer::Defer).collect()
+            Ok(proposals.iter().map(|_| Answer::Defer).collect())
         },
     );
 

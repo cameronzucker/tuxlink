@@ -257,7 +257,7 @@ pub fn run_exchange<R, W, F>(
 where
     R: BufRead,
     W: Write,
-    F: Fn(&[Proposal]) -> Vec<Answer>,
+    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
 {
     run_exchange_with_role(reader, writer, ExchangeRole::Dial, config, outbound, decide, wire_log)
 }
@@ -276,7 +276,7 @@ pub fn run_exchange_with_role<R, W, F>(
 where
     R: BufRead,
     W: Write,
-    F: Fn(&[Proposal]) -> Vec<Answer>,
+    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
 {
     let span = tracing::info_span!(
         "b2f_exchange",
@@ -470,7 +470,7 @@ pub fn run_exchange_with_events<R, W, F>(
 where
     R: BufRead,
     W: Write,
-    F: Fn(&[Proposal]) -> Vec<Answer>,
+    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
 {
     use super::b2f_events::{B2fEvent, ConnectionPhase};
 
@@ -676,7 +676,7 @@ pub fn receive_turn<R, W, F>(
 where
     R: BufRead,
     W: Write,
-    F: Fn(&[Proposal]) -> Vec<Answer>,
+    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
 {
     let mut outcome = ReceiveOutcome::default();
     let mut proposals: Vec<Proposal> = Vec::new();
@@ -722,7 +722,7 @@ where
                     outcome.remote_no_messages = true;
                     return Ok(outcome);
                 }
-                answers = decide(&proposals);
+                answers = decide(&proposals)?;
                 if answers.len() != proposals.len() {
                     return Err(ExchangeError::AnswerCountMismatch);
                 }
@@ -1083,8 +1083,10 @@ mod tests {
         let mut reader = Cursor::new(script);
         let mut writer = Vec::new();
         let outcome =
-            receive_turn(&mut reader, &mut writer, |_| vec![Answer::Accept { resume_offset: 0 }])
-                .unwrap();
+            receive_turn(&mut reader, &mut writer, |_| {
+                Ok(vec![Answer::Accept { resume_offset: 0 }])
+            })
+            .unwrap();
 
         assert_eq!(writer, b"FS +\r");
         assert_eq!(outcome.messages.len(), 1);
@@ -1094,10 +1096,44 @@ mod tests {
     }
 
     #[test]
+    fn receive_turn_cancelling_decider_returns_err_and_writes_no_answer_line() {
+        // A decider that cancels (operator abort) must make receive_turn return
+        // Err BEFORE any FS answer line is written and before any body is read.
+        let mut msg = Message::new();
+        msg.set_header("Mid", "INBOUND00001");
+        msg.set_header("Subject", "Field report");
+        msg.set_header("From", "N7XYZ");
+        msg.set_body(b"Net is active.\r\n".to_vec());
+        let (proposal, _compressed) = msg.to_proposal().unwrap();
+
+        // Only the proposal line + its F> checksum line are needed to reach the
+        // decide() call; the cancel happens at F> before any body read.
+        let mut script = Vec::new();
+        script.extend_from_slice(proposal.line().as_bytes());
+        script.push(b'\r');
+        script.extend_from_slice(batch_checksum_line(&[proposal]).as_bytes());
+        script.push(b'\r');
+
+        let mut reader = Cursor::new(script);
+        let mut writer = Vec::new();
+        let result = receive_turn(&mut reader, &mut writer, |_| Err(ExchangeError::Cancelled));
+
+        assert_eq!(result, Err(ExchangeError::Cancelled));
+        assert!(
+            writer.is_empty(),
+            "no FS answer line must be written on cancel; got {writer:?}"
+        );
+        assert!(
+            !writer.windows(2).any(|w| w == b"FS"),
+            "writer must not contain an FS answer line on cancel; got {writer:?}"
+        );
+    }
+
+    #[test]
     fn the_other_side_having_no_messages_ends_the_turn() {
         let mut reader = Cursor::new(b"FF\r".to_vec());
         let mut writer = Vec::new();
-        let outcome = receive_turn(&mut reader, &mut writer, |_| vec![]).unwrap();
+        let outcome = receive_turn(&mut reader, &mut writer, |_| Ok(vec![])).unwrap();
         assert!(outcome.remote_no_messages);
         assert!(outcome.messages.is_empty());
         assert!(writer.is_empty());
@@ -1107,7 +1143,7 @@ mod tests {
     fn the_other_side_quitting_is_reported() {
         let mut reader = Cursor::new(b"FQ\r".to_vec());
         let mut writer = Vec::new();
-        let outcome = receive_turn(&mut reader, &mut writer, |_| vec![]).unwrap();
+        let outcome = receive_turn(&mut reader, &mut writer, |_| Ok(vec![])).unwrap();
         assert!(outcome.remote_quit);
     }
 
@@ -1116,7 +1152,7 @@ mod tests {
         // No proposals, just the end-of-batch line; its checksum is "00".
         let mut reader = Cursor::new(b"F> 00\r".to_vec());
         let mut writer = Vec::new();
-        let outcome = receive_turn(&mut reader, &mut writer, |_| vec![]).unwrap();
+        let outcome = receive_turn(&mut reader, &mut writer, |_| Ok(vec![])).unwrap();
         assert!(outcome.remote_no_messages);
         assert!(outcome.messages.is_empty());
         assert!(writer.is_empty());
@@ -1144,7 +1180,7 @@ mod tests {
             ExchangeRole::Dial,
             &config,
             vec![],
-            |_| vec![],
+            |_| Ok(vec![]),
             None,
         )
         .unwrap();
@@ -1173,7 +1209,7 @@ mod tests {
             password: Some("MYPASS".into()),
             intent: SessionIntent::Cms,
         };
-        let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| vec![], None).unwrap();
+        let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None).unwrap();
 
         assert!(result.received.is_empty());
         assert!(result.sent.is_empty());
@@ -1214,7 +1250,7 @@ mod tests {
             intent: SessionIntent::Cms,
         };
         let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| {
-            vec![Answer::Accept { resume_offset: 0 }]
+            Ok(vec![Answer::Accept { resume_offset: 0 }])
         }, None)
         .unwrap();
 
@@ -1235,7 +1271,7 @@ mod tests {
             intent: SessionIntent::Cms,
         };
         assert_eq!(
-            run_exchange(&mut reader, &mut writer, &config, vec![], |_| vec![], None),
+            run_exchange(&mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None),
             Err(ExchangeError::PasswordRequired)
         );
     }
@@ -1248,7 +1284,7 @@ mod tests {
                 .to_vec(),
         );
         let mut writer = Vec::new();
-        let result = receive_turn(&mut reader, &mut writer, |_| vec![]);
+        let result = receive_turn(&mut reader, &mut writer, |_| Ok(vec![]));
         assert!(matches!(result, Err(ExchangeError::RemoteError(_))));
     }
 
@@ -1284,7 +1320,7 @@ mod tests {
         let mut reader = Cursor::new(script);
         let mut writer = Vec::new();
         assert_eq!(
-            receive_turn(&mut reader, &mut writer, |_| vec![Answer::Accept { resume_offset: 0 }]),
+            receive_turn(&mut reader, &mut writer, |_| Ok(vec![Answer::Accept { resume_offset: 0 }])),
             Err(ExchangeError::ChecksumMismatch)
         );
     }
@@ -1328,7 +1364,7 @@ mod tests {
             ExchangeRole::Answer,
             &config,
             vec![],
-            |_| vec![Answer::Accept { resume_offset: 0 }],
+            |_| Ok(vec![Answer::Accept { resume_offset: 0 }]),
             None,
         )
         .unwrap();
@@ -1378,7 +1414,7 @@ mod tests {
         };
         let sink = VecEventSink::new();
         let result = run_exchange_with_events(
-            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink),
+            &mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None, Some(&sink),
             AttemptId::fresh(),
         ).unwrap();
         assert!(result.received.is_empty());
@@ -1416,7 +1452,7 @@ mod tests {
         };
         let sink = VecEventSink::new();
         let _ = run_exchange_with_events(
-            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink),
+            &mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None, Some(&sink),
             AttemptId::fresh(),
         );
         let events = sink.snapshot();
@@ -1468,7 +1504,7 @@ mod tests {
 
         let sink = VecEventSink::new();
         let result = run_exchange_with_events(
-            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink),
+            &mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None, Some(&sink),
             AttemptId::fresh(),
         );
         assert!(result.is_ok(), "happy-path exchange must not error: {result:?}");
@@ -1520,7 +1556,7 @@ mod tests {
         let sink = VecEventSink::new();
         let supplied_id = AttemptId(99);
         let _ = run_exchange_with_events(
-            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink), supplied_id,
+            &mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None, Some(&sink), supplied_id,
         );
         let events = sink.snapshot();
         for event in &events {
@@ -1556,7 +1592,7 @@ mod tests {
         };
         let sink = VecEventSink::new();
         let result = run_exchange_with_events(
-            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink), AttemptId(1),
+            &mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None, Some(&sink), AttemptId(1),
         );
         // PostAuthExchangeStarted must NOT fire — the line is not a valid B2F command.
         let events = sink.snapshot();

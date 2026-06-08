@@ -184,7 +184,8 @@ pub fn run_accept_loop<F>(
     wire_log: &dyn Fn(&str),
     decide: F,
 ) where
-    F: Fn(&[crate::winlink::proposal::Proposal]) -> Vec<crate::winlink::proposal::Answer> + Clone,
+    F: Fn(&[crate::winlink::proposal::Proposal]) -> Result<Vec<crate::winlink::proposal::Answer>, ExchangeError>
+        + Clone,
 {
     let local = listener
         .local_addr()
@@ -309,7 +310,7 @@ pub(crate) fn handle_one_session<F>(
     decide: F,
 ) -> Result<ExchangeResult, TelnetListenError>
 where
-    F: Fn(&[crate::winlink::proposal::Proposal]) -> Vec<crate::winlink::proposal::Answer>,
+    F: Fn(&[crate::winlink::proposal::Proposal]) -> Result<Vec<crate::winlink::proposal::Answer>, ExchangeError>,
 {
     // Bound the wire phase so a half-open peer can't pin the listener.
     stream.set_read_timeout(Some(PEER_TIMEOUT)).ok();
@@ -523,7 +524,7 @@ fn run_b2f_answerer<R, W, F>(
 where
     R: Read,
     W: Write,
-    F: Fn(&[crate::winlink::proposal::Proposal]) -> Vec<crate::winlink::proposal::Answer>,
+    F: Fn(&[crate::winlink::proposal::Proposal]) -> Result<Vec<crate::winlink::proposal::Answer>, ExchangeError>,
 {
     use crate::winlink_backend::MailboxFolder;
 
@@ -979,7 +980,7 @@ mod tests {
                 None,
                 &|_| {},
                 &|_| {},
-                |_| Vec::new(),
+                |_| Ok(Vec::new()),
             )
         });
 
@@ -1055,7 +1056,7 @@ mod tests {
                 None,
                 &|_| {},
                 &|_| {},
-                |_| Vec::new(),
+                |_| Ok(Vec::new()),
             )
         });
 
@@ -1122,7 +1123,7 @@ mod tests {
                 None,
                 &|_| {},
                 &|_| {},
-                |_| Vec::new(),
+                |_| Ok(Vec::new()),
             )
         });
 
@@ -1182,7 +1183,7 @@ mod tests {
                 None,
                 &|_| {},
                 &|_| {},
-                |_| Vec::new(),
+                |_| Ok(Vec::new()),
             )
         });
 
@@ -1357,7 +1358,7 @@ mod tests {
                 None,
                 &|_| {},
                 &|_| {},
-                |_| Vec::new(),
+                |_| Ok(Vec::new()),
             )
         });
 
@@ -1416,7 +1417,7 @@ mod tests {
                 shutdown_for_loop,
                 &|_| {},
                 &|_| {},
-                |_proposals: &[Proposal]| Vec::new(),
+                |_proposals: &[Proposal]| Ok(Vec::new()),
             );
         });
 

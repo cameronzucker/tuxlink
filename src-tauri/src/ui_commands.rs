@@ -5471,7 +5471,7 @@ pub async fn telnet_p2p_connect(
                     line.to_string(),
                 );
             },
-            |_proposals| Vec::new(),
+            |_proposals| Ok(Vec::new()),
         )
     })
     .await
@@ -5963,10 +5963,10 @@ pub async fn telnet_listen(
                 // accept every proposal at the B2F layer; mailbox dedup is
                 // a follow-up (filed as a new bd issue tracking inbound-
                 // mail symmetry — outbox-on-inbound + inbox-persistence).
-                proposals
+                Ok(proposals
                     .iter()
                     .map(|_| crate::winlink::proposal::Answer::Accept { resume_offset: 0 })
-                    .collect()
+                    .collect())
             },
         );
         // Clear the handle once the loop exits.
