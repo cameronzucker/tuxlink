@@ -49,6 +49,103 @@
 | #12 | MEDIUM | Rust clamp underspecified; primary monitor ≠ caller's; window-state can restore oversized | **ACCEPT** → derive from current/caller monitor; safe fallback; **post-`build()` clamp** if restored geometry exceeds the work area (Task 12). |
 | #13 | MEDIUM | App-level mount test isn't a layout guard | **ACCEPT** → labeled a smoke test; real viewport tests own the shell invariants (Task 7). |
 
+### Claude adversarial review rounds 2-5 dispositions (4 lenses: CSS-cascade / radio-safety / a11y / coordination)
+
+These supersede/augment the task bodies where they conflict — **the corrections below are authoritative.** (Full transcript: workflow `wf_0e94e4a6-194`.) Five "VERIFIED OK" refutations were also returned — do NOT re-investigate: nested `display:contents` grid placement is correct; the `min-width:0` override beats `RadioPanel.css` on specificity (not source order); `translateX(100%)` correctly hides the closed body; `.panes--with-dock` source-order win holds; the grip is a real button with no focus-trap.
+
+| F | Sev | Finding | Authoritative fix |
+|---|---|---|---|
+| **F1** | **CRITICAL** | `.nav-label { display:none }` strips the accessible name from every rail button → all nameless to AT (WCAG 4.1.2). The plan's own CSS-string test asserts the broken rule. | **Use the visually-hidden CLIP pattern, not `display:none`** (code below). Fix the Task 10 test to assert the clip pattern + add an accessible-name check. |
+| **F2+F13** | **HIGH** | `deriveDrawerSessionState` reads binary `modemIsActive` → shows GREEN/grey during an RF *connecting* handshake (the 2026-05-22 runaway window) — never reaches amber. A lying safety indicator. | **Switch on `statusData.status.kind`** (code below): map Connecting→connecting(amber), Connected→connected, Listening→connecting(armed), Disconnecting→disconnecting, Error→error, else disconnected. Add unit branches for each. |
+| **F3** | **HIGH** | R6's "honest grip → expand-tap-to-abort" is circular while F2 is unfixed; the only RF stop is inside the collapsed panel. | **PARTIAL.** Fixing F2 makes the grip an honest amber cue (the in-scope mitigation). A new "ribbon Abort for all transports" is a **radio-UX/safety feature the operator owns** (`feedback_no_tuxlink_added_safeguards`, `feedback_radio1_governs_tx_not_ui`) — do NOT build it speculatively in this responsive PR. **File a bd follow-up + surface it as an explicit operator smoke-note** (see revised R6). |
+| **F4** | **HIGH** | Hiding `.section-label` (a flex container) also hides the `+` create-folder button — the only folder-creation path in compact. | **Hide section-label TEXT only** (wrap each section heading's text in a span; clip-hide the span; keep the container + `+` button). Task 10 + Task 8. |
+| **F5** | **HIGH** | Rail nav-items have no `:focus-visible`; the default outline is clipped by `.panes { overflow:hidden }` → invisible keyboard focus (WCAG 2.4.7). | Add an **inset** focus ring in compact (code below) + a Playwright check. |
+| **F6** | **HIGH** | The radio-panel **interior** compact rules (segmented tabs ≥44px, chips, inputs, font floors, `.session-log` min-height) have a checklist row but **no task**. `.radio-panel-segmented` (in `src/radio/sections/ModemLinkSection.css`) is what CF's tabs reuse — it must exist. | **New Task 6b** (Phase 1, after Task 6) — see below. |
+| **F7** | **HIGH** | Leftover `@import` clause (L67) contradicts the JS-import fix → false-clean regression guard. | **Fixed** (deleted). AppShell.css is unchanged; sole loader is the JS import. |
+| **F8** | MEDIUM | `drawerOpen` not reset when `radioPanelMode→null` via modem-stop (only onClose resets) → next panel opens pre-expanded, violating "manual, default-closed". | Add `useEffect(() => { if (radioPanelMode === null) setDrawerOpen(false); }, [radioPanelMode]);` (Task 5) + a test. |
+| **F9** | MEDIUM | Task 2 guard never reads `RadioDrawer.css` — a `display:flex` leak to desktop there is caught only by Playwright. | Add a `RadioDrawer.css?raw` scoping assertion (Task 4): pre-`@media` slice contains exactly the 3 desktop rules, no `display:flex/block`. |
+| **F10** | MEDIUM | Opening the drawer leaves focus on the grip; Abort is N blind tabs away. | On open, move focus to panel root (`tabIndex={-1}` + `.focus()`); on close, return to grip (Task 5/4) + RTL test. |
+| **F11** | MEDIUM | Coordination row: CF adds a new "Address" `section-label` + a Contacts item *in the `MAILBOX_ITEMS`-style list*. Task 8 must wrap CF's labels too, else raw text shows in the rail. | Task 8 contract = "**every** sidebar label incl. CF's Address/Contacts is `.nav-label`-wrapped"; add a "no bare text node is a direct nav-item child" test. (Verified against CF's Task A7.) |
+| **F12** | MEDIUM | Coordination row cites the wrong mount for CF's tabs (per-mode panel, not `RadioPanel.tsx:58`); "zero overlap" still holds. | Doc fix + tie "reuse `.radio-panel-segmented`" to Task 6b. |
+
+**F1 — visually-hidden clip for rail labels (replaces the `display:none` in Task 10's CSS):**
+
+```css
+  /* Rail labels: visually hidden but KEPT in the accessibility tree (Claude
+   * adrev F1 — display:none would make every icon-only button nameless to a
+   * screen reader). Section-label TEXT is wrapped in its own span and clipped
+   * the same way, so the `+` create-folder button in the Folders section header
+   * stays visible (F4). */
+  .layout-b .sidebar .nav-label,
+  .layout-b .sidebar .section-label-text {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0; border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .layout-b .sidebar .count,
+  .layout-b .sidebar .v01-badge { display: none; } /* decorative — safe to drop */
+  /* Expanded overlay restores the clipped text. */
+  .layout-b .sidebar.is-expanded .nav-label,
+  .layout-b .sidebar.is-expanded .section-label-text {
+    position: static; width: auto; height: auto;
+    margin: 0; overflow: visible; clip-path: none; white-space: normal;
+  }
+  /* F5 — inset focus ring (the default outline is clipped by .panes overflow). */
+  .layout-b .sidebar .nav-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+```
+
+> Task 8 must therefore also wrap each **section-label** heading's text in `<span className="section-label-text">…</span>` (for "Mailbox", "Folders", "Connections", and CF's "Address"). The `+` button stays a direct child of the `.section-label` container, unclipped.
+
+**F2+F13 — honest `deriveDrawerSessionState` (replaces the Task 5 body):**
+
+```ts
+// src/shell/drawerSessionState.ts
+import type { RadioPanelState } from '../radio/RadioPanel';
+
+export interface DrawerStateInputs {
+  /** True while a CMS connect exchange is in flight (AppShell `connecting`). */
+  connecting: boolean;
+  /** The live transport status (AppShell `statusData.status`), or undefined. */
+  status?: { kind?: string } | null;
+  /** Fallback: modem in any active state (AppShell `useModemIsActive()`). */
+  modemIsActive: boolean;
+}
+
+/**
+ * Coarse session state for the drawer grip tick. CRITICAL (Claude adrev F2):
+ * must NOT show 'connected'/'disconnected' during an RF *connecting* handshake —
+ * that is exactly the runaway-connect window (2026-05-22) where the operator
+ * needs abort urgency. Switch on the transport status kind so 'Connecting' and
+ * 'Listening' surface amber. tuxlink-h7q7.
+ */
+export function deriveDrawerSessionState(i: DrawerStateInputs): RadioPanelState {
+  if (i.connecting) return 'connecting';
+  const k = i.status?.kind;
+  if (k === 'Connecting') return 'connecting';
+  if (k === 'Listening') return 'connecting'; // armed → amber, not green
+  if (k === 'Disconnecting') return 'disconnecting';
+  if (k === 'Error') return 'error';
+  if (k === 'Connected') return 'connected';
+  if (i.modemIsActive) return 'connecting'; // active but unknown kind → amber (cautious), not green
+  return 'disconnected';
+}
+```
+
+> Unit test branches: `connecting:true`→'connecting'; each `kind`→its mapping; `modemIsActive:true` with no status→'connecting' (cautious); else→'disconnected'. The cautious "active→amber" default is deliberate: an unknown-but-active modem must never read as a safe green. **Confirm the exact `status.kind` string values** against the Rust status type before finalizing (read the `statusData.status` type); adjust the literals to match.
+
+**F3 — revised R6 (authoritative):** the mitigation for a collapsed-drawer live session is the **honest amber grip** (F2 fix), which makes a connecting/active session glanceable so the operator taps to expand → abort (one tap; RADIO-1 governs the TX-consent click, not abort placement). A *zero-expand* abort (ribbon Abort wired to every transport's disconnect) is a **radio-UX/safety feature the operator owns** and is NOT built in this PR (it borders on a tuxlink-added safeguard the operator has said to avoid). **File `tuxlink` follow-up issue** "compact collapsed-drawer abort reachability — decide zero-expand abort" (dep: h7q7) and **call it out explicitly in the operator smoke-note**: "at 1280, start an RF session, collapse the drawer — is the amber grip + one-tap-expand-to-abort acceptable, or do you want a ribbon abort?"
+
+**F6 — New Task 6b: radio-panel interior compact CSS (Phase 1, after Task 6).**
+- Files: `src/radio/RadioPanel.css`, `src/radio/sections/ModemLinkSection.css` (+ any `src/radio/sections/*.css` carrying the audited sub-floor selectors).
+- `@media (max-width: 1365px)` block covering the §2.3 audit checklist: `.radio-panel-segmented` (ModemLinkSection.css) `min-height:44px; font-size:12px` (**the rule CF's Favorites/Recent/Manual tabs reuse — F12**); `radio-panel-btn-sm`/chips/chip-`✕` ≥44px; inputs/selects ≥44px; native radio bump; Listen header rows; font floors (segmented 11→12, h5 11→12, LIVE 10→11, help/pills 11→12, Listen 9px region→12); `.session-log { min-height: 160px }` (from 240). TDD via CSS-string assertions on each file. Commit: `feat(radio): compact interior — segmented tabs/chips/inputs touch + font floors (tuxlink-h7q7)`.
+- **Coordination (C):** CF's new tab strip in `radio-panel-body` reuses `.radio-panel-segmented`; this task makes that class compact-correct so CF gets it for free.
+
 ---
 
 ## File structure (created / modified)
@@ -64,7 +161,7 @@
 **Modified files:**
 - `src/shell/AppShell.tsx` — panes className (L841), `drawerOpen`/`railExpanded` state (near L242), wrap the radio-panel mount block (L936-1003) in `<RadioDrawer>`, add the `compact` class to the `.layout-b` root, import `compactShell.css`. **Coordination: different hunks from shoal-raven-gorge's content-switch (L869-929) + `selectedFolder` (L214).**
 - `src/mailbox/FolderSidebar.tsx` — wrap the bare label text node (L184) in `<span className="nav-label">`; refactor the inline-styled `+` button (L211-225), empty-hint (L261-271), and create-btn so a media query can reach them. **Coordination: different hunk from shoal-raven-gorge's `MAILBOX_ITEMS` (L29-35), but the `.nav-label` wrap is inside the same `.map` body — agree which PR lands it.**
-- `src/shell/AppShell.css` — add `@import './compactShell.css';` at top; **no other change** (desktop rules stay byte-identical).
+- `src/shell/AppShell.css` — **NO CHANGE** (desktop rules stay byte-identical). The compact stylesheet is loaded via a JS `import './compactShell.css'` in `AppShell.tsx` (after `import './AppShell.css'`), **not** a CSS `@import` here (Codex R1 #7; Claude adrev F7).
 - `src/mailbox/MessageView.css` — leave `.reading-pane { min-width: 0 }` as-is (it's correct; the fix is removing the dock column, not fighting min-width). No edit expected — listed so the executor knows *not* to touch it.
 - `src/compose/Compose.css` — in-window `@media (max-width: 1365px)` block (the compose window is a separate document; its width ≤1100 matches naturally).
 - `src/compose/CheckInForm.css`, `src/compose/Ics309FormV2.css`, `src/compose/PositionFormV2.css` — embedded-form compact blocks.
