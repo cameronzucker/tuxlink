@@ -121,8 +121,17 @@ pub(crate) async fn fetch_listing_from_url(
         .text()
         .await
         .map_err(|e| UiError::Transport { reason: e.to_string() })?;
-    // parse_listing degrades to raw internally — never errors/panics on a bad body.
-    Ok(parse_listing(&text, mode))
+    let listing = parse_listing(&text, mode);
+    // An HTTP 200 carrying a non-listing body (e.g. an IIS/ASP.NET error page) is an endpoint
+    // FAILURE, not a result. Surface it as Unavailable so the cache serves the prior good listing
+    // (stale-on-error) and the UI offers the message fallback — never cache garbage over good data.
+    // (parse_listing itself still degrades-to-raw for any direct caller; this is the fetch-path policy.)
+    if !listing.parsed_ok {
+        return Err(UiError::Unavailable {
+            reason: "listing response was not a recognizable channel listing".to_string(),
+        });
+    }
+    Ok(listing)
 }
 
 /// Fetch station lists for the given modes via the polite cache (TTL + per-key coalescing +
@@ -180,6 +189,22 @@ mod tests {
                 .unwrap();
         assert!(listing.parsed_ok);
         assert!(!listing.gateways.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_treats_unparsable_200_body_as_unavailable() {
+        // HTTP 200 + an ASP.NET-style error page → Unavailable (so the cache won't poison good data).
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(200)
+            .with_body("<!DOCTYPE html><html><body>Server Error in '/' Application.</body></html>")
+            .create_async()
+            .await;
+        let err = fetch_listing_from_url(&format!("{}/x", server.url()), ListingMode::VaraHf)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, UiError::Unavailable { .. }));
     }
 
     #[tokio::test]

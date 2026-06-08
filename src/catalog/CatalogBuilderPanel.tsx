@@ -30,9 +30,9 @@ const MODE_INQUIRY_FILENAME: Record<ListingMode, string> = {
 // v1 info categories the listing endpoint can't serve (filenames from the bundled catalog).
 // Only 3 ⇒ always ≤ the WLE 10-filenames-per-inquiry cap by construction (no slice needed).
 const INFO_CATEGORIES: { id: string; label: string; filename: string }[] = [
-  { id: 'area-weather', label: 'Area weather', filename: 'US.ALL' },
-  { id: 'propagation', label: 'Propagation', filename: 'AUR_TONIGHT' },
-  { id: 'bulletins', label: 'Bulletins', filename: 'WL2K_HELP' },
+  { id: 'area-weather', label: 'Area weather', filename: 'US.ALL' }, // WX_US|US.ALL
+  { id: 'propagation', label: 'Propagation', filename: 'AUR_TONIGHT' }, // AURORA|AUR_TONIGHT
+  { id: 'winlink-info', label: 'Winlink info', filename: 'INQUIRIES' }, // WL2K_HELP|INQUIRIES
 ];
 
 type QueueState =
@@ -176,11 +176,14 @@ export function CatalogBuilderPanel({ onClose }: CatalogBuilderPanelProps) {
           </div>
         </div>
 
-        {infoCats.size > 0 && (
+        {(infoCats.size > 0 || queueState.kind !== 'idle') && (
           <footer className="catalog-builder__footer">
-            <button type="button" onClick={onQueueInfo} disabled={queueState.kind === 'sending'}>
-              Queue {infoCats.size} request{infoCats.size > 1 ? 's' : ''}
-            </button>
+            {infoCats.size > 0 && (
+              <button type="button" onClick={onQueueInfo} disabled={queueState.kind === 'sending'}>
+                Queue {infoCats.size} request{infoCats.size > 1 ? 's' : ''}
+              </button>
+            )}
+            {queueState.kind === 'sending' && <p className="catalog-builder__confirm">Queuing…</p>}
             {queueState.kind === 'done' && (
               <p className="catalog-builder__confirm">
                 Queued {queueState.count} request{queueState.count > 1 ? 's' : ''} — they'll arrive in your Inbox after the next connect.

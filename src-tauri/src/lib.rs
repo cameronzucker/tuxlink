@@ -162,7 +162,8 @@ pub fn run() {
         // (NOT the .setup() app_data_dir arm where per-feature stores register).
         .manage(std::sync::Arc::new(
             crate::catalog::stations_cache::StationsCache::new(
-                30 * 60 * 1000,
+                30 * 60 * 1000, // TTL: 30 min
+                15 * 60 * 1000, // min-refetch floor: 15 min (bounds retries during an outage)
                 std::sync::Arc::new(crate::catalog::stations_cache::SystemClock),
             ),
         ))
