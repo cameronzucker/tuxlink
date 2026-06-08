@@ -75,7 +75,7 @@ impl InboundSelection {
 
     /// Accept every proposal in the batch unconditionally.
     ///
-    /// Used as the 45-second-timeout fallback: when the operator has not
+    /// Used as the [`SELECTION_TIMEOUT`] fallback: when the operator has not
     /// responded by the time the CMS expects an answer, accept everything so
     /// the session completes rather than stalling.
     pub fn accept_all(proposals: &[Proposal]) -> Vec<Answer> {
@@ -131,7 +131,7 @@ pub const SELECTION_TIMEOUT: Duration = Duration::from_secs(45);
 pub struct SelectionSlot {
     /// The connect attempt this prompt belongs to.
     pub attempt_id: AttemptId,
-    /// Monotonic per-process prompt id (see [`SELECTION_TIMEOUT`] callers).
+    /// Monotonic per-process prompt id (see [`REQUEST_SEQ`] / [`build_selecting_decider`]).
     pub request_id: u64,
     /// Channel the answering thread sends the operator's selection through.
     pub tx: mpsc::Sender<InboundSelection>,
@@ -577,8 +577,8 @@ mod tests {
         let reg: SelectionRegistry = Arc::new(Mutex::new(None));
         let attempt = AttemptId(70);
 
-        // Batch 7 registers, then "times out": the slot is gone.
-        // (We model the timeout by simply not leaving a slot for req=7.)
+        // req=7 is modelled as already timed out: we never register it, leaving
+        // no slot for it. Only req=8 is registered as the live batch.
         // Batch 8 is the live one.
         let (tx8, rx8) = mpsc::channel();
         *reg.lock().unwrap() = Some(SelectionSlot { attempt_id: attempt, request_id: 8, tx: tx8 });
