@@ -16,6 +16,17 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.37.0](https://github.com/cameronzucker/tuxlink/compare/v0.36.0...v0.37.0) (2026-06-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **winlink:** credentials stored only under the legacy "tuxlink-pat" keyring service are no longer auto-migrated; re-enter the CMS password if prompted.
+
+### Bug Fixes
+
+* **winlink:** remove tuxlink-pat legacy keyring service; read canonical tuxlink ([841ff62](https://github.com/cameronzucker/tuxlink/commit/841ff62932b8b0edd5a6e61b68ff4af189028c7c))
+
 ## [0.36.0](https://github.com/cameronzucker/tuxlink/compare/v0.35.13...v0.36.0) (2026-06-08)
 
 
