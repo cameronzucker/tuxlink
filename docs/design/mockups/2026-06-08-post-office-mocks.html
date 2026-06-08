@@ -81,7 +81,7 @@
     <tr><td><b>Telnet RMS Post Office</b></td><td>to an RMS Relay, typically local (<code>CALL-L</code>, <code>L</code>)</td><td>held in the relay's local pool for local pickup — never forwarded globally</td><td>local delivery that stays off the global system</td></tr>
   </table>
 
-  <div class="key"><b>The divergence (front-and-center in docs):</b> tuxlink drops WLE's compose-time "message type" / routing pools. The relay decides routing from the login (a Telnet RMS Post Office logs in as <code>CALL-L</code>); the message bytes are identical. You open the connection that means what you want, and select which Outbox messages to send. tuxlink still emits the same <code>X-RMS-Routing: L</code> header WLE does, derived from the connection at send time — so it stays byte-identical and fully interoperable on a shared relay.</div>
+  <div class="key"><b>The divergence (front-and-center in docs):</b> tuxlink drops WLE's compose-time "message type" / routing pools. The relay decides routing from the login (a Telnet RMS Post Office logs in as <code>CALL-L</code>) — the <code>-L</code> login is the sole routing discriminator. You open the connection that means what you want, and select which Outbox messages to send. WLE transmits <b>no</b> routing header on the B2F wire, so tuxlink transmits none either; the identical <code>-L</code> login keeps it fully interoperable on a shared relay — field-compatible, exactly as tuxlink's existing CMS path already is (not byte-identical).</div>
 
   <h2>Compose — unchanged</h2>
   <p class="note">No new control. The deferred "Send as" field stays disabled at "Winlink Message". Composing says nothing about routing — that's decided when you connect.</p>
