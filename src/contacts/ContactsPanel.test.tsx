@@ -211,6 +211,44 @@ describe('<ContactsPanel> — suggestions', () => {
       expect(contact.callsign).toBe('KE7XYZ');
     });
   });
+
+  it('removes the "+ Add" card after adding (re-derived suggestions exclude it) — no duplicate create', async () => {
+    // Simulate the backend `derive_suggestions` re-derivation: the suggestion is
+    // present on the FIRST `contacts_suggestions` call, then excluded (the
+    // contact now exists) on every subsequent call. The card must invalidate +
+    // refetch away after the "+ Add" click, so a second click is impossible.
+    let suggestionsCalls = 0;
+    vi.mocked(invoke).mockImplementation((async (
+      cmd: string,
+      args?: Record<string, unknown>,
+    ) => {
+      if (cmd === 'contacts_read') return { schema_version: 1, contacts: [], groups: [] };
+      if (cmd === 'contacts_suggestions') {
+        suggestionsCalls += 1;
+        return suggestionsCalls === 1 ? [{ callsign: 'KE7XYZ', message_count: 4 }] : [];
+      }
+      if (cmd === 'contact_upsert') return args?.contact as Contact;
+      return undefined;
+    }) as typeof invoke);
+
+    renderPanel();
+
+    const card = await screen.findByTestId('suggestion-KE7XYZ');
+    fireEvent.click(within(card).getByTestId('suggestion-add-KE7XYZ'));
+
+    // After the upsert + suggestions invalidation settles, the card is gone.
+    await waitFor(() => {
+      expect(screen.queryByTestId('suggestion-KE7XYZ')).not.toBeInTheDocument();
+    });
+    // The whole Suggested section collapses once there are no suggestions left.
+    expect(screen.queryByTestId('contacts-suggested')).not.toBeInTheDocument();
+
+    // contact_upsert fired exactly once — no duplicate create from a stale card.
+    const upsertCalls = vi
+      .mocked(invoke)
+      .mock.calls.filter(([cmd]) => cmd === 'contact_upsert');
+    expect(upsertCalls).toHaveLength(1);
+  });
 });
 
 describe('<ContactsPanel> — editor', () => {

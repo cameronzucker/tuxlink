@@ -21,7 +21,7 @@
 // `contact_upsert` with the callsign prefilled — contacts are NEVER auto-created.
 
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { Virtuoso } from 'react-virtuoso';
 import './ContactsPanel.css';
@@ -59,7 +59,14 @@ type EditorState =
   | { kind: 'new'; seed: Contact }
   | { kind: 'edit'; contact: Contact };
 
+/// Query key for the suggest-from-history cards. Distinct from the contacts
+/// file key (`['contacts']`) so `addSuggestion` can re-derive suggestions
+/// without forcing a full contacts refetch — though `upsertContact` invalidates
+/// `['contacts']` independently.
+const SUGGESTIONS_QUERY_KEY = ['contacts', 'suggestions'] as const;
+
 export function ContactsPanel() {
+  const qc = useQueryClient();
   const { contacts, groups, upsertContact } = useContacts();
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -69,7 +76,7 @@ export function ContactsPanel() {
   // server-side (A3); fetched HERE so the panel owns the query (and re-runs as
   // the mailbox / contacts change via the default cache invalidation).
   const suggestionsQuery = useQuery({
-    queryKey: ['contacts', 'suggestions'],
+    queryKey: SUGGESTIONS_QUERY_KEY,
     queryFn: () => invoke<Suggestion[]>('contacts_suggestions'),
   });
   const suggestions = suggestionsQuery.data ?? [];
@@ -98,6 +105,11 @@ export function ContactsPanel() {
     // One explicit click → create a contact with the callsign prefilled. Never
     // auto-created. The name defaults to the callsign so the row isn't blank.
     await upsertContact({ ...emptyContact(s.callsign), name: s.callsign });
+    // Re-derive suggestions: the backend `derive_suggestions` excludes existing
+    // contacts, so the just-added card disappears. Without this, the stale card
+    // stays visible and a second click creates a DUPLICATE contact (each empty
+    // id gets a fresh uuid → callsign-based dedup never fires at this layer).
+    await qc.invalidateQueries({ queryKey: SUGGESTIONS_QUERY_KEY });
   };
 
   // Editor takes over the whole panel body when open (inline; no popup).
