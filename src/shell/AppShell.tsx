@@ -57,6 +57,10 @@ const AboutDialog = lazy(() =>
 const CatalogRequestPanel = lazy(() =>
   import('../catalog/CatalogRequestPanel').then((m) => ({ default: m.CatalogRequestPanel })),
 );
+// tuxlink-a2gd: location-aware Catalog Builder (sibling overlay panel, not a main-content view).
+const CatalogBuilderPanel = lazy(() =>
+  import('../catalog/CatalogBuilderPanel').then((m) => ({ default: m.CatalogBuilderPanel })),
+);
 const GribRequestPanel = lazy(() =>
   import('../grib/GribRequestPanel').then((m) => ({ default: m.GribRequestPanel })),
 );
@@ -264,6 +268,8 @@ export function AppShell() {
   // Catalog Request. Picks WLE catalog inquiries and queues a request
   // message in the outbox routed to INQUIRY@winlink.org.
   const [catalogRequestOpen, setCatalogRequestOpen] = useState(false);
+  // tuxlink-a2gd: inline Catalog Builder ("Find a Gateway"), opened from Message → Find a Gateway.
+  const [catalogBuilderOpen, setCatalogBuilderOpen] = useState(false);
   // Inline GRIB request panel (tuxlink-vrpk), opened from Message → GRIB
   // File Request. Composes a Saildocs request and queues it in the outbox.
   const [gribRequestOpen, setGribRequestOpen] = useState(false);
@@ -692,6 +698,7 @@ export function AppShell() {
       reportIssueController.start();
     },
     openCatalogRequest: () => setCatalogRequestOpen(true),
+    openCatalogBuilder: () => setCatalogBuilderOpen(true),
     openGribRequest: () => setGribRequestOpen(true),
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage, archiveOpen, reportIssueController]);
@@ -1062,6 +1069,12 @@ export function AppShell() {
       {catalogRequestOpen && (
         <Suspense fallback={null}>
           <CatalogRequestPanel onClose={() => setCatalogRequestOpen(false)} />
+        </Suspense>
+      )}
+
+      {catalogBuilderOpen && (
+        <Suspense fallback={null}>
+          <CatalogBuilderPanel onClose={() => setCatalogBuilderOpen(false)} />
         </Suspense>
       )}
 

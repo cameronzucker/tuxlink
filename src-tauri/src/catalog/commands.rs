@@ -68,3 +68,163 @@ pub async fn catalog_send_inquiry(
     );
     Ok(mid.0)
 }
+
+// ============================================================================
+// tuxlink-a2gd: location-aware station-list direct poll + reply parse-with-fallback
+// ============================================================================
+
+use crate::catalog::reply::{parse_reply, ReplyView};
+use crate::catalog::stations::{parse_listing, ListingMode, StationListing};
+use crate::catalog::stations_cache::{CacheKey, StationsCache};
+use std::sync::Arc;
+
+const CATALOG_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Descriptive, identifiable User-Agent so winlink ops can contact rather than ban.
+fn catalog_user_agent() -> String {
+    format!(
+        "Tuxlink/{} ({}; {})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
+}
+
+/// Testable HTTP seam: GET `url`, parse as `mode`'s listing. Reuses the parsed-host transport
+/// classifier (rejects loopback-lookalike hosts + non-http schemes); https-only off only for
+/// genuine loopback (mockito tests). `:444` cert validation is reqwest-default and MUST NOT be
+/// relaxed — `danger_accept_invalid_certs` is banned here; the non-standard port does not affect
+/// SNI/cert validation for host `cms.winlink.org`.
+pub(crate) async fn fetch_listing_from_url(
+    url: &str,
+    mode: ListingMode,
+) -> Result<StationListing, UiError> {
+    let is_loopback = crate::forms::updater::classify_transport(url)
+        .map_err(|reason| UiError::Transport { reason })?;
+    let client = reqwest::Client::builder()
+        .user_agent(catalog_user_agent())
+        .timeout(CATALOG_HTTP_TIMEOUT)
+        .https_only(!is_loopback)
+        .build()
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| UiError::Transport { reason: e.to_string() })?;
+    if !resp.status().is_success() {
+        return Err(UiError::Unavailable {
+            reason: format!("listing endpoint returned {}", resp.status()),
+        });
+    }
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| UiError::Transport { reason: e.to_string() })?;
+    let listing = parse_listing(&text, mode);
+    // An HTTP 200 carrying a non-listing body (e.g. an IIS/ASP.NET error page) is an endpoint
+    // FAILURE, not a result. Surface it as Unavailable so the cache serves the prior good listing
+    // (stale-on-error) and the UI offers the message fallback — never cache garbage over good data.
+    // (parse_listing itself still degrades-to-raw for any direct caller; this is the fetch-path policy.)
+    if !listing.parsed_ok {
+        return Err(UiError::Unavailable {
+            reason: "listing response was not a recognizable channel listing".to_string(),
+        });
+    }
+    Ok(listing)
+}
+
+/// Fetch station lists for the given modes via the polite cache (TTL + per-key coalescing +
+/// stale-on-error). v1 is PUBLIC-only — `serviceCodes` is fixed to `PUBLIC`, not caller-supplied.
+/// Independent modes fetch concurrently (per-key cache locks don't cross-block).
+#[tauri::command]
+pub async fn catalog_fetch_stations(
+    modes: Vec<ListingMode>,
+    history_hours: Option<u32>,
+    cache: State<'_, Arc<StationsCache>>,
+) -> Result<Vec<StationListing>, UiError> {
+    const SERVICE_CODES: &str = "PUBLIC"; // locked v1 scope — PUBLIC only
+    let history_hours = history_hours.unwrap_or(168);
+    let cache = cache.inner().clone();
+    let futures = modes.into_iter().map(|mode| {
+        let cache = cache.clone();
+        async move {
+            let url = mode.listing_url(SERVICE_CODES, history_hours);
+            let key = CacheKey {
+                mode,
+                service_codes: SERVICE_CODES.to_string(),
+                history_hours,
+            };
+            cache.get_or_fetch(key, fetch_listing_from_url(&url, mode)).await
+        }
+    });
+    futures::future::try_join_all(futures).await
+}
+
+/// Parse a received catalog reply (subject + decoded body) into a structured view, or raw.
+/// Never errors on content (parse_reply degrades to raw); the `Result` is for IPC uniformity.
+#[tauri::command]
+pub fn catalog_parse_reply(subject: String, body: String) -> Result<ReplyView, UiError> {
+    Ok(parse_reply(&subject, &body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn fetch_parses_listing_from_http() {
+        let mut server = mockito::Server::new_async().await;
+        let body = include_str!("../../tests/fixtures/catalog/listing-ardop-hf.txt");
+        let _m = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/text")
+            .with_body(body)
+            .create_async()
+            .await;
+        let listing =
+            fetch_listing_from_url(&format!("{}/listings/x", server.url()), ListingMode::ArdopHf)
+                .await
+                .unwrap();
+        assert!(listing.parsed_ok);
+        assert!(!listing.gateways.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_treats_unparsable_200_body_as_unavailable() {
+        // HTTP 200 + an ASP.NET-style error page → Unavailable (so the cache won't poison good data).
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(200)
+            .with_body("<!DOCTYPE html><html><body>Server Error in '/' Application.</body></html>")
+            .create_async()
+            .await;
+        let err = fetch_listing_from_url(&format!("{}/x", server.url()), ListingMode::VaraHf)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, UiError::Unavailable { .. }));
+    }
+
+    #[tokio::test]
+    async fn fetch_maps_non_2xx_to_unavailable() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(404)
+            .with_body("nope")
+            .create_async()
+            .await;
+        let err = fetch_listing_from_url(&format!("{}/x", server.url()), ListingMode::VaraHf)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, UiError::Unavailable { .. }));
+    }
+
+    #[test]
+    fn parse_reply_command_returns_raw_for_unknown_subject() {
+        let v = catalog_parse_reply("Service Advice Message".into(), "hi".into()).unwrap();
+        assert!(matches!(v, ReplyView::Raw { .. }));
+    }
+}

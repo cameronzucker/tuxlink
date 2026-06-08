@@ -1,0 +1,84 @@
+WINLINK PACKET CHANNEL LISTING - (Monday, June 8, 2026 03:42 UTC)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Explanation of codes:
+    - = Unknown
+    A = Additional information
+  Antenna being used:
+    B = Beam
+    D = Dipole
+    V = Vertical
+  Internet(details)
+    E = Email address of sysop - if not listed, use callsign@winlink.org
+    H = Homepage URL
+
+Channel, Sysop Name / Callsign, [Grid], (last update)
+-----------------------------------------------------------------
+
+9Y4C-11.RMS.PACKET, Dexter/9Y4C, [FK90GP: San Juan, NA], (Mon, 08 Jun 2026 03:04:00 GMT)
+   E  dex.9y4c@gmail.com
+   H  https://9y4c.com
+   A  San Juan, NA
+   -  145.050
+
+AA3E-10.RMS.PACKET, MontCo PA EOC/AA3E, [FN20GD: USA, PA], (Mon, 08 Jun 2026 02:35:00 GMT)
+   E  w3afv@arrl.net
+   A  USA, PA
+   -  145.050
+
+AA3WS-10.RMS.PACKET, Charles Hallock/AA3WS, [FM18LQ: USA, MD], (Mon, 08 Jun 2026 03:14:00 GMT)
+   E  selbynet@hotmail.com
+   A  USA, MD
+   -  145.650
+
+AA5AF-10.RMS.PACKET, Robby Roberson/AA5AF, [EL19AN: Seguin, Texas], (Mon, 08 Jun 2026 02:43:00 GMT)
+   E  robby.roberson@icloud.com
+   A  Seguin, Texas
+   -  145.070
+
+AA5DE-10.RMS.PACKET, Donald Eddy/AA5DE, [EM10DP: USA, TX], (Mon, 08 Jun 2026 02:02:00 GMT)
+   E  dleddy@aya.yale.edu
+   A  USA, TX
+   -  145.610
+
+AA5KV-10.RMS.PACKET, John J. Stewart/AA5KV, [EM32DK: Shreveport, LA], (Mon, 08 Jun 2026 01:49:00 GMT)
+   E  stewart4308@gmail.com
+   H  https://qsl.net/aa5kv
+   A  Shreveport, LA
+   -  145.020
+
+AA5QJ-10.RMS.PACKET, Charlie Kunz/AA5QJ, [DM26IE: Las Vegas, NV], (Mon, 08 Jun 2026 02:28:00 GMT)
+   E  chaskunz@gmail.com
+   A  Las Vegas, NV
+   -  145.050
+
+AA6AT-10.RMS.PACKET, Chris Harwood/AA6AT, [CM87UX: Richmond, CA], (Mon, 08 Jun 2026 03:17:00 GMT)
+   E  aa6at@arrl.net
+   H  www.qrz.com/db/aa6at
+   A  Richmond, CA
+   -  145.730
+
+AB0DK-10.RMS.PACKET, Dave Krueger/AB0DK, [EN30RE: USA, MO], (Mon, 08 Jun 2026 01:57:00 GMT)
+   E  djk.tuner@gmail.com
+   A  USA, MO
+   -  145.030
+
+AB1KI-10.RMS.PACKET, Brit Rothrock/AB1KI, [FN54JM: USA, Me], (Mon, 08 Jun 2026 02:25:00 GMT)
+   E  eoc@waldocountyme.gov
+   A  USA, Me
+   -  145.010
+
+AB1PH-10.RMS.PACKET, Don Rolph/AB1PH, [FN42JD: East Walpole, MA], (Mon, 08 Jun 2026 03:16:00 GMT)
+   E  don.rolph@gmail.com
+   A  East Walpole, MA
+   -  145.090
+
+AB4CD-10.RMS.PACKET, Allen Blair/AB4CD, [EM64KO: Decatur, AL], (Mon, 08 Jun 2026 03:17:00 GMT)
+   E  allen@allenblair.com
+   A  Decatur, AL
+   -  145.070
+
+PI1ZTM-12.RMS.PACKET, AndrÃ©/PI1ZTM, [JO22DB: Den Haag, zh], (Mon, 08 Jun 2026 02:38:00 GMT)
+   E  pd2atg@gmail.com
+   A  Den Haag, zh
+   -  144.925
+
