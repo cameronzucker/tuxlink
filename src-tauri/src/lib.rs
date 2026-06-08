@@ -88,6 +88,11 @@ pub fn run() {
                 .build(),
         )
         .manage(crate::wizard::WizardMutex::new())
+        // tuxlink-bsiy: the single inbound-selection rendezvous. cms_connect threads
+        // a clone of this Arc into the selecting decider; the resolve command (Task
+        // 5) and cms_abort read the SAME managed Arc, so an operator answer/abort
+        // reaches the decider parked in the blocking exchange thread (Codex #1).
+        .manage(crate::winlink::inbound_selection::SelectionRegistry::default())
         // tuxlink-0gsy (spec §8.2): managed theme-state singleton — the help
         // window calls theme_get_scheme to bootstrap and listens for
         // color_scheme_changed events emitted by theme_broadcast_scheme.
@@ -398,6 +403,7 @@ pub fn run() {
             crate::ui_commands::open_webview_viewer,
             crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
             crate::ui_commands::cms_abort,             // tuxlink-9z2 (abort in-flight connect)
+            crate::ui_commands::cms_resolve_inbound_selection,    // tuxlink-bsiy (inbound message selection resolve)
             crate::ui_commands::config_read,           // Task 16 (tuxlink-hvv)
             crate::ui_commands::backend_status,        // Task 16 (tuxlink-hvv)
             crate::ui_commands::session_log_snapshot,  // Task 15 (tuxlink-8zg integration round)
@@ -444,6 +450,7 @@ pub fn run() {
             crate::ui_commands::render_ics309_pdf,            // tuxlink-hnkn P2 Task 2 (ICS-309 PDF export)
             crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
+            crate::ui_commands::config_set_review_inbound, // tuxlink-bsiy (review-pending-messages preference)
             // Task 10 (tuxlink-1hu): find-messages search commands
             crate::search::commands::tauri_search_run,
             crate::search::commands::tauri_search_list_saved,

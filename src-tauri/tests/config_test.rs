@@ -719,6 +719,7 @@ fn config_skips_pat_mbo_address_on_write() {
         modem_ardop: None,
         modem_vara: None,
         telnet_listen: tuxlink_lib::config::TelnetListenUiConfig::default(),
+        review_inbound_before_download: false,
     };
     let json = serde_json::to_string(&cfg).unwrap();
     assert!(

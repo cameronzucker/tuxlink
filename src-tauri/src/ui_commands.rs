@@ -2061,6 +2061,7 @@ pub async fn cms_connect(
     app: AppHandle,
     state: State<'_, BackendState>,
     log: State<'_, std::sync::Arc<SessionLogState>>,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
 ) -> Result<(), UiError> {
     let backend = state
         .current()
@@ -2090,10 +2091,23 @@ pub async fn cms_connect(
     let events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
         std::sync::Arc::new(crate::winlink::b2f_events::TauriEventSink::new(app.clone()));
 
+    // tuxlink-bsiy: mint ONE attempt_id at the top so the in-flight
+    // InboundProposalsOffered events (emitted from the selecting decider) and the
+    // result-level AuthClassified event in the Err arm share a single correlation
+    // id. The frontend stale-filter keys on this AttemptId (Codex #2).
+    let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+
     match backend
-        .connect(TransportConfig::Cms {
-            mode: cfg.connect.transport,
-        })
+        .connect(
+            TransportConfig::Cms {
+                mode: cfg.connect.transport,
+            },
+            Some(crate::winlink_backend::CmsSelectionContext {
+                sink: events_sink.clone(),
+                attempt_id,
+                registry: registry.inner().clone(),
+            }),
+        )
         .await
     {
         Ok(session) => {
@@ -2158,7 +2172,11 @@ pub async fn cms_connect(
             // give us TcpConnected / RemoteSidReceived / PostAuthExchangeStarted
             // events for Mode 1 vs Mode 5 discrimination) is tracked as
             // bd-tuxlink-7do4-followup-backend-events.
-            let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+            //
+            // tuxlink-bsiy: reuse the top-minted `attempt_id` (no longer re-minted
+            // here) so a pending InboundProposalsOffered event and this
+            // AuthClassified event share one attempt_id — the frontend stale-filter
+            // depends on that (Codex #2).
             use crate::winlink::b2f_events::{B2fEvent, FailureMode};
             let (mode, raw) = match &e {
                 // BackendError::RemoteError carries the *** payload (redaction-
@@ -2201,6 +2219,7 @@ pub async fn cms_abort(
     app: AppHandle,
     state: State<'_, BackendState>,
     log: State<'_, std::sync::Arc<SessionLogState>>,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
 ) -> Result<(), UiError> {
     let backend = state
         .current()
@@ -2212,6 +2231,42 @@ pub async fn cms_abort(
     );
     emit_session_line(&app, &log, LogLevel::Info, "Aborting CMS connection…".to_string());
     backend.abort().await?;
+
+    // tuxlink-bsiy: wake a decider parked on a pending selection prompt. Dropping
+    // the slot drops the only mpsc Sender, so the decider's recv_timeout returns
+    // Disconnected immediately; backend.abort() above already set the `aborting`
+    // flag, so the decider's post-recv abort re-check returns Err(Cancelled) (NOT
+    // accept-all). No-op if no prompt is pending. Order matters: abort() (sets
+    // aborting) BEFORE the slot drop (wakes the decider).
+    *registry.lock().unwrap() = None;
+
+    Ok(())
+}
+
+// ============================================================================
+// Task 5 (tuxlink-bsiy) — cms_resolve_inbound_selection
+// ============================================================================
+
+/// Deliver the operator's inbound-message selection to a decider parked in
+/// native_connect (Task 4b). Matches the pending slot by (attempt_id, request_id)
+/// and take()s it (idempotent); a stale/mismatched key or an empty registry is a
+/// silent no-op (the frontend also stale-filters via attempt_id). The numeric
+/// attempt_id mirrors the AttemptId carried by the InboundProposalsOffered event
+/// the frontend received. Thin wrapper over inbound_selection::resolve_selection
+/// (Task 3), which carries the unit tests for the match/take/no-op semantics.
+#[tauri::command]
+pub async fn cms_resolve_inbound_selection(
+    attempt_id: u64,
+    request_id: u64,
+    selection: crate::winlink::inbound_selection::InboundSelection,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
+) -> Result<(), UiError> {
+    crate::winlink::inbound_selection::resolve_selection(
+        registry.inner(),
+        crate::winlink::b2f_events::AttemptId(attempt_id),
+        request_id,
+        selection,
+    );
     Ok(())
 }
 
@@ -2439,6 +2494,12 @@ pub struct ConfigViewDto {
     /// has pinned a grid square). Mirrors `PrivacyConfig.position_source` in
     /// config.rs. Task 8 renders a source chip from this field.
     pub position_source: PositionSource,
+    /// Opt-in: prompt the operator to select which pending inbound messages to
+    /// download on a CMS connect (WLE "Review Pending Messages" parity), instead
+    /// of auto-downloading all. Default false. Mirrors
+    /// `Config.review_inbound_before_download` (tuxlink-bsiy). The inline
+    /// SettingsPanel loads this into its checkbox on open.
+    pub review_inbound_before_download: bool,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -2455,6 +2516,7 @@ impl From<&config::Config> for ConfigViewDto {
             gps_state: c.privacy.gps_state,
             position_precision: c.privacy.position_precision,
             position_source: c.privacy.position_source,
+            review_inbound_before_download: c.review_inbound_before_download,
         }
     }
 }
@@ -3195,7 +3257,7 @@ pub async fn packet_connect(
         LogLevel::Info,
         format!("Connecting to {call} over packet…"),
     );
-    match backend.connect(transport).await {
+    match backend.connect(transport, None).await {
         Ok(_session) => {
             emit_session_line(
                 &app,
@@ -3260,7 +3322,7 @@ pub async fn packet_listen(
         LogLevel::Info,
         format!("Listening for an incoming packet call as {effective}…"),
     );
-    match backend.connect(transport).await {
+    match backend.connect(transport, None).await {
         Ok(_session) => {
             emit_session_line(
                 &app,
@@ -5151,6 +5213,41 @@ pub async fn config_set_connect(
     Ok(())
 }
 
+// ============================================================================
+// tuxlink-bsiy — config_set_review_inbound (Review Pending Messages preference)
+// ============================================================================
+
+/// Persist the opt-in `review_inbound_before_download` preference (WLE "Review
+/// Pending Messages" parity). Default false = auto-download-all (the default,
+/// WLE parity). Mirrors `config_set_connect`'s read → mutate → persist ordering
+/// and its `UiError` handling exactly.
+///
+/// The live-refresh `set_config` call is load-bearing: the connect path reads
+/// the backend's LIVE config (not the disk), so persisting alone is NOT enough
+/// — without `set_config`, the next connect would use the stale snapshot until
+/// an app restart.
+///
+/// NOTE (test coverage): like `config_set_connect` / `config_set_privacy`, the
+/// full read→write round-trip is NOT unit-tested here — `config::config_path()`
+/// resolves via the process-global `XDG_CONFIG_HOME`, so an isolated round-trip
+/// races under parallel `cargo test`. The persist path is identical to
+/// `config_set_connect`'s and is operator-smoke-covered. The serde
+/// round-trip + default are unit-tested in `config.rs`; the DTO mapping is
+/// unit-tested in `config_view_dto_maps_review_inbound_when_enabled`.
+#[tauri::command]
+pub async fn config_set_review_inbound(
+    state: State<'_, BackendState>,
+    enabled: bool,
+) -> Result<(), UiError> {
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.review_inbound_before_download = enabled;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg); // live refresh: next connect sees it without restart (Codex #9)
+    }
+    Ok(())
+}
+
 /// Validate a user-supplied CMS host. Returns `Some(message)` for the FIRST rule
 /// violated, `None` when valid. Rules (most-actionable first, mirroring
 /// `config::validate_identity_describe`): nonempty → no whitespace. A hostname's
@@ -5471,7 +5568,7 @@ pub async fn telnet_p2p_connect(
                     line.to_string(),
                 );
             },
-            |_proposals| Vec::new(),
+            |_proposals| Ok(Vec::new()),
         )
     })
     .await
@@ -5963,10 +6060,10 @@ pub async fn telnet_listen(
                 // accept every proposal at the B2F layer; mailbox dedup is
                 // a follow-up (filed as a new bd issue tracking inbound-
                 // mail symmetry — outbox-on-inbound + inbox-persistence).
-                proposals
+                Ok(proposals
                     .iter()
                     .map(|_| crate::winlink::proposal::Answer::Accept { resume_offset: 0 })
-                    .collect()
+                    .collect())
             },
         );
         // Clear the handle once the loop exits.
@@ -6655,6 +6752,7 @@ hw:CARD=Device,DEV=0
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            review_inbound_before_download: false,
         }
     }
 
@@ -6675,6 +6773,20 @@ hw:CARD=Device,DEV=0
         assert_eq!(dto.position_precision, PositionPrecision::SixCharGrid);
         // tuxlink-686 Task 7: position_source is surfaced in the DTO.
         assert_eq!(dto.position_source, PositionSource::Gps);
+        // tuxlink-bsiy: review_inbound_before_download maps through the From impl
+        // (default false on the fixture).
+        assert!(!dto.review_inbound_before_download);
+    }
+
+    // tuxlink-bsiy: a config with review_inbound_before_download=true maps to a
+    // true DTO field (proves the From impl reads the real config value, not a
+    // hardcoded default).
+    #[test]
+    fn config_view_dto_maps_review_inbound_when_enabled() {
+        let mut cfg = cms_config_fixture();
+        cfg.review_inbound_before_download = true;
+        let dto = ConfigViewDto::from(&cfg);
+        assert!(dto.review_inbound_before_download);
     }
 
     // Offline-mode mapping: callsign None, identifier Some — mirrors the
@@ -6864,6 +6976,7 @@ hw:CARD=Device,DEV=0
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            review_inbound_before_download: false,
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -7597,6 +7710,7 @@ hw:CARD=Device,DEV=0
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            review_inbound_before_download: false,
         }
     }
 

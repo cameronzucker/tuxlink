@@ -209,7 +209,7 @@ pub fn connect_and_exchange<F>(
     decide: F,
 ) -> Result<ExchangeResult, TelnetError>
 where
-    F: Fn(&[Proposal]) -> Vec<Answer>,
+    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
 {
     let shared: Shared = Arc::new(Mutex::new(connect_stream(
         host,
@@ -285,7 +285,7 @@ pub(crate) fn connect_and_auth_test(
         &mut writer,
         config,
         vec![],
-        |_| vec![],
+        |_| Ok(vec![]),
         None,
         events,
         attempt_id,
@@ -510,7 +510,7 @@ mod tests {
             &|_| {},
             &|_| {},
             &|_| {},
-            |_| vec![],
+            |_| Ok(vec![]),
         )
         .unwrap();
 
@@ -672,7 +672,7 @@ mod tests {
             &|msg: &str| recorded.borrow_mut().push(msg.to_string()),
             &|_| {},
             &|_| {},
-            |_| vec![],
+            |_| Ok(vec![]),
         )
         .unwrap();
         server.join().unwrap();
@@ -726,7 +726,7 @@ mod tests {
             &|_| {},
             &|line: &str| wire.borrow_mut().push(line.to_string()),
             &|_| {},
-            |_| vec![],
+            |_| Ok(vec![]),
         )
         .unwrap();
         server.join().unwrap();
