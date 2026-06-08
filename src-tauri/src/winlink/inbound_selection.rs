@@ -183,6 +183,21 @@ where
 /// Inner factory taking an explicit `timeout`, so tests can exercise the
 /// timeout path without waiting [`SELECTION_TIMEOUT`]. The public
 /// [`build_selecting_decider`] delegates here with the production constant.
+///
+/// **Abort has THREE checkpoints**, because an abort sets `aborting=true` and
+/// then drops the registry slot, but a slot-drop only wakes `recv_timeout` if a
+/// slot was registered when it landed:
+///
+/// 1. **Pre-register:** abort already happened → cancel without prompting.
+/// 2. **Post-register / pre-recv:** abort raced into the gap AFTER the
+///    pre-register check but BEFORE we registered (its slot-drop a no-op because
+///    nothing was registered yet; our register then re-created the slot). Without
+///    this check the decider would park for the full `timeout` with no wake
+///    source — a socket shutdown does NOT wake an mpsc `recv`. Re-checking here
+///    honors the abort promptly.
+/// 3. **Post-recv:** abort landed after we registered — its slot-drop wakes
+///    `recv_timeout` (severs the only `tx`), and we re-check the flag to return
+///    `Cancelled` rather than accept-all.
 fn build_selecting_decider_with_timeout<E>(
     reg: SelectionRegistry,
     attempt_id: AttemptId,
@@ -218,6 +233,18 @@ where
         let (tx, rx) = mpsc::channel();
         *reg.lock().unwrap() = Some(SelectionSlot { attempt_id, request_id, tx });
         emit(request_id, &dtos);
+
+        // Abort lost-wake guard: if an abort raced in after our pre-check but before we
+        // park (its slot-drop a no-op because we had not registered yet, then our
+        // register re-created the slot), recv_timeout would have no wake source and we
+        // would block the full timeout. Re-check here so abort is honored promptly.
+        if aborting.load(Ordering::SeqCst) {
+            let mut g = reg.lock().unwrap();
+            if matches!(&*g, Some(s) if s.request_id == request_id) {
+                *g = None;
+            }
+            return Err(ExchangeError::Cancelled);
+        }
 
         let r = rx.recv_timeout(timeout);
 
@@ -568,6 +595,42 @@ mod tests {
             build_selecting_decider(Arc::clone(&reg), AttemptId(61), noop_emit(), Arc::clone(&aborting));
         assert_eq!(decider(&proposals), Err(ExchangeError::Cancelled));
         assert!(reg.lock().unwrap().is_none(), "pre-abort must not register a slot");
+    }
+
+    // Test (c''): the lost-wake window. An abort whose `aborting=true` lands
+    // exactly in the gap between register/emit and recv (its slot-drop a no-op
+    // because nothing was registered when it ran, then our register re-created
+    // the slot) must be honored by the post-register/pre-recv check — NOT block
+    // the decider until the timeout (a socket shutdown does not wake an mpsc recv).
+    #[test]
+    fn decider_cancels_if_abort_lands_between_register_and_recv() {
+        // Simulate abort's `aborting=true` landing exactly after register/emit (the
+        // lost-wake window): the emit closure flips the flag. The decider must return
+        // Cancelled via the post-register/pre-recv check, NOT block until the timeout.
+        let reg: SelectionRegistry = Arc::new(Mutex::new(None));
+        let aborting = Arc::new(AtomicBool::new(false));
+        let aborting_in_emit = aborting.clone();
+        let emit = move |_req: u64, _dtos: &[PendingProposalDto]| {
+            aborting_in_emit.store(true, Ordering::SeqCst);
+        };
+        // a large timeout: if the guard is missing, this test would hang ~that long
+        let decider = build_selecting_decider_with_timeout(
+            reg.clone(),
+            AttemptId(1),
+            emit,
+            aborting.clone(),
+            Duration::from_secs(30),
+        );
+        let proposals = vec![prop("A")];
+        let start = std::time::Instant::now();
+        let r = decider(&proposals);
+        assert_eq!(r, Err(ExchangeError::Cancelled));
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "must not park for the full timeout"
+        );
+        // slot cleaned up
+        assert!(reg.lock().unwrap().is_none());
     }
 
     // Test (d): stale-answer regression. Register req=7, time it out (slot

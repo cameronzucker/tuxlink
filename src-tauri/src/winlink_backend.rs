@@ -794,6 +794,10 @@ pub trait WinlinkBackend: Send + Sync {
     async fn send_message(&self, msg: OutboundMessage)
         -> Result<MessageId, BackendError>;
 
+    /// Connect and run the exchange. `selection`: `None` ⇒ accept-all (download
+    /// all inbound); `Some(CmsSelectionContext)` ⇒ on a CMS connect with the
+    /// review-inbound preference on, prompt the operator to select which inbound
+    /// messages to download.
     async fn connect(
         &self,
         transport: TransportConfig,
@@ -3597,6 +3601,14 @@ mod native_read_state_tests {
     // RADIO-1: 127.0.0.1 loopback only. Nothing is transmitted. `#[serial]`
     // because it sets the process-global TUXLINK_CMS_PORT to point native_connect
     // at the ephemeral loopback listener (serial_test gates env-mutating tests).
+    //
+    // Hang-safety: this test runs `native_connect` synchronously on the main
+    // thread (it borrows `client_mailbox`, asserted after the call, so a bounded
+    // off-thread join would force the mailbox to move out and back). A protocol
+    // stall therefore cannot run away — the client connect is bounded by telnet
+    // `CONNECT_TIMEOUT` (15s) and the read/write `TIMEOUT` (60s), so a wedged
+    // server surfaces as an `Err` from `native_connect` rather than a hang; the
+    // answerer thread's slot wait is itself bounded (400×5ms spin then panic).
     // =========================================================================
     #[test]
     #[serial_test::serial]
@@ -3742,8 +3754,17 @@ mod native_read_state_tests {
         cfg.review_inbound_before_download = true;
 
         // SAFETY: edition-2021 set_var; `#[serial]` ensures no concurrent test
-        // reads TUXLINK_CMS_PORT while it is set. Cleared in the same serial scope.
+        // reads TUXLINK_CMS_PORT while it is set. The RAII guard clears it on drop
+        // so a panic between here and the assertions cannot leak the override into
+        // a later test in the same process.
+        struct CmsPortGuard;
+        impl Drop for CmsPortGuard {
+            fn drop(&mut self) {
+                std::env::remove_var("TUXLINK_CMS_PORT");
+            }
+        }
         std::env::set_var("TUXLINK_CMS_PORT", listen_port.to_string());
+        let _cms_port_guard = CmsPortGuard;
 
         let abort_handle: Mutex<Option<TcpStream>> = Mutex::new(None);
         let ctx = CmsSelectionContext {
@@ -3763,7 +3784,7 @@ mod native_read_state_tests {
             None,
             Some(ctx),
         );
-        std::env::remove_var("TUXLINK_CMS_PORT");
+        // TUXLINK_CMS_PORT is cleared by `_cms_port_guard` on scope exit (incl. panic).
 
         result.expect("selecting connect must complete");
         answerer.join().expect("operator-answer thread panicked");
