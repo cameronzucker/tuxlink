@@ -1,9 +1,11 @@
 pub mod app_backend;
 pub mod bootstrap;
 pub mod catalog;
+pub mod contacts;
 pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
+pub mod favorites;
 pub mod forms;
 pub mod grib;
 pub mod help_window;
