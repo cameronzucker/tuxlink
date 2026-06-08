@@ -65,6 +65,15 @@ export interface FolderSidebarProps {
   selectedConnection?: ConnectionKey | null;
   /** Select a connection (opens its reading-pane panel). */
   onSelectConnection?: (conn: ConnectionKey) => void;
+  /** FZ-M1 compact mode (tuxlink-813d). When `true`, render the collapsed
+   *  vertical-text `.vtab` rail + the `☰` expand button + the absolutely-
+   *  positioned labeled flyout (the compact rework). When `false` (desktop,
+   *  the default), render the ORIGINAL labeled `.sidebar` nav inline — no rail,
+   *  no flyout, no `☰`. Driven by `AppShell`'s `useViewport().isCompact` so
+   *  there is a single source of truth (the same signal that drives the
+   *  `.compact` root class); FolderSidebar never calls `useViewport` itself,
+   *  keeping it a pure prop-driven component for tests. */
+  compact?: boolean;
 }
 
 /// Custom DataTransfer MIME for tuxlink message drags. Mirrors the export in
@@ -106,6 +115,7 @@ export const FolderSidebar = memo(function FolderSidebar({
   onFolderContextMenu,
   selectedConnection = null,
   onSelectConnection,
+  compact = false,
 }: FolderSidebarProps) {
   // Drag-over visual state — which folder slug currently has the drag hovering.
   // null when nothing is being dragged or the drag is outside a folder.
@@ -415,15 +425,197 @@ export const FolderSidebar = memo(function FolderSidebar({
     </>
   );
 
+  // ---- Desktop labeled nav (the ORIGINAL pre-rework sidebar) ---------------
+  // Restored verbatim from the pre-rework version (merge-base 5f3be81). On
+  // desktop the rail/flyout rework is a no-op at the CSS layer (the `☰` is
+  // display:none, the `.vtab` styles are compact-only), so rendering the rail
+  // there produced an unstyled, connection-less, create-folder-less sidebar
+  // (the tuxlink-813d P1 regression). Desktop must render this labeled nav
+  // inline instead — full `.nav-item` rows, the Folders `+`, and the
+  // Connections accordion, all reachable without a `☰`. Original testids
+  // (`folder-<id>`, `user-folder-<slug>`, `folder-create-btn`, `sess-<id>`,
+  // `proto-<s>-<p>`) so existing desktop selectors keep resolving.
+  const renderDesktopNav = () => (
+    <nav
+      className="sidebar"
+      data-testid="folder-sidebar"
+      aria-label="Mailbox and connections"
+    >
+      <div className="section-label">
+        <span className="section-label-text">Mailbox</span>
+      </div>
+      {MAILBOX_ITEMS.map((item) => {
+        const isFolder = item.id !== undefined && item.enabled;
+        const active = isFolder && item.id === selectedFolder;
+        const count = item.id ? counts[item.id] : undefined;
+        const isDropTarget = isFolder && dragOver === item.id;
+        const className = [
+          'nav-item',
+          active ? 'active' : '',
+          item.enabled ? '' : 'disabled',
+          isDropTarget ? 'drop-target' : '',
+        ]
+          .filter(Boolean)
+          .join(' ');
+        const dropSlug = item.id;
+        return (
+          <button
+            key={item.label}
+            type="button"
+            data-testid={item.id ? `folder-${item.id}` : `folder-${item.label.toLowerCase()}`}
+            className={className}
+            disabled={!item.enabled}
+            aria-current={active ? 'true' : undefined}
+            onClick={() => {
+              if (isFolder) onSelectFolder(item.id as MailboxFolder);
+            }}
+            onDragOver={isFolder && dropSlug ? makeDragOver(dropSlug) : undefined}
+            onDragLeave={isFolder && dropSlug ? handleDragLeave(dropSlug) : undefined}
+            onDrop={isFolder && dropSlug ? makeDropHandler(dropSlug as MailboxFolderRef) : undefined}
+            style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
+          >
+            <span className="icon" aria-hidden="true">
+              {item.icon}
+            </span>
+            <span className="nav-label">{item.label}</span>
+            {typeof count === 'number' && count > 0 && (
+              <span className="count" data-testid={`folder-count-${item.id}`}>
+                {count}
+              </span>
+            )}
+            {item.v01 && <span className="v01-badge">soon</span>}
+          </button>
+        );
+      })}
+
+      {/* User folders (tuxlink-f62f). The Folders section header carries a
+          `+` button that fires onCreateFolder; the section is rendered even
+          when empty so the operator's path to creating a first folder is
+          always visible. */}
+      <div className="section-label section-label--folders">
+        <span className="section-label-text">Folders</span>
+        {onCreateFolder && (
+          <button
+            type="button"
+            className="folder-create-btn"
+            data-testid="folder-create-btn"
+            onClick={onCreateFolder}
+            aria-label="New folder"
+            title="New folder"
+          >
+            +
+          </button>
+        )}
+      </div>
+      {userFolders.map((uf) => {
+        const active = uf.slug === selectedFolder;
+        const isDropTarget = dragOver === uf.slug;
+        return (
+          <button
+            key={uf.slug}
+            type="button"
+            data-testid={`user-folder-${uf.slug}`}
+            className={['nav-item', active ? 'active' : '', isDropTarget ? 'drop-target' : '']
+              .filter(Boolean)
+              .join(' ')}
+            aria-current={active ? 'true' : undefined}
+            onClick={() => onSelectFolder(uf.slug)}
+            onContextMenu={(e) => {
+              if (onFolderContextMenu) {
+                e.preventDefault();
+                onFolderContextMenu(uf.slug, e.clientX, e.clientY);
+              }
+            }}
+            onDragOver={makeDragOver(uf.slug)}
+            onDragLeave={handleDragLeave(uf.slug)}
+            onDrop={makeDropHandler(uf.slug)}
+            style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
+          >
+            <span className="icon" aria-hidden="true">▢</span>
+            <span className="nav-label">{uf.displayName}</span>
+          </button>
+        );
+      })}
+      {userFolders.length === 0 && (
+        <div className="folders-empty-hint" data-testid="folders-empty-hint">
+          {onCreateFolder ? 'Click + to create one' : 'No custom folders yet'}
+        </div>
+      )}
+
+      <div className="section-label">
+        <span className="section-label-text">Connections</span>
+      </div>
+      {SESSION_TYPES.map((s) => (
+        <div key={s.id}>
+          {/* Session-type header (accordion toggle) */}
+          <button
+            type="button"
+            data-testid={`sess-${s.id}`}
+            className="nav-item"
+            aria-expanded={!!expanded[s.id]}
+            onClick={() => setExpanded((e) => ({ ...e, [s.id]: !e[s.id] }))}
+          >
+            <span className="icon" aria-hidden="true">{expanded[s.id] ? '▾' : '▸'}</span>
+            <span className="nav-label">{s.label}</span>
+          </button>
+
+          {/* Protocol rows (only shown when expanded) */}
+          {expanded[s.id] &&
+            s.protocols.map((p) => {
+              const isActive =
+                selectedConnection?.sessionType === s.id &&
+                selectedConnection?.protocol === p.id;
+
+              // tuxlink-bcgj: the Packet row used to carry a transport-state
+              // dot (off/listening/connected). It duplicated the DashboardRibbon's
+              // connection chip + made the sidebar asymmetric (no other
+              // transport had a dot). Removed for visual cohesion.
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  data-testid={`proto-${s.id}-${p.id}`}
+                  className={['nav-item', 'proto', isActive ? 'active' : '']
+                    .filter(Boolean)
+                    .join(' ')}
+                  disabled={!p.built}
+                  aria-current={isActive ? 'true' : undefined}
+                  onClick={() => {
+                    onSelectConnection?.({ sessionType: s.id, protocol: p.id });
+                  }}
+                >
+                  <span className="nav-label">{p.label}</span>
+                  {!p.built && <span className="v01-badge">soon</span>}
+                </button>
+              );
+            })}
+        </div>
+      ))}
+    </nav>
+  );
+
+  // Desktop: render the original labeled sidebar inline. No rail, no flyout,
+  // no `☰` — the compact rework does not apply here.
+  if (!compact) {
+    return renderDesktopNav();
+  }
+
   return (
     <>
       {/* Collapsed vertical-text rail — ALWAYS in the grid (never absolute), so
-          expanding never shifts the other panes (tuxlink-813d D3). */}
+          expanding never shifts the other panes (tuxlink-813d D3). When the
+          flyout is open, the rail's duplicate folder tabs are removed from the
+          tab order + a11y tree (`inert` + `aria-hidden`): focus moves into the
+          flyout, which owns its own dismissal (scrim / Escape / select), so the
+          rail's duplicate accessible names + `aria-current` must not linger
+          (Codex a11y P2). */}
       <nav
         className="sidebar"
         data-testid="folder-sidebar"
         aria-label="Mailbox and connections"
         ref={railRef}
+        inert={railExpanded ? true : undefined}
+        aria-hidden={railExpanded ? 'true' : undefined}
       >
         {/* Rail expand toggle — CSS-hidden at desktop; in compact it opens the
             labeled flyout over the message list (tuxlink-h7q7 / tuxlink-813d). */}

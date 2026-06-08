@@ -206,13 +206,12 @@ function renderShell() {
   );
 }
 
-// tuxlink-813d D3 restructure: the Connections accordion (`sess-*` / `proto-*`)
-// moved into the FolderSidebar flyout, which only mounts when the rail is
-// expanded. Open the flyout first, then click the session header + protocol.
-// (Selecting a protocol calls setRailExpanded(false), so the flyout closes
-// itself afterward — that does not affect the selected connection.)
+// tuxlink-813d P1 fix: the shell passes `compact={isCompact}` to FolderSidebar.
+// jsdom has no `matchMedia` (no global stub in test-setup), so `useViewport`
+// returns `isCompact=false` and the shell renders the DESKTOP labeled sidebar —
+// the Connections accordion (`sess-*` / `proto-*`) is inline, with no `☰`
+// rail-expand button. Click the session header + protocol directly.
 function selectConnection(sessTestId: string, protoTestId: string) {
-  fireEvent.click(screen.getByTestId('rail-expand-btn'));
   fireEvent.click(screen.getByTestId(sessTestId));
   fireEvent.click(screen.getByTestId(protoTestId));
 }
@@ -512,8 +511,8 @@ describe('<AppShell> — Mock B topology', () => {
   });
   it('disables unbuilt protocol rows (radio-only+telnet)', () => {
     renderShell();
-    // The Connections accordion lives in the flyout (tuxlink-813d D3).
-    fireEvent.click(screen.getByTestId('rail-expand-btn'));
+    // Desktop nav in jsdom (no matchMedia → isCompact=false): the Connections
+    // accordion is inline, no rail-expand needed (tuxlink-813d P1 fix).
     fireEvent.click(screen.getByTestId('sess-radio-only'));
     expect(screen.getByTestId('proto-radio-only-telnet')).toBeDisabled();
   });

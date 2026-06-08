@@ -176,12 +176,12 @@ function renderShell() {
   );
 }
 
-// tuxlink-813d D3: the Connections accordion moved into the FolderSidebar
-// flyout (only mounted while the rail is expanded). Open the flyout, then
-// click the session header + protocol. (Selecting a protocol closes the
-// flyout, which does not affect the selected connection.)
+// tuxlink-813d P1 fix: the shell passes `compact={isCompact}` to FolderSidebar.
+// jsdom has no `matchMedia` (no global stub in test-setup), so `useViewport`
+// returns `isCompact=false` and the shell renders the DESKTOP labeled sidebar —
+// the Connections accordion (`sess-*` / `proto-*`) is inline, with no `☰`
+// rail-expand button. Click the session header + protocol directly.
 function selectConnection(sessTestId: string, protoTestId: string) {
-  fireEvent.click(screen.getByTestId('rail-expand-btn'));
   fireEvent.click(screen.getByTestId(sessTestId));
   fireEvent.click(screen.getByTestId(protoTestId));
 }

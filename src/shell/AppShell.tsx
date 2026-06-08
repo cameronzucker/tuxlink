@@ -870,6 +870,7 @@ export function AppShell() {
         data-testid="shell-panes"
       >
         <FolderSidebar
+          compact={isCompact}
           selectedFolder={selectedFolder}
           onSelectFolder={onSelectFolder}
           counts={counts}
@@ -905,7 +906,7 @@ export function AppShell() {
           const readingPane = selectedMessage
             ? (
                 <Suspense fallback={<MessageViewLoading />}>
-                  <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} radioDrawerOpen={drawerOpen} />
+                  <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} radioDrawerOpen={isCompact && drawerOpen} />
                 </Suspense>
               )
             : <MessageViewEmpty />;
