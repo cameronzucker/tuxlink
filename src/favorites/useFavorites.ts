@@ -81,7 +81,10 @@ export function useFavorites(mode: RadioMode): UseFavorites {
       outcome: 'reached' | 'failed',
       ts_local: string,
     ) => {
-      await invoke('favorite_record_attempt', { dial, outcome, ts_local }).catch(() => {});
+      // Tauri auto-camelCases Rust snake_case command args on the JS wire:
+      // `ts_local: String` in Rust → `tsLocal` key here (see PacketRadioPanel.tsx:79).
+      // Snake_case keys silently fail to bind and the command no-ops at runtime.
+      await invoke('favorite_record_attempt', { dial, outcome, tsLocal: ts_local }).catch(() => {});
       await invalidate();
     },
   };

@@ -148,7 +148,9 @@ describe('<ConnectionRecord> — gated ToD hint', () => {
     await waitFor(() => {
       const call = invokeMock.mock.calls.find(([cmd]) => cmd === 'favorite_tod_hint');
       expect(call).toBeTruthy();
-      expect((call?.[1] as { unit_id: string }).unit_id).toBe('unit-xyz');
+      // unitId (camelCase) is the correct Tauri wire key for Rust param `unit_id: String`.
+      // Tauri auto-camelCases snake_case Rust args; snake_case keys silently fail to bind.
+      expect((call?.[1] as { unitId: string }).unitId).toBe('unit-xyz');
     });
   });
 });

@@ -189,7 +189,7 @@ describe('useFavorites', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: FAVORITES_QUERY_KEY });
   });
 
-  it('recordAttempt invokes favorite_record_attempt with {dial, outcome, ts_local} (no unit_id) then invalidates', async () => {
+  it('recordAttempt invokes favorite_record_attempt with {dial, outcome, tsLocal} (no unit_id) then invalidates', async () => {
     const qc = newQc();
     const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
     const { result } = renderHook(() => useFavorites('ardop-hf'), { wrapper: wrapperWith(qc) });
@@ -199,10 +199,12 @@ describe('useFavorites', () => {
     const ts_local = '2026-06-08T10:00:00-07:00';
     await result.current.recordAttempt(DIAL, 'reached', ts_local);
 
+    // tsLocal (camelCase) is the correct Tauri wire key for Rust param `ts_local: String`.
+    // Tauri auto-camelCases snake_case Rust args; snake_case keys silently fail to bind.
     expect(invokeMock).toHaveBeenCalledWith('favorite_record_attempt', {
       dial: DIAL,
       outcome: 'reached',
-      ts_local,
+      tsLocal: ts_local,
     });
     // Confirm unit_id was NOT included in the invocation args
     const callArgs = invokeMock.mock.calls.find(
@@ -224,7 +226,7 @@ describe('useFavorites', () => {
     expect(invokeMock).toHaveBeenCalledWith('favorite_record_attempt', {
       dial: DIAL,
       outcome: 'failed',
-      ts_local,
+      tsLocal: ts_local,
     });
   });
 

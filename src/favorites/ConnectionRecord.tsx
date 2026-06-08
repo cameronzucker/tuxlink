@@ -47,7 +47,10 @@ export function ConnectionRecord({ unitId, attempts, now }: ConnectionRecordProp
   // zero-success buckets (H2).
   const hintQuery = useQuery({
     queryKey: ['favorite_tod_hint', unitId],
-    queryFn: () => invoke<TodHint | null>('favorite_tod_hint', { unit_id: unitId }),
+    // Tauri auto-camelCases Rust snake_case command args on the JS wire:
+    // `unit_id: String` in Rust → `unitId` key here (see PacketRadioPanel.tsx:79).
+    // Snake_case keys silently fail to bind and the command no-ops at runtime.
+    queryFn: () => invoke<TodHint | null>('favorite_tod_hint', { unitId }),
   });
   const hint = hintQuery.data ?? null;
 
