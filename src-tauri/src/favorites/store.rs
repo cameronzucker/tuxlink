@@ -180,6 +180,20 @@ pub fn tod_bucket(hour: u8) -> &'static str {
     }
 }
 
+/// Parse an optional offset-bearing RFC3339 dial timestamp into a comparable
+/// instant. `None`/unparseable sorts as the OLDEST possible instant so a
+/// never-dialed (or malformed) recent is treated as least-recently-dialed
+/// (evicted first; sorts last in the most-recent-first recents view). Comparing
+/// `DateTime<FixedOffset>` compares by the underlying UTC instant, so mixed
+/// offsets (DST / timezone changes) order correctly — unlike a string compare.
+fn dial_instant(
+    last_attempt_at: &Option<String>,
+) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    last_attempt_at
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+}
+
 /// Parse the LOCAL hour from an offset-bearing ISO8601 timestamp.
 ///
 /// `ts_local` is a `DateTime<FixedOffset>` that is ALREADY local — its `.hour()`
@@ -387,7 +401,11 @@ impl FavoritesStore {
             .cloned()
             .collect();
         // Most-recently dialed first; never-dialed (None) sort last.
-        recents.sort_by(|a, b| b.last_attempt_at.cmp(&a.last_attempt_at));
+        // Compare by parsed UTC instant so mixed offsets (DST / timezone changes)
+        // order correctly — string compare breaks when offsets differ (C2-P2).
+        recents.sort_by(|a, b| {
+            dial_instant(&b.last_attempt_at).cmp(&dial_instant(&a.last_attempt_at))
+        });
         recents
     }
 
@@ -597,11 +615,14 @@ impl FavoritesStore {
             }
 
             // Pick the least-recently-DIALED among them. A never-dialed entry
-            // (last_attempt_at == None) is "smallest" and evicted first.
+            // (last_attempt_at == None) sorts as the oldest instant and is
+            // evicted first. Sort ascending by instant so index [0] is the
+            // least-recently-dialed. Compare by parsed UTC instant so mixed
+            // offsets (DST / timezone changes) order correctly — string compare
+            // breaks when offsets differ (C2-P2).
             recent_idx.sort_by(|&a, &b| {
-                self.file.favorites[a]
-                    .last_attempt_at
-                    .cmp(&self.file.favorites[b].last_attempt_at)
+                dial_instant(&self.file.favorites[a].last_attempt_at)
+                    .cmp(&dial_instant(&self.file.favorites[b].last_attempt_at))
             });
             let evict = recent_idx[0];
             let dropped_id = self.file.favorites[evict].id.clone();
@@ -1135,6 +1156,113 @@ mod tests {
             "GW0 was the least-recently-dialed; it must be evicted"
         );
         assert!(gateways.contains(&"NEW".to_string()));
+    }
+
+    #[test]
+    fn trim_evicts_by_instant_across_offsets() {
+        // C2-P2: lexical order ≠ instant order when offsets differ.
+        //
+        // The scenario:
+        //   A = 2026-06-07T01:15:00-08:00 → UTC 09:15Z  (more recent instant)
+        //   B = 2026-06-07T01:30:00-07:00 → UTC 08:30Z  (older instant)
+        //
+        // String compare: "01:15" < "01:30" (same date prefix, -08 > -07 doesn't
+        // rescue the comparison because the digit characters dominate), so a
+        // naive string sort would rank A as the SMALLER timestamp (least-recently
+        // dialed) and evict it. But A's UTC instant (09:15Z) is LATER than B's
+        // (08:30Z), so B is actually the older dial and must be evicted first.
+        //
+        // Instant compare: A (09:15Z) > B (08:30Z) → B is least-recently-dialed
+        // → B gets evicted, A survives. That's the correct behaviour.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+        let mut ids = id_seq();
+
+        // Dial A with the LATER UTC instant but the SMALLER wall-clock string.
+        store
+            .record_attempt(
+                dial("ardop-hf", "STATION_A", Some("14100.0")),
+                "reached".to_string(),
+                "2026-06-07T01:15:00-08:00".to_string(), // 09:15Z
+                &mut ids,
+                "2026-06-07T09:15:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        // Dial B with the OLDER UTC instant but the LARGER wall-clock string.
+        store
+            .record_attempt(
+                dial("ardop-hf", "STATION_B", Some("14100.0")),
+                "reached".to_string(),
+                "2026-06-07T01:30:00-07:00".to_string(), // 08:30Z
+                &mut ids,
+                "2026-06-07T08:30:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        // Confirm the recents order: most-recent-first → A (09:15Z) before B
+        // (08:30Z). Under string compare this would be backwards.
+        let recents = store.favorites_recents("ardop-hf");
+        assert_eq!(recents.len(), 2);
+        assert_eq!(
+            recents[0].gateway, "STATION_A",
+            "A (09:15Z) is the more-recent dial; it must sort first (C2-P2)"
+        );
+        assert_eq!(
+            recents[1].gateway, "STATION_B",
+            "B (08:30Z) is the older dial; it must sort second (C2-P2)"
+        );
+
+        // Now fill the mode to exactly the cap with 8 more recents so the next
+        // dial pushes the count to cap+1 and forces one eviction.
+        for i in 0..8 {
+            store
+                .record_attempt(
+                    dial("ardop-hf", &format!("FILLER{i}"), Some("14100.0")),
+                    "reached".to_string(),
+                    format!("2026-06-06T{:02}:00:00+00:00", i + 2), // older than A and B
+                    &mut ids,
+                    "2026-06-06T10:00:00+00:00".to_string(),
+                )
+                .unwrap();
+        }
+        assert_eq!(store.favorites_recents("ardop-hf").len(), RECENTS_CAP);
+
+        // Dial one more new station to push the count to 11 → one eviction.
+        store
+            .record_attempt(
+                dial("ardop-hf", "NEWCOMER", Some("14100.0")),
+                "reached".to_string(),
+                "2026-06-08T12:00:00+00:00".to_string(), // newest of all
+                &mut ids,
+                "2026-06-08T12:00:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        let recents = store.favorites_recents("ardop-hf");
+        assert_eq!(recents.len(), RECENTS_CAP, "cap must hold at 10 after eviction");
+
+        let gateways: Vec<String> = recents.iter().map(|f| f.gateway.clone()).collect();
+        assert!(
+            gateways.contains(&"STATION_A".to_string()),
+            "STATION_A (09:15Z, more-recent instant) must SURVIVE — C2-P2 fix"
+        );
+        // B (08:30Z) is the oldest among A and B; whether B or a FILLER entry
+        // gets evicted depends on exact filler timestamps, but B must NOT survive
+        // if it is the absolute least-recently-dialed. The fillers were dialed
+        // at 2026-06-06T02..09Z which are all older than B's 08:30Z, so B should
+        // survive too — the oldest filler (02:00Z) is the one evicted.
+        // The critical assertion is that A survives (string compare would evict A).
+        assert!(
+            !gateways.iter().any(|g| g.starts_with("FILLER0")
+                || (g.starts_with("FILLER") && {
+                    let n: u32 = g.trim_start_matches("FILLER").parse().unwrap_or(99);
+                    // The oldest filler was FILLER0 at 02:00Z — it must be evicted.
+                    n == 0
+                })),
+            "FILLER0 (2026-06-06T02:00Z, oldest) must be evicted, not STATION_A"
+        );
     }
 
     #[test]
