@@ -1659,3 +1659,79 @@ Expected: all green; no vitest zombies.
 - "as of <time>" stale-cache stamp: `StationListing` has no timestamp field; if the design's stale-stamp is wanted in v1, add `fetched_at_ms: Option<u64>` to `StationListing` set by the cache, surfaced in `StationResults`. Flagged for adrev (kept out of the core tasks to avoid threading time through the parser).
 - Do NOT touch CF-owned files: `useFavorites`/`useContacts`, `stations.json`/`contacts.json`, the six `favorite_*` commands, Compose/`useDraft.ts`, `FolderSidebar.tsx`, the AppShell main-content switch, `RadioPanel.tsx`, and `src/forms/position/maidenhead.ts` (import only).
 - `src-tauri/src/lib.rs` invoke_handler + `.manage()` are EXPECTED textual merge points with the CF branch — clean concatenation per the coordination brief.
+
+---
+
+# Post-adversarial corrections (v2 — AUTHORITATIVE; supersedes the task bodies above where they conflict)
+
+> Source: Codex cross-provider round (`dev/adversarial/2026-06-07-catalog-plan-codex.md`) + a 6-reviewer Claude
+> adversarial workflow + synthesis (all findings verified against source / compiled / run on this Pi 2026-06-07).
+> This section is the source of truth; the task bodies above are scaffolding. The implementer applies these.
+
+## Path + grounding note (applies to ALL tasks)
+`dev/scratch/` is gitignored and does NOT exist in this worktree — grounding docs + raw fixtures live ONLY in the
+MAIN checkout. Read them at the absolute path `/home/administrator/Code/tuxlink/dev/scratch/...`. Integration-test
+crate prefix is `tuxlink_lib` (lib name ≠ package name `tuxlink`); `use tuxlink_lib::catalog::...` is correct.
+
+## BLOCKERS (must be correct or it won't compile/run)
+
+**B1 — ReplyView serde (Tasks 5, 6, 11).** `#[serde(tag="kind")] enum { Raw(String) }` serializes to a RUNTIME
+Err ("cannot serialize tagged newtype variant"); Raw is the dominant path, so it would break the design's
+"never error/blank" guarantee at the IPC boundary, and the in-memory tests hide it. Use STRUCT variants:
+```rust
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ReplyView { AreaWeather(AreaWeather), Raw { text: String } }
+```
+`parse_reply` returns `ReplyView::Raw { text: body.to_string() }`. Rust test → `matches!(view, ReplyView::Raw { ref text } if text == "...")`. **Add a serialization round-trip test:** `assert_eq!(serde_json::to_value(&ReplyView::Raw{text:"x".into()}).unwrap(), serde_json::json!({"kind":"raw","text":"x"}))`. TS: `{ kind:'raw'; text:string }`. CatalogReplyView: `view.text`; auto-fallback `setView({ kind:'raw', text: body })`; Task 11 mock `{ kind:'raw', text:'just text' }`.
+
+**B2 — UiError field name (Task 4).** Real variants ([ui_commands.rs:49-61], enum is `#[serde(tag="kind", content="detail")]`): `Transport { reason }`, `Unavailable { reason }`, `AuthFailed { reason }`, `Internal { detail }`, plus newtypes `NotConfigured(String)`/`NotFound(String)`/`Rejected(String)` + unit `Cancelled`. Use `UiError::Transport { reason: e.to_string() }`, `UiError::Unavailable { reason: format!("listing endpoint returned {}", resp.status()) }`, keep `UiError::Internal { detail: e.to_string() }` for the client-build arm. **Frontend error extraction:** the wire shape is `{ kind, detail: { reason } }` (or `detail: string` for Internal) — extract `const msg = typeof e?.detail === 'string' ? e.detail : (e?.detail?.reason ?? String(e))` in `useStations`/panel.
+
+**B3 — menu wiring (Task 12).** `MenuHandlers` is keyed by METHOD names, not menu-ids. THREE edits: (a) add `openCatalogBuilder: () => void;` to the `MenuHandlers` interface in `dispatchMenuAction.ts` (beside `openCatalogRequest`); (b) add `case 'menu:message:catalog_builder': h.openCatalogBuilder(); return;` to the switch (beside the `catalog_request` case); (c) add `openCatalogBuilder: () => setCatalogBuilderOpen(true),` (method-key) to the `handlers` useMemo in `AppShell.tsx` (beside `openCatalogRequest`). `MenuActionId` is `type = string` — NO union edit. Add `dispatchMenuAction.ts` to Task 12 file list.
+
+**B4 — App-level test (Task 12).** No `openMenuItem` helper exists; the real one is `clickMenu(top: string, item: RegExp)`. There is NO existing catalog test to mirror. Use `clickMenu('Message', /find a gateway/i)`. The dialog accessible name comes from the panel `aria-label` — **set the panel `aria-label="Find a Gateway"` to match the `<h2>` + menu label** (resolves B4's name-mismatch); query `findByRole('dialog', { name: /find a gateway/i }, { timeout: 10000 })`. Note: `AppShell.test.tsx`'s top-level invoke mock returns `config_read → null`; the panel's null-grid is swallowed by `.catch`, so the dialog still opens (renders with empty location). Extend the mock locally only if a later assertion needs a grid.
+
+**B5 — Task 0 reply-fixture strip.** The `.b2f` uses CRLF; `awk '/^$/'` misses the `\r`-bearing blank and drops the `FPUS65 KPSR` product line. Use `tr -d '\r' < "$SRC/reply-...b2f" | awk 'f{print} /^$/{f=1}'`. Assert `head -1 "$DST/reply-area-weather-nws.txt"` prints the AWIPS id (e.g. starts with `FPUS65`).
+
+**B6 — Task 0 fixture filenames + trim.** Staged file is `listing-robustpacket.txt` (no hyphen). Loop over the REAL names `for m in ardop-hf vara-hf packet pactor robustpacket`, write dest as `listing-robust-packet.txt` (kebab) via `${m/robustpacket/robust-packet}`. Trim by counting STATION-HEADER lines (`^[A-Z0-9].*,.*\[`), keep the legend preamble + first ~12 headers + their sublines (the plan's old awk kept ~727 lines — too big). **Curate the committed `listing-packet.txt` to INCLUDE the `André/PI1ZTM` block** (real multibyte station, packet line ~4122) for boundary coverage. Assert every trimmed fixture is non-empty: `for f in "$DST"/*.txt; do [ -s "$f" ] || echo "EMPTY: $f"; done`.
+
+## MAJOR corrections (fold into the named task)
+
+**M1 — Cache per-key coalescing (Task 3).** Do NOT hold the map lock across `fetch.await`. Shape: `inner: Mutex<HashMap<CacheKey, Entry>>` for data + `in_flight: Mutex<HashMap<CacheKey, Arc<tokio::sync::Notify>>>` (or `Arc<OnceCell>`) for single-flight. Flow: (1) lock inner, if fresh clone+return + drop guard; (2) lock in_flight — become leader or await the existing leader's Notify; (3) leader runs `fetch` with NO lock held, then re-locks inner to store + notifies. Tests: (a) 2 concurrent same-key callers ⇒ 1 fetch; (b) a mode-B cache hit is NOT blocked by an in-flight mode-A miss; (c) `error_after_success_serves_stale`; (d) `error_with_empty_cache_propagates_err`. In Task 4, run the per-mode fetches with `futures::future::try_join_all` so independent modes are concurrent.
+
+**M2 — min-refetch is subsumed by TTL for v1 (Task 3 + header + Self-Review).** Do NOT ship a separate unimplemented `min_refetch_ms`. With TTL 30m ≥ 15m, the TTL gate IS the refetch floor. State this explicitly in Task 3 + header; DELETE the "separate min-refetch 15m" framing from the title/doc-comment/commit/Self-Review so there is no checked item without code.
+
+**M3 — "as of <time>" stale stamp (Tasks 2 DTO, 3, 9).** Add `fetched_at_ms: Option<u64>` to `StationListing`; the cache sets it on BOTH fresh-store and stale-return paths. Thread to `stationTypes.ts` + `StationResults`: show an "as of <local time>" caption when the served listing is older than TTL (the design line-63 anti-silent-staleness clause). ~10 lines; do not defer.
+
+**M4 — Parser degrade-to-raw gate + empty-callsign (Task 2).** Before accepting a station, validate the channel against a callsign shape (uppercase-alnum runs separated by `.`/`-`; reject `<`,`{`,`"`,`/`,`:`,space). Require a `WINLINK … CHANNEL LISTING` title OR the `Channel, Sysop Name / Callsign` header row before `parsed_ok=true`. Empty-callsign guard: `let callsign = channel.split(['.', '-']).next().filter(|s| !s.is_empty())?;` (returns None, dropping the bogus header). **Negative tests with bracket-bearing non-listing bodies:** ASP.NET `HttpException` page, CSS `input[type=text]`, `<a>[link]</a>` — each asserts `parsed_ok==false` + gateways empty. Frequency parse: `.filter(|f| f.is_finite() && *f > 0.0)` (reject NaN/inf). Mirror `parser.rs` BOM strip: `let body = body.strip_prefix('\u{FEFF}').unwrap_or(body);`. (Multibyte byte-index panic is DISPROVEN — `str::find` returns valid boundaries; still add an `André/PI1ZTM` regression test.)
+
+**M5 — Reuse `classify_transport` (Task 4).** Make `forms::updater::classify_transport` `pub(crate)` and call it instead of the `url.contains("127.0.0.1")` substring check (which matches lookalike hosts like `127.0.0.1.evil.com`). It also rejects non-http schemes. `let is_loopback = crate::forms::updater::classify_transport(url).map_err(|e| UiError::Transport { reason: e })?;`. Add a one-line note: `:444` cert validation is reqwest-default and MUST NOT be relaxed (`danger_accept_invalid_certs` is banned here; the non-standard port does not affect SNI/cert validation for host `cms.winlink.org`).
+
+**M6 — `ListingMode: Hash` (Task 1).** Add `Hash` to the Task 1 derive directly: `#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]` (CacheKey needs it). DELETE the empty `impl ListingMode {}` stub from Task 3's code block.
+
+**M7 — UA string (Task 4).** Runtime `String`, not a `concat!` const: `let ua = format!("Tuxlink/{} ({}; {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);`.
+
+**M8 — PUBLIC-only (Task 4).** v1 is PUBLIC-only (locked scope). Do NOT expose arbitrary `service_codes` in the command/TS API. Drop the param (hard-code `"PUBLIC"` internally) OR reject anything ≠ `"PUBLIC"` with `UiError::Rejected`. The TS `fetchStations` wrapper drops `serviceCodes`.
+
+**M9 — area-weather product heuristic (Task 5).** Tighten to the AWIPS PIL shape via regex `^[A-Z]{4}\d{2}\s+[A-Z0-9]{4}\s+\d{6}` (TTAAII CCCC DDHHMM) for the product line; `issued` stays optional (`String`, may be empty) — document that explicitly + test a missing-issued body still yields `AreaWeather` (markers present) while a no-product body degrades to `Raw`.
+
+**M10 — Mount `CatalogReplyView` in the read path (Task 11→new sub-step).** It's currently never rendered. Wire it into `src/mailbox/MessageView.tsx` (the `MessageViewLoaded` body render, ~:437): when `from === 'SERVICE'` AND `subject` starts with `INQUIRY - `, render `<CatalogReplyView subject={subject} body={body} />` instead of the raw `<pre>`; else unchanged. Add an App-level/production-path test. CAUTION: PR #457 (`savanna-moss-gorge`) also edits `MessageView.tsx`/`AttachmentStrip` — keep this edit minimal + additive (one guarded branch) to ease the merge; it is NOT a CF-owned file, but coordinate via the handoff.
+
+**M11 — ≤10 inquiry cap (Task 10).** The builder offers only 3 info categories, so ≤10 holds by construction — REMOVE the misleading `.slice(0,10)` and add a comment to that effect. Do NOT add a cap to the shared `build_inquiry_body`/`catalog_send_inquiry` (would change existing tree-picker behavior + tests — "reuse unchanged"). File a follow-up bd to enforce the WLE ≤10 cap in the existing tree-picker if it doesn't already.
+
+## COORDINATION corrections (CF agent shoal-raven-gorge / tuxlink-raez)
+
+**C1 — bd dep edge (pre-Task-1).** `bd dep add tuxlink-a2gd tuxlink-raez` (a2gd's ★ consumes CF's `favorite_upsert`). Note in the a2gd issue body that ★ activation is gated on tuxlink-raez landing. a2gd ships ★ disabled ⇒ merge-safe.
+
+**C2 — distance TODO path (Task 6).** CF creates a NEW file `src/forms/position/distance.ts` exporting `haversineKm` + `distanceBetweenGrids` (NOT in `maidenhead.ts`). Fix the TODO + header to cite `src/forms/position/distance.ts`; the post-merge swap is: a2gd `distanceKm`→CF `haversineKm`, a2gd `distanceFromGrids`→CF `distanceBetweenGrids`. (a2gd still imports `gridToLatLon` from `maidenhead.ts` — read-only.)
+
+**C3 — ★ mode mapping (Task 9).** CF's favorite `RadioMode` is `vara-hf|vara-fm|ardop-hf|packet|telnet` — it lacks `pactor`/`robust-packet`. On ★ activation, DISABLE the ★ for pactor/robust-packet rows (no valid CF target) — decide now, not at merge. (★ is disabled in v1 regardless until CF lands.)
+
+**C4 — `.manage()` placement (Task 4).** a2gd's `StationsCache` needs no `app_data_dir`, so it MUST stay in the TOP-LEVEL builder chain (`lib.rs:88-159`). CF registers its stores INSIDE the `app_data_dir` match arm — DIFFERENT region; the non-overlap is the safety property. Do NOT relocate a2gd's cache into the match arm. `generate_handler![]` is the clean-concatenation point (each branch appends distinct lines in separately-labeled comment blocks).
+
+## SCOPE correction
+
+**S1 — radio-config-pane entry point is EXPLICITLY DEFERRED.** The design (line 28) mandates two entry points (Message menu + a "Find a gateway" affordance in the radio config panes). v1 ships ONLY the menu entry; the radio panels (`ArdopRadioPanel`/`PacketRadioPanel`/`TelnetRadioPanel`) are CF-edited this sprint, so the second entry point is deferred to avoid the collision. State this in Task 12 + Self-Review (do NOT mark "entry points ✓" unqualified) and file a follow-up bd to add it after both branches land.
+
+## DEFAULTS — CONFIRMED (not open for further adrev)
+TTL **30 min** ✓ · historyhours **168** ✓ (Packet omits the param) · radius **300 mi** (locale unit; dim-beyond, not hide) ✓ · UA **`Tuxlink/<ver> (<os>; <arch>)`** (runtime String) ✓ · min-refetch **subsumed by TTL** ✓.
