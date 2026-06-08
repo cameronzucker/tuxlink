@@ -138,6 +138,7 @@ import { computePanelMode } from '../radio/radioPanelVisibility';
 import type { RadioPanelMode } from '../radio/types';
 import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
 import './AppShell.css';
+import './compactShell.css'; // FZ-M1 compact rules (tuxlink-h7q7) — must follow AppShell.css for equal-specificity overrides to win on order
 
 /// Human label for a system folder (titlebar). Mirrors the sidebar labels.
 const FOLDER_LABELS: Record<MailboxFolder, string> = {

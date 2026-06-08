@@ -1,0 +1,16 @@
+/* src/shell/compactShell.css
+ *
+ * FZ-M1 compact mode — additive, scoped. Mirrors COMPACT_MEDIA_QUERY in
+ * src/shell/useViewport.ts (keep both at 1365px). Desktop (>=1366px) is
+ * unaffected: EVERY rule here lives inside the media query. Loaded via a JS
+ * `import './compactShell.css'` in AppShell.tsx (NOT a CSS @import — the ?raw
+ * test path can't see @import'ed rules; Codex adrev R1 #7). tuxlink-h7q7.
+ */
+@media (max-width: 1365px) {
+  /* panes grid + rail + ribbon + chrome compact rules — Phases 1-2 */
+}
+
+/* Rail expand toggle is hidden at desktop (the rest is inside the @media). */
+.rail-expand-btn {
+  display: none;
+}
