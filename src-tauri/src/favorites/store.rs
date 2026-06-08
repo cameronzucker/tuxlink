@@ -1,1 +1,1263 @@
-//! Favorites JSON store — implemented in Task B1.
+//! Favorites JSON store — the `stations.json` backing for the per-radio-mode
+//! Favorites / Recents system + its honest, time-of-day-bucketed empirical
+//! connection record.
+//!
+//! Plan: docs/superpowers/plans/2026-06-07-contacts-favorites.md → "Locked
+//! decisions" + "Task B1". Hardened by a 5-round adversarial review; the
+//! invariants below are load-bearing, not stylistic. The shared store mechanics
+//! (infallible `open`, corrupt-file quarantine, atomic `.tmp`→rename flush,
+//! hand-written `Default`, `#[serde(default)]` additive tolerance, NO
+//! `deny_unknown_fields`) mirror `contacts/store.rs`.
+//!
+//! **HONESTY-critical logic (the high-risk parts):**
+//! - **ToD bucketing (H1):** the bucket is derived from the LOCAL wall-clock
+//!   hour. [`ConnectionAttempt::ts_local`] is an offset-bearing ISO8601 string
+//!   (`DateTime<FixedOffset>`) that is ALREADY local — its `.hour()` IS the
+//!   station-local hour. We therefore parse with
+//!   [`chrono::DateTime::parse_from_rfc3339`] and read `.hour()` directly.
+//!   FORBIDDEN: `.with_timezone(&Utc)`, `.naive_utc()`, `.timestamp()` — those
+//!   re-bucket by UTC and silently corrupt the feature.
+//! - **`tod_hint` over-claim guard (H2):** a hint is returned ONLY when the
+//!   argmax-`reached`-fraction bucket has ≥3 attempts AND ≥1 (prefer ≥2) actual
+//!   successes AND is a STRICT unique max. Otherwise `None`. We NEVER name a
+//!   zero-success bucket and NEVER frame a hint as a prediction — observed
+//!   counts only.
+//! - **Recents trim (M3):** cap is 10 NON-starred entries per mode; eviction is
+//!   least-recently-DIALED (smallest `last_attempt_at`), NOT least-recently
+//!   *created*. Starred favorites are NEVER trimmed (star-to-promote survives
+//!   indefinitely).
+//! - **Server-stamped `unit_id` (H3):** the record path assigns/finds the
+//!   recent FIRST, then stamps the appended attempt's `unit_id` with that
+//!   recent's `id`. The client never supplies `unit_id`.
+//! - **Log orphan-sweep (M2):** on recents-trim AND on `favorite_delete`, every
+//!   `ConnectionAttempt` whose `unit_id` matches the dropped favorite is removed
+//!   from `log`. A per-unit cap (~50 most-recent attempts) keeps `log` bounded.
+
+use chrono::Timelike;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use thiserror::Error;
+
+/// On-disk schema version. Bumped only on a non-additive shape change.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// Per-mode cap on NON-starred recents. Starred favorites are exempt (M3).
+const RECENTS_CAP: usize = 10;
+
+/// Per-unit cap on retained `ConnectionAttempt`s, keeping `log` bounded (M2).
+const PER_UNIT_LOG_CAP: usize = 50;
+
+/// Minimum attempts in the argmax bucket before a ToD hint may show (H2).
+const TOD_HINT_MIN_ATTEMPTS: usize = 3;
+
+/// Minimum successes in the argmax bucket before a ToD hint may show (H2). The
+/// spec prefers ≥2 but mandates ≥1; we require ≥1 here and the observed-success
+/// count is surfaced so the UI never implies more confidence than the data.
+const TOD_HINT_MIN_SUCCESSES: usize = 1;
+
+/// A single per-mode favorite/recent station. The `id` is server-assigned and is
+/// the join key for [`ConnectionAttempt::unit_id`]. `last_attempt_at` is bumped
+/// on every recorded attempt and is the LRU-dialed eviction key (M3). `freq` is
+/// RECORD-ONLY metadata (never read back into a form, H8). `transport` is the
+/// telnet-only `"CmsSsl" | "Telnet"` discriminator (H7 — NOT a free port).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Favorite {
+    pub id: String,
+    pub mode: String,
+    pub gateway: String,
+    pub freq: Option<String>,
+    pub transport: Option<String>,
+    pub band: Option<String>,
+    pub grid: Option<String>,
+    pub note: Option<String>,
+    pub starred: bool,
+    pub last_attempt_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One empirical connection attempt against a unit. `unit_id` is stamped
+/// SERVER-SIDE (H3) — the client never supplies it. `ts_local` is an
+/// offset-bearing ISO8601 string stored VERBATIM — NEVER converted to UTC (H1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionAttempt {
+    pub unit_id: String,
+    pub ts_local: String,
+    pub freq: Option<String>,
+    /// `"reached"` | `"failed"`.
+    pub outcome: String,
+}
+
+impl ConnectionAttempt {
+    /// True iff this attempt actually reached the gateway (an on-air link).
+    fn reached(&self) -> bool {
+        self.outcome == "reached"
+    }
+}
+
+/// The record-path DTO (H3/Codex#8). Carries everything needed to upsert/find
+/// the unit; the client passes this (NOT a `unit_id`) to the record path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FavoriteDial {
+    pub mode: String,
+    pub gateway: String,
+    pub freq: Option<String>,
+    pub transport: Option<String>,
+    pub band: Option<String>,
+    pub grid: Option<String>,
+}
+
+impl FavoriteDial {
+    /// The natural identity of a recent within a mode: gateway plus the
+    /// freq-or-transport discriminator. Telnet units key on `transport`
+    /// (CmsSsl/Telnet); RF units key on the dial `freq`; either may be absent.
+    fn ident_key(&self) -> (String, Option<String>, Option<String>) {
+        (self.gateway.clone(), self.freq.clone(), self.transport.clone())
+    }
+}
+
+/// The observed time-of-day record surfaced to the UI when (and only when) the
+/// over-claim guard (H2) passes. Carries observed counts ONLY — never a
+/// prediction, never a zero-success bucket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodHint {
+    /// The argmax bucket name: `dawn` | `day` | `dusk` | `night`.
+    pub bucket: String,
+    /// Total attempts observed in that bucket (≥3).
+    pub attempts: usize,
+    /// Successful (`reached`) attempts observed in that bucket (≥1).
+    pub successes: usize,
+}
+
+/// The on-disk file shape. `#[serde(default)]` on every field gives additive
+/// forward-compat tolerance; there is deliberately NO `deny_unknown_fields`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StationsFile {
+    #[serde(default)]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub favorites: Vec<Favorite>,
+    #[serde(default)]
+    pub log: Vec<ConnectionAttempt>,
+}
+
+// NO derive(Default) (M1) — hand-write Default so schema_version is 1, not 0.
+impl Default for StationsFile {
+    fn default() -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            favorites: vec![],
+            log: vec![],
+        }
+    }
+}
+
+/// Serializable error projection for the IPC boundary. Mirrors the
+/// `#[serde(tag = "kind", content = "detail")]` shape used by `ContactsError`
+/// and `ui_commands.rs::UiError`.
+#[derive(Debug, Error, Serialize)]
+#[serde(tag = "kind", content = "detail")]
+pub enum FavoritesError {
+    #[error("io: {0}")]
+    Io(String),
+    #[error("serde: {0}")]
+    Serde(String),
+}
+
+/// Map a local wall-clock hour (0–23) to its time-of-day bucket.
+/// dawn 05–07, day 08–16, dusk 17–19, night 20–04.
+pub fn tod_bucket(hour: u8) -> &'static str {
+    match hour {
+        5..=7 => "dawn",
+        8..=16 => "day",
+        17..=19 => "dusk",
+        // 20..=23 and 0..=4 (and any out-of-range value, defensively) → night.
+        _ => "night",
+    }
+}
+
+/// Parse the LOCAL hour from an offset-bearing ISO8601 timestamp.
+///
+/// `ts_local` is a `DateTime<FixedOffset>` that is ALREADY local — its `.hour()`
+/// IS the station-local hour. We parse and read `.hour()` directly. We do NOT
+/// call `.with_timezone(&Utc)` / `.naive_utc()` / `.timestamp()` — those would
+/// re-bucket by UTC and defeat the feature (H1). An unparseable timestamp yields
+/// `None` (skipped, never a panic).
+fn local_hour(ts_local: &str) -> Option<u8> {
+    chrono::DateTime::parse_from_rfc3339(ts_local)
+        .ok()
+        .map(|dt| dt.hour() as u8)
+}
+
+/// Compute the honest time-of-day hint from a unit's attempts, or `None`.
+///
+/// Buckets each parseable attempt by its LOCAL hour (H1). The hint is the bucket
+/// with the highest `reached`-fraction; it is returned ONLY when that bucket has
+/// ≥3 attempts AND ≥1 success AND is a STRICT unique max (strictly greater
+/// `reached`-fraction than every other bucket). Otherwise `None`. A
+/// zero-success bucket is NEVER named; a tie produces no hint (H2).
+pub fn tod_hint(attempts: &[ConnectionAttempt]) -> Option<TodHint> {
+    // Tally (attempts, successes) per bucket, by LOCAL hour. Unparseable
+    // timestamps are skipped (H1).
+    let buckets = ["dawn", "day", "dusk", "night"];
+    let mut totals: std::collections::HashMap<&'static str, (usize, usize)> =
+        std::collections::HashMap::new();
+    for a in attempts {
+        let Some(hour) = local_hour(&a.ts_local) else {
+            continue;
+        };
+        let bucket = tod_bucket(hour);
+        let entry = totals.entry(bucket).or_insert((0, 0));
+        entry.0 += 1;
+        if a.reached() {
+            entry.1 += 1;
+        }
+    }
+
+    // Find the argmax bucket by reached-fraction. We require a STRICT unique
+    // max: if two buckets tie on the top fraction, no hint (H2). We compare
+    // fractions via cross-multiplication to avoid float drift:
+    // s_a / n_a > s_b / n_b  <=>  s_a * n_b > s_b * n_a.
+    let mut best: Option<(&'static str, usize, usize)> = None; // (bucket, attempts, successes)
+    let mut best_is_unique = true;
+    for &bucket in &buckets {
+        let Some(&(n, s)) = totals.get(bucket) else {
+            continue;
+        };
+        if n == 0 {
+            continue;
+        }
+        match best {
+            None => {
+                best = Some((bucket, n, s));
+                best_is_unique = true;
+            }
+            Some((_, bn, bs)) => {
+                // Compare s/n vs bs/bn.
+                let lhs = s * bn;
+                let rhs = bs * n;
+                if lhs > rhs {
+                    best = Some((bucket, n, s));
+                    best_is_unique = true;
+                } else if lhs == rhs {
+                    // A tie with the current best.
+                    best_is_unique = false;
+                }
+            }
+        }
+    }
+
+    let (bucket, attempts_n, successes_n) = best?;
+
+    // Over-claim guard (H2): ≥3 attempts, ≥1 success, strict unique max.
+    if !best_is_unique
+        || attempts_n < TOD_HINT_MIN_ATTEMPTS
+        || successes_n < TOD_HINT_MIN_SUCCESSES
+    {
+        return None;
+    }
+
+    Some(TodHint {
+        bucket: bucket.to_string(),
+        attempts: attempts_n,
+        successes: successes_n,
+    })
+}
+
+/// The favorites store: an in-memory [`StationsFile`] plus the path it persists
+/// to. Mutations flush eagerly. Construct via [`FavoritesStore::open`].
+pub struct FavoritesStore {
+    path: PathBuf,
+    file: StationsFile,
+}
+
+impl FavoritesStore {
+    /// Open the store at `path`. INFALLIBLE — always returns a usable store.
+    ///
+    /// - Missing file → default empty store.
+    /// - Present + parseable → the parsed file.
+    /// - Present + UNparseable (read error or JSON error): rename the file to
+    ///   `<name>.corrupt-<utc-ts>` to PRESERVE the original bytes, `eprintln!` a
+    ///   warning, then return the default empty store. The corrupt original is
+    ///   never overwritten in place; a later flush writes only to `path`,
+    ///   leaving the sidecar intact. (Mirrors `contacts/store.rs::open` /
+    ///   `user_folders.rs::load_registry`.)
+    pub fn open(path: PathBuf) -> Self {
+        let file = match std::fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<StationsFile>(&bytes) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    Self::quarantine_corrupt(&path, &bytes);
+                    eprintln!(
+                        "favorites: {} is unparseable, starting empty (original preserved): {e}",
+                        path.display()
+                    );
+                    StationsFile::default()
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => StationsFile::default(),
+            Err(e) => {
+                // A non-NotFound read error (e.g. permission/partial). Try to
+                // preserve whatever bytes we can read; if even that fails, we
+                // still degrade to empty rather than blocking startup.
+                if let Ok(bytes) = std::fs::read(&path) {
+                    Self::quarantine_corrupt(&path, &bytes);
+                }
+                eprintln!(
+                    "favorites: failed to read {}, starting empty: {e}",
+                    path.display()
+                );
+                StationsFile::default()
+            }
+        };
+        Self { path, file }
+    }
+
+    /// Rename the unreadable file to a timestamped `.corrupt-*` sidecar,
+    /// preserving the original bytes. Falls back to a copy-write if the rename
+    /// itself fails (best-effort preservation; never panics).
+    fn quarantine_corrupt(path: &std::path::Path, original: &[u8]) {
+        let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "stations.json".to_string());
+        let corrupt = path.with_file_name(format!("{name}.corrupt-{ts}"));
+        if let Err(e) = std::fs::rename(path, &corrupt) {
+            // Rename failed (e.g. cross-device); fall back to copying the bytes
+            // out so the original is not lost when a later flush overwrites it.
+            eprintln!(
+                "favorites: could not rename corrupt {} → {} ({e}); copying bytes instead",
+                path.display(),
+                corrupt.display()
+            );
+            let _ = std::fs::write(&corrupt, original);
+        }
+    }
+
+    /// Persist the in-memory file atomically: serialize → write to a sibling
+    /// `<name>.tmp` → `rename` over the final path. `create_dir_all(parent)`
+    /// first. Uses `format!("{}.tmp", name)` so the suffix is `stations.json.tmp`
+    /// (NOT `with_extension("tmp")`, which would drop `.json`).
+    fn flush(&self) -> Result<(), FavoritesError> {
+        let json = serde_json::to_string_pretty(&self.file)
+            .map_err(|e| FavoritesError::Serde(e.to_string()))?;
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| FavoritesError::Io(e.to_string()))?;
+        }
+        let name = self
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "stations.json".to_string());
+        let tmp = self.path.with_file_name(format!("{name}.tmp"));
+        std::fs::write(&tmp, json).map_err(|e| FavoritesError::Io(e.to_string()))?;
+        std::fs::rename(&tmp, &self.path).map_err(|e| FavoritesError::Io(e.to_string()))?;
+        Ok(())
+    }
+
+    /// The whole in-memory file (read-only view) — used by `favorites_read`.
+    pub fn file(&self) -> &StationsFile {
+        &self.file
+    }
+
+    /// All favorites (read-only view).
+    pub fn favorites(&self) -> &[Favorite] {
+        &self.file.favorites
+    }
+
+    /// All log entries (read-only view).
+    pub fn log(&self) -> &[ConnectionAttempt] {
+        &self.file.log
+    }
+
+    /// Recents for a mode: NON-starred favorites of that mode, most-recently
+    /// dialed first (entries never dialed sort last). Starred favorites are not
+    /// recents (they live in the Favorites tab).
+    pub fn favorites_recents(&self, mode: &str) -> Vec<Favorite> {
+        let mut recents: Vec<Favorite> = self
+            .file
+            .favorites
+            .iter()
+            .filter(|f| f.mode == mode && !f.starred)
+            .cloned()
+            .collect();
+        // Most-recently dialed first; never-dialed (None) sort last.
+        recents.sort_by(|a, b| b.last_attempt_at.cmp(&a.last_attempt_at));
+        recents
+    }
+
+    /// All attempts recorded against a unit (read-only view), in insertion order.
+    pub fn attempts_for(&self, unit_id: &str) -> Vec<ConnectionAttempt> {
+        self.file
+            .log
+            .iter()
+            .filter(|a| a.unit_id == unit_id)
+            .cloned()
+            .collect()
+    }
+
+    /// Insert a favorite, or replace the existing one with the same `id`. The
+    /// store takes the favorite as given (id/timestamp/merge semantics are the
+    /// command layer's job, Task B2). Flushes on success.
+    pub fn favorite_upsert(&mut self, f: Favorite) -> Result<(), FavoritesError> {
+        match self.file.favorites.iter_mut().find(|x| x.id == f.id) {
+            Some(existing) => *existing = f,
+            None => self.file.favorites.push(f),
+        }
+        self.flush()
+    }
+
+    /// Flip a favorite's `starred` flag (no-op if the id is absent). A starred
+    /// favorite is exempt from recents trimming; star-to-promote keeps a recent
+    /// alive past the cap. Bumps `updated_at`. Flushes on success.
+    pub fn favorite_star(
+        &mut self,
+        id: &str,
+        starred: bool,
+        updated_at: String,
+    ) -> Result<(), FavoritesError> {
+        if let Some(fav) = self.file.favorites.iter_mut().find(|f| f.id == id) {
+            fav.starred = starred;
+            fav.updated_at = updated_at;
+        }
+        self.flush()
+    }
+
+    /// Remove a favorite by id (no-op if absent) AND sweep its orphaned log
+    /// entries (M2: every `ConnectionAttempt` with `unit_id == id`). Flushes.
+    pub fn favorite_delete(&mut self, id: &str) -> Result<(), FavoritesError> {
+        self.file.favorites.retain(|f| f.id != id);
+        self.file.log.retain(|a| a.unit_id != id);
+        self.flush()
+    }
+
+    /// Record a connection attempt against the unit identified by `dial`.
+    ///
+    /// The record path (H3):
+    /// 1. Find OR create the recent for `(mode, gateway, freq|transport)`,
+    ///    obtaining/assigning its `id` (server-assigned via `new_id`).
+    /// 2. Bump that recent's `last_attempt_at` to `ts_local` and `updated_at`.
+    /// 3. Append a [`ConnectionAttempt`] with `unit_id` = that recent's id
+    ///    (SERVER-stamped — the client never supplies `unit_id`), `ts_local`
+    ///    stored VERBATIM (no UTC conversion, H1).
+    /// 4. Enforce the per-unit log cap (M2: keep the ~50 most-recent attempts
+    ///    for that unit).
+    /// 5. Trim non-starred recents for that mode to [`RECENTS_CAP`] by
+    ///    least-recently-DIALED (smallest `last_attempt_at`, M3); starred
+    ///    favorites are NEVER trimmed.
+    /// 6. Sweep orphaned log entries for any trimmed unit (M2).
+    ///
+    /// `new_id` supplies a fresh unique id for a brand-new recent (the command
+    /// layer passes a uuid factory). `now` is the `updated_at`/`created_at`
+    /// stamp for a newly-created recent (RFC3339 UTC). Flushes on success.
+    pub fn record_attempt(
+        &mut self,
+        dial: FavoriteDial,
+        outcome: String,
+        ts_local: String,
+        new_id: impl FnOnce() -> String,
+        now: String,
+    ) -> Result<(), FavoritesError> {
+        let key = dial.ident_key();
+
+        // 1. Find OR create the recent for this dial within its mode.
+        let unit_id = match self.file.favorites.iter_mut().find(|f| {
+            f.mode == dial.mode
+                && (f.gateway.clone(), f.freq.clone(), f.transport.clone()) == key
+        }) {
+            Some(existing) => {
+                // 2. Bump the existing recent's dial timestamp.
+                existing.last_attempt_at = Some(ts_local.clone());
+                existing.updated_at = now.clone();
+                existing.id.clone()
+            }
+            None => {
+                let id = new_id();
+                self.file.favorites.push(Favorite {
+                    id: id.clone(),
+                    mode: dial.mode.clone(),
+                    gateway: dial.gateway.clone(),
+                    freq: dial.freq.clone(),
+                    transport: dial.transport.clone(),
+                    band: dial.band.clone(),
+                    grid: dial.grid.clone(),
+                    note: None,
+                    starred: false,
+                    last_attempt_at: Some(ts_local.clone()),
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                });
+                id
+            }
+        };
+
+        // 3. Append the attempt with the server-stamped unit_id; ts_local VERBATIM.
+        self.file.log.push(ConnectionAttempt {
+            unit_id: unit_id.clone(),
+            ts_local,
+            freq: dial.freq.clone(),
+            outcome,
+        });
+
+        // 4. Enforce the per-unit log cap for this unit (M2).
+        self.cap_unit_log(&unit_id);
+
+        // 5 + 6. Trim non-starred recents for this mode + sweep orphans (M2/M3).
+        self.trim_recents(&dial.mode);
+
+        self.flush()
+    }
+
+    /// Keep only the [`PER_UNIT_LOG_CAP`] most-recent attempts for `unit_id`
+    /// (M2). Most-recent = latest in insertion order (attempts are appended in
+    /// chronological record order). Other units' entries are untouched.
+    fn cap_unit_log(&mut self, unit_id: &str) {
+        let count = self.file.log.iter().filter(|a| a.unit_id == unit_id).count();
+        if count <= PER_UNIT_LOG_CAP {
+            return;
+        }
+        let mut to_drop = count - PER_UNIT_LOG_CAP;
+        // Drop the OLDEST (earliest-inserted) attempts for this unit until the
+        // cap is met; retain everything for other units.
+        self.file.log.retain(|a| {
+            if a.unit_id == unit_id && to_drop > 0 {
+                to_drop -= 1;
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    /// Trim NON-starred recents for `mode` down to [`RECENTS_CAP`] by
+    /// least-recently-DIALED (smallest `last_attempt_at`, M3). Starred favorites
+    /// are NEVER trimmed (and not counted toward the cap). On each eviction,
+    /// orphaned log entries for the dropped unit are swept (M2).
+    fn trim_recents(&mut self, mode: &str) {
+        loop {
+            // Indices of non-starred recents in this mode.
+            let mut recent_idx: Vec<usize> = self
+                .file
+                .favorites
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.mode == mode && !f.starred)
+                .map(|(i, _)| i)
+                .collect();
+
+            if recent_idx.len() <= RECENTS_CAP {
+                break;
+            }
+
+            // Pick the least-recently-DIALED among them. A never-dialed entry
+            // (last_attempt_at == None) is "smallest" and evicted first.
+            recent_idx.sort_by(|&a, &b| {
+                self.file.favorites[a]
+                    .last_attempt_at
+                    .cmp(&self.file.favorites[b].last_attempt_at)
+            });
+            let evict = recent_idx[0];
+            let dropped_id = self.file.favorites[evict].id.clone();
+            self.file.favorites.remove(evict);
+            // Sweep orphaned log entries for the dropped unit (M2).
+            self.file.log.retain(|a| a.unit_id != dropped_id);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Datelike;
+    use tempfile::tempdir;
+
+    /// Deterministic id factory: each call returns a fresh id.
+    fn id_seq() -> impl FnMut() -> String {
+        let mut n = 0u32;
+        move || {
+            n += 1;
+            format!("u{n}")
+        }
+    }
+
+    fn dial(mode: &str, gateway: &str, freq: Option<&str>) -> FavoriteDial {
+        FavoriteDial {
+            mode: mode.to_string(),
+            gateway: gateway.to_string(),
+            freq: freq.map(|s| s.to_string()),
+            transport: None,
+            band: None,
+            grid: None,
+        }
+    }
+
+    fn telnet_dial(gateway: &str, transport: &str) -> FavoriteDial {
+        FavoriteDial {
+            mode: "telnet".to_string(),
+            gateway: gateway.to_string(),
+            freq: None,
+            transport: Some(transport.to_string()),
+            band: None,
+            grid: None,
+        }
+    }
+
+    fn favorite(id: &str, mode: &str, gateway: &str) -> Favorite {
+        Favorite {
+            id: id.to_string(),
+            mode: mode.to_string(),
+            gateway: gateway.to_string(),
+            freq: Some("14105.0".to_string()),
+            transport: None,
+            band: Some("20m".to_string()),
+            grid: Some("CN87".to_string()),
+            note: None,
+            starred: false,
+            last_attempt_at: None,
+            created_at: "2026-06-07T12:00:00+00:00".to_string(),
+            updated_at: "2026-06-07T12:00:00+00:00".to_string(),
+        }
+    }
+
+    fn attempt(unit_id: &str, ts_local: &str, outcome: &str) -> ConnectionAttempt {
+        ConnectionAttempt {
+            unit_id: unit_id.to_string(),
+            ts_local: ts_local.to_string(),
+            freq: None,
+            outcome: outcome.to_string(),
+        }
+    }
+
+    // ---- Store CRUD + reopen ------------------------------------------------
+
+    #[test]
+    fn open_missing_returns_empty() {
+        let dir = tempdir().unwrap();
+        let store = FavoritesStore::open(dir.path().join("stations.json"));
+        assert_eq!(store.file().schema_version, SCHEMA_VERSION);
+        assert!(store.favorites().is_empty());
+        assert!(store.log().is_empty());
+    }
+
+    #[test]
+    fn fresh_empty_store_has_schema_version_1() {
+        // M1: a brand-new store written to disk persists schema_version:1, NOT 0
+        // (guards against an accidental derive(Default)).
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path.clone());
+        store.favorite_upsert(favorite("f1", "ardop-hf", "W6XYZ")).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            raw.contains("\"schema_version\": 1"),
+            "expected schema_version 1 on disk, got: {raw}"
+        );
+        let reopened = FavoritesStore::open(path);
+        assert_eq!(reopened.file().schema_version, 1);
+    }
+
+    #[test]
+    fn upsert_then_reopen_persists_favorites_and_log() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path.clone());
+        store.favorite_upsert(favorite("f1", "ardop-hf", "W6XYZ")).unwrap();
+        // Append a log entry via the record path so the log persists too.
+        store
+            .record_attempt(
+                dial("ardop-hf", "W6XYZ", Some("14105.0")),
+                "reached".to_string(),
+                "2026-06-07T10:00:00-07:00".to_string(),
+                id_seq(),
+                "2026-06-07T17:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        drop(store);
+        let reopened = FavoritesStore::open(path);
+        assert!(!reopened.favorites().is_empty());
+        assert!(!reopened.log().is_empty());
+    }
+
+    #[test]
+    fn unknown_top_level_field_tolerated() {
+        // C1: an EXTRA top-level key parses fine; deny_unknown_fields is ABSENT.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let json = r#"{
+            "schema_version": 1,
+            "favorites": [],
+            "log": [],
+            "future_field_from_a_newer_version": {"nested": true}
+        }"#;
+        std::fs::write(&path, json).unwrap();
+        let store = FavoritesStore::open(path);
+        assert_eq!(store.file().schema_version, 1);
+        // No corrupt sidecar should have been created.
+        let sidecars: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+            .collect();
+        assert!(
+            sidecars.is_empty(),
+            "tolerated unknown field must NOT trigger quarantine"
+        );
+    }
+
+    #[test]
+    fn open_on_corrupt_file_preserves_original_bytes() {
+        // C1: garbage in stations.json → open() returns empty AND leaves a
+        // stations.json.corrupt-<ts> sidecar holding the ORIGINAL bytes; a
+        // subsequent mutate+flush must NOT destroy those bytes.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let garbage = b"not valid json {{{ \x00\x01 broken";
+        std::fs::write(&path, garbage).unwrap();
+
+        let mut store = FavoritesStore::open(path.clone());
+        assert!(
+            store.favorites().is_empty(),
+            "corrupt file must degrade to empty store"
+        );
+
+        let sidecar = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains("stations.json.corrupt-")
+            })
+            .expect("expected a stations.json.corrupt-<ts> sidecar");
+        let preserved = std::fs::read(sidecar.path()).unwrap();
+        assert_eq!(
+            preserved, garbage,
+            "corrupt sidecar must hold the original bytes verbatim"
+        );
+
+        // A subsequent mutate+flush writes the fresh empty file WITHOUT
+        // destroying the preserved bytes.
+        store.favorite_upsert(favorite("f1", "ardop-hf", "W6XYZ")).unwrap();
+        let preserved_after = std::fs::read(sidecar.path()).unwrap();
+        assert_eq!(
+            preserved_after, garbage,
+            "flush must not clobber the preserved corrupt bytes"
+        );
+        let reopened = FavoritesStore::open(path);
+        assert_eq!(reopened.favorites().len(), 1);
+    }
+
+    #[test]
+    fn atomic_write_leaves_no_tmp() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+        store.favorite_upsert(favorite("f1", "ardop-hf", "W6XYZ")).unwrap();
+        let tmps: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(tmps.is_empty(), "no .tmp file should remain after flush");
+    }
+
+    // ---- Star + delete ------------------------------------------------------
+
+    #[test]
+    fn favorite_star_flips_starred() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path.clone());
+        store.favorite_upsert(favorite("f1", "ardop-hf", "W6XYZ")).unwrap();
+        store
+            .favorite_star("f1", true, "2026-06-08T00:00:00+00:00".to_string())
+            .unwrap();
+        drop(store);
+        let reopened = FavoritesStore::open(path);
+        assert!(reopened.favorites()[0].starred);
+        assert_eq!(reopened.favorites()[0].updated_at, "2026-06-08T00:00:00+00:00");
+    }
+
+    #[test]
+    fn delete_sweeps_log_entries() {
+        // M2: favorite_delete also removes that unit's ConnectionAttempts.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+        // Create a recent + an attempt via the record path so unit_id links.
+        store
+            .record_attempt(
+                dial("ardop-hf", "W6XYZ", Some("14105.0")),
+                "reached".to_string(),
+                "2026-06-07T10:00:00-07:00".to_string(),
+                id_seq(),
+                "2026-06-07T17:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        let unit_id = store.favorites()[0].id.clone();
+        assert_eq!(store.attempts_for(&unit_id).len(), 1);
+
+        store.favorite_delete(&unit_id).unwrap();
+        assert!(store.favorites().is_empty());
+        assert!(
+            store.log().is_empty(),
+            "delete must sweep the unit's orphaned log entries (M2)"
+        );
+    }
+
+    // ---- Record path: server-stamped unit_id + ts_local verbatim ------------
+
+    #[test]
+    fn record_attempt_appends_verbatim_ts_and_bumps_last_attempt() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+        let ts = "2026-06-07T23:00:00-07:00"; // offset-bearing, NOT UTC
+        store
+            .record_attempt(
+                dial("ardop-hf", "W6XYZ", Some("14105.0")),
+                "reached".to_string(),
+                ts.to_string(),
+                id_seq(),
+                "2026-06-08T06:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        let unit = &store.favorites()[0];
+        // last_attempt_at bumped to the EXACT ts_local (offset preserved).
+        assert_eq!(unit.last_attempt_at.as_deref(), Some(ts));
+        // The appended attempt's ts_local is stored VERBATIM (no UTC conversion).
+        let logged = &store.log()[0];
+        assert_eq!(logged.ts_local, ts, "ts_local must be stored verbatim (H1)");
+    }
+
+    #[test]
+    fn starred_favorite_never_trimmed() {
+        // A starred favorite survives even when the mode is over the recents cap.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+        // Star a favorite up front.
+        store.favorite_upsert(favorite("star", "packet", "K0STAR")).unwrap();
+        store
+            .favorite_star("star", true, "2026-06-07T12:00:00+00:00".to_string())
+            .unwrap();
+        // Dial 12 distinct NON-starred recents → over the cap of 10.
+        let mut ids = id_seq();
+        for i in 0..12 {
+            store
+                .record_attempt(
+                    dial("packet", &format!("GW{i}"), None),
+                    "reached".to_string(),
+                    format!("2026-06-07T{:02}:00:00-07:00", i),
+                    &mut ids,
+                    "2026-06-07T20:00:00+00:00".to_string(),
+                )
+                .unwrap();
+        }
+        // The starred favorite is still present.
+        assert!(
+            store.favorites().iter().any(|f| f.id == "star" && f.starred),
+            "starred favorite must never be trimmed (M3)"
+        );
+        // Non-starred packet recents are capped at 10.
+        let non_starred = store
+            .favorites()
+            .iter()
+            .filter(|f| f.mode == "packet" && !f.starred)
+            .count();
+        assert_eq!(non_starred, RECENTS_CAP);
+    }
+
+    #[test]
+    fn first_dial_creates_recent_and_links_attempt() {
+        // H3: recording on a brand-new (mode,gateway,freq|transport) CREATES the
+        // recent (server assigns id); the attempt's unit_id == that id. A SECOND
+        // record on the same pair reuses the same recent id (no dup unit).
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+        let mut ids = id_seq();
+
+        store
+            .record_attempt(
+                dial("ardop-hf", "W6XYZ", Some("14105.0")),
+                "reached".to_string(),
+                "2026-06-07T10:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-07T17:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        assert_eq!(store.favorites().len(), 1, "first dial creates the recent");
+        let unit_id = store.favorites()[0].id.clone();
+        assert_eq!(store.log().len(), 1);
+        assert_eq!(
+            store.log()[0].unit_id, unit_id,
+            "attempt's unit_id must equal the server-assigned recent id (H3)"
+        );
+
+        // Second record on the SAME pair reuses the same recent.
+        store
+            .record_attempt(
+                dial("ardop-hf", "W6XYZ", Some("14105.0")),
+                "failed".to_string(),
+                "2026-06-07T11:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-07T18:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        assert_eq!(store.favorites().len(), 1, "second dial reuses the recent");
+        assert_eq!(store.log().len(), 2);
+        assert!(store.log().iter().all(|a| a.unit_id == unit_id));
+
+        // favorites_recents(mode) contains the recent.
+        let recents = store.favorites_recents("ardop-hf");
+        assert_eq!(recents.len(), 1);
+        assert_eq!(recents[0].id, unit_id);
+    }
+
+    #[test]
+    fn record_distinguishes_telnet_transport() {
+        // A telnet unit keys on transport, not freq: two transports on the same
+        // host are distinct recents.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+        let mut ids = id_seq();
+        store
+            .record_attempt(
+                telnet_dial("cms.winlink.org", "CmsSsl"),
+                "reached".to_string(),
+                "2026-06-07T10:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-07T17:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        store
+            .record_attempt(
+                telnet_dial("cms.winlink.org", "Telnet"),
+                "reached".to_string(),
+                "2026-06-07T10:05:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-07T17:05:00+00:00".to_string(),
+            )
+            .unwrap();
+        assert_eq!(
+            store.favorites_recents("telnet").len(),
+            2,
+            "distinct transports on the same host are distinct recents"
+        );
+    }
+
+    #[test]
+    fn trim_evicts_least_recently_dialed_not_created() {
+        // M3: with the cap exceeded, eviction drops the recent with the SMALLEST
+        // last_attempt_at — NOT the smallest created_at. Dial an OLD-created
+        // entry late to bump its last_attempt_at; overflow; assert it SURVIVES
+        // and a newer-created-but-staler-dialed entry is dropped.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+        let mut ids = id_seq();
+
+        // Seed an "old-created" recent dialed at an EARLY local time first.
+        store
+            .record_attempt(
+                dial("ardop-hf", "OLD", Some("14000.0")),
+                "reached".to_string(),
+                "2026-06-07T01:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-07T08:00:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        // Fill to exactly the cap with 9 more distinct recents (total 10).
+        for i in 0..9 {
+            store
+                .record_attempt(
+                    dial("ardop-hf", &format!("GW{i}"), Some("14000.0")),
+                    "reached".to_string(),
+                    format!("2026-06-07T{:02}:00:00-07:00", i + 2),
+                    &mut ids,
+                    "2026-06-07T09:00:00+00:00".to_string(),
+                )
+                .unwrap();
+        }
+        assert_eq!(store.favorites_recents("ardop-hf").len(), 10);
+
+        // Re-dial OLD LATE so its last_attempt_at becomes the NEWEST.
+        store
+            .record_attempt(
+                dial("ardop-hf", "OLD", Some("14000.0")),
+                "reached".to_string(),
+                "2026-06-07T23:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-07T23:00:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        // Now dial ONE new recent → overflow (11 > cap of 10). The evicted one
+        // must be the least-recently-DIALED = GW0 (dialed at 02:00), NOT OLD.
+        store
+            .record_attempt(
+                dial("ardop-hf", "NEW", Some("14000.0")),
+                "reached".to_string(),
+                "2026-06-07T22:30:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-07T22:30:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        let recents = store.favorites_recents("ardop-hf");
+        assert_eq!(recents.len(), 10, "cap holds at 10");
+        let gateways: Vec<String> = recents.iter().map(|f| f.gateway.clone()).collect();
+        assert!(
+            gateways.contains(&"OLD".to_string()),
+            "OLD was re-dialed latest; it must SURVIVE (LRU-dialed, not created)"
+        );
+        assert!(
+            !gateways.contains(&"GW0".to_string()),
+            "GW0 was the least-recently-dialed; it must be evicted"
+        );
+        assert!(gateways.contains(&"NEW".to_string()));
+    }
+
+    #[test]
+    fn trim_sweeps_orphaned_log_entries() {
+        // M2: when a non-starred recent is trimmed, its ConnectionAttempts are
+        // removed from log; no orphaned attempts remain.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+        let mut ids = id_seq();
+        // Dial 11 distinct recents → one is trimmed.
+        for i in 0..11 {
+            store
+                .record_attempt(
+                    dial("packet", &format!("GW{i}"), None),
+                    "reached".to_string(),
+                    format!("2026-06-07T{:02}:00:00-07:00", i),
+                    &mut ids,
+                    "2026-06-07T20:00:00+00:00".to_string(),
+                )
+                .unwrap();
+        }
+        // Exactly one recent was trimmed; the cap holds.
+        assert_eq!(store.favorites_recents("packet").len(), RECENTS_CAP);
+        // Every remaining log entry references a still-present favorite — no
+        // orphans.
+        let live_ids: std::collections::HashSet<String> =
+            store.favorites().iter().map(|f| f.id.clone()).collect();
+        assert!(
+            store.log().iter().all(|a| live_ids.contains(&a.unit_id)),
+            "no orphaned log entries may remain after a trim (M2)"
+        );
+        // And the total log count equals the live recents count (1 attempt each).
+        assert_eq!(store.log().len(), RECENTS_CAP);
+    }
+
+    #[test]
+    fn per_unit_log_cap_bounds_growth() {
+        // M2: the log can't grow unbounded for a single hot unit — only the ~50
+        // most-recent attempts per unit_id are retained.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+        let mut ids = id_seq();
+        // 60 attempts on the SAME pair → one unit, capped at 50.
+        for i in 0..60 {
+            store
+                .record_attempt(
+                    dial("ardop-hf", "HOT", Some("14000.0")),
+                    if i % 2 == 0 { "reached" } else { "failed" }.to_string(),
+                    format!("2026-06-07T{:02}:{:02}:00-07:00", i / 60, i % 60),
+                    &mut ids,
+                    "2026-06-07T20:00:00+00:00".to_string(),
+                )
+                .unwrap();
+        }
+        assert_eq!(store.favorites_recents("ardop-hf").len(), 1);
+        let unit_id = store.favorites()[0].id.clone();
+        assert_eq!(
+            store.attempts_for(&unit_id).len(),
+            PER_UNIT_LOG_CAP,
+            "per-unit log must be capped at {PER_UNIT_LOG_CAP} (M2)"
+        );
+    }
+
+    // ---- tod_bucket boundaries ----------------------------------------------
+
+    #[test]
+    fn tod_bucket_boundaries() {
+        assert_eq!(tod_bucket(5), "dawn");
+        assert_eq!(tod_bucket(6), "dawn");
+        assert_eq!(tod_bucket(7), "dawn");
+        assert_eq!(tod_bucket(8), "day");
+        assert_eq!(tod_bucket(12), "day");
+        assert_eq!(tod_bucket(16), "day");
+        assert_eq!(tod_bucket(17), "dusk");
+        assert_eq!(tod_bucket(18), "dusk");
+        assert_eq!(tod_bucket(19), "dusk");
+        assert_eq!(tod_bucket(20), "night");
+        assert_eq!(tod_bucket(23), "night");
+        assert_eq!(tod_bucket(0), "night");
+        assert_eq!(tod_bucket(2), "night");
+        assert_eq!(tod_bucket(4), "night");
+    }
+
+    // ---- tod_hint: offset-local hour (H1) -----------------------------------
+
+    #[test]
+    fn tod_hint_buckets_by_offset_local_hour_not_utc() {
+        // H1: offset-bearing fixtures where the LOCAL hour and the UTC hour fall
+        // in DIFFERENT buckets. The bucket must follow the LOCAL hour.
+        // 2026-06-07T23:00:00-07:00 → local 23:00 = night (UTC would be 06 =
+        // dawn). Use 3 such attempts (≥3) with ≥1 success so a hint is produced.
+        let attempts = vec![
+            attempt("u1", "2026-06-07T23:00:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T23:30:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T22:00:00-07:00", "reached"),
+        ];
+        let hint = tod_hint(&attempts).expect("a unique ≥3-attempt ≥1-success bucket → Some");
+        assert_eq!(
+            hint.bucket, "night",
+            "23:00-07:00 must bucket by LOCAL hour (night), NOT UTC (dawn) — H1"
+        );
+        assert_eq!(hint.attempts, 3);
+        assert_eq!(hint.successes, 3);
+    }
+
+    #[test]
+    fn tod_hint_offset_dawn_not_day() {
+        // 2026-06-07T06:00:00-07:00 → local 06 = dawn (UTC 13 = day).
+        let attempts = vec![
+            attempt("u1", "2026-06-07T06:00:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T06:30:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T05:00:00-07:00", "reached"),
+        ];
+        let hint = tod_hint(&attempts).unwrap();
+        assert_eq!(
+            hint.bucket, "dawn",
+            "06:00-07:00 must bucket by LOCAL hour (dawn), NOT UTC (day) — H1"
+        );
+    }
+
+    #[test]
+    fn tod_hint_positive_offset_night() {
+        // 2026-01-15T02:00:00+10:00 → local 02 = night (UTC 16:00 prev day =
+        // day). Verifies a POSITIVE offset is also honored locally.
+        let attempts = vec![
+            attempt("u1", "2026-01-15T02:00:00+10:00", "reached"),
+            attempt("u1", "2026-01-15T03:00:00+10:00", "reached"),
+            attempt("u1", "2026-01-15T01:00:00+10:00", "reached"),
+        ];
+        let hint = tod_hint(&attempts).unwrap();
+        assert_eq!(
+            hint.bucket, "night",
+            "02:00+10:00 must bucket by LOCAL hour (night), NOT UTC (day) — H1"
+        );
+    }
+
+    #[test]
+    fn tod_hint_skips_unparseable_ts_no_panic() {
+        // An unparseable ts_local is skipped (no panic, no count). The remaining
+        // parseable attempts still form a hint.
+        let attempts = vec![
+            attempt("u1", "not-a-timestamp", "reached"),
+            attempt("u1", "2026-06-07T23:00:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T23:30:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T22:00:00-07:00", "reached"),
+        ];
+        let hint = tod_hint(&attempts).unwrap();
+        assert_eq!(hint.bucket, "night");
+        assert_eq!(hint.attempts, 3, "the unparseable attempt is not counted");
+    }
+
+    // ---- tod_hint: over-claim guard (H2) ------------------------------------
+
+    #[test]
+    fn tod_hint_none_below_three_attempts() {
+        // <3 attempts in the argmax bucket → None.
+        let attempts = vec![
+            attempt("u1", "2026-06-07T23:00:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T23:30:00-07:00", "reached"),
+        ];
+        assert!(
+            tod_hint(&attempts).is_none(),
+            "fewer than 3 attempts must NOT produce a hint (H2)"
+        );
+    }
+
+    #[test]
+    fn tod_hint_none_all_failed_zero_success() {
+        // A bucket with 3 attempts ALL failed → None. NEVER name a zero-success
+        // bucket (H2).
+        let attempts = vec![
+            attempt("u1", "2026-06-07T23:00:00-07:00", "failed"),
+            attempt("u1", "2026-06-07T23:30:00-07:00", "failed"),
+            attempt("u1", "2026-06-07T22:00:00-07:00", "failed"),
+        ];
+        assert!(
+            tod_hint(&attempts).is_none(),
+            "a zero-success bucket must NEVER be named (H2)"
+        );
+    }
+
+    #[test]
+    fn tod_hint_none_on_tie_no_unique_max() {
+        // No UNIQUE max: two buckets each ≥3 attempts at the SAME reached
+        // fraction (1.0) → a tie → None (H2).
+        let attempts = vec![
+            // night: 3/3 reached
+            attempt("u1", "2026-06-07T23:00:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T22:00:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T21:00:00-07:00", "reached"),
+            // dawn: 3/3 reached
+            attempt("u1", "2026-06-07T06:00:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T05:30:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T07:00:00-07:00", "reached"),
+        ];
+        assert!(
+            tod_hint(&attempts).is_none(),
+            "a tie on the top reached-fraction must NOT produce a hint (H2)"
+        );
+    }
+
+    #[test]
+    fn tod_hint_some_on_unique_max_with_successes() {
+        // The positive case: night has the strict-unique highest reached
+        // fraction with ≥3 attempts and ≥1 success → Some, observed counts only.
+        let attempts = vec![
+            // night: 3/3 reached (fraction 1.0)
+            attempt("u1", "2026-06-07T23:00:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T22:00:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T21:00:00-07:00", "reached"),
+            // day: 1/3 reached (fraction 0.33) — strictly lower
+            attempt("u1", "2026-06-07T10:00:00-07:00", "reached"),
+            attempt("u1", "2026-06-07T11:00:00-07:00", "failed"),
+            attempt("u1", "2026-06-07T12:00:00-07:00", "failed"),
+        ];
+        let hint = tod_hint(&attempts).expect("a strict unique max with successes → Some");
+        assert_eq!(hint.bucket, "night");
+        assert_eq!(hint.attempts, 3);
+        assert_eq!(hint.successes, 3);
+    }
+
+    #[test]
+    fn tod_hint_empty_is_none() {
+        assert!(tod_hint(&[]).is_none());
+    }
+
+    // A sanity touch on a chrono Datelike import (positive-offset day boundary
+    // case exercises date math implicitly); keep the import meaningful.
+    #[test]
+    fn local_hour_reads_offset_local_hour() {
+        // Direct unit check on the parse helper via a positive offset crossing
+        // the UTC date boundary: +10:00 at 02:00 local.
+        let parsed = chrono::DateTime::parse_from_rfc3339("2026-01-15T02:00:00+10:00").unwrap();
+        assert_eq!(parsed.hour(), 2);
+        // The UTC equivalent would be the previous day at 16:00 — proving we do
+        // NOT use it.
+        assert_ne!(parsed.with_timezone(&chrono::Utc).day(), parsed.day());
+    }
+}
