@@ -71,6 +71,10 @@ export interface DashboardRibbonProps {
   onAbort?: () => void;
   /** Packet transport state; when active, overrides the CMS connection label. */
   packet?: PacketUiState;
+  /** Active non-packet radio transport (ARDOP/VARA) override for the connection
+   *  label, supplied by AppShell when the last-active transport is a radio modem
+   *  in the idle/disconnected window. Lower precedence than `packet`. */
+  radioConn?: { label: string; tone: StatusTone } | null;
   /** Effective AX.25 SSID (0..15) for the callsign chip. Undefined when no
    *  packet config has loaded — the callsign renders without a -N suffix. */
   ssid?: number;
@@ -84,7 +88,7 @@ export interface DashboardRibbonProps {
 // via useStatusData's useMemo) and other shell-level renders skip the ribbon
 // when its props haven't changed. The 1s clock tick already lives inside the
 // scoped ClockCell subtree, so a memo'd ribbon stays still while time advances.
-export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, ssid, onSsidChange }: DashboardRibbonProps) {
+export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, ssid, onSsidChange }: DashboardRibbonProps) {
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Task 14 (tuxlink-c79g, spec §4.3 + Codex P1 #4): after a grid commit or a
   // source flip resolves, invalidate the config_read query so the source chip
@@ -106,10 +110,14 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
   // so it always names the real configured/active transport (tuxlink-989 fix).
   const connection = DEV_FIXTURE ? DEV_CONNECTION_DASH : connectionFromData;
 
-  // Packet override: when packet is active, replace the connection label + tone.
+  // Transport override: when an active radio transport is selected, replace the
+  // connection label + tone so the ribbon reflects the last-active modem rather
+  // than the generic config label. Packet takes precedence over the ARDOP/VARA
+  // override (they are mutually exclusive in practice, but ordering is explicit).
   const packetConn = packet ? formatPacketConnection(packet) : null;
-  const connectionLabel = packetConn ? packetConn.label : connection;
-  const connectionTone = packetConn ? packetConn.tone : state.tone;
+  const transportConn = packetConn ?? radioConn ?? null;
+  const connectionLabel = transportConn ? transportConn.label : connection;
+  const connectionTone = transportConn ? transportConn.tone : state.tone;
 
   return (
     <div className="dashboard" data-testid="dashboard-ribbon" role="banner">

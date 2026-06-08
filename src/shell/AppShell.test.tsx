@@ -434,6 +434,23 @@ describe('<AppShell> — Mock B topology', () => {
       .toHaveTextContent(/Packet/);
   });
 
+  it('closing an ARDOP panel keeps ARDOP as the ribbon transport intent (item 38 gap — radio, not just packet)', async () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+
+    fireEvent.click(screen.getByTestId('radio-panel-close'));
+    await waitFor(() => expect(screen.queryByTestId('radio-panel-root')).toBeNull());
+    // The ribbon must still name ARDOP, not revert to the generic config label.
+    expect(screen.getByTestId('ribbon-connection')).toHaveTextContent('ARDOP HF · not connected');
+
+    vi.mocked(invoke).mockClear();
+    fireEvent.click(screen.getByTestId('connect-button'));
+    // And Connect must not start a Telnet/CMS session for the radio intent.
+    expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'cms_connect')).toBe(false);
+  });
+
   it('renders the TelnetRadioPanel when cms+telnet is selected (P2: panel moved to right-hand radio panel)', async () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-cms'));
