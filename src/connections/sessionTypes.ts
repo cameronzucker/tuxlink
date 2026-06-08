@@ -127,6 +127,34 @@ export type CredentialScope =
   | { kind: 'aux'; callsign: string }
   | { kind: 'unknown' };
 
+// === Inbound pending-message selection (tuxlink-bsiy, WLE "Review Pending
+// Messages" parity) ===
+// These shapes mirror the Rust serde structs/enums in the b2f layer.
+// snake_case fields match the serde wire contract exactly — do NOT change
+// the casing; a mismatch silently breaks deserialization.
+
+/// Disposition for messages the operator did NOT select for download. The Rust
+/// enum carries `#[serde(rename_all = "snake_case")]`, so these must be
+/// lowercase on the wire. Default is `'hold'`.
+export type UnselectedDisposition = 'hold' | 'delete';
+
+/// One proposed inbound message offered before download. Sizes are bytes;
+/// sender/subject are unavailable pre-download (proposal phase only carries
+/// the MID + sizes), matching the WLE pending-messages columns.
+export interface PendingProposalDto {
+  mid: string;
+  uncompressed_size: number;
+  compressed_size: number;
+}
+
+/// The operator's selection, sent back to the backend via
+/// `cms_resolve_inbound_selection`. `selected_mids` are the MIDs to download;
+/// everything else is held or deleted per `disposition`.
+export interface InboundSelection {
+  selected_mids: string[];
+  disposition: UnselectedDisposition;
+}
+
 export type B2fEvent =
   | { kind: 'tcp_connected'; host: string; port: number; attempt_id: AttemptId }
   | { kind: 'tls_handshake_started'; attempt_id: AttemptId }
@@ -147,5 +175,11 @@ export type B2fEvent =
       kind: 'auth_classified';
       mode: FailureMode;
       raw: string | null;
+      attempt_id: AttemptId;
+    }
+  | {
+      kind: 'inbound_proposals_offered';
+      request_id: number;
+      proposals: PendingProposalDto[];
       attempt_id: AttemptId;
     };

@@ -64,6 +64,13 @@ const CatalogBuilderPanel = lazy(() =>
 const GribRequestPanel = lazy(() =>
   import('../grib/GribRequestPanel').then((m) => ({ default: m.GribRequestPanel })),
 );
+// tuxlink-bsiy: inline pending-message selection panel ("Review Pending
+// Messages"). Event-driven — useInboundSelection (below) subscribes to the
+// b2f-event channel and surfaces a prompt; the panel only paints when a
+// proposal arrives, so it's off the cold-start critical path like the others.
+const InboundSelectionPanel = lazy(() =>
+  import('../connections/InboundSelectionPanel').then((m) => ({ default: m.InboundSelectionPanel })),
+);
 const NewFolderDialog = lazy(() =>
   import('../mailbox/NewFolderDialog').then((m) => ({ default: m.NewFolderDialog })),
 );
@@ -99,6 +106,7 @@ import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus'
 import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
 import { StubPanel } from '../connections/StubPanel';
+import { useInboundSelection } from '../connections/useInboundSelection';
 import { SearchBar } from '../search/SearchBar';
 import { deparseQuery } from '../search/parseQuery';
 
@@ -449,6 +457,12 @@ export function AppShell() {
   // config and emits writes; the shared listener here picks those up). Operator
   // smoke 2026-05-31 caught that the prior code hardcoded SSID=0 in the ribbon.
   const packetConfig = usePacketConfig();
+
+  // tuxlink-bsiy: inbound pending-message selection ("Review Pending Messages").
+  // Subscribes to the b2f-event channel for `inbound_proposals_offered`; when a
+  // proposal arrives, `inbound.prompt` is non-null and the inline panel mounts
+  // below. The operator's choice resolves via cms_resolve_inbound_selection.
+  const inbound = useInboundSelection();
 
   // Modem (ARDOP HF) status — feeds the radio-panel visibility check + the
   // panes-grid column-count swap (tuxlink-4ek Task 4.3 baseline; radio-panel-
@@ -1150,6 +1164,20 @@ export function AppShell() {
         state={reportIssueState}
         onClose={() => setReportIssueState({ kind: 'idle' })}
       />
+
+      {/* tuxlink-bsiy: inline pending-message selection ("Review Pending
+       *  Messages"). Event-driven — mounts only when the backend offers
+       *  proposals before download (useInboundSelection). Lazy-loaded; the
+       *  panel resolves via cms_resolve_inbound_selection. */}
+      {inbound.prompt && (
+        <Suspense fallback={null}>
+          <InboundSelectionPanel
+            proposals={inbound.prompt.proposals}
+            onSubmit={inbound.submit}
+            onClose={inbound.close}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
