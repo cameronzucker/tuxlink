@@ -160,11 +160,11 @@ describe('FZ-M1 operator smoke fixes (tuxlink-813d)', () => {
 
     // tuxlink-813d smoke #2: top-aligning all ribbon cells so the inherently
     // taller Grid cell (44px touch segment) doesn't drag the labels off-center.
-    it('top-aligns the compact dashboard flex container (align-items: flex-start)', () => {
-      // The rule lives on .ribbon-with-search .dashboard inside the compact block.
-      expect(compactBlock).toContain('align-items: flex-start');
-      // Belt-and-suspenders: the padding-top accompanies the alignment fix.
-      expect(compactBlock).toContain('padding-top: 9px');
+    it('lets the compact ribbon grow to fit its 44px touch controls (height: auto)', () => {
+      // The desktop ribbon is a fixed 56px; the compact ribbon carries 44px
+      // touch controls (SSID picker, GPS/MANUAL segment) that overflowed it and
+      // clipped in WebKitGTK. The compact dashboard grows to fit instead.
+      expect(compactBlock).toMatch(/\.ribbon-with-search \.dashboard\s*\{[^}]*height:\s*auto/);
     });
 
     // #2b (operator full-screen grim): with the SSID picker + GPS segment, the

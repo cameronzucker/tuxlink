@@ -301,14 +301,17 @@
    * browser-smoke. The structure (gap:0 + justify-content:center) is the canonical
    * fix; numbers are conservative starting points.
    * ---- */
-  /* The Grid cell is inherently taller than the text-only cells (it carries the
-   * 44px GPS/MANUAL touch segment), so center-aligning items of unequal height
-   * left the GRID label ~11px above its neighbours. Top-align every cell's label
-   * to a shared baseline instead; the grid segment simply extends further down.
-   * The Connect button + dividers stay vertically centered. */
+  /* The callsign (SSID picker) + grid (GPS/MANUAL segment) cells carry 44px
+   * touch controls, so the compact ribbon content is taller than the desktop's
+   * fixed 56px. Let the ribbon GROW to fit (height: auto) — the fixed 56px
+   * clipped the controls in WebKitGTK (text touching the bottom edge / buttons
+   * cut off; Chromium's metrics hid it). With every value area a uniform 44px
+   * band (below), all cells are the same height, so centering them aligns both
+   * labels and values without any pixel-tight fit. tuxlink-813d operator smoke. */
   .layout-b .ribbon-with-search .dashboard {
-    align-items: flex-start;
-    padding-top: 9px;
+    align-items: center;
+    height: auto;
+    min-height: 56px;
   }
   .layout-b .dashboard .dash-divider,
   .layout-b .dashboard .dash-connect {
@@ -316,7 +319,7 @@
   }
   .layout-b .dashboard .dash-item--grid {
     gap: 0;
-    justify-content: flex-start;
+    justify-content: center;
   }
   /* Uniform value row: the callsign (SSID picker) and grid (GPS/MANUAL segment)
    * cells carry 44px touch controls, while the clock + connection cells are
