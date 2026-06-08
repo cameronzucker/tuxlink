@@ -278,6 +278,43 @@
   .layout-b .dashboard .dash-source-segment {
     font-size: 12px;
   }
+  /* ---- GridEdit ribbon cluster — ribbon alignment polish (Task 5, tuxlink-813d) ----
+   * Problem: the Grid .dash-item is a column layout (label + 44px touch target)
+   * that totals ~56px — the full ribbon height — leaving zero room for breathing
+   * space and causing the source-segment control to visually collide with the
+   * adjacent .dash-dividers. Fixes:
+   *   1. Collapse the gap to 0 so label (12px line-height) + 44px = 56px fits
+   *      exactly in the ribbon; justify-content centers the column within it.
+   *   2. align-items: center ensures the .dash-grid-display row and .dash-label
+   *      are both horizontally centered within the item column.
+   *   3. align-self: center pins the whole item to the ribbon's vertical midpoint
+   *      (the ribbon flex is align-items:center, but explicit here for clarity).
+   *   4. Ensure .dash-grid-display itself centers its children vertically so the
+   *      GPS/MANUAL segments and the grid-value button share the same baseline.
+   * PIXEL-TUNING NOTE: exact gap/padding values may be refined by the operator's
+   * browser-smoke. The structure (gap:0 + justify-content:center) is the canonical
+   * fix; numbers are conservative starting points.
+   * ---- */
+  .layout-b .dashboard .dash-item--grid {
+    gap: 0;
+    justify-content: center;
+    align-self: center;
+  }
+  .layout-b .dashboard .dash-item--grid .dash-grid-display {
+    align-items: center;
+    gap: 8px;
+  }
+  /* Tighten the source-segment horizontal padding so the GPS|MANUAL buttons
+   * don't crowd the adjacent .dash-dividers. Height is still governed by
+   * min-height: 44px (the touch-target rule above); the reduced padding only
+   * shrinks the intrinsic width. */
+  .layout-b .dashboard .dash-source-segments {
+    gap: 0; /* segments are joined — no inter-segment gap */
+  }
+  .layout-b .dashboard .dash-item--grid .dash-source-segment {
+    padding: 1px 5px; /* was 1px 6px desktop; 1px reduction gives back ~2px total */
+  }
+
   /* MenuBar trigger buttons + dropdown menu items >=44px touch. */
   .tux-menu > button,
   .tux-dropdown .tux-mi {

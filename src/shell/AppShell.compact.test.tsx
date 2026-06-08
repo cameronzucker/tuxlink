@@ -99,6 +99,20 @@ describe('Compact ribbon + chrome (Task 11)', () => {
   });
 });
 
+describe('Compact ribbon GridEdit alignment (Task 5, tuxlink-813d)', () => {
+  it('compact ribbon aligns the GridEdit source cluster', () => {
+    const compactBlock = compactCss.slice(compactCss.indexOf(COMPACT));
+    // The source-segment control class must be targeted inside the compact block.
+    expect(compactBlock).toContain('.dash-source-segment');
+    // The grid item cluster must have an alignment hook inside compact.
+    expect(compactBlock).toMatch(/align-items:\s*center/);
+    // The GridEdit item must collapse its gap so label+44px touch target fits in 56px ribbon.
+    expect(compactBlock).toMatch(/\.dash-item--grid[\s\S]*?gap:\s*0/);
+    // The dash-grid-display inner flex must also align its children.
+    expect(compactBlock).toMatch(/\.dash-item--grid \.dash-grid-display[\s\S]*?align-items:\s*center/);
+  });
+});
+
 describe('FZ-M1 overlay drawer (tuxlink-813d)', () => {
   it('compact panes grid no longer reserves a 4th radio column', () => {
     const compactBlock = compactCss.slice(compactCss.indexOf(COMPACT));
