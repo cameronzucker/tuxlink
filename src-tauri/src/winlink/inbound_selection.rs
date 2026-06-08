@@ -210,4 +210,18 @@ mod tests {
         let answers = InboundSelection::accept_all(&[]);
         assert!(answers.is_empty());
     }
+
+    #[test]
+    fn from_proposal_redacted_scrubs_credential_token_in_mid() {
+        // A MID carrying a ;PR: response token must be scrubbed before crossing to the UI (Codex #8).
+        let p = Proposal {
+            code: 'C',
+            msg_type: "EM".into(),
+            mid: "X ;PR: 72768415".into(),
+            size: 100,
+            compressed_size: 50,
+        };
+        let dto = PendingProposalDto::from_proposal_redacted(&p);
+        assert!(!dto.mid.contains("72768415"), "credential token leaked into DTO mid: {:?}", dto.mid);
+    }
 }
