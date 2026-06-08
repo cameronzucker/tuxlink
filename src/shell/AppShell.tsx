@@ -36,7 +36,7 @@ import { FolderSidebar } from '../mailbox/FolderSidebar';
 import type { ConnectionKey } from '../mailbox/FolderSidebar';
 import { DashboardRibbon } from './DashboardRibbon';
 import { StatusBar } from './StatusBar';
-import { useStatusData } from './useStatus';
+import { useStatusData, type StatusTone } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
 
 // tuxlink-perf-coldstart: lazy-load every overlay/dialog panel. None of these
@@ -756,6 +756,30 @@ export function AppShell() {
     [statusData.status, activeConnection, statusData.callsign, packetConfig.ssid],
   );
 
+  // Ribbon override for active non-packet radio transports (ARDOP / VARA).
+  // Mirrors the packet override: when the operator's last-active transport is a
+  // radio modem but the live backend is idle/disconnected (e.g. after closing
+  // the radio pane), the ribbon should still name that transport instead of
+  // falling back to the generic config-derived "Idle · <configTransport>" label.
+  // Packet was already handled via `packetUi`; ARDOP/VARA were not — that was
+  // the smoke-walk item 38 residual gap. Live Connecting/Connected/Listening
+  // states already name the transport via formatConnectionState, so this only
+  // overrides the idle/disconnected fallback.
+  const radioConn = useMemo<{ label: string; tone: StatusTone } | null>(() => {
+    const RADIO_LABELS: Record<string, string> = {
+      'ardop-hf': 'ARDOP HF',
+      'vara-hf': 'VARA HF',
+      'vara-fm': 'VARA FM',
+    };
+    const label = RADIO_LABELS[activeConnection.protocol];
+    if (!label) return null;
+    const status = statusData.status ?? null;
+    if (status === null || status.kind === 'Disconnected') {
+      return { label: `${label} · not connected`, tone: 'idle' };
+    }
+    return null;
+  }, [activeConnection, statusData.status]);
+
   return (
     <div className="layout-b" data-testid="app-shell-root">
       <TitleBar folderLabel={folderLabel(selectedFolder, userFolders)} />
@@ -807,6 +831,7 @@ export function AppShell() {
           connecting={connecting}
           onAbort={onAbort}
           packet={packetUi}
+          radioConn={radioConn}
           ssid={packetConfig.config ? packetConfig.ssid : undefined}
           onSsidChange={packetConfig.config ? packetConfig.setSsid : undefined}
         />

@@ -38,6 +38,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { clearDraft, loadDraft, saveDraft, splitAddrs } from './useDraft';
 import { ComposeTitleBar } from './ComposeTitleBar';
 import { ResizeHandles } from '../shell/chrome/ResizeHandles';
+import { formatCallsign } from '../shell/useStatus';
 import { lookupForm } from '../forms';
 import { CatalogBrowser } from './CatalogBrowser';
 import { WebviewFormHost, type ParsedBody } from './WebviewFormHost';
@@ -281,9 +282,24 @@ export function Compose({ draftId }: ComposeProps) {
 
   // Fetch config to populate callsign + grid for send_form (T6.1)
   useEffect(() => {
-    invoke<{ callsign?: string; grid?: string }>('config_read')
+    invoke<{
+      connect_to_cms?: boolean;
+      callsign?: string | null;
+      identifier?: string | null;
+      grid?: string;
+    }>('config_read')
       .then((cfg) => {
-        setCallsign(cfg.callsign ?? '');
+        // Resolve the From identity the same way the ribbon does (spec §5.6):
+        // callsign for CMS installs, falling back to identifier for offline-path
+        // operators who have no callsign. Reading cfg.callsign alone left the
+        // field blank for the offline audience (smoke-walk item 39 gap).
+        setCallsign(
+          formatCallsign({
+            connect_to_cms: cfg.connect_to_cms ?? false,
+            callsign: cfg.callsign ?? null,
+            identifier: cfg.identifier ?? null,
+          }),
+        );
         setGrid(cfg.grid ?? '');
       })
       .catch(() => {

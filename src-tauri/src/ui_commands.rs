@@ -780,12 +780,49 @@ fn find_text_plain_body(msg: &mail_parser::Message<'_>, raw: &[u8]) -> String {
 /// single-byte Windows code page. Prefer valid UTF-8; otherwise use
 /// Windows-1252, which preserves ISO-8859-1 printable bytes and the smart
 /// punctuation commonly produced by Windows clients.
+///
+/// Decoding is **byte-wise**: valid UTF-8 runs are kept verbatim and only the
+/// genuinely-invalid bytes are CP-1252-mapped. An earlier all-or-nothing gate
+/// (whole-body `from_utf8`, else map every byte) re-introduced mojibake on
+/// mixed-encoding bodies — a single stray non-UTF-8 byte flipped an otherwise
+/// valid UTF-8 body to Latin-1, turning a real `café` (C3 A9) into `cafÃ©`
+/// (smoke-walk item 24 regression risk). Walking the bytes preserves the valid
+/// UTF-8 while still rescuing legacy CP-1252 high bytes.
 fn decode_b2f_body_text(bytes: &[u8]) -> String {
-    if let Ok(text) = std::str::from_utf8(bytes) {
-        return text.to_string();
+    let mut out = String::with_capacity(bytes.len());
+    let mut rest = bytes;
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(text) => {
+                out.push_str(text);
+                break;
+            }
+            Err(err) => {
+                let valid = err.valid_up_to();
+                // SAFETY: `valid_up_to()` guarantees `rest[..valid]` is valid UTF-8.
+                out.push_str(unsafe { std::str::from_utf8_unchecked(&rest[..valid]) });
+                match err.error_len() {
+                    // A bounded invalid sequence: CP-1252-map each offending byte,
+                    // then resume UTF-8 decoding after it.
+                    Some(len) => {
+                        for &b in &rest[valid..valid + len] {
+                            out.push(windows_1252_char(b));
+                        }
+                        rest = &rest[valid + len..];
+                    }
+                    // Truncated multibyte sequence at the tail (no further bytes):
+                    // CP-1252-map the remainder and stop.
+                    None => {
+                        for &b in &rest[valid..] {
+                            out.push(windows_1252_char(b));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
     }
-
-    bytes.iter().map(|&b| windows_1252_char(b)).collect()
+    out
 }
 
 fn windows_1252_char(byte: u8) -> char {
@@ -5364,6 +5401,12 @@ pub async fn telnet_p2p_connect(
     };
 
     let outbound_count = outbound.len();
+    // Capture (MID, subject) pairs before `outbound` is moved into the exchange
+    // closure, so the post-exchange plain log can name each sent/deferred/rejected
+    // message by subject — parity with the shared exchange filing paths
+    // (smoke-walk item 4: Telnet P2P was the one Telnet mode that still emitted
+    // only an aggregate count, not per-message movement).
+    let outbound_log = crate::winlink_backend::outbound_log_items(&outbound);
     emit_session_line(
         &app,
         &log,
@@ -5473,6 +5516,14 @@ pub async fn telnet_p2p_connect(
                 }
             }
 
+            // Per-message movement detail (Received/Sent/Rejected/Deferred by
+            // subject), mirroring the shared exchange filing paths so a Telnet
+            // P2P operator can see WHICH messages moved, not just a count.
+            crate::winlink_backend::emit_exchange_result_progress(
+                &exchange,
+                &outbound_log,
+                &|line: &str| emit_session_line(&app, &log, LogLevel::Info, line.to_string()),
+            );
             let summary = format!(
                 "P2P exchange complete. Sent {}, received {}.",
                 exchange.sent.len(),
