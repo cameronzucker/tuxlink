@@ -36,14 +36,14 @@ importers:
         specifier: ^1.9.4
         version: 1.9.4
       marked:
-        specifier: ^14.1.4
-        version: 14.1.4
+        specifier: ^15.0.12
+        version: 15.0.12
       marked-extended-tables:
         specifier: ^2.0.1
-        version: 2.0.1(marked@14.1.4)
+        version: 2.0.1(marked@15.0.12)
       marked-footnote:
         specifier: ^1.4.0
-        version: 1.4.0(marked@14.1.4)
+        version: 1.4.0(marked@15.0.12)
       mermaid:
         specifier: ^11.15.0
         version: 11.15.0
@@ -1876,8 +1876,8 @@ packages:
     peerDependencies:
       marked: '>=7.0.0'
 
-  marked@14.1.4:
-    resolution: {integrity: sha512-vkVZ8ONmUdPnjCKc5uTRvmkRbx4EAi2OkTOXmfTDhZz3OFqMNBM1oTTWwTr4HY4uAEojhzPf+Fy8F1DWa3Sndg==}
+  marked@15.0.12:
+    resolution: {integrity: sha512-8dD6FusOQSrpv9Z1rdNMdlSgQOIP880DHqnohobOmYLElGEqAL/JvxvuxZO16r4HtjTlfPRDC1hbvxC9dPN2nA==}
     engines: {node: '>= 18'}
     hasBin: true
 
@@ -3963,15 +3963,15 @@ snapshots:
     dependencies:
       semver: 7.8.0
 
-  marked-extended-tables@2.0.1(marked@14.1.4):
+  marked-extended-tables@2.0.1(marked@15.0.12):
     dependencies:
-      marked: 14.1.4
+      marked: 15.0.12
 
-  marked-footnote@1.4.0(marked@14.1.4):
+  marked-footnote@1.4.0(marked@15.0.12):
     dependencies:
-      marked: 14.1.4
+      marked: 15.0.12
 
-  marked@14.1.4: {}
+  marked@15.0.12: {}
 
   marked@16.4.2: {}
 
