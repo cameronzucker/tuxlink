@@ -197,10 +197,12 @@ function FormMessageBody({
   formId,
   payload,
   bodyText,
+  radioDrawerOpen = false,
 }: {
   formId: string;
   payload: FormPayload;
   bodyText: string;
+  radioDrawerOpen?: boolean;
 }) {
   // Track viewer-fallback failure so we can fall through to KeyValueView.
   // Reset semantics: state lives for the lifetime of this component
@@ -249,6 +251,7 @@ function FormMessageBody({
         fieldValues={fieldValues}
         onClose={() => setViewerFailed(true)}
         onFallback={() => setViewerFailed(true)}
+        suppressed={radioDrawerOpen}
       />
     </div>
   );
@@ -272,6 +275,7 @@ export function MessageViewLoaded({
   currentFolder,
   userFolders,
   onMove,
+  radioDrawerOpen = false,
 }: {
   message: ParsedMessage;
   onArchive?: () => void;
@@ -285,6 +289,9 @@ export function MessageViewLoaded({
   /// Move-to-folder callback. When supplied + `currentFolder` is present,
   /// the reading-pane toolbar renders a "Move ▾" dropdown alongside Archive.
   onMove?: (to: MailboxFolderRef) => void;
+  /// When true, any open form-viewer webview is hidden while the radio
+  /// drawer is open. Threaded from AppShell via MessageView (tuxlink-813d).
+  radioDrawerOpen?: boolean;
 }) {
   const from = parseAddress(message.from);
   const toAddrs = message.to.map(parseAddress);
@@ -426,6 +433,7 @@ export function MessageViewLoaded({
           formId={message.formId}
           payload={message.formPayload}
           bodyText={message.body}
+          radioDrawerOpen={radioDrawerOpen}
         />
       ) : message.isForm ? (
         // isForm true but no payload — parse failed server-side or message
@@ -678,6 +686,10 @@ export interface MessageViewProps {
   /** Move-to-folder callback. When supplied, the reading pane renders a
    *  "Move ▾" dropdown that lists system folders + user folders. */
   onMove?: (to: MailboxFolderRef) => void;
+  /** When true, any open form-viewer child webview is hidden while the
+   *  radio drawer is open (compact-mode overlay coexistence, tuxlink-813d).
+   *  Defaults to false so existing call sites that omit it keep working. */
+  radioDrawerOpen?: boolean;
 }
 
 /**
@@ -703,6 +715,7 @@ export default function MessageView({
   onArchive,
   userFolders,
   onMove,
+  radioDrawerOpen = false,
 }: MessageViewProps) {
   const { data, isLoading, isError, error } = useMessage(selectedMessage);
 
@@ -747,6 +760,7 @@ export default function MessageView({
       currentFolder={selectedMessage.folder}
       userFolders={userFolders}
       onMove={onMove}
+      radioDrawerOpen={radioDrawerOpen}
     />
   );
 }

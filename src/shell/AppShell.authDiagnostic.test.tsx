@@ -176,6 +176,16 @@ function renderShell() {
   );
 }
 
+// tuxlink-813d P1 fix: the shell passes `compact={isCompact}` to FolderSidebar.
+// jsdom has no `matchMedia` (no global stub in test-setup), so `useViewport`
+// returns `isCompact=false` and the shell renders the DESKTOP labeled sidebar —
+// the Connections accordion (`sess-*` / `proto-*`) is inline, with no `☰`
+// rail-expand button. Click the session header + protocol directly.
+function selectConnection(sessTestId: string, protoTestId: string) {
+  fireEvent.click(screen.getByTestId(sessTestId));
+  fireEvent.click(screen.getByTestId(protoTestId));
+}
+
 const STOPPED_STATUS: ModemStatus = {
   state: 'stopped',
   peer: null,
@@ -210,8 +220,7 @@ describe('<AppShell> AuthDiagnosticBanner integration (production mount path)', 
     renderShell();
 
     // Select CMS → Telnet to mount TelnetRadioPanel (same pattern as AppShell.test.tsx).
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+    selectConnection('sess-cms', 'proto-cms-telnet');
 
     // Wait for the lazy TelnetRadioPanel to resolve and render.
     await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
@@ -254,8 +263,7 @@ describe('<AppShell> AuthDiagnosticBanner integration (production mount path)', 
   it('dismisses the banner when an auth-diagnostic-clear event arrives', async () => {
     // Mount shell + select Telnet to get TelnetRadioPanel.
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+    selectConnection('sess-cms', 'proto-cms-telnet');
     await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
 
     // Wait for both handlers to register.
