@@ -2370,13 +2370,12 @@ pub fn run_ardop_b2f_exchange(
     // dials we skip the keyring read entirely — both a hygiene win (no
     // unnecessary keyring traffic) and a defensive guarantee that a stale
     // CMS secret cannot leak into a peer handshake.
-    // The CMS path reuses the existing `tuxlink-pat` keyring entry — the
-    // cred store is shared with the legacy Pat flow (per ADR 0011 cred
-    // refactor).
+    // The CMS path reads the secure-login password from the canonical `tuxlink`
+    // keyring service via credentials::read_password (same source the telnet path
+    // uses). tuxlink-kc3q: previously read the legacy `tuxlink-pat` service directly.
     let password = if intent == SessionIntent::Cms {
-        keyring::Entry::new("tuxlink-pat", &callsign)
+        crate::winlink::credentials::read_password(&callsign)
             .ok()
-            .and_then(|e| e.get_password().ok())
             .filter(|p| !p.is_empty())
     } else {
         None
@@ -2660,8 +2659,9 @@ pub fn run_vara_b2f_answer(
 /// # CMS password
 ///
 /// For `intent == Cms`, fetches the operator's CMS password from the
-/// shared `tuxlink-pat` keyring entry (same source the ARDOP path uses)
-/// so a `;PQ` challenge from the gateway can be answered. For non-CMS
+/// canonical `tuxlink` keyring service via credentials::read_password (same
+/// source the ARDOP path uses) so a `;PQ` challenge from the gateway can be
+/// answered. For non-CMS
 /// intents, skips the keyring read — peers never challenge per the FBB
 /// master/slave split and a stale CMS secret should not leak into a peer
 /// handshake.
@@ -2694,15 +2694,14 @@ pub fn run_vara_b2f_exchange(
     let locator = crate::position::effective_broadcast_locator(config, position);
 
     // CMS gateway may issue a `;PQ` challenge — fetch the operator's CMS
-    // password from the shared `tuxlink-pat` keyring entry (per ADR 0011
-    // cred refactor; same source ARDOP uses). For peer intents the FBB
+    // password from the canonical `tuxlink` keyring service via
+    // credentials::read_password (same source ARDOP uses). For peer intents the FBB
     // master/slave split forbids challenges, so skip the keyring read:
     // both a hygiene win and a defensive guarantee that a stale CMS
     // secret cannot leak into a peer handshake.
     let password = if intent == SessionIntent::Cms {
-        keyring::Entry::new("tuxlink-pat", &callsign)
+        crate::winlink::credentials::read_password(&callsign)
             .ok()
-            .and_then(|e| e.get_password().ok())
             .filter(|p| !p.is_empty())
     } else {
         None
