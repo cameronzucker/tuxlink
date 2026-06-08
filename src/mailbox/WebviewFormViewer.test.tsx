@@ -241,3 +241,58 @@ describe('<WebviewFormViewer>', () => {
     expect(onFallback).toHaveBeenCalledWith(expect.stringContaining('viewer template not found'));
   });
 });
+
+// tuxlink-h7q7 Task 17 (Codex adrev R1 #5/#6): under the FZ-M1 PUSH drawer,
+// opening the radio panel narrows the reader → the embed placeholder resizes →
+// the component's existing ResizeObserver fires → the child webview is
+// repositioned/resized to the narrower reader (never occluded). This proves the
+// reflow path repositions the webview. The authoritative occlusion check is the
+// Playwright real-viewport pass (jsdom cannot prove native-webview stacking).
+describe('<WebviewFormViewer> — repositions on placeholder resize (push reflow, R1)', () => {
+  let fireResize: (() => void) | null = null;
+  const originalRO = globalThis.ResizeObserver;
+
+  beforeEach(() => {
+    fireResize = null;
+    class CapturingResizeObserver {
+      constructor(cb: ResizeObserverCallback) {
+        fireResize = () => cb([], this as unknown as ResizeObserver);
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
+      CapturingResizeObserver as unknown as typeof ResizeObserver;
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'open_webview_viewer') return { url: 'http://127.0.0.1:54322/', port: 54322, token: 'tok-vw1' };
+      return undefined;
+    });
+  });
+  afterEach(() => {
+    (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver = originalRO;
+    mocks.webviewSetPosition.mockClear();
+    mocks.webviewSetSize.mockClear();
+  });
+
+  it('calls setPosition + setSize with the new rect when the embed placeholder resizes', async () => {
+    render(<WebviewFormViewer formId="Quick_Message" fieldValues={{}} onClose={() => {}} />);
+    // Wait for the async open + webview construction + observer registration.
+    await waitFor(() => expect(mocks.WebviewMock).toHaveBeenCalled());
+    await waitFor(() => expect(fireResize).not.toBeNull());
+
+    // Simulate the push reflow: the embed placeholder is now narrower + shifted.
+    const embed = screen.getByTestId('webview-form-viewer-embed');
+    embed.getBoundingClientRect = () =>
+      ({ left: 48, top: 100, width: 452, height: 600, right: 500, bottom: 700, x: 48, y: 100, toJSON: () => ({}) }) as DOMRect;
+
+    mocks.webviewSetPosition.mockClear();
+    mocks.webviewSetSize.mockClear();
+    fireResize!();
+
+    expect(mocks.webviewSetPosition).toHaveBeenCalled();
+    expect(mocks.webviewSetSize).toHaveBeenCalled();
+    // The new size reflects the narrower reader column (push drawer open).
+    expect(mocks.LogicalSizeMock).toHaveBeenCalledWith(452, 600);
+  });
+});

@@ -154,3 +154,40 @@
   border-color: var(--color-accent, #3d84f7);
   color: #fff;
 }
+
+/* ============================================================
+ * FZ-M1 compact mode (tuxlink-h7q7)
+ *
+ * Embedded in the Compose window (a separate Tauri document), so this is a
+ * pure `@media (max-width: 1365px)` block evaluated against the compose
+ * window's own width. Strictly below the 1366px desktop floor (Codex adrev
+ * R1 #1).
+ *
+ * CRITICAL: this form sizes its fonts in `rem`. We must NOT add any root /
+ * `.ics309-form-v2` font-size shrink — at the 14px root the `0.85rem`
+ * datetime/subtitle text already sits ~11.9px, right at the floor, and a
+ * root shrink would push it below. So this block ONLY pins touch targets
+ * and lifts the borderline `0.85rem` datetime input to a hard 12px floor;
+ * it never scales the form down. Desktop is byte-identical.
+ * ============================================================ */
+
+@media (max-width: 1365px) {
+  /* datetime-local pickers -> >=44px tall touch target + 12px font floor
+   * (0.85rem ≈ 11.9px at the 14px root, just under the floor — pin it). */
+  .ics309-form-v2__custom-range input[type="datetime-local"] {
+    min-height: 44px;
+    font-size: 12px;
+  }
+
+  /* Range query button + preset buttons -> >=44px tall. */
+  .ics309-form-v2__query-btn,
+  .ics309-form-v2__preset-btn {
+    min-height: 44px;
+  }
+
+  /* Action buttons (Insert log / Save / …) -> >=44px tall. */
+  .ics309-form-v2__actions button {
+    min-height: 44px;
+    padding: 8px 16px;
+  }
+}

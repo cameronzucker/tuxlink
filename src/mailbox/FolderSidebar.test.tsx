@@ -265,3 +265,55 @@ describe('FolderSidebar — Connections accordion', () => {
     expect(screen.getByTestId('sess-cms')).toHaveAttribute('aria-expanded', 'true');
   });
 });
+
+describe('<FolderSidebar> — FZ-M1 compact rail (tuxlink-h7q7)', () => {
+  it('wraps every folder label in a .nav-label (a11y-safe rail hide; no bare text node)', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />);
+    const inbox = screen.getByTestId('folder-inbox');
+    expect(inbox.querySelector('.nav-label')?.textContent).toBe('Inbox');
+    expect(inbox.querySelector('.icon')).toBeInTheDocument();
+    // No direct text-node child of the button (would show raw text in the rail).
+    const directText = Array.from(inbox.childNodes)
+      .filter((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? '').trim() !== '');
+    expect(directText).toHaveLength(0);
+  });
+
+  it('wraps section headings in .section-label-text (keeps the + button visible in the rail)', () => {
+    render(
+      <FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} onCreateFolder={() => {}} />,
+    );
+    expect(screen.getByText('Folders').className).toContain('section-label-text');
+    // The create-folder button is a sibling of the clipped text, not inside it.
+    const createBtn = screen.getByTestId('folder-create-btn');
+    expect(createBtn.className).toContain('folder-create-btn'); // classed, not inline (F4/Task 9)
+  });
+
+  it('renders the empty-hint with a class (media-query reachable), not inline styles', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} onCreateFolder={() => {}} />);
+    expect(screen.getByTestId('folders-empty-hint').className).toContain('folders-empty-hint');
+  });
+
+  it('toggles rail expansion and collapses on folder select, Escape, and outside click (F11)', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />);
+    const nav = screen.getByTestId('folder-sidebar');
+    const expandBtn = screen.getByTestId('rail-expand-btn');
+
+    // expand → collapse on folder select
+    fireEvent.click(expandBtn);
+    expect(nav.classList.contains('is-expanded')).toBe(true);
+    fireEvent.click(screen.getByTestId('folder-sent'));
+    expect(nav.classList.contains('is-expanded')).toBe(false);
+
+    // expand → collapse on Escape
+    fireEvent.click(expandBtn);
+    expect(nav.classList.contains('is-expanded')).toBe(true);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(nav.classList.contains('is-expanded')).toBe(false);
+
+    // expand → collapse on outside pointer-down
+    fireEvent.click(expandBtn);
+    expect(nav.classList.contains('is-expanded')).toBe(true);
+    fireEvent.pointerDown(document.body);
+    expect(nav.classList.contains('is-expanded')).toBe(false);
+  });
+});

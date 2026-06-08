@@ -6,7 +6,7 @@
 // by SESSION_TYPES. Selecting a built protocol calls
 // `onSelectConnection({ sessionType, protocol })`. Styling lives in AppShell.css.
 
-import { memo, useState, useEffect } from 'react';
+import { memo, useState, useEffect, useRef } from 'react';
 import type { MailboxFolder, MailboxFolderRef, UserFolder } from './types';
 import { SESSION_TYPES } from '../connections/sessionTypes';
 import type { SessionTypeId, ConnectionKey } from '../connections/sessionTypes';
@@ -111,6 +111,28 @@ export const FolderSidebar = memo(function FolderSidebar({
   // null when nothing is being dragged or the drag is outside a folder.
   const [dragOver, setDragOver] = useState<string | null>(null);
 
+  // FZ-M1 compact rail expand overlay (tuxlink-h7q7). The 36/48px icon rail
+  // expands to a labeled overlay over the message list. CSS-gated to compact;
+  // a no-op at desktop (the expand button is display:none there). Dismissal:
+  // selecting a folder, an outside pointer-down, or Escape (Claude adrev F11).
+  const [railExpanded, setRailExpanded] = useState(false);
+  const navRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!railExpanded) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) setRailExpanded(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setRailExpanded(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [railExpanded]);
+
   // Drop handler factory — wraps the payload parse + the AppShell callback.
   const makeDropHandler = (toFolder: MailboxFolderRef) => (e: React.DragEvent) => {
     e.preventDefault();
@@ -146,8 +168,27 @@ export const FolderSidebar = memo(function FolderSidebar({
   }, [selectedConnection]);
 
   return (
-    <nav className="sidebar" data-testid="folder-sidebar" aria-label="Mailbox and connections">
-      <div className="section-label">Mailbox</div>
+    <nav
+      className={`sidebar${railExpanded ? ' is-expanded' : ''}`}
+      data-testid="folder-sidebar"
+      aria-label="Mailbox and connections"
+      ref={navRef}
+    >
+      {/* Rail expand toggle — CSS-hidden at desktop; in compact it reveals the
+          full labeled sidebar as an overlay over the message list (tuxlink-h7q7). */}
+      <button
+        type="button"
+        className="rail-expand-btn"
+        data-testid="rail-expand-btn"
+        aria-expanded={railExpanded}
+        aria-label={railExpanded ? 'Collapse folder labels' : 'Expand folder labels'}
+        onClick={() => setRailExpanded((x) => !x)}
+      >
+        <span aria-hidden="true">{railExpanded ? '⟨' : '☰'}</span>
+      </button>
+      <div className="section-label">
+        <span className="section-label-text">Mailbox</span>
+      </div>
       {MAILBOX_ITEMS.map((item) => {
         const isFolder = item.id !== undefined && item.enabled;
         const active = isFolder && item.id === selectedFolder;
@@ -172,6 +213,7 @@ export const FolderSidebar = memo(function FolderSidebar({
             aria-current={active ? 'true' : undefined}
             onClick={() => {
               if (isFolder) onSelectFolder(item.id as MailboxFolder);
+              setRailExpanded(false);
             }}
             onDragOver={isFolder && dropSlug ? makeDragOver(dropSlug) : undefined}
             onDragLeave={isFolder && dropSlug ? handleDragLeave(dropSlug) : undefined}
@@ -181,7 +223,7 @@ export const FolderSidebar = memo(function FolderSidebar({
             <span className="icon" aria-hidden="true">
               {item.icon}
             </span>
-            {item.label}
+            <span className="nav-label">{item.label}</span>
             {typeof count === 'number' && count > 0 && (
               <span className="count" data-testid={`folder-count-${item.id}`}>
                 {count}
@@ -196,33 +238,16 @@ export const FolderSidebar = memo(function FolderSidebar({
           `+` button that fires onCreateFolder; the section is rendered even
           when empty so the operator's path to creating a first folder is
           always visible. */}
-      <div
-        className="section-label"
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-      >
-        <span>Folders</span>
+      <div className="section-label section-label--folders">
+        <span className="section-label-text">Folders</span>
         {onCreateFolder && (
           <button
             type="button"
+            className="folder-create-btn"
             data-testid="folder-create-btn"
             onClick={onCreateFolder}
             aria-label="New folder"
             title="New folder"
-            style={{
-              background: 'transparent',
-              border: '1px solid var(--border-strong, #2c3744)',
-              borderRadius: 3,
-              color: 'inherit',
-              fontSize: 13,
-              width: 18,
-              height: 18,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              padding: 0,
-              lineHeight: 1,
-            }}
           >
             +
           </button>
@@ -240,7 +265,10 @@ export const FolderSidebar = memo(function FolderSidebar({
               .filter(Boolean)
               .join(' ')}
             aria-current={active ? 'true' : undefined}
-            onClick={() => onSelectFolder(uf.slug)}
+            onClick={() => {
+              onSelectFolder(uf.slug);
+              setRailExpanded(false);
+            }}
             onContextMenu={(e) => {
               if (onFolderContextMenu) {
                 e.preventDefault();
@@ -253,25 +281,19 @@ export const FolderSidebar = memo(function FolderSidebar({
             style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
           >
             <span className="icon" aria-hidden="true">▢</span>
-            {uf.displayName}
+            <span className="nav-label">{uf.displayName}</span>
           </button>
         );
       })}
       {userFolders.length === 0 && (
-        <div
-          data-testid="folders-empty-hint"
-          style={{
-            padding: '4px 10px',
-            fontSize: 11,
-            fontStyle: 'italic',
-            color: 'var(--text-faint, #5d6975)',
-          }}
-        >
+        <div className="folders-empty-hint" data-testid="folders-empty-hint">
           {onCreateFolder ? 'Click + to create one' : 'No custom folders yet'}
         </div>
       )}
 
-      <div className="section-label">Connections</div>
+      <div className="section-label">
+        <span className="section-label-text">Connections</span>
+      </div>
       {SESSION_TYPES.map((s) => (
         <div key={s.id}>
           {/* Session-type header (accordion toggle) */}
@@ -282,8 +304,8 @@ export const FolderSidebar = memo(function FolderSidebar({
             aria-expanded={!!expanded[s.id]}
             onClick={() => setExpanded((e) => ({ ...e, [s.id]: !e[s.id] }))}
           >
-            <span aria-hidden="true">{expanded[s.id] ? '▾' : '▸'}</span>
-            {s.label}
+            <span className="icon" aria-hidden="true">{expanded[s.id] ? '▾' : '▸'}</span>
+            <span className="nav-label">{s.label}</span>
           </button>
 
           {/* Protocol rows (only shown when expanded) */}
@@ -307,9 +329,12 @@ export const FolderSidebar = memo(function FolderSidebar({
                     .join(' ')}
                   disabled={!p.built}
                   aria-current={isActive ? 'true' : undefined}
-                  onClick={() => onSelectConnection?.({ sessionType: s.id, protocol: p.id })}
+                  onClick={() => {
+                    onSelectConnection?.({ sessionType: s.id, protocol: p.id });
+                    setRailExpanded(false);
+                  }}
                 >
-                  {p.label}
+                  <span className="nav-label">{p.label}</span>
                   {!p.built && <span className="v01-badge">soon</span>}
                 </button>
               );

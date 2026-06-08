@@ -387,3 +387,95 @@
   font-size: 14px;
   color: var(--text-dim);
 }
+
+/* ── FZ-M1 compact mode (tuxlink-h7q7) ──────────────────────────────────────
+ * Touch-friendly density pass for the Panasonic FZ-M1 (1280x800, ~216 PPI,
+ * capacitive touch). Pure CSS — the wizard renders BEFORE the shell and is
+ * never co-mounted, so it needs no JS hook (audit §2.6 / plan Phase 5).
+ *
+ * Design intent is DENSITY, not uniform shrink: tighten wasteful vertical
+ * padding, lift sub-floor fonts to a >=13px legibility floor, and grow tap
+ * targets to >=44px — the whole-UI base font is NOT scaled down. The 580px
+ * centered card is preserved (no horizontal overflow on this surface).
+ *
+ * Strictly `max-width: 1365px` (NOT 1366) so desktop >=1366px is byte-identical
+ * (Codex adrev R1 #1). Every rule below lives inside this one media query.
+ *
+ * KNOWN GAP — the inline Register anchor (`.wizard-root a` in
+ * Step2Credentials.tsx) is an inline `<a>` inside a sentence; its hit area is
+ * the text line-box only and cannot cleanly reach 44px inline without
+ * restyling it as a block button (which would break the prose flow). This is
+ * flagged for a DESIGN call (plan §"design open item" / Codex item 2) and is
+ * deliberately NOT restyled speculatively here.
+ */
+@media (max-width: 1365px) {
+  /* Reclaim vertical budget: lower the top padding and tighten card padding so
+   * the credentials / probing steps are less likely to overflow ~760px. */
+  .wizard-root {
+    padding: clamp(16px, 3vh, 32px) 24px 48px;
+  }
+  .wizard-root .wizard-step {
+    padding: 24px 28px 24px;
+  }
+
+  /* Cap the session log to a fraction of the viewport (was a fixed 220px) so a
+   * long probing transcript can't push the action row off-screen; bump its mono
+   * font off the 12px floor (it + the failed-detail are the hardest-to-read
+   * strings on this surface). */
+  .wizard-root .wizard-session-log {
+    max-height: 30vh;
+    font-size: 13px;
+  }
+  .wizard-root .wizard-failed-detail {
+    font-size: 13px;
+  }
+
+  /* ── Touch targets >=44px ───────────────────────────────────────────────── */
+  /* Primary + secondary submit-row buttons. */
+  .wizard-root .wizard-submit-row > button {
+    min-height: 44px;
+  }
+  /* Text inputs (credentials / offline identity). */
+  .wizard-root .wizard-field input {
+    min-height: 44px;
+  }
+  /* Password show/hide toggle. */
+  .wizard-root .wizard-password-row button {
+    min-height: 44px;
+  }
+  /* The link-button ("Go to inbox now" / "Go to inbox"). */
+  .wizard-root .wizard-btn-link,
+  .wizard-root .wizard-submit-row > button.wizard-btn-link {
+    min-height: 44px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  /* Error-banner Retry button. */
+  .wizard-root .wizard-error-banner button {
+    min-height: 44px;
+  }
+
+  /* ── Font floors: lift sub-floor (12 / 12.5px) offenders to 13px ─────────── */
+  .wizard-root .wizard-field label,
+  .wizard-root .wizard-field-error,
+  .wizard-root .wizard-field-hint,
+  .wizard-root .wizard-password-row button,
+  .wizard-root .wizard-error-banner button,
+  .wizard-root .wizard-transport-visibility,
+  .wizard-root .wizard-failed-hint-heading,
+  .wizard-root .wizard-mock-banner,
+  .wizard-root .wizard-footer-copy {
+    font-size: 13px;
+  }
+
+  /* Inline code: 0.88em is sub-floor against the 13-14px body — nudge up. */
+  .wizard-root code {
+    font-size: 0.92em;
+  }
+
+  /* The footer copy uses the faintest token (--text-faint #5d6975 on #0d1318 —
+   * low contrast). Lighten one step to --text-dim for legibility at 216 PPI. */
+  .wizard-root .wizard-footer-copy {
+    color: var(--text-dim);
+  }
+}

@@ -277,3 +277,54 @@
   font-size: 10px;
   opacity: 0.7;
 }
+
+/* ============================================================================
+   FZ-M1 (tuxlink-h7q7): controls moved off inline styles so a media query can
+   reach them in compact mode. Desktop values are byte-identical to the prior
+   inline styles (no-visual-change refactor at >=1366px).
+   ============================================================================ */
+.section-label.section-label--folders {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.folder-create-btn {
+  background: transparent;
+  border: 1px solid var(--border-strong, #2c3744);
+  border-radius: 3px;
+  color: inherit;
+  font-size: 13px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+.folders-empty-hint {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-faint, #5d6975);
+}
+
+@media (max-width: 1365px) {
+  /* Touch + legibility in the icon rail. The 44px `+` button fits the 48px rail
+     once the section-label horizontal padding is trimmed. */
+  .layout-b .sidebar .section-label {
+    padding: 6px 2px 4px;
+  }
+  .layout-b .sidebar .section-label.section-label--folders {
+    justify-content: center;
+  }
+  .folder-create-btn {
+    width: 44px;
+    height: 44px;
+    font-size: 18px;
+  }
+  .folders-empty-hint {
+    font-size: 12px;
+  }
+}

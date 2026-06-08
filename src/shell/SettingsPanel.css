@@ -156,3 +156,51 @@
   color: var(--text);
   border-color: var(--border-strong);
 }
+
+/* FZ-M1 compact mode (tuxlink-h7q7) — touch-target + sub-floor-font density for
+ * the 1280x800 / ~216 PPI rugged tablet. Additive + scoped: desktop (>=1366px)
+ * is byte-identical. Mirrors COMPACT_MEDIA_QUERY in src/shell/useViewport.ts.
+ *
+ * This file is the shared home for the DRY close-button rule reused by all THREE
+ * dialogs (Settings/Theme/About) — see the multi-selector rule below. The other
+ * two dialog stylesheets (ThemeDesigner.css, AboutDialog.css) intentionally do
+ * NOT restate it. */
+@media (max-width: 1365px) {
+  /* DRY close-button touch target — one rule, all three modals. The bare 22px
+   * glyph buttons are half the 44px floor; bump every dialog's close control at
+   * once. Negative inline margin keeps the larger hit area from shoving the
+   * header title sideways. */
+  .tux-settings-close,
+  .tux-theme-designer-close,
+  .tux-about-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    margin: -8px -8px -8px 0;
+  }
+
+  /* Each option row is a tap target (select-precision radio choice). */
+  .tux-settings-opt {
+    min-height: 44px;
+    align-items: center;
+  }
+  /* Native radio bump — the default ~13-16px control is sub-floor for touch. */
+  .tux-settings-opt input[type='radio'] {
+    width: 20px;
+    height: 20px;
+    margin-top: 0;
+  }
+
+  /* Sub-floor font floors (density, not whole-UI shrink). */
+  .tux-settings-opt-help {
+    font-size: 13px;
+  }
+  .tux-settings-group legend {
+    font-size: 12px;
+  }
+  .tux-settings-error {
+    font-size: 13px;
+  }
+}

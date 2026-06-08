@@ -1,0 +1,119 @@
+/* src/shell/RadioDrawer.css
+ *
+ * Desktop (>=1366px): the wrapper AND its body are display:contents, so the
+ * radio panel sits in the grid's 4th column exactly as before; the grip is
+ * hidden. tuxlink-h7q7.
+ */
+.radio-drawer {
+  display: contents;
+}
+.radio-drawer-body {
+  display: contents;
+}
+.radio-drawer-grip {
+  display: none;
+}
+
+@media (max-width: 1365px) {
+  /* Compact: the wrapper IS the grid's 4th column (the grid template reserves
+   * 44px closed / 400px open — see compactShell.css). It PUSHES the reader; it
+   * does NOT overlay (a child webview would paint over an HTML overlay). */
+  .radio-drawer {
+    display: flex;
+    height: 100%;
+    min-width: 0;
+    overflow: hidden;
+    position: relative;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+  }
+  /* Body: fills the column when open; clipped to 0 when the column is 44px. The
+   * panel cosmetically slides in (composited transform); the reader reflow that
+   * repositions the form-viewer webview is INSTANT (grid-template-columns has no
+   * transition), so no transitionend re-measure is needed. */
+  .radio-drawer-body {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    overflow: auto;
+    transform: translateX(100%);
+    transition: transform 220ms ease;
+  }
+  .panes.drawer-open .radio-drawer-body {
+    transform: translateX(0);
+  }
+  /* Override the panel's own rigid 400px floor so it fits the column.
+   * Specificity (0,2,0) beats RadioPanel.css's `.radio-panel` (0,1,0)
+   * regardless of which (possibly lazy) chunk loads later. */
+  .radio-drawer-body .radio-panel {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Grip: >=44px-wide hit target. Closed → it fills the 44px column (centered).
+   * Open → a tab pinned to the panel's left edge to collapse without dropping
+   * the connection. Always reachable; never under the webview (it lives in its
+   * own grid track, not over the reader). */
+  .radio-drawer-grip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 44px;
+    width: 44px;
+    min-height: 44px;
+    padding: 0;
+    background: var(--surface-2);
+    border: 0;
+    border-right: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .panes.drawer-open .radio-drawer-grip {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
+    height: 56px;
+    min-height: 56px;
+    border-radius: 0 6px 6px 0;
+    z-index: 1;
+  }
+  .radio-drawer-grip-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--text-faint);
+  }
+  .radio-drawer-grip[data-session-state='connecting'] .radio-drawer-grip-dot {
+    background: var(--accent-2, #fbbf24);
+    animation: radio-drawer-pulse 1.2s ease-in-out infinite;
+  }
+  .radio-drawer-grip[data-session-state='connected'] .radio-drawer-grip-dot {
+    background: var(--success, #4ade80);
+    box-shadow: 0 0 5px var(--success, #4ade80);
+  }
+  .radio-drawer-grip[data-session-state='disconnecting'] .radio-drawer-grip-dot {
+    background: var(--accent-2, #fbbf24);
+  }
+  .radio-drawer-grip[data-session-state='error'] .radio-drawer-grip-dot {
+    background: var(--error, #f87171);
+  }
+}
+
+@keyframes radio-drawer-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .radio-drawer-body {
+    transition: none;
+  }
+  .radio-drawer-grip-dot {
+    animation: none !important;
+  }
+}
