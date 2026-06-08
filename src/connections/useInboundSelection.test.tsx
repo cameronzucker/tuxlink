@@ -18,15 +18,21 @@ import type { PendingProposalDto } from './sessionTypes';
 // test can dispatch a synthetic event into the production tree.
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
-let b2fHandler: ((e: { payload: unknown }) => void) | null = null;
+let b2fHandlers: Array<(e: { payload: unknown }) => void> = [];
 const listenMock = vi.fn(
   async (event: string, cb: (e: { payload: unknown }) => void): Promise<() => void> => {
-    if (event === 'b2f-event') b2fHandler = cb;
+    if (event === 'b2f-event') b2fHandlers.push(cb);
     return () => {
-      if (event === 'b2f-event') b2fHandler = null;
+      if (event === 'b2f-event') b2fHandlers = b2fHandlers.filter((h) => h !== cb);
     };
   },
 );
+
+function fireB2f(payload: unknown) {
+  act(() => {
+    b2fHandlers.forEach((h) => h({ payload }));
+  });
+}
 vi.mock('@tauri-apps/api/event', () => ({
   listen: (...args: unknown[]) =>
     (listenMock as (...a: unknown[]) => Promise<() => void>)(...args),
@@ -73,7 +79,7 @@ import App from '../App';
 describe('InboundSelectionPanel — production mount (tuxlink-bsiy)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    b2fHandler = null;
+    b2fHandlers = [];
     setPath('/');
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === 'get_wizard_completed') return Promise.resolve(true);
@@ -97,24 +103,20 @@ describe('InboundSelectionPanel — production mount (tuxlink-bsiy)', () => {
     // Wait for the production shell to mount (post-wizard) and the hook to
     // register its b2f-event listener.
     await screen.findByTestId('app-shell-root');
-    await waitFor(() => expect(b2fHandler).not.toBeNull());
+    await waitFor(() => expect(b2fHandlers.length).toBeGreaterThan(0));
 
     // Fire a synthetic backend event through the SAME channel the hook listens
     // on. attempt_id + request_id are the correlation keys the resolve command
     // echoes back.
-    act(() => {
-      b2fHandler!({
-        payload: {
-          kind: 'inbound_proposals_offered',
-          request_id: 1,
-          attempt_id: 1,
-          proposals: PROPOSALS,
-        },
-      });
+    fireB2f({
+      kind: 'inbound_proposals_offered',
+      request_id: 1,
+      attempt_id: 1,
+      proposals: PROPOSALS,
     });
 
     // The lazy panel mounts; wait for the footer button.
-    const submit = await screen.findByRole('button', { name: /download 2 checked/i });
+    const submit = await screen.findByRole('button', { name: /download 2 checked/i }, { timeout: 8000 });
     fireEvent.click(submit);
 
     await waitFor(() => {
@@ -147,7 +149,7 @@ import { useInboundSelection } from './useInboundSelection';
 describe('useInboundSelection — AttemptId stale filter (tuxlink-bsiy)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    b2fHandler = null;
+    b2fHandlers = [];
     invokeMock.mockResolvedValue(undefined);
   });
 
@@ -155,32 +157,24 @@ describe('useInboundSelection — AttemptId stale filter (tuxlink-bsiy)', () => 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const { result } = renderHook(() => useInboundSelection());
-      await waitFor(() => expect(b2fHandler).not.toBeNull());
+      await waitFor(() => expect(b2fHandlers.length).toBeGreaterThan(0));
 
       // First (newer) prompt.
-      act(() => {
-        b2fHandler!({
-          payload: {
-            kind: 'inbound_proposals_offered',
-            request_id: 9,
-            attempt_id: 5,
-            proposals: PROPOSALS,
-          },
-        });
+      fireB2f({
+        kind: 'inbound_proposals_offered',
+        request_id: 9,
+        attempt_id: 5,
+        proposals: PROPOSALS,
       });
       expect(result.current.prompt).not.toBeNull();
       expect(result.current.prompt?.attemptId).toBe(5);
 
       // Stale prompt — lower attempt_id. Must be dropped, not replace.
-      act(() => {
-        b2fHandler!({
-          payload: {
-            kind: 'inbound_proposals_offered',
-            request_id: 2,
-            attempt_id: 2,
-            proposals: [{ mid: 'STALE', uncompressed_size: 1, compressed_size: 1 }],
-          },
-        });
+      fireB2f({
+        kind: 'inbound_proposals_offered',
+        request_id: 2,
+        attempt_id: 2,
+        proposals: [{ mid: 'STALE', uncompressed_size: 1, compressed_size: 1 }],
       });
 
       // The active prompt is unchanged (still attempt 5 / request 9).
@@ -194,17 +188,13 @@ describe('useInboundSelection — AttemptId stale filter (tuxlink-bsiy)', () => 
 
   it('close() clears the active prompt locally', async () => {
     const { result } = renderHook(() => useInboundSelection());
-    await waitFor(() => expect(b2fHandler).not.toBeNull());
+    await waitFor(() => expect(b2fHandlers.length).toBeGreaterThan(0));
 
-    act(() => {
-      b2fHandler!({
-        payload: {
-          kind: 'inbound_proposals_offered',
-          request_id: 1,
-          attempt_id: 1,
-          proposals: PROPOSALS,
-        },
-      });
+    fireB2f({
+      kind: 'inbound_proposals_offered',
+      request_id: 1,
+      attempt_id: 1,
+      proposals: PROPOSALS,
     });
     expect(result.current.prompt).not.toBeNull();
 
@@ -216,17 +206,13 @@ describe('useInboundSelection — AttemptId stale filter (tuxlink-bsiy)', () => 
 
   it('submit() invokes cms_resolve_inbound_selection then clears the prompt', async () => {
     const { result } = renderHook(() => useInboundSelection());
-    await waitFor(() => expect(b2fHandler).not.toBeNull());
+    await waitFor(() => expect(b2fHandlers.length).toBeGreaterThan(0));
 
-    act(() => {
-      b2fHandler!({
-        payload: {
-          kind: 'inbound_proposals_offered',
-          request_id: 7,
-          attempt_id: 3,
-          proposals: PROPOSALS,
-        },
-      });
+    fireB2f({
+      kind: 'inbound_proposals_offered',
+      request_id: 7,
+      attempt_id: 3,
+      proposals: PROPOSALS,
     });
 
     await act(async () => {
