@@ -4,7 +4,7 @@
 
 **Goal:** Add a touch-friendly "compact" mode to the Tuxlink shell (and every primary surface) so the app is usable on a Panasonic FZ-M1 — a 1280×800, 7", ~216 PPI capacitive-touch rugged tablet — without changing the desktop (≥1366px) layout at all.
 
-**Architecture:** Greenfield responsive work — the entire `src/` tree has exactly one non-print `@media` rule today. Compact rules are **additive and scoped** behind a single `@media (max-width: 1366px)` breakpoint (for static layout/typography/density) plus a `.layout-b.compact` root class toggled by a `useViewport` hook keyed off the **same** media-query string (for JS-stateful interactions: the radio slide-over drawer's open/close and the icon-rail expand overlay). Desktop above 1366px is byte-identical to today and that invariant is enforced by a regression-guard test that lands *first*. The headline fix replaces the permanent 400px radio dock column (which starves the reader to ~300px at 1280px) with a `position:absolute` slide-over drawer.
+**Architecture:** Greenfield responsive work — the entire `src/` tree has exactly one non-print `@media` rule today. Compact rules are **additive and scoped** behind a single `@media (max-width: 1365px)` breakpoint (strictly below the 1366px desktop floor — Codex R1 #1). **All layout** is `@media`-driven; a `useViewport` hook + element-state classes (`.drawer-open`, `.sidebar.is-expanded`) carry only interactive state, and their effect is gated *inside* the media query so CSS and JS can never disagree about the mode (Codex R1 #2). Desktop ≥1366px is byte-identical and a regression-guard test lands *first*. The headline fix replaces the permanent 400px radio dock column (which starves the reader to ~300px at 1280px) with a **collapsible 4th grid column** (the radio "drawer"): closed it is a 44px grip strip; open it is the 400px panel. It **pushes** (reflows the reader) rather than overlaying — because a Tauri child webview (the HTML form viewer) paints *above* parent HTML, so an absolute overlay would be occluded by it; push reflows the reader, the form-viewer's `ResizeObserver` fires on the placeholder resize, and the webview repositions correctly (Codex R1 #5).
 
 **Tech Stack:** React 18 + TypeScript, Vite, Vitest (jsdom) + React Testing Library, Tauri (Rust) for the separate Compose window, plain CSS (no preprocessor). jsdom cannot compute layout or evaluate media queries, so layout/typography assertions are **CSS-string assertions** (import the stylesheet as a string, slice the media block, assert on it — the established pattern in `AppShell.test.tsx`); interactive state is tested with RTL; real-viewport visual proof is an operator browser-smoke at 1280×800 plus an optional Playwright pass.
 
@@ -16,18 +16,38 @@
 - **Audit synthesis (local reference, gitignored):** `dev/scratch/2026-06-07-fzm1-compact-audit-synthesis.md` — per-surface FZ-M1 compact-readiness audit (7 surfaces, workflow `wf_20f7ea5a-9ae`). Raw per-surface JSON: `dev/scratch/2026-06-07-fzm1-compact-audit-raw.json`.
 - **bd issue:** `tuxlink-h7q7` (P2). Companion help-window responsive is the separate `tuxlink-0gsy` (out of scope here).
 
-### Resolved design open items (PROPOSED — to be converged by the Codex cross-provider adversarial review in `build-robust-features`, not decided unilaterally with the operator)
+### Resolved design open items (CONVERGED via Codex cross-provider adversarial review, round 1, 2026-06-07)
 
-| # | Open item | PROPOSED resolution | Rationale |
+| # | Open item | CONVERGED resolution | Rationale |
 |---|---|---|---|
-| 1 | Exact breakpoint value | **Single `@media (max-width: 1366px)`**; no second tier | 1366 catches the FZ-M1's 1280 with an 86px margin and aligns with the 1366×768 laptop class; no surface needs a second tier; phone-width (<768px) is explicitly out of scope. Keeps the desktop regression guard a single media boundary. |
-| 2 | Drawer transition + closed-grip session state | **`transform: translateX(100%)→0`, `transition: transform 220ms ease`**, GPU-composited; `prefers-reduced-motion` disables it; **YES — the closed grip shows a subtle session-state tick** (reflects `RadioPanelState`) | `transform` avoids layout thrash on the `.panes` grid; the grip tick serves the design's headline "eyes on the inbox while a session runs" case — with the drawer tucked away the operator otherwise loses all session feedback. Grip is itself a ≥44px hit target. |
+| 1 | Exact breakpoint value | **Single `@media (max-width: 1365px)`** (strictly below the 1366px desktop floor); no second tier | A `max-width: 1366px` query *includes* 1366px, but the invariant is "desktop **≥**1366px unchanged" — overlap at exactly 1366 (Codex R1 #1, CRITICAL). `1365px` makes compact strictly `<1366`; FZ-M1 (1280) still triggers. No surface needs a second tier; phone-width (<768px) is out of scope. |
+| 2 | Drawer mechanism + transition + grip state | **PUSH (collapsible 4th grid column), NOT an `absolute` overlay.** Closed col = 44px grip; open col = 400px panel. Transition via `transform: translateX` within the column; `prefers-reduced-motion` disables it. Grip shows a **real** coarse session state via `deriveDrawerSessionState()`. | A Tauri **child webview paints above parent HTML** (verified: `WebviewFormViewer.tsx:11-14`), so an absolute overlay drawer renders *behind* a form-viewer webview (Codex R1 #5, CRITICAL). Push reflows the reader → the embed placeholder resizes → the existing `ResizeObserver` repositions the webview → no occlusion. Push also keeps the grid's 4th track always reserved (no orphaned grid item if the JS class lags — Codex R1 #2). |
 | 3 | Per-surface compact checklist | The table in **§"Per-surface compact checklist"** below | Derived directly from the 7-surface audit. |
-| 4 | Icon rail tap-to-expand: overlay vs push | **Overlay** (expanded labeled rail floats over the message list; grid does not reflow) | On a 1280px width budget, a *push* re-adds 200px on every expand AND moves the embedded form-viewer webview's placeholder rect → stale-position hazard (see Integration Risk R1). Overlay never reflows the grid, so the webview never moves. The resting 36→48px rail IS in the grid track (reader keeps its reclaimed width permanently); only the *expanded* state overlays. |
+| 4 | Icon rail tap-to-expand: overlay vs push | **Overlay** (expanded labeled rail floats over the message list; grid does not reflow) — UNCHANGED. The rail overlays the message *list* (HTML, no webview), so the occlusion hazard does not apply there; and a push rail would needlessly re-starve the reader on every label peek. | The rail vs the drawer differ: the rail floats over HTML (safe to overlay), the drawer can sit over a child webview (must push). |
 
-### Additional PROPOSED resolution (design-internal tension found during grounding)
+### Additional CONVERGED resolution (design-internal tension)
 
-**Rail resting width: 48px, not the design's "36px".** The design says "36px icon rail" *and* "touch targets ≥44×44px" — a 36px-wide rail cannot host 44px-*wide* tap targets. **PROPOSED: 48px resting rail** (still reclaims 152px of the original 200px sidebar; the extra 12px vs 36px is negligible against the reader-width win) so rail icons get a full 44×44 hit area. Flag for Codex convergence. If Codex prefers 36px, the fallback is a 44px-tall × 36px-wide hit area with generous vertical spacing (partial compliance on the horizontal axis).
+**Rail resting width: 48px, not the design's "36px".** A 36px-wide rail cannot host 44px-*wide* tap targets (the design says both "36px rail" and "≥44×44px"). **48px resting rail** reclaims 152px of the original 200px sidebar and gives rail icons a full 44×44 hit area. (Codex R1 #3 concurred the touch-floor wins.)
+
+### Codex round 1 dispositions (cross-provider adrev — `dev/adversarial/2026-06-07-fzm1-plan-codex-r1.md`, gitignored)
+
+13 unique findings (3 CRITICAL, 7 HIGH, 3 MEDIUM). Dispositions baked into the tasks below:
+
+| Codex | Severity | Finding | Disposition |
+|---|---|---|---|
+| #1 | CRITICAL | `max-width:1366px` includes 1366 → desktop-invariant overlap | **ACCEPT** → `1365px` (open item 1). Boundary tests at 1365/1366/1367 (Task 2). |
+| #2 | CRITICAL | CSS (grid drops col under `@media`) and JS (`.compact` makes panel absolute) can contradict → orphaned grid item | **ACCEPT** → PUSH model: grid always reserves the 4th track (44px/400px); layout fully `@media`-driven; `.drawer-open`/`.is-expanded` are interactive-state classes whose effect is gated *inside* `@media` (Tasks 4-6). |
+| #3 | HIGH | 24px closed grip violates 44px touch floor | **ACCEPT** → grip is its own 44px column when closed; ≥44px hit area (Tasks 4, 6). |
+| #4 | HIGH | `display:contents` not byte-identical (DOM/a11y); future direct-child selectors fragile | **PARTIAL** → keep `display:contents` at desktop (the alternative — conditional wrap — *remounts the live radio panel on resize*, losing session state, which is worse for an emcomm app). `display:contents` elements drop from the a11y tree; impact negligible. Documented + verified via Playwright computed-width parity (Task 4 + Final verification). |
+| #5 | CRITICAL | Task 17 doesn't solve R1; child webview paints above HTML → overlay drawer occluded | **ACCEPT** → PUSH (not overlay) so the placeholder resizes and the webview repositions naturally; re-measure on `transitionend` if the column animates (Task 17). |
+| #6 | HIGH | Webview signal prop path goes via `MessageView`→`MessageViewLoaded`→`FormMessageBody`, not AppShell→viewer directly | **MOOT under PUSH** — no manual signal threading needed (natural `ResizeObserver`). Task 17 reduced to verification. De-risks the CF coordination. |
+| #7 | HIGH | `?raw` import of `AppShell.css` won't inline `@import` → CSS-string tests see the import line, not compact rules | **ACCEPT** → `compactShell.css` raw-imported separately and **concatenated** in the test shim; compact rules also loaded via a normal `import './compactShell.css'` in AppShell.tsx (Vite-bundled), not a CSS `@import` (Task 2). |
+| #8 | HIGH | CSS-string regression guard is "theater" — can't catch computed layout/stacking/hit-area | **ACCEPT** → CSS-string tests remain a cheap *first* guard; **Playwright at 1280×800 / 1366×768 / 1440 is now MANDATORY** (Final verification), plus the operator browser-smoke. |
+| #9 | HIGH | Grip session-state hardcoded `'disconnected'` = a lie | **ACCEPT** → `deriveDrawerSessionState({ connecting, status, modemIsActive })` returns a real coarse state (Task 5). |
+| #10 | HIGH | Coordination understated — webview signal touches CF's content-switch region | **MOOT under PUSH** (#6). Remaining AppShell overlap is panes-className + drawer-state, still different hunks from CF's L869-929/L214. |
+| #11 | MEDIUM | Rail expand: no outside-click/Escape dismissal | **ACCEPT** → outside-pointer + Escape dismissal + focus handling (Task 10). |
+| #12 | MEDIUM | Rust clamp underspecified; primary monitor ≠ caller's; window-state can restore oversized | **ACCEPT** → derive from current/caller monitor; safe fallback; **post-`build()` clamp** if restored geometry exceeds the work area (Task 12). |
+| #13 | MEDIUM | App-level mount test isn't a layout guard | **ACCEPT** → labeled a smoke test; real viewport tests own the shell invariants (Task 7). |
 
 ---
 
@@ -39,14 +59,14 @@
 - `src/shell/RadioDrawer.tsx` — the slide-over wrapper around the radio-panel mount block (grip handle + session-state tick + open/close). Single responsibility: drawer chrome + state; it does **not** know about radio internals (it wraps whatever children it's given).
 - `src/shell/RadioDrawer.css` — drawer-specific compact CSS.
 - `src/shell/RadioDrawer.test.tsx` — drawer behavior tests.
-- `src/shell/compactShell.css` — the shell's `@media (max-width: 1366px)` block (panes grid rewrite, rail, ribbon clip fix, chrome/menubar/titlebar/statusbar touch+font floors). Kept separate from `AppShell.css` so the compact rules are reviewable as one unit and the desktop file is untouched except for one `@import`. (If the codebase convention is one CSS file per component and reviewers prefer it inline, fold into `AppShell.css` — note for Codex.)
+- `src/shell/compactShell.css` — the shell's `@media (max-width: 1365px)` block (panes grid rewrite, rail, ribbon clip fix, chrome/menubar/titlebar/statusbar touch+font floors). Kept separate from `AppShell.css` so the compact rules are reviewable as one unit and the desktop file stays untouched; bundled via a normal `import './compactShell.css'` in `AppShell.tsx` (NOT a CSS `@import` — the `?raw` test path can't see `@import`ed rules; Codex R1 #7).
 
 **Modified files:**
 - `src/shell/AppShell.tsx` — panes className (L841), `drawerOpen`/`railExpanded` state (near L242), wrap the radio-panel mount block (L936-1003) in `<RadioDrawer>`, add the `compact` class to the `.layout-b` root, import `compactShell.css`. **Coordination: different hunks from shoal-raven-gorge's content-switch (L869-929) + `selectedFolder` (L214).**
 - `src/mailbox/FolderSidebar.tsx` — wrap the bare label text node (L184) in `<span className="nav-label">`; refactor the inline-styled `+` button (L211-225), empty-hint (L261-271), and create-btn so a media query can reach them. **Coordination: different hunk from shoal-raven-gorge's `MAILBOX_ITEMS` (L29-35), but the `.nav-label` wrap is inside the same `.map` body — agree which PR lands it.**
 - `src/shell/AppShell.css` — add `@import './compactShell.css';` at top; **no other change** (desktop rules stay byte-identical).
 - `src/mailbox/MessageView.css` — leave `.reading-pane { min-width: 0 }` as-is (it's correct; the fix is removing the dock column, not fighting min-width). No edit expected — listed so the executor knows *not* to touch it.
-- `src/compose/Compose.css` — in-window `@media (max-width: 1366px)` block (the compose window is a separate document; its width ≤1100 matches naturally).
+- `src/compose/Compose.css` — in-window `@media (max-width: 1365px)` block (the compose window is a separate document; its width ≤1100 matches naturally).
 - `src/compose/CheckInForm.css`, `src/compose/Ics309FormV2.css`, `src/compose/PositionFormV2.css` — embedded-form compact blocks.
 - `src-tauri/src/.../compose_window.rs` — clamp the default inner height to the monitor work area (the **Rust** fix; CSS cannot reach window geometry). Exact path resolved in Task 12.
 - `src/shell/SettingsPanel.css`, `src/shell/ThemeDesigner.css`, `src/shell/AboutDialog.css` — dialog compact blocks (DRY the close-button rule).
@@ -57,11 +77,12 @@
 
 ### Shared-CSS scoping discipline (Integration Risks — read before editing)
 
-- **R1 — embedded-webview stale position.** `WebviewFormViewer` (mailbox reader) and `WebviewFormHost` (compose) are child Tauri webviews pixel-positioned over a placeholder div, repositioned only on `ResizeObserver(embed + document.body)`. An **overlay** drawer that moves the reader without resizing the observed box leaves the webview stranded. **Guard:** Task 17 wires an explicit re-measure to `drawerOpen` + compact-mode changes. This is a required integration test, not an assumption.
+- **R1 — embedded-webview occlusion + stale position (resolved by PUSH).** `WebviewFormViewer` (mailbox reader) and `WebviewFormHost` (compose) are child Tauri webviews that **paint above parent HTML** (`WebviewFormViewer.tsx:11-14`) and reposition only on `ResizeObserver(embed + document.body)`. An *absolute overlay* drawer would render *behind* the webview AND leave the placeholder rect unchanged (re-measuring sets the same position — useless). **Resolution:** the drawer **pushes** (a real 4th grid column), so opening it narrows the reader → the embed placeholder resizes → the `ResizeObserver` fires → the webview repositions to the narrower reader, never overlapped. Task 17 *verifies* this (it is no longer a manual signal-threading fix). Codex R1 #5/#6.
 - **R2 — Compose is a separate window.** Its default height (820) > FZ-M1 usable (~760) clips the action bar. **Rust** fix (Task 12), separate from the in-window CSS (Task 13).
 - **R3 — inline styles can't be reached by `@media`.** The sidebar `+` button / empty-hint / create-btn must be classed (Task 9) *before* the rail CSS pass.
 - **R4 — `chrome.css .tux-ctrl` is shared** between the shell titlebar and the compose titlebar. Scope the compose bump to `.tux-compose-titlebar .tux-ctrl`; the shell owns the bare `.tux-ctrl`. No double-application.
 - **R5 — `App.css` base input/button/radio sizing is global.** Do **not** add a global `.compact input{…}` rule in `App.css`; keep touch bumps per-surface so rules aren't double-applied. (Native radio/checkbox `width:auto` in `App.css:452-455` is the shared source of unpinned sizes — bump per-surface.)
+- **R6 — abort accessibility under a collapsed drawer (emcomm safety).** When a radio session is live and the drawer is collapsed to the 44px grip, the panel's Abort/Disconnect controls are hidden. Per the operator's design choice the drawer does **not** auto-open (manual Option A), so this is NOT changed to auto-open. The mitigation is the **grip session-state tick** (`deriveDrawerSessionState` → amber "connecting" / green "connected"): it makes a live session visible at a glance so the operator knows to tap the grip → expand → abort. This is consistent with `feedback_radio1_governs_tx_not_ui` (RADIO-1 governs the TX-consent click, not button placement) and `feedback_no_tuxlink_added_safeguards` (no new modals/auto-behaviors). **Required:** the grip tick must be present and correct (Task 4 + Task 5 tests already assert `data-session-state`); the Playwright pass screenshots a "connecting" grip. Flagged for the operator smoke as a thing to eyeball: is one expand-tap-to-abort acceptable, or does the grip itself want a direct abort affordance? (Deferred — do not build speculatively.)
 
 ---
 
@@ -71,21 +92,21 @@ Each row is a compact-scoped change set; full selector lists are in `dev/scratch
 
 | Surface | Trigger | Layout | Touch (≥44px) | Font floor (≥12px) | Density |
 |---|---|---|---|---|---|
-| **Shell** | `@media ≤1366px` + `.layout-b.compact` | 3 panes templates → `48px 380px 1fr`; drop dock 4th col; null legacy 5th col; reuse `.panes` `position:relative` as drawer anchor | Connect/Abort, SSID select, grid-edit, GPS/MANUAL segments, set-manually, nav-item, MenuBar buttons, dropdown items, titlebar ctrls, sort trigger, `.row` min-height | `.dash-label`, `.dash-source-segment` (9px), GPS status/error, `.section-label`, nav count/icon, badges, status divider | search-zone 560→360, connection max-w 260→180, dashboard gap 28→16 |
+| **Shell** | `@media ≤1365px` + `.drawer-open`/`.is-expanded` state classes | panes templates → `48px 380px 1fr` base; with-dock reserves a collapsible 4th track (44px grip / 400px open — push drawer); null legacy 5th col | Connect/Abort, SSID select, grid-edit, GPS/MANUAL segments, set-manually, nav-item, MenuBar buttons, dropdown items, titlebar ctrls, sort trigger, `.row` min-height | `.dash-label`, `.dash-source-segment` (9px), GPS status/error, `.section-label`, nav count/icon, badges, status divider | search-zone 560→360, connection max-w 260→180, dashboard gap 28→16 |
 | **Mailbox** | inherits shell | `.nav-label` span for rail hide; keep `.reading-pane min-width:0` | nav rows, reader action-btns, sort trigger, inline `+`→class, attachment Save/Preview, ctx-menu, folder-dialog btns | `.section-label`, nav icon→16, count, `.form-tag`, `.size`, `msg-meta dt`, inline empty-hint/create-btn→class | rail icon centering |
 | **Radio drawer** | `.compact` (JS state) | extract aside from grid → `position:absolute` drawer; override `min-width:400→0`, `width: min(400px, 92vw)` | close, primary/danger btns, segmented tabs, btn-sm, chips, chip-`✕`, inputs/selects, native radio, Listen header | segmented/h5/help/pills 11→12, LIVE 10→11, Listen 9px→12 | `.session-log min-height 240→160` |
-| **Compose (window)** | (a) Rust height clamp; (b) `@media ≤1366px` on compose doc | n/a (separate window; min-width safe) | action btns, inputs, receipt checkbox, attachments 36→48, `.tux-compose-titlebar .tux-ctrl`, embedded inputs/btns, CheckIn radios, ICS-309 datetime-local | `.compose-hint`, `fix-badge`/`grid-error` 11→12; **do NOT shrink 14px root (ICS-309 rem-based)** | embedded-form padding 16→10, gap 12→8 |
-| **Settings dialog** | `@media ≤1366px` | modal width fine | `.tux-settings-opt` min-h 44 + native radio; close btn (DRY ×3) | opt-help 11→13, legend, error | — |
+| **Compose (window)** | (a) Rust height clamp; (b) `@media ≤1365px` on compose doc | n/a (separate window; min-width safe) | action btns, inputs, receipt checkbox, attachments 36→48, `.tux-compose-titlebar .tux-ctrl`, embedded inputs/btns, CheckIn radios, ICS-309 datetime-local | `.compose-hint`, `fix-badge`/`grid-error` 11→12; **do NOT shrink 14px root (ICS-309 rem-based)** | embedded-form padding 16→10, gap 12→8 |
+| **Settings dialog** | `@media ≤1365px` | modal width fine | `.tux-settings-opt` min-h 44 + native radio; close btn (DRY ×3) | opt-help 11→13, legend, error | — |
 | **Theme dialog** | same | optional card→`min(720px,…)` | **swatch 36×28→44×44 (×24)**, hex/name/select inputs, action btns, close btn | token/group/field help 11→13, hex 12→13 | tighten group padding 14→12 |
 | **About dialog** | same | meta grid fine; row-gap 6→10 | footer Close, **5 meta links→inline-block padding+44px**, close btn | `.tux-about-meta` 12→13, credit, prealpha | adjacent-link separation |
-| **Wizard** | **pure CSS `@media ≤1366px` in wizard.css** | keep 580px card; lower `.wizard-root` top-pad to `clamp(16px,3vh,32px)`; card pad 38/40→24/28; session-log `max-height:30vh` | submit-row btns, inputs, password toggle, link-button, Retry; **inline Register anchor → flag to design** | bump 12/12.5px→13px; mono log + failed-detail + faint footer → 13px + lighten | vertical-budget check ~760px |
-| **HTML forms** | `@media ≤1366px` ×4 files | `.ics309-log-entry`→1-col; `.damage-category` 6→2 col; legend input 200px→100% | picker rows, action btns, native inputs/checkbox, toolbar select/btns, +Add | field `label`, `log-entry>strong`, table `th` 11→12 | + R1 webview reposition guard |
+| **Wizard** | **pure CSS `@media ≤1365px` in wizard.css** | keep 580px card; lower `.wizard-root` top-pad to `clamp(16px,3vh,32px)`; card pad 38/40→24/28; session-log `max-height:30vh` | submit-row btns, inputs, password toggle, link-button, Retry; **inline Register anchor → flag to design** | bump 12/12.5px→13px; mono log + failed-detail + faint footer → 13px + lighten | vertical-budget check ~760px |
+| **HTML forms** | `@media ≤1365px` ×4 files | `.ics309-log-entry`→1-col; `.damage-category` 6→2 col; legend input 200px→100% | picker rows, action btns, native inputs/checkbox, toolbar select/btns, +Add | field `label`, `log-entry>strong`, table `th` 11→12 | + R1 webview reposition guard |
 
 ---
 
 ## Testing strategy (how each layer is verified)
 
-1. **CSS-string assertions (jsdom):** import the stylesheet string (the existing `APP_SHELL_CSS_MODULES['./AppShell.css']` pattern, `AppShell.test.tsx:19`), `slice` from the `@media (max-width: 1366px)` index, and assert the block `toContain` the expected rules. **Regression guard:** assert the desktop grid templates (`grid-template-columns: 200px 380px 1fr`) appear in the string but **before** the compact `@media` index (i.e. unscoped/untouched).
+1. **CSS-string assertions (jsdom):** raw-import each stylesheet (`import css from './x.css?raw'`) — for the shell, import `AppShell.css?raw` (desktop) and `compactShell.css?raw` (compact) **separately** because a `?raw` import does not inline `@import` (Codex R1 #7). Assert the desktop file contains the bare grid templates and **no** `max-width: 1365px`; assert the compact file's rules all live inside the `@media` block. A *first* guard only — see item 5.
 2. **Hook + component behavior (RTL + jsdom):** mock `window.matchMedia`; assert `useViewport` returns compact true/false on the threshold; assert the drawer/rail toggles add/remove the state classes; assert `.nav-label` renders; assert inline-style refactors became classes.
 3. **App-level mount (`App.test.tsx`):** mount `<App />` (the production path that wraps `QueryClientProvider` *after* selecting AppShell — the tuxlink-n4hz "test the production mount path" lesson) and assert the compact wiring mounts without crashing.
 4. **Rust unit test (Phase 3a):** test the height-clamp pure function against work-area inputs.
@@ -135,8 +156,8 @@ function installMatchMedia(initialMatches: boolean) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('useViewport', () => {
-  it('exports the canonical compact media query string', () => {
-    expect(COMPACT_MEDIA_QUERY).toBe('(max-width: 1366px)');
+  it('exports the canonical compact media query string (strictly below the 1366px desktop floor)', () => {
+    expect(COMPACT_MEDIA_QUERY).toBe('(max-width: 1365px)');
   });
 
   it('reports compact=true when the media query matches at mount', () => {
@@ -174,15 +195,18 @@ import { useEffect, useState } from 'react';
 
 /**
  * The single source of truth for the FZ-M1 compact breakpoint. The CSS
- * `@media (max-width: 1366px)` blocks (compactShell.css, RadioDrawer.css,
+ * `@media (max-width: 1365px)` blocks (compactShell.css, RadioDrawer.css,
  * wizard.css, dialog/forms compact blocks) MUST mirror this exact string.
  * Because the hook evaluates the identical media query via matchMedia, the
  * CSS-driven layout and the JS-driven interactive state can never disagree
  * about whether we are in compact mode.
  *
+ * Strictly below 1366px so the "desktop >=1366px is unchanged" invariant holds
+ * with no boundary overlap (Codex R1 #1).
+ *
  * tuxlink-h7q7 / docs/design/2026-06-07-fzm1-responsive-design.md.
  */
-export const COMPACT_MEDIA_QUERY = '(max-width: 1366px)';
+export const COMPACT_MEDIA_QUERY = '(max-width: 1365px)';
 
 export interface Viewport {
   /** True when the viewport is at/below the FZ-M1 compact breakpoint. */
@@ -237,41 +261,41 @@ This test pins the desktop layout so every subsequent compact task proves deskto
 ```tsx
 // src/shell/AppShell.compact.test.tsx
 import { describe, it, expect } from 'vitest';
-// Mirror AppShell.test.tsx's CSS-string import (it imports AppShell.css as a
-// raw string via the test's CSS-modules shim). compactShell.css is @imported
-// from AppShell.css, so once it exists its rules appear in the combined string.
-import { APP_SHELL_CSS_MODULES } from './__testRawCss';
+// IMPORTANT (Codex R1 #7): a Vite `?raw` import of AppShell.css does NOT inline
+// `@import './compactShell.css'` — it returns the literal import line. So we
+// raw-import BOTH files and concatenate. desktopCss (AppShell.css) holds the
+// untouched desktop rules; compactCss (compactShell.css) holds the @media block.
+import desktopCss from './AppShell.css?raw';
+import compactCss from './compactShell.css?raw';
 
-const css = APP_SHELL_CSS_MODULES['./AppShell.css'];
-const COMPACT = '@media (max-width: 1366px)';
+const COMPACT = '@media (max-width: 1365px)';
 
 describe('AppShell desktop regression guard (tuxlink-h7q7)', () => {
-  it('keeps the desktop panes grid templates unscoped (outside any media query)', () => {
-    const compactIdx = css.indexOf(COMPACT);
-    const desktopHead = compactIdx === -1 ? css : css.slice(0, compactIdx);
-    // The three desktop templates must exist BEFORE the compact block — i.e.
-    // they are NOT mutated, only overridden inside the media query.
-    expect(desktopHead).toContain('grid-template-columns: 200px 380px 1fr');
-    expect(desktopHead).toContain('grid-template-columns: 200px 380px 1fr 400px');
+  it('keeps the desktop panes grid templates in AppShell.css, unscoped (no @media)', () => {
+    // The desktop file must NOT contain any non-print compact media query.
+    expect(desktopCss).not.toContain('max-width: 1365px');
+    // The three desktop templates exist as bare (un-media-scoped) rules.
+    expect(desktopCss).toContain('grid-template-columns: 200px 380px 1fr');
+    expect(desktopCss).toContain('grid-template-columns: 200px 380px 1fr 400px');
   });
 });
 
 describe('AppShell compact CSS contract (tuxlink-h7q7)', () => {
-  it('defines a single compact breakpoint at 1366px', () => {
-    expect(css).toContain(COMPACT);
-    // exactly one non-print compact breakpoint
-    const occurrences = css.split(COMPACT).length - 1;
-    expect(occurrences).toBeGreaterThanOrEqual(1);
+  it('puts every compact rule inside the 1365px breakpoint (compactShell.css)', () => {
+    expect(compactCss).toContain(COMPACT);
+    // No compact rule may live outside the media query (would leak to desktop).
+    const beforeBlock = compactCss.slice(0, compactCss.indexOf(COMPACT));
+    expect(beforeBlock.replace(/\/\*[\s\S]*?\*\//g, '').trim()).toBe('');
   });
 
-  it('rewrites the panes grid inside the compact block: rail + no permanent dock column', () => {
-    const block = css.slice(css.indexOf(COMPACT));
-    expect(block).toContain('48px 380px 1fr'); // rail (48px) + list + reader
+  it('rewrites the panes grid inside the compact block: 48px rail + reserved drawer track', () => {
+    const block = compactCss.slice(compactCss.indexOf(COMPACT));
+    expect(block).toContain('48px 380px 1fr'); // rail + list + reader (drawer track appended)
   });
 });
 ```
 
-> **Note on `./__testRawCss`:** `AppShell.test.tsx` already resolves the raw CSS via a test shim (it reads `APP_SHELL_CSS_MODULES['./AppShell.css']`). Reuse the exact same import mechanism it uses — if that symbol lives inline in `AppShell.test.tsx`, extract it to a tiny shared `src/shell/__testRawCss.ts` in this task so both test files share it. If extraction is undesirable, duplicate the 3-line raw-import in this file. Confirm the mechanism by reading `AppShell.test.tsx:1-25` first.
+> **CSS load mechanism:** AppShell.tsx gets the compact rules via a normal `import './compactShell.css'` (Vite bundles it — NOT a CSS `@import`, which the `?raw` test path can't see). Confirm `vite.config.ts` allows `?raw` imports (default in Vite) by reading how `AppShell.test.tsx` currently obtains its raw CSS; match that mechanism. If the existing test uses a custom `APP_SHELL_CSS_MODULES` shim rather than `?raw`, mirror *that* and concatenate the two files through it instead.
 
 - [ ] **Step 2: Run, verify the compact-contract cases FAIL (guard cases pass)**
 
@@ -283,28 +307,29 @@ Expected: the "desktop regression guard" case PASSES (desktop templates already 
 ```css
 /* src/shell/compactShell.css */
 /* FZ-M1 compact mode — additive, scoped. Mirrors COMPACT_MEDIA_QUERY in
- * src/shell/useViewport.ts. Desktop (>1366px) is unaffected: every rule here
- * lives inside the media query or under `.layout-b.compact`. tuxlink-h7q7. */
-@media (max-width: 1366px) {
+ * src/shell/useViewport.ts (keep both at 1365px). Desktop (>=1366px) is
+ * unaffected: EVERY rule here lives inside the media query. tuxlink-h7q7. */
+@media (max-width: 1365px) {
   /* panes grid + rail + ribbon + chrome compact rules land in Phase 1-2 */
 }
 ```
 
-Add to the very top of `src/shell/AppShell.css` (above the first rule, after the leading comment banner):
+Wire it into the bundle via a normal JS import in `src/shell/AppShell.tsx` (NOT a CSS `@import` — the `?raw` test path can't see `@import`ed rules). Add alongside the existing `import './AppShell.css';`:
 
-```css
-@import './compactShell.css';
+```tsx
+import './AppShell.css';
+import './compactShell.css'; // FZ-M1 compact rules (tuxlink-h7q7)
 ```
 
 - [ ] **Step 4: Run, verify the breakpoint-exists case passes; the `48px` case still fails**
 
 Run: `pnpm exec vitest run src/shell/AppShell.compact.test.tsx`
-Expected: "defines a single compact breakpoint" PASSES; "rewrites the panes grid" still FAILS (no `48px` rule yet — Phase 1 adds it). Then `pkill -9 -f vitest`.
+Expected: "puts every compact rule inside the breakpoint" PASSES; "rewrites the panes grid" still FAILS (no `48px` rule yet — Task 6 adds it). The desktop-guard case PASSES. Then `pkill -9 -f vitest`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/shell/AppShell.compact.test.tsx src/shell/compactShell.css src/shell/AppShell.css src/shell/__testRawCss.ts
+git add src/shell/AppShell.compact.test.tsx src/shell/compactShell.css src/shell/AppShell.tsx
 git commit -m "test(shell): desktop regression guard + compact-CSS scaffold (tuxlink-h7q7)"
 ```
 
@@ -475,10 +500,16 @@ export interface RadioDrawerProps {
 }
 
 /**
- * Wraps the radio-panel mount block. Desktop (>1366px): `display: contents`
- * (CSS), so the child panel IS the 4th grid column — byte-identical to the
- * pre-compact layout. Compact: a position:absolute slide-over with a grip
- * handle that shows session state and toggles open/closed. tuxlink-h7q7.
+ * Wraps the radio-panel mount block. Desktop (>=1366px): `display: contents`
+ * (CSS), so the child panel IS the 4th grid column — visually identical to the
+ * pre-compact layout (the wrapper is layout- and a11y-transparent; we keep
+ * display:contents rather than conditionally wrapping because a conditional
+ * wrap would REMOUNT the live radio panel on a resize across the breakpoint,
+ * dropping session state — Codex R1 #4). Compact (<1366px): the wrapper IS the
+ * grid's collapsible 4th column — 44px (grip only) when closed, 400px (panel)
+ * when open. It PUSHES (reflows the reader) rather than overlaying, because a
+ * child Tauri webview paints above parent HTML (Codex R1 #5). The grip shows a
+ * coarse session-state tick and toggles open/closed. tuxlink-h7q7.
  */
 export function RadioDrawer({ open, onToggle, sessionState, children }: RadioDrawerProps) {
   return (
@@ -502,60 +533,73 @@ export function RadioDrawer({ open, onToggle, sessionState, children }: RadioDra
 
 ```css
 /* src/shell/RadioDrawer.css */
-/* Desktop: the wrapper is transparent so the radio panel sits in the grid's
- * 4th column exactly as before. The grip is hidden. tuxlink-h7q7. */
+/* Desktop (>=1366px): the wrapper AND its body are display:contents, so the
+ * radio panel sits in the grid's 4th column exactly as before; the grip is
+ * hidden. tuxlink-h7q7. */
 .radio-drawer { display: contents; }
+.radio-drawer-body { display: contents; }
 .radio-drawer-grip { display: none; }
 
-@media (max-width: 1366px) {
-  /* Compact: the drawer becomes a right-anchored slide-over over .panes
-   * (which is position:relative; isolation:isolate already). */
-  .layout-b.compact .radio-drawer {
-    display: block;
-    position: absolute;
-    top: 0;
-    right: 0;
+@media (max-width: 1365px) {
+  /* Compact: the wrapper IS the grid's 4th column (the grid template reserves
+   * 44px closed / 400px open — see compactShell.css). It PUSHES the reader; it
+   * does NOT overlay (a child webview would paint over an HTML overlay). */
+  .radio-drawer {
+    display: flex;
     height: 100%;
-    z-index: 5;
-    transform: translateX(100%);
-    transition: transform 220ms ease;
-    pointer-events: none; /* closed: let the reader beneath receive taps */
-  }
-  .layout-b.compact .radio-drawer.is-open {
-    transform: translateX(0);
-    pointer-events: auto;
-  }
-  .layout-b.compact .radio-drawer-body {
-    width: min(400px, 92vw);
-    height: 100%;
-    overflow: auto;
+    min-width: 0;
+    overflow: hidden;
+    position: relative;
     background: var(--surface);
     border-left: 1px solid var(--border);
-    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
   }
-  /* Grip: a ≥44px-tall tab on the drawer's left edge, always tappable so the
-   * operator can re-open a tucked-away session. */
-  .layout-b.compact .radio-drawer-grip {
+  /* Body: fills the column when open; clipped to 0 when the column is 44px. The
+   * panel cosmetically slides in (composited transform); the reader reflow that
+   * repositions the form-viewer webview is INSTANT (grid-template-columns has no
+   * transition), so no transitionend re-measure is needed. */
+  .radio-drawer-body {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    overflow: auto;
+    transform: translateX(100%);
+    transition: transform 220ms ease;
+  }
+  .panes.drawer-open .radio-drawer-body { transform: translateX(0); }
+  /* Override the panel's own rigid 400px floor so it fits the column. */
+  .radio-drawer-body .radio-panel { width: 100%; min-width: 0; }
+
+  /* Grip: ≥44px-wide hit target. Closed → it fills the 44px column (centered).
+   * Open → a tab pinned to the panel's left edge to collapse without dropping
+   * the connection. Always reachable; never under the webview (it lives in its
+   * own grid track, not over the reader). */
+  .radio-drawer-grip {
     display: flex;
     align-items: center;
     justify-content: center;
-    position: absolute;
-    top: 50%;
-    left: -24px;
-    transform: translateY(-50%);
-    width: 24px;
-    min-height: 56px; /* ≥44px hit target */
+    flex: 0 0 44px;
+    width: 44px;
+    min-height: 44px;
     padding: 0;
     background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-right: 0;
-    border-radius: 6px 0 0 6px;
+    border: 0;
+    border-right: 1px solid var(--border);
     cursor: pointer;
-    pointer-events: auto;
+  }
+  .panes.drawer-open .radio-drawer-grip {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
+    height: 56px;
+    min-height: 56px;
+    border-radius: 0 6px 6px 0;
+    z-index: 1;
   }
   .radio-drawer-grip-dot {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     background: var(--text-faint);
   }
@@ -566,10 +610,12 @@ export function RadioDrawer({ open, onToggle, sessionState, children }: RadioDra
 }
 @keyframes radio-drawer-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) {
-  .layout-b.compact .radio-drawer { transition: none; }
+  .radio-drawer-body { transition: none; }
   .radio-drawer-grip-dot { animation: none !important; }
 }
 ```
+
+> **Note:** the `.is-open` class on `.radio-drawer` (set by the component) is retained for the test contract and a11y (`aria-expanded`), but the *layout* keys off `.panes.drawer-open` (set in Task 5) so the grid column and the panel slide stay in lockstep with one source of truth. Both are toggled together.
 
 - [ ] **Step 4: Run, verify it passes**
 
@@ -612,7 +658,13 @@ it('wraps the radio panel in a closed drawer in compact mode (tuxlink-h7q7)', ()
 
 - [ ] **Step 3: Implement.** In `AppShell.tsx`:
   - Add state near L242: `const [drawerOpen, setDrawerOpen] = useState(false);`
-  - Import `RadioDrawer`.
+  - Import `RadioDrawer` and `deriveDrawerSessionState` (define the latter — see below — in a small `src/shell/drawerSessionState.ts` so it is unit-testable on its own).
+  - Add `' drawer-open'` to the `.panes` className when `drawerOpen` (this is the single layout source of truth — see Task 4's CSS note). The L841 className becomes:
+
+```tsx
+className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}${drawerOpen ? ' drawer-open' : ''}`}
+```
+
   - Wrap the entire radio-panel mount block (the conditionals at L936-1003) in:
 
 ```tsx
@@ -620,14 +672,48 @@ it('wraps the radio panel in a closed drawer in compact mode (tuxlink-h7q7)', ()
   <RadioDrawer
     open={drawerOpen}
     onToggle={() => setDrawerOpen((o) => !o)}
-    sessionState={/* existing shell modem state, else 'disconnected' */ 'disconnected'}
+    sessionState={deriveDrawerSessionState({
+      connecting,
+      status: statusData.status,
+      modemIsActive,
+    })}
   >
     {/* the existing L936-1003 conditional panels, unchanged */}
   </RadioDrawer>
 )}
 ```
 
-  - When the panel is closed by its `onClose` (which already calls `setSelectedConnection(null); setPinRadioPanel(false)`), also `setDrawerOpen(false)` so a re-opened panel starts closed. Add `setDrawerOpen(false)` to each `onClose` (or refactor the repeated onClose into one `closeRadioPanel` callback — DRY; the 6 onClose handlers are identical).
+  - When the panel is closed by its `onClose` (which already calls `setSelectedConnection(null); setPinRadioPanel(false)`), also `setDrawerOpen(false)` so a re-opened panel starts closed. Refactor the 6 identical `onClose` handlers into one `closeRadioPanel` callback (DRY) that adds `setDrawerOpen(false)`.
+
+  **`deriveDrawerSessionState` (Codex R1 #9 — a real coarse signal, not a hardcoded `'disconnected'`):**
+
+```ts
+// src/shell/drawerSessionState.ts
+import type { RadioPanelState } from '../radio/RadioPanel';
+
+export interface DrawerStateInputs {
+  /** True while a CMS connect exchange is in flight (AppShell `connecting`). */
+  connecting: boolean;
+  /** The live transport status (AppShell `statusData.status`), or undefined. */
+  status?: { kind?: string } | null;
+  /** Whether the modem is in any active state (AppShell `useModemIsActive()`). */
+  modemIsActive: boolean;
+}
+
+/**
+ * Coarse session state for the drawer grip tick. The shell cannot observe every
+ * per-transport sub-state, so this surfaces an honest three-way signal
+ * (connecting / connected / disconnected). The open panel still shows granular
+ * per-mode state. tuxlink-h7q7 / Codex R1 #9.
+ */
+export function deriveDrawerSessionState(i: DrawerStateInputs): RadioPanelState {
+  if (i.connecting) return 'connecting';
+  if (i.status?.kind === 'Connected' || i.modemIsActive) return 'connected';
+  return 'disconnected';
+}
+```
+
+  Add a unit test `src/shell/drawerSessionState.test.ts` covering the three branches (connecting → 'connecting'; Connected/modemIsActive → 'connected'; else → 'disconnected').
 
 - [ ] **Step 4: Run, verify it passes.** `pnpm exec vitest run src/shell/AppShell.radioPanel.test.tsx` → PASS. `pkill -9 -f vitest`.
 
@@ -638,40 +724,54 @@ git add src/shell/AppShell.tsx src/shell/AppShell.radioPanel.test.tsx
 git commit -m "feat(shell): mount radio panel in RadioDrawer with manual open/close (tuxlink-h7q7)"
 ```
 
-### Task 6: Compact panes grid (rail track + drop dock column + null legacy column)
+### Task 6: Compact panes grid (rail track + collapsible drawer track + null legacy column)
 
 **Files:**
 - Modify: `src/shell/compactShell.css`
 - Modify: `src/shell/AppShell.compact.test.tsx`
 
-- [ ] **Step 1: Extend the test** — assert the compact block drops the 4th dock column and nulls the legacy 5th, and keeps the reader usable.
+- [ ] **Step 1: Extend the test** — assert the compact grid: 48px rail; no-dock base = 3 cols; with-dock reserves a 4th track that is 44px closed / 400px open; legacy 5th nulled.
 
 ```tsx
-it('drops the permanent dock column in compact (reader not starved)', () => {
-  const block = css.slice(css.indexOf(COMPACT));
-  // with-dock compact override must NOT contain a 4th fixed 400px track
-  expect(block).toMatch(/\.panes--with-dock\s*\{[^}]*grid-template-columns:\s*48px 380px 1fr\s*;?[^}]*\}/);
+it('uses a 48px rail and 3-column base in compact (no radio panel)', () => {
+  const block = compactCss.slice(compactCss.indexOf(COMPACT));
+  expect(block).toMatch(/\.layout-b \.panes\b[^{]*\{[^}]*grid-template-columns:\s*48px 380px 1fr\s*;/);
+});
+it('reserves a collapsible 44px grip / 400px open drawer track with-dock (push, not overlay)', () => {
+  const block = compactCss.slice(compactCss.indexOf(COMPACT));
+  // closed: 4th track is the 44px grip
+  expect(block).toMatch(/\.panes--with-dock\b[^{]*\{[^}]*grid-template-columns:\s*48px 380px 1fr 44px\s*;/);
+  // open: 4th track widens to the 400px panel
+  expect(block).toMatch(/\.panes--with-dock\.drawer-open\b[^{]*\{[^}]*grid-template-columns:\s*48px 380px 1fr 400px\s*;/);
 });
 it('nulls the legacy 5th column in compact', () => {
-  const block = css.slice(css.indexOf(COMPACT));
+  const block = compactCss.slice(compactCss.indexOf(COMPACT));
   expect(block).toContain('panes--with-legacy-dock');
 });
 ```
 
 - [ ] **Step 2: Run, verify the new cases fail.** `pnpm exec vitest run src/shell/AppShell.compact.test.tsx`. `pkill -9 -f vitest`.
 
-- [ ] **Step 3: Add the grid rules** inside the `@media (max-width: 1366px)` block of `compactShell.css`:
+- [ ] **Step 3: Add the grid rules** inside the `@media (max-width: 1365px)` block of `compactShell.css`:
 
 ```css
-  /* Panes grid: 200px sidebar → 48px rail; the radio dock 4th column is gone
-   * (the panel is now an absolute drawer over the reader). The legacy 5th
-   * column (dead today) is explicitly nulled in case a future dual-mount
-   * re-applies the class. The reader's 1fr now spans ~852px at 1280px instead
-   * of ~300px. */
-  .layout-b .panes,
+  /* Panes grid: 200px sidebar → 48px rail. The radio panel is now a COLLAPSIBLE
+   * 4th column (push drawer): 44px grip when closed, 400px when open. It is NOT
+   * an absolute overlay (a child webview would paint over it — Codex R1 #5).
+   * The legacy 5th column (dead today) collapses into the same template in case
+   * a future dual-mount re-applies the class.
+   * Reader 1fr at 1280px: ~808px (drawer closed) / ~452px (open) — both beat the
+   * desktop dock's ~300px. */
+  .layout-b .panes {
+    grid-template-columns: 48px 380px 1fr;
+  }
   .layout-b .panes--with-dock,
   .layout-b .panes--with-dock.panes--with-legacy-dock {
-    grid-template-columns: 48px 380px 1fr;
+    grid-template-columns: 48px 380px 1fr 44px; /* closed: grip only */
+  }
+  .layout-b .panes--with-dock.drawer-open,
+  .layout-b .panes--with-dock.panes--with-legacy-dock.drawer-open {
+    grid-template-columns: 48px 380px 1fr 400px; /* open: panel */
   }
 ```
 
@@ -681,15 +781,17 @@ it('nulls the legacy 5th column in compact', () => {
 
 ```bash
 git add src/shell/compactShell.css src/shell/AppShell.compact.test.tsx
-git commit -m "feat(shell): compact panes grid — 48px rail, drop dock column, reader reclaims width (tuxlink-h7q7)"
+git commit -m "feat(shell): compact panes grid — 48px rail + collapsible push-drawer track (tuxlink-h7q7)"
 ```
 
-### Task 7: App-level mount test (production path)
+### Task 7: App-level mount **smoke** test (production path)
 
 **Files:**
 - Modify: `src/App.test.tsx`
 
-- [ ] **Step 1: Write the test** — mount `<App />` in compact mode and assert it renders the shell without crashing (the `QueryClientProvider`-wraps-AppShell production path; tuxlink-n4hz lesson).
+> **Scope (Codex R1 #13):** this is a *smoke* test — it proves the production `<App/>` tree (which wraps `QueryClientProvider` *around* AppShell — the tuxlink-n4hz "test the production mount path" lesson) mounts without crashing in compact mode. It is **not** a layout/responsive guard; the shell's compact invariants are owned by the CSS-string tests (first guard) and the mandatory Playwright pass (real guard). Do not over-claim it.
+
+- [ ] **Step 1: Write the test** — mount `<App />` in compact mode and assert it renders the shell without crashing.
 
 ```tsx
 // add to src/App.test.tsx
@@ -797,7 +899,7 @@ it('renders the new-folder + button and empty-hint with classes (media-query rea
 .folder-create-btn { background: transparent; border: 1px solid var(--border-strong, #2c3744); border-radius: 3px; color: inherit; font-size: 13px; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; line-height: 1; }
 .folders-empty-hint { padding: 4px 10px; font-size: 11px; font-style: italic; color: var(--text-faint, #5d6975); }
 
-@media (max-width: 1366px) {
+@media (max-width: 1365px) {
   .folder-create-btn { width: 44px; height: 44px; font-size: 18px; }
   .folders-empty-hint { font-size: 12px; }
 }
@@ -841,21 +943,26 @@ it('expanded rail overlays (absolute), does not reflow the grid', () => {
 - [ ] **Step 3: Implement the CSS** in the compact block:
 
 ```css
-  /* Icon rail: labels hidden, icons centered + enlarged, rows ≥44px tall. */
-  .layout-b.compact .sidebar { padding: 8px 0; overflow: visible; }
-  .layout-b.compact .sidebar .section-label,
-  .layout-b.compact .sidebar .nav-label,
-  .layout-b.compact .sidebar .count,
-  .layout-b.compact .sidebar .v01-badge { display: none; }
-  .layout-b.compact .sidebar .nav-item {
+  /* Icon rail — layout is @media-driven (NOT gated on the .compact JS class, so
+   * CSS and JS can't disagree about the mode — Codex R1 #2). The 48px column
+   * width comes from the panes grid (Task 6); these rules hide labels, center
+   * icons, and pin ≥44px rows. The EXPANDED state is the only JS bit
+   * (.is-expanded), and its effect is gated inside this @media. */
+  .layout-b .sidebar { padding: 8px 0; overflow: visible; }
+  .layout-b .sidebar .section-label,
+  .layout-b .sidebar .nav-label,
+  .layout-b .sidebar .count,
+  .layout-b .sidebar .v01-badge { display: none; }
+  .layout-b .sidebar .nav-item {
     justify-content: center;
     min-height: 44px;
     padding: 7px 0;
     gap: 0;
   }
-  .layout-b.compact .sidebar .nav-item .icon { width: auto; font-size: 18px; }
-  /* Expanded overlay — floats the full labeled sidebar over the list. */
-  .layout-b.compact .sidebar.is-expanded {
+  .layout-b .sidebar .nav-item .icon { width: auto; font-size: 18px; }
+  /* Expanded overlay — floats the full labeled sidebar over the list (overlay,
+   * not push: the list is HTML so no webview-occlusion concern; open item 4). */
+  .layout-b .sidebar.is-expanded {
     position: absolute;
     top: 0; left: 0; bottom: 0;
     width: 220px;
@@ -865,22 +972,28 @@ it('expanded rail overlays (absolute), does not reflow the grid', () => {
     overflow: auto;
     padding: 12px 0;
   }
-  .layout-b.compact .sidebar.is-expanded .section-label,
-  .layout-b.compact .sidebar.is-expanded .nav-label,
-  .layout-b.compact .sidebar.is-expanded .count { display: revert; }
-  .layout-b.compact .sidebar.is-expanded .nav-item { justify-content: flex-start; padding: 7px 18px; gap: 10px; }
-  .layout-b.compact .sidebar.is-expanded .nav-item .icon { width: 14px; font-size: 11px; }
-  /* The expand toggle (a rail header button). */
-  .layout-b.compact .rail-expand-btn { display: flex; }
-  .rail-expand-btn { display: none; }
+  .layout-b .sidebar.is-expanded .section-label,
+  .layout-b .sidebar.is-expanded .nav-label,
+  .layout-b .sidebar.is-expanded .count { display: revert; }
+  .layout-b .sidebar.is-expanded .nav-item { justify-content: flex-start; padding: 7px 18px; gap: 10px; }
+  .layout-b .sidebar.is-expanded .nav-item .icon { width: 14px; font-size: 11px; }
+  /* The expand toggle (a rail header button) — shown only in compact. */
+  .layout-b .rail-expand-btn { display: flex; }
+}
+.rail-expand-btn { display: none; }
+@media (max-width: 1365px) {
 ```
 
-- [ ] **Step 4: Implement the expand state + affordance** in `FolderSidebar` (preferred — keeps sidebar concerns local) or AppShell. Add a `railExpanded` state, a `.rail-expand-btn` at the top of `<nav className="sidebar">` (`aria-expanded`, `aria-label="Expand folders"`), apply `is-expanded` to the nav className, and collapse on `onSelectFolder`/tap-away. Add a behavior test:
+> The trailing `}` + re-opened `@media` above keep the desktop `.rail-expand-btn { display: none }` rule **outside** the media block (so it hides the button at desktop) while the rest stays inside. In the real file, place `.rail-expand-btn { display: none; }` at file scope (outside the `@media`) and the rest inside — do not literally close/reopen mid-block; this snippet shows the scoping intent.
+
+- [ ] **Step 4: Implement the expand state + affordance + dismissal** in `FolderSidebar` (preferred — keeps sidebar concerns local) or AppShell. Add a `railExpanded` state, a `.rail-expand-btn` at the top of `<nav className="sidebar">` (`aria-expanded`, `aria-label="Expand folders"`), apply `is-expanded` to the nav className. **Dismissal (Codex R1 #11 — the expanded overlay must never get stuck over the list):** collapse on (a) `onSelectFolder`/`onSelectConnection`, (b) an **outside pointer-down** (a `useEffect` document `pointerdown` listener that collapses when the target is outside the nav), and (c) **Escape** keydown. Keep focus visible on the expand button after toggle. Add a behavior test:
 
 ```tsx
-it('toggles rail expansion and collapses on folder select (compact)', () => {
-  // render sidebar with a compact prop or wrap; click rail-expand-btn → nav has is-expanded;
-  // click a folder → is-expanded removed.
+it('toggles rail expansion and collapses on folder select, outside-click, and Escape (compact)', () => {
+  // click rail-expand-btn → nav has is-expanded;
+  // click a folder → is-expanded removed;
+  // re-expand → pointerdown on document.body (outside nav) → is-expanded removed;
+  // re-expand → keydown Escape → is-expanded removed.
 });
 ```
 
@@ -959,7 +1072,10 @@ mod tests {
 
 - [ ] **Step 3: Run, verify it fails.** `cargo test --manifest-path src-tauri/Cargo.toml clamped_compose_height` → FAIL (no fn).
 
-- [ ] **Step 4: Implement** the clamp fn + use it at the builder. Resolve the current monitor work area via the Tauri API available in that scope (`monitor.size()` / `available work area`; if the builder lacks a monitor handle pre-creation, clamp against the primary monitor or use `current_monitor()` after creation + `set_size`). Replace the literal `.inner_size(1100.0, clamped_compose_height(820.0, work_h, 24.0))`.
+- [ ] **Step 4: Implement** the clamp fn + use it (Codex R1 #12 — do NOT rely solely on a pre-creation primary-monitor read). Two-stage:
+  1. **Pre-creation best-effort:** if a monitor handle is resolvable before `build()` (e.g. the parent window's `current_monitor()`), clamp `.inner_size(1100.0, clamped_compose_height(820.0, work_h, 24.0))`. If no work-area API is available pre-creation, leave the default and rely on stage 2.
+  2. **Post-`build()` clamp:** after the window exists, read its actual monitor's work area and, if the (possibly window-state-restored) inner height exceeds `work_h - margin`, call `set_size` to clamp it. This catches `tauri-plugin-window-state` restoring an oversized geometry that overrides the default. Guard against a clamp-loop (only shrink, never grow; compare with a small epsilon).
+  Note the caller's monitor may not be the primary monitor — prefer `current_monitor()` over `primary_monitor()`.
 
 - [ ] **Step 5: Run → PASS. Commit.**
 
@@ -974,7 +1090,7 @@ git commit -m "fix(compose): clamp window default height to monitor work area fo
 - Modify: `src/compose/Compose.css`, `src/compose/CheckInForm.css`, `src/compose/Ics309FormV2.css`, `src/compose/PositionFormV2.css`
 - Test: `src/compose/Compose.test.tsx` (CSS-string assertions if a raw-CSS import exists; else a behavior test that the action bar is reachable)
 
-- [ ] **Step 1–4: TDD per the checklist** — add `@media (max-width: 1366px)` blocks: action btns/inputs ≥44px; receipt checkbox + 44px label row; attachments drop-zone 36→48px; `.tux-compose-titlebar .tux-ctrl { min-width: 44px; min-height: 44px; }` (R4 — scoped to compose, NOT bare `.tux-ctrl`); embedded inputs/buttons ≥44px; CheckIn radios + ICS-309 `datetime-local` sized; font floors `.compose-hint`/`fix-badge`/`grid-error` → 12px; tighten embedded-form padding 16→10, gap 12→8. **Do NOT add a root font-size shrink (ICS-309 is rem-based — it would dip below floor).** Assert via CSS-string slicing; commit per file or as one Compose-CSS commit.
+- [ ] **Step 1–4: TDD per the checklist** — add `@media (max-width: 1365px)` blocks: action btns/inputs ≥44px; receipt checkbox + 44px label row; attachments drop-zone 36→48px; `.tux-compose-titlebar .tux-ctrl { min-width: 44px; min-height: 44px; }` (R4 — scoped to compose, NOT bare `.tux-ctrl`); embedded inputs/buttons ≥44px; CheckIn radios + ICS-309 `datetime-local` sized; font floors `.compose-hint`/`fix-badge`/`grid-error` → 12px; tighten embedded-form padding 16→10, gap 12→8. **Do NOT add a root font-size shrink (ICS-309 is rem-based — it would dip below floor).** Assert via CSS-string slicing; commit per file or as one Compose-CSS commit.
 
 - [ ] **Step 5: Commit**
 
@@ -1012,7 +1128,7 @@ git commit -m "feat(shell): compact dialogs — Theme swatch/Settings/About touc
 - Modify: `src/wizard/wizard.css`
 - Test: a CSS-string assertion test (new `src/wizard/wizard.compact.test.tsx` mirroring the AppShell CSS-string pattern, or extend an existing wizard test)
 
-- [ ] **Step 1–4: TDD.** `@media (max-width: 1366px)` in `wizard.css`: keep 580px centered card; `.wizard-root` top-pad → `clamp(16px, 3vh, 32px)`; card padding 38/40 → 24/28; `.wizard-session-log { max-height: 30vh; }`; submit-row buttons/inputs/password-toggle/link-button/Retry ≥44px; bump 12/12.5px offenders → 13px; **mono session-log + `wizard-failed-detail` → 13px; lighten the faint `.wizard-footer-copy` color**; `code` 0.88em → 0.92em. **Flag (in the PR body + a code comment) the inline Register anchor — it cannot cleanly reach 44px inline; a design call (restyle as button vs accept line-box) is deferred.**
+- [ ] **Step 1–4: TDD.** `@media (max-width: 1365px)` in `wizard.css`: keep 580px centered card; `.wizard-root` top-pad → `clamp(16px, 3vh, 32px)`; card padding 38/40 → 24/28; `.wizard-session-log { max-height: 30vh; }`; submit-row buttons/inputs/password-toggle/link-button/Retry ≥44px; bump 12/12.5px offenders → 13px; **mono session-log + `wizard-failed-detail` → 13px; lighten the faint `.wizard-footer-copy` color**; `code` 0.88em → 0.92em. **Flag (in the PR body + a code comment) the inline Register anchor — it cannot cleanly reach 44px inline; a design call (restyle as button vs accept line-box) is deferred.**
 
 - [ ] **Step 5: Commit**
 
@@ -1031,7 +1147,7 @@ git commit -m "feat(wizard): compact CSS — touch, font floors, vertical densit
 - Modify: `src/forms/forms.css`, `src/forms/FormPicker.css`, `src/compose/WebviewFormHost.css`, `src/mailbox/WebviewFormViewer.css`
 - Test: CSS-string assertions per file
 
-- [ ] **Step 1–4: TDD per checklist.** `@media (max-width: 1366px)`: `.ics309-log-entry` 3-col → single column; `.damage-category` 6-col → 2-col; `.damage-category > legend > input` 200px → 100%; picker list rows ≥44px; all action buttons/native inputs ≥44px; native checkbox → 22px; toolbar select/buttons ≥44px; font floors field `label`/`log-entry>strong`/table `th` → 12px.
+- [ ] **Step 1–4: TDD per checklist.** `@media (max-width: 1365px)`: `.ics309-log-entry` 3-col → single column; `.damage-category` 6-col → 2-col; `.damage-category > legend > input` 200px → 100%; picker list rows ≥44px; all action buttons/native inputs ≥44px; native checkbox → 22px; toolbar select/buttons ≥44px; font floors field `label`/`log-entry>strong`/table `th` → 12px.
 
 - [ ] **Step 5: Commit**
 
@@ -1040,35 +1156,38 @@ git add src/forms src/compose/WebviewFormHost.css src/mailbox/WebviewFormViewer.
 git commit -m "feat(forms): compact CSS — reflow, touch, font floors (tuxlink-h7q7)"
 ```
 
-### Task 17: Embedded form-viewer reposition guard (the load-bearing integration fix)
+### Task 17: Verify the embedded form-viewer webview repositions under the push drawer (R1)
 
 **Files:**
-- Modify: `src/mailbox/WebviewFormViewer.tsx` (re-measure on drawer/compact change)
-- Modify: `src/shell/AppShell.tsx` (thread a reposition signal — `drawerOpen` + `isCompact` — to the viewer, or expose a context the viewer subscribes to)
-- Test: `src/mailbox/WebviewFormViewer.test.tsx`
+- Test: `src/mailbox/WebviewFormViewer.test.tsx` (assert the existing `ResizeObserver` callback fires on placeholder resize)
+- Possibly modify: `src/mailbox/WebviewFormViewer.tsx` (only if the verification reveals a gap)
 
-**Risk R1:** the viewer's child Tauri webview is pixel-positioned and repositions only on `ResizeObserver(embed + document.body)`. An overlay drawer moves the reader without resizing those boxes → stale webview position occluded by/overlapping the drawer.
+**Why this is now verification, not a rebuild (Codex R1 #5/#6):** the drawer PUSHES (it is a real grid column — Task 6), so opening it narrows the reader → the `.webview-form-viewer__embed` placeholder resizes → the component's existing `ResizeObserver` (`WebviewFormViewer.tsx:137-147`) fires → `setPosition`/`setSize` reposition the child webview to the narrower reader. The webview is never overlapped because the drawer occupies its own grid track, not an absolute layer over the reader. **No manual signal threading through `MessageView` is needed** — which also removes the coordination hazard with shoal-raven-gorge's content-switch region (Codex R1 #6/#10).
 
-- [ ] **Step 1: Read `WebviewFormViewer.tsx`** to find the reposition function (the ResizeObserver callback / the `set_position` IPC). Identify the cleanest re-measure trigger (a `useEffect` keyed on a `repositionSignal` prop, or an exposed imperative `remeasure()`).
-
-- [ ] **Step 2: Write the failing test** — when the reposition-signal prop changes (drawer toggles), the viewer re-measures (assert the reposition function/IPC is called).
+- [ ] **Step 1: Write a test** that proves the reposition wiring fires when the placeholder's observed box changes.
 
 ```tsx
-it('re-measures the embedded webview when the drawer toggles in compact (R1)', () => {
-  // mock the reposition IPC/callback; render the viewer with repositionSignal=0;
-  // rerender with repositionSignal=1; assert the reposition fn was called.
+// src/mailbox/WebviewFormViewer.test.tsx — mock @tauri-apps Webview + the
+// ResizeObserver; render the viewer; drive a resize of the embed element;
+// assert setPosition + setSize were called with the new rect. This proves the
+// reflow path that the push drawer triggers actually repositions the webview.
+it('repositions the child webview when the embed placeholder resizes (push reflow, R1)', () => {
+  // install a controllable ResizeObserver mock that captures the callback;
+  // mock Webview with setPosition/setSize spies; render; invoke the captured
+  // callback after stubbing mountRef.getBoundingClientRect to a new rect;
+  // assert setPosition + setSize called.
 });
 ```
 
-- [ ] **Step 3: Implement** — add a `repositionSignal` (or `drawerOpen`/`isCompact`) prop; `useEffect(() => { remeasure(); }, [repositionSignal])`. In `AppShell.tsx`, pass a signal derived from `drawerOpen` + `isCompact` down to the reader's `WebviewFormViewer`. (If the viewer is deep in the reading-pane IIFE — shoal-raven-gorge's region — thread the prop through the existing props rather than restructuring; coordinate the prop addition.)
+- [ ] **Step 2: Run.** If it PASSES, the natural reflow path is sound — no `.tsx` change needed. If the test reveals the observer does not fire on a width-only change of the embed (jsdom ResizeObserver is mocked, so this is really verified in the Playwright pass), add an explicit re-measure: a tiny `repositionSignal?: number` prop bumped from AppShell `drawerOpen`, `useEffect(()=>remeasure(),[repositionSignal])`. Prefer NOT to add it unless needed.
 
-- [ ] **Step 4: Run → PASS.** `pkill -9 -f vitest`.
+- [ ] **Step 3: Real-viewport confirmation (the actual R1 gate).** In the Final-verification Playwright pass: open a message that renders the form viewer, open the radio drawer, and assert the form content is fully visible (not occluded, not overlapping the drawer) at 1280×800. This is the authoritative R1 check — jsdom cannot prove webview stacking.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add src/mailbox/WebviewFormViewer.tsx src/mailbox/WebviewFormViewer.test.tsx src/shell/AppShell.tsx
-git commit -m "fix(forms): re-measure embedded form-viewer webview on drawer toggle (R1, tuxlink-h7q7)"
+git add src/mailbox/WebviewFormViewer.test.tsx src/mailbox/WebviewFormViewer.tsx
+git commit -m "test(forms): verify form-viewer webview repositions under push drawer (R1, tuxlink-h7q7)"
 ```
 
 ---
@@ -1079,7 +1198,11 @@ git commit -m "fix(forms): re-measure embedded form-viewer webview on drawer tog
 - [ ] **Typecheck:** `pnpm typecheck` → clean.
 - [ ] **Rust:** `cargo test --manifest-path src-tauri/Cargo.toml` (compose clamp) → PASS.
 - [ ] **Codex cross-provider adversarial review** (required by `build-robust-features` — see `feedback_no_carveout_on_cross_provider_adrev`; this is design-bearing UX, not plumbing): run rounds against the diff, focusing Codex on: (a) any desktop-layout regression (rules leaking outside the media query / `.compact`), (b) the overlay-vs-push reader-occlusion trade-off, (c) the R1 webview reposition correctness, (d) the rail 36-vs-48px tension, (e) the grip session-state coupling. Converge the PROPOSED open-item resolutions here. Write transcripts to `dev/adversarial/` (gitignored); summarize dispositions in the PR body.
-- [ ] **Optional Playwright pass at 1280×800** for evidence (computed widths, screenshots).
+- [ ] **MANDATORY Playwright pass at three widths — 1280×800, 1366×768, 1440×900** (Codex R1 #8 — CSS-string tests are a cheap first guard but cannot prove computed layout, stacking, or hit areas). Assert, with computed values + screenshots:
+  - **1440 (desktop):** panes grid computed columns == `200px 380px 1fr [400px]` — byte-identical to a pre-change baseline screenshot. The regression guard's real teeth.
+  - **1366 (boundary):** still desktop (no compact rules applied) — proves the `1365px` strict boundary (Codex R1 #1).
+  - **1280 (FZ-M1):** rail collapsed to 48px; reader usable closed (~808px) and open (~452px); grip ≥44px and reachable; drawer pushes (reader narrows, not overlapped); titlebar/ribbon controls ≥44px (computed `getBoundingClientRect`).
+  - **R1 webview:** open a form-viewer message, open the drawer, screenshot → form content fully visible, not occluded.
 - [ ] **Open a READY PR** (`gh pr create --base main`), NOT draft. **Do not self-merge** — the operator browser-smokes the responsive layout at real window sizes before merge.
 
 ## Coordination summary (shoal-raven-gorge, `bd-tuxlink-raez/contacts-favorites`)
