@@ -218,3 +218,50 @@
   background: var(--tux-accent-hover, #1d4ed8);
   border-color: var(--tux-accent-hover, #1d4ed8);
 }
+
+/* ============================================================
+ * FZ-M1 compact mode (tuxlink-h7q7)
+ *
+ * Embedded in the Compose window (a separate Tauri document), so this is a
+ * pure `@media (max-width: 1365px)` block evaluated against the compose
+ * window's own width. Strictly below the 1366px desktop floor (Codex adrev
+ * R1 #1). This file also owns the shared `.form-slot-toolbar` (used by all
+ * P2 native forms), so its compact touch bumps cover every form's slot
+ * toolbar. DENSITY: 16px card padding -> 10px; sub-floor 11px fonts on the
+ * fix-badge and the load-bearing submit-time grid-error -> 12px. Desktop is
+ * byte-identical.
+ * ============================================================ */
+
+@media (max-width: 1365px) {
+  /* Density: tighten the card padding (16->10). */
+  .position-form-v2 {
+    padding: 10px;
+  }
+
+  /* Shared slot toolbar (every P2 form) — select + buttons -> >=44px tall. */
+  .form-slot-toolbar select,
+  .form-slot-toolbar button {
+    min-height: 44px;
+  }
+
+  /* Text inputs / textarea -> >=44px tall touch targets. */
+  .position-form-v2 input[type='text'],
+  .position-form-v2 textarea {
+    min-height: 44px;
+  }
+
+  /* Action buttons -> >=44px tall. */
+  .position-form-v2__actions button {
+    min-height: 44px;
+    padding: 8px 14px;
+  }
+
+  /* Sub-floor font floors -> 12px. The grid-error is load-bearing (it is the
+   * only submit-time validation feedback for the Maidenhead grid field). */
+  .position-form-v2__fix-badge {
+    font-size: 12px;
+  }
+  .position-form-v2__grid-error {
+    font-size: 12px;
+  }
+}

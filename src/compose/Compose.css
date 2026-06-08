@@ -388,3 +388,71 @@
   text-align: center;
   max-width: 280px;
 }
+
+/* ============================================================
+ * FZ-M1 compact mode (tuxlink-h7q7)
+ *
+ * The Compose window is a SEPARATE Tauri document — the shell's `.compact`
+ * root class never reaches it — so the compact treatment is a pure
+ * `@media (max-width: 1365px)` block evaluated against the compose window's
+ * own width (default 1100, so it matches naturally). Strictly below the
+ * 1366px desktop floor (Codex adrev R1 #1): desktop is byte-identical.
+ *
+ * DENSITY, not uniform shrink. We do NOT touch `.compose-root`'s 14px
+ * font-size — the embedded ICS-309 form sizes its text in `rem`, so any
+ * root-font shrink would push that text below the 12px floor. Touch targets
+ * are bumped to >=44px; only specific sub-floor chrome fonts are raised.
+ * ============================================================ */
+
+@media (max-width: 1365px) {
+  /* --- Compose-titlebar window controls -> 44x44 touch targets ---
+   * Scoped to `.tux-compose-titlebar` (Integration Risk R4): the bare
+   * `.tux-ctrl` (shell titlebar) is owned by the shell surface; this rule
+   * touches ONLY the compose window's titlebar controls, so there is no
+   * double-application or cross-surface bleed. The selector lives here (not
+   * in chrome.css) because chrome.css is shell-owned and Compose.css is the
+   * compose-window-scoped stylesheet that is loaded in this document. */
+  .tux-compose-titlebar .tux-ctrl {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* --- Action buttons -> >=44px tall ---
+   * Post to Outbox / Save Draft / Cancel / discard-prompt buttons. */
+  .compose-btn {
+    min-height: 44px;
+    padding: 8px 14px;
+  }
+
+  /* --- Text inputs (To / Cc / Subject / …) -> >=44px tall --- */
+  .compose-input {
+    min-height: 44px;
+    padding: 8px 10px;
+  }
+
+  /* --- Request-receipt checkbox + its label row ---
+   * The native checkbox is bumped so it is itself a comfortable target, and
+   * the whole label row is given a 44px-tall hit area so a tap anywhere on
+   * "Request read receipt" toggles it. */
+  .compose-options {
+    padding: 4px 12px;
+  }
+  .compose-checkbox-label {
+    min-height: 44px;
+    gap: 10px;
+  }
+  .compose-checkbox-label input[type='checkbox'] {
+    width: 24px;
+    height: 24px;
+  }
+
+  /* --- Attachments drop-zone -> 36px..48px tall --- */
+  .compose-attachments {
+    min-height: 48px;
+  }
+
+  /* --- Sub-floor font floor: .compose-hint 11px -> 12px --- */
+  .compose-hint {
+    font-size: 12px;
+  }
+}

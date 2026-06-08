@@ -225,3 +225,49 @@
   border-color: var(--accent-2);
   color: var(--tux-accent-fg);
 }
+
+/* FZ-M1 compact mode (tuxlink-h7q7) — the highest-density dialog: 24 color rows
+ * already overflow the card, so this block raises touch targets WITHOUT adding
+ * vertical bulk where avoidable (group padding tightens 14->12 to offset the
+ * taller 44px rows). Additive + scoped: desktop (>=1366px) is byte-identical.
+ * The shared DRY close-button rule lives in SettingsPanel.css. */
+@media (max-width: 1365px) {
+  /* PRIMARY TARGET: the color swatch (x24 instances, most-tapped control) goes
+   * from 36x28 to a full 44x44 hit area. */
+  .tux-theme-designer-color {
+    width: 44px;
+    height: 44px;
+  }
+  /* Hex input + name/"Start from"/Mode inputs (the selects reuse
+   * .tux-theme-designer-text-input) reach the 44px touch floor. */
+  .tux-theme-designer-color-text {
+    min-height: 44px;
+    font-size: 13px;
+  }
+  .tux-theme-designer-text-input {
+    min-height: 44px;
+  }
+  /* Action buttons (Reset / Cancel / Save) to the touch floor. */
+  .tux-theme-designer-button {
+    min-height: 44px;
+  }
+
+  /* Density offset: tighten group padding 14->12 so the taller 44px rows don't
+   * blow the already-scroll-bound card budget further. */
+  .tux-theme-designer-group {
+    padding: 12px 18px;
+  }
+
+  /* Sub-floor font floors. */
+  .tux-theme-designer-token-help,
+  .tux-theme-designer-group-help,
+  .tux-theme-designer-field-help {
+    font-size: 13px;
+  }
+  .tux-theme-designer-field-label {
+    font-size: 13px;
+  }
+  .tux-theme-designer-group legend {
+    font-size: 12px;
+  }
+}

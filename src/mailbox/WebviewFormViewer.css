@@ -90,3 +90,22 @@
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+/* ============================================================
+ * FZ-M1 compact mode (tuxlink-h7q7) — additive + scoped.
+ *
+ * Only OUR chrome around the embedded viewer is touched here —
+ * the read-only Close button. The embedded child Tauri webview
+ * INTERIOR (third-party Winlink HTML) is out of our CSS control
+ * and is deliberately NOT restyled; the `__embed` placeholder
+ * rect is left untouched so the webview's ResizeObserver
+ * position is not disturbed (the reader-width reflow from the
+ * radio drawer is what repositions it — see plan §R1). Strictly
+ * below the 1366px desktop floor (Codex adrev R1 #1).
+ * ============================================================ */
+@media (max-width: 1365px) {
+  /* --- Touch: chrome Close button --- */
+  .webview-form-viewer__btn {
+    min-height: 44px;
+  }
+}
