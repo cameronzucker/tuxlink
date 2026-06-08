@@ -50,6 +50,13 @@ pub struct Config {
     /// bd: tuxlink-xehu
     #[serde(default)]
     pub telnet_listen: TelnetListenUiConfig,
+    /// Opt-in: prompt the operator to select which pending inbound messages to
+    /// download on a CMS connect (WLE "Review Pending Messages" parity), instead
+    /// of auto-downloading all. Default false = auto-download-all (today's behavior).
+    /// `#[serde(default)]` migrates configs that predate this field (absent → false),
+    /// satisfying `deny_unknown_fields` (the field is now KNOWN).
+    #[serde(default)]
+    pub review_inbound_before_download: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -737,6 +744,42 @@ mod tests {
         let reserialized = serde_json::to_string(&config).unwrap();
         let reloaded: Config = serde_json::from_str(&reserialized).unwrap();
         assert_eq!(reloaded.connect.host, "server.winlink.org");
+    }
+
+    // tuxlink-bsiy: the opt-in `review_inbound_before_download` preference
+    // round-trips through serde when set to true (proves persistence, not just
+    // the default).
+    #[test]
+    fn review_inbound_before_download_round_trips_when_true() {
+        let mut cfg: Config = serde_json::from_str(&sample_config_json_without_packet()).unwrap();
+        cfg.review_inbound_before_download = true;
+        let serialized = serde_json::to_string(&cfg).unwrap();
+        let reloaded: Config = serde_json::from_str(&serialized).unwrap();
+        assert!(
+            reloaded.review_inbound_before_download,
+            "review_inbound_before_download=true must survive a serialize→deserialize round-trip"
+        );
+    }
+
+    // tuxlink-bsiy: the additive-migration test. An OLD config JSON with NO
+    // `review_inbound_before_download` key (every config that predates this
+    // field) must deserialize with the field defaulting to false (today's
+    // auto-download-all behavior, WLE parity). The field is now KNOWN to the
+    // struct, so `deny_unknown_fields` stays satisfied; `#[serde(default)]`
+    // supplies false when the key is absent.
+    #[test]
+    fn review_inbound_before_download_defaults_false_when_absent_from_config() {
+        let json = sample_config_json_without_packet();
+        assert!(
+            !json.contains("review_inbound_before_download"),
+            "fixture must omit the key for this migration test to be meaningful"
+        );
+        let cfg: Config = serde_json::from_str(&json)
+            .expect("config without review_inbound_before_download should deserialize");
+        assert!(
+            !cfg.review_inbound_before_download,
+            "missing review_inbound_before_download must default to false (auto-download-all)"
+        );
     }
 
     // tuxlink-efo: a packet.link variant THIS build doesn't know (forward/sideways

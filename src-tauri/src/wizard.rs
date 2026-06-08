@@ -181,6 +181,9 @@ pub async fn persist_cms_impl(
         modem_ardop: None,
         modem_vara: None,
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
+        // tuxlink-bsiy: opt-in Review-Pending-Messages preference; off by default
+        // (auto-download-all, WLE parity). Operator toggles it in SettingsPanel.
+        review_inbound_before_download: false,
     };
 
     // Step 4: Create keyring entry handle (needed for rollback in step 7).
@@ -340,6 +343,9 @@ pub async fn persist_offline_impl(
         modem_ardop: None,
         modem_vara: None,
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
+        // tuxlink-bsiy: opt-in Review-Pending-Messages preference; off by default
+        // (auto-download-all, WLE parity). Operator toggles it in SettingsPanel.
+        review_inbound_before_download: false,
     };
 
     // Single atomic write to config.json. No keyring involved.

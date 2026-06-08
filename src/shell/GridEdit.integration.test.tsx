@@ -78,6 +78,7 @@ test('integration §6.3: State 1 → click source chip → State 4 → Set manua
     gps_state: 'BroadcastAtPrecision',
     position_precision: 'FourCharGrid',
     position_source: configSource,
+    review_inbound_before_download: false,
   });
   const positionDto = (): PositionStatusDto => ({
     gps_ready: false,

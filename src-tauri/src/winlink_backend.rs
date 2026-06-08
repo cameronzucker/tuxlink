@@ -3036,6 +3036,7 @@ mod native_read_state_tests {
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            review_inbound_before_download: false,
         }
     }
 
@@ -3848,6 +3849,7 @@ mod native_read_state_tests {
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            review_inbound_before_download: false,
         }
     }
 

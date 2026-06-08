@@ -2439,6 +2439,12 @@ pub struct ConfigViewDto {
     /// has pinned a grid square). Mirrors `PrivacyConfig.position_source` in
     /// config.rs. Task 8 renders a source chip from this field.
     pub position_source: PositionSource,
+    /// Opt-in: prompt the operator to select which pending inbound messages to
+    /// download on a CMS connect (WLE "Review Pending Messages" parity), instead
+    /// of auto-downloading all. Default false. Mirrors
+    /// `Config.review_inbound_before_download` (tuxlink-bsiy). The inline
+    /// SettingsPanel loads this into its checkbox on open.
+    pub review_inbound_before_download: bool,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -2455,6 +2461,7 @@ impl From<&config::Config> for ConfigViewDto {
             gps_state: c.privacy.gps_state,
             position_precision: c.privacy.position_precision,
             position_source: c.privacy.position_source,
+            review_inbound_before_download: c.review_inbound_before_download,
         }
     }
 }
@@ -5151,6 +5158,41 @@ pub async fn config_set_connect(
     Ok(())
 }
 
+// ============================================================================
+// tuxlink-bsiy — config_set_review_inbound (Review Pending Messages preference)
+// ============================================================================
+
+/// Persist the opt-in `review_inbound_before_download` preference (WLE "Review
+/// Pending Messages" parity). Default false = auto-download-all (today's
+/// behavior). Mirrors `config_set_connect`'s read → mutate → persist ordering
+/// and its `UiError` handling exactly.
+///
+/// The live-refresh `set_config` call is load-bearing: the connect path reads
+/// the backend's LIVE config (not the disk), so persisting alone is NOT enough
+/// — without `set_config`, the next connect would use the stale snapshot until
+/// an app restart.
+///
+/// NOTE (test coverage): like `config_set_connect` / `config_set_privacy`, the
+/// full read→write round-trip is NOT unit-tested here — `config::config_path()`
+/// resolves via the process-global `XDG_CONFIG_HOME`, so an isolated round-trip
+/// races under parallel `cargo test`. The persist path is identical to
+/// `config_set_connect`'s and is operator-smoke-covered. The serde
+/// round-trip + default are unit-tested in `config.rs`; the DTO mapping is
+/// unit-tested in `config_view_dto_maps_review_inbound_when_enabled`.
+#[tauri::command]
+pub async fn config_set_review_inbound(
+    state: State<'_, BackendState>,
+    enabled: bool,
+) -> Result<(), UiError> {
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.review_inbound_before_download = enabled;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg); // live refresh: next connect sees it without restart (Codex #9)
+    }
+    Ok(())
+}
+
 /// Validate a user-supplied CMS host. Returns `Some(message)` for the FIRST rule
 /// violated, `None` when valid. Rules (most-actionable first, mirroring
 /// `config::validate_identity_describe`): nonempty → no whitespace. A hostname's
@@ -6655,6 +6697,7 @@ hw:CARD=Device,DEV=0
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            review_inbound_before_download: false,
         }
     }
 
@@ -6675,6 +6718,20 @@ hw:CARD=Device,DEV=0
         assert_eq!(dto.position_precision, PositionPrecision::SixCharGrid);
         // tuxlink-686 Task 7: position_source is surfaced in the DTO.
         assert_eq!(dto.position_source, PositionSource::Gps);
+        // tuxlink-bsiy: review_inbound_before_download maps through the From impl
+        // (default false on the fixture).
+        assert!(!dto.review_inbound_before_download);
+    }
+
+    // tuxlink-bsiy: a config with review_inbound_before_download=true maps to a
+    // true DTO field (proves the From impl reads the real config value, not a
+    // hardcoded default).
+    #[test]
+    fn config_view_dto_maps_review_inbound_when_enabled() {
+        let mut cfg = cms_config_fixture();
+        cfg.review_inbound_before_download = true;
+        let dto = ConfigViewDto::from(&cfg);
+        assert!(dto.review_inbound_before_download);
     }
 
     // Offline-mode mapping: callsign None, identifier Some — mirrors the
@@ -6864,6 +6921,7 @@ hw:CARD=Device,DEV=0
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            review_inbound_before_download: false,
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -7597,6 +7655,7 @@ hw:CARD=Device,DEV=0
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            review_inbound_before_download: false,
         }
     }
 
