@@ -83,3 +83,20 @@ describe('RadioPanel interior compact CSS (tuxlink-h7q7 Task 6b)', () => {
     expect(block).toMatch(/\.radio-panel-btn \{[\s\S]*?min-height:\s*44px/);
   });
 });
+
+// Codex post-impl review: the small controls the first Task 6b pass missed.
+const LISTEN_CSS = (
+  import.meta.glob('./sections/ListenSection.css', { eager: true, query: '?raw', import: 'default' }) as Record<string, string>
+)['./sections/ListenSection.css'];
+
+describe('RadioPanel interior compact CSS — small controls (Codex post-impl review)', () => {
+  it('bumps small buttons, the chip-remove ✕, native radios, and help text', () => {
+    const modem = MODEM_LINK_CSS.slice(MODEM_LINK_CSS.indexOf('@media (max-width: 1365px)'));
+    expect(modem).toMatch(/\.radio-panel-btn-sm \{[\s\S]*?min-height:\s*44px/);
+    const listen = LISTEN_CSS.slice(LISTEN_CSS.indexOf('@media (max-width: 1365px)'));
+    expect(listen).toMatch(/\.radio-panel-chip-x \{[\s\S]*?min-height:\s*44px/);
+    expect(listen).toMatch(/\.radio-panel-help \{[\s\S]*?font-size:\s*12px/);
+    const panel = RADIO_PANEL_CSS.slice(RADIO_PANEL_CSS.indexOf('@media (max-width: 1365px)'));
+    expect(panel).toMatch(/input\[type='radio'\] \{[\s\S]*?width:\s*22px/);
+  });
+});

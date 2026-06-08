@@ -384,3 +384,12 @@ select.radio-panel-input option {
     min-height: 44px;
   }
 }
+
+/* FZ-M1 compact — Codex post-impl review: native transport radios (~13-16px,
+   unpinned). */
+@media (max-width: 1365px) {
+  .radio-panel-radio-row input[type='radio'] {
+    width: 22px;
+    height: 22px;
+  }
+}

@@ -77,3 +77,11 @@
     font-size: 12px;
   }
 }
+
+/* FZ-M1 compact — Codex post-impl review: small action buttons (refresh etc.)
+   were ~22px. */
+@media (max-width: 1365px) {
+  .radio-panel-btn-sm {
+    min-height: 44px;
+  }
+}

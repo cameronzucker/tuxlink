@@ -138,3 +138,15 @@
     font-size: 12px;
   }
 }
+
+/* FZ-M1 compact — Codex post-impl review: the chip-remove ✕ (worst touch
+   target in the app, ~14x14) and the 11px help text. */
+@media (max-width: 1365px) {
+  .radio-panel-chip-x {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .radio-panel-help {
+    font-size: 12px;
+  }
+}
