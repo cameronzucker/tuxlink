@@ -318,6 +318,17 @@
     gap: 0;
     justify-content: flex-start;
   }
+  /* Uniform value row: the callsign (SSID picker) and grid (GPS/MANUAL segment)
+   * cells carry 44px touch controls, while the clock + connection cells are
+   * short text. Give every value area the same 44px height with vertically-
+   * centered content so all values share one baseline (was: tall cells' values
+   * sat ~12px lower than the text cells). tuxlink-813d operator smoke. */
+  .layout-b .dashboard .dash-item > .dash-value,
+  .layout-b .dashboard .dash-item--grid .dash-grid-display {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
   .layout-b .dashboard .dash-item--grid .dash-grid-display {
     align-items: center;
     gap: 8px;

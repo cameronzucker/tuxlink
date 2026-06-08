@@ -166,6 +166,18 @@ describe('FZ-M1 operator smoke fixes (tuxlink-813d)', () => {
       // Belt-and-suspenders: the padding-top accompanies the alignment fix.
       expect(compactBlock).toContain('padding-top: 9px');
     });
+
+    // #2b (operator full-screen grim): with the SSID picker + GPS segment, the
+    // callsign/grid value areas are 44px while the clock/connection are short
+    // text, so the values sat ~12px apart. Every value area gets a uniform 44px
+    // centered band so all values share one baseline.
+    it('gives every value area a uniform 44px centered band', () => {
+      expect(compactBlock).toContain('.dash-item > .dash-value');
+      const idx = compactBlock.indexOf('.dash-item > .dash-value');
+      const rule = compactBlock.slice(idx, idx + 220);
+      expect(rule).toContain('min-height: 44px');
+      expect(rule).toMatch(/align-items:\s*center/);
+    });
   });
 
   describe('grip enlargement (#1b)', () => {
