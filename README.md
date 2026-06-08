@@ -269,7 +269,7 @@ explicit, per-invocation operator consent. See
 
 ## License
 
-[MIT](LICENSE). Copyright 2026 Cameron Zucker.
+[GNU GPL v3 or later](LICENSE). Copyright 2026 Cameron Zucker.
 
 ## Contributing / Development
 
