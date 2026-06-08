@@ -39,6 +39,9 @@ export interface MenuHandlers {
   /** Open the inline Catalog Request panel (tuxlink-ddiq) — WLE catalog
    *  inquiry picker that routes through INQUIRY@winlink.org. */
   openCatalogRequest: () => void;
+  /** Open the inline Catalog Builder panel (tuxlink-a2gd) — location-aware
+   *  station finder (direct /listings poll) + by-message info-category requests. */
+  openCatalogBuilder: () => void;
   /** Open the inline GRIB File Request panel (tuxlink-vrpk) — Saildocs
    *  GRIB-request form that routes through query@saildocs.com. */
   openGribRequest: () => void;
@@ -62,6 +65,7 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:message:archive': h.archive(); return;
     case 'menu:message:print': h.print(); return;
     case 'menu:message:catalog_request': h.openCatalogRequest(); return;
+    case 'menu:message:catalog_builder': h.openCatalogBuilder(); return;
     case 'menu:message:grib_request': h.openGribRequest(); return;
     case 'menu:view:status_bar': h.toggleStatusBar(); return;
     case 'menu:view:radio_panel': h.toggleRadioPanel(); return;
