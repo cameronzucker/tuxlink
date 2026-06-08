@@ -308,6 +308,57 @@ fn test_parse_b2f_body_decodes_windows_1252_text() {
     );
 }
 
+#[test]
+fn test_b2f_body_valid_utf8_passes_through_unchanged() {
+    // A modern client sending a fully-valid UTF-8 B2F body must round-trip
+    // byte-for-byte — multibyte characters included — and never get
+    // reinterpreted as Windows-1252 (smoke-walk item 24 happy-path guard).
+    let body_bytes = "Regards café — über —\r\n".as_bytes();
+
+    let mut raw: Vec<u8> = Vec::new();
+    raw.extend_from_slice(b"Mid: VALID-UTF8\r\n");
+    raw.extend_from_slice(format!("Body: {}\r\n", body_bytes.len()).as_bytes());
+    raw.extend_from_slice(b"Date: 2026/06/07 09:00\r\n");
+    raw.extend_from_slice(b"From: SERVICE\r\n");
+    raw.extend_from_slice(b"Subject: UTF8 note\r\n");
+    raw.extend_from_slice(b"To: N7CPZ\r\n");
+    raw.extend_from_slice(b"\r\n");
+    raw.extend_from_slice(body_bytes);
+
+    let dto = parse_raw_rfc5322("VALID-UTF8", &raw).expect("B2F parse succeeds");
+    assert_eq!(dto.body, "Regards café — über —\r\n");
+    assert!(!dto.body.contains('\u{FFFD}'), "no replacement glyphs: {:?}", dto.body);
+}
+
+#[test]
+fn test_b2f_body_mixed_encoding_preserves_valid_utf8_runs() {
+    // The dangerous case: a body that is mostly valid UTF-8 (café = C3 A9) with
+    // ONE stray CP-1252 byte (0x92 = right single quote). The byte-wise decoder
+    // must keep the valid UTF-8 "café" intact and CP-1252-map only the stray
+    // byte. The old all-or-nothing gate flipped the WHOLE body to Latin-1,
+    // turning café into the mojibake "cafÃ©" (smoke-walk item 24 regression).
+    let mut body_bytes: Vec<u8> = Vec::new();
+    body_bytes.extend_from_slice("café ".as_bytes()); // valid UTF-8 é (C3 A9)
+    body_bytes.push(0x92); // stray Windows-1252 right single quote
+    body_bytes.extend_from_slice(b"s note\r\n");
+
+    let mut raw: Vec<u8> = Vec::new();
+    raw.extend_from_slice(b"Mid: MIXED-ENCODING\r\n");
+    raw.extend_from_slice(format!("Body: {}\r\n", body_bytes.len()).as_bytes());
+    raw.extend_from_slice(b"Date: 2026/06/07 09:30\r\n");
+    raw.extend_from_slice(b"From: SERVICE\r\n");
+    raw.extend_from_slice(b"Subject: Mixed note\r\n");
+    raw.extend_from_slice(b"To: N7CPZ\r\n");
+    raw.extend_from_slice(b"\r\n");
+    raw.extend_from_slice(&body_bytes);
+
+    let dto = parse_raw_rfc5322("MIXED-ENCODING", &raw).expect("B2F parse succeeds");
+    assert_eq!(dto.body, "café \u{2019}s note\r\n");
+    assert!(dto.body.contains("café"), "valid UTF-8 run preserved: {:?}", dto.body);
+    assert!(!dto.body.contains('Ã'), "no Latin-1 mojibake of café: {:?}", dto.body);
+    assert!(!dto.body.contains('\u{FFFD}'), "no replacement glyphs: {:?}", dto.body);
+}
+
 // ============================================================================
 // Task-13 test (6): oversized input → parse_raw_rfc5322 returns UiError
 // Spec §5.3 (Codex verdict V3): cap parse input; surface a parser-failure state.
