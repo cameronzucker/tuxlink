@@ -7,8 +7,8 @@
 //! We do NOT use `keyring::set_default_credential_builder(mock::default_credential_builder())`
 //! here because the keyring 3.6.3 mock has `CredentialPersistence::EntryOnly` — every
 //! `Entry::new()` call returns a fresh credential with no shared backing store. That makes
-//! it impossible to test the migration scenario, where `read_password` writes to a new
-//! `Entry::new("tuxlink", call)` and then a caller should be able to read it back.
+//! it impossible to test cross-entry scenarios (e.g. the P2P peer write-then-read-back
+//! roundtrip) where one call writes and a later call must read it back.
 //!
 //! The factory approach injects a `Fn(&str, &str) -> Box<dyn EntryLike>` that is backed by
 //! an `Arc<Mutex<HashMap<(String, String), String>>>`. The same HashMap instance is shared
@@ -37,7 +37,7 @@ use tuxlink_lib::winlink::credentials::{
 /// A fake credential entry backed by a shared `HashMap<(service, account), password>`.
 ///
 /// Multiple `MockEntry` instances that share the same `Arc<Mutex<HashMap>>` see
-/// each other's writes — exactly the cross-entry consistency the migration test needs.
+/// each other's writes — exactly the cross-entry consistency the P2P roundtrip tests need.
 struct MockEntry {
     store: Arc<Mutex<HashMap<(String, String), String>>>,
     service: String,
@@ -107,13 +107,16 @@ fn new_entry_exists_returns_password() {
 }
 
 // ──────────────────────────────────────────────────────────────
-// Test 2: Only old entry ("tuxlink-pat") exists → migrates and returns password
+// Test 2: Only the legacy "tuxlink-pat" entry exists → NoEntry.
+// The legacy service is no longer consulted (Pat fully stripped, tuxlink-kc3q):
+// read_password reads ONLY "tuxlink", so a stale legacy entry is ignored and
+// left untouched (no read-through, no migration, no delete).
 // ──────────────────────────────────────────────────────────────
 
 #[test]
-fn old_entry_only_migrates_to_new_and_returns_password() {
+fn legacy_only_entry_is_ignored_returns_no_entry() {
     let store: Arc<Mutex<HashMap<(String, String), String>>> = Arc::new(Mutex::new(HashMap::new()));
-    // Pre-populate only the legacy service name
+    // Pre-populate ONLY the legacy service name.
     store.lock().unwrap().insert(
         ("tuxlink-pat".to_string(), "W4PHS".to_string()),
         "legacy_pass".to_string(),
@@ -122,22 +125,25 @@ fn old_entry_only_migrates_to_new_and_returns_password() {
     let factory = mock_factory(Arc::clone(&store));
     let result = read_password_with_factory("W4PHS", &factory);
 
-    assert!(result.is_ok(), "expected Ok after migration, got: {result:?}");
-    assert_eq!(result.unwrap(), "legacy_pass");
+    assert!(
+        matches!(&result, Err(KeyringError::NoEntry { callsign }) if callsign == "W4PHS"),
+        "legacy 'tuxlink-pat' entry must be ignored (no migration), got: {result:?}"
+    );
 
-    // Verify migration side-effects: new entry written, old entry deleted
+    // The legacy entry is left untouched and no canonical entry is created.
     let store_guard = store.lock().unwrap();
-
     assert_eq!(
-        store_guard.get(&("tuxlink".to_string(), "W4PHS".to_string())).map(|s| s.as_str()),
+        store_guard
+            .get(&("tuxlink-pat".to_string(), "W4PHS".to_string()))
+            .map(|s| s.as_str()),
         Some("legacy_pass"),
-        "new entry must be written during migration"
+        "legacy entry must be left untouched (not read-through, not deleted)"
     );
     assert!(
         store_guard
-            .get(&("tuxlink-pat".to_string(), "W4PHS".to_string()))
+            .get(&("tuxlink".to_string(), "W4PHS".to_string()))
             .is_none(),
-        "old entry must be deleted after migration"
+        "no canonical 'tuxlink' entry should be created"
     );
 }
 

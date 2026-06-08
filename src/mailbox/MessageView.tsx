@@ -39,6 +39,12 @@ import { devFormMeta } from './devFixture';
 import { lookupForm, KeyValueView } from '../forms';
 import { MoveToButton } from './MoveToButton';
 import { WebviewFormViewer } from './WebviewFormViewer';
+import { CatalogReplyView } from '../catalog/CatalogReplyView';
+
+/// tuxlink-a2gd: a received catalog INQUIRY reply (From: SERVICE, Subject "INQUIRY - <url>").
+function isCatalogReply(m: ParsedMessage): boolean {
+  return (m.from ?? '').toUpperCase().includes('SERVICE') && (m.subject ?? '').startsWith('INQUIRY - ');
+}
 
 // ============================================================================
 // Exported constants (used by tests)
@@ -441,6 +447,10 @@ export function MessageViewLoaded({
             </div>
           )}
         </div>
+      ) : isCatalogReply(message) ? (
+        // tuxlink-a2gd: catalog INQUIRY replies (From: SERVICE, Subject: "INQUIRY - <url>")
+        // render via parse-with-fallback — area weather structured, everything else raw.
+        <CatalogReplyView subject={message.subject} body={message.body} />
       ) : (
         <pre className="msg-body" data-testid="message-body">
           {message.body}

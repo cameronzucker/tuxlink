@@ -159,7 +159,7 @@ fn is_safe_version(v: &str) -> bool {
 /// P2 #8: production must use https; tests/dev proxies on loopback are
 /// permitted on http because an on-path attacker can't intercept
 /// loopback. Returns `Ok((is_loopback,))` on accept, `Err(_)` on reject.
-fn classify_transport(url_str: &str) -> Result<bool, String> {
+pub(crate) fn classify_transport(url_str: &str) -> Result<bool, String> {
     let parsed = reqwest::Url::parse(url_str).map_err(|e| format!("invalid URL {url_str:?}: {e}"))?;
     let is_loopback = matches!(
         parsed.host_str(),

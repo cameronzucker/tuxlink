@@ -1,0 +1,82 @@
+WINLINK PACTOR CHANNEL LISTING - (Monday, June 8, 2026 03:43 UTC)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Frequencies followed by a hash sign (#) are available for PACTOR 3 (and/or 4) connections.
+
+Explanation of codes:
+    - = Unknown
+    A = Additional information
+  Antenna being used:
+    B = Beam
+    D = Dipole
+    V = Vertical
+  Internet(details)
+    E = Email address of sysop - if not listed, use callsign@winlink.org
+    H = Homepage URL
+
+Channel, Sysop Name / Callsign, [Grid], (last update)
+-----------------------------------------------------------------
+
+8P6BWS.WINLINK, -/8P6BWS, [GK03ED: BRIDGESTOWN, -], (Wed, 03 Jun 2026 18:58:00 GMT)
+   E  ishmael.cadogan@barbados.gov.bb
+   H  -
+   A  BRIDGESTOWN, -
+   -  3647.0# 7092.0# 10147.5# 14118.0# 18098.1# 
+
+AA5AF.WINLINK, Robby Roberson/AA5AF, [EL19AN: Seguin, Texas], (Sun, 07 Jun 2026 12:50:00 GMT)
+   E  robby.roberson@icloud.com
+   A  Seguin, Texas
+   -  3587.5# 3596.0# 7102.5# 10144.7# 14100.4# 
+
+AB0DK.WINLINK, Dave Krueger/AB0DK, [EN30RE: USA, MO], (Mon, 08 Jun 2026 01:58:00 GMT)
+   E  djk.tuner@gmail.com
+   A  USA, MO
+   -  3587.0# 7062.5 7101.5# 10148.4# 14110.0# 
+
+AG7MM.WINLINK, MIKE MCCARTHY/AG7MM, [DN32CM: BURLEY, ID], (Mon, 08 Jun 2026 02:04:00 GMT)
+   E  ag7mm@minicassia.net
+   A  BURLEY, ID
+   -  3588.0# 7103.5# 14102.0# 
+
+AI4Y.WINLINK, Richard Creasey/AI4Y, [FM07CC: Wirtz, VA], (Mon, 08 Jun 2026 02:12:00 GMT)
+   E  creas002@gmail.com
+   A  Wirtz, VA
+   -  3589.0 3589.0# 7101.6 7101.6# 10146.4 10146.4# 14096.4 14096.4# 18108.6 18108.6# 21091.4 21091.4# 28187.6 28187.6# 
+
+AJ4GU.WINLINK, MICHAEL D CROWE/AJ4GU, [EM83AL: MCDONOUGH, GA], (Sat, 06 Jun 2026 10:28:00 GMT)
+   E  aj4gu@bellsouth.net
+   A  MCDONOUGH, GA
+   -  7103.8# 
+
+AJ7C.WINLINK, Kevin Sherwood/AJ7C, [DM04TA: Culver City, CA], (Mon, 08 Jun 2026 03:28:00 GMT)
+   E  kevin@thesherwoods.org
+   H  http://ccares.net
+   A  Culver City, CA
+   -  7102.0# 10147.5# 18108.6# 
+
+BD4OS.WINLINK, Gao guoqiang/BD4OS, [PM17BM: Weihai, Shandong], (Mon, 08 Jun 2026 01:24:00 GMT)
+   E  bd4os@chinaham.org
+   H  chinaham.org
+   A  Weihai, Shandong
+   -  3597.0 3597.0# 5363.0 5363.0# 7094.0 7094.0# 10147.0 10147.0# 14115.0 14115.0# 18109.5 18109.5# 21110.0 21110.0# 
+
+CT1CPS.WINLINK, Joao Costa/CT1CPS, [IM59ND: Lapa-Cartaxo, Ribatejo], (Mon, 08 Jun 2026 01:23:00 GMT)
+   E  zs1xp@sapo.pt
+   A  Lapa-Cartaxo, Ribatejo
+   -  7046.0 7046.0# 10144.5 10144.5# 14105.0 14105.0# 
+
+DA5UDI.WINLINK, Hans/DA5UDI, [JO30QJ: Kruft, RLP], (Mon, 08 Jun 2026 02:32:00 GMT)
+   E  dl5di@darc.de
+   H  https://da5udi.prgm.org
+   A  Kruft, RLP
+   -  7051.8 7051.8# 14094.9 14102.4 14102.4# 14110.4 14110.4# 
+
+DB0BES.WINLINK, Oliver Harms/DB0BES, [JO62TF: Bestensee, Brandenburg], (Mon, 08 Jun 2026 00:55:00 GMT)
+   E  info@db0bes.de
+   A  Bestensee, Brandenburg
+   -  3601.5 3601.5# 7052.8 7052.8# 10149.3 14104.0 14104.0# 
+
+DB0HYC.WINLINK, Winlink Knoten/DB0HYC, [JO33XP: Wangerland, Niedersachsen], (Mon, 08 Jun 2026 01:25:00 GMT)
+   E  alexander.barz@hotmail.de
+   A  Wangerland, Niedersachsen
+   -  7052.0 7052.0# 14111.0 14111.0# 21114.0 21114.0# 
+

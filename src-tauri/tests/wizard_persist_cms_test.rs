@@ -169,8 +169,11 @@ async fn persist_cms_returns_busy_when_mutex_held() {
 async fn persist_cms_restores_prior_credential_on_config_write_failure() {
     use_mock_keyring();
 
-    // Write an initial credential at W4PHS BEFORE the wizard runs.
-    let entry = keyring::Entry::new("tuxlink-pat", "W4PHS").expect("entry create");
+    // Write an initial credential at W4PHS BEFORE the wizard runs. Must use the SAME
+    // service persist_cms writes to ("tuxlink") or the snapshot-restore path isn't
+    // exercised at all (tuxlink-kc3q: was "tuxlink-pat", which persist_cms never touches,
+    // so this test passed vacuously after the Pat strip repointed persist to "tuxlink").
+    let entry = keyring::Entry::new("tuxlink", "W4PHS").expect("entry create");
     entry.set_password("original_password").expect("initial write");
 
     // Point XDG_CONFIG_HOME to /proc/1 — world-readable but not writable by non-root.

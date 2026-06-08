@@ -367,6 +367,16 @@ describe('<AppShell> — Mock B topology', () => {
     );
   });
 
+  // tuxlink-a2gd: production mount path — the lazy overlay actually opens from the menu.
+  // config_read is mocked to null above; the panel's null-grid is swallowed, so it still renders.
+  it('Message → Find a Gateway opens the Catalog Builder (production mount path)', async () => {
+    renderShell();
+    clickMenu('Message', /find a gateway/i);
+    expect(
+      await screen.findByRole('dialog', { name: /find a gateway/i }, { timeout: 10000 }),
+    ).toBeInTheDocument();
+  });
+
   // Option (b): with a message selected, Message → Reply opens a reply window.
   // openReplyWindow seeds a draft then opens a compose window via
   // compose_window_open. The message_read mock resolves so useMessage's

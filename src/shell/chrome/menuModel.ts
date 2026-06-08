@@ -45,6 +45,10 @@ export const MENU_TREE: TopMenu[] = [
     // Opens the CatalogRequestPanel; routes through the existing outgoing
     // rails to INQUIRY@winlink.org.
     { id: 'menu:message:catalog_request', label: 'Catalog Request…' },
+    // tuxlink-a2gd: location-aware Catalog Builder — direct /listings station poll
+    // + by-message info-category requests. (A radio-config-pane entry point is
+    // deferred this sprint to avoid colliding with the CF agent's radio panels.)
+    { id: 'menu:message:catalog_builder', label: 'Find a Gateway…' },
     // tuxlink-vrpk: Saildocs GRIB request (3rd-party SMTP, not Winlink CMS).
     // Opens GribRequestPanel; routes through outgoing rails to
     // query@saildocs.com.
