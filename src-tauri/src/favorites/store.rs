@@ -162,6 +162,10 @@ pub enum FavoritesError {
     Io(String),
     #[error("serde: {0}")]
     Serde(String),
+    /// A command-layer input was rejected before it reached the store (e.g. an
+    /// unknown `mode` string on an upsert/record). Task B2.
+    #[error("validation: {0}")]
+    Validation(String),
 }
 
 /// Map a local wall-clock hour (0–23) to its time-of-day bucket.
@@ -406,6 +410,48 @@ impl FavoritesStore {
             None => self.file.favorites.push(f),
         }
         self.flush()
+    }
+
+    /// Merge ONLY the operator-editable fields of `edited` into the existing
+    /// favorite with the same `id`, preserving everything `favorite_star` and
+    /// `record_attempt` own (M12). Editable fields: `gateway`, `freq`,
+    /// `transport`, `band`, `grid`, `note`. PRESERVED from the existing record:
+    /// `id`, `mode`, `starred`, `created_at`, `last_attempt_at` (and, in the
+    /// file, the whole `log` — untouched here). Bumps `updated_at` to `now`.
+    ///
+    /// This is the M12 anti-clobber guard: a STALE whole-object `favorite_upsert`
+    /// carrying `starred:false` (or a stale `last_attempt_at`) can never revert a
+    /// concurrent star or rewind the dial clock, because those fields are read
+    /// from the LIVE record, not the caller's payload.
+    ///
+    /// Returns `None` (and does NOT flush) when no favorite with `edited.id`
+    /// exists — the command layer treats that as a brand-new mint. On a hit, the
+    /// merged record is flushed and returned.
+    pub fn favorite_merge_editable(
+        &mut self,
+        edited: &Favorite,
+        now: String,
+    ) -> Result<Option<Favorite>, FavoritesError> {
+        let Some(existing) = self
+            .file
+            .favorites
+            .iter_mut()
+            .find(|f| f.id == edited.id)
+        else {
+            return Ok(None);
+        };
+        // Operator-editable fields overwrite.
+        existing.gateway = edited.gateway.clone();
+        existing.freq = edited.freq.clone();
+        existing.transport = edited.transport.clone();
+        existing.band = edited.band.clone();
+        existing.grid = edited.grid.clone();
+        existing.note = edited.note.clone();
+        existing.updated_at = now;
+        // starred, created_at, last_attempt_at, mode, id: PRESERVED (not touched).
+        let merged = existing.clone();
+        self.flush()?;
+        Ok(Some(merged))
     }
 
     /// Flip a favorite's `starred` flag (no-op if the id is absent). A starred
@@ -777,6 +823,75 @@ mod tests {
         let reopened = FavoritesStore::open(path);
         assert!(reopened.favorites()[0].starred);
         assert_eq!(reopened.favorites()[0].updated_at, "2026-06-08T00:00:00+00:00");
+    }
+
+    #[test]
+    fn favorite_merge_editable_preserves_protected_fields() {
+        // M12: merging operator-editable fields must NOT touch starred,
+        // created_at, or last_attempt_at — only gateway/freq/transport/band/
+        // grid/note + updated_at change. A miss returns None without flushing.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+
+        // Seed a starred favorite that has been dialed (has last_attempt_at).
+        let mut seed = favorite("f1", "ardop-hf", "W6XYZ");
+        seed.starred = true;
+        seed.created_at = "2026-01-01T00:00:00+00:00".to_string();
+        seed.last_attempt_at = Some("2026-06-07T10:00:00-07:00".to_string());
+        seed.note = Some("original note".to_string());
+        store.favorite_upsert(seed).unwrap();
+
+        // A STALE edit: starred:false, no last_attempt_at, different created_at,
+        // only the note + band changed.
+        let edit = Favorite {
+            id: "f1".to_string(),
+            mode: "telnet".to_string(), // mode is NOT editable — must be ignored
+            gateway: "W6XYZ".to_string(),
+            freq: Some("7102.0".to_string()),
+            transport: None,
+            band: Some("40m".to_string()),
+            grid: Some("CN88".to_string()),
+            note: Some("edited note".to_string()),
+            starred: false,                                  // stale — must be ignored
+            last_attempt_at: None,                           // stale — must be ignored
+            created_at: "2099-01-01T00:00:00+00:00".to_string(), // stale — must be ignored
+            updated_at: String::new(),
+        };
+        let merged = store
+            .favorite_merge_editable(&edit, "2026-06-08T12:00:00+00:00".to_string())
+            .unwrap()
+            .expect("merge over an existing id returns Some");
+
+        // Protected fields preserved from the LIVE record.
+        assert!(merged.starred, "starred must be preserved (M12)");
+        assert_eq!(merged.created_at, "2026-01-01T00:00:00+00:00", "created_at preserved");
+        assert_eq!(
+            merged.last_attempt_at.as_deref(),
+            Some("2026-06-07T10:00:00-07:00"),
+            "last_attempt_at preserved"
+        );
+        assert_eq!(merged.mode, "ardop-hf", "mode is not editable — preserved");
+        // Editable fields overwritten.
+        assert_eq!(merged.note.as_deref(), Some("edited note"));
+        assert_eq!(merged.band.as_deref(), Some("40m"));
+        assert_eq!(merged.freq.as_deref(), Some("7102.0"));
+        assert_eq!(merged.grid.as_deref(), Some("CN88"));
+        assert_eq!(merged.updated_at, "2026-06-08T12:00:00+00:00");
+    }
+
+    #[test]
+    fn favorite_merge_editable_miss_returns_none() {
+        // A merge against an unknown id returns None (command layer mints anew).
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+        let edit = favorite("ghost", "packet", "K0NONE");
+        let result = store
+            .favorite_merge_editable(&edit, "2026-06-08T12:00:00+00:00".to_string())
+            .unwrap();
+        assert!(result.is_none(), "merge against an absent id returns None");
+        assert!(store.favorites().is_empty(), "no favorite is created on a miss");
     }
 
     #[test]

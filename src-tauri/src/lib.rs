@@ -211,6 +211,18 @@ pub fn run() {
                         ),
                     )));
 
+                    // favorites (tuxlink-egmp, Task B2): the stations.json
+                    // per-radio-mode Favorites/Recents store. `FavoritesStore::open`
+                    // is INFALLIBLE (same degrade-and-preserve contract as
+                    // ContactsStore) so it is UNCONDITIONALLY managed — no guard
+                    // branch, no startup block. Reuses the already-resolved
+                    // `data_dir` (C2: app_data_dir resolved ONCE here).
+                    app.manage(std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::favorites::store::FavoritesStore::open(
+                            data_dir.join("stations.json"),
+                        ),
+                    )));
+
                     let search_root = data_dir.join("native-mbox");
                     // Ensure the directory exists before opening SQLite (Index::open
                     // calls Connection::open, which creates the .db file but expects
@@ -524,6 +536,20 @@ pub fn run() {
             crate::contacts::commands::group_upsert,
             crate::contacts::commands::group_delete,
             crate::contacts::commands::contacts_suggestions, // Task A3: suggest-from-history
+            // favorites (tuxlink-egmp, Task B2): per-radio-mode Favorites/Recents
+            // CRUD + the honest connection record, over the managed
+            // `Arc<Mutex<FavoritesStore>>`. `favorite_upsert` MERGES only
+            // operator-editable fields (M12) so a stale whole-object upsert can't
+            // clobber a concurrent star; `favorite_star` /
+            // `favorite_record_attempt` are the only writers of starred /
+            // last_attempt_at / the log. No cross-window event (single-window
+            // radio-dock surface). KEEP THIS BLOCK CONTIGUOUS + LABELED.
+            crate::favorites::commands::favorites_read,
+            crate::favorites::commands::favorite_upsert,
+            crate::favorites::commands::favorite_delete,
+            crate::favorites::commands::favorite_star,
+            crate::favorites::commands::favorite_record_attempt,
+            crate::favorites::commands::favorites_recents,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
