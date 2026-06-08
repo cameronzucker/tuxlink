@@ -358,3 +358,29 @@ select.radio-panel-input option {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* FZ-M1 compact (tuxlink-h7q7 Task 6b): touch targets >=44px + font floors for
+   the radio panel interior. Density, not uniform shrink. */
+@media (max-width: 1365px) {
+  .radio-panel-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .radio-panel-sec h5 {
+    font-size: 12px;
+  }
+  .radio-panel-sec h5 .live {
+    font-size: 11px;
+  }
+  .radio-panel-chip {
+    min-height: 44px;
+    font-size: 12px;
+  }
+  .radio-panel-btn {
+    min-height: 44px;
+  }
+  .radio-panel-field input,
+  .radio-panel-field select {
+    min-height: 44px;
+  }
+}

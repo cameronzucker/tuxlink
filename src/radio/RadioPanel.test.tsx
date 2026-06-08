@@ -61,3 +61,25 @@ describe('<RadioPanel>', () => {
     expect(hoverRule).not.toContain('filter: brightness');
   });
 });
+
+// FZ-M1 compact interior (tuxlink-h7q7 Task 6b)
+const RADIO_PANEL_CSS = (
+  import.meta.glob('./RadioPanel.css', { eager: true, query: '?raw', import: 'default' }) as Record<string, string>
+)['./RadioPanel.css'];
+const MODEM_LINK_CSS = (
+  import.meta.glob('./sections/ModemLinkSection.css', { eager: true, query: '?raw', import: 'default' }) as Record<string, string>
+)['./sections/ModemLinkSection.css'];
+
+describe('RadioPanel interior compact CSS (tuxlink-h7q7 Task 6b)', () => {
+  it('bumps the segmented tabs to >=44px / 12px in compact (reused by Contacts+Favorites tabs)', () => {
+    const block = MODEM_LINK_CSS.slice(MODEM_LINK_CSS.indexOf('@media (max-width: 1365px)'));
+    expect(block).toMatch(/\.radio-panel-segmented button \{[\s\S]*?min-height:\s*44px/);
+    expect(block).toMatch(/\.radio-panel-segmented button \{[\s\S]*?font-size:\s*12px/);
+  });
+  it('bumps the close button, chips, and buttons to >=44px in compact', () => {
+    const block = RADIO_PANEL_CSS.slice(RADIO_PANEL_CSS.indexOf('@media (max-width: 1365px)'));
+    expect(block).toMatch(/\.radio-panel-close \{[\s\S]*?min-height:\s*44px/);
+    expect(block).toMatch(/\.radio-panel-chip \{[\s\S]*?min-height:\s*44px/);
+    expect(block).toMatch(/\.radio-panel-btn \{[\s\S]*?min-height:\s*44px/);
+  });
+});

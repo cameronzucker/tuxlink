@@ -131,3 +131,10 @@
   line-height: 1.4;
   margin: 0;
 }
+
+/* FZ-M1 compact (tuxlink-h7q7 Task 6b): raise the 9px region to the 12px floor. */
+@media (max-width: 1365px) {
+  .listen-section {
+    font-size: 12px;
+  }
+}
