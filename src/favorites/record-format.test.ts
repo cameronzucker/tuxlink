@@ -54,4 +54,8 @@ describe('relativeAgo (absolute-instant delta)', () => {
     // 7-hours-earlier absolute instant vs `now` (which is 22:00-07:00).
     expect(relativeAgo('2026-06-07T22:00:00+00:00', now)).toBe('7 h ago');
   });
+
+  it('returns empty string for an unparseable timestamp', () => {
+    expect(relativeAgo('not-a-timestamp')).toBe('');
+  });
 });

@@ -22,7 +22,7 @@ import { invoke } from '@tauri-apps/api/core';
 import * as Tabs from '@radix-ui/react-tabs';
 import './FavoritesTabs.css';
 import type { FavoriteDial, RadioMode, StationsFile } from './types';
-import { useFavorites } from './useFavorites';
+import { useFavorites, FAVORITES_QUERY_KEY } from './useFavorites';
 import { FavoriteRow } from './FavoriteRow';
 
 export interface FavoritesTabsProps {
@@ -53,7 +53,7 @@ export function FavoritesTabs({ mode, onPrefill, manualContent }: FavoritesTabsP
   // is the same cached fetch, not a second network call. We slice it per-unit
   // for each row (useFavorites intentionally does not expose the log).
   const stationsQuery = useQuery({
-    queryKey: ['favorites'],
+    queryKey: FAVORITES_QUERY_KEY,
     queryFn: () => invoke<StationsFile>('favorites_read'),
   });
   const log = useMemo(() => stationsQuery.data?.log ?? [], [stationsQuery.data]);

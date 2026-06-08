@@ -26,6 +26,7 @@ export function stationWallClock(tsLocal: string): string | null {
  */
 export function relativeAgo(tsLocal: string, now: Date = new Date()): string {
   const then = new Date(tsLocal).getTime();
+  if (Number.isNaN(then)) return '';
   const ms = now.getTime() - then;
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 1) return 'just now';
