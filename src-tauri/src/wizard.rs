@@ -424,7 +424,7 @@ pub async fn verify_cms_connection_impl(_app: tauri::AppHandle) -> Result<(), Wi
         mode: config.connect.transport,
     };
     let session = backend
-        .connect(transport)
+        .connect(transport, None)
         .await
         .map_err(|e| WizardError::Other {
             detail: format!("CMS connection failed: {e}"),

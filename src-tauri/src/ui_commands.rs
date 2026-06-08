@@ -2061,6 +2061,7 @@ pub async fn cms_connect(
     app: AppHandle,
     state: State<'_, BackendState>,
     log: State<'_, std::sync::Arc<SessionLogState>>,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
 ) -> Result<(), UiError> {
     let backend = state
         .current()
@@ -2090,10 +2091,23 @@ pub async fn cms_connect(
     let events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
         std::sync::Arc::new(crate::winlink::b2f_events::TauriEventSink::new(app.clone()));
 
+    // tuxlink-bsiy: mint ONE attempt_id at the top so the in-flight
+    // InboundProposalsOffered events (emitted from the selecting decider) and the
+    // result-level AuthClassified event in the Err arm share a single correlation
+    // id. The frontend stale-filter keys on this AttemptId (Codex #2).
+    let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+
     match backend
-        .connect(TransportConfig::Cms {
-            mode: cfg.connect.transport,
-        })
+        .connect(
+            TransportConfig::Cms {
+                mode: cfg.connect.transport,
+            },
+            Some(crate::winlink_backend::CmsSelectionContext {
+                sink: events_sink.clone(),
+                attempt_id,
+                registry: registry.inner().clone(),
+            }),
+        )
         .await
     {
         Ok(session) => {
@@ -2158,7 +2172,11 @@ pub async fn cms_connect(
             // give us TcpConnected / RemoteSidReceived / PostAuthExchangeStarted
             // events for Mode 1 vs Mode 5 discrimination) is tracked as
             // bd-tuxlink-7do4-followup-backend-events.
-            let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+            //
+            // tuxlink-bsiy: reuse the top-minted `attempt_id` (no longer re-minted
+            // here) so a pending InboundProposalsOffered event and this
+            // AuthClassified event share one attempt_id — the frontend stale-filter
+            // depends on that (Codex #2).
             use crate::winlink::b2f_events::{B2fEvent, FailureMode};
             let (mode, raw) = match &e {
                 // BackendError::RemoteError carries the *** payload (redaction-
@@ -2201,6 +2219,7 @@ pub async fn cms_abort(
     app: AppHandle,
     state: State<'_, BackendState>,
     log: State<'_, std::sync::Arc<SessionLogState>>,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
 ) -> Result<(), UiError> {
     let backend = state
         .current()
@@ -2212,6 +2231,15 @@ pub async fn cms_abort(
     );
     emit_session_line(&app, &log, LogLevel::Info, "Aborting CMS connection…".to_string());
     backend.abort().await?;
+
+    // tuxlink-bsiy: wake a decider parked on a pending selection prompt. Dropping
+    // the slot drops the only mpsc Sender, so the decider's recv_timeout returns
+    // Disconnected immediately; backend.abort() above already set the `aborting`
+    // flag, so the decider's post-recv abort re-check returns Err(Cancelled) (NOT
+    // accept-all). No-op if no prompt is pending. Order matters: abort() (sets
+    // aborting) BEFORE the slot drop (wakes the decider).
+    *registry.lock().unwrap() = None;
+
     Ok(())
 }
 
@@ -3202,7 +3230,7 @@ pub async fn packet_connect(
         LogLevel::Info,
         format!("Connecting to {call} over packet…"),
     );
-    match backend.connect(transport).await {
+    match backend.connect(transport, None).await {
         Ok(_session) => {
             emit_session_line(
                 &app,
@@ -3267,7 +3295,7 @@ pub async fn packet_listen(
         LogLevel::Info,
         format!("Listening for an incoming packet call as {effective}…"),
     );
-    match backend.connect(transport).await {
+    match backend.connect(transport, None).await {
         Ok(_session) => {
             emit_session_line(
                 &app,

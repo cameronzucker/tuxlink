@@ -86,6 +86,11 @@ pub fn run() {
                 .build(),
         )
         .manage(crate::wizard::WizardMutex::new())
+        // tuxlink-bsiy: the single inbound-selection rendezvous. cms_connect threads
+        // a clone of this Arc into the selecting decider; the resolve command (Task
+        // 5) and cms_abort read the SAME managed Arc, so an operator answer/abort
+        // reaches the decider parked in the blocking exchange thread (Codex #1).
+        .manage(crate::winlink::inbound_selection::SelectionRegistry::default())
         // tuxlink-0gsy (spec §8.2): managed theme-state singleton — the help
         // window calls theme_get_scheme to bootstrap and listens for
         // color_scheme_changed events emitted by theme_broadcast_scheme.

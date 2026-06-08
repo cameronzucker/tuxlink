@@ -648,6 +648,20 @@ pub enum BackendError {
 // Trait surface (spec §3.1)
 // ============================================================================
 
+/// Per-connect inbound-selection plumbing threaded from `cms_connect` into
+/// `native_connect`. Present only on the user-initiated CMS connect; other
+/// connect callers pass `None` (and get accept-all). The registry is the SAME
+/// Arc that lib.rs `.manage()`s and the resolve command reads (Codex #1).
+///
+/// Send+Sync+'static (Arc<dyn Sink> is Send+Sync; AttemptId is Copy;
+/// SelectionRegistry is Arc<Mutex<…>>), so the whole bundle moves cleanly into
+/// the connect path's `spawn_blocking` closure.
+pub struct CmsSelectionContext {
+    pub sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink>,
+    pub attempt_id: crate::winlink::b2f_events::AttemptId,
+    pub registry: crate::winlink::inbound_selection::SelectionRegistry,
+}
+
 /// Backend abstraction for Winlink interactions. See spec §3.1 for the
 /// full contract; key invariants:
 ///
@@ -780,8 +794,11 @@ pub trait WinlinkBackend: Send + Sync {
     async fn send_message(&self, msg: OutboundMessage)
         -> Result<MessageId, BackendError>;
 
-    async fn connect(&self, transport: TransportConfig)
-        -> Result<Session, BackendError>;
+    async fn connect(
+        &self,
+        transport: TransportConfig,
+        selection: Option<CmsSelectionContext>,
+    ) -> Result<Session, BackendError>;
 
     async fn disconnect(&self, session: Session)
         -> Result<(), BackendError>;
@@ -1158,8 +1175,13 @@ impl WinlinkBackend for NativeBackend {
         Ok(id)
     }
 
-    async fn connect(&self, transport: TransportConfig) -> Result<Session, BackendError> {
-        // Dispatch to per-transport paths.
+    async fn connect(
+        &self,
+        transport: TransportConfig,
+        selection: Option<CmsSelectionContext>,
+    ) -> Result<Session, BackendError> {
+        // Dispatch to per-transport paths. The packet path runs no CMS inbound
+        // selection, so it drops `selection` (callers pass `None` there anyway).
         if let TransportConfig::Packet { link, ssid, role } = transport {
             return self.packet_connect_inner(link, ssid, role).await;
         }
@@ -1223,8 +1245,9 @@ impl WinlinkBackend for NativeBackend {
                 &*wire,
                 &*mailbox_change,
                 &abort_handle,
-                &aborting,
+                aborting,
                 position.as_deref(),
+                selection,
             )
         })
         .await
@@ -2039,6 +2062,13 @@ fn resolve_locator(config: &Config, position: Option<&crate::position::PositionA
     crate::position::effective_broadcast_locator(config, position)
 }
 
+/// The inbound-proposal decider `native_connect` hands to the telnet exchange:
+/// either the accept-all closure or the operator-selecting decider (tuxlink-bsiy).
+/// Boxed because the two arms have distinct concrete types; it stays on the
+/// blocking exchange thread, so no `Send`/`Sync` bound is required.
+type InboundDecider =
+    Box<dyn Fn(&[crate::winlink::proposal::Proposal]) -> Result<Vec<Answer>, session::ExchangeError>>;
+
 /// Run one CMS exchange (blocking): build the outbox into proposals, connect over
 /// the chosen transport, accept all offered messages, then file what arrived into
 /// the inbox and move what was sent into the sent folder.
@@ -2056,8 +2086,9 @@ fn native_connect(
     wire_log: &dyn Fn(&str),
     mailbox_change: &dyn Fn(),
     abort_handle: &Mutex<Option<TcpStream>>,
-    aborting: &AtomicBool,
+    aborting: Arc<AtomicBool>,
     position: Option<&crate::position::PositionArbiter>,
+    selection: Option<CmsSelectionContext>,
 ) -> Result<(), BackendError> {
     let callsign = config
         .identity
@@ -2144,6 +2175,46 @@ fn native_connect(
         }
     };
 
+    // Choose the inbound-proposal decider. With the review-inbound preference ON
+    // AND a selection context present (the user-initiated CMS connect), build the
+    // selecting decider that prompts the operator via the event sink + registry
+    // (tuxlink-bsiy). Otherwise — preference off, or a caller that passed no
+    // context (wizard probe, packet, tests) — accept everything (WLE parity, the
+    // prior behavior). The boxed decider stays on this blocking thread, so it does
+    // NOT need Send/Sync; it satisfies `connect_and_exchange`'s `F: Fn(...)` bound.
+    use crate::winlink::b2f_events::B2fEvent;
+    use crate::winlink::inbound_selection::PendingProposalDto;
+    use crate::winlink::proposal::Proposal;
+    let decide: InboundDecider =
+        match (config.review_inbound_before_download, selection) {
+            (true, Some(ctx)) => {
+                let CmsSelectionContext {
+                    sink,
+                    attempt_id,
+                    registry,
+                } = ctx;
+                let emit = move |request_id: u64, dtos: &[PendingProposalDto]| {
+                    sink.push(B2fEvent::InboundProposalsOffered {
+                        request_id,
+                        proposals: dtos.to_vec(),
+                        attempt_id,
+                    });
+                };
+                Box::new(crate::winlink::inbound_selection::build_selecting_decider(
+                    registry,
+                    attempt_id,
+                    emit,
+                    aborting.clone(),
+                ))
+            }
+            _ => Box::new(|proposals: &[Proposal]| {
+                Ok(proposals
+                    .iter()
+                    .map(|_| Answer::Accept { resume_offset: 0 })
+                    .collect())
+            }),
+        };
+
     let result = telnet::connect_and_exchange(
         &host,
         port,
@@ -2153,12 +2224,7 @@ fn native_connect(
         progress,
         wire_log,
         &register_socket,
-        |proposals| {
-            Ok(proposals
-                .iter()
-                .map(|_| Answer::Accept { resume_offset: 0 })
-                .collect())
-        },
+        decide,
     )
     .map_err(|e| {
         // Task 12 (tuxlink-7do4): intercept *** payload variants so
@@ -2176,6 +2242,11 @@ fn native_connect(
             TelnetError::Exchange(ExchangeError::Handshake(
                 HandshakeError::RemoteError(payload),
             )) => BackendError::RemoteError(payload),
+            // tuxlink-bsiy: the selecting decider returns Cancelled when the
+            // operator aborts a pending selection prompt. Map it explicitly so the
+            // cancel path is structural here rather than relying solely on
+            // `abort_aware_outcome`'s flag check at the caller.
+            TelnetError::Exchange(ExchangeError::Cancelled) => BackendError::Cancelled,
             other => BackendError::TransportFailed {
                 reason: format!("{other:?}"),
                 source: None,
@@ -3501,12 +3572,225 @@ mod native_read_state_tests {
         let backend = NativeBackend::new(offline_config(), dir.path());
         backend.connect_in_progress.store(true, Ordering::SeqCst);
         let result = backend
-            .connect(TransportConfig::Cms { mode: CmsTransport::Telnet })
+            .connect(TransportConfig::Cms { mode: CmsTransport::Telnet }, None)
             .await;
         assert!(
             matches!(result, Err(BackendError::BackendUnavailable { .. })),
             "a concurrent connect should be rejected, got {result:?}"
         );
+    }
+
+    // =========================================================================
+    // Task 4b (tuxlink-bsiy): selecting-connect integration over a 127.0.0.1
+    // loopback. Proves the FULL wiring: native_connect, with the review-inbound
+    // preference ON and a CmsSelectionContext present, builds the SELECTING
+    // decider (not accept-all); the decider emits InboundProposalsOffered through
+    // the threaded sink, parks on the registry, and the operator's resolved
+    // selection lands the chosen message in the Inbox.
+    //
+    // The fake server is the Answer-role master that OFFERS one proposal (the
+    // mirror of `two_native_backends_exchange_with_attachment`, which offers from
+    // the client side). The operator answer is delivered from a separate thread
+    // that spin-waits for the registry slot — exactly the Task 3 decider-test
+    // rendezvous, scaled to a real socket.
+    //
+    // RADIO-1: 127.0.0.1 loopback only. Nothing is transmitted. `#[serial]`
+    // because it sets the process-global TUXLINK_CMS_PORT to point native_connect
+    // at the ephemeral loopback listener (serial_test gates env-mutating tests).
+    // =========================================================================
+    #[test]
+    #[serial_test::serial]
+    fn selecting_connect_emits_offer_and_files_selected_message_into_inbox() {
+        use crate::winlink::b2f_events::{AttemptId, B2fEvent, B2fEventSink};
+        use crate::winlink::inbound_selection::{
+            resolve_selection, InboundSelection, SelectionRegistry, UnselectedDisposition,
+        };
+        use crate::winlink::session::{
+            run_exchange_with_role, ExchangeConfig, ExchangeRole, OutboundMessage as SessionOutbound,
+            SessionIntent,
+        };
+        use crate::winlink::telnet::CMS_TARGET_CALL;
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::Mutex as StdMutex;
+
+        // A recording sink that captures every emitted B2fEvent so the test can
+        // assert the InboundProposalsOffered event fired with the redacted DTO.
+        struct RecordingSink {
+            events: Arc<StdMutex<Vec<B2fEvent>>>,
+        }
+        impl B2fEventSink for RecordingSink {
+            fn push(&self, event: B2fEvent) {
+                self.events.lock().unwrap().push(event);
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // Step 1: the server composes the ONE message it will offer the client.
+        // A plain alphanumeric generated MID is redaction-stable, so the DTO MID
+        // the operator sees equals the real proposal MID the decider matches on.
+        // -------------------------------------------------------------------
+        let offered = compose_message(
+            "W7AUX",
+            &["N7CPZ"],
+            &[],
+            "Selecting-path inbound",
+            "pick me",
+            1_716_300_000,
+        );
+        let offered_mid = offered.header("Mid").expect("composed message has a Mid").to_string();
+        let (proposal, compressed) = offered.to_proposal().expect("offered message → proposal");
+        let server_outbound = vec![SessionOutbound {
+            proposal,
+            title: "Selecting-path inbound".to_string(),
+            compressed,
+        }];
+
+        // -------------------------------------------------------------------
+        // Step 2: spawn the fake Answer-role server that offers the proposal.
+        // -------------------------------------------------------------------
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let listen_port = listener.local_addr().expect("listener addr").port();
+
+        let server = std::thread::spawn(move || {
+            let (sock, _) = listener.accept().expect("accept");
+            let mut writer = sock.try_clone().expect("clone for write");
+            // Telnet login prompts, then read+discard the client's callsign+password.
+            writer.write_all(b"Callsign :\rPassword :\r").expect("write login prompts");
+            let mut reader = BufReader::new(sock);
+            for _ in 0..2 {
+                let mut line = Vec::new();
+                reader.read_until(b'\r', &mut line).expect("read login response");
+            }
+            let server_config = ExchangeConfig {
+                mycall: "W7AUX".into(),
+                targetcall: CMS_TARGET_CALL.to_string(),
+                locator: "CN87".into(),
+                password: None,
+                intent: SessionIntent::Cms,
+            };
+            run_exchange_with_role(
+                &mut reader,
+                &mut writer,
+                ExchangeRole::Answer,
+                &server_config,
+                server_outbound, // the server OFFERS this message
+                |proposals| {
+                    Ok(proposals
+                        .iter()
+                        .map(|_| Answer::Accept { resume_offset: 0 })
+                        .collect())
+                },
+                None,
+            )
+            .expect("server-side Answer exchange must succeed");
+        });
+
+        // -------------------------------------------------------------------
+        // Step 3: build the selection context + spawn the operator-answer thread.
+        // The answer thread spin-waits for the decider to register its slot, reads
+        // the offered (redaction-stable) MID off the emitted event, then resolves
+        // the selection — modelling the Tauri resolve command.
+        // -------------------------------------------------------------------
+        let registry: SelectionRegistry = Arc::new(Mutex::new(None));
+        let aborting = Arc::new(AtomicBool::new(false));
+        let attempt_id = AttemptId(4242);
+        let events = Arc::new(StdMutex::new(Vec::<B2fEvent>::new()));
+        let sink: Arc<dyn B2fEventSink> = Arc::new(RecordingSink {
+            events: events.clone(),
+        });
+
+        let answerer = {
+            let registry = registry.clone();
+            let want_mid = offered_mid.clone();
+            std::thread::spawn(move || {
+                // Spin-wait (bounded) for the slot the decider registers.
+                let (slot_attempt, slot_req) = {
+                    let mut found = None;
+                    for _ in 0..400 {
+                        if let Some(s) = registry.lock().unwrap().as_ref() {
+                            found = Some((s.attempt_id, s.request_id));
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    found.expect("decider never registered a selection slot")
+                };
+                let delivered = resolve_selection(
+                    &registry,
+                    slot_attempt,
+                    slot_req,
+                    InboundSelection {
+                        selected_mids: vec![want_mid],
+                        disposition: UnselectedDisposition::Hold,
+                    },
+                );
+                assert!(delivered, "resolve_selection should match the live slot");
+            })
+        };
+
+        // -------------------------------------------------------------------
+        // Step 4: run native_connect (the REAL decider-building path). Config has
+        // a callsign, an empty outbox (so the client offers nothing on its first
+        // turn), the review preference ON, and host=127.0.0.1. The ephemeral port
+        // is handed in via TUXLINK_CMS_PORT (Plaintext, so no TLS).
+        // -------------------------------------------------------------------
+        let client_dir = tempdir().unwrap();
+        let client_mailbox = Mailbox::new(client_dir.path());
+        let mut cfg = config_with_call("N7CPZ");
+        cfg.connect.host = "127.0.0.1".to_string();
+        cfg.review_inbound_before_download = true;
+
+        // SAFETY: edition-2021 set_var; `#[serial]` ensures no concurrent test
+        // reads TUXLINK_CMS_PORT while it is set. Cleared in the same serial scope.
+        std::env::set_var("TUXLINK_CMS_PORT", listen_port.to_string());
+
+        let abort_handle: Mutex<Option<TcpStream>> = Mutex::new(None);
+        let ctx = CmsSelectionContext {
+            sink,
+            attempt_id,
+            registry: registry.clone(),
+        };
+        let result = native_connect(
+            &cfg,
+            &client_mailbox,
+            CmsTransport::Telnet,
+            &|_| {},
+            &|_| {},
+            &|| {},
+            &abort_handle,
+            aborting,
+            None,
+            Some(ctx),
+        );
+        std::env::remove_var("TUXLINK_CMS_PORT");
+
+        result.expect("selecting connect must complete");
+        answerer.join().expect("operator-answer thread panicked");
+        server.join().expect("server thread panicked");
+
+        // -------------------------------------------------------------------
+        // Assertion (a): the InboundProposalsOffered event fired with the offered
+        // (redacted) proposal under the threaded attempt_id.
+        // -------------------------------------------------------------------
+        let log = events.lock().unwrap();
+        let offer = log.iter().find_map(|e| match e {
+            B2fEvent::InboundProposalsOffered { proposals, attempt_id: a, .. } => {
+                Some((proposals.clone(), *a))
+            }
+            _ => None,
+        });
+        let (dtos, evt_attempt) =
+            offer.expect("an InboundProposalsOffered event must have been emitted");
+        assert_eq!(evt_attempt, attempt_id, "the event must carry the threaded attempt_id");
+        assert_eq!(dtos.len(), 1, "exactly one proposal was offered");
+        assert_eq!(dtos[0].mid, offered_mid, "the redacted DTO MID must match the offered MID");
+
+        // -------------------------------------------------------------------
+        // Assertion (b): the selected message landed in the client's Inbox.
+        // -------------------------------------------------------------------
+        let inbox = client_mailbox.list(MailboxFolder::Inbox).expect("list inbox");
+        assert_eq!(inbox.len(), 1, "the selected message must be in the Inbox; got {inbox:?}");
     }
 
     // =========================================================================
@@ -3868,7 +4152,7 @@ mod native_read_state_tests {
                 link: KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() },
                 ssid: 7,
                 role: PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
-            })
+            }, None)
             .await
             .unwrap_err();
         assert!(
@@ -3903,7 +4187,7 @@ mod native_read_state_tests {
                 link: KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() },
                 ssid: 7,
                 role: PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
-            })
+            }, None)
             .await
             .unwrap_err();
 
@@ -4046,7 +4330,7 @@ mod native_read_state_tests {
 
         // Watchdog: a handshake/connect deadlock must fail the test, not hang cargo.
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
-            tokio::join!(answerer.connect(listen), dialer.connect(dial))
+            tokio::join!(answerer.connect(listen, None), dialer.connect(dial, None))
         })
         .await;
 
