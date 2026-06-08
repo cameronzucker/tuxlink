@@ -159,6 +159,16 @@ pub fn run() {
         // in that the transport is externally-managed (operator must
         // vara_open_session before vara_listen can arm).
         .manage(std::sync::Arc::new(crate::ui_commands::VaraListenState::default()))
+        // tuxlink-a2gd: polite station-list cache (TTL 30 min; per-key coalescing +
+        // stale-on-error). Needs no app_data_dir, so it lives in the top-level chain
+        // (NOT the .setup() app_data_dir arm where per-feature stores register).
+        .manage(std::sync::Arc::new(
+            crate::catalog::stations_cache::StationsCache::new(
+                30 * 60 * 1000, // TTL: 30 min
+                15 * 60 * 1000, // min-refetch floor: 15 min (bounds retries during an outage)
+                std::sync::Arc::new(crate::catalog::stations_cache::SystemClock),
+            ),
+        ))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
 
@@ -450,6 +460,9 @@ pub fn run() {
             // catalog file + in-band INQUIRY@winlink.org composer/sender.
             crate::catalog::commands::catalog_list,
             crate::catalog::commands::catalog_send_inquiry,
+            // tuxlink-a2gd: location-aware station-list direct poll + reply parse-with-fallback.
+            crate::catalog::commands::catalog_fetch_stations,
+            crate::catalog::commands::catalog_parse_reply,
             // tuxlink-vrpk: GRIB request via Saildocs (3rd-party SMTP).
             crate::grib::commands::grib_send_request,
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)

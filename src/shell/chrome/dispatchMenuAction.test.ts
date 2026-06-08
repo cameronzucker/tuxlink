@@ -21,6 +21,7 @@ function handlers(): MenuHandlers {
     openLogging: vi.fn(),
     reportIssue: vi.fn(),
     openCatalogRequest: vi.fn(),
+    openCatalogBuilder: vi.fn(),
     openGribRequest: vi.fn(),
     quit: vi.fn(),
   };
@@ -31,6 +32,13 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:message:new', h);
     expect(h.openCompose).toHaveBeenCalledOnce();
+  });
+
+  it('routes message:catalog_builder to openCatalogBuilder', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:message:catalog_builder', h);
+    expect(h.openCatalogBuilder).toHaveBeenCalledOnce();
+    expect(h.openCatalogRequest).not.toHaveBeenCalled();
   });
 
   it('routes file:quit to quit', () => {

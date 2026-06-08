@@ -438,3 +438,82 @@
   white-space: pre-wrap;
   color: var(--tux-fg);
 }
+
+/* ============================================================
+ * FZ-M1 compact mode (tuxlink-h7q7) — additive + scoped.
+ *
+ * Touch >=44px, font floors ->12px, and the two grid reflows
+ * (ICS-309 log-entry 3-col -> single col; Damage 6-col -> 2-col)
+ * for the 1280x800 capacitive-touch tablet. Strictly below the
+ * 1366px desktop floor (Codex adrev R1 #1), so desktop >=1366px
+ * is byte-identical: every rule lives inside the media query.
+ * Density, not uniform shrink — sub-floor fonts are raised, the
+ * 13px body font is left alone.
+ * ============================================================ */
+@media (max-width: 1365px) {
+  /* --- Reflow: ICS-309 log entry 3-col grid -> single column --- */
+  .ics309-log-entry {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "head"
+      "time"
+      "from"
+      "to"
+      "subj";
+  }
+
+  /* --- Reflow: Damage Assessment 6-col -> 2-col --- */
+  .damage-category {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* --- Reflow: category-name input fixed 200px -> full width --- */
+  .damage-category > legend > input {
+    width: 100%;
+  }
+
+  /* --- Touch >=44px: native field inputs + textareas --- */
+  :where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) :is(input:not([type="checkbox"]), textarea) {
+    min-height: 44px;
+  }
+
+  /* --- Touch: native checkbox -> 22px (per spec; full 44px not needed) --- */
+  :where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* --- Touch: "+ Add entry" button (ICS-309) --- */
+  .ics309-form fieldset > button[type="button"]:not(.form-actions button) {
+    min-height: 44px;
+  }
+
+  /* --- Touch: saved-slot toolbar select + buttons --- */
+  .form-slot-toolbar select,
+  .form-slot-toolbar button {
+    min-height: 44px;
+  }
+
+  /* --- Touch: form action buttons (Send / Discard) --- */
+  .form-actions button {
+    min-height: 44px;
+  }
+
+  /* --- Font floor: native field labels 11px -> 12px --- */
+  :where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) > label,
+  :where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) fieldset > label,
+  :where(.ics309-log-entry, .damage-category) > label {
+    font-size: 12px;
+  }
+
+  /* --- Font floor: ICS-309 log-entry heading 11px -> 12px --- */
+  .ics309-log-entry > strong {
+    font-size: 12px;
+  }
+
+  /* --- Font floor: read-side data-table headers 11px -> 12px --- */
+  .ics309-log-table th,
+  .damage-category-table th {
+    font-size: 12px;
+  }
+}

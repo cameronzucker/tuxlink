@@ -213,6 +213,16 @@ function renderShell() {
   );
 }
 
+// tuxlink-813d P1 fix: the shell passes `compact={isCompact}` to FolderSidebar.
+// jsdom has no `matchMedia` (no global stub in test-setup), so `useViewport`
+// returns `isCompact=false` and the shell renders the DESKTOP labeled sidebar —
+// the Connections accordion (`sess-*` / `proto-*`) is inline, with no `☰`
+// rail-expand button. Click the session header + protocol directly.
+function selectConnection(sessTestId: string, protoTestId: string) {
+  fireEvent.click(screen.getByTestId(sessTestId));
+  fireEvent.click(screen.getByTestId(protoTestId));
+}
+
 describe('<AppShell> — Mock B topology', () => {
   beforeEach(() => {
     globalThis.localStorage?.clear?.();
@@ -364,6 +374,16 @@ describe('<AppShell> — Mock B topology', () => {
     );
   });
 
+  // tuxlink-a2gd: production mount path — the lazy overlay actually opens from the menu.
+  // config_read is mocked to null above; the panel's null-grid is swallowed, so it still renders.
+  it('Message → Find a Gateway opens the Catalog Builder (production mount path)', async () => {
+    renderShell();
+    clickMenu('Message', /find a gateway/i);
+    expect(
+      await screen.findByRole('dialog', { name: /find a gateway/i }, { timeout: 10000 }),
+    ).toBeInTheDocument();
+  });
+
   // Option (b): with a message selected, Message → Reply opens a reply window.
   // openReplyWindow seeds a draft then opens a compose window via
   // compose_window_open. The message_read mock resolves so useMessage's
@@ -390,8 +410,7 @@ describe('<AppShell> — Mock B topology', () => {
   it('selecting the CMS Packet connection mounts the PacketRadioPanel (P3: panel moved to right-hand radio panel)', async () => {
     renderShell();
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-packet'));
+    selectConnection('sess-cms', 'proto-cms-packet');
     // P3: Packet UI lives in the right radio panel. The reading pane
     // falls back to the message view (same pattern as Telnet (P2) and
     // ARDOP (P4)).
@@ -413,8 +432,7 @@ describe('<AppShell> — Mock B topology', () => {
   // folders closes the radio modem dock — not intended behavior."
   it('selecting a folder preserves the active radio panel (selectedConnection is independent)', async () => {
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-packet'));
+    selectConnection('sess-cms', 'proto-cms-packet');
     await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
     fireEvent.click(screen.getByTestId('folder-sent'));
     // Panel stays mounted across folder navigation — the operator can
@@ -425,8 +443,7 @@ describe('<AppShell> — Mock B topology', () => {
 
   it('closing Packet keeps Packet as the ribbon transport intent and Connect does not start Telnet', async () => {
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-packet'));
+    selectConnection('sess-cms', 'proto-cms-packet');
     await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
 
     fireEvent.click(screen.getByTestId('radio-panel-close'));
@@ -443,8 +460,7 @@ describe('<AppShell> — Mock B topology', () => {
 
   it('closing an ARDOP panel keeps ARDOP as the ribbon transport intent (item 38 gap — radio, not just packet)', async () => {
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
+    selectConnection('sess-cms', 'proto-cms-ardop-hf');
     await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
 
     fireEvent.click(screen.getByTestId('radio-panel-close'));
@@ -460,8 +476,7 @@ describe('<AppShell> — Mock B topology', () => {
 
   it('renders the TelnetRadioPanel when cms+telnet is selected (P2: panel moved to right-hand radio panel)', async () => {
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+    selectConnection('sess-cms', 'proto-cms-telnet');
     // Telnet UI now lives in the right radio panel (data-testid=radio-panel-root)
     // with the Telnet Winlink title; the reading pane shows the MessageView fallback.
     // tuxlink-twym: bump timeout — radio panels are now React.lazy and the
@@ -473,8 +488,7 @@ describe('<AppShell> — Mock B topology', () => {
 
   it('renders the TelnetP2pRadioPanel when p2p+telnet is selected (tuxlink-0pnb client-dial)', async () => {
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-p2p'));
-    fireEvent.click(screen.getByTestId('proto-p2p-telnet'));
+    selectConnection('sess-p2p', 'proto-p2p-telnet');
     // p2p+telnet shares the radio-panel-root mount with cms+telnet but the
     // title swaps to "Telnet P2P" via the intent-aware panelTitle().
     // tuxlink-twym: bump timeout — radio panels are now React.lazy and the
@@ -490,8 +504,7 @@ describe('<AppShell> — Mock B topology', () => {
     // The post-P2 reading pane is decoupled from selectedConnection for Telnet,
     // so the two states must be independent.
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+    selectConnection('sess-cms', 'proto-cms-telnet');
     await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
     fireEvent.click(screen.getByTestId('message-row-INBOX1'));
     // Panel must still be present; the click on the message no longer clears
@@ -507,8 +520,7 @@ describe('<AppShell> — Mock B topology', () => {
     renderShell();
     fireEvent.click(screen.getByTestId('message-row-INBOX1'));
     // selectedMessage is set; reading pane shows MessageView for INBOX1.
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+    selectConnection('sess-cms', 'proto-cms-telnet');
     await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
     // The message row stays highlighted (selectedMessage was preserved).
     const messageRow = screen.getByTestId('message-row-INBOX1');
@@ -516,6 +528,8 @@ describe('<AppShell> — Mock B topology', () => {
   });
   it('disables unbuilt protocol rows (radio-only+telnet)', () => {
     renderShell();
+    // Desktop nav in jsdom (no matchMedia → isCompact=false): the Connections
+    // accordion is inline, no rail-expand needed (tuxlink-813d P1 fix).
     fireEvent.click(screen.getByTestId('sess-radio-only'));
     expect(screen.getByTestId('proto-radio-only-telnet')).toBeDisabled();
   });

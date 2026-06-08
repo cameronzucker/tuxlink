@@ -16,7 +16,7 @@
 // is readable in isolation. The provider wrapping + Tauri IPC mocks mirror
 // the existing AppShell test so the shell mounts cleanly under jsdom.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -164,6 +164,7 @@ vi.mock('../mailbox/useUserFolders', () => ({
 }));
 
 import { AppShell } from './AppShell';
+import { COMPACT_MEDIA_QUERY } from './useViewport';
 
 function renderShell() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -172,6 +173,16 @@ function renderShell() {
       <AppShell />
     </QueryClientProvider>,
   );
+}
+
+// tuxlink-813d P1 fix: the shell passes `compact={isCompact}` to FolderSidebar.
+// jsdom has no `matchMedia` (no global stub in test-setup), so `useViewport`
+// returns `isCompact=false` and the shell renders the DESKTOP labeled sidebar —
+// the Connections accordion (`sess-*` / `proto-*`) is inline, with no `☰`
+// rail-expand button. Click the session header + protocol directly.
+function selectConnection(sessTestId: string, protoTestId: string) {
+  fireEvent.click(screen.getByTestId(sessTestId));
+  fireEvent.click(screen.getByTestId(protoTestId));
 }
 
 const RUNNING: ModemStatus = {
@@ -249,9 +260,8 @@ describe('<AppShell> radio panel', () => {
     renderShell();
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
-    // Expand Winlink (CMS) accordion, then pick ARDOP HF.
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
+    // Open the flyout, expand Winlink (CMS) accordion, then pick ARDOP HF.
+    selectConnection('sess-cms', 'proto-cms-ardop-hf');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     // ArdopRadioPanel mounts; SignalSection is unique to it among the
     // built panels (Telnet / Packet don't mount SignalSection).
@@ -287,8 +297,7 @@ describe('<AppShell> radio panel', () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-vara-hf'));
+    selectConnection('sess-cms', 'proto-cms-vara-hf');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('vara-host-input')).toBeInTheDocument();
     // The placeholder must NOT mount alongside — VaraRadioPanel owns
@@ -299,8 +308,7 @@ describe('<AppShell> radio panel', () => {
   it('renders VaraRadioPanel when VARA FM is selected (modem stopped)', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-vara-fm'));
+    selectConnection('sess-cms', 'proto-cms-vara-fm');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
@@ -313,8 +321,7 @@ describe('<AppShell> radio panel', () => {
   it('renders VaraRadioPanel with P2P title when VARA HF is selected under P2P', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-p2p'));
-    fireEvent.click(screen.getByTestId('proto-p2p-vara-hf'));
+    selectConnection('sess-p2p', 'proto-p2p-vara-hf');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('vara-host-input')).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara HF P2P');
@@ -324,8 +331,7 @@ describe('<AppShell> radio panel', () => {
   it('renders VaraRadioPanel with P2P title when VARA FM is selected under P2P', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-p2p'));
-    fireEvent.click(screen.getByTestId('proto-p2p-vara-fm'));
+    selectConnection('sess-p2p', 'proto-p2p-vara-fm');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM P2P');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
@@ -497,5 +503,96 @@ describe('<AppShell> radio panel', () => {
         expect(callsAfterClick).not.toContain('modem_ardop_b2f_exchange');
       },
     );
+  });
+});
+
+// tuxlink-813d operator smoke #1a/#3: selecting a connection in compact mode
+// must automatically open the radio drawer (the `.panes` div acquires the
+// `drawer-open` class). In desktop the drawer does not auto-open (no class).
+describe('<AppShell> compact drawer auto-open (tuxlink-813d)', () => {
+  beforeEach(() => {
+    mockUseModemStatus.mockReset();
+    // Stub matchMedia to report compact for the COMPACT_MEDIA_QUERY.
+    // This mirrors the pattern in App.test.tsx (tuxlink-h7q7 smoke).
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: q === COMPACT_MEDIA_QUERY,
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  // Helper: renders AppShell in compact mode (matchMedia stub is already set
+  // in beforeEach above). Desktop renderShell() re-uses the shared factory.
+  function renderShellCompact() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('drawer-open class is absent before any connection is selected (compact)', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShellCompact();
+    const panes = screen.getByTestId('shell-panes');
+    expect(panes).not.toHaveClass('drawer-open');
+  });
+
+  // tuxlink-813d smoke #1a/#3: selecting a built CMS protocol (telnet) in compact
+  // must add `drawer-open` to `.panes` so the radio drawer slides into view.
+  // In compact the sidebar renders as a VERTICAL-TEXT RAIL (no labeled nav
+  // inline) — the expand button (`rail-expand-btn`) opens the flyout from which
+  // the connection accordion is reachable. Click the expand button → expand the
+  // CMS session (`sess-cms`) → select Telnet (`proto-cms-telnet`).
+  it('auto-opens the drawer when a CMS connection is selected in compact', async () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShellCompact();
+    const panes = screen.getByTestId('shell-panes');
+
+    // Pre-condition: no drawer-open initially.
+    expect(panes).not.toHaveClass('drawer-open');
+
+    // In compact the sidebar is a vertical-text rail; the expand button is the
+    // entry point to the flyout where the connection accordion lives.
+    const expandBtn = screen.getByTestId('rail-expand-btn');
+    fireEvent.click(expandBtn);
+
+    // Expand the CMS session accordion, then click the Telnet proto row.
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+
+    // The radio panel must mount (proves the connection selection registered).
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+
+    // The compact auto-open effect must have added drawer-open to .panes.
+    expect(panes).toHaveClass('drawer-open');
+  });
+
+  // Desktop control: WITHOUT the compact matchMedia stub, selecting the same
+  // connection must NOT add `drawer-open`. The effect only fires when
+  // `isCompact` is true.
+  it('does NOT add drawer-open when a connection is selected in desktop mode', async () => {
+    // Override the beforeEach compact stub with a stub that always returns
+    // false (simulates desktop >=1366px).
+    vi.stubGlobal('matchMedia', (_q: string) => ({
+      matches: false,
+      media: _q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    // Use the shared renderShell which mounts without the compact stub.
+    renderShell();
+
+    const panes = screen.getByTestId('shell-panes');
+    // Desktop: labeled nav is inline (no rail-expand-btn needed).
+    selectConnection('sess-cms', 'proto-cms-telnet');
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+
+    // Desktop: drawer-open must NOT be applied.
+    expect(panes).not.toHaveClass('drawer-open');
   });
 });

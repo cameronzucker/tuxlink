@@ -218,3 +218,32 @@ describe('<App> logging-window routing (tuxlink-qjgx)', () => {
     expect(screen.queryByTestId('help-root')).not.toBeInTheDocument();
   });
 });
+
+// tuxlink-h7q7 (Codex adrev R1 #13): a SMOKE test only — proves the production
+// <App/> tree (QueryClientProvider wrapping AppShell — the n4hz mount-path
+// lesson) mounts in compact mode without crashing. It is NOT a layout guard;
+// the shell's compact invariants are owned by the CSS-string tests + the
+// mandatory Playwright pass.
+import { COMPACT_MEDIA_QUERY } from './shell/useViewport';
+
+describe('<App> compact mount smoke (tuxlink-h7q7)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    currentLabel = 'main';
+    setPath('/');
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: q === COMPACT_MEDIA_QUERY,
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('mounts the production shell in compact mode and applies the .compact root class', async () => {
+    routeInvoke(true);
+    render(<App />);
+    const root = await screen.findByTestId('app-shell-root');
+    expect(root.classList.contains('compact')).toBe(true);
+  });
+});

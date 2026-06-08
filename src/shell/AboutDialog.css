@@ -147,3 +147,30 @@
   background: var(--accent-2);
   border-color: var(--accent-2);
 }
+
+/* FZ-M1 compact mode (tuxlink-h7q7) — the 5 inline meta links are the worst
+ * touch targets on this surface (text-glyph hit area only, ~22px apart). Give
+ * each a padded inline-block box at the 44px touch floor and open the inter-row
+ * gap 6->10 so adjacent links don't collide under a fingertip. Additive +
+ * scoped: desktop (>=1366px) is byte-identical. The shared DRY close-button rule
+ * lives in SettingsPanel.css. */
+@media (max-width: 1365px) {
+  .tux-about-meta {
+    row-gap: 10px;
+    font-size: 13px;
+  }
+  .tux-about-meta a {
+    display: inline-block;
+    padding: 8px 4px;
+    min-height: 44px;
+    box-sizing: border-box;
+  }
+
+  /* Sub-floor font floors. */
+  .tux-about-credit {
+    font-size: 12px;
+  }
+  .tux-about-prealpha {
+    font-size: 13px;
+  }
+}

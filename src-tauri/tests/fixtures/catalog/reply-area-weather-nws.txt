@@ -1,0 +1,245 @@
+FPUS65 KPSR 050638
+SFTAZ 
+AZZALL-051838-
+
+Tabular State Forecast for Arizona
+National Weather Service Phoenix AZ
+1138 PM MST Thu Jun 4 2026
+
+ROWS INCLUDE...
+   Daily predominant daytime weather
+   Forecast temperatures...early morning low/daytime high
+      Probability of precipitation nighttime 6PM-6AM/daytime 6AM-6PM
+      - indicates temperatures below zero
+      MM indicates missing data
+
+
+   FCST     FCST     FCST     FCST     FCST     FCST     FCST
+   Fri      Sat      Sun      Mon      Tue      Wed      Thu
+   Jun 05   Jun 06   Jun 07   Jun 08   Jun 09   Jun 10   Jun 11
+
+...Northwest Arizona...
+   Lake Havasu City Airport
+   Vryhot   Vryhot   Sunny    Sunny    Sunny    Sunny    Sunny
+   79/110   80/107   79/103   77/103   76/103   76/103   76/103
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Bullhead City
+   Vryhot   Vryhot   Sunny    Sunny    Sunny    Sunny    Sunny
+   80/110   81/107   80/102   77/102   74/102   74/104   74/102
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Kingman
+   Sunny    Dust     Sunny    Sunny    Sunny    Sunny    Sunny
+   67/97    67/95    67/91    63/91    62/91    63/91    62/91
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Meadview
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   76/100   78/97    76/93    72/93    73/93    72/93    71/91
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+...NORTH CENTRAL AND NORTHEAST ARIZONA...
+   Flagstaff
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   46/85    47/81    47/77    45/77    43/79    44/78    44/78
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Grand Canyon Airport
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   37/89    37/86    39/82    34/82    40/83    41/82    41/81
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Phantom Ranch
+   Vryhot   Sunny    Sunny    Sunny    Sunny    Sunny    Windy
+   71/108   72/105   72/102   67/102   63/99    63/98    63/98
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Prescott
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   56/92    58/88    57/85    52/85    53/87    54/86    54/86
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Castle Hot Springs
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   80/104   79/101   78/98    74/97    70/98    71/98    71/97
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Seligman
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   53/91    55/88    55/84    50/84    52/84    52/84    52/84
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Cottonwood
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   61/101   61/98    61/94    57/94    59/96    59/96    59/96
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Sedona
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   63/98    63/95    63/91    59/91    62/93    61/93    62/92
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Page
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   70/96    70/95    70/91    66/91    63/96    63/96    63/93
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Jacob Lake
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   56/84    55/81    55/77    51/78    49/78    49/77    48/76
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Canyon De Chelly
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   52/93    53/92    55/88    51/89    53/89    53/89    53/88
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Window Rock
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   44/89    46/88    47/84    43/84    47/85    47/85    47/84
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Navajo National Monument
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   55/87    54/85    54/81    51/82    51/84    52/84    51/82
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Wupatki National Monument
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   67/97    69/95    67/91    62/90    56/92    55/92    56/92
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Winslow
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   58/98    60/96    59/91    54/92    52/92    53/92    53/90
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   St. Johns
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   55/93    57/92    55/89    52/90    54/90    54/90    53/89
+    00/00    00/00    00/00    00/00    00/10    00/00    00/00
+
+   Heber
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   59/87    60/84    59/80    54/81    51/83    52/82    52/81
+    10/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Show Low
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   57/87    57/85    58/81    55/82    54/85    55/84    55/83
+    10/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Greer
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   51/80    52/79    50/75    48/76    49/77    49/77    49/76
+    10/00    00/10    00/00    00/00    00/00    00/00    00/00
+
+   Payson
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   55/92    55/88    55/85    52/86    56/89    56/88    56/88
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+...SOUTH-CENTRAL ARIZONA...
+   Phoenix
+   Vryhot   Vryhot   Sunny    Sunny    Sunny    Sunny    Sunny
+   80/108   79/107   79/105   76/105   75/104   75/104   75/103
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Globe
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   68/99    68/97    68/95    66/96    65/97    65/96    65/95
+    00/00    00/00    00/00    00/00    00/00    00/00    00/20
+
+...SOUTHWEST ARIZONA...
+   Yuma
+   Vryhot   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   72/106   73/103   73/101   70/100   67/103   68/103   69/103
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+...SOUTHEAST ARIZONA...
+   Tucson
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   72/101   70/101   71/100   69/101   68/103   69/102   69/101
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Green Valley
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   64/100   64/99    65/98    62/99    64/101   64/100   64/99
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   MT Lemmon
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   55/70    53/70    54/69    52/70    54/78    54/77    54/76
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Hannagan Meadow
+   Sunny    Sunny    Ptcldy   Sunny    Sunny    Sunny    Sunny
+   44/71    46/70    45/66    44/67    44/72    44/72    44/71
+    10/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Picacho Peak
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   70/100   69/100   70/98    67/99    67/100   67/99    68/98
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Oracle
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   66/92    65/92    65/92    63/92    64/93    64/93    64/91
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Safford
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   66/103   68/102   67/101   66/102   66/104   66/103   66/102
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Organ Pipe N.M.
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   67/101   68/100   68/97    64/97    64/99    65/99    66/98
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Sells
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   67/101   67/101   67/99    64/99    64/101   65/101   66/99
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Nogales
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   62/95    61/94    62/92    61/93    62/95    62/95    62/93
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Willcox
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   60/97    59/96    59/96    58/97    59/99    60/98    59/97
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Sierra Vista
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   66/93    64/93    65/92    63/93    65/95    65/94    65/93
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Bisbee
+   Ptcldy   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   64/89    63/90    63/89    62/90    64/93    64/92    64/90
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+   Douglas
+   Ptcldy   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny
+   63/95    62/96    63/95    62/97    64/99    65/98    64/97
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00
+
+
+$$
+
+
+
+
+=====
+Thanks for using Winlink, an Amateur Radio Safety Foundation 
+sponsored project. For information about Winlink or to manage
+your Winlink account please visit: 
+https://www.winlink.org
+
+For information on how you can help support Winlink and other
+Amateur Radio Safety Foundation projects please visit:
+https://www.arsfi.org

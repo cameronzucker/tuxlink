@@ -59,6 +59,10 @@ const AboutDialog = lazy(() =>
 const CatalogRequestPanel = lazy(() =>
   import('../catalog/CatalogRequestPanel').then((m) => ({ default: m.CatalogRequestPanel })),
 );
+// tuxlink-a2gd: location-aware Catalog Builder (sibling overlay panel, not a main-content view).
+const CatalogBuilderPanel = lazy(() =>
+  import('../catalog/CatalogBuilderPanel').then((m) => ({ default: m.CatalogBuilderPanel })),
+);
 const GribRequestPanel = lazy(() =>
   import('../grib/GribRequestPanel').then((m) => ({ default: m.GribRequestPanel })),
 );
@@ -140,6 +144,10 @@ import { computePanelMode } from '../radio/radioPanelVisibility';
 import type { RadioPanelMode } from '../radio/types';
 import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
 import './AppShell.css';
+import './compactShell.css'; // FZ-M1 compact rules (tuxlink-h7q7) — must follow AppShell.css for equal-specificity overrides to win on order
+import { useViewport } from './useViewport';
+import { RadioDrawer } from './RadioDrawer';
+import { deriveDrawerSessionState } from './drawerSessionState';
 
 /// Human label for a system folder (titlebar). Mirrors the sidebar labels.
 const FOLDER_LABELS: Record<MailboxFolder, string> = {
@@ -242,6 +250,13 @@ export function AppShell() {
   // (radio-panel-shell P1.7: renamed from pinRadioDock — the dock-vs-panel
   // distinction is dropped per spec §3.2 + §3.7.)
   const [pinRadioPanel, setPinRadioPanel] = useState(false);
+  // FZ-M1 compact mode (tuxlink-h7q7): the radio panel becomes a collapsible
+  // push-drawer below the breakpoint. `isCompact` drives the `.compact` root
+  // class (non-layout signal); `drawerOpen` toggles the drawer's 4th-column
+  // width (closed=44px grip, open=400px panel). Manual open only (operator
+  // chose plain Option A — no auto-open).
+  const { isCompact } = useViewport();
+  const [drawerOpen, setDrawerOpen] = useState(false);
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Inline theme designer overlay (tuxlink-vgth), opened from View → Color
@@ -255,6 +270,8 @@ export function AppShell() {
   // Catalog Request. Picks WLE catalog inquiries and queues a request
   // message in the outbox routed to INQUIRY@winlink.org.
   const [catalogRequestOpen, setCatalogRequestOpen] = useState(false);
+  // tuxlink-a2gd: inline Catalog Builder ("Find a Gateway"), opened from Message → Find a Gateway.
+  const [catalogBuilderOpen, setCatalogBuilderOpen] = useState(false);
   // Inline GRIB request panel (tuxlink-vrpk), opened from Message → GRIB
   // File Request. Composes a Saildocs request and queues it in the outbox.
   const [gribRequestOpen, setGribRequestOpen] = useState(false);
@@ -487,6 +504,35 @@ export function AppShell() {
     togglePinned: pinRadioPanel,
   });
 
+  // Close the radio panel entirely (drop the connection + unpin). Shared by the
+  // per-mode panels' close buttons (DRY) and also collapses the compact drawer
+  // so a re-opened panel starts closed (tuxlink-h7q7).
+  const closeRadioPanel = useCallback(() => {
+    setSelectedConnection(null);
+    setPinRadioPanel(false);
+    setDrawerOpen(false);
+  }, []);
+
+  // radioPanelMode is DERIVED — it can go null when a modem session ends on its
+  // own (not only via the close button). Reset the compact drawer whenever the
+  // panel unmounts (F8 Claude adrev). tuxlink-813d operator smoke #1/#3: ALSO
+  // auto-open the drawer when a panel newly appears (or the mode changes) in
+  // compact — selecting a modem mode, or Ctrl+Shift+M (which forces the panel
+  // via the pin), should open the drawer immediately instead of leaving it
+  // collapsed off-screen. Keyed on a stable kind:intent string (computePanelMode
+  // returns a fresh object each render) so a deliberate collapse of an UNCHANGED
+  // mode persists; a NEW mode (or first mount) re-opens.
+  const panelKey = radioPanelMode ? `${radioPanelMode.kind}:${radioPanelMode.intent}` : null;
+  const prevPanelKey = useRef(panelKey);
+  useEffect(() => {
+    if (panelKey === null) {
+      setDrawerOpen(false);
+    } else if (isCompact && panelKey !== prevPanelKey.current) {
+      setDrawerOpen(true);
+    }
+    prevPanelKey.current = panelKey;
+  }, [panelKey, isCompact]);
+
   // CMS connect: run one exchange (send outbox + receive), then refresh the
   // mailbox so any downloaded messages appear. The button lives in the ribbon;
   // progress + any failure reason surface in the session log (emitted by the
@@ -670,6 +716,7 @@ export function AppShell() {
       reportIssueController.start();
     },
     openCatalogRequest: () => setCatalogRequestOpen(true),
+    openCatalogBuilder: () => setCatalogBuilderOpen(true),
     openGribRequest: () => setGribRequestOpen(true),
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage, archiveOpen, reportIssueController]);
@@ -787,7 +834,7 @@ export function AppShell() {
   }, [activeConnection, statusData.status]);
 
   return (
-    <div className="layout-b" data-testid="app-shell-root">
+    <div className={`layout-b${isCompact ? ' compact' : ''}`} data-testid="app-shell-root">
       <TitleBar folderLabel={folderLabel(selectedFolder, userFolders)} />
       <MenuBar onAction={onMenuAction} />
       <ResizeHandles />
@@ -844,10 +891,11 @@ export function AppShell() {
       </div>
 
       <div
-        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}`}
+        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}${drawerOpen ? ' drawer-open' : ''}`}
         data-testid="shell-panes"
       >
         <FolderSidebar
+          compact={isCompact}
           selectedFolder={selectedFolder}
           onSelectFolder={onSelectFolder}
           counts={counts}
@@ -893,7 +941,7 @@ export function AppShell() {
           const readingPane = selectedMessage
             ? (
                 <Suspense fallback={<MessageViewLoading />}>
-                  <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />
+                  <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} radioDrawerOpen={isCompact && drawerOpen} />
                 </Suspense>
               )
             : <MessageViewEmpty />;
@@ -945,6 +993,22 @@ export function AppShell() {
         })()}
           </>
         )}
+        {/* FZ-M1 compact (tuxlink-h7q7): wrap the radio-panel mount in the
+            push-drawer. Desktop (>=1366px): RadioDrawer is display:contents, so
+            the panel is the 4th grid column exactly as before. Compact: the
+            wrapper is the collapsible 4th column (44px grip / 400px open). The
+            inner per-mode conditionals are unchanged. */}
+        {radioPanelMode !== null && (
+          <RadioDrawer
+            open={drawerOpen}
+            onToggle={() => setDrawerOpen((o) => !o)}
+            sessionState={deriveDrawerSessionState({
+              connecting,
+              status: statusData.status,
+              modemIsActive,
+            })}
+          >
+
         {/* Per-mode radio panels. Telnet (P2), Packet (P3), ARDOP HF (P4),
             and VARA HF/FM (Phase 2 — tuxlink-dfmf) ship their real
             implementations; any other mode (none today) would fall through
@@ -954,20 +1018,14 @@ export function AppShell() {
         {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'cms' && (
           <Suspense fallback={null}>
             <TelnetRadioPanel
-              onClose={() => {
-                setSelectedConnection(null);
-                setPinRadioPanel(false);
-              }}
+              onClose={closeRadioPanel}
             />
           </Suspense>
         )}
         {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'p2p' && (
           <Suspense fallback={null}>
             <TelnetP2pRadioPanel
-              onClose={() => {
-                setSelectedConnection(null);
-                setPinRadioPanel(false);
-              }}
+              onClose={closeRadioPanel}
             />
           </Suspense>
         )}
@@ -976,20 +1034,14 @@ export function AppShell() {
             <PacketRadioPanel
               intent={radioPanelMode.intent}
               baseCall={statusData.callsign}
-              onClose={() => {
-                setSelectedConnection(null);
-                setPinRadioPanel(false);
-              }}
+              onClose={closeRadioPanel}
             />
           </Suspense>
         )}
         {radioPanelMode && radioPanelMode.kind === 'ardop-hf' && (
           <Suspense fallback={null}>
             <ArdopRadioPanel
-              onClose={() => {
-                setSelectedConnection(null);
-                setPinRadioPanel(false);
-              }}
+              onClose={closeRadioPanel}
             />
           </Suspense>
         )}
@@ -998,10 +1050,7 @@ export function AppShell() {
             <Suspense fallback={null}>
               <VaraRadioPanel
                 mode={radioPanelMode}
-                onClose={() => {
-                  setSelectedConnection(null);
-                  setPinRadioPanel(false);
-                }}
+                onClose={closeRadioPanel}
               />
             </Suspense>
           )}
@@ -1013,12 +1062,11 @@ export function AppShell() {
           radioPanelMode.kind !== 'vara-fm' && (
             <PlaceholderRadioPanel
               mode={radioPanelMode}
-              onClose={() => {
-                setSelectedConnection(null);
-                setPinRadioPanel(false);
-              }}
+              onClose={closeRadioPanel}
             />
           )}
+          </RadioDrawer>
+        )}
       </div>
 
       <StatusBar
@@ -1053,6 +1101,12 @@ export function AppShell() {
       {catalogRequestOpen && (
         <Suspense fallback={null}>
           <CatalogRequestPanel onClose={() => setCatalogRequestOpen(false)} />
+        </Suspense>
+      )}
+
+      {catalogBuilderOpen && (
+        <Suspense fallback={null}>
+          <CatalogBuilderPanel onClose={() => setCatalogBuilderOpen(false)} />
         </Suspense>
       )}
 

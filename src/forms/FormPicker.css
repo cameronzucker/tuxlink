@@ -120,3 +120,25 @@
 .form-picker-actions__primary:hover:not(:disabled) {
   background: var(--tux-accent-hover) !important;
 }
+
+/* ============================================================
+ * FZ-M1 compact mode (tuxlink-h7q7) — additive + scoped.
+ *
+ * The picker is a vertical listbox (not a tile grid); its rows
+ * and the OK/Cancel action buttons are the touch targets. Pin
+ * both to >=44px for the 1280x800 capacitive-touch tablet.
+ * Strictly below the 1366px desktop floor (Codex adrev R1 #1).
+ * ============================================================ */
+@media (max-width: 1365px) {
+  /* --- Touch: form-picker list rows --- */
+  .form-picker-list li {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* --- Touch: picker action buttons (OK / Cancel) --- */
+  .form-picker-actions button {
+    min-height: 44px;
+  }
+}

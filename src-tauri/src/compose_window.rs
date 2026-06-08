@@ -28,7 +28,27 @@
 //! `ui_commands.rs`'s append-only command list. The `invoke_handler`
 //! registration lands in the orchestrator integration commit (spec §4.3).
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+
+/// Default compose-window inner height (logical px). Bumped to 820 (2026-05-31)
+/// for multi-fieldset HTML Forms.
+const COMPOSE_DEFAULT_INNER_HEIGHT: f64 = 820.0;
+/// Floor — matches `.min_inner_size` below; the clamp never goes lower.
+const COMPOSE_MIN_INNER_HEIGHT: f64 = 560.0;
+/// Vertical margin reserved for OS chrome (titlebar/taskbar) when clamping to a
+/// monitor. On the FZ-M1 (1280x800, ~760 usable) this keeps the action bar
+/// on-screen. tuxlink-h7q7 / Codex adrev R1 #12.
+const COMPOSE_VERTICAL_MARGIN: f64 = 48.0;
+
+/// Clamp the compose window's default inner height to a monitor's usable height.
+/// Pure (testable): `default_h` shrinks to fit `monitor_logical_h - margin`, but
+/// never below [`COMPOSE_MIN_INNER_HEIGHT`]. Only shrinks, never grows.
+/// FZ-M1: a 820px default on a ~760px-usable screen would clip the action bar
+/// (Post to Outbox / Save Draft) off-screen — this is the fix (Codex adrev R1 #12).
+fn clamped_compose_height(default_h: f64, monitor_logical_h: f64, margin: f64) -> f64 {
+    let avail = (monitor_logical_h - margin).max(COMPOSE_MIN_INNER_HEIGHT);
+    default_h.min(avail)
+}
 
 /// The window label authorized to open compose windows. Only the main window
 /// may spawn compose windows (Codex integration round, defense-in-depth for F7).
@@ -149,13 +169,24 @@ pub fn compose_window_open(
     // tauri-plugin-window-state persists per-label geometry — operators who
     // resize a specific compose window get their choice remembered; only
     // new drafts use this default.
+    // Best-effort pre-creation clamp against the primary monitor's usable
+    // height (Codex adrev R1 #12). The post-build clamp below catches the
+    // caller-not-primary-monitor case and any window-state-restored geometry.
+    let inner_h = match app.primary_monitor() {
+        Ok(Some(monitor)) => {
+            let logical_h = monitor.size().height as f64 / monitor.scale_factor();
+            clamped_compose_height(COMPOSE_DEFAULT_INNER_HEIGHT, logical_h, COMPOSE_VERTICAL_MARGIN)
+        }
+        _ => COMPOSE_DEFAULT_INNER_HEIGHT,
+    };
+
     let build_result = WebviewWindowBuilder::new(
         &app,
         &label,
         WebviewUrl::App(url.into()),
     )
     .title("New Message — Tuxlink")
-    .inner_size(1100.0, 820.0)
+    .inner_size(1100.0, inner_h)
     .min_inner_size(720.0, 560.0)
     .resizable(true)
     .decorations(false)
@@ -163,7 +194,25 @@ pub fn compose_window_open(
     .build();
 
     match build_result {
-        Ok(_) => {}
+        Ok(_) => {
+            // Post-build clamp (Codex adrev R1 #12): the window may land on a
+            // non-primary monitor, or tauri-plugin-window-state may have
+            // restored an oversized height that overrides the default. Re-clamp
+            // against the window's ACTUAL monitor. Only shrinks, never grows;
+            // the 0.5px epsilon avoids a set_size jitter loop.
+            if let Some(win) = app.get_webview_window(&label) {
+                if let (Ok(Some(monitor)), Ok(size)) = (win.current_monitor(), win.inner_size()) {
+                    let scale = monitor.scale_factor();
+                    let logical_h = monitor.size().height as f64 / scale;
+                    let cur_h = size.height as f64 / scale;
+                    let max_h = clamped_compose_height(cur_h, logical_h, COMPOSE_VERTICAL_MARGIN);
+                    if cur_h > max_h + 0.5 {
+                        let cur_w = size.width as f64 / scale;
+                        let _ = win.set_size(LogicalSize::new(cur_w, max_h));
+                    }
+                }
+            }
+        }
         Err(tauri::Error::WindowLabelAlreadyExists(_))
         | Err(tauri::Error::WebviewLabelAlreadyExists(_)) => {
             // Concurrent open race: another call already created the window.
@@ -212,6 +261,31 @@ mod tests {
     // for compose-window open/focus/multi-window behavior.
     //
     // What IS testable here: the label format contract.
+
+    use super::{
+        clamped_compose_height, COMPOSE_DEFAULT_INNER_HEIGHT, COMPOSE_MIN_INNER_HEIGHT,
+    };
+
+    #[test]
+    fn clamps_to_work_area_on_short_screens() {
+        // FZ-M1: ~760px usable; default 820 must clamp below the usable height.
+        let h = clamped_compose_height(820.0, 760.0, 24.0);
+        assert!(h <= 760.0 - 24.0 + 0.01, "got {h}");
+        assert!(h >= COMPOSE_MIN_INNER_HEIGHT, "must not go below the floor, got {h}");
+    }
+
+    #[test]
+    fn leaves_tall_screens_untouched() {
+        let h = clamped_compose_height(COMPOSE_DEFAULT_INNER_HEIGHT, 1080.0, 48.0);
+        assert_eq!(h, COMPOSE_DEFAULT_INNER_HEIGHT);
+    }
+
+    #[test]
+    fn never_shrinks_below_the_min_floor() {
+        // A tiny/odd monitor must not produce a sub-floor window.
+        let h = clamped_compose_height(820.0, 400.0, 48.0);
+        assert_eq!(h, COMPOSE_MIN_INNER_HEIGHT);
+    }
 
     #[test]
     fn compose_label_format() {

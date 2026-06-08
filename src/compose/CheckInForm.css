@@ -186,3 +186,44 @@
   background: var(--tux-accent-hover, #1d4ed8);
   border-color: var(--tux-accent-hover, #1d4ed8);
 }
+
+/* ============================================================
+ * FZ-M1 compact mode (tuxlink-h7q7)
+ *
+ * Embedded in the Compose window (a separate Tauri document), so this is a
+ * pure `@media (max-width: 1365px)` block evaluated against the compose
+ * window's own width. Strictly below the 1366px desktop floor (Codex adrev
+ * R1 #1). DENSITY: tighten the wasteful 16px card padding to 10px; raise
+ * touch targets to >=44px; the native radios get a comfortable size. No
+ * whole-form font shrink. Desktop is byte-identical.
+ * ============================================================ */
+
+@media (max-width: 1365px) {
+  /* Density: tighten the card padding (16->10) so taller 44px controls fit
+   * the compact Compose body without overflowing. */
+  .checkin-form {
+    padding: 10px;
+  }
+
+  /* Text inputs / textarea -> >=44px tall touch targets. */
+  .checkin-form input[type='text'],
+  .checkin-form textarea {
+    min-height: 44px;
+  }
+
+  /* Session radios (Telnet / Packet / VARA / …) -> comfortable native size
+   * and a 44px-tall label row so the whole row is tappable. */
+  .checkin-form__radios label {
+    min-height: 44px;
+  }
+  .checkin-form__radios input[type='radio'] {
+    width: 24px;
+    height: 24px;
+  }
+
+  /* Action buttons (Send / Save slot / …) -> >=44px tall. */
+  .checkin-form__actions button {
+    min-height: 44px;
+    padding: 8px 14px;
+  }
+}

@@ -16,6 +16,49 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.37.1](https://github.com/cameronzucker/tuxlink/compare/v0.37.0...v0.37.1) (2026-06-08)
+
+
+### Bug Fixes
+
+* **shell:** align compact ribbon GridEdit source cluster (tuxlink-813d) ([5d1d5d3](https://github.com/cameronzucker/tuxlink/commit/5d1d5d32a78953d5258c39c4246f2c58e7725923))
+* **shell:** align ribbon values across SSID-picker/segment + text cells (tuxlink-813d) ([958678b](https://github.com/cameronzucker/tuxlink/commit/958678b3f6843f7a3976eb06c25a5d7caad7dda2))
+* **shell:** compact ribbon grows to fit its 44px touch controls (tuxlink-813d) ([0ff6001](https://github.com/cameronzucker/tuxlink/commit/0ff6001e35e1622f9f63a2f31da7a02a64e923dc))
+* **shell:** FZ-M1 compact drawer auto-open, grip tab, ribbon alignment (tuxlink-813d) ([1315af2](https://github.com/cameronzucker/tuxlink/commit/1315af2bb49c7cd18fbecbb7f4ee946a030f1ec1))
+* **shell:** gate compact rail behind isCompact; restore desktop sidebar (tuxlink-813d) ([6ac89e1](https://github.com/cameronzucker/tuxlink/commit/6ac89e1838f94831e19f774d6ad1f9d371f041e9))
+
+## [0.37.0](https://github.com/cameronzucker/tuxlink/compare/v0.36.0...v0.37.0) (2026-06-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **winlink:** credentials stored only under the legacy "tuxlink-pat" keyring service are no longer auto-migrated; re-enter the CMS password if prompted.
+
+### Bug Fixes
+
+* **winlink:** remove tuxlink-pat legacy keyring service; read canonical tuxlink ([841ff62](https://github.com/cameronzucker/tuxlink/commit/841ff62932b8b0edd5a6e61b68ff4af189028c7c))
+
+## [0.36.0](https://github.com/cameronzucker/tuxlink/compare/v0.35.13...v0.36.0) (2026-06-08)
+
+
+### Features
+
+* **catalog:** location-aware builder UI + reply view (frontend) ([7b6489e](https://github.com/cameronzucker/tuxlink/commit/7b6489ec51a42bf5df99d2d59384f56d47fafd51))
+* **catalog:** mount builder via Find a Gateway menu + route catalog replies in reader ([c51b765](https://github.com/cameronzucker/tuxlink/commit/c51b765e0e3fb4cf0090f089215bb8f849c89731))
+* **catalog:** station-list direct poll + reply parse-with-fallback (Rust) ([14680a0](https://github.com/cameronzucker/tuxlink/commit/14680a0df9de5eb6bd863faf0b14b754a4d7ba0d))
+* **mailbox,radio:** compact icon rail + radio interior touch/floors (tuxlink-h7q7) ([645d1cd](https://github.com/cameronzucker/tuxlink/commit/645d1cdcf8c113d440236c1c29f790b09dd3cad6))
+* **shell:** compact mode core — useViewport, push radio drawer, rail, chrome (tuxlink-h7q7) ([4f782d5](https://github.com/cameronzucker/tuxlink/commit/4f782d5ae67458f18c77a8cab68e930054a5d122))
+* **shell:** useViewport compact-mode hook + shared breakpoint constant (tuxlink-h7q7) ([61a893f](https://github.com/cameronzucker/tuxlink/commit/61a893f4425df38547f8ebde7841c564402dbfc9))
+* **ui:** FZ-M1 compact CSS for Compose, dialogs, wizard, forms (tuxlink-h7q7) ([9509b4b](https://github.com/cameronzucker/tuxlink/commit/9509b4bbedbf4fc3eb60244a0dc67d379fd53314))
+
+
+### Bug Fixes
+
+* **catalog:** address Codex post-impl diff review (4× P2) ([c60a564](https://github.com/cameronzucker/tuxlink/commit/c60a564696386d7b51114d44cba62b3de01a0449))
+* **catalog:** clippy --all-targets -D warnings clean ([8f9ecda](https://github.com/cameronzucker/tuxlink/commit/8f9ecda6e647cee96b39d035f912194261103661))
+* **compose:** clamp window default height to monitor work area for FZ-M1 (tuxlink-h7q7) ([b4a6496](https://github.com/cameronzucker/tuxlink/commit/b4a6496893085918122e7f6006cc7c7c120e92ca))
+* **radio:** compact touch floors for small controls missed in 6b (tuxlink-h7q7) ([497ceb5](https://github.com/cameronzucker/tuxlink/commit/497ceb5b57200caeb80811d68518240999dade83))
+
 ## [0.35.13](https://github.com/cameronzucker/tuxlink/compare/v0.35.12...v0.35.13) (2026-06-08)
 
 

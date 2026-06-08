@@ -1,0 +1,89 @@
+/* src/shell/RadioDrawer.css
+ *
+ * Desktop (>=1366px): the wrapper AND its body are display:contents, so the
+ * radio panel sits in the grid's 4th column exactly as before; the grip is
+ * hidden. tuxlink-h7q7.
+ */
+.radio-drawer {
+  display: contents;
+}
+.radio-drawer-body {
+  display: contents;
+}
+.radio-drawer-grip {
+  display: none;
+}
+
+@media (max-width: 1365px) {
+  /* Compact (tuxlink-813d D1): the drawer is an ABSOLUTE OVERLAY pinned to the
+   * right edge of .panes. It is taken out of grid flow (position: absolute), so
+   * it does NOT occupy or create a 4th grid column; the reading pane keeps its
+   * full 1fr width underneath the overlay. Closed = only the 16px grip strip
+   * pokes from the right edge (translateX(100%) hides the 404px body off-screen).
+   * Open = slides in 220ms; grip becomes the close-tab on the panel's left edge.
+   * CSS values lifted from 2026-06-08-fzm1-overlay-behavior.html (proven at
+   * 1280×800). */
+  .radio-drawer {
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: 404px; z-index: 5;
+    display: flex; flex-direction: column;
+    background: var(--surface); border-left: 1px solid var(--border);
+    box-shadow: -14px 0 34px rgba(0, 0, 0, 0.5);
+    transform: translateX(100%); transition: transform 220ms ease;
+  }
+  .panes.drawer-open .radio-drawer { transform: translateX(0); }
+  /* Closed: a proper pull-tab protruding 30px from the panel's left edge (the
+   * panel itself is translateX(100%) off-screen), fully on-screen and tappable.
+   * Open: the same tab sits on the panel's left edge as the collapse handle.
+   * z-index 9 keeps it above the window ResizeHandles so the right-edge handle
+   * can't intercept the tap (tuxlink-813d operator smoke #1b — the old 16px
+   * sliver read as clipped/unclickable). */
+  .radio-drawer-grip {
+    position: absolute; left: -30px; top: 50%; transform: translateY(-50%);
+    width: 30px; height: 76px; min-height: 56px;
+    background: var(--surface-2); border: 1px solid var(--border); border-right: 0;
+    border-radius: 9px 0 0 9px; box-shadow: -5px 0 16px rgba(0, 0, 0, 0.4);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; cursor: pointer; z-index: 9; color: var(--text-dim);
+  }
+  .radio-drawer-grip-chevron { font-size: 16px; line-height: 1; }
+  .radio-drawer-body { display: block; flex: 1 1 auto; min-width: 0; height: 100%; overflow: auto; }
+  .radio-drawer-grip-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--text-faint);
+  }
+  .radio-drawer-grip[data-session-state='connecting'] .radio-drawer-grip-dot {
+    background: var(--accent-2, #fbbf24);
+    animation: radio-drawer-pulse 1.2s ease-in-out infinite;
+  }
+  .radio-drawer-grip[data-session-state='connected'] .radio-drawer-grip-dot {
+    background: var(--success, #4ade80);
+    box-shadow: 0 0 5px var(--success, #4ade80);
+  }
+  .radio-drawer-grip[data-session-state='disconnecting'] .radio-drawer-grip-dot {
+    background: var(--accent-2, #fbbf24);
+  }
+  .radio-drawer-grip[data-session-state='error'] .radio-drawer-grip-dot {
+    background: var(--error, #f87171);
+  }
+}
+
+@keyframes radio-drawer-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .radio-drawer {
+    transition: none;
+  }
+  .radio-drawer-grip-dot {
+    animation: none !important;
+  }
+}

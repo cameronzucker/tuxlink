@@ -31,11 +31,15 @@ const mocks = vi.hoisted(() => {
   const webviewClose = vi.fn(async () => {});
   const webviewSetPosition = vi.fn(async () => {});
   const webviewSetSize = vi.fn(async () => {});
+  const webviewHide = vi.fn(async () => {});
+  const webviewShow = vi.fn(async () => {});
   const WebviewMock = vi.fn().mockImplementation(function (this: object) {
     Object.assign(this, {
       close: webviewClose,
       setPosition: webviewSetPosition,
       setSize: webviewSetSize,
+      hide: webviewHide,
+      show: webviewShow,
     });
   });
   const parentWindowStub = { __isParentWindowStub: true };
@@ -56,6 +60,8 @@ const mocks = vi.hoisted(() => {
     webviewClose,
     webviewSetPosition,
     webviewSetSize,
+    webviewHide,
+    webviewShow,
     WebviewMock,
     parentWindowStub,
     getCurrentWindow,
@@ -87,6 +93,8 @@ describe('<WebviewFormViewer>', () => {
     mocks.webviewClose.mockClear();
     mocks.webviewSetPosition.mockClear();
     mocks.webviewSetSize.mockClear();
+    mocks.webviewHide.mockClear();
+    mocks.webviewShow.mockClear();
     mocks.WebviewMock.mockClear();
     mocks.getCurrentWindow.mockClear();
     mocks.LogicalPositionMock.mockClear();
@@ -239,5 +247,134 @@ describe('<WebviewFormViewer>', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/Viewer failed to open/i);
     });
     expect(onFallback).toHaveBeenCalledWith(expect.stringContaining('viewer template not found'));
+  });
+
+  it('suppress: hides webview immediately if suppressed=true at construction time', async () => {
+    // Regression guard for the initial-suppressed gap: if the drawer is already
+    // open when the user selects a form message, the webview is created visible
+    // and the [suppressed] effect won't re-fire (suppressed didn't change from
+    // its initial value). The guard inside the async IIFE must call hide() right
+    // after webviewRef.current is set.
+    render(
+      <WebviewFormViewer
+        formId="Quick_Message_Initial"
+        fieldValues={{}}
+        onClose={vi.fn()}
+        suppressed={true}
+      />,
+    );
+    // Wait for the async open + webview construction to complete.
+    await waitFor(() => {
+      expect(mocks.WebviewMock).toHaveBeenCalled();
+    });
+    // hide() must have been called — the webview must not remain visible while
+    // the drawer is open.
+    await waitFor(() => {
+      expect(mocks.webviewHide).toHaveBeenCalled();
+    });
+    // show() must NOT have been called.
+    expect(mocks.webviewShow).not.toHaveBeenCalled();
+  });
+
+  it('suppress: calls hide when suppressed=true, show when suppressed=false', async () => {
+    // Render with suppressed=false; wait for webview construction.
+    const { rerender } = render(
+      <WebviewFormViewer
+        formId="Quick_Message_Initial"
+        fieldValues={{}}
+        onClose={vi.fn()}
+        suppressed={false}
+      />,
+    );
+    await waitFor(() => {
+      expect(mocks.WebviewMock).toHaveBeenCalled();
+    });
+
+    // Toggle suppressed=true → hide() should be called.
+    mocks.webviewHide.mockClear();
+    mocks.webviewShow.mockClear();
+    rerender(
+      <WebviewFormViewer
+        formId="Quick_Message_Initial"
+        fieldValues={{}}
+        onClose={vi.fn()}
+        suppressed={true}
+      />,
+    );
+    await waitFor(() => {
+      expect(mocks.webviewHide).toHaveBeenCalled();
+    });
+    expect(mocks.webviewShow).not.toHaveBeenCalled();
+
+    // Toggle suppressed=false → show() should be called.
+    mocks.webviewHide.mockClear();
+    mocks.webviewShow.mockClear();
+    rerender(
+      <WebviewFormViewer
+        formId="Quick_Message_Initial"
+        fieldValues={{}}
+        onClose={vi.fn()}
+        suppressed={false}
+      />,
+    );
+    await waitFor(() => {
+      expect(mocks.webviewShow).toHaveBeenCalled();
+    });
+    expect(mocks.webviewHide).not.toHaveBeenCalled();
+  });
+});
+
+// tuxlink-h7q7 Task 17 (Codex adrev R1 #5/#6): under the FZ-M1 PUSH drawer,
+// opening the radio panel narrows the reader → the embed placeholder resizes →
+// the component's existing ResizeObserver fires → the child webview is
+// repositioned/resized to the narrower reader (never occluded). This proves the
+// reflow path repositions the webview. The authoritative occlusion check is the
+// Playwright real-viewport pass (jsdom cannot prove native-webview stacking).
+describe('<WebviewFormViewer> — repositions on placeholder resize (push reflow, R1)', () => {
+  let fireResize: (() => void) | null = null;
+  const originalRO = globalThis.ResizeObserver;
+
+  beforeEach(() => {
+    fireResize = null;
+    class CapturingResizeObserver {
+      constructor(cb: ResizeObserverCallback) {
+        fireResize = () => cb([], this as unknown as ResizeObserver);
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
+      CapturingResizeObserver as unknown as typeof ResizeObserver;
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'open_webview_viewer') return { url: 'http://127.0.0.1:54322/', port: 54322, token: 'tok-vw1' };
+      return undefined;
+    });
+  });
+  afterEach(() => {
+    (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver = originalRO;
+    mocks.webviewSetPosition.mockClear();
+    mocks.webviewSetSize.mockClear();
+  });
+
+  it('calls setPosition + setSize with the new rect when the embed placeholder resizes', async () => {
+    render(<WebviewFormViewer formId="Quick_Message" fieldValues={{}} onClose={() => {}} />);
+    // Wait for the async open + webview construction + observer registration.
+    await waitFor(() => expect(mocks.WebviewMock).toHaveBeenCalled());
+    await waitFor(() => expect(fireResize).not.toBeNull());
+
+    // Simulate the push reflow: the embed placeholder is now narrower + shifted.
+    const embed = screen.getByTestId('webview-form-viewer-embed');
+    embed.getBoundingClientRect = () =>
+      ({ left: 48, top: 100, width: 452, height: 600, right: 500, bottom: 700, x: 48, y: 100, toJSON: () => ({}) }) as DOMRect;
+
+    mocks.webviewSetPosition.mockClear();
+    mocks.webviewSetSize.mockClear();
+    fireResize!();
+
+    expect(mocks.webviewSetPosition).toHaveBeenCalled();
+    expect(mocks.webviewSetSize).toHaveBeenCalled();
+    // The new size reflects the narrower reader column (push drawer open).
+    expect(mocks.LogicalSizeMock).toHaveBeenCalledWith(452, 600);
   });
 });

@@ -1,0 +1,69 @@
+WINLINK ROBUST PACKET CHANNEL LISTING - (Monday, June 8, 2026 03:43 UTC)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Explanation of codes:
+    - = Unknown
+    A = Additional information
+  Antenna being used:
+    B = Beam
+    D = Dipole
+    V = Vertical
+  Internet(details)
+    E = Email address of sysop - if not listed, use callsign@winlink.org
+    H = Homepage URL
+
+Channel, Sysop Name / Callsign, [Grid], (last update)
+------------------------------------------------------------------------
+
+DB0BES.WINLINK, Oliver Harms/DB0BES, [JO62TF: Bestensee, Brandenburg], (Mon, 08 Jun 2026 00:55:00 GMT)
+   E  info@db0bes.de
+   A  Bestensee, Brandenburg
+   -  3601.5 7052.8 10149.3 14104.0 
+
+EA8URF.WINLINK, Asociacion Fuerteventura/EA8URF, [IL38BM: Puerto del Rosario, Las Palmas], (Mon, 08 Jun 2026 02:02:00 GMT)
+   E  urfuer.org@gmail.com
+   H  urfuer.org
+   A  Puerto del Rosario, Las Palmas
+   -  7053.0 14109.0 21118.0 
+
+IW2OHX.WINLINK, Marco Di Martino/IW2OHX, [JN45NN: Bollate, Lombardy], (Sun, 07 Jun 2026 20:59:00 GMT)
+   E  iw2ohx@iw2ohx.net
+   H  www.iw2ohx.net
+   A  Bollate, Lombardy
+   -  3592.6 7055.5 14103.8 14110.4 21115.0 
+
+KI0BK-10.WINLINK, JAMES C CORDILL/KI0BK, [EM28OU: OLATHE, KS], (Mon, 08 Jun 2026 02:21:00 GMT)
+   E  jccordill@mycci.net
+   A  OLATHE, KS
+   -  3593.5 7102.5 14105.0 
+
+PY1XTA-10.WINLINK, Mauro R. Veiga/PY1XTA, [GG87EA: Rio de Janeiro, RJ], (Sun, 07 Jun 2026 21:02:00 GMT)
+   E  maurorveiga@yahoo.com.br
+   A  Rio de Janeiro, RJ
+   -  7047.0 
+
+SK0BO-10.WINLINK, Thomas/SK0BO, [JO99JL: Stockholm, Finnhamn], (Mon, 08 Jun 2026 02:24:00 GMT)
+   E  thomasbostrom1@gmail.com
+   A  Stockholm, Finnhamn
+   -  10148.8 
+
+VK2RZ.WINLINK, Alex/VK2RZ, [QF56PG: Dee Why, NSW], (Mon, 08 Jun 2026 02:59:00 GMT)
+   E  vk2rz.g6hsv@gmail.com
+   A  Dee Why, NSW
+   -  7045.0 
+
+W9OTR.WINLINK, Jerome Kutche/W9OTR, [EM68SR: Mitchell, Indiiana], (Mon, 08 Jun 2026 01:44:00 GMT)
+   E  n9lya@kutche.net
+   H  www.mitchellbpq.com
+   A  Mitchell, Indiiana
+   -  3597.5 10145.5 14108.0 24929.5 28305.9 
+
+YT7MPB.WINLINK, Miroslav Skoric/YT7MPB, [JN95WG: Novi Sad, Vojvodina], (Fri, 05 Jun 2026 14:40:00 GMT)
+   E  skoric@uns.ac.rs
+   H  https://www.linkedin.com/in/miroslavskoric/
+   A  Novi Sad, Vojvodina
+   -  14103.8 14110.4 
+PI1ZTM-12.RMS.PACKET, AndrÃ©/PI1ZTM, [JO22DB: Den Haag, zh], (Mon, 08 Jun 2026 02:38:00 GMT)
+   E  pd2atg@gmail.com
+   A  Den Haag, zh
+   -  144.925
+

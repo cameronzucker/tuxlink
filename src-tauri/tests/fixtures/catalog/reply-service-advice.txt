@@ -1,0 +1,10 @@
+We have been unable to deliver your message: 
+   MessageId: EYFR5DW4Y7W3
+   To: SMTP:cameronzucker@gmail.com
+   Subject: Tuxlink Test 2
+for the reason given below by the remote mail server.
+
+"550-5.7.26 Your email has been blocked because the sender is unauthenticated."
+
+This advice applies only to cameronzucker@gmail.com. Other
+addressees of the same message may have been successfully forwarded.

@@ -101,3 +101,21 @@
 .webview-form-host__btn--fallback {
   font-style: italic;
 }
+
+/* ============================================================
+ * FZ-M1 compact mode (tuxlink-h7q7) — additive + scoped.
+ *
+ * Only OUR chrome around the embedded form is touched here — the
+ * Cancel / Submit-fallback buttons. The embedded child Tauri
+ * webview INTERIOR (third-party Winlink HTML) is out of our CSS
+ * control and is deliberately NOT restyled; the `__embed`
+ * placeholder rect is also left untouched so the webview's
+ * ResizeObserver position is not disturbed. Strictly below the
+ * 1366px desktop floor (Codex adrev R1 #1).
+ * ============================================================ */
+@media (max-width: 1365px) {
+  /* --- Touch: chrome action buttons --- */
+  .webview-form-host__btn {
+    min-height: 44px;
+  }
+}

@@ -42,6 +42,12 @@ import { devFormMeta } from './devFixture';
 import { lookupForm, KeyValueView } from '../forms';
 import { MoveToButton } from './MoveToButton';
 import { WebviewFormViewer } from './WebviewFormViewer';
+import { CatalogReplyView } from '../catalog/CatalogReplyView';
+
+/// tuxlink-a2gd: a received catalog INQUIRY reply (From: SERVICE, Subject "INQUIRY - <url>").
+function isCatalogReply(m: ParsedMessage): boolean {
+  return (m.from ?? '').toUpperCase().includes('SERVICE') && (m.subject ?? '').startsWith('INQUIRY - ');
+}
 
 // ============================================================================
 // Exported constants (used by tests)
@@ -207,10 +213,12 @@ function FormMessageBody({
   formId,
   payload,
   bodyText,
+  radioDrawerOpen = false,
 }: {
   formId: string;
   payload: FormPayload;
   bodyText: string;
+  radioDrawerOpen?: boolean;
 }) {
   // Track viewer-fallback failure so we can fall through to KeyValueView.
   // Reset semantics: state lives for the lifetime of this component
@@ -259,6 +267,7 @@ function FormMessageBody({
         fieldValues={fieldValues}
         onClose={() => setViewerFailed(true)}
         onFallback={() => setViewerFailed(true)}
+        suppressed={radioDrawerOpen}
       />
     </div>
   );
@@ -284,6 +293,7 @@ export function MessageViewLoaded({
   onMove,
   contacts,
   onAddContact,
+  radioDrawerOpen = false,
 }: {
   message: ParsedMessage;
   onArchive?: () => void;
@@ -306,6 +316,9 @@ export function MessageViewLoaded({
   contacts?: Contact[];
   /// Persist an added-from-sender contact (routes through `contact_upsert`).
   onAddContact?: (contact: Contact) => Promise<void> | void;
+  /// When true, any open form-viewer webview is hidden while the radio
+  /// drawer is open. Threaded from AppShell via MessageView (tuxlink-813d).
+  radioDrawerOpen?: boolean;
 }) {
   const from = parseAddress(message.from);
   const toAddrs = message.to.map(parseAddress);
@@ -482,6 +495,7 @@ export function MessageViewLoaded({
           formId={message.formId}
           payload={message.formPayload}
           bodyText={message.body}
+          radioDrawerOpen={radioDrawerOpen}
         />
       ) : message.isForm ? (
         // isForm true but no payload — parse failed server-side or message
@@ -495,6 +509,10 @@ export function MessageViewLoaded({
             </div>
           )}
         </div>
+      ) : isCatalogReply(message) ? (
+        // tuxlink-a2gd: catalog INQUIRY replies (From: SERVICE, Subject: "INQUIRY - <url>")
+        // render via parse-with-fallback — area weather structured, everything else raw.
+        <CatalogReplyView subject={message.subject} body={message.body} />
       ) : (
         <pre className="msg-body" data-testid="message-body">
           {message.body}
@@ -730,6 +748,10 @@ export interface MessageViewProps {
   /** Move-to-folder callback. When supplied, the reading pane renders a
    *  "Move ▾" dropdown that lists system folders + user folders. */
   onMove?: (to: MailboxFolderRef) => void;
+  /** When true, any open form-viewer child webview is hidden while the
+   *  radio drawer is open (compact-mode overlay coexistence, tuxlink-813d).
+   *  Defaults to false so existing call sites that omit it keep working. */
+  radioDrawerOpen?: boolean;
 }
 
 /**
@@ -755,6 +777,7 @@ export default function MessageView({
   onArchive,
   userFolders,
   onMove,
+  radioDrawerOpen = false,
 }: MessageViewProps) {
   const { data, isLoading, isError, error } = useMessage(selectedMessage);
   // G1 (Task A8) — wire the real contacts state so a sender that isn't already
@@ -804,6 +827,7 @@ export default function MessageView({
       onMove={onMove}
       contacts={contacts}
       onAddContact={upsertContact}
+      radioDrawerOpen={radioDrawerOpen}
     />
   );
 }
