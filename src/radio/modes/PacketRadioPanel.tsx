@@ -24,7 +24,7 @@
 // panel renders with fallback defaults and persistence is a no-op until
 // a config exists.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { RadioPanel } from '../RadioPanel';
@@ -35,6 +35,10 @@ import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
 import { useListenerState } from '../sections/useListenerState';
 import { effectiveCall, pathPreview, ssidOptions } from '../../packet/packetConfig';
 import type { PacketConfigDto } from '../../packet/packetTypes';
+import { FavoritesTabs } from '../../favorites/FavoritesTabs';
+import { useFavorites } from '../../favorites/useFavorites';
+import { tsLocal } from '../../favorites/ts-local';
+import type { FavoriteDial } from '../../favorites/types';
 import '../sections/ListenSection.css';
 
 export interface PacketRadioPanelProps {
@@ -59,6 +63,36 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
   // packet_set_listen. Restored 2026-05-31 from legacy PacketConnectionPanel.
   const [listenDefault, setListenDefault] = useState<boolean>(true);
   const { entries: logEntries, clear: clearLog } = useSessionLog();
+
+  // Favorites integration (Task B6-PACKET). RADIO-1: a favorite's Connect is
+  // PRE-FILL ONLY — it sets `target` via `handlePrefill` and NEVER invokes
+  // `packet_connect`. The operator's later Start click is the Part 97 consent
+  // gate. recordAttempt logs the HONEST on-air outcome: packet_connect is a
+  // BLOCKING connect→B2F, so `reached` is recorded on resolve and `failed` in
+  // the catch (no status-transition watching needed — the single call's
+  // resolve/reject IS the signal).
+  const { recordAttempt } = useFavorites('packet');
+  // The favorite whose Connect was last clicked. Carries its metadata into the
+  // connection record IFF its gateway matches the connect target. Cleared on a
+  // manual target edit (a hand-typed target is not the prefilled favorite).
+  const pendingDialRef = useRef<FavoriteDial | null>(null);
+  const handlePrefill = (dial: FavoriteDial) => {
+    setTarget(dial.gateway);
+    pendingDialRef.current = dial;
+  };
+  // Build the dial for a connection record. The gateway is the connect target.
+  // If the prefilled favorite matches it (case-insensitive), carry its metadata
+  // (band/grid/note) into the record; otherwise record a minimal manual dial.
+  // (Packet favorites do NOT carry relay chains — a known forward gap; prefill
+  // sets only the target callsign.)
+  const buildRecordDial = (call: string): FavoriteDial => {
+    const gw = call.trim();
+    const pend = pendingDialRef.current;
+    if (pend && pend.gateway.trim().toUpperCase() === gw.toUpperCase()) {
+      return { ...pend, mode: 'packet', gateway: gw };
+    }
+    return { mode: 'packet', gateway: gw };
+  };
 
   // Packet listener allowlist plumbing (spec §1.3). Packet has no
   // IP-pattern layer (AX.25 isn't IP-routed); we pass undefined for
@@ -168,11 +202,23 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
       });
   };
 
-  const onConnect = () => {
+  // H4: onConnect is async/await so a packet_connect failure is observable —
+  // the prior fire-and-forget `.catch(() => {})` swallowed every rejection,
+  // making a failed connect indistinguishable from a successful one. Now the
+  // single BLOCKING connect→B2F call's resolve records `reached`; its reject
+  // records `failed` in the CATCH (never the finally), so a pre-air guard never
+  // logs a spurious gateway failure.
+  const onConnect = async () => {
     const call = target.trim();
-    if (!call) return;
+    if (!call) return; // pre-air guard: precedes the dial/record, so an empty-target click records nothing
     const path = relays.map((r) => r.trim()).filter(Boolean);
-    void invoke('packet_connect', { call, path }).catch(() => {});
+    const dial = buildRecordDial(call);
+    try {
+      await invoke('packet_connect', { call, path });
+      void recordAttempt(dial, 'reached', tsLocal()); // blocking connect→B2F resolved = honest reach
+    } catch {
+      void recordAttempt(dial, 'failed', tsLocal()); // record failed in the catch (NOT finally)
+    }
   };
 
   const headerSub = config
@@ -309,69 +355,90 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
 
       <section className="radio-panel-sec">
         <h5>Connect</h5>
-        <label className="radio-panel-input-row">
-          <span>To</span>
-          <input
-            type="text"
-            className="radio-panel-input"
-            data-testid="packet-target-input"
-            placeholder="call sign (gateway or peer)"
-            value={target}
-            spellCheck={false}
-            autoCapitalize="characters"
-            autoCorrect="off"
-            onChange={(e) => setTarget(e.target.value)}
-          />
-        </label>
-
-        <div data-testid="packet-relays">
-          {relays.map((r, i) => (
-            <label key={i} className="radio-panel-input-row">
-              <span>{`Relay ${i + 1}`}</span>
-              <span style={{ display: 'flex', gap: 4 }}>
+        {/* Connect-target surface — Favorites / Recent / Manual (Task
+            B6-PACKET). The hand-entry To + relays + path-preview fields are the
+            Manual tab's content; a favorite's Connect PRE-FILLS the target via
+            handlePrefill and never transmits (RADIO-1). The Start button stays
+            OUTSIDE the tabs (rendered after, still inside this section) so it
+            remains visible regardless of the active tab — mirrors ARDOP keeping
+            its action buttons outside the tabs. */}
+        <FavoritesTabs
+          mode="packet"
+          onPrefill={handlePrefill}
+          manualContent={
+            <>
+              <label className="radio-panel-input-row">
+                <span>To</span>
                 <input
                   type="text"
                   className="radio-panel-input"
-                  data-testid={`packet-relay-${i}`}
-                  placeholder="W7RPT-1"
-                  value={r}
+                  data-testid="packet-target-input"
+                  placeholder="call sign (gateway or peer)"
+                  value={target}
                   spellCheck={false}
                   autoCapitalize="characters"
                   autoCorrect="off"
-                  onChange={(e) => onRelayChange(i, e.target.value)}
+                  onChange={(e) => {
+                    setTarget(e.target.value);
+                    // A hand-typed target is not the prefilled favorite — drop
+                    // the association so the record doesn't carry stale metadata.
+                    pendingDialRef.current = null;
+                  }}
                 />
-                <button
-                  type="button"
-                  className="radio-panel-chip"
-                  data-testid={`packet-relay-remove-${i}`}
-                  aria-label={`Remove relay ${i + 1}`}
-                  onClick={() => onRemoveRelay(i)}
-                >
-                  ✕
-                </button>
-              </span>
-            </label>
-          ))}
-          {relays.length < 2 && (
-            <button
-              type="button"
-              className="radio-panel-chip"
-              data-testid="packet-add-relay"
-              onClick={onAddRelay}
-            >
-              + add relay (0–2)
-            </button>
-          )}
-        </div>
+              </label>
 
-        <p className="radio-panel-mono" data-testid="packet-path-preview">
-          Path: <code>{pathPreview(baseCall, ssid, relays, target)}</code>
-        </p>
+              <div data-testid="packet-relays">
+                {relays.map((r, i) => (
+                  <label key={i} className="radio-panel-input-row">
+                    <span>{`Relay ${i + 1}`}</span>
+                    <span style={{ display: 'flex', gap: 4 }}>
+                      <input
+                        type="text"
+                        className="radio-panel-input"
+                        data-testid={`packet-relay-${i}`}
+                        placeholder="W7RPT-1"
+                        value={r}
+                        spellCheck={false}
+                        autoCapitalize="characters"
+                        autoCorrect="off"
+                        onChange={(e) => onRelayChange(i, e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="radio-panel-chip"
+                        data-testid={`packet-relay-remove-${i}`}
+                        aria-label={`Remove relay ${i + 1}`}
+                        onClick={() => onRemoveRelay(i)}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  </label>
+                ))}
+                {relays.length < 2 && (
+                  <button
+                    type="button"
+                    className="radio-panel-chip"
+                    data-testid="packet-add-relay"
+                    onClick={onAddRelay}
+                  >
+                    + add relay (0–2)
+                  </button>
+                )}
+              </div>
+
+              <p className="radio-panel-mono" data-testid="packet-path-preview">
+                Path: <code>{pathPreview(baseCall, ssid, relays, target)}</code>
+              </p>
+            </>
+          }
+        />
 
         {/* Vocab unification (operator smoke 2026-05-31): use Start (idle) /
             Stop (active) to match the Telnet + ARDOP panels. The dedicated
             data-testid retains a stable hook for tests + grep. Listen is a
-            distinct action that stays separate (it's the "armed" state). */}
+            distinct action that stays separate (it's the "armed" state).
+            Kept OUTSIDE FavoritesTabs so it stays visible on every tab. */}
         <button
           type="button"
           className="radio-panel-btn radio-panel-btn-primary"
