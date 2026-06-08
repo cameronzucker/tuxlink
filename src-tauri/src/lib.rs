@@ -550,6 +550,7 @@ pub fn run() {
             crate::favorites::commands::favorite_star,
             crate::favorites::commands::favorite_record_attempt,
             crate::favorites::commands::favorites_recents,
+            crate::favorites::commands::favorite_tod_hint,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

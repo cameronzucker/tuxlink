@@ -402,7 +402,7 @@ mod tests {
     // tally_correspondents (A3) — counts From + To across message metas.
     // ------------------------------------------------------------------
 
-    fn count_of<'a>(pairs: &'a [(String, u32)], who: &str) -> Option<u32> {
+    fn count_of(pairs: &[(String, u32)], who: &str) -> Option<u32> {
         pairs.iter().find(|(c, _)| c == who).map(|(_, n)| *n)
     }
 

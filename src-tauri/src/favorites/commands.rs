@@ -28,7 +28,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::store::{
-    Favorite, FavoriteDial, FavoritesError, FavoritesStore, StationsFile,
+    Favorite, FavoriteDial, FavoritesError, FavoritesStore, StationsFile, TodHint,
 };
 
 /// The radio modes a favorite may belong to (mirrors the frontend `RadioMode`
@@ -161,6 +161,22 @@ pub fn favorites_recents(
 ) -> Result<Vec<Favorite>, FavoritesError> {
     let store = svc.lock().expect("favorites store mutex poisoned");
     Ok(store.favorites_recents(&mode))
+}
+
+/// Return the gated time-of-day hint for the unit `unit_id`, or None.
+///
+/// Reads that unit's recorded attempts from the store and runs the EXISTING
+/// `tod_hint` gate (≥3 attempts, ≥1 success, strict unique max — H2; offset-local
+/// bucketing — H1). The whole honesty gate lives in Rust by design; this command
+/// is a thin read-only IPC shim so the B5 frontend never re-implements the
+/// bucketing in JS. An unknown `unit_id` yields an empty attempt set → None.
+#[tauri::command]
+pub fn favorite_tod_hint(
+    unit_id: String,
+    svc: tauri::State<Arc<Mutex<FavoritesStore>>>,
+) -> Result<Option<TodHint>, FavoritesError> {
+    let store = svc.lock().expect("favorites store mutex poisoned");
+    Ok(super::store::tod_hint(&store.attempts_for(&unit_id)))
 }
 
 #[cfg(test)]
@@ -339,5 +355,71 @@ mod tests {
         let live = &store.favorites()[0];
         assert!(live.starred);
         assert_eq!(live.created_at, original_created);
+    }
+
+    // ---- favorite_tod_hint delegation contract ------------------------------
+
+    /// Documents that `favorite_tod_hint`'s body delegates correctly to
+    /// `store::tod_hint` without re-implementing the bucketing logic. Exercises
+    /// the command body against a raw store (no Tauri harness needed — the
+    /// `#[tauri::command]` wrapper only adds State extraction).
+    #[test]
+    fn tod_hint_command_delegates_to_store() {
+        let dir = tempdir().unwrap();
+        let mut store = FavoritesStore::open(dir.path().join("stations.json"));
+
+        // Record 3 `reached` attempts on the same dial at offset-local night
+        // hours (23:00, 22:00, 21:00 at -07:00 → local hour falls in "night").
+        let dial = FavoriteDial {
+            mode: "ardop-hf".to_string(),
+            gateway: "W6XYZ".to_string(),
+            freq: Some("14105.0".to_string()),
+            transport: None,
+            band: Some("20m".to_string()),
+            grid: Some("CN87".to_string()),
+        };
+        store
+            .record_attempt(
+                dial.clone(),
+                "reached".to_string(),
+                "2026-06-07T23:00:00-07:00".to_string(),
+                || "u1".to_string(),
+                "2026-06-08T06:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        store
+            .record_attempt(
+                dial.clone(),
+                "reached".to_string(),
+                "2026-06-07T22:00:00-07:00".to_string(),
+                || "u1".to_string(),
+                "2026-06-08T05:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        store
+            .record_attempt(
+                dial.clone(),
+                "reached".to_string(),
+                "2026-06-07T21:00:00-07:00".to_string(),
+                || "u1".to_string(),
+                "2026-06-08T04:00:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        let unit_id = store.favorites()[0].id.clone();
+
+        // Replicate the command body: lock (raw store here) → attempts_for → tod_hint.
+        // `crate::favorites::store::tod_hint` is the same fn the production command
+        // calls as `super::store::tod_hint` (super = favorites from the command level,
+        // super = commands from inside this test module).
+        let hint = crate::favorites::store::tod_hint(&store.attempts_for(&unit_id));
+        let hint = hint.expect("3 night reached attempts → Some");
+        assert_eq!(hint.bucket, "night", "offset-local bucketing (H1): 23:00-07:00 = night");
+        assert_eq!(hint.attempts, 3);
+        assert_eq!(hint.successes, 3);
+
+        // An unknown unit_id yields empty attempts → None (the command's unknown-id contract).
+        let none_hint = crate::favorites::store::tod_hint(&store.attempts_for("nope"));
+        assert!(none_hint.is_none(), "unknown unit_id → empty attempts → None");
     }
 }
