@@ -5401,6 +5401,12 @@ pub async fn telnet_p2p_connect(
     };
 
     let outbound_count = outbound.len();
+    // Capture (MID, subject) pairs before `outbound` is moved into the exchange
+    // closure, so the post-exchange plain log can name each sent/deferred/rejected
+    // message by subject — parity with the shared exchange filing paths
+    // (smoke-walk item 4: Telnet P2P was the one Telnet mode that still emitted
+    // only an aggregate count, not per-message movement).
+    let outbound_log = crate::winlink_backend::outbound_log_items(&outbound);
     emit_session_line(
         &app,
         &log,
@@ -5510,6 +5516,14 @@ pub async fn telnet_p2p_connect(
                 }
             }
 
+            // Per-message movement detail (Received/Sent/Rejected/Deferred by
+            // subject), mirroring the shared exchange filing paths so a Telnet
+            // P2P operator can see WHICH messages moved, not just a count.
+            crate::winlink_backend::emit_exchange_result_progress(
+                &exchange,
+                &outbound_log,
+                &|line: &str| emit_session_line(&app, &log, LogLevel::Info, line.to_string()),
+            );
             let summary = format!(
                 "P2P exchange complete. Sent {}, received {}.",
                 exchange.sent.len(),
