@@ -86,12 +86,14 @@ pub enum B2fEvent {
     },
     /// The CMS offered a batch of inbound proposals for operator review.
     ///
-    // SAFETY-CRITICAL: keep the serde-lockdown test (b2f_events.rs:183) in sync;
-    // proposal strings MUST be redacted by the producer (PendingProposalDto::from_proposal_redacted).
+    /// SAFETY-CRITICAL: proposal strings MUST be redacted by the producer
+    /// (`PendingProposalDto::from_proposal_redacted`). The
+    /// `serde_lockdown_no_credential_fields_in_any_variant` test in this
+    /// file's tests mod catches this.
     InboundProposalsOffered {
-        attempt_id: AttemptId,
         request_id: u64,
         proposals: Vec<PendingProposalDto>,
+        attempt_id: AttemptId,
     },
 }
 
