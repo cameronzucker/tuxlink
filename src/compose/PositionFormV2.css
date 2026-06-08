@@ -16,6 +16,10 @@
   color: var(--tux-fg);
   font-family: var(--sans, inherit);
   font-size: 13px;
+  /* Cap the form at a readable column so its width:100% fields don't stretch
+     edge-to-edge when the Compose window is maximized (smoke-walk item 23).
+     Mirrors the existing .ics309-form-v2 cap so all native forms agree. */
+  max-width: 700px;
 }
 
 /* ── Saved-slot toolbar — shared class used by all P2 native forms ── */
