@@ -1,0 +1,30 @@
+/* Catalog reply structured/raw view. */
+.catalog-reply__raw {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 12px;
+  margin: 0;
+}
+.catalog-reply__structured {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.catalog-reply__structured dt {
+  color: var(--text-dim);
+}
+.catalog-reply__structured dd {
+  margin: 0;
+}
+.catalog-reply__toggle {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
