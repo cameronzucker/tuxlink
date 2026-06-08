@@ -71,7 +71,7 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .radio-drawer-body {
+  .radio-drawer {
     transition: none;
   }
   .radio-drawer-grip-dot {
