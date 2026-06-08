@@ -249,6 +249,33 @@ describe('<WebviewFormViewer>', () => {
     expect(onFallback).toHaveBeenCalledWith(expect.stringContaining('viewer template not found'));
   });
 
+  it('suppress: hides webview immediately if suppressed=true at construction time', async () => {
+    // Regression guard for the initial-suppressed gap: if the drawer is already
+    // open when the user selects a form message, the webview is created visible
+    // and the [suppressed] effect won't re-fire (suppressed didn't change from
+    // its initial value). The guard inside the async IIFE must call hide() right
+    // after webviewRef.current is set.
+    render(
+      <WebviewFormViewer
+        formId="Quick_Message_Initial"
+        fieldValues={{}}
+        onClose={vi.fn()}
+        suppressed={true}
+      />,
+    );
+    // Wait for the async open + webview construction to complete.
+    await waitFor(() => {
+      expect(mocks.WebviewMock).toHaveBeenCalled();
+    });
+    // hide() must have been called — the webview must not remain visible while
+    // the drawer is open.
+    await waitFor(() => {
+      expect(mocks.webviewHide).toHaveBeenCalled();
+    });
+    // show() must NOT have been called.
+    expect(mocks.webviewShow).not.toHaveBeenCalled();
+  });
+
   it('suppress: calls hide when suppressed=true, show when suppressed=false', async () => {
     // Render with suppressed=false; wait for webview construction.
     const { rerender } = render(

@@ -148,6 +148,12 @@ export function WebviewFormViewer({
           height: initialH,
         });
         webviewRef.current = webview;
+        // If the drawer was already open when this form loaded, the webview is
+        // created visible and the [suppressed] effect won't re-fire (suppressed
+        // didn't change) — hide it now so it never punches through the overlay.
+        if (suppressedRef.current) {
+          void webview.hide().catch(() => {});
+        }
 
         // Reposition on layout changes (parent window resize, sibling
         // panel reflow, etc.). Same mechanism as WebviewFormHost.
@@ -214,8 +220,12 @@ export function WebviewFormViewer({
       const el = mountRef.current;
       if (el) {
         const r = el.getBoundingClientRect();
-        void wv.setPosition(new LogicalPosition(Math.max(0, Math.floor(r.left)), Math.max(0, Math.floor(r.top)))).catch(() => {});
-        void wv.setSize(new LogicalSize(Math.max(1, Math.floor(r.width)), Math.max(1, Math.floor(r.height)))).catch(() => {});
+        void wv
+          .setPosition(new LogicalPosition(Math.max(0, Math.floor(r.left)), Math.max(0, Math.floor(r.top))))
+          .catch(() => {});
+        void wv
+          .setSize(new LogicalSize(Math.max(1, Math.floor(r.width)), Math.max(1, Math.floor(r.height))))
+          .catch(() => {});
       }
     }
   }, [suppressed]);
