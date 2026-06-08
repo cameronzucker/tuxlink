@@ -63,6 +63,6 @@ fn packet_fixture_includes_multibyte_station_without_corruption() {
     if let Some(g) = listing.gateways.iter().find(|g| g.callsign == "PI1ZTM") {
         let name = g.sysop_name.as_deref().unwrap_or("");
         assert!(!name.is_empty(), "multibyte sysop name must be preserved, not stripped");
-        assert!(name.chars().any(|c| !c.is_ascii()), "non-ASCII byte(s) must be retained intact");
+        assert!(!name.is_ascii(), "non-ASCII byte(s) must be retained intact");
     }
 }

@@ -218,8 +218,8 @@ fn parse_header_line(line: &str) -> Option<Gateway> {
         .map(str::to_string)
         .filter(|s| !s.is_empty() && s != "-");
     let location = grid_field
-        .splitn(2, ':')
-        .nth(1)
+        .split_once(':')
+        .map(|x| x.1)
         .map(str::trim)
         .map(str::to_string)
         .filter(|s| !s.is_empty() && s != "-");

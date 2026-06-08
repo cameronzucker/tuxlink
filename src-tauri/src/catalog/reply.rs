@@ -119,13 +119,13 @@ mod tests {
     #[test]
     fn raw_variant_serializes_to_tagged_object_not_a_runtime_error() {
         // Regression guard for the serde tagged-newtype trap: Raw is the dominant IPC path.
-        let v = serde_json::to_value(&ReplyView::Raw { text: "hello".into() }).unwrap();
+        let v = serde_json::to_value(ReplyView::Raw { text: "hello".into() }).unwrap();
         assert_eq!(v, serde_json::json!({ "kind": "raw", "text": "hello" }));
     }
 
     #[test]
     fn area_weather_serializes_with_camelcase_fields() {
-        let v = serde_json::to_value(&ReplyView::AreaWeather(AreaWeather {
+        let v = serde_json::to_value(ReplyView::AreaWeather(AreaWeather {
             product: "FPUS65 KPSR 050638".into(),
             office: "National Weather Service Phoenix AZ".into(),
             issued: "".into(),
