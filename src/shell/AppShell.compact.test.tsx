@@ -16,6 +16,9 @@ const COMPACT_CSS_MODULES = import.meta.glob('./compactShell.css', {
   query: '?raw',
   import: 'default',
 }) as Record<string, string>;
+const COMPACT_DRAWER_CSS = import.meta.glob('./RadioDrawer.css', {
+  eager: true, query: '?raw', import: 'default',
+}) as Record<string, string>;
 
 const desktopCss = DESKTOP_CSS_MODULES['./AppShell.css'];
 const compactCss = COMPACT_CSS_MODULES['./compactShell.css'];
@@ -46,21 +49,16 @@ describe('AppShell compact CSS contract (tuxlink-h7q7)', () => {
   });
 });
 
-describe('Compact panes grid (Task 6 — push drawer, not overlay)', () => {
+describe('Compact panes grid (tuxlink-813d — overlay drawer replaces push)', () => {
   const block = compactCss.slice(compactCss.indexOf(COMPACT));
-  it('uses a 48px rail + 3-column base (no radio panel)', () => {
+  it('uses a 48px rail + 3-column base (reader keeps full 1fr — no 4th column)', () => {
+    // The compact panes grid is exactly 3 columns; no 4th column for the drawer.
     expect(block).toMatch(/\.layout-b \.panes \{\s*grid-template-columns:\s*48px 380px 1fr;/);
   });
-  it('reserves a collapsible 44px grip / 400px open drawer track with-dock', () => {
-    expect(block).toMatch(/grid-template-columns:\s*48px 380px 1fr 44px;/); // closed: grip
-    expect(block).toMatch(/grid-template-columns:\s*48px 380px 1fr 400px;/); // open: panel
-  });
-  it('drives the open width off the .drawer-open class (single layout source of truth)', () => {
-    expect(block).toContain('.panes--with-dock.drawer-open');
-  });
-  it('nulls the legacy 5th column in compact', () => {
-    expect(block).toContain('panes--with-legacy-dock');
-  });
+  // The old push-drawer 4th-column tests (44px grip / 400px open / drawer-open
+  // grid template / panes--with-legacy-dock column) are intentionally removed in
+  // tuxlink-813d D1. The overlay tests in the FZ-M1 overlay drawer block below
+  // are the new guards.
 });
 
 describe('Compact icon rail (Task 10) — a11y-safe label hide', () => {
@@ -90,5 +88,20 @@ describe('Compact ribbon + chrome (Task 11)', () => {
   });
   it('bumps titlebar controls to a 44px touch target', () => {
     expect(block).toMatch(/\.tux-titlebar \.tux-ctrl \{[\s\S]*?min-width:\s*44px/);
+  });
+});
+
+describe('FZ-M1 overlay drawer (tuxlink-813d)', () => {
+  it('compact panes grid no longer reserves a 4th radio column', () => {
+    const compactBlock = compactCss.slice(compactCss.indexOf(COMPACT));
+    expect(compactBlock).not.toContain('48px 380px 1fr 44px');
+    expect(compactBlock).not.toContain('48px 380px 1fr 400px');
+    expect(compactBlock).not.toContain('52px 380px 1fr 44px');
+    expect(compactBlock).not.toContain('52px 380px 1fr 400px');
+  });
+  it('compact radio drawer is an absolute overlay, not a grid column', () => {
+    const drawerCss = COMPACT_DRAWER_CSS['./RadioDrawer.css'];
+    const compactBlock = drawerCss.slice(drawerCss.indexOf('max-width: 1365px'));
+    expect(compactBlock).toContain('position: absolute');
   });
 });

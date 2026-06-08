@@ -15,69 +15,30 @@
 }
 
 @media (max-width: 1365px) {
-  /* Compact: the wrapper IS the grid's 4th column (the grid template reserves
-   * 44px closed / 400px open — see compactShell.css). It PUSHES the reader; it
-   * does NOT overlay (a child webview would paint over an HTML overlay). */
+  /* Compact (tuxlink-813d D1): the drawer is an ABSOLUTE OVERLAY pinned to the
+   * right edge of .panes. It is taken out of grid flow (position: absolute), so
+   * it does NOT occupy or create a 4th grid column; the reading pane keeps its
+   * full 1fr width underneath the overlay. Closed = only the 16px grip strip
+   * pokes from the right edge (translateX(100%) hides the 404px body off-screen).
+   * Open = slides in 220ms; grip becomes the close-tab on the panel's left edge.
+   * CSS values lifted from 2026-06-08-fzm1-overlay-behavior.html (proven at
+   * 1280×800). */
   .radio-drawer {
-    display: flex;
-    height: 100%;
-    min-width: 0;
-    overflow: hidden;
-    position: relative;
-    background: var(--surface);
-    border-left: 1px solid var(--border);
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: 404px; z-index: 5;
+    display: flex; flex-direction: column;
+    background: var(--surface); border-left: 1px solid var(--border);
+    box-shadow: -14px 0 34px rgba(0, 0, 0, 0.5);
+    transform: translateX(100%); transition: transform 220ms ease;
   }
-  /* Body: fills the column when open; clipped to 0 when the column is 44px. The
-   * panel cosmetically slides in (composited transform); the reader reflow that
-   * repositions the form-viewer webview is INSTANT (grid-template-columns has no
-   * transition), so no transitionend re-measure is needed. */
-  .radio-drawer-body {
-    display: block;
-    flex: 1 1 auto;
-    min-width: 0;
-    height: 100%;
-    overflow: auto;
-    transform: translateX(100%);
-    transition: transform 220ms ease;
-  }
-  .panes.drawer-open .radio-drawer-body {
-    transform: translateX(0);
-  }
-  /* Override the panel's own rigid 400px floor so it fits the column.
-   * Specificity (0,2,0) beats RadioPanel.css's `.radio-panel` (0,1,0)
-   * regardless of which (possibly lazy) chunk loads later. */
-  .radio-drawer-body .radio-panel {
-    width: 100%;
-    min-width: 0;
-  }
-
-  /* Grip: >=44px-wide hit target. Closed → it fills the 44px column (centered).
-   * Open → a tab pinned to the panel's left edge to collapse without dropping
-   * the connection. Always reachable; never under the webview (it lives in its
-   * own grid track, not over the reader). */
+  .panes.drawer-open .radio-drawer { transform: translateX(0); }
   .radio-drawer-grip {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: 0 0 44px;
-    width: 44px;
-    min-height: 44px;
-    padding: 0;
-    background: var(--surface-2);
-    border: 0;
-    border-right: 1px solid var(--border);
-    cursor: pointer;
+    position: absolute; left: -16px; top: 50%; transform: translateY(-50%);
+    width: 16px; height: 60px; min-height: 56px;
+    background: var(--surface-2); border: 1px solid var(--border); border-right: 0;
+    border-radius: 7px 0 0 7px; display: grid; place-items: center; cursor: pointer; z-index: 6;
   }
-  .panes.drawer-open .radio-drawer-grip {
-    position: absolute;
-    top: 50%;
-    left: 0;
-    transform: translateY(-50%);
-    height: 56px;
-    min-height: 56px;
-    border-radius: 0 6px 6px 0;
-    z-index: 1;
-  }
+  .radio-drawer-body { display: block; flex: 1 1 auto; min-width: 0; height: 100%; overflow: auto; }
   .radio-drawer-grip-dot {
     width: 10px;
     height: 10px;

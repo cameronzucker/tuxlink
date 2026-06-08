@@ -8,23 +8,15 @@
  */
 @media (max-width: 1365px) {
   /* ====================================================================
-   * Panes grid (Task 6). 200px sidebar → 48px rail. The radio panel is a
-   * COLLAPSIBLE 4th column (push drawer): 44px grip when closed, 400px when
-   * open. NOT an absolute overlay (a child webview would paint over it —
-   * Codex adrev R1 #5). The legacy 5th column (dead today) collapses into the
-   * same template. Reader 1fr at 1280px: ~808px (closed) / ~452px (open) —
-   * both beat the desktop dock's ~300px.
+   * Panes grid (tuxlink-813d D1). 200px sidebar → 48px rail. The radio panel
+   * is an ABSOLUTE OVERLAY (tuxlink-813d), NOT a grid column — reader keeps
+   * full 1fr regardless of drawer state. The old push-drawer 4th-column
+   * reservations (44px closed / 400px open) are intentionally removed here;
+   * they live only in desktop AppShell.css (>=1366px, unscoped). The legacy
+   * 5th column (dead today) collapses into the same 3-column template.
    * ==================================================================== */
   .layout-b .panes {
     grid-template-columns: 48px 380px 1fr;
-  }
-  .layout-b .panes--with-dock,
-  .layout-b .panes--with-dock.panes--with-legacy-dock {
-    grid-template-columns: 48px 380px 1fr 44px; /* closed: grip only */
-  }
-  .layout-b .panes--with-dock.drawer-open,
-  .layout-b .panes--with-dock.panes--with-legacy-dock.drawer-open {
-    grid-template-columns: 48px 380px 1fr 400px; /* open: panel */
   }
 
   /* ====================================================================
