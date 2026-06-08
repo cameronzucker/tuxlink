@@ -8,100 +8,229 @@
  */
 @media (max-width: 1365px) {
   /* ====================================================================
-   * Panes grid (tuxlink-813d D1). 200px sidebar → 48px rail. The radio panel
-   * is an ABSOLUTE OVERLAY (tuxlink-813d), NOT a grid column — reader keeps
-   * full 1fr regardless of drawer state. The old push-drawer 4th-column
-   * reservations (44px closed / 400px open) are intentionally removed here;
-   * they live only in desktop AppShell.css (>=1366px, unscoped). The legacy
-   * 5th column (dead today) collapses into the same 3-column template.
+   * Panes grid (tuxlink-813d D1/D2/D3). 200px sidebar → 52px vertical-text
+   * rail. The radio panel is an ABSOLUTE OVERLAY (tuxlink-813d D1), NOT a grid
+   * column — reader keeps full 1fr regardless of drawer state. The old
+   * push-drawer 4th-column reservations (44px closed / 400px open) are
+   * intentionally removed here; they live only in desktop AppShell.css
+   * (>=1366px, unscoped). The legacy 5th column (dead today) collapses into
+   * the same 3-column template. The rail widened 48→52px for the vertical-text
+   * tabs (D2).
    * ==================================================================== */
   .layout-b .panes {
-    grid-template-columns: 48px 380px 1fr;
+    grid-template-columns: 52px 380px 1fr;
+  }
+
+  /* Belt-and-suspenders (tuxlink-813d D3): explicitly pin the message-list pane
+   * to column 2 and the reading pane / connection stub to column 3 so grid
+   * auto-flow can NEVER shift them, even if a future change drops a `.panes`
+   * child out of flow (the original grid-implosion root cause). `.sidebar` (the
+   * rail, column 1) and the absolute `.radio-drawer` overlay are intentionally
+   * unpinned. MessageList's ROOT element is `.rows-pane`; the reading pane and
+   * StubPanel both carry `.reading-pane`. Both are DIRECT `.panes` children. */
+  .layout-b .panes > .rows-pane {
+    grid-column: 2;
+  }
+  .layout-b .panes > .reading-pane {
+    grid-column: 3;
   }
 
   /* ====================================================================
-   * Icon rail (Task 10). Layout is @media-driven (NOT gated on the .compact
-   * JS class) so CSS and JS can't disagree about the mode (Codex adrev R1 #2).
-   * The 48px width comes from the panes grid above; these rules hide label
-   * TEXT (kept in the a11y tree via clip — Claude adrev F1/F4), center icons,
-   * and pin >=44px rows. Only the EXPANDED state is JS (.is-expanded).
+   * Vertical-text folder rail (tuxlink-813d D2/D3). Layout is @media-driven
+   * (NOT gated on the .compact JS class) so CSS and JS can't disagree about
+   * the mode (Codex adrev R1 #2). The collapsed rail renders folder names as
+   * vertical-text tabs (bottom-to-top, Outlook-spine convention) so every
+   * folder is readable without expanding — no more four identical `▢` icons.
+   *
+   * D3 structural fix: the rail NEVER leaves the grid (no `.is-expanded`
+   * `position: absolute` mutation). The expanded labeled navigation is a
+   * SEPARATE absolutely-positioned `.sidebar-flyout` element (with a scrim)
+   * rendered over the message list, so the other panes never shift columns.
    * ==================================================================== */
   .layout-b .sidebar {
-    padding: 8px 0;
-    overflow: visible;
+    padding: 6px 0;
+    overflow: hidden auto;
   }
-  /* Hide label text but KEEP it in the accessibility tree (clip, not
-   * display:none — else icon-only buttons are nameless to AT, F1). Wrapping
-   * the section heading text in its own span (F4) keeps the Folders `+`
-   * create-folder button visible. */
-  .layout-b .sidebar .nav-label,
-  .layout-b .sidebar .section-label-text {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    border: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-  /* Counts/badges are decorative — safe to drop entirely in the rail. */
-  .layout-b .sidebar .nav-item .count,
-  .layout-b .sidebar .nav-item .v01-badge {
-    display: none;
-  }
-  .layout-b .sidebar .nav-item {
+  /* Vertical-text tab — proven values lifted from
+   * docs/design/mockups/2026-06-08-fzm1-vertical-rail.html (verified 1280×800). */
+  .layout-b .sidebar .vtab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
+    gap: 6px;
     min-height: 44px;
-    padding: 7px 0;
-    gap: 0;
+    padding: 12px 0;
+    border-left: 2px solid transparent;
+    border-right: 0;
+    border-top: 0;
+    border-bottom: 0;
+    width: 100%;
+    cursor: pointer;
+    color: var(--text-dim);
+    background: none;
   }
-  .layout-b .sidebar .nav-item .icon {
-    width: auto;
-    font-size: 18px;
+  /* Bottom-to-top reading: vertical-rl for honest layout sizing, then
+   * rotate(180deg) to flip the glyphs to read upward (head-tilt-left). */
+  .layout-b .sidebar .vtab .vlabel {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    font-size: 13px;
+    font-weight: 550;
+    line-height: 1;
   }
-  /* F5 — inset focus ring (the default outline is clipped by .panes overflow). */
-  .layout-b .sidebar .nav-item:focus-visible {
+  /* `--surface-3` is the mockup's raised-surface tier; tuxlink's design system
+   * names that tier `--elevated`, so fall back to it (the var is undefined in
+   * tuxlink themes). */
+  .layout-b .sidebar .vtab.active {
+    background: var(--surface-3, var(--elevated));
+    color: var(--text);
+    border-left-color: var(--accent);
+  }
+  .layout-b .sidebar .vtab:hover:not(.active) {
+    background: var(--surface-2);
+  }
+  /* Reserved count slot — keeps labels aligned whether or not a tab has a
+   * count chip. */
+  .layout-b .sidebar .vtab .vslot {
+    flex: 0 0 auto;
+    min-height: 16px;
+    display: grid;
+    place-items: center;
+  }
+  /* Count chip — same vertical orientation as the labels (no horizontal/
+   * vertical alternation). */
+  .layout-b .sidebar .vtab .vcount {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    font-size: 10px;
+    font-weight: 700;
+    color: #1a1206;
+    background: var(--accent);
+    border-radius: 9px;
+    width: 16px;
+    min-height: 16px;
+    display: grid;
+    place-items: center;
+    padding: 4px 0;
+  }
+  /* Inset focus ring (the default outline is clipped by .panes overflow). */
+  .layout-b .sidebar .vtab:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
   }
-  /* Expanded overlay — floats the full labeled sidebar over the list (overlay,
-   * not push: the list is HTML so no webview-occlusion concern). */
-  .layout-b .sidebar.is-expanded {
+
+  /* Expanded labeled flyout + scrim (tuxlink-813d D3). The flyout is a separate
+   * absolute overlay anchored to `.panes` (already `position: relative` in
+   * AppShell.css), over the message list — the rail's grid track is untouched
+   * so no pane shifts. The scrim dims the rest + closes on click (JS handler). */
+  .layout-b .sidebar-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 7;
+    background: rgba(0, 0, 0, 0.28);
+  }
+  .layout-b .sidebar-flyout {
     position: absolute;
     top: 0;
     left: 0;
     bottom: 0;
-    width: 220px;
-    z-index: 6;
+    width: 240px;
+    z-index: 8;
     background: var(--surface);
-    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.35);
+    box-shadow: 6px 0 24px rgba(0, 0, 0, 0.45);
     overflow: auto;
-    padding: 12px 0;
+    padding: 6px 0;
   }
-  .layout-b .sidebar.is-expanded .nav-label,
-  .layout-b .sidebar.is-expanded .section-label-text {
-    position: static;
-    width: auto;
-    height: auto;
-    margin: 0;
-    overflow: visible;
-    clip-path: none;
-    white-space: normal;
+  /* The flyout shows the full DESKTOP-style labeled nav rows. The desktop
+   * `.sidebar .nav-item` rules in AppShell.css do NOT match `.sidebar-flyout`,
+   * so the flyout carries its own full set of visual rules (layout + color +
+   * active/hover/disabled/count/badge) here — desktop stays byte-identical. */
+  .layout-b .sidebar-flyout .section-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px 4px;
   }
-  .layout-b .sidebar.is-expanded .nav-item .count {
-    display: revert;
-  }
-  .layout-b .sidebar.is-expanded .nav-item {
-    justify-content: flex-start;
-    padding: 7px 18px;
+  .layout-b .sidebar-flyout .nav-item {
+    display: flex;
+    align-items: center;
     gap: 10px;
+    width: 100%;
+    min-height: 44px;
+    padding: 7px 18px;
+    justify-content: flex-start;
+    color: var(--text);
+    border-left: 2px solid transparent;
+    border-top: 0;
+    border-right: 0;
+    border-bottom: 0;
+    border-radius: 0;
+    background: none;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
-  .layout-b .sidebar.is-expanded .nav-item .icon {
+  .layout-b .sidebar-flyout .nav-item:hover:not(.active):not(.disabled) {
+    background: var(--surface-2);
+  }
+  .layout-b .sidebar-flyout .nav-item.active {
+    background: var(--accent-soft);
+    color: var(--accent-2);
+    border-left-color: var(--accent);
+  }
+  .layout-b .sidebar-flyout .nav-item .icon {
     width: 14px;
-    font-size: 11px;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 13px;
+    flex: 0 0 auto;
   }
+  .layout-b .sidebar-flyout .nav-item.active .icon {
+    color: var(--accent);
+  }
+  .layout-b .sidebar-flyout .nav-item .count {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .layout-b .sidebar-flyout .nav-item.disabled,
+  .layout-b .sidebar-flyout .nav-item:disabled {
+    color: var(--text-faint);
+    cursor: not-allowed;
+  }
+  .layout-b .sidebar-flyout .nav-item .v01-badge {
+    font-size: 9px;
+    background: var(--surface-2);
+    color: var(--text-faint);
+    padding: 1px 5px;
+    border-radius: 3px;
+    letter-spacing: 0.04em;
+    margin-left: auto;
+  }
+  .layout-b .sidebar-flyout .nav-item.proto {
+    padding-left: 40px;
+  }
+  /* The Folders `+` create button + empty-hint mirror the desktop styles
+   * (defined unscoped in AppShell.css, so they apply in the flyout too — but
+   * re-pin touch height for the compact shell). */
+  .layout-b .sidebar-flyout .folder-create-btn {
+    min-height: 32px;
+    min-width: 32px;
+  }
+  .layout-b .sidebar-flyout .nav-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
   /* Rail expand toggle (a rail header button) — shown only in compact. */
   .layout-b .rail-expand-btn {
     display: flex;
@@ -151,10 +280,6 @@
   .layout-b .dashboard .dash-source-segment {
     font-size: 12px;
   }
-  /* Sidebar section labels (when expanded) + MenuBar + status floors. */
-  .layout-b .sidebar .section-label {
-    font-size: 12px;
-  }
   /* MenuBar trigger buttons + dropdown menu items >=44px touch. */
   .tux-menu > button,
   .tux-dropdown .tux-mi {
@@ -173,11 +298,6 @@
   .layout-b .statusbar .status-item {
     min-height: 44px;
   }
-}
-
-/* Rail expand toggle is hidden at desktop (the rest is inside the @media). */
-.rail-expand-btn {
-  display: none;
 }
 
 /* Rail expand toggle is hidden at desktop (the rest is inside the @media). */

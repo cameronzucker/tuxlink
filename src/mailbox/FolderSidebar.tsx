@@ -111,16 +111,27 @@ export const FolderSidebar = memo(function FolderSidebar({
   // null when nothing is being dragged or the drag is outside a folder.
   const [dragOver, setDragOver] = useState<string | null>(null);
 
-  // FZ-M1 compact rail expand overlay (tuxlink-h7q7). The 36/48px icon rail
-  // expands to a labeled overlay over the message list. CSS-gated to compact;
-  // a no-op at desktop (the expand button is display:none there). Dismissal:
-  // selecting a folder, an outside pointer-down, or Escape (Claude adrev F11).
+  // FZ-M1 compact rail expand overlay (tuxlink-h7q7 → restructured tuxlink-813d
+  // D3). The 52px vertical-text rail ALWAYS stays in the grid; the labeled
+  // navigation expands as a SEPARATE absolutely-positioned flyout (sibling of
+  // the rail) over the message list, with a scrim. The rail never goes
+  // `position: absolute`, so the other panes never shift (grid-implosion fix).
+  // CSS-gated to compact; a no-op at desktop (the expand button is
+  // display:none there). Dismissal: selecting a folder/connection, a scrim
+  // click, an outside pointer-down, or Escape (Claude adrev F11).
   const [railExpanded, setRailExpanded] = useState(false);
-  const navRef = useRef<HTMLElement | null>(null);
+  const railRef = useRef<HTMLElement | null>(null);
+  const flyoutRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!railExpanded) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (navRef.current && !navRef.current.contains(e.target as Node)) setRailExpanded(false);
+      const target = e.target as Node;
+      // Stay open only when the pointer-down lands inside the rail OR the
+      // flyout. The scrim is neither, so a scrim pointer-down also closes
+      // (in addition to its own onClick handler) — both paths are safe.
+      const insideRail = railRef.current?.contains(target);
+      const insideFlyout = flyoutRef.current?.contains(target);
+      if (!insideRail && !insideFlyout) setRailExpanded(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setRailExpanded(false);
@@ -167,25 +178,74 @@ export const FolderSidebar = memo(function FolderSidebar({
     }
   }, [selectedConnection]);
 
-  return (
-    <nav
-      className={`sidebar${railExpanded ? ' is-expanded' : ''}`}
-      data-testid="folder-sidebar"
-      aria-label="Mailbox and connections"
-      ref={navRef}
-    >
-      {/* Rail expand toggle — CSS-hidden at desktop; in compact it reveals the
-          full labeled sidebar as an overlay over the message list (tuxlink-h7q7). */}
+  // Collapse on any folder/connection selection — shared by rail tabs and
+  // flyout rows.
+  const selectFolderAndCollapse = (folder: MailboxFolderRef) => {
+    onSelectFolder(folder);
+    setRailExpanded(false);
+  };
+
+  // ---- Collapsed rail (always rendered, stays in the grid) -----------------
+  // Each system + user folder is a vertical-text tab: a reserved `.vslot`
+  // (carrying the `.vcount` chip when count>0, kept whether or not a count
+  // exists so labels stay aligned) + a `.vlabel`. The drag-drop handlers ride
+  // on the tab exactly as the old `.nav-item` rows did. The `☰` expand button
+  // opens the flyout. Section headings / the create-`+` / the Connections
+  // accordion are NOT on the rail — they live only in the flyout.
+  const renderRailTab = (
+    key: string,
+    testId: string,
+    label: string,
+    folderRef: MailboxFolderRef | undefined,
+    active: boolean,
+    count: number | undefined,
+    dropSlug: string | undefined,
+    onContextMenu?: (e: React.MouseEvent) => void,
+  ) => {
+    const isDropTarget = dropSlug !== undefined && dragOver === dropSlug;
+    return (
       <button
+        key={key}
         type="button"
-        className="rail-expand-btn"
-        data-testid="rail-expand-btn"
-        aria-expanded={railExpanded}
-        aria-label={railExpanded ? 'Collapse folder labels' : 'Expand folder labels'}
-        onClick={() => setRailExpanded((x) => !x)}
+        data-testid={testId}
+        className={['vtab', active ? 'active' : '', isDropTarget ? 'drop-target' : '']
+          .filter(Boolean)
+          .join(' ')}
+        aria-current={active ? 'true' : undefined}
+        onClick={() => {
+          // Non-folder (disabled) system tabs just collapse; only real folders
+          // fire selection (mirrors the pre-restructure isFolder guard).
+          if (folderRef !== undefined) selectFolderAndCollapse(folderRef);
+          else setRailExpanded(false);
+        }}
+        onContextMenu={onContextMenu}
+        onDragOver={dropSlug !== undefined ? makeDragOver(dropSlug) : undefined}
+        onDragLeave={dropSlug !== undefined ? handleDragLeave(dropSlug) : undefined}
+        onDrop={dropSlug !== undefined ? makeDropHandler(dropSlug as MailboxFolderRef) : undefined}
+        style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
       >
-        <span aria-hidden="true">{railExpanded ? '⟨' : '☰'}</span>
+        <span className="vslot">
+          {typeof count === 'number' && count > 0 && (
+            <span className="vcount" data-testid={`folder-count-${dropSlug ?? folderRef}`}>
+              {count}
+            </span>
+          )}
+        </span>
+        <span className="vlabel">{label}</span>
       </button>
+    );
+  };
+
+  // ---- Flyout labeled nav (rendered only when expanded) --------------------
+  // The full labeled navigation (Mailbox section + items, Folders section +
+  // create `+`, user folders, Connections accordion). Folder ROWS here use
+  // `flyout-`-prefixed testids so they don't collide with the rail's
+  // `folder-<id>` / `user-folder-<slug>` (the rail owns those; collision would
+  // break existing getBy* selection tests with a duplicate-testid error). The
+  // create button + connection rows appear ONLY here, so they keep their
+  // existing testids without collision.
+  const renderFlyoutNav = () => (
+    <>
       <div className="section-label">
         <span className="section-label-text">Mailbox</span>
       </div>
@@ -207,13 +267,13 @@ export const FolderSidebar = memo(function FolderSidebar({
           <button
             key={item.label}
             type="button"
-            data-testid={item.id ? `folder-${item.id}` : `folder-${item.label.toLowerCase()}`}
+            data-testid={item.id ? `flyout-folder-${item.id}` : `flyout-folder-${item.label.toLowerCase()}`}
             className={className}
             disabled={!item.enabled}
             aria-current={active ? 'true' : undefined}
             onClick={() => {
-              if (isFolder) onSelectFolder(item.id as MailboxFolder);
-              setRailExpanded(false);
+              if (isFolder) selectFolderAndCollapse(item.id as MailboxFolder);
+              else setRailExpanded(false);
             }}
             onDragOver={isFolder && dropSlug ? makeDragOver(dropSlug) : undefined}
             onDragLeave={isFolder && dropSlug ? handleDragLeave(dropSlug) : undefined}
@@ -225,7 +285,7 @@ export const FolderSidebar = memo(function FolderSidebar({
             </span>
             <span className="nav-label">{item.label}</span>
             {typeof count === 'number' && count > 0 && (
-              <span className="count" data-testid={`folder-count-${item.id}`}>
+              <span className="count" data-testid={`flyout-folder-count-${item.id}`}>
                 {count}
               </span>
             )}
@@ -260,15 +320,12 @@ export const FolderSidebar = memo(function FolderSidebar({
           <button
             key={uf.slug}
             type="button"
-            data-testid={`user-folder-${uf.slug}`}
+            data-testid={`flyout-user-folder-${uf.slug}`}
             className={['nav-item', active ? 'active' : '', isDropTarget ? 'drop-target' : '']
               .filter(Boolean)
               .join(' ')}
             aria-current={active ? 'true' : undefined}
-            onClick={() => {
-              onSelectFolder(uf.slug);
-              setRailExpanded(false);
-            }}
+            onClick={() => selectFolderAndCollapse(uf.slug)}
             onContextMenu={(e) => {
               if (onFolderContextMenu) {
                 e.preventDefault();
@@ -341,6 +398,88 @@ export const FolderSidebar = memo(function FolderSidebar({
             })}
         </div>
       ))}
-    </nav>
+    </>
+  );
+
+  return (
+    <>
+      {/* Collapsed vertical-text rail — ALWAYS in the grid (never absolute), so
+          expanding never shifts the other panes (tuxlink-813d D3). */}
+      <nav
+        className="sidebar"
+        data-testid="folder-sidebar"
+        aria-label="Mailbox and connections"
+        ref={railRef}
+      >
+        {/* Rail expand toggle — CSS-hidden at desktop; in compact it opens the
+            labeled flyout over the message list (tuxlink-h7q7 / tuxlink-813d). */}
+        <button
+          type="button"
+          className="rail-expand-btn"
+          data-testid="rail-expand-btn"
+          aria-expanded={railExpanded}
+          aria-label={railExpanded ? 'Collapse folder labels' : 'Expand folder labels'}
+          onClick={() => setRailExpanded((x) => !x)}
+        >
+          <span aria-hidden="true">{railExpanded ? '⟨' : '☰'}</span>
+        </button>
+
+        {MAILBOX_ITEMS.map((item) => {
+          const isFolder = item.id !== undefined && item.enabled;
+          const active = isFolder && item.id === selectedFolder;
+          const count = item.id ? counts[item.id] : undefined;
+          const testId = item.id ? `folder-${item.id}` : `folder-${item.label.toLowerCase()}`;
+          // Disabled (non-folder) system items render as a flat, non-selecting
+          // tab; today every MAILBOX_ITEM is enabled, but keep the guard.
+          return renderRailTab(
+            item.label,
+            testId,
+            item.label,
+            isFolder ? (item.id as MailboxFolderRef) : undefined,
+            !!active,
+            count,
+            isFolder ? item.id : undefined,
+          );
+        })}
+
+        {userFolders.map((uf) =>
+          renderRailTab(
+            uf.slug,
+            `user-folder-${uf.slug}`,
+            uf.displayName,
+            uf.slug,
+            uf.slug === selectedFolder,
+            undefined,
+            uf.slug,
+            (e) => {
+              if (onFolderContextMenu) {
+                e.preventDefault();
+                onFolderContextMenu(uf.slug, e.clientX, e.clientY);
+              }
+            },
+          ),
+        )}
+      </nav>
+
+      {/* Expanded flyout — a SEPARATE absolutely-positioned overlay over the
+          message list, with a scrim. The rail above stays in the grid. */}
+      {railExpanded && (
+        <>
+          <div
+            className="sidebar-scrim"
+            data-testid="sidebar-scrim"
+            onClick={() => setRailExpanded(false)}
+          />
+          <nav
+            className="sidebar-flyout"
+            data-testid="sidebar-flyout"
+            aria-label="Folders and connections"
+            ref={flyoutRef}
+          >
+            {renderFlyoutNav()}
+          </nav>
+        </>
+      )}
+    </>
   );
 });

@@ -51,9 +51,10 @@ describe('AppShell compact CSS contract (tuxlink-h7q7)', () => {
 
 describe('Compact panes grid (tuxlink-813d — overlay drawer replaces push)', () => {
   const block = compactCss.slice(compactCss.indexOf(COMPACT));
-  it('uses a 48px rail + 3-column base (reader keeps full 1fr — no 4th column)', () => {
+  it('uses a 52px vertical-tab rail + 3-column base (reader keeps full 1fr — no 4th column)', () => {
     // The compact panes grid is exactly 3 columns; no 4th column for the drawer.
-    expect(block).toMatch(/\.layout-b \.panes \{\s*grid-template-columns:\s*48px 380px 1fr;/);
+    // tuxlink-813d D2/D3: the rail widened 48→52px for the vertical-text tabs.
+    expect(block).toMatch(/\.layout-b \.panes \{\s*grid-template-columns:\s*52px 380px 1fr;/);
   });
   // The old push-drawer 4th-column tests (44px grip / 400px open / drawer-open
   // grid template / panes--with-legacy-dock column) are intentionally removed in
@@ -61,19 +62,26 @@ describe('Compact panes grid (tuxlink-813d — overlay drawer replaces push)', (
   // are the new guards.
 });
 
-describe('Compact icon rail (Task 10) — a11y-safe label hide', () => {
+describe('Compact rail (tuxlink-813d D2/D3) — vertical-text tabs + flyout', () => {
   const block = compactCss.slice(compactCss.indexOf(COMPACT));
-  it('clips labels (keeps them in the a11y tree) instead of display:none (F1)', () => {
-    // The nav-label rule must use clip-path, NOT display:none.
-    expect(block).toMatch(/\.nav-label[\s\S]{0,400}clip-path:\s*inset\(50%\)/);
-    expect(block).not.toMatch(/\.nav-label[^}]*display:\s*none/);
+  // tuxlink-813d D2: the indistinct icon rail is replaced with vertical-text
+  // tabs (bottom-to-top, Outlook-spine). The a11y-clip label-hide rules and the
+  // `.sidebar.is-expanded` absolute mutation are GONE (D3 structural fix): the
+  // rail never leaves the grid; the expanded nav is a separate `.sidebar-flyout`.
+  it('compact rail uses bottom-to-top vertical-text tabs', () => {
+    expect(block).toContain('writing-mode: vertical-rl');
+    expect(block).toContain('rotate(180deg)'); // bottom-to-top reading
+    expect(block).toContain('grid-template-columns: 52px 380px 1fr');
   });
-  it('pins rail rows to >=44px and gives an inset focus ring (F5)', () => {
-    expect(block).toMatch(/\.sidebar \.nav-item \{[\s\S]*?min-height:\s*44px/);
-    expect(block).toMatch(/\.nav-item:focus-visible \{[\s\S]*?outline-offset:\s*-2px/);
+  it('expanded rail does NOT make .sidebar position:absolute (grid stays intact)', () => {
+    // Root fix for problem 2 (grid implosion): the rail never goes absolute.
+    expect(block).not.toMatch(/\.sidebar\.is-expanded\s*\{[^}]*position:\s*absolute/);
+    // The expanded nav is its own absolutely-positioned flyout element.
+    expect(block).toContain('.sidebar-flyout');
   });
-  it('expands to an overlay (absolute), not a push reflow (open item 4)', () => {
-    expect(block).toMatch(/\.sidebar\.is-expanded \{[\s\S]*?position:\s*absolute/);
+  it('pins vertical-tab rows to >=44px and gives an inset focus ring', () => {
+    expect(block).toMatch(/\.sidebar \.vtab \{[\s\S]*?min-height:\s*44px/);
+    expect(block).toMatch(/\.vtab:focus-visible \{[\s\S]*?outline-offset:\s*-2px/);
   });
 });
 

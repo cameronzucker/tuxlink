@@ -152,6 +152,16 @@ function renderShell() {
   );
 }
 
+// tuxlink-813d D3: the Connections accordion moved into the FolderSidebar
+// flyout (only mounted while the rail is expanded). Open the flyout, then
+// click the session header + protocol. (Selecting a protocol closes the
+// flyout, which does not affect the selected connection.)
+function selectConnection(sessTestId: string, protoTestId: string) {
+  fireEvent.click(screen.getByTestId('rail-expand-btn'));
+  fireEvent.click(screen.getByTestId(sessTestId));
+  fireEvent.click(screen.getByTestId(protoTestId));
+}
+
 const RUNNING: ModemStatus = {
   state: 'connected-irs',
   peer: 'W7RMS-10',
@@ -227,9 +237,8 @@ describe('<AppShell> radio panel', () => {
     renderShell();
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
-    // Expand Winlink (CMS) accordion, then pick ARDOP HF.
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
+    // Open the flyout, expand Winlink (CMS) accordion, then pick ARDOP HF.
+    selectConnection('sess-cms', 'proto-cms-ardop-hf');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     // ArdopRadioPanel mounts; SignalSection is unique to it among the
     // built panels (Telnet / Packet don't mount SignalSection).
@@ -265,8 +274,7 @@ describe('<AppShell> radio panel', () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-vara-hf'));
+    selectConnection('sess-cms', 'proto-cms-vara-hf');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('vara-host-input')).toBeInTheDocument();
     // The placeholder must NOT mount alongside — VaraRadioPanel owns
@@ -277,8 +285,7 @@ describe('<AppShell> radio panel', () => {
   it('renders VaraRadioPanel when VARA FM is selected (modem stopped)', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-vara-fm'));
+    selectConnection('sess-cms', 'proto-cms-vara-fm');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
@@ -291,8 +298,7 @@ describe('<AppShell> radio panel', () => {
   it('renders VaraRadioPanel with P2P title when VARA HF is selected under P2P', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-p2p'));
-    fireEvent.click(screen.getByTestId('proto-p2p-vara-hf'));
+    selectConnection('sess-p2p', 'proto-p2p-vara-hf');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('vara-host-input')).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara HF P2P');
@@ -302,8 +308,7 @@ describe('<AppShell> radio panel', () => {
   it('renders VaraRadioPanel with P2P title when VARA FM is selected under P2P', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-p2p'));
-    fireEvent.click(screen.getByTestId('proto-p2p-vara-fm'));
+    selectConnection('sess-p2p', 'proto-p2p-vara-fm');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM P2P');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();

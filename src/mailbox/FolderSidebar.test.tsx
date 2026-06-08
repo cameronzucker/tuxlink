@@ -3,18 +3,30 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { FolderSidebar } from './FolderSidebar';
 import { SESSION_TYPES } from '../connections/sessionTypes';
 
+// tuxlink-813d D2/D3 restructure: the collapsed rail (always rendered, stays in
+// the grid) owns the `folder-<id>` / `user-folder-<slug>` vertical tabs + the `☰`
+// expand button. The full labeled nav — section headings (Mailbox/Folders/
+// Connections), the Folders `+` create button, the Connections accordion
+// (`sess-*` / `proto-*`), and the empty-hint — lives ONLY in the separate
+// `.sidebar-flyout`, rendered when expanded. Tests that touch those controls
+// now click `rail-expand-btn` first to mount the flyout. Selection tests on the
+// rail tabs stay as-is (the rail owns `folder-<id>` / `user-folder-<slug>`).
+
 describe('<FolderSidebar> (Mock B)', () => {
-  it('renders the Mailbox + Connections sections with their items', () => {
+  it('renders the rail folder tabs + the flyout sections when expanded', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />);
     expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
-    expect(screen.getByText('Mailbox')).toBeInTheDocument();
-    expect(screen.getByText('Connections')).toBeInTheDocument();
+    // Rail tabs (always present, even collapsed).
     expect(screen.getByTestId('folder-inbox')).toBeInTheDocument();
     expect(screen.getByTestId('folder-sent')).toBeInTheDocument();
     expect(screen.getByTestId('folder-outbox')).toBeInTheDocument();
     expect(screen.getByTestId('folder-drafts')).toBeInTheDocument();
     expect(screen.getByTestId('folder-archive')).toBeInTheDocument();
-    // Connections accordion: session-type headers replace old static items
+    // Sections + the Connections accordion live in the flyout — expand first.
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
+    expect(screen.getByTestId('sidebar-flyout')).toBeInTheDocument();
+    expect(screen.getByText('Mailbox')).toBeInTheDocument();
+    expect(screen.getByText('Connections')).toBeInTheDocument();
     expect(screen.getByTestId('sess-cms')).toBeInTheDocument();
     expect(screen.getByTestId('sess-radio-only')).toBeInTheDocument();
   });
@@ -62,12 +74,15 @@ describe('<FolderSidebar> (Mock B)', () => {
     expect(onSelect).toHaveBeenCalledWith('archive');
   });
 
-  it('shows counts for Inbox + Sent (suppresses zero/missing)', () => {
+  it('shows counts for Inbox + Sent (suppresses zero/missing) as vertical chips', () => {
     render(
       <FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} counts={{ inbox: 3, sent: 87 }} />,
     );
+    // Rail count chips (`.vcount`) carry the `folder-count-<id>` testid.
     expect(screen.getByTestId('folder-count-inbox')).toHaveTextContent('3');
     expect(screen.getByTestId('folder-count-sent')).toHaveTextContent('87');
+    // Outbox has no count → no chip.
+    expect(screen.queryByTestId('folder-count-outbox')).toBeNull();
   });
 });
 
@@ -83,12 +98,13 @@ describe('<FolderSidebar> — user folders (tuxlink-f62f)', () => {
     { slug: 'disaster-prep', displayName: 'Disaster Prep', createdAt: '2026-06-02T13:00:00Z' },
   ];
 
-  it('renders the Folders section heading', () => {
+  it('renders the Folders section heading (in the flyout)', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     expect(screen.getByText('Folders')).toBeInTheDocument();
   });
 
-  it('shows the empty-hint copy when no user folders exist + create is wired', () => {
+  it('shows the empty-hint copy when no user folders exist + create is wired (in the flyout)', () => {
     render(
       <FolderSidebar
         selectedFolder="inbox"
@@ -96,15 +112,17 @@ describe('<FolderSidebar> — user folders (tuxlink-f62f)', () => {
         onCreateFolder={vi.fn()}
       />,
     );
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     expect(screen.getByTestId('folders-empty-hint')).toHaveTextContent('Click + to create one');
   });
 
-  it('does NOT show the + button when onCreateFolder is absent', () => {
+  it('does NOT show the + button when onCreateFolder is absent (even expanded)', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     expect(screen.queryByTestId('folder-create-btn')).toBeNull();
   });
 
-  it('clicking the + button fires onCreateFolder', () => {
+  it('clicking the + button (in the flyout) fires onCreateFolder', () => {
     const onCreateFolder = vi.fn();
     render(
       <FolderSidebar
@@ -113,6 +131,7 @@ describe('<FolderSidebar> — user folders (tuxlink-f62f)', () => {
         onCreateFolder={onCreateFolder}
       />,
     );
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     fireEvent.click(screen.getByTestId('folder-create-btn'));
     expect(onCreateFolder).toHaveBeenCalledOnce();
   });
@@ -173,10 +192,12 @@ describe('FolderSidebar — Packet connection entry (accordion)', () => {
   // removed for visual cohesion — the same info already renders in the
   // DashboardRibbon connection chip. The Packet row now mirrors every
   // other transport row (label + selection only).
-  it('renders a selectable Packet (AX.25) item (under cms accordion)', () => {
+  it('renders a selectable Packet (AX.25) item (under cms accordion, in the flyout)', () => {
     render(
       <FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />,
     );
+    // The Connections accordion lives in the flyout — expand the rail first.
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     // Expand the CMS accordion to reveal protocols
     fireEvent.click(screen.getByTestId('sess-cms'));
     const item = screen.getByTestId('proto-cms-packet');
@@ -194,6 +215,7 @@ describe('FolderSidebar — Packet connection entry (accordion)', () => {
         onSelectConnection={onSelectConnection}
       />,
     );
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-packet'));
     expect(onSelectConnection).toHaveBeenCalledWith({ sessionType: 'cms', protocol: 'packet' });
@@ -207,20 +229,26 @@ describe('FolderSidebar — Packet connection entry (accordion)', () => {
         selectedConnection={{ sessionType: 'cms', protocol: 'packet' }}
       />,
     );
-    // The accordion auto-expands because selectedConnection is pre-set — no manual click needed.
+    // Open the flyout to reveal the Connections accordion. The accordion
+    // auto-expands because selectedConnection is pre-set — no sess-cms click.
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     expect(screen.getByTestId('proto-cms-packet')).toHaveClass('active');
   });
 });
 
 describe('FolderSidebar — Connections accordion', () => {
+  // The Connections accordion now lives only in the `.sidebar-flyout`; every
+  // test opens the flyout (rail-expand-btn) before touching `sess-*`/`proto-*`.
   it('renders a header per session type, collapsed by default', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     for (const s of SESSION_TYPES) {
       expect(screen.getByTestId(`sess-${s.id}`)).toHaveAttribute('aria-expanded', 'false');
     }
   });
   it('expands a session type to reveal its protocols', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     fireEvent.click(screen.getByTestId('sess-cms'));
     expect(screen.getByTestId('sess-cms')).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByTestId('proto-cms-telnet')).toBeInTheDocument();
@@ -229,6 +257,7 @@ describe('FolderSidebar — Connections accordion', () => {
   it('selecting a built protocol calls onSelectConnection with the key', () => {
     const onSelectConnection = vi.fn();
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} onSelectConnection={onSelectConnection} />);
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-telnet'));
     expect(onSelectConnection).toHaveBeenCalledWith({ sessionType: 'cms', protocol: 'telnet' });
@@ -242,6 +271,7 @@ describe('FolderSidebar — Connections accordion', () => {
     // row exhibits the disabled-button behavior.
     const onSelectConnection = vi.fn();
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} onSelectConnection={onSelectConnection} />);
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     fireEvent.click(screen.getByTestId('sess-radio-only'));
     const telnet = screen.getByTestId('proto-radio-only-telnet');
     expect(telnet).toBeDisabled();
@@ -258,6 +288,7 @@ describe('FolderSidebar — Connections accordion', () => {
         onSelectConnection={vi.fn()}
       />,
     );
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     // No manual click on sess-cms — the row must already be present + active:
     const row = screen.getByTestId('proto-cms-telnet');
     expect(row).toBeInTheDocument();
@@ -266,54 +297,79 @@ describe('FolderSidebar — Connections accordion', () => {
   });
 });
 
-describe('<FolderSidebar> — FZ-M1 compact rail (tuxlink-h7q7)', () => {
-  it('wraps every folder label in a .nav-label (a11y-safe rail hide; no bare text node)', () => {
+describe('<FolderSidebar> — FZ-M1 compact rail (tuxlink-h7q7 / tuxlink-813d)', () => {
+  // tuxlink-813d D2: the rail renders vertical-text tabs (`.vtab` with a
+  // `.vlabel`), NOT clipped `.nav-label` rows. The full labeled rows (with
+  // `.nav-label` + section headings + `+`) moved to the flyout.
+  it('renders each folder as a vertical-text tab (.vtab/.vlabel) with no bare text node', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />);
     const inbox = screen.getByTestId('folder-inbox');
-    expect(inbox.querySelector('.nav-label')?.textContent).toBe('Inbox');
-    expect(inbox.querySelector('.icon')).toBeInTheDocument();
+    expect(inbox.className).toContain('vtab');
+    expect(inbox.querySelector('.vlabel')?.textContent).toBe('Inbox');
+    // Reserved count slot present even without a count (keeps labels aligned).
+    expect(inbox.querySelector('.vslot')).toBeInTheDocument();
     // No direct text-node child of the button (would show raw text in the rail).
     const directText = Array.from(inbox.childNodes)
       .filter((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? '').trim() !== '');
     expect(directText).toHaveLength(0);
   });
 
-  it('wraps section headings in .section-label-text (keeps the + button visible in the rail)', () => {
+  it('keeps section headings + the + button in the flyout (classed, not inline — F4/Task 9)', () => {
     render(
       <FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} onCreateFolder={() => {}} />,
     );
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     expect(screen.getByText('Folders').className).toContain('section-label-text');
-    // The create-folder button is a sibling of the clipped text, not inside it.
     const createBtn = screen.getByTestId('folder-create-btn');
-    expect(createBtn.className).toContain('folder-create-btn'); // classed, not inline (F4/Task 9)
+    expect(createBtn.className).toContain('folder-create-btn');
   });
 
-  it('renders the empty-hint with a class (media-query reachable), not inline styles', () => {
+  it('renders the empty-hint with a class (in the flyout), not inline styles', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} onCreateFolder={() => {}} />);
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
     expect(screen.getByTestId('folders-empty-hint').className).toContain('folders-empty-hint');
   });
 
-  it('toggles rail expansion and collapses on folder select, Escape, and outside click (F11)', () => {
+  it('renders a separate flyout overlay + scrim when expanded, keeping the rail mounted', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} onCreateFolder={() => {}} />);
+    // Collapsed: no flyout, no scrim; the rail is present.
+    expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
+    expect(screen.queryByTestId('sidebar-flyout')).toBeNull();
+    expect(screen.queryByTestId('sidebar-scrim')).toBeNull();
+    // Expanded: the rail STAYS mounted (never goes absolute) and the flyout +
+    // scrim mount as separate elements.
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
+    expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
+    expect(screen.getByTestId('sidebar-flyout')).toBeInTheDocument();
+    expect(screen.getByTestId('sidebar-scrim')).toBeInTheDocument();
+  });
+
+  it('collapses the flyout on folder select, Escape, scrim click, and outside click (F11)', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />);
-    const nav = screen.getByTestId('folder-sidebar');
     const expandBtn = screen.getByTestId('rail-expand-btn');
 
-    // expand → collapse on folder select
+    // expand → collapse on folder select (rail tab)
     fireEvent.click(expandBtn);
-    expect(nav.classList.contains('is-expanded')).toBe(true);
+    expect(screen.getByTestId('sidebar-flyout')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('folder-sent'));
-    expect(nav.classList.contains('is-expanded')).toBe(false);
+    expect(screen.queryByTestId('sidebar-flyout')).toBeNull();
 
     // expand → collapse on Escape
     fireEvent.click(expandBtn);
-    expect(nav.classList.contains('is-expanded')).toBe(true);
+    expect(screen.getByTestId('sidebar-flyout')).toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' });
-    expect(nav.classList.contains('is-expanded')).toBe(false);
+    expect(screen.queryByTestId('sidebar-flyout')).toBeNull();
+
+    // expand → collapse on scrim click
+    fireEvent.click(expandBtn);
+    expect(screen.getByTestId('sidebar-flyout')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('sidebar-scrim'));
+    expect(screen.queryByTestId('sidebar-flyout')).toBeNull();
 
     // expand → collapse on outside pointer-down
     fireEvent.click(expandBtn);
-    expect(nav.classList.contains('is-expanded')).toBe(true);
+    expect(screen.getByTestId('sidebar-flyout')).toBeInTheDocument();
     fireEvent.pointerDown(document.body);
-    expect(nav.classList.contains('is-expanded')).toBe(false);
+    expect(screen.queryByTestId('sidebar-flyout')).toBeNull();
   });
 });
