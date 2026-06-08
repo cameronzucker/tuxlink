@@ -35,7 +35,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { clearDraft, expandGroupsAndDedup, loadDraft, saveDraft, splitAddrs } from './useDraft';
+import { clearDraft, expandGroupsAndDedup, findUnknownGroupTokens, loadDraft, saveDraft, splitAddrs } from './useDraft';
 import { ComposeTitleBar } from './ComposeTitleBar';
 import { ResizeHandles } from '../shell/chrome/ResizeHandles';
 import { formatCallsign } from '../shell/useStatus';
@@ -407,10 +407,13 @@ export function Compose({ draftId }: ComposeProps) {
   // `contacts`/`groups` are read fresh from the live `useContacts` query at
   // call time (Codex#5), so a separate Compose window expands the up-to-date
   // group membership after a `contacts:changed` invalidation, not a stale copy.
-  const buildRecipients = useCallback((): { to: string[]; cc: string[] } => {
-    const expandedTo = expandGroupsAndDedup(splitAddrs(to), contacts, groups);
-    const expandedCc = expandGroupsAndDedup(splitAddrs(cc), contacts, groups, expandedTo);
-    return { to: expandedTo, cc: expandedCc };
+  const buildRecipients = useCallback((): { to: string[]; cc: string[]; unknownGroups: string[] } => {
+    const rawTo = splitAddrs(to);
+    const rawCc = splitAddrs(cc);
+    const unknownGroups = findUnknownGroupTokens([...rawTo, ...rawCc], groups);
+    const expandedTo = expandGroupsAndDedup(rawTo, contacts, groups);
+    const expandedCc = expandGroupsAndDedup(rawCc, contacts, groups, expandedTo);
+    return { to: expandedTo, cc: expandedCc, unknownGroups };
   }, [to, cc, contacts, groups]);
 
   // ============================================================================
@@ -427,7 +430,12 @@ export function Compose({ draftId }: ComposeProps) {
 
     // Expand groups + wire-key-dedup at send (Task A6). No `group:<id>` token
     // reaches the wire (H5); To/Cc dedup with Cc seeded from To (Codex#6).
-    const { to: toAddrs, cc: ccAddrs } = buildRecipients();
+    const { to: toAddrs, cc: ccAddrs, unknownGroups } = buildRecipients();
+    if (unknownGroups.length > 0) {
+      setSendState('error');
+      setErrorMsg('A distribution group in your recipients no longer exists. Remove the group and re-add its members before sending.');
+      return;
+    }
     const dto: OutboundDraftDto = {
       to: toAddrs,
       cc: ccAddrs,
@@ -471,7 +479,12 @@ export function Compose({ draftId }: ComposeProps) {
     setErrorMsg(null);
     // Expand groups + wire-key-dedup at send (Task A6) — same helper as
     // message_send, so the form path produces an IDENTICAL recipient list.
-    const { to: toAddrs, cc: ccAddrs } = buildRecipients();
+    const { to: toAddrs, cc: ccAddrs, unknownGroups } = buildRecipients();
+    if (unknownGroups.length > 0) {
+      setSendState('error');
+      setErrorMsg('A distribution group in your recipients no longer exists. Remove the group and re-add its members before sending.');
+      return;
+    }
     try {
       await invoke<string>('send_form', {
         formId,
@@ -524,7 +537,12 @@ export function Compose({ draftId }: ComposeProps) {
     const fieldValues = parsedBodyToFieldValues(payload);
     // Expand groups + wire-key-dedup at send (Task A6) — same helper as the
     // other two send paths, so the webview-form path is IDENTICAL.
-    const { to: toAddrs, cc: ccAddrs } = buildRecipients();
+    const { to: toAddrs, cc: ccAddrs, unknownGroups } = buildRecipients();
+    if (unknownGroups.length > 0) {
+      setSendState('error');
+      setErrorMsg('A distribution group in your recipients no longer exists. Remove the group and re-add its members before sending.');
+      return;
+    }
     try {
       await invoke<string>('send_webview_form', {
         formId,

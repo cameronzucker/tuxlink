@@ -172,6 +172,10 @@ import {
 /// bare callsign and its `<call>@winlink.org` email form are the SAME wire
 /// identity; an arbitrary SMTP address (`@gmail.com`, etc.) is a DISTINCT
 /// identity. The SSID is part of the callsign identity and is NEVER stripped.
+// NOTE: this uppercases the whole SMTP address, so it is intentionally STRICTER
+// than Rust `normalize_address` on SMTP-local-part case — a benign over-dedup of
+// two spellings of the same mailbox (e.g. Bob@x.com vs bob@x.com). Acceptable:
+// the worst case is collapsing two display forms of one real recipient.
 function wireKey(token: string): string {
   const trimmed = token.trim();
   const at = trimmed.lastIndexOf('@');
@@ -239,4 +243,14 @@ export function expandGroupsAndDedup(
     out.push(token);
   }
   return out;
+}
+
+/// Return the `group:<id>` sentinel tokens in `recipients` whose group no
+/// longer exists in `groups` (e.g. deleted mid-compose). Used to BLOCK a send
+/// rather than silently drop the recipients (H5). Non-group tokens are ignored.
+export function findUnknownGroupTokens(recipients: string[], groups: Group[]): string[] {
+  const ids = new Set(groups.map((g) => g.id));
+  return recipients
+    .map((t) => t.trim())
+    .filter((t) => t.startsWith(GROUP_SENTINEL_PREFIX) && !ids.has(t.slice(GROUP_SENTINEL_PREFIX.length)));
 }

@@ -17,7 +17,7 @@
 //           empty token); surviving members expand normally.
 
 import { describe, expect, it } from 'vitest';
-import { expandGroupsAndDedup, splitAddrs } from './useDraft';
+import { expandGroupsAndDedup, findUnknownGroupTokens, splitAddrs } from './useDraft';
 import type { Contact, Group } from '../contacts/types';
 
 // ---------------------------------------------------------------------------
@@ -215,5 +215,52 @@ describe('expandGroupsAndDedup — splitAddrs integration', () => {
       GROUPS,
     );
     expect(out).toEqual(['W6ABC', 'W7DEF', 'W9XYZ', 'W8SOLO']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findUnknownGroupTokens (A6 follow-up a — deleted-group send-block helper)
+// ---------------------------------------------------------------------------
+
+describe('findUnknownGroupTokens', () => {
+  it('returns the unknown group:<id> token when the group is missing from the groups list', () => {
+    const out = findUnknownGroupTokens(['group:g-ghost'], GROUPS);
+    expect(out).toEqual(['group:g-ghost']);
+  });
+
+  it('returns all unknown group tokens when multiple groups are missing', () => {
+    const out = findUnknownGroupTokens(['group:g-ghost', 'group:g-another-ghost'], GROUPS);
+    expect(out).toEqual(['group:g-ghost', 'group:g-another-ghost']);
+  });
+
+  it('returns [] when all group:<id> tokens resolve to known groups', () => {
+    const out = findUnknownGroupTokens(['group:g-ares', 'group:g-partial'], GROUPS);
+    expect(out).toEqual([]);
+  });
+
+  it('returns [] when there are no group: tokens (only literal callsigns)', () => {
+    const out = findUnknownGroupTokens(['W6ABC', 'W7DEF', 'someone@example.com'], GROUPS);
+    expect(out).toEqual([]);
+  });
+
+  it('returns [] for an empty recipients array', () => {
+    expect(findUnknownGroupTokens([], GROUPS)).toEqual([]);
+  });
+
+  it('ignores non-group literal tokens and returns only unknown group tokens', () => {
+    const out = findUnknownGroupTokens(['W6ABC', 'group:g-ghost', 'someone@example.com'], GROUPS);
+    expect(out).toEqual(['group:g-ghost']);
+  });
+
+  it('a known group token mixed with an unknown one — only the unknown is returned', () => {
+    const out = findUnknownGroupTokens(['group:g-ares', 'group:g-ghost'], GROUPS);
+    expect(out).toEqual(['group:g-ghost']);
+  });
+
+  it('trims whitespace from tokens before checking', () => {
+    // Recipients split by splitAddrs are already trimmed, but the helper
+    // must be robust if called with raw untrimmed input.
+    const out = findUnknownGroupTokens(['  group:g-ghost  '], GROUPS);
+    expect(out).toEqual(['group:g-ghost']);
   });
 });

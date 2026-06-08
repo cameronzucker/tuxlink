@@ -360,6 +360,67 @@ describe('<Compose> send-path group expansion (Task A6)', () => {
     expect(draft?.cc).toEqual(['W7DEF']); // W6ABC dropped — already in To
   });
 
+  it('BLOCKS send and shows compose-error when a group in To was deleted (unknown group token)', async () => {
+    // The group is NOT in mocks.groups — simulates deletion mid-compose.
+    mocks.contacts = [];
+    mocks.groups = [];
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+      // message_send must NOT be called — this line would fail the test if hit.
+      if (cmd === 'message_send') return 'MID-SHOULD-NOT-HAPPEN';
+      return null;
+    });
+    seedDraft('a6-block-deleted-group', 'group:g-deleted-uuid');
+
+    render(<Compose draftId="a6-block-deleted-group" />);
+    await screen.findByTestId('recipient-chip-group:g-deleted-uuid');
+
+    fireEvent.click(screen.getByTestId('compose-send-btn'));
+
+    // The error banner must appear with the block message.
+    await waitFor(() =>
+      expect(screen.getByTestId('compose-error')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('compose-error')).toHaveTextContent(
+      'A distribution group in your recipients no longer exists. Remove the group and re-add its members before sending.',
+    );
+
+    // message_send must NOT have been called.
+    expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'message_send')).toBe(false);
+  });
+
+  it('sends normally when a group in To IS known (existing A6 behavior stays green)', async () => {
+    mocks.contacts = [mkContact('c-w6abc', 'W6ABC')];
+    mocks.groups = [
+      {
+        id: 'g-known',
+        name: 'Known',
+        members: [{ type: 'contact', contact_id: 'c-w6abc' }],
+        created_at: ts,
+        updated_at: ts,
+      },
+    ];
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+      if (cmd === 'message_send') return 'MID-OK';
+      return null;
+    });
+    seedDraft('a6-known-group-sends', 'group:g-known');
+
+    render(<Compose draftId="a6-known-group-sends" />);
+    await screen.findByTestId('recipient-chip-group:g-known');
+
+    fireEvent.click(screen.getByTestId('compose-send-btn'));
+
+    await waitFor(() =>
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'message_send')).toBe(true),
+    );
+    const draft = lastMessageSendDraft();
+    expect(draft?.to).toEqual(['W6ABC']);
+    // No error banner.
+    expect(screen.queryByTestId('compose-error')).not.toBeInTheDocument();
+  });
+
   it('does NOT expand groups on autosave — saved draft keeps the group: sentinel', async () => {
     vi.useFakeTimers();
     try {
