@@ -168,6 +168,70 @@ describe('<FolderSidebar> — user folders (tuxlink-f62f)', () => {
   });
 });
 
+// ============================================================================
+// Address section — Contacts pseudo-folder (tuxlink-raez, Task A7). The
+// "Address" section appears below the system + user folders; its single
+// "Contacts" nav-item is NOT a mailbox folder ('contacts' is a pseudo-folder
+// string, never added to the MailboxFolder enum). Its count comes from a
+// dedicated `contactsCount` prop (sourced from useContacts in AppShell), NOT
+// from the mailbox `counts` memo.
+// ============================================================================
+
+describe('<FolderSidebar> — Address / Contacts (tuxlink-raez A7)', () => {
+  it('renders an "Address" section label', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    expect(screen.getByText('Address')).toBeInTheDocument();
+  });
+
+  it('renders a Contacts nav-item', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    const item = screen.getByTestId('folder-contacts');
+    expect(item).toBeInTheDocument();
+    expect(item).toHaveTextContent('Contacts');
+  });
+
+  it('shows the passed contacts count in folder-count-contacts', () => {
+    render(
+      <FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} contactsCount={12} />,
+    );
+    expect(screen.getByTestId('folder-count-contacts')).toHaveTextContent('12');
+  });
+
+  it('suppresses the count badge when contactsCount is zero/missing', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    expect(screen.queryByTestId('folder-count-contacts')).toBeNull();
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} contactsCount={0} />);
+    expect(screen.queryByTestId('folder-count-contacts')).toBeNull();
+  });
+
+  it('clicking Contacts fires onSelectFolder with the contacts pseudo-folder', () => {
+    const onSelect = vi.fn();
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={onSelect} />);
+    fireEvent.click(screen.getByTestId('folder-contacts'));
+    expect(onSelect).toHaveBeenCalledWith('contacts');
+  });
+
+  it('marks Contacts active (aria-current) when selectedFolder is contacts', () => {
+    render(<FolderSidebar selectedFolder="contacts" onSelectFolder={vi.fn()} />);
+    expect(screen.getByTestId('folder-contacts')).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByTestId('folder-inbox')).not.toHaveAttribute('aria-current');
+  });
+
+  it('does NOT use the mailbox counts memo for the Contacts badge', () => {
+    // Passing a mailbox `counts` object that happens to carry a numeric value
+    // must not leak into the Contacts badge — the Contacts count is its own
+    // prop. With no contactsCount, no badge renders regardless of `counts`.
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={vi.fn()}
+        counts={{ inbox: 3, sent: 87 }}
+      />,
+    );
+    expect(screen.queryByTestId('folder-count-contacts')).toBeNull();
+  });
+});
+
 describe('FolderSidebar — Packet connection entry (accordion)', () => {
   // tuxlink-bcgj: the transport-state dot (off/listening/connected) was
   // removed for visual cohesion — the same info already renders in the

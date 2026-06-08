@@ -28,6 +28,7 @@ import { DRAFTS_CHANGED_EVENT, listDraftMessages } from '../mailbox/draftMailbox
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
 import { useUserFolders } from '../mailbox/useUserFolders';
+import { useContacts } from '../contacts/useContacts';
 import { FolderContextMenu } from '../mailbox/FolderContextMenu';
 import type { UserFolder } from '../mailbox/types';
 import type { MessageMetaDto } from '../search/types';
@@ -356,6 +357,10 @@ export function AppShell() {
   // tuxlink-f62f: operator-created user folders, rendered in the sidebar's
   // Folders section. Backend reads `<root>/.folders.json`.
   const { folders: userFolders } = useUserFolders();
+  // tuxlink-raez (A7): contacts count for the sidebar's Address → Contacts
+  // pseudo-folder badge. Sourced from useContacts, NOT the mailbox `counts`
+  // memo — `'contacts'` is a pseudo-folder, not a MailboxFolder.
+  const { contacts } = useContacts();
   const notConnected = isNotConfigured(error);
   const [draftMessages, setDraftMessages] = useState<MessageMeta[]>(() => listDraftMessages());
 
@@ -845,6 +850,7 @@ export function AppShell() {
           selectedFolder={selectedFolder}
           onSelectFolder={onSelectFolder}
           counts={counts}
+          contactsCount={contacts.length}
           userFolders={userFolders}
           onCreateFolder={onCreateFolder}
           onDropMessage={moveByIdToFolder}
