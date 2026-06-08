@@ -57,6 +57,22 @@ describe('<Compose> sender identity', () => {
     expect(from).toBeDisabled();
     expect(screen.getByText(/Multi-callsign.*coming soon/i)).toBeInTheDocument();
   });
+
+  it('falls back to the configured identifier for offline-path installs', async () => {
+    // Offline-path operators have no callsign (config.rs forbids it on that
+    // path) — their station identity lives in `identifier`. The From field must
+    // surface it instead of rendering blank (smoke-walk item 39 gap).
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read')
+        return { connect_to_cms: false, callsign: null, identifier: 'FIELD-1', grid: 'CN87' };
+      return null;
+    });
+    render(<Compose draftId="from-identity-offline-test" />);
+    const from = screen.getByLabelText(/^From$/i) as HTMLInputElement;
+
+    await waitFor(() => expect(from).toHaveValue('FIELD-1'));
+    expect(from).toBeDisabled();
+  });
 });
 
 describe('parsedBodyToFieldValues', () => {
