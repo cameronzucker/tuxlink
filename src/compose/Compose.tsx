@@ -43,6 +43,7 @@ import { lookupForm } from '../forms';
 import { CatalogBrowser } from './CatalogBrowser';
 import { WebviewFormHost, type ParsedBody } from './WebviewFormHost';
 import { RecipientInput } from '../contacts/RecipientInput';
+import type { ContactsFile } from '../contacts/types';
 import { useContacts } from '../contacts/useContacts';
 import './Compose.css';
 
@@ -404,15 +405,29 @@ export function Compose({ draftId }: ComposeProps) {
   //
   // Factored as one helper so all THREE send paths (message_send / send_form /
   // send_webview_form) produce IDENTICAL recipient lists — no path can drift.
-  // `contacts`/`groups` are read fresh from the live `useContacts` query at
-  // call time (Codex#5), so a separate Compose window expands the up-to-date
-  // group membership after a `contacts:changed` invalidation, not a stale copy.
-  const buildRecipients = useCallback((): { to: string[]; cc: string[]; unknownGroups: string[] } => {
+  //
+  // C2-P1 / Codex#5: fetch FRESH contacts at send so a separate Compose window
+  // cannot expand a STALE group after a main-window edit (the cached useContacts
+  // value can lag an in-flight contacts:changed refetch). Falls back to the
+  // cached hook values if the fresh read fails (offline / no backend) so send
+  // still works without a Tauri runtime.
+  const buildRecipients = useCallback(async (): Promise<{ to: string[]; cc: string[]; unknownGroups: string[] }> => {
+    let freshContacts = contacts;
+    let freshGroups = groups;
+    try {
+      const file = await invoke<ContactsFile>('contacts_read');
+      if (file) {
+        freshContacts = file.contacts ?? [];
+        freshGroups = file.groups ?? [];
+      }
+    } catch {
+      // keep the cached hook value
+    }
     const rawTo = splitAddrs(to);
     const rawCc = splitAddrs(cc);
-    const unknownGroups = findUnknownGroupTokens([...rawTo, ...rawCc], groups);
-    const expandedTo = expandGroupsAndDedup(rawTo, contacts, groups);
-    const expandedCc = expandGroupsAndDedup(rawCc, contacts, groups, expandedTo);
+    const unknownGroups = findUnknownGroupTokens([...rawTo, ...rawCc], freshGroups);
+    const expandedTo = expandGroupsAndDedup(rawTo, freshContacts, freshGroups);
+    const expandedCc = expandGroupsAndDedup(rawCc, freshContacts, freshGroups, expandedTo);
     return { to: expandedTo, cc: expandedCc, unknownGroups };
   }, [to, cc, contacts, groups]);
 
@@ -430,7 +445,9 @@ export function Compose({ draftId }: ComposeProps) {
 
     // Expand groups + wire-key-dedup at send (Task A6). No `group:<id>` token
     // reaches the wire (H5); To/Cc dedup with Cc seeded from To (Codex#6).
-    const { to: toAddrs, cc: ccAddrs, unknownGroups } = buildRecipients();
+    // C2-P1: await the async fresh-fetch so stale-cache group expansion is
+    // impossible even when a contacts:changed refetch is in flight.
+    const { to: toAddrs, cc: ccAddrs, unknownGroups } = await buildRecipients();
     if (unknownGroups.length > 0) {
       setSendState('error');
       setErrorMsg('A distribution group in your recipients no longer exists. Remove the group and re-add its members before sending.');
@@ -479,7 +496,8 @@ export function Compose({ draftId }: ComposeProps) {
     setErrorMsg(null);
     // Expand groups + wire-key-dedup at send (Task A6) — same helper as
     // message_send, so the form path produces an IDENTICAL recipient list.
-    const { to: toAddrs, cc: ccAddrs, unknownGroups } = buildRecipients();
+    // C2-P1: await the async fresh-fetch (same rationale as handleSend).
+    const { to: toAddrs, cc: ccAddrs, unknownGroups } = await buildRecipients();
     if (unknownGroups.length > 0) {
       setSendState('error');
       setErrorMsg('A distribution group in your recipients no longer exists. Remove the group and re-add its members before sending.');
@@ -537,7 +555,8 @@ export function Compose({ draftId }: ComposeProps) {
     const fieldValues = parsedBodyToFieldValues(payload);
     // Expand groups + wire-key-dedup at send (Task A6) — same helper as the
     // other two send paths, so the webview-form path is IDENTICAL.
-    const { to: toAddrs, cc: ccAddrs, unknownGroups } = buildRecipients();
+    // C2-P1: await the async fresh-fetch (same rationale as handleSend).
+    const { to: toAddrs, cc: ccAddrs, unknownGroups } = await buildRecipients();
     if (unknownGroups.length > 0) {
       setSendState('error');
       setErrorMsg('A distribution group in your recipients no longer exists. Remove the group and re-add its members before sending.');

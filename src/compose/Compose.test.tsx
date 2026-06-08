@@ -453,4 +453,83 @@ describe('<Compose> send-path group expansion (Task A6)', () => {
       vi.useRealTimers();
     }
   });
+
+  // ============================================================================
+  // C2-P1 regression — fresh contacts_read at send (Codex#5 proper fix)
+  // ============================================================================
+  //
+  // The stale-group-expansion race: the cached `useContacts` hook value can lag
+  // a `contacts:changed` refetch that was triggered by a main-window edit AFTER
+  // the Compose window mounted. buildRecipients must perform a LIVE contacts_read
+  // at send so expansion always uses the most-recent membership — not the value
+  // frozen into the hook at mount time.
+  //
+  // Arrange: cached hook state (set A) vs fresh contacts_read response (set B).
+  // Assert: the message is sent with set B, proving the send path re-reads.
+  it('C2-P1: uses the fresh contacts_read result, NOT the stale cached hook value, when expanding a group at send', async () => {
+    // Set A — stale cache: group g-stale contains only W6ABC (mounted state)
+    const staleContact = mkContact('c-w6abc', 'W6ABC');
+    mocks.contacts = [staleContact];
+    mocks.groups = [
+      {
+        id: 'g-stale',
+        name: 'Stale',
+        members: [{ type: 'contact', contact_id: 'c-w6abc' }],
+        created_at: ts,
+        updated_at: ts,
+      },
+    ];
+
+    // Set B — fresh contacts_read: same group now also includes W7DEF (simulating
+    // a main-window edit that invalidated the query but whose refetch is still
+    // in-flight inside the hook's cache).
+    const freshMember = mkContact('c-w7def', 'W7DEF');
+    const freshContactsFile = {
+      schema_version: 1,
+      contacts: [staleContact, freshMember],
+      groups: [
+        {
+          id: 'g-stale',
+          name: 'Stale',
+          members: [
+            { type: 'contact' as const, contact_id: 'c-w6abc' },
+            { type: 'contact' as const, contact_id: 'c-w7def' },
+          ],
+          created_at: ts,
+          updated_at: ts,
+        },
+      ],
+    };
+
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+      if (cmd === 'contacts_read') return freshContactsFile;
+      if (cmd === 'message_send') return 'MID-C2P1';
+      return null;
+    });
+    seedDraft('c2-p1-fresh-fetch', 'group:g-stale');
+
+    render(<Compose draftId="c2-p1-fresh-fetch" />);
+    await screen.findByTestId('recipient-chip-group:g-stale');
+
+    const contactsReadBefore = mocks.invoke.mock.calls.filter(([cmd]) => cmd === 'contacts_read').length;
+
+    fireEvent.click(screen.getByTestId('compose-send-btn'));
+
+    await waitFor(() =>
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'message_send')).toBe(true),
+    );
+
+    // contacts_read must have been called at least once during the send flow
+    // (call count must have increased from the pre-send baseline).
+    const contactsReadAfter = mocks.invoke.mock.calls.filter(([cmd]) => cmd === 'contacts_read').length;
+    expect(contactsReadAfter).toBeGreaterThan(contactsReadBefore);
+
+    // The wire payload must reflect set B (fresh), NOT set A (stale cache).
+    const draft = lastMessageSendDraft();
+    // Fresh contacts_read gives g-stale two members: W6ABC + W7DEF.
+    expect(draft?.to).toEqual(['W6ABC', 'W7DEF']);
+    // W7DEF must be present — it was NOT in the stale cached hook state.
+    expect(draft?.to).toContain('W7DEF');
+  });
 });
