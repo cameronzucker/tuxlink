@@ -65,6 +65,12 @@ export interface WebviewFormViewerProps {
    *  custom form with no companion `_Viewer.html`). MessageView falls
    *  through to KeyValueView when this fires. */
   onFallback?: (error: string) => void;
+  /** When true, the child webview is hidden (`.hide()`) and ResizeObserver
+   *  repositioning is paused. The webview is NOT destroyed — form state +
+   *  the loopback session survive. Used by AppShell to hide the viewer
+   *  while the radio drawer is open (compact-mode overlay coexistence,
+   *  tuxlink-813d Task 2). Defaults to false. */
+  suppressed?: boolean;
 }
 
 export function WebviewFormViewer({
@@ -72,6 +78,7 @@ export function WebviewFormViewer({
   fieldValues,
   onClose,
   onFallback,
+  suppressed = false,
 }: WebviewFormViewerProps) {
   const [error, setError] = useState<string | null>(null);
   // Open status surface to the operator while the loopback bind + viewer
@@ -80,6 +87,15 @@ export function WebviewFormViewer({
   // Placeholder div the child Webview is pixel-positioned over. The webview
   // paints above this div at runtime.
   const mountRef = useRef<HTMLDivElement | null>(null);
+  // Hold the created webview so the suppression effect can call hide/show
+  // without being in the creation effect's dependency list.
+  const webviewRef = useRef<Webview | null>(null);
+  // Keep a ref to the latest suppressed value so the ResizeObserver callback
+  // (which closes over the ref, not the state) can read the current value.
+  const suppressedRef = useRef(suppressed);
+  useEffect(() => {
+    suppressedRef.current = suppressed;
+  }, [suppressed]);
   // Hold the latest onFallback in a ref so the open-failure path always
   // sees the freshest closure even if MessageView re-renders before the
   // open promise rejects.
@@ -131,11 +147,12 @@ export function WebviewFormViewer({
           width: initialW,
           height: initialH,
         });
+        webviewRef.current = webview;
 
         // Reposition on layout changes (parent window resize, sibling
         // panel reflow, etc.). Same mechanism as WebviewFormHost.
         resizeObserver = new ResizeObserver(() => {
-          if (cancelled || !webview || !mountRef.current) return;
+          if (cancelled || !webview || !mountRef.current || suppressedRef.current) return;
           const rect = mountRef.current.getBoundingClientRect();
           const x = Math.max(0, Math.floor(rect.left));
           const y = Math.max(0, Math.floor(rect.top));
@@ -167,6 +184,7 @@ export function WebviewFormViewer({
     return () => {
       cancelled = true;
       resizeObserver?.disconnect();
+      webviewRef.current = null;
       if (activeToken) {
         invoke('close_webview_form_server', { token: activeToken }).catch(() => {
           /* idempotent — backend treats unknown tokens as Ok(()) */
@@ -182,6 +200,25 @@ export function WebviewFormViewer({
     // triggers a full unmount/remount; this deps array is a safety net.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formId, JSON.stringify(fieldValues)]);
+
+  // Hide/show the child webview when the radio drawer opens/closes (tuxlink-813d
+  // Task 2). Keyed on [suppressed] only — does NOT add suppressed to the creation
+  // effect's deps so the webview is never recreated on toggle.
+  useEffect(() => {
+    const wv = webviewRef.current;
+    if (!wv) return;
+    if (suppressed) {
+      void wv.hide().catch(() => {});
+    } else {
+      void wv.show().catch(() => {});
+      const el = mountRef.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        void wv.setPosition(new LogicalPosition(Math.max(0, Math.floor(r.left)), Math.max(0, Math.floor(r.top)))).catch(() => {});
+        void wv.setSize(new LogicalSize(Math.max(1, Math.floor(r.width)), Math.max(1, Math.floor(r.height)))).catch(() => {});
+      }
+    }
+  }, [suppressed]);
 
   return (
     <div className="webview-form-viewer" data-testid="webview-form-viewer">
