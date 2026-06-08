@@ -10,8 +10,29 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactElement } from 'react';
 import type { ModemStatus } from '../../modem/types';
 import { STOPPED } from '../../modem/types';
+import type { FavoriteDial } from '../../favorites/types';
+
+// The panel now mounts FavoritesTabs/useFavorites (react-query), so every
+// render must be wrapped in a QueryClientProvider or the queries throw
+// "No QueryClient set". retry:false keeps a rejected favorites read from
+// retrying through the test.
+const renderPanel = (ui: ReactElement) => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+};
+
+// The hand-entry Target + Bandwidth fields now live in the FavoritesTabs
+// "Manual" tab (Task B6-ARDOP). Radix Tabs.Trigger switches on mouseDown
+// (button 0) under jsdom, not click. Tests that need the target input call
+// this to switch to the Manual tab first.
+const switchToManualTab = async () => {
+  const manual = await screen.findByRole('tab', { name: 'Manual' });
+  fireEvent.mouseDown(manual, { button: 0 });
+};
 
 // Tauri IPC mocks. Per-test mockImplementation is re-applied in
 // beforeEach so a test that overrides default behavior doesn't leak
@@ -40,7 +61,7 @@ vi.mock('../../modem/useModemStatus', () => ({
 
 import { ArdopRadioPanel } from './ArdopRadioPanel';
 
-const defaultInvokeImpl = async (cmd: string) => {
+const defaultInvokeImpl = async (cmd: string, _args?: unknown) => {
   if (cmd === 'session_log_snapshot') return [];
   // Full ardop config so the Radio section can load capture/playback/ptt
   // without choking on missing keys. webgui_port=null exercises the
@@ -60,6 +81,16 @@ const defaultInvokeImpl = async (cmd: string) => {
   if (cmd === 'ardop_allowed_stations_get') {
     return { allow_all: true, callsigns: [] };
   }
+  // Favorites surface (Task B6-ARDOP). The mounted FavoritesTabs/useFavorites
+  // issue these reads; return empty/benign shapes so the queries RESOLVE
+  // (rejecting would noisily fail in jsdom). Tests that need a clickable
+  // favorite override favorites_read / favorites_recents per-test.
+  if (cmd === 'favorites_read') {
+    return { schema_version: 1, favorites: [], log: [] };
+  }
+  if (cmd === 'favorites_recents') return [];
+  if (cmd === 'position_current_fix') return { grid: null };
+  if (cmd === 'favorite_tod_hint') return null;
   return undefined;
 };
 
@@ -94,12 +125,12 @@ describe('<ArdopRadioPanel>', () => {
   });
 
   it('renders the Ardop Winlink title in the RadioPanel chrome', () => {
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Ardop Winlink');
   });
 
   it('mounts the SessionLogSection (children of RadioPanel body)', () => {
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     expect(screen.getByTestId('session-log-section')).toBeInTheDocument();
   });
 
@@ -109,18 +140,19 @@ describe('<ArdopRadioPanel>', () => {
       loading: false,
       error: null,
     });
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     expect(screen.getByTestId('signal-section')).toBeInTheDocument();
     expect(screen.getByTestId('quality-score')).toHaveTextContent('72');
   });
 
-  it('renders the target-callsign input in the Connect form (stopped state)', () => {
-    render(<ArdopRadioPanel onClose={() => {}} />);
-    expect(screen.getByTestId('ardop-target-input')).toBeInTheDocument();
+  it('renders the target-callsign input in the Connect form (stopped state)', async () => {
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+    await switchToManualTab();
+    expect(await screen.findByTestId('ardop-target-input')).toBeInTheDocument();
   });
 
   it('Start button is disabled when target callsign is empty', () => {
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     const start = screen.getByTestId('ardop-start-btn') as HTMLButtonElement;
     expect(start.disabled).toBe(true);
   });
@@ -128,8 +160,9 @@ describe('<ArdopRadioPanel>', () => {
   it('Start button directly fires modem_ardop_connect without a consent modal (no-tuxlink-added-safeguards)', async () => {
     const core = await import('@tauri-apps/api/core');
     const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-    render(<ArdopRadioPanel onClose={() => {}} />);
-    const target = screen.getByTestId('ardop-target-input') as HTMLInputElement;
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+    await switchToManualTab();
+    const target = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
     fireEvent.change(target, { target: { value: 'W7RMS-10' } });
     const start = screen.getByTestId('ardop-start-btn') as HTMLButtonElement;
     expect(start.disabled).toBe(false);
@@ -154,7 +187,7 @@ describe('<ArdopRadioPanel>', () => {
     });
     const core = await import('@tauri-apps/api/core');
     const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     fireEvent.click(screen.getByTestId('ardop-stop-btn'));
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('modem_ardop_disconnect');
@@ -162,7 +195,7 @@ describe('<ArdopRadioPanel>', () => {
   });
 
   it('Send/Receive button is disabled when modem is not connected', () => {
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     const btn = screen.queryByTestId('ardop-send-receive-btn');
     // In stopped state the running-only action row may not render at all.
     if (btn) {
@@ -183,7 +216,7 @@ describe('<ArdopRadioPanel>', () => {
     const shell = await import('@tauri-apps/plugin-shell');
     const shellOpenMock = shell.open as ReturnType<typeof vi.fn>;
     shellOpenMock.mockClear();
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     const webguiBtn = screen.getByTestId('ardop-open-webgui-btn');
     fireEvent.click(webguiBtn);
     await waitFor(() => {
@@ -216,7 +249,7 @@ describe('<ArdopRadioPanel>', () => {
     const shell = await import('@tauri-apps/plugin-shell');
     const shellOpenMock = shell.open as ReturnType<typeof vi.fn>;
     shellOpenMock.mockClear();
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     fireEvent.click(screen.getByTestId('ardop-open-webgui-btn'));
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/cmd_port/);
@@ -232,7 +265,7 @@ describe('<ArdopRadioPanel>', () => {
   // can't request the URL before there's anything bound to it.
   it('Open WebGUI button is disabled when ardopcf is stopped (round 3)', async () => {
     // Default state from beforeEach is STOPPED.
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     const btn = screen.getByTestId('ardop-open-webgui-btn') as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     // Title hint must tell the operator WHY: ardopcf must be running first.
@@ -263,7 +296,7 @@ describe('<ArdopRadioPanel>', () => {
     const shell = await import('@tauri-apps/plugin-shell');
     const shellOpenMock = shell.open as ReturnType<typeof vi.fn>;
     shellOpenMock.mockClear();
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     fireEvent.click(screen.getByTestId('ardop-open-webgui-btn'));
     await waitFor(() => {
       expect(shellOpenMock).toHaveBeenCalledWith('http://localhost:9080/');
@@ -273,7 +306,7 @@ describe('<ArdopRadioPanel>', () => {
   it('webgui_port input field persists override on blur (round 3)', async () => {
     const core = await import('@tauri-apps/api/core');
     const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     // Wait for initial load.
     await waitFor(() => {
       expect(screen.getByTestId('ardop-webgui-port-input')).toBeInTheDocument();
@@ -314,7 +347,7 @@ describe('<ArdopRadioPanel>', () => {
       if (cmd === 'session_log_snapshot') return [];
       return undefined;
     });
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     await waitFor(() => {
       const input = screen.getByTestId('ardop-webgui-port-input') as HTMLInputElement;
       expect(input.value).toBe('9080');
@@ -357,8 +390,9 @@ describe('<ArdopRadioPanel>', () => {
       return null;
     });
 
-    render(<ArdopRadioPanel onClose={() => {}} />);
-    const target = screen.getByTestId('ardop-target-input') as HTMLInputElement;
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+    await switchToManualTab();
+    const target = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
     fireEvent.change(target, { target: { value: 'K7TEST' } });
     fireEvent.click(screen.getByTestId('ardop-start-btn'));
 
@@ -371,13 +405,13 @@ describe('<ArdopRadioPanel>', () => {
 
   it('close button fires onClose', () => {
     const onClose = vi.fn();
-    render(<ArdopRadioPanel onClose={onClose} />);
+    renderPanel(<ArdopRadioPanel onClose={onClose} />);
     fireEvent.click(screen.getByTestId('radio-panel-close'));
     expect(onClose).toHaveBeenCalled();
   });
 
   it('does not render a "Dial as" intent toggle', () => {
-    render(<ArdopRadioPanel onClose={() => {}} />);
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     expect(screen.queryByTestId('ardop-intent-select')).toBeNull();
     expect(screen.queryByText(/Dial as/i)).toBeNull();
   });
@@ -386,7 +420,7 @@ describe('<ArdopRadioPanel>', () => {
   // ModemLinkSection — audio capture + playback + PTT serial editable inline.
   describe('Radio section', () => {
     it('mounts the Radio section in stopped state', async () => {
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() =>
         expect(screen.getByTestId('ardop-radio-section')).toBeInTheDocument(),
       );
@@ -396,7 +430,7 @@ describe('<ArdopRadioPanel>', () => {
     });
 
     it('loads capture/playback/PTT from config_get_ardop on mount', async () => {
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() => {
         const cap = screen.getByTestId('ardop-capture-input') as HTMLInputElement;
         expect(cap.value).toBe('plughw:1,0');
@@ -406,7 +440,7 @@ describe('<ArdopRadioPanel>', () => {
     it('persists capture device via config_set_ardop on blur', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       // Wait for initial load to complete (otherwise persistArdop would
       // see ardopConfig=null and bail).
       await waitFor(() => {
@@ -443,7 +477,7 @@ describe('<ArdopRadioPanel>', () => {
         if (cmd === 'session_log_snapshot') return [];
         return undefined;
       });
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() => {
         const ptt = screen.getByTestId('ardop-ptt-input') as HTMLInputElement;
         expect(ptt.value).toBe('/dev/ttyUSB0');
@@ -467,7 +501,7 @@ describe('<ArdopRadioPanel>', () => {
         loading: false,
         error: null,
       });
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       expect(screen.queryByTestId('ardop-radio-section')).not.toBeInTheDocument();
     });
 
@@ -476,14 +510,14 @@ describe('<ArdopRadioPanel>', () => {
     // surface in the panel. These tests pin the rows + their persist-on-blur
     // behavior so the operator can edit both inline.
     it('Radio section has a cmd_port input row (tuxlink-jmfm)', async () => {
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() =>
         expect(screen.getByTestId('ardop-cmd-port-input')).toBeInTheDocument(),
       );
     });
 
     it('Radio section has an ardopcf binary input row (tuxlink-jmfm)', async () => {
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() =>
         expect(screen.getByTestId('ardop-binary-input')).toBeInTheDocument(),
       );
@@ -492,7 +526,7 @@ describe('<ArdopRadioPanel>', () => {
     it('cmd_port input persists on blur (tuxlink-jmfm)', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       // Wait for initial load (default config has cmd_port=8515 so the
       // input renders that value once ardopConfig hydrates).
       await waitFor(() => {
@@ -514,7 +548,7 @@ describe('<ArdopRadioPanel>', () => {
     it('binary input persists on blur (tuxlink-jmfm)', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       // Wait for initial load (default config has binary='ardopcf').
       await waitFor(() => {
         expect((screen.getByTestId('ardop-binary-input') as HTMLInputElement).value).toBe('ardopcf');
@@ -540,7 +574,7 @@ describe('<ArdopRadioPanel>', () => {
     it('commitBinary reverts on empty input (tuxlink-jmfm follow-up)', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       // Wait for initial load (default config has binary='ardopcf').
       await waitFor(() => {
         expect((screen.getByTestId('ardop-binary-input') as HTMLInputElement).value).toBe('ardopcf');
@@ -563,7 +597,7 @@ describe('<ArdopRadioPanel>', () => {
     it('commitCmdPort rejects non-numeric input strictly (tuxlink-jmfm follow-up)', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() => {
         expect((screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement).value).toBe('8515');
       });
@@ -585,7 +619,7 @@ describe('<ArdopRadioPanel>', () => {
     it('commitCmdPort rejects port > 65535 (tuxlink-jmfm follow-up)', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() => {
         expect((screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement).value).toBe('8515');
       });
@@ -638,7 +672,7 @@ describe('<ArdopRadioPanel>', () => {
         if (cmd === 'session_log_snapshot') return [];
         return undefined;
       });
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() => {
         expect(invokeMock).toHaveBeenCalledWith('ardop_list_audio_devices');
       });
@@ -693,7 +727,7 @@ describe('<ArdopRadioPanel>', () => {
         if (cmd === 'session_log_snapshot') return [];
         return undefined;
       });
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const captureSel = await screen.findByTestId('ardop-capture-select') as HTMLSelectElement;
       const playbackSel = await screen.findByTestId('ardop-playback-select') as HTMLSelectElement;
       await waitFor(() => {
@@ -739,7 +773,7 @@ describe('<ArdopRadioPanel>', () => {
         if (cmd === 'session_log_snapshot') return [];
         return undefined;
       });
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const captureSel = await screen.findByTestId('ardop-capture-select') as HTMLSelectElement;
       await waitFor(() => {
         expect(Array.from(captureSel.options).map((o) => o.value))
@@ -760,7 +794,7 @@ describe('<ArdopRadioPanel>', () => {
     it('Refresh button re-invokes ardop_list_audio_devices', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() => {
         expect(invokeMock).toHaveBeenCalledWith('ardop_list_audio_devices');
       });
@@ -802,7 +836,7 @@ describe('<ArdopRadioPanel>', () => {
         if (cmd === 'session_log_snapshot') return [];
         return undefined;
       });
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const pttSel = await screen.findByTestId('ardop-ptt-select') as HTMLSelectElement;
       await waitFor(() => {
         expect(Array.from(pttSel.options).map((o) => o.value)).toContain('/dev/ttyUSB0');
@@ -836,7 +870,7 @@ describe('<ArdopRadioPanel>', () => {
         if (cmd === 'session_log_snapshot') return [];
         return undefined;
       });
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const pttSel = await screen.findByTestId('ardop-ptt-select') as HTMLSelectElement;
       await waitFor(() => {
         expect(pttSel.value).toBe('/dev/ttyUSB0');
@@ -868,7 +902,7 @@ describe('<ArdopRadioPanel>', () => {
     });
 
     it('renders the Listen section', async () => {
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       expect(await screen.findByTestId('ardop-listen-section')).toBeInTheDocument();
     });
 
@@ -876,7 +910,7 @@ describe('<ArdopRadioPanel>', () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
       invokeMock.mockImplementation(defaultInvokeImpl);
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const armBtn = await screen.findByTestId('ardop-listen-arm-btn');
       fireEvent.click(armBtn);
       await waitFor(() => {
@@ -888,7 +922,7 @@ describe('<ArdopRadioPanel>', () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
       invokeMock.mockImplementation(defaultInvokeImpl);
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const armBtn = await screen.findByTestId('ardop-listen-arm-btn');
       fireEvent.click(armBtn);
       const disarmBtn = await screen.findByTestId('ardop-listen-disarm-btn');
@@ -909,7 +943,7 @@ describe('<ArdopRadioPanel>', () => {
         }
         return defaultInvokeImpl(cmd);
       });
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const armBtn = await screen.findByTestId('ardop-listen-arm-btn');
       fireEvent.click(armBtn);
       await waitFor(() => {
@@ -923,7 +957,7 @@ describe('<ArdopRadioPanel>', () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
       invokeMock.mockImplementation(defaultInvokeImpl);
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const expander = await screen.findByTestId('ardop-allowed-expander');
       fireEvent.click(expander);
       const toggle = await screen.findByTestId('ardop-allowed-allow-all-toggle');
@@ -940,7 +974,7 @@ describe('<ArdopRadioPanel>', () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
       invokeMock.mockImplementation(defaultInvokeImpl);
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const expander = await screen.findByTestId('ardop-allowed-expander');
       fireEvent.click(expander);
       const addBtn = await screen.findByTestId('ardop-allowed-callsign-add-btn');
@@ -965,7 +999,7 @@ describe('<ArdopRadioPanel>', () => {
         }
         return defaultInvokeImpl(cmd);
       });
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const expander = await screen.findByTestId('ardop-allowed-expander');
       fireEvent.click(expander);
       const removeBtn = await screen.findByTestId('ardop-allowed-callsign-remove-W7RMS');
@@ -981,7 +1015,7 @@ describe('<ArdopRadioPanel>', () => {
     it('ARDOP allowed-stations editor does NOT render an IP row', async () => {
       const core = await import('@tauri-apps/api/core');
       (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(defaultInvokeImpl);
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       const expander = await screen.findByTestId('ardop-allowed-expander');
       fireEvent.click(expander);
       await waitFor(() =>
@@ -991,15 +1025,250 @@ describe('<ArdopRadioPanel>', () => {
     });
 
     it('Listen section does NOT render a Station Password expander', async () => {
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await screen.findByTestId('ardop-listen-section');
       expect(screen.queryByTestId('ardop-station-pw-expander')).not.toBeInTheDocument();
     });
 
     it('Listen section does NOT render a Listener setup expander', async () => {
-      render(<ArdopRadioPanel onClose={() => {}} />);
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await screen.findByTestId('ardop-listen-section');
       expect(screen.queryByTestId('ardop-listen-setup-expander')).not.toBeInTheDocument();
+    });
+  });
+
+  // ── Favorites integration (Task B6-ARDOP) ────────────────────────────────
+  //
+  // RADIO-1 + C3 + M4. A favorite's Connect PRE-FILLS the target only (never
+  // transmits). `reached` is recorded on the on-air connected-* transition (not
+  // when modem_ardop_connect resolves); `failed` is recorded in the
+  // b2f_exchange catch (not finally, not on a busy-guard / local-spawn path).
+  // The record timestamp carries a UTC offset (M4 / H1).
+
+  describe('Favorites integration (B6-ARDOP)', () => {
+    // A connected status with a freshly-rendered QueryClient. `state` and
+    // `peer` are the two record-trigger inputs.
+    const connectedStatus = (peer: string = 'W7RMS-10'): ModemStatus => ({
+      ...RUNNING,
+      state: 'connected-irs',
+      peer,
+    });
+    const findRecordCalls = (invokeMock: ReturnType<typeof vi.fn>) =>
+      invokeMock.mock.calls.filter(([cmd]) => cmd === 'favorite_record_attempt');
+
+    it('records reached on the connected-* link transition (C3), once', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      // Start NOT connected so the record-on-transition effect does not fire
+      // on mount.
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      const { rerender } = renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      expect(findRecordCalls(invokeMock)).toHaveLength(0);
+
+      // The modem reaches the on-air ARQ link.
+      mockUseModemStatus.mockReturnValue({
+        status: connectedStatus('W7RMS-10'),
+        loading: false,
+        error: null,
+      });
+      rerender(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <ArdopRadioPanel onClose={() => {}} />
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => {
+        const calls = findRecordCalls(invokeMock);
+        expect(calls).toHaveLength(1);
+        const [, args] = calls[0] as [string, { dial: FavoriteDial; outcome: string }];
+        expect(args.outcome).toBe('reached');
+        expect(args.dial.gateway).toBe('W7RMS-10');
+        expect(args.dial.mode).toBe('ardop-hf');
+      });
+
+      // A subsequent status tick at the SAME connected state must NOT re-record.
+      rerender(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <ArdopRadioPanel onClose={() => {}} />
+        </QueryClientProvider>,
+      );
+      await new Promise((r) => setTimeout(r, 20));
+      expect(findRecordCalls(invokeMock)).toHaveLength(1);
+    });
+
+    it('does NOT record reached when the modem never reaches connected-*', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      // modem_ardop_connect resolves but the status stays non-connected.
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'modem_ardop_connect') return null;
+        return defaultInvokeImpl(cmd, args);
+      });
+      mockUseModemStatus.mockReturnValue({
+        status: { ...STOPPED, state: 'connecting', peer: null },
+        loading: false,
+        error: null,
+      });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(findRecordCalls(invokeMock)).toHaveLength(0);
+    });
+
+    it('records failed in the b2f_exchange catch (C3) — not on a pre-air guard', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'modem_ardop_b2f_exchange') {
+          throw new Error('CMS rejected');
+        }
+        return defaultInvokeImpl(cmd, args);
+      });
+      // Connected so Send/Receive is enabled and effectiveTarget is the peer.
+      mockUseModemStatus.mockReturnValue({
+        status: connectedStatus('W7RMS-10'),
+        loading: false,
+        error: null,
+      });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      // The on-air transition already records ONE `reached` (the panel mounts
+      // straight into connected-*). Clear so we isolate the failed record.
+      await waitFor(() => expect(findRecordCalls(invokeMock).length).toBeGreaterThanOrEqual(1));
+      invokeMock.mockClear();
+      // Re-install the throwing impl (mockClear wipes the implementation).
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'modem_ardop_b2f_exchange') {
+          throw new Error('CMS rejected');
+        }
+        return defaultInvokeImpl(cmd, args);
+      });
+      fireEvent.click(screen.getByTestId('ardop-send-receive-btn'));
+      await waitFor(() => {
+        const failed = findRecordCalls(invokeMock).filter(
+          ([, a]) => (a as { outcome: string }).outcome === 'failed',
+        );
+        expect(failed).toHaveLength(1);
+        const [, args] = failed[0] as [string, { dial: FavoriteDial; outcome: string }];
+        expect(args.dial.gateway).toBe('W7RMS-10');
+      });
+    });
+
+    it('busy-guard / not-exchange-ready Send/Receive records NOTHING', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      // Stopped: Send/Receive isn't rendered (and the guard would bail anyway).
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await new Promise((r) => setTimeout(r, 20));
+      // No on-air transition (stopped) and no exchange → no record at all.
+      expect(findRecordCalls(invokeMock)).toHaveLength(0);
+      // The Send/Receive button isn't present in the stopped action row.
+      expect(screen.queryByTestId('ardop-send-receive-btn')).toBeNull();
+    });
+
+    it('CONSENT NON-BYPASS (M13): a favorite Connect pre-fills only, never transmits', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      // Route a starred ardop-hf favorite so the Favorites tab has a row.
+      const fav = {
+        id: 'fav-1',
+        mode: 'ardop-hf' as const,
+        gateway: 'W7RMS-10',
+        band: '40m',
+        starred: true,
+        created_at: '2026-06-08T00:00:00-07:00',
+        updated_at: '2026-06-08T00:00:00-07:00',
+      };
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'favorites_read') {
+          return { schema_version: 1, favorites: [fav], log: [] };
+        }
+        if (cmd === 'favorites_recents') return [];
+        if (cmd === 'modem_ardop_connect') return null;
+        return defaultInvokeImpl(cmd, args);
+      });
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+
+      // Default tab is Favorites; the favorite's Connect appears there.
+      const connectBtn = await screen.findByTestId('favorite-connect-fav-1');
+      fireEvent.click(connectBtn);
+      // Let any (forbidden) async invoke settle.
+      await new Promise((r) => setTimeout(r, 20));
+
+      // RADIO-1: neither connect nor exchange may have fired from the prefill.
+      expect(
+        invokeMock.mock.calls.some(([cmd]) => cmd === 'modem_ardop_connect'),
+      ).toBe(false);
+      expect(
+        invokeMock.mock.calls.some(([cmd]) => cmd === 'modem_ardop_b2f_exchange'),
+      ).toBe(false);
+
+      // Prefill worked: the Manual tab's target now holds the gateway.
+      await switchToManualTab();
+      const target = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
+      expect(target.value).toBe('W7RMS-10');
+
+      // Consent gate intact: clicking Start NOW invokes modem_ardop_connect.
+      fireEvent.click(screen.getByTestId('ardop-start-btn'));
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'modem_ardop_connect',
+          expect.objectContaining({ target: 'W7RMS-10' }),
+        );
+      });
+    });
+
+    it('records an offset-bearing ts_local (M4) — not a UTC Z timestamp', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      mockUseModemStatus.mockReturnValue({
+        status: connectedStatus('W7RMS-10'),
+        loading: false,
+        error: null,
+      });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => {
+        const calls = findRecordCalls(invokeMock);
+        expect(calls.length).toBeGreaterThanOrEqual(1);
+        const [, args] = calls[0] as [string, { tsLocal: string }];
+        // camelCase wire key + offset-bearing (±HH:MM), never Z.
+        expect(typeof args.tsLocal).toBe('string');
+        expect(args.tsLocal).toMatch(/[+-]\d{2}:\d{2}$/);
+        expect(args.tsLocal.endsWith('Z')).toBe(false);
+      });
+    });
+
+    it('ARDOP prefill sets ONLY the target (no freq input on the ARDOP form) (H8)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      const fav = {
+        id: 'fav-2',
+        mode: 'ardop-hf' as const,
+        gateway: 'KE7XYZ-10',
+        freq: '7.103 MHz',
+        band: '40m',
+        starred: true,
+        created_at: '2026-06-08T00:00:00-07:00',
+        updated_at: '2026-06-08T00:00:00-07:00',
+      };
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'favorites_read') {
+          return { schema_version: 1, favorites: [fav], log: [] };
+        }
+        if (cmd === 'favorites_recents') return [];
+        return defaultInvokeImpl(cmd, args);
+      });
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+
+      const connectBtn = await screen.findByTestId('favorite-connect-fav-2');
+      fireEvent.click(connectBtn);
+
+      await switchToManualTab();
+      const target = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
+      expect(target.value).toBe('KE7XYZ-10');
+      // The ARDOP Connect form has no freq input — only target + bandwidth.
+      expect(screen.queryByTestId('ardop-freq-input')).toBeNull();
     });
   });
 });

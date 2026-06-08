@@ -39,6 +39,10 @@ import type { ArdopFrameType } from '../charts/FrameRibbon';
 import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
 import { ListenArmButton } from '../sections/ListenArmButton';
 import { useListenerState } from '../sections/useListenerState';
+import { FavoritesTabs } from '../../favorites/FavoritesTabs';
+import { useFavorites } from '../../favorites/useFavorites';
+import { tsLocal } from '../../favorites/ts-local';
+import type { FavoriteDial } from '../../favorites/types';
 import './ArdopRadioPanel.css';
 import '../sections/ListenSection.css';
 
@@ -285,6 +289,33 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
 
   const { entries: logEntries, clear: clearLog } = useSessionLog();
 
+  // Favorites integration (Task B6-ARDOP). RADIO-1: a favorite's Connect is
+  // PRE-FILL ONLY — it sets `target` via `handlePrefill` and NEVER invokes a
+  // connect/exchange command. The operator's later Start + Send/Receive clicks
+  // are the Part 97 consent gates. recordAttempt logs the HONEST on-air outcome
+  // (reached on the connected-* link transition; failed in the b2f catch).
+  const { recordAttempt } = useFavorites('ardop-hf');
+  // The favorite whose Connect was last clicked. Carries its metadata into the
+  // connection record IFF it matches the live peer. Cleared on a manual target
+  // edit (a hand-typed target is not the prefilled favorite).
+  const pendingDialRef = useRef<FavoriteDial | null>(null);
+  const handlePrefill = (dial: FavoriteDial) => {
+    setTarget(dial.gateway);
+    pendingDialRef.current = dial;
+  };
+  // Build the dial for a connection record from the LIVE peer. If the prefilled
+  // favorite matches the peer callsign, carry its metadata (freq/band/grid/
+  // transport) into the record; otherwise record a minimal dial (manual connect).
+  const buildRecordDial = (): FavoriteDial | null => {
+    const gw = status.peer?.trim();
+    if (!gw) return null;
+    const pend = pendingDialRef.current;
+    if (pend && pend.gateway.trim().toUpperCase() === gw.toUpperCase()) {
+      return { ...pend, mode: 'ardop-hf', gateway: gw };
+    }
+    return { mode: 'ardop-hf', gateway: gw };
+  };
+
   // ARDOP listener arms + allowlist plumbing (spec §1.3). ARDOP has no
   // station-password layer (per ardop-p2p.md divergence 2) so the
   // panel does NOT render the password expander. The set-allow-all
@@ -454,6 +485,26 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const isExchangeReady =
     status.state === 'connected-irs' || status.state === 'connected-iss';
 
+  // Record `reached` ONCE per connection, on the actual on-air ARQ link
+  // transition (C3) — NOT when `modem_ardop_connect` resolves (that's the local
+  // ardopcf spawn, not the gateway link). The guard ref fires the record only on
+  // the first connected-* tick with a peer, then resets when the link drops so a
+  // subsequent connection re-records.
+  const isConnected =
+    status.state === 'connected-irs' || status.state === 'connected-iss';
+  const recordedConnRef = useRef(false);
+  useEffect(() => {
+    if (isConnected && status.peer && !recordedConnRef.current) {
+      recordedConnRef.current = true;
+      const dial = buildRecordDial();
+      if (dial) void recordAttempt(dial, 'reached', tsLocal());
+    }
+    if (!isConnected) recordedConnRef.current = false;
+    // buildRecordDial / recordAttempt are stable enough for this transition
+    // guard; keying on isConnected + peer is the intended fire condition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, status.peer]);
+
   // tuxlink-y7nq: filter ALSA enumerations to hardware-only for the dropdown.
   // `arecord -L` / `aplay -L` return a dozen plugin / converter chains
   // (lavrate, samplerate, speex, upmix, vdownmix, jack, oss, null, sysdefault,
@@ -536,6 +587,13 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
       });
     } catch (e) {
       setConnectError(`Send/Receive failed: ${e}`);
+      // Record a gateway `failed` (C3) — in the CATCH, never the FINALLY, so a
+      // pre-air busy-guard rejection or the local connect never logs a spurious
+      // gateway failure. The guard at the top (isExchangeReady / effectiveTarget
+      // null) returns before any record path, so only a real exchange attempt
+      // that threw reaches here.
+      const dial = buildRecordDial();
+      if (dial) void recordAttempt(dial, 'failed', tsLocal());
     } finally {
       setExchanging(false);
     }
@@ -588,6 +646,9 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
 
   const onTargetChange = (e: ChangeEvent<HTMLInputElement>) => {
     setTarget(e.target.value);
+    // A hand-typed target is not the prefilled favorite — drop the association
+    // so the connection record doesn't carry stale favorite metadata.
+    pendingDialRef.current = null;
   };
 
   const headerSub = `${status.peer ?? '—'} · ${status.widthHz ? `${status.widthHz} Hz` : '—'}`;
@@ -599,39 +660,51 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
       sub={headerSub}
       onClose={onClose}
     >
+      {/* Connect surface — Favorites / Recent / Manual (Task B6-ARDOP). The
+          hand-entry Target + Bandwidth fields are the Manual tab's content;
+          a favorite's Connect PRE-FILLS the target via handlePrefill and never
+          transmits (RADIO-1). Only rendered in the stopped state — favorites/
+          connect only make sense before ardopcf is running. The Start /
+          Send-Receive / Stop action buttons stay OUTSIDE this surface, below. */}
       {isStopped && (
-        <section className="radio-panel-sec">
-          <h5>Connect</h5>
-          <label className="radio-panel-input-row">
-            <span>Target</span>
-            <input
-              type="text"
-              className="radio-panel-input"
-              data-testid="ardop-target-input"
-              value={target}
-              onChange={onTargetChange}
-              placeholder="W7RMS-10"
-              spellCheck={false}
-              autoCapitalize="characters"
-              autoCorrect="off"
-            />
-          </label>
-          <label className="radio-panel-input-row">
-            <span>Bandwidth</span>
-            <select
-              className="radio-panel-input"
-              data-testid="ardop-bandwidth-select"
-              value={bandwidth ?? ''}
-              onChange={onBandwidthChange}
-            >
-              {ARQ_BANDWIDTH_OPTIONS.map((opt) => (
-                <option key={String(opt.value)} value={opt.value ?? ''}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </section>
+        <FavoritesTabs
+          mode="ardop-hf"
+          onPrefill={handlePrefill}
+          manualContent={
+            <section className="radio-panel-sec">
+              <h5>Connect</h5>
+              <label className="radio-panel-input-row">
+                <span>Target</span>
+                <input
+                  type="text"
+                  className="radio-panel-input"
+                  data-testid="ardop-target-input"
+                  value={target}
+                  onChange={onTargetChange}
+                  placeholder="W7RMS-10"
+                  spellCheck={false}
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                />
+              </label>
+              <label className="radio-panel-input-row">
+                <span>Bandwidth</span>
+                <select
+                  className="radio-panel-input"
+                  data-testid="ardop-bandwidth-select"
+                  value={bandwidth ?? ''}
+                  onChange={onBandwidthChange}
+                >
+                  {ARQ_BANDWIDTH_OPTIONS.map((opt) => (
+                    <option key={String(opt.value)} value={opt.value ?? ''}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </section>
+          }
+        />
       )}
 
       {/* Radio (audio devices + PTT serial path). Operator smoke 2026-05-31:
