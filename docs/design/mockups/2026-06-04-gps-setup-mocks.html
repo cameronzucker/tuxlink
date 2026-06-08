@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tuxlink — GPS setup UX brainstorm (2026-06-04)</title>
+<style>
+:root {
+  --bg:            #0d1318;
+  --surface:       #141c23;
+  --surface-2:     #1a2330;
+  --elevated:      #1e2832;
+  --border:        #1f2832;
+  --border-strong: #2c3744;
+  --border-soft:   #1a2028;
+  --text:          #e4ebf2;
+  --text-dim:      #94a0ad;
+  --text-faint:    #5d6975;
+  --accent:        #f59f3c;
+  --accent-2:      #ffba6e;
+  --accent-soft:   rgba(245, 159, 60, 0.12);
+  --success:       #5dd6a0;
+  --success-soft:  rgba(93, 214, 160, 0.12);
+  --warn:          #ffd166;
+  --warn-soft:     rgba(255, 209, 102, 0.12);
+  --error:         #ee6b6b;
+  --error-soft:    rgba(238, 107, 107, 0.10);
+  --info:          #6bb8ee;
+  --info-soft:     rgba(107, 184, 238, 0.12);
+  --mono:          "JetBrains Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", Consolas, monospace;
+  --sans:          "Inter", "Cantarell", "Ubuntu", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: #060a0e;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 1480px; margin: 0 auto; padding: 32px 28px 96px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0 0 4px; }
+.subtitle { color: var(--text-dim); font-size: 14px; margin: 0 0 24px; }
+
+.legend {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 40px;
+  font-size: 13px;
+}
+.legend h3 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); font-weight: 600; }
+.legend p { margin: 0 0 8px; color: var(--text-dim); }
+.legend strong { color: var(--text); }
+.legend code { font-family: var(--mono); color: var(--accent-2); font-size: 12px; }
+
+h2.section-title {
+  font-size: 16px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--text);
+  margin: 56px 0 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-strong);
+}
+.section-caption {
+  font-size: 13px; color: var(--text-dim); margin: 0 0 20px;
+  max-width: 880px;
+}
+.section-caption strong { color: var(--text); }
+
+/* Tauri window chrome */
+.window {
+  width: 1180px;
+  margin: 0 auto;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 14px 32px rgba(0,0,0,0.5);
+}
+.titlebar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, #1a2330 0%, #141c23 100%);
+  border-bottom: 1px solid var(--border-strong);
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.tl-dot { width: 12px; height: 12px; border-radius: 50%; background: #2c3744; }
+.tl-dot.r { background: #5d6975; }
+.tl-dot.y { background: #5d6975; }
+.tl-dot.g { background: #5d6975; }
+.tl-title { margin-left: 8px; color: var(--text-dim); }
+.tl-spacer { flex: 1; }
+
+/* Wizard frame */
+.wizard-body {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 580px;
+}
+.wizard-side {
+  background: #0a1015;
+  border-right: 1px solid var(--border-strong);
+  padding: 24px 0;
+}
+.wizard-side h4 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--text-faint); font-weight: 600;
+  margin: 0 20px 14px;
+}
+.step {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 20px;
+  font-size: 13px;
+  color: var(--text-dim);
+  border-left: 2px solid transparent;
+}
+.step.done { color: var(--text-dim); }
+.step.done .step-dot {
+  background: var(--success-soft);
+  border-color: var(--success);
+  color: var(--success);
+}
+.step.active {
+  color: var(--text);
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+.step.active .step-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+.step.future .step-dot {
+  color: var(--text-faint);
+}
+.step-dot {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: transparent; border: 1px solid var(--border-strong);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600;
+  flex-shrink: 0;
+}
+
+.wizard-main {
+  padding: 40px 56px 32px;
+  display: flex; flex-direction: column;
+  max-width: 760px; /* enforce the "no stretched full-width" memory */
+}
+.wizard-eyebrow {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-faint); margin: 0 0 6px;
+}
+.wizard-h1 {
+  font-size: 22px; font-weight: 600;
+  color: var(--text);
+  margin: 0 0 8px;
+}
+.wizard-sub {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin: 0 0 24px;
+  max-width: 580px;
+}
+.wizard-footer {
+  margin-top: auto;
+  padding-top: 24px;
+  display: flex; justify-content: space-between;
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+.btn {
+  font-family: var(--sans); font-size: 13px; font-weight: 500;
+  padding: 9px 16px; border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.btn.secondary { background: transparent; color: var(--text-dim); }
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a1208;
+}
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+  text-decoration: underline;
+  padding-left: 4px; padding-right: 4px;
+}
+
+/* "Found a source" card */
+.source-card {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 14px;
+  align-items: start;
+}
+.source-card.recommended {
+  border-color: var(--success);
+  background: linear-gradient(180deg, var(--success-soft) 0%, var(--surface) 60%);
+}
+.source-icon {
+  width: 28px; height: 28px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  background: var(--success-soft);
+  color: var(--success);
+}
+.source-icon.warn { background: var(--warn-soft); color: var(--warn); }
+.source-icon.error { background: var(--error-soft); color: var(--error); }
+.source-icon.info { background: var(--info-soft); color: var(--info); }
+.source-body { min-width: 0; }
+.source-title {
+  font-size: 14px; font-weight: 600;
+  color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 4px;
+}
+.source-tag {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  background: var(--success); color: #062014;
+  padding: 2px 7px; border-radius: 999px;
+  font-weight: 600;
+}
+.source-tag.experimental { background: var(--warn); color: #2b1f04; }
+.source-desc {
+  font-size: 13px; color: var(--text-dim);
+  margin: 0 0 8px;
+}
+.source-meta {
+  font-family: var(--mono); font-size: 12px;
+  color: var(--text-faint);
+  display: flex; flex-wrap: wrap; gap: 14px;
+}
+.source-meta strong { color: var(--text-dim); font-weight: 500; }
+.source-action {
+  align-self: center;
+}
+
+/* Triage card */
+.triage-card {
+  background: var(--surface);
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  padding: 16px 20px;
+  margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 14px;
+}
+.triage-card.ok { border-color: var(--success); }
+.triage-card.warn { border-color: var(--warn); }
+.triage-card.error { border-color: var(--error); }
+.triage-icon { color: var(--text-dim); font-size: 14px; padding-top: 1px; }
+.triage-card.ok .triage-icon { color: var(--success); }
+.triage-card.warn .triage-icon { color: var(--warn); }
+.triage-card.error .triage-icon { color: var(--error); }
+.triage-title {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  margin: 0 0 4px;
+}
+.triage-body {
+  font-size: 13px; color: var(--text-dim);
+  margin: 0 0 10px;
+}
+.triage-body strong { color: var(--text); }
+
+.cmd {
+  background: #06090c;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--accent-2);
+  display: flex; align-items: center; gap: 10px;
+  justify-content: space-between;
+  margin: 6px 0;
+}
+.cmd-text { white-space: pre; }
+.cmd-text .comment { color: var(--text-faint); }
+.copy-btn {
+  font-family: var(--sans); font-size: 11px; font-weight: 500;
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 4px 10px; border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.copy-btn:hover { color: var(--text); }
+
+.triage-aside {
+  font-size: 12px; color: var(--text-faint);
+  margin-top: 4px;
+  font-style: italic;
+}
+
+/* Manual entry */
+.field-group {
+  display: grid; grid-template-columns: auto 1fr; gap: 14px 18px;
+  align-items: center;
+  margin-bottom: 24px;
+}
+.field-label {
+  font-size: 13px; color: var(--text-dim); font-weight: 500;
+  white-space: nowrap;
+}
+.field {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-family: var(--mono); font-size: 13px;
+  width: 100%;
+  max-width: 220px;
+}
+.field-hint { font-size: 12px; color: var(--text-faint); margin-top: 4px; }
+.privacy-row {
+  display: grid; grid-template-columns: auto 1fr; gap: 14px;
+  margin-bottom: 12px; align-items: start;
+}
+.privacy-row input { margin-top: 4px; }
+.privacy-row label { font-size: 13px; }
+.privacy-row .privacy-note { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
+
+/* Settings panel mock */
+.settings-page {
+  background: var(--bg);
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  min-height: 540px;
+}
+.settings-nav {
+  background: #0a1015;
+  border-right: 1px solid var(--border-strong);
+  padding: 18px 0;
+}
+.settings-nav h5 {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-faint); margin: 18px 18px 8px;
+}
+.settings-nav-item {
+  padding: 7px 18px; font-size: 13px;
+  color: var(--text-dim);
+  border-left: 2px solid transparent;
+  cursor: pointer;
+}
+.settings-nav-item.active {
+  color: var(--text);
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.settings-content {
+  padding: 32px 40px;
+}
+.settings-h2 {
+  font-size: 16px; font-weight: 600; margin: 0 0 4px;
+}
+.settings-sub {
+  font-size: 13px; color: var(--text-dim); margin: 0 0 24px;
+}
+.status-row {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+.status-row:last-child { border-bottom: 0; }
+.status-key { font-size: 12px; color: var(--text-dim); }
+.status-value {
+  font-family: var(--mono); font-size: 13px;
+  color: var(--text);
+}
+.status-pill {
+  background: var(--success-soft); color: var(--success);
+  padding: 3px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.status-pill.cold { background: var(--info-soft); color: var(--info); }
+.status-pill.warn { background: var(--warn-soft); color: var(--warn); }
+
+.nmea-box {
+  margin-top: 20px;
+  background: #06090c;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: var(--mono); font-size: 11px;
+  color: var(--text-faint);
+  max-height: 110px;
+  overflow: hidden;
+}
+.nmea-box span.green { color: var(--success); }
+.nmea-box span.dim { color: var(--text-faint); opacity: 0.5; }
+
+/* Persona vignette */
+.persona-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-top: 8px;
+  max-width: 1180px;
+  margin-left: auto; margin-right: auto;
+}
+.persona-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 20px;
+}
+.persona-name {
+  font-size: 14px; font-weight: 600;
+  color: var(--text);
+  display: flex; gap: 10px; align-items: center;
+  margin-bottom: 4px;
+}
+.persona-call {
+  font-family: var(--mono); font-size: 12px;
+  color: var(--accent-2);
+  background: var(--accent-soft);
+  padding: 1px 7px; border-radius: 3px;
+}
+.persona-role {
+  font-size: 12px; color: var(--text-dim);
+  margin-bottom: 12px;
+}
+.persona-bullets {
+  margin: 0; padding-left: 18px;
+  font-size: 13px; color: var(--text-dim);
+  line-height: 1.7;
+}
+.persona-bullets strong { color: var(--text); }
+
+/* Annotation */
+.annotation {
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  padding: 14px 18px;
+  font-size: 13px;
+  color: var(--text);
+  border-radius: 0 6px 6px 0;
+  margin: 20px auto;
+  max-width: 1180px;
+}
+.annotation strong { color: var(--accent-2); }
+
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Tuxlink — GPS setup UX brainstorm</h1>
+<p class="subtitle">2026-06-04 • magpie-isthmus-gorge • backed by <code>dev/research/2026-06-04-winlink-group-pain-points.md</code></p>
+
+<div class="legend">
+  <h3>Reading guide</h3>
+  <p>Four wizard-step states (success, native-NMEA, triage, manual fallback) + one Settings GPS panel for the post-setup surface. All callsigns and grids are realistic placeholders. Sudo commands are copy-paste-ready.</p>
+  <p>Design principle: <strong>"failure mode is the product"</strong>. The interesting UX work is what we do when GPS <em>doesn't</em> work, not when it does.</p>
+  <p>Anchors: <strong>v0.0.1-ux-principles.md §1</strong> ("intuitive like Thunderbird") + <strong>P3</strong> ("promote dashboard info legacy Winlink hides"). The four personas below ground the design — each gets a coherent path.</p>
+</div>
+
+<!-- =================== PERSONAS =================== -->
+<h2 class="section-title">The four personas hitting GPS setup</h2>
+<p class="section-caption">Frequency in the wild is rough estimation. The <strong>EmComm field op</strong> is the highest-stakes — the others have time to recover from a stumble; she may not.</p>
+
+<div class="persona-grid">
+  <div class="persona-card">
+    <div class="persona-name">Bob the seasoned Debian ham <span class="persona-call">K6ABC</span></div>
+    <div class="persona-role">Fixed home station. Linux for 15 years. Already runs gpsd because xastir wants it.</div>
+    <ul class="persona-bullets">
+      <li>Outcome on first run: <strong>tuxlink finds gpsd silently, fix is live, "use this" pre-selected.</strong> One Enter and he's done.</li>
+      <li>He's the easiest. He's also the loudest if we make him click through 5 screens to confirm what he already configured.</li>
+      <li>What we owe him: a wizard step he can blow past in under 2 seconds.</li>
+    </ul>
+  </div>
+
+  <div class="persona-card">
+    <div class="persona-name">Sue the EmComm field operator <span class="persona-call">W7SUE</span></div>
+    <div class="persona-role">ARES deployment, parking-lot QTH. Field laptop, no gpsd configured, USB GPS puck on the table.</div>
+    <ul class="persona-bullets">
+      <li>Outcome: <strong>tuxlink notices the USB GPS, reads NMEA, offers the device by name</strong> — without her installing or configuring gpsd.</li>
+      <li>If we make her edit <code>/etc/default/gpsd</code> with the wind whipping the EOC tent flap, we have failed her.</li>
+      <li>What we owe her: zero-config recognition AND a fast manual-grid fallback if the GPS won't cooperate.</li>
+    </ul>
+  </div>
+
+  <div class="persona-card">
+    <div class="persona-name">Dave the Windows-Winlink convert <span class="persona-call">N3DAV</span></div>
+    <div class="persona-role">25 years of Winlink Express. Just installed Mint on a refurb ThinkPad. First Linux ham app he's ever tried.</div>
+    <ul class="persona-bullets">
+      <li>Outcome: <strong>he plugs in his GPS, nothing happens, the wizard shows him why and what to type.</strong> The fix is 60 seconds and a re-login.</li>
+      <li>If the failure surface says "GPS not detected. Check your configuration." — he uninstalls tuxlink and posts in the Winlink group about Linux being broken.</li>
+      <li>What we owe him: every error includes the exact command. <code>dialout</code>, <code>ModemManager</code>, none of it should require Google.</li>
+    </ul>
+  </div>
+
+  <div class="persona-card">
+    <div class="persona-name">Mike the fixed-station retiree <span class="persona-call">W4MIKE</span></div>
+    <div class="persona-role">FT-991 + dipole + log table. Knows his grid. No GPS, doesn't want one, runs Pop!_OS on his shack PC.</div>
+    <ul class="persona-bullets">
+      <li>Outcome: <strong>one click to skip GPS entirely</strong>, manual Maidenhead entry with sane defaults.</li>
+      <li>If we force him to wait through a 30-second gpsd timeout before he can type "EM35vx", we've already lost his trust.</li>
+      <li>What we owe him: the "I don't have GPS" path is a <em>first-class</em> option in the wizard, not buried under "Advanced."</li>
+    </ul>
+  </div>
+</div>
+
+<div class="annotation">
+  <strong>Design implication:</strong> the wizard step has FOUR states the user can land in, and the LAYOUT of each state should make the user's path one click. The detection probe runs in parallel with the manual-entry option being visible — no one waits for a timeout to skip.
+</div>
+
+
+<!-- =================== STATE A — SUCCESS =================== -->
+<h2 class="section-title">State A — gpsd already running (Bob's path)</h2>
+<p class="section-caption">First moment after the wizard step loads. Detection runs in the background; gpsd responds in &lt;100ms. The card lights up green, the live fix is rendered, "Use this" is pre-selected. The whole step takes one Enter.</p>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="tl-dot r"></div>
+    <div class="tl-dot y"></div>
+    <div class="tl-dot g"></div>
+    <div class="tl-title">tuxlink — setup wizard</div>
+    <div class="tl-spacer"></div>
+  </div>
+  <div class="wizard-body">
+    <div class="wizard-side">
+      <h4>Setup</h4>
+      <div class="step done"><div class="step-dot">✓</div>Welcome</div>
+      <div class="step done"><div class="step-dot">✓</div>Callsign</div>
+      <div class="step done"><div class="step-dot">✓</div>Winlink account</div>
+      <div class="step active"><div class="step-dot">4</div>Location</div>
+      <div class="step future"><div class="step-dot">5</div>Test send</div>
+      <div class="step future"><div class="step-dot">6</div>Done</div>
+    </div>
+    <div class="wizard-main">
+      <p class="wizard-eyebrow">Step 4 of 6 — Location</p>
+      <h1 class="wizard-h1">Tuxlink found your GPS.</h1>
+      <p class="wizard-sub">Your operating location goes in your Winlink session header. Tuxlink reduces broadcast precision to a 4-character grid by default — your full coordinates stay local.</p>
+
+      <div class="source-card recommended">
+        <div class="source-icon">●</div>
+        <div class="source-body">
+          <div class="source-title">
+            gpsd on this machine
+            <span class="source-tag">found</span>
+          </div>
+          <p class="source-desc">A GPS daemon is already running on your system. Tuxlink read your current fix.</p>
+          <div class="source-meta">
+            <span><strong>Grid:</strong> CN87ux</span>
+            <span><strong>Source:</strong> 127.0.0.1:2947</span>
+            <span><strong>Fix age:</strong> 0.4&nbsp;s</span>
+            <span><strong>Satellites:</strong> 8</span>
+            <span><strong>Mode:</strong> 3D</span>
+          </div>
+        </div>
+        <div class="source-action">
+          <button class="btn primary">Use this</button>
+        </div>
+      </div>
+
+      <button class="btn ghost">▾ Other options (use a different device, or enter a grid manually)</button>
+
+      <div class="wizard-footer">
+        <button class="btn secondary">← Back</button>
+        <button class="btn primary">Continue →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- =================== STATE B — NATIVE NMEA (BD-3) =================== -->
+<h2 class="section-title">State B — no gpsd, but USB GPS on the table (Sue's path, full bd-3 vision)</h2>
+<p class="section-caption"><strong>Scope note (Codex review 2026-06-05):</strong> the green "Use this" + automatic NMEA read shown below is the <strong>bd-3 endpoint</strong>, not bd-1. For bd-1's alpha-candidate ship, the serial-device surface is diagnostic-only — see "State B — bd-1 alpha" below. This green-source mockup is preserved as the design target for bd-3 (native NMEA reader + `ProviderArbiter` refactor).</p>
+<p class="section-caption">Tuxlink probes <code>/dev/ttyACM*</code>, <code>/dev/ttyUSB*</code>, and BlueZ for paired NMEA devices. Finds Sue's u-blox 7 USB puck spewing NMEA. Recognizes the VID:PID. Offers it by name. Sue clicks one button.</p>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="tl-dot r"></div>
+    <div class="tl-dot y"></div>
+    <div class="tl-dot g"></div>
+    <div class="tl-title">tuxlink — setup wizard</div>
+    <div class="tl-spacer"></div>
+  </div>
+  <div class="wizard-body">
+    <div class="wizard-side">
+      <h4>Setup</h4>
+      <div class="step done"><div class="step-dot">✓</div>Welcome</div>
+      <div class="step done"><div class="step-dot">✓</div>Callsign</div>
+      <div class="step done"><div class="step-dot">✓</div>Winlink account</div>
+      <div class="step active"><div class="step-dot">4</div>Location</div>
+      <div class="step future"><div class="step-dot">5</div>Test send</div>
+      <div class="step future"><div class="step-dot">6</div>Done</div>
+    </div>
+    <div class="wizard-main">
+      <p class="wizard-eyebrow">Step 4 of 6 — Location</p>
+      <h1 class="wizard-h1">Tuxlink found a GPS receiver.</h1>
+      <p class="wizard-sub">Your USB GPS is sending NMEA sentences and we're parsing them directly. You don't need to install or configure anything else.</p>
+
+      <div class="source-card recommended">
+        <div class="source-icon">●</div>
+        <div class="source-body">
+          <div class="source-title">
+            u-blox 7 GPS receiver
+            <span class="source-tag">found</span>
+          </div>
+          <p class="source-desc">Detected on <code style="color: var(--accent-2); font-family: var(--mono);">/dev/ttyACM0</code> · vendor 1546 · receiving NMEA.</p>
+          <div class="source-meta">
+            <span><strong>Grid:</strong> EM35vx</span>
+            <span><strong>Fix age:</strong> 1.2&nbsp;s</span>
+            <span><strong>Satellites:</strong> 6</span>
+            <span><strong>Mode:</strong> 3D</span>
+          </div>
+        </div>
+        <div class="source-action">
+          <button class="btn primary">Use this</button>
+        </div>
+      </div>
+
+      <div class="source-card">
+        <div class="source-icon info">○</div>
+        <div class="source-body">
+          <div class="source-title">No gpsd on this system</div>
+          <p class="source-desc">If you'd rather share your GPS with other ham apps (xastir, foxtrotgps), you can install <code style="font-family: var(--mono); color: var(--accent-2);">gpsd</code> later. Tuxlink reads it directly for now.</p>
+        </div>
+      </div>
+
+      <button class="btn ghost">▾ Use a different device, or enter a grid manually</button>
+
+      <div class="wizard-footer">
+        <button class="btn secondary">← Back</button>
+        <button class="btn primary">Continue →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- =================== STATE B BD-1 — DIAGNOSTIC =================== -->
+<h2 class="section-title">State B — bd-1 alpha (serial device detected, full support in next release)</h2>
+<p class="section-caption">For the alpha-candidate ship: when a USB GPS is detected but gpsd isn't running, tuxlink surfaces a <strong>diagnostic info card</strong> naming the device and routing the user to either install gpsd or enter their grid manually. Sue still gets a working tuxlink today; bd-3 lights up the green-source one-click path next release.</p>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="tl-dot r"></div>
+    <div class="tl-dot y"></div>
+    <div class="tl-dot g"></div>
+    <div class="tl-title">tuxlink — setup wizard</div>
+    <div class="tl-spacer"></div>
+  </div>
+  <div class="wizard-body">
+    <div class="wizard-side">
+      <h4>Setup</h4>
+      <div class="step done"><div class="step-dot">✓</div>Welcome</div>
+      <div class="step done"><div class="step-dot">✓</div>Callsign</div>
+      <div class="step done"><div class="step-dot">✓</div>Winlink account</div>
+      <div class="step active"><div class="step-dot">●</div>Location</div>
+      <div class="step future"><div class="step-dot">5</div>Test send</div>
+      <div class="step future"><div class="step-dot">6</div>Done</div>
+    </div>
+    <div class="wizard-main">
+      <p class="wizard-eyebrow">Location</p>
+      <h1 class="wizard-h1">Tuxlink sees a GPS — direct support arrives soon.</h1>
+      <p class="wizard-sub">Your USB GPS is plugged in and recognized. For this release, tuxlink reads GPS through gpsd (the standard Linux GPS daemon). Direct device reading lands next release.</p>
+
+      <div class="source-card">
+        <div class="source-icon info">ⓘ</div>
+        <div class="source-body">
+          <div class="source-title">u-blox 7 GPS receiver <span class="source-tag" style="background: var(--info); color: #062030;">detected</span></div>
+          <p class="source-desc">On <code style="color: var(--accent-2); font-family: var(--mono);">/dev/ttyACM0</code> · vendor 1546 · model 01a7. Direct read via tuxlink's native NMEA path arrives in the next release.</p>
+          <div class="source-meta">
+            <span><strong>Today:</strong> install gpsd, then click Rescan</span>
+            <span><strong>Or:</strong> enter your grid manually below</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="triage-card">
+        <div class="triage-icon">○</div>
+        <div>
+          <h3 class="triage-title">Install gpsd to use your detected GPS</h3>
+          <p class="triage-body">gpsd is Linux's standard GPS daemon. It reads your u-blox device, then tuxlink reads gpsd. One install, one click rescan.</p>
+          <div style="display: flex; gap: 8px; margin: 8px 0 4px;">
+            <button class="btn" style="padding: 8px 14px;">Install gpsd</button>
+            <button class="btn" style="padding: 8px 14px;">Show command</button>
+          </div>
+          <p class="triage-aside">Opens a system terminal with <code style="font-family: var(--mono); color: var(--accent-2);">apt install gpsd gpsd-clients</code> pre-typed (interactive — you confirm).</p>
+        </div>
+      </div>
+
+      <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center;">
+        <div class="field-label">Or enter your grid manually</div>
+        <div>
+          <input class="field" type="text" placeholder="EM35vx" />
+          <div class="field-hint">For fixed stations or when GPS isn't working yet · <a href="#" style="color: var(--info); text-decoration: none;">Find my grid on a map →</a></div>
+        </div>
+      </div>
+
+      <div class="wizard-footer">
+        <button class="btn secondary">← Back</button>
+        <button class="btn primary">Continue →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="annotation">
+  <strong>Honesty over magic for the alpha.</strong> Per <code>[[no-incomplete-or-internal-refs-in-shipped-features]]</code>, the bd-1 ship doesn't hide the unfinished work — it names the device, gives two complete paths forward (install gpsd OR manual grid), and tells the operator exactly what's coming next. The bd-3 green-source state above this section is the design target; bd-1 doesn't pretend to ship it.
+</div>
+
+<!-- =================== STATE C — TRIAGE =================== -->
+<h2 class="section-title">State C — no GPS detected, triage panel (Dave's path)</h2>
+<p class="section-caption"><strong>This is where "give a shit" lives.</strong> Tuxlink ran six probes, found nothing usable, and tells the user exactly what's blocking each path. Every diagnostic includes the exact command to fix it. Dave fixes <code>dialout</code>, hits Rescan, and is done.</p>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="tl-dot r"></div>
+    <div class="tl-dot y"></div>
+    <div class="tl-dot g"></div>
+    <div class="tl-title">tuxlink — setup wizard</div>
+    <div class="tl-spacer"></div>
+  </div>
+  <div class="wizard-body">
+    <div class="wizard-side">
+      <h4>Setup</h4>
+      <div class="step done"><div class="step-dot">✓</div>Welcome</div>
+      <div class="step done"><div class="step-dot">✓</div>Callsign</div>
+      <div class="step done"><div class="step-dot">✓</div>Winlink account</div>
+      <div class="step active"><div class="step-dot">4</div>Location</div>
+      <div class="step future"><div class="step-dot">5</div>Test send</div>
+      <div class="step future"><div class="step-dot">6</div>Done</div>
+    </div>
+    <div class="wizard-main">
+      <p class="wizard-eyebrow">Step 4 of 6 — Location</p>
+      <h1 class="wizard-h1">No GPS detected. Here's what's getting in the way.</h1>
+      <p class="wizard-sub">Tuxlink looked in three places. Each one had a specific problem — most of these take one command to fix.</p>
+
+      <div class="triage-card error">
+        <div class="triage-icon">✗</div>
+        <div>
+          <h3 class="triage-title">You're not in the <code style="font-family: var(--mono); color: var(--accent-2);">dialout</code> group.</h3>
+          <p class="triage-body">Linux requires this group to read GPS / serial devices. We can see <code style="font-family: var(--mono); color: var(--accent-2);">/dev/ttyACM0</code> on your system but can't open it.</p>
+          <div style="display: flex; gap: 8px; margin: 8px 0 4px;">
+            <button class="btn primary" style="padding: 8px 14px; display: flex; align-items: center; gap: 6px;">
+              <span style="opacity: 0.9;">🔓</span> Fix it for me
+            </button>
+            <button class="btn" style="padding: 8px 14px;">Show command</button>
+          </div>
+          <p class="triage-aside">"Fix it for me" pops a system password prompt (PolicyKit), runs <code style="font-family: var(--mono); color: var(--accent-2);">usermod -aG dialout $USER</code>, then asks you to log out and back in. Linux loads group membership at login — that step's mandatory, not ours.</p>
+        </div>
+      </div>
+
+      <div class="triage-card warn">
+        <div class="triage-icon">⚠</div>
+        <div>
+          <h3 class="triage-title">ModemManager may be hijacking your GPS.</h3>
+          <p class="triage-body">ModemManager runs AT commands at every USB serial device, including GPS pucks. It can wedge them. If you don't have a USB cellular modem, you don't need ModemManager.</p>
+          <div style="display: flex; gap: 8px; margin: 8px 0 4px;">
+            <button class="btn primary" style="padding: 8px 14px; display: flex; align-items: center; gap: 6px;">
+              <span style="opacity: 0.9;">🔓</span> Fix it for me
+            </button>
+            <button class="btn" style="padding: 8px 14px;">Show command</button>
+          </div>
+          <p class="triage-aside">PolicyKit prompt → <code style="font-family: var(--mono); color: var(--accent-2);">systemctl mask ModemManager</code>. Reversible from the Settings → Location → Troubleshoot panel if you ever need cellular USB modem support.</p>
+        </div>
+      </div>
+
+      <div class="triage-card">
+        <div class="triage-icon">○</div>
+        <div>
+          <h3 class="triage-title">No <code style="font-family: var(--mono); color: var(--accent-2);">gpsd</code> on this system.</h3>
+          <p class="triage-body">Not required — once <code style="font-family: var(--mono);">dialout</code> is fixed, tuxlink reads the GPS directly. If you'd rather share it with other ham apps, install <code style="font-family: var(--mono); color: var(--accent-2);">gpsd</code>.</p>
+          <div style="display: flex; gap: 8px; margin: 8px 0 4px;">
+            <button class="btn" style="padding: 8px 14px;">Install gpsd</button>
+            <button class="btn" style="padding: 8px 14px;">Show command</button>
+          </div>
+          <p class="triage-aside">Optional. Opens a system terminal with <code style="font-family: var(--mono); color: var(--accent-2);">apt install</code> pre-typed — apt is interactive so we don't run it silently.</p>
+        </div>
+      </div>
+
+      <div style="display:flex; gap: 10px; margin-top: 18px;">
+        <button class="btn">↻ Rescan</button>
+        <button class="btn secondary">Skip — I'll enter my grid manually</button>
+      </div>
+
+      <div class="wizard-footer">
+        <button class="btn secondary">← Back</button>
+        <button class="btn secondary" disabled style="opacity: 0.4;">Continue →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- =================== STATE D — MANUAL =================== -->
+<h2 class="section-title">State D — fixed-station, manual grid entry (Mike's path)</h2>
+<p class="section-caption">Mike clicked "Skip — I'll enter my grid manually" from the previous screen. (Or he clicked it on State A's "▾ Other options" before detection finished.) This is a first-class path. No GPS shame.</p>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="tl-dot r"></div>
+    <div class="tl-dot y"></div>
+    <div class="tl-dot g"></div>
+    <div class="tl-title">tuxlink — setup wizard</div>
+    <div class="tl-spacer"></div>
+  </div>
+  <div class="wizard-body">
+    <div class="wizard-side">
+      <h4>Setup</h4>
+      <div class="step done"><div class="step-dot">✓</div>Welcome</div>
+      <div class="step done"><div class="step-dot">✓</div>Callsign</div>
+      <div class="step done"><div class="step-dot">✓</div>Winlink account</div>
+      <div class="step active"><div class="step-dot">4</div>Location</div>
+      <div class="step future"><div class="step-dot">5</div>Test send</div>
+      <div class="step future"><div class="step-dot">6</div>Done</div>
+    </div>
+    <div class="wizard-main">
+      <p class="wizard-eyebrow">Step 4 of 6 — Location</p>
+      <h1 class="wizard-h1">Where are you operating from?</h1>
+      <p class="wizard-sub">Tuxlink needs your Maidenhead grid square to put in your Winlink session header. Fixed stations don't need GPS — your grid is your QTH.</p>
+
+      <div class="field-group">
+        <div class="field-label">Maidenhead grid</div>
+        <div>
+          <input class="field" type="text" value="EM35vx" />
+          <div class="field-hint">Memphis area · <a href="#" style="color: var(--info); text-decoration: none;">Find my grid on a map →</a></div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); font-weight: 600;">What goes on the air</div>
+      <div class="privacy-row">
+        <input type="radio" id="precision-4" checked />
+        <label for="precision-4">
+          <strong>4 characters — <code style="font-family: var(--mono); color: var(--accent-2);">EM35</code></strong> · APRS convention. Resolves to a ~1° × 2° area.
+          <div class="privacy-note">Recommended. Your full grid stays local; reduced precision broadcasts.</div>
+        </label>
+      </div>
+      <div class="privacy-row">
+        <input type="radio" id="precision-6" />
+        <label for="precision-6">
+          <strong>6 characters — <code style="font-family: var(--mono); color: var(--accent-2);">EM35vx</code></strong> · ~0.04° × 0.08° area, roughly a neighborhood block.
+          <div class="privacy-note">For EmComm exercises where finer location matters.</div>
+        </label>
+      </div>
+
+      <div class="wizard-footer">
+        <button class="btn secondary">← Back</button>
+        <button class="btn primary">Continue →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- =================== SETTINGS POST-SETUP =================== -->
+<h2 class="section-title">Post-setup — Settings → Location panel</h2>
+<p class="section-caption">Same triage UX surfaces post-setup so when GPS stops working three months later (Linux distro upgrade hijacks dialout, ModemManager comes back from the dead, USB device gets renumbered), the user has the same path to fix it without leaving tuxlink. Source + fix age + raw NMEA preview gives them everything to confirm or diagnose.</p>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="tl-dot r"></div>
+    <div class="tl-dot y"></div>
+    <div class="tl-dot g"></div>
+    <div class="tl-title">tuxlink — Settings</div>
+    <div class="tl-spacer"></div>
+  </div>
+  <div class="settings-page">
+    <div class="settings-nav">
+      <h5>Profile</h5>
+      <div class="settings-nav-item">Callsign &amp; identity</div>
+      <div class="settings-nav-item">Winlink account</div>
+      <div class="settings-nav-item active">Location &amp; GPS</div>
+      <h5>App</h5>
+      <div class="settings-nav-item">Theme &amp; layout</div>
+      <div class="settings-nav-item">Privacy</div>
+    </div>
+    <div class="settings-content">
+      <h2 class="settings-h2">Location &amp; GPS</h2>
+      <p class="settings-sub">Your operating location. Reduced precision goes on the air; full precision stays local.</p>
+
+      <div class="status-row">
+        <div class="status-key">Source</div>
+        <div class="status-value">u-blox 7 on <span style="color: var(--accent-2);">/dev/ttyACM0</span></div>
+        <div class="status-pill">live</div>
+      </div>
+      <div class="status-row">
+        <div class="status-key">Current grid</div>
+        <div class="status-value">EM35vx <span style="color: var(--text-faint);">(broadcasts as <strong style="color: var(--text-dim);">EM35</strong>)</span></div>
+        <div></div>
+      </div>
+      <div class="status-row">
+        <div class="status-key">Fix age</div>
+        <div class="status-value">0.9 s</div>
+        <div></div>
+      </div>
+      <div class="status-row">
+        <div class="status-key">Satellites</div>
+        <div class="status-value">8 (3D fix)</div>
+        <div></div>
+      </div>
+      <div class="status-row">
+        <div class="status-key">Broadcast</div>
+        <div class="status-value">Allowed at 4 characters</div>
+        <div><button class="btn" style="padding: 5px 12px; font-size: 12px;">Change…</button></div>
+      </div>
+
+      <div class="nmea-box">
+<span class="dim">14:23:50.802</span> <span class="green">$GPGGA</span>,142350.000,3508.5544,N,09003.4221,W,1,08,1.0,82.6,M,-31.0,M,,*6F<br>
+<span class="dim">14:23:50.840</span> <span class="green">$GPGSA</span>,A,3,03,06,11,17,19,28,30,32,,,,,1.7,1.0,1.4*30<br>
+<span class="dim">14:23:51.000</span> <span class="green">$GPGGA</span>,142351.000,3508.5547,N,09003.4218,W,1,08,1.0,82.6,M,-31.0,M,,*61<br>
+<span class="dim">14:23:51.040</span> <span class="green">$GPRMC</span>,142351.000,A,3508.5547,N,09003.4218,W,0.05,316.6,040626,,,A*7B<br>
+<span class="dim">14:23:52.001</span> <span class="green">$GPGGA</span>,142352.000,3508.5549,N,09003.4214,W,1,08,1.0,82.6,M,-31.0,M,,*60
+      </div>
+      <div style="font-size: 11px; color: var(--text-faint); margin-top: 6px;">Raw NMEA preview — last 5 sentences. Update live.</div>
+
+      <div style="margin-top: 28px; display: flex; gap: 10px;">
+        <button class="btn">Switch to gpsd</button>
+        <button class="btn">Pick a different device…</button>
+        <button class="btn secondary">Enter manually</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="annotation">
+  <strong>Design loop closure:</strong> the wizard step and the Settings panel use the same component vocabulary — source cards, triage cards, status rows, NMEA preview. A user who learned the wizard knows the Settings panel. A user troubleshooting in Settings sees the same "fix it with this command" affordances they saw on day one. Consistency between first-run and ongoing-use is the load-bearing trust signal.
+</div>
+
+
+<!-- =================== POST-SETUP TRIAGE — WHEN THINGS CHANGE =================== -->
+<h2 class="section-title">Post-setup — when something changes (field deployment, distro upgrade, device swap)</h2>
+<p class="section-caption">Cameron's pushback (2026-06-04): the wizard runs once, but stations get <strong>stood up in one place and deployed somewhere else</strong>. Sue packs her laptop at home (gpsd happy) and arrives at an EOC parking lot (no gpsd, USB puck plugged in). Dave's distro upgrades and ModemManager comes back from the dead. Bob upgrades from a u-blox 7 to a u-blox 9. The Settings panel needs the <em>same triage UX</em> the wizard had, plus a clean way to switch sources without restarting.</p>
+
+<p class="section-caption" style="margin-top: -8px;"><strong>Architectural answer:</strong> the wizard's GPS step and the Settings → Location panel render the same component. Different chrome (wizard has Back/Continue; Settings has Save/Cancel), same detection + triage + "Fix it for me" surface. The user who learned the wizard knows Settings by inference.</p>
+
+<!-- Dashboard ribbon — NOT in scope, already exists in tuxlink. The GPS feature emits Tauri events that the existing ribbon already consumes; no new ribbon work in this design. -->
+
+
+<!-- Settings → Location → triage when something broke -->
+<h2 class="section-title" style="font-size: 14px; margin-top: 36px;">Settings → Location → "Troubleshoot" (Dave's distro upgrade reverted dialout)</h2>
+<p class="section-caption">Dave clicked the red pill. Settings opens directly to Location with the triage cards expanded. Identical to the wizard's State C — same "Fix it for me" buttons, same reversibility commitments. The "Troubleshoot" tab/section is also reachable manually from Settings → Location even when things look fine, in case the user wants to inspect.</p>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="tl-dot r"></div>
+    <div class="tl-dot y"></div>
+    <div class="tl-dot g"></div>
+    <div class="tl-title">tuxlink — Settings</div>
+    <div class="tl-spacer"></div>
+  </div>
+  <div class="settings-page">
+    <div class="settings-nav">
+      <h5>Profile</h5>
+      <div class="settings-nav-item">Callsign &amp; identity</div>
+      <div class="settings-nav-item">Winlink account</div>
+      <div class="settings-nav-item active">Location &amp; GPS</div>
+      <h5>App</h5>
+      <div class="settings-nav-item">Theme &amp; layout</div>
+      <div class="settings-nav-item">Privacy</div>
+    </div>
+    <div class="settings-content">
+      <h2 class="settings-h2">Location &amp; GPS</h2>
+      <p class="settings-sub" style="color: var(--error);">⚠ GPS is dark — using your stored manual grid <strong>FN31pr</strong> as the broadcast position. Here's what's wrong:</p>
+
+      <div style="display: flex; gap: 14px; border-bottom: 1px solid var(--border); margin-bottom: 18px; padding-bottom: 0;">
+        <button style="background: transparent; border: 0; border-bottom: 2px solid var(--accent); color: var(--text); padding: 8px 4px; font-size: 13px; font-weight: 600; cursor: pointer;">Troubleshoot</button>
+        <button style="background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--text-dim); padding: 8px 4px; font-size: 13px; cursor: pointer;">Source picker</button>
+        <button style="background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--text-dim); padding: 8px 4px; font-size: 13px; cursor: pointer;">Manual grid</button>
+        <button style="background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--text-dim); padding: 8px 4px; font-size: 13px; cursor: pointer;">Privacy</button>
+      </div>
+
+      <div class="triage-card error">
+        <div class="triage-icon">✗</div>
+        <div>
+          <h3 class="triage-title">Your <code style="font-family: var(--mono); color: var(--accent-2);">dialout</code> membership was lost.</h3>
+          <p class="triage-body">Likely the Ubuntu upgrade reset it. You were in <code style="font-family: var(--mono);">dialout</code> before, you're not now. <code style="font-family: var(--mono); color: var(--accent-2);">/dev/ttyACM0</code> is still there but tuxlink can't read it.</p>
+          <div style="display: flex; gap: 8px; margin: 8px 0 4px;">
+            <button class="btn primary" style="padding: 8px 14px; display: flex; align-items: center; gap: 6px;">
+              <span style="opacity: 0.9;">🔓</span> Fix it for me
+            </button>
+            <button class="btn" style="padding: 8px 14px;">Show command</button>
+          </div>
+          <p class="triage-aside">Same fix as setup — log out and back in after, since Linux only loads group membership at login.</p>
+        </div>
+      </div>
+
+      <div class="triage-card warn">
+        <div class="triage-icon">⚠</div>
+        <div>
+          <h3 class="triage-title">ModemManager is running again.</h3>
+          <p class="triage-body">It was masked previously. Looks like the distro upgrade unmasked it. Same fix as before.</p>
+          <div style="display: flex; gap: 8px; margin: 8px 0 4px;">
+            <button class="btn primary" style="padding: 8px 14px; display: flex; align-items: center; gap: 6px;">
+              <span style="opacity: 0.9;">🔓</span> Fix it for me
+            </button>
+            <button class="btn" style="padding: 8px 14px;">Show command</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap: 10px; margin-top: 18px;">
+        <button class="btn">↻ Rescan</button>
+        <button class="btn">Switch to manual grid for now</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="height: 16px;"></div>
+
+<!-- Settings → Location → Source picker (Sue's deployment) -->
+<h2 class="section-title" style="font-size: 14px; margin-top: 24px;">Settings → Location → "Source picker" (Sue's deployment switch)</h2>
+<p class="section-caption">Sue clicked the amber pill on arrival at the EOC. Tuxlink had detected the gpsd disappearance + new USB device. The Source picker tab shows both options, with the new USB puck recommended. One click and she's on the new source. No wizard re-run.</p>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="tl-dot r"></div>
+    <div class="tl-dot y"></div>
+    <div class="tl-dot g"></div>
+    <div class="tl-title">tuxlink — Settings</div>
+    <div class="tl-spacer"></div>
+  </div>
+  <div class="settings-page">
+    <div class="settings-nav">
+      <h5>Profile</h5>
+      <div class="settings-nav-item">Callsign &amp; identity</div>
+      <div class="settings-nav-item">Winlink account</div>
+      <div class="settings-nav-item active">Location &amp; GPS</div>
+      <h5>App</h5>
+      <div class="settings-nav-item">Theme &amp; layout</div>
+      <div class="settings-nav-item">Privacy</div>
+    </div>
+    <div class="settings-content">
+      <h2 class="settings-h2">Location &amp; GPS</h2>
+      <p class="settings-sub" style="color: var(--warn);">⚠ Your GPS source changed since this morning. Pick which one to use.</p>
+
+      <div style="display: flex; gap: 14px; border-bottom: 1px solid var(--border); margin-bottom: 18px;">
+        <button style="background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--text-dim); padding: 8px 4px; font-size: 13px; cursor: pointer;">Troubleshoot</button>
+        <button style="background: transparent; border: 0; border-bottom: 2px solid var(--accent); color: var(--text); padding: 8px 4px; font-size: 13px; font-weight: 600; cursor: pointer;">Source picker</button>
+        <button style="background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--text-dim); padding: 8px 4px; font-size: 13px; cursor: pointer;">Manual grid</button>
+        <button style="background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--text-dim); padding: 8px 4px; font-size: 13px; cursor: pointer;">Privacy</button>
+      </div>
+
+      <div class="source-card recommended">
+        <div class="source-icon">●</div>
+        <div class="source-body">
+          <div class="source-title">
+            u-blox 7 GPS receiver
+            <span class="source-tag">new — just detected</span>
+          </div>
+          <p class="source-desc">On <code style="color: var(--accent-2); font-family: var(--mono);">/dev/ttyACM0</code>. Receiving NMEA. Tuxlink can read this directly without gpsd.</p>
+          <div class="source-meta">
+            <span><strong>Grid:</strong> CM87wb</span>
+            <span><strong>Fix age:</strong> 0.6&nbsp;s</span>
+            <span><strong>Satellites:</strong> 7</span>
+          </div>
+        </div>
+        <div class="source-action">
+          <button class="btn primary">Use this</button>
+        </div>
+      </div>
+
+      <div class="source-card">
+        <div class="source-icon warn">○</div>
+        <div class="source-body">
+          <div class="source-title">gpsd on this machine <span style="font-size: 11px; color: var(--text-faint); font-weight: normal; font-style: italic;">(was previous source)</span></div>
+          <p class="source-desc">Tuxlink couldn't reach 127.0.0.1:2947 here. gpsd is probably not running on the EOC laptop, or the service didn't start at this boot.</p>
+          <div class="source-meta">
+            <span><strong>Status:</strong> unreachable</span>
+            <span><strong>Last seen:</strong> 7&nbsp;h ago at home QTH</span>
+          </div>
+        </div>
+        <div class="source-action">
+          <button class="btn" style="padding: 7px 12px;">Diagnose</button>
+        </div>
+      </div>
+
+      <div class="source-card">
+        <div class="source-icon info">○</div>
+        <div class="source-body">
+          <div class="source-title">Stored manual grid · <code style="font-family: var(--mono); color: var(--accent-2);">CN87ux</code></div>
+          <p class="source-desc">Your home QTH grid. Available as a fallback if no GPS is reachable in the field.</p>
+        </div>
+        <div class="source-action">
+          <button class="btn" style="padding: 7px 12px;">Use stored grid</button>
+        </div>
+      </div>
+
+      <div style="margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-faint);">
+        <strong style="color: var(--text-dim);">↻ Rescan</strong> — re-probe gpsd, USB serial, Bluetooth NMEA. Useful if you just plugged in a new device.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="annotation">
+  <strong>Two surfaces, one component.</strong> The wizard's GPS step (States A–D above) and the Settings → Location panel (the three views above) render the same React component with different chrome. Detection probes run identically in both. The triage cards, the source cards, the "Fix it for me" buttons — same code, same trust contract. The wizard is just the Settings panel with Back/Continue around it.
+</div>
+
+
+<h2 class="section-title">Locked decisions (Cameron, 2026-06-04)</h2>
+
+<div style="background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; padding: 24px; max-width: 1180px; margin: 0 auto;">
+
+<h3 style="font-size: 14px; color: var(--success); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 8px;">✓ First slice = full UX, not phase-gated</h3>
+<p style="margin: 0 0 18px; color: var(--text-dim);">"Fix it for me" (pkexec) ships alongside "Show command" in the same release. Rationale: shell friction is enormous even for technical users — see Cameron's Laserfiche Support Tools, a product that exists because his engineers wouldn't paste commands. "Give a shit" means respecting shell friction. Power users keep the copy-paste escape hatch; the rest get the magic button.</p>
+
+<h3 style="font-size: 14px; color: var(--success); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 8px;">✓ Tuxlink never holds sudo; PolicyKit owns the trust surface</h3>
+<p style="margin: 0 0 18px; color: var(--text-dim);">"Fix it for me" invokes <code style="font-family: var(--mono); color: var(--accent-2);">pkexec /usr/libexec/tuxlink-gps-fix &lt;action&gt;</code>. The helper is a tiny binary shipping a fixed set of actions (<code style="font-family: var(--mono);">add-dialout</code>, <code style="font-family: var(--mono);">mask-modemmanager</code>, <code style="font-family: var(--mono);">install-gpsd</code>). A PolicyKit policy in <code style="font-family: var(--mono); color: var(--accent-2);">/usr/share/polkit-1/actions/com.tuxlink.app.policy</code> authorizes only the helper, not arbitrary commands. The user types their password in a system-rendered dialog and consents to one specific action.</p>
+
+<h3 style="font-size: 14px; color: var(--success); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 8px;">✓ The "whoa" moment we polish hardest</h3>
+<p style="margin: 0 0 18px; color: var(--text-dim);">Dave's path. The triage panel that detects ModemManager + dialout + missing-device with the exact diagnosis, and the "Fix it for me" button that just works. That's the screenshot a tuxlink user posts to their club Slack. Bob and Sue get their happy paths along the way, but Dave's path is what differentiates this from every other Linux ham app.</p>
+
+<h3 style="font-size: 14px; color: var(--success); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 8px;">✓ Wizard step and Settings panel share one component</h3>
+<p style="margin: 0; color: var(--text-dim);">The GPS source picker + triage UX is a single React component mounted in two contexts. Wizard wraps it in Back/Continue chrome; Settings wraps it in tabs (Troubleshoot / Source picker / Manual grid / Privacy) plus a Save/Cancel footer. Detection probes, source cards, triage cards, "Fix it for me" buttons — all shared. Field deployments and distro upgrades are first-class flows, not afterthoughts. The dashboard pill is the always-visible "tuxlink noticed something" surface that bounces the user into the relevant Settings tab.</p>
+
+</div>
+
+</div>
+</body>
+</html>
