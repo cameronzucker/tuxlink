@@ -20,15 +20,15 @@
 // (DBUS_SESSION_BUS_ADDRESS must be set + gnome-keyring-daemon must be running).
 // Normal `cargo test` skips them (but the SAFE unit test below always runs).
 //
-// Test cases per spec §3.8:
+// Test cases per spec §3.8 (tuxlink-kc3q: de-Pat-framed; canonical service is "tuxlink"):
 // 1. Direct keyring round-trip: Entry::new + set_password + get_password at the
-//    exact (service="tuxlink-pat", account=<callsign>) shape that Pat reads.
+//    (service="tuxlink", account=<callsign>) shape the app reads.
 // 2. persist_cms_impl happy path: writes config.json + keyring; reads config back
 //    AND asserts a SEPARATE process (`secret-tool`) reads the password back from
-//    the freedesktop Secret Service — the wizard→Pat cross-process contract. A
+//    the freedesktop Secret Service — the real-store cross-process contract. A
 //    secret-tool miss is a hard failure (it means the write went to the keyring
-//    crate's mock store, which Pat's go-keyring cannot see), NOT a best-effort
-//    nicety.
+//    crate's in-process mock store, not the real Secret Service the app reads),
+//    NOT a best-effort nicety.
 // 3. Snapshot-and-restore: pre-write a credential, simulate config-write failure,
 //    assert prior credential is restored (not overwritten, not deleted).
 
@@ -199,17 +199,17 @@ fn skip_if_no_session_bus() -> bool {
 // Case 1: Direct keyring round-trip via keyring::Entry
 // ──────────────────────────────────────────────────────────────
 
-/// Verify that keyring::Entry::new("tuxlink-pat", "W4PHS").set_password()
+/// Verify that keyring::Entry::new("tuxlink", "W4PHS").set_password()
 /// round-trips through the real gnome-keyring-daemon (or equivalent) and
-/// can be read back, confirming the (service, account) shape that Pat reads.
+/// can be read back, confirming the (service, account) shape the app reads.
 ///
-/// This is the cross-language contract test: the Rust `keyring` crate writes via
-/// the freedesktop Secret Service D-Bus protocol; Pat's `go-keyring` reads via
-/// the same protocol. If this round-trip works, the wizard→Pat handoff works.
+/// This proves the wizard's credential lands in the real freedesktop Secret
+/// Service over D-Bus (via the Rust `keyring` crate), not an in-process mock —
+/// so the app's later credentials::read_password finds it.
 #[tokio::test]
 #[ignore]
 #[serial]
-async fn integration_keyring_round_trip_at_tuxlink_pat_account_shape() {
+async fn integration_keyring_round_trip_at_tuxlink_account_shape() {
     if skip_if_no_session_bus() { return; }
     assert_keyring_isolated();
 
@@ -217,7 +217,7 @@ async fn integration_keyring_round_trip_at_tuxlink_pat_account_shape() {
     let password = "integration-test-password-do-not-use-in-production";
 
     // Write.
-    let entry = keyring::Entry::new("tuxlink-pat", callsign)
+    let entry = keyring::Entry::new("tuxlink", callsign)
         .expect("should create entry");
     entry.set_password(password).expect("should write to real keyring");
 
@@ -234,16 +234,14 @@ async fn integration_keyring_round_trip_at_tuxlink_pat_account_shape() {
 // ──────────────────────────────────────────────────────────────
 
 /// Full persist_cms_impl run against the real gnome-keyring-daemon:
-/// - Writes the password to keyring at (service="tuxlink-pat", username="INTTEST2")
+/// - Writes the password to keyring at (service="tuxlink", username="INTTEST2")
 /// - Writes config.json to a temp dir
 /// - Reads both back and asserts correctness
 ///
 /// CONTRACT NOTE: the freedesktop Secret Service attribute that the Rust `keyring`
 /// crate (via `dbus-secret-service`) writes for the entry's account is `username`
-/// (NOT `account`). zalando `go-keyring` — the reader on Pat's side — searches by
-/// exactly `{service, username}` (go-keyring keyring_unix.go: `search := {"username":
-/// user, "service": service}`). So the faithful cross-process read-back uses
-/// `secret-tool lookup service tuxlink-pat username INTTEST2`. Querying `account`
+/// (NOT `account`). So the faithful cross-process read-back uses
+/// `secret-tool lookup service tuxlink username INTTEST2`. Querying `account`
 /// here would model nothing real and would falsely fail.
 #[tokio::test]
 #[ignore]
@@ -283,29 +281,27 @@ async fn integration_persist_cms_happy_path_real_keyring() {
     // CROSS-PROCESS CONTRACT ASSERTION (the load-bearing check, not best-effort).
     //
     // `secret-tool` is a SEPARATE process that reads the freedesktop Secret Service
-    // over D-Bus — the exact same protocol+store that Pat's `go-keyring` reads. If
-    // the wizard's keyring write landed in the crate's in-process mock store (the
-    // bug when no Secret Service feature is enabled), this lookup MISSES and Pat
+    // over D-Bus — the same real store the app reads via the keyring crate. If the
+    // wizard's keyring write landed in the crate's in-process mock store (the bug
+    // when no Secret Service feature is enabled), this lookup MISSES and the app
     // would never find the credential. Asserting a successful, value-matching
-    // read-back from a separate process IS the wizard→Pat contract. It must
+    // read-back from a separate process IS the real-store contract. It must
     // succeed and match — a miss is a contract failure, not "an implementation
     // detail of the backend."
     //
-    // We query by `{service, username}` — the EXACT attribute pair zalando
-    // go-keyring searches on Unix (keyring_unix.go), and the exact pair the Rust
-    // keyring crate writes (verified: `attribute.service` + `attribute.username`).
-    // This is the real reader's query, not the freedesktop `account` convention.
+    // We query by `{service, username}` — the exact attribute pair the Rust keyring
+    // crate writes (verified: `attribute.service` + `attribute.username`). This is
+    // the real on-disk query, not the freedesktop `account` convention.
     let output = std::process::Command::new("secret-tool")
-        .args(["lookup", "service", "tuxlink-pat", "username", "INTTEST2"])
+        .args(["lookup", "service", "tuxlink", "username", "INTTEST2"])
         .output()
         .expect("secret-tool must be installed for the cross-process contract assertion");
     assert!(
         output.status.success(),
         "secret-tool (separate process) MUST find the credential at \
-         (service=tuxlink-pat, username=INTTEST2) — the exact attribute pair Pat's \
-         go-keyring searches. A miss means the wizard wrote to the keyring crate's \
-         mock store instead of the freedesktop Secret Service, so tuxlink-pat's \
-         go-keyring would never read it. status={:?} stderr={}",
+         (service=tuxlink, username=INTTEST2). A miss means the wizard wrote to the \
+         keyring crate's in-process mock store instead of the freedesktop Secret \
+         Service, so the app would never read it. status={:?} stderr={}",
         output.status,
         String::from_utf8_lossy(&output.stderr),
     );
@@ -317,7 +313,7 @@ async fn integration_persist_cms_happy_path_real_keyring() {
     );
 
     // Cleanup: remove the credential persist_cms_impl wrote (separate from Case 1's entry).
-    let _ = keyring::Entry::new("tuxlink-pat", "INTTEST2")
+    let _ = keyring::Entry::new("tuxlink", "INTTEST2")
         .and_then(|e| e.delete_credential());
 }
 
@@ -340,7 +336,7 @@ async fn integration_snapshot_and_restore_on_config_write_failure() {
     let original = "original-password";
 
     // Pre-write the original credential to the real keyring.
-    let entry = keyring::Entry::new("tuxlink-pat", callsign).expect("entry create");
+    let entry = keyring::Entry::new("tuxlink", callsign).expect("entry create");
     entry.set_password(original).expect("pre-write should succeed");
 
     // Point XDG_CONFIG_HOME to /proc/1 — not writable by non-root.

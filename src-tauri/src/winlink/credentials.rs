@@ -1,13 +1,8 @@
-//! Keyring credential read + one-time migration helper.
+//! Keyring credential read helper.
 //!
-//! Service name history:
-//! - `"tuxlink-pat"` — used during the Pat era; the service name reflected the Pat sidecar.
-//! - `"tuxlink"` — canonical name post-Pat-strip. This is what new entries use.
-//!
-//! `read_password` reads from `"tuxlink"` first. If no entry exists, it falls back to
-//! `"tuxlink-pat"` (one-time migration): on success it writes the password to the new
-//! entry and best-effort deletes the old one, then returns the password. This is
-//! transparent to operators who set their password during the Pat era.
+//! All tuxlink credentials live under the `"tuxlink"` keyring service. `read_password`
+//! reads from `"tuxlink"`; there is no fallback. (The Pat-era `"tuxlink-pat"` service and
+//! its one-time migration fallback were removed in tuxlink-kc3q — Pat is fully stripped.)
 //!
 //! # Test isolation
 //!
@@ -25,8 +20,6 @@
 
 /// The canonical keyring service name for tuxlink credentials.
 const SERVICE: &str = "tuxlink";
-/// Legacy service name from the Pat era. Used only during one-time migration.
-const LEGACY_SERVICE: &str = "tuxlink-pat";
 
 // ──────────────────────────────────────────────────────────────
 // Public error type
@@ -100,48 +93,16 @@ impl EntryLike for RealEntry {
 ///
 /// # Errors
 ///
-/// - `KeyringError::NoEntry` — neither the `"tuxlink"` nor the `"tuxlink-pat"` entry
-///   exists for this callsign.
+/// - `KeyringError::NoEntry` — no `"tuxlink"` entry exists for this callsign.
 /// - `KeyringError::Backend` — an unexpected error from the underlying credential store.
 pub fn read_password_with_factory<F>(callsign: &str, factory: &F) -> Result<String, KeyringError>
 where
     F: Fn(&str, &str) -> Box<dyn EntryLike>,
 {
-    // Step 1: try the canonical service name.
-    let new_entry = factory(SERVICE, callsign);
-    match new_entry.get_password() {
-        Ok(password) => return Ok(password),
-        Err(keyring::Error::NoEntry) => {} // fall through to migration
-        Err(other) => return Err(KeyringError::Backend(format!("{other}"))),
-    }
-
-    // Step 2: canonical entry absent — try the legacy service (one-time migration).
-    let old_entry = factory(LEGACY_SERVICE, callsign);
-    match old_entry.get_password() {
-        Ok(password) => {
-            // Migrate: write to new service name.
-            let migrate_entry = factory(SERVICE, callsign);
-            if let Err(e) = migrate_entry.set_password(&password) {
-                // Migration write failed — still return the password; next call retries.
-                eprintln!(
-                    "credentials: migration write to '{}' failed for {callsign}: {e}",
-                    SERVICE
-                );
-            } else {
-                // Best-effort delete from legacy service.
-                if let Err(e) = old_entry.delete_password() {
-                    eprintln!(
-                        "credentials: best-effort delete from '{}' failed for {callsign}: {e}",
-                        LEGACY_SERVICE
-                    );
-                }
-                eprintln!(
-                    "credentials: migrated {callsign} from '{}' to '{}'",
-                    LEGACY_SERVICE, SERVICE
-                );
-            }
-            Ok(password)
-        }
+    // Read the canonical service. No legacy fallback — Pat is fully stripped (tuxlink-kc3q).
+    let entry = factory(SERVICE, callsign);
+    match entry.get_password() {
+        Ok(password) => Ok(password),
         Err(keyring::Error::NoEntry) => Err(KeyringError::NoEntry {
             callsign: callsign.to_string(),
         }),
@@ -155,12 +116,11 @@ where
 
 /// Read the Winlink password for `callsign` from the OS keyring.
 ///
-/// Reads from the `"tuxlink"` service. If absent, transparently migrates from the
-/// legacy `"tuxlink-pat"` service (one-time, logged at `info`).
+/// Reads from the `"tuxlink"` service (no legacy fallback — Pat fully stripped).
 ///
 /// # Errors
 ///
-/// - `KeyringError::NoEntry` — no entry in either service.
+/// - `KeyringError::NoEntry` — no entry for this callsign.
 /// - `KeyringError::Backend` — unexpected backend error.
 pub fn read_password(callsign: &str) -> Result<String, KeyringError> {
     let real_factory = |service: &str, account: &str| -> Box<dyn EntryLike> {
