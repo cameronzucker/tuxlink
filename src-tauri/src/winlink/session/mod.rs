@@ -810,6 +810,9 @@ pub enum ExchangeError {
     RemoteError(String),
     /// The exchange exceeded its turn cap (a misbehaving or looping server).
     TooManyTurns,
+    /// The operator aborted while a selection prompt was pending (or before
+    /// one); the turn is cancelled without sending an answer line.
+    Cancelled,
 }
 
 impl std::fmt::Display for ExchangeError {
@@ -829,6 +832,7 @@ impl std::fmt::Display for ExchangeError {
             ExchangeError::PasswordRequired => write!(f, "server required a password but none was configured"),
             ExchangeError::RemoteError(s) => write!(f, "remote error: {s}"),
             ExchangeError::TooManyTurns => write!(f, "exchange exceeded turn cap"),
+            ExchangeError::Cancelled => write!(f, "exchange cancelled by operator"),
         }
     }
 }
