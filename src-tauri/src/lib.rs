@@ -377,6 +377,7 @@ pub fn run() {
             crate::ui_commands::open_webview_viewer,
             crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
             crate::ui_commands::cms_abort,             // tuxlink-9z2 (abort in-flight connect)
+            crate::ui_commands::cms_resolve_inbound_selection,    // tuxlink-bsiy (inbound message selection resolve)
             crate::ui_commands::config_read,           // Task 16 (tuxlink-hvv)
             crate::ui_commands::backend_status,        // Task 16 (tuxlink-hvv)
             crate::ui_commands::session_log_snapshot,  // Task 15 (tuxlink-8zg integration round)

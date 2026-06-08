@@ -678,6 +678,51 @@ mod tests {
         assert!(reg.lock().unwrap().is_some());
     }
 
+    // Test (Task 5 wire contract): the Tauri command receives attempt_id as a
+    // plain u64 (the JSON number the frontend sends back) and constructs
+    // AttemptId(attempt_id) before calling resolve_selection. This test uses
+    // u64 numeric literals explicitly to document that wire contract and guard
+    // that AttemptId(7u64) round-trips correctly through the match predicate.
+    // A full #[tauri::command] State-injection test would need the Tauri test
+    // harness; this conversion test + the resolve_selection tests above cover
+    // the command's logic end-to-end.
+    #[test]
+    fn u64_attempt_id_wire_contract_matches_and_rejects_wrong_id() {
+        let reg: SelectionRegistry = Arc::new(Mutex::new(None));
+        let (tx, rx) = mpsc::channel();
+        *reg.lock().unwrap() = Some(SelectionSlot {
+            attempt_id: AttemptId(7),
+            request_id: 42,
+            tx,
+        });
+
+        // Correct attempt_id: AttemptId(7u64) — mirrors what the command builds
+        // from the frontend's numeric JSON field.
+        let sel = InboundSelection {
+            selected_mids: vec!["A".into()],
+            disposition: UnselectedDisposition::Hold,
+        };
+        let matched = resolve_selection(&reg, AttemptId(7u64), 42, sel);
+        assert!(matched, "AttemptId(7u64) must match the registered AttemptId(7) slot");
+        assert!(rx.try_recv().is_ok(), "selection must be delivered through the channel");
+
+        // Wrong attempt_id (8u64): must be a no-op — frontend's stale event guard.
+        let (tx2, rx2) = mpsc::channel();
+        *reg.lock().unwrap() = Some(SelectionSlot {
+            attempt_id: AttemptId(7),
+            request_id: 42,
+            tx: tx2,
+        });
+        let missed = resolve_selection(
+            &reg,
+            AttemptId(8u64),
+            42,
+            InboundSelection { selected_mids: vec![], disposition: UnselectedDisposition::Hold },
+        );
+        assert!(!missed, "AttemptId(8u64) must not resolve an AttemptId(7) slot");
+        assert!(rx2.try_recv().is_err(), "wrong attempt_id must not deliver anything");
+    }
+
     // Test (e): double-submit is a no-op after the first take(). The first call
     // delivers + clears the slot; the second finds nothing and returns false.
     #[test]

@@ -2244,6 +2244,33 @@ pub async fn cms_abort(
 }
 
 // ============================================================================
+// Task 5 (tuxlink-bsiy) — cms_resolve_inbound_selection
+// ============================================================================
+
+/// Deliver the operator's inbound-message selection to a decider parked in
+/// native_connect (Task 4b). Matches the pending slot by (attempt_id, request_id)
+/// and take()s it (idempotent); a stale/mismatched key or an empty registry is a
+/// silent no-op (the frontend also stale-filters via attempt_id). The numeric
+/// attempt_id mirrors the AttemptId carried by the InboundProposalsOffered event
+/// the frontend received. Thin wrapper over inbound_selection::resolve_selection
+/// (Task 3), which carries the unit tests for the match/take/no-op semantics.
+#[tauri::command]
+pub async fn cms_resolve_inbound_selection(
+    attempt_id: u64,
+    request_id: u64,
+    selection: crate::winlink::inbound_selection::InboundSelection,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
+) -> Result<(), UiError> {
+    crate::winlink::inbound_selection::resolve_selection(
+        registry.inner(),
+        crate::winlink::b2f_events::AttemptId(attempt_id),
+        request_id,
+        selection,
+    );
+    Ok(())
+}
+
+// ============================================================================
 // Task 13 (tuxlink-7do4) — smart-auth-diagnostics banner recovery commands
 // ============================================================================
 // Three commands the banner's recovery affordances depend on. Registered in
