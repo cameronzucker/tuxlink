@@ -7,8 +7,10 @@
 //
 // Plan: docs/superpowers/plans/2026-06-01-html-forms-p1-webview-infra.md Task 10.
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { Contact, Group } from '../contacts/types';
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -17,10 +19,45 @@ const mocks = vi.hoisted(() => ({
     minimize: vi.fn(async () => {}),
     toggleMaximize: vi.fn(async () => {}),
   },
+  // Mutable contacts/groups the mocked useContacts returns. Tests assign these
+  // before render so send-time group expansion has fixtures to resolve against.
+  contacts: [] as Contact[],
+  groups: [] as Group[],
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => mocks.win }));
+// Defensive global stubs. Compose's close-handler effect does a dynamic
+// `import('@tauri-apps/api/window')` inside an async `.then()`; when a mounted
+// <Compose> outlives a fast test (the A6 send tests await an invoke, then
+// cleanup unmounts), the late promise + unlisten can momentarily resolve
+// against the REAL Tauri module during teardown, which reads these globals.
+// Stubbing them makes that path a harmless no-op instead of an
+// unhandled-rejection that pollutes the run (mirrors App.test.tsx, which also
+// mounts <Compose>). The in-test path still uses the mocked getCurrentWindow.
+const g = globalThis as unknown as Record<string, unknown>;
+g.__TAURI_INTERNALS__ = {
+  metadata: { currentWindow: { label: 'compose-test' }, currentWebview: { label: 'compose-test' } },
+  transformCallback: (cb: unknown) => cb,
+  invoke: async () => undefined,
+};
+g.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+  unregisterListener: async () => undefined,
+};
+// Compose builds its own useContacts() instance (separate window). Mock it so
+// the send-time group expansion sees fixture contacts/groups without a Tauri
+// runtime or a QueryClientProvider wrapper.
+vi.mock('../contacts/useContacts', () => ({
+  useContacts: () => ({
+    contacts: mocks.contacts,
+    groups: mocks.groups,
+    isLoading: false,
+    upsertContact: vi.fn(),
+    deleteContact: vi.fn(),
+    upsertGroup: vi.fn(),
+    deleteGroup: vi.fn(),
+  }),
+}));
 
 import {
   Compose,
@@ -42,6 +79,8 @@ beforeEach(() => {
   mocks.win.onCloseRequested.mockResolvedValue(vi.fn());
   mocks.win.minimize.mockClear();
   mocks.win.toggleMaximize.mockClear();
+  mocks.contacts = [];
+  mocks.groups = [];
 });
 
 afterEach(() => {
@@ -198,5 +237,159 @@ describe('closePromptShape', () => {
     const closeShape = closePromptShape('webview-form', 'close');
     const switchShape = closePromptShape('webview-form', 'switch-to-form');
     expect(closeShape).toEqual(switchShape);
+  });
+});
+
+// ============================================================================
+// Task A6 — send-path group expansion (CORRECTNESS-CRITICAL: recipients on the
+// wire). These mount the real <Compose> with a mocked invoke + useContacts so
+// we can assert the EXACT message_send payload.
+// ============================================================================
+
+const ts = '2026-06-07T00:00:00Z';
+const mkContact = (id: string, callsign: string): Contact => ({
+  id,
+  name: callsign,
+  callsign,
+  created_at: ts,
+  updated_at: ts,
+});
+
+/** Seed a localStorage draft so Compose restores `to`/`cc` on mount. */
+function seedDraft(draftId: string, to: string, cc = ''): void {
+  localStorage.setItem(
+    `tuxlink.drafts.${draftId}`,
+    JSON.stringify({ draftId, to, cc, subject: 'S', body: 'B', requestAck: false, savedAt: ts }),
+  );
+}
+
+/** Pull the `message_send` draft DTO out of the invoke mock's calls. */
+function lastMessageSendDraft(): { to: string[]; cc: string[] } | undefined {
+  const call = mocks.invoke.mock.calls.find(([cmd]) => cmd === 'message_send');
+  return call?.[1]?.draft;
+}
+
+describe('<Compose> send-path group expansion (Task A6)', () => {
+  it('expands a group:<id> in To to member callsigns — NO group: token reaches message_send (H5)', async () => {
+    mocks.contacts = [mkContact('c-w6abc', 'W6ABC'), mkContact('c-w7def', 'W7DEF')];
+    mocks.groups = [
+      {
+        id: 'g-ares',
+        name: 'ARES',
+        members: [
+          { type: 'contact', contact_id: 'c-w6abc' },
+          { type: 'contact', contact_id: 'c-w7def' },
+          { type: 'raw', callsign: 'W9XYZ' },
+        ],
+        created_at: ts,
+        updated_at: ts,
+      },
+    ];
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+      if (cmd === 'message_send') return 'MID-1';
+      return null;
+    });
+    seedDraft('a6-h5', 'group:g-ares');
+
+    render(<Compose draftId="a6-h5" />);
+    // Wait for the draft restore to populate the To chips.
+    await screen.findByTestId('recipient-chip-group:g-ares');
+
+    fireEvent.click(screen.getByTestId('compose-send-btn'));
+
+    await waitFor(() =>
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'message_send')).toBe(true),
+    );
+    const draft = lastMessageSendDraft();
+    expect(draft?.to).toEqual(['W6ABC', 'W7DEF', 'W9XYZ']);
+    // H5 — the sentinel must NOT survive to the wire.
+    expect(draft?.to.some((t) => t.startsWith('group:'))).toBe(false);
+  });
+
+  it('dedups To against the @winlink.org email form on the wire (H6)', async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+      if (cmd === 'message_send') return 'MID-1';
+      return null;
+    });
+    seedDraft('a6-dedup', 'W6ABC; w6abc@winlink.org; W6ABC-7');
+
+    render(<Compose draftId="a6-dedup" />);
+    await screen.findByTestId('recipient-chip-W6ABC');
+
+    fireEvent.click(screen.getByTestId('compose-send-btn'));
+
+    await waitFor(() =>
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'message_send')).toBe(true),
+    );
+    const draft = lastMessageSendDraft();
+    // W6ABC + w6abc@winlink.org collapse to one; W6ABC-7 is a distinct SSID.
+    expect(draft?.to).toEqual(['W6ABC', 'W6ABC-7']);
+  });
+
+  it('seeds Cc from the expanded To so a shared recipient is not double-sent (Codex#6)', async () => {
+    mocks.contacts = [mkContact('c-w6abc', 'W6ABC')];
+    mocks.groups = [
+      {
+        id: 'g-one',
+        name: 'One',
+        members: [{ type: 'contact', contact_id: 'c-w6abc' }],
+        created_at: ts,
+        updated_at: ts,
+      },
+    ];
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+      if (cmd === 'message_send') return 'MID-1';
+      return null;
+    });
+    // To = group expanding to W6ABC; Cc = W6ABC (email form) + a fresh callsign.
+    seedDraft('a6-cc', 'group:g-one', 'w6abc@winlink.org; W7DEF');
+
+    render(<Compose draftId="a6-cc" />);
+    await screen.findByTestId('recipient-chip-group:g-one');
+
+    fireEvent.click(screen.getByTestId('compose-send-btn'));
+
+    await waitFor(() =>
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'message_send')).toBe(true),
+    );
+    const draft = lastMessageSendDraft();
+    expect(draft?.to).toEqual(['W6ABC']);
+    expect(draft?.cc).toEqual(['W7DEF']); // W6ABC dropped — already in To
+  });
+
+  it('does NOT expand groups on autosave — saved draft keeps the group: sentinel', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.contacts = [mkContact('c-w6abc', 'W6ABC')];
+      mocks.groups = [
+        {
+          id: 'g-keep',
+          name: 'Keep',
+          members: [{ type: 'contact', contact_id: 'c-w6abc' }],
+          created_at: ts,
+          updated_at: ts,
+        },
+      ];
+      mocks.invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+        return null;
+      });
+      seedDraft('a6-autosave', 'group:g-keep');
+
+      render(<Compose draftId="a6-autosave" />);
+      // Let the restore-on-mount effect run, then fire the 2s autosave tick.
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(2000);
+
+      const saved = JSON.parse(localStorage.getItem('tuxlink.drafts.a6-autosave')!);
+      // Autosave persists the RAW sentinel string, never the expanded members.
+      expect(saved.to).toBe('group:g-keep');
+      expect(saved.to).not.toContain('W6ABC');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

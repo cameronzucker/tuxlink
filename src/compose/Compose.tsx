@@ -35,13 +35,15 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { clearDraft, loadDraft, saveDraft, splitAddrs } from './useDraft';
+import { clearDraft, expandGroupsAndDedup, loadDraft, saveDraft, splitAddrs } from './useDraft';
 import { ComposeTitleBar } from './ComposeTitleBar';
 import { ResizeHandles } from '../shell/chrome/ResizeHandles';
 import { formatCallsign } from '../shell/useStatus';
 import { lookupForm } from '../forms';
 import { CatalogBrowser } from './CatalogBrowser';
 import { WebviewFormHost, type ParsedBody } from './WebviewFormHost';
+import { RecipientInput } from '../contacts/RecipientInput';
+import { useContacts } from '../contacts/useContacts';
 import './Compose.css';
 
 // ============================================================================
@@ -194,6 +196,13 @@ export function Compose({ draftId }: ComposeProps) {
   const [formMode, setFormMode] = useState<FormMode>({ kind: 'plain' });
   const [callsign, setCallsign] = useState<string>('');
   const [grid, setGrid] = useState<string>('');
+
+  // Contacts/groups for the To/Cc autocomplete + send-time group expansion.
+  // Compose is a SEPARATE Tauri window, so this is its own useContacts
+  // instance; the A4 `contacts:changed` listener keeps it fresh when the main
+  // window edits a contact/group (H9 — so an in-flight draft expands the
+  // UPDATED membership at send time, not a stale snapshot).
+  const { contacts, groups } = useContacts();
 
   // Send + close state
   const [sendState, setSendState] = useState<SendState>('idle');
@@ -385,6 +394,26 @@ export function Compose({ draftId }: ComposeProps) {
   }, [draftId, to, cc, subject, body, requestAck, formMode]);
 
   // ============================================================================
+  // Recipient build — the SINGLE send-time expansion point (Task A6)
+  // ============================================================================
+  //
+  // Expand `group:<id>` sentinels to member callsigns and wire-key-dedup, for
+  // BOTH To and Cc. Cc is seeded against the EXPANDED To so a recipient in both
+  // is not double-sent (Codex#6). Expansion happens ONLY here, at send — the
+  // `to`/`cc` state stays the raw semicolon string with sentinels for autosave.
+  //
+  // Factored as one helper so all THREE send paths (message_send / send_form /
+  // send_webview_form) produce IDENTICAL recipient lists — no path can drift.
+  // `contacts`/`groups` are read fresh from the live `useContacts` query at
+  // call time (Codex#5), so a separate Compose window expands the up-to-date
+  // group membership after a `contacts:changed` invalidation, not a stale copy.
+  const buildRecipients = useCallback((): { to: string[]; cc: string[] } => {
+    const expandedTo = expandGroupsAndDedup(splitAddrs(to), contacts, groups);
+    const expandedCc = expandGroupsAndDedup(splitAddrs(cc), contacts, groups, expandedTo);
+    return { to: expandedTo, cc: expandedCc };
+  }, [to, cc, contacts, groups]);
+
+  // ============================================================================
   // Send
   // ============================================================================
 
@@ -396,9 +425,12 @@ export function Compose({ draftId }: ComposeProps) {
     setSendState('sending');
     setErrorMsg(null);
 
+    // Expand groups + wire-key-dedup at send (Task A6). No `group:<id>` token
+    // reaches the wire (H5); To/Cc dedup with Cc seeded from To (Codex#6).
+    const { to: toAddrs, cc: ccAddrs } = buildRecipients();
     const dto: OutboundDraftDto = {
-      to: splitAddrs(to),
-      cc: splitAddrs(cc),
+      to: toAddrs,
+      cc: ccAddrs,
       subject,
       body,
       // P2.1 bridge: attachment-picker not yet built (HTML Forms PR #151); pass []
@@ -427,7 +459,7 @@ export function Compose({ draftId }: ComposeProps) {
         setErrorMsg(String(err));
       }
     }
-  }, [sendState, to, cc, subject, body, draftId, formMode.kind]);
+  }, [sendState, buildRecipients, subject, body, draftId, formMode.kind]);
 
   // ============================================================================
   // Form submit (T6.1)
@@ -437,12 +469,15 @@ export function Compose({ draftId }: ComposeProps) {
     if (sendState === 'sending') return;
     setSendState('sending');
     setErrorMsg(null);
+    // Expand groups + wire-key-dedup at send (Task A6) — same helper as
+    // message_send, so the form path produces an IDENTICAL recipient list.
+    const { to: toAddrs, cc: ccAddrs } = buildRecipients();
     try {
       await invoke<string>('send_form', {
         formId,
         fieldValues: values,
-        to: splitAddrs(to),
-        cc: splitAddrs(cc),
+        to: toAddrs,
+        cc: ccAddrs,
         sendersCallsign: callsign,
         gridSquare: grid,
       });
@@ -459,7 +494,7 @@ export function Compose({ draftId }: ComposeProps) {
         setErrorMsg(String(err));
       }
     }
-  }, [sendState, to, cc, draftId, callsign, grid]);
+  }, [sendState, buildRecipients, draftId, callsign, grid]);
 
   // ============================================================================
   // Webview-form submit (T10)
@@ -487,12 +522,15 @@ export function Compose({ draftId }: ComposeProps) {
     // per name). The exported helper at module scope is unit-tested
     // independently — see Compose.test.tsx.
     const fieldValues = parsedBodyToFieldValues(payload);
+    // Expand groups + wire-key-dedup at send (Task A6) — same helper as the
+    // other two send paths, so the webview-form path is IDENTICAL.
+    const { to: toAddrs, cc: ccAddrs } = buildRecipients();
     try {
       await invoke<string>('send_webview_form', {
         formId,
         fieldValues,
-        to: splitAddrs(to),
-        cc: splitAddrs(cc),
+        to: toAddrs,
+        cc: ccAddrs,
         sendersCallsign: callsign,
         gridSquare: grid,
       });
@@ -509,7 +547,7 @@ export function Compose({ draftId }: ComposeProps) {
         setErrorMsg(String(err));
       }
     }
-  }, [sendState, to, cc, draftId, callsign, grid]);
+  }, [sendState, buildRecipients, draftId, callsign, grid]);
 
   // ============================================================================
   // Form picker (T6.1)
@@ -731,35 +769,35 @@ export function Compose({ draftId }: ComposeProps) {
           />
         </div>
 
-        {/* To */}
+        {/* To — chips + contacts autocomplete (Task A6). The `to` STATE stays a
+            semicolon string with `group:<id>` sentinels so draft autosave is
+            unchanged; group expansion happens only at send (buildRecipients). */}
         <div className="compose-field-row">
           <label htmlFor="compose-to" className="compose-label">
             To <span className="compose-label__req" aria-hidden="true">*</span>
           </label>
-          <input
+          <RecipientInput
             id="compose-to"
-            className="compose-input"
-            type="text"
             value={to}
-            onChange={(e) => setTo(e.target.value)}
+            onChange={setTo}
+            contacts={contacts}
+            groups={groups}
             placeholder="W6ABC@winlink.org; W7DEF@winlink.org"
             aria-label="Recipients (semicolon-separated callsigns)"
-            data-testid="compose-to"
           />
         </div>
 
         {/* Cc — enabled end-to-end per tuxlink-h1km. */}
         <div className="compose-field-row">
           <label htmlFor="compose-cc" className="compose-label">Cc</label>
-          <input
+          <RecipientInput
             id="compose-cc"
-            className="compose-input"
-            type="text"
             value={cc}
-            onChange={(e) => setCc(e.target.value)}
+            onChange={setCc}
+            contacts={contacts}
+            groups={groups}
             placeholder="W6ABC@winlink.org; W7DEF@winlink.org"
             aria-label="Cc recipients (semicolon-separated callsigns)"
-            data-testid="compose-cc"
           />
         </div>
 
