@@ -56,6 +56,7 @@ export function RadioDrawer({ open, onToggle, sessionState, children }: RadioDra
         aria-label={open ? 'Collapse radio panel' : 'Open radio panel'}
         onClick={onToggle}
       >
+        <span className="radio-drawer-grip-chevron" aria-hidden="true">{open ? '›' : '‹'}</span>
         <span className="radio-drawer-grip-dot" aria-hidden="true" />
       </button>
       <div className="radio-drawer-body" ref={bodyRef} tabIndex={-1}>

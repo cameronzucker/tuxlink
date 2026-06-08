@@ -32,12 +32,21 @@
     transform: translateX(100%); transition: transform 220ms ease;
   }
   .panes.drawer-open .radio-drawer { transform: translateX(0); }
+  /* Closed: a proper pull-tab protruding 30px from the panel's left edge (the
+   * panel itself is translateX(100%) off-screen), fully on-screen and tappable.
+   * Open: the same tab sits on the panel's left edge as the collapse handle.
+   * z-index 9 keeps it above the window ResizeHandles so the right-edge handle
+   * can't intercept the tap (tuxlink-813d operator smoke #1b — the old 16px
+   * sliver read as clipped/unclickable). */
   .radio-drawer-grip {
-    position: absolute; left: -16px; top: 50%; transform: translateY(-50%);
-    width: 16px; height: 60px; min-height: 56px;
+    position: absolute; left: -30px; top: 50%; transform: translateY(-50%);
+    width: 30px; height: 76px; min-height: 56px;
     background: var(--surface-2); border: 1px solid var(--border); border-right: 0;
-    border-radius: 7px 0 0 7px; display: grid; place-items: center; cursor: pointer; z-index: 6;
+    border-radius: 9px 0 0 9px; box-shadow: -5px 0 16px rgba(0, 0, 0, 0.4);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; cursor: pointer; z-index: 9; color: var(--text-dim);
   }
+  .radio-drawer-grip-chevron { font-size: 16px; line-height: 1; }
   .radio-drawer-body { display: block; flex: 1 1 auto; min-width: 0; height: 100%; overflow: auto; }
   .radio-drawer-grip-dot {
     width: 10px;

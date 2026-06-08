@@ -16,7 +16,7 @@
 // is readable in isolation. The provider wrapping + Tauri IPC mocks mirror
 // the existing AppShell test so the shell mounts cleanly under jsdom.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -142,6 +142,7 @@ vi.mock('../mailbox/useUserFolders', () => ({
 }));
 
 import { AppShell } from './AppShell';
+import { COMPACT_MEDIA_QUERY } from './useViewport';
 
 function renderShell() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -328,5 +329,96 @@ describe('<AppShell> radio panel', () => {
 
     fireEvent.keyDown(window, { key: 'm', ctrlKey: true, shiftKey: true });
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
+  });
+});
+
+// tuxlink-813d operator smoke #1a/#3: selecting a connection in compact mode
+// must automatically open the radio drawer (the `.panes` div acquires the
+// `drawer-open` class). In desktop the drawer does not auto-open (no class).
+describe('<AppShell> compact drawer auto-open (tuxlink-813d)', () => {
+  beforeEach(() => {
+    mockUseModemStatus.mockReset();
+    // Stub matchMedia to report compact for the COMPACT_MEDIA_QUERY.
+    // This mirrors the pattern in App.test.tsx (tuxlink-h7q7 smoke).
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: q === COMPACT_MEDIA_QUERY,
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  // Helper: renders AppShell in compact mode (matchMedia stub is already set
+  // in beforeEach above). Desktop renderShell() re-uses the shared factory.
+  function renderShellCompact() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('drawer-open class is absent before any connection is selected (compact)', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShellCompact();
+    const panes = screen.getByTestId('shell-panes');
+    expect(panes).not.toHaveClass('drawer-open');
+  });
+
+  // tuxlink-813d smoke #1a/#3: selecting a built CMS protocol (telnet) in compact
+  // must add `drawer-open` to `.panes` so the radio drawer slides into view.
+  // In compact the sidebar renders as a VERTICAL-TEXT RAIL (no labeled nav
+  // inline) — the expand button (`rail-expand-btn`) opens the flyout from which
+  // the connection accordion is reachable. Click the expand button → expand the
+  // CMS session (`sess-cms`) → select Telnet (`proto-cms-telnet`).
+  it('auto-opens the drawer when a CMS connection is selected in compact', async () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShellCompact();
+    const panes = screen.getByTestId('shell-panes');
+
+    // Pre-condition: no drawer-open initially.
+    expect(panes).not.toHaveClass('drawer-open');
+
+    // In compact the sidebar is a vertical-text rail; the expand button is the
+    // entry point to the flyout where the connection accordion lives.
+    const expandBtn = screen.getByTestId('rail-expand-btn');
+    fireEvent.click(expandBtn);
+
+    // Expand the CMS session accordion, then click the Telnet proto row.
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+
+    // The radio panel must mount (proves the connection selection registered).
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+
+    // The compact auto-open effect must have added drawer-open to .panes.
+    expect(panes).toHaveClass('drawer-open');
+  });
+
+  // Desktop control: WITHOUT the compact matchMedia stub, selecting the same
+  // connection must NOT add `drawer-open`. The effect only fires when
+  // `isCompact` is true.
+  it('does NOT add drawer-open when a connection is selected in desktop mode', async () => {
+    // Override the beforeEach compact stub with a stub that always returns
+    // false (simulates desktop >=1366px).
+    vi.stubGlobal('matchMedia', (_q: string) => ({
+      matches: false,
+      media: _q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    // Use the shared renderShell which mounts without the compact stub.
+    renderShell();
+
+    const panes = screen.getByTestId('shell-panes');
+    // Desktop: labeled nav is inline (no rail-expand-btn needed).
+    selectConnection('sess-cms', 'proto-cms-telnet');
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+
+    // Desktop: drawer-open must NOT be applied.
+    expect(panes).not.toHaveClass('drawer-open');
   });
 });

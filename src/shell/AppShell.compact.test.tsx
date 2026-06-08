@@ -127,3 +127,63 @@ describe('FZ-M1 overlay drawer (tuxlink-813d)', () => {
     expect(compactBlock).toContain('position: absolute');
   });
 });
+
+describe('FZ-M1 operator smoke fixes (tuxlink-813d)', () => {
+  // All three sub-describes below read the same compactCss / drawerCss that the
+  // existing guards use — no new imports needed.
+  const compactBlock = compactCss.slice(compactCss.indexOf(COMPACT));
+  const drawerCss = COMPACT_DRAWER_CSS['./RadioDrawer.css'];
+  const drawerCompactBlock = drawerCss.slice(drawerCss.indexOf('max-width: 1365px'));
+
+  describe('ribbon fixes (#2)', () => {
+    // tuxlink-813d smoke #2: the grid value button was flex-squeezed to ~31px and
+    // `white-space: normal` wrapped "· CN87" onto two lines. Fixed by pinning it
+    // to one line at its intrinsic width.
+    it('pins .dash-grid-value-btn to white-space: nowrap', () => {
+      // The rule must exist inside the compact block near .dash-grid-value-btn.
+      expect(compactBlock).toContain('.layout-b .dashboard .dash-grid-value-btn');
+      expect(compactBlock).toContain('white-space: nowrap');
+    });
+
+    // tuxlink-813d smoke #2: the verbose GPS-no-fix status + "Set manually" link
+    // ballooned the Grid cell to 378px. Hidden in compact; desktop-only.
+    it('hides .dash-gps-no-fix-status and .dash-set-manually in compact', () => {
+      expect(compactBlock).toContain('.dash-gps-no-fix-status');
+      expect(compactBlock).toContain('.dash-set-manually');
+      // Both are inside a shared rule block that sets display:none.
+      const gpsIdx = compactBlock.indexOf('.dash-gps-no-fix-status');
+      // Find the next closing brace after the selector — should contain display:none.
+      const ruleEnd = compactBlock.indexOf('}', gpsIdx);
+      const rule = compactBlock.slice(gpsIdx, ruleEnd + 1);
+      expect(rule).toContain('display: none');
+    });
+
+    // tuxlink-813d smoke #2: top-aligning all ribbon cells so the inherently
+    // taller Grid cell (44px touch segment) doesn't drag the labels off-center.
+    it('top-aligns the compact dashboard flex container (align-items: flex-start)', () => {
+      // The rule lives on .ribbon-with-search .dashboard inside the compact block.
+      expect(compactBlock).toContain('align-items: flex-start');
+      // Belt-and-suspenders: the padding-top accompanies the alignment fix.
+      expect(compactBlock).toContain('padding-top: 9px');
+    });
+  });
+
+  describe('grip enlargement (#1b)', () => {
+    // tuxlink-813d smoke #1b: the old 16px-wide grip sliver read as clipped /
+    // unclickable. Fixed to 30px, z-index:9 (above ResizeHandles), with a visible
+    // chevron span.
+    it('grip is 30px wide in the compact block', () => {
+      expect(drawerCompactBlock).toContain('width: 30px');
+    });
+
+    it('grip has z-index: 9 so it sits above the ResizeHandles', () => {
+      expect(drawerCompactBlock).toContain('z-index: 9');
+    });
+
+    it('grip renders a .radio-drawer-grip-chevron span', () => {
+      // The CSS class must be defined inside the compact block so the chevron
+      // is a styled element in compact.
+      expect(drawerCompactBlock).toContain('.radio-drawer-grip-chevron');
+    });
+  });
+});
