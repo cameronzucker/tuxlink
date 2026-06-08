@@ -344,6 +344,21 @@ describe('<FolderSidebar> — FZ-M1 compact rail (tuxlink-h7q7 / tuxlink-813d)',
     expect(screen.getByTestId('sidebar-scrim')).toBeInTheDocument();
   });
 
+  it('moves focus into the flyout on expand and back to the expand button on Escape (F1)', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />);
+    const expandBtn = screen.getByTestId('rail-expand-btn');
+
+    // Open the flyout — focus should transfer to the flyout nav.
+    fireEvent.click(expandBtn);
+    const flyout = screen.getByTestId('sidebar-flyout');
+    expect(document.activeElement).toBe(flyout);
+
+    // Collapse via Escape — focus should return to the expand button.
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByTestId('sidebar-flyout')).toBeNull();
+    expect(document.activeElement).toBe(expandBtn);
+  });
+
   it('collapses the flyout on folder select, Escape, scrim click, and outside click (F11)', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />);
     const expandBtn = screen.getByTestId('rail-expand-btn');

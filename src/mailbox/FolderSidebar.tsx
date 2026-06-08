@@ -122,6 +122,7 @@ export const FolderSidebar = memo(function FolderSidebar({
   const [railExpanded, setRailExpanded] = useState(false);
   const railRef = useRef<HTMLElement | null>(null);
   const flyoutRef = useRef<HTMLElement | null>(null);
+  const expandBtnRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (!railExpanded) return;
     const onPointerDown = (e: PointerEvent) => {
@@ -142,6 +143,18 @@ export const FolderSidebar = memo(function FolderSidebar({
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
+  }, [railExpanded]);
+
+  // Focus management (a11y parity with RadioDrawer): on open, focus the flyout
+  // panel so keyboard users land in the navigation (not stranded on the expand
+  // button); on close, return focus to the expand button. prevRailExpanded skips
+  // the initial mount (same pattern as RadioDrawer.tsx).
+  const prevRailExpanded = useRef(railExpanded);
+  useEffect(() => {
+    if (railExpanded === prevRailExpanded.current) return;
+    if (railExpanded) flyoutRef.current?.focus();
+    else expandBtnRef.current?.focus();
+    prevRailExpanded.current = railExpanded;
   }, [railExpanded]);
 
   // Drop handler factory — wraps the payload parse + the AppShell callback.
@@ -192,16 +205,17 @@ export const FolderSidebar = memo(function FolderSidebar({
   // on the tab exactly as the old `.nav-item` rows did. The `☰` expand button
   // opens the flyout. Section headings / the create-`+` / the Connections
   // accordion are NOT on the rail — they live only in the flyout.
-  const renderRailTab = (
-    key: string,
-    testId: string,
-    label: string,
-    folderRef: MailboxFolderRef | undefined,
-    active: boolean,
-    count: number | undefined,
-    dropSlug: string | undefined,
-    onContextMenu?: (e: React.MouseEvent) => void,
-  ) => {
+  const renderRailTab = (opts: {
+    key: string;
+    testId: string;
+    label: string;
+    folderRef: MailboxFolderRef | undefined;
+    active: boolean;
+    count?: number;
+    dropSlug?: string;
+    onContextMenu?: (e: React.MouseEvent) => void;
+  }) => {
+    const { key, testId, label, folderRef, active, count, dropSlug, onContextMenu } = opts;
     const isDropTarget = dropSlug !== undefined && dragOver === dropSlug;
     return (
       <button
@@ -414,6 +428,7 @@ export const FolderSidebar = memo(function FolderSidebar({
         {/* Rail expand toggle — CSS-hidden at desktop; in compact it opens the
             labeled flyout over the message list (tuxlink-h7q7 / tuxlink-813d). */}
         <button
+          ref={expandBtnRef}
           type="button"
           className="rail-expand-btn"
           data-testid="rail-expand-btn"
@@ -431,33 +446,32 @@ export const FolderSidebar = memo(function FolderSidebar({
           const testId = item.id ? `folder-${item.id}` : `folder-${item.label.toLowerCase()}`;
           // Disabled (non-folder) system items render as a flat, non-selecting
           // tab; today every MAILBOX_ITEM is enabled, but keep the guard.
-          return renderRailTab(
-            item.label,
+          return renderRailTab({
+            key: item.label,
             testId,
-            item.label,
-            isFolder ? (item.id as MailboxFolderRef) : undefined,
-            !!active,
+            label: item.label,
+            folderRef: isFolder ? (item.id as MailboxFolderRef) : undefined,
+            active: !!active,
             count,
-            isFolder ? item.id : undefined,
-          );
+            dropSlug: isFolder ? item.id : undefined,
+          });
         })}
 
         {userFolders.map((uf) =>
-          renderRailTab(
-            uf.slug,
-            `user-folder-${uf.slug}`,
-            uf.displayName,
-            uf.slug,
-            uf.slug === selectedFolder,
-            undefined,
-            uf.slug,
-            (e) => {
+          renderRailTab({
+            key: uf.slug,
+            testId: `user-folder-${uf.slug}`,
+            label: uf.displayName,
+            folderRef: uf.slug,
+            active: uf.slug === selectedFolder,
+            dropSlug: uf.slug,
+            onContextMenu: (e) => {
               if (onFolderContextMenu) {
                 e.preventDefault();
                 onFolderContextMenu(uf.slug, e.clientX, e.clientY);
               }
             },
-          ),
+          }),
         )}
       </nav>
 
@@ -475,6 +489,7 @@ export const FolderSidebar = memo(function FolderSidebar({
             data-testid="sidebar-flyout"
             aria-label="Folders and connections"
             ref={flyoutRef}
+            tabIndex={-1}
           >
             {renderFlyoutNav()}
           </nav>

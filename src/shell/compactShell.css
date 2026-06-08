@@ -80,11 +80,9 @@
     font-weight: 550;
     line-height: 1;
   }
-  /* `--surface-3` is the mockup's raised-surface tier; tuxlink's design system
-   * names that tier `--elevated`, so fall back to it (the var is undefined in
-   * tuxlink themes). */
+  /* Active tab uses the raised-surface tier `--elevated`. */
   .layout-b .sidebar .vtab.active {
-    background: var(--surface-3, var(--elevated));
+    background: var(--elevated);
     color: var(--text);
     border-left-color: var(--accent);
   }
