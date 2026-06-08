@@ -1,0 +1,262 @@
+/* GroupEditor — inline New/Edit distribution-group form (Task A8b).
+ * Mirrors ContactEditor.css tokens; member rows + the contact-pick dropdown
+ * reuse the RecipientInput surface treatment. */
+
+.group-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 520px;
+  padding: 20px 24px;
+  color: var(--text);
+}
+
+.group-editor-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.group-editor-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group-editor-row > span {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+
+.group-editor-row input {
+  padding: 6px 9px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-family: inherit;
+}
+
+.group-editor-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ---- member list ---- */
+.group-member-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group-member-empty {
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 4px 2px;
+}
+
+.group-member-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  font-size: 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.group-member-row--unknown {
+  /* M6 — a deleted-contact member reads as a problem, while staying visible
+   * and removable (never silently dropped). */
+  background: color-mix(in srgb, var(--danger, #c0392b) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger, #c0392b) 38%, transparent);
+  color: var(--danger, #e06c5e);
+  font-style: italic;
+}
+
+.group-member-primary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-member-secondary {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--mono, monospace);
+}
+
+.group-member-remove {
+  background: transparent;
+  border: 0;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.group-member-remove:hover {
+  color: var(--accent-2);
+}
+
+.group-member-row--unknown .group-member-remove:hover {
+  color: var(--danger, #e06c5e);
+}
+
+/* ---- member add (search + contact-pick dropdown) ---- */
+.group-member-add {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.group-member-search {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-family: inherit;
+}
+
+.group-member-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.group-member-add-btn {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.group-member-add-btn:hover:not(:disabled) {
+  color: var(--bg);
+  background: var(--accent);
+}
+
+.group-member-add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.group-member-options {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin-top: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  list-style: none;
+  padding: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.65);
+}
+
+.group-member-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.group-member-options li:last-child .group-member-option {
+  border-bottom: 0;
+}
+
+.group-member-option:hover {
+  background: var(--accent-soft);
+}
+
+.group-member-option-name {
+  font-size: 13px;
+}
+
+.group-member-option-callsign {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--mono, monospace);
+}
+
+/* ---- actions ---- */
+.group-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.group-editor-actions-spacer {
+  flex: 1;
+}
+
+.group-editor-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.group-editor-btn:hover:not(:disabled) {
+  background: var(--elevated);
+}
+
+.group-editor-btn-primary {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.group-editor-btn-primary:hover:not(:disabled) {
+  background: var(--accent-2);
+}
+
+.group-editor-btn-danger {
+  color: var(--danger, #e06c5e);
+  border-color: color-mix(in srgb, var(--danger, #c0392b) 48%, transparent);
+}
+
+.group-editor-btn-danger:hover:not(:disabled) {
+  color: #fff;
+  background: var(--danger, #c0392b);
+}
+
+.group-editor-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

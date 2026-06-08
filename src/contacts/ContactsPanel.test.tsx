@@ -76,6 +76,8 @@ function routeInvoke(opts: {
     if (cmd === 'contacts_read') return { schema_version: 1, contacts, groups };
     if (cmd === 'contacts_suggestions') return suggestions;
     if (cmd === 'contact_upsert') return args?.contact as Contact;
+    if (cmd === 'group_upsert') return args?.group as Group;
+    if (cmd === 'group_delete') return undefined;
     return undefined;
   }) as typeof invoke);
 }
@@ -296,5 +298,62 @@ describe('<ContactsPanel> — editor', () => {
     expect((within(editor).getByTestId('editor-callsign') as HTMLInputElement).value).toBe('W6ABC');
     expect((within(editor).getByTestId('editor-name') as HTMLInputElement).value).toBe('Alice Operator');
     expect((within(editor).getByTestId('editor-email') as HTMLInputElement).value).toBe('w6abc@winlink.org');
+  });
+});
+
+describe('<ContactsPanel> — group editor (A8b)', () => {
+  it('+ New group opens an empty GroupEditor; saving routes through group_upsert', async () => {
+    routeInvoke({ contacts: [ALICE], groups: [] });
+    renderPanel();
+
+    fireEvent.click(await screen.findByTestId('contacts-new-group'));
+    const editor = await screen.findByTestId('group-editor');
+    // Empty (new) group: blank name, Delete absent.
+    expect((within(editor).getByTestId('group-editor-name') as HTMLInputElement).value).toBe('');
+    expect(within(editor).queryByTestId('group-editor-delete')).not.toBeInTheDocument();
+
+    fireEvent.change(within(editor).getByTestId('group-editor-name'), {
+      target: { value: 'Field Day Crew' },
+    });
+    fireEvent.click(within(editor).getByTestId('group-editor-save'));
+
+    await waitFor(() => {
+      const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === 'group_upsert');
+      expect(call).toBeTruthy();
+      const group = (call?.[1] as { group: Group }).group;
+      expect(group.name).toBe('Field Day Crew');
+      expect(group.id).toBe(''); // new → backend stamps
+    });
+  });
+
+  it('clicking an existing group opens the GroupEditor prefilled (name + members)', async () => {
+    routeInvoke({ contacts: [ALICE], groups: [TEAM] });
+    renderPanel();
+
+    fireEvent.click(await screen.findByTestId('group-row-g-team'));
+    const editor = await screen.findByTestId('group-editor');
+    expect((within(editor).getByTestId('group-editor-name') as HTMLInputElement).value).toBe(
+      'Team Alpha',
+    );
+    // Edit mode → Delete present.
+    expect(within(editor).getByTestId('group-editor-delete')).toBeInTheDocument();
+    // The contact member resolves to Alice's display form (not silently absent).
+    const list = within(editor).getByTestId('group-member-list');
+    expect(within(list).getByText(/Alice Operator/)).toBeInTheDocument();
+  });
+
+  it('Delete in the GroupEditor routes through group_delete', async () => {
+    routeInvoke({ contacts: [ALICE], groups: [TEAM] });
+    renderPanel();
+
+    fireEvent.click(await screen.findByTestId('group-row-g-team'));
+    const editor = await screen.findByTestId('group-editor');
+    fireEvent.click(within(editor).getByTestId('group-editor-delete'));
+
+    await waitFor(() => {
+      const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === 'group_delete');
+      expect(call).toBeTruthy();
+      expect((call?.[1] as { id: string }).id).toBe('g-team');
+    });
   });
 });

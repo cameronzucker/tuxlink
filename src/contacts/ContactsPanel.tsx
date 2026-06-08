@@ -29,6 +29,7 @@ import type { Contact, Group, Suggestion } from './types';
 import { useContacts } from './useContacts';
 import { resolveGroupMemberCount } from './recipients';
 import { ContactEditor, emptyContact } from './ContactEditor';
+import { GroupEditor, emptyGroup } from './GroupEditor';
 import { openComposeTo } from './composeTo';
 
 /// Up-to-two-character initials for the round avatar. Prefers the name; falls
@@ -53,11 +54,15 @@ const matchesQuery = (c: Contact, q: string): boolean => {
 const groupMatchesQuery = (g: Group, q: string): boolean =>
   !q || g.name.toLowerCase().includes(q);
 
-/// Editor-target discriminator: closed, a brand-new contact, or an existing one.
+/// Editor-target discriminator: closed, a brand-new/existing contact, or a
+/// brand-new/existing group. The whole panel body is replaced by the relevant
+/// editor when one is open (inline; no popup).
 type EditorState =
   | { kind: 'closed' }
   | { kind: 'new'; seed: Contact }
-  | { kind: 'edit'; contact: Contact };
+  | { kind: 'edit'; contact: Contact }
+  | { kind: 'new-group'; seed: Group }
+  | { kind: 'edit-group'; group: Group };
 
 /// Query key for the suggest-from-history cards. Distinct from the contacts
 /// file key (`['contacts']`) so `addSuggestion` can re-derive suggestions
@@ -67,7 +72,7 @@ const SUGGESTIONS_QUERY_KEY = ['contacts', 'suggestions'] as const;
 
 export function ContactsPanel() {
   const qc = useQueryClient();
-  const { contacts, groups, upsertContact } = useContacts();
+  const { contacts, groups, upsertContact, upsertGroup, deleteGroup } = useContacts();
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState>({ kind: 'closed' });
@@ -101,6 +106,16 @@ export function ContactsPanel() {
     setEditor({ kind: 'closed' });
   };
 
+  const saveGroup = async (g: Group) => {
+    await upsertGroup(g);
+    setEditor({ kind: 'closed' });
+  };
+
+  const removeGroup = async (id: string) => {
+    await deleteGroup(id);
+    setEditor({ kind: 'closed' });
+  };
+
   const addSuggestion = async (s: Suggestion) => {
     // One explicit click → create a contact with the callsign prefilled. Never
     // auto-created. The name defaults to the callsign so the row isn't blank.
@@ -113,13 +128,27 @@ export function ContactsPanel() {
   };
 
   // Editor takes over the whole panel body when open (inline; no popup).
-  if (editor.kind !== 'closed') {
+  if (editor.kind === 'new' || editor.kind === 'edit') {
     const target = editor.kind === 'new' ? editor.seed : editor.contact;
     return (
       <div className="contacts-panel contacts-panel--editing" data-testid="contacts-panel">
         <ContactEditor
           contact={target}
           onSave={saveContact}
+          onCancel={() => setEditor({ kind: 'closed' })}
+        />
+      </div>
+    );
+  }
+  if (editor.kind === 'new-group' || editor.kind === 'edit-group') {
+    const targetGroup = editor.kind === 'new-group' ? editor.seed : editor.group;
+    return (
+      <div className="contacts-panel contacts-panel--editing" data-testid="contacts-panel">
+        <GroupEditor
+          group={targetGroup}
+          contacts={contacts}
+          onSave={saveGroup}
+          onDelete={removeGroup}
           onCancel={() => setEditor({ kind: 'closed' })}
         />
       </div>
@@ -185,11 +214,22 @@ export function ContactsPanel() {
           </section>
         )}
 
-        {/* GROUPS — on top (A.4). Plain list, blue avatars. */}
+        {/* GROUPS — on top (A.4). Plain list, blue avatars. Each row opens the
+            GroupEditor for view/edit; "+ New group" opens an empty editor. */}
         <section className="contacts-section contacts-groups">
-          <h4 className="contacts-section-label" data-testid="contacts-groups-heading">
-            Groups
-          </h4>
+          <div className="contacts-section-head">
+            <h4 className="contacts-section-label" data-testid="contacts-groups-heading">
+              Groups
+            </h4>
+            <button
+              type="button"
+              className="contacts-section-add"
+              data-testid="contacts-new-group"
+              onClick={() => setEditor({ kind: 'new-group', seed: emptyGroup() })}
+            >
+              + New group
+            </button>
+          </div>
           {visibleGroups.length === 0 ? (
             <p className="contacts-empty" data-testid="contacts-groups-empty">
               No groups
@@ -197,14 +237,21 @@ export function ContactsPanel() {
           ) : (
             <ul className="contacts-group-list">
               {visibleGroups.map((g) => (
-                <li key={g.id} className="contacts-group-row" data-testid={`group-row-${g.id}`}>
-                  <span className="contacts-avatar contacts-avatar--group" aria-hidden="true">
-                    {initials({ name: g.name, callsign: g.name })}
-                  </span>
-                  <span className="contacts-row-name">{g.name}</span>
-                  <span className="contacts-row-sub">
-                    {resolveGroupMemberCount(g, contacts)} members
-                  </span>
+                <li key={g.id} className="contacts-group-li">
+                  <button
+                    type="button"
+                    className="contacts-group-row contacts-group-row--button"
+                    data-testid={`group-row-${g.id}`}
+                    onClick={() => setEditor({ kind: 'edit-group', group: g })}
+                  >
+                    <span className="contacts-avatar contacts-avatar--group" aria-hidden="true">
+                      {initials({ name: g.name, callsign: g.name })}
+                    </span>
+                    <span className="contacts-row-name">{g.name}</span>
+                    <span className="contacts-row-sub">
+                      {resolveGroupMemberCount(g, contacts)} members
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>
