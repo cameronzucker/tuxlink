@@ -668,6 +668,9 @@ pub fn send_turn<R: BufRead, W: Write>(
 
 /// The other side's turn: read its proposals, verify the batch checksum, answer
 /// each (via `decide`), and pull down the bodies we accept.
+///
+/// If `decide` returns `Err` (e.g. `ExchangeError::Cancelled` on operator abort), it is
+/// propagated as-is and NO `FS` answer line is written to the wire.
 pub fn receive_turn<R, W, F>(
     reader: &mut R,
     writer: &mut W,
@@ -722,7 +725,7 @@ where
                     outcome.remote_no_messages = true;
                     return Ok(outcome);
                 }
-                answers = decide(&proposals)?;
+                answers = decide(&proposals)?; // Err (e.g. Cancelled) propagates before any FS write
                 if answers.len() != proposals.len() {
                     return Err(ExchangeError::AnswerCountMismatch);
                 }
@@ -1122,10 +1125,6 @@ mod tests {
         assert!(
             writer.is_empty(),
             "no FS answer line must be written on cancel; got {writer:?}"
-        );
-        assert!(
-            !writer.windows(2).any(|w| w == b"FS"),
-            "writer must not contain an FS answer line on cancel; got {writer:?}"
         );
     }
 
