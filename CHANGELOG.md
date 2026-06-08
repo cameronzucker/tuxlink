@@ -16,6 +16,17 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.37.1](https://github.com/cameronzucker/tuxlink/compare/v0.37.0...v0.37.1) (2026-06-08)
+
+
+### Bug Fixes
+
+* **shell:** align compact ribbon GridEdit source cluster (tuxlink-813d) ([5d1d5d3](https://github.com/cameronzucker/tuxlink/commit/5d1d5d32a78953d5258c39c4246f2c58e7725923))
+* **shell:** align ribbon values across SSID-picker/segment + text cells (tuxlink-813d) ([958678b](https://github.com/cameronzucker/tuxlink/commit/958678b3f6843f7a3976eb06c25a5d7caad7dda2))
+* **shell:** compact ribbon grows to fit its 44px touch controls (tuxlink-813d) ([0ff6001](https://github.com/cameronzucker/tuxlink/commit/0ff6001e35e1622f9f63a2f31da7a02a64e923dc))
+* **shell:** FZ-M1 compact drawer auto-open, grip tab, ribbon alignment (tuxlink-813d) ([1315af2](https://github.com/cameronzucker/tuxlink/commit/1315af2bb49c7cd18fbecbb7f4ee946a030f1ec1))
+* **shell:** gate compact rail behind isCompact; restore desktop sidebar (tuxlink-813d) ([6ac89e1](https://github.com/cameronzucker/tuxlink/commit/6ac89e1838f94831e19f774d6ad1f9d371f041e9))
+
 ## [0.37.0](https://github.com/cameronzucker/tuxlink/compare/v0.36.0...v0.37.0) (2026-06-08)
 
 

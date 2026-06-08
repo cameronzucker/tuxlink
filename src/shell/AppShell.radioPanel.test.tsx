@@ -16,7 +16,7 @@
 // is readable in isolation. The provider wrapping + Tauri IPC mocks mirror
 // the existing AppShell test so the shell mounts cleanly under jsdom.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -47,7 +47,17 @@ vi.mock('@tauri-apps/api/core', () => ({
     // ArdopRadioPanel calls config_get_ardop when Open WebGUI is clicked,
     // but it's safe to return a benign default here so test-time imports
     // don't hit `undefined` and surface noisy errors.
-    if (cmd === 'config_get_ardop') return { cmd_port: 8515 };
+    if (cmd === 'config_get_ardop') {
+      return {
+        binary: 'ardopcf',
+        capture_device: '',
+        playback_device: '',
+        ptt_serial_path: null,
+        cmd_port: 8515,
+        bandwidth_hz: null,
+        webgui_port: null,
+      };
+    }
     // tuxlink-dfmf: VARA panel benign defaults so the panel can mount in
     // shell tests without touching the live VaraSession.
     if (cmd === 'config_get_vara') {
@@ -85,6 +95,18 @@ vi.mock('@tauri-apps/api/core', () => ({
     // the useSavedSearches hook that mounts inside the SearchBar in the ribbon.
     if (cmd === 'tauri_search_list_saved') return [];
     if (cmd === 'tauri_search_list_recent') return [];
+    // Favorites surface defaults (B7): FavoritesTabs/useFavorites mount inside
+    // ArdopRadioPanel when the modem is stopped. Benign empty defaults so queries
+    // resolve cleanly across all tests that select ARDOP HF.
+    if (cmd === 'favorites_read') return { schema_version: 1, favorites: [], log: [] };
+    if (cmd === 'favorites_recents') return [];
+    if (cmd === 'position_current_fix') return { grid: null };
+    if (cmd === 'favorite_tod_hint') return null;
+    // ArdopRadioPanel listener state (useListenerState) — benign defaults.
+    if (cmd === 'ardop_allowed_stations_get') return { allow_all: true, callsigns: [] };
+    // ArdopRadioPanel Radio section device pickers — empty lists are valid.
+    if (cmd === 'ardop_list_audio_devices') return { captures: [], playbacks: [] };
+    if (cmd === 'packet_list_serial_devices') return [];
     return undefined;
   }),
 }));
@@ -142,6 +164,7 @@ vi.mock('../mailbox/useUserFolders', () => ({
 }));
 
 import { AppShell } from './AppShell';
+import { COMPACT_MEDIA_QUERY } from './useViewport';
 
 function renderShell() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -150,6 +173,16 @@ function renderShell() {
       <AppShell />
     </QueryClientProvider>,
   );
+}
+
+// tuxlink-813d P1 fix: the shell passes `compact={isCompact}` to FolderSidebar.
+// jsdom has no `matchMedia` (no global stub in test-setup), so `useViewport`
+// returns `isCompact=false` and the shell renders the DESKTOP labeled sidebar —
+// the Connections accordion (`sess-*` / `proto-*`) is inline, with no `☰`
+// rail-expand button. Click the session header + protocol directly.
+function selectConnection(sessTestId: string, protoTestId: string) {
+  fireEvent.click(screen.getByTestId(sessTestId));
+  fireEvent.click(screen.getByTestId(protoTestId));
 }
 
 const RUNNING: ModemStatus = {
@@ -227,9 +260,8 @@ describe('<AppShell> radio panel', () => {
     renderShell();
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
-    // Expand Winlink (CMS) accordion, then pick ARDOP HF.
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
+    // Open the flyout, expand Winlink (CMS) accordion, then pick ARDOP HF.
+    selectConnection('sess-cms', 'proto-cms-ardop-hf');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     // ArdopRadioPanel mounts; SignalSection is unique to it among the
     // built panels (Telnet / Packet don't mount SignalSection).
@@ -265,8 +297,7 @@ describe('<AppShell> radio panel', () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-vara-hf'));
+    selectConnection('sess-cms', 'proto-cms-vara-hf');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('vara-host-input')).toBeInTheDocument();
     // The placeholder must NOT mount alongside — VaraRadioPanel owns
@@ -277,8 +308,7 @@ describe('<AppShell> radio panel', () => {
   it('renders VaraRadioPanel when VARA FM is selected (modem stopped)', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    fireEvent.click(screen.getByTestId('proto-cms-vara-fm'));
+    selectConnection('sess-cms', 'proto-cms-vara-fm');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
@@ -291,8 +321,7 @@ describe('<AppShell> radio panel', () => {
   it('renders VaraRadioPanel with P2P title when VARA HF is selected under P2P', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-p2p'));
-    fireEvent.click(screen.getByTestId('proto-p2p-vara-hf'));
+    selectConnection('sess-p2p', 'proto-p2p-vara-hf');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('vara-host-input')).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara HF P2P');
@@ -302,8 +331,7 @@ describe('<AppShell> radio panel', () => {
   it('renders VaraRadioPanel with P2P title when VARA FM is selected under P2P', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
-    fireEvent.click(screen.getByTestId('sess-p2p'));
-    fireEvent.click(screen.getByTestId('proto-p2p-vara-fm'));
+    selectConnection('sess-p2p', 'proto-p2p-vara-fm');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM P2P');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
@@ -323,5 +351,248 @@ describe('<AppShell> radio panel', () => {
 
     fireEvent.keyDown(window, { key: 'm', ctrlKey: true, shiftKey: true });
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
+  });
+
+  // ── Task B7: App-level (production-provider-stack) mount test for Favorites ──
+  //
+  // The B6 tests wrapped ArdopRadioPanel in a bare QueryClient scaffold. B7
+  // mounts the REAL AppShell tree (QueryClientProvider + routing + full shell)
+  // so the FavoritesTabs connect surface is exercised through the production
+  // provider stack. Mirrors the "ARDOP HF selected, modem stopped" test above
+  // for the panel-selection mechanic; adds favorites-data routing (M9) and
+  // asserts RADIO-1 safety (no connect/exchange invoke on favorite click).
+  describe('B7: Favorites surface via production AppShell stack', () => {
+    it(
+      'renders Favorites surface and is RADIO-1-safe (prefill-only) through the production path',
+      async () => {
+        // Override the module-level invoke mock with favorites data so
+        // FavoritesTabs renders a starred ardop-hf row. All other commands
+        // fall through to the same benign defaults declared in the module-level
+        // mock above (the base impl is captured and forwarded for anything not
+        // overridden here).
+        const core = await import('@tauri-apps/api/core');
+        const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+
+        // Snapshot the module-level impl so we can delegate non-favorites
+        // commands. We use mockImplementation to overlay favorites data only.
+        invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+          // M9: route all favorites commands the panel fires.
+          if (cmd === 'favorites_read') {
+            return {
+              schema_version: 1,
+              favorites: [
+                {
+                  id: 'fav-1',
+                  mode: 'ardop-hf',
+                  gateway: 'W7RMS-10',
+                  freq: '14105.0',
+                  transport: null,
+                  band: '20m',
+                  grid: 'CN87',
+                  note: null,
+                  starred: true,
+                  last_attempt_at: null,
+                  created_at: '2026-06-01T00:00:00+00:00',
+                  updated_at: '2026-06-01T00:00:00+00:00',
+                },
+              ],
+              log: [],
+            };
+          }
+          if (cmd === 'favorites_recents') return [];
+          // C4: full-precision operator grid for distance (used by FavoritesTabs).
+          if (cmd === 'position_current_fix') return { grid: 'CN88', source: 'Gps', fresh: true };
+          if (cmd === 'favorite_tod_hint') return null;
+
+          // Delegate to the benign module-level defaults for everything else.
+          if (cmd === 'config_read') return null;
+          if (cmd === 'backend_status') return null;
+          if (cmd === 'session_log_snapshot') return [];
+          if (cmd === 'message_read') return null;
+          if (cmd === 'config_get_ardop') {
+            return {
+              binary: 'ardopcf',
+              capture_device: '',
+              playback_device: '',
+              ptt_serial_path: null,
+              cmd_port: 8515,
+              bandwidth_hz: null,
+              webgui_port: null,
+            };
+          }
+          if (cmd === 'config_get_vara') {
+            return { host: '127.0.0.1', cmd_port: 8300, data_port: 8301, bandwidth_hz: null };
+          }
+          if (cmd === 'vara_status') {
+            return { state: 'closed', lastError: null, boundHost: null, boundCmdPort: null };
+          }
+          if (cmd === 'platform_info') {
+            return { arch: 'x86_64', os: 'linux', varaSupported: true };
+          }
+          if (cmd === 'packet_config_get') {
+            return {
+              ssid: 7,
+              listenDefault: true,
+              linkKind: 'Tcp',
+              tcpHost: '127.0.0.1',
+              tcpPort: 8001,
+              serialDevice: null,
+              serialBaud: null,
+              txdelay: 30,
+              persistence: 63,
+              slotTime: 10,
+              paclen: 128,
+              maxframe: 4,
+              t1Ms: 3000,
+              n2Retries: 10,
+            };
+          }
+          if (cmd === 'position_status') return { gps_ready: false, broadcast_grid: '', ui_grid: '' };
+          if (cmd === 'tauri_search_list_saved') return [];
+          if (cmd === 'tauri_search_list_recent') return [];
+          if (cmd === 'ardop_allowed_stations_get') return { allow_all: true, callsigns: [] };
+          if (cmd === 'ardop_list_audio_devices') return { captures: [], playbacks: [] };
+          if (cmd === 'packet_list_serial_devices') return [];
+          // Suppress unused-args lint warning (args is part of the mock signature).
+          void args;
+          return undefined;
+        });
+
+        // 1. Mount the production AppShell via renderShell(), modem stopped.
+        mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+        renderShell();
+        expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
+
+        // 2. Select ARDOP HF — same mechanic as the existing "ARDOP HF selected,
+        //    modem stopped" test. This causes the panel to mount via the real
+        //    AppShell routing + provider stack.
+        fireEvent.click(screen.getByTestId('sess-cms'));
+        fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
+        expect(
+          await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 }),
+        ).toBeInTheDocument();
+
+        // 3. Assert the Favorites surface rendered through the production stack.
+        //    FavoritesTabs renders Radix Tabs with three triggers: Favorites / Recent
+        //    / Manual. The Favorites tab is the default, so the favorite row is
+        //    already visible without a tab-switch.
+        expect(
+          await screen.findByRole('tab', { name: 'Favorites' }, { timeout: 10000 }),
+        ).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: 'Recent' })).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: 'Manual' })).toBeInTheDocument();
+
+        // The starred ardop-hf favorite's row must appear in the default
+        // Favorites tab (no tab-switch required — defaultValue="favorites").
+        const connectBtn = await screen.findByTestId('favorite-connect-fav-1', undefined, {
+          timeout: 10000,
+        });
+        expect(connectBtn).toBeInTheDocument();
+
+        // 4. RADIO-1 safety through the production path: clicking the favorite's
+        //    Connect must ONLY prefill (onPrefill) and NEVER fire a modem connect
+        //    or b2f exchange command. This is the production-stack analog of B6's
+        //    consent-non-bypass test.
+        invokeMock.mockClear(); // isolate: only watch calls FROM this point on.
+        fireEvent.click(connectBtn);
+        // Allow one async tick for any (forbidden) async invoke to settle.
+        await new Promise((r) => setTimeout(r, 30));
+
+        const callsAfterClick = invokeMock.mock.calls.map(([c]) => c as string);
+        expect(callsAfterClick).not.toContain('modem_ardop_connect');
+        expect(callsAfterClick).not.toContain('modem_ardop_b2f_exchange');
+      },
+    );
+  });
+});
+
+// tuxlink-813d operator smoke #1a/#3: selecting a connection in compact mode
+// must automatically open the radio drawer (the `.panes` div acquires the
+// `drawer-open` class). In desktop the drawer does not auto-open (no class).
+describe('<AppShell> compact drawer auto-open (tuxlink-813d)', () => {
+  beforeEach(() => {
+    mockUseModemStatus.mockReset();
+    // Stub matchMedia to report compact for the COMPACT_MEDIA_QUERY.
+    // This mirrors the pattern in App.test.tsx (tuxlink-h7q7 smoke).
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: q === COMPACT_MEDIA_QUERY,
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  // Helper: renders AppShell in compact mode (matchMedia stub is already set
+  // in beforeEach above). Desktop renderShell() re-uses the shared factory.
+  function renderShellCompact() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('drawer-open class is absent before any connection is selected (compact)', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShellCompact();
+    const panes = screen.getByTestId('shell-panes');
+    expect(panes).not.toHaveClass('drawer-open');
+  });
+
+  // tuxlink-813d smoke #1a/#3: selecting a built CMS protocol (telnet) in compact
+  // must add `drawer-open` to `.panes` so the radio drawer slides into view.
+  // In compact the sidebar renders as a VERTICAL-TEXT RAIL (no labeled nav
+  // inline) — the expand button (`rail-expand-btn`) opens the flyout from which
+  // the connection accordion is reachable. Click the expand button → expand the
+  // CMS session (`sess-cms`) → select Telnet (`proto-cms-telnet`).
+  it('auto-opens the drawer when a CMS connection is selected in compact', async () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShellCompact();
+    const panes = screen.getByTestId('shell-panes');
+
+    // Pre-condition: no drawer-open initially.
+    expect(panes).not.toHaveClass('drawer-open');
+
+    // In compact the sidebar is a vertical-text rail; the expand button is the
+    // entry point to the flyout where the connection accordion lives.
+    const expandBtn = screen.getByTestId('rail-expand-btn');
+    fireEvent.click(expandBtn);
+
+    // Expand the CMS session accordion, then click the Telnet proto row.
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+
+    // The radio panel must mount (proves the connection selection registered).
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+
+    // The compact auto-open effect must have added drawer-open to .panes.
+    expect(panes).toHaveClass('drawer-open');
+  });
+
+  // Desktop control: WITHOUT the compact matchMedia stub, selecting the same
+  // connection must NOT add `drawer-open`. The effect only fires when
+  // `isCompact` is true.
+  it('does NOT add drawer-open when a connection is selected in desktop mode', async () => {
+    // Override the beforeEach compact stub with a stub that always returns
+    // false (simulates desktop >=1366px).
+    vi.stubGlobal('matchMedia', (_q: string) => ({
+      matches: false,
+      media: _q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    // Use the shared renderShell which mounts without the compact stub.
+    renderShell();
+
+    const panes = screen.getByTestId('shell-panes');
+    // Desktop: labeled nav is inline (no rail-expand-btn needed).
+    selectConnection('sess-cms', 'proto-cms-telnet');
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+
+    // Desktop: drawer-open must NOT be applied.
+    expect(panes).not.toHaveClass('drawer-open');
   });
 });

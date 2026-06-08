@@ -31,11 +31,15 @@ const mocks = vi.hoisted(() => {
   const webviewClose = vi.fn(async () => {});
   const webviewSetPosition = vi.fn(async () => {});
   const webviewSetSize = vi.fn(async () => {});
+  const webviewHide = vi.fn(async () => {});
+  const webviewShow = vi.fn(async () => {});
   const WebviewMock = vi.fn().mockImplementation(function (this: object) {
     Object.assign(this, {
       close: webviewClose,
       setPosition: webviewSetPosition,
       setSize: webviewSetSize,
+      hide: webviewHide,
+      show: webviewShow,
     });
   });
   const parentWindowStub = { __isParentWindowStub: true };
@@ -56,6 +60,8 @@ const mocks = vi.hoisted(() => {
     webviewClose,
     webviewSetPosition,
     webviewSetSize,
+    webviewHide,
+    webviewShow,
     WebviewMock,
     parentWindowStub,
     getCurrentWindow,
@@ -87,6 +93,8 @@ describe('<WebviewFormViewer>', () => {
     mocks.webviewClose.mockClear();
     mocks.webviewSetPosition.mockClear();
     mocks.webviewSetSize.mockClear();
+    mocks.webviewHide.mockClear();
+    mocks.webviewShow.mockClear();
     mocks.WebviewMock.mockClear();
     mocks.getCurrentWindow.mockClear();
     mocks.LogicalPositionMock.mockClear();
@@ -239,6 +247,80 @@ describe('<WebviewFormViewer>', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/Viewer failed to open/i);
     });
     expect(onFallback).toHaveBeenCalledWith(expect.stringContaining('viewer template not found'));
+  });
+
+  it('suppress: hides webview immediately if suppressed=true at construction time', async () => {
+    // Regression guard for the initial-suppressed gap: if the drawer is already
+    // open when the user selects a form message, the webview is created visible
+    // and the [suppressed] effect won't re-fire (suppressed didn't change from
+    // its initial value). The guard inside the async IIFE must call hide() right
+    // after webviewRef.current is set.
+    render(
+      <WebviewFormViewer
+        formId="Quick_Message_Initial"
+        fieldValues={{}}
+        onClose={vi.fn()}
+        suppressed={true}
+      />,
+    );
+    // Wait for the async open + webview construction to complete.
+    await waitFor(() => {
+      expect(mocks.WebviewMock).toHaveBeenCalled();
+    });
+    // hide() must have been called — the webview must not remain visible while
+    // the drawer is open.
+    await waitFor(() => {
+      expect(mocks.webviewHide).toHaveBeenCalled();
+    });
+    // show() must NOT have been called.
+    expect(mocks.webviewShow).not.toHaveBeenCalled();
+  });
+
+  it('suppress: calls hide when suppressed=true, show when suppressed=false', async () => {
+    // Render with suppressed=false; wait for webview construction.
+    const { rerender } = render(
+      <WebviewFormViewer
+        formId="Quick_Message_Initial"
+        fieldValues={{}}
+        onClose={vi.fn()}
+        suppressed={false}
+      />,
+    );
+    await waitFor(() => {
+      expect(mocks.WebviewMock).toHaveBeenCalled();
+    });
+
+    // Toggle suppressed=true → hide() should be called.
+    mocks.webviewHide.mockClear();
+    mocks.webviewShow.mockClear();
+    rerender(
+      <WebviewFormViewer
+        formId="Quick_Message_Initial"
+        fieldValues={{}}
+        onClose={vi.fn()}
+        suppressed={true}
+      />,
+    );
+    await waitFor(() => {
+      expect(mocks.webviewHide).toHaveBeenCalled();
+    });
+    expect(mocks.webviewShow).not.toHaveBeenCalled();
+
+    // Toggle suppressed=false → show() should be called.
+    mocks.webviewHide.mockClear();
+    mocks.webviewShow.mockClear();
+    rerender(
+      <WebviewFormViewer
+        formId="Quick_Message_Initial"
+        fieldValues={{}}
+        onClose={vi.fn()}
+        suppressed={false}
+      />,
+    );
+    await waitFor(() => {
+      expect(mocks.webviewShow).toHaveBeenCalled();
+    });
+    expect(mocks.webviewHide).not.toHaveBeenCalled();
   });
 });
 

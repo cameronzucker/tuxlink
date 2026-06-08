@@ -166,7 +166,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
       </div>
       <div className="dash-divider" />
 
-      <div className="dash-item">
+      <div className="dash-item dash-item--grid">
         <div className="dash-label">Grid</div>
         <GridEdit
           grid={grid}

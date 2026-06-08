@@ -39,7 +39,11 @@ const SYSTEM_BACKEND_FOLDERS: ReadonlySet<MailboxFolder> = new Set<MailboxFolder
 /// here just avoids dispatching for obvious non-folders like `'drafts'`).
 export function isBackendFolder(folder: MailboxFolderRef): boolean {
   if ((SYSTEM_BACKEND_FOLDERS as ReadonlySet<string>).has(folder)) return true;
-  if (folder === 'drafts' || folder === 'deleted') return false;
+  // `drafts`/`deleted` are local/placeholder; `contacts` is the Address
+  // pseudo-folder (Task A8 / Codex#11) — it would otherwise pass the
+  // `isUserFolderSlug` check below and fire a spurious `mailbox_list`. Disable
+  // the mailbox query for it so the ContactsPanel renders without a backend hit.
+  if (folder === 'drafts' || folder === 'deleted' || folder === 'contacts') return false;
   return isUserFolderSlug(folder);
 }
 

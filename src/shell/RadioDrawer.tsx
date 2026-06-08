@@ -19,11 +19,11 @@ export interface RadioDrawerProps {
  * pre-compact layout (the wrapper is layout- and a11y-transparent; we keep
  * display:contents rather than conditionally wrapping because a conditional
  * wrap would REMOUNT the live radio panel on a resize across the breakpoint,
- * dropping session state — Codex adrev R1 #4). Compact (<1366px): the wrapper IS
- * the grid's collapsible 4th column — 44px (grip only) when closed, 400px
- * (panel) when open. It PUSHES (reflows the reader) rather than overlaying,
- * because a child Tauri webview paints above parent HTML (Codex adrev R1 #5).
- * The grip shows a coarse session-state tick and toggles open/closed.
+ * dropping session state — Codex adrev R1 #4). Compact (<1366px): the wrapper is
+ * an ABSOLUTE OVERLAY (tuxlink-813d D1) pinned to the right edge of .panes —
+ * closed = only the ~16px grip strip pokes at the right edge; open = the panel
+ * slides in (220ms). The reader keeps its full 1fr width in both states (it is
+ * NOT pushed). The grip shows a coarse session-state tick and toggles open/closed.
  * tuxlink-h7q7.
  */
 export function RadioDrawer({ open, onToggle, sessionState, children }: RadioDrawerProps) {
@@ -56,6 +56,7 @@ export function RadioDrawer({ open, onToggle, sessionState, children }: RadioDra
         aria-label={open ? 'Collapse radio panel' : 'Open radio panel'}
         onClick={onToggle}
       >
+        <span className="radio-drawer-grip-chevron" aria-hidden="true">{open ? '›' : '‹'}</span>
         <span className="radio-drawer-grip-dot" aria-hidden="true" />
       </button>
       <div className="radio-drawer-body" ref={bodyRef} tabIndex={-1}>
