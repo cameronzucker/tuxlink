@@ -16,6 +16,22 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.36.0](https://github.com/cameronzucker/tuxlink/compare/v0.35.13...v0.36.0) (2026-06-08)
+
+
+### Features
+
+* **mailbox,radio:** compact icon rail + radio interior touch/floors (tuxlink-h7q7) ([645d1cd](https://github.com/cameronzucker/tuxlink/commit/645d1cdcf8c113d440236c1c29f790b09dd3cad6))
+* **shell:** compact mode core — useViewport, push radio drawer, rail, chrome (tuxlink-h7q7) ([4f782d5](https://github.com/cameronzucker/tuxlink/commit/4f782d5ae67458f18c77a8cab68e930054a5d122))
+* **shell:** useViewport compact-mode hook + shared breakpoint constant (tuxlink-h7q7) ([61a893f](https://github.com/cameronzucker/tuxlink/commit/61a893f4425df38547f8ebde7841c564402dbfc9))
+* **ui:** FZ-M1 compact CSS for Compose, dialogs, wizard, forms (tuxlink-h7q7) ([9509b4b](https://github.com/cameronzucker/tuxlink/commit/9509b4bbedbf4fc3eb60244a0dc67d379fd53314))
+
+
+### Bug Fixes
+
+* **compose:** clamp window default height to monitor work area for FZ-M1 (tuxlink-h7q7) ([b4a6496](https://github.com/cameronzucker/tuxlink/commit/b4a6496893085918122e7f6006cc7c7c120e92ca))
+* **radio:** compact touch floors for small controls missed in 6b (tuxlink-h7q7) ([497ceb5](https://github.com/cameronzucker/tuxlink/commit/497ceb5b57200caeb80811d68518240999dade83))
+
 ## [0.35.13](https://github.com/cameronzucker/tuxlink/compare/v0.35.12...v0.35.13) (2026-06-08)
 
 
