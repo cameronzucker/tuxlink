@@ -89,16 +89,18 @@ const favKey = (f: { host: string; port: number }) => `${f.host}:${f.port}`;
  * silently disagree — the prior `base ? \`${base}-L\` : ''` guard rendered '—'
  * for empty input while the backend would have sent '-L'.
  *
- * Network mode logs in with the FULL callsign unchanged (panel contract above;
- * empty → '').
+ * Network mode logs in with the full BASE callsign (SSID/qualifier stripped,
+ * no '-L'), matching base_callsign_for_post_office(.., local=false) — A1's
+ * vector table returns "N7CPZ" for "n7cpz-10". The design doc's "full callsign"
+ * means the full BASE callsign (vs local's base + '-L'), NOT the raw SSID-bearing
+ * form; the A1 vector is the precise spec and the indicator must predict it.
+ * Empty → '' (network) / '-L' (local), mirroring the backend's unguarded format.
  *
  * Exported for unit reuse / parity with the backend vector table.
  */
 export function loginCallsign(myCallsign: string, mode: PostOfficeMode): string {
-  const trimmed = myCallsign.trim();
-  if (mode === 'network') return trimmed.toUpperCase();
-  const base = trimmed.toUpperCase().split('.')[0].split('-')[0];
-  return `${base}-L`;
+  const base = myCallsign.trim().toUpperCase().split('.')[0].split('-')[0];
+  return mode === 'network' ? base : `${base}-L`;
 }
 
 export function TelnetPostOfficeRadioPanel({

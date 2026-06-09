@@ -270,11 +270,15 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
     });
   });
 
-  it('network mode login indicator shows the FULL callsign (no -L)', async () => {
+  it('network mode login indicator shows the SSID-stripped base callsign (no -L)', async () => {
+    // config callsign N7CPZ-10 → backend base_callsign_for_post_office(.., false)
+    // strips the SSID to N7CPZ (no -L). The indicator must match what is sent.
     renderPanel({ mode: 'network' });
     await waitFor(() => {
-      expect(screen.getByTestId('po-login-indicator')).toHaveTextContent('N7CPZ-10');
+      expect(screen.getByTestId('po-login-indicator')).toHaveTextContent('N7CPZ');
     });
+    // base callsign only: neither the SSID (-10) nor the local -L suffix
+    expect(screen.getByTestId('po-login-indicator')).not.toHaveTextContent('-10');
     expect(screen.getByTestId('po-login-indicator')).not.toHaveTextContent('-L');
   });
 
