@@ -682,6 +682,19 @@ export function AppShell() {
     }
   }, [queryClient]);
 
+  // tuxlink-etxt Task 12+13: single-message read/unread toggle — wired from the
+  // context-menu (T12) and the U key (T13). Mirrors the invoke + invalidate
+  // pattern of the other per-message handlers; the try/catch keeps an unhandled
+  // rejection from surfacing in the UI (failure is recoverable via next refetch).
+  const setMessageReadState = useCallback(async (id: string, folder: MailboxFolderRef, read: boolean) => {
+    try {
+      await invoke('message_set_read_state', { folder, id, read });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [queryClient]);
+
   // tuxlink-etxt Task 11: bulk read/unread for selected rows. Each id is mapped
   // to its own folder (present on the row when search is cross-folder; falls back
   // to the active folder for single-folder views). Mirrors the invoke + invalidate
@@ -973,6 +986,7 @@ export function AppShell() {
           selectedIds={selectedIds}
           onSelectionChange={setSelectedIds}
           onBulkSetReadState={bulkSetReadState}
+          onSetReadState={setMessageReadState}
         />
         {(() => {
           // tuxlink-djnl: shared render fragment for the reading pane. When

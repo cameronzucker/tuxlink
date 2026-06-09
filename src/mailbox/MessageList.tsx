@@ -293,6 +293,9 @@ export interface MessageListProps {
   /// Optional — Task 11 wires the real AppShell handler; the bulk bar's `?.`
   /// guard keeps AppShell compiling in the interim.
   onBulkSetReadState?: (ids: Set<string>, read: boolean) => void;
+  /// Single-message read/unread toggle — context-menu and U-key (tuxlink-etxt
+  /// Tasks 12 + 13). Optional so existing callers compile without change.
+  onSetReadState?: (id: string, folder: MailboxFolderRef, read: boolean) => void;
 }
 
 /// Stable empty-selection default so the no-selection caller (pre-Task-11) does
@@ -317,6 +320,7 @@ export function MessageList({
   selectedIds = EMPTY_SELECTION,
   onSelectionChange = () => {},
   onBulkSetReadState,
+  onSetReadState,
 }: MessageListProps) {
   // Sort client-side so changing modes doesn't require a backend re-fetch.
   // Memo keyed on (messages, sortState, folder) — folder affects sender-* in
@@ -430,6 +434,7 @@ export function MessageList({
           x={ctxMenu.x}
           y={ctxMenu.y}
           userFolders={userFolders ?? []}
+          onSetReadState={(read) => onSetReadState?.(ctxMenu.message.id, ctxSourceFolder, read)}
           onMoveTo={(to) => {
             onMoveMessage?.(ctxMenu.message.id, ctxSourceFolder, to);
           }}
