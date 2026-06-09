@@ -129,6 +129,8 @@ const loadTelnetRadioPanel = () =>
   import('../radio/modes/TelnetRadioPanel').then((m) => ({ default: m.TelnetRadioPanel }));
 const loadTelnetP2pRadioPanel = () =>
   import('../radio/modes/TelnetP2pRadioPanel').then((m) => ({ default: m.TelnetP2pRadioPanel }));
+const loadTelnetPostOfficeRadioPanel = () =>
+  import('../radio/modes/TelnetPostOfficeRadioPanel').then((m) => ({ default: m.TelnetPostOfficeRadioPanel }));
 const loadPacketRadioPanel = () =>
   import('../radio/modes/PacketRadioPanel').then((m) => ({ default: m.PacketRadioPanel }));
 const loadArdopRadioPanel = () =>
@@ -137,6 +139,7 @@ const loadVaraRadioPanel = () =>
   import('../radio/modes/VaraRadioPanel').then((m) => ({ default: m.VaraRadioPanel }));
 const TelnetRadioPanel = lazy(loadTelnetRadioPanel);
 const TelnetP2pRadioPanel = lazy(loadTelnetP2pRadioPanel);
+const TelnetPostOfficeRadioPanel = lazy(loadTelnetPostOfficeRadioPanel);
 const PacketRadioPanel = lazy(loadPacketRadioPanel);
 const ArdopRadioPanel = lazy(loadArdopRadioPanel);
 const VaraRadioPanel = lazy(loadVaraRadioPanel);
@@ -348,6 +351,7 @@ export function AppShell() {
     const preload = () => {
       void loadTelnetRadioPanel();
       void loadTelnetP2pRadioPanel();
+      void loadTelnetPostOfficeRadioPanel();
       void loadPacketRadioPanel();
       void loadArdopRadioPanel();
       void loadVaraRadioPanel();
@@ -1139,6 +1143,12 @@ export function AppShell() {
             // config; RF CONNECT arrives in Phase 3.
             return readingPane;
           }
+          if ((sessionType === 'post-office' || sessionType === 'network-po') && protocol === 'telnet') {
+            // tuxlink-6c9y: TelnetPostOfficeRadioPanel owns the Post Office
+            // dial UI in the right panel; reading pane falls back to mail
+            // (same pattern as the other telnet/packet/ardop/vara panes).
+            return readingPane;
+          }
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
@@ -1178,6 +1188,16 @@ export function AppShell() {
             <TelnetP2pRadioPanel
               onClose={closeRadioPanel}
             />
+          </Suspense>
+        )}
+        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'post-office' && (
+          <Suspense fallback={null}>
+            <TelnetPostOfficeRadioPanel mode="local" onClose={closeRadioPanel} />
+          </Suspense>
+        )}
+        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'network-po' && (
+          <Suspense fallback={null}>
+            <TelnetPostOfficeRadioPanel mode="network" onClose={closeRadioPanel} />
           </Suspense>
         )}
         {radioPanelMode && radioPanelMode.kind === 'packet' && (

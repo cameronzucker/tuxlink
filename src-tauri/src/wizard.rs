@@ -181,6 +181,7 @@ pub async fn persist_cms_impl(
         modem_ardop: None,
         modem_vara: None,
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
+        network_po_favorites: Vec::new(),
         // tuxlink-pmp5: review pending messages before download is the default
         // (WLE emcomm default). Operator opts out to auto-download-all via the
         // dashboard ribbon's "On connect" control.
@@ -345,6 +346,7 @@ pub async fn persist_offline_impl(
         modem_ardop: None,
         modem_vara: None,
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
+        network_po_favorites: Vec::new(),
         // tuxlink-pmp5: review pending messages before download is the default
         // (WLE emcomm default). Operator opts out to auto-download-all via the
         // dashboard ribbon's "On connect" control.

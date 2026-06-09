@@ -149,9 +149,10 @@ pub enum SessionIntent {
     PostOffice,
     /// MESH — Network Post Office. Deep-dive path 1C
     /// (`TelnetMESHSession` with `B2PeerToPeer=false`). Telnet to a
-    /// locally-run RMS Relay instance, or via AREDN mesh. Carries no
-    /// routing flag at the message layer (the relay tags inbound by
-    /// its own configuration).
+    /// locally-run RMS Relay instance, or via AREDN mesh. Carries the
+    /// normal `C`/CMS routing flag at the message layer (normal mail
+    /// pool); differs from a direct CMS session only on transport
+    /// (spec §1.1/§3/§5.5).
     Mesh,
     /// Peer-to-peer — direct station, no CMS, no creds, no routing
     /// flag. The local mailbox stores P2P messages unpooled.
@@ -162,9 +163,9 @@ pub enum SessionIntent {
 /// a B2F session, per WLE's `B2Protocol.cs:860-900` (`B2CheckSendMessage`)
 /// + `L1125-1155` (inbound `RoutingFlag` tagging on receive).
 ///
-/// `None` means "no flag" — applies to [`SessionIntent::P2p`] and
-/// [`SessionIntent::Mesh`] sessions per the WLE behavior; the local
-/// mailbox treats unflagged messages as belonging to no pool.
+/// `None` means "no flag" — applies to [`SessionIntent::P2p`] sessions
+/// only; the local mailbox treats unflagged messages as belonging to no
+/// pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutingFlag {
     /// `C` — CMS-routed message.
@@ -200,14 +201,14 @@ impl RoutingFlag {
 
 impl SessionIntent {
     /// The routing flag a message takes when it crosses this session.
-    /// Returns `None` for [`SessionIntent::P2p`] and [`SessionIntent::Mesh`]
-    /// — the local mailbox stores unflagged messages for these intents.
+    /// Returns `None` for [`SessionIntent::P2p`] only — the local mailbox
+    /// stores unflagged messages for that intent.
     pub fn routing_flag(self) -> Option<RoutingFlag> {
         match self {
-            Self::Cms => Some(RoutingFlag::Cms),
+            Self::Cms | Self::Mesh => Some(RoutingFlag::Cms), // Mesh = normal/C mail (tuxlink-6c9y §5.5)
             Self::RadioOnly => Some(RoutingFlag::RadioOnly),
             Self::PostOffice => Some(RoutingFlag::PostOffice),
-            Self::Mesh | Self::P2p => None,
+            Self::P2p => None,
         }
     }
 
@@ -227,6 +228,9 @@ pub struct ExchangeResult {
     pub sent: Vec<String>,
     pub rejected: Vec<String>,
     pub deferred: Vec<String>,
+    /// What the remote's pre-SID banner revealed about its relay type.
+    /// `NotRelay` for ordinary CMS sessions and P2P-listen (Answer role).
+    pub relay_state: crate::winlink::relay_banner::RelayState,
 }
 
 /// Which side of the FBB master/slave split this exchange plays.
@@ -296,11 +300,13 @@ where
         "exchange started",
     );
 
+    let mut relay_state = crate::winlink::relay_banner::RelayState::NotRelay;
     let my_turn = match role {
         ExchangeRole::Dial => {
             // Slave: the remote speaks first; answer its challenge if present.
             let remote =
                 handshake::read_remote_handshake(reader).map_err(ExchangeError::Handshake)?;
+            relay_state = remote.relay_state;
             tracing::debug!(
                 target: "tuxlink::winlink::session",
                 remote_sid = %remote.sid,
@@ -365,7 +371,7 @@ where
         }
     };
 
-    let mut result = ExchangeResult::default();
+    let mut result = ExchangeResult { relay_state, ..Default::default() };
     let mut remaining = outbound;
     let mut remote_no_messages = false;
     let mut my_turn = my_turn;
@@ -396,7 +402,14 @@ where
             result.sent.extend(outcome.sent);
             result.rejected.extend(outcome.rejected);
             result.deferred.extend(outcome.deferred);
-            remaining.clear(); // each message is offered once
+            // Offer at most MAX_BATCH this turn; keep the tail for the next my_turn cycle.
+            // INVARIANT: this must drain exactly the prefix send_turn proposed. Both sites
+            // slice with `.min(MAX_BATCH)` (send_turn at its `&outbound[..]` slice), so they
+            // stay in lockstep on the shared constant. If send_turn's batch size ever
+            // diverges from this computation, update both — otherwise messages silently
+            // drop (drain too many) or re-send (drain too few).
+            let offered = remaining.len().min(MAX_BATCH);
+            remaining.drain(..offered); // multi-batch send (tuxlink-6c9y §5.5)
             if outcome.quit_sent {
                 break;
             }
@@ -924,11 +937,11 @@ mod tests {
     }
 
     #[test]
-    fn mesh_intent_carries_no_routing_flag() {
-        // Network Post Office / MESH sessions don't carry a flag at the
-        // message layer either — the relay's own configuration tags
-        // inbound messages downstream.
-        assert_eq!(SessionIntent::Mesh.routing_flag(), None);
+    fn mesh_intent_carries_cms_routing_flag() {
+        // Network Post Office (Mesh) carries NORMAL mail (the C pool) — distinct from
+        // CMS only on transport, not routing (spec §1.1/§3/§5.5). P2p stays None.
+        assert_eq!(SessionIntent::Mesh.routing_flag(), Some(RoutingFlag::Cms));
+        assert_eq!(SessionIntent::P2p.routing_flag(), None);
     }
 
     #[test]
@@ -1256,6 +1269,78 @@ mod tests {
         assert_eq!(result.received.len(), 1);
         assert_eq!(result.received[0].header("Mid"), Some("SRVMSG000001"));
         assert_eq!(result.received[0].body(), b"Wind calm.\r\n");
+    }
+
+    #[test]
+    fn multi_batch_send_offers_outbox_tail_across_turns() {
+        // Regression for tuxlink-6c9y §5.5: with more than MAX_BATCH (5) queued
+        // messages, the turn loop must offer the first batch, then KEEP the tail
+        // for the next `my_turn` cycle. The pre-fix `remaining.clear()` dropped
+        // every message past the first batch — here the 6th was never sent.
+        let mut outbound = Vec::new();
+        let mut expected_mids = Vec::new();
+        for i in 1..=6 {
+            let mid = format!("OUTBOX00000{i}");
+            // Build the title on its own line: the opaque-container source audit
+            // (tests/no_opaque_container_emissions.rs) flags `outbound_message` on any
+            // line that also contains `format!`, so keep them on separate lines.
+            let title = format!("Batch msg {i}");
+            let (out, _compressed) = outbound_message(&mid, &title, b"payload");
+            outbound.push(out);
+            expected_mids.push(mid);
+        }
+
+        // Scripted Dial-role CMS peer (server speaks first). Its flat READ buffer
+        // — the dialer's own writes go to the sink, not here — is, in order:
+        //   1. handshake: SID + ;PQ challenge + CMS> prompt
+        //   2. FS YYYYY  — accept the dialer's turn-1 batch of 5 proposals
+        //   3. FF        — the peer's (empty) turn 2: no inbound messages
+        //   4. FS Y      — accept the dialer's turn-3 proposal (the kept 6th)
+        //   5. FF        — the peer's (empty) turn 4; sets remote_no_messages
+        // The dialer's turn-5 send_turn then has an empty `remaining` and a
+        // remote that is done, so it writes FQ and the loop ends (no further read).
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 87654321\rCMS>\r");
+        server.extend_from_slice(b"FS YYYYY\r"); // turn 1: accept all 5
+        server.extend_from_slice(b"FF\r"); // turn 2: peer has nothing
+        server.extend_from_slice(b"FS Y\r"); // turn 3: accept the 6th
+        server.extend_from_slice(b"FF\r"); // turn 4: peer still has nothing
+
+        let mut reader = Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("GOODPASS".into()),
+            intent: SessionIntent::Cms,
+        };
+        let result = run_exchange_with_role(
+            &mut reader,
+            &mut writer,
+            ExchangeRole::Dial,
+            &config,
+            outbound,
+            |_| Ok(vec![]),
+            None,
+        )
+        .expect("multi-batch exchange must complete without error");
+
+        // All 6 MIDs must be sent — the bug drops the 6th, landing only 5.
+        assert_eq!(
+            result.sent.len(),
+            6,
+            "all 6 queued messages must be sent across two batches; got {:?}",
+            result.sent,
+        );
+        for mid in &expected_mids {
+            assert!(
+                result.sent.contains(mid),
+                "MID {mid} must be among the sent messages; sent = {:?}",
+                result.sent,
+            );
+        }
+        assert!(result.rejected.is_empty() && result.deferred.is_empty());
     }
 
     #[test]

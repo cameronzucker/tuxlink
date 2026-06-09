@@ -394,6 +394,7 @@ fn test_parsed_message_dto_serializes_camel_case() {
         }],
         is_form: false,
         routing: None,
+        received_session: None,
         form_id: None,
         form_payload: None,
     };

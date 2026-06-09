@@ -49,7 +49,7 @@ impl MailboxFolder {
 use crate::config::{broadcast_grid, CmsTransport, Config};
 use crate::native_mailbox::Mailbox;
 use crate::winlink::ax25::{Address, KissLinkConfig};
-use crate::winlink::message::Message;
+use crate::winlink::message::{Message, RECEIVED_SESSION_HEADER, RECEIVED_SESSION_POST_OFFICE};
 use crate::winlink::proposal::Answer;
 use crate::winlink::session::{ExchangeRole, SessionIntent};
 use crate::winlink::{compose, session, telnet};
@@ -227,41 +227,41 @@ pub fn resolve_packet_endpoint(
 /// `ui_commands::telnet_p2p_connect` for tuxlink-l55l) build the same shape
 /// of outbound without duplicating the loop.
 ///
-/// # Intent-filtered drain (Codex Round 5 P1 #3 — tuxlink-u5hl)
+/// # Drain gate + send-time MID selection (tuxlink-6c9y §5.5)
 ///
 /// Spec §3 capability matrix requires every B2F session to drain only the
-/// subset of Outbox whose routing-flag matches the session's
+/// subset of Outbox appropriate to the session's
 /// [`SessionIntent::routing_flag`]:
 ///
-/// - `Cms` (flag `C`)        → drains only C-tagged messages.
-/// - `RadioOnly` (flag `R`)  → drains only R-tagged messages.
-/// - `P2p` (no flag)          → drains only unflagged messages.
+/// - `Cms` (flag `C`)        → CMS / Post Office mail pool.
+/// - `RadioOnly` (flag `R`)  → radio-only mail pool.
+/// - `PostOffice` (flag `L`) → local Post Office mail pool.
+/// - `Mesh` (flag `C`)       → normal mail pool over a relay/mesh transport.
+/// - `P2p` (no flag)          → unflagged peer-to-peer mail.
 ///
-/// Today the on-disk [`MessageMeta`] schema carries NO `routing_flag`
-/// field; nothing is tagged. The full per-message filter requires
-/// (a) adding `MessageMeta::routing_flag`, (b) tagging at compose +
-/// inbound-dispatch time, and (c) filtering this drain by
-/// `meta.routing_flag == intent.routing_flag()`. That schema cascade was
-/// out of scope for the v0.0.1 alpha sprint that surfaced this bug.
+/// **Narrowed safety gate.** The on-disk [`MessageMeta`] schema still carries
+/// no per-message `routing_flag` field, so a full per-message filter is not
+/// yet possible. In its place this helper fail-closes for the two intents
+/// whose unfiltered drain would tag spec-mismatched routing flags at the peer
+/// — `P2p` and `RadioOnly` — returning [`BackendError::MessageRejected`] with
+/// a diagnostic naming the gate + the bd issue tracking the residual schema
+/// work (**tuxlink-u5hl**, which re-scopes those two). The Post Office modes
+/// (`Cms`, `PostOffice`, `Mesh`) drain; for `PostOffice`/`Mesh` the caller's
+/// explicit `selected` MID set IS the leakage guard, bounding which Outbox
+/// drafts ship at send time.
 ///
-/// As a **safety gate** in lieu of the full filter: for any intent whose
-/// `routing_flag()` is **not** `Some(RoutingFlag::Cms)` (i.e., the
-/// non-CMS intents `P2p`, `RadioOnly`, `PostOffice`, `Mesh`) this helper
-/// returns [`BackendError::MessageRejected`] with a diagnostic that names
-/// the gate + the bd issue tracking the schema work. The CMS path (alpha's
-/// only "drain everything is implicitly correct" case, because outbound
-/// today is composed against the keyring's CMS password assumption) keeps
-/// its current "drain all" behavior.
+/// **`selected` semantics.** `None` drains the whole Outbox (status-quo CMS
+/// behavior; the back-compat path for every existing caller). `Some(set)`
+/// intersects the live Outbox with `set` on the MID (`meta.id.0 ==
+/// proposal.mid`): a draft ships iff its MID is in `set`. The selection is
+/// advisory — a selected MID no longer present in the Outbox is silently
+/// skipped (never appears in the listing), not fatal.
 ///
-/// All callers (dial AND listen) catch the safety-gate error and degrade
-/// to an empty outbound list (Codex Phase 3-4 RE-REVIEW P2). The dial path
-/// previously fail-closed via `?` propagation; that posture blocked spec §8
-/// build-walk-revise validation for the 6 non-CMS×3-protocol combinations
-/// of the umbrella's alpha walkthrough. The new posture: degrade-to-empty
-/// on the gate-specific error, log the skip, exchange proceeds with no
-/// outbound proposed. The peer never sees an off-spec routing-flag tag
-/// because an empty outbound batch carries no proposals; the listen-side
-/// degrades identically.
+/// All callers (dial AND listen) catch the gate error and degrade to an empty
+/// outbound list (Codex Phase 3-4 RE-REVIEW P2). The dial path previously
+/// fail-closed via `?` propagation; the degrade-to-empty posture lets the
+/// exchange proceed with no outbound proposed — the peer never sees an
+/// off-spec routing-flag tag because an empty batch carries no proposals.
 ///
 /// Concrete call sites:
 /// - **Dial:** [`run_ardop_b2f_exchange`] / [`run_vara_b2f_exchange`] /
@@ -269,33 +269,30 @@ pub fn resolve_packet_endpoint(
 ///   `match` on `BackendError::MessageRejected` to empty Vec.
 /// - **Listen:** [`run_ardop_b2f_answer`] / [`run_vara_b2f_answer`] /
 ///   [`crate::winlink::telnet_listen`] — same `unwrap_or_else` pattern.
-///
-/// The gate will lift when bd issue **tuxlink-u5hl** ships the schema +
-/// per-message filter.
 pub fn build_outbound_proposals(
     mailbox: &Mailbox,
     intent: SessionIntent,
+    selected: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<session::OutboundMessage>, BackendError> {
-    // Safety gate — see fn docs (tuxlink-u5hl). Non-CMS intents refuse to
-    // drain Outbox until the per-message routing_flag schema lands; the
-    // current "drain everything" is off-spec for any session whose
-    // `routing_flag()` is not `Cms`. Treats `None` (P2p/Mesh) and
-    // `Some(R|L)` (RadioOnly/PostOffice) identically: only `Some(Cms)`
-    // passes.
-    if intent.routing_flag() != Some(crate::winlink::session::RoutingFlag::Cms) {
+    // Safety gate (narrowed — tuxlink-6c9y §5.5): P2p/RadioOnly still fail-closed
+    // (6c9y does not address their leakage; tuxlink-u5hl re-scopes them). Cms/
+    // PostOffice/Mesh drain; for the Post Office modes, `selected` IS the leakage
+    // guard.
+    if matches!(intent, SessionIntent::P2p | SessionIntent::RadioOnly) {
         return Err(BackendError::MessageRejected(format!(
             "safety gate: outbound mail filtering not yet implemented for \
-             non-CMS sessions (intent={intent:?}); gate will lift when \
-             MessageMeta.routing_flag lands (tracked as bd issue tuxlink-u5hl). \
-             Spec §3 capability matrix requires draining only messages whose \
-             routing flag matches the session intent — today the schema does \
-             not carry the flag, so the safe default is fail-closed for any \
-             intent other than CMS."
+             {intent:?} sessions (tracked as bd issue tuxlink-u5hl)."
         )));
     }
-
     let mut outbound = Vec::new();
     for meta in mailbox.list(MailboxFolder::Outbox)? {
+        // §5.5(b): advisory selection intersected with the live Outbox on the MID
+        // (meta.id.0 == proposal.mid). Vanished MID never appears here (skip-not-abort).
+        if let Some(sel) = selected {
+            if !sel.contains(&meta.id.0) {
+                continue;
+            }
+        }
         // Codex review 2026-06-03 [P2 #6] (tuxlink-61yg): per-message read
         // failures used to propagate `?` and discard the entire batch.
         // A single bad/missing file would silently withhold ALL readable
@@ -326,13 +323,14 @@ mod build_outbound_proposals_tests {
     use super::*;
     use crate::native_mailbox::Mailbox;
     use crate::winlink::compose::compose_message;
+    use std::collections::HashSet;
     use tempfile::tempdir;
 
     #[test]
     fn empty_outbox_returns_empty_vec() {
         let dir = tempdir().unwrap();
         let mailbox = Mailbox::new(dir.path());
-        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms).unwrap();
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None).unwrap();
         assert!(out.is_empty(), "empty outbox should produce no proposals; got {out:?}");
     }
 
@@ -369,7 +367,7 @@ mod build_outbound_proposals_tests {
         mailbox.store(MailboxFolder::Outbox, &m1.to_bytes()).unwrap();
         mailbox.store(MailboxFolder::Outbox, &m2.to_bytes()).unwrap();
 
-        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms).unwrap();
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None).unwrap();
         assert_eq!(
             out.len(),
             2,
@@ -405,7 +403,7 @@ mod build_outbound_proposals_tests {
             .store(MailboxFolder::Outbox, &third_party.to_bytes())
             .unwrap();
 
-        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms).unwrap();
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None).unwrap();
         assert_eq!(
             out.len(),
             1,
@@ -444,7 +442,7 @@ mod build_outbound_proposals_tests {
     #[test]
     fn safety_gate_fires_for_p2p_intent() {
         let (_dir, mailbox) = outbox_with_one_draft();
-        let err = build_outbound_proposals(&mailbox, SessionIntent::P2p)
+        let err = build_outbound_proposals(&mailbox, SessionIntent::P2p, None)
             .expect_err("safety gate must reject P2p drain — see tuxlink-u5hl");
         assert!(
             matches!(err, BackendError::MessageRejected(_)),
@@ -464,7 +462,7 @@ mod build_outbound_proposals_tests {
     #[test]
     fn safety_gate_fires_for_radio_only_intent() {
         let (_dir, mailbox) = outbox_with_one_draft();
-        let err = build_outbound_proposals(&mailbox, SessionIntent::RadioOnly)
+        let err = build_outbound_proposals(&mailbox, SessionIntent::RadioOnly, None)
             .expect_err("safety gate must reject RadioOnly drain — see tuxlink-u5hl");
         assert!(
             matches!(err, BackendError::MessageRejected(_)),
@@ -472,20 +470,118 @@ mod build_outbound_proposals_tests {
         );
     }
 
+    // ────────────────────────────────────────────────────────────────────
+    // tuxlink-6c9y §5.5 — send-time MID selection for the Post Office modes.
+    // PostOffice/Mesh no longer fail-closed at the gate (their routing flags
+    // are valid CMS-pool mail); instead the caller passes an explicit
+    // `selected` MID set that bounds which Outbox drafts ship. The selection
+    // is advisory: it is intersected with the live Outbox on the MID
+    // (meta.id.0 == proposal.mid), and a selected MID no longer present in the
+    // Outbox is silently skipped (not fatal). These tests pin that contract.
+    //
+    // MIDs are generated by `compose_message` (not settable), so each fixture
+    // reads the ACTUAL generated MIDs back from the Outbox listing and builds
+    // the selection from a chosen subset of those real MIDs.
+    // ────────────────────────────────────────────────────────────────────
+
     #[test]
-    fn safety_gate_fires_for_post_office_intent() {
-        let (_dir, mailbox) = outbox_with_one_draft();
-        let err = build_outbound_proposals(&mailbox, SessionIntent::PostOffice)
-            .expect_err("safety gate must reject PostOffice drain — see tuxlink-u5hl");
-        assert!(matches!(err, BackendError::MessageRejected(_)));
+    fn post_office_intent_proposes_only_selected_mids() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        // Three drafts with distinct timestamps → distinct generated MIDs.
+        for (i, secs) in [1_716_200_000, 1_716_200_001, 1_716_200_002]
+            .into_iter()
+            .enumerate()
+        {
+            let m = compose_message(
+                "N7CPZ",
+                &["W7AUX"],
+                &[],
+                &format!("Draft-{i}"),
+                "body",
+                secs,
+            );
+            mailbox.store(MailboxFolder::Outbox, &m.to_bytes()).unwrap();
+        }
+        let mids: Vec<String> = mailbox
+            .list(MailboxFolder::Outbox)
+            .unwrap()
+            .into_iter()
+            .map(|meta| meta.id.0)
+            .collect();
+        assert_eq!(mids.len(), 3, "fixture must produce 3 distinct MIDs; got {mids:?}");
+
+        // Select exactly 2 of the 3 real MIDs.
+        let selected: HashSet<String> = [mids[0].clone(), mids[2].clone()].into_iter().collect();
+        let out =
+            build_outbound_proposals(&mailbox, SessionIntent::PostOffice, Some(&selected)).unwrap();
+        let returned: HashSet<String> = out.iter().map(|o| o.proposal.mid.clone()).collect();
+        assert_eq!(
+            returned, selected,
+            "PostOffice must propose EXACTLY the selected MID subset; got {returned:?}"
+        );
     }
 
     #[test]
-    fn safety_gate_fires_for_mesh_intent() {
-        let (_dir, mailbox) = outbox_with_one_draft();
-        let err = build_outbound_proposals(&mailbox, SessionIntent::Mesh)
-            .expect_err("safety gate must reject Mesh drain — see tuxlink-u5hl");
-        assert!(matches!(err, BackendError::MessageRejected(_)));
+    fn mesh_intent_drains_selected_not_gated() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let m = compose_message(
+            "N7CPZ",
+            &["W7AUX"],
+            &[],
+            "Mesh-draft",
+            "body",
+            1_716_200_000,
+        );
+        mailbox.store(MailboxFolder::Outbox, &m.to_bytes()).unwrap();
+        let mid = mailbox.list(MailboxFolder::Outbox).unwrap()[0].id.0.clone();
+        let selected: HashSet<String> = [mid].into_iter().collect();
+
+        // Mesh is NOT gated (its routing flag is the normal C pool, tuxlink-6c9y).
+        let out =
+            build_outbound_proposals(&mailbox, SessionIntent::Mesh, Some(&selected)).unwrap();
+        assert_eq!(out.len(), 1, "Mesh drain must ship the selected draft, not gate; got {out:?}");
+    }
+
+    #[test]
+    fn selected_but_vanished_mid_is_skipped_not_fatal() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let m = compose_message(
+            "N7CPZ",
+            &["W7AUX"],
+            &[],
+            "Present-draft",
+            "body",
+            1_716_200_000,
+        );
+        mailbox.store(MailboxFolder::Outbox, &m.to_bytes()).unwrap();
+        let mid = mailbox.list(MailboxFolder::Outbox).unwrap()[0].id.0.clone();
+
+        // Select the real MID PLUS a ghost MID that is not in the Outbox.
+        let selected: HashSet<String> =
+            [mid, "GHOST-MID-NOT-IN-OUTBOX".to_string()].into_iter().collect();
+        let out =
+            build_outbound_proposals(&mailbox, SessionIntent::PostOffice, Some(&selected)).unwrap();
+        assert_eq!(
+            out.len(),
+            1,
+            "a selected MID absent from the Outbox must be silently skipped, not fatal; got {out:?}"
+        );
+    }
+
+    #[test]
+    fn none_selection_drains_all_back_compat() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        for secs in [1_716_200_000, 1_716_200_001] {
+            let m = compose_message("N7CPZ", &["W7AUX"], &[], "Draft", "body", secs);
+            mailbox.store(MailboxFolder::Outbox, &m.to_bytes()).unwrap();
+        }
+        // `None` selection = drain everything (status-quo CMS behavior).
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None).unwrap();
+        assert_eq!(out.len(), 2, "None selection must drain all Outbox drafts; got {out:?}");
     }
 
     #[test]
@@ -494,7 +590,7 @@ mod build_outbound_proposals_tests {
         // The safety gate is non-CMS-only; this test pins that CMS is NOT
         // accidentally regressed.
         let (_dir, mailbox) = outbox_with_one_draft();
-        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms)
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None)
             .expect("CMS drain must NOT be gated");
         assert_eq!(out.len(), 1, "CMS drain must yield all outbox messages");
     }
@@ -1737,6 +1833,7 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     let mut reader = std::io::BufReader::new(ReadHalf(shared.clone()));
     let mut writer = WriteHalf(shared.clone());
 
+    // TODO(tuxlink-u5hl follow-up): migrate to build_outbound_proposals for skip-not-abort parity
     // Build outbox proposals (mirrors native_connect).
     let mut outbound = Vec::new();
     for meta in mailbox.list(MailboxFolder::Outbox)? {
@@ -2162,21 +2259,11 @@ fn native_connect(
         .and_then(|s| s.parse::<u16>().ok());
     let (port, transport) = resolve_cms_endpoint(mode, plaintext_override, port_override);
 
-    // Turn each queued outbox message into a proposal + compressed body.
-    let mut outbound = Vec::new();
-    for meta in mailbox.list(MailboxFolder::Outbox)? {
-        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
-        if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
-            if let Some((proposal, compressed)) = message.to_proposal() {
-                let title = message.header("Subject").unwrap_or_default().to_string();
-                outbound.push(session::OutboundMessage {
-                    proposal,
-                    title,
-                    compressed,
-                });
-            }
-        }
-    }
+    // Turn each queued outbox message into a proposal + compressed body. CMS
+    // dial drains the whole Outbox (intent=Cms, selected=None) — via the shared
+    // helper, which gains skip-not-abort on per-message read failures
+    // (tuxlink-6c9y consolidates this third drain loop into the helper).
+    let outbound = build_outbound_proposals(mailbox, SessionIntent::Cms, None)?;
     let outbound_log = outbound_log_items(&outbound);
 
     // P1.3 (Codex post-impl review): defer read_password until after all config
@@ -2317,7 +2404,7 @@ fn native_connect(
     // successfully-sent MIDs in the Outbox where they would be re-offered on the
     // next connection (duplicate send). Moving them to Sent is idempotent even
     // when `result.sent` is empty (all-rejected batch); the error still surfaces.
-    file_exchange_result(mailbox, &result, mailbox_change)?;
+    file_exchange_result(mailbox, &result, SessionIntent::Cms, mailbox_change)?;
     emit_exchange_result_progress(&result, &outbound_log, progress);
     if !result.rejected.is_empty() {
         return Err(BackendError::MessageRejected(format!(
@@ -2431,14 +2518,25 @@ fn compact_log_field(value: &str, max_chars: usize) -> String {
 
 /// Persist a completed exchange into the mailbox and emit one change
 /// notification if at least one message was received or sent.
-fn file_exchange_result(
+///
+/// `intent` determines whether inbound messages are stamped with
+/// `X-Tuxlink-Received-Session`. Only `SessionIntent::PostOffice` applies the
+/// marker (value `"post-office"`); all other intents store messages byte-identical.
+pub(crate) fn file_exchange_result(
     mailbox: &Mailbox,
     result: &session::ExchangeResult,
+    intent: SessionIntent,
     mailbox_change: &dyn Fn(),
 ) -> Result<(), BackendError> {
     let mut changed = false;
     for message in &result.received {
-        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+        if intent == SessionIntent::PostOffice {
+            let mut m = message.clone();
+            m.set_header(RECEIVED_SESSION_HEADER, RECEIVED_SESSION_POST_OFFICE);
+            mailbox.store(MailboxFolder::Inbox, &m.to_bytes())?;
+        } else {
+            mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+        }
         changed = true;
     }
     for mid in &result.sent {
@@ -2521,7 +2619,7 @@ pub fn run_ardop_b2f_exchange(
     // exercise the non-CMS combos. Symmetric with `run_ardop_b2f_answer`'s
     // all-errors-degrade pattern. The peer never sees off-spec routing
     // flags either way because no proposal is sent when outbound is empty.
-    let outbound = build_outbound_proposals(mailbox, intent).unwrap_or_else(|e| {
+    let outbound = build_outbound_proposals(mailbox, intent, None).unwrap_or_else(|e| {
         eprintln!(
             "run_ardop_b2f_exchange: outbound drain skipped ({e}); dial proceeds with empty outbound"
         );
@@ -2603,7 +2701,7 @@ pub fn run_ardop_b2f_answer(
     // the inbound session — the peer is already on the link and inbound
     // mail filing still works without us shipping outbound. Symmetric with
     // the telnet_listen answerer (`progress("Outbox read failed …")`).
-    let outbound = build_outbound_proposals(mailbox, SessionIntent::P2p).unwrap_or_else(|e| {
+    let outbound = build_outbound_proposals(mailbox, SessionIntent::P2p, None).unwrap_or_else(|e| {
         eprintln!(
             "run_ardop_b2f_answer: outbound drain skipped ({e}); inbound continues with empty outbound"
         );
@@ -2690,7 +2788,7 @@ pub fn run_vara_b2f_answer(
     // the inbound session — symmetric with `run_ardop_b2f_answer` above and
     // the telnet_listen answerer. The peer is already on the link; inbound
     // mail filing still works without us shipping outbound.
-    let outbound = build_outbound_proposals(mailbox, SessionIntent::P2p).unwrap_or_else(|e| {
+    let outbound = build_outbound_proposals(mailbox, SessionIntent::P2p, None).unwrap_or_else(|e| {
         eprintln!(
             "run_vara_b2f_answer: outbound drain skipped ({e}); inbound continues with empty outbound"
         );
@@ -2843,7 +2941,7 @@ pub fn run_vara_b2f_exchange(
     // orphan the operator's session. The peer sees no proposal sent
     // (empty outbound) so no off-spec routing flag rides out. Matches
     // `run_vara_b2f_answer`'s all-errors-degrade pattern.
-    let outbound = build_outbound_proposals(mailbox, intent).unwrap_or_else(|e| {
+    let outbound = build_outbound_proposals(mailbox, intent, None).unwrap_or_else(|e| {
         eprintln!(
             "run_vara_b2f_exchange: outbound drain skipped ({e}); dial proceeds with empty outbound"
         );
@@ -3044,13 +3142,14 @@ mod mailbox_change_tests {
             sent: vec![queued_id.0],
             rejected: vec![],
             deferred: vec![],
+            relay_state: crate::winlink::relay_banner::RelayState::NotRelay,
         };
         let notified = AtomicUsize::new(0);
         let notify = || {
             notified.fetch_add(1, Ordering::SeqCst);
         };
 
-        file_exchange_result(&mailbox, &result, &notify).expect("files exchange result");
+        file_exchange_result(&mailbox, &result, SessionIntent::Cms, &notify).expect("files exchange result");
 
         assert_eq!(notified.load(Ordering::SeqCst), 1);
         assert_eq!(mailbox.list(MailboxFolder::Inbox).unwrap().len(), 1);
@@ -3067,7 +3166,7 @@ mod mailbox_change_tests {
             notified.fetch_add(1, Ordering::SeqCst);
         };
 
-        file_exchange_result(&mailbox, &session::ExchangeResult::default(), &notify)
+        file_exchange_result(&mailbox, &session::ExchangeResult::default(), SessionIntent::Cms, &notify)
             .expect("empty exchange is valid");
 
         assert_eq!(notified.load(Ordering::SeqCst), 0);
@@ -3103,6 +3202,7 @@ mod mailbox_change_tests {
             sent: vec![sent.proposal.mid.clone()],
             rejected: vec![rejected.proposal.mid.clone()],
             deferred: vec!["DEFMID00001".to_string()],
+            relay_state: crate::winlink::relay_banner::RelayState::NotRelay,
         };
         let outbound_messages = vec![sent, rejected];
         let outbound = outbound_log_items(&outbound_messages);
@@ -3135,6 +3235,89 @@ mod mailbox_change_tests {
 
         assert_eq!(lines.into_inner(), vec!["No messages exchanged."]);
     }
+
+    // ---- tuxlink-6c9y A6: Post Office inbound routing marker ----------------
+
+    /// PostOffice sessions must stamp inbound messages with
+    /// `X-Tuxlink-Received-Session: post-office`.
+    #[test]
+    fn file_exchange_result_stamps_post_office_marker_on_received_message() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let received = compose_message(
+            "W1AW",
+            &["N7CPZ"],
+            &[],
+            "Post Office Inbound",
+            "body from local pool",
+            1_716_200_000,
+        );
+        let result = session::ExchangeResult {
+            received: vec![received],
+            sent: vec![],
+            rejected: vec![],
+            deferred: vec![],
+            relay_state: crate::winlink::relay_banner::RelayState::NotRelay,
+        };
+        let noop = || {};
+
+        file_exchange_result(&mailbox, &result, SessionIntent::PostOffice, &noop)
+            .expect("file_exchange_result succeeds for PostOffice");
+
+        let ids = mailbox.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(ids.len(), 1, "one message should be in Inbox");
+        let body = mailbox.read(MailboxFolder::Inbox, &ids[0].id).unwrap();
+        let stored =
+            Message::from_bytes(&body.raw_rfc5322).expect("stored bytes are valid Message");
+        assert_eq!(
+            stored.header(RECEIVED_SESSION_HEADER),
+            Some(RECEIVED_SESSION_POST_OFFICE),
+            "PostOffice session must stamp X-Tuxlink-Received-Session: post-office"
+        );
+    }
+
+    /// Non-PostOffice sessions (e.g. Cms) must NOT stamp the marker.
+    /// The stored bytes are byte-identical to the original.
+    #[test]
+    fn file_exchange_result_does_not_stamp_marker_for_cms_session() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let received = compose_message(
+            "W1AW",
+            &["N7CPZ"],
+            &[],
+            "CMS Inbound",
+            "body from cms",
+            1_716_200_001,
+        );
+        let original_bytes = received.to_bytes();
+        let result = session::ExchangeResult {
+            received: vec![received],
+            sent: vec![],
+            rejected: vec![],
+            deferred: vec![],
+            relay_state: crate::winlink::relay_banner::RelayState::NotRelay,
+        };
+        let noop = || {};
+
+        file_exchange_result(&mailbox, &result, SessionIntent::Cms, &noop)
+            .expect("file_exchange_result succeeds for Cms");
+
+        let ids = mailbox.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(ids.len(), 1, "one message should be in Inbox");
+        let body = mailbox.read(MailboxFolder::Inbox, &ids[0].id).unwrap();
+        let stored =
+            Message::from_bytes(&body.raw_rfc5322).expect("stored bytes are valid Message");
+        assert_eq!(
+            stored.header(RECEIVED_SESSION_HEADER),
+            None,
+            "Cms session must NOT stamp X-Tuxlink-Received-Session"
+        );
+        assert_eq!(
+            body.raw_rfc5322, original_bytes,
+            "Cms stored bytes must be byte-identical to original"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3165,6 +3348,7 @@ mod native_read_state_tests {
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
             map_tile_source: None,
         }
@@ -4253,6 +4437,7 @@ mod native_read_state_tests {
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
             map_tile_source: None,
         }

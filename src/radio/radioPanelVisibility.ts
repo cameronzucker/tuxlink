@@ -30,20 +30,29 @@ export function computePanelMode(
   // Sidebar selection wins when present (operator's explicit context).
   if (reason.sidebarSelected !== null) {
     const { sessionType, protocol } = reason.sidebarSelected;
-    const intent: 'cms' | 'p2p' | 'radio-only' =
-      sessionType === 'p2p' ? 'p2p' :
-      sessionType === 'radio-only' ? 'radio-only' :
+    // post-office and network-po are telnet-only intents; non-telnet kinds
+    // do not support them and coerce them to cms below.
+    const intent: 'cms' | 'p2p' | 'radio-only' | 'post-office' | 'network-po' =
+      sessionType === 'p2p'         ? 'p2p' :
+      sessionType === 'radio-only'  ? 'radio-only' :
+      sessionType === 'post-office' ? 'post-office' :
+      sessionType === 'network-po'  ? 'network-po' :
       'cms';
+    // The RF kinds (ardop-hf/vara-hf/vara-fm) accept cms|p2p|radio-only but not the
+    // telnet-only post-office/network-po intents; coerce those to cms once for all
+    // three RF arms (a single telnet-only intent added later updates only this line).
+    const rfSafeIntent = intent === 'post-office' || intent === 'network-po' ? 'cms' : intent;
     switch (protocol) {
       case 'telnet':
-        // telnet is not RF-bearing; radio-only degrades to cms
+        // telnet supports all intents; radio-only degrades to cms (no RF transport)
         return { kind: 'telnet', intent: intent === 'radio-only' ? 'cms' : intent };
       case 'packet':
-        // packet is not RF-bearing; radio-only degrades to cms
-        return { kind: 'packet', intent: intent === 'radio-only' ? 'cms' : intent };
-      case 'ardop-hf': return { kind: 'ardop-hf', intent };
-      case 'vara-hf':  return { kind: 'vara-hf',  intent };
-      case 'vara-fm':  return { kind: 'vara-fm',  intent };
+        // packet (AX.25) supports only cms|p2p; radio-only and the telnet-only
+        // post-office/network-po intents all coerce to cms (no Post Office over packet)
+        return { kind: 'packet', intent: intent === 'p2p' ? 'p2p' : 'cms' };
+      case 'ardop-hf': return { kind: 'ardop-hf', intent: rfSafeIntent };
+      case 'vara-hf':  return { kind: 'vara-hf',  intent: rfSafeIntent };
+      case 'vara-fm':  return { kind: 'vara-fm',  intent: rfSafeIntent };
     }
   }
 

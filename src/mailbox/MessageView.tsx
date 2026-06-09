@@ -641,6 +641,19 @@ export function MessageViewLoaded({
           <dt>Date</dt>
           <dd data-testid="message-date">{formatHeaderDate(message.date)}</dd>
 
+          {/* B5 (tuxlink-6c9y) — routing-source chip for Post Office inbound mail.
+              Derived from the receiving session type (NOT the transport-provenance
+              `routing` field); see design §4.5. Only renders for receivedSession
+              === 'post-office'; null/absent values render nothing. */}
+          {message.receivedSession === 'post-office' && (
+            <>
+              <dt>Received</dt>
+              <dd data-testid="message-received-session">
+                <span className="chip">Post Office</span>
+              </dd>
+            </>
+          )}
+
           {/* Winlink message ID — tuxlink-gtno. Surfaced for support / forensics
               / log-correlation workflows where the operator needs to quote the
               ID in a thread or grep wl2k-go logs. Mono so paste-targets line up. */}

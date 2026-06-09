@@ -205,6 +205,9 @@ pub fn run() {
             in_progress: std::sync::atomic::AtomicBool::new(false),
             aborting: std::sync::atomic::AtomicBool::new(false),
         })
+        // tuxlink-6c9y: single-flight + abort coordination for the Telnet
+        // "Post Office" connect path (RMS Relay over plaintext TCP).
+        .manage(crate::ui_commands::PostOfficeConnectState::default())
         // tuxlink-xehu: Telnet-P2P listener shared state — the in-flight
         // listener's shutdown flag + bound socket addr. None when no listener
         // is armed; Some(...) when one is running.
@@ -529,6 +532,11 @@ pub fn run() {
             crate::ui_commands::render_ics309_pdf,            // tuxlink-hnkn P2 Task 2 (ICS-309 PDF export)
             crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
+            // tuxlink-6c9y (Task A7): Network PO relay favorites — persist in config.
+            crate::ui_commands::network_po_favorites_get,
+            crate::ui_commands::network_po_favorites_add,
+            crate::ui_commands::network_po_favorites_remove,
+            crate::ui_commands::network_po_favorites_set,
             crate::ui_commands::config_set_review_inbound, // tuxlink-bsiy (review-pending-messages preference)
             // Task 10 (tuxlink-1hu): find-messages search commands
             crate::search::commands::tauri_search_run,
@@ -583,6 +591,11 @@ pub fn run() {
             // telnet_p2p_abort added to mirror cms_abort (operator cancel semantics).
             crate::ui_commands::telnet_p2p_connect,
             crate::ui_commands::telnet_p2p_abort,
+            // tuxlink-6c9y Task C1: Telnet "Post Office" connect + abort (RMS
+            // Relay over plaintext TCP; reuses cms_resolve_inbound_selection for
+            // the inbound-selection resolve seam — it is registry-generic).
+            crate::ui_commands::telnet_post_office_connect,
+            crate::ui_commands::telnet_post_office_abort,
             crate::ui_commands::p2p_peer_password_set,
             crate::ui_commands::p2p_peer_password_clear,
             crate::ui_commands::p2p_peer_password_status,

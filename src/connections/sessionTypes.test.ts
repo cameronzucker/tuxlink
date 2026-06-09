@@ -51,6 +51,18 @@ describe('session-type catalog', () => {
   it('isBuilt is false when protocol is not listed under the intent (network-po + vara-hf)', () => {
     expect(isBuilt({ sessionType: 'network-po', protocol: 'vara-hf' })).toBe(false);
   });
+
+  it('isBuilt is true for post-office+telnet (tuxlink-6c9y)', () => {
+    expect(isBuilt({ sessionType: 'post-office', protocol: 'telnet' })).toBe(true);
+  });
+
+  it('isBuilt is true for network-po+telnet (tuxlink-6c9y)', () => {
+    expect(isBuilt({ sessionType: 'network-po', protocol: 'telnet' })).toBe(true);
+  });
+
+  it('isBuilt is still false for post-office+packet (PKT stays unbuilt, tuxlink-6c9y)', () => {
+    expect(isBuilt({ sessionType: 'post-office', protocol: 'packet' })).toBe(false);
+  });
 });
 
 describe('radio-only session type', () => {

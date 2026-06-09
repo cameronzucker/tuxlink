@@ -17,7 +17,7 @@ import type { ConnectionKey } from '../mailbox/FolderSidebar';
  * RadioPanelMountReason; null means the panel is not mounted.
  */
 export type RadioPanelMode =
-  | { kind: 'telnet'; intent: 'cms' | 'p2p' }
+  | { kind: 'telnet'; intent: 'cms' | 'p2p' | 'post-office' | 'network-po' }
   | { kind: 'packet'; intent: 'cms' | 'p2p' }
   | { kind: 'ardop-hf'; intent: 'cms' | 'p2p' | 'radio-only' }
   | { kind: 'vara-hf'; intent: 'cms' | 'p2p' | 'radio-only' }
@@ -43,8 +43,10 @@ export interface RadioPanelMountReason {
  */
 export function panelTitle(mode: RadioPanelMode): string {
   const intentSuffix =
-    mode.intent === 'cms' ? 'Winlink' :
-    mode.intent === 'p2p' ? 'P2P' :
+    mode.intent === 'cms'        ? 'Winlink' :
+    mode.intent === 'p2p'        ? 'P2P' :
+    mode.intent === 'post-office'  ? 'Post Office' :
+    mode.intent === 'network-po'   ? 'Network Post Office' :
     'Radio-only';
   switch (mode.kind) {
     case 'telnet':   return `Telnet ${intentSuffix}`;

@@ -54,9 +54,11 @@ export const SESSION_TYPES: SessionTypeEntry[] = [
     id: 'post-office',
     label: 'Post Office',
     blurb: 'Local RMS Relay store-and-forward (pool L).',
-    built: false,
+    // tuxlink-6c9y Phase B1: post-office flipped to built:true.
+    // Telnet (TEL) is the delivered protocol; Packet (PKT) stays unbuilt.
+    built: true,
     protocols: [
-      { ...TEL, built: false },
+      { ...TEL, built: true },
       { ...PKT, built: false },
     ],
   },
@@ -81,9 +83,11 @@ export const SESSION_TYPES: SessionTypeEntry[] = [
     id: 'network-po',
     label: 'Network Post Office',
     blurb: 'Local RMS Relay network.',
-    built: false,
+    // tuxlink-6c9y Phase B1: network-po flipped to built:true.
+    // Telnet (TEL) is the delivered protocol; no Packet entry for this intent.
+    built: true,
     protocols: [
-      { ...TEL, built: false },
+      { ...TEL, built: true },
     ],
   },
 ];

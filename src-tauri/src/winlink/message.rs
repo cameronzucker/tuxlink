@@ -13,6 +13,14 @@
 
 use super::proposal::Proposal;
 
+/// HTTP-style custom header stamped on inbound mail filed by the local Post
+/// Office (`SessionIntent::PostOffice`), read back by the mailbox DTO to drive
+/// the "Post Office" inbound chip. Writer: `winlink_backend::file_exchange_result`;
+/// reader: `ui_commands::extract_received_session`. Shared so they cannot drift.
+pub const RECEIVED_SESSION_HEADER: &str = "X-Tuxlink-Received-Session";
+/// The marker value written for local Post Office mail (the only value emitted).
+pub const RECEIVED_SESSION_POST_OFFICE: &str = "post-office";
+
 /// A Winlink message being built (and, later, parsed).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {

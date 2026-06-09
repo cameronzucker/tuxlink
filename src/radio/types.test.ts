@@ -34,4 +34,12 @@ describe('panelTitle', () => {
     expect(panelTitle({ kind: 'telnet', intent: 'p2p' })).toBe('Telnet P2P');
     expect(panelTitle({ kind: 'vara-hf', intent: 'p2p' })).toBe('Vara HF P2P');
   });
+
+  it('returns Post Office suffix for post-office intent (tuxlink-6c9y)', () => {
+    expect(panelTitle({ kind: 'telnet', intent: 'post-office' })).toBe('Telnet Post Office');
+  });
+
+  it('returns Network Post Office suffix for network-po intent (tuxlink-6c9y)', () => {
+    expect(panelTitle({ kind: 'telnet', intent: 'network-po' })).toBe('Telnet Network Post Office');
+  });
 });

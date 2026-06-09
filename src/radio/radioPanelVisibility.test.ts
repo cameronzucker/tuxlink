@@ -85,6 +85,22 @@ describe('computePanelMode', () => {
     expect(mode).toEqual({ kind: 'telnet', intent: 'p2p' });
   });
 
+  it('returns telnet/post-office when post-office+telnet is selected (tuxlink-6c9y B2)', () => {
+    const mode = computePanelMode(
+      { sidebarSelected: { sessionType: 'post-office', protocol: 'telnet' },
+        activeModem: null, togglePinned: false },
+    );
+    expect(mode).toEqual({ kind: 'telnet', intent: 'post-office' });
+  });
+
+  it('returns telnet/network-po when network-po+telnet is selected (tuxlink-6c9y B2)', () => {
+    const mode = computePanelMode(
+      { sidebarSelected: { sessionType: 'network-po', protocol: 'telnet' },
+        activeModem: null, togglePinned: false },
+    );
+    expect(mode).toEqual({ kind: 'telnet', intent: 'network-po' });
+  });
+
   it('maps radio-only sidebar selection to radio-only intent for ardop/vara', () => {
     const reasonArdop = {
       sidebarSelected: { sessionType: 'radio-only', protocol: 'ardop-hf' } as const,

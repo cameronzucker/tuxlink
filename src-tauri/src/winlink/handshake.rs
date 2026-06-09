@@ -36,6 +36,9 @@ pub struct RemoteHandshake {
     pub forwarders: Vec<String>,
     /// The password challenge, if the server asked for a secure login.
     pub challenge: Option<String>,
+    /// What the pre-SID banner lines revealed about the remote's relay type.
+    /// `NotRelay` when no banner phrase matched (the ordinary CMS case).
+    pub relay_state: crate::winlink::relay_banner::RelayState,
 }
 
 /// Build the client's half of the handshake (the bytes to send after reading
@@ -131,6 +134,7 @@ fn read_handshake<R: BufRead>(
     let mut sid: Option<String> = None;
     let mut forwarders = Vec::new();
     let mut challenge = None;
+    let mut relay_state = crate::winlink::relay_banner::RelayState::NotRelay;
 
     loop {
         if master {
@@ -173,6 +177,8 @@ fn read_handshake<R: BufRead>(
         } else if line.ends_with('>') {
             // The prompt marks the end of the handshake.
             break;
+        } else if let Some(state) = crate::winlink::relay_banner::classify_banner_line(&line) {
+            relay_state = state;
         }
         // Anything else (comments, message-of-the-day, "*** ..." lines) is
         // ignored during the handshake.
@@ -192,6 +198,7 @@ fn read_handshake<R: BufRead>(
                 sid,
                 forwarders,
                 challenge,
+                relay_state,
             })
         }
         None => Err(HandshakeError::NoSid),
@@ -360,5 +367,26 @@ mod tests {
             }
             other => panic!("expected RemoteError, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn relay_banner_before_sid_sets_relay_state_radio_network() {
+        // A relay emits its self-identification banner BEFORE the SID line.
+        // The parser must capture it into relay_state.
+        use crate::winlink::relay_banner::RelayState;
+        let data = b"THIS IS A RADIO NETWORK HUB\r[WL2K-5.0-B2FHM$]\r;PQ: 12345678\rCMS>\r";
+        let mut cursor = Cursor::new(&data[..]);
+        let hs = read_remote_handshake(&mut cursor).unwrap();
+        assert_eq!(hs.relay_state, RelayState::RadioNetwork);
+    }
+
+    #[test]
+    fn ordinary_cms_handshake_has_not_relay_state() {
+        // A standard CMS session with no relay banner yields NotRelay.
+        use crate::winlink::relay_banner::RelayState;
+        let data = b"[WL2K-5.0-B2FHM$]\r;PQ: 12345678\rCMS>\r";
+        let mut cursor = Cursor::new(&data[..]);
+        let hs = read_remote_handshake(&mut cursor).unwrap();
+        assert_eq!(hs.relay_state, RelayState::NotRelay);
     }
 }

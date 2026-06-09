@@ -38,12 +38,13 @@
 /// Mirrors WLE's `B2RMSRelayState` enum (`B2Protocol.cs:25-35`), with
 /// the addition of [`NotRelay`] which WLE represents implicitly via
 /// `enmB2RMSRelayState == NotRMSRelay` (its default initial state).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RelayState {
     /// No banner phrase matched a relay self-identifier; the remote
     /// looks like an ordinary CMS endpoint (the `CMS>` prompt, or the
     /// `CMS via <relay>` form when a relay is acting as a transparent
     /// proxy to an internet-reachable CMS).
+    #[default]
     NotRelay,
 
     /// The remote is a local-database / store-and-forward post-office.

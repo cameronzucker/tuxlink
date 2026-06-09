@@ -82,6 +82,7 @@ function parsed(over: Partial<ParsedMessage> = {}): ParsedMessage {
     attachments: [],
     isForm: false,
     routing: null,
+    receivedSession: null,
     ...over,
   };
 }
@@ -407,6 +408,19 @@ describe('<MessageViewLoaded>', () => {
   it('shows UTC sent date', () => {
     render(<MessageViewLoaded message={parsed({ date: '2026-05-19T14:05:00Z' })} />);
     expect(screen.getByTestId('message-date')).toHaveTextContent('2026-05-19');
+  });
+
+  // B5 (tuxlink-6c9y): Post Office routing-source chip in the reading pane.
+  it('renders the Post Office chip when receivedSession is "post-office"', () => {
+    render(<MessageViewLoaded message={parsed({ receivedSession: 'post-office' })} />);
+    const chip = screen.getByTestId('message-received-session');
+    expect(chip).toBeInTheDocument();
+    expect(chip).toHaveTextContent('Post Office');
+  });
+
+  it('does NOT render the Post Office chip when receivedSession is null', () => {
+    render(<MessageViewLoaded message={parsed({ receivedSession: null })} />);
+    expect(screen.queryByTestId('message-received-session')).toBeNull();
   });
 });
 

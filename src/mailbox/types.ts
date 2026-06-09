@@ -50,6 +50,8 @@ export interface ParsedMessage {
   attachments: AttachmentMeta[]; // names + sizes; bytes fetched lazily
   isForm: boolean; // body is a Winlink form payload → placeholder for now
   routing: string | null; // e.g. "via CMS-SSL"; null if unknown
+  // "post-office" when filed by the local Post Office; null/absent otherwise
+  receivedSession?: string | null;
   /// Form ID extracted from RMS_Express_Form_<id>.xml attachment name (T2.2).
   /// Optional + null when not a form. Validated server-side; safe for path use.
   formId?: string | null;
