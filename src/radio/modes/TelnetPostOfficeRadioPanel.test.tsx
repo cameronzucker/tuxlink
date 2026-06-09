@@ -13,8 +13,8 @@
 // Tauri commands under test:
 //   config_read()                                   → { callsign, grid }
 //   mailbox_list({ folder: 'outbox' })              → MessageMeta[]  (Outbox source)
-//   telnet_post_office_connect({ req: {...} })      → { sent_count, received_count }
-//     ^ Phase-C backend command — NOT yet implemented; mocked here. B3↔C1 seam.
+//   telnet_post_office_connect({ req: {...} })      → { sent_count, received_count, relay_state }
+//     ^ Phase-C backend command (C1); relay_state is a kebab-case RelayStateDto value.
 //   network_po_favorites_get()                      → RelayFavorite[]  (network only)
 //   network_po_favorites_add(favorite)              → RelayFavorite[]
 //   network_po_favorites_remove(host, port)         → RelayFavorite[]
@@ -176,7 +176,7 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
       async (cmd: string, args?: unknown) => {
         if (cmd === 'telnet_post_office_connect') {
           observedReq = (args as { req: Record<string, unknown> }).req;
-          return { sent_count: 1, received_count: 0 };
+          return { sent_count: 1, received_count: 0, relay_state: 'not-relay' };
         }
         return defaultInvokeImpl(cmd);
       },
@@ -204,7 +204,7 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
       async (cmd: string, args?: unknown) => {
         if (cmd === 'telnet_post_office_connect') {
           observedReq = (args as { req: Record<string, unknown> }).req;
-          return { sent_count: 0, received_count: 2 };
+          return { sent_count: 0, received_count: 2, relay_state: 'not-relay' };
         }
         return defaultInvokeImpl(cmd);
       },
@@ -224,7 +224,7 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
       async (cmd: string, args?: unknown) => {
         if (cmd === 'telnet_post_office_connect') {
           observedReq = (args as { req: Record<string, unknown> }).req;
-          return { sent_count: 0, received_count: 0 };
+          return { sent_count: 0, received_count: 0, relay_state: 'not-relay' };
         }
         return defaultInvokeImpl(cmd);
       },
@@ -258,6 +258,111 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
         'connect command not implemented',
       );
     });
+  });
+
+  // ── §5.9 relay-state banner ───────────────────────────────────────────────
+  //
+  // The relay-state banner (data-testid="po-relay-banner") appears after a
+  // successful connect whenever relay_state is NOT 'not-relay'. It shows a
+  // human-readable label from the RELAY_STATE_LABELS map. For 'not-relay' (an
+  // ordinary CMS endpoint) no banner is rendered.
+
+  it('relay_state "radio-network" → po-relay-banner renders the correct label', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'telnet_post_office_connect') {
+        return { sent_count: 0, received_count: 1, relay_state: 'radio-network' };
+      }
+      return defaultInvokeImpl(cmd);
+    });
+    renderPanel({ mode: 'local' });
+    await screen.findByTestId('po-outbox-row-OUT-1');
+    fireEvent.click(screen.getByTestId('po-connect-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('po-relay-banner')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('po-relay-banner')).toHaveTextContent('Radio network hub');
+  });
+
+  it('relay_state "local-database" → po-relay-banner renders the correct label', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'telnet_post_office_connect') {
+        return { sent_count: 0, received_count: 1, relay_state: 'local-database' };
+      }
+      return defaultInvokeImpl(cmd);
+    });
+    renderPanel({ mode: 'local' });
+    await screen.findByTestId('po-outbox-row-OUT-1');
+    fireEvent.click(screen.getByTestId('po-connect-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('po-relay-banner')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('po-relay-banner')).toHaveTextContent(
+      'Local post office (holds mail locally)',
+    );
+  });
+
+  it('relay_state "radio-network-and-internet" → po-relay-banner renders the correct label', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'telnet_post_office_connect') {
+        return { sent_count: 0, received_count: 0, relay_state: 'radio-network-and-internet' };
+      }
+      return defaultInvokeImpl(cmd);
+    });
+    renderPanel({ mode: 'network' });
+    await screen.findByTestId('po-outbox-row-OUT-1');
+    fireEvent.click(screen.getByTestId('po-connect-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('po-relay-banner')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('po-relay-banner')).toHaveTextContent(
+      'Radio network + internet relay',
+    );
+  });
+
+  it('relay_state "no-cms-connection-available" → po-relay-banner renders the correct label', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'telnet_post_office_connect') {
+        return { sent_count: 0, received_count: 0, relay_state: 'no-cms-connection-available' };
+      }
+      return defaultInvokeImpl(cmd);
+    });
+    renderPanel({ mode: 'local' });
+    await screen.findByTestId('po-outbox-row-OUT-1');
+    fireEvent.click(screen.getByTestId('po-connect-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('po-relay-banner')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('po-relay-banner')).toHaveTextContent(
+      'Relay reachable; CMS uplink down',
+    );
+  });
+
+  it('relay_state "not-relay" → po-relay-banner is NOT rendered', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'telnet_post_office_connect') {
+        return { sent_count: 1, received_count: 0, relay_state: 'not-relay' };
+      }
+      return defaultInvokeImpl(cmd);
+    });
+    renderPanel({ mode: 'local' });
+    await screen.findByTestId('po-outbox-row-OUT-1');
+    fireEvent.click(screen.getByTestId('po-connect-btn'));
+    // Wait for the result to appear (sent/received line).
+    await waitFor(() => {
+      expect(screen.getByTestId('po-result')).toBeInTheDocument();
+    });
+    // Banner must NOT be present for a non-relay endpoint.
+    expect(screen.queryByTestId('po-relay-banner')).toBeNull();
+  });
+
+  it('po-relay-banner is absent before any connect (no result yet)', () => {
+    renderPanel({ mode: 'local' });
+    expect(screen.queryByTestId('po-relay-banner')).toBeNull();
   });
 
   // ── Login indicator ───────────────────────────────────────────────────────
@@ -477,7 +582,7 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
         return outboxCall === 1 ? OUTBOX_FIXTURE : [OUTBOX_FIXTURE[1]];
       }
       if (cmd === 'telnet_post_office_connect') {
-        return { sent_count: 1, received_count: 0 };
+        return { sent_count: 1, received_count: 0, relay_state: 'not-relay' };
       }
       return defaultInvokeImpl(cmd);
     });

@@ -54,10 +54,27 @@ const DEFAULT_PORT = 8772; // RMS Relay default (design §4.3); operator-overrid
 const MIN_PORT = 1;
 const MAX_PORT = 65535;
 
+/** Kebab-case relay-state values serialized by `RelayStateDto` (Rust `#[serde(rename_all = "kebab-case")]`). */
+type RelayState =
+  | 'not-relay'
+  | 'local-database'
+  | 'radio-network'
+  | 'radio-network-and-internet'
+  | 'no-cms-connection-available';
+
 interface DialResult {
   sent_count: number;
   received_count: number;
+  relay_state: RelayState;
 }
+
+/** Map a relay-state kebab value to a human-readable label for the §5.9 banner strip. */
+const RELAY_STATE_LABELS: Record<Exclude<RelayState, 'not-relay'>, string> = {
+  'local-database': 'Local post office (holds mail locally)',
+  'radio-network': 'Radio network hub',
+  'radio-network-and-internet': 'Radio network + internet relay',
+  'no-cms-connection-available': 'Relay reachable; CMS uplink down',
+};
 
 interface ConfigSlice {
   callsign?: string;
@@ -511,6 +528,18 @@ export function TelnetPostOfficeRadioPanel({
           <p className="radio-panel-radio-help" data-testid="po-result">
             Sent {result.sent_count}, received {result.received_count}.
           </p>
+          {/* §5.9 relay-state banner: shown only when the relay identified itself
+              as a relay (any state OTHER than 'not-relay'). Not shown for plain
+              CMS endpoints. Informational — no action required. */}
+          {result.relay_state !== 'not-relay' && (
+            <p
+              className="radio-panel-radio-help"
+              data-testid="po-relay-banner"
+              style={{ marginTop: '4px' }}
+            >
+              Relay: {RELAY_STATE_LABELS[result.relay_state]}
+            </p>
+          )}
         </section>
       )}
       {connectError && (
