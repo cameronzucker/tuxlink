@@ -5904,6 +5904,472 @@ pub async fn telnet_p2p_abort(
 }
 
 // ============================================================================
+// tuxlink-6c9y — Telnet "Post Office" connect (RMS Relay over plaintext TCP)
+// Plan: docs/superpowers/plans/2026-06-08-telnet-post-office.md Task C1
+// ============================================================================
+//
+// Dials an RMS Relay over PLAINTEXT TCP and runs the B2F exchange with
+// send-time outbound selection + `bsiy`'s inbound message selection. This is
+// the WLE "post office" model: `mode == "local"` (L pool, `<base>-L` login,
+// PostOffice intent, the `X-Tuxlink-Received-Session: post-office` marker) vs
+// `mode == "network"` (normal C-mail pool, full base callsign, Mesh intent).
+//
+// RADIO-1: pure TCP, no RF, no transmitter keying — exactly like the existing
+// CMS-over-Telnet path. NO consent gate. The relay never challenges for a
+// secure-login password, so the Post Office path reads NO keyring
+// (`ExchangeConfig.password = None`); `post_office_exchange_config` pins this.
+
+/// Serializable view of [`crate::winlink::relay_banner::RelayState`] for the
+/// connect-result DTO. The wire-protocol [`RelayState`] is a parser type kept
+/// free of frontend serde concerns; this kebab-case mirror (matching how
+/// `SessionIntent` serializes) lets the pane render a banner strip without
+/// pulling serde into the parser. The variant set is 1:1 with `RelayState`.
+///
+/// [`RelayState`]: crate::winlink::relay_banner::RelayState
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RelayStateDto {
+    /// Ordinary CMS endpoint / no relay banner matched.
+    NotRelay,
+    /// Local-database store-and-forward post office.
+    LocalDatabase,
+    /// Radio-network hub (no internet leg).
+    RadioNetwork,
+    /// Hybrid radio + internet hub.
+    RadioNetworkAndInternet,
+    /// CMS routing currently unavailable (relay holding messages).
+    NoCmsConnectionAvailable,
+}
+
+impl From<crate::winlink::relay_banner::RelayState> for RelayStateDto {
+    fn from(state: crate::winlink::relay_banner::RelayState) -> Self {
+        use crate::winlink::relay_banner::RelayState;
+        match state {
+            RelayState::NotRelay => RelayStateDto::NotRelay,
+            RelayState::LocalDatabase => RelayStateDto::LocalDatabase,
+            RelayState::RadioNetwork => RelayStateDto::RadioNetwork,
+            RelayState::RadioNetworkAndInternet => RelayStateDto::RadioNetworkAndInternet,
+            RelayState::NoCmsConnectionAvailable => RelayStateDto::NoCmsConnectionAvailable,
+        }
+    }
+}
+
+/// Request object for [`telnet_post_office_connect`]. The B3 pane sends these
+/// snake_case keys inside a `{ req: {...} }` wrapper (Tauri rejects flat args
+/// for this shape — see `TelnetP2pRadioPanel.tsx`); mirror `P2pDialRequest`.
+#[derive(Debug, Deserialize)]
+pub struct PostOfficeDialRequest {
+    /// `"local"` (L pool / `<base>-L` login / PostOffice intent) or anything
+    /// else (`"network"` — normal C-mail pool / full base callsign / Mesh).
+    pub mode: String,
+    /// Hostname or IP of the RMS Relay's TCP listener (default `127.0.0.1`).
+    pub host: String,
+    /// TCP port on the relay (default `8772`, the RMS Relay default).
+    pub port: u16,
+    /// Operator callsign; the login line is derived from it per `mode`.
+    pub my_callsign: String,
+    /// Maidenhead grid locator for the B2F handshake.
+    pub locator: String,
+    /// MIDs the operator selected to send this session. `build_outbound_proposals`
+    /// intersects this advisory set with the live Outbox (a vanished MID is
+    /// skipped, not fatal). An EMPTY set is valid — a receive-only dial.
+    pub selected_mids: Vec<String>,
+}
+
+/// Result returned by [`telnet_post_office_connect`]. The snake_case counters
+/// are read by the pane's `DialResult`; `relay_state` exposes what the relay's
+/// pre-SID banner revealed (spec §5.9 banner strip).
+#[derive(Debug, Serialize)]
+pub struct PostOfficeDialResult {
+    /// Outbound messages sent successfully (moved Outbox → Sent).
+    pub sent_count: usize,
+    /// Inbound messages received (filed into Inbox).
+    pub received_count: usize,
+    /// What the relay's banner revealed about its type.
+    pub relay_state: RelayStateDto,
+}
+
+/// Single-flight + abort coordination for the Post Office connect path
+/// (mirrors [`P2pConnectState`]). Held in Tauri managed state so
+/// [`telnet_post_office_connect`] and [`telnet_post_office_abort`] share it.
+pub struct PostOfficeConnectState {
+    /// `true` for the duration of a connect; a second concurrent connect is
+    /// rejected rather than racing on the status/log pipeline.
+    pub in_progress: std::sync::atomic::AtomicBool,
+    /// Set by [`telnet_post_office_abort`]; checked by the selecting decider
+    /// (it shares this flag) and the socket-abort handler so an in-flight dial
+    /// can be cancelled.
+    pub aborting: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Default for PostOfficeConnectState {
+    fn default() -> Self {
+        Self {
+            in_progress: std::sync::atomic::AtomicBool::new(false),
+            aborting: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+}
+
+/// Build the [`ExchangeConfig`] for a Post Office dial. Split out as a pure
+/// function so the no-keyring (`password: None`) + login-callsign + intent
+/// mapping is unit-testable without a socket.
+///
+/// - `local == true`  → `<base>-L` login, [`SessionIntent::PostOffice`].
+/// - `local == false` → full base callsign (no `-L`), [`SessionIntent::Mesh`].
+///
+/// `targetcall` is always [`telnet::CMS_TARGET_CALL`] (`wl2k`). `password` is
+/// ALWAYS `None` — the relay never issues a `;PQ` challenge to a post-office
+/// client, so no OS-keyring read happens on this path.
+///
+/// [`ExchangeConfig`]: crate::winlink::session::ExchangeConfig
+/// [`SessionIntent::PostOffice`]: crate::winlink::session::SessionIntent::PostOffice
+/// [`SessionIntent::Mesh`]: crate::winlink::session::SessionIntent::Mesh
+fn post_office_exchange_config(
+    my_callsign: &str,
+    locator: &str,
+    local: bool,
+) -> crate::winlink::session::ExchangeConfig {
+    use crate::winlink::session::SessionIntent;
+    let intent = if local { SessionIntent::PostOffice } else { SessionIntent::Mesh };
+    crate::winlink::session::ExchangeConfig {
+        mycall: crate::winlink::telnet::base_callsign_for_post_office(my_callsign, local),
+        targetcall: crate::winlink::telnet::CMS_TARGET_CALL.to_string(),
+        locator: locator.to_string(),
+        // Post Office uses no keyring — see the function doc + RADIO-1 note.
+        password: None,
+        intent,
+    }
+}
+
+/// Run one Post Office B2F exchange against `host:port` over plaintext TCP.
+///
+/// The pure orchestration seam (the analog of `winlink_backend::native_connect`
+/// for the CMS path), factored out of [`telnet_post_office_connect`] so it can
+/// be integration-tested against a scripted loopback relay with the real
+/// `bsiy` selecting decider. It:
+///
+/// 1. builds the [`ExchangeConfig`] via [`post_office_exchange_config`]
+///    (no keyring; `<base>-L`/base login; PostOffice/Mesh intent);
+/// 2. drains the Outbox filtered to `selected` (advisory set ∩ live Outbox);
+/// 3. dials `host:port` with [`Transport::Plaintext`] and runs the exchange,
+///    driving the caller-supplied `decide` closure for inbound selection;
+/// 4. files the result — received mail into Inbox (PostOffice intent stamps
+///    the `X-Tuxlink-Received-Session: post-office` marker), sent MIDs
+///    Outbox → Sent — via `file_exchange_result`.
+///
+/// Returns the [`PostOfficeDialResult`] (counts + relay banner state). N=0
+/// `selected` still connects (a receive-only dial).
+///
+/// [`ExchangeConfig`]: crate::winlink::session::ExchangeConfig
+/// [`Transport::Plaintext`]: crate::winlink::telnet::Transport::Plaintext
+#[allow(clippy::too_many_arguments)]
+fn post_office_exchange<F>(
+    mailbox: &crate::native_mailbox::Mailbox,
+    host: &str,
+    port: u16,
+    my_callsign: &str,
+    locator: &str,
+    local: bool,
+    selected: &std::collections::HashSet<String>,
+    progress: &dyn Fn(&str),
+    wire_log: &dyn Fn(&str),
+    mailbox_change: &dyn Fn(),
+    register_socket: &dyn Fn(&std::net::TcpStream),
+    decide: F,
+) -> Result<PostOfficeDialResult, UiError>
+where
+    F: Fn(
+        &[crate::winlink::proposal::Proposal],
+    ) -> Result<Vec<crate::winlink::proposal::Answer>, crate::winlink::session::ExchangeError>,
+{
+    let config = post_office_exchange_config(my_callsign, locator, local);
+    let intent = config.intent;
+
+    // Drain the Outbox filtered to the operator's selection (advisory set ∩
+    // live Outbox; a vanished MID is skipped, not fatal — A3's filter).
+    let outbound = crate::winlink_backend::build_outbound_proposals(mailbox, intent, Some(selected))
+        .map_err(|e| UiError::Internal { detail: format!("outbox drain: {e}") })?;
+
+    let result = crate::winlink::telnet::connect_and_exchange(
+        host,
+        port,
+        crate::winlink::telnet::Transport::Plaintext,
+        &config,
+        outbound,
+        progress,
+        wire_log,
+        register_socket,
+        decide,
+    )
+    .map_err(|e| UiError::Transport { reason: format!("{e:?}") })?;
+
+    // File received mail (Inbox; PostOffice stamps the marker) + move sent
+    // MIDs Outbox → Sent. Filing FIRST is idempotent even on an all-rejected
+    // batch (mirrors native_connect P1.4).
+    crate::winlink_backend::file_exchange_result(mailbox, &result, intent, mailbox_change)
+        .map_err(|e| UiError::Internal { detail: format!("file exchange result: {e}") })?;
+
+    Ok(PostOfficeDialResult {
+        sent_count: result.sent.len(),
+        received_count: result.received.len(),
+        relay_state: result.relay_state.into(),
+    })
+}
+
+/// Connect to an RMS Relay "post office" over plaintext TCP and run a full B2F
+/// message exchange with send-time outbound selection + inbound message
+/// selection (`bsiy`).
+///
+/// Mirrors [`telnet_p2p_connect`]'s structure (session-log + `backend_status`
+/// events, single-flight, `spawn_blocking` for the blocking exchange) and
+/// [`cms_connect`]'s inbound-selection plumbing (mints one `AttemptId`, builds
+/// the selecting decider that emits `InboundProposalsOffered` and parks on the
+/// shared [`SelectionRegistry`] until [`cms_resolve_inbound_selection`]
+/// delivers the operator's choice). The Post Office connect ALWAYS prompts for
+/// inbound selection (full inbound selection in v1 per the spec).
+///
+/// The `{ req }` wrapper is the B3 ↔ C1 contract (single `req` param). N=0
+/// `selected_mids` still connects (a receive-only dial — do NOT early-return).
+///
+/// RADIO-1: drives plaintext TCP to a relay — no RF, so no Part 97 consent
+/// gate. The relay may transmit RF independently; tuxlink does not trigger it.
+/// No keyring is read on this path (`ExchangeConfig.password = None`).
+#[tauri::command]
+pub async fn telnet_post_office_connect(
+    app: AppHandle,
+    po_state: State<'_, PostOfficeConnectState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
+    req: PostOfficeDialRequest,
+) -> Result<PostOfficeDialResult, UiError> {
+    use std::sync::atomic::Ordering;
+
+    let local = req.mode == "local";
+
+    // Single-flight: reject a second concurrent connect.
+    if po_state
+        .in_progress
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err(UiError::Internal {
+            detail: "a Post Office connection is already in progress".to_string(),
+        });
+    }
+    // Clear any stale abort flag from a prior connect.
+    po_state.aborting.store(false, Ordering::SeqCst);
+
+    let transport_label = "Post Office".to_string();
+    emit_p2p_status(&app, StatusDto::Connecting { transport: transport_label.clone() });
+
+    // Build a Mailbox at the same on-disk location the native backend uses
+    // (`<app_data>/native-mbox`); the Post Office path walks the shared store
+    // directly (like P2P). Attach the search index when present so PO-received
+    // mail lands in the search corpus.
+    let mbox_dir = match app.path().app_data_dir() {
+        Ok(dir) => dir.join("native-mbox"),
+        Err(e) => {
+            po_state.in_progress.store(false, Ordering::SeqCst);
+            emit_p2p_status(&app, StatusDto::Disconnected);
+            return Err(UiError::Internal {
+                detail: format!("could not resolve app data dir: {e}"),
+            });
+        }
+    };
+    let mut mailbox = crate::native_mailbox::Mailbox::new(mbox_dir);
+    if let Some(svc) = app.try_state::<crate::search::commands::SearchService>() {
+        mailbox = mailbox.with_index(svc.index.clone());
+    }
+
+    let login = crate::winlink::telnet::base_callsign_for_post_office(&req.my_callsign, local);
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        format!(
+            "Connecting to {}:{} (Post Office, login {}, {} selected)…",
+            req.host,
+            req.port,
+            login,
+            req.selected_mids.len()
+        ),
+    );
+
+    // tuxlink-bsiy: mint ONE attempt_id so the in-flight InboundProposalsOffered
+    // events share a single correlation id (the frontend stale-filter keys on it).
+    let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+    let events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
+        std::sync::Arc::new(crate::winlink::b2f_events::TauriEventSink::new(app.clone()));
+
+    // Values moved into the blocking task.
+    let host = req.host.clone();
+    let port = req.port;
+    let my_callsign = req.my_callsign.clone();
+    let locator = req.locator.clone();
+    let selected: std::collections::HashSet<String> =
+        req.selected_mids.iter().cloned().collect();
+    let registry = registry.inner().clone();
+    let aborting = po_state.aborting.clone();
+
+    let app_progress = app.clone();
+    let log_progress = log.inner().clone();
+    let app_wire = app.clone();
+    let log_wire = log.inner().clone();
+
+    let outcome = tokio::task::spawn_blocking(move || {
+        use crate::winlink::b2f_events::B2fEvent;
+        use crate::winlink::inbound_selection::PendingProposalDto;
+
+        // The selecting decider: emit the offer + park on the registry slot
+        // until the resolve command delivers (or abort / timeout). The Post
+        // Office connect ALWAYS prompts (full inbound selection in v1).
+        let emit = {
+            let sink = events_sink.clone();
+            move |request_id: u64, dtos: &[PendingProposalDto]| {
+                sink.push(B2fEvent::InboundProposalsOffered {
+                    request_id,
+                    proposals: dtos.to_vec(),
+                    attempt_id,
+                });
+            }
+        };
+        let decide = crate::winlink::inbound_selection::build_selecting_decider(
+            registry,
+            attempt_id,
+            emit,
+            aborting.clone(),
+        );
+
+        // Hand each freshly-connected socket to the abort handle so an operator
+        // abort can `.shutdown()` it (mirrors native_connect's register_socket).
+        let abort_handle: std::sync::Mutex<Option<std::net::TcpStream>> =
+            std::sync::Mutex::new(None);
+        let register_socket = |sock: &std::net::TcpStream| {
+            if let Ok(clone) = sock.try_clone() {
+                if let Ok(mut slot) = abort_handle.lock() {
+                    if aborting.load(Ordering::SeqCst) {
+                        let _ = clone.shutdown(std::net::Shutdown::Both);
+                    } else {
+                        *slot = Some(clone);
+                    }
+                }
+            }
+        };
+
+        post_office_exchange(
+            &mailbox,
+            &host,
+            port,
+            &my_callsign,
+            &locator,
+            local,
+            &selected,
+            &move |line: &str| {
+                emit_session_line(&app_progress, &log_progress, LogLevel::Info, line.to_string());
+            },
+            &move |line: &str| {
+                emit_session_line_with_source(
+                    &app_wire,
+                    &log_wire,
+                    LogLevel::Info,
+                    LogSource::Wire,
+                    line.to_string(),
+                );
+            },
+            &|| {},
+            &register_socket,
+            decide,
+        )
+    })
+    .await;
+
+    // Release single-flight + read the abort flag for outcome reporting.
+    po_state.in_progress.store(false, Ordering::SeqCst);
+    let was_aborted = po_state.aborting.load(Ordering::SeqCst);
+
+    match outcome {
+        Ok(Ok(result)) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                format!(
+                    "Post Office exchange complete. Sent {}, received {}.",
+                    result.sent_count, result.received_count
+                ),
+            );
+            // Brief Connected window (mirrors cms_connect / telnet_p2p_connect's
+            // 1.5s hold so the operator perceives success). PO sessions are
+            // transient (connect → B2F → done), not a held socket.
+            emit_p2p_status(
+                &app,
+                StatusDto::Connected {
+                    transport: transport_label,
+                    peer: format!("{}:{}", req.host, req.port),
+                    since_iso: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            emit_p2p_status(&app, StatusDto::Disconnected);
+            Ok(result)
+        }
+        Ok(Err(e)) => {
+            if was_aborted {
+                emit_session_line(
+                    &app,
+                    &log,
+                    LogLevel::Warn,
+                    "Post Office connection aborted.".to_string(),
+                );
+            } else {
+                emit_session_line(
+                    &app,
+                    &log,
+                    LogLevel::Error,
+                    format!("Post Office connect failed: {e:?}"),
+                );
+            }
+            emit_p2p_status(&app, StatusDto::Disconnected);
+            Err(e)
+        }
+        Err(join_err) => {
+            po_state.in_progress.store(false, Ordering::SeqCst);
+            emit_p2p_status(&app, StatusDto::Disconnected);
+            Err(UiError::Internal {
+                detail: format!("Post Office connect task failed: {join_err}"),
+            })
+        }
+    }
+}
+
+/// Abort an in-flight [`telnet_post_office_connect`] (mirrors
+/// [`telnet_p2p_abort`] + [`cms_abort`]): set the shared abort flag (which the
+/// selecting decider re-checks and the socket-abort handler reads to
+/// `.shutdown()` the connecting socket) and drop the registry slot so a decider
+/// parked on a pending selection prompt wakes immediately. Emits Disconnected
+/// at once so the StatusBar responds without waiting for the blocking exchange.
+/// A no-op when nothing is connecting.
+#[tauri::command]
+pub async fn telnet_post_office_abort(
+    app: AppHandle,
+    po_state: State<'_, PostOfficeConnectState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
+) -> Result<(), UiError> {
+    use std::sync::atomic::Ordering;
+
+    emit_session_line(&app, &log, LogLevel::Info, "Aborting Post Office connection…".to_string());
+    // Order matters (mirrors cms_abort): set `aborting` BEFORE dropping the slot
+    // so the woken decider's post-recv abort re-check returns Cancelled (not
+    // accept-all). The socket-abort handler also reads `aborting`.
+    po_state.aborting.store(true, Ordering::SeqCst);
+    *registry.lock().unwrap() = None;
+    emit_p2p_status(&app, StatusDto::Disconnected);
+    Ok(())
+}
+
+// ============================================================================
 // tuxlink-xehu — Telnet-P2P listener (allowlist + keyring + arm/disarm)
 // Spec: docs/design/2026-06-03-multi-transport-listener-architecture.md §4.1
 // Wire: dev/scratch/winlink-re/findings/telnet-p2p.md
@@ -9021,6 +9487,391 @@ hw:CARD=Device,DEV=0
             serde_json::Value::Null,
             "receivedSession must serialise as null when absent"
         );
+    }
+
+    // ========================================================================
+    // tuxlink-6c9y Task C1 — telnet_post_office_connect orchestration
+    // ========================================================================
+
+    /// Local mode (`mode == "local"`) builds the `<base>-L` login callsign,
+    /// the `wl2k` B2F targetcall, a `PostOffice` intent, and — critically —
+    /// NO keyring password. The `-L` suffix is the entire local-vs-network
+    /// routing discriminator (WLE `TelnetSession.cs:2011-2013`); the Post
+    /// Office path never reads the OS keyring (`password: None`).
+    #[test]
+    fn post_office_config_local_uses_dash_l_and_no_keyring() {
+        let cfg = post_office_exchange_config("n7cpz-7", "CN87", true);
+        assert_eq!(cfg.mycall, "N7CPZ-L", "local PO login is the base call + -L");
+        assert_eq!(
+            cfg.targetcall,
+            crate::winlink::telnet::CMS_TARGET_CALL,
+            "B2F targetcall is wl2k"
+        );
+        assert_eq!(cfg.locator, "CN87");
+        assert!(
+            cfg.password.is_none(),
+            "Post Office uses no keyring — password MUST be None"
+        );
+        assert_eq!(
+            cfg.intent,
+            crate::winlink::session::SessionIntent::PostOffice,
+            "local mode → PostOffice intent (L pool + marker)"
+        );
+    }
+
+    /// Network mode (`mode != "local"`) builds the FULL base callsign (no
+    /// `-L`), the `wl2k` targetcall, a `Mesh` intent (normal C-mail pool), and
+    /// still NO keyring password.
+    #[test]
+    fn post_office_config_network_uses_full_base_and_mesh_intent() {
+        let cfg = post_office_exchange_config("N7CPZ-7", "CN87", false);
+        assert_eq!(cfg.mycall, "N7CPZ", "network PO login is the bare base call, no -L");
+        assert_eq!(cfg.targetcall, crate::winlink::telnet::CMS_TARGET_CALL);
+        assert!(cfg.password.is_none(), "network PO also reads no keyring");
+        assert_eq!(
+            cfg.intent,
+            crate::winlink::session::SessionIntent::Mesh,
+            "network mode → Mesh intent (normal C-mail pool)"
+        );
+    }
+
+    /// The connect-request DTO deserializes the snake_case keys the B3 pane
+    /// sends (`my_callsign`, `selected_mids`) — the `{ req: {...} }` contract.
+    #[test]
+    fn post_office_dial_request_deserializes_snake_case() {
+        let json = serde_json::json!({
+            "mode": "local",
+            "host": "127.0.0.1",
+            "port": 8772,
+            "my_callsign": "N7CPZ",
+            "locator": "CN87",
+            "selected_mids": ["AAA111", "BBB222"],
+        });
+        let req: PostOfficeDialRequest =
+            serde_json::from_value(json).expect("snake_case PO dial request deserializes");
+        assert_eq!(req.mode, "local");
+        assert_eq!(req.host, "127.0.0.1");
+        assert_eq!(req.port, 8772);
+        assert_eq!(req.my_callsign, "N7CPZ");
+        assert_eq!(req.locator, "CN87");
+        assert_eq!(req.selected_mids, vec!["AAA111".to_string(), "BBB222".to_string()]);
+    }
+
+    /// The result DTO serializes `relay_state` as a kebab-case string the pane
+    /// can render in its banner strip, alongside the snake_case counters the
+    /// frontend `DialResult` reads.
+    #[test]
+    fn post_office_dial_result_serializes_relay_state_kebab_case() {
+        use crate::winlink::relay_banner::RelayState;
+        let result = PostOfficeDialResult {
+            sent_count: 2,
+            received_count: 1,
+            relay_state: RelayState::LocalDatabase.into(),
+        };
+        let value = serde_json::to_value(&result).expect("PO dial result serializes");
+        assert_eq!(value["sent_count"], 2);
+        assert_eq!(value["received_count"], 1);
+        assert_eq!(
+            value["relay_state"], "local-database",
+            "RelayState::LocalDatabase → \"local-database\""
+        );
+        // NotRelay is the ordinary-CMS / no-banner default.
+        let plain: RelayStateDto = RelayState::NotRelay.into();
+        assert_eq!(
+            serde_json::to_value(plain).unwrap(),
+            "not-relay",
+            "RelayState::NotRelay → \"not-relay\""
+        );
+    }
+
+    /// Integration test (clone of `bsiy`'s
+    /// `selecting_connect_emits_offer_and_files_selected_message_into_inbox`):
+    /// a scripted Answer-role relay on loopback OFFERS one inbound message and
+    /// receives the client's outbound. Drives the REAL
+    /// `post_office_exchange` orchestration with the `bsiy` selecting decider.
+    ///
+    /// Asserts, against the fixture relay:
+    /// - the login line sent is `<base>-L` (local mode);
+    /// - ONLY the operator-selected outbound MID is proposed (selection filter);
+    /// - inbound selection is exercised via the `bsiy` decider (the registry
+    ///   slot is populated; `resolve_selection` delivers the selected message);
+    /// - the received PO mail is filed into Inbox WITH the
+    ///   `X-Tuxlink-Received-Session: post-office` marker (PostOffice intent);
+    /// - `relay_state` is returned in the result.
+    ///
+    /// The keyring-never property is structural — `post_office_exchange` takes
+    /// no password and builds `ExchangeConfig.password = None`
+    /// (`post_office_config_local_uses_dash_l_and_no_keyring` pins it). Nothing
+    /// is transmitted: 127.0.0.1 loopback only (RADIO-1 N/A — pure TCP).
+    #[test]
+    fn post_office_exchange_selects_outbound_and_files_inbound_with_marker() {
+        use crate::winlink::b2f_events::{AttemptId, B2fEvent, B2fEventSink};
+        use crate::winlink::compose::compose_message;
+        use crate::winlink::inbound_selection::{
+            build_selecting_decider, resolve_selection, InboundSelection, PendingProposalDto,
+            SelectionRegistry, UnselectedDisposition,
+        };
+        use crate::winlink::proposal::{Answer, Proposal};
+        use crate::winlink::session::{
+            run_exchange_with_role, ExchangeConfig, ExchangeRole, OutboundMessage as SessionOutbound,
+            SessionIntent,
+        };
+        use crate::winlink::telnet::CMS_TARGET_CALL;
+        use crate::native_mailbox::Mailbox;
+        use std::collections::HashSet;
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::{Shutdown, TcpListener, TcpStream};
+        use std::sync::atomic::AtomicBool;
+        use std::sync::{Arc, Mutex as StdMutex};
+
+        struct RecordingSink {
+            events: Arc<StdMutex<Vec<B2fEvent>>>,
+        }
+        impl B2fEventSink for RecordingSink {
+            fn push(&self, event: B2fEvent) {
+                self.events.lock().unwrap().push(event);
+            }
+        }
+
+        // -- Step 1: the message the relay will OFFER the client (inbound). ----
+        let offered = compose_message(
+            "W7AUX",
+            &["N7CPZ"],
+            &[],
+            "PO inbound",
+            "pick me",
+            1_716_400_000,
+        );
+        let offered_mid = offered.header("Mid").expect("offered has Mid").to_string();
+        let (in_proposal, in_compressed) =
+            offered.to_proposal().expect("offered → proposal");
+        let server_outbound = vec![SessionOutbound {
+            proposal: in_proposal,
+            title: "PO inbound".to_string(),
+            compressed: in_compressed,
+        }];
+
+        // -- Step 2: the client's Outbox has TWO drafts; only ONE is selected.
+        let client_dir = tempfile::tempdir().unwrap();
+        let client_mailbox = Mailbox::new(client_dir.path());
+        let selected_msg = compose_message(
+            "N7CPZ",
+            &["W7AUX"],
+            &[],
+            "Selected outbound",
+            "send me",
+            1_716_400_100,
+        );
+        let unselected_msg = compose_message(
+            "N7CPZ",
+            &["KK7XYZ"],
+            &[],
+            "Unselected outbound",
+            "leave me",
+            1_716_400_101,
+        );
+        let selected_mid = selected_msg.header("Mid").expect("selected has Mid").to_string();
+        let unselected_mid =
+            unselected_msg.header("Mid").expect("unselected has Mid").to_string();
+        client_mailbox
+            .store(MailboxFolder::Outbox, &selected_msg.to_bytes())
+            .unwrap();
+        client_mailbox
+            .store(MailboxFolder::Outbox, &unselected_msg.to_bytes())
+            .unwrap();
+        let mut selected_set = HashSet::new();
+        selected_set.insert(selected_mid.clone());
+
+        // -- Step 3: scripted Answer-role relay on loopback. -------------------
+        // Captures the client's login line so the test can assert `<base>-L`,
+        // and records which outbound MIDs the client proposes.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let listen_port = listener.local_addr().unwrap().port();
+        let login_capture = Arc::new(StdMutex::new(String::new()));
+        let proposed_mids = Arc::new(StdMutex::new(Vec::<String>::new()));
+
+        let server = {
+            let login_capture = login_capture.clone();
+            let proposed_mids = proposed_mids.clone();
+            std::thread::spawn(move || {
+                let (sock, _) = listener.accept().expect("accept");
+                let mut writer = sock.try_clone().expect("clone for write");
+                writer.write_all(b"Callsign :\rPassword :\r").expect("login prompts");
+                let mut reader = BufReader::new(sock);
+                // First client line is the callsign (login), second is the password.
+                let mut callsign_line = Vec::new();
+                reader.read_until(b'\r', &mut callsign_line).expect("read callsign");
+                *login_capture.lock().unwrap() =
+                    String::from_utf8_lossy(&callsign_line).trim_end_matches('\r').to_string();
+                let mut password_line = Vec::new();
+                reader.read_until(b'\r', &mut password_line).expect("read password");
+
+                let server_config = ExchangeConfig {
+                    mycall: "W7AUX".into(),
+                    targetcall: CMS_TARGET_CALL.to_string(),
+                    locator: "CN87".into(),
+                    password: None,
+                    intent: SessionIntent::Cms,
+                };
+                // The Answer-role server OFFERS its message and records the MIDs
+                // the client proposes back (the decide closure sees the client's
+                // outbound proposals).
+                run_exchange_with_role(
+                    &mut reader,
+                    &mut writer,
+                    ExchangeRole::Answer,
+                    &server_config,
+                    server_outbound,
+                    |proposals: &[Proposal]| {
+                        let mut g = proposed_mids.lock().unwrap();
+                        for p in proposals {
+                            g.push(p.mid.clone());
+                        }
+                        Ok(proposals
+                            .iter()
+                            .map(|_| Answer::Accept { resume_offset: 0 })
+                            .collect())
+                    },
+                    None,
+                )
+                .expect("server Answer exchange succeeds");
+            })
+        };
+
+        // -- Step 4: operator-answer thread (models the resolve command). ------
+        let registry: SelectionRegistry = Arc::new(StdMutex::new(None));
+        let aborting = Arc::new(AtomicBool::new(false));
+        let attempt_id = AttemptId(7777);
+        let events = Arc::new(StdMutex::new(Vec::<B2fEvent>::new()));
+        let sink: Arc<dyn B2fEventSink> = Arc::new(RecordingSink {
+            events: events.clone(),
+        });
+
+        let answerer = {
+            let registry = registry.clone();
+            let want_mid = offered_mid.clone();
+            std::thread::spawn(move || {
+                let (slot_attempt, slot_req) = {
+                    let mut found = None;
+                    for _ in 0..400 {
+                        if let Some(s) = registry.lock().unwrap().as_ref() {
+                            found = Some((s.attempt_id, s.request_id));
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    found.expect("decider never registered a selection slot")
+                };
+                let delivered = resolve_selection(
+                    &registry,
+                    slot_attempt,
+                    slot_req,
+                    InboundSelection {
+                        selected_mids: vec![want_mid],
+                        disposition: UnselectedDisposition::Hold,
+                    },
+                );
+                assert!(delivered, "resolve_selection should match the live slot");
+            })
+        };
+
+        // -- Step 5: build the selecting decider + run post_office_exchange. ---
+        let emit = {
+            let sink = sink.clone();
+            move |request_id: u64, dtos: &[PendingProposalDto]| {
+                sink.push(B2fEvent::InboundProposalsOffered {
+                    request_id,
+                    proposals: dtos.to_vec(),
+                    attempt_id,
+                });
+            }
+        };
+        let decide = build_selecting_decider(registry.clone(), attempt_id, emit, aborting.clone());
+
+        let abort_handle: StdMutex<Option<TcpStream>> = StdMutex::new(None);
+        let register_socket = |sock: &TcpStream| {
+            if let Ok(clone) = sock.try_clone() {
+                if let Ok(mut slot) = abort_handle.lock() {
+                    if aborting.load(std::sync::atomic::Ordering::SeqCst) {
+                        let _ = clone.shutdown(Shutdown::Both);
+                    } else {
+                        *slot = Some(clone);
+                    }
+                }
+            }
+        };
+
+        let result = post_office_exchange(
+            &client_mailbox,
+            "127.0.0.1",
+            listen_port,
+            "N7CPZ",
+            "CN87",
+            /* local */ true,
+            &selected_set,
+            &|_| {},
+            &|_| {},
+            &|| {},
+            &register_socket,
+            decide,
+        )
+        .expect("post_office_exchange completes");
+
+        answerer.join().expect("answerer thread panicked");
+        server.join().expect("server thread panicked");
+
+        // -- Assertion: login line was the base call + -L. ---------------------
+        assert_eq!(
+            *login_capture.lock().unwrap(),
+            "N7CPZ-L",
+            "local-mode login line must be the base callsign + -L"
+        );
+
+        // -- Assertion: ONLY the selected outbound MID was proposed. -----------
+        let proposed = proposed_mids.lock().unwrap().clone();
+        assert!(
+            proposed.contains(&selected_mid),
+            "the selected outbound MID must be proposed; proposed = {proposed:?}"
+        );
+        assert!(
+            !proposed.contains(&unselected_mid),
+            "the UNSELECTED outbound MID must NOT be proposed; proposed = {proposed:?}"
+        );
+
+        // -- Assertion: the inbound offer fired via the bsiy decider. ----------
+        let log = events.lock().unwrap();
+        let offer = log.iter().find_map(|e| match e {
+            B2fEvent::InboundProposalsOffered { proposals, attempt_id: a, .. } => {
+                Some((proposals.clone(), *a))
+            }
+            _ => None,
+        });
+        let (dtos, evt_attempt) =
+            offer.expect("an InboundProposalsOffered event must have fired");
+        assert_eq!(evt_attempt, attempt_id, "offer carries the threaded attempt_id");
+        assert_eq!(dtos.len(), 1, "exactly one inbound proposal offered");
+        assert_eq!(dtos[0].mid, offered_mid);
+
+        // -- Assertion: received PO mail filed with the post-office marker. ----
+        let inbox = client_mailbox.list(MailboxFolder::Inbox).expect("list inbox");
+        assert_eq!(inbox.len(), 1, "selected inbound landed in Inbox; got {inbox:?}");
+        let body = client_mailbox
+            .read(MailboxFolder::Inbox, &inbox[0].id)
+            .expect("read filed inbound");
+        let stored = crate::winlink::message::Message::from_bytes(&body.raw_rfc5322)
+            .expect("filed bytes are a Message");
+        assert_eq!(
+            stored.header(crate::winlink::message::RECEIVED_SESSION_HEADER),
+            Some(RECEIVED_SESSION_POST_OFFICE),
+            "PostOffice intent must stamp X-Tuxlink-Received-Session: post-office"
+        );
+
+        // -- Assertion: result carries counts + relay_state. -------------------
+        assert_eq!(result.received_count, 1, "one inbound received");
+        assert_eq!(result.sent_count, 1, "one outbound sent");
+        // relay_state is plumbed from the exchange (NotRelay for a plain
+        // CMS-style server with no relay banner).
+        let _ = result.relay_state;
     }
 }
 

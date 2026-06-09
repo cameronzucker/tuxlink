@@ -142,6 +142,9 @@ pub fn run() {
             in_progress: std::sync::atomic::AtomicBool::new(false),
             aborting: std::sync::atomic::AtomicBool::new(false),
         })
+        // tuxlink-6c9y: single-flight + abort coordination for the Telnet
+        // "Post Office" connect path (RMS Relay over plaintext TCP).
+        .manage(crate::ui_commands::PostOfficeConnectState::default())
         // tuxlink-xehu: Telnet-P2P listener shared state — the in-flight
         // listener's shutdown flag + bound socket addr. None when no listener
         // is armed; Some(...) when one is running.
@@ -512,6 +515,11 @@ pub fn run() {
             // telnet_p2p_abort added to mirror cms_abort (operator cancel semantics).
             crate::ui_commands::telnet_p2p_connect,
             crate::ui_commands::telnet_p2p_abort,
+            // tuxlink-6c9y Task C1: Telnet "Post Office" connect + abort (RMS
+            // Relay over plaintext TCP; reuses cms_resolve_inbound_selection for
+            // the inbound-selection resolve seam — it is registry-generic).
+            crate::ui_commands::telnet_post_office_connect,
+            crate::ui_commands::telnet_post_office_abort,
             crate::ui_commands::p2p_peer_password_set,
             crate::ui_commands::p2p_peer_password_clear,
             crate::ui_commands::p2p_peer_password_status,

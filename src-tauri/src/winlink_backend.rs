@@ -2522,7 +2522,7 @@ fn compact_log_field(value: &str, max_chars: usize) -> String {
 /// `intent` determines whether inbound messages are stamped with
 /// `X-Tuxlink-Received-Session`. Only `SessionIntent::PostOffice` applies the
 /// marker (value `"post-office"`); all other intents store messages byte-identical.
-fn file_exchange_result(
+pub(crate) fn file_exchange_result(
     mailbox: &Mailbox,
     result: &session::ExchangeResult,
     intent: SessionIntent,
