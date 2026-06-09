@@ -397,7 +397,9 @@ where
             result.sent.extend(outcome.sent);
             result.rejected.extend(outcome.rejected);
             result.deferred.extend(outcome.deferred);
-            remaining.clear(); // each message is offered once
+            // Offer at most MAX_BATCH this turn; keep the tail for the next my_turn cycle.
+            let offered = remaining.len().min(MAX_BATCH);
+            remaining.drain(..offered); // was remaining.clear() — multi-batch (tuxlink-6c9y §5.5)
             if outcome.quit_sent {
                 break;
             }
@@ -1218,6 +1220,75 @@ mod tests {
         assert_eq!(result.received.len(), 1);
         assert_eq!(result.received[0].header("Mid"), Some("SRVMSG000001"));
         assert_eq!(result.received[0].body(), b"Wind calm.\r\n");
+    }
+
+    #[test]
+    fn multi_batch_send_offers_outbox_tail_across_turns() {
+        // Regression for tuxlink-6c9y §5.5: with more than MAX_BATCH (5) queued
+        // messages, the turn loop must offer the first batch, then KEEP the tail
+        // for the next `my_turn` cycle. The pre-fix `remaining.clear()` dropped
+        // every message past the first batch — here the 6th was never sent.
+        let mut outbound = Vec::new();
+        let mut expected_mids = Vec::new();
+        for i in 1..=6 {
+            let mid = format!("OUTBOX00000{i}");
+            let (out, _compressed) =
+                outbound_message(&mid, &format!("Batch msg {i}"), b"payload");
+            outbound.push(out);
+            expected_mids.push(mid);
+        }
+
+        // Scripted Dial-role CMS peer (server speaks first). Its flat READ buffer
+        // — the dialer's own writes go to the sink, not here — is, in order:
+        //   1. handshake: SID + ;PQ challenge + CMS> prompt
+        //   2. FS YYYYY  — accept the dialer's turn-1 batch of 5 proposals
+        //   3. FF        — the peer's (empty) turn 2: no inbound messages
+        //   4. FS Y      — accept the dialer's turn-3 proposal (the kept 6th)
+        //   5. FF        — the peer's (empty) turn 4; sets remote_no_messages
+        // The dialer's turn-5 send_turn then has an empty `remaining` and a
+        // remote that is done, so it writes FQ and the loop ends (no further read).
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 87654321\rCMS>\r");
+        server.extend_from_slice(b"FS YYYYY\r"); // turn 1: accept all 5
+        server.extend_from_slice(b"FF\r"); // turn 2: peer has nothing
+        server.extend_from_slice(b"FS Y\r"); // turn 3: accept the 6th
+        server.extend_from_slice(b"FF\r"); // turn 4: peer still has nothing
+
+        let mut reader = Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("GOODPASS".into()),
+            intent: SessionIntent::Cms,
+        };
+        let result = run_exchange_with_role(
+            &mut reader,
+            &mut writer,
+            ExchangeRole::Dial,
+            &config,
+            outbound,
+            |_| vec![],
+            None,
+        )
+        .expect("multi-batch exchange must complete without error");
+
+        // All 6 MIDs must be sent — the bug drops the 6th, landing only 5.
+        assert_eq!(
+            result.sent.len(),
+            6,
+            "all 6 queued messages must be sent across two batches; got {:?}",
+            result.sent,
+        );
+        for mid in &expected_mids {
+            assert!(
+                result.sent.contains(mid),
+                "MID {mid} must be among the sent messages; sent = {:?}",
+                result.sent,
+            );
+        }
+        assert!(result.rejected.is_empty() && result.deferred.is_empty());
     }
 
     #[test]
