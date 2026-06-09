@@ -42,13 +42,19 @@ export function RequestCenter({ onClose }: RequestCenterProps) {
   }, [onClose]);
 
   useEffect(() => {
+    // `mounted` guard matches the codebase house pattern (useCatalog, AppShell):
+    // don't setState if config_read resolves after the overlay unmounts.
+    let mounted = true;
     invoke<{ grid: string | null }>('config_read')
       .then((c) => {
-        if (c?.grid) setGrid(c.grid);
+        if (mounted && c?.grid) setGrid(c.grid);
       })
       .catch(() => {
         // Leave grid null → neutral chip. Never surface a read error as a location.
       });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const locationLabel = grid ? `Near ${grid}` : 'Location not set';
