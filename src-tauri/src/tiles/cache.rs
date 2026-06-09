@@ -152,7 +152,7 @@ fn tile_path_inner(
 }
 
 fn io_err(msg: &str) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, msg.to_string())
+    std::io::Error::other(msg.to_string())
 }
 
 /// Write a verified tile body into the cache for `source`+`coord`.

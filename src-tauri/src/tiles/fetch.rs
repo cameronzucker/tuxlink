@@ -32,11 +32,16 @@
 //! 7. **Image magic-byte validation** — the leading bytes must be a real
 //!    PNG/JPEG/WebP signature; the upstream `Content-Type` is NOT trusted.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
+use futures::future::{BoxFuture, FutureExt, Shared};
+use once_cell::sync::Lazy;
 use reqwest::Url;
 
+use super::cache;
 use super::coord::TileCoord;
 use super::host::{ip_is_permitted, validate_source_url};
 use super::{TileScheme, TileSource};
@@ -309,6 +314,126 @@ where
     // Image magic-byte validation — do NOT trust the upstream Content-Type.
     let mime = image_mime_from_magic(&body).ok_or(FetchError::NotAnImage)?;
     Ok((body, mime))
+}
+
+// ===========================================================================
+// Single-flight de-duplication (Task 5.4)
+// ===========================================================================
+
+/// The shared result of one in-flight fetch. `Arc` because `FetchError` is not
+/// `Clone` and `futures::future::Shared` requires a `Clone` output: every
+/// waiter clones the cheap `Arc`, not the body. The body is cloned once per
+/// caller only when each unwraps its copy.
+type FetchResult = Arc<Result<(Vec<u8>, &'static str), FetchError>>;
+
+/// A shared, cloneable handle to an in-flight fetch future.
+type SharedFetch = Shared<BoxFuture<'static, FetchResult>>;
+
+/// Key for the in-flight map: per-source namespace + the validated coordinate.
+/// Two callers asking for the SAME tile of the SAME source coalesce; different
+/// sources (different namespace) never collide even at identical z/x/y.
+type FlightKey = (String, TileCoord);
+
+/// Process-wide in-flight registry: maps a tile key to its shared fetch future.
+/// Guarded by an async mutex so the join-or-launch decision is atomic across
+/// concurrent callers (mirrors `forms::updater::INSTALL_LOCK`, but keyed per
+/// tile so independent tiles still fetch concurrently). The leader removes its
+/// own entry on completion, so the map cannot grow unbounded.
+static FLIGHTS: Lazy<tokio::sync::Mutex<HashMap<FlightKey, SharedFetch>>> =
+    Lazy::new(|| tokio::sync::Mutex::new(HashMap::new()));
+
+/// Fetch a tile with single-flight de-duplication AND cache integration.
+///
+/// Behavior:
+/// 1. **Cache hit** → return the cached bytes immediately (no upstream, no
+///    flight). The `cache_root` is resolved by Phase 6 and passed in.
+/// 2. **Cache miss** → coalesce concurrent callers for the SAME
+///    `(namespace, coord)` onto ONE upstream fetch via a `Shared` future. The
+///    leader performs the fetch and the cache `put`; every waiter awaits the
+///    same result. Exactly one upstream request and one cache write occur.
+///
+/// The in-flight entry is removed when the fetch completes so the registry does
+/// not grow unbounded.
+pub async fn fetch_tile_single_flight(
+    cache_root: &std::path::Path,
+    source: &TileSource,
+    coord: &TileCoord,
+    allow_loopback: bool,
+) -> Result<(Vec<u8>, &'static str), FetchError> {
+    // 1. Cache-first: a hit short-circuits before any flight bookkeeping.
+    if let Some(bytes) = cache::get(cache_root, source, coord) {
+        let mime = image_mime_from_magic(&bytes).unwrap_or("image/png");
+        return Ok((bytes, mime));
+    }
+
+    let ns = cache::source_namespace(source);
+    let key: FlightKey = (ns, *coord);
+
+    // 2. Upgrade-or-insert the shared flight under the registry lock.
+    let shared: SharedFetch = {
+        let mut flights = FLIGHTS.lock().await;
+        if let Some(existing) = flights.get(&key) {
+            // A fetch for this exact tile is already in flight: join it.
+            existing.clone()
+        } else {
+            // Become the leader: build the fetch+cache future, share it, store
+            // it so concurrent callers join, then drop the lock and drive it.
+            let cache_root = cache_root.to_path_buf();
+            let source = source.clone();
+            let coord = *coord;
+            let key_for_cleanup = key.clone();
+            let fut = async move {
+                let result = fetch_tile_bytes(&source, &coord, allow_loopback).await;
+                // Cache only a verified success (cache-only-good is enforced
+                // again inside `put`; degrades silently on write failure).
+                if let Ok((ref bytes, _mime)) = result {
+                    let _ = cache::put(&cache_root, &source, &coord, bytes);
+                }
+                // Remove our own in-flight entry so the registry stays bounded.
+                // A late joiner that already cloned the Shared still completes;
+                // a NEW caller after this point re-fetches (correct: the result
+                // is now cached, so it short-circuits at step 1 anyway).
+                {
+                    let mut flights = FLIGHTS.lock().await;
+                    flights.remove(&key_for_cleanup);
+                }
+                Arc::new(result)
+            }
+            .boxed()
+            .shared();
+            flights.insert(key.clone(), fut.clone());
+            fut
+        }
+    };
+
+    // Await the shared result (leader and all waiters land here).
+    let shared_result: FetchResult = shared.await;
+    match Arc::try_unwrap(shared_result) {
+        // We were the last holder — take ownership without cloning the body.
+        Ok(r) => r,
+        // Other waiters still hold the Arc — clone our copy out of it.
+        Err(arc) => match &*arc {
+            Ok((bytes, mime)) => Ok((bytes.clone(), mime)),
+            Err(e) => Err(clone_fetch_error(e)),
+        },
+    }
+}
+
+/// `FetchError` is not `Clone` (it wraps non-Clone payloads), but a waiter that
+/// shares a failed result must surface its own owned error. Reconstruct an
+/// equivalent variant. Lossless for the unit variants; string variants clone
+/// their message.
+fn clone_fetch_error(e: &FetchError) -> FetchError {
+    match e {
+        FetchError::Redirect => FetchError::Redirect,
+        FetchError::HostDenied(s) => FetchError::HostDenied(s.clone()),
+        FetchError::NotAnImage => FetchError::NotAnImage,
+        FetchError::TooLarge => FetchError::TooLarge,
+        FetchError::NotFound => FetchError::NotFound,
+        FetchError::Status(c) => FetchError::Status(*c),
+        FetchError::Network(s) => FetchError::Network(s.clone()),
+        FetchError::BadUrl(s) => FetchError::BadUrl(s.clone()),
+    }
 }
 
 #[cfg(test)]
@@ -584,5 +709,90 @@ mod tests {
         let (_bytes, mime) = fetch_tile_bytes(&src, &c, true).await.unwrap();
         m.assert_async().await;
         assert_eq!(mime, "image/png");
+    }
+
+    // ---- Task 5.4 ----
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn single_flight_dedupes_concurrent_requests_for_same_tile() {
+        // N concurrent callers for the SAME (source, coord) must cause EXACTLY
+        // ONE upstream fetch and ONE cache write. The mock's hit counter is the
+        // ground truth: `.expect(1)` + assert proves de-duplication.
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/3/5/2.png")
+            .with_status(200)
+            .with_header("content-type", "image/png")
+            // A slow (chunked, sleep-between-chunks) body widens the in-flight
+            // window so every concurrent caller joins the SAME flight before the
+            // leader completes — exercising the coalescing path, not just a
+            // post-completion cache hit.
+            .with_chunked_body(|w| {
+                w.write_all(b"\x89PNG\r\n\x1a\n")?;
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                w.write_all(&[0u8; 64])
+            })
+            .expect(1) // <-- exactly one upstream request, no matter how many callers
+            .create_async()
+            .await;
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        let src = Arc::new(source(&server.url()));
+        let cache_root = Arc::new(cache_dir.path().to_path_buf());
+        let c = coord();
+
+        // Launch 16 concurrent callers for the same tile.
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let src = src.clone();
+            let cache_root = cache_root.clone();
+            handles.push(tokio::spawn(async move {
+                fetch_tile_single_flight(&cache_root, &src, &c, true).await
+            }));
+        }
+        let mut bodies = Vec::new();
+        for h in handles {
+            let (bytes, mime) = h.await.unwrap().expect("each caller gets the result");
+            assert_eq!(mime, "image/png");
+            bodies.push(bytes);
+        }
+
+        // Exactly one upstream request occurred.
+        m.assert_async().await;
+        // Every caller observed the identical body.
+        assert!(bodies.iter().all(|b| *b == bodies[0]));
+        assert!(bodies[0].starts_with(b"\x89PNG"));
+
+        // The single cache write landed: a subsequent get is a hit with no new
+        // upstream request (the mock would fail `.expect(1)` on a 2nd hit).
+        let cached = cache::get(cache_root.as_path(), &src, &c).expect("tile cached");
+        assert_eq!(cached, bodies[0]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn single_flight_cache_hit_skips_upstream() {
+        // After one fetch populates the cache, a later call serves from cache
+        // with NO upstream request (mock expects exactly the single fetch).
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/3/5/2.png")
+            .with_status(200)
+            .with_header("content-type", "image/png")
+            .with_body(png_bytes())
+            .expect(1)
+            .create_async()
+            .await;
+        let cache_dir = tempfile::tempdir().unwrap();
+        let src = source(&server.url());
+        let c = coord();
+        let (b1, _) = fetch_tile_single_flight(cache_dir.path(), &src, &c, true)
+            .await
+            .unwrap();
+        // Second call: cache hit, no upstream.
+        let (b2, _) = fetch_tile_single_flight(cache_dir.path(), &src, &c, true)
+            .await
+            .unwrap();
+        m.assert_async().await; // still exactly 1 upstream
+        assert_eq!(b1, b2);
     }
 }
