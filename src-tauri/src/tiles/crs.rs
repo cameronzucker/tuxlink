@@ -53,9 +53,10 @@ pub enum CrsCheck {
 /// Returns `true` when the string contains a known geodetic CRS indicator.
 ///
 /// Covered identifiers (case-insensitive substring match):
-/// `EPSG:4326`, `4326`, `OGC:CRS84`, `CRS84`, `WGS84`, `geodetic`,
+/// `EPSG:4326`, `:4326`, `OGC:CRS84`, `CRS84`, `WGS84`, `geodetic`,
 /// `urn:ogc:def:crs:EPSG::4326`, `GLOBAL_GEODETIC`, `WorldCRS84Quad`,
-/// `GoogleCRS84Quad`.
+/// `GoogleCRS84Quad`. (A bare `4326` without a leading colon is intentionally
+/// NOT matched — too ambiguous.)
 fn is_geodetic_indicator(s: &str) -> bool {
     let lo = s.to_ascii_lowercase();
     lo.contains("epsg:4326")
@@ -107,21 +108,40 @@ fn classify_crs_str(s: &str) -> Option<CrsCheck> {
 
 // ─── Probe helpers ────────────────────────────────────────────────────────────
 
-/// Try to classify a parsed TileJSON `Value` by inspecting the fields most
-/// commonly used to declare CRS: `"crs"`, `"crs_wkt"`, `"profile"`, and
-/// `"tileMatrixSet"` / `"scheme"`.
-///
-/// Returns `None` when no recognised field is present (caller falls through).
-fn classify_tilejson(json: &serde_json::Value) -> Option<CrsCheck> {
-    // Fields to inspect, in priority order.
-    for key in &["crs", "crs_wkt", "profile", "tileMatrixSet", "scheme"] {
+/// Scan the named string fields of a JSON object for CRS signals with a
+/// **reject-biased CROSS-FIELD policy (§8.1)**: if ANY field declares Mercator,
+/// the source is `Rejected` even when another field declares geodetic. This
+/// closes the field-order false-accept where a server carries a geodetic
+/// *data*-CRS in `"crs"` while the actual tile pyramid is `WebMercatorQuad` in
+/// `"tileMatrixSet"` — returning `Geodetic` on the first field would render
+/// Mercator tiles on the EPSG:4326 map (the ship-blocker). Returns `Geodetic`
+/// only when ≥1 field is geodetic AND no field is Mercator; `None` when no
+/// field yields a signal.
+fn classify_json_fields(json: &serde_json::Value, keys: &[&str]) -> Option<CrsCheck> {
+    let mut saw_geodetic = false;
+    for key in keys {
         if let Some(serde_json::Value::String(v)) = json.get(*key) {
-            if let Some(check) = classify_crs_str(v) {
-                return Some(check);
+            match classify_crs_str(v) {
+                // A Mercator signal anywhere vetoes — reject immediately.
+                Some(CrsCheck::Rejected) => return Some(CrsCheck::Rejected),
+                Some(CrsCheck::Geodetic) => saw_geodetic = true,
+                _ => {}
             }
         }
     }
-    None
+    if saw_geodetic {
+        Some(CrsCheck::Geodetic)
+    } else {
+        None
+    }
+}
+
+/// Try to classify a parsed TileJSON `Value` by inspecting the fields most
+/// commonly used to declare CRS: `"crs"`, `"crs_wkt"`, `"profile"`,
+/// `"tileMatrixSet"`, `"scheme"`. Reject-biased across fields (see
+/// [`classify_json_fields`]). Returns `None` when no recognised field is present.
+fn classify_tilejson(json: &serde_json::Value) -> Option<CrsCheck> {
+    classify_json_fields(json, &["crs", "crs_wkt", "profile", "tileMatrixSet", "scheme"])
 }
 
 /// Scan a WMTS capabilities document for known TileMatrixSet identifiers.
@@ -158,14 +178,9 @@ fn classify_wmts_xml(xml: &str) -> Option<CrsCheck> {
 /// with fields such as `"profile"`, `"crs"`, or `"srs"`. We check those fields
 /// plus the special `"format"` value that sometimes carries a CRS hint.
 fn classify_mbtiles_metadata(json: &serde_json::Value) -> Option<CrsCheck> {
-    for key in &["crs", "srs", "profile"] {
-        if let Some(serde_json::Value::String(v)) = json.get(*key) {
-            if let Some(check) = classify_crs_str(v) {
-                return Some(check);
-            }
-        }
-    }
-    None
+    // Reject-biased across fields (see classify_json_fields): a Mercator `profile`
+    // must not be shadowed by a geodetic `crs`/`srs` declared earlier.
+    classify_json_fields(json, &["crs", "srs", "profile"])
 }
 
 // ─── probe_source_crs ─────────────────────────────────────────────────────────
@@ -284,6 +299,11 @@ pub async fn probe_source_crs(client: &reqwest::Client, source: &TileSource) -> 
 /// - The south-pole row is clamped to `2^z - 1` (lat=-90 maps to the last
 ///   row rather than overflowing).
 pub fn geodetic_tile_index(lon: f64, lat: f64, z: u32) -> (u32, u32) {
+    // Geodetic tile pyramids never exceed ~z22; clamp z to 30 so `1u32 << (z+1)`
+    // (which requires z ≤ 30) can never shift-overflow/panic on an out-of-range
+    // z from a malformed/adversarial caller. Pure-fn defense-in-depth, mirroring
+    // coord.rs's checked_shl posture.
+    let z = z.min(30);
     let lon = lon.clamp(-180.0, 180.0);
     let lat = lat.clamp(-90.0, 90.0);
 
@@ -389,6 +409,33 @@ mod tests {
         assert_eq!(classify_crs_str("WGS84"), Some(CrsCheck::Geodetic));
         assert_eq!(classify_crs_str("EPSG:4326"), Some(CrsCheck::Geodetic));
         assert_eq!(classify_crs_str("WorldCRS84Quad"), Some(CrsCheck::Geodetic));
+    }
+
+    #[test]
+    fn tilejson_geodetic_crs_with_mercator_matrixset_is_rejected() {
+        // §8.1 cross-field regression: a server declaring a geodetic DATA crs
+        // (`crs: EPSG:4326`) but a Mercator TILE pyramid (`tileMatrixSet:
+        // WebMercatorQuad`) must be REJECTED — the Mercator signal vetoes the
+        // earlier geodetic field (field-order must not produce a false-accept).
+        let merc_tiles = serde_json::json!({
+            "tilejson": "3.0.0",
+            "crs": "EPSG:4326",
+            "tileMatrixSet": "WebMercatorQuad"
+        });
+        assert_eq!(classify_tilejson(&merc_tiles), Some(CrsCheck::Rejected));
+        // mbtiles twin: geodetic crs shadowing a mercator profile.
+        let merc_mb = serde_json::json!({ "crs": "WGS84", "profile": "mercator" });
+        assert_eq!(classify_mbtiles_metadata(&merc_mb), Some(CrsCheck::Rejected));
+        // Pure-geodetic multi-field still Geodetic.
+        let geo = serde_json::json!({ "crs": "EPSG:4326", "tileMatrixSet": "WorldCRS84Quad" });
+        assert_eq!(classify_tilejson(&geo), Some(CrsCheck::Geodetic));
+    }
+
+    #[test]
+    fn geodetic_tile_index_is_panic_safe_for_huge_z() {
+        // pub fn must not shift-overflow on an out-of-range z (clamped to 30).
+        let _ = geodetic_tile_index(0.0, 0.0, 35);
+        let _ = geodetic_tile_index(179.9, -89.9, u32::MAX);
     }
 
     #[test]
