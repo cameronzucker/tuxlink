@@ -19,6 +19,8 @@ import {
   type GribRequest,
 } from './types';
 import { sendGribRequest } from './useGrib';
+import { GridMapPicker } from '../map/GridMapPicker';
+import { signedBboxToGribRegion } from '../map/gribRegion';
 import './GribRequestPanel.css';
 
 export interface GribRequestPanelProps {
@@ -108,6 +110,21 @@ export function GribRequestPanel({ onClose }: GribRequestPanelProps) {
         <div className="grib-body">
           <section className="grib-section">
             <h3>Region</h3>
+            <div className="grib-region-map" data-testid="grib-region-map" style={{ height: 260 }}>
+              <GridMapPicker
+                mode="box"
+                onBoxChange={(a, b) => {
+                  const r = signedBboxToGribRegion(a, b);
+                  setLat('lat0', r.lat0.degrees, r.lat0.dir);
+                  setLat('lat1', r.lat1.degrees, r.lat1.dir);
+                  setLon('lon0', r.lon0.degrees, r.lon0.dir);
+                  setLon('lon1', r.lon1.degrees, r.lon1.dir);
+                }}
+              />
+            </div>
+            <p className="grib-hint">
+              Drag a box on the map to set the region, or edit the fields below.
+            </p>
             <div className="grib-region-row">
               <LatField label="Lat 0" value={request.lat0} onChange={(d, dir) => setLat('lat0', d, dir)} testId="grib-lat0" />
               <LatField label="Lat 1" value={request.lat1} onChange={(d, dir) => setLat('lat1', d, dir)} testId="grib-lat1" />
