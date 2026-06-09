@@ -1193,14 +1193,10 @@ pub async fn message_read(
         FolderRef::System(f) => backend.read_message_in(*f, &mid).await?,
         FolderRef::User(slug) => backend.read_user_message(slug, &mid).await?,
     };
-    // Opening a message marks it read (tuxlink-xgn). Best-effort: a marker-write
-    // failure must not fail the read the user just performed, so the error is
-    // discarded (the message simply stays unread and self-heals on the next
-    // open). User folders don't track unread today so the mark is a no-op for
-    // them — only system folders flow through `mark_read`.
-    if let FolderRef::System(f) = &parsed {
-        let _ = backend.mark_read(*f, &mid).await;
-    }
+    // Opening a message no longer mutates read-state server-side. Mark-on-open is
+    // a once-per-open-transition client effect (useMessage) so an explicit Mark
+    // Unread on the open message is not undone by a reading-pane refetch (window
+    // focus / poll). See tuxlink-etxt design §1.4.
     parse_raw_rfc5322(&id, &body.raw_rfc5322)
 }
 
