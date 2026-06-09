@@ -7,6 +7,25 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 import { invoke } from '@tauri-apps/api/core';
 
+// Mock GridMapPicker at the module boundary — assert the box→region WIRING,
+// not Leaflet (C1). The mock exposes a button that fires onBoxChange with two
+// signed corners (the NE→SW drag from gribRegion.test.ts case 1).
+vi.mock('../map/GridMapPicker', () => ({
+  GridMapPicker: ({
+    onBoxChange,
+  }: {
+    onBoxChange?: (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="mock-box-drag"
+      onClick={() => onBoxChange?.({ lat: 60.2, lon: -120.9 }, { lat: 40.8, lon: -140.1 })}
+    >
+      fire box
+    </button>
+  ),
+}));
+
 describe('<GribRequestPanel>', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -120,5 +139,29 @@ describe('<GribRequestPanel>', () => {
     expect(req.mode).toBe('sub');
     expect(req.sub_days).toBe(30);
     expect(req.sub_time).toBe('06:00');
+  });
+
+  it('map box-drag fills the region fields; manual inputs stay editable (item 21 / C9)', () => {
+    render(<GribRequestPanel onClose={() => {}} />);
+
+    // Fire a box drag via the mocked picker → signedBboxToGribRegion wiring.
+    fireEvent.click(screen.getByTestId('mock-box-drag'));
+
+    // Region fields reflect signedBboxToGribRegion((60.2N,120.9W),(40.8N,140.1W)):
+    // south=40N, north=61N, west=141W, east=120W (ordered, whole-degree, outward).
+    expect((screen.getByTestId('grib-lat0-deg') as HTMLInputElement).value).toBe('40');
+    expect((screen.getByTestId('grib-lat0-dir') as HTMLSelectElement).value).toBe('N');
+    expect((screen.getByTestId('grib-lat1-deg') as HTMLInputElement).value).toBe('61');
+    expect((screen.getByTestId('grib-lat1-dir') as HTMLSelectElement).value).toBe('N');
+    expect((screen.getByTestId('grib-lon0-deg') as HTMLInputElement).value).toBe('141');
+    expect((screen.getByTestId('grib-lon0-dir') as HTMLSelectElement).value).toBe('W');
+    expect((screen.getByTestId('grib-lon1-deg') as HTMLInputElement).value).toBe('120');
+    expect((screen.getByTestId('grib-lon1-dir') as HTMLSelectElement).value).toBe('W');
+
+    // C9: the manual region inputs remain present + editable (the map is an aid).
+    const lat0 = screen.getByTestId('grib-lat0-deg') as HTMLInputElement;
+    expect(lat0).toBeEnabled();
+    fireEvent.change(lat0, { target: { value: '12' } });
+    expect(lat0.value).toBe('12');
   });
 });

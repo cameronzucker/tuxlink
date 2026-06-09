@@ -7,6 +7,17 @@
 
 The audit cited a `PositionMapWidget` + `src/forms/position/maidenhead.ts` as reusable prior art. **Neither exists.** There is **no map library** (`package.json` has no Leaflet/MapLibre/Mapbox), **no map widget**, and **no lat/lon↔Maidenhead converter**. Grid is set today via the `GridEdit.tsx` text input. The app CSP is `img-src 'self' data:` — **external tiles (OSM) are already forbidden**, which aligns with the offline/no-ban posture. This feature is **greenfield**.
 
+## Correction (2026-06-08, agent moss-basalt-hawk)
+
+The Grounding section above rests on a stale checkout: the brainstorm read a tree 639 commits behind `origin/main`. The cited prior art **did exist** on `origin/main`, shipped roughly two days before the 2026-06-07 brainstorm:
+
+- `leaflet` + `react-leaflet` were already `package.json` dependencies (PR #392/#420).
+- `src/forms/position/maidenhead.ts` (+ its Rust mirror) already provided `gridToLatLon` / `latLonToGrid`.
+- `src/compose/PositionMapWidget.tsx` already rendered a Leaflet map.
+- The CSP **allowed** public OpenStreetMap tiles (`img-src` / `connect-src` whitelisted `tile.openstreetmap.org`) and `PositionMapWidget` loaded them directly — the opposite of the "external tiles already forbidden" claim.
+
+The offline-first / never-public-OSM **posture stands** (operator re-affirmed 2026-06-08) and ships as a bundled-only foundation under `tuxlink-z9u4`: a vendored public-domain equirectangular world raster (`src/map/`), a reusable `GridMapPicker` (pin + box), and a `MaidenheadOverlay`. The compose widget and CSP are remediated to drop the OSM allowance (`tuxlink-714t`); the GRIB region wires to the box picker (`tuxlink-mxmx`). The Rust tile-gatekeeper and the opt-in permitted tile server are split to the follow-up `tuxlink-dyop` — this work ships zero tile-server affordance. The greenfield framing in Components §1–§3 is therefore partly inaccurate: the converter and map widget were reused and remediated, not built from scratch.
+
 ## Operator principles (load-bearing)
 
 - **Self-contained by default.** A bundled offline map is the **required fallback** (small files), always available with no network.

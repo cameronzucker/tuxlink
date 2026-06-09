@@ -68,6 +68,23 @@ describe('<PositionFormV2>', () => {
     expect((input as HTMLInputElement).value).toBe('EM26');
   });
 
+  it('keeps the manual grid input editable while the offline map is mounted (C9)', async () => {
+    // The map is an aid, never the only path: the manual Maidenhead input must
+    // remain present and editable whenever the (offline) map is mounted.
+    render(<PositionFormV2 onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    const input = await screen.findByLabelText(/Maidenhead grid/i);
+
+    // Default GPS fix → grid set → the map mounts inside the mount div.
+    const mount = screen.getByTestId('position-map-mount');
+    expect(mount.className).toContain('--active');
+    expect(mount.children.length).toBeGreaterThan(0);
+
+    // The manual input is still present and editable.
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: 'EM26' } });
+    expect((input as HTMLInputElement).value).toBe('EM26');
+  });
+
   it('Send button calls onSubmit with the wire-format payload', async () => {
     const onSubmit = vi.fn();
     render(<PositionFormV2 onSubmit={onSubmit} onCancel={vi.fn()} />);
