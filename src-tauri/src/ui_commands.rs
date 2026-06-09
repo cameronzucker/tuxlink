@@ -5990,24 +5990,65 @@ pub struct PostOfficeDialResult {
 }
 
 /// Single-flight + abort coordination for the Post Office connect path
-/// (mirrors [`P2pConnectState`]). Held in Tauri managed state so
+/// (mirrors [`P2pConnectState`] + [`NativeBackend`]'s `connect_in_progress` +
+/// `aborting` + `abort_handle`). Held in Tauri managed state so
 /// [`telnet_post_office_connect`] and [`telnet_post_office_abort`] share it.
+///
+/// [`NativeBackend`]: crate::winlink_backend::NativeBackend
 pub struct PostOfficeConnectState {
     /// `true` for the duration of a connect; a second concurrent connect is
-    /// rejected rather than racing on the status/log pipeline.
-    pub in_progress: std::sync::atomic::AtomicBool,
+    /// rejected rather than racing on the status/log pipeline. Reset by a
+    /// connect-scoped RAII guard ([`PostOfficeConnectGuard`]) so it is released
+    /// on EVERY exit — normal return, early return, or a panic in the async
+    /// setup window — and can never wedge `true` permanently.
+    pub in_progress: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Set by [`telnet_post_office_abort`]; checked by the selecting decider
     /// (it shares this flag) and the socket-abort handler so an in-flight dial
     /// can be cancelled.
     pub aborting: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Shutdown handle for the in-flight connect socket (mirrors
+    /// [`NativeBackend`]'s `abort_handle`). A clone of the connecting
+    /// `TcpStream`, stored once TCP connects by the connect path's
+    /// `register_socket` closure and taken + `shutdown(Both)` by
+    /// [`telnet_post_office_abort`] to force-close a slow login/exchange phase.
+    /// `None` when nothing is in flight.
+    ///
+    /// [`NativeBackend`]: crate::winlink_backend::NativeBackend
+    pub abort_handle: std::sync::Arc<std::sync::Mutex<Option<std::net::TcpStream>>>,
 }
 
 impl Default for PostOfficeConnectState {
     fn default() -> Self {
         Self {
-            in_progress: std::sync::atomic::AtomicBool::new(false),
+            in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             aborting: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            abort_handle: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+}
+
+/// Clears the single-flight flag + abort handle when a Post Office connect ends,
+/// however it ends (mirrors [`NativeBackend`]'s `ConnectGuard`): normal return,
+/// early return, or a panic in the async setup window (Mailbox build, Arc
+/// clones, `HashSet` collect — between acquiring single-flight and the
+/// `.await`). A manual `store(false)` cannot cover a panic in that window; the
+/// RAII Drop can. Clearing the handle on exit also prevents a late
+/// [`telnet_post_office_abort`] from `shutdown`-ing a reused fd once this dial
+/// is done.
+///
+/// [`NativeBackend`]: crate::winlink_backend::NativeBackend
+struct PostOfficeConnectGuard {
+    in_progress: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: std::sync::Arc<std::sync::Mutex<Option<std::net::TcpStream>>>,
+}
+
+impl Drop for PostOfficeConnectGuard {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.handle.lock() {
+            *slot = None;
+        }
+        self.in_progress
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -6147,7 +6188,13 @@ pub async fn telnet_post_office_connect(
 
     let local = req.mode == "local";
 
-    // Single-flight: reject a second concurrent connect.
+    // Single-flight: reject a second concurrent connect. The RAII guard
+    // (constructed immediately) releases the flag + clears the abort handle on
+    // EVERY exit — normal return, early return, or a panic in the async setup
+    // window below (Mailbox build, Arc clones, HashSet collect). A manual
+    // `store(false)` cannot survive a panic in that window and would wedge the
+    // single-flight `true` forever, rejecting every future connect until
+    // restart (mirrors NativeBackend::ConnectGuard).
     if po_state
         .in_progress
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -6157,8 +6204,17 @@ pub async fn telnet_post_office_connect(
             detail: "a Post Office connection is already in progress".to_string(),
         });
     }
-    // Clear any stale abort flag from a prior connect.
+    let _guard = PostOfficeConnectGuard {
+        in_progress: po_state.in_progress.clone(),
+        handle: po_state.abort_handle.clone(),
+    };
+
+    // Fresh abort epoch: clear any stale flag/handle from a prior connect so an
+    // earlier abort can't bleed into this one (mirrors NativeBackend::connect).
     po_state.aborting.store(false, Ordering::SeqCst);
+    if let Ok(mut slot) = po_state.abort_handle.lock() {
+        *slot = None;
+    }
 
     let transport_label = "Post Office".to_string();
     emit_p2p_status(&app, StatusDto::Connecting { transport: transport_label.clone() });
@@ -6170,7 +6226,7 @@ pub async fn telnet_post_office_connect(
     let mbox_dir = match app.path().app_data_dir() {
         Ok(dir) => dir.join("native-mbox"),
         Err(e) => {
-            po_state.in_progress.store(false, Ordering::SeqCst);
+            // `_guard` releases single-flight on this early return.
             emit_p2p_status(&app, StatusDto::Disconnected);
             return Err(UiError::Internal {
                 detail: format!("could not resolve app data dir: {e}"),
@@ -6211,6 +6267,13 @@ pub async fn telnet_post_office_connect(
         req.selected_mids.iter().cloned().collect();
     let registry = registry.inner().clone();
     let aborting = po_state.aborting.clone();
+    // Clone the SHARED abort handle (lives on PostOfficeConnectState) into the
+    // blocking task so the socket the dial connects is reachable from
+    // `telnet_post_office_abort` (mirrors NativeBackend::connect). A handle
+    // local to this closure — the prior shape — could never be reached by the
+    // abort command, so abort could wake a parked decider but never shut a
+    // mid-exchange socket.
+    let abort_handle = po_state.abort_handle.clone();
 
     let app_progress = app.clone();
     let log_progress = log.inner().clone();
@@ -6241,10 +6304,13 @@ pub async fn telnet_post_office_connect(
             aborting.clone(),
         );
 
-        // Hand each freshly-connected socket to the abort handle so an operator
-        // abort can `.shutdown()` it (mirrors native_connect's register_socket).
-        let abort_handle: std::sync::Mutex<Option<std::net::TcpStream>> =
-            std::sync::Mutex::new(None);
+        // Hand each freshly-connected socket to the SHARED abort handle (on
+        // PostOfficeConnectState, cloned in above) so an operator abort can
+        // `.shutdown()` it (mirrors native_connect's register_socket). The
+        // TOCTOU-safe store: under the same `lock()`, if `aborting` is already
+        // set the socket is shut down immediately rather than stored (the abort
+        // command may have fired before TCP connected); otherwise it is stored
+        // for the abort command to take + shut down.
         let register_socket = |sock: &std::net::TcpStream| {
             if let Ok(clone) = sock.try_clone() {
                 if let Ok(mut slot) = abort_handle.lock() {
@@ -6284,8 +6350,9 @@ pub async fn telnet_post_office_connect(
     })
     .await;
 
-    // Release single-flight + read the abort flag for outcome reporting.
-    po_state.in_progress.store(false, Ordering::SeqCst);
+    // Read the abort flag for outcome reporting. Single-flight release + abort
+    // handle clear are owned by `_guard`'s Drop (fires when this fn returns),
+    // so they run on every exit including a panic in the setup window above.
     let was_aborted = po_state.aborting.load(Ordering::SeqCst);
 
     match outcome {
@@ -6334,7 +6401,7 @@ pub async fn telnet_post_office_connect(
             Err(e)
         }
         Err(join_err) => {
-            po_state.in_progress.store(false, Ordering::SeqCst);
+            // `_guard` already released single-flight + cleared the handle.
             emit_p2p_status(&app, StatusDto::Disconnected);
             Err(UiError::Internal {
                 detail: format!("Post Office connect task failed: {join_err}"),
@@ -6344,12 +6411,24 @@ pub async fn telnet_post_office_connect(
 }
 
 /// Abort an in-flight [`telnet_post_office_connect`] (mirrors
-/// [`telnet_p2p_abort`] + [`cms_abort`]): set the shared abort flag (which the
-/// selecting decider re-checks and the socket-abort handler reads to
-/// `.shutdown()` the connecting socket) and drop the registry slot so a decider
-/// parked on a pending selection prompt wakes immediately. Emits Disconnected
-/// at once so the StatusBar responds without waiting for the blocking exchange.
-/// A no-op when nothing is connecting.
+/// [`telnet_p2p_abort`] + [`cms_abort`] + [`NativeBackend::abort`]). Three
+/// effects, in order:
+///
+/// 1. Set the shared `aborting` flag — the selecting decider re-checks it after
+///    waking so it returns Cancelled rather than accept-all, and the connect
+///    path's `register_socket` reads it to shut down a socket that connects
+///    AFTER this abort fires.
+/// 2. Drop the registry slot — wakes a decider parked on a pending inbound
+///    selection prompt immediately (its `recv_timeout` returns Disconnected).
+/// 3. Take + `shutdown(Both)` the stored connect socket — force-closes a dial
+///    already mid login/exchange so a slow phase unblocks at once instead of
+///    waiting for the blocking exchange to time out.
+///
+/// Emits Disconnected at once so the StatusBar responds without waiting for the
+/// blocking exchange. A no-op for the parts with nothing in flight (no parked
+/// decider / no stored socket).
+///
+/// [`NativeBackend::abort`]: crate::winlink_backend::NativeBackend
 #[tauri::command]
 pub async fn telnet_post_office_abort(
     app: AppHandle,
@@ -6360,11 +6439,21 @@ pub async fn telnet_post_office_abort(
     use std::sync::atomic::Ordering;
 
     emit_session_line(&app, &log, LogLevel::Info, "Aborting Post Office connection…".to_string());
-    // Order matters (mirrors cms_abort): set `aborting` BEFORE dropping the slot
-    // so the woken decider's post-recv abort re-check returns Cancelled (not
-    // accept-all). The socket-abort handler also reads `aborting`.
+    // Order matters (mirrors cms_abort / NativeBackend::abort): set `aborting`
+    // FIRST so the woken decider's post-recv abort re-check returns Cancelled
+    // (not accept-all) and a socket connecting after this point is shut down by
+    // `register_socket`. Then drop the slot (wakes a parked decider), then
+    // force-close the in-flight socket.
     po_state.aborting.store(true, Ordering::SeqCst);
     *registry.lock().unwrap() = None;
+    if let Some(sock) = po_state
+        .abort_handle
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+    {
+        let _ = sock.shutdown(std::net::Shutdown::Both);
+    }
     emit_p2p_status(&app, StatusDto::Disconnected);
     Ok(())
 }
@@ -9872,6 +9961,118 @@ hw:CARD=Device,DEV=0
         // relay_state is plumbed from the exchange (NotRelay for a plain
         // CMS-style server with no relay banner).
         let _ = result.relay_state;
+    }
+
+    /// The abort wiring fix (code-review C1): the connect path stores the live
+    /// socket into the SHARED `PostOfficeConnectState.abort_handle`, and the
+    /// abort command takes + `shutdown(Both)`s it. The full `#[tauri::command]`
+    /// needs an app harness, so this drives the abort command's exact take +
+    /// shutdown logic against a real loopback socket the connect path would have
+    /// registered, proving (a) the handle is emptied (the take happened) and
+    /// (b) the peer observes the socket close (read returns 0 = EOF).
+    ///
+    /// Regression guard: the prior shape kept `abort_handle` LOCAL to the
+    /// `spawn_blocking` closure, unreachable from the abort command — so an
+    /// in-flight dial's socket was never shut down. Loopback only, no RF
+    /// (RADIO-1 N/A — pure TCP).
+    #[test]
+    fn post_office_abort_takes_and_shuts_down_the_registered_socket() {
+        use std::io::Read;
+        use std::net::{Shutdown, TcpListener, TcpStream};
+        use std::sync::atomic::Ordering;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+
+        // Server side: accept the connection and hold its end so the client's
+        // shutdown is observable as EOF on a read.
+        let server = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 8];
+            // Blocks until the client end is shut down → returns Ok(0) (EOF).
+            peer.read(&mut buf).expect("read after peer shutdown")
+        });
+
+        let client = TcpStream::connect(addr).expect("connect loopback");
+
+        // Build the shared state the connect path manages, and register the
+        // socket exactly as the connect path's `register_socket` does (store a
+        // clone into the SHARED handle while `aborting` is unset).
+        let po_state = PostOfficeConnectState::default();
+        {
+            let clone = client.try_clone().expect("clone socket");
+            assert!(
+                !po_state.aborting.load(Ordering::SeqCst),
+                "precondition: not yet aborting, so the socket is stored not shut"
+            );
+            *po_state.abort_handle.lock().unwrap() = Some(clone);
+        }
+        assert!(
+            po_state.abort_handle.lock().unwrap().is_some(),
+            "the registered socket is reachable from shared state (the bug: it was not)"
+        );
+
+        // Run the abort command's exact take + shutdown sequence (order:
+        // set aborting → [drop registry slot, N/A here] → shutdown socket).
+        po_state.aborting.store(true, Ordering::SeqCst);
+        if let Some(sock) = po_state
+            .abort_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            let _ = sock.shutdown(Shutdown::Both);
+        }
+
+        // The handle was emptied by the take.
+        assert!(
+            po_state.abort_handle.lock().unwrap().is_none(),
+            "abort must TAKE the socket out of the handle"
+        );
+
+        // The peer observed the shutdown as EOF (0 bytes), proving the abort
+        // actually force-closed the in-flight socket.
+        let bytes_read = server.join().expect("server thread");
+        assert_eq!(bytes_read, 0, "peer must see EOF after abort shuts the socket down");
+
+        // The original client handle still exists but is shut; an extra
+        // shutdown of an already-closed socket is a harmless no-op.
+        let _ = client.shutdown(Shutdown::Both);
+    }
+
+    /// The `PostOfficeConnectGuard` resets `in_progress` on Drop (panic-safe
+    /// single-flight). A panic in the async setup window — after the
+    /// `compare_exchange` acquires the flag but before the `.await` — would
+    /// otherwise wedge `in_progress = true` forever. The guard's Drop covers it.
+    #[test]
+    fn post_office_connect_guard_resets_single_flight_on_drop() {
+        use std::sync::atomic::Ordering;
+
+        let po_state = PostOfficeConnectState::default();
+        // Acquire single-flight, as the connect command does.
+        assert!(
+            po_state
+                .in_progress
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok(),
+            "single-flight acquired"
+        );
+        // Simulate a panic in the setup window: the guard is in scope and
+        // unwinds. `catch_unwind` confirms the Drop ran despite the panic.
+        let in_progress = po_state.in_progress.clone();
+        let handle = po_state.abort_handle.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = PostOfficeConnectGuard {
+                in_progress: in_progress.clone(),
+                handle: handle.clone(),
+            };
+            panic!("simulated setup-window panic");
+        }));
+        assert!(result.is_err(), "the closure panicked as set up");
+        assert!(
+            !po_state.in_progress.load(Ordering::SeqCst),
+            "the guard's Drop must reset in_progress even on an unwinding panic"
+        );
     }
 }
 
