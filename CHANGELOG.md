@@ -32,6 +32,7 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
 
 ### Bug Fixes
 
+* **radio:** place gateway finder in panel command row ([5abe40d](https://github.com/cameronzucker/tuxlink/commit/5abe40db054582914e144984baad4ab4c18f6507))
 * **shell:** stabilize ribbon connection slot ([90a6970](https://github.com/cameronzucker/tuxlink/commit/90a6970a10e4467d9c5d83f0595c934868d06927))
 
 ## [0.41.0](https://github.com/cameronzucker/tuxlink/compare/v0.40.0...v0.41.0) (2026-06-09)
