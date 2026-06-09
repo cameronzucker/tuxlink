@@ -75,6 +75,15 @@ describe('<PositionFormV2>', () => {
     const input = await screen.findByLabelText(/Maidenhead grid/i);
 
     // Default GPS fix → grid set → the map mounts inside the mount div.
+    // Wait for the async GPS fix to populate the grid before asserting the
+    // map-mount's grid-derived `--active` class. `findByLabelText` above only
+    // awaits the input's presence (it renders on the first pass, before the
+    // position_current_fix invoke resolves and setGrid re-renders); asserting
+    // `--active` synchronously here races that re-render. Awaiting the grid's
+    // display value is how the other tests in this file wait for the fix to
+    // land. (This raced and failed the amd64 verify job on the 0.39.1 release
+    // CI run 2026-06-09; arm64 passed the same commit — classic timing flake.)
+    await screen.findByDisplayValue('CN87US');
     const mount = screen.getByTestId('position-map-mount');
     expect(mount.className).toContain('--active');
     expect(mount.children.length).toBeGreaterThan(0);
