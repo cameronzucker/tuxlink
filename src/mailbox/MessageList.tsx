@@ -306,6 +306,12 @@ export interface MessageListProps {
   /// Optional — Task 11 wires the real AppShell handler; the bulk bar's `?.`
   /// guard keeps AppShell compiling in the interim.
   onBulkSetReadState?: (ids: Set<string>, read: boolean) => void;
+  /// Move the given set of messages to a destination folder (tuxlink-l80q).
+  /// Drives the bulk bar's Move ▾ and the selection-mode context menu.
+  onBulkMove?: (ids: Set<string>, to: MailboxFolderRef) => void;
+  /// Archive the given set of messages (tuxlink-l80q). Drives the bulk bar's
+  /// Archive button and the selection-mode context menu's Archive item.
+  onBulkArchive?: (ids: Set<string>) => void;
   /// Single-message read/unread toggle — context-menu and U-key (tuxlink-etxt
   /// Tasks 12 + 13). Optional so existing callers compile without change.
   onSetReadState?: (id: string, folder: MailboxFolderRef, read: boolean) => void;
@@ -333,6 +339,8 @@ export function MessageList({
   selectedIds = EMPTY_SELECTION,
   onSelectionChange = () => {},
   onBulkSetReadState,
+  onBulkMove,
+  onBulkArchive,
   onSetReadState,
 }: MessageListProps) {
   // Sort client-side so changing modes doesn't require a backend re-fetch.
@@ -381,15 +389,25 @@ export function MessageList({
     message: MessageMeta;
     x: number;
     y: number;
+    // tuxlink-l80q: true when the right-clicked row was part of the selection
+    // set at open time → the menu acts on ALL selected messages. Captured at
+    // open (not derived live) so the out-of-selection reset below can't flip
+    // an already-open menu back to single mode.
+    selectionMode: boolean;
   } | null>(null);
   // tuxlink-sndh: stabilize the callback so the memoized MessageRow can
   // skip re-render when nothing else about the row's props changed.
   const ctxAvailable = Boolean(onMoveMessage || onArchiveMessage);
+  // tuxlink-l80q: OS convention — right-clicking a row already in the selection
+  // acts on the whole selection; right-clicking a row OUTSIDE the selection
+  // resets the selection to that single row and acts single-target.
   const onContextMenu = useCallback(
     (e: React.MouseEvent, message: MessageMeta) => {
-      setCtxMenu({ message, x: e.clientX, y: e.clientY });
+      const inSelection = selectedIds.size > 0 && selectedIds.has(message.id);
+      if (!inSelection && selectedIds.size > 0) onSelectionChange(new Set());
+      setCtxMenu({ message, x: e.clientX, y: e.clientY, selectionMode: inSelection });
     },
-    [],
+    [selectedIds, onSelectionChange],
   );
   const rowContextMenu = ctxAvailable ? onContextMenu : undefined;
   // The source folder is the row's own message.folder when present
@@ -406,8 +424,12 @@ export function MessageList({
           {selectedIds.size > 0 ? (
             <MessageBulkBar
               count={selectedIds.size}
+              currentFolder={folder}
+              userFolders={userFolders ?? []}
               onMarkRead={() => onBulkSetReadState?.(new Set(selectedIds), true)}
               onMarkUnread={() => onBulkSetReadState?.(new Set(selectedIds), false)}
+              onArchive={() => onBulkArchive?.(new Set(selectedIds))}
+              onMove={(to) => onBulkMove?.(new Set(selectedIds), to)}
               onClear={() => onSelectionChange(new Set())}
             />
           ) : (
@@ -448,12 +470,18 @@ export function MessageList({
           x={ctxMenu.x}
           y={ctxMenu.y}
           userFolders={userFolders ?? []}
-          onSetReadState={(read) => onSetReadState?.(ctxMenu.message.id, ctxSourceFolder, read)}
+          selectionCount={ctxMenu.selectionMode ? selectedIds.size : undefined}
+          onSetReadState={(read) => {
+            if (ctxMenu.selectionMode) onBulkSetReadState?.(new Set(selectedIds), read);
+            else onSetReadState?.(ctxMenu.message.id, ctxSourceFolder, read);
+          }}
           onMoveTo={(to) => {
-            onMoveMessage?.(ctxMenu.message.id, ctxSourceFolder, to);
+            if (ctxMenu.selectionMode) onBulkMove?.(new Set(selectedIds), to);
+            else onMoveMessage?.(ctxMenu.message.id, ctxSourceFolder, to);
           }}
           onArchive={() => {
-            onArchiveMessage?.(ctxMenu.message.id, ctxSourceFolder);
+            if (ctxMenu.selectionMode) onBulkArchive?.(new Set(selectedIds));
+            else onArchiveMessage?.(ctxMenu.message.id, ctxSourceFolder);
           }}
           onClose={() => setCtxMenu(null)}
         />

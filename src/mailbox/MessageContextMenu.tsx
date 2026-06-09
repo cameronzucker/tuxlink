@@ -29,6 +29,13 @@ export interface MessageContextMenuProps {
   onMoveTo: (toFolder: MailboxFolderRef) => void;
   onArchive: () => void;
   onClose: () => void;
+  /// Selection mode (tuxlink-l80q). When set, the right-clicked row is part of
+  /// the multi-select set and every action applies to all `selectionCount`
+  /// selected messages. The menu shows an "N messages" header, an
+  /// "Acting on N selected messages" footer, and BOTH Mark-as-read /
+  /// Mark-as-unread items (a mixed selection has no single toggle direction).
+  /// Absent → single-target mode (acts on `message` only), today's behavior.
+  selectionCount?: number;
 }
 
 /// System destinations always shown above the user-folder list. Drafts/
@@ -50,8 +57,11 @@ export function MessageContextMenu({
   onMoveTo,
   onArchive,
   onClose,
+  selectionCount,
 }: MessageContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const selectionMode = selectionCount !== undefined;
+  const plural = (selectionCount ?? 0) === 1 ? 'message' : 'messages';
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -91,17 +101,48 @@ export function MessageContextMenu({
       className="tux-ctx-menu"
       style={{ position: 'fixed', left, top, minWidth: MENU_W }}
     >
+      {selectionMode && (
+        <>
+          <div className="tux-ctx-label" data-testid="ctx-selection-header">
+            {selectionCount} {plural}
+          </div>
+          <div className="tux-ctx-separator" />
+        </>
+      )}
       {folderBearsReadState(folder) && (
         <>
-          <button
-            type="button"
-            role="menuitem"
-            className="tux-ctx-item"
-            data-testid="ctx-set-read-state"
-            onClick={actAndClose(() => onSetReadState?.(message.unread))}
-          >
-            {message.unread ? 'Mark as read' : 'Mark as unread'}
-          </button>
+          {selectionMode ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                className="tux-ctx-item"
+                data-testid="ctx-set-read"
+                onClick={actAndClose(() => onSetReadState?.(true))}
+              >
+                Mark as read
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="tux-ctx-item"
+                data-testid="ctx-set-unread"
+                onClick={actAndClose(() => onSetReadState?.(false))}
+              >
+                Mark as unread
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              role="menuitem"
+              className="tux-ctx-item"
+              data-testid="ctx-set-read-state"
+              onClick={actAndClose(() => onSetReadState?.(message.unread))}
+            >
+              {message.unread ? 'Mark as read' : 'Mark as unread'}
+            </button>
+          )}
           <div className="tux-ctx-separator" />
         </>
       )}
@@ -161,7 +202,9 @@ export function MessageContextMenu({
       )}
       <div className="tux-ctx-separator" />
       <div className="tux-ctx-footer" data-testid="ctx-msg-id">
-        {truncate(message.subject, 32)}
+        {selectionMode
+          ? `Acting on ${selectionCount} selected ${plural}`
+          : truncate(message.subject, 32)}
       </div>
     </div>
   );
