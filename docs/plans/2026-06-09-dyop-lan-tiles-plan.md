@@ -14,15 +14,37 @@
 
 ## Pre-flight (executor reads first)
 
-- **Worktree:** Implement in a NEW worktree off `main` (after design PR #495 merges), claimed by `tuxlink-dyop`:
+- **Worktree:** Implement in a NEW worktree off `main` — but FIRST verify the design landed: `gh pr view 495 --json state` must show `MERGED` (the plan cites `docs/design/2026-06-08-map-picker-v2-design.md §8.1–8.9`, which is absent from `main` until #495 merges). Then claim `tuxlink-dyop`:
   `python3 .claude/scripts/new_tuxlink_worktree.py --slug dyop-lan-tiles --issue tuxlink-dyop --base main --moniker <your-moniker>`.
   Run `pnpm install` and `bash scripts/install-githooks.sh` in the new worktree first.
 - **Moniker:** you are agent `<your-moniker>`; put `Agent: <moniker>` in every commit trailer. (The drafting session was `shoal-magnolia-fjord`.)
 - **RADIO-1:** this feature touches NO RF/transmit path. Do not let any task run a transmit binary.
 - **CSP invariant (every task):** no task may add a network or LAN host to `img-src`/`connect-src`. The only permitted CSP delta is the one local-scheme token the Phase 0 spike selects. Public OSM is never a permitted source.
-- **TDD (every task):** before writing code, read `.claude/skills/test-driven-development/` (or invoke `/test-driven-development`) and `docs/pitfalls/testing-pitfalls.md`. Failing test → minimal impl → green. Before marking a task complete: re-check tests against `docs/pitfalls/testing-pitfalls.md`, verify error/edge paths are tested, run the relevant test subset green.
+- **TDD (every task):** before writing code, read `.claude/skills/test-driven-development/` (or invoke `/test-driven-development`) and `docs/pitfalls/testing-pitfalls.md`. Failing test → minimal impl → green. Before marking a task complete: re-check tests against `docs/pitfalls/testing-pitfalls.md`, verify error/edge paths are tested, run the relevant test subset green. **After any vitest sweep, verify `pgrep -f vitest` is empty (reap with `pkill -9 -f vitest`; ~8.5 GB zombie-leak risk on this Pi). Scoped vitest is NOT the CI gate — Task 10.2's full `pnpm vitest run` + `cargo clippy --all-targets -D warnings` is.**
 - **Review loop:** after each Phase, do a minimum of three review rounds from multiple perspectives; if the third still finds substantive issues, keep going. Update your journal, then continue.
-- **Reuse pointers (read before Phase 1):** `src-tauri/src/forms/updater.rs` (`classify_transport` :162, reqwest client :189, `HTTP_TIMEOUT`/`MAX_ARCHIVE_BYTES` + `content_length` pre-check + streaming abort :398-435, `is_safe_version` :147, `INSTALL_LOCK` serialization), `src-tauri/src/config.rs` (`write_config_atomic`), `src-tauri/src/logging/state_dir.rs` (canonical-path / symlink-refusal posture), `app_data_dir()` usage (cache lives at `~/.local/share/tuxlink/tile-cache/`).
+- **Reuse pointers (read before Phase 1):** `src-tauri/src/forms/updater.rs` (`classify_transport` :162, reqwest client :189, `HTTP_TIMEOUT`/`MAX_ARCHIVE_BYTES` + `content_length` pre-check + streaming abort :398-435, `is_safe_version` :147, `INSTALL_LOCK` serialization), `src-tauri/src/config.rs` (`write_config_atomic` :461 — JSON not TOML; rewrites whole `Config`; check the `CONFIG_SCHEMA_VERSION` guard :483), `src-tauri/src/logging/state_dir.rs` (canonical-path / symlink-refusal posture :39-50 — note `canonicalize` requires the path to EXIST, so canonicalize the PARENT dir and join the integer filename), `app_data_dir()` usage (cache at `~/.local/share/tuxlink/tile-cache/`). **`src/map/testMapMock.ts` is the canonical react-leaflet/leaflet double (SHAPE-ONLY; exports MapContainer/ImageOverlay/Marker/Rectangle/Polyline/Tooltip/useMap/useMapEvents — NO `TileLayer`/`GridLayer`, hardcoded `getZoom()===1`). Any Phase-7/9 task introducing `TileLayer`/`GridLayer` or non-default zoom MUST extend this SHARED mock (add a `data-*`-mirroring stub + a `getZoom` override seam), never fork a private mock (testing-pitfalls §1).**
+
+### Task dependency DAG (CORRECTS the "Phases 1–5 parallel" simplification)
+
+Phases 1–5 are independent of the **Phase-0 spike**, but NOT of each other. Real edges:
+
+- **Parallelizable roots:** Phase 1 (`host.rs`), Phase 2 (`coord.rs`), Phase 4 (`crs.rs`) — and Task 1.0 must land before all of them.
+- **Phase 3 (`fetch.rs`) requires Phase 1** (`ip_is_permitted`) **and Task 1.0** (`TileSource`).
+- **Phase 5 (`cache.rs`) requires Phase 2** (`TileCoord`) **and Phase 3** (caches only verified-fetch results).
+- **Phase 6 requires Phase 0's decision** + Phases 1–5. **Phase 7 (frontend) consumes Phase 6/8 command signatures + Task 1.0 types** — run 7.x after the Rust types/commands exist (or stub them per Task 1.0).
+- **`src-tauri/src/lib.rs` and `src-tauri/tauri.conf.json` are owned EXCLUSIVELY by the Phase-0/Phase-6 serial track** — no Phase 1–5 task edits them. Task 6.1 must verify `git diff` shows no residual Phase-0 spike scaffolding before adding the production CSP token.
+
+### Command contract (single source of truth — Rust `#[command]` name ↔ TS `invoke`)
+
+All four commands live in `tiles/commands.rs`, are registered in the `lib.rs` `generate_handler![]`, and are called by `src/map/tileSource.ts` (Task 7.1) with these EXACT names/args — do not drift:
+
+| Command | Args | Returns |
+|---|---|---|
+| `configure_tile_source` | `{ source: TileSource }` | `TileSourceStatus` |
+| `test_tile_source` | `{ source: TileSource }` | `TileSourceStatus` |
+| `clear_tile_cache` | `{}` | `()` |
+| `tile_source_status` | `{}` | `TileSourceStatus` |
+| (serving, if Phase 0 picks invoke+blob) `fetch_tile` | `{ z, x, y }` | `Vec<u8>` (bytes) |
 
 ## File structure
 
@@ -83,6 +105,38 @@ The cross-provider review split on custom `tile` scheme vs `invoke`+`blob:`. Thi
 > The remaining phases say "the serving mechanism" abstractly; Phase 6 instantiates the Phase-0 decision. Phases 1–5 (the Rust gatekeeper core) are independent of the serving choice and can proceed in parallel with the spike if needed.
 
 ---
+
+## Phase 1 — module scaffold + `classify_tile_host` (SSRF host policy)
+
+### Task 1.0: Seed `tiles/mod.rs` + define the SHARED types (must land before Phases 1–7)
+
+Fixes two plan-review findings: (a) `mod.rs`'s module-declaration block is touched by 7+ tasks → parallel-dispatch collision; (b) `TileSource`/`TileSourceStatus` are consumed by Phases 3/4/7 but were defined late in Phase 8 → forward reference / compile failure. Defining them here (in `mod.rs`, matching the File-structure table) makes Phases 1–5 compile independently.
+
+**Files:**
+- Create: `src-tauri/src/tiles/mod.rs`
+- Modify: `src-tauri/src/lib.rs` (`mod tiles;`)
+
+- [ ] **Step 1:** Create `mod.rs` with ALL submodule declarations pre-seeded so later tasks only touch their own file: `mod host; mod coord; mod fetch; mod cache; mod crs; mod serve; mod commands;` (create each as an empty stub file `// placeholder` so the crate compiles).
+- [ ] **Step 2: Write the failing test** for the shared types' serde round-trip:
+
+```rust
+#[test]
+fn tile_source_and_status_serde_round_trip() {
+    let s = TileSource { url: "http://192.168.1.5:8080/".into(), crs: Crs::Geodetic,
+        scheme: TileScheme::Xyz, min_zoom: 0, max_zoom: 16, cache_budget_mb: 384,
+        attribution: None, label: "shack".into() };
+    let j = serde_json::to_string(&s).unwrap();
+    assert_eq!(serde_json::from_str::<TileSource>(&j).unwrap().label, "shack");
+    let st = TileSourceStatus { kind: StatusKind::LanLive, zoom: 13, label: Some("shack".into()), cached_at: None };
+    let _ = serde_json::to_string(&st).unwrap();
+}
+```
+
+- [ ] **Step 3: Implement** in `mod.rs`: `TileSource { url: String, crs: Crs /* only Geodetic */, scheme: TileScheme /* Xyz|Tms */, min_zoom: u32, max_zoom: u32, cache_budget_mb: u64, attribution: Option<String>, label: String }`; `enum Crs { Geodetic }`; `enum TileScheme { Xyz, Tms }`; `TileSourceStatus { kind: StatusKind, zoom: u32, label: Option<String>, cached_at: Option<String> }`; `enum StatusKind { Bundled, LanLive, LanCached, Partial, Unreachable, Incompatible }`. All `#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]`, `#[serde(rename_all = "kebab-case")]` on `StatusKind` so it serializes as `lan-live` etc. (matches the TS union in Task 7.1). NO auth field (keyring later if ever).
+- [ ] **Step 4: Run, verify pass.**
+- [ ] **Step 5: Commit** `feat(tiles): module scaffold + shared TileSource/TileSourceStatus types`.
+
+> Phase 8.1 now only adds the `config.rs` persistence of `TileSource` (not its definition). Phases 3.2/4.1 take `&TileSource`; they compile against this task's types.
 
 ## Phase 1 — `classify_tile_host` (SSRF host policy)
 
@@ -155,7 +209,8 @@ fn loopback_allowed_only_with_dev_optin() {
 ```
 
 - [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** `ip_is_permitted`: normalize IPv4-mapped IPv6 (`to_canonical()` / manual `::ffff:` unwrap) FIRST; deny `is_loopback`, `is_unspecified`, `is_multicast`, IPv4 link-local `169.254.0.0/16`, IPv6 `fe80::/10`, IPv4 `0.0.0.0/8`; then allow ONLY IPv4 `10/8`+`172.16/12`+`192.168/16` and IPv6 ULA `fc00::/7`; loopback allowed iff `allow_loopback`. Everything else denied. (Cite the explicit metadata case `169.254.169.254` in a comment — it is covered by link-local but called out for reviewers.)
+- [ ] **Step 3: Implement** `ip_is_permitted`: normalize IPv4-mapped IPv6 via `IpAddr::to_canonical()` FIRST (stable since Rust 1.75 = repo MSRV; do NOT hand-roll a `::ffff:` unwrap — `to_canonical()` returns an `IpAddr`, match on the returned variant for the range checks); deny `is_loopback`, `is_unspecified`, `is_multicast`, IPv4 link-local `169.254.0.0/16`, IPv6 `fe80::/10`, IPv4 `0.0.0.0/8`; then allow ONLY IPv4 `10/8`+`172.16/12`+`192.168/16` and IPv6 ULA `fc00::/7`; loopback allowed iff `allow_loopback`. Everything else denied. (Cite the explicit metadata case `169.254.169.254` in a comment — covered by link-local but called out for reviewers. The `::ffff:127.0.0.1` deny-test case is the to_canonical regression guard.)
+- [ ] **Step 3b: Boundary note in code:** `ip_is_permitted` is pure and operates on an already-resolved `IpAddr` — it does NOT take a URL or do DNS. The resolve-then-vet wiring is Task 3.2's job; config-time validation (Task 8.1) calls it only as a courtesy warning, never as the security control. This task ships only the pure predicate + its unit tests.
 - [ ] **Step 4: Run, verify pass.**
 - [ ] **Step 5: Commit** `feat(tiles): resolved-IP allow/deny policy (RFC1918/ULA allow, default-deny)`.
 
@@ -191,15 +246,18 @@ fn rejects_zoom_above_cap() {
     assert!(TileCoord::new(17, 0, 0, 16).is_err());
 }
 #[test]
-fn from_str_rejects_non_integer() {
+fn from_str_rejects_non_integer_and_huge_zoom() {
     assert!(TileCoord::from_parts("..","0","0",16).is_err());
     assert!(TileCoord::from_parts("3","-1","0",16).is_err());
     assert!(TileCoord::from_parts("3","x","0",16).is_err());
+    // adversarial z far above cap — must reject BEFORE any 2^z is computed
+    // (else `2u32.pow(40)` panics on overflow). Webview-supplied.
+    assert!(TileCoord::from_parts("40","0","0",16).is_err());
 }
 ```
 
 - [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** `TileCoord { z: u32, x: u32, y: u32 }` with `new(z,x,y,max_zoom)` enforcing `z <= max_zoom`, `x < 2u32.pow(z)`, `y < 2u32.pow(z)`; and `from_parts(&str,&str,&str,max_zoom)` parsing each as `u32` (rejects `-1`, `..`, `x`, empty) then calling `new`.
+- [ ] **Step 3: Implement** `TileCoord { z: u32, x: u32, y: u32 }`. `new(z,x,y,max_zoom)` MUST check `z <= max_zoom` **FIRST and return early on failure**, THEN compute the bound as `1u32 << z` (now provably `z <= 16`, no overflow) and check `x < bound`, `y < bound`. Do NOT write `2u32.pow(z)` in the same expression as the cap check — an adversarial `z >= 32` from `from_parts` would panic before the cap rejects it. `from_parts(&str,&str,&str,max_zoom)` parses each as `u32` (rejects `-1`, `..`, `x`, empty) then calls `new`.
 - [ ] **Step 4: Run, verify pass.**
 - [ ] **Step 5: Commit** `feat(tiles): bounded-integer TileCoord parse/validate`.
 
@@ -254,7 +312,9 @@ Per §8.3. Mirrors the updater's reqwest discipline but adds resolved-IP pinning
 
 - [ ] **Step 1: Write the failing test** with a mockito server bound to `127.0.0.1` and `allow_loopback=true`, asserting fetch succeeds; and a unit test that a resolver returning a public IP for the host causes `FetchError::HostDenied` even though the configured URL string "looked" private. (Use a seam: a `resolve: impl Fn(&str,u16)->io::Result<Vec<SocketAddr>>` parameter so the test can inject resolution.)
 - [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** `fetch_tile_bytes(source, coord, allow_loopback)`: resolve host→`SocketAddr`s at fetch time; reject unless EVERY resolved IP passes `ip_is_permitted(ip, allow_loopback)` (reject mixed/any-public); connect by the vetted `SocketAddr` (reqwest `resolve()` / `ClientBuilder::resolve_to_addrs` pin, or a custom connector) so DNS can't rebind between check and connect.
+- [ ] **Step 3: Implement** `fetch_tile_bytes(source, coord, allow_loopback)` with the CORRECT rebind defense for reqwest 0.12 (verified — `resolve_to_addrs` is a NO-OP for IP-literal hosts):
+  - **If the URL host is an IP literal** (the common LAN case, `http://192.168.1.5:8080/`): there is no DNS step to rebind — vet the literal directly with `ip_is_permitted` at parse time and connect normally. No pinning needed.
+  - **If the URL host is a name** (`https://tiles.lan/`): resolve the host to `SocketAddr`s yourself, reject unless EVERY resolved IP passes `ip_is_permitted(ip, allow_loopback)` (reject mixed / any-public — do not use the single-addr `resolve()`), then build a **per-fetch** client with `.resolve_to_addrs(host, &vetted_addrs)` so the connect can only hit the vetted set. (The fully-general alternative is a custom `dns_resolver` `Resolve` impl on one shared client — name it as the alternative, not the primary.)
 - [ ] **Step 4: Run, verify pass.**
 - [ ] **Step 5: Commit** `feat(tiles): fetch-time resolved-IP pinning (DNS-rebind defense)`.
 
@@ -443,12 +503,32 @@ Per §8.4. Lives at `app_data_dir()/tile-cache/`.
 
 ### Task 8.3: Status pill provenance states
 
-**Files:**
-- Modify: the picker control surface pill component (shared, from a1cc) OR a `TileStatusPill.tsx` dyop ships and a1cc consumes
-- Test: pill test
+**DECISION (resolves the plan-review OR):** a1cc may not be merged when dyop runs, so **dyop ships `src/map/TileStatusPill.tsx` standalone** (dyop owns the `TileSourceStatus`→display mapping, which is dyop-domain logic); a1cc later *places* it in the shared toolbar and must NOT reimplement it. Add a `bd dep`/commit note to that effect.
 
-- [ ] **Step 1–4 (TDD):** render `z{n} · bundled` / `LAN live` / `LAN cached as of …` / `LAN live (partial)` / `tiles unreachable — bundled` / `incompatible tile source` from `TileSourceStatus`, plus the zoom-cap reason.
-- [ ] **Step 5: Commit** `feat(map): tile-source provenance status pill`.
+**Files:**
+- Create: `src/map/TileStatusPill.tsx`
+- Test: `src/map/TileStatusPill.test.tsx`
+
+- [ ] **Step 1: Write the failing tests.**
+
+```ts
+test.each([
+  [{kind:'bundled', zoom:2}, /z2 · bundled/],
+  [{kind:'lan-live', zoom:13}, /LAN live/],
+  [{kind:'lan-cached', zoom:13, cachedAt:'2026-06-09T10:00:00Z'}, /LAN cached as of/],
+  [{kind:'partial', zoom:13}, /LAN live \(partial\)/],
+  [{kind:'unreachable', zoom:2}, /tiles unreachable — bundled/],
+  [{kind:'incompatible', zoom:2}, /incompatible tile source/],
+])('renders %o', (status, re) => {
+  render(<TileStatusPill status={status as any} zoomCapReason="bundled raster max" />);
+  expect(screen.getByTestId('tile-status-pill').textContent).toMatch(re);
+});
+```
+
+- [ ] **Step 2: Run, verify fail.**
+- [ ] **Step 3: Implement** a pure presentational component (props-driven, no `invoke`) mapping each `TileSourceStatus.kind` to the §8.5 pill text + the zoom-cap reason.
+- [ ] **Step 4: Run, verify pass.**
+- [ ] **Step 5: Commit** `feat(map): standalone tile-source provenance status pill (a1cc consumes)`.
 
 ---
 
@@ -481,7 +561,7 @@ Per §8.5. Ties the gatekeeper states to the UI.
 **Files:**
 - Modify: `docs/pitfalls/implementation-pitfalls.md`
 
-- [ ] **Step 1:** Add an entry **"Tile-coordinate path traversal (filesystem twin of SSRF)"**: webview-supplied `{z}/{x}/{y}` land on disk; parse as bounded integers, hash the host, build paths from integers, canonicalize + `starts_with(cache_root)`. Cross-reference the existing SSRF entry and §8.4. (Also do the AGENTS.md parity check — no rule change here, so likely no edit.)
+- [ ] **Step 1:** `docs/pitfalls/implementation-pitfalls.md` has **no SSRF entry yet** (verified — existing entries are RADIO-1/2, CRED-1, SCOPE-1, HOOK-1, LEASE-1, PARITY-1, DRIFT-1, TEST-1, DISCOVERY-1, SCHEMA-1, BD-1, ORCH-1). So add **two** entries (or one with two subsections): **(a) SSRF / outbound-egress gatekeeper** — a backend that fetches an operator/webview-influenced host must enforce at the socket layer (fetch-time resolved-IP allow/deny, `redirect::Policy::none()`, http(s)-only, no URL creds, no caller-supplied full URLs); config-time string validation is defeated by DNS rebinding; the operator-of-record / no-added-safeguards posture governs UX, NOT egress hygiene. **(b) Tile-coordinate path traversal (filesystem twin of the SSRF entry)** — webview-supplied `{z}/{x}/{y}` land on disk; parse as bounded integers, hash the host, build paths from integers via `PathBuf::join`, canonicalize the parent + `starts_with(cache_root)`. Cross-reference each other and §8.3/§8.4. Do the AGENTS.md parity check (additive doc content; likely no AGENTS.md edit).
 - [ ] **Step 2: Commit** `docs(pitfalls): tile-coordinate path-traversal entry`.
 
 ### Task 10.2: Final cross-phase review loop
@@ -503,4 +583,25 @@ Per §8.5. Ties the gatekeeper states to the UI.
 | §8.7 source config (URL/CRS/scheme/zoom/budget/attribution/label); auth keyring | 8.1, 8.2 |
 | §8.8 strictly opt-in; offline-first | 6.2, 9.1 |
 | §8.9 (process) | this plan + the build-robust-features adrev already done |
-| New tile-coord path-traversal pitfall | 10.1 |
+| New SSRF + tile-coord path-traversal pitfalls | 10.1 |
+
+---
+
+## Plan-review status (build-robust-features Step 4 — 3 rounds, 2026-06-09)
+
+Reviewed by three parallel reviewers (subagent-readiness; ordering/conflicts; pitfalls + grounded-API accuracy). Findings dispositioned:
+
+**Applied inline (this revision):**
+- Task **1.0 added** — seeds `mod.rs` + defines `TileSource`/`TileSourceStatus`/`Crs`/`TileScheme`/`StatusKind` EARLY (fixes the forward-reference: Phases 3/4/7 consumed `TileSource` before old Task 8.1 defined it; fixes the `mod.rs` 7-task collision).
+- **Dependency DAG** added to pre-flight (the blanket "Phases 1–5 parallel" claim was wrong: roots = 1/2/4; Phase 3←1; Phase 5←2+3; `lib.rs`/`tauri.conf.json` owned by the Phase-0/6 serial track).
+- **Command-contract table** added (pins the four `#[command]` names ↔ TS `invoke` strings so they can't drift).
+- Task **2.1** — `pow` overflow ordering (cap-check before `1u32 << z`; added a `z=40` reject test).
+- Task **3.2** — corrected DNS-rebind mechanism (`resolve_to_addrs` is a no-op for IP-literal hosts; branch IP-literal vs named).
+- Task **1.2** — `to_canonical()` only (drop hand-rolled unwrap); added the pure-predicate boundary.
+- Task **8.3** — resolved the status-pill ownership OR → dyop ships `TileStatusPill.tsx` standalone.
+- Task **10.1** — the cited SSRF pitfall entry does not exist; now creates BOTH the SSRF and the tile-coord-traversal entries.
+- Pre-flight — `gh pr view 495` gate, vitest-zombie reaping + scoped-vs-CI note, `testMapMock` extension requirement, `write_config_atomic` JSON/`CONFIG_SCHEMA_VERSION`/canonicalize-parent nuances.
+
+**Expand-before-dispatch (the review produced paste-ready test bodies + boundaries for each — fold them in when that task is claimed):** the compressed tasks **6.2, 7.1, 7.2, 7.3, 7.4, 7.5, 8.1, 8.2, 9.1, 9.2** still read "Step 1–4 (TDD)". Phases **0–5 are subagent-ready now**; these Phase-6+ frontend/wiring tasks need their failing-test bodies inserted before a zero-context subagent runs them. Load-bearing ones to prioritize: **7.2** (blob-revocation leak test — bounded-growth ≥1000 cycles, driven through the real `tileunload` lifecycle, not bare `createTile`), **7.4** (requires extending the closed `GridLevel` enum + `STEPS` + label-truncation in `gridGeometry.ts` — name those files), **9.1** (circuit-breaker state machine with an injectable clock). The simplest path: re-run the same three-reviewer plan-review pass against this revision and apply its per-task inserts, or expand each task from the §8 + reuse-pointer detail as it is claimed.
+
+**Confirmed-correct (no change):** `redirect::Policy::none()`, `register_asynchronous_uri_scheme_protocol` (Tauri 2.11.2), `write_config_atomic` reuse, the `state_dir.rs` canonical-path mirror, the `updater.rs:398-435` size-cap pattern, the Phase-0 gate language, and the C11-widening (7.3) / 6-char-gate (7.5) dyop ownership boundaries.
