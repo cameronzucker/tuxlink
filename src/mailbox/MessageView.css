@@ -160,6 +160,19 @@
   color: var(--form-tag);
   font-weight: 600;
 }
+/* B5 (tuxlink-6c9y) — routing-source chip. Teal-tinted pill; used by the
+ * "Post Office" received-session label in the reading-pane meta block. */
+.reading-pane .msg-meta dd .chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(45, 212, 191, 0.15);
+  color: var(--accent-teal, #2dd4bf);
+  border: 1px solid rgba(45, 212, 191, 0.35);
+  letter-spacing: 0.03em;
+}
 
 /* 5 — attachment strip (names + sizes + explicit actions) */
 .reading-pane .msg-attachments {
