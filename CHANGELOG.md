@@ -22,6 +22,7 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
 ### Bug Fixes
 
 * **catalog:** add backdrop-click and Escape dismiss to Find a Gateway ([ff0f024](https://github.com/cameronzucker/tuxlink/commit/ff0f024970c1dd48906406fc638493250342f9a7))
+* **favorites:** make Telnet Manual-only and align active-tab to modem accent ([3b6759b](https://github.com/cameronzucker/tuxlink/commit/3b6759b01239ba8594dcaeb6ec7edd7895d3e93d))
 * **shell:** span the Contacts surface across the list + reader tracks ([eb34224](https://github.com/cameronzucker/tuxlink/commit/eb34224d2f267c1e6e7613235698b5c264583ddc))
 
 ## [0.38.0](https://github.com/cameronzucker/tuxlink/compare/v0.37.1...v0.38.0) (2026-06-09)
