@@ -315,6 +315,36 @@
 .layout-b .dashboard .abort-button:hover {
   background: color-mix(in srgb, var(--error, #e5534b) 16%, transparent);
 }
+/* "On connect" segmented control — Review | Download all (tuxlink-pmp5). Inline
+   opt-out for the review-pending-messages default; lives in the ribbon next to
+   Connect, not in the Settings modal. */
+.layout-b .dashboard .seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.layout-b .dashboard .seg button {
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  border-right: 1px solid var(--border-strong);
+}
+.layout-b .dashboard .seg button:last-child {
+  border-right: none;
+}
+.layout-b .dashboard .seg button.active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.layout-b .dashboard .seg button:hover:not(.active) {
+  color: var(--text);
+}
 /* GridEdit — inline-edit container, source chip, GPS-ready affordance (tuxlink-686 Task 8). */
 .layout-b .dashboard .dash-grid-display {
   display: flex;

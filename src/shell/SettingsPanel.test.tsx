@@ -79,28 +79,6 @@ describe('SettingsPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it('reflects review_inbound_before_download from config_read (unchecked when false)', async () => {
-    render(<SettingsPanel open onClose={vi.fn()} />);
-    const checkbox = await screen.findByRole('checkbox', {
-      name: /review pending messages before downloading/i,
-    });
-    await waitFor(() => expect(checkbox).not.toBeChecked());
-  });
-
-  it('toggles review_inbound_before_download on via config_set_review_inbound', async () => {
-    render(<SettingsPanel open onClose={vi.fn()} />);
-    const checkbox = await screen.findByRole('checkbox', {
-      name: /review pending messages before downloading/i,
-    });
-    await waitFor(() => expect(checkbox).not.toBeChecked());
-    fireEvent.click(checkbox);
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith('config_set_review_inbound', {
-        enabled: true,
-      });
-    });
-  });
-
   it('does NOT render the ARDOP HF fieldset (tuxlink-jmfm)', async () => {
     render(<SettingsPanel open onClose={vi.fn()} />);
     // Wait for the panel to be open before asserting absence.

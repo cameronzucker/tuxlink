@@ -63,10 +63,6 @@ export interface SettingsPanelProps {
 export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [gpsState, setGpsState] = useState<GpsState | null>(null);
   const [precision, setPrecision] = useState<PositionPrecision | null>(null);
-  // tuxlink-bsiy: opt-in Review-Pending-Messages preference (WLE parity).
-  // null = config not yet loaded (mirrors the GPS null-init pattern so a click
-  // before config_read resolves cannot persist a stale pre-load value).
-  const [reviewInbound, setReviewInbound] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Load the current values each time the panel opens (live config, not cached).
@@ -79,7 +75,6 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         if (!mounted) return;
         setGpsState(c.gps_state);
         setPrecision(c.position_precision);
-        setReviewInbound(c.review_inbound_before_download);
       })
       .catch(() => {
         if (mounted) setError('Could not load settings.');
@@ -112,18 +107,6 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         gpsState: next.gpsState,
         positionPrecision: next.precision,
       });
-    } catch {
-      setError('Could not save settings.');
-    }
-  }
-
-  // tuxlink-bsiy: persist the Review-Pending-Messages preference. Optimistically
-  // reflect the toggle; surface a failure inline (mirrors persist() above).
-  async function persistReviewInbound(enabled: boolean) {
-    setReviewInbound(enabled);
-    setError(null);
-    try {
-      await invoke('config_set_review_inbound', { enabled });
     } catch {
       setError('Could not save settings.');
     }
@@ -194,27 +177,6 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
               </span>
             </label>
           ))}
-        </fieldset>
-
-        <fieldset className="tux-settings-group">
-          <legend>Inbound messages</legend>
-          <label className="tux-settings-opt">
-            <input
-              type="checkbox"
-              name="review-inbound"
-              checked={reviewInbound === true}
-              onChange={() => reviewInbound !== null && persistReviewInbound(!reviewInbound)}
-            />
-            <span className="tux-settings-opt-text">
-              <span className="tux-settings-opt-label">
-                Review pending messages before downloading
-              </span>
-              <span className="tux-settings-opt-help">
-                Prompt to select which pending messages to download on a connect,
-                instead of downloading all (default).
-              </span>
-            </span>
-          </label>
         </fieldset>
       </div>
     </div>
