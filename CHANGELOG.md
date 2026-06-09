@@ -16,6 +16,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.39.2](https://github.com/cameronzucker/tuxlink/compare/v0.39.1...v0.39.2) (2026-06-09)
+
+
+### Bug Fixes
+
+* **mailbox:** address 5 Codex P2 findings — search invalidation, Enter-clears-selection, bulk id filter, archived-sent read-state, mark-on-open guard reset (tuxlink-etxt) ([5333411](https://github.com/cameronzucker/tuxlink/commit/5333411470c34156a245196bb570f2076a176c67))
+* **test:** type the invoke mock-call access in the Fix 5 mark-on-open test (tuxlink-kuhk) ([817e2fd](https://github.com/cameronzucker/tuxlink/commit/817e2fddbf7c5462eb03f6e2090756f6371ac553))
+
 ## [0.39.1](https://github.com/cameronzucker/tuxlink/compare/v0.39.0...v0.39.1) (2026-06-09)
 
 
