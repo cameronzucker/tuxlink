@@ -186,10 +186,21 @@ fn clear_cache_core(gatekeeper: &TileGatekeeper) -> Result<(), UiError> {
 }
 
 /// Core of [`tile_source_status`]: report the CURRENT status with NO network I/O
-/// (§8.5). `Bundled` when no source is active; `LanLive` reflecting the active
-/// source otherwise. This is a lightweight reflection of `active_source()`, not
-/// a re-probe — a re-probe on every mount would violate the no-synchronous-
-/// network-on-startup rule and stall the map.
+/// (§8.5). `Bundled` when no source is active; otherwise the active source's
+/// status reflecting the §8.5 circuit-breaker phase:
+///
+/// - breaker `Degraded` (tripped + cooling) → [`StatusKind::Unreachable`]: the
+///   source failed K consecutive host fetches and the breaker is suppressing
+///   per-tile fetches, so the map is serving bundled.
+/// - breaker `Live` with a recorded coverage-gap 404 → [`StatusKind::Partial`]:
+///   the source is reachable but missing tiles above its raster-native zoom.
+/// - breaker `Live`, no coverage gap → [`StatusKind::LanLive`].
+///
+/// This is a lightweight reflection of in-memory breaker state, NOT a re-probe —
+/// a re-probe on every mount would violate the no-synchronous-network-on-startup
+/// rule and stall the map (§8.5). The clock is read once here (`Instant::now()`)
+/// so a cooldown that has elapsed reports `LanLive` (the source is re-probe-able
+/// on the next tile request).
 fn status_core(gatekeeper: &TileGatekeeper) -> TileSourceStatus {
     match gatekeeper.active_source() {
         None => TileSourceStatus {
@@ -198,7 +209,22 @@ fn status_core(gatekeeper: &TileGatekeeper) -> TileSourceStatus {
             label: None,
             cached_at: None,
         },
-        Some(source) => status(StatusKind::LanLive, &source, source.max_zoom),
+        Some(source) => {
+            use crate::tiles::breaker::BreakerHealth;
+            let kind = match gatekeeper.breaker_health(std::time::Instant::now()) {
+                BreakerHealth::Degraded => StatusKind::Unreachable,
+                BreakerHealth::Live if gatekeeper.is_partial_coverage() => StatusKind::Partial,
+                BreakerHealth::Live => StatusKind::LanLive,
+            };
+            // Degraded/Partial: zoom 0 (no validated live ceiling to advertise);
+            // LanLive: the source's validated max.
+            let zoom = if kind == StatusKind::LanLive {
+                source.max_zoom
+            } else {
+                0
+            };
+            status(kind, &source, zoom)
+        }
     }
 }
 
@@ -464,6 +490,55 @@ mod tests {
         assert_eq!(st.kind, StatusKind::LanLive);
         assert_eq!(st.zoom, 16);
         assert_eq!(st.label.as_deref(), Some("shack"));
+    }
+
+    // ── status_core reflects the §8.5 circuit-breaker phase (no network) ─────
+
+    #[test]
+    fn status_is_unreachable_when_breaker_degraded() {
+        use crate::tiles::breaker::{Outcome, FAILURE_THRESHOLD};
+        let cache = tempfile::tempdir().unwrap();
+        let gk = TileGatekeeper::new(cache.path());
+        gk.set_source(Some(source("http://192.168.1.5:8080/tiles/")));
+        let now = std::time::Instant::now();
+        // K consecutive host failures trip the breaker → status reflects it.
+        for _ in 0..FAILURE_THRESHOLD {
+            gk.breaker_record(Outcome::HostFailure, now);
+        }
+        let st = status_core(&gk);
+        assert_eq!(
+            st.kind,
+            StatusKind::Unreachable,
+            "degraded breaker → Unreachable: got {st:?}"
+        );
+        assert_eq!(st.zoom, 0, "degraded advertises no live zoom ceiling");
+    }
+
+    #[test]
+    fn status_is_partial_after_a_coverage_404() {
+        use crate::tiles::breaker::Outcome;
+        let cache = tempfile::tempdir().unwrap();
+        let gk = TileGatekeeper::new(cache.path());
+        gk.set_source(Some(source("http://192.168.1.5:8080/tiles/")));
+        let now = std::time::Instant::now();
+        // A coverage-gap 404: source live, tile missing → Partial.
+        gk.breaker_record(Outcome::Coverage, now);
+        let st = status_core(&gk);
+        assert_eq!(st.kind, StatusKind::Partial, "coverage 404 → Partial: got {st:?}");
+    }
+
+    #[test]
+    fn status_returns_to_lan_live_after_a_success_clears_partial() {
+        use crate::tiles::breaker::Outcome;
+        let cache = tempfile::tempdir().unwrap();
+        let gk = TileGatekeeper::new(cache.path());
+        gk.set_source(Some(source("http://192.168.1.5:8080/tiles/")));
+        let now = std::time::Instant::now();
+        gk.breaker_record(Outcome::Coverage, now);
+        assert_eq!(status_core(&gk).kind, StatusKind::Partial);
+        // A subsequent real tile clears the partial flag → LanLive again.
+        gk.breaker_record(Outcome::Success, now);
+        assert_eq!(status_core(&gk).kind, StatusKind::LanLive);
     }
 
     // ── configure persistence (file I/O path; serial env isolation) ─────────

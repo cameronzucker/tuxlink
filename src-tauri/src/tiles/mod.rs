@@ -8,6 +8,7 @@
 //!
 //! Fetch-time resolve-then-vet wiring is Phase 3's job.
 
+pub mod breaker;
 pub mod cache;
 pub mod commands;
 pub mod coord;
@@ -17,7 +18,10 @@ pub mod host;
 pub mod serve;
 
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
+use std::time::Instant;
+
+use breaker::{BreakerHealth, CircuitBreaker, Outcome};
 
 use serde::{Deserialize, Serialize};
 
@@ -111,10 +115,22 @@ pub struct TileGatekeeper {
     /// Root directory of the on-disk tile cache. Resolved once at construction
     /// (typically `<app_data_dir>/tile-cache`); never mutated.
     cache_root: PathBuf,
-    // Phase 9 (circuit breaker): a breaker-state field lands here — e.g.
-    // `breaker: RwLock<BreakerState>` tracking consecutive upstream failures
-    // so the gatekeeper can fast-fail to cache-only while a source is down.
-    // Intentionally NOT implemented now; documented placeholder only.
+    /// Phase-9 source-level circuit breaker (§8.5). Tracks consecutive host
+    /// failures for the active source so [`serve::serve_tile`] can fast-fail to
+    /// "serve bundled" while the source is down, instead of issuing a per-tile
+    /// timeout storm. A [`Mutex`] (not `RwLock`) because every consultation may
+    /// mutate the phase (`should_attempt` transitions `Degraded → Probing`), and
+    /// the critical section is a few enum-field comparisons — uncontended.
+    ///
+    /// Construction performs NO network I/O: the breaker starts `Live` and
+    /// engages only as outcomes are recorded during serving (§8.5 "no
+    /// synchronous network on startup/mount").
+    breaker: Mutex<CircuitBreaker>,
+    /// Whether the active source has returned a coverage-gap 404 above its
+    /// raster-native zoom (§8.5 `partial`). Set on an [`Outcome::Coverage`],
+    /// cleared on a fresh success/host-failure transition or a source change.
+    /// Surfaced as [`StatusKind::Partial`] when the source is otherwise live.
+    partial_coverage: Mutex<bool>,
 }
 
 impl TileGatekeeper {
@@ -127,16 +143,70 @@ impl TileGatekeeper {
         TileGatekeeper {
             active: RwLock::new(None),
             cache_root: cache_root.into(),
+            breaker: Mutex::new(CircuitBreaker::new()),
+            partial_coverage: Mutex::new(false),
         }
     }
 
     /// Set (or clear, with `None`) the active source.
+    ///
+    /// Changing the source resets the breaker and the partial-coverage flag: the
+    /// new source's health is unrelated to the old one's failure history, so a
+    /// stale `Degraded` must not carry over.
     pub fn set_source(&self, source: Option<TileSource>) {
         let mut guard = self
             .active
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = source;
+        *self.lock_breaker() = CircuitBreaker::new();
+        *self.lock_partial() = false;
+    }
+
+    /// Lock the breaker, recovering from poisoning (a panic mid-transition must
+    /// not wedge every later tile request).
+    fn lock_breaker(&self) -> std::sync::MutexGuard<'_, CircuitBreaker> {
+        self.breaker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Lock the partial-coverage flag, recovering from poisoning.
+    fn lock_partial(&self) -> std::sync::MutexGuard<'_, bool> {
+        self.partial_coverage
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Should a per-tile fetch be attempted right now, given the breaker state?
+    ///
+    /// `serve_tile` consults this BEFORE any network I/O: a `false` means the
+    /// source is degraded and cooling, so the caller short-circuits to "serve
+    /// bundled" instead of issuing a fetch that would just time out. `now` is
+    /// the injected clock instant (production: `Instant::now()`).
+    pub(crate) fn breaker_should_attempt(&self, now: Instant) -> bool {
+        self.lock_breaker().should_attempt(now)
+    }
+
+    /// Feed a fetch outcome back to the breaker and update the partial flag.
+    ///
+    /// A [`Outcome::Coverage`] sets the partial flag (a coverage-gap 404); any
+    /// other outcome clears it (the source either served a real tile or failed
+    /// at the host level, neither of which is a partial-coverage view).
+    pub(crate) fn breaker_record(&self, outcome: Outcome, now: Instant) {
+        self.lock_breaker().record(outcome, now);
+        *self.lock_partial() = matches!(outcome, Outcome::Coverage);
+    }
+
+    /// The breaker's current health AT `now` (for the status surface).
+    pub(crate) fn breaker_health(&self, now: Instant) -> BreakerHealth {
+        self.lock_breaker().health(now)
+    }
+
+    /// Whether the active source last reported a coverage-gap 404 (§8.5
+    /// `partial`).
+    pub(crate) fn is_partial_coverage(&self) -> bool {
+        *self.lock_partial()
     }
 
     /// Return a clone of the active source, or `None` if no source is configured.

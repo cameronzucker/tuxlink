@@ -132,6 +132,11 @@ pub fn run() {
                         let status = match e {
                             ServeError::NoSource | ServeError::NotFound => 404,
                             ServeError::BadPath(_) => 400,
+                            // §8.5 breaker open: the source is degraded + cooling.
+                            // 503 signals "transiently unavailable; serve bundled"
+                            // — the webview falls back to the bundled raster for
+                            // these tiles without learning source-internal detail.
+                            ServeError::SourceDegraded => 503,
                             ServeError::Upstream(_) => 502,
                         };
                         tauri::http::Response::builder()
