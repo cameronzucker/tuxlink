@@ -90,6 +90,24 @@ describe('<FolderSidebar> — desktop labeled nav (default / compact=false)', ()
     expect(screen.getByTestId('folder-inbox')).not.toHaveAttribute('aria-current');
   });
 
+  it('uses state-driven folder indicators instead of a hardcoded filled Inbox checkbox', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="sent"
+        onSelectFolder={() => {}}
+        counts={{ inbox: 2 }}
+      />,
+    );
+
+    expect(screen.getByTestId('folder-indicator-sent')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByTestId('folder-indicator-inbox')).toHaveAttribute('data-active', 'false');
+    expect(screen.getByTestId('folder-indicator-inbox')).toHaveAttribute('data-has-count', 'true');
+    expect(screen.getByTestId('folder-indicator-drafts')).toHaveAttribute('data-active', 'false');
+    for (const id of ['inbox', 'sent', 'outbox', 'drafts', 'archive']) {
+      expect(screen.getByTestId(`folder-${id}`).textContent).not.toMatch(/[▣▢]/);
+    }
+  });
+
   it('renders user folders inline with their slugs', () => {
     render(
       <FolderSidebar
@@ -150,6 +168,16 @@ describe('<FolderSidebar> (compact rail + flyout — Mock B)', () => {
     render(<FolderSidebar compact selectedFolder="sent" onSelectFolder={() => {}} />);
     expect(screen.getByTestId('folder-sent')).toHaveAttribute('aria-current', 'true');
     expect(screen.getByTestId('folder-inbox')).not.toHaveAttribute('aria-current');
+  });
+
+  it('uses dynamic folder indicators in the expanded flyout too', () => {
+    render(<FolderSidebar compact selectedFolder="archive" onSelectFolder={() => {}} />);
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
+    expect(screen.getByTestId('flyout-folder-indicator-archive')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByTestId('flyout-folder-indicator-inbox')).toHaveAttribute('data-active', 'false');
+    for (const id of ['inbox', 'sent', 'outbox', 'drafts', 'archive']) {
+      expect(screen.getByTestId(`flyout-folder-${id}`).textContent).not.toMatch(/[▣▢]/);
+    }
   });
 
   it('clicking a functional folder fires onSelectFolder', () => {

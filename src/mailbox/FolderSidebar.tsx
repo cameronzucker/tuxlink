@@ -17,7 +17,6 @@ export type { ConnectionKey } from '../connections/sessionTypes';
 interface MailboxItem {
   id?: MailboxFolder; // present → a functional folder
   label: string;
-  icon: string;
   enabled: boolean;
   v01?: boolean;
 }
@@ -52,11 +51,11 @@ const ADDRESS_ITEMS: readonly PseudoFolderItem[] = [
 /// (tuxlink-f62f) will lift Archive into a dedicated "Folders" section
 /// alongside user-created folders; for Phase 1 it stays here.
 const MAILBOX_ITEMS: readonly MailboxItem[] = [
-  { id: 'inbox', label: 'Inbox', icon: '▣', enabled: true },
-  { id: 'sent', label: 'Sent', icon: '▢', enabled: true },
-  { id: 'outbox', label: 'Outbox', icon: '▢', enabled: true },
-  { id: 'drafts', label: 'Drafts', icon: '▢', enabled: true },
-  { id: 'archive', label: 'Archive', icon: '▢', enabled: true },
+  { id: 'inbox', label: 'Inbox', enabled: true },
+  { id: 'sent', label: 'Sent', enabled: true },
+  { id: 'outbox', label: 'Outbox', enabled: true },
+  { id: 'drafts', label: 'Drafts', enabled: true },
+  { id: 'archive', label: 'Archive', enabled: true },
 ];
 
 export interface FolderSidebarProps {
@@ -171,6 +170,26 @@ export function buildFolderTree(
     }
   }
   return rows;
+}
+
+function FolderIndicator({
+  active,
+  count,
+  testId,
+}: {
+  active: boolean;
+  count?: number;
+  testId: string;
+}) {
+  return (
+    <span
+      className="icon folder-indicator"
+      data-testid={testId}
+      data-active={active ? 'true' : 'false'}
+      data-has-count={typeof count === 'number' && count > 0 ? 'true' : 'false'}
+      aria-hidden="true"
+    />
+  );
 }
 
 // tuxlink-djnl: React.memo so shell-level renders (status polls, search
@@ -384,7 +403,10 @@ export const FolderSidebar = memo(function FolderSidebar({
           ) : (
             depth > 0 && <span className="folder-twisty-spacer" aria-hidden="true" />
           )}
-          <span className="icon" aria-hidden="true">▢</span>
+          <FolderIndicator
+            active={active}
+            testId={`${testidPrefix}-indicator-${uf.slug}`}
+          />
           <span className="nav-label">{uf.displayName}</span>
         </button>
       );
@@ -504,9 +526,11 @@ export const FolderSidebar = memo(function FolderSidebar({
             onDrop={isFolder && dropSlug ? makeDropHandler(dropSlug as MailboxFolderRef) : undefined}
             style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
           >
-            <span className="icon" aria-hidden="true">
-              {item.icon}
-            </span>
+            <FolderIndicator
+              active={!!active}
+              count={count}
+              testId={`flyout-folder-indicator-${item.id}`}
+            />
             <span className="nav-label">{item.label}</span>
             {typeof count === 'number' && count > 0 && (
               <span className="count" data-testid={`flyout-folder-count-${item.id}`}>
@@ -688,9 +712,11 @@ export const FolderSidebar = memo(function FolderSidebar({
             onDrop={isFolder && dropSlug ? makeDropHandler(dropSlug as MailboxFolderRef) : undefined}
             style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
           >
-            <span className="icon" aria-hidden="true">
-              {item.icon}
-            </span>
+            <FolderIndicator
+              active={!!active}
+              count={count}
+              testId={`folder-indicator-${item.id}`}
+            />
             <span className="nav-label">{item.label}</span>
             {typeof count === 'number' && count > 0 && (
               <span className="count" data-testid={`folder-count-${item.id}`}>
