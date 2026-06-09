@@ -99,11 +99,12 @@ export function useMessage(selection: MessageSelection | null) {
     const key = `${selection.folder}/${selection.id}`;
     if (markedRef.current === key) return; // once per open transition, not per refetch
     markedRef.current = key;
+    // Best-effort: on failure the ref stays set (no retry this open); the badge self-heals via the mailbox poll or the next distinct open.
     void invoke('message_set_read_state', {
       folder: selection.folder,
       id: selection.id,
       read: true,
-    }).then(() => queryClient.invalidateQueries({ queryKey: ['mailbox'] }));
+    }).then(() => queryClient.invalidateQueries({ queryKey: ['mailbox'] })).catch(() => {});
   }, [selection?.folder, selection?.id, result.isSuccess, queryClient]);
 
   // Dev fixture: when the real backend has no data (empty / NotConfigured) and

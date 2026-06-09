@@ -188,4 +188,55 @@ describe('useMessage — mark-on-open (Task 7)', () => {
       expect(markCalls).toHaveLength(0);
     }
   });
+
+  it('re-marks when reopening a message after navigating away', async () => {
+    // open A → marks A; rerender to B → marks B; rerender back to A → marks A again.
+    // The ref tracks the LAST marked key (a string), not a visited-Set — so returning
+    // to A after visiting B resets markedRef to 'inbox/B', which differs from
+    // 'inbox/A', causing the effect to fire again. A visited-Set alternative would
+    // permanently suppress the re-mark for A, violating the spec requirement that
+    // "Mark Unread" on A can be re-set by re-opening A after leaving it.
+    type Props = { id: string };
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    const { rerender } = renderHook(
+      ({ id }: Props) => useMessage({ folder: 'inbox', id }),
+      { wrapper: wrapperWith(qc), initialProps: { id: 'A' } },
+    );
+
+    // Wait for A to be marked.
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('message_set_read_state', {
+        folder: 'inbox',
+        id: 'A',
+        read: true,
+      }),
+    );
+
+    const countAfterA = mockInvoke.mock.calls.filter(
+      (c) => c[0] === 'message_set_read_state',
+    ).length;
+
+    // Navigate to B — marks B.
+    rerender({ id: 'B' });
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('message_set_read_state', {
+        folder: 'inbox',
+        id: 'B',
+        read: true,
+      }),
+    );
+
+    // Navigate back to A — must re-mark A.
+    rerender({ id: 'A' });
+    await waitFor(() => {
+      // Count all message_set_read_state calls; after returning to A there must be
+      // more than the count recorded after the first open of A.
+      const total = mockInvoke.mock.calls.filter(
+        (c) => c[0] === 'message_set_read_state',
+      ).length;
+      // countAfterA = 1 (A first open), then B adds 1 = 2; returning to A adds 1 = 3.
+      expect(total).toBeGreaterThan(countAfterA + 1);
+    });
+  });
 });
