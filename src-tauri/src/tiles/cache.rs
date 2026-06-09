@@ -26,12 +26,54 @@
 //!   LRU index. [`put`] evicts least-recently-accessed entries *before* writing
 //!   so total bytes never exceed the source's byte cap.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
+use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
 
 use super::coord::TileCoord;
 use super::{Crs, TileScheme, TileSource};
+
+/// Process-wide registry of per-namespace critical-section locks.
+///
+/// Concurrency invariant (§8.4 bounded-growth): the meta.json read-modify-write
+/// that `put`/`get` perform (`evict_to_fit` + tile write + `record_entry`, and
+/// `get`'s `touch_entry`) is NOT atomic on its own. The single-flight layer in
+/// `fetch.rs` only dedups the SAME `(ns, coord)`; concurrent operations on
+/// DIFFERENT coords of the same namespace (the viewport-pan case — dozens of
+/// distinct tiles at once) would otherwise each load a stale meta, each pass the
+/// cap check, each write, and last-writer-wins would clobber the accounting →
+/// on-disk bytes exceed the cap, tile files written-but-untracked become orphans
+/// eviction can never reclaim, and `last_access` bumps clobber each other so LRU
+/// ordering breaks. This map hands out one `Mutex` per namespace so the ENTIRE
+/// evict→write→record critical section runs atomically per namespace.
+///
+/// `std::sync::Mutex` (not `tokio`'s) is correct here: the critical section is
+/// synchronous file I/O with NO `.await` inside it, and `put`/`get` are
+/// themselves synchronous fns. Holding a std Mutex is sound because nothing
+/// awaits while the guard is live.
+///
+/// Map memory: lock entries are never evicted. There is one entry per configured
+/// tile source (a handful at most), so unbounded `Weak`-cleanup would be
+/// over-engineering for no measurable benefit. The `Arc<Mutex<()>>` values are
+/// 1 word each; the map is effectively a small fixed set keyed by 64-hex-char
+/// namespace strings.
+static CACHE_LOCKS: Lazy<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Get (or create) the per-namespace critical-section lock. The outer map lock
+/// is held only briefly to look up / insert the `Arc`; the returned `Arc<Mutex>`
+/// is what callers hold across the evict→write→record critical section.
+fn ns_lock(ns: &str) -> Arc<Mutex<()>> {
+    let mut map = CACHE_LOCKS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    map.entry(ns.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
 
 /// Default per-source cache budget (MiB) when a source does not specify one
 /// (§8.7). Mirrors `TileSource::cache_budget_mb`'s configured default.
@@ -184,6 +226,14 @@ pub fn put(cache_root: &Path, source: &TileSource, coord: &TileCoord, bytes: &[u
     let tms = matches!(source.scheme, TileScheme::Tms);
     let ns = source_namespace(source);
 
+    // Serialize the ENTIRE per-namespace critical section (evict_to_fit → tile
+    // write → record_entry) so concurrent puts for DIFFERENT coords of this
+    // namespace cannot interleave their meta.json accounting (§8.4 bounded
+    // growth; see CACHE_LOCKS). The guard is held across all of put_inner; there
+    // is no `.await` inside, so holding a std Mutex here is sound.
+    let lock = ns_lock(&ns);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+
     // Everything below this point is best-effort: degrade to uncached on error.
     if let Err(e) = put_inner(cache_root, source, &ns, coord, tms, bytes) {
         tracing::warn!(
@@ -214,8 +264,30 @@ fn put_inner(
     let cap = byte_cap(source);
     evict_to_fit(&ns_root, cap, bytes.len() as u64)?;
 
+    // Traversal-safety (§8.4), leaf check: `tile_path` canonicalizes the PARENT
+    // dir and asserts it stays under the cache root, but a planted LEAF symlink
+    // at `path` would evade that gate. Refuse a symlinked leaf before writing
+    // (mirrors logging/state_dir.rs's symlink refusal). `symlink_metadata` does
+    // NOT follow the link, so a planted leaf symlink is detected, not traversed.
+    if let Ok(meta) = std::fs::symlink_metadata(&path) {
+        if meta.file_type().is_symlink() {
+            return Err(io_err(&format!(
+                "refusing to write through a symlinked tile path: {path:?}"
+            )));
+        }
+    }
+
     // Atomic temp+rename (mirrors config::write_config_atomic): write to a
     // same-directory temp file, fsync, then persist via rename.
+    //
+    // SAFETY-CRITICAL — do NOT replace `tmp.persist(&path)` with a
+    // follow-symlink open such as `File::create(path)`. `persist` performs a
+    // `rename` that REPLACES the target inode rather than following it, so a
+    // planted leaf symlink cannot redirect the write to an arbitrary file. A
+    // `File::create(path)` (or any `OpenOptions` open without `O_NOFOLLOW`)
+    // would follow a leaf symlink and turn a planted link into an arbitrary
+    // write. The symlink_metadata refusal above is the explicit guard; this
+    // rename is the structural one. Keep both.
     let tmp = tempfile::NamedTempFile::new_in(parent)?;
     {
         use std::io::Write;
@@ -245,10 +317,19 @@ pub fn get(cache_root: &Path, source: &TileSource, coord: &TileCoord) -> Option<
     if bytes.is_empty() {
         return None;
     }
-    // LRU touch: best-effort, a failure here doesn't invalidate the hit.
+    // LRU touch: best-effort, a failure here doesn't invalidate the hit. The
+    // touch is a meta.json read-modify-write too, so serialize it under the SAME
+    // per-namespace lock as `put`: a concurrent put+get must not clobber meta
+    // (a lost touch is benign for correctness, but round-tripping the whole meta
+    // could lost-update total_bytes and corrupt LRU ordering). No `.await` is
+    // held across this std guard.
     let rel = coord.rel_path(tms);
     let rel_str = rel.to_string_lossy().replace('\\', "/");
-    let _ = touch_entry(&cache_root.join(&ns), &rel_str);
+    {
+        let lock = ns_lock(&ns);
+        let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = touch_entry(&cache_root.join(&ns), &rel_str);
+    }
     Some(bytes)
 }
 
@@ -600,6 +681,66 @@ mod tests {
         // And the meta agrees with disk (within the cap).
         let meta = load_meta(&ns_root);
         assert!(meta.total_bytes <= cap, "meta total {} > cap {cap}", meta.total_bytes);
+    }
+
+    #[test]
+    fn concurrent_puts_distinct_coords_stay_under_cap() {
+        // BLOCKER regression: concurrent puts for DIFFERENT coords in the same
+        // namespace (the viewport-pan case) must NOT race their meta.json
+        // read-modify-write. Without per-namespace serialization each thread
+        // loads a stale meta, each passes the cap check, each writes, and
+        // last-writer-wins clobbers the accounting → on-disk bytes blow past
+        // the cap and meta-tracked tiles become orphans eviction can't reclaim.
+        let root = tempfile::tempdir().unwrap();
+        let mut src = source("http://192.168.1.5:8080/tiles/");
+        src.cache_budget_mb = 1; // 1 MiB cap
+        let cap = byte_cap(&src);
+        // 50 distinct-coord tiles, 100 KiB each → 5 MiB attempted vs 1 MiB cap.
+        const N: u32 = 50;
+        const TILE_BYTES: usize = 100 * 1024;
+        let tile = png_sized(TILE_BYTES);
+
+        std::thread::scope(|scope| {
+            for i in 0..N {
+                let root = root.path();
+                let src = &src;
+                let tile = &tile;
+                scope.spawn(move || {
+                    // Distinct rel paths: spread across x at z=16.
+                    let c = TileCoord::new(16, i, 0, 19).unwrap();
+                    put(root, src, &c, tile).unwrap();
+                });
+            }
+        });
+
+        let ns_root = root.path().join(source_namespace(&src));
+        let on_disk = on_disk_tile_bytes(&ns_root);
+        // (a)/(b): no panic (join above) + on-disk ≤ cap.
+        assert!(
+            on_disk <= cap,
+            "on-disk bytes {on_disk} must stay <= cap {cap} after {N} concurrent distinct-coord puts \
+             ({:.2}x over cap)",
+            on_disk as f64 / cap as f64
+        );
+        // (c): meta.json parses.
+        let meta = load_meta(&ns_root);
+        // (d): no orphans — every on-disk tile is tracked in meta, and meta's
+        // total agrees with disk within one tile's slack (the only legitimate
+        // skew is a tile written but whose record_entry has not yet landed; the
+        // serialized critical section makes write+record atomic, so they match).
+        assert!(
+            meta.total_bytes <= cap,
+            "meta total {} must stay <= cap {cap}",
+            meta.total_bytes
+        );
+        let slack = TILE_BYTES as u64;
+        let diff = on_disk.abs_diff(meta.total_bytes);
+        assert!(
+            diff <= slack,
+            "meta total_bytes {} must agree with on-disk {on_disk} within one tile ({slack}); \
+             a larger gap means orphaned tile files lost from meta",
+            meta.total_bytes
+        );
     }
 
     #[test]
