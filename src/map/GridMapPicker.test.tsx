@@ -82,4 +82,23 @@ describe('<GridMapPicker> (shape only)', () => {
     expect(screen.getByTestId('leaflet-marker')).toBeInTheDocument();
     expect(screen.getByTestId('leaflet-rectangle')).toBeInTheDocument();
   });
+
+  it('box mode: releasing off-map aborts the drag and re-enables dragging (codex C-impl)', () => {
+    const onBoxChange = vi.fn();
+    render(<GridMapPicker mode="box" onBoxChange={onBoxChange} gridOverlay={false} />);
+    act(() => {
+      fireMapEvent('mousedown', { lat: 10, lng: 10 });
+    });
+    act(() => {
+      fireMapEvent('mousemove', { lat: 20, lng: 25 });
+    });
+    expect(screen.getByTestId('leaflet-rectangle')).toBeInTheDocument();
+    // Pointer released OUTSIDE the map container → only the window mouseup fires.
+    act(() => {
+      window.dispatchEvent(new MouseEvent('mouseup'));
+    });
+    expect(screen.queryByTestId('leaflet-rectangle')).toBeNull(); // temp cleared
+    expect(getMockMap().dragging.enable).toHaveBeenCalled(); // panning restored
+    expect(onBoxChange).not.toHaveBeenCalled(); // abort, not a completed box
+  });
 });

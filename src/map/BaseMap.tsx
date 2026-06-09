@@ -5,9 +5,11 @@
  * `L.CRS.EPSG4326` (plate carrée → linear pixel↔lat/lon). No tile layer, no
  * network: the map works fully offline, served entirely from `'self'`.
  *
- * `maxZoom={4}` caps zoom so the view cannot magnify past the 2048px native
- * raster resolution into illusory precision (C6). Panning is bounded to the
- * world rectangle (`maxBounds` + full viscosity) so there is no grey void.
+ * `maxZoom={2}` caps zoom at the raster's native resolution so the view cannot
+ * magnify past it into illusory precision (C6): under `L.CRS.EPSG4326` the world
+ * is 512×256 CSS px at zoom 0 and doubles each level, so the 2048×1024 raster is
+ * 1:1 at zoom 2. Panning is bounded to the world rectangle (`maxBounds` + full
+ * viscosity) so there is no grey void.
  *
  * Real projection / render / pan correctness is verified via grim on
  * WebKitGTK, NOT through the react-leaflet test mock (C1).
@@ -59,7 +61,7 @@ export function BaseMap({ children, onMapClick, initialCenter, initialZoom }: Ba
       maxBounds={WORLD_BOUNDS}
       maxBoundsViscosity={1.0}
       minZoom={0}
-      maxZoom={4}
+      maxZoom={2}
       zoomSnap={0.5}
       worldCopyJump={false}
       // Native shift-drag box-zoom is disabled: it conflicts with the

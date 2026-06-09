@@ -16,6 +16,11 @@ describe('signed coord → {degrees,dir}', () => {
     expect(signedToLatitude(95)).toEqual({ degrees: 90, dir: 'N' });
     expect(signedToLongitude(-200)).toEqual({ degrees: 180, dir: 'W' });
   });
+  it('canonicalizes a sub-degree negative that rounds to 0° as N / E (codex C-impl)', () => {
+    // -0.2 rounds to 0°; the hemisphere must be canonical N/E, never a misleading 0S/0W.
+    expect(signedToLatitude(-0.2)).toEqual({ degrees: 0, dir: 'N' });
+    expect(signedToLongitude(-0.4)).toEqual({ degrees: 0, dir: 'E' });
+  });
 });
 
 describe('signedBboxToGribRegion (two signed corners → ordered, whole-degree, non-degenerate)', () => {
@@ -57,6 +62,17 @@ describe('signedBboxToGribRegion (two signed corners → ordered, whole-degree, 
     expect(r.lat1).toEqual({ degrees: 90, dir: 'N' }); // north stays at the 90 ceiling
     expect(r.lon0).toEqual({ degrees: 179, dir: 'E' }); // west pulled down 1°
     expect(r.lon1).toEqual({ degrees: 180, dir: 'E' }); // east stays at the 180 ceiling
+  });
+  it('clamps BOTH corners beyond the same world edge and stays non-degenerate (codex C-impl)', () => {
+    // both lats > 90: a one-sided clamp would leave south=95,north=90 → both 90N → composer rejects.
+    const r = signedBboxToGribRegion({ lat: 95, lon: 10 }, { lat: 96, lon: 11 });
+    expect(r.lat0.degrees).not.toEqual(r.lat1.degrees);
+    expect(r.lat0).toEqual({ degrees: 89, dir: 'N' });
+    expect(r.lat1).toEqual({ degrees: 90, dir: 'N' });
+    // both lons > 180 (antimeridian overshoot)
+    const r2 = signedBboxToGribRegion({ lat: 10, lon: 181 }, { lat: 11, lon: 182 });
+    expect(r2.lon0.degrees).not.toEqual(r2.lon1.degrees);
+    expect(r2.lon1).toEqual({ degrees: 180, dir: 'E' });
   });
   it('produces an ordered, in-range region for a south-west hemisphere box', () => {
     const r = signedBboxToGribRegion({ lat: -34.1, lon: -58.9 }, { lat: -33.4, lon: -58.2 });

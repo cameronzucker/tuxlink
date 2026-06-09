@@ -54,7 +54,7 @@ export function PositionMapWidget({ grid, onGridChange }: PositionMapWidgetProps
         onGridChange(latLonToGrid(lat, lon));
       }}
       initialCenter={ll ?? undefined}
-      initialZoom={ll ? 4 : 1}
+      initialZoom={ll ? 2 : 1}
     >
       {ll && <Marker position={[ll.lat, ll.lon]} />}
       {bounds && (

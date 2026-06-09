@@ -35,10 +35,10 @@ describe('<BaseMap> (shape only)', () => {
     expect(container.dataset.maxbounds).toBe(JSON.stringify(WORLD_BOUNDS));
   });
 
-  it('caps zoom at 4 and disables map-copy wrapping (offline single-world)', () => {
+  it('caps zoom at 2 (raster-native) and disables map-copy wrapping (offline single-world)', () => {
     render(<BaseMap />);
     const container = screen.getByTestId('leaflet-map');
-    expect(container.dataset.maxzoom).toBe('4');
+    expect(container.dataset.maxzoom).toBe('2');
     expect(container.dataset.worldcopyjump).toBe('false');
     // native box-zoom disabled (conflicts with GridMapPicker drag-to-select)
     expect(container.dataset.boxzoom).toBe('false');

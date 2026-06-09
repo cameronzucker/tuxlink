@@ -32,7 +32,9 @@ interface SignedLatLon {
  */
 export function signedToLatitude(lat: number): Latitude {
   const degrees = Math.min(90, Math.round(Math.abs(lat)));
-  return { degrees, dir: lat < 0 ? 'S' : 'N' };
+  // Canonical hemisphere: a value that rounds to 0° is N (the equator), never
+  // a misleading 0°S.
+  return { degrees, dir: degrees === 0 ? 'N' : lat < 0 ? 'S' : 'N' };
 }
 
 /**
@@ -42,7 +44,9 @@ export function signedToLatitude(lat: number): Latitude {
  */
 export function signedToLongitude(lon: number): Longitude {
   const degrees = Math.min(180, Math.round(Math.abs(lon)));
-  return { degrees, dir: lon < 0 ? 'W' : 'E' };
+  // Canonical hemisphere: a value that rounds to 0° is E (the prime meridian),
+  // never a misleading 0°W.
+  return { degrees, dir: degrees === 0 ? 'E' : lon < 0 ? 'W' : 'E' };
 }
 
 /**
@@ -51,11 +55,18 @@ export function signedToLongitude(lon: number): Longitude {
  * world bounds, then expands any collapsed edge by 1° — at the 90/180 ceiling
  * it expands the opposite edge DOWN since it cannot expand up.
  */
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+
 export function signedBboxToGribRegion(a: SignedLatLon, b: SignedLatLon): GribRegion {
-  let south = Math.max(-90, Math.floor(Math.min(a.lat, b.lat)));
-  let north = Math.min(90, Math.ceil(Math.max(a.lat, b.lat)));
-  let west = Math.max(-180, Math.floor(Math.min(a.lon, b.lon)));
-  let east = Math.min(180, Math.ceil(Math.max(a.lon, b.lon)));
+  // Clamp each edge to BOTH world bounds: if both corners overshoot the same
+  // edge (e.g. both lat > 90 from a drag past the pole), a one-sided clamp would
+  // leave an inverted range (south=95, north=90) that collapses to a degenerate
+  // 90==90 region after conversion. Clamping both sides + the degeneracy guard
+  // below keeps the region valid.
+  let south = clamp(Math.floor(Math.min(a.lat, b.lat)), -90, 90);
+  let north = clamp(Math.ceil(Math.max(a.lat, b.lat)), -90, 90);
+  let west = clamp(Math.floor(Math.min(a.lon, b.lon)), -180, 180);
+  let east = clamp(Math.ceil(Math.max(a.lon, b.lon)), -180, 180);
 
   // Degeneracy guard: an integer-aligned or zero-area drag collapses
   // floor==ceil. Expand by 1°, or pull the opposite edge down at the ceiling.

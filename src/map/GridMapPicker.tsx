@@ -11,7 +11,7 @@
  * are real-interaction behaviours verified via grim — the shape test proves
  * only wiring (C1).
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Marker, Rectangle, useMap, useMapEvents } from 'react-leaflet';
 import { BaseMap } from './BaseMap';
 import { MaidenheadOverlay } from './MaidenheadOverlay';
@@ -64,6 +64,23 @@ function PickerInteractions({ mode, onGridChange, onBoxChange, onTemp }: Interac
   const startRef = useRef<LatLon | null>(null);
   const draggedRef = useRef(false);
 
+  // Abort cleanup: if the pointer is released OUTSIDE the Leaflet container, the
+  // map 'mouseup' never fires — that would leave dragging disabled and startRef
+  // stale for the component's lifetime. A window-level mouseup resets the drag
+  // (no onBoxChange — this is an abort). On an on-map release the map's own
+  // mouseup clears startRef first, so this handler then no-ops.
+  useEffect(() => {
+    const onWindowUp = () => {
+      if (startRef.current) {
+        startRef.current = null;
+        map.dragging.enable();
+        onTemp(null);
+      }
+    };
+    window.addEventListener('mouseup', onWindowUp);
+    return () => window.removeEventListener('mouseup', onWindowUp);
+  }, [map, onTemp]);
+
   // useMapEvents auto-cleans listeners on unmount (no bare map.on leak).
   useMapEvents({
     mousedown(e) {
@@ -111,7 +128,7 @@ export function GridMapPicker({
   const pinBounds = mode === 'pin' && grid && ll ? gridSquareBounds(grid, ll) : null;
 
   return (
-    <BaseMap initialCenter={ll ?? undefined} initialZoom={ll ? 4 : 1}>
+    <BaseMap initialCenter={ll ?? undefined} initialZoom={ll ? 2 : 1}>
       {gridOverlay && <MaidenheadOverlay visible />}
       <PickerInteractions
         mode={mode}
