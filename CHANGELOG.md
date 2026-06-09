@@ -16,6 +16,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.39.1](https://github.com/cameronzucker/tuxlink/compare/v0.39.0...v0.39.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* **catalog:** stack Find a Gateway above app chrome so its controls stay reachable ([9d01ef9](https://github.com/cameronzucker/tuxlink/commit/9d01ef925a68ef689c6d88888c0f686c01cc4fd6))
+* **test:** await async grid before asserting map-mount --active (C9 flake) ([4653b14](https://github.com/cameronzucker/tuxlink/commit/4653b14f48455d71808cf282379eae6834110374))
+
 ## [0.39.0](https://github.com/cameronzucker/tuxlink/compare/v0.38.1...v0.39.0) (2026-06-09)
 
 
