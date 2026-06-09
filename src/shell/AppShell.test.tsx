@@ -141,6 +141,18 @@ const inboxMsgs: MessageMeta[] = [
     bodySize: 100,
     hasAttachments: false,
   },
+  // Second inbox message (read) — used by the bulk-read test (Task 11).
+  // unread:false preserves the folder-count-inbox badge assertion (counts only unread=true).
+  {
+    id: 'INBOX2',
+    subject: 'Second inbox message',
+    from: 'W7SRC@winlink.org',
+    to: [],
+    date: '2026-05-19T12:00:00Z',
+    unread: false,
+    bodySize: 80,
+    hasAttachments: false,
+  },
 ];
 const sentMsgs: MessageMeta[] = [
   {
@@ -909,5 +921,50 @@ describe('<AppShell> — Contacts App-level mount with routed data (A9: M9 + Cod
     expect(
       vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'contacts_suggestions'),
     ).toBe(true);
+  });
+});
+
+// ============================================================================
+// Bulk read/unread — selection wiring in AppShell (tuxlink-etxt Task 11)
+//
+// Verifies the production mount path: AppShell owns selectedIds state, clears
+// it on folder change, and fires message_set_read_state_bulk with per-folder
+// items when the bulk-bar "Mark read" button is clicked.
+// ============================================================================
+describe('<AppShell> — bulk Mark read/unread (tuxlink-etxt Task 11)', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    vi.mocked(invoke).mockClear();
+  });
+
+  it('bulk Mark read invokes the batch command with per-folder items and refreshes', async () => {
+    renderShell();
+
+    // Inbox renders INBOX1 + INBOX2 (both present in inboxMsgs fixture).
+    // Ctrl+click INBOX1 to start a selection.
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'), { ctrlKey: true });
+    // Ctrl+click INBOX2 to add to the selection — bulk bar should appear.
+    fireEvent.click(screen.getByTestId('message-row-INBOX2'), { ctrlKey: true });
+
+    // Bulk bar appears when selection.size > 0.
+    expect(await screen.findByTestId('message-bulk-bar')).toBeInTheDocument();
+
+    vi.mocked(invoke).mockClear();
+
+    // Click "Mark read" — fires message_set_read_state_bulk.
+    fireEvent.click(screen.getByRole('button', { name: 'Mark read' }));
+
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+        'message_set_read_state_bulk',
+        expect.objectContaining({
+          items: expect.arrayContaining([
+            { folder: 'inbox', id: 'INBOX1' },
+            { folder: 'inbox', id: 'INBOX2' },
+          ]),
+          read: true,
+        }),
+      ),
+    );
   });
 });

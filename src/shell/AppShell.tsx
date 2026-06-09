@@ -298,6 +298,12 @@ export function AppShell() {
     saveSortState(next);
   }, []);
 
+  // tuxlink-etxt Task 11: multi-row selection state. Cleared whenever the
+  // active folder changes so stale ids from a previous folder can't bleed
+  // through to a bulk command against a different folder's messages.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  useEffect(() => { setSelectedIds(new Set()); }, [selectedFolder]);
+
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
   // tuxlink-479c: remember the last operator-selected/open transport separately
@@ -676,6 +682,20 @@ export function AppShell() {
     }
   }, [queryClient]);
 
+  // tuxlink-etxt Task 11: bulk read/unread for selected rows. Each id is mapped
+  // to its own folder (present on the row when search is cross-folder; falls back
+  // to the active folder for single-folder views). Mirrors the invoke + invalidate
+  // pattern used by the existing single-message move/archive handlers above.
+  const bulkSetReadState = useCallback(async (ids: Set<string>, read: boolean) => {
+    const byId = new Map(visibleMessages.map((m) => [m.id, m] as const));
+    const items = [...ids].map((id) => ({
+      folder: (byId.get(id)?.folder as string | undefined) ?? selectedFolder,
+      id,
+    }));
+    await invoke('message_set_read_state_bulk', { items, read });
+    void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+  }, [visibleMessages, selectedFolder, queryClient]);
+
   const handlers: MenuHandlers = useMemo(() => ({
     openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
     connect: onConnect,
@@ -943,6 +963,9 @@ export function AppShell() {
           userFolders={userFolders}
           onMoveMessage={moveByIdToFolder}
           onArchiveMessage={archiveByIdAndFolder}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          onBulkSetReadState={bulkSetReadState}
         />
         {(() => {
           // tuxlink-djnl: shared render fragment for the reading pane. When
