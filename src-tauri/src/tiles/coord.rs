@@ -35,8 +35,14 @@ impl TileCoord {
                 "zoom {z} exceeds max_zoom {max_zoom}"
             ));
         }
-        // z ≤ max_zoom ≤ 30 (practical limit); 1u32 << z is now safe.
-        let bound = 1u32 << z;
+        // `z` is now `≤ max_zoom`, but a caller could pass an absurd `max_zoom`
+        // (≥ 32). `checked_shl` returns `None` for a shift `≥ 32` instead of
+        // panicking, so the bound computation is panic-safe regardless of what
+        // `max_zoom` the caller supplies (defense-in-depth — the config-time
+        // cap is NOT relied on for this primitive's panic-safety).
+        let bound = 1u32
+            .checked_shl(z)
+            .ok_or_else(|| format!("zoom {z} too large to compute a tile bound"))?;
         if x >= bound {
             return Err(format!("x {x} out of range for zoom {z} (bound {bound})"));
         }
@@ -108,6 +114,16 @@ mod tests {
     #[test]
     fn rejects_zoom_above_cap() {
         assert!(TileCoord::new(17, 0, 0, 16).is_err());
+    }
+
+    #[test]
+    fn shift_is_panic_safe_for_absurd_max_zoom() {
+        // Even if a caller passes an absurd max_zoom (≥ 32) so the zoom-cap check
+        // passes, the `1u32 << z` bound computation must NOT panic — `checked_shl`
+        // turns it into an error instead. Guards against shift-overflow panics.
+        assert!(TileCoord::new(32, 0, 0, 40).is_err());
+        assert!(TileCoord::new(64, 0, 0, 64).is_err());
+        assert!(TileCoord::from_parts("32", "0", "0", 40).is_err());
     }
 
     #[test]
