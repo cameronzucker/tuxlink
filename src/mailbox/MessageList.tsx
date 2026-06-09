@@ -279,12 +279,17 @@ export interface MessageListProps {
   onArchiveMessage?: (id: string, fromFolder: MailboxFolderRef) => void;
   /// The multi-select selection set (tuxlink-etxt Task 8). Optional; defaults
   /// to an empty set so AppShell compiles without change until Task 11 wires
-  /// the real state.
-  selectedIds?: Set<string>;
+  /// the real state. ReadonlySet allows the module-level EMPTY_SELECTION
+  /// constant to satisfy the default without allocating per render.
+  selectedIds?: ReadonlySet<string>;
   /// Called whenever the selection set should change (Ctrl/Shift+click). Optional
   /// no-op default mirrors the `selectedIds` default (safe for unupgraded callers).
   onSelectionChange?: (next: Set<string>) => void;
 }
+
+/// Stable empty-selection default so the no-selection caller (pre-Task-11) does
+/// not allocate a new Set each render and churn MessageRow's memo.
+const EMPTY_SELECTION: ReadonlySet<string> = new Set<string>();
 
 /// The list pane. Renders the mock's `.rows-pane` as its root (the 420px left
 /// column of `.panes`); Virtuoso scrolls inside it.
@@ -301,7 +306,7 @@ export function MessageList({
   userFolders,
   onMoveMessage,
   onArchiveMessage,
-  selectedIds = new Set<string>(),
+  selectedIds = EMPTY_SELECTION,
   onSelectionChange = () => {},
 }: MessageListProps) {
   // Sort client-side so changing modes doesn't require a backend re-fetch.

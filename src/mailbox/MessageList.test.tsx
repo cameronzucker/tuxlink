@@ -348,6 +348,24 @@ describe('<MessageList> — multi-select / selection set (tuxlink-etxt Task 8)',
     expect(screen.getByTestId('message-row-M2').className).toContain('in-selection');
     expect(screen.getByTestId('message-row-M1').className).not.toContain('in-selection');
   });
+
+  it('Ctrl+click on an already-selected row removes it from the selection', () => {
+    const onSelect = vi.fn();
+    const onSelectionChange = vi.fn();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={onSelect}
+        selectedIds={new Set(['M2'])}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('message-row-M2'), { ctrlKey: true });
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onSelectionChange).toHaveBeenLastCalledWith(new Set()); // M2 toggled off
+  });
 });
 
 describe('<MessageList> — sort wiring (tuxlink-2x0l)', () => {
