@@ -455,7 +455,10 @@ export function AppShell() {
       outbox: outbox.messages.length,
       drafts: draftMessages.length,
       sent: sent.messages.length,
-      archive: archive.messages.length,
+      // tuxlink-etxt: Archive badge = unread count (matches Inbox badge semantics).
+      // User-folder count badges are intentionally deferred — they'd need a per-folder
+      // N+1 query; user-folder unread still surfaces in-list via the unread row style.
+      archive: archive.messages.filter((m) => m.unread).length,
     }),
     [inbox.messages, outbox.messages, draftMessages, sent.messages, archive.messages],
   );

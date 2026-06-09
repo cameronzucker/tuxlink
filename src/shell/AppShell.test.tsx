@@ -183,6 +183,41 @@ const outboxMsgs: MessageMeta[] = [
   },
 ];
 
+// tuxlink-etxt Task 14: archive fixture — 3 total, 2 unread — so the badge
+// assertion can distinguish unread count (2) from total count (3).
+const archiveMsgs: MessageMeta[] = [
+  {
+    id: 'ARCHIVE1',
+    subject: 'Archived unread 1',
+    from: 'KK4XYZ@winlink.org',
+    to: [],
+    date: '2026-05-01T10:00:00Z',
+    unread: true,
+    bodySize: 100,
+    hasAttachments: false,
+  },
+  {
+    id: 'ARCHIVE2',
+    subject: 'Archived unread 2',
+    from: 'W7SRC@winlink.org',
+    to: [],
+    date: '2026-05-02T10:00:00Z',
+    unread: true,
+    bodySize: 80,
+    hasAttachments: false,
+  },
+  {
+    id: 'ARCHIVE3',
+    subject: 'Archived read',
+    from: 'N7CPZ@winlink.org',
+    to: [],
+    date: '2026-05-03T10:00:00Z',
+    unread: false,
+    bodySize: 60,
+    hasAttachments: false,
+  },
+];
+
 vi.mock('../mailbox/useMailbox', () => ({
   useMailboxChangeEvents: () => {},
   useMailbox: (folder: string) => ({
@@ -193,6 +228,8 @@ vi.mock('../mailbox/useMailbox', () => ({
         ? sentMsgs
         : folder === 'outbox'
         ? outboxMsgs
+        : folder === 'archive'
+        ? archiveMsgs
         : [],
     isLoading: false,
     isError: false,
@@ -265,6 +302,13 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.getByTestId('folder-inbox')).toHaveAttribute('aria-current', 'true');
     expect(screen.getByTestId('folder-count-inbox')).toHaveTextContent('1'); // 1 unread
     expect(screen.getByTestId('folder-count-sent')).toHaveTextContent('1'); // 1 total
+  });
+
+  // tuxlink-etxt Task 14: Archive badge must show UNREAD count, not total.
+  // archiveMsgs fixture: 3 total, 2 unread — badge should read "2", not "3".
+  it('Archive folder badge shows unread count (not total) — tuxlink-etxt Task 14', () => {
+    renderShell();
+    expect(screen.getByTestId('folder-count-archive')).toHaveTextContent('2'); // 2 unread, not 3 total
   });
 
   // tuxlink-gp8b: PR #219 wired the Outbox folder entry into the sidebar but
