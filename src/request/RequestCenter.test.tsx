@@ -622,6 +622,11 @@ describe('<RequestCenter> — E1 basket UI + Send all', () => {
     // grib_send_request called once per saildocs item.
     const gribCalls = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'grib_send_request');
     expect(gribCalls).toHaveLength(1);
+    // PAYLOAD, not just count: the dispatched request must carry the operator's
+    // composed request, NOT DEFAULT_GRIB_REQUEST. seedBasket set a distinctive
+    // subject ("GRIB request 0", vs the default "GRIB request"), so a regression
+    // that sent the default body would fail here.
+    expect(gribCalls[0][1]).toMatchObject({ request: { subject: 'GRIB request 0' } });
 
     // Basket cleared (both rails ok).
     const basket = screen.getByTestId('request-basket');

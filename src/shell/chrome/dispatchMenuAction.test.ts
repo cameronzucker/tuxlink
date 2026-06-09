@@ -189,6 +189,9 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:message:request_center', h);
     expect(h.openRequestCenter).toHaveBeenCalledOnce();
+    // Home route passes NO initialView — a stray arg would land on the wrong
+    // inner view (openRequestCenter is arg-overloaded; 'grib' is a valid one).
+    expect(h.openRequestCenter).toHaveBeenCalledWith();
   });
 
   // tuxlink-eymu: GRIB File Request now opens the Request Center directly on

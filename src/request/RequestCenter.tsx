@@ -1,15 +1,16 @@
-// RequestCenter — full-viewport overlay workspace for assembling CMS requests
-// (bd-tuxlink-eymu). Task C1: the overlay shell.
+// RequestCenter — full-viewport request-assembly workspace for the Winlink
+// catalog (bd-tuxlink-eymu).
 //
-// This is the single owner of the catalog load: it calls `useCatalog()` once
-// and will pass `entries` down to the home sections / browse / search consumers
-// that arrive in later tasks (C2+). For C1 the content region is a placeholder;
-// the shell only establishes the chrome (location chip, search, basket region)
-// and the three catalog-load states (loading / empty / error).
+// It is the single owner of the catalog load: it calls `useCatalog()` once and
+// passes `entries` down to every consumer (home sections, master-detail browse,
+// global search, GRIB form) — none of those re-fetch the catalog. The content
+// region routes between four views (home / browse / search / grib) over a shared
+// request basket; basket items dispatch per rail on "Send all" — cms items
+// collapse into one catalog inquiry to the CMS, while each Saildocs item sends
+// its own GRIB request.
 //
-// Unlike CatalogRequestPanel, the Request Center is a full-screen workspace, not
-// a dismissable popover: backdrop clicks do NOT close it. ESC and the Close
-// button are the only close paths.
+// The workspace is a full-screen overlay, not a dismissable popover: backdrop
+// clicks do NOT close it. ESC and the Close button are the only close paths.
 
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
