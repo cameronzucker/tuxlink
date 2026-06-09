@@ -37,3 +37,21 @@ export function selectionToFolderItems(
       id,
     }));
 }
+
+/// Return a copy of `set` with `id` removed, or the original set unchanged when
+/// `id` is absent (stable identity avoids a needless re-render/churn).
+export function dropId(set: Set<string>, id: string): Set<string> {
+  if (!set.has(id)) return set;
+  const next = new Set(set);
+  next.delete(id);
+  return next;
+}
+
+/// Return a copy of `set` with every id in `ids` removed, or the original set
+/// when nothing intersects. Used to drop a whole bulk target set from the
+/// selection after a move/archive — including stale ids that never produced a
+/// move item (they would otherwise strand the bulk bar count, #499/Codex P2).
+export function dropIds(set: Set<string>, ids: ReadonlySet<string>): Set<string> {
+  if (![...ids].some((id) => set.has(id))) return set;
+  return new Set([...set].filter((id) => !ids.has(id)));
+}

@@ -1390,6 +1390,13 @@ pub(crate) async fn move_bulk_with_backend(
     let to_ref = parse_folder_ref(to)?;
     for item in items {
         let from_ref = parse_folder_ref(&item.folder)?;
+        // Self-move guard (Codex P2, data loss): move_between writes the
+        // destination then removes the source, which is the SAME path when
+        // from == to — deleting the message. Skip it, mirroring the single
+        // mailbox_move's frontend no-op. (move_between itself also guards now.)
+        if from_ref == to_ref {
+            continue;
+        }
         let mid = MessageId::new(&item.id);
         backend
             .move_between_folders(from_ref, to_ref.clone(), &mid)
@@ -8539,6 +8546,34 @@ hw:CARD=Device,DEV=0
             backend.list_messages(MailboxFolder::Archive).await.unwrap().len(),
             3,
             "all three messages landed in the single destination folder"
+        );
+    }
+
+    // tuxlink-l80q (Codex P2): a self-move (item.folder == to) must be a no-op,
+    // NOT a delete. Mailbox::move_between writes dst then removes src — the same
+    // path for a self-move — so without a guard the message is destroyed.
+    #[tokio::test]
+    async fn message_move_bulk_self_move_is_a_no_op_not_a_delete() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::compose::compose_message;
+        use crate::winlink_backend::{MailboxFolder, NativeBackend, WinlinkBackend};
+
+        let dir = tempfile::tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+        let a = seed
+            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "A", "a", 1_716_200_000).to_bytes())
+            .unwrap();
+        let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
+
+        let items = vec![MessageRefDto { folder: "inbox".into(), id: a.0.clone() }];
+        move_bulk_with_backend(&backend, items, "inbox")
+            .await
+            .expect("self-move is accepted as a no-op");
+
+        assert_eq!(
+            backend.list_messages(MailboxFolder::Inbox).await.unwrap().len(),
+            1,
+            "a self-move must not delete the message"
         );
     }
 }

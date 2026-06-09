@@ -482,8 +482,9 @@ describe('<MessageList> — selection-aware context menu (tuxlink-l80q)', () => 
     );
     // M3 is NOT in the selection.
     fireEvent.contextMenu(screen.getByTestId('message-row-M3'));
-    // Selection resets (OS convention) and the menu is single-target.
-    expect(p.onSelectionChange).toHaveBeenCalledWith(new Set());
+    // Selection resets to the clicked row (OS convention) and the menu is
+    // single-target — the prior M1/M2 selection is abandoned.
+    expect(p.onSelectionChange).toHaveBeenCalledWith(new Set(['M3']));
     expect(screen.queryByTestId('ctx-selection-header')).toBeNull();
 
     fireEvent.click(screen.getByTestId('ctx-move-sent'));

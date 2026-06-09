@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { MessageMeta } from './types';
-import { selectionToFolderItems } from './bulkSelection';
+import { selectionToFolderItems, dropId, dropIds } from './bulkSelection';
 
 function meta(over: Partial<MessageMeta> = {}): MessageMeta {
   return {
@@ -47,5 +47,25 @@ describe('selectionToFolderItems (tuxlink-l80q bulk move/archive mapping)', () =
   it('returns an empty array for an empty selection', () => {
     const visible = [meta({ id: 'A', folder: 'inbox' })];
     expect(selectionToFolderItems(new Set(), visible, 'inbox')).toEqual([]);
+  });
+});
+
+describe('dropId', () => {
+  it('removes the id when present', () => {
+    expect([...dropId(new Set(['A', 'B']), 'A')]).toEqual(['B']);
+  });
+  it('returns the SAME set reference when the id is absent (no churn)', () => {
+    const set = new Set(['A', 'B']);
+    expect(dropId(set, 'Z')).toBe(set);
+  });
+});
+
+describe('dropIds', () => {
+  it('removes every intersecting id (moved + stale targets)', () => {
+    expect([...dropIds(new Set(['A', 'B', 'C']), new Set(['A', 'C', 'GHOST']))]).toEqual(['B']);
+  });
+  it('returns the SAME set reference when nothing intersects', () => {
+    const set = new Set(['A', 'B']);
+    expect(dropIds(set, new Set(['Y', 'Z']))).toBe(set);
   });
 });

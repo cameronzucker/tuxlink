@@ -22,7 +22,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
 import type { HighlightRange } from '../mailbox/MessageList';
-import { selectionToFolderItems } from '../mailbox/bulkSelection';
+import { selectionToFolderItems, dropId, dropIds } from '../mailbox/bulkSelection';
 import { type SortState, loadSortState, saveSortState } from '../mailbox/messageSort';
 import { useMailbox, useMailboxChangeEvents } from '../mailbox/useMailbox';
 import { DRAFTS_CHANGED_EVENT, listDraftMessages } from '../mailbox/draftMailbox';
@@ -697,6 +697,10 @@ export function AppShell() {
       // Clear selection if the moved message was the one open — its folder
       // changed under the reading pane.
       setSelectedMessage((cur) => (cur?.id === id ? null : cur));
+      // A moved row leaves the view; drop it from the selection set so it can't
+      // strand the bulk bar on an invisible row (matters now that an
+      // out-of-selection right-click resets the selection to that single row).
+      setSelectedIds((cur) => dropId(cur, id));
     } catch {
       /* surfaced via Rust logs */
     }
@@ -711,6 +715,7 @@ export function AppShell() {
       await invoke('mailbox_move', { from: fromFolder, to: 'archive', id });
       void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
       setSelectedMessage((cur) => (cur?.id === id ? null : cur));
+      setSelectedIds((cur) => dropId(cur, id));
     } catch {
       /* surfaced via Rust logs */
     }
@@ -772,8 +777,13 @@ export function AppShell() {
       await invoke('message_move_bulk', { items, to });
       void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
       void queryClient.invalidateQueries({ queryKey: ['search'] });
+      // Drop the WHOLE requested set from the selection (Codex P2): items that
+      // moved, plus any stale ids that selectionToFolderItems filtered out
+      // (rows gone from the view before the action) — leaving them selected
+      // would strand the bulk bar count on invisible rows. The reading pane
+      // only clears if the OPEN message actually moved.
       const movedIds = new Set(items.map((it) => it.id));
-      setSelectedIds((cur) => new Set([...cur].filter((id) => !movedIds.has(id))));
+      setSelectedIds((cur) => dropIds(cur, ids));
       setSelectedMessage((cur) => (cur && movedIds.has(cur.id) ? null : cur));
     } catch {
       /* surfaced via Rust logs; next refetch resyncs */

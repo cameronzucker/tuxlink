@@ -404,7 +404,11 @@ export function MessageList({
   const onContextMenu = useCallback(
     (e: React.MouseEvent, message: MessageMeta) => {
       const inSelection = selectedIds.size > 0 && selectedIds.has(message.id);
-      if (!inSelection && selectedIds.size > 0) onSelectionChange(new Set());
+      // OS convention (Codex P2): right-clicking a row OUTSIDE an existing
+      // selection resets the selection to that single row — which highlights it
+      // — and the menu then acts single-target. With no prior selection,
+      // right-click leaves the selection untouched (no spurious 1-row select).
+      if (!inSelection && selectedIds.size > 0) onSelectionChange(new Set([message.id]));
       setCtxMenu({ message, x: e.clientX, y: e.clientY, selectionMode: inSelection });
     },
     [selectedIds, onSelectionChange],
