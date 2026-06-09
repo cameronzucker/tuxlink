@@ -366,6 +366,28 @@ describe('<MessageList> — multi-select / selection set (tuxlink-etxt Task 8)',
     expect(onSelect).not.toHaveBeenCalled();
     expect(onSelectionChange).toHaveBeenLastCalledWith(new Set()); // M2 toggled off
   });
+
+  it('keyboard contract: Enter opens, Space toggles selection (does not open)', () => {
+    const onSelect = vi.fn();
+    const onSelectionChange = vi.fn();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={onSelect}
+        selectedIds={new Set()}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    fireEvent.keyDown(screen.getByTestId('message-row-M2'), { key: 'Enter' });
+    expect(onSelect).toHaveBeenCalledWith('M2');
+
+    onSelect.mockClear();
+    fireEvent.keyDown(screen.getByTestId('message-row-M2'), { key: ' ' });
+    expect(onSelect).not.toHaveBeenCalled();                      // Space no longer opens
+    expect(onSelectionChange).toHaveBeenLastCalledWith(new Set(['M2'])); // Space toggles into the set
+  });
 });
 
 describe('<MessageList> — sort wiring (tuxlink-2x0l)', () => {

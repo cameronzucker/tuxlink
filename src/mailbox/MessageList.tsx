@@ -186,9 +186,12 @@ export const MessageRow = memo(function MessageRow({ message, folder, isOpen, in
         }
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
+        if (e.key === 'Enter') {
           e.preventDefault();
-          onSelect(message.id);
+          onSelect(message.id);                                  // Enter opens
+        } else if (e.key === ' ') {
+          e.preventDefault();
+          onRowClick(message.id, { ctrl: true, shift: false });  // Space toggles selection (grid/listbox semantic)
         }
       }}
       draggable
