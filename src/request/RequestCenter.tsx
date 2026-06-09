@@ -17,6 +17,7 @@ import { useCatalog } from '../catalog/useCatalog';
 import { useRequestBasket } from './basket';
 import { buildSections, type CardAction } from './sections';
 import { CatalogBrowse } from './CatalogBrowse';
+import { GribForm } from './GribForm';
 import './RequestCenter.css';
 
 export interface RequestCenterProps {
@@ -196,11 +197,24 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
               />
             )}
 
-            {/* GRIB pane — minimal placeholder; the real GRIB request form
-                replaces this in Task D3. Same load-guard prefix as browse/home
-                for symmetry. */}
+            {/* GRIB pane — the Saildocs GRIB request form (Task D3). Unlike the
+                cms cards, "Add to request" creates a `saildocs` BasketItem
+                carrying the full GribRequest (NOT an immediate send — dispatch
+                is Task E1's job). The id `saildocs:<json>` lets two distinct
+                requests coexist while re-adding an identical request dedups to a
+                no-op. Same load-guard prefix as browse/home for symmetry. */}
             {!searchActive && view === 'grib' && !loading && !error && entries && (
-              <div data-testid="request-grib" />
+              <GribForm
+                onAddSaildocs={(request) =>
+                  basket.add({
+                    id: `saildocs:${JSON.stringify(request)}`,
+                    label: request.subject || 'GRIB request',
+                    rail: 'saildocs',
+                    request,
+                  })
+                }
+                onBack={() => setView('home')}
+              />
             )}
 
             {/* Request-first home sections. Home renders only when not loading,
@@ -260,6 +274,20 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
                     }}
                   >
                     Browse full catalog by category →
+                  </button>
+                </div>
+
+                {/* GRIB-by-area reveal — drops into the Saildocs GRIB request
+                    form (Task D3). Adds a saildocs request to the basket; the
+                    send happens later from the basket rail (Task E1). */}
+                <div className="request-browse-reveal">
+                  <button
+                    type="button"
+                    className="request-browse-reveal__button"
+                    data-testid="request-grib-reveal"
+                    onClick={() => setView('grib')}
+                  >
+                    More: GRIB by area →
                   </button>
                 </div>
               </div>

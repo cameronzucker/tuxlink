@@ -9,6 +9,25 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 import { invoke } from '@tauri-apps/api/core';
 
+// Mock GridMapPicker at the module boundary — the GribForm view (Task D3)
+// imports it, and the real picker pulls in Leaflet (no DOM map in jsdom). The
+// mock exposes a button that fires onBoxChange, matching GribForm.test.tsx.
+vi.mock('../map/GridMapPicker', () => ({
+  GridMapPicker: ({
+    onBoxChange,
+  }: {
+    onBoxChange?: (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="mock-box-drag"
+      onClick={() => onBoxChange?.({ lat: 60.2, lon: -120.9 }, { lat: 40.8, lon: -140.1 })}
+    >
+      fire box
+    </button>
+  ),
+}));
+
 function entry(category: string, filename: string, description = '', size_bytes = 0): CatalogEntry {
   return { category, filename, description, size_bytes };
 }
@@ -116,12 +135,16 @@ describe('<RequestCenter>', () => {
     expect(document.querySelector('.request-sections')).toBeNull();
   });
 
-  // --- initialView routing: grib seam renders its placeholder, not home ---
+  // --- initialView routing: grib seam renders the GribForm, not home (D3) ---
 
-  it('initialView="grib" renders the grib placeholder and not the home sections', async () => {
+  it('initialView="grib" renders the GribForm and not the home sections', async () => {
     mockHappy();
     render(<RequestCenter onClose={() => {}} initialView="grib" />);
-    expect(await screen.findByTestId('request-grib')).toBeInTheDocument();
+    const grib = await screen.findByTestId('request-grib');
+    expect(grib).toBeInTheDocument();
+    // The GribForm fields are present (it's the real form, not a blank div).
+    expect(screen.getByTestId('grib-subject')).toBeInTheDocument();
+    expect(screen.getByTestId('grib-add')).toBeInTheDocument();
     // Home sections must not render in the grib view.
     expect(document.querySelector('.request-sections')).toBeNull();
     expect(screen.queryAllByTestId(/^request-card-/)).toHaveLength(0);
@@ -408,6 +431,58 @@ describe('<RequestCenter> — D2 global search', () => {
 
     fireEvent.change(screen.getByTestId('request-search'), { target: { value: 'forecast' } });
     expect(await screen.findByTestId('catalog-search-results')).toBeInTheDocument();
+    expect(screen.queryByTestId('request-grib')).toBeNull();
+  });
+});
+
+// ===========================================================================
+// Task D3 — the home "More: GRIB by area" reveal mounts the GribForm; adding
+// a GRIB request puts a `saildocs` BasketItem in the shared basket (NOT an
+// immediate send); Back returns to home.
+// ===========================================================================
+
+describe('<RequestCenter> — D3 GRIB-by-area reveal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('the home GRIB reveal switches to the grib view and mounts GribForm', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    const reveal = await screen.findByTestId('request-grib-reveal');
+    expect(reveal).toBeInTheDocument();
+
+    fireEvent.click(reveal);
+
+    expect(await screen.findByTestId('request-grib')).toBeInTheDocument();
+    expect(screen.getByTestId('grib-subject')).toBeInTheDocument();
+    // Home sections no longer rendered.
+    expect(document.querySelector('.request-sections')).toBeNull();
+  });
+
+  it('clicking Add to request adds a saildocs basket item carrying the request', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} initialView="grib" />);
+    await screen.findByTestId('request-grib');
+
+    fireEvent.click(screen.getByTestId('grib-add'));
+
+    // A saildocs basket item appears, labelled by the request subject. The id
+    // scheme is `saildocs:<json>`, so query by the label rather than the id.
+    const basket = screen.getByTestId('request-basket');
+    expect(within(basket).getByText('GRIB request')).toBeInTheDocument();
+    expect(within(basket).getByTestId(/^basket-item-saildocs:/)).toBeInTheDocument();
+  });
+
+  it('Back from the GribForm returns to the home view', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    fireEvent.click(await screen.findByTestId('request-grib-reveal'));
+    await screen.findByTestId('request-grib');
+
+    fireEvent.click(screen.getByTestId('grib-back'));
+
+    expect(await screen.findByTestId('request-section-propagation')).toBeInTheDocument();
     expect(screen.queryByTestId('request-grib')).toBeNull();
   });
 });
