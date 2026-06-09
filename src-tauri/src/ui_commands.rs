@@ -542,6 +542,10 @@ pub struct ParsedMessageDto {
     pub attachments: Vec<AttachmentMetaDto>,
     pub is_form: bool,
     pub routing: Option<String>,
+    /// `"post-office"` when this message was filed by the local Post Office
+    /// (`SessionIntent::PostOffice`); `None` for all other session types.
+    /// Drives the "Post Office" chip in the mailbox inbound list (Phase B5).
+    pub received_session: Option<String>,
     /// Form ID extracted from `RMS_Express_Form_<id>.xml` attachment name.
     /// Validated via `forms::validation::is_valid_form_id`. None when not a form.
     pub form_id: Option<String>,
@@ -664,6 +668,9 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
     // Routing: check known Winlink transport headers.
     let routing = extract_routing(&msg);
 
+    // Received-session marker: set by file_exchange_result for PostOffice sessions.
+    let received_session = extract_received_session(&msg);
+
     Ok(ParsedMessageDto {
         id: mid.to_string(),
         subject,
@@ -675,6 +682,7 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
         attachments,
         is_form,
         routing,
+        received_session,
         form_id,
         form_payload,
     })
@@ -1044,6 +1052,21 @@ fn extract_routing(msg: &mail_parser::Message<'_>) -> Option<String> {
             if !s.is_empty() {
                 return Some(s.to_string());
             }
+        }
+    }
+    None
+}
+
+/// Extract the `X-Tuxlink-Received-Session` header value.
+///
+/// Returns `Some(value)` when the header is present and non-empty; `None`
+/// otherwise. Mirrors `extract_routing`'s header-access style but operates on
+/// a single tuxlink-private header and is intentionally separate so
+/// `TRANSPORT_HEADERS` is not polluted with tuxlink-internal metadata.
+fn extract_received_session(msg: &mail_parser::Message<'_>) -> Option<String> {
+    if let Some(mail_parser::HeaderValue::Text(s)) = msg.header("X-Tuxlink-Received-Session") {
+        if !s.is_empty() {
+            return Some(s.to_string());
         }
     }
     None
@@ -6217,6 +6240,7 @@ hw:CARD=Device,DEV=0
             }],
             is_form: false,
             routing: Some("via CMS-SSL".into()),
+            received_session: None,
             form_id: None,
             form_payload: None,
         };
@@ -8233,6 +8257,72 @@ hw:CARD=Device,DEV=0
         assert_eq!(rfc3339_to_epoch("2024-05-20T10:13:00Z"), Some(1_716_199_980));
         assert_eq!(rfc3339_to_epoch("not-a-date"), None);
         assert_eq!(rfc3339_to_epoch(""), None);
+    }
+
+    // ---- tuxlink-6c9y A6: receivedSession DTO field -------------------------
+
+    /// A message bearing `X-Tuxlink-Received-Session: post-office` must
+    /// surface as `received_session = Some("post-office")` and serialise to
+    /// `{ "receivedSession": "post-office" }` (camelCase per serde rename_all).
+    #[test]
+    fn parse_raw_rfc5322_surfaces_received_session_for_post_office_header() {
+        let mut raw: Vec<u8> = Vec::new();
+        raw.extend_from_slice(b"Mid: POMID0000001\r\n");
+        raw.extend_from_slice(b"From: W1AW\r\n");
+        raw.extend_from_slice(b"To: N7CPZ\r\n");
+        raw.extend_from_slice(b"Subject: Post Office Test\r\n");
+        raw.extend_from_slice(b"Date: 2026/06/08 12:00\r\n");
+        raw.extend_from_slice(b"Body: 5\r\n");
+        raw.extend_from_slice(b"X-Tuxlink-Received-Session: post-office\r\n");
+        raw.extend_from_slice(b"\r\n");
+        raw.extend_from_slice(b"hello");
+
+        let dto = parse_raw_rfc5322("POMID0000001", &raw)
+            .expect("parse succeeds for message with X-Tuxlink-Received-Session");
+
+        assert_eq!(
+            dto.received_session,
+            Some("post-office".to_string()),
+            "received_session must be Some(\"post-office\") when header is present"
+        );
+
+        // Verify camelCase serialisation for the TS boundary.
+        let value = serde_json::to_value(&dto).expect("DTO serialises");
+        assert_eq!(
+            value["receivedSession"],
+            serde_json::Value::String("post-office".to_string()),
+            "receivedSession (camelCase) must appear in JSON with value \"post-office\""
+        );
+    }
+
+    /// A message without the header must give `received_session = None`
+    /// and `receivedSession` must be `null` in JSON.
+    #[test]
+    fn parse_raw_rfc5322_received_session_is_none_when_header_absent() {
+        let mut raw: Vec<u8> = Vec::new();
+        raw.extend_from_slice(b"Mid: CMSMID000001\r\n");
+        raw.extend_from_slice(b"From: W1AW\r\n");
+        raw.extend_from_slice(b"To: N7CPZ\r\n");
+        raw.extend_from_slice(b"Subject: CMS Mail\r\n");
+        raw.extend_from_slice(b"Date: 2026/06/08 12:00\r\n");
+        raw.extend_from_slice(b"Body: 5\r\n");
+        raw.extend_from_slice(b"\r\n");
+        raw.extend_from_slice(b"hello");
+
+        let dto = parse_raw_rfc5322("CMSMID000001", &raw)
+            .expect("parse succeeds for message without X-Tuxlink-Received-Session");
+
+        assert_eq!(
+            dto.received_session, None,
+            "received_session must be None when header is absent"
+        );
+
+        let value = serde_json::to_value(&dto).expect("DTO serialises");
+        assert_eq!(
+            value["receivedSession"],
+            serde_json::Value::Null,
+            "receivedSession must serialise as null when absent"
+        );
     }
 }
 

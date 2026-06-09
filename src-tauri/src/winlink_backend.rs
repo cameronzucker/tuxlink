@@ -2275,7 +2275,7 @@ fn native_connect(
     // successfully-sent MIDs in the Outbox where they would be re-offered on the
     // next connection (duplicate send). Moving them to Sent is idempotent even
     // when `result.sent` is empty (all-rejected batch); the error still surfaces.
-    file_exchange_result(mailbox, &result, mailbox_change)?;
+    file_exchange_result(mailbox, &result, SessionIntent::Cms, mailbox_change)?;
     emit_exchange_result_progress(&result, &outbound_log, progress);
     if !result.rejected.is_empty() {
         return Err(BackendError::MessageRejected(format!(
@@ -2389,14 +2389,25 @@ fn compact_log_field(value: &str, max_chars: usize) -> String {
 
 /// Persist a completed exchange into the mailbox and emit one change
 /// notification if at least one message was received or sent.
+///
+/// `intent` determines whether inbound messages are stamped with
+/// `X-Tuxlink-Received-Session`. Only `SessionIntent::PostOffice` applies the
+/// marker (value `"post-office"`); all other intents store messages byte-identical.
 fn file_exchange_result(
     mailbox: &Mailbox,
     result: &session::ExchangeResult,
+    intent: SessionIntent,
     mailbox_change: &dyn Fn(),
 ) -> Result<(), BackendError> {
     let mut changed = false;
     for message in &result.received {
-        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+        if intent == SessionIntent::PostOffice {
+            let mut m = message.clone();
+            m.set_header("X-Tuxlink-Received-Session", "post-office");
+            mailbox.store(MailboxFolder::Inbox, &m.to_bytes())?;
+        } else {
+            mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+        }
         changed = true;
     }
     for mid in &result.sent {
@@ -3009,7 +3020,7 @@ mod mailbox_change_tests {
             notified.fetch_add(1, Ordering::SeqCst);
         };
 
-        file_exchange_result(&mailbox, &result, &notify).expect("files exchange result");
+        file_exchange_result(&mailbox, &result, SessionIntent::Cms, &notify).expect("files exchange result");
 
         assert_eq!(notified.load(Ordering::SeqCst), 1);
         assert_eq!(mailbox.list(MailboxFolder::Inbox).unwrap().len(), 1);
@@ -3026,7 +3037,7 @@ mod mailbox_change_tests {
             notified.fetch_add(1, Ordering::SeqCst);
         };
 
-        file_exchange_result(&mailbox, &session::ExchangeResult::default(), &notify)
+        file_exchange_result(&mailbox, &session::ExchangeResult::default(), SessionIntent::Cms, &notify)
             .expect("empty exchange is valid");
 
         assert_eq!(notified.load(Ordering::SeqCst), 0);
@@ -3094,6 +3105,89 @@ mod mailbox_change_tests {
         );
 
         assert_eq!(lines.into_inner(), vec!["No messages exchanged."]);
+    }
+
+    // ---- tuxlink-6c9y A6: Post Office inbound routing marker ----------------
+
+    /// PostOffice sessions must stamp inbound messages with
+    /// `X-Tuxlink-Received-Session: post-office`.
+    #[test]
+    fn file_exchange_result_stamps_post_office_marker_on_received_message() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let received = compose_message(
+            "W1AW",
+            &["N7CPZ"],
+            &[],
+            "Post Office Inbound",
+            "body from local pool",
+            1_716_200_000,
+        );
+        let result = session::ExchangeResult {
+            received: vec![received],
+            sent: vec![],
+            rejected: vec![],
+            deferred: vec![],
+            relay_state: crate::winlink::relay_banner::RelayState::NotRelay,
+        };
+        let noop = || {};
+
+        file_exchange_result(&mailbox, &result, SessionIntent::PostOffice, &noop)
+            .expect("file_exchange_result succeeds for PostOffice");
+
+        let ids = mailbox.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(ids.len(), 1, "one message should be in Inbox");
+        let body = mailbox.read(MailboxFolder::Inbox, &ids[0].id).unwrap();
+        let stored =
+            Message::from_bytes(&body.raw_rfc5322).expect("stored bytes are valid Message");
+        assert_eq!(
+            stored.header("X-Tuxlink-Received-Session"),
+            Some("post-office"),
+            "PostOffice session must stamp X-Tuxlink-Received-Session: post-office"
+        );
+    }
+
+    /// Non-PostOffice sessions (e.g. Cms) must NOT stamp the marker.
+    /// The stored bytes are byte-identical to the original.
+    #[test]
+    fn file_exchange_result_does_not_stamp_marker_for_cms_session() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let received = compose_message(
+            "W1AW",
+            &["N7CPZ"],
+            &[],
+            "CMS Inbound",
+            "body from cms",
+            1_716_200_001,
+        );
+        let original_bytes = received.to_bytes();
+        let result = session::ExchangeResult {
+            received: vec![received],
+            sent: vec![],
+            rejected: vec![],
+            deferred: vec![],
+            relay_state: crate::winlink::relay_banner::RelayState::NotRelay,
+        };
+        let noop = || {};
+
+        file_exchange_result(&mailbox, &result, SessionIntent::Cms, &noop)
+            .expect("file_exchange_result succeeds for Cms");
+
+        let ids = mailbox.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(ids.len(), 1, "one message should be in Inbox");
+        let body = mailbox.read(MailboxFolder::Inbox, &ids[0].id).unwrap();
+        let stored =
+            Message::from_bytes(&body.raw_rfc5322).expect("stored bytes are valid Message");
+        assert_eq!(
+            stored.header("X-Tuxlink-Received-Session"),
+            None,
+            "Cms session must NOT stamp X-Tuxlink-Received-Session"
+        );
+        assert_eq!(
+            body.raw_rfc5322, original_bytes,
+            "Cms stored bytes must be byte-identical to original"
+        );
     }
 }
 
