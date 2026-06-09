@@ -25,7 +25,7 @@ export interface MessageContextMenuProps {
   userFolders: UserFolder[];
   /// Called with `read=true` (unread→read) or `read=false` (read→unread).
   /// Only rendered when `folderBearsReadState(folder)` is true.
-  onSetReadState: (read: boolean) => void;
+  onSetReadState?: (read: boolean) => void;
   onMoveTo: (toFolder: MailboxFolderRef) => void;
   onArchive: () => void;
   onClose: () => void;
@@ -98,7 +98,7 @@ export function MessageContextMenu({
             role="menuitem"
             className="tux-ctx-item"
             data-testid="ctx-set-read-state"
-            onClick={actAndClose(() => onSetReadState(message.unread))}
+            onClick={actAndClose(() => onSetReadState?.(message.unread))}
           >
             {message.unread ? 'Mark as read' : 'Mark as unread'}
           </button>

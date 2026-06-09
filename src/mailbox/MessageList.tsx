@@ -200,6 +200,8 @@ export const MessageRow = memo(function MessageRow({ message, folder, isOpen, in
           onRowClick(message.id, { ctrl: true, shift: false });  // Space toggles selection (grid/listbox semantic)
         } else if (e.key === 'u' || e.key === 'U') {
           e.preventDefault();
+          // Toggle: a currently-unread message becomes read (read=true); a read one becomes unread.
+          // message.unread already equals the desired `read` value, by design.
           onRowSetReadState?.(message.id, srcFolder as MailboxFolderRef, message.unread);
         }
       }}

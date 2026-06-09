@@ -996,3 +996,49 @@ describe('<AppShell> — bulk Mark read/unread (tuxlink-etxt Task 11)', () => {
     );
   });
 });
+
+// ============================================================================
+// Single-message read/unread — context-menu + U-key wiring in AppShell
+// (tuxlink-etxt Tasks 12 + 13)
+//
+// Verifies the production mount path: AppShell provides onMoveMessage +
+// onArchiveMessage (so MessageList mounts the context menu on right-click)
+// AND provides onSetReadState, which wires through to invoke('message_set_read_state').
+//
+// Path chosen: context-menu (right-click → ctx-set-read-state click).
+// AppShell passes both onMoveMessage and onArchiveMessage to MessageList, so
+// ctxAvailable=true and the onContextMenu prop is wired on every row.
+// The right-click path exercises the full AppShell → MessageList →
+// MessageContextMenu → onSetReadState → invoke chain.
+// ============================================================================
+describe('<AppShell> — single-message Mark read/unread (tuxlink-etxt Tasks 12 + 13)', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    vi.mocked(invoke).mockClear();
+  });
+
+  it('context-menu Mark as read invokes the single command through AppShell', async () => {
+    renderShell();
+
+    // INBOX1 is unread (unread: true in the fixture). Right-click to open the
+    // real MessageContextMenu (AppShell supplies onMoveMessage + onArchiveMessage,
+    // so ctxAvailable=true and the context-menu overlay mounts on right-click).
+    fireEvent.contextMenu(screen.getByTestId('message-row-INBOX1'));
+
+    // The menu renders; find the read-state item (data-testid="ctx-set-read-state").
+    // INBOX1 is unread → label is "Mark as read".
+    const readItem = await screen.findByTestId('ctx-set-read-state');
+    expect(readItem).toBeInTheDocument();
+
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(readItem);
+
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+        'message_set_read_state',
+        expect.objectContaining({ folder: 'inbox', id: 'INBOX1', read: expect.any(Boolean) }),
+      ),
+    );
+  });
+});
