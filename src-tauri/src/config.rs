@@ -64,6 +64,17 @@ pub struct Config {
     /// `deny_unknown_fields` (the field is now KNOWN).
     #[serde(default = "default_review_inbound_before_download")]
     pub review_inbound_before_download: bool,
+    /// LAN map-tile source (tuxlink-dyop Phase 8). `None` = no LAN source
+    /// configured; the map serves the bundled offline base map (`StatusKind::Bundled`).
+    /// Set by `configure_tile_source` only AFTER the source validates+activates
+    /// (geodetic CRS + reachable host serving a real image). Carries NO auth field
+    /// by design — `TileSource` has no credentials, so no secret is ever written to
+    /// disk (keyring-later if auth is ever needed). `#[serde(default)]` migrates
+    /// configs that predate this field (absent → `None`); the field is now KNOWN,
+    /// so `deny_unknown_fields` is satisfied. `skip_serializing_if` keeps a no-source
+    /// config byte-identical to its pre-dyop shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_tile_source: Option<crate::tiles::TileSource>,
 }
 
 /// A saved Network Post Office relay server entry.
@@ -752,6 +763,72 @@ mod tests {
             config.connect.host, "cms-z.winlink.org",
             "missing connect.host must default to cms-z.winlink.org"
         );
+    }
+
+    // tuxlink-dyop Phase 8: an OLD config JSON that predates `map_tile_source`
+    // (the pre-dyop shape — no `map_tile_source` key) must deserialize with the
+    // field defaulting to `None`. The field is now KNOWN, so `deny_unknown_fields`
+    // is satisfied; `#[serde(default)]` supplies `None` when the key is absent.
+    #[test]
+    fn map_tile_source_defaults_to_none_when_absent_from_config() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{
+                    "gps_state": "BroadcastAtPrecision",
+                    "position_precision": "FourCharGrid"
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let config: Config = serde_json::from_str(&json)
+            .expect("config without map_tile_source should deserialize");
+        assert!(
+            config.map_tile_source.is_none(),
+            "missing map_tile_source must default to None"
+        );
+    }
+
+    // tuxlink-dyop Phase 8: a configured `map_tile_source` round-trips through
+    // serialize → deserialize (proves on-disk persistence of an activated source).
+    #[test]
+    fn map_tile_source_round_trips_when_set() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{
+                    "gps_state": "BroadcastAtPrecision",
+                    "position_precision": "FourCharGrid"
+                }},
+                "map_tile_source": {{
+                    "url": "http://192.168.1.5:8080/tiles/",
+                    "crs": "Geodetic",
+                    "scheme": "Xyz",
+                    "minZoom": 0,
+                    "maxZoom": 16,
+                    "cacheBudgetMb": 384,
+                    "attribution": null,
+                    "label": "shack"
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let config: Config = serde_json::from_str(&json)
+            .expect("config with map_tile_source should deserialize");
+        let src = config.map_tile_source.as_ref().expect("source present");
+        assert_eq!(src.url, "http://192.168.1.5:8080/tiles/");
+        assert_eq!(src.label, "shack");
+        // Round-trip back out and parse again — the serialized form re-parses
+        // (camelCase field names match the TileSource serde contract).
+        let reser = serde_json::to_string(&config).unwrap();
+        let back: Config = serde_json::from_str(&reser).unwrap();
+        assert_eq!(back.map_tile_source.unwrap().url, "http://192.168.1.5:8080/tiles/");
     }
 
     // tuxlink-3o0: a configured host round-trips (proves persistence, not just

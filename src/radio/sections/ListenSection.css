@@ -142,7 +142,7 @@
 }
 
 /* FZ-M1 compact (tuxlink-h7q7 Task 6b): raise the 9px region to the 12px floor. */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   .listen-section {
     font-size: 12px;
   }
@@ -150,7 +150,7 @@
 
 /* FZ-M1 compact — Codex post-impl review: the chip-remove ✕ (worst touch
    target in the app, ~14x14) and the 11px help text. */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   .radio-panel-chip-x {
     min-width: 44px;
     min-height: 44px;

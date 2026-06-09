@@ -321,6 +321,7 @@ mod tests {
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
+            map_tile_source: None,
         }
     }
 

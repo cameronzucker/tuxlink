@@ -721,6 +721,7 @@ fn config_skips_pat_mbo_address_on_write() {
         telnet_listen: tuxlink_lib::config::TelnetListenUiConfig::default(),
         network_po_favorites: Vec::new(),
         review_inbound_before_download: false,
+        map_tile_source: None,
     };
     let json = serde_json::to_string(&cfg).unwrap();
     assert!(

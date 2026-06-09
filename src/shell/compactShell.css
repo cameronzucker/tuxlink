@@ -1,12 +1,15 @@
 /* src/shell/compactShell.css
  *
  * FZ-M1 compact mode — additive, scoped. Mirrors COMPACT_MEDIA_QUERY in
- * src/shell/useViewport.ts (keep both at 1365px). Desktop (>=1366px) is
+ * src/shell/useViewport.ts (keep both at `(max-width: 1365px) and
+ * (any-pointer: coarse)` — tuxlink-mt73 added the touch-pointer gate so a
+ * narrow desktop window like the 1100px Compose webview does not enter
+ * compact). Desktop / mouse-only (>=1366px OR no coarse pointer) is
  * unaffected: EVERY rule here lives inside the media query. Loaded via a JS
  * `import './compactShell.css'` in AppShell.tsx (NOT a CSS @import — the ?raw
  * test path can't see @import'ed rules; Codex adrev R1 #7). tuxlink-h7q7.
  */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* ====================================================================
    * Panes grid (tuxlink-813d D1/D2/D3). 200px sidebar → 52px vertical-text
    * rail. The radio panel is an ABSOLUTE OVERLAY (tuxlink-813d D1), NOT a grid
@@ -196,6 +199,27 @@
     color: var(--text-faint);
     font-size: 13px;
     flex: 0 0 auto;
+  }
+  .layout-b .sidebar-flyout .nav-item .icon.folder-indicator {
+    display: grid;
+    place-items: center;
+    height: 14px;
+  }
+  .layout-b .sidebar-flyout .nav-item .icon.folder-indicator::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid currentColor;
+    border-radius: 999px;
+    background: transparent;
+    box-sizing: border-box;
+  }
+  .layout-b .sidebar-flyout .nav-item.active .icon.folder-indicator::before {
+    background: currentColor;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .layout-b .sidebar-flyout .nav-item .icon.folder-indicator[data-has-count="true"]::before {
+    border-color: var(--accent);
   }
   .layout-b .sidebar-flyout .nav-item.active .icon {
     color: var(--accent);

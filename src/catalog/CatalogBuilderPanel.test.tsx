@@ -1,9 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactElement } from 'react';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 import { invoke } from '@tauri-apps/api/core';
 import { CatalogBuilderPanel } from './CatalogBuilderPanel';
+
+// The panel invalidates the shared ['favorites'] query after a ★ add, so it
+// needs a QueryClientProvider in scope (mirrors the app-root provider).
+function renderPanel(ui: ReactElement) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+}
 
 // Raw CSS for the stacking-order invariant (tuxlink-tsl5). The modal overlay must
 // paint ABOVE the app chrome (titlebar/menubar/resize) or its header + × land
@@ -35,7 +44,7 @@ beforeEach(() => {
 
 describe('CatalogBuilderPanel', () => {
   it('renders the form column (location, modes, radius) inside a Find a Gateway dialog', async () => {
-    render(<CatalogBuilderPanel onClose={() => {}} />);
+    renderPanel(<CatalogBuilderPanel onClose={() => {}} />);
     expect(screen.getByRole('dialog', { name: /find a gateway/i })).toBeTruthy();
     expect(await screen.findByLabelText(/your location/i)).toBeTruthy();
     expect(screen.getByLabelText(/VARA HF/i)).toBeTruthy();
@@ -43,12 +52,12 @@ describe('CatalogBuilderPanel', () => {
   });
 
   it('prefills location from config_read full-precision grid', async () => {
-    render(<CatalogBuilderPanel onClose={() => {}} />);
+    renderPanel(<CatalogBuilderPanel onClose={() => {}} />);
     await waitFor(() => expect(screen.getByLabelText(/your location/i)).toHaveValue('DM43bp'));
   });
 
   it('calls catalog_fetch_stations with the checked modes on Get Stations', async () => {
-    render(<CatalogBuilderPanel onClose={() => {}} />);
+    renderPanel(<CatalogBuilderPanel onClose={() => {}} />);
     fireEvent.click(await screen.findByLabelText(/VARA HF/i));
     fireEvent.click(screen.getByRole('button', { name: /get stations/i }));
     await waitFor(() =>
@@ -60,7 +69,7 @@ describe('CatalogBuilderPanel', () => {
   });
 
   it('does NOT pass serviceCodes (PUBLIC-only is server-fixed)', async () => {
-    render(<CatalogBuilderPanel onClose={() => {}} />);
+    renderPanel(<CatalogBuilderPanel onClose={() => {}} />);
     // Exact label — "Packet" must not also match the "Robust Packet" checkbox.
     fireEvent.click(await screen.findByLabelText('Packet'));
     fireEvent.click(screen.getByRole('button', { name: /get stations/i }));
@@ -75,7 +84,7 @@ describe('CatalogBuilderPanel', () => {
   // bundled catalog). Find a Gateway is now the station finder only — those
   // checkboxes must not appear here.
   it('does NOT render the info-category (by-message) requests — moved to Catalog Request (tuxlink-6jpf)', async () => {
-    render(<CatalogBuilderPanel onClose={() => {}} />);
+    renderPanel(<CatalogBuilderPanel onClose={() => {}} />);
     await screen.findByLabelText(/your location/i);
     expect(screen.queryByText(/also request \(by message\)/i)).toBeNull();
     expect(screen.queryByLabelText(/area weather/i)).toBeNull();
@@ -89,7 +98,7 @@ describe('CatalogBuilderPanel', () => {
   // sibling CatalogRequestPanel already has both).
   it('dismisses on Escape', async () => {
     const onClose = vi.fn();
-    render(<CatalogBuilderPanel onClose={onClose} />);
+    renderPanel(<CatalogBuilderPanel onClose={onClose} />);
     await screen.findByLabelText(/your location/i);
     fireEvent.keyDown(screen.getByRole('dialog', { name: /find a gateway/i }), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -97,7 +106,7 @@ describe('CatalogBuilderPanel', () => {
 
   it('dismisses on backdrop (overlay) click', async () => {
     const onClose = vi.fn();
-    render(<CatalogBuilderPanel onClose={onClose} />);
+    renderPanel(<CatalogBuilderPanel onClose={onClose} />);
     await screen.findByLabelText(/your location/i);
     fireEvent.click(screen.getByTestId('catalog-builder-overlay'));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -105,9 +114,54 @@ describe('CatalogBuilderPanel', () => {
 
   it('does NOT dismiss when clicking inside the panel body', async () => {
     const onClose = vi.fn();
-    render(<CatalogBuilderPanel onClose={onClose} />);
+    renderPanel(<CatalogBuilderPanel onClose={onClose} />);
     fireEvent.click(await screen.findByLabelText(/your location/i));
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  // tuxlink-dqte: the ★ in the results was shipped as a disabled forward hook
+  // (gated on CF's favorite_upsert landing). favorite_upsert HAS landed, but the
+  // production parent never wired onAddFavorite, so the ★ was permanently
+  // disabled and "favorites from the station lookup don't work." Clicking ★ must
+  // persist the gateway AND star it (the store's star-to-promote model: a bare
+  // upsert is an unstarred "recent"), so it lands in the Favorites tab.
+  it('★ adds the gateway as a STARRED favorite: favorite_upsert → favorite_star (tuxlink-dqte)', async () => {
+    const gateway = {
+      channel: 'CHAN-1', callsign: 'W6ABC', sysopName: null, grid: 'CN87',
+      location: null, frequenciesKhz: [14105], lastUpdate: null, email: null, homepage: null,
+    };
+    const listing = {
+      mode: 'vara-hf', title: null, gateways: [gateway], raw: '', parsedOk: true, fetchedAtMs: null,
+    };
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { grid: 'DM43bp' };
+      if (cmd === 'catalog_fetch_stations') return [listing];
+      // favorite_upsert returns the STORED record (server-assigned id); the
+      // handler stars THAT id. A fixed record is enough — the call args are
+      // asserted via toHaveBeenCalledWith below, not via this return value.
+      if (cmd === 'favorite_upsert') {
+        return { id: 'fav-1', mode: 'vara-hf', gateway: 'W6ABC', starred: false, created_at: 'now', updated_at: 'now' };
+      }
+      return undefined;
+    });
+
+    renderPanel(<CatalogBuilderPanel onClose={() => {}} />);
+    fireEvent.click(await screen.findByLabelText(/VARA HF/i));
+    fireEvent.click(screen.getByRole('button', { name: /get stations/i }));
+
+    const star = await screen.findByRole('button', { name: /add W6ABC to vara-hf favorites/i });
+    expect(star).toBeEnabled();
+    fireEvent.click(star);
+
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+        'favorite_upsert',
+        expect.objectContaining({
+          favorite: expect.objectContaining({ mode: 'vara-hf', gateway: 'W6ABC' }),
+        }),
+      );
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('favorite_star', { id: 'fav-1', starred: true });
+    });
   });
 });
 

@@ -26,8 +26,10 @@ function installMatchMedia(initialMatches: boolean) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('useViewport', () => {
-  it('exports the canonical compact media query string (strictly below the 1366px desktop floor)', () => {
-    expect(COMPACT_MEDIA_QUERY).toBe('(max-width: 1365px)');
+  it('exports the canonical compact media query string (strictly below the 1366px desktop floor, gated on a touch pointer)', () => {
+    // tuxlink-mt73: gated on `any-pointer: coarse` so a narrow desktop window
+    // (the 1100px Compose webview) does not enter FZ-M1 touch mode.
+    expect(COMPACT_MEDIA_QUERY).toBe('(max-width: 1365px) and (any-pointer: coarse)');
   });
 
   it('reports compact=true when the media query matches at mount', () => {

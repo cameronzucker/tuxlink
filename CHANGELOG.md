@@ -16,6 +16,18 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.40.0](https://github.com/cameronzucker/tuxlink/compare/v0.39.3...v0.40.0) (2026-06-09)
+
+
+### Features
+
+* **mailbox:** add in-message find ([58282ba](https://github.com/cameronzucker/tuxlink/commit/58282ba9256a44c9bb554736d980dde0bd769f0b))
+
+
+### Bug Fixes
+
+* **compose:** gate FZ-M1 compact mode on a touch pointer, not viewport width alone ([fabc408](https://github.com/cameronzucker/tuxlink/commit/fabc408a940a5badf0c1e8008993e14d7bb23e8f))
+
 ## [0.39.3](https://github.com/cameronzucker/tuxlink/compare/v0.39.2...v0.39.3) (2026-06-09)
 
 

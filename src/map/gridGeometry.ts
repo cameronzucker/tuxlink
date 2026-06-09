@@ -17,6 +17,12 @@ export enum GridLevel {
   Field = 'field',
   /** 2°×1° squares, labelled by the 4-char field+square prefix (e.g. `JJ00`). */
   Square = 'square',
+  /**
+   * 5′×2.5′ subsquares, labelled by the full 6-char locator (e.g. `JJ00aa`).
+   * Used in the high-zoom band (z9-13) the LAN tile layer unlocks — without it
+   * a single coarse square would span the whole z14 view.
+   */
+  Subsquare = 'subsquare',
 }
 
 export interface GridBounds {
@@ -44,7 +50,37 @@ export interface GridLinesResult {
 const STEPS: Record<GridLevel, { lon: number; lat: number }> = {
   [GridLevel.Field]: { lon: 20, lat: 10 },
   [GridLevel.Square]: { lon: 2, lat: 1 },
+  // Subsquare cells are 5′ lon × 2.5′ lat.
+  [GridLevel.Subsquare]: { lon: 5 / 60, lat: 2.5 / 60 },
 };
+
+/** Locator-prefix length (chars) per grid level. */
+const LABEL_PREFIX: Record<GridLevel, number> = {
+  [GridLevel.Field]: 2,
+  [GridLevel.Square]: 4,
+  [GridLevel.Subsquare]: 6,
+};
+
+/**
+ * Grid granularity for a map zoom across the FULL offline+LAN zoom range.
+ *
+ * z0-2 stay at Field and z3 stays at Square — UNCHANGED legacy behavior so the
+ * offline raster substrate (maxZoom 2) and the low LAN band look exactly as
+ * before. The validated LAN tile layer raises maxZoom up to 16, so this fans
+ * the lattice finer as zoom climbs and fades it out entirely (null) at very
+ * high zoom where even subsquare lines would clutter the view:
+ *
+ *   z ≤ 2  → Field      (20°×10°, 2-char)
+ *   z 3-8  → Square     (2°×1°,  4-char)
+ *   z 9-13 → Subsquare  (5′×2.5′, 6-char)
+ *   z ≥ 14 → null       (lattice hidden)
+ */
+export function levelFromZoom(zoom: number): GridLevel | null {
+  if (zoom >= 14) return null;
+  if (zoom >= 9) return GridLevel.Subsquare;
+  if (zoom >= 3) return GridLevel.Square;
+  return GridLevel.Field;
+}
 
 /** Normalize `-0` to `0` so line/label values compare cleanly. */
 function noNegZero(v: number): number {
@@ -83,7 +119,7 @@ function cellStarts(min: number, max: number, step: number): number[] {
 export function gridLines(bounds: GridBounds, level: GridLevel): GridLinesResult {
   const { south, west, north, east } = bounds;
   const step = STEPS[level];
-  const prefix = level === GridLevel.Field ? 2 : 4;
+  const prefix = LABEL_PREFIX[level];
 
   const lonLines = linesInRange(west, east, step.lon);
   const latLines = linesInRange(south, north, step.lat);

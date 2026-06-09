@@ -382,7 +382,7 @@ select.radio-panel-input option {
 
 /* FZ-M1 compact (tuxlink-h7q7 Task 6b): touch targets >=44px + font floors for
    the radio panel interior. Density, not uniform shrink. */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   .radio-panel-close {
     min-width: 44px;
     min-height: 44px;
@@ -408,7 +408,7 @@ select.radio-panel-input option {
 
 /* FZ-M1 compact — Codex post-impl review: native transport radios (~13-16px,
    unpinned). */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   .radio-panel-radio-row input[type='radio'] {
     width: 22px;
     height: 22px;

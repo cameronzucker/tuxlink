@@ -70,3 +70,76 @@ describe('<MessageContextMenu> — Mark read/unread (tuxlink-etxt Task 12)', () 
     expect(screen.queryByRole('menuitem', { name: /mark as (read|unread)/i })).toBeNull();
   });
 });
+
+describe('<MessageContextMenu> — selection mode (tuxlink-l80q)', () => {
+  it('renders an N-messages header, an "acting on N" footer, and both read items', () => {
+    const onSetReadState = vi.fn();
+    render(
+      <MessageContextMenu
+        message={baseMsg}
+        folder="inbox"
+        x={0}
+        y={0}
+        userFolders={[]}
+        selectionCount={3}
+        onSetReadState={onSetReadState}
+        onMoveTo={vi.fn()}
+        onArchive={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('ctx-selection-header')).toHaveTextContent('3 messages');
+    expect(screen.getByTestId('ctx-msg-id')).toHaveTextContent(/acting on 3 selected messages/i);
+    // The single-message subject footer must NOT appear in selection mode.
+    expect(screen.queryByText(baseMsg.subject)).toBeNull();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: /mark as read/i }));
+    expect(onSetReadState).toHaveBeenCalledWith(true);
+    fireEvent.click(screen.getByRole('menuitem', { name: /mark as unread/i }));
+    expect(onSetReadState).toHaveBeenCalledWith(false);
+  });
+
+  it('fires bulk move + archive through the same onMoveTo/onArchive callbacks', () => {
+    const onMoveTo = vi.fn();
+    const onArchive = vi.fn();
+    render(
+      <MessageContextMenu
+        message={baseMsg}
+        folder="inbox"
+        x={0}
+        y={0}
+        userFolders={[]}
+        selectionCount={2}
+        onSetReadState={vi.fn()}
+        onMoveTo={onMoveTo}
+        onArchive={onArchive}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('ctx-move-sent'));
+    expect(onMoveTo).toHaveBeenCalledWith('sent');
+    fireEvent.click(screen.getByTestId('ctx-archive'));
+    expect(onArchive).toHaveBeenCalled();
+  });
+
+  it('single-target mode (no selectionCount) keeps the subject footer and toggle', () => {
+    render(
+      <MessageContextMenu
+        message={{ ...baseMsg, unread: true }}
+        folder="inbox"
+        x={0}
+        y={0}
+        userFolders={[]}
+        onSetReadState={vi.fn()}
+        onMoveTo={vi.fn()}
+        onArchive={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('ctx-selection-header')).toBeNull();
+    expect(screen.getByTestId('ctx-msg-id')).toHaveTextContent(baseMsg.subject);
+    // Single toggle, not two separate items.
+    expect(screen.getByRole('menuitem', { name: /mark as read/i })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /mark as unread/i })).toBeNull();
+  });
+});

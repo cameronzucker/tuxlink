@@ -587,6 +587,27 @@
   font-size: 11px;
   flex: 0 0 auto;
 }
+.layout-b .sidebar .nav-item .icon.folder-indicator {
+  display: grid;
+  place-items: center;
+  height: 14px;
+}
+.layout-b .sidebar .nav-item .icon.folder-indicator::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  box-sizing: border-box;
+}
+.layout-b .sidebar .nav-item.active .icon.folder-indicator::before {
+  background: currentColor;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.layout-b .sidebar .nav-item .icon.folder-indicator[data-has-count="true"]::before {
+  border-color: var(--accent);
+}
 /* Nested-folder twisty (tuxlink-ka3z). The expand/collapse chevron on a parent
    row, and an equal-width spacer on childless rows so icons stay aligned. */
 .layout-b .sidebar .nav-item .folder-twisty,
@@ -752,6 +773,37 @@
 .layout-b .bulk-btn.clear:hover {
   color: var(--text);
   background: var(--accent-soft);
+}
+/* Archive disabled when the current folder is already Archive (tuxlink-l80q). */
+.layout-b .bulk-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.layout-b .bulk-btn:disabled:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+/* The Move ▾ control reuses MoveToButton (.action-btn); align it to the bulk
+ * strip's button styling so it doesn't inherit the reading-pane's only (tuxlink-l80q). */
+.layout-b .message-bulk-bar .action-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.layout-b .message-bulk-bar .action-btn:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.layout-b .message-bulk-bar .action-btn:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
 }
 
 /* Popup menu — Radix renders into a portal, so the selector is global (not

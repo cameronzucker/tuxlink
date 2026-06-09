@@ -419,6 +419,92 @@ describe('<MessageList> — multi-select / selection set (tuxlink-etxt Task 8)',
   });
 });
 
+describe('<MessageList> — selection-aware context menu (tuxlink-l80q)', () => {
+  function ctxProps() {
+    return {
+      onMoveMessage: vi.fn(),
+      onArchiveMessage: vi.fn(),
+      onSetReadState: vi.fn(),
+      onBulkMove: vi.fn(),
+      onBulkArchive: vi.fn(),
+      onBulkSetReadState: vi.fn(),
+      onSelectionChange: vi.fn(),
+    };
+  }
+
+  it('right-click on a SELECTED row → selection-mode menu acting on the whole set', () => {
+    const p = ctxProps();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={() => {}}
+        selectedIds={new Set(['M1', 'M2'])}
+        {...p}
+      />,
+    );
+    fireEvent.contextMenu(screen.getByTestId('message-row-M1'));
+    // Selection-mode header reflects the whole set, not the one clicked row.
+    expect(screen.getByTestId('ctx-selection-header')).toHaveTextContent('2 messages');
+
+    fireEvent.click(screen.getByTestId('ctx-move-sent'));
+    expect(p.onBulkMove).toHaveBeenCalledWith(new Set(['M1', 'M2']), 'sent');
+    expect(p.onMoveMessage).not.toHaveBeenCalled();
+  });
+
+  it('selection-mode Archive + read items drive the bulk handlers', () => {
+    const p = ctxProps();
+    const { rerender } = render(
+      <MessageList folder="inbox" messages={THREE_MSGS} selectedId={null} onSelect={() => {}} selectedIds={new Set(['M1', 'M2'])} {...p} />,
+    );
+    fireEvent.contextMenu(screen.getByTestId('message-row-M2'));
+    fireEvent.click(screen.getByTestId('ctx-archive'));
+    expect(p.onBulkArchive).toHaveBeenCalledWith(new Set(['M1', 'M2']));
+
+    rerender(<MessageList folder="inbox" messages={THREE_MSGS} selectedId={null} onSelect={() => {}} selectedIds={new Set(['M1', 'M2'])} {...p} />);
+    fireEvent.contextMenu(screen.getByTestId('message-row-M2'));
+    fireEvent.click(screen.getByTestId('ctx-set-read'));
+    expect(p.onBulkSetReadState).toHaveBeenCalledWith(new Set(['M1', 'M2']), true);
+  });
+
+  it('right-click on an UNSELECTED row → resets selection and acts single-target', () => {
+    const p = ctxProps();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={() => {}}
+        selectedIds={new Set(['M1', 'M2'])}
+        {...p}
+      />,
+    );
+    // M3 is NOT in the selection.
+    fireEvent.contextMenu(screen.getByTestId('message-row-M3'));
+    // Selection resets to the clicked row (OS convention) and the menu is
+    // single-target — the prior M1/M2 selection is abandoned.
+    expect(p.onSelectionChange).toHaveBeenCalledWith(new Set(['M3']));
+    expect(screen.queryByTestId('ctx-selection-header')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('ctx-move-sent'));
+    expect(p.onMoveMessage).toHaveBeenCalledWith('M3', 'inbox', 'sent');
+    expect(p.onBulkMove).not.toHaveBeenCalled();
+  });
+
+  it('right-click with no selection → single-target, no reset call', () => {
+    const p = ctxProps();
+    render(
+      <MessageList folder="inbox" messages={THREE_MSGS} selectedId={null} onSelect={() => {}} selectedIds={new Set()} {...p} />,
+    );
+    fireEvent.contextMenu(screen.getByTestId('message-row-M2'));
+    expect(screen.queryByTestId('ctx-selection-header')).toBeNull();
+    fireEvent.click(screen.getByTestId('ctx-archive'));
+    expect(p.onArchiveMessage).toHaveBeenCalledWith('M2', 'inbox');
+    expect(p.onBulkArchive).not.toHaveBeenCalled();
+  });
+});
+
 describe('<MessageList> — sort wiring (tuxlink-2x0l)', () => {
   it('omits the sort header when onSortStateChange is absent and selection is empty', () => {
     render(<MessageList folder="inbox" messages={[meta()]} selectedId={null} onSelect={() => {}} />);

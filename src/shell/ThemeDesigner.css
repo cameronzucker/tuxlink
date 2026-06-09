@@ -231,7 +231,7 @@
  * vertical bulk where avoidable (group padding tightens 14->12 to offset the
  * taller 44px rows). Additive + scoped: desktop (>=1366px) is byte-identical.
  * The shared DRY close-button rule lives in SettingsPanel.css. */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* PRIMARY TARGET: the color swatch (x24 instances, most-tapped control) goes
    * from 36x28 to a full 44x44 hit area. */
   .tux-theme-designer-color {
