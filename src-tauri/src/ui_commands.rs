@@ -2097,16 +2097,29 @@ pub async fn cms_connect(
     // id. The frontend stale-filter keys on this AttemptId (Codex #2).
     let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
 
+    // tuxlink-bsiy connect-path staleness fix: build the selection context — which
+    // makes `native_connect` prompt the operator — from the FRESH on-disk
+    // preference read into `cfg` above (`config::read_config()`), NOT the backend's
+    // in-memory `live_config`. `config_set_review_inbound` refreshes `live_config`
+    // only when the backend is already installed, so a preference enabled during
+    // startup would otherwise be ignored at the next connect. Preference off ⇒ no
+    // context ⇒ accept-all (the WLE-parity default).
+    let selection = if cfg.review_inbound_before_download {
+        Some(crate::winlink_backend::CmsSelectionContext {
+            sink: events_sink.clone(),
+            attempt_id,
+            registry: registry.inner().clone(),
+        })
+    } else {
+        None
+    };
+
     match backend
         .connect(
             TransportConfig::Cms {
                 mode: cfg.connect.transport,
             },
-            Some(crate::winlink_backend::CmsSelectionContext {
-                sink: events_sink.clone(),
-                attempt_id,
-                registry: registry.inner().clone(),
-            }),
+            selection,
         )
         .await
     {
