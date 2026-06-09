@@ -89,7 +89,11 @@ pub enum FetchError {
 
 /// MIME type of a fetched tile, derived from the validated magic bytes (NOT
 /// from the upstream `Content-Type`, which is not trusted).
-fn image_mime_from_magic(bytes: &[u8]) -> Option<&'static str> {
+///
+/// `pub(crate)` so the cache layer reuses the SAME magic check when deciding
+/// whether a byte slice is cacheable (cache-only-good, §8.4) — a single source
+/// of truth for "is this a real image."
+pub(crate) fn image_mime_from_magic(bytes: &[u8]) -> Option<&'static str> {
     // PNG: 89 50 4E 47 0D 0A 1A 0A
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
     // JPEG: FF D8 FF
