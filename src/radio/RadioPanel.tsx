@@ -26,12 +26,18 @@ export interface RadioPanelProps {
   sub?: string;
   /** Called when the operator clicks the close button. */
   onClose: () => void;
+  /**
+   * tuxlink-6jpf: RF dial modes (ARDOP / Packet / VARA) pass this to surface a
+   * "Find a gateway" affordance in the panel chrome — the station finder is
+   * needed at connect time, in the panel. Telnet (fixed CMS host) omits it.
+   */
+  onFindGateway?: () => void;
   /** Mode-specific section content. */
   children: ReactNode;
 }
 
 export function RadioPanel({
-  mode, state = 'disconnected', sub, onClose, children,
+  mode, state = 'disconnected', sub, onClose, onFindGateway, children,
 }: RadioPanelProps) {
   return (
     <aside className="radio-panel" data-testid="radio-panel-root">
@@ -56,6 +62,17 @@ export function RadioPanel({
         </button>
       </header>
       <div className="radio-panel-body">
+        {onFindGateway && (
+          <button
+            type="button"
+            className="radio-panel-find-gateway"
+            data-testid="radio-panel-find-gateway"
+            onClick={onFindGateway}
+            title="Find a gateway near you"
+          >
+            🛰 Find a gateway…
+          </button>
+        )}
         {children}
       </div>
     </aside>

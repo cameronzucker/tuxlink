@@ -115,6 +115,27 @@
   min-width: 0;
 }
 
+/* tuxlink-6jpf: "Find a gateway" affordance at the top of the panel body for RF
+   dial modes (ARDOP / Packet / VARA). Compact, auto-width (no stretched full-
+   width), tinted with the modem-accent family to read as part of the panel
+   chrome rather than a generic button. */
+.radio-panel-find-gateway {
+  align-self: flex-start;
+  margin: 0 0 10px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  background: var(--modem-accent-soft);
+  color: var(--modem-accent);
+  border: 1px solid color-mix(in srgb, var(--modem-accent) 35%, transparent);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.radio-panel-find-gateway:hover {
+  background: color-mix(in srgb, var(--modem-accent) 18%, transparent);
+  border-color: var(--modem-accent);
+}
+
 /* Section primitive — used by mode panels and shared sections. The
    `min-width: 0` + `box-sizing: border-box` pair is operator-smoke load-
    bearing: without it, a wide child (a long status line, a long stats

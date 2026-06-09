@@ -1049,6 +1049,7 @@ export function AppShell() {
               intent={radioPanelMode.intent}
               baseCall={statusData.callsign}
               onClose={closeRadioPanel}
+              onFindGateway={() => setCatalogBuilderOpen(true)}
             />
           </Suspense>
         )}
@@ -1056,6 +1057,7 @@ export function AppShell() {
           <Suspense fallback={null}>
             <ArdopRadioPanel
               onClose={closeRadioPanel}
+              onFindGateway={() => setCatalogBuilderOpen(true)}
             />
           </Suspense>
         )}
@@ -1065,6 +1067,7 @@ export function AppShell() {
               <VaraRadioPanel
                 mode={radioPanelMode}
                 onClose={closeRadioPanel}
+                onFindGateway={() => setCatalogBuilderOpen(true)}
               />
             </Suspense>
           )}

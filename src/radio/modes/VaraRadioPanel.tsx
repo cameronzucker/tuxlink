@@ -50,6 +50,8 @@ interface PlatformInfoDto {
 export interface VaraRadioPanelProps {
   mode: RadioPanelMode;
   onClose: () => void;
+  /** tuxlink-6jpf: open the station finder ("Find a gateway") from the panel. */
+  onFindGateway?: () => void;
 }
 
 /** Documented bandwidth presets. The selector lets the operator pick one of
@@ -75,7 +77,7 @@ function mapVaraStateToPanelState(s: VaraStatusDto['state']): RadioPanelState {
   }
 }
 
-export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
+export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelProps) {
   const { config, setConfig } = useVaraConfig();
   const [status, setStatus] = useState<VaraStatusDto>({
     state: 'closed',
@@ -274,6 +276,7 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
       state={mapVaraStateToPanelState(status.state)}
       sub={headerSub}
       onClose={onClose}
+      onFindGateway={onFindGateway}
     >
       {platformBlocked && (
         <p

@@ -65,7 +65,8 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:message:archive': h.archive(); return;
     case 'menu:message:print': h.print(); return;
     case 'menu:message:catalog_request': h.openCatalogRequest(); return;
-    case 'menu:message:catalog_builder': h.openCatalogBuilder(); return;
+    // tuxlink-6jpf: "Find a Gateway" relocated from Message → Tools.
+    case 'menu:tools:find_gateway': h.openCatalogBuilder(); return;
     case 'menu:message:grib_request': h.openGribRequest(); return;
     case 'menu:view:status_bar': h.toggleStatusBar(); return;
     case 'menu:view:radio_panel': h.toggleRadioPanel(); return;

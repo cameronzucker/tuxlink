@@ -1,7 +1,12 @@
-// Catalog Request Builder — location-aware station finder (bd-tuxlink-a2gd).
+// Find a Gateway — location-aware station finder (bd-tuxlink-a2gd).
 // Inline overlay panel (no pop-up window): a form column + a distance-sorted results column.
-// Stations come from the direct HTTPS poll (catalog_fetch_stations); info categories the listing
-// endpoint can't serve are queued as in-band INQUIRY messages via the existing rails.
+// Stations come from the direct HTTPS poll (catalog_fetch_stations); when the listing endpoint
+// can't serve a mode, the station list is requestable by in-band message instead.
+//
+// tuxlink-6jpf: the by-message INFO-category requests (area weather / propagation / winlink info)
+// that previously lived here have moved to Message → Catalog Request, which already lists the full
+// bundled catalog (those entries — US.ALL, AUR_TONIGHT, INQUIRIES — are in it). This panel is now
+// the station finder only.
 
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -27,14 +32,6 @@ const MODE_INQUIRY_FILENAME: Record<ListingMode, string> = {
   'robust-packet': 'PUB_ROBUST',
 };
 
-// v1 info categories the listing endpoint can't serve (filenames from the bundled catalog).
-// Only 3 ⇒ always ≤ the WLE 10-filenames-per-inquiry cap by construction (no slice needed).
-const INFO_CATEGORIES: { id: string; label: string; filename: string }[] = [
-  { id: 'area-weather', label: 'Area weather', filename: 'US.ALL' }, // WX_US|US.ALL
-  { id: 'propagation', label: 'Propagation', filename: 'AUR_TONIGHT' }, // AURORA|AUR_TONIGHT
-  { id: 'winlink-info', label: 'Winlink info', filename: 'INQUIRIES' }, // WL2K_HELP|INQUIRIES
-];
-
 type QueueState =
   | { kind: 'idle' }
   | { kind: 'sending' }
@@ -45,7 +42,6 @@ export function CatalogBuilderPanel({ onClose }: CatalogBuilderPanelProps) {
   const [grid, setGrid] = useState('');
   const [modes, setModes] = useState<Set<ListingMode>>(new Set());
   const [radiusMi, setRadiusMi] = useState(DEFAULT_RADIUS_MI);
-  const [infoCats, setInfoCats] = useState<Set<string>>(new Set());
   const [queueState, setQueueState] = useState<QueueState>({ kind: 'idle' });
   const stations = useStations();
 
@@ -76,26 +72,7 @@ export function CatalogBuilderPanel({ onClose }: CatalogBuilderPanelProps) {
       return next;
     });
 
-  const toggleCat = (id: string) =>
-    setInfoCats((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-
   const onGetStations = () => stations.fetch([...modes]);
-
-  const onQueueInfo = async () => {
-    const filenames = INFO_CATEGORIES.filter((c) => infoCats.has(c.id)).map((c) => c.filename);
-    if (filenames.length === 0) return;
-    setQueueState({ kind: 'sending' });
-    try {
-      await sendCatalogInquiry(filenames);
-      setQueueState({ kind: 'done', count: filenames.length });
-    } catch (e) {
-      setQueueState({ kind: 'error', message: catalogErrorMessage(e) });
-    }
-  };
 
   // Direct-poll failed → offer the station list by in-band message (PUB_<mode> inquiry).
   const onRequestStationsByMessage = async () => {
@@ -168,16 +145,6 @@ export function CatalogBuilderPanel({ onClose }: CatalogBuilderPanelProps) {
               <output>{radiusMi} mi</output>
             </label>
 
-            <fieldset className="catalog-field">
-              <legend>Also request (by message)</legend>
-              {INFO_CATEGORIES.map((c) => (
-                <label key={c.id} className="catalog-check">
-                  <input type="checkbox" aria-label={c.label} checked={infoCats.has(c.id)} onChange={() => toggleCat(c.id)} />
-                  {c.label}
-                </label>
-              ))}
-            </fieldset>
-
             <button type="submit" className="catalog-builder__go" disabled={modes.size === 0 || stations.loading}>
               {stations.loading ? 'Fetching…' : 'Get stations →'}
             </button>
@@ -194,13 +161,8 @@ export function CatalogBuilderPanel({ onClose }: CatalogBuilderPanelProps) {
           </div>
         </div>
 
-        {(infoCats.size > 0 || queueState.kind !== 'idle') && (
+        {queueState.kind !== 'idle' && (
           <footer className="catalog-builder__footer">
-            {infoCats.size > 0 && (
-              <button type="button" onClick={onQueueInfo} disabled={queueState.kind === 'sending'}>
-                Queue {infoCats.size} request{infoCats.size > 1 ? 's' : ''}
-              </button>
-            )}
             {queueState.kind === 'sending' && <p className="catalog-builder__confirm">Queuing…</p>}
             {queueState.kind === 'done' && (
               <p className="catalog-builder__confirm">

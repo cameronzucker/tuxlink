@@ -51,9 +51,11 @@ export interface PacketRadioPanelProps {
   baseCall: string;
   /** Called when the operator closes the panel. */
   onClose: () => void;
+  /** tuxlink-6jpf: open the station finder ("Find a gateway") from the panel. */
+  onFindGateway?: () => void;
 }
 
-export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanelProps) {
+export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: PacketRadioPanelProps) {
   const [config, setConfig] = useState<PacketConfigDto | null>(null);
   const [target, setTarget] = useState('');
   const [relays, setRelays] = useState<string[]>([]);
@@ -235,6 +237,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
       state="disconnected"
       sub={headerSub}
       onClose={onClose}
+      onFindGateway={onFindGateway}
     >
       <ModemLinkSection
         kind={

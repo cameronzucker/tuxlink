@@ -52,14 +52,17 @@ describe('CatalogBuilderPanel', () => {
     });
   });
 
-  it('queues info-category requests via catalog_send_inquiry and confirms', async () => {
+  // tuxlink-6jpf: the by-message INFO-category requests (area weather / propagation
+  // / winlink info) moved to Message → Catalog Request (which already lists the full
+  // bundled catalog). Find a Gateway is now the station finder only — those
+  // checkboxes must not appear here.
+  it('does NOT render the info-category (by-message) requests — moved to Catalog Request (tuxlink-6jpf)', async () => {
     render(<CatalogBuilderPanel onClose={() => {}} />);
-    fireEvent.click(await screen.findByLabelText(/area weather/i));
-    fireEvent.click(screen.getByRole('button', { name: /queue 1 request/i }));
-    await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith('catalog_send_inquiry', { filenames: expect.any(Array) }),
-    );
-    expect(await screen.findByText(/arrive in your inbox after the next connect/i)).toBeTruthy();
+    await screen.findByLabelText(/your location/i);
+    expect(screen.queryByText(/also request \(by message\)/i)).toBeNull();
+    expect(screen.queryByLabelText(/area weather/i)).toBeNull();
+    expect(screen.queryByLabelText(/propagation/i)).toBeNull();
+    expect(screen.queryByLabelText(/winlink info/i)).toBeNull();
   });
 
   // tuxlink-29zx: the panel shipped with only the × button to dismiss — no
