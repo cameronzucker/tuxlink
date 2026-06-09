@@ -132,6 +132,11 @@ export interface MessageRowProps {
   /// message so the parent can position a context menu at the cursor.
   /// Absent → browser default context menu (no overlay rendered).
   onContextMenu?: (e: React.MouseEvent, message: MessageMeta) => void;
+  /// U-key read/unread toggle (tuxlink-etxt Task 13). Called with the message
+  /// id, the source folder, and the target read value (true = mark read,
+  /// false = mark unread). Optional — no-op when absent so direct MessageRow
+  /// render tests don't need to supply it.
+  onRowSetReadState?: (id: string, folder: MailboxFolderRef, read: boolean) => void;
 }
 
 /// Custom DataTransfer MIME for tuxlink message drags (tuxlink-ejph). The
@@ -144,7 +149,7 @@ export const TUXLINK_DRAG_MIME = 'application/x-tuxlink-message';
 /// tuxlink-sndh: wrapped in React.memo so a parent re-render (e.g. modem-status
 /// tick, search keystroke, status poll) doesn't repaint every virtuoso row.
 /// Effective only when callers stabilize callback props with useCallback.
-export const MessageRow = memo(function MessageRow({ message, folder, isOpen, inSelection, onRowClick, onSelect, matchHighlight, showFolderTag, onContextMenu }: MessageRowProps) {
+export const MessageRow = memo(function MessageRow({ message, folder, isOpen, inSelection, onRowClick, onSelect, matchHighlight, showFolderTag, onContextMenu, onRowSetReadState }: MessageRowProps) {
   // tuxlink-sndh: memoize per-row derived data so it's reused across renders
   // when the row's own props haven't changed.
   const size = useMemo(() => formatSize(message.bodySize), [message.bodySize]);
@@ -193,6 +198,9 @@ export const MessageRow = memo(function MessageRow({ message, folder, isOpen, in
         } else if (e.key === ' ') {
           e.preventDefault();
           onRowClick(message.id, { ctrl: true, shift: false });  // Space toggles selection (grid/listbox semantic)
+        } else if (e.key === 'u' || e.key === 'U') {
+          e.preventDefault();
+          onRowSetReadState?.(message.id, srcFolder as MailboxFolderRef, message.unread);
         }
       }}
       draggable
@@ -422,6 +430,7 @@ export function MessageList({
                 matchHighlight={matchHighlights?.[msg.id]}
                 showFolderTag={showFolderTag}
                 onContextMenu={rowContextMenu}
+                onRowSetReadState={onSetReadState}
               />
             )}
           />

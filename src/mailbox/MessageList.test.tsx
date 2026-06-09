@@ -494,3 +494,55 @@ describe('<MessageList> — bulk bar (tuxlink-etxt Task 10)', () => {
     expect(screen.getByTestId('message-list-sort-trigger')).toBeInTheDocument();
   });
 });
+
+// M1 is unread in this fixture so pressing U should flip to read=true.
+const M1_UNREAD = meta({ id: 'M1', date: '2026-06-03T10:00:00Z', unread: true });
+const M2_READ = meta({ id: 'M2', date: '2026-06-02T10:00:00Z', unread: false });
+const TWO_MSGS = [M1_UNREAD, M2_READ];
+
+describe('<MessageList> — U keyboard shortcut (tuxlink-etxt Task 13)', () => {
+  it('U toggles the focused message read-state (unread → read=true)', () => {
+    const onSetReadState = vi.fn();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={TWO_MSGS}
+        selectedId={null}
+        onSelect={() => {}}
+        onSetReadState={onSetReadState}
+      />,
+    );
+    fireEvent.keyDown(screen.getByTestId('message-row-M1'), { key: 'u' });
+    expect(onSetReadState).toHaveBeenCalledWith('M1', expect.any(String), true);
+  });
+
+  it('U on a read message marks it unread (read → read=false)', () => {
+    const onSetReadState = vi.fn();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={TWO_MSGS}
+        selectedId={null}
+        onSelect={() => {}}
+        onSetReadState={onSetReadState}
+      />,
+    );
+    fireEvent.keyDown(screen.getByTestId('message-row-M2'), { key: 'u' });
+    expect(onSetReadState).toHaveBeenCalledWith('M2', expect.any(String), false);
+  });
+
+  it('uppercase U also works', () => {
+    const onSetReadState = vi.fn();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={TWO_MSGS}
+        selectedId={null}
+        onSelect={() => {}}
+        onSetReadState={onSetReadState}
+      />,
+    );
+    fireEvent.keyDown(screen.getByTestId('message-row-M1'), { key: 'U' });
+    expect(onSetReadState).toHaveBeenCalledWith('M1', expect.any(String), true);
+  });
+});
