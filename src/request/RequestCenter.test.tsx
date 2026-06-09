@@ -78,11 +78,9 @@ describe('<RequestCenter>', () => {
   // --- Adrev #3: single catalog-load owner; shell renders loading/empty/error states ---
 
   it('renders a loading placeholder while the catalog fetches', () => {
-    vi.mocked(invoke).mockImplementation((cmd: string) => {
-      if (cmd === 'config_read') return Promise.resolve({ grid: 'CN87' });
-      // catalog_list never resolves → stay in loading.
-      return new Promise(() => {});
-    });
+    // Both calls return never-resolving promises so NO deferred setState fires
+    // after the synchronous assertion (would warn "not wrapped in act(...)").
+    vi.mocked(invoke).mockImplementation(() => new Promise(() => {}));
     render(<RequestCenter onClose={() => {}} />);
     expect(screen.getByTestId('request-catalog-loading')).toBeInTheDocument();
   });
@@ -95,6 +93,10 @@ describe('<RequestCenter>', () => {
     });
     render(<RequestCenter onClose={() => {}} />);
     expect(await screen.findByTestId('request-catalog-empty')).toBeInTheDocument();
+    // Mutual exclusion: empty state must not coexist with home cards/sections
+    // (guards the `entries.length > 0` home clause against a future drop).
+    expect(screen.queryAllByTestId(/^request-card-/)).toHaveLength(0);
+    expect(document.querySelector('.request-sections')).toBeNull();
   });
 
   it('renders an error message (no crash) when catalog_list rejects', async () => {
@@ -108,6 +110,21 @@ describe('<RequestCenter>', () => {
     expect(err).toHaveTextContent('catalog backend offline');
     // Dialog still renders — no crash.
     expect(screen.getByRole('dialog', { name: 'Request Center' })).toBeInTheDocument();
+    // Mutual exclusion: error state must not coexist with home cards/sections
+    // (guards the `!error` home clause against a future drop).
+    expect(screen.queryAllByTestId(/^request-card-/)).toHaveLength(0);
+    expect(document.querySelector('.request-sections')).toBeNull();
+  });
+
+  // --- initialView routing: grib seam renders its placeholder, not home ---
+
+  it('initialView="grib" renders the grib placeholder and not the home sections', async () => {
+    mockHappy();
+    render(<RequestCenter onClose={() => {}} initialView="grib" />);
+    expect(await screen.findByTestId('request-grib')).toBeInTheDocument();
+    // Home sections must not render in the grib view.
+    expect(document.querySelector('.request-sections')).toBeNull();
+    expect(screen.queryAllByTestId(/^request-card-/)).toHaveLength(0);
   });
 
   // --- Adrev #9: config_read failure path → neutral location chip, never "Near null" ---
@@ -147,7 +164,7 @@ describe('<RequestCenter>', () => {
 
 const C2_ENTRIES: CatalogEntry[] = [
   // WA state forecast (non-tabular preferred by bestStateForecast).
-  entry('WX_US_WA', 'WA_FOR_SEW', 'State Forecast for Washington', 4096),
+  entry('WX_US_WA', 'WA_FOR_WA', 'State Forecast for Washington', 4096),
   // The four NATIONAL filenames in their categories.
   entry('PROPAGATION', 'PROP_3DAY', '3-Day Propagation Forecast', 800),
   entry('PROPAGATION', 'PROP_WWV', 'Daily WWV Solar Flux summary', 621),
@@ -169,9 +186,9 @@ function mockC2(grid: string | null = 'CN87') {
   });
 }
 
-// Click the add control inside a card identified by its label.
-function clickCardAdd(label: string) {
-  const card = screen.getByTestId(`request-card-${label}`);
+// Click the add control inside a card identified by its stable id.
+function clickCardAdd(id: string) {
+  const card = screen.getByTestId(`request-card-${id}`);
   fireEvent.click(within(card).getByRole('button', { name: /add|open/i }));
 }
 
@@ -183,22 +200,25 @@ describe('<RequestCenter> — C2 sections & cards', () => {
   it('Weather: "State forecast" card adds the WA state-forecast cms item', async () => {
     mockC2('CN87');
     render(<RequestCenter onClose={() => {}} />);
-    const card = await screen.findByTestId('request-card-State forecast');
+    const card = await screen.findByTestId('request-card-wx-state-forecast');
     expect(card).toBeInTheDocument();
+    // Verify the visible label copy.
+    expect(within(card).getByText('State forecast')).toBeInTheDocument();
 
-    clickCardAdd('State forecast');
+    clickCardAdd('wx-state-forecast');
 
-    const item = await screen.findByTestId('basket-item-cms:WA_FOR_SEW');
+    const item = await screen.findByTestId('basket-item-cms:WA_FOR_WA');
     expect(item).toHaveTextContent('State forecast');
   });
 
   it('Weather: "Marine forecast" card navigates the browse view to WX_EASTPAC without touching the basket', async () => {
     mockC2('CN87');
     render(<RequestCenter onClose={() => {}} />);
-    const card = await screen.findByTestId('request-card-Marine forecast');
+    const card = await screen.findByTestId('request-card-wx-marine-forecast');
     expect(card).toBeInTheDocument();
+    expect(within(card).getByText('Marine forecast')).toBeInTheDocument();
 
-    clickCardAdd('Marine forecast');
+    clickCardAdd('wx-marine-forecast');
 
     const browse = await screen.findByTestId('request-browse');
     expect(browse).toHaveAttribute('data-category', 'WX_EASTPAC');
@@ -213,9 +233,9 @@ describe('<RequestCenter> — C2 sections & cards', () => {
     const cards = within(section).getAllByTestId(/^request-card-/);
     expect(cards).toHaveLength(3);
 
-    clickCardAdd('Propagation forecast');
-    clickCardAdd('Solar-terrestrial');
-    clickCardAdd('Aurora tonight');
+    clickCardAdd('prop-forecast');
+    clickCardAdd('prop-solar');
+    clickCardAdd('prop-aurora');
 
     expect(await screen.findByTestId('basket-item-cms:PROP_3DAY')).toBeInTheDocument();
     expect(screen.getByTestId('basket-item-cms:PROP_WWV')).toBeInTheDocument();
@@ -228,11 +248,11 @@ describe('<RequestCenter> — C2 sections & cards', () => {
     await screen.findByTestId('request-section-nearby');
 
     // Winlink info & how-to → addCms INQUIRIES.
-    clickCardAdd('Winlink info & how-to');
+    clickCardAdd('nearby-winlink-info');
     expect(await screen.findByTestId('basket-item-cms:INQUIRIES')).toBeInTheDocument();
 
     // Public gateway lists → openBrowse WL2K_RMS (navigates, no basket mutation).
-    clickCardAdd('Public gateway lists');
+    clickCardAdd('nearby-gateways');
     const browse = await screen.findByTestId('request-browse');
     expect(browse).toHaveAttribute('data-category', 'WL2K_RMS');
   });
@@ -249,10 +269,10 @@ describe('<RequestCenter> — C2 sections & cards', () => {
     mockC2(null);
     render(<RequestCenter onClose={() => {}} />);
     // National + nearby render regardless of location.
-    expect(await screen.findByTestId('request-card-Propagation forecast')).toBeInTheDocument();
-    expect(screen.getByTestId('request-card-Winlink info & how-to')).toBeInTheDocument();
+    expect(await screen.findByTestId('request-card-prop-forecast')).toBeInTheDocument();
+    expect(screen.getByTestId('request-card-nearby-winlink-info')).toBeInTheDocument();
     // Geo-derived cards omitted when there is no grid.
-    expect(screen.queryByTestId('request-card-State forecast')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('request-card-Marine forecast')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('request-card-wx-state-forecast')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('request-card-wx-marine-forecast')).not.toBeInTheDocument();
   });
 });

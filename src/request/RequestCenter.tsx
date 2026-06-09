@@ -149,9 +149,18 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
             )}
 
             {/* Browse pane — minimal placeholder; the real 3-pane CatalogBrowse
-                replaces this in Task D1. */}
-            {view === 'browse' && (
+                replaces this in Task D1. Gated by the same load-guard prefix as
+                home so D1 (which reads `entries` here) can't render against
+                entries===null. */}
+            {view === 'browse' && !loading && !error && entries && (
               <div data-testid="request-browse" data-category={browseCategory ?? ''} />
+            )}
+
+            {/* GRIB pane — minimal placeholder; the real GRIB request form
+                replaces this in Task D3. Same load-guard prefix as browse/home
+                for symmetry. */}
+            {view === 'grib' && !loading && !error && entries && (
+              <div data-testid="request-grib" />
             )}
 
             {/* Request-first home sections. Home renders only when not loading,
@@ -171,7 +180,7 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
                         <article
                           key={card.id}
                           className="request-card"
-                          data-testid={`request-card-${card.label}`}
+                          data-testid={`request-card-${card.id}`}
                         >
                           <div className="request-card__body">
                             <span className="request-card__label">{card.label}</span>
