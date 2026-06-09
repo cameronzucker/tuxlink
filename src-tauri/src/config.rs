@@ -50,6 +50,29 @@ pub struct Config {
     /// bd: tuxlink-xehu
     #[serde(default)]
     pub telnet_listen: TelnetListenUiConfig,
+    /// Network Post Office relay favorites (additive; empty when absent).
+    /// `#[serde(default)]` migrates old config files that predate this field.
+    /// bd: tuxlink-6c9y.
+    #[serde(default)]
+    pub network_po_favorites: Vec<RelayFavorite>,
+}
+
+/// A saved Network Post Office relay server entry.
+///
+/// Dedup key: `(host case-insensitive, port)`. The `callsign` and `label`
+/// are display/routing metadata only — they do NOT affect the dedup check.
+/// `deny_unknown_fields` is the AMD-11 drift defense for this sub-type too.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelayFavorite {
+    /// Callsign of the relay station (display + B2F login). Non-empty.
+    pub callsign: String,
+    /// Operator-supplied human label (e.g. "Home mesh relay"). May be empty.
+    pub label: String,
+    /// Hostname or IP address. Non-empty. Dedup key (case-insensitive).
+    pub host: String,
+    /// TCP port. Dedup key (exact). Default relay port is 8772.
+    pub port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1236,5 +1259,81 @@ mod tests {
         let cfg: Config = serde_json::from_str(&json)
             .expect("old config without modem_vara must deserialize (migration)");
         assert!(cfg.modem_vara.is_none(), "modem_vara must default to None when absent");
+    }
+
+    // --- tuxlink-6c9y: RelayFavorite persistence + migration tests ---
+
+    // Migration: a Config JSON WITHOUT `network_po_favorites` deserializes
+    // to an empty Vec (proves `#[serde(default)]`). Mirrors
+    // `config_modem_vara_absent_migrates_to_none` above.
+    #[test]
+    fn config_network_po_favorites_absent_migrates_to_empty_vec() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let cfg: Config = serde_json::from_str(&json)
+            .expect("old config without network_po_favorites must deserialize (migration)");
+        assert!(
+            cfg.network_po_favorites.is_empty(),
+            "network_po_favorites must default to empty Vec when absent"
+        );
+    }
+
+    // Round-trip: a Config with one RelayFavorite serializes and deserializes
+    // back equal. Mirrors `vara_ui_config_round_trips_through_serde` above.
+    #[test]
+    fn relay_favorite_round_trips_through_serde() {
+        let fav = RelayFavorite {
+            callsign: "W7AUX".into(),
+            label: "Home mesh relay".into(),
+            host: "192.168.1.100".into(),
+            port: 8772,
+        };
+        let json = serde_json::to_string(&fav).unwrap();
+        let back: RelayFavorite = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, fav);
+    }
+
+    // A full Config round-trip carrying a non-empty network_po_favorites Vec.
+    #[test]
+    fn config_with_network_po_favorites_round_trips() {
+        let fav = RelayFavorite {
+            callsign: "W7AUX".into(),
+            label: "Test relay".into(),
+            host: "relay.local".into(),
+            port: 8772,
+        };
+        let json_in = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }},
+                "network_po_favorites": [{{
+                    "callsign": "W7AUX",
+                    "label": "Test relay",
+                    "host": "relay.local",
+                    "port": 8772
+                }}]
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let cfg: Config = serde_json::from_str(&json_in)
+            .expect("Config with network_po_favorites must deserialize");
+        assert_eq!(cfg.network_po_favorites.len(), 1);
+        assert_eq!(cfg.network_po_favorites[0], fav);
+
+        // Round-trip through serialization.
+        let serialized = serde_json::to_string(&cfg).unwrap();
+        let cfg2: Config = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(cfg2.network_po_favorites, cfg.network_po_favorites);
     }
 }

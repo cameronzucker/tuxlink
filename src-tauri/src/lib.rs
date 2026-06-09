@@ -444,6 +444,11 @@ pub fn run() {
             crate::ui_commands::render_ics309_pdf,            // tuxlink-hnkn P2 Task 2 (ICS-309 PDF export)
             crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
+            // tuxlink-6c9y (Task A7): Network PO relay favorites — persist in config.
+            crate::ui_commands::network_po_favorites_get,
+            crate::ui_commands::network_po_favorites_add,
+            crate::ui_commands::network_po_favorites_remove,
+            crate::ui_commands::network_po_favorites_set,
             // Task 10 (tuxlink-1hu): find-messages search commands
             crate::search::commands::tauri_search_run,
             crate::search::commands::tauri_search_list_saved,

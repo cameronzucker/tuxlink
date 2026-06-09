@@ -181,6 +181,7 @@ pub async fn persist_cms_impl(
         modem_ardop: None,
         modem_vara: None,
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
+        network_po_favorites: Vec::new(),
     };
 
     // Step 4: Create keyring entry handle (needed for rollback in step 7).
@@ -340,6 +341,7 @@ pub async fn persist_offline_impl(
         modem_ardop: None,
         modem_vara: None,
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
+        network_po_favorites: Vec::new(),
     };
 
     // Single atomic write to config.json. No keyring involved.

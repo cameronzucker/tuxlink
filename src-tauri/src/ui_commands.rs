@@ -5192,6 +5192,88 @@ pub(crate) fn validate_cms_host(host: &str) -> Option<&'static str> {
 }
 
 // ============================================================================
+// tuxlink-6c9y — Network Post Office relay favorites (Phase A7)
+// Spec: docs/design/2026-06-08-telnet-post-office-design.md §5.8
+// Plan: docs/superpowers/plans/2026-06-08-telnet-post-office.md Task A7
+// ============================================================================
+
+/// Return the full list of saved Network PO relay favorites.
+///
+/// Read-only; mirrors the `config_set_connect` read path.
+#[tauri::command]
+pub async fn network_po_favorites_get() -> Result<Vec<config::RelayFavorite>, UiError> {
+    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(cfg.network_po_favorites)
+}
+
+/// Add a Network PO relay favorite.
+///
+/// Validation: `host` and `callsign` must be non-empty (trimmed).
+/// Dedup: `(host case-insensitive, port)` — duplicate returns `UiError::Rejected`.
+/// Returns the updated Vec on success.
+/// Mirrors `config_set_connect`'s unguarded read-modify-write convention.
+#[tauri::command]
+pub async fn network_po_favorites_add(
+    favorite: config::RelayFavorite,
+) -> Result<Vec<config::RelayFavorite>, UiError> {
+    if favorite.host.trim().is_empty() {
+        return Err(UiError::Rejected("relay host must not be empty".into()));
+    }
+    if favorite.callsign.trim().is_empty() {
+        return Err(UiError::Rejected("relay callsign must not be empty".into()));
+    }
+    let mut cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    // Check for duplicate (host case-insensitive, port).
+    let is_dup = cfg.network_po_favorites.iter().any(|f| {
+        f.host.eq_ignore_ascii_case(&favorite.host) && f.port == favorite.port
+    });
+    if is_dup {
+        return Err(UiError::Rejected(format!(
+            "a favorite with host '{}' port {} already exists",
+            favorite.host, favorite.port
+        )));
+    }
+    cfg.network_po_favorites.push(favorite);
+    config::write_config_atomic(&cfg)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(cfg.network_po_favorites)
+}
+
+/// Remove the favorite matching `(host case-insensitive, port)`.
+///
+/// Idempotent: no error if no entry matched.
+/// Returns the updated Vec.
+#[tauri::command]
+pub async fn network_po_favorites_remove(
+    host: String,
+    port: u16,
+) -> Result<Vec<config::RelayFavorite>, UiError> {
+    let mut cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.network_po_favorites
+        .retain(|f| !(f.host.eq_ignore_ascii_case(&host) && f.port == port));
+    config::write_config_atomic(&cfg)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(cfg.network_po_favorites)
+}
+
+/// Replace the entire favorites list atomically.
+///
+/// Returns the updated Vec (the same slice passed in, after persisting).
+#[tauri::command]
+pub async fn network_po_favorites_set(
+    favorites: Vec<config::RelayFavorite>,
+) -> Result<Vec<config::RelayFavorite>, UiError> {
+    let mut cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.network_po_favorites = favorites;
+    config::write_config_atomic(&cfg)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(cfg.network_po_favorites)
+}
+
+// ============================================================================
 // tuxlink-0pnb — P2P-Telnet connect + peer-password management (PR 1)
 // Spec: docs/design/2026-06-01-tcp-p2p-telnet-design.md §4.6
 // Plan: 2026-06-01-tcp-p2p-telnet-pr1-client-dial.md Task 4
@@ -6682,6 +6764,7 @@ hw:CARD=Device,DEV=0
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            network_po_favorites: Vec::new(),
         }
     }
 
@@ -6891,6 +6974,7 @@ hw:CARD=Device,DEV=0
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            network_po_favorites: Vec::new(),
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -7144,6 +7228,210 @@ hw:CARD=Device,DEV=0
             validate_cms_host("host\twith\ttabs"),
             Some("CMS host must not contain whitespace")
         );
+    }
+
+    // ========================================================================
+    // tuxlink-6c9y — network_po_favorites commands
+    // ========================================================================
+
+    // Command tests: add, get, duplicate, remove idempotent.
+    // Uses the TUXLINK_CONFIG_DIR + tempdir isolation pattern (same as the
+    // position_set_source / config_set_grid tests above) since these commands
+    // call read_config + write_config_atomic via the process-global config dir.
+
+    #[tokio::test]
+    async fn network_po_favorites_add_then_get_returns_favorite() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+
+        let _env_guard = position_set_source_env_lock().await;
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: single-threaded test (env_lock).
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed).expect("seed config");
+
+        let fav = crate::config::RelayFavorite {
+            callsign: "W7AUX".into(),
+            label: "My relay".into(),
+            host: "relay.local".into(),
+            port: 8772,
+        };
+
+        let add_result = network_po_favorites_add(fav.clone()).await;
+        assert!(add_result.is_ok(), "add must succeed; got {add_result:?}");
+        let added = add_result.unwrap();
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0], fav);
+
+        let get_result = network_po_favorites_get().await;
+        assert!(get_result.is_ok(), "get after add must succeed; got {get_result:?}");
+        assert_eq!(get_result.unwrap(), vec![fav]);
+
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn network_po_favorites_add_duplicate_host_port_returns_rejected() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+
+        let _env_guard = position_set_source_env_lock().await;
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed).expect("seed config");
+
+        let fav = crate::config::RelayFavorite {
+            callsign: "W7AUX".into(),
+            label: "First".into(),
+            host: "Relay.Local".into(), // mixed-case host
+            port: 8772,
+        };
+        let dup = crate::config::RelayFavorite {
+            callsign: "K7XYZ".into(),   // different callsign/label — only host+port matters
+            label: "Dup".into(),
+            host: "relay.local".into(), // same host, different case
+            port: 8772,
+        };
+
+        let _ = network_po_favorites_add(fav).await.expect("first add");
+        let dup_result = network_po_favorites_add(dup).await;
+        assert!(
+            matches!(dup_result, Err(UiError::Rejected(_))),
+            "duplicate (host case-insensitive, port) must return UiError::Rejected; got {dup_result:?}"
+        );
+
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn network_po_favorites_remove_is_idempotent() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+
+        let _env_guard = position_set_source_env_lock().await;
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed).expect("seed config");
+
+        let fav = crate::config::RelayFavorite {
+            callsign: "W7AUX".into(),
+            label: "My relay".into(),
+            host: "relay.local".into(),
+            port: 8772,
+        };
+
+        let _ = network_po_favorites_add(fav).await.expect("add");
+
+        // First remove: should remove the entry and return empty Vec.
+        let remove1 = network_po_favorites_remove("relay.local".into(), 8772).await;
+        assert!(remove1.is_ok(), "first remove must succeed; got {remove1:?}");
+        assert!(remove1.unwrap().is_empty(), "Vec must be empty after remove");
+
+        // Second remove: idempotent — no error, still empty.
+        let remove2 = network_po_favorites_remove("relay.local".into(), 8772).await;
+        assert!(remove2.is_ok(), "second remove must be idempotent; got {remove2:?}");
+        assert!(remove2.unwrap().is_empty(), "Vec remains empty after second remove");
+
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn network_po_favorites_add_rejects_empty_host() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+
+        let _env_guard = position_set_source_env_lock().await;
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed).expect("seed config");
+
+        let bad_host = crate::config::RelayFavorite {
+            callsign: "W7AUX".into(),
+            label: "Test".into(),
+            host: "  ".into(), // whitespace-only → empty after trim
+            port: 8772,
+        };
+        let bad_callsign = crate::config::RelayFavorite {
+            callsign: "  ".into(), // empty callsign
+            label: "Test".into(),
+            host: "relay.local".into(),
+            port: 8772,
+        };
+
+        assert!(
+            matches!(network_po_favorites_add(bad_host).await, Err(UiError::Rejected(_))),
+            "empty host must be Rejected"
+        );
+        assert!(
+            matches!(network_po_favorites_add(bad_callsign).await, Err(UiError::Rejected(_))),
+            "empty callsign must be Rejected"
+        );
+
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
     }
 
     // ========================================================================
@@ -7624,6 +7912,7 @@ hw:CARD=Device,DEV=0
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            network_po_favorites: Vec::new(),
         }
     }
 

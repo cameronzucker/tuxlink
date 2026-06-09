@@ -1808,6 +1808,7 @@ mod tests {
             modem_ardop: None,
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            network_po_favorites: Vec::new(),
         };
         assert!(check_identity_present(&cfg).is_err());
     }
