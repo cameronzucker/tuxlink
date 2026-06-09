@@ -103,84 +103,158 @@ Important details:
 
 ## Post Office
 
-Post Office mode is local store-and-forward through RMS Relay. Instead of
-routing normal CMS mail, a local RMS Relay system acts as a post office
-for a served area or exercise. Operators deposit and retrieve Post Office
-messages from that local server.
+Post Office mode is local store-and-forward through an RMS Relay. An RMS
+Relay is a "post office": a station that accepts mail and holds or
+forwards it on behalf of operators in a served area. Telnet RMS Post
+Office mode connects to that relay over Telnet and deposits mail into the
+relay's **local pool** for local pickup. Mail in the local pool stays at
+the relay; it is never forwarded onto the global Winlink system.
+
+The relay decides whether a session is local or global from the login
+alone. A Telnet RMS Post Office session logs in as **`CALLSIGN-L`** — the
+base callsign with a `-L` suffix. That `-L` suffix is the sole routing
+discriminator: it tells the relay "deposit this in the local pool." A
+session that logs in with the bare base callsign instead gets normal
+routing (see Network Post Office, below).
 
 Use it when:
 
 - A local RMS Relay server is the planned hub for an exercise.
-- The served area wants mail to stay local.
+- The served area wants mail to stay local rather than reach the global
+  Winlink system.
 - Operators are told to send "Post Office messages," not ordinary Winlink
   messages.
 - A hub station is managing pickup and forwarding.
 
 Important details:
 
-- Post Office message type and Post Office session type must match.
-- A Post Office session should not be treated as a normal CMS sync.
-- Gateway paths may look similar to Packet or Telnet paths, but the
-  message pool is different.
-- Tuxlink currently exposes this as a planned operating mode, not a fully
-  shipped alpha path.
+- Local-pool mail is local only. A message deposited through Telnet RMS
+  Post Office is held at the relay for local pickup and is not forwarded
+  globally. Network Post Office is the mode for mail that should route
+  onward (below).
+- A Post Office session is not a normal CMS sync. The relay is the
+  endpoint, not the worldwide Winlink system.
+- The `-L` login is automatic. Tuxlink extracts your base callsign and
+  appends `-L`; the pane shows the resulting login. The Telnet handshake
+  uses a fixed, non-secret value, so the pane has no password field.
+- Tuxlink exposes Telnet RMS Post Office as a built operating mode,
+  selectable in the Connections sidebar. The pane provides relay
+  `host:port` fields, a send-time Outbox selection checklist, and an
+  inbound message-selection prompt. The relay-dial path still needs
+  operator-run validation before operational reliance (see "What Tuxlink
+  exposes," below).
 
 ## Network Post Office
 
-Network Post Office is related to Post Office mode, but it is about a
-network of local Post Office servers that synchronize with each other. It
-is commonly discussed around LAN or AREDN mesh deployments, where several
-servers may share messages without relying on the public internet.
+Network Post Office also connects to an RMS Relay, but the relay does
+**normal routing** rather than local-pool holding. Where Telnet RMS Post
+Office logs in as `CALLSIGN-L` to deposit local-only mail, Network Post
+Office logs in with the **full base callsign**, and the relay forwards the
+mail onward — and can also deliver to recipients reachable on the local
+mesh. This mode targets LAN and AREDN mesh deployments, where a relay is
+reachable but the global CMS is not.
+
+The distinction is the routing axis, not the transport axis. Network Post
+Office mail is ordinary, onward-routed Winlink mail; it differs from
+Winlink (CMS) in that it reaches a mesh-local relay instead of the CMS,
+not in how it is routed once the relay has it.
 
 Use it when:
 
-- A local mesh/LAN plan provides one or more Post Office servers.
-- Operators are told to connect to a Network Post Office service.
-- A served agency needs local mailbox continuity across several sites.
+- A local mesh/LAN plan provides one or more relays for forwarding.
+- A relay is reachable but the global CMS path is not.
+- A served agency needs mailbox continuity across several mesh sites.
 
 Important details:
 
-- Network Post Office and RMS Post Office are close enough to confuse
-  experienced users.
-- Some Network Post Office deployments may accept conventional Winlink
-  messages as well as Post Office messages, depending on server policy.
-- Tuxlink currently exposes this as a planned operating mode, not a fully
-  shipped alpha path.
+- Network Post Office carries normal mail, not local-pool mail. The full
+  base callsign login is what tells the relay to route onward; this is the
+  one detail that separates it from Telnet RMS Post Office.
+- The two modes are close enough to confuse experienced users. The local
+  pool (`-L`) holds mail at the relay; normal routing (full callsign)
+  forwards it.
+- Tuxlink exposes Network Post Office as a built operating mode,
+  selectable in the Connections sidebar. The pane provides a saved relay
+  endpoints list (Network Post Office favorites) of `host:port` entries,
+  plus the same send-time Outbox selection and inbound message-selection
+  controls as Telnet RMS Post Office.
+- Tuxlink locates relays by **manual `host:port`** rather than mesh
+  auto-discovery. Winlink Express auto-discovers mesh relays through a
+  mechanism that rides the OLSR mesh routing protocol. AREDN is replacing
+  OLSR with Babel, and OLSR-based discovery already breaks on Babel-only
+  nodes, so auto-discovery is not durable. Manual `host:port` with saved
+  favorites is explicit and stays correct across that transition.
+- As with Telnet RMS Post Office, the relay-dial path still needs
+  operator-run validation before operational reliance.
 
-## What Tuxlink exposes today
+## How Tuxlink decides routing
+
+Routing in Tuxlink is **determined by the connection you open**, and you
+**select which Outbox messages to send** when you connect. The operating
+mode you pick in the Connections sidebar is the routing decision: opening
+Telnet RMS Post Office means "deposit to the local pool"; opening Network
+Post Office means "route onward through a mesh relay"; opening Winlink
+(CMS) means "send through the global Winlink system." Composing a message
+carries no routing attribute — the compose "Send as" control is a disabled
+stub, present only to signal where Winlink Express puts the choice.
+
+This diverges deliberately from Winlink Express. Winlink Express tags each
+message with a routing pool at **compose time**, then matches that tag
+against the session type at send time. That model is a footgun: a message
+composed for one pool sits silently in the Outbox when the operator opens
+a session for a different pool, and nothing leaves. Tuxlink removes the
+compose-time tag entirely. You open the connection that means what you
+want, then pick which queued messages go on that connection. Nothing is
+silently stranded because nothing is pre-committed to a pool it can only
+leave through one specific session.
+
+The practical consequence: at connect time, each Post Office and Network
+Post Office pane shows a checklist of Outbox messages with select-all and
+select-none. You choose what to send. Connecting with nothing selected is
+valid and supported — receive-only is a primary use, pulling waiting local
+mail without sending anything.
+
+## What Tuxlink exposes
 
 The Connections sidebar is organized by operating mode first, then
-transport. Alpha readiness is intentionally visible: built entries open a
-real panel; planned entries are shown so operators can understand the
-Winlink model without assuming every WLE cell is already shipped.
+transport. Alpha readiness is visible: built entries open a real pane;
+planned entries are shown so operators can understand the Winlink model
+without assuming every Winlink Express cell is already shipped.
 
-| Operating mode | Tuxlink alpha status | Built transports shown today |
+| Operating mode | Tuxlink alpha status | Built transports |
 |---|---|---|
-| Winlink (CMS) | Available | Telnet, Packet, ARDOP HF, VARA HF, VARA FM |
-| Radio-only | Available for current alpha RF panels | ARDOP HF, VARA HF, VARA FM |
-| Peer-to-peer | Available for current alpha panels | Telnet, Packet, VARA HF, VARA FM |
-| Post Office | Planned | None yet |
-| Network Post Office | Planned | None yet |
+| Winlink (CMS) | Built | Telnet, Packet, ARDOP HF, VARA HF, VARA FM |
+| Radio-only | Built for the alpha RF panes | ARDOP HF, VARA HF, VARA FM |
+| Peer-to-peer | Built for the alpha panes | Telnet, Packet, VARA HF, VARA FM |
+| Post Office | Built | Telnet |
+| Network Post Office | Built | Telnet |
 
-Availability means the UI/backend path exists in the alpha build. It does
-not replace the operator's normal validation: on-air RF paths still need
-operator-run testing under the live-radio policy.
+"Built" means the pane and its backend path exist in the alpha build. It
+does not replace the operator's normal validation. On-air RF paths need
+operator-run testing under the live-radio policy. The Post Office and
+Network Post Office panes are selectable and their send-selection controls
+work; the relay-dial path that reaches an RMS Relay over Telnet needs
+operator-run validation before operational reliance.
 
 ## Message pools and the Outbox
 
-The operating mode also controls which queued messages should leave the
-Outbox. Winlink Express distinguishes normal CMS messages, Radio-only
-messages, Post Office messages, and direct peer-to-peer traffic. The
-session type you open determines which pool is eligible to move.
+Winlink Express separates the Outbox into pools — normal CMS messages,
+Radio-only messages, Post Office messages, and direct peer-to-peer traffic
+— and matches a message's pool against the session type at send time. The
+separation prevents sending ordinary CMS mail during a local Post Office
+exercise, or pushing a Radio-only message through a normal CMS session.
+The cost is that a message tagged for one pool is invisible to every other
+session type, and an operator who opens the wrong session sees nothing
+leave.
 
-That separation prevents an operator from accidentally sending ordinary
-CMS mail during a local Post Office exercise, or from trying to push a
-Radio-only message through a normal CMS session.
-
-Tuxlink's alpha UI is still catching up to that full per-message routing
-model. When a non-CMS mode is exposed but Tuxlink has not yet tagged
-outbound drafts for that mode, the backend errs on the conservative side
-and avoids draining ordinary CMS Outbox mail through the wrong path.
+Tuxlink reaches the same goal through connection-determined routing and
+send-time selection rather than per-message pools. The session you open is
+the pool, and the checklist at connect time is the choice of which
+messages move. An operator cannot drain CMS mail through a Post Office
+session by accident, because the Post Office pane only sends the messages
+checked in that session. The Outbox holds one undifferentiated set of
+queued messages; the routing decision lives at the connection, not on the
+message.
 
 ## Practical rule
 
@@ -189,13 +263,15 @@ Pick the operating mode first:
 1. **Need normal Winlink/email routing?** Use Winlink (CMS).
 2. **Need direct station-to-station with no CMS?** Use Peer-to-peer.
 3. **Need Hybrid/RF-only continuity?** Use Radio-only.
-4. **Need a local RMS Relay mailbox for an exercise?** Use Post Office.
-5. **Need LAN/AREDN synchronized post offices?** Use Network Post Office.
+4. **Need local-only mail held at an RMS Relay for an exercise?** Use
+   Telnet RMS Post Office.
+5. **Need onward routing through a LAN/AREDN mesh relay when the CMS is
+   unreachable?** Use Network Post Office.
 
-Then pick the transport that can actually reach the target station today:
-Telnet for local internet, Packet for local VHF/UHF, ARDOP or VARA for
-HF, and the transport your net plan names when operating under a served
-agency procedure.
+Then pick the transport that can reach the target station: Telnet for
+local internet, Packet for local VHF/UHF, ARDOP or VARA for HF, and the
+transport your net plan names when operating under a served agency
+procedure.
 
 ## Where next
 
