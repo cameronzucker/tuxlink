@@ -4,7 +4,7 @@
 // can't serve a mode, the station list is requestable by in-band message instead.
 //
 // tuxlink-6jpf: the by-message INFO-category requests (area weather / propagation / winlink info)
-// that previously lived here have moved to Message → Catalog Request, which already lists the full
+// that previously lived here have moved to Message → Request Center, which already lists the full
 // bundled catalog (those entries — US.ALL, AUR_TONIGHT, INQUIRIES — are in it). This panel is now
 // the station finder only.
 

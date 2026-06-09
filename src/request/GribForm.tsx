@@ -1,8 +1,8 @@
 // GribForm — Saildocs GRIB request form, rendered as a VIEW inside the Request
 // Center's content region (bd-tuxlink-eymu, Task D3).
 //
-// Adapted from GribRequestPanel (src/grib/GribRequestPanel.tsx), which sends a
-// GRIB request immediately. GribForm does NOT send: "Add to request" hands the
+// Adapted from the former standalone GRIB request panel, which sent a GRIB
+// request immediately. GribForm does NOT send: "Add to request" hands the
 // composed `GribRequest` to the parent via `onAddSaildocs`, which turns it into
 // a `saildocs` BasketItem. The actual send happens later from the basket rail
 // (Task E1's dispatchBasket). GribForm therefore makes NO Tauri invoke call.

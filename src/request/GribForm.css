@@ -1,5 +1,5 @@
 /* GribForm — Saildocs GRIB request as a Request Center view (bd-tuxlink-eymu,
- * Task D3). Adapted from GribRequestPanel.css; the overlay/panel chrome is
+ * Task D3). Adapted from the former GRIB request panel's styles; the overlay/panel chrome is
  * dropped (this renders inside the request-content region, which owns scroll).
  * No fixed pixel heights on layout containers — only the map viewport, which
  * legitimately needs a bounded height to render. */

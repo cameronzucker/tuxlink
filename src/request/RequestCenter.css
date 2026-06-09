@@ -1,5 +1,5 @@
 /* Request Center — full-viewport overlay workspace (bd-tuxlink-eymu, Task C1).
- * Mirrors the design-token conventions of CatalogRequestPanel but is a
+ * Mirrors the design-token conventions of the former Catalog Request panel but is a
  * full-screen workspace rather than a centered popover. No backdrop-dismiss.
  *
  * WebKitGTK: use auto / min-height, never fixed pixel heights — fixed heights

@@ -71,10 +71,10 @@ describe('CatalogBuilderPanel', () => {
   });
 
   // tuxlink-6jpf: the by-message INFO-category requests (area weather / propagation
-  // / winlink info) moved to Message → Catalog Request (which already lists the full
+  // / winlink info) moved to Message → Request Center (which already lists the full
   // bundled catalog). Find a Gateway is now the station finder only — those
   // checkboxes must not appear here.
-  it('does NOT render the info-category (by-message) requests — moved to Catalog Request (tuxlink-6jpf)', async () => {
+  it('does NOT render the info-category (by-message) requests — moved to Request Center (tuxlink-6jpf)', async () => {
     render(<CatalogBuilderPanel onClose={() => {}} />);
     await screen.findByLabelText(/your location/i);
     expect(screen.queryByText(/also request \(by message\)/i)).toBeNull();
@@ -85,8 +85,8 @@ describe('CatalogBuilderPanel', () => {
 
   // tuxlink-29zx: the panel shipped with only the × button to dismiss — no
   // backdrop-click and no Escape. Operator smoke: "no way to close it or click
-  // off of it." These codify the two standard modal-dismiss affordances (the
-  // sibling CatalogRequestPanel already has both).
+  // off of it." These codify the two standard modal-dismiss affordances (both
+  // standard for the project's overlay panels).
   it('dismisses on Escape', async () => {
     const onClose = vi.fn();
     render(<CatalogBuilderPanel onClose={onClose} />);

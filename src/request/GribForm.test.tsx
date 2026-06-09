@@ -4,7 +4,7 @@ import { GribForm } from './GribForm';
 import type { GribRequest } from '../grib/types';
 
 // Mock GridMapPicker at the module boundary — assert the box→region WIRING,
-// not Leaflet (mirrors GribRequestPanel.test.tsx). The mock exposes a button
+// not Leaflet (mirrors the former GRIB request panel's test). The mock exposes a button
 // that fires onBoxChange with two signed corners (the NE→SW drag from
 // gribRegion.test.ts case 1).
 vi.mock('../map/GridMapPicker', () => ({

@@ -56,15 +56,9 @@ const ThemeDesigner = lazy(() =>
 const AboutDialog = lazy(() =>
   import('./AboutDialog').then((m) => ({ default: m.AboutDialog })),
 );
-const CatalogRequestPanel = lazy(() =>
-  import('../catalog/CatalogRequestPanel').then((m) => ({ default: m.CatalogRequestPanel })),
-);
 // tuxlink-a2gd: location-aware Catalog Builder (sibling overlay panel, not a main-content view).
 const CatalogBuilderPanel = lazy(() =>
   import('../catalog/CatalogBuilderPanel').then((m) => ({ default: m.CatalogBuilderPanel })),
-);
-const GribRequestPanel = lazy(() =>
-  import('../grib/GribRequestPanel').then((m) => ({ default: m.GribRequestPanel })),
 );
 // tuxlink-eymu: unified Request Center overlay (catalog browse + WLE inquiries
 // + Saildocs GRIB). Replaces the Catalog Request menu item and absorbs GRIB as
@@ -280,15 +274,8 @@ export function AppShell() {
   // Help → Documentation now opens a separate Tauri webview window via
   // help_window_open (tuxlink-0gsy / spec §4); no in-process state.
   const [aboutOpen, setAboutOpen] = useState(false);
-  // Inline Catalog Request panel (tuxlink-ddiq), opened from Message →
-  // Catalog Request. Picks WLE catalog inquiries and queues a request
-  // message in the outbox routed to INQUIRY@winlink.org.
-  const [catalogRequestOpen, setCatalogRequestOpen] = useState(false);
   // tuxlink-a2gd: inline Catalog Builder ("Find a Gateway"), opened from Message → Find a Gateway.
   const [catalogBuilderOpen, setCatalogBuilderOpen] = useState(false);
-  // Inline GRIB request panel (tuxlink-vrpk), opened from Message → GRIB
-  // File Request. Composes a Saildocs request and queues it in the outbox.
-  const [gribRequestOpen, setGribRequestOpen] = useState(false);
   // tuxlink-eymu: Request Center overlay. Carries the initial inner view;
   // null = closed. Opened from Message → Request Center… ('home') and from
   // Message → GRIB File Request… ('grib').
@@ -764,9 +751,7 @@ export function AppShell() {
       // and drives the ReportIssueModal state machine (spec §8.5).
       reportIssueController.start();
     },
-    openCatalogRequest: () => setCatalogRequestOpen(true),
     openCatalogBuilder: () => setCatalogBuilderOpen(true),
-    openGribRequest: () => setGribRequestOpen(true),
     openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage, archiveOpen, reportIssueController]);
@@ -1153,21 +1138,9 @@ export function AppShell() {
         </Suspense>
       )}
 
-      {catalogRequestOpen && (
-        <Suspense fallback={null}>
-          <CatalogRequestPanel onClose={() => setCatalogRequestOpen(false)} />
-        </Suspense>
-      )}
-
       {catalogBuilderOpen && (
         <Suspense fallback={null}>
           <CatalogBuilderPanel onClose={() => setCatalogBuilderOpen(false)} />
-        </Suspense>
-      )}
-
-      {gribRequestOpen && (
-        <Suspense fallback={null}>
-          <GribRequestPanel onClose={() => setGribRequestOpen(false)} />
         </Suspense>
       )}
 

@@ -20,9 +20,7 @@ function handlers(): MenuHandlers {
     openHelp: vi.fn(),
     openLogging: vi.fn(),
     reportIssue: vi.fn(),
-    openCatalogRequest: vi.fn(),
     openCatalogBuilder: vi.fn(),
-    openGribRequest: vi.fn(),
     openRequestCenter: vi.fn(),
     quit: vi.fn(),
   };
@@ -39,7 +37,6 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:tools:find_gateway', h);
     expect(h.openCatalogBuilder).toHaveBeenCalledOnce();
-    expect(h.openCatalogRequest).not.toHaveBeenCalled();
   });
 
   it('routes file:quit to quit', () => {
@@ -200,6 +197,5 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:message:grib_request', h);
     expect(h.openRequestCenter).toHaveBeenCalledWith('grib');
-    expect(h.openGribRequest).not.toHaveBeenCalled();
   });
 });

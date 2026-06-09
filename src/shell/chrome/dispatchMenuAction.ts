@@ -36,15 +36,9 @@ export interface MenuHandlers {
   openLogging: () => void;
   /** Open the Report Issue modal — auto-export + pre-filled GitHub URL (tuxlink-qjgx Task 8). */
   reportIssue: () => void;
-  /** Open the inline Catalog Request panel (tuxlink-ddiq) — WLE catalog
-   *  inquiry picker that routes through INQUIRY@winlink.org. */
-  openCatalogRequest: () => void;
   /** Open the inline Catalog Builder panel (tuxlink-a2gd) — location-aware
    *  station finder (direct /listings poll) + by-message info-category requests. */
   openCatalogBuilder: () => void;
-  /** Open the inline GRIB File Request panel (tuxlink-vrpk) — Saildocs
-   *  GRIB-request form that routes through query@saildocs.com. */
-  openGribRequest: () => void;
   /** Open the inline Request Center overlay (tuxlink-eymu) — unified catalog
    *  browse + WLE inquiries + Saildocs GRIB requests. The optional initialView
    *  selects the inner view ('home' default; 'grib' from GRIB File Request…). */
