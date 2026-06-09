@@ -16,6 +16,31 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.38.0](https://github.com/cameronzucker/tuxlink/compare/v0.37.1...v0.38.0) (2026-06-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **compose:** Position map now uses a bundled offline world map instead of online OpenStreetMap tiles.
+
+### Features
+
+* **grib:** map-based region selection (item 21, tuxlink-mxmx) ([448b0cf](https://github.com/cameronzucker/tuxlink/commit/448b0cfe9a279c1047a053ab042b0bb6efeb53e7))
+* **map:** BaseMap offline EPSG4326 substrate + shared leaflet icon fix + canonical test mock ([59f2e88](https://github.com/cameronzucker/tuxlink/commit/59f2e8845e229f4a78e445b104dd7b46124e55b9))
+* **map:** GridMapPicker pin + box-drag modes ([e1fd645](https://github.com/cameronzucker/tuxlink/commit/e1fd645dfd12348007b2effe6a54d84fa9b3b5d8))
+* **map:** pure EPSG4326 projection helpers ([e2c4615](https://github.com/cameronzucker/tuxlink/commit/e2c46158703bfef482c007d33e37bdb801d32a9f))
+* **map:** pure maidenhead overlay geometry ([f86b06c](https://github.com/cameronzucker/tuxlink/commit/f86b06c1e1973892377d23137d8e50ddbef9fd73))
+* **map:** pure signed-bbox→GRIB region normalizer ([a8d13a7](https://github.com/cameronzucker/tuxlink/commit/a8d13a7dd003020d78f50c50561cca6c3de3f6fd))
+* **map:** toggleable maidenhead grid overlay ([99d940a](https://github.com/cameronzucker/tuxlink/commit/99d940afdecdcaaeab0d7da3823b55af6f3c2795))
+* **map:** vendor public-domain equirectangular world map asset ([0df33c4](https://github.com/cameronzucker/tuxlink/commit/0df33c465b24f83341f1dc2900df551bcaec5f21))
+
+
+### Bug Fixes
+
+* **compose:** remove public-OSM tiles; use bundled offline map (tuxlink-714t) ([2a6c004](https://github.com/cameronzucker/tuxlink/commit/2a6c004909cd26e83d18cd7d5b5ad99918c8b995))
+* **map:** address Codex adversarial review (4 P2 correctness/UX defects) ([c75c81f](https://github.com/cameronzucker/tuxlink/commit/c75c81f260ece2f841b6472c5c23b005746dfcb2))
+* **winlink:** gate inbound-review prompt on fresh disk preference, not stale live_config ([de32878](https://github.com/cameronzucker/tuxlink/commit/de328785ef746c0d8a3973f8563ab3223d63aa9c))
+
 ## [0.37.1](https://github.com/cameronzucker/tuxlink/compare/v0.37.0...v0.37.1) (2026-06-08)
 
 
