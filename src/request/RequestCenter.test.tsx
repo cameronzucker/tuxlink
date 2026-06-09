@@ -276,3 +276,68 @@ describe('<RequestCenter> — C2 sections & cards', () => {
     expect(screen.queryByTestId('request-card-wx-marine-forecast')).not.toBeInTheDocument();
   });
 });
+
+// ===========================================================================
+// Task D1 — the home "Browse full catalog by category" reveal mounts the real
+// master-detail CatalogBrowse, and the C2 openBrowse deep-links still resolve
+// against it (data-category preserved on the browse root).
+// ===========================================================================
+
+describe('<RequestCenter> — D1 catalog browse reveal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('the home browse-reveal switches to the browse view and mounts CatalogBrowse', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    // Home reveal control is present.
+    const reveal = await screen.findByTestId('request-browse-reveal');
+    expect(reveal).toBeInTheDocument();
+
+    fireEvent.click(reveal);
+
+    // Browse pane mounts; CatalogBrowse's nav lists real categories.
+    const browse = await screen.findByTestId('request-browse');
+    expect(browse).toBeInTheDocument();
+    expect(screen.getByTestId('catalog-browse-nav')).toBeInTheDocument();
+    // No deep-link category → defaults to first category (WX_US_WA in C2 order).
+    expect(screen.getByTestId('catalog-browse-cat-WL2K_RMS')).toBeInTheDocument();
+    // Home sections no longer rendered.
+    expect(document.querySelector('.request-sections')).toBeNull();
+  });
+
+  it('adding an item from browse puts a cms BasketItem in the shared basket (cms:<filename> id)', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    fireEvent.click(await screen.findByTestId('request-browse-reveal'));
+    await screen.findByTestId('request-browse');
+    // Select WL2K_RMS, then add PUB_PACKET from its item list.
+    fireEvent.click(screen.getByTestId('catalog-browse-cat-WL2K_RMS'));
+    const item = screen.getByTestId('catalog-browse-item-PUB_PACKET');
+    fireEvent.click(within(item).getByRole('button', { name: /add/i }));
+    // Same id scheme as the C2 home cards → dedup works across surfaces.
+    expect(await screen.findByTestId('basket-item-cms:PUB_PACKET')).toBeInTheDocument();
+  });
+
+  it('Back from browse returns to the home view', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    fireEvent.click(await screen.findByTestId('request-browse-reveal'));
+    await screen.findByTestId('request-browse');
+    fireEvent.click(screen.getByTestId('catalog-browse-back'));
+    // Home sections render again.
+    expect(await screen.findByTestId('request-section-propagation')).toBeInTheDocument();
+    expect(screen.queryByTestId('request-browse')).toBeNull();
+  });
+
+  it('openBrowse deep-link from a card preselects the target category on the browse root', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    // Marine-forecast card deep-links to WX_EASTPAC.
+    const card = await screen.findByTestId('request-card-wx-marine-forecast');
+    fireEvent.click(within(card).getByRole('button', { name: /open/i }));
+    const browse = await screen.findByTestId('request-browse');
+    expect(browse).toHaveAttribute('data-category', 'WX_EASTPAC');
+  });
+});

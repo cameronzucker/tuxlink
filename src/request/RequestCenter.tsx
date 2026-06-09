@@ -16,6 +16,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useCatalog } from '../catalog/useCatalog';
 import { useRequestBasket } from './basket';
 import { buildSections, type CardAction } from './sections';
+import { CatalogBrowse } from './CatalogBrowse';
 import './RequestCenter.css';
 
 export interface RequestCenterProps {
@@ -148,12 +149,26 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
               </div>
             )}
 
-            {/* Browse pane — minimal placeholder; the real 3-pane CatalogBrowse
-                replaces this in Task D1. Gated by the same load-guard prefix as
-                home so D1 (which reads `entries` here) can't render against
-                entries===null. */}
+            {/* Browse pane — the 3-pane master-detail CatalogBrowse (Task D1).
+                Gated by the same load-guard prefix as home so it can't render
+                against entries===null. CatalogBrowse receives `entries` as a
+                prop — it does NOT call useCatalog() (adrev #3: RequestCenter is
+                the single catalog-load owner). */}
             {view === 'browse' && !loading && !error && entries && (
-              <div data-testid="request-browse" data-category={browseCategory ?? ''} />
+              <CatalogBrowse
+                entries={entries}
+                initialCategory={browseCategory}
+                onAddCms={(e) =>
+                  basket.add({
+                    id: `cms:${e.filename}`,
+                    label: e.description || e.filename,
+                    rail: 'cms',
+                    filename: e.filename,
+                  })
+                }
+                addedFilenames={new Set(basket.cmsFilenames)}
+                onBack={() => setView('home')}
+              />
             )}
 
             {/* GRIB pane — minimal placeholder; the real GRIB request form
@@ -205,6 +220,23 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
                     </div>
                   </section>
                 ))}
+
+                {/* Browse-everything reveal — drops into the full master-detail
+                    catalog browser (Task D1). Opens with no category preselected
+                    so the browser defaults to its first category. */}
+                <div className="request-browse-reveal">
+                  <button
+                    type="button"
+                    className="request-browse-reveal__button"
+                    data-testid="request-browse-reveal"
+                    onClick={() => {
+                      setBrowseCategory(null);
+                      setView('browse');
+                    }}
+                  >
+                    Browse full catalog by category →
+                  </button>
+                </div>
               </div>
             )}
           </div>

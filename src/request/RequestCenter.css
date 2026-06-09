@@ -205,6 +205,31 @@
   gap: 6px;
 }
 
+.request-browse-reveal {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.request-browse-reveal__button {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.request-browse-reveal__button:hover {
+  background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
+  border-color: var(--accent);
+}
+.request-browse-reveal__button:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
 .request-state {
   padding: 24px;
   text-align: center;
