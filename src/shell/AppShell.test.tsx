@@ -91,6 +91,9 @@ vi.mock('@tauri-apps/api/core', () => ({
     // react-query rejects undefined query data).
     if (cmd === 'contacts_read') return { schema_version: 1, contacts: [], groups: [] };
     if (cmd === 'contacts_suggestions') return [];
+    // tuxlink-6c9y: TelnetPostOfficeRadioPanel calls this on mount in network
+    // mode. Return an empty array so the panel doesn't throw / reject on no-op.
+    if (cmd === 'network_po_favorites_get') return [];
     return undefined;
   }),
 }));
@@ -532,6 +535,49 @@ describe('<AppShell> — Mock B topology', () => {
     // accordion is inline, no rail-expand needed (tuxlink-813d P1 fix).
     fireEvent.click(screen.getByTestId('sess-radio-only'));
     expect(screen.getByTestId('proto-radio-only-telnet')).toBeDisabled();
+  });
+
+  // tuxlink-6c9y B4: Post Office (local mode) — production mount path.
+  // Selecting post-office+telnet must mount TelnetPostOfficeRadioPanel in
+  // 'local' mode (panel title = "MODEM · Post Office"; po-banner present)
+  // AND the reading pane falls back to mail (NOT a StubPanel).
+  it('renders TelnetPostOfficeRadioPanel (local mode) when post-office+telnet is selected (tuxlink-6c9y B4)', async () => {
+    renderShell();
+    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
+    selectConnection('sess-post-office', 'proto-post-office-telnet');
+    // Panel mounts in the right radio drawer — wait for the lazy chunk.
+    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+    expect(panel).toBeInTheDocument();
+    // Title confirms local mode dispatch.
+    expect(await screen.findByTestId('radio-panel-title', undefined, { timeout: 10000 }))
+      .toHaveTextContent('Post Office');
+    // po-banner confirms the Post Office pane body rendered (not a StubPanel).
+    expect(await screen.findByTestId('po-banner', undefined, { timeout: 10000 }))
+      .toBeInTheDocument();
+    // Reading pane stays on message-view-empty (no message selected) — confirms
+    // the reading-pane branch returns readingPane, not <StubPanel>.
+    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
+  });
+
+  // tuxlink-6c9y B4: Network Post Office — production mount path.
+  // Selecting network-po+telnet must mount TelnetPostOfficeRadioPanel in
+  // 'network' mode (panel title = "MODEM · Network Post Office"; favorites
+  // section present) AND the reading pane falls back to mail.
+  it('renders TelnetPostOfficeRadioPanel (network mode) when network-po+telnet is selected (tuxlink-6c9y B4)', async () => {
+    renderShell();
+    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
+    selectConnection('sess-network-po', 'proto-network-po-telnet');
+    // Panel mounts in the right radio drawer — wait for the lazy chunk.
+    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+    expect(panel).toBeInTheDocument();
+    // Title confirms network mode dispatch.
+    expect(await screen.findByTestId('radio-panel-title', undefined, { timeout: 10000 }))
+      .toHaveTextContent('Network Post Office');
+    // po-favorites-section is network-only — confirms mode="network" was passed.
+    expect(await screen.findByTestId('po-favorites-section', undefined, { timeout: 10000 }))
+      .toBeInTheDocument();
+    // Reading pane stays on message-view-empty — reading-pane branch correct.
+    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
   });
 });
 
