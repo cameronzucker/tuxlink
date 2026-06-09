@@ -628,6 +628,136 @@ describe('<RequestCenter> — E1 basket UI + Send all', () => {
     expect(within(basket).queryAllByTestId(/^basket-item-/)).toHaveLength(0);
   });
 
+  it('Send all (cms only): calls catalog_send_inquiry, not grib; CMS summary only; basket cleared', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'catalog_list') return C2_ENTRIES;
+      if (cmd === 'config_read') return { grid: 'CN87' };
+      if (cmd === 'catalog_send_inquiry') return 'MID-CMS-1';
+      if (cmd === 'grib_send_request') return 'MID-GRIB-1';
+      return null;
+    });
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    await seedBasket({ cms: 2 });
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(screen.getByTestId('request-basket-send'));
+
+    const result = await screen.findByTestId('request-basket-result');
+    // CMS summary + next-connect line present.
+    expect(result).toHaveTextContent('Queued 1 inquiry message to the CMS');
+    expect(result).toHaveTextContent('Responses arrive in your Inbox after the next connect.');
+    // No Saildocs clause at all (no saildocs items dispatched).
+    expect(result.textContent).not.toMatch(/Saildocs/);
+
+    // catalog_send_inquiry called once with both cms filenames; grib never called.
+    const cmsCalls = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'catalog_send_inquiry');
+    expect(cmsCalls).toHaveLength(1);
+    expect(cmsCalls[0][1]).toEqual({ filenames: ['PROP_3DAY', 'PROP_WWV'] });
+    expect(vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'grib_send_request')).toHaveLength(0);
+
+    // Basket cleared on success.
+    const basket = screen.getByTestId('request-basket');
+    expect(within(basket).queryAllByTestId(/^basket-item-/)).toHaveLength(0);
+  });
+
+  it('Send all (saildocs only): calls grib_send_request, not cms; Saildocs summary only; basket cleared', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'catalog_list') return C2_ENTRIES;
+      if (cmd === 'config_read') return { grid: 'CN87' };
+      if (cmd === 'catalog_send_inquiry') return 'MID-CMS-1';
+      if (cmd === 'grib_send_request') return 'MID-GRIB-1';
+      return null;
+    });
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    await seedBasket({ saildocs: 1 });
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(screen.getByTestId('request-basket-send'));
+
+    const result = await screen.findByTestId('request-basket-result');
+    // Saildocs summary + next-connect line present.
+    expect(result).toHaveTextContent('Queued 1 Saildocs request');
+    expect(result).toHaveTextContent('Responses arrive in your Inbox after the next connect.');
+    // No CMS clause at all (no cms items dispatched), and no failure text.
+    expect(result.textContent).not.toMatch(/inquiry message to the CMS/);
+    expect(result.textContent).not.toMatch(/CMS failed/);
+
+    // grib_send_request called once; catalog_send_inquiry never called.
+    const gribCalls = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'grib_send_request');
+    expect(gribCalls).toHaveLength(1);
+    expect(vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'catalog_send_inquiry')).toHaveLength(
+      0,
+    );
+
+    // Basket cleared on success.
+    const basket = screen.getByTestId('request-basket');
+    expect(within(basket).queryAllByTestId(/^basket-item-/)).toHaveLength(0);
+  });
+
+  it('retry after partial failure: failed saildocs kept, then a second Send (only saildocs) succeeds and clears', async () => {
+    // First send: cms ok, saildocs rejects. Toggle gribFails to flip the
+    // grib_send_request behavior between the two Send clicks.
+    let gribFails = true;
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'catalog_list') return C2_ENTRIES;
+      if (cmd === 'config_read') return { grid: 'CN87' };
+      if (cmd === 'catalog_send_inquiry') return 'MID-CMS-1';
+      if (cmd === 'grib_send_request') {
+        if (gribFails) throw new Error('saildocs offline');
+        return 'MID-GRIB-1';
+      }
+      return null;
+    });
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    await seedBasket({ cms: 1, saildocs: 1 });
+    const basket = screen.getByTestId('request-basket');
+
+    // --- First Send: cms succeeds, saildocs fails ---
+    fireEvent.click(screen.getByTestId('request-basket-send'));
+
+    const result = await screen.findByTestId('request-basket-result');
+    await waitFor(() => expect(result).toHaveTextContent('Saildocs failed: saildocs offline'));
+    // cms item cleared (succeeded rail); saildocs item kept (failed rail).
+    await waitFor(() =>
+      expect(within(basket).queryByTestId('basket-item-cms:PROP_3DAY')).toBeNull(),
+    );
+    expect(within(basket).getByTestId(/^basket-item-saildocs:/)).toBeInTheDocument();
+
+    // --- Fix the backend, then re-send the remaining saildocs item ---
+    gribFails = false;
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(screen.getByTestId('request-basket-send'));
+
+    // Second send dispatches only the remaining saildocs item.
+    await waitFor(() =>
+      expect(
+        vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'grib_send_request'),
+      ).toHaveLength(1),
+    );
+    // No cms items remain → catalog_send_inquiry not called the second time.
+    expect(vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'catalog_send_inquiry')).toHaveLength(
+      0,
+    );
+
+    // Saildocs item now clears; basket empty.
+    await waitFor(() =>
+      expect(within(basket).queryAllByTestId(/^basket-item-/)).toHaveLength(0),
+    );
+
+    // Result region shows saildocs success + next-connect, no stale failure text.
+    const result2 = screen.getByTestId('request-basket-result');
+    expect(result2).toHaveTextContent('Queued 1 Saildocs request');
+    expect(result2).toHaveTextContent('Responses arrive in your Inbox after the next connect.');
+    expect(result2.textContent).not.toMatch(/Saildocs failed/);
+  });
+
   it('partial failure (cms ok / saildocs fail): saildocs items remain, cms cleared, error shown', async () => {
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'catalog_list') return C2_ENTRIES;

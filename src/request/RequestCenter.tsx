@@ -376,47 +376,48 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
               {sendState.kind === 'sending' ? 'Sending…' : 'Send all'}
             </button>
 
-            {sendState.kind === 'done' && (
-              <div
-                className="request-basket__result"
-                data-testid="request-basket-result"
-                role="status"
-              >
-                {sendState.result.cms?.ok && (
-                  <p className="request-basket__result-line">
-                    Queued 1 inquiry message to the CMS
-                    {sendState.result.cms.mid ? ` (MID ${sendState.result.cms.mid}).` : '.'}
-                  </p>
-                )}
-                {sendState.result.cms && !sendState.result.cms.ok && (
-                  <p className="request-basket__result-error">
-                    CMS failed: {sendState.result.cms.error}
-                  </p>
-                )}
-                {sendState.result.saildocs.some((e) => e.ok) && (
-                  <p className="request-basket__result-line">
-                    Queued {sendState.result.saildocs.filter((e) => e.ok).length} Saildocs{' '}
-                    {sendState.result.saildocs.filter((e) => e.ok).length === 1
-                      ? 'request'
-                      : 'requests'}
-                    .
-                  </p>
-                )}
-                {sendState.result.saildocs
-                  .filter((e) => !e.ok)
-                  .map((e) => (
-                    <p key={e.item.id} className="request-basket__result-error">
-                      Saildocs failed: {e.error}
-                    </p>
-                  ))}
-                {(sendState.result.cms?.ok ||
-                  sendState.result.saildocs.some((e) => e.ok)) && (
-                  <p className="request-basket__result-note">
-                    Responses arrive in your Inbox after the next connect.
-                  </p>
-                )}
-              </div>
-            )}
+            {sendState.kind === 'done' &&
+              (() => {
+                const { result } = sendState;
+                const okSaildocs = result.saildocs.filter((e) => e.ok);
+                return (
+                  <div
+                    className="request-basket__result"
+                    data-testid="request-basket-result"
+                    role="status"
+                  >
+                    {result.cms?.ok && (
+                      <p className="request-basket__result-line">
+                        Queued 1 inquiry message to the CMS
+                        {result.cms.mid ? ` (MID ${result.cms.mid}).` : '.'}
+                      </p>
+                    )}
+                    {result.cms && !result.cms.ok && (
+                      <p className="request-basket__result-error">
+                        CMS failed: {result.cms.error}
+                      </p>
+                    )}
+                    {okSaildocs.length > 0 && (
+                      <p className="request-basket__result-line">
+                        Queued {okSaildocs.length} Saildocs{' '}
+                        {okSaildocs.length === 1 ? 'request' : 'requests'}.
+                      </p>
+                    )}
+                    {result.saildocs
+                      .filter((e) => !e.ok)
+                      .map((e) => (
+                        <p key={e.item.id} className="request-basket__result-error">
+                          Saildocs failed: {e.error}
+                        </p>
+                      ))}
+                    {(result.cms?.ok || okSaildocs.length > 0) && (
+                      <p className="request-basket__result-note">
+                        Responses arrive in your Inbox after the next connect.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
           </aside>
         </div>
       </div>
