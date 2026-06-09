@@ -202,6 +202,18 @@ Review the batch from multiple perspectives (correctness, test quality, scope cr
 
 ---
 
+## Adrev revisions (Codex cross-provider round, 2026-06-09 — BINDING; apply within the named tasks)
+
+1. **Card action model (C2/sections.ts):** a card's action is a tagged union — `{ kind:'addCms', filename }` OR `{ kind:'openBrowse', category }`. The **Marine** card is `openBrowse('WX_EASTPAC'|…)` (navigates the 3-pane to the resolved sea-area category; does NOT mutate the basket). Test marine-click → browse shows that category, basket unchanged.
+2. **National constants are real FILENAMES, guard them (A4):** `PROP_3DAY`, `PROP_WWV`, `AUR_TONIGHT`, `INQUIRIES` are filenames. Add a test asserting each NATIONAL filename is present in the loaded catalog (fail loudly if the catalog drops one). For `openBrowse` cards keep `category` separate from any filename; basket items only ever carry real filenames.
+3. **Single catalog load owner (C1):** `RequestCenter` loads `catalog_list` ONCE (via `useCatalog`) and passes `entries` to home sections, browse, and search. Test loading / empty / error states at the RequestCenter level (mock `catalog_list` rejecting).
+4. **Partial-failure dispatch (B2/E1):** `dispatchBasket` runs the two rails with `Promise.allSettled`. On partial failure: KEEP the failed rail's items in the basket, clear only the succeeded rail, and surface a per-rail error ("CMS sent; Saildocs failed: <msg>"). Tests: cms-ok+saildocs-fail (saildocs items remain, error shown), both-fail (nothing cleared), both-ok (cleared).
+5. **Empty basket (E1):** "Send all" is disabled when the basket is empty; test that clicking a disabled/empty Send invokes nothing.
+6. **State polygons (A2):** include a reproducible sourcing note (script or documented steps) deriving simplified polygons from US Census cartographic boundaries; support `MultiPolygon` (HI, AK, island states); set a bundle size budget (≤~150 KB) and note it. Tests: coastal (Seattle/WA), border (KC metro), island (Honolulu/HI), ocean point → null.
+7. **Sea-area buckets (A3):** define explicit lon/lat boundaries with precedence (Pacific vs Atlantic vs Gulf) and an inland-exclusion rule. Tests: Phoenix/Denver/Chicago → null; Miami → Atlantic-or-Gulf (assert which); Seattle → EASTPAC.
+8. **Menu IDs — declare final state once (E2/F1):** ADD `menu:message:request_center`; REMOVE `menu:message:catalog_request`; KEEP `menu:message:grib_request` mapped to opening the center with `initialView='grib'`. Update `EXPECTED_IDS` in one edit. Grep to confirm zero dangling `catalog_request` refs after F1.
+9. **Production/error-path tests (E3 + throughout):** E3 must drive the EXACT AppShell menu-dispatch path (not a synthetic open) and assert the dialog mounts with providers. Add invoke-failure tests for `config_read` (no grid → chip shows a neutral state, no crash), `catalog_list` (error state), and both send rails (error surfaced) BEFORE deleting the old panels in F1.
+
 ## Self-review notes (author)
 - Spec coverage: all approved-mock elements map to a task (header/location chip C1; search D2; sections+cards C2; browse D1; GRIB form D3; basket+dual-rail B2/E1; menu IA E2). Dropped cards (METAR, hazardous) documented in the decisions log, not silently omitted.
 - The geo dataset (A2) is the one real data-sourcing risk — isolated in its own task with border-case tests.
