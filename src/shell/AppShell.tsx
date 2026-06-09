@@ -1201,11 +1201,16 @@ export function AppShell() {
         <Suspense fallback={null}>
           <DeleteFolderDialog
             folder={deleteFolder}
+            childCount={userFolders.filter((f) => f.parentSlug === deleteFolder.slug).length}
+            childNames={userFolders
+              .filter((f) => f.parentSlug === deleteFolder.slug)
+              .map((f) => f.displayName)}
             onClose={() => setDeleteFolder(null)}
-            onDeleted={(slug) => {
-              // If the operator was viewing the now-gone folder, navigate back
-              // to Inbox so they don't sit on a slug that no longer resolves.
-              if (selectedFolder === slug) {
+            onDeleted={(removedSlugs) => {
+              // Cascade-aware (A5): if the operator was viewing the parent OR any
+              // cascaded child that's now gone, navigate back to Inbox so they
+              // don't sit on a slug that no longer resolves.
+              if (removedSlugs.includes(selectedFolder as string)) {
                 setSelectedFolder('inbox');
                 setSelectedMessage(null);
               }

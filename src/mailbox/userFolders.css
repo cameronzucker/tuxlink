@@ -88,6 +88,15 @@
   pointer-events: none;
 }
 
+/* Delete-dialog blast-radius warning (tuxlink-ka3z A8) — flags that the delete
+   cascades to subfolders before the operator confirms. */
+.tux-folder-help--warn {
+  color: var(--warning, #e0a44a);
+  border-left: 2px solid var(--warning, #e0a44a);
+  padding-left: 8px;
+  margin-bottom: 8px;
+}
+
 .tux-ctx-separator {
   height: 1px;
   margin: 4px 0;
