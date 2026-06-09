@@ -376,9 +376,10 @@ describe('<AppShell> — Mock B topology', () => {
 
   // tuxlink-a2gd: production mount path — the lazy overlay actually opens from the menu.
   // config_read is mocked to null above; the panel's null-grid is swallowed, so it still renders.
-  it('Message → Find a Gateway opens the Catalog Builder (production mount path)', async () => {
+  // tuxlink-6jpf: Find a Gateway relocated from Message → Tools.
+  it('Tools → Find a Gateway opens the Catalog Builder (production mount path)', async () => {
     renderShell();
-    clickMenu('Message', /find a gateway/i);
+    clickMenu('Tools', /find a gateway/i);
     expect(
       await screen.findByRole('dialog', { name: /find a gateway/i }, { timeout: 10000 }),
     ).toBeInTheDocument();
