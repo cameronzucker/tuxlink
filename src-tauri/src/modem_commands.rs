@@ -1330,19 +1330,32 @@ mod tests {
         // helper directly. The factory blocks until we drop the sentinel so the
         // first call never completes during the test.
         let (sentinel_tx, sentinel_rx) = std::sync::mpsc::channel::<()>();
+        // Deterministic handshake: the worker signals `ready` from inside the
+        // factory, which the production gate invokes only AFTER try_begin_connect()
+        // has set the busy guard (see modem_ardop_connect_gated_with_factory above:
+        // the compare_exchange is the first statement). This replaces a flaky
+        // sleep() that assumed the worker was scheduled within 50ms — under CI
+        // load it sometimes was not, so the second call saw an unset guard and
+        // the test failed (testing-pitfalls §5: synchronize with a primitive,
+        // never a timing assumption).
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
         let session_clone = Arc::clone(&session);
         let h = std::thread::spawn(move || {
             let factory = move |_: ArdopConfig, _: &str| -> Result<Box<dyn ModemTransport>, String> {
-                // Block until released; the test sends the sentinel to unblock.
+                // The busy guard is already set by the time the factory runs.
+                // Signal the test, then block until released.
+                ready_tx.send(()).ok();
                 sentinel_rx.recv().ok();
                 Err("test stub never connects".into())
             };
             modem_ardop_connect_gated_with_factory(&session_clone, "K7TEST", &cfg, factory)
         });
 
-        // Give the worker a beat to enter the busy state. (No production code
-        // races on this — the busy guard is set before the factory call.)
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        // Wait until the worker is inside the factory (busy guard set). No
+        // timing assumption — blocks until the signal arrives.
+        ready_rx
+            .recv()
+            .expect("worker should enter the factory with the busy guard set");
 
         let factory_2 =
             |_: ArdopConfig, _: &str| -> Result<Box<dyn ModemTransport>, String> {

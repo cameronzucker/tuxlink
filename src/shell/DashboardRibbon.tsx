@@ -82,13 +82,21 @@ export interface DashboardRibbonProps {
    *  from the dashboard ribbon (not just the PacketRadioPanel) so the operator
    *  doesn't need to open the radio panel to switch. */
   onSsidChange?: (n: number) => void;
+  /** Current "review pending inbound before download" preference (tuxlink-pmp5),
+   *  or null before config_read resolves. Drives the inline "On connect" control:
+   *  null/true ⇒ Review is active (the default); false ⇒ Download all. */
+  reviewInbound?: boolean | null;
+  /** Persist the review-inbound choice (AppShell calls config_set_review_inbound).
+   *  When omitted, the "On connect" control is not rendered — keeps prop-free
+   *  consumers/tests unchanged. */
+  onReviewInboundChange?: (enabled: boolean) => void;
 }
 
 // tuxlink-djnl: React.memo so 2s status-poll renders (now reference-stable
 // via useStatusData's useMemo) and other shell-level renders skip the ribbon
 // when its props haven't changed. The 1s clock tick already lives inside the
 // scoped ClockCell subtree, so a memo'd ribbon stays still while time advances.
-export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, ssid, onSsidChange }: DashboardRibbonProps) {
+export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, ssid, onSsidChange, reviewInbound, onReviewInboundChange }: DashboardRibbonProps) {
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Task 14 (tuxlink-c79g, spec §4.3 + Codex P1 #4): after a grid commit or a
   // source flip resolves, invalidate the config_read query so the source chip
@@ -225,6 +233,40 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
           {connectionLabel}
         </div>
       </div>
+
+      {onReviewInboundChange && (
+        <>
+          <div className="dash-divider" />
+          <div className="dash-item">
+            <div className="dash-label">On connect</div>
+            <div
+              className="seg"
+              role="group"
+              aria-label="On connect: review pending messages, or download all"
+              data-testid="ribbon-review-inbound"
+            >
+              <button
+                type="button"
+                className={reviewInbound !== false ? 'active' : ''}
+                aria-pressed={reviewInbound !== false}
+                onClick={() => onReviewInboundChange(true)}
+                data-testid="review-inbound-review"
+              >
+                Review
+              </button>
+              <button
+                type="button"
+                className={reviewInbound === false ? 'active' : ''}
+                aria-pressed={reviewInbound === false}
+                onClick={() => onReviewInboundChange(false)}
+                data-testid="review-inbound-download-all"
+              >
+                Download all
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {onConnect && (
         <>

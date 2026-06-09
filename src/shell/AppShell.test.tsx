@@ -432,9 +432,10 @@ describe('<AppShell> — Mock B topology', () => {
 
   // tuxlink-a2gd: production mount path — the lazy overlay actually opens from the menu.
   // config_read is mocked to null above; the panel's null-grid is swallowed, so it still renders.
-  it('Message → Find a Gateway opens the Catalog Builder (production mount path)', async () => {
+  // tuxlink-6jpf: Find a Gateway relocated from Message → Tools.
+  it('Tools → Find a Gateway opens the Catalog Builder (production mount path)', async () => {
     renderShell();
-    clickMenu('Message', /find a gateway/i);
+    clickMenu('Tools', /find a gateway/i);
     expect(
       await screen.findByRole('dialog', { name: /find a gateway/i }, { timeout: 10000 }),
     ).toBeInTheDocument();
@@ -724,6 +725,24 @@ describe('AppShell.css radio-panel chrome width (tuxlink-8rng + tuxlink-40u8)', 
   });
 });
 
+// ---------------------------------------------------------------------------
+// Contacts grid span — tuxlink-r4je
+//
+// The Contacts pseudo-folder renders ContactsPanel as a single direct child of
+// the `.panes` grid, REPLACING the MessageList + reading-pane pair (M8). Without
+// an explicit column span it lands in the 380px MessageList track alone — the
+// surface collapses left and (with the radio dock open) the radio panel slides
+// into the 1fr reader track. The span makes ContactsPanel occupy tracks 2–3 so
+// the radio dock auto-places into its own 400px track.
+// ---------------------------------------------------------------------------
+describe('AppShell.css contacts grid span (tuxlink-r4je)', () => {
+  it('spans the Contacts surface across the MessageList + reading-pane tracks', () => {
+    expect(appShellCss).toMatch(
+      /\.layout-b \.panes\s*>\s*\.contacts-panel\s*\{[^}]*grid-column:\s*2\s*\/\s*4/,
+    );
+  });
+});
+
 describe('AppShell.css print stylesheet (tuxlink-zdfj)', () => {
   const printCss = appShellCss.slice(appShellCss.indexOf('@media print'));
 
@@ -797,6 +816,20 @@ describe('<AppShell> — Contacts pseudo-folder (M8 + Codex#11)', () => {
     );
     // M8: MessageList (rows-pane) MUST NOT render alongside the ContactsPanel.
     expect(screen.queryByTestId('rows-pane')).toBeNull();
+  });
+
+  it('mounts ContactsPanel as a direct child of the panes grid (tuxlink-r4je)', async () => {
+    // The grid-column span fix targets `.layout-b .panes > .contacts-panel`.
+    // Guard the selector's precondition: a future wrapper around ContactsPanel
+    // would silently break the span and re-collapse the surface.
+    renderShell();
+    fireEvent.click(screen.getByTestId('folder-contacts'));
+    await waitFor(() =>
+      expect(screen.getByTestId('contacts-panel')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('contacts-panel').parentElement).toBe(
+      screen.getByTestId('shell-panes'),
+    );
   });
 
   it('does NOT fire mailbox_list for the contacts pseudo-folder (Codex#11)', async () => {

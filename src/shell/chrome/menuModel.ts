@@ -45,10 +45,6 @@ export const MENU_TREE: TopMenu[] = [
     // Opens the CatalogRequestPanel; routes through the existing outgoing
     // rails to INQUIRY@winlink.org.
     { id: 'menu:message:catalog_request', label: 'Catalog Request…' },
-    // tuxlink-a2gd: location-aware Catalog Builder — direct /listings station poll
-    // + by-message info-category requests. (A radio-config-pane entry point is
-    // deferred this sprint to avoid colliding with the CF agent's radio panels.)
-    { id: 'menu:message:catalog_builder', label: 'Find a Gateway…' },
     // tuxlink-vrpk: Saildocs GRIB request (3rd-party SMTP, not Winlink CMS).
     // Opens GribRequestPanel; routes through outgoing rails to
     // query@saildocs.com.
@@ -97,6 +93,11 @@ export const MENU_TREE: TopMenu[] = [
     ] },
   ] },
   { label: 'Tools', items: [
+    // tuxlink-6jpf: location-aware station finder ("Find a Gateway") — direct
+    // /listings poll → distance-sorted stations. Relocated here from the Message
+    // menu (operator smoke: it's a modem-context action, not a message action);
+    // also surfaced in-panel from the ARDOP/Packet/VARA radio panels.
+    { id: 'menu:tools:find_gateway', label: 'Find a Gateway…' },
     // Not-yet-wired: disabled + badged so they read as "coming", not broken.
     { id: 'menu:tools:templates', label: 'Templates', disabled: true },
     { id: 'menu:tools:rig_control', label: 'Rig Control', disabled: true },

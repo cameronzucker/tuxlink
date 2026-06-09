@@ -2200,45 +2200,53 @@ fn native_connect(
         }
     };
 
-    // Choose the inbound-proposal decider. With the review-inbound preference ON
-    // AND a selection context present (the user-initiated CMS connect), build the
-    // selecting decider that prompts the operator via the event sink + registry
-    // (tuxlink-bsiy). Otherwise — preference off, or a caller that passed no
-    // context (wizard probe, packet, tests) — accept everything (WLE parity, the
-    // prior behavior). The boxed decider stays on this blocking thread, so it does
-    // NOT need Send/Sync; it satisfies `connect_and_exchange`'s `F: Fn(...)` bound.
+    // Choose the inbound-proposal decider by the PRESENCE of a selection context.
+    // `cms_connect` builds the context iff the operator's FRESH on-disk
+    // `review_inbound_before_download` preference is on, so a context here means
+    // "prompt the operator" and no context means accept-all (preference off, or a
+    // non-prompting caller: wizard probe, packet, tests).
+    //
+    // tuxlink-bsiy connect-path staleness fix: gating on the context — NOT on this
+    // `config` snapshot's `review_inbound_before_download` — is deliberate. `config`
+    // is the backend's in-memory `live_config`, refreshed only by `set_config`,
+    // which `config_set_review_inbound` skips when the backend is not yet installed.
+    // A preference toggled before the backend comes up therefore never reaches
+    // `live_config`, so reading the flag here silently dropped the prompt. The
+    // context (built from the fresh disk read) is the authoritative signal.
+    //
+    // The boxed decider stays on this blocking thread, so it does NOT need
+    // Send/Sync; it satisfies `connect_and_exchange`'s `F: Fn(...)` bound.
     use crate::winlink::b2f_events::B2fEvent;
     use crate::winlink::inbound_selection::PendingProposalDto;
     use crate::winlink::proposal::Proposal;
-    let decide: InboundDecider =
-        match (config.review_inbound_before_download, selection) {
-            (true, Some(ctx)) => {
-                let CmsSelectionContext {
-                    sink,
+    let decide: InboundDecider = match selection {
+        Some(ctx) => {
+            let CmsSelectionContext {
+                sink,
+                attempt_id,
+                registry,
+            } = ctx;
+            let emit = move |request_id: u64, dtos: &[PendingProposalDto]| {
+                sink.push(B2fEvent::InboundProposalsOffered {
+                    request_id,
+                    proposals: dtos.to_vec(),
                     attempt_id,
-                    registry,
-                } = ctx;
-                let emit = move |request_id: u64, dtos: &[PendingProposalDto]| {
-                    sink.push(B2fEvent::InboundProposalsOffered {
-                        request_id,
-                        proposals: dtos.to_vec(),
-                        attempt_id,
-                    });
-                };
-                Box::new(crate::winlink::inbound_selection::build_selecting_decider(
-                    registry,
-                    attempt_id,
-                    emit,
-                    aborting.clone(),
-                ))
-            }
-            _ => Box::new(|proposals: &[Proposal]| {
-                Ok(proposals
-                    .iter()
-                    .map(|_| Answer::Accept { resume_offset: 0 })
-                    .collect())
-            }),
-        };
+                });
+            };
+            Box::new(crate::winlink::inbound_selection::build_selecting_decider(
+                registry,
+                attempt_id,
+                emit,
+                aborting.clone(),
+            ))
+        }
+        None => Box::new(|proposals: &[Proposal]| {
+            Ok(proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect())
+        }),
+    };
 
     let result = telnet::connect_and_exchange(
         &host,
@@ -3642,10 +3650,12 @@ mod native_read_state_tests {
 
     // =========================================================================
     // Task 4b (tuxlink-bsiy): selecting-connect integration over a 127.0.0.1
-    // loopback. Proves the FULL wiring: native_connect, with the review-inbound
-    // preference ON and a CmsSelectionContext present, builds the SELECTING
-    // decider (not accept-all); the decider emits InboundProposalsOffered through
-    // the threaded sink, parks on the registry, and the operator's resolved
+    // loopback. Proves the FULL wiring: native_connect, given a CmsSelectionContext
+    // (which `cms_connect` supplies iff the fresh on-disk review-inbound preference
+    // is on), builds the SELECTING decider (not accept-all) — REGARDLESS of the
+    // backend's in-memory `live_config` flag, which `cfg` below sets to false to
+    // pin the connect-path staleness fix. The decider emits InboundProposalsOffered
+    // through the threaded sink, parks on the registry, and the operator's resolved
     // selection lands the chosen message in the Inbox.
     //
     // The fake server is the Answer-role master that OFFERS one proposal (the
@@ -3807,7 +3817,14 @@ mod native_read_state_tests {
         let client_mailbox = Mailbox::new(client_dir.path());
         let mut cfg = config_with_call("N7CPZ");
         cfg.connect.host = "127.0.0.1".to_string();
-        cfg.review_inbound_before_download = true;
+        // tuxlink-bsiy connect-path staleness regression: the live-config flag is
+        // intentionally FALSE here. The decider must be selected by the PRESENCE of
+        // the CmsSelectionContext (which `cms_connect` builds only when the FRESH
+        // on-disk preference is on), NOT by this in-memory `live_config` snapshot —
+        // which lags the toggle when the preference is enabled before the backend
+        // finishes installing. Before the fix, `(false, Some(ctx))` took the
+        // accept-all arm and no offer fired; this assertion caught that.
+        cfg.review_inbound_before_download = false;
 
         // SAFETY: edition-2021 set_var; `#[serial]` ensures no concurrent test
         // reads TUXLINK_CMS_PORT while it is set. The RAII guard clears it on drop

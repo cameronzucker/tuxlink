@@ -562,6 +562,10 @@ export function AppShell() {
   // backend), not beside the button.
   const queryClient = useQueryClient();
   const [connecting, setConnecting] = useState(false);
+  // tuxlink-pmp5: the "review pending inbound before download" preference, shown
+  // as the inline "On connect" control in the dashboard ribbon. null until
+  // config_read resolves (the ribbon treats null as the on/Review default).
+  const [reviewInbound, setReviewInbound] = useState<boolean | null>(null);
 
   const onConnect = useCallback(async () => {
     // Codex #1: don't start a second connect while one is in flight. The Connect
@@ -590,6 +594,27 @@ export function AppShell() {
     // in-flight cms_connect promise then resolves (Cancelled) and its `finally`
     // clears `connecting`. The session log carries the "Aborting…" line.
     void invoke('cms_abort');
+  }, []);
+
+  // tuxlink-pmp5: load the review-inbound preference once so the ribbon's "On
+  // connect" control reflects the persisted choice. Reads the LIVE config via the
+  // same command SettingsPanel used; a failure leaves it null (Review default).
+  useEffect(() => {
+    let mounted = true;
+    invoke<{ review_inbound_before_download: boolean }>('config_read')
+      .then((c) => { if (mounted) setReviewInbound(c.review_inbound_before_download); })
+      .catch(() => { /* leave null → ribbon shows the Review default */ });
+    return () => { mounted = false; };
+  }, []);
+
+  // Persist the operator's "On connect" choice. Optimistic (mirrors the prior
+  // SettingsPanel toggle); revert on failure so the ribbon never lies about the
+  // persisted state. config_set_review_inbound also refreshes the live backend.
+  const onReviewInboundChange = useCallback((enabled: boolean) => {
+    setReviewInbound(enabled);
+    void invoke('config_set_review_inbound', { enabled }).catch(() => {
+      setReviewInbound(!enabled);
+    });
   }, []);
 
   // Native titlebar: mock B shows "Tuxlink — Inbox". Track the active folder.
@@ -944,6 +969,8 @@ export function AppShell() {
           radioConn={radioConn}
           ssid={packetConfig.config ? packetConfig.ssid : undefined}
           onSsidChange={packetConfig.config ? packetConfig.setSsid : undefined}
+          reviewInbound={reviewInbound}
+          onReviewInboundChange={onReviewInboundChange}
         />
       </div>
 
@@ -1096,6 +1123,7 @@ export function AppShell() {
               intent={radioPanelMode.intent}
               baseCall={statusData.callsign}
               onClose={closeRadioPanel}
+              onFindGateway={() => setCatalogBuilderOpen(true)}
             />
           </Suspense>
         )}
@@ -1103,6 +1131,7 @@ export function AppShell() {
           <Suspense fallback={null}>
             <ArdopRadioPanel
               onClose={closeRadioPanel}
+              onFindGateway={() => setCatalogBuilderOpen(true)}
             />
           </Suspense>
         )}
@@ -1112,6 +1141,7 @@ export function AppShell() {
               <VaraRadioPanel
                 mode={radioPanelMode}
                 onClose={closeRadioPanel}
+                onFindGateway={() => setCatalogBuilderOpen(true)}
               />
             </Suspense>
           )}
