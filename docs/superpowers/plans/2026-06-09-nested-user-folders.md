@@ -1034,3 +1034,82 @@ gh pr create --base main --head bd-tuxlink-ka3z/nested-folders \
 **Placeholder scan:** Backend tasks (T1–T6) carry exact code. UI tasks (T8–T12) specify exact test code, exact testids, and the precise edit shape; a few host-wiring touchpoints (which parent component opens the dialog / wires `onMoveTo`) say "follow the existing wiring" because that consumer wasn't read in full during planning — the executor must read the `FolderSidebar` consumer before T9/T10/T11 and follow its established open-dialog pattern. Flagged here rather than hidden.
 
 **Type consistency:** `parent_slug` (Rust, snake) ↔ `parentSlug` (TS/DTO, camel via serde rename) used consistently. `validate_reparent(reg, slug, Option<&str>)`, `children_slugs(reg, slug)`, `move_user_folder(slug, Option<&str>)`, `useMoveUserFolder({slug, parentSlug})`, `onReparentFolder(slug, parentSlug|undefined)` — names stable across tasks. `DeleteAction` reused unchanged (made `Copy` in T5).
+
+---
+
+## Codex Adversarial Review R1 — REQUIRED Plan Amendments (2026-06-09)
+
+> **EXECUTOR: read this section before starting any task. It supersedes the task steps above where noted.** A cross-provider Codex review (transcript: `dev/adversarial/2026-06-09-nested-folders-codex.md`, gitignored) found 13 issues; all were spot-verified against the real source. Several reveal the original tasks were written without the full backend stack (the `WinlinkBackend` trait, the search `Index`, the three sidebar variants, AppShell selection). Dispositions below are ACCEPTED unless marked otherwise.
+
+| # | Sev | Finding (one-line) | Disposition |
+|---|-----|--------------------|-------------|
+| 1 | P0 | `fs::rename` overwrites on MID collision when cascaded messages move to Inbox → silent data loss | **Accept** — A1 below |
+| 2 | P0 | Cascade delete is not atomic; mid-loop failure strands disk/registry | **Accept** — A1 |
+| 3 | P0 | Registry read-modify-write is unguarded (concurrent create+delete → orphan) | **Accept** — A2 |
+| 4 | P1 | D4 only sound for already-valid registries; orphan/cycle on load hides children | **Accept** — A3 |
+| 5 | P1 | v1→v2 version bump claim false (default change alone doesn't rewrite version) | **Accept** — A3 (supersedes T1 Step 3) |
+| 6 | P1 | `version > CURRENT` silently defaulted = forward corruption | **Accept** — A3 |
+| 7 | P1 | Rust `Option` serializes as `null`, not absent | **Accept** — A4 (amends T1, T6, T7) |
+| 8 | P1 | Delete-cascade selection: a selected child orphaned on parent delete | **Accept** — A5 (amends T5, T12) |
+| 9 | P1 | `ui_commands` calls the `WinlinkBackend` trait, not `Mailbox` — trait+NativeBackend unwired | **Accept** — A6 (new T6a, supersedes T6 wiring) |
+| 10 | P1 | `FolderSidebar` has THREE user-folder maps (desktop L372, flyout L579, rail L765) | **Accept** — A7 (supersedes T8) |
+| 11 | P1 | Blast-radius numeric message count not derivable from host state | **Accept (omit number)** — A8 (amends T12 + spec D6) |
+| 12 | P2 | Drag payload discrimination needs MIME constants + mixed-payload no-op | **Accept** — A9 (amends T11) |
+| 13 | P2→P1 | Delete cascade omits search-`Index` updates → stale rows multiply | **Accept** — A1 (index updates fold into the cascade rewrite) |
+
+### A1 — Collision-safe, atomic, index-aware delete cascade (supersedes T5 Step 3)
+
+Rewrite `delete_user_folder(slug, on_messages)` as **gather → preflight → commit**, not a per-child loop that saves repeatedly:
+
+1. Load the registry once. Compute the affected set: `slug` + `children_slugs(reg, slug)` (one level, cap-bounded).
+2. **Preflight collisions (move modes only):** for every `.b2f` in every affected folder dir, compute its destination path (`Inbox`/`Archive` dir). If any destination already exists, OR two affected messages share a filename, **reject the whole operation** with `BackendError::message_rejected("delete would overwrite an existing message: <mid>")`. No partial work. (Rationale: data loss is the only irreversible consequence — refuse rather than clobber.)
+3. **Commit:** perform the file moves/removes, update the search index per message (see below), then `retain` all affected slugs out of the registry and `save_registry` **once**.
+4. **Search index (finding #13):** in `Delete` mode, call `Index::delete(mid)` for each removed message; in move modes, call `Index::update_folder(mid, dest)` mirroring how `move_between` (native_mailbox.rs:401-417) already does it. Best-effort + logged, matching the existing index-error handling (native_mailbox.rs:171-178).
+5. **Failure contract:** because step 2 preflights, step 3 should not partially fail under normal conditions; if an `fs` op still errors mid-commit, return the error and log which slugs were already removed. Document this contract in the method doc-comment. Full transactional rollback is out of scope (single desktop process); the preflight is the guard.
+6. **Tests:** (a) Inbox-collision preflight rejects + leaves all files in place; (b) child-vs-child MID collision rejects; (c) happy-path cascade move-to-Inbox relocates parent+child messages and removes both registry entries + dirs; (d) Delete-mode cascade removes everything; (e) with an attached index, rows are updated/deleted.
+
+### A2 — Serialize registry mutations (finding #3)
+
+Add a `std::sync::Mutex<()>` (or reuse an existing mailbox-level lock if one exists — grep `Mutex` in native_mailbox.rs / the `AppState`) guarding the registry read-modify-write critical section in **create, rename, move, delete**. Acquire it at the top of each mutating method, before `load_registry`, hold through `save_registry`. Add a test that spawns a create and a delete concurrently (threads + barrier) and asserts the registry never ends with a child whose parent was removed. **New step in T3, T4, T5; rename (existing) also wrapped.**
+
+### A3 — `validate_registry` + `normalize_to_current` on load (supersedes T1 Step 3; findings #4, #5, #6)
+
+Add to `user_folders.rs`:
+- `pub const CURRENT_REGISTRY_VERSION: u32 = 2;`
+- `fn normalize_to_current(reg: &mut Registry)` — set `reg.version = CURRENT_REGISTRY_VERSION`; then **self-heal** via `validate_registry`: any folder whose `parent_slug` does not resolve to an existing *top-level* folder (dangling, points at a subfolder, self-parent, or would exceed depth 2) is reset to `parent_slug = None` (promote-to-top-level, logged to stderr). Self-heal — NOT hide — so no folder ever vanishes from the tree (this also protects the future WLE-import path).
+- `pub fn validate_registry(reg: &Registry) -> Vec<String>` — returns a list of integrity problems (unique slugs, parent resolves to top-level, no self-parent, no cycle, depth ≤ 2); used by `normalize_to_current` and as a test oracle.
+- `load_registry`: if the parsed `version > CURRENT_REGISTRY_VERSION`, return an error variant (or a typed `LoadError`) that the caller surfaces — do NOT fall back to `Registry::default()` (which would risk overwriting a newer file). For `version <= CURRENT`, call `normalize_to_current` before returning so any subsequent `save_registry` writes `version: 2`.
+- Split validation: `validate_create_parent(reg, parent)` (parent exists + top-level) vs `validate_reparent(reg, slug, new_parent)` (also asserts `slug` exists + has no children). T3 uses the create variant; T4 the reparent variant.
+- **Tests:** load a v1 fixture → mutate → save → assert on-disk `version == 2`; a registry with a dangling `parent_slug` self-heals to top-level on load; `version: 99` is rejected, original file untouched.
+
+### A4 — `skip_serializing_if` on both Option fields (finding #7; amends T1, T6, T7)
+
+On `UserFolder.parent_slug` (registry) AND `UserFolderDto.parent_slug`: `#[serde(default, skip_serializing_if = "Option::is_none")]`. Then top-level folders emit no `parentSlug` key (absent, not `null`), and TS `parentSlug?: string` is correct as written. Add a serde test asserting a top-level folder's JSON has no `parentSlug` key.
+
+### A5 — Delete returns the full deleted set; AppShell clears stale selection (finding #8; amends T5, T12)
+
+`folder_delete` (IPC) returns `Vec<String>` (all slugs removed: parent + children) instead of `()`. `useDeleteUserFolder` surfaces it; the host (`AppShell.tsx` onDeleted ~L1193-1198) clears selection to `'inbox'` when `selectedFolder` is in the returned set (not only when it equals the deleted parent). Test the child-selected case.
+
+### A6 — `WinlinkBackend` trait + `NativeBackend` wiring (new Task 6a, before T6; finding #9)
+
+`ui_commands` calls the `WinlinkBackend` trait (winlink_backend.rs:735 `create_user_folder`, :744 `delete_user_folder`), not `Mailbox` directly; `NativeBackend` delegates (1105/1112). Add a task BEFORE the IPC task:
+- Extend the trait: `create_user_folder(&self, display_name, parent_slug: Option<&str>)`; add `move_user_folder(&self, slug, new_parent: Option<&str>)`; change `delete_user_folder` to return `Vec<String>`.
+- Implement all three in `NativeBackend` by delegating to the `Mailbox` methods from T3/T4/T5.
+- Update every other `WinlinkBackend` impl (mocks/test doubles) so the trait still compiles — grep `impl WinlinkBackend` and `create_user_folder` across the crate.
+- Only then wire `ui_commands` (T6) to the trait methods.
+
+### A7 — One tree model, applied to all three sidebar renders (supersedes T8; finding #10)
+
+`FolderSidebar` renders user folders in three places: desktop list (L372), compact flyout (L579), compact rail (L765). Extract a single `buildFolderTree(userFolders)` helper (top-level + childrenOf + collapse state) and render it in **all three**. Desktop + flyout get full indent + expand/collapse; the **compact rail** (icon-only) renders top-level icons with a subfolder-count affordance (decide + document — a small dot/badge — do NOT silently leave it flat). Tests for `compact={false}` AND `compact={true}`. The original T8 testids/behavior for the desktop list still apply.
+
+### A8 — Blast-radius without a number (amends T12; finding #11)
+
+T12's copy omits the numeric message total. Render: "Will remove {childCount} subfolder{s} ({childNames}) and all messages they contain." Drop `messageCount` from the blast-radius requirement; keep `childCount`/`childNames` (derivable from `useUserFolders().folders`). Spec D6 already amended to match.
+
+### A9 — Drag payload MIME constants + mixed-payload no-op (amends T11; finding #12)
+
+Define `const MIME_MESSAGE = 'application/x-tuxlink-message'` and `const MIME_FOLDER = 'application/x-tuxlink-folder'` (existing message drag uses the former — FolderSidebar.tsx:122-128). In `onDrop`, branch on which type is present; if BOTH are present, no-op (defensive). Tests: message-drop (existing path intact), folder-drop (re-parent), mixed-payload no-op.
+
+### Re-review note
+
+Per build-robust-features, incorporate → plan-review cycle (min 3 rounds) → execute. These amendments expand the backend risk-surface materially (atomic cascade, registry lock, validate_registry, trait layer, index). A **second adversarial round after incorporation** is warranted before TDD execution; at minimum the next session runs the 3-round plan-review cycle on the amended plan. Sequence the new work: T1→A3/A4 (schema+migration+validate) → T2 (split validation) → T3/T4/T5 with A1/A2 (mutating methods, locked, atomic cascade) → T6a/A6 (trait) → T6 (IPC) → T7 (TS) → T8/A7 (tree, all variants) → T9/T10/T11/A9 (menus, drag) → T12/A5/A8 (delete dialog + selection) → T13 (gates + smoke).
