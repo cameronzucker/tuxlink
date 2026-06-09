@@ -1,6 +1,6 @@
 # Convergence-build failure-mode fixtures
 
-This directory holds regression fixtures for the 7 known convergence failure modes catalogued in [dev/handoffs/2026-06-01-moss-cove-hemlock-convergence-discipline-handoff.md](../../dev/handoffs/2026-06-01-moss-cove-hemlock-convergence-discipline-handoff.md). Each fixture validates one mode's handler.
+This directory holds regression fixtures for the convergence failure modes — the 7 catalogued in [dev/handoffs/2026-06-01-moss-cove-hemlock-convergence-discipline-handoff.md](../../dev/handoffs/2026-06-01-moss-cove-hemlock-convergence-discipline-handoff.md) plus mode 8 (root-`target/` refusal), added by the `tuxlink-edvb.1` cross-vendor adrev. Each fixture validates one mode's handler.
 
 Per Codex 2026-06-01 P2 #18:
 
@@ -19,6 +19,7 @@ Run via `python3 -m unittest tests.converge_build_fixtures_test`.
 | 5 | Untracked-vs-tracked identical-content collision | (v1) `converge-build.sh` `resolve_untracked_collisions` / (v2) eliminated by disposable-wt fresh checkout | `05-untracked-collision.sh` |
 | 6 | Stale `src-tauri/target/debug/tuxlink` | `converge-build.sh` `maybe_wipe_build_artifacts` (HEAD-change-detect) | `06-stale-cargo-target.sh` |
 | 7 | Port 1420 ownership / strictPort | `converge-build.sh` `verify_port_free` + (PR #206) dev-server lease | `07-port-1420-collision.sh` |
+| 8 | Repo-root `target/` (reintroduced root Cargo workspace) hidden by a lagging `.gitignore` | `converge-build.sh` `_disposable_is_clean` (explicit root-`target/` refusal, ignore-rule-independent) | `08-root-target-refusal.sh` |
 
 ## What the fixtures verify
 
