@@ -50,13 +50,22 @@ pub struct Config {
     /// bd: tuxlink-xehu
     #[serde(default)]
     pub telnet_listen: TelnetListenUiConfig,
-    /// Opt-in: prompt the operator to select which pending inbound messages to
-    /// download on a CMS connect (WLE "Review Pending Messages" parity), instead
-    /// of auto-downloading all. Default false = auto-download-all (the default, WLE parity).
-    /// `#[serde(default)]` migrates configs that predate this field (absent → false),
-    /// satisfying `deny_unknown_fields` (the field is now KNOWN).
-    #[serde(default)]
+    /// Prompt the operator to select which pending inbound messages to download
+    /// on a CMS connect (WLE "Review Pending Messages" parity), instead of
+    /// auto-downloading all. Default TRUE = review before download (the WLE emcomm
+    /// default); operators opt out to auto-download-all via the dashboard ribbon's
+    /// "On connect" control (tuxlink-pmp5). `#[serde(default = ...)]` migrates
+    /// configs that predate this field (absent → true), satisfying
+    /// `deny_unknown_fields` (the field is now KNOWN).
+    #[serde(default = "default_review_inbound_before_download")]
     pub review_inbound_before_download: bool,
+}
+
+/// Serde default for [`Config::review_inbound_before_download`]: `true` — review
+/// before download, the WLE emcomm default (tuxlink-pmp5). A free fn because
+/// serde's `default = "..."` takes a path and `bool`'s own `Default` is `false`.
+fn default_review_inbound_before_download() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -761,14 +770,14 @@ mod tests {
         );
     }
 
-    // tuxlink-bsiy: the additive-migration test. An OLD config JSON with NO
-    // `review_inbound_before_download` key (every config that predates this
-    // field) must deserialize with the field defaulting to false (today's
-    // auto-download-all behavior, WLE parity). The field is now KNOWN to the
-    // struct, so `deny_unknown_fields` stays satisfied; `#[serde(default)]`
-    // supplies false when the key is absent.
+    // tuxlink-pmp5: review-before-download is now the DEFAULT (the WLE emcomm
+    // default). An OLD config JSON with NO `review_inbound_before_download` key
+    // (every config that predates this field) must deserialize with the field
+    // defaulting to TRUE. The field is KNOWN to the struct, so
+    // `deny_unknown_fields` stays satisfied; the serde default fn supplies true
+    // when the key is absent.
     #[test]
-    fn review_inbound_before_download_defaults_false_when_absent_from_config() {
+    fn review_inbound_before_download_defaults_true_when_absent_from_config() {
         let json = sample_config_json_without_packet();
         assert!(
             !json.contains("review_inbound_before_download"),
@@ -777,8 +786,8 @@ mod tests {
         let cfg: Config = serde_json::from_str(&json)
             .expect("config without review_inbound_before_download should deserialize");
         assert!(
-            !cfg.review_inbound_before_download,
-            "missing review_inbound_before_download must default to false (auto-download-all)"
+            cfg.review_inbound_before_download,
+            "missing review_inbound_before_download must default to true (review before download)"
         );
     }
 
