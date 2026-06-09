@@ -20,6 +20,7 @@ import type { MailboxFolderRef, MessageMeta, UserFolder } from './types';
 import { MessageContextMenu } from './MessageContextMenu';
 import { DEFAULT_SORT_STATE, type SortState, sortMessages } from './messageSort';
 import { MessageListSortControl } from './MessageListSortControl';
+import { MessageBulkBar } from './MessageBulkBar';
 
 /// Empty-folder copy (spec §5.2).
 export const EMPTY_FOLDER_COPY =
@@ -288,6 +289,10 @@ export interface MessageListProps {
   /// Called whenever the selection set should change (Ctrl/Shift+click). Optional
   /// no-op default mirrors the `selectedIds` default (safe for unupgraded callers).
   onSelectionChange?: (next: Set<string>) => void;
+  /// Mark the given set of messages read or unread (tuxlink-etxt Task 10).
+  /// Optional — Task 11 wires the real AppShell handler; the bulk bar's `?.`
+  /// guard keeps AppShell compiling in the interim.
+  onBulkSetReadState?: (ids: Set<string>, read: boolean) => void;
 }
 
 /// Stable empty-selection default so the no-selection caller (pre-Task-11) does
@@ -311,6 +316,7 @@ export function MessageList({
   onArchiveMessage,
   selectedIds = EMPTY_SELECTION,
   onSelectionChange = () => {},
+  onBulkSetReadState,
 }: MessageListProps) {
   // Sort client-side so changing modes doesn't require a backend re-fetch.
   // Memo keyed on (messages, sortState, folder) — folder affects sender-* in
@@ -378,9 +384,18 @@ export function MessageList({
 
   return (
     <div className="rows-pane" data-testid="rows-pane">
-      {onSortStateChange && (
+      {(onSortStateChange || selectedIds.size > 0) && (
         <div className="rows-pane-header" data-testid="rows-pane-header">
-          <MessageListSortControl value={sortState} onChange={onSortStateChange} />
+          {selectedIds.size > 0 ? (
+            <MessageBulkBar
+              count={selectedIds.size}
+              onMarkRead={() => onBulkSetReadState?.(new Set(selectedIds), true)}
+              onMarkUnread={() => onBulkSetReadState?.(new Set(selectedIds), false)}
+              onClear={() => onSelectionChange(new Set())}
+            />
+          ) : (
+            onSortStateChange && <MessageListSortControl value={sortState} onChange={onSortStateChange} />
+          )}
         </div>
       )}
       {sortedMessages.length === 0 ? (

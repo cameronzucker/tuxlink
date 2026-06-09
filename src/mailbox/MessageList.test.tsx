@@ -391,7 +391,7 @@ describe('<MessageList> — multi-select / selection set (tuxlink-etxt Task 8)',
 });
 
 describe('<MessageList> — sort wiring (tuxlink-2x0l)', () => {
-  it('omits the sort header when onSortStateChange is absent', () => {
+  it('omits the sort header when onSortStateChange is absent and selection is empty', () => {
     render(<MessageList folder="inbox" messages={[meta()]} selectedId={null} onSelect={() => {}} />);
     expect(screen.queryByTestId('rows-pane-header')).toBeNull();
     expect(screen.queryByTestId('message-list-sort-trigger')).toBeNull();
@@ -459,5 +459,36 @@ describe('<MessageList> — sort wiring (tuxlink-2x0l)', () => {
     );
     expect(screen.getByTestId('message-list-sort-key-date')).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByTestId('message-list-sort-key-subject')).toHaveAttribute('aria-checked', 'false');
+  });
+});
+
+describe('<MessageList> — bulk bar (tuxlink-etxt Task 10)', () => {
+  it('shows the bulk bar when a selection exists, even with no sort handler', () => {
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={() => {}}
+        selectedIds={new Set(['M1', 'M2'])}
+        onSelectionChange={() => {}}
+      />,
+    );
+    expect(screen.getByRole('toolbar', { name: /selection actions/i })).toBeInTheDocument();
+  });
+
+  it('hides the bulk bar when the selection is empty', () => {
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={() => {}}
+        selectedIds={new Set()}
+        onSelectionChange={() => {}}
+        onSortStateChange={() => {}}
+      />,
+    );
+    expect(screen.queryByRole('toolbar', { name: /selection actions/i })).toBeNull();
   });
 });
