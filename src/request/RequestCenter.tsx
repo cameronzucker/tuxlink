@@ -94,6 +94,20 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
 
   const locationLabel = grid ? `Near ${grid}` : 'Location not set';
 
+  // Global search (Task D2). A non-empty trimmed needle shows cross-category
+  // search results, overriding the current view (home/browse/grib). Cleared →
+  // the view-based content returns. The header search input stays visible in
+  // all states. Reuses CatalogBrowse's search mode + the shared cms add path.
+  const searchActive = search.trim().length > 0;
+
+  const addCms = (e: { filename: string; description: string }) =>
+    basket.add({
+      id: `cms:${e.filename}`,
+      label: e.description || e.filename,
+      rail: 'cms',
+      filename: e.filename,
+    });
+
   return (
     <div className="request-overlay" data-testid="request-overlay" role="dialog" aria-label="Request Center">
       <div className="request-workspace">
@@ -149,23 +163,34 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
               </div>
             )}
 
+            {/* Global search results (Task D2). When the header search needle
+                is non-empty, CatalogBrowse renders a flat cross-category
+                results list — overriding home/browse/grib. Cleared → the view
+                content (below) returns. Gated by the same load-guard prefix.
+                Reuses CatalogBrowse's search mode + the shared cms add path. */}
+            {searchActive && !loading && !error && entries && (
+              <CatalogBrowse
+                entries={entries}
+                searchQuery={search}
+                onAddCms={addCms}
+                addedFilenames={new Set(basket.cmsFilenames)}
+                onBack={() => {
+                  setSearch('');
+                  setView('home');
+                }}
+              />
+            )}
+
             {/* Browse pane — the 3-pane master-detail CatalogBrowse (Task D1).
                 Gated by the same load-guard prefix as home so it can't render
                 against entries===null. CatalogBrowse receives `entries` as a
                 prop — it does NOT call useCatalog() (adrev #3: RequestCenter is
                 the single catalog-load owner). */}
-            {view === 'browse' && !loading && !error && entries && (
+            {!searchActive && view === 'browse' && !loading && !error && entries && (
               <CatalogBrowse
                 entries={entries}
                 initialCategory={browseCategory}
-                onAddCms={(e) =>
-                  basket.add({
-                    id: `cms:${e.filename}`,
-                    label: e.description || e.filename,
-                    rail: 'cms',
-                    filename: e.filename,
-                  })
-                }
+                onAddCms={addCms}
                 addedFilenames={new Set(basket.cmsFilenames)}
                 onBack={() => setView('home')}
               />
@@ -174,13 +199,13 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
             {/* GRIB pane — minimal placeholder; the real GRIB request form
                 replaces this in Task D3. Same load-guard prefix as browse/home
                 for symmetry. */}
-            {view === 'grib' && !loading && !error && entries && (
+            {!searchActive && view === 'grib' && !loading && !error && entries && (
               <div data-testid="request-grib" />
             )}
 
             {/* Request-first home sections. Home renders only when not loading,
                 no error, entries present, and the home view is active. */}
-            {view === 'home' && !loading && !error && entries && entries.length > 0 && (
+            {!searchActive && view === 'home' && !loading && !error && entries && entries.length > 0 && (
               <div className="request-sections">
                 {sections.map((section) => (
                   <section

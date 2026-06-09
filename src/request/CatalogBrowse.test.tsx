@@ -183,4 +183,150 @@ describe('<CatalogBrowse>', () => {
     expect(screen.getByTestId('request-browse')).toBeInTheDocument();
     expect(screen.getByTestId('catalog-browse-empty')).toBeInTheDocument();
   });
+
+  // --- Task D2: global search mode (searchQuery prop) ---
+
+  describe('search mode (searchQuery)', () => {
+    it('a non-empty searchQuery renders a flat cross-category results list', () => {
+      // "PUB" matches both WL2K_RMS gateway entries (filename) — same category.
+      // "forecast" (in description) spans categories; use "VARA" + "Aurora" to
+      // prove multi-category: needle "a" is too broad, so pick a needle that
+      // hits >=2 categories. 'gateways' is in two WL2K_RMS descriptions only.
+      // Use 'forecast' which appears in PROPAGATION (Aurora Forecast) and
+      // WX_EASTPAC (Offshore Waters Forecast) descriptions.
+      render(
+        <CatalogBrowse
+          entries={ENTRIES}
+          searchQuery="forecast"
+          onAddCms={vi.fn()}
+          onBack={vi.fn()}
+        />,
+      );
+      const results = screen.getByTestId('catalog-search-results');
+      expect(results).toBeInTheDocument();
+      // Master-detail nav is hidden in search mode.
+      expect(screen.queryByTestId('catalog-browse-nav')).toBeNull();
+      // Matches from MULTIPLE categories present.
+      expect(within(results).getByTestId('catalog-browse-item-AUR_TONIGHT')).toBeInTheDocument();
+      expect(within(results).getByTestId('catalog-browse-item-OFFNT01')).toBeInTheDocument();
+      // Non-matching entries absent.
+      expect(screen.queryByTestId('catalog-browse-item-PUB_PACKET')).toBeNull();
+    });
+
+    it('matching is case-insensitive and spans filename, description, and category', () => {
+      // 'wl2k' matches the WL2K_RMS category (case-insensitive) → both its items.
+      render(
+        <CatalogBrowse
+          entries={ENTRIES}
+          searchQuery="wl2k"
+          onAddCms={vi.fn()}
+          onBack={vi.fn()}
+        />,
+      );
+      const results = screen.getByTestId('catalog-search-results');
+      expect(within(results).getByTestId('catalog-browse-item-PUB_PACKET')).toBeInTheDocument();
+      expect(within(results).getByTestId('catalog-browse-item-PUB_VARA')).toBeInTheDocument();
+
+      // Filename match (case-insensitive): 'aur_tonight' lowercase needle.
+      render(
+        <CatalogBrowse
+          entries={ENTRIES}
+          searchQuery="aur_tonight"
+          onAddCms={vi.fn()}
+          onBack={vi.fn()}
+        />,
+      );
+      expect(screen.getAllByTestId('catalog-browse-item-AUR_TONIGHT').length).toBeGreaterThan(0);
+
+      // Description match: 'solar flux' lives in PROP_WWV's description.
+      render(
+        <CatalogBrowse
+          entries={ENTRIES}
+          searchQuery="SOLAR FLUX"
+          onAddCms={vi.fn()}
+          onBack={vi.fn()}
+        />,
+      );
+      expect(screen.getAllByTestId('catalog-browse-item-PROP_WWV').length).toBeGreaterThan(0);
+    });
+
+    it('clicking a search result’s Add fires onAddCms with that entry', () => {
+      const onAddCms = vi.fn();
+      render(
+        <CatalogBrowse
+          entries={ENTRIES}
+          searchQuery="OFFNT"
+          onAddCms={onAddCms}
+          onBack={vi.fn()}
+        />,
+      );
+      const item = screen.getByTestId('catalog-browse-item-OFFNT01');
+      fireEvent.click(within(item).getByRole('button', { name: /add/i }));
+      expect(onAddCms).toHaveBeenCalledTimes(1);
+      expect(onAddCms).toHaveBeenCalledWith(ENTRIES[4]);
+    });
+
+    it('addedFilenames shows the Added affordance in search results', () => {
+      render(
+        <CatalogBrowse
+          entries={ENTRIES}
+          searchQuery="PUB"
+          addedFilenames={new Set(['PUB_PACKET'])}
+          onAddCms={vi.fn()}
+          onBack={vi.fn()}
+        />,
+      );
+      const item = screen.getByTestId('catalog-browse-item-PUB_PACKET');
+      expect(within(item).queryByRole('button', { name: /^add$/i })).toBeNull();
+      expect(within(item).getByText(/added/i)).toBeInTheDocument();
+    });
+
+    it('a no-match needle shows the empty state and no item rows', () => {
+      render(
+        <CatalogBrowse
+          entries={ENTRIES}
+          searchQuery="zzz_no_such_item"
+          onAddCms={vi.fn()}
+          onBack={vi.fn()}
+        />,
+      );
+      expect(screen.getByTestId('catalog-search-results')).toBeInTheDocument();
+      expect(screen.queryByTestId(/^catalog-browse-item-/)).toBeNull();
+      expect(screen.getByText(/no items match/i)).toBeInTheDocument();
+    });
+
+    it('an empty / whitespace searchQuery restores the master-detail view', () => {
+      render(
+        <CatalogBrowse
+          entries={ENTRIES}
+          searchQuery="   "
+          onAddCms={vi.fn()}
+          onBack={vi.fn()}
+        />,
+      );
+      // Master-detail nav present, search-results absent.
+      expect(screen.getByTestId('catalog-browse-nav')).toBeInTheDocument();
+      expect(screen.queryByTestId('catalog-search-results')).toBeNull();
+    });
+
+    it('no searchQuery prop behaves exactly as the D1 master-detail', () => {
+      render(<CatalogBrowse entries={ENTRIES} onAddCms={vi.fn()} onBack={vi.fn()} />);
+      expect(screen.getByTestId('catalog-browse-nav')).toBeInTheDocument();
+      expect(screen.queryByTestId('catalog-search-results')).toBeNull();
+    });
+
+    it('Back still works in search mode', () => {
+      const onBack = vi.fn();
+      render(
+        <CatalogBrowse
+          entries={ENTRIES}
+          searchQuery="forecast"
+          onAddCms={vi.fn()}
+          onBack={onBack}
+        />,
+      );
+      fireEvent.click(screen.getByTestId('catalog-browse-back'));
+      expect(onBack).toHaveBeenCalledTimes(1);
+    });
+  });
 });

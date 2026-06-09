@@ -30,6 +30,11 @@ export interface CatalogBrowseProps {
   /// Filenames already in the basket — rows for these show an "Added"
   /// affordance instead of an Add control.
   addedFilenames?: Set<string>;
+  /// Global search needle (Task D2). When non-empty (trimmed), CatalogBrowse
+  /// renders a FLAT cross-category results list of all `entries` matching the
+  /// needle in filename, description, OR category (case-insensitive) — hiding
+  /// the master-detail nav. Empty / absent → the D1 master-detail behaviour.
+  searchQuery?: string;
   /// Returns to the request-first home view.
   onBack: () => void;
 }
@@ -39,8 +44,67 @@ export function CatalogBrowse({
   initialCategory,
   onAddCms,
   addedFilenames,
+  searchQuery,
   onBack,
 }: CatalogBrowseProps) {
+  // Global search mode takes precedence over master-detail when the needle is
+  // a non-empty trimmed string.
+  const searchNeedle = (searchQuery ?? '').trim().toLowerCase();
+  const isSearching = searchNeedle.length > 0;
+
+  // Flat cross-category matches: filename || description || category, all
+  // case-insensitive. Source order preserved (entries is already grouped).
+  const searchResults = useMemo(() => {
+    if (!isSearching) return [];
+    return entries.filter(
+      (e) =>
+        e.filename.toLowerCase().includes(searchNeedle) ||
+        e.description.toLowerCase().includes(searchNeedle) ||
+        e.category.toLowerCase().includes(searchNeedle),
+    );
+  }, [entries, isSearching, searchNeedle]);
+
+  // Shared item-row render — identical markup + Add/✓Added affordance for both
+  // the master-detail center pane and the flat search-results list, so the
+  // `cms:<filename>` add path and the Added state behave the same everywhere.
+  const renderItemRow = (entry: CatalogEntry) => {
+    const added = addedFilenames?.has(entry.filename) ?? false;
+    return (
+      <li
+        key={entry.filename}
+        className="catalog-browse__item"
+        data-testid={`catalog-browse-item-${entry.filename}`}
+      >
+        <div className="catalog-browse__item-body">
+          <span className="catalog-browse__item-filename">{entry.filename}</span>
+          {entry.description && (
+            <span className="catalog-browse__item-desc">{entry.description}</span>
+          )}
+          {formatSize(entry.size_bytes) && (
+            <span className="catalog-browse__item-size">{formatSize(entry.size_bytes)}</span>
+          )}
+        </div>
+        {added ? (
+          <span
+            className="catalog-browse__added"
+            aria-label={`${entry.filename} already in request`}
+          >
+            ✓ Added
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="catalog-browse__add"
+            onClick={() => onAddCms(entry)}
+            aria-label={`Add ${entry.filename} to request`}
+          >
+            Add
+          </button>
+        )}
+      </li>
+    );
+  };
+
   // Group once; insertion-ordered (groupByCategory preserves source order).
   const tree = useMemo(() => groupByCategory(entries), [entries]);
   const categoryNames = useMemo(() => Array.from(tree.categories.keys()), [tree]);
@@ -77,6 +141,38 @@ export function CatalogBrowse({
   }, [tree, activeCategory, filter]);
 
   const isEmpty = categoryNames.length === 0;
+
+  if (isSearching) {
+    return (
+      <div className="catalog-browse" data-testid="request-browse" data-category="">
+        <div className="catalog-browse__bar">
+          <button
+            type="button"
+            className="catalog-browse__back"
+            data-testid="catalog-browse-back"
+            onClick={onBack}
+          >
+            ← Back
+          </button>
+          <span className="catalog-browse__search-count" data-testid="catalog-search-count">
+            {searchResults.length === 1
+              ? '1 match'
+              : `${searchResults.length} matches`}
+          </span>
+        </div>
+
+        <div className="catalog-browse__items" data-testid="catalog-search-results">
+          {searchResults.length === 0 ? (
+            <div className="catalog-browse__noitems">
+              No items match “{searchQuery?.trim()}”.
+            </div>
+          ) : (
+            <ul className="catalog-browse__list">{searchResults.map(renderItemRow)}</ul>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -143,47 +239,7 @@ export function CatalogBrowse({
             {activeItems.length === 0 ? (
               <div className="catalog-browse__noitems">No items match your filter.</div>
             ) : (
-              <ul className="catalog-browse__list">
-                {activeItems.map((entry) => {
-                  const added = addedFilenames?.has(entry.filename) ?? false;
-                  return (
-                    <li
-                      key={entry.filename}
-                      className="catalog-browse__item"
-                      data-testid={`catalog-browse-item-${entry.filename}`}
-                    >
-                      <div className="catalog-browse__item-body">
-                        <span className="catalog-browse__item-filename">{entry.filename}</span>
-                        {entry.description && (
-                          <span className="catalog-browse__item-desc">{entry.description}</span>
-                        )}
-                        {formatSize(entry.size_bytes) && (
-                          <span className="catalog-browse__item-size">
-                            {formatSize(entry.size_bytes)}
-                          </span>
-                        )}
-                      </div>
-                      {added ? (
-                        <span
-                          className="catalog-browse__added"
-                          aria-label={`${entry.filename} already in request`}
-                        >
-                          ✓ Added
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          className="catalog-browse__add"
-                          onClick={() => onAddCms(entry)}
-                          aria-label={`Add ${entry.filename} to request`}
-                        >
-                          Add
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
+              <ul className="catalog-browse__list">{activeItems.map(renderItemRow)}</ul>
             )}
           </div>
         </div>

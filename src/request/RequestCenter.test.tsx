@@ -341,3 +341,73 @@ describe('<RequestCenter> — D1 catalog browse reveal', () => {
     expect(browse).toHaveAttribute('data-category', 'WX_EASTPAC');
   });
 });
+
+// ===========================================================================
+// Task D2 — global header search: typing in `request-search` filters across
+// ALL catalog items (filename / description / category, case-insensitive),
+// overriding the current view; clearing the search returns to the view.
+//
+// Fixture has matches across >= 2 categories sharing the needle "forecast"
+// (Aurora Forecast / 3-Day Propagation Forecast in PROPAGATION, State Forecast
+// in WX_US_WA), so a single needle proves cross-category results.
+// ===========================================================================
+
+describe('<RequestCenter> — D2 global search', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('typing a needle shows global results across categories, overriding home', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    fireEvent.change(screen.getByTestId('request-search'), { target: { value: 'forecast' } });
+
+    const results = await screen.findByTestId('catalog-search-results');
+    expect(results).toBeInTheDocument();
+    // Matches span multiple categories.
+    expect(within(results).getByTestId('catalog-browse-item-PROP_3DAY')).toBeInTheDocument();
+    expect(within(results).getByTestId('catalog-browse-item-WA_FOR_WA')).toBeInTheDocument();
+    // Home sections no longer rendered (search overrides the view).
+    expect(document.querySelector('.request-sections')).toBeNull();
+  });
+
+  it('clicking a global result Add adds a cms:<filename> basket item', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    fireEvent.change(screen.getByTestId('request-search'), { target: { value: 'WWV' } });
+    const item = await screen.findByTestId('catalog-browse-item-PROP_WWV');
+    fireEvent.click(within(item).getByRole('button', { name: /add/i }));
+
+    // Same id scheme as cards/browse → dedup works across surfaces.
+    expect(await screen.findByTestId('basket-item-cms:PROP_WWV')).toBeInTheDocument();
+  });
+
+  it('clearing the search returns to the home view', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    const search = screen.getByTestId('request-search');
+    fireEvent.change(search, { target: { value: 'forecast' } });
+    expect(await screen.findByTestId('catalog-search-results')).toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: '' } });
+    // Home sections render again; search results gone.
+    expect(await screen.findByTestId('request-section-propagation')).toBeInTheDocument();
+    expect(screen.queryByTestId('catalog-search-results')).toBeNull();
+  });
+
+  it('search overrides the grib view too (search from anywhere)', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} initialView="grib" />);
+    await screen.findByTestId('request-grib');
+
+    fireEvent.change(screen.getByTestId('request-search'), { target: { value: 'forecast' } });
+    expect(await screen.findByTestId('catalog-search-results')).toBeInTheDocument();
+    expect(screen.queryByTestId('request-grib')).toBeNull();
+  });
+});
