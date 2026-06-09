@@ -443,6 +443,29 @@ pub fn telnet_login<R: BufRead, W: Write>(
     }
 }
 
+/// Login callsign for an RMS Relay "post office" telnet session, mirroring WLE
+/// `GetBaseCallsign` (`Globals.cs:3136-3154`): uppercase, drop any `.`-qualifier
+/// then SSID, then (for the local `L` pool) append `-L` — the `-L` suffix is the
+/// entire local-vs-global routing discriminator (`TelnetSession.cs:2011-2013`).
+/// Network PO passes `local = false` for the full base callsign, no `-L`.
+///
+/// No >6-char rejection: that check is Pactor-TNC-only (`PactorWL2KSession.cs:2259`);
+/// importing it here would be a tuxlink-added safeguard (see memory
+/// `feedback_no_tuxlink_added_safeguards`).
+pub fn base_callsign_for_post_office(raw: &str, local: bool) -> String {
+    let base = raw
+        .trim()
+        .to_uppercase()
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .split('-')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    if local { format!("{base}-L") } else { base }
+}
+
 /// Why a telnet exchange failed.
 #[derive(Debug)]
 pub enum TelnetError {
@@ -791,5 +814,24 @@ mod tests {
             "marker must remain for log readability, got: {:?}",
             entries[0]
         );
+    }
+
+    #[test]
+    fn base_callsign_for_post_office_local_appends_dash_l_after_stripping() {
+        // Vector table pins the WLE GetBaseCallsign algorithm: uppercase, split '.'
+        // first, then '-', take the first token; append -L for local. NO >6 rejection.
+        assert_eq!(base_callsign_for_post_office("n7cpz-10", true), "N7CPZ-L");
+        assert_eq!(base_callsign_for_post_office("N7CPZ.P", true), "N7CPZ-L");
+        assert_eq!(base_callsign_for_post_office("W7XYZ-10", true), "W7XYZ-L");
+        assert_eq!(base_callsign_for_post_office("N7CPZ", true), "N7CPZ-L");
+        assert_eq!(base_callsign_for_post_office("RELAY1", true), "RELAY1-L"); // tactical passthrough
+        // '.' splits BEFORE '-' (load-bearing order): "w7xyz-5.bbs" -> ".".0="w7xyz-5" -> "-".0="w7xyz"
+        assert_eq!(base_callsign_for_post_office("w7xyz-5.bbs", true), "W7XYZ-L");
+    }
+
+    #[test]
+    fn base_callsign_for_post_office_network_keeps_full_base_no_dash_l() {
+        assert_eq!(base_callsign_for_post_office("n7cpz-10", false), "N7CPZ");
+        assert_eq!(base_callsign_for_post_office("N7CPZ.P", false), "N7CPZ");
     }
 }
