@@ -32,6 +32,15 @@ describe('AppShell desktop regression guard (tuxlink-h7q7)', () => {
     expect(desktopCss).toContain('grid-template-columns: 200px 380px 1fr');
     expect(desktopCss).toContain('grid-template-columns: 200px 380px 1fr 400px');
   });
+
+  it('gives the Connection ribbon cell a stable slot while ellipsizing only its text (tuxlink-a8x6)', () => {
+    expect(desktopCss).toContain('--dash-connection-slot: clamp(210px, 18vw, 260px)');
+    expect(desktopCss).toMatch(
+      /\.dashboard \.dash-item--connection\s*\{[^}]*flex:\s*0 0 var\(--dash-connection-slot\);[^}]*inline-size:\s*var\(--dash-connection-slot\);/,
+    );
+    expect(desktopCss).toMatch(/\.dashboard \.dash-connection\s*\{[^}]*inline-size:\s*100%;/);
+    expect(desktopCss).toMatch(/\.dashboard \.dash-connection-text\s*\{[^}]*text-overflow:\s*ellipsis;/);
+  });
 });
 
 describe('AppShell compact CSS contract (tuxlink-h7q7)', () => {
@@ -89,7 +98,8 @@ describe('Compact ribbon + chrome (Task 11)', () => {
   const block = compactCss.slice(compactCss.indexOf(COMPACT));
   it('fixes the ribbon clip (smaller search-zone, connection, gap)', () => {
     expect(block).toMatch(/\.search-zone \{\s*flex:\s*0 0 360px/);
-    expect(block).toMatch(/\.dash-connection \{\s*max-width:\s*180px/);
+    expect(block).toMatch(/\.dash-item--connection \{\s*--dash-connection-slot:\s*180px/);
+    expect(block).toMatch(/\.dash-connection \{\s*max-inline-size:\s*100%/);
   });
   it('raises the worst sub-floor chrome font (.dash-source-segment 9px → 12px)', () => {
     expect(block).toMatch(/\.dash-source-segment \{\s*font-size:\s*12px/);

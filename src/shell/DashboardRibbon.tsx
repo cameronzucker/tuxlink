@@ -222,7 +222,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
       </div>
       <div className="dash-divider" />
 
-      <div className="dash-item">
+      <div className="dash-item dash-item--connection">
         <div className="dash-label">Connection</div>
         <div
           className="dash-value dash-connection"
@@ -230,7 +230,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
           title={typeof connectionLabel === 'string' ? connectionLabel : undefined}
         >
           <span className={`dash-status-dot ${dashDotClass(connectionTone)}`} aria-hidden="true" />
-          {connectionLabel}
+          <span className="dash-connection-text">{connectionLabel}</span>
         </div>
       </div>
 
