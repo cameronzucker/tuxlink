@@ -718,6 +718,7 @@ export function AppShell() {
     try {
       await invoke('message_set_read_state', { folder, id, read });
       void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
     } catch {
       /* surfaced via Rust logs; next refetch resyncs */
     }
@@ -732,13 +733,22 @@ export function AppShell() {
   // it via the ✕ button or by switching folders — do not auto-clear on success.
   const bulkSetReadState = useCallback(async (ids: Set<string>, read: boolean) => {
     const byId = new Map(visibleMessages.map((m) => [m.id, m] as const));
-    const items = [...ids].map((id) => ({
-      folder: (byId.get(id)?.folder as string | undefined) ?? selectedFolder,
-      id,
-    }));
+    // Fix 3: filter to ids that are actually present in the visible list so
+    // a stale selection (row removed between select and act) never falls back
+    // to selectedFolder for an unknown message — that could target the wrong
+    // folder in a cross-folder search view.
+    const items = [...ids]
+      .filter((id) => byId.has(id))
+      .map((id) => ({
+        folder: (byId.get(id)!.folder as string | undefined) ?? selectedFolder,
+        id,
+      }));
     try {
       await invoke('message_set_read_state_bulk', { items, read });
       void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      // Fix 1: also invalidate search results so unread state stays current
+      // when a bulk read/unread action is taken while a search view is active.
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
     } catch {
       /* surfaced via Rust logs; next refetch resyncs */
     }

@@ -187,17 +187,23 @@ describe('<MessageRow> (3-line, Mock D)', () => {
     expect(screen.getByTestId('message-row-MID1').className).toContain('selected');
   });
 
-  it('click fires onRowClick and Enter fires onSelect with the id', () => {
+  it('click fires onRowClick and Enter also fires onRowClick (plain-click path)', () => {
     const onRowClick = vi.fn();
     const onSelect = vi.fn();
     render(<MessageRow message={meta()} folder="inbox" isOpen={false} inSelection={false} onRowClick={onRowClick} onSelect={onSelect} />);
     const row = screen.getByTestId('message-row-MID1');
+    // Plain mouse click → onRowClick with ctrl:false/shift:false
     fireEvent.click(row);
     expect(onRowClick).toHaveBeenCalledTimes(1);
     expect(onRowClick).toHaveBeenCalledWith('MID1', { ctrl: false, shift: false });
+    onRowClick.mockClear();
+    // Enter key → same plain-click path via onRowClick (Fix 2: clears selection + opens)
     fireEvent.keyDown(row, { key: 'Enter' });
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect).toHaveBeenCalledWith('MID1');
+    expect(onRowClick).toHaveBeenCalledTimes(1);
+    expect(onRowClick).toHaveBeenCalledWith('MID1', { ctrl: false, shift: false });
+    // onSelect is called internally by onRowClick's plain-click branch — but at
+    // the MessageRow level the call goes via onRowClick, not onSelect directly.
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });
 
@@ -387,6 +393,29 @@ describe('<MessageList> — multi-select / selection set (tuxlink-etxt Task 8)',
     fireEvent.keyDown(screen.getByTestId('message-row-M2'), { key: ' ' });
     expect(onSelect).not.toHaveBeenCalled();                      // Space no longer opens
     expect(onSelectionChange).toHaveBeenLastCalledWith(new Set(['M2'])); // Space toggles into the set
+  });
+
+  // Fix 2 (Codex P2): Enter must clear the selection set, just like a plain
+  // mouse click. Before the fix, Enter called onSelect directly, bypassing the
+  // onRowClick plain-click path that clears the set — leaving stale selection
+  // highlights after keyboard-opening a row.
+  it('Enter clears the selection set and opens the message (Fix 2)', () => {
+    const onSelect = vi.fn();
+    const onSelectionChange = vi.fn();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={onSelect}
+        selectedIds={new Set(['M1', 'M3'])}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    // Enter on M2 while M1+M3 are in the selection set: must open M2 AND clear the set.
+    fireEvent.keyDown(screen.getByTestId('message-row-M2'), { key: 'Enter' });
+    expect(onSelect).toHaveBeenCalledWith('M2');
+    expect(onSelectionChange).toHaveBeenCalledWith(new Set()); // selection cleared
   });
 });
 

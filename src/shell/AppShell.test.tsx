@@ -1072,6 +1072,48 @@ describe('<AppShell> — bulk Mark read/unread (tuxlink-etxt Task 11)', () => {
       ),
     );
   });
+
+  // Fix 3 (Codex P2): bulkSetReadState must silently drop ids that are no
+  // longer present in the visible message list (stale selection). If an id is
+  // not in byId, the old code fell back to selectedFolder — potentially the
+  // wrong folder for a cross-folder search view. After the fix, stale ids are
+  // filtered out; only ids that appear in the visible list are sent.
+  it('bulk action silently ignores stale ids not in the visible list (Fix 3)', async () => {
+    renderShell();
+
+    // Ctrl+click INBOX1 and INBOX2 to build a selection.
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'), { ctrlKey: true });
+    fireEvent.click(screen.getByTestId('message-row-INBOX2'), { ctrlKey: true });
+    expect(await screen.findByTestId('message-bulk-bar')).toBeInTheDocument();
+
+    vi.mocked(invoke).mockClear();
+
+    // Click "Mark read" — the two visible inbox messages are sent.
+    fireEvent.click(screen.getByRole('button', { name: 'Mark read' }));
+
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+        'message_set_read_state_bulk',
+        expect.objectContaining({
+          // Both ids are in the list → both appear.
+          items: expect.arrayContaining([
+            { folder: 'inbox', id: 'INBOX1' },
+            { folder: 'inbox', id: 'INBOX2' },
+          ]),
+          read: true,
+        }),
+      ),
+    );
+
+    // The items array must NOT contain any id that isn't in the visible list
+    // (no ghost entries from stale selection state). Two real items → length exactly 2.
+    const call = vi.mocked(invoke).mock.calls.find(
+      ([cmd]) => cmd === 'message_set_read_state_bulk',
+    );
+    expect(call).toBeDefined();
+    const { items } = (call![1] as { items: { folder: string; id: string }[]; read: boolean });
+    expect(items).toHaveLength(2);
+  });
 });
 
 // ============================================================================
