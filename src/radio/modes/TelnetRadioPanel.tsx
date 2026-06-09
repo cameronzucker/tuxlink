@@ -189,13 +189,12 @@ export function TelnetRadioPanel({ onClose }: TelnetRadioPanelProps) {
       sub={`${host}:${portFor(transport)}`}
       onClose={onClose}
     >
-      {/* Connect-target surface — Favorites / Recent / Manual (Task B6-TELNET).
-          The Server (Host + quick-picks) + Transport sections are the Manual
-          tab's content; a favorite's Connect PRE-FILLS host + transport via
-          handlePrefill and never transmits (RADIO-1). The
-          AuthDiagnosticBanner, SessionLog, and Start/Stop actions stay OUTSIDE
-          the tabs so they remain visible regardless of the active tab — mirrors
-          the ARDOP + Packet panels. */}
+      {/* Connect-target surface (Task B6-TELNET; tuxlink-fr0d: Manual-only).
+          Telnet connects to a FIXED CMS host, so FavoritesTabs renders the
+          manual content directly — no Favorites/Recent tabs (there is no nearby
+          station to choose). The Server (Host + quick-picks) + Transport
+          sections are that manual content. onPrefill is retained for the shared
+          FavoritesTabs contract but is never invoked in Manual-only mode. */}
       <FavoritesTabs
         mode="telnet"
         onPrefill={handlePrefill}

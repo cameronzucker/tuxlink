@@ -1,7 +1,7 @@
 // FavoritesTabs + FavoriteRow tests (Task B5).
 //
-// Covers: per-mode tabs (M7 — RF/telnet get Favorites/Recent/Manual; VARA gets
-// Manual-only with NO tabs + NO Connect), FavoriteRow head/detail lines
+// Covers: per-mode tabs (M7 — ARDOP/packet get Favorites/Recent/Manual; VARA +
+// telnet get Manual-only with NO tabs + NO Connect), FavoriteRow head/detail lines
 // (gateway·band, freq·grid·distance), telnet head (gateway·transport, no
 // freq/band, H7), C4 distance source (position_current_fix NOT position_status)
 // + null-grid safety, star-to-promote, and the RADIO-1 purity of Connect
@@ -16,6 +16,11 @@ import { invoke } from '@tauri-apps/api/core';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
 import { FavoritesTabs } from './FavoritesTabs';
+// Raw CSS for the active-tab styling assertion (tuxlink-fr0d), mirroring the
+// AppShell.test.tsx pattern of pinning a style rule against regression.
+const FAVORITES_TABS_CSS = Object.values(
+  import.meta.glob('./FavoritesTabs.css', { query: '?raw', import: 'default', eager: true }),
+)[0] as string;
 import { FavoriteRow } from './FavoriteRow';
 import type { Favorite, FavoriteDial, RadioMode, StationsFile } from './types';
 import { FIXTURE_FAVORITES, FIXTURE_RECENTS, FIXTURE_ATTEMPTS } from './favorites-fixture';
@@ -93,12 +98,24 @@ describe('<FavoritesTabs> — per-mode chrome (M7)', () => {
     expect(await screen.findByTestId('manual-content')).toBeInTheDocument();
   });
 
-  it('packet and telnet also get the three-tab chrome', async () => {
+  it('packet gets the three-tab chrome', async () => {
     routeInvoke({ favorites: FIXTURE_FAVORITES });
-    renderTabs({ mode: 'telnet' });
+    renderTabs({ mode: 'packet' });
     expect(await screen.findByRole('tab', { name: 'Favorites' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Recent' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Manual' })).toBeInTheDocument();
+  });
+
+  // tuxlink-fr0d: telnet connects to a FIXED CMS host — there is no nearby-
+  // station choice to favorite or redial, so it is Manual-only like VARA
+  // (operator converged-build smoke: Telnet Winlink CMS doesn't need this).
+  it('telnet is Manual-only — NO Favorites/Recent tabs (tuxlink-fr0d)', async () => {
+    routeInvoke({ favorites: FIXTURE_FAVORITES });
+    renderTabs({ mode: 'telnet' });
+    expect(await screen.findByTestId('manual-content')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Favorites' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Recent' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Manual' })).not.toBeInTheDocument();
   });
 
   it('VARA (vara-hf) renders manualContent and NO Favorites/Recent triggers and NO Connect button', async () => {
@@ -120,6 +137,20 @@ describe('<FavoritesTabs> — per-mode chrome (M7)', () => {
     renderTabs({ mode: 'vara-fm' });
     expect(await screen.findByTestId('manual-content')).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Favorites' })).not.toBeInTheDocument();
+  });
+});
+
+// tuxlink-fr0d: the active tab highlighted with the GLOBAL app accent (orange
+// --accent) read as generic/foreign inside the green --modem-accent radio
+// panel. Pin the active state to the radio-panel accent family so it stays
+// consistent with the surrounding .radio-panel-segmented chrome.
+describe('FavoritesTabs.css active-tab styling (tuxlink-fr0d)', () => {
+  it('uses the radio-panel modem-accent (not the global app accent) for the active tab', () => {
+    const start = FAVORITES_TABS_CSS.indexOf(".favorites-tab-trigger[data-state='active']");
+    expect(start).toBeGreaterThan(-1);
+    const block = FAVORITES_TABS_CSS.slice(start, FAVORITES_TABS_CSS.indexOf('}', start) + 1);
+    expect(block).toMatch(/color:\s*var\(--modem-accent\)/);
+    expect(block).not.toMatch(/var\(--accent\)/);
   });
 });
 
