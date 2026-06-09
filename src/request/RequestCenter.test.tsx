@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { RequestCenter } from './RequestCenter';
 import type { CatalogEntry } from '../catalog/types';
 
@@ -135,5 +135,124 @@ describe('<RequestCenter>', () => {
     const chip = screen.getByTestId('request-center-location');
     expect(chip).toHaveTextContent('Location not set');
     expect(chip.textContent).not.toMatch(/null|undefined|Near/);
+  });
+});
+
+// ===========================================================================
+// Task C2 — request-first sections + cards.
+//
+// A richer catalog fixture so the geo + catalogMap resolvers have real entries
+// to bind to. CN87 → lat≈47.5, lon≈-123.0 → state WA, sea-area WX_EASTPAC.
+// ===========================================================================
+
+const C2_ENTRIES: CatalogEntry[] = [
+  // WA state forecast (non-tabular preferred by bestStateForecast).
+  entry('WX_US_WA', 'WA_FOR_SEW', 'State Forecast for Washington', 4096),
+  // The four NATIONAL filenames in their categories.
+  entry('PROPAGATION', 'PROP_3DAY', '3-Day Propagation Forecast', 800),
+  entry('PROPAGATION', 'PROP_WWV', 'Daily WWV Solar Flux summary', 621),
+  entry('PROPAGATION', 'AUR_TONIGHT', 'Aurora Forecast Tonight', 900),
+  entry('INQUIRIES', 'INQUIRIES', 'Winlink Catalog Inquiries Help', 1200),
+  // Two WL2K_RMS PUB_* gateway entries (by mode).
+  entry('WL2K_RMS', 'PUB_PACKET', 'Packet Public Gateways Frequency List', 219867),
+  entry('WL2K_RMS', 'PUB_VARA', 'VARA HF Public Gateways Frequency List', 180000),
+  // Decoy entries that MUST NOT surface as cards (dropped per decisions §7).
+  entry('WX_METAR', 'METAR_KSEA', 'METAR for Seattle-Tacoma', 300),
+  entry('WX_HAZARD', 'HAZ_OUTLOOK', 'Hazardous Weather Outlook', 500),
+];
+
+function mockC2(grid: string | null = 'CN87') {
+  vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+    if (cmd === 'catalog_list') return C2_ENTRIES;
+    if (cmd === 'config_read') return { grid };
+    return null;
+  });
+}
+
+// Click the add control inside a card identified by its label.
+function clickCardAdd(label: string) {
+  const card = screen.getByTestId(`request-card-${label}`);
+  fireEvent.click(within(card).getByRole('button', { name: /add|open/i }));
+}
+
+describe('<RequestCenter> — C2 sections & cards', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('Weather: "State forecast" card adds the WA state-forecast cms item', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    const card = await screen.findByTestId('request-card-State forecast');
+    expect(card).toBeInTheDocument();
+
+    clickCardAdd('State forecast');
+
+    const item = await screen.findByTestId('basket-item-cms:WA_FOR_SEW');
+    expect(item).toHaveTextContent('State forecast');
+  });
+
+  it('Weather: "Marine forecast" card navigates the browse view to WX_EASTPAC without touching the basket', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    const card = await screen.findByTestId('request-card-Marine forecast');
+    expect(card).toBeInTheDocument();
+
+    clickCardAdd('Marine forecast');
+
+    const browse = await screen.findByTestId('request-browse');
+    expect(browse).toHaveAttribute('data-category', 'WX_EASTPAC');
+    // Basket unchanged — openBrowse never adds an item.
+    expect(screen.queryByTestId(/^basket-item-/)).not.toBeInTheDocument();
+  });
+
+  it('Propagation: renders exactly 3 national cards, each adding the right cms filename', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    const section = await screen.findByTestId('request-section-propagation');
+    const cards = within(section).getAllByTestId(/^request-card-/);
+    expect(cards).toHaveLength(3);
+
+    clickCardAdd('Propagation forecast');
+    clickCardAdd('Solar-terrestrial');
+    clickCardAdd('Aurora tonight');
+
+    expect(await screen.findByTestId('basket-item-cms:PROP_3DAY')).toBeInTheDocument();
+    expect(screen.getByTestId('basket-item-cms:PROP_WWV')).toBeInTheDocument();
+    expect(screen.getByTestId('basket-item-cms:AUR_TONIGHT')).toBeInTheDocument();
+  });
+
+  it('Nearby stations: gateway-lists card opens browse at WL2K_RMS; Winlink-info adds INQUIRIES', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-nearby');
+
+    // Winlink info & how-to → addCms INQUIRIES.
+    clickCardAdd('Winlink info & how-to');
+    expect(await screen.findByTestId('basket-item-cms:INQUIRIES')).toBeInTheDocument();
+
+    // Public gateway lists → openBrowse WL2K_RMS (navigates, no basket mutation).
+    clickCardAdd('Public gateway lists');
+    const browse = await screen.findByTestId('request-browse');
+    expect(browse).toHaveAttribute('data-category', 'WL2K_RMS');
+  });
+
+  it('dropped cards are absent: no METAR card, no hazardous-weather card', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-nearby');
+    expect(screen.queryByText(/METAR/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/hazardous/i)).not.toBeInTheDocument();
+  });
+
+  it('grid=null: geo cards (State / Marine forecast) are absent; national + nearby cards still render', async () => {
+    mockC2(null);
+    render(<RequestCenter onClose={() => {}} />);
+    // National + nearby render regardless of location.
+    expect(await screen.findByTestId('request-card-Propagation forecast')).toBeInTheDocument();
+    expect(screen.getByTestId('request-card-Winlink info & how-to')).toBeInTheDocument();
+    // Geo-derived cards omitted when there is no grid.
+    expect(screen.queryByTestId('request-card-State forecast')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('request-card-Marine forecast')).not.toBeInTheDocument();
   });
 });
