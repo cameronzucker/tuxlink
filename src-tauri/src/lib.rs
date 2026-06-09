@@ -1,5 +1,6 @@
 pub mod app_backend;
 pub mod bootstrap;
+pub mod tiles;
 pub mod catalog;
 pub mod contacts;
 pub mod compose_window;
