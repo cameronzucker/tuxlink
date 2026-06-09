@@ -447,7 +447,9 @@ impl Mailbox {
     /// Shared list-dir helper used by both system and user folder listing.
     /// Returns metadatas sorted newest-first with id ascending as tiebreaker.
     /// `surface_unread` controls whether a missing `.read` sidecar marks the
-    /// message unread — only the inbox surfaces this today (spec §2.1).
+    /// message unread. Its sole caller (`list_user`) passes `true` — received
+    /// mail in user folders surfaces unread (tuxlink-etxt); `list` surfaces
+    /// Inbox + Archive directly (spec §2.1).
     ///
     /// Called only for user folders; system folders compute unread in `list` directly.
     fn list_dir(dir: &Path, surface_unread: bool) -> Result<Vec<MessageMeta>, BackendError> {
@@ -745,19 +747,18 @@ mod tests {
 
         mbox.set_read_state(&FolderRef::User(uf.slug.clone()), &id, true).unwrap();
 
-        // Directly verify the sidecar was written to the user folder directory —
-        // independent of list_user's surface_unread flag (which is false today).
-        // This assertion fails if set_read_state's FolderRef::User arm is broken
-        // even if list_user always returns unread=false.
+        // Directly verify the sidecar was written to the user folder directory.
+        // This is the most precise check of set_read_state's FolderRef::User arm:
+        // it fails if that arm is broken, independent of list_user's surfacing.
         let sidecar = crate::user_folders::folder_dir(dir.path(), &uf.slug)
             .join(format!("{}.read", id.0));
         assert!(
             sidecar.exists(),
             "set_read_state(FolderRef::User) must write the <mid>.read sidecar at {sidecar:?}"
         );
-        // Also confirm list_user doesn't blow up (surface flag is false today;
-        // this will flip to true when user-folder unread is implemented).
-        assert!(!mbox.list_user(&uf.slug).unwrap()[0].unread, "list_user must not error on a user folder with a read sidecar");
+        // And confirm list_user surfaces the now-read state: with the sidecar
+        // written and surface_unread=true (tuxlink-etxt), the message reports read.
+        assert!(!mbox.list_user(&uf.slug).unwrap()[0].unread, "a read message in a user folder must surface unread=false");
     }
 
     #[test]
