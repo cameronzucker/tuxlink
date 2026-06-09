@@ -490,5 +490,7 @@ describe('<MessageList> — bulk bar (tuxlink-etxt Task 10)', () => {
       />,
     );
     expect(screen.queryByRole('toolbar', { name: /selection actions/i })).toBeNull();
+    // Sort control must return when selection clears (toggle-back contract).
+    expect(screen.getByTestId('message-list-sort-trigger')).toBeInTheDocument();
   });
 });

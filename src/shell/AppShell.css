@@ -658,7 +658,6 @@
 }
 .layout-b .bulk-spacer {
   flex: 1 1 auto;
-  margin-left: auto;
 }
 .layout-b .bulk-btn {
   display: inline-flex;
