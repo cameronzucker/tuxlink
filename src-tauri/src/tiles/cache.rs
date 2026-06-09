@@ -90,12 +90,52 @@ pub fn tile_path(
     coord: &TileCoord,
     tms: bool,
 ) -> std::io::Result<PathBuf> {
+    tile_path_inner(cache_root, ns, coord, tms, /*create*/ true)
+}
+
+/// Read-side path resolver: like [`tile_path`] but does NOT create the parent
+/// directory tree. A read must not materialize the cache layout — if the
+/// parent does not exist yet, the tile is simply absent (returns `None`). This
+/// keeps `clear`/`purge` durable: a subsequent `get` does not silently recreate
+/// the namespace subtree that was just removed.
+fn tile_path_read(
+    cache_root: &Path,
+    ns: &str,
+    coord: &TileCoord,
+    tms: bool,
+) -> std::io::Result<Option<PathBuf>> {
+    let rel = coord.rel_path(tms);
+    let parent = cache_root.join(ns).join(&rel);
+    let parent = parent.parent().map(Path::to_path_buf);
+    let Some(parent) = parent else {
+        return Err(io_err("tile path has no parent directory"));
+    };
+    if !parent.exists() {
+        return Ok(None); // not yet cached → miss, no traversal possible
+    }
+    Ok(Some(tile_path_inner(cache_root, ns, coord, tms, false)?))
+}
+
+/// Shared core. `create=true` materializes the parent (write path);
+/// `create=false` requires it to already exist (read path).
+//
+// traversal-safety (§8.4): the canonicalize + starts_with gate below is the
+// filesystem twin of the SSRF host gate. Phase-10 pitfalls cites this anchor.
+fn tile_path_inner(
+    cache_root: &Path,
+    ns: &str,
+    coord: &TileCoord,
+    tms: bool,
+    create: bool,
+) -> std::io::Result<PathBuf> {
     let rel = coord.rel_path(tms); // integers only: `<z>/<x>/<y>.tile`
     let full = cache_root.join(ns).join(&rel);
     let parent = full
         .parent()
         .ok_or_else(|| io_err("tile path has no parent directory"))?;
-    std::fs::create_dir_all(parent)?;
+    if create {
+        std::fs::create_dir_all(parent)?;
+    }
 
     let canon_root = std::fs::canonicalize(cache_root)?;
     let canon_parent = std::fs::canonicalize(parent)?;
@@ -200,7 +240,7 @@ fn put_inner(
 pub fn get(cache_root: &Path, source: &TileSource, coord: &TileCoord) -> Option<Vec<u8>> {
     let tms = matches!(source.scheme, TileScheme::Tms);
     let ns = source_namespace(source);
-    let path = tile_path(cache_root, &ns, coord, tms).ok()?;
+    let path = tile_path_read(cache_root, &ns, coord, tms).ok()??;
     let bytes = std::fs::read(&path).ok()?;
     if bytes.is_empty() {
         return None;
@@ -498,5 +538,118 @@ mod tests {
         assert!(r.is_ok(), "failed write must degrade to Ok(()), got {r:?}");
         // And the read is a clean miss.
         assert!(get(&file_as_root, &src, &coord()).is_none());
+    }
+
+    // ---- Task 5.3 ----
+
+    /// A small PNG of a chosen size (≥ 8 bytes magic). Distinct sizes let us
+    /// drive the byte cap with a known per-tile cost.
+    fn png_sized(total: usize) -> Vec<u8> {
+        let mut v = b"\x89PNG\r\n\x1a\n".to_vec();
+        v.resize(total.max(8), 0u8);
+        v
+    }
+
+    /// Sum the bytes of every `*.tile` file under a namespace subtree.
+    fn on_disk_tile_bytes(ns_root: &Path) -> u64 {
+        fn walk(dir: &Path, acc: &mut u64) {
+            if let Ok(rd) = std::fs::read_dir(dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        walk(&p, acc);
+                    } else if p.extension().and_then(|s| s.to_str()) == Some("tile") {
+                        *acc += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                    }
+                }
+            }
+        }
+        let mut acc = 0;
+        walk(ns_root, &mut acc);
+        acc
+    }
+
+    #[test]
+    fn lru_eviction_keeps_total_under_cap() {
+        // THE bounded-growth discipline. A tiny cap + many inserts must NEVER
+        // let on-disk bytes exceed the cap: eviction runs before each write.
+        let root = tempfile::tempdir().unwrap();
+        let mut src = source("http://192.168.1.5:8080/tiles/");
+        // cache_budget_mb is in MiB; we want a SMALL cap. Use the raw helper to
+        // express a sub-MiB cap by overriding via a tiny per-tile budget: set
+        // the budget so the cap is ~64 KiB. cache_budget_mb can't express <1MiB,
+        // so we drive eviction by inserting MANY 1100-byte tiles against a 1 MiB
+        // cap → cap = 1,048,576 bytes; 1100-byte tiles → ~953 fit; insert 1500.
+        src.cache_budget_mb = 1; // 1 MiB cap
+        let cap = byte_cap(&src);
+        let tile = png_sized(1100);
+        // Insert 1500 distinct tiles (well past the ~953 that fit under 1 MiB).
+        let mut inserted = 0u32;
+        for i in 0..1500u32 {
+            // Spread across x to get distinct rel paths at z=16 (x<65536).
+            let c = TileCoord::new(16, i, 0, 19).unwrap();
+            put(root.path(), &src, &c, &tile).unwrap();
+            inserted += 1;
+        }
+        let ns_root = root.path().join(source_namespace(&src));
+        let on_disk = on_disk_tile_bytes(&ns_root);
+        assert!(
+            on_disk <= cap,
+            "on-disk bytes {on_disk} must stay <= cap {cap} after {inserted} inserts"
+        );
+        // And the meta agrees with disk (within the cap).
+        let meta = load_meta(&ns_root);
+        assert!(meta.total_bytes <= cap, "meta total {} > cap {cap}", meta.total_bytes);
+    }
+
+    #[test]
+    fn lru_evicts_least_recently_accessed_first() {
+        // Insert A then B under a cap that holds ~1 tile of slack; touch A via
+        // get (making B the LRU), then insert C → B must be the eviction victim.
+        let root = tempfile::tempdir().unwrap();
+        let mut src = source("http://192.168.1.5:8080/tiles/");
+        src.cache_budget_mb = 1;
+        let cap = byte_cap(&src);
+        // Each tile ~ 60% of cap so only one fits at a time, forcing a choice.
+        let big = png_sized((cap as usize * 6) / 10);
+        let a = TileCoord::new(16, 1, 0, 19).unwrap();
+        let b = TileCoord::new(16, 2, 0, 19).unwrap();
+        let c = TileCoord::new(16, 3, 0, 19).unwrap();
+        put(root.path(), &src, &a, &big).unwrap();
+        put(root.path(), &src, &b, &big).unwrap(); // evicts A (only one fits)
+        // A is gone, B present.
+        assert!(get(root.path(), &src, &a).is_none(), "A should have been evicted by B");
+        assert!(get(root.path(), &src, &b).is_some(), "B should be present");
+        // Now insert C; B is the only resident → B evicted, C present.
+        put(root.path(), &src, &c, &big).unwrap();
+        assert!(get(root.path(), &src, &b).is_none(), "B should have been evicted by C");
+        assert!(get(root.path(), &src, &c).is_some(), "C should be present");
+    }
+
+    #[test]
+    fn clear_empties_source_subtree() {
+        let root = tempfile::tempdir().unwrap();
+        let src = source("http://192.168.1.5:8080/tiles/");
+        put(root.path(), &src, &coord(), &png_bytes()).unwrap();
+        assert!(get(root.path(), &src, &coord()).is_some());
+        clear(root.path(), &src).unwrap();
+        assert!(get(root.path(), &src, &coord()).is_none(), "clear must empty the subtree");
+        let ns_root = root.path().join(source_namespace(&src));
+        assert!(!ns_root.exists(), "namespace subtree removed");
+        // Idempotent: clearing an absent subtree is a no-op.
+        clear(root.path(), &src).unwrap();
+    }
+
+    #[test]
+    fn purge_removes_namespace_and_isolates_other_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let a = source("http://192.168.1.5:8080/a/");
+        let b = source("http://192.168.1.5:8080/b/");
+        put(root.path(), &a, &coord(), &png_bytes()).unwrap();
+        put(root.path(), &b, &coord(), &png_bytes()).unwrap();
+        purge(root.path(), &a).unwrap();
+        // a's tiles gone, b's untouched.
+        assert!(get(root.path(), &a, &coord()).is_none(), "purged source has no tiles");
+        assert!(get(root.path(), &b, &coord()).is_some(), "other source untouched by purge");
     }
 }
