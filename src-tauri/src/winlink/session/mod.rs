@@ -398,8 +398,13 @@ where
             result.rejected.extend(outcome.rejected);
             result.deferred.extend(outcome.deferred);
             // Offer at most MAX_BATCH this turn; keep the tail for the next my_turn cycle.
+            // INVARIANT: this must drain exactly the prefix send_turn proposed. Both sites
+            // slice with `.min(MAX_BATCH)` (send_turn at its `&outbound[..]` slice), so they
+            // stay in lockstep on the shared constant. If send_turn's batch size ever
+            // diverges from this computation, update both — otherwise messages silently
+            // drop (drain too many) or re-send (drain too few).
             let offered = remaining.len().min(MAX_BATCH);
-            remaining.drain(..offered); // was remaining.clear() — multi-batch (tuxlink-6c9y §5.5)
+            remaining.drain(..offered); // multi-batch send (tuxlink-6c9y §5.5)
             if outcome.quit_sent {
                 break;
             }
