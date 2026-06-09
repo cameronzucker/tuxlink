@@ -62,6 +62,10 @@ export function BaseMap({ children, onMapClick, initialCenter, initialZoom }: Ba
       maxZoom={4}
       zoomSnap={0.5}
       worldCopyJump={false}
+      // Native shift-drag box-zoom is disabled: it conflicts with the
+      // GridMapPicker drag-to-select gesture, and the zoom-4 cap makes it
+      // pointless on the offline substrate.
+      boxZoom={false}
       attributionControl={false}
       style={{ height: '100%', width: '100%' }}
     >

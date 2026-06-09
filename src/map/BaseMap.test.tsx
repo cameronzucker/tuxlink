@@ -40,6 +40,8 @@ describe('<BaseMap> (shape only)', () => {
     const container = screen.getByTestId('leaflet-map');
     expect(container.dataset.maxzoom).toBe('4');
     expect(container.dataset.worldcopyjump).toBe('false');
+    // native box-zoom disabled (conflicts with GridMapPicker drag-to-select)
+    expect(container.dataset.boxzoom).toBe('false');
   });
 
   it('renders the bundled ImageOverlay across the full world rectangle', () => {
