@@ -28,7 +28,48 @@
 //! for sources that don't expose discoverable metadata but are known-geodetic).
 //! This module returns the honest signal; the policy decision lives upstream.
 
+use std::net::SocketAddr;
+
+use super::fetch::{build_vetted_client, FetchError};
 use super::TileSource;
+
+/// Hard cap on a CRS-metadata probe body (Finding 5). The TileJSON / WMTS
+/// capabilities / mbtiles-metadata documents a LAN tile server exposes are small
+/// (a few KiB in practice). A hostile or misconfigured source could otherwise
+/// stream an unbounded body into `.json()`/`.text()` — the tile fetch caps at
+/// [`super::fetch::MAX_TILE_BYTES`] but the probe historically did not. 512 KiB
+/// is generous for any legitimate metadata document while bounding peak memory
+/// within the 5 s probe timeout.
+const MAX_METADATA_BYTES: u64 = 512 * 1024;
+
+/// Read at most [`MAX_METADATA_BYTES`] of a probe response body as bytes.
+///
+/// Mirrors `fetch.rs`'s body-cap defense (Finding 5): a declared
+/// `Content-Length` over the cap is rejected up front, and the body is streamed
+/// with a running-total abort so a server that omits/under-reports the length
+/// cannot OOM us. Returns `None` when the body is absent, over-cap, or errors —
+/// the caller treats a `None` body as "no signal" and falls through to the next
+/// probe (graceful degradation, never a panic).
+async fn read_capped_body(resp: reqwest::Response) -> Option<Vec<u8>> {
+    if let Some(len) = resp.content_length() {
+        if len > MAX_METADATA_BYTES {
+            return None;
+        }
+    }
+    let mut body: Vec<u8> = Vec::new();
+    let mut total: u64 = 0;
+    use futures::StreamExt;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk_res) = stream.next().await {
+        let chunk = chunk_res.ok()?;
+        total = total.saturating_add(chunk.len() as u64);
+        if total > MAX_METADATA_BYTES {
+            return None; // over-cap: abort, treat as no signal
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Some(body)
+}
 
 // ─── CrsCheck ────────────────────────────────────────────────────────────────
 
@@ -205,7 +246,49 @@ fn classify_mbtiles_metadata(json: &serde_json::Value) -> Option<CrsCheck> {
 /// **Phase 6/8 policy note:** `Unknown` MUST be treated as
 /// reject-with-explanation by the caller unless the operator explicitly set the
 /// `crs: Geodetic` config flag on the source.
-pub async fn probe_source_crs(client: &reqwest::Client, source: &TileSource) -> CrsCheck {
+///
+/// **SSRF egress (Findings 1+2):** the probe builds the SAME vetted+pinned+
+/// no-proxy client the tile fetch uses ([`build_vetted_client`]) and connects
+/// through it. The host is vetted against the LAN-only policy BEFORE the first
+/// probe GET, so `test_tile_source`/`configure_tile_source` can no longer reach a
+/// public/metadata host during the CRS probe. If the host is denied (public IP
+/// literal, or a name resolving to a public IP), every probe is skipped and the
+/// probe returns [`CrsCheck::Unknown`] — the caller's Unknown-is-reject policy
+/// then refuses the source. Production resolves via the system resolver.
+pub async fn probe_source_crs(source: &TileSource, allow_loopback: bool) -> CrsCheck {
+    probe_source_crs_with_resolver(source, allow_loopback, |host, port| async move {
+        let target = format!("{host}:{port}");
+        tokio::net::lookup_host(target).await.map(|it| it.collect())
+    })
+    .await
+}
+
+/// Core CRS probe with an injectable resolver seam (for tests), mirroring
+/// `fetch::fetch_tile_bytes_with_resolver`. Builds the vetted client via
+/// [`build_vetted_client`]; a `HostDenied`/build failure short-circuits to
+/// [`CrsCheck::Unknown`] WITHOUT any probe GET — the gate runs before egress.
+pub(crate) async fn probe_source_crs_with_resolver<R, Fut>(
+    source: &TileSource,
+    allow_loopback: bool,
+    resolve: R,
+) -> CrsCheck
+where
+    R: Fn(String, u16) -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
+{
+    // SSRF gate (Findings 1+2): vet the host and build the pinned/no-proxy client
+    // BEFORE any probe connects. A denied host yields no client → Unknown (the
+    // caller rejects). This is the SAME chokepoint the tile fetch uses.
+    let client = match build_vetted_client(source, allow_loopback, resolve).await {
+        Ok(c) => c,
+        Err(FetchError::HostDenied(_)) | Err(FetchError::BadUrl(_)) | Err(FetchError::Network(_)) => {
+            return CrsCheck::Unknown;
+        }
+        // build_vetted_client only returns the above variants; any other is
+        // treated conservatively as "cannot probe" → Unknown.
+        Err(_) => return CrsCheck::Unknown,
+    };
+
     let base = source.url.trim_end_matches('/');
 
     // ── Probe 1: TileJSON ────────────────────────────────────────────────────
@@ -217,14 +300,17 @@ pub async fn probe_source_crs(client: &reqwest::Client, source: &TileSource) -> 
     ] {
         if let Ok(resp) = client.get(tilejson_url.as_str()).send().await {
             if resp.status().is_success() {
-                if let Ok(json) = resp.json::<serde_json::Value>().await {
-                    if let Some(check) = classify_tilejson(&json) {
-                        return check;
+                // Finding 5: cap the probe body before parsing.
+                if let Some(body) = read_capped_body(resp).await {
+                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&body) {
+                        if let Some(check) = classify_tilejson(&json) {
+                            return check;
+                        }
                     }
                 }
             }
         }
-        // Non-200, parse error, or network error → fall through.
+        // Non-200, parse error, over-cap body, or network error → fall through.
     }
 
     // ── Probe 2: WMTS capabilities (heuristic XML substring scan) ────────────
@@ -233,7 +319,9 @@ pub async fn probe_source_crs(client: &reqwest::Client, source: &TileSource) -> 
     );
     if let Ok(resp) = client.get(&wmts_url).send().await {
         if resp.status().is_success() {
-            if let Ok(text) = resp.text().await {
+            // Finding 5: cap the probe body before scanning the XML.
+            if let Some(body) = read_capped_body(resp).await {
+                let text = String::from_utf8_lossy(&body);
                 if let Some(check) = classify_wmts_xml(&text) {
                     return check;
                 }
@@ -248,9 +336,12 @@ pub async fn probe_source_crs(client: &reqwest::Client, source: &TileSource) -> 
     ] {
         if let Ok(resp) = client.get(meta_url.as_str()).send().await {
             if resp.status().is_success() {
-                if let Ok(json) = resp.json::<serde_json::Value>().await {
-                    if let Some(check) = classify_mbtiles_metadata(&json) {
-                        return check;
+                // Finding 5: cap the probe body before parsing.
+                if let Some(body) = read_capped_body(resp).await {
+                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&body) {
+                        if let Some(check) = classify_mbtiles_metadata(&json) {
+                            return check;
+                        }
                     }
                 }
             }
@@ -341,12 +432,126 @@ mod tests {
         }
     }
 
-    fn plain_client() -> reqwest::Client {
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .expect("test client")
+    // A resolver returning fixed addresses (test seam for the vetted-client gate).
+    fn fixed_resolver(
+        addrs: Vec<SocketAddr>,
+    ) -> impl Fn(String, u16) -> std::future::Ready<std::io::Result<Vec<SocketAddr>>> + Clone {
+        move |_host, _port| std::future::ready(Ok(addrs.clone()))
+    }
+
+    // ── Finding 1 (SSRF): the CRS probe is gated by the resolved-IP egress
+    //    policy BEFORE any probe connects ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn probe_public_ip_literal_source_is_denied_before_connect() {
+        // A public IP-literal source must be denied by the egress gate inside
+        // build_vetted_client BEFORE the first probe GET. No network I/O happens;
+        // the probe returns Unknown (→ caller rejects). The historical hole: the
+        // probe issued client.get(...) on source.url-derived URLs ahead of any
+        // resolved-IP check, so `http://8.8.8.8/` connected to a public host.
+        let src = source("http://8.8.8.8:8080/");
+        // allow_loopback is irrelevant here — a public IP is denied regardless.
+        let check = probe_source_crs(&src, false).await;
+        assert_eq!(
+            check,
+            CrsCheck::Unknown,
+            "public IP-literal source must be gated (Unknown, no probe connect): got {check:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn probe_named_host_resolving_to_public_ip_is_denied_before_connect() {
+        // A named host whose (injected) resolution returns a PUBLIC IP must be
+        // denied by the same resolve-then-vet gate the tile fetch uses — the probe
+        // must not connect to the public host. Returns Unknown.
+        let src = source("https://tiles.lan/");
+        let public: SocketAddr = "8.8.8.8:443".parse().unwrap();
+        let check = probe_source_crs_with_resolver(&src, false, fixed_resolver(vec![public])).await;
+        assert_eq!(
+            check,
+            CrsCheck::Unknown,
+            "named host resolving to a public IP must be gated before the probe: got {check:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn probe_named_host_with_mixed_addrs_is_denied_before_connect() {
+        // Any-public in the resolved set → reject (no cherry-pick of the private
+        // address). The probe never connects; Unknown.
+        let src = source("https://tiles.lan/");
+        let private: SocketAddr = "192.168.1.5:443".parse().unwrap();
+        let public: SocketAddr = "8.8.8.8:443".parse().unwrap();
+        let check =
+            probe_source_crs_with_resolver(&src, false, fixed_resolver(vec![private, public])).await;
+        assert_eq!(check, CrsCheck::Unknown, "mixed-addr resolution must be gated: got {check:?}");
+    }
+
+    // ── Finding 5: probe body is size-capped ────────────────────────────────
+
+    #[tokio::test]
+    async fn probe_over_cap_metadata_body_falls_through_gracefully() {
+        // A TileJSON endpoint that streams a body OVER MAX_METADATA_BYTES must not
+        // OOM the probe: read_capped_body aborts → the probe treats it as no signal
+        // and falls through. With all other probes 404, the result is Unknown.
+        // The over-cap body carries a geodetic signal that would classify Geodetic
+        // if it were parsed — proving the cap fires BEFORE parse (we get Unknown,
+        // not Geodetic). chunked transfer → no Content-Length, so the streaming
+        // running-total guard (not the pre-check) is what aborts.
+        let mut server = mockito::Server::new_async().await;
+        let big = (MAX_METADATA_BYTES + 4096) as usize;
+        server
+            .mock("GET", "/tilejson.json")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_chunked_body(move |w| {
+                // Lead with a geodetic marker, then pad past the cap.
+                w.write_all(br#"{"crs":"EPSG:4326","pad":""#)?;
+                w.write_all(&vec![b'x'; big])
+            })
+            .create_async()
+            .await;
+        // base URL + WMTS + metadata all 404 → no other signal.
+        server.mock("GET", "/").with_status(404).create_async().await;
+        server
+            .mock("GET", mockito::Matcher::Regex(r"SERVICE=WMTS".to_string()))
+            .with_status(404)
+            .create_async()
+            .await;
+        server.mock("GET", "/metadata.json").with_status(404).create_async().await;
+        server.mock("GET", "/metadata").with_status(404).create_async().await;
+        let src = source(&server.url());
+        let check = probe_source_crs(&src, true).await;
+        assert_eq!(
+            check,
+            CrsCheck::Unknown,
+            "over-cap probe body must abort and fall through to Unknown, not parse a giant body: got {check:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn probe_declared_over_cap_content_length_is_skipped() {
+        // An honest over-cap Content-Length is rejected by read_capped_body's
+        // pre-check (no body streamed). Same graceful fall-through to Unknown.
+        let mut server = mockito::Server::new_async().await;
+        let body = vec![b'x'; (MAX_METADATA_BYTES + 1) as usize];
+        server
+            .mock("GET", "/tilejson.json")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+        server.mock("GET", "/").with_status(404).create_async().await;
+        server
+            .mock("GET", mockito::Matcher::Regex(r"SERVICE=WMTS".to_string()))
+            .with_status(404)
+            .create_async()
+            .await;
+        server.mock("GET", "/metadata.json").with_status(404).create_async().await;
+        server.mock("GET", "/metadata").with_status(404).create_async().await;
+        let src = source(&server.url());
+        let check = probe_source_crs(&src, true).await;
+        assert_eq!(check, CrsCheck::Unknown, "over-cap declared length must be skipped: got {check:?}");
     }
 
     // ── Task 4.1: probe_source_crs ──────────────────────────────────────────
@@ -362,7 +567,7 @@ mod tests {
             .create_async()
             .await;
         let src = source(&server.url());
-        let check = probe_source_crs(&plain_client(), &src).await;
+        let check = probe_source_crs(&src, true).await;
         assert_eq!(check, CrsCheck::Rejected, "EPSG:3857 TileJSON must be Rejected");
     }
 
@@ -377,7 +582,7 @@ mod tests {
             .create_async()
             .await;
         let src = source(&server.url());
-        let check = probe_source_crs(&plain_client(), &src).await;
+        let check = probe_source_crs(&src, true).await;
         assert_eq!(check, CrsCheck::Rejected, "WebMercatorQuad TileJSON must be Rejected");
     }
 
@@ -392,7 +597,7 @@ mod tests {
             .create_async()
             .await;
         let src = source(&server.url());
-        let check = probe_source_crs(&plain_client(), &src).await;
+        let check = probe_source_crs(&src, true).await;
         assert_eq!(check, CrsCheck::Geodetic, "EPSG:4326 TileJSON must be Geodetic");
     }
 
@@ -461,7 +666,7 @@ mod tests {
             .create_async()
             .await;
         let src = source(&server.url());
-        let check = probe_source_crs(&plain_client(), &src).await;
+        let check = probe_source_crs(&src, true).await;
         assert_eq!(check, CrsCheck::Geodetic, "WGS84 profile TileJSON must be Geodetic");
     }
 
@@ -495,7 +700,7 @@ mod tests {
             .create_async()
             .await;
         let src = source(&server.url());
-        let check = probe_source_crs(&plain_client(), &src).await;
+        let check = probe_source_crs(&src, true).await;
         assert_eq!(check, CrsCheck::Geodetic, "mbtiles geodetic metadata must be Geodetic");
     }
 
@@ -525,7 +730,7 @@ mod tests {
             .create_async()
             .await;
         let src = source(&server.url());
-        let check = probe_source_crs(&plain_client(), &src).await;
+        let check = probe_source_crs(&src, true).await;
         assert_eq!(check, CrsCheck::Rejected, "mbtiles mercator metadata must be Rejected");
     }
 
@@ -559,7 +764,7 @@ mod tests {
             .create_async()
             .await;
         let src = source(&server.url());
-        let check = probe_source_crs(&plain_client(), &src).await;
+        let check = probe_source_crs(&src, true).await;
         assert_eq!(check, CrsCheck::Unknown, "no probeable metadata must be Unknown");
     }
 
@@ -586,7 +791,7 @@ mod tests {
             .create_async()
             .await;
         let src = source(&server.url());
-        let check = probe_source_crs(&plain_client(), &src).await;
+        let check = probe_source_crs(&src, true).await;
         assert_eq!(check, CrsCheck::Geodetic, "WMTS WorldCRS84Quad must be Geodetic");
     }
 
@@ -611,7 +816,7 @@ mod tests {
             .create_async()
             .await;
         let src = source(&server.url());
-        let check = probe_source_crs(&plain_client(), &src).await;
+        let check = probe_source_crs(&src, true).await;
         assert_eq!(check, CrsCheck::Rejected, "WMTS WebMercatorQuad must be Rejected");
     }
 

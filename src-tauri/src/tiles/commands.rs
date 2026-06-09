@@ -12,7 +12,7 @@
 //!
 //! ## Activation policy (§8.1 / §4.1 / §8.3)
 //!
-//! [`validate`] is the plain-async core (injectable client + cache root) that
+//! [`validate`] is the plain-async core (cache root + allow_loopback) that
 //! both `configure` and `test` delegate to. In order:
 //!
 //! 1. **URL shape** ([`validate_source_url`]) — a malformed URL, non-http(s)
@@ -57,7 +57,7 @@ use std::sync::Arc;
 use super::cache;
 use super::coord::TileCoord;
 use super::crs::{probe_source_crs, CrsCheck};
-use super::fetch::{build_tile_client, fetch_tile_single_flight, FetchError};
+use super::fetch::{fetch_tile_single_flight, FetchError};
 use super::host::validate_source_url;
 use super::{Crs, StatusKind, TileGatekeeper, TileSource, TileSourceStatus};
 use crate::config::{read_config, write_config_atomic, ConfigWriteError};
@@ -81,11 +81,11 @@ fn status(kind: StatusKind, source: &TileSource, zoom: u32) -> TileSourceStatus 
 /// earns, WITHOUT mutating any state. The plain-async core both `configure` and
 /// `test` call (the `#[tauri::command]` wrappers are thin `State` extractors).
 ///
-/// `client` is the (no-redirect, short-timeout) reqwest client used for the CRS
-/// metadata probe. `cache_root` + `allow_loopback` are threaded into the single
-/// reachability fetch. See the module-level docs for the full branch table.
+/// `cache_root` + `allow_loopback` are threaded into BOTH the CRS metadata probe
+/// (which builds its own vetted/pinned/no-proxy client internally — Findings 1+2)
+/// and the single reachability fetch. See the module-level docs for the full
+/// branch table.
 async fn validate(
-    client: &reqwest::Client,
     cache_root: &std::path::Path,
     source: &TileSource,
     allow_loopback: bool,
@@ -96,7 +96,12 @@ async fn validate(
     }
 
     // 2. CRS probe + the Unknown-with-override policy (§4.1).
-    match probe_source_crs(client, source).await {
+    //
+    // SSRF (Findings 1+2): `probe_source_crs` now builds the SAME vetted+pinned+
+    // no-proxy client the reachability fetch uses, vetting the host BEFORE any
+    // probe GET — `allow_loopback` is threaded through so a public-IP source is
+    // denied before the probe can connect (it returns Unknown → rejected below).
+    match probe_source_crs(source, allow_loopback).await {
         CrsCheck::Rejected => return status(StatusKind::Incompatible, source, 0),
         CrsCheck::Unknown => {
             // `Crs::Geodetic` is the explicit operator override for a
@@ -143,12 +148,11 @@ async fn validate(
 /// `Err` (the source DID validate; the operator should know the on-disk write
 /// failed even though the in-memory gatekeeper is now live).
 async fn configure_core(
-    client: &reqwest::Client,
     gatekeeper: &TileGatekeeper,
     source: &TileSource,
     allow_loopback: bool,
 ) -> Result<TileSourceStatus, UiError> {
-    let st = validate(client, gatekeeper.cache_root(), source, allow_loopback).await;
+    let st = validate(gatekeeper.cache_root(), source, allow_loopback).await;
     if st.kind == StatusKind::LanLive {
         gatekeeper.set_source(Some(source.clone()));
         persist_source(Some(source.clone()))?;
@@ -237,11 +241,10 @@ pub async fn configure_tile_source(
     source: TileSource,
     gatekeeper: tauri::State<'_, Arc<TileGatekeeper>>,
 ) -> Result<TileSourceStatus, UiError> {
-    let client = build_tile_client().map_err(|e| UiError::Internal {
-        detail: format!("tile client build failed: {e}"),
-    })?;
-    // Production: never permit loopback (only tests opt in via the core fn).
-    configure_core(&client, gatekeeper.inner(), &source, false).await
+    // Production: never permit loopback (only tests opt in via the core fn). The
+    // CRS probe + reachability fetch each build their own vetted/pinned/no-proxy
+    // client internally (Findings 1+2); no shared client is threaded in.
+    configure_core(gatekeeper.inner(), &source, false).await
 }
 
 /// Dry-run validation of a LAN tile source (operator "Test source"). Returns the
@@ -251,10 +254,7 @@ pub async fn test_tile_source(
     source: TileSource,
     gatekeeper: tauri::State<'_, Arc<TileGatekeeper>>,
 ) -> Result<TileSourceStatus, UiError> {
-    let client = build_tile_client().map_err(|e| UiError::Internal {
-        detail: format!("tile client build failed: {e}"),
-    })?;
-    Ok(validate(&client, gatekeeper.cache_root(), &source, false).await)
+    Ok(validate(gatekeeper.cache_root(), &source, false).await)
 }
 
 /// Empty the active source's on-disk tile cache. No-op when no source is active.
@@ -292,10 +292,6 @@ mod tests {
         }
     }
 
-    fn client() -> reqwest::Client {
-        build_tile_client().expect("test client")
-    }
-
     fn png_bytes() -> Vec<u8> {
         let mut v = b"\x89PNG\r\n\x1a\n".to_vec();
         v.extend_from_slice(&[0u8; 32]);
@@ -331,7 +327,7 @@ mod tests {
         let cache = tempfile::tempdir().unwrap();
         let src = source(&server.url());
         // allow_loopback=true: mockito binds loopback.
-        let st = validate(&client(), cache.path(), &src, true).await;
+        let st = validate(cache.path(), &src, true).await;
         assert_eq!(st.kind, StatusKind::LanLive, "got {st:?}");
         assert_eq!(st.zoom, 16);
         assert_eq!(st.label.as_deref(), Some("shack"));
@@ -351,7 +347,7 @@ mod tests {
             .await;
         let cache = tempfile::tempdir().unwrap();
         let src = source(&server.url());
-        let st = validate(&client(), cache.path(), &src, true).await;
+        let st = validate(cache.path(), &src, true).await;
         assert_eq!(st.kind, StatusKind::Incompatible, "got {st:?}");
     }
 
@@ -368,7 +364,7 @@ mod tests {
         let cache = tempfile::tempdir().unwrap();
         let gk = TileGatekeeper::new(cache.path());
         let src = source(&server.url());
-        let st = configure_core(&client(), &gk, &src, true).await.unwrap();
+        let st = configure_core(&gk, &src, true).await.unwrap();
         assert_eq!(st.kind, StatusKind::Incompatible, "got {st:?}");
         assert!(
             gk.active_source().is_none(),
@@ -402,7 +398,7 @@ mod tests {
             .await;
         let cache = tempfile::tempdir().unwrap();
         let src = source(&server.url()); // crs == Geodetic (the override)
-        let st = validate(&client(), cache.path(), &src, true).await;
+        let st = validate(cache.path(), &src, true).await;
         assert_eq!(
             st.kind,
             StatusKind::LanLive,
@@ -421,7 +417,7 @@ mod tests {
         let server = geodetic_png_server().await;
         let cache = tempfile::tempdir().unwrap();
         let src = source(&server.url());
-        let st = validate(&client(), cache.path(), &src, false).await;
+        let st = validate(cache.path(), &src, false).await;
         assert_eq!(
             st.kind,
             StatusKind::Unreachable,
@@ -434,7 +430,7 @@ mod tests {
         let cache = tempfile::tempdir().unwrap();
         let mut src = source("not-a-url");
         src.url = "ftp://192.168.1.5/".into(); // non-http scheme
-        let st = validate(&client(), cache.path(), &src, true).await;
+        let st = validate(cache.path(), &src, true).await;
         assert_eq!(st.kind, StatusKind::Incompatible, "got {st:?}");
     }
 
@@ -447,7 +443,7 @@ mod tests {
         let gk = TileGatekeeper::new(cache.path());
         let src = source(&server.url());
         // Configure → activates + caches the probe tile.
-        let st = configure_core(&client(), &gk, &src, true).await.unwrap();
+        let st = configure_core(&gk, &src, true).await.unwrap();
         assert_eq!(st.kind, StatusKind::LanLive);
         let probe = TileCoord::new(0, 0, 0, src.max_zoom).unwrap();
         assert!(
@@ -576,7 +572,7 @@ mod tests {
 
         let gk = TileGatekeeper::new(cache.path());
         let src = source(&server.url());
-        let st = configure_core(&client(), &gk, &src, true).await.unwrap();
+        let st = configure_core(&gk, &src, true).await.unwrap();
         assert_eq!(st.kind, StatusKind::LanLive, "got {st:?}");
         // (a) gatekeeper activated.
         assert_eq!(gk.active_source().as_ref(), Some(&src));
@@ -617,7 +613,7 @@ mod tests {
 
         let gk = TileGatekeeper::new(cache.path());
         let src = source(&server.url());
-        let st = configure_core(&client(), &gk, &src, true).await.unwrap();
+        let st = configure_core(&gk, &src, true).await.unwrap();
         assert_eq!(st.kind, StatusKind::Incompatible, "got {st:?}");
         assert!(gk.active_source().is_none(), "incompatible must not activate");
         let reloaded = crate::config::read_config().expect("config reloads");

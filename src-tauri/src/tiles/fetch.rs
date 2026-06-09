@@ -25,11 +25,16 @@
 //!      reqwest's connect cannot occur — reqwest does not re-resolve).
 //! 4. **`redirect::Policy::none()`** — a 3xx is a hard error, never followed
 //!    (a redirect is a classic SSRF pivot).
-//! 5. **Short timeout** (5 s).
-//! 6. **Response size cap** ([`MAX_TILE_BYTES`]) enforced via both the
+//! 5. **`.no_proxy()`** on every tile/probe client — `resolve_to_addrs` pins the
+//!    target HOST's connection, NOT a proxy. If reqwest honored
+//!    `HTTP(S)_PROXY`/system proxy, a permitted LAN source's TCP connection would
+//!    be opened to a public proxy instead, defeating the LAN-only egress
+//!    guarantee. `.no_proxy()` forces a direct connection to the pinned address.
+//! 6. **Short timeout** (5 s).
+//! 7. **Response size cap** ([`MAX_TILE_BYTES`]) enforced via both the
 //!    `Content-Length` pre-check AND a streaming running-total abort (the
 //!    server may lie about / omit `Content-Length`).
-//! 7. **Image magic-byte validation** — the leading bytes must be a real
+//! 8. **Image magic-byte validation** — the leading bytes must be a real
 //!    PNG/JPEG/WebP signature; the upstream `Content-Type` is NOT trusted.
 
 use std::collections::HashMap;
@@ -116,18 +121,117 @@ pub(crate) fn image_mime_from_magic(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
-/// Build the shared no-redirect, short-timeout tile client.
+/// Build the shared no-redirect, short-timeout, no-proxy tile client.
 ///
 /// Used directly for the IP-literal host case (no DNS pinning needed). For
 /// named hosts, a *per-fetch* client is built with the same options plus
-/// `resolve_to_addrs` pinning (see [`fetch_tile_bytes_with_resolver`]).
+/// `resolve_to_addrs` pinning (see [`build_vetted_client`]).
+///
+/// `.no_proxy()` is load-bearing for the SSRF guarantee — see the module-level
+/// defense (4a) and [`build_vetted_client`].
 pub fn build_tile_client() -> Result<reqwest::Client, FetchError> {
     reqwest::Client::builder()
         .user_agent(TILE_USER_AGENT)
         .timeout(TILE_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
+        // SSRF (§8.3): never honor an ambient HTTP(S)_PROXY / system proxy. A
+        // proxy would open the connection to the proxy host, not the vetted LAN
+        // IP, so the LAN-only egress gate would be bypassed entirely.
+        .no_proxy()
         .build()
         .map_err(|e| FetchError::Network(format!("client build: {e}")))
+}
+
+/// Vet a tile source's host against the SSRF policy and build the reqwest client
+/// that will reach it — the SINGLE shared egress chokepoint for BOTH the tile
+/// fetch ([`fetch_tile_bytes_with_resolver`]) AND the CRS metadata probe
+/// ([`crate::tiles::crs::probe_source_crs`]).
+///
+/// Vetting branches on the source URL's host type (§8.3):
+/// - **IP literal** (`http://192.168.1.5:8080/`, `http://[fd00::1]:8080/`): there
+///   is no DNS to rebind — the literal is vetted directly via
+///   [`ip_is_permitted`]. The shared no-redirect/no-proxy client is returned.
+/// - **Named host** (`https://tiles.lan/`): resolved via `resolve` AT THIS POINT,
+///   EVERY resolved address must pass [`ip_is_permitted`] (reject mixed/any-public
+///   — no single-addr cherry-pick), and the returned client is PINNED to exactly
+///   that vetted address set via `resolve_to_addrs`. reqwest does not re-resolve a
+///   pinned host, so the TOCTOU rebind window between our lookup and reqwest's
+///   connect is closed.
+///
+/// Every returned client carries `redirect::none()`, the short timeout, AND
+/// `.no_proxy()` (Findings 1+2): the probe and the fetch share the identical
+/// egress discipline, so a host that would be denied for a tile fetch is denied
+/// for the metadata probe too — the probe can no longer connect to a public host
+/// ahead of the gate.
+pub(crate) async fn build_vetted_client<R, Fut>(
+    source: &TileSource,
+    allow_loopback: bool,
+    resolve: R,
+) -> Result<reqwest::Client, FetchError>
+where
+    R: Fn(String, u16) -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
+{
+    // Shape-validate the source URL (scheme, no creds, host present) and extract
+    // the host + effective port for the gate.
+    let url = validate_source_url(&source.url).map_err(FetchError::BadUrl)?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| FetchError::BadUrl("source URL has no host".into()))?
+        .to_string();
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| FetchError::BadUrl("source URL has no known port".into()))?;
+
+    // `Url::host_str` returns IPv6 literals bracketed (`[fd00::1]`), which does
+    // not parse as `IpAddr`; strip the brackets so BOTH v4 and v6 literals take
+    // the direct-vet branch (a v6 literal must not be misrouted to the resolver).
+    let host_for_ip = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host.as_str());
+
+    match host_for_ip.parse::<std::net::IpAddr>() {
+        Ok(ip) => {
+            // IP-literal host: no DNS to rebind, vet the literal directly.
+            if !ip_is_permitted(ip, allow_loopback) {
+                return Err(FetchError::HostDenied(format!(
+                    "IP literal {ip} is not a permitted LAN destination"
+                )));
+            }
+            build_tile_client()
+        }
+        Err(_) => {
+            // Named host: resolve at this point, require EVERY resolved address to
+            // pass the policy, then PIN the connection to that vetted set.
+            let resolved = resolve(host.clone(), port)
+                .await
+                .map_err(|e| FetchError::Network(format!("DNS resolution of {host:?}: {e}")))?;
+            if resolved.is_empty() {
+                return Err(FetchError::HostDenied(format!(
+                    "host {host:?} resolved to no addresses"
+                )));
+            }
+            for addr in &resolved {
+                if !ip_is_permitted(addr.ip(), allow_loopback) {
+                    return Err(FetchError::HostDenied(format!(
+                        "host {host:?} resolved to non-LAN address {}",
+                        addr.ip()
+                    )));
+                }
+            }
+            reqwest::Client::builder()
+                .user_agent(TILE_USER_AGENT)
+                .timeout(TILE_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::none())
+                // SSRF (§8.3) — see build_tile_client: a proxy would defeat the
+                // resolve_to_addrs pin (it pins the host, not the proxy).
+                .no_proxy()
+                .resolve_to_addrs(&host, &resolved)
+                .build()
+                .map_err(|e| FetchError::Network(format!("client build: {e}")))
+        }
+    }
 }
 
 /// Build the upstream tile URL from the stored source + validated coordinate.
@@ -198,77 +302,12 @@ where
 {
     let url = build_tile_url(source, coord)?;
 
-    let host = url
-        .host_str()
-        .ok_or_else(|| FetchError::BadUrl("tile URL has no host".into()))?
-        .to_string();
-    // Effective port for connect-pinning (scheme default when absent).
-    let port = url
-        .port_or_known_default()
-        .ok_or_else(|| FetchError::BadUrl("tile URL has no known port".into()))?;
-
-    // SSRF (§8.3): the resolved-IP gate. Branch on host type.
-    // `Url::host_str` returns IPv6 literals in bracketed form (`[fd00::1]`),
-    // which does not parse as `IpAddr`; strip the brackets so BOTH IPv4 and
-    // IPv6 literals are recognized and take the direct-vet branch below (a v6
-    // literal must not be misrouted through the resolver path). Domains never
-    // carry brackets, so this is a no-op for them.
-    let host_for_ip = host
-        .strip_prefix('[')
-        .and_then(|s| s.strip_suffix(']'))
-        .unwrap_or(host.as_str());
-    let client = match host_for_ip.parse::<std::net::IpAddr>() {
-        Ok(ip) => {
-            // IP-literal host (common LAN case, e.g. http://192.168.1.5:8080/ or
-            // http://[fd00::1]:8080/). There is no DNS to rebind: vet the literal
-            // directly and connect normally with the shared no-redirect client.
-            if !ip_is_permitted(ip, allow_loopback) {
-                return Err(FetchError::HostDenied(format!(
-                    "IP literal {ip} is not a permitted LAN destination"
-                )));
-            }
-            build_tile_client()?
-        }
-        Err(_) => {
-            // Named host (e.g. https://tiles.lan/). Resolve at fetch time and
-            // require EVERY resolved address to pass the policy (reject mixed /
-            // any-public — do NOT use the single-addr `resolve()` convenience),
-            // then PIN the per-fetch client's connection to exactly that vetted
-            // address set so reqwest can only reach IPs we validated. reqwest
-            // does not re-resolve a pinned host, closing the TOCTOU rebind
-            // window between our lookup and reqwest's connect.
-            //
-            // Fully-general alternative: a custom `dns_resolver`/`Resolve` impl
-            // on one shared client that vets inside `resolve()`. The per-fetch
-            // `resolve_to_addrs` approach below is the primary because it keeps
-            // the vetting in plain async code (testable via this seam) and does
-            // not require a long-lived shared resolver object.
-            let resolved = resolve(host.clone(), port)
-                .await
-                .map_err(|e| FetchError::Network(format!("DNS resolution of {host:?}: {e}")))?;
-            if resolved.is_empty() {
-                return Err(FetchError::HostDenied(format!(
-                    "host {host:?} resolved to no addresses"
-                )));
-            }
-            for addr in &resolved {
-                if !ip_is_permitted(addr.ip(), allow_loopback) {
-                    return Err(FetchError::HostDenied(format!(
-                        "host {host:?} resolved to non-LAN address {}",
-                        addr.ip()
-                    )));
-                }
-            }
-            // All vetted: pin the connection to exactly these addresses.
-            reqwest::Client::builder()
-                .user_agent(TILE_USER_AGENT)
-                .timeout(TILE_TIMEOUT)
-                .redirect(reqwest::redirect::Policy::none())
-                .resolve_to_addrs(&host, &resolved)
-                .build()
-                .map_err(|e| FetchError::Network(format!("client build: {e}")))?
-        }
-    };
+    // SSRF (§8.3): the resolved-IP gate. The same vet-and-build logic the CRS
+    // probe uses (Findings 1+2) — IP-literal → direct vet; named → resolve, vet
+    // EVERY address, pin via resolve_to_addrs; always redirect::none + no_proxy.
+    // Because the tile URL is built from the source URL (same host/port), vetting
+    // the source is equivalent to vetting the tile URL's destination.
+    let client = build_vetted_client(source, allow_loopback, resolve).await?;
 
     let resp = client
         .get(url)
@@ -479,6 +518,63 @@ mod tests {
     fn client_builds() {
         // Smoke: the no-redirect / short-timeout client constructs cleanly.
         assert!(build_tile_client().is_ok());
+    }
+
+    // ---- Finding 2: no proxy on tile clients ----
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn fetch_ignores_ambient_proxy_env() {
+        // Finding 2 regression: reqwest honors HTTP(S)_PROXY / system proxy by
+        // default; `resolve_to_addrs` pins the TARGET host, NOT the proxy, so a
+        // permitted LAN source's connection could be opened to a PUBLIC proxy.
+        // We point the proxy env at a dead address — if the tile client honored
+        // it, the fetch would route to the (refused) proxy and fail. `.no_proxy()`
+        // forces a direct connection to the vetted loopback address, so the fetch
+        // SUCCEEDS. (serial + env save/restore: env is process-global.)
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/3/5/2.png")
+            .with_status(200)
+            .with_header("content-type", "image/png")
+            .with_body(png_bytes())
+            .create_async()
+            .await;
+
+        // A dead proxy on a port nothing listens on. If honored, the fetch fails.
+        let dead_proxy = "http://127.0.0.1:9";
+        let prior_http = std::env::var("HTTP_PROXY").ok();
+        let prior_https = std::env::var("HTTPS_PROXY").ok();
+        let prior_all = std::env::var("ALL_PROXY").ok();
+        // SAFETY: single-threaded (serial) test; no concurrent env access.
+        unsafe {
+            std::env::set_var("HTTP_PROXY", dead_proxy);
+            std::env::set_var("HTTPS_PROXY", dead_proxy);
+            std::env::set_var("ALL_PROXY", dead_proxy);
+        }
+
+        let src = source(&server.url());
+        let result = fetch_tile_bytes(&src, &coord(), true).await;
+
+        // SAFETY: symmetric restore; single-threaded test.
+        unsafe {
+            match prior_http {
+                Some(v) => std::env::set_var("HTTP_PROXY", v),
+                None => std::env::remove_var("HTTP_PROXY"),
+            }
+            match prior_https {
+                Some(v) => std::env::set_var("HTTPS_PROXY", v),
+                None => std::env::remove_var("HTTPS_PROXY"),
+            }
+            match prior_all {
+                Some(v) => std::env::set_var("ALL_PROXY", v),
+                None => std::env::remove_var("ALL_PROXY"),
+            }
+        }
+
+        let (bytes, mime) = result.expect("no_proxy client must bypass the dead proxy and fetch directly");
+        assert_eq!(mime, "image/png");
+        assert!(bytes.starts_with(b"\x89PNG"));
     }
 
     #[tokio::test]
