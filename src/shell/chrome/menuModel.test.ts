@@ -11,6 +11,8 @@ const EXPECTED_IDS = [
   'menu:mailbox:inbox', 'menu:mailbox:sent', 'menu:mailbox:outbox', 'menu:mailbox:archive',
   'menu:view:status_bar', 'menu:view:radio_panel',
   'menu:view:scheme:default',
+  'menu:view:scheme:github-dark',
+  'menu:view:scheme:office-dark',
   'menu:view:scheme:daylight',
   'menu:view:scheme:high-contrast-light',
   'menu:view:scheme:paper',

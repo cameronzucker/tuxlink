@@ -45,6 +45,17 @@ describe('MenuBar', () => {
     expect(onAction).toHaveBeenCalledWith('menu:view:scheme:night-red');
   });
 
+  it('offers the practical dark color schemes in the View menu', () => {
+    const onAction = vi.fn();
+    render(<MenuBar onAction={onAction} />);
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    fireEvent.click(screen.getByRole('button', { name: 'GitHub dark' }));
+    expect(onAction).toHaveBeenCalledWith('menu:view:scheme:github-dark');
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Office dark' }));
+    expect(onAction).toHaveBeenCalledWith('menu:view:scheme:office-dark');
+  });
+
   // tuxlink-39b: not-yet-wired items render disabled + badged (not dead clickables).
   it('renders a not-yet-wired item disabled with a "soon" badge and does not fire onAction', () => {
     const onAction = vi.fn();
