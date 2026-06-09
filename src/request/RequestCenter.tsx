@@ -168,7 +168,7 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
                 results list — overriding home/browse/grib. Cleared → the view
                 content (below) returns. Gated by the same load-guard prefix.
                 Reuses CatalogBrowse's search mode + the shared cms add path. */}
-            {searchActive && !loading && !error && entries && (
+            {searchActive && !loading && !error && entries && entries.length > 0 && (
               <CatalogBrowse
                 entries={entries}
                 searchQuery={search}
