@@ -16,6 +16,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.38.1](https://github.com/cameronzucker/tuxlink/compare/v0.38.0...v0.38.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* **catalog:** add backdrop-click and Escape dismiss to Find a Gateway ([ff0f024](https://github.com/cameronzucker/tuxlink/commit/ff0f024970c1dd48906406fc638493250342f9a7))
+* **shell:** span the Contacts surface across the list + reader tracks ([eb34224](https://github.com/cameronzucker/tuxlink/commit/eb34224d2f267c1e6e7613235698b5c264583ddc))
+
 ## [0.38.0](https://github.com/cameronzucker/tuxlink/compare/v0.37.1...v0.38.0) (2026-06-09)
 
 
