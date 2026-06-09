@@ -149,7 +149,7 @@ export const TUXLINK_DRAG_MIME = 'application/x-tuxlink-message';
 /// tuxlink-sndh: wrapped in React.memo so a parent re-render (e.g. modem-status
 /// tick, search keystroke, status poll) doesn't repaint every virtuoso row.
 /// Effective only when callers stabilize callback props with useCallback.
-export const MessageRow = memo(function MessageRow({ message, folder, isOpen, inSelection, onRowClick, onSelect, matchHighlight, showFolderTag, onContextMenu, onRowSetReadState }: MessageRowProps) {
+export const MessageRow = memo(function MessageRow({ message, folder, isOpen, inSelection, onRowClick, onSelect: _onSelect, matchHighlight, showFolderTag, onContextMenu, onRowSetReadState }: MessageRowProps) {
   // tuxlink-sndh: memoize per-row derived data so it's reused across renders
   // when the row's own props haven't changed.
   const size = useMemo(() => formatSize(message.bodySize), [message.bodySize]);
@@ -194,7 +194,10 @@ export const MessageRow = memo(function MessageRow({ message, folder, isOpen, in
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
-          onSelect(message.id);                                  // Enter opens
+          // Route through the plain-click path so Enter clears any selection
+          // set (same behaviour as a bare mouse click, which goes through
+          // onRowClick with ctrl:false/shift:false → clears set + opens).
+          onRowClick(message.id, { ctrl: false, shift: false });
         } else if (e.key === ' ') {
           e.preventDefault();
           onRowClick(message.id, { ctrl: true, shift: false });  // Space toggles selection (grid/listbox semantic)
