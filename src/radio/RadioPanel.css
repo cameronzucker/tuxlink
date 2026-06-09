@@ -115,19 +115,28 @@
   min-width: 0;
 }
 
-/* tuxlink-6jpf: "Find a gateway" affordance at the top of the panel body for RF
-   dial modes (ARDOP / Packet / VARA). Compact, auto-width (no stretched full-
-   width), tinted with the modem-accent family to read as part of the panel
-   chrome rather than a generic button. */
+/* tuxlink-6jpf + tuxlink-9525: "Find a gateway" is a panel command for RF dial
+   modes, not loose content. Keep it in a padded row that follows the section
+   rhythm so it never touches the header or the first modem controls. */
+.radio-panel-command-row {
+  padding: 8px 12px;
+  border-bottom: 1px dashed var(--border-soft, rgba(255, 255, 255, 0.08));
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
 .radio-panel-find-gateway {
-  align-self: flex-start;
-  margin: 0 0 10px;
-  padding: 5px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 5px 12px;
   border-radius: 4px;
   background: var(--modem-accent-soft);
   color: var(--modem-accent);
   border: 1px solid color-mix(in srgb, var(--modem-accent) 35%, transparent);
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -396,6 +405,9 @@ select.radio-panel-input option {
   .radio-panel-chip {
     min-height: 44px;
     font-size: 12px;
+  }
+  .radio-panel-find-gateway {
+    min-height: 44px;
   }
   .radio-panel-btn {
     min-height: 44px;

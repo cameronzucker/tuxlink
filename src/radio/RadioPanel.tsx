@@ -63,15 +63,17 @@ export function RadioPanel({
       </header>
       <div className="radio-panel-body">
         {onFindGateway && (
-          <button
-            type="button"
-            className="radio-panel-find-gateway"
-            data-testid="radio-panel-find-gateway"
-            onClick={onFindGateway}
-            title="Find a gateway near you"
-          >
-            🛰 Find a gateway…
-          </button>
+          <div className="radio-panel-command-row" data-testid="radio-panel-command-row">
+            <button
+              type="button"
+              className="radio-panel-find-gateway"
+              data-testid="radio-panel-find-gateway"
+              onClick={onFindGateway}
+              title="Find a gateway near you"
+            >
+              Find a gateway
+            </button>
+          </div>
         )}
         {children}
       </div>
