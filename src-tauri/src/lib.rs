@@ -88,6 +88,63 @@ pub fn run() {
                 )
                 .build(),
         )
+        // tuxlink-dyop Phase 6 (map-picker v2 §8.2/§8.3): the bespoke `tile`
+        // URI scheme — the ONLY webview→backend path for LAN map tiles. The
+        // Leaflet TileLayer's `tile://localhost/{z}/{x}/{y}` requests land here.
+        // The handler extracts the URL path, retrieves the managed
+        // `TileGatekeeper` (set up in the app_data_dir arm below), and runs the
+        // SSRF-guarded serve pipeline on the async runtime, responding when the
+        // fetch settles. Production passes `allow_loopback = false`. NEVER the
+        // general asset protocol; only this bespoke scheme. Phase-0 spike proved
+        // the `tile:` img-src token renders in a packaged WebKitGTK build.
+        .register_asynchronous_uri_scheme_protocol("tile", |ctx, request, responder| {
+            use tauri::Manager as _;
+            // The path is `/{z}/{x}/{y}` (or `…/{y}.png`); serve_tile tolerates
+            // the leading `/`. Own it before moving into the async task.
+            let path = request.uri().path().to_string();
+            // Retrieve the managed gatekeeper Arc and clone it into the task.
+            // If it is not yet managed (setup failed to resolve app_data_dir),
+            // respond 503 rather than panic.
+            let gk = match ctx
+                .app_handle()
+                .try_state::<std::sync::Arc<crate::tiles::TileGatekeeper>>()
+            {
+                Some(state) => (*state).clone(),
+                None => {
+                    let _ = tauri::http::Response::builder()
+                        .status(503)
+                        .header(tauri::http::header::CONTENT_TYPE, "text/plain")
+                        .body(b"tile gatekeeper unavailable".to_vec())
+                        .map(|resp| responder.respond(resp));
+                    return;
+                }
+            };
+            tauri::async_runtime::spawn(async move {
+                // Production = NO loopback (allow_loopback = false).
+                let result = crate::tiles::serve::serve_tile(&gk, &path, false).await;
+                let response = match result {
+                    Ok((bytes, mime)) => tauri::http::Response::builder()
+                        .status(200)
+                        .header(tauri::http::header::CONTENT_TYPE, mime)
+                        .body(bytes),
+                    Err(e) => {
+                        use crate::tiles::serve::ServeError;
+                        let status = match e {
+                            ServeError::NoSource | ServeError::NotFound => 404,
+                            ServeError::BadPath(_) => 400,
+                            ServeError::Upstream(_) => 502,
+                        };
+                        tauri::http::Response::builder()
+                            .status(status)
+                            .header(tauri::http::header::CONTENT_TYPE, "text/plain")
+                            .body(e.to_string().into_bytes())
+                    }
+                };
+                if let Ok(response) = response {
+                    responder.respond(response);
+                }
+            });
+        })
         .manage(crate::wizard::WizardMutex::new())
         // tuxlink-bsiy: the single inbound-selection rendezvous. cms_connect threads
         // a clone of this Arc into the selecting decider; the resolve command (Task
@@ -215,6 +272,18 @@ pub fn run() {
             // degrades gracefully (empty results); the app always launches.
             match app.path().app_data_dir() {
                 Ok(data_dir) => {
+                    // tuxlink-dyop Phase 6: the TileGatekeeper managed state the
+                    // `tile`-scheme handler (registered on the Builder above)
+                    // consumes. Cache root is `<app_data>/tile-cache`; `new` does
+                    // NO I/O (the cache layer creates the tree lazily on first
+                    // write). Managed as `Arc<TileGatekeeper>` so the handler can
+                    // clone it out of managed state per request. The active source
+                    // starts `None` until the Phase-8 configure command sets it,
+                    // so an unconfigured serve returns 404 (NoSource), never panics.
+                    app.manage(std::sync::Arc::new(
+                        crate::tiles::TileGatekeeper::new(data_dir.join("tile-cache")),
+                    ));
+
                     // contacts (tuxlink-raez, Task A2): the contacts.json address
                     // book store. `ContactsStore::open` is INFALLIBLE (degrades to
                     // an empty store on a read/parse error, preserving the corrupt
