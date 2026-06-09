@@ -426,7 +426,7 @@ impl Mailbox {
                     for entry in fs::read_dir(&dir)? {
                         let path = entry?.path();
                         if let Some(name) = path.file_name() {
-                            fs::rename(&path, &dst_dir.join(name))?;
+                            fs::rename(&path, dst_dir.join(name))?;
                             if path.extension().and_then(|e| e.to_str()) == Some("b2f") {
                                 if let Some(mid) = path.file_stem().and_then(|st| st.to_str()) {
                                     self.index_set_folder(mid, folder_str(sys));
