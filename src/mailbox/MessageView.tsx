@@ -269,6 +269,13 @@ function FormMessageBody({
         onFallback={() => setViewerFailed(true)}
         suppressed={radioDrawerOpen}
       />
+      <div
+        className="message-form-print-fallback"
+        data-testid="message-form-print-fallback"
+        aria-hidden="true"
+      >
+        <KeyValueView payload={payload} bodyText={bodyText} />
+      </div>
     </div>
   );
 }
