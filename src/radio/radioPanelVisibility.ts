@@ -38,28 +38,21 @@ export function computePanelMode(
       sessionType === 'post-office' ? 'post-office' :
       sessionType === 'network-po'  ? 'network-po' :
       'cms';
+    // The RF kinds (ardop-hf/vara-hf/vara-fm) accept cms|p2p|radio-only but not the
+    // telnet-only post-office/network-po intents; coerce those to cms once for all
+    // three RF arms (a single telnet-only intent added later updates only this line).
+    const rfSafeIntent = intent === 'post-office' || intent === 'network-po' ? 'cms' : intent;
     switch (protocol) {
       case 'telnet':
         // telnet supports all intents; radio-only degrades to cms (no RF transport)
         return { kind: 'telnet', intent: intent === 'radio-only' ? 'cms' : intent };
       case 'packet':
-        // packet supports only cms|p2p; radio-only, post-office, network-po all
-        // coerce to cms (packet is not RF-bearing for Post Office sessions)
+        // packet (AX.25) supports only cms|p2p; radio-only and the telnet-only
+        // post-office/network-po intents all coerce to cms (no Post Office over packet)
         return { kind: 'packet', intent: intent === 'p2p' ? 'p2p' : 'cms' };
-      case 'ardop-hf': {
-        // ardop-hf supports cms|p2p|radio-only; post-office/network-po are
-        // telnet-only and coerce to cms for RF kinds
-        const rfIntent = (intent === 'post-office' || intent === 'network-po') ? 'cms' : intent;
-        return { kind: 'ardop-hf', intent: rfIntent };
-      }
-      case 'vara-hf': {
-        const rfIntent = (intent === 'post-office' || intent === 'network-po') ? 'cms' : intent;
-        return { kind: 'vara-hf', intent: rfIntent };
-      }
-      case 'vara-fm': {
-        const rfIntent = (intent === 'post-office' || intent === 'network-po') ? 'cms' : intent;
-        return { kind: 'vara-fm', intent: rfIntent };
-      }
+      case 'ardop-hf': return { kind: 'ardop-hf', intent: rfSafeIntent };
+      case 'vara-hf':  return { kind: 'vara-hf',  intent: rfSafeIntent };
+      case 'vara-fm':  return { kind: 'vara-fm',  intent: rfSafeIntent };
     }
   }
 
