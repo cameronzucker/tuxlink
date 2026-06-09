@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useCatalog } from '../catalog/useCatalog';
-import { useRequestBasket } from './basket';
+import { useRequestBasket, dispatchBasket, type DispatchResult } from './basket';
 import { buildSections, type CardAction } from './sections';
 import { CatalogBrowse } from './CatalogBrowse';
 import { GribForm } from './GribForm';
@@ -23,6 +23,27 @@ import './RequestCenter.css';
 export interface RequestCenterProps {
   onClose: () => void;
   initialView?: 'home' | 'browse' | 'grib';
+}
+
+// Send-all state machine (Task E1). `done` carries the DispatchResult so the
+// result region renders the per-rail summary + errors directly from it.
+type SendState =
+  | { kind: 'idle' }
+  | { kind: 'sending' }
+  | { kind: 'done'; result: DispatchResult };
+
+// Per-rail footer summary. The CMS rail collapses to ONE inquiry message
+// regardless of how many filenames; saildocs is one request each. Clauses for
+// absent rails are omitted; counts pluralize correctly. Present-indicative,
+// formal, no first person.
+function basketSummary(cmsCount: number, saildocsCount: number): string {
+  const total = cmsCount + saildocsCount;
+  const clauses: string[] = [`${total} ${total === 1 ? 'request' : 'requests'}`];
+  if (cmsCount > 0) clauses.push('1 inquiry message to the CMS');
+  if (saildocsCount > 0) {
+    clauses.push(`${saildocsCount} Saildocs ${saildocsCount === 1 ? 'request' : 'requests'}`);
+  }
+  return clauses.join(' · ');
 }
 
 export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterProps) {
@@ -38,6 +59,11 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
   // (adrev #9 — never "Near null"/"Near undefined").
   const [grid, setGrid] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+
+  // Send state machine (Task E1). `done` carries the DispatchResult so the
+  // result region renders from it (per-rail summary + errors). `sending`
+  // disables the Send button to prevent a double-dispatch.
+  const [sendState, setSendState] = useState<SendState>({ kind: 'idle' });
 
   // View routing. `initialView` (the C1 nit) seeds the view; openBrowse swaps
   // to the browse pane (a placeholder until the real 3-pane CatalogBrowse in
@@ -108,6 +134,26 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
       rail: 'cms',
       filename: e.filename,
     });
+
+  // "Send all" (Task E1). Dispatch both rails via dispatchBasket (never throws,
+  // runs Promise.allSettled internally). Capture the cms filenames BEFORE
+  // dispatch so the post-dispatch clear targets the right ids even if the basket
+  // changes meanwhile. adrev #4 keep/clear: clear only the succeeded rail.
+  const sendAll = async () => {
+    if (basket.isEmpty || sendState.kind === 'sending') return;
+    const cmsFilenamesAtSend = [...basket.cmsFilenames];
+    setSendState({ kind: 'sending' });
+    const result = await dispatchBasket(basket.items);
+
+    if (result.cms?.ok) {
+      for (const filename of cmsFilenamesAtSend) basket.remove(`cms:${filename}`);
+    }
+    for (const entry of result.saildocs) {
+      if (entry.ok) basket.remove(entry.item.id);
+    }
+
+    setSendState({ kind: 'done', result });
+  };
 
   return (
     <div className="request-overlay" data-testid="request-overlay" role="dialog" aria-label="Request Center">
@@ -292,15 +338,85 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
           </div>
 
           <aside className="request-basket" data-testid="request-basket" aria-label="Request basket">
-            {/* Labelled item list only; the full basket UI (remove, footer,
-                Send) is Task E1. */}
             <ul className="request-basket__list">
               {basket.items.map((item) => (
-                <li key={item.id} data-testid={`basket-item-${item.id}`}>
-                  {item.label}
+                <li
+                  key={item.id}
+                  className="request-basket__item"
+                  data-testid={`basket-item-${item.id}`}
+                >
+                  <span className="request-basket__item-label">{item.label}</span>
+                  <button
+                    type="button"
+                    className="request-basket__remove"
+                    data-testid={`basket-remove-${item.id}`}
+                    onClick={() => basket.remove(item.id)}
+                    aria-label={`Remove ${item.label}`}
+                    title="Remove"
+                  >
+                    ✕
+                  </button>
                 </li>
               ))}
             </ul>
+
+            {!basket.isEmpty && (
+              <p className="request-basket__summary" data-testid="request-basket-summary">
+                {basketSummary(basket.cmsFilenames.length, basket.saildocsItems.length)}
+              </p>
+            )}
+
+            <button
+              type="button"
+              className="request-basket__send"
+              data-testid="request-basket-send"
+              onClick={sendAll}
+              disabled={basket.isEmpty || sendState.kind === 'sending'}
+            >
+              {sendState.kind === 'sending' ? 'Sending…' : 'Send all'}
+            </button>
+
+            {sendState.kind === 'done' && (
+              <div
+                className="request-basket__result"
+                data-testid="request-basket-result"
+                role="status"
+              >
+                {sendState.result.cms?.ok && (
+                  <p className="request-basket__result-line">
+                    Queued 1 inquiry message to the CMS
+                    {sendState.result.cms.mid ? ` (MID ${sendState.result.cms.mid}).` : '.'}
+                  </p>
+                )}
+                {sendState.result.cms && !sendState.result.cms.ok && (
+                  <p className="request-basket__result-error">
+                    CMS failed: {sendState.result.cms.error}
+                  </p>
+                )}
+                {sendState.result.saildocs.some((e) => e.ok) && (
+                  <p className="request-basket__result-line">
+                    Queued {sendState.result.saildocs.filter((e) => e.ok).length} Saildocs{' '}
+                    {sendState.result.saildocs.filter((e) => e.ok).length === 1
+                      ? 'request'
+                      : 'requests'}
+                    .
+                  </p>
+                )}
+                {sendState.result.saildocs
+                  .filter((e) => !e.ok)
+                  .map((e) => (
+                    <p key={e.item.id} className="request-basket__result-error">
+                      Saildocs failed: {e.error}
+                    </p>
+                  ))}
+                {(sendState.result.cms?.ok ||
+                  sendState.result.saildocs.some((e) => e.ok)) && (
+                  <p className="request-basket__result-note">
+                    Responses arrive in your Inbox after the next connect.
+                  </p>
+                )}
+              </div>
+            )}
           </aside>
         </div>
       </div>

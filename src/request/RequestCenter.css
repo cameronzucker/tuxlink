@@ -205,6 +205,98 @@
   gap: 6px;
 }
 
+/* --- E1: basket item rows, footer summary, Send all, result ------------- */
+
+.request-basket__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.request-basket__item-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.request-basket__remove {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.request-basket__remove:hover {
+  color: var(--text);
+  background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
+}
+.request-basket__remove:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+.request-basket__summary {
+  margin: 12px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.request-basket__send {
+  margin-top: 12px;
+  width: 100%;
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.request-basket__send:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.request-basket__send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.request-basket__send:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+.request-basket__result {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+}
+.request-basket__result-line {
+  margin: 0;
+  color: var(--text);
+}
+.request-basket__result-note {
+  margin: 0;
+  color: var(--text-dim);
+}
+.request-basket__result-error {
+  margin: 0;
+  color: var(--danger, #c0392b);
+}
+
 .request-browse-reveal {
   display: flex;
   justify-content: flex-start;

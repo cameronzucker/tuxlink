@@ -513,3 +513,179 @@ describe('<RequestCenter> — D3 GRIB-by-area reveal', () => {
     expect(screen.queryByTestId('request-grib')).toBeNull();
   });
 });
+
+// ===========================================================================
+// Task E1 — basket right-rail UI + Send all.
+//
+// The basket lists added items with a remove (✕) control; a per-rail footer
+// summarizes counts ("N requests · 1 inquiry message to the CMS · N Saildocs
+// request(s)"); "Send all" dispatches via dispatchBasket. Partial-failure
+// (adrev #4): KEEP the failed rail's items, clear only the SUCCEEDED rail,
+// surface a per-rail error. Empty basket (adrev #5): Send is disabled.
+// ===========================================================================
+
+// Adds N cms items + M saildocs items to the basket by driving the UI:
+//   - cms via the home Propagation cards (prop-forecast/prop-solar/prop-aurora)
+//   - saildocs via the GRIB reveal + add (one per call), back to home each time.
+// Returns once the basket holds the requested items.
+async function seedBasket({ cms = 0, saildocs = 0 }: { cms?: number; saildocs?: number }) {
+  const cmsCards = ['prop-forecast', 'prop-solar', 'prop-aurora'];
+  for (let i = 0; i < cms; i++) {
+    clickCardAdd(cmsCards[i]);
+  }
+  for (let i = 0; i < saildocs; i++) {
+    fireEvent.click(screen.getByTestId('request-grib-reveal'));
+    await screen.findByTestId('request-grib');
+    // The mock box-drag sets a unique-enough request; vary the subject so each
+    // saildocs item gets a distinct id (saildocs:<json>) and is not deduped.
+    fireEvent.change(screen.getByTestId('grib-subject'), {
+      target: { value: `GRIB request ${i}` },
+    });
+    fireEvent.click(screen.getByTestId('grib-add'));
+    fireEvent.click(screen.getByTestId('grib-back'));
+    await screen.findByTestId('request-section-propagation');
+  }
+}
+
+describe('<RequestCenter> — E1 basket UI + Send all', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('lists added items with a remove control that removes the item', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    await seedBasket({ cms: 1 });
+    const basket = screen.getByTestId('request-basket');
+    expect(within(basket).getByTestId('basket-item-cms:PROP_3DAY')).toBeInTheDocument();
+
+    const remove = within(basket).getByTestId('basket-remove-cms:PROP_3DAY');
+    fireEvent.click(remove);
+
+    expect(within(basket).queryByTestId('basket-item-cms:PROP_3DAY')).toBeNull();
+  });
+
+  it('footer summary reflects per-rail counts (cms collapses to one inquiry message)', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    // 2 cms + 1 saildocs → "3 requests · 1 inquiry message to the CMS · 1 Saildocs request"
+    await seedBasket({ cms: 2, saildocs: 1 });
+    const summary = screen.getByTestId('request-basket-summary');
+    expect(summary).toHaveTextContent('3 requests');
+    expect(summary).toHaveTextContent('1 inquiry message to the CMS');
+    expect(summary).toHaveTextContent('1 Saildocs request');
+    expect(summary.textContent).not.toMatch(/Saildocs requests\b/); // singular
+  });
+
+  it('footer summary pluralizes Saildocs and omits absent rails', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    // 0 cms + 2 saildocs → no "inquiry message to the CMS" clause; "2 Saildocs requests"
+    await seedBasket({ saildocs: 2 });
+    const summary = screen.getByTestId('request-basket-summary');
+    expect(summary).toHaveTextContent('2 requests');
+    expect(summary).toHaveTextContent('2 Saildocs requests');
+    expect(summary.textContent).not.toMatch(/inquiry message to the CMS/);
+  });
+
+  it('Send all (cms + saildocs) calls each command and clears the basket on success', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'catalog_list') return C2_ENTRIES;
+      if (cmd === 'config_read') return { grid: 'CN87' };
+      if (cmd === 'catalog_send_inquiry') return 'MID-CMS-1';
+      if (cmd === 'grib_send_request') return 'MID-GRIB-1';
+      return null;
+    });
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    await seedBasket({ cms: 2, saildocs: 1 });
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(screen.getByTestId('request-basket-send'));
+
+    // Result region shows the per-rail summary + the next-connect line.
+    const result = await screen.findByTestId('request-basket-result');
+    expect(result).toHaveTextContent('Responses arrive in your Inbox after the next connect.');
+
+    // catalog_send_inquiry called ONCE with both cms filenames in insertion order.
+    const cmsCalls = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'catalog_send_inquiry');
+    expect(cmsCalls).toHaveLength(1);
+    expect(cmsCalls[0][1]).toEqual({ filenames: ['PROP_3DAY', 'PROP_WWV'] });
+
+    // grib_send_request called once per saildocs item.
+    const gribCalls = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'grib_send_request');
+    expect(gribCalls).toHaveLength(1);
+
+    // Basket cleared (both rails ok).
+    const basket = screen.getByTestId('request-basket');
+    expect(within(basket).queryAllByTestId(/^basket-item-/)).toHaveLength(0);
+  });
+
+  it('partial failure (cms ok / saildocs fail): saildocs items remain, cms cleared, error shown', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'catalog_list') return C2_ENTRIES;
+      if (cmd === 'config_read') return { grid: 'CN87' };
+      if (cmd === 'catalog_send_inquiry') return 'MID-CMS-1';
+      if (cmd === 'grib_send_request') throw new Error('saildocs offline');
+      return null;
+    });
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    await seedBasket({ cms: 1, saildocs: 1 });
+    fireEvent.click(screen.getByTestId('request-basket-send'));
+
+    const result = await screen.findByTestId('request-basket-result');
+    expect(result).toHaveTextContent('saildocs offline');
+
+    const basket = screen.getByTestId('request-basket');
+    // cms item gone; saildocs item remains.
+    await waitFor(() =>
+      expect(within(basket).queryByTestId('basket-item-cms:PROP_3DAY')).toBeNull(),
+    );
+    expect(within(basket).getByTestId(/^basket-item-saildocs:/)).toBeInTheDocument();
+  });
+
+  it('both fail: nothing is cleared, errors shown', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'catalog_list') return C2_ENTRIES;
+      if (cmd === 'config_read') return { grid: 'CN87' };
+      if (cmd === 'catalog_send_inquiry') throw new Error('cms offline');
+      if (cmd === 'grib_send_request') throw new Error('saildocs offline');
+      return null;
+    });
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    await seedBasket({ cms: 1, saildocs: 1 });
+    fireEvent.click(screen.getByTestId('request-basket-send'));
+
+    const result = await screen.findByTestId('request-basket-result');
+    expect(result).toHaveTextContent('cms offline');
+    expect(result).toHaveTextContent('saildocs offline');
+
+    const basket = screen.getByTestId('request-basket');
+    expect(within(basket).getByTestId('basket-item-cms:PROP_3DAY')).toBeInTheDocument();
+    expect(within(basket).getByTestId(/^basket-item-saildocs:/)).toBeInTheDocument();
+  });
+
+  it('Send all is disabled when the basket is empty and invokes nothing', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-section-propagation');
+
+    const send = screen.getByTestId('request-basket-send');
+    expect(send).toBeDisabled();
+
+    vi.mocked(invoke).mockClear();
+    fireEvent.click(send);
+    expect(vi.mocked(invoke)).not.toHaveBeenCalled();
+  });
+});
