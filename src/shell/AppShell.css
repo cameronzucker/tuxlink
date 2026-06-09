@@ -717,6 +717,10 @@
 .layout-b .row.selected:hover {
   background: rgba(245, 159, 60, 0.16);
 }
+.layout-b .row.in-selection { background: rgba(245, 159, 60, 0.10); position: relative; }
+.layout-b .row.in-selection::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent);
+}
 .layout-b .row:focus-visible {
   outline: 2px solid var(--tux-focus-ring);
   outline-offset: -2px;

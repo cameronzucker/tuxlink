@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import {
   MessageRow,
   MessageList,
@@ -11,6 +12,27 @@ import {
   NOT_CONNECTED_COPY,
 } from './MessageList';
 import type { MessageMeta } from './types';
+
+// react-virtuoso renders into a zero-height scroller under jsdom and does not
+// call itemContent, so individual rows are invisible to queries. Mock it to
+// render items directly so multi-select tests can fire events on row elements.
+// This mock is scoped to this file; existing tests that only probe the list
+// container (`message-list`, `message-list-empty`) are unaffected.
+vi.mock('react-virtuoso', () => ({
+  Virtuoso: ({
+    data,
+    itemContent,
+  }: {
+    data: MessageMeta[];
+    itemContent: (i: number, m: MessageMeta) => unknown;
+  }) => (
+    <div data-testid="virtuoso-mock">
+      {data.map((m, i) => (
+        <div key={m.id}>{itemContent(i, m) as ReactNode}</div>
+      ))}
+    </div>
+  ),
+}));
 
 function meta(over: Partial<MessageMeta> = {}): MessageMeta {
   return {
@@ -77,6 +99,10 @@ describe('formatters', () => {
   });
 });
 
+// Convenience: a no-op onRowClick for MessageRow tests that don't exercise
+// click modifier semantics (the handler is required on the interface).
+const noopRowClick = () => {};
+
 describe('<MessageRow> (3-line, Mock D)', () => {
   it('renders correspondent, subject, date, and size', () => {
     render(
@@ -84,7 +110,9 @@ describe('<MessageRow> (3-line, Mock D)', () => {
         // an old date → stable absolute formatRowDate output
         message={meta({ subject: 'Net check-in', from: 'KK4XYZ', date: '2024-03-09T14:05:00Z', bodySize: 2458 })}
         folder="inbox"
-        selected={false}
+        isOpen={false}
+        inSelection={false}
+        onRowClick={noopRowClick}
         onSelect={() => {}}
       />,
     );
@@ -99,45 +127,47 @@ describe('<MessageRow> (3-line, Mock D)', () => {
       <MessageRow
         message={meta({ preview: 'NWS Memphis has issued a severe thunderstorm watch…' })}
         folder="inbox"
-        selected={false}
+        isOpen={false}
+        inSelection={false}
+        onRowClick={noopRowClick}
         onSelect={() => {}}
       />,
     );
     expect(screen.getByTestId('row-preview')).toHaveTextContent('NWS Memphis');
     rerender(
-      <MessageRow message={meta({ preview: undefined })} folder="inbox" selected={false} onSelect={() => {}} />,
+      <MessageRow message={meta({ preview: undefined })} folder="inbox" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} />,
     );
     expect(screen.queryByTestId('row-preview')).toBeNull();
   });
 
   it('renders the form-tag badge only when formTag is set', () => {
     const { rerender } = render(
-      <MessageRow message={meta({ formTag: 'ICS-213' })} folder="inbox" selected={false} onSelect={() => {}} />,
+      <MessageRow message={meta({ formTag: 'ICS-213' })} folder="inbox" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} />,
     );
     expect(screen.getByTestId('row-form-tag')).toHaveTextContent('ICS-213');
     rerender(
-      <MessageRow message={meta({ formTag: undefined })} folder="inbox" selected={false} onSelect={() => {}} />,
+      <MessageRow message={meta({ formTag: undefined })} folder="inbox" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} />,
     );
     expect(screen.queryByTestId('row-form-tag')).toBeNull();
   });
 
   it('omits the size when bodySize is zero', () => {
-    render(<MessageRow message={meta({ bodySize: 0 })} folder="inbox" selected={false} onSelect={() => {}} />);
+    render(<MessageRow message={meta({ bodySize: 0 })} folder="inbox" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} />);
     expect(screen.queryByTestId('row-size')).toBeNull();
   });
 
   it('inbox row shows the sender; sent row shows the recipient', () => {
     const m = meta({ from: 'KK4OBN', to: ['W6ABC'] });
     const { rerender } = render(
-      <MessageRow message={m} folder="inbox" selected={false} onSelect={() => {}} />,
+      <MessageRow message={m} folder="inbox" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} />,
     );
     expect(screen.getByTestId('row-correspondent')).toHaveTextContent('KK4OBN');
-    rerender(<MessageRow message={m} folder="sent" selected={false} onSelect={() => {}} />);
+    rerender(<MessageRow message={m} folder="sent" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} />);
     expect(screen.getByTestId('row-correspondent')).toHaveTextContent('W6ABC');
   });
 
   it('unread row carries the unread class and shows the unread dot', () => {
-    render(<MessageRow message={meta({ unread: true })} folder="inbox" selected={false} onSelect={() => {}} />);
+    render(<MessageRow message={meta({ unread: true })} folder="inbox" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} />);
     const row = screen.getByTestId('message-row-MID1');
     expect(row.className).toContain('row');
     expect(row.className).toContain('unread');
@@ -145,25 +175,28 @@ describe('<MessageRow> (3-line, Mock D)', () => {
   });
 
   it('read row has no unread class and no unread dot', () => {
-    render(<MessageRow message={meta({ unread: false })} folder="inbox" selected={false} onSelect={() => {}} />);
+    render(<MessageRow message={meta({ unread: false })} folder="inbox" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} />);
     const row = screen.getByTestId('message-row-MID1');
     expect(row.className).toContain('row');
     expect(row.className).not.toContain('unread');
     expect(screen.queryByTestId('row-unread-dot')).toBeNull();
   });
 
-  it('selected row carries the selected class', () => {
-    render(<MessageRow message={meta()} folder="inbox" selected={true} onSelect={() => {}} />);
+  it('isOpen row carries the selected class', () => {
+    render(<MessageRow message={meta()} folder="inbox" isOpen={true} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} />);
     expect(screen.getByTestId('message-row-MID1').className).toContain('selected');
   });
 
-  it('click and Enter both fire onSelect with the id', () => {
+  it('click fires onRowClick and Enter fires onSelect with the id', () => {
+    const onRowClick = vi.fn();
     const onSelect = vi.fn();
-    render(<MessageRow message={meta()} folder="inbox" selected={false} onSelect={onSelect} />);
+    render(<MessageRow message={meta()} folder="inbox" isOpen={false} inSelection={false} onRowClick={onRowClick} onSelect={onSelect} />);
     const row = screen.getByTestId('message-row-MID1');
     fireEvent.click(row);
+    expect(onRowClick).toHaveBeenCalledTimes(1);
+    expect(onRowClick).toHaveBeenCalledWith('MID1', { ctrl: false, shift: false });
     fireEvent.keyDown(row, { key: 'Enter' });
-    expect(onSelect).toHaveBeenCalledTimes(2);
+    expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith('MID1');
   });
 });
@@ -174,7 +207,7 @@ describe('<MessageRow> — highlight + folder-tag (find-messages Task 17)', () =
       id: 'm1', subject: 'DAMAGE report', from: 'KX5DD', to: ['N7CPZ'],
       date: '2024-05-20T10:13:00Z', unread: true, bodySize: 100, hasAttachments: false,
     };
-    render(<MessageRow message={m} folder="inbox" selected={false} onSelect={() => {}}
+    render(<MessageRow message={m} folder="inbox" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}}
                        matchHighlight={[{ field: 'subject', start: 0, end: 6 }]} />);
     const mark = screen.getByTestId('row-subject').querySelector('mark');
     expect(mark).not.toBeNull();
@@ -187,7 +220,7 @@ describe('<MessageRow> — highlight + folder-tag (find-messages Task 17)', () =
       date: '2024-05-20T10:13:00Z', unread: false, bodySize: 0, hasAttachments: false,
       folder: 'sent',
     };
-    render(<MessageRow message={m} folder="inbox" selected={false} onSelect={() => {}} showFolderTag />);
+    render(<MessageRow message={m} folder="inbox" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} showFolderTag />);
     expect(screen.getByTestId('row-folder-tag')).toHaveTextContent(/sent/i);
   });
 
@@ -197,7 +230,7 @@ describe('<MessageRow> — highlight + folder-tag (find-messages Task 17)', () =
       date: '2024-05-20T10:13:00Z', unread: false, bodySize: 0, hasAttachments: false,
       folder: 'sent',
     };
-    render(<MessageRow message={m} folder="inbox" selected={false} onSelect={() => {}} />);
+    render(<MessageRow message={m} folder="inbox" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} />);
     expect(screen.queryByTestId('row-folder-tag')).toBeNull();
   });
 
@@ -206,7 +239,7 @@ describe('<MessageRow> — highlight + folder-tag (find-messages Task 17)', () =
       id: 'm1', subject: 'Hello world', from: 'y', to: ['z'],
       date: '2024-05-20T10:13:00Z', unread: false, bodySize: 0, hasAttachments: false,
     };
-    render(<MessageRow message={m} folder="inbox" selected={false} onSelect={() => {}} />);
+    render(<MessageRow message={m} folder="inbox" isOpen={false} inSelection={false} onRowClick={noopRowClick} onSelect={() => {}} />);
     const subject = screen.getByTestId('row-subject');
     expect(subject.querySelector('mark')).toBeNull();
     expect(subject).toHaveTextContent('Hello world');
@@ -234,6 +267,86 @@ describe('<MessageList>', () => {
       <MessageList folder="inbox" messages={[meta()]} selectedId={null} onSelect={() => {}} />,
     );
     expect(screen.getByTestId('message-list')).toBeInTheDocument();
+  });
+});
+
+// Three-message fixture sorted date-desc (M1 newest → M3 oldest) so the
+// rendered order under the default sort is M1, M2, M3 — matching the range
+// test assertions in the multi-select suite below.
+const M1 = meta({ id: 'M1', date: '2026-06-03T10:00:00Z' });
+const M2 = meta({ id: 'M2', date: '2026-06-02T10:00:00Z' });
+const M3 = meta({ id: 'M3', date: '2026-06-01T10:00:00Z' });
+const THREE_MSGS = [M1, M2, M3];
+
+describe('<MessageList> — multi-select / selection set (tuxlink-etxt Task 8)', () => {
+  it('Ctrl+click adds a row to the selection without opening it', () => {
+    const onSelect = vi.fn();
+    const onSelectionChange = vi.fn();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={onSelect}
+        selectedIds={new Set()}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('message-row-M2'), { ctrlKey: true });
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onSelectionChange).toHaveBeenLastCalledWith(new Set(['M2']));
+  });
+
+  it('plain click opens and clears the selection set', () => {
+    const onSelect = vi.fn();
+    const onSelectionChange = vi.fn();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={onSelect}
+        selectedIds={new Set(['M2'])}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('message-row-M1'));
+    expect(onSelect).toHaveBeenCalledWith('M1');
+    expect(onSelectionChange).toHaveBeenLastCalledWith(new Set());
+  });
+
+  it('Shift+click selects the contiguous range from the anchor', () => {
+    const onSelect = vi.fn();
+    const onSelectionChange = vi.fn();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={onSelect}
+        selectedIds={new Set()}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    // Anchor M1 via Ctrl+click, then extend to M3 via Shift+click.
+    fireEvent.click(screen.getByTestId('message-row-M1'), { ctrlKey: true });
+    fireEvent.click(screen.getByTestId('message-row-M3'), { shiftKey: true });
+    expect(onSelectionChange).toHaveBeenLastCalledWith(new Set(['M1', 'M2', 'M3']));
+  });
+
+  it('rows in the selection set carry the in-selection class', () => {
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={() => {}}
+        selectedIds={new Set(['M2'])}
+        onSelectionChange={() => {}}
+      />,
+    );
+    expect(screen.getByTestId('message-row-M2').className).toContain('in-selection');
+    expect(screen.getByTestId('message-row-M1').className).not.toContain('in-selection');
   });
 });
 
