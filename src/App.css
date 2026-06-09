@@ -209,6 +209,72 @@ body,
   color-scheme: dark;
 }
 
+/* GitHub dark — code-host-inspired neutrals with blue links / highlights and
+ * green radio identity. Practical for operators who live in developer tools. */
+:root[data-theme='github-dark'] {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-2: #21262d;
+  --elevated: #30363d;
+  --border: #30363d;
+  --border-strong: #484f58;
+  --border-soft: #21262d;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --text-faint: #6e7681;
+  --accent: #58a6ff;
+  --accent-2: #79c0ff;
+  --accent-soft: rgba(88, 166, 255, 0.14);
+  --modem-accent: #3fb950;
+  --modem-accent-2: #56d364;
+  --modem-accent-soft: rgba(63, 185, 80, 0.14);
+  --modem-accent-fg: #0d1117;
+  --unread-dot: #f2cc60;
+  --success: #3fb950;
+  --error: #ff7b72;
+  --info: #58a6ff;
+  --form-tag: #bc8cff;
+  /* literal --tux-* tokens (no primitive to alias) */
+  --tux-accent-fg: #0d1117;
+  --tux-danger-fg: #0d1117;
+  --tux-danger-surface: rgba(255, 123, 114, 0.14);
+  --tux-focus-ring: rgba(88, 166, 255, 0.55);
+  color-scheme: dark;
+}
+
+/* Office dark — Outlook/Office-inspired neutral charcoal with crisp blue
+ * commands and green modem affordances. Kept restrained for dense workflows. */
+:root[data-theme='office-dark'] {
+  --bg: #111217;
+  --surface: #1b1c21;
+  --surface-2: #24262d;
+  --elevated: #2c2f37;
+  --border: #343741;
+  --border-strong: #4b5563;
+  --border-soft: #252832;
+  --text: #f2f3f5;
+  --text-dim: #c7cbd1;
+  --text-faint: #8a9099;
+  --accent: #4f9cf9;
+  --accent-2: #7bbcff;
+  --accent-soft: rgba(79, 156, 249, 0.14);
+  --modem-accent: #44c08a;
+  --modem-accent-2: #5ed99e;
+  --modem-accent-soft: rgba(68, 192, 138, 0.14);
+  --modem-accent-fg: #08130e;
+  --unread-dot: #ffcc4d;
+  --success: #4ecb8f;
+  --error: #ff6b6b;
+  --info: #6db9ff;
+  --form-tag: #d8a7ff;
+  /* literal --tux-* tokens (no primitive to alias) */
+  --tux-accent-fg: #08121f;
+  --tux-danger-fg: #180607;
+  --tux-danger-surface: rgba(255, 107, 107, 0.14);
+  --tux-focus-ring: rgba(79, 156, 249, 0.55);
+  color-scheme: dark;
+}
+
 /* ----------------------------------------------------------------------------
  * Light-mode presets (tuxlink-c22r). Motivated by outdoor / bright-sun
  * readability on the operator's LCD. Each block sets `color-scheme: light` so

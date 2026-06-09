@@ -7,11 +7,12 @@
 // localStorage — a UI preference, not validated app config — and is applied
 // before React mounts (main.tsx) so there's no flash of the default theme.
 //
-// Light schemes (Daylight, High-Contrast Light, Paper) join the dark slate
-// default + Night-Red + Grayscale set, motivated by outdoor / bright-sun
-// readability. Each preset declares its mode via `color-scheme: light|dark`
-// in the matching App.css block so WebKitGTK renders native form controls,
-// scrollbars, and selection highlights in the correct mode.
+// Practical dark schemes (GitHub dark, Office dark), light schemes (Daylight,
+// High-Contrast Light, Paper), and specialty schemes (Night-Red, Grayscale)
+// join the dark slate default. Each preset declares its mode via
+// `color-scheme: light|dark` in the matching App.css block so WebKitGTK
+// renders native form controls, scrollbars, and selection highlights in the
+// correct mode.
 //
 // Custom themes (tuxlink-vgth) are a separate layer on top: the operator picks
 // `Customize…` from View → Color Scheme, the ThemeDesigner panel writes a
@@ -22,6 +23,8 @@
 
 export type PresetScheme =
   | 'default'
+  | 'github-dark'
+  | 'office-dark'
   | 'daylight'
   | 'high-contrast-light'
   | 'paper'
@@ -38,10 +41,12 @@ export interface ColorSchemeOption {
   mode: 'light' | 'dark';
 }
 
-/** The selectable preset schemes, in menu order (dark default first, then
- *  light family, then specialty). */
+/** The selectable preset schemes, in menu order (practical dark schemes first,
+ *  then light family, then specialty). */
 export const COLOR_SCHEMES: ColorSchemeOption[] = [
   { id: 'default', label: 'Default (dark)', mode: 'dark' },
+  { id: 'github-dark', label: 'GitHub dark', mode: 'dark' },
+  { id: 'office-dark', label: 'Office dark', mode: 'dark' },
   { id: 'daylight', label: 'Daylight (light)', mode: 'light' },
   { id: 'high-contrast-light', label: 'High contrast (light)', mode: 'light' },
   { id: 'paper', label: 'Paper (warm light)', mode: 'light' },
@@ -314,6 +319,60 @@ export const DEFAULT_DARK_TOKENS: Record<CustomThemeToken, string> = {
   'tux-danger-fg': '#1a0e02',
 };
 
+/** GitHub dark inspired preset. Mirrored from App.css's github-dark block. */
+export const GITHUB_DARK_TOKENS: Record<CustomThemeToken, string> = {
+  'bg': '#0d1117',
+  'surface': '#161b22',
+  'surface-2': '#21262d',
+  'elevated': '#30363d',
+  'border': '#30363d',
+  'border-strong': '#484f58',
+  'border-soft': '#21262d',
+  'text': '#e6edf3',
+  'text-dim': '#8b949e',
+  'text-faint': '#6e7681',
+  'accent': '#58a6ff',
+  'accent-2': '#79c0ff',
+  'unread-dot': '#f2cc60',
+  'success': '#3fb950',
+  'error': '#ff7b72',
+  'info': '#58a6ff',
+  'form-tag': '#bc8cff',
+  'modem-accent': '#3fb950',
+  'modem-accent-2': '#56d364',
+  'modem-accent-soft': 'rgba(63, 185, 80, 0.14)',
+  'modem-accent-fg': '#0d1117',
+  'tux-accent-fg': '#0d1117',
+  'tux-danger-fg': '#0d1117',
+};
+
+/** Office/Outlook dark inspired preset. Mirrored from App.css's office-dark block. */
+export const OFFICE_DARK_TOKENS: Record<CustomThemeToken, string> = {
+  'bg': '#111217',
+  'surface': '#1b1c21',
+  'surface-2': '#24262d',
+  'elevated': '#2c2f37',
+  'border': '#343741',
+  'border-strong': '#4b5563',
+  'border-soft': '#252832',
+  'text': '#f2f3f5',
+  'text-dim': '#c7cbd1',
+  'text-faint': '#8a9099',
+  'accent': '#4f9cf9',
+  'accent-2': '#7bbcff',
+  'unread-dot': '#ffcc4d',
+  'success': '#4ecb8f',
+  'error': '#ff6b6b',
+  'info': '#6db9ff',
+  'form-tag': '#d8a7ff',
+  'modem-accent': '#44c08a',
+  'modem-accent-2': '#5ed99e',
+  'modem-accent-soft': 'rgba(68, 192, 138, 0.14)',
+  'modem-accent-fg': '#08130e',
+  'tux-accent-fg': '#08121f',
+  'tux-danger-fg': '#180607',
+};
+
 /** The "Daylight" preset's token values — exposed so the designer can offer
  *  "Start from Daylight" as a light-mode base. Mirrored from App.css. */
 export const DAYLIGHT_TOKENS: Record<CustomThemeToken, string> = {
@@ -346,6 +405,8 @@ export const DAYLIGHT_TOKENS: Record<CustomThemeToken, string> = {
  *  picker. Only presets bundled with token snapshots are listed; the rest
  *  fall through to DEFAULT_DARK_TOKENS for safety. */
 export function tokensForBase(base: PresetScheme): Record<CustomThemeToken, string> {
+  if (base === 'github-dark') return GITHUB_DARK_TOKENS;
+  if (base === 'office-dark') return OFFICE_DARK_TOKENS;
   if (base === 'daylight') return DAYLIGHT_TOKENS;
   return DEFAULT_DARK_TOKENS;
 }

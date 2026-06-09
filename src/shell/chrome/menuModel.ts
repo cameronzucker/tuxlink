@@ -75,12 +75,14 @@ export const MENU_TREE: TopMenu[] = [
     { id: 'menu:view:status_bar', label: 'Toggle Mailbox Bar' },
     { id: 'menu:view:radio_panel', label: 'Toggle Radio Panel', accel: 'Ctrl+Shift+M' },
     { separator: true },
-    // tuxlink-c22r + tuxlink-vgth: dark default, three light presets, two
-    // specialty schemes, then a separator and the operator's saved custom
-    // theme + the Customize designer entry. The Customize action opens an
-    // inline panel (per feedback_inline_ui_no_window_clutter), not a window.
+    // tuxlink-c22r + tuxlink-vgth + tuxlink-4wg1: practical dark presets,
+    // three light presets, two specialty schemes, then a separator and the
+    // operator's saved custom theme + the Customize designer entry. The
+    // Customize action opens an inline panel, not a window.
     { label: 'Color scheme', submenu: [
       { id: 'menu:view:scheme:default', label: 'Default (dark)' },
+      { id: 'menu:view:scheme:github-dark', label: 'GitHub dark' },
+      { id: 'menu:view:scheme:office-dark', label: 'Office dark' },
       { id: 'menu:view:scheme:daylight', label: 'Daylight (light)' },
       { id: 'menu:view:scheme:high-contrast-light', label: 'High contrast (light)' },
       { id: 'menu:view:scheme:paper', label: 'Paper (warm light)' },

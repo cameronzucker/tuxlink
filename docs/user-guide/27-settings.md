@@ -66,7 +66,7 @@ defaults and what each field controls.
 ## Color schemes
 
 <!-- screenshot-needed: docs/user-guide/images/27-settings/color-scheme-picker.png
-     Show: Tools → Settings → Color schemes panel with the six bundled
+     Show: Tools → Settings → Color schemes panel with the bundled
      scheme tiles visible (Default, Light, High contrast, etc.). The
      currently-active scheme should be marked. Settings-panel crop,
      ~700x500. -->
@@ -78,9 +78,13 @@ mailbox, or any configuration.
 
 ### Picking a preset
 
-View → Color Scheme lists the six bundled presets:
+View → Color Scheme lists the eight bundled presets:
 
 - **Default (dark).** The cool-slate dark theme; the design baseline.
+- **GitHub dark.** A code-host-inspired dark theme with neutral
+  surfaces, blue highlights, and green radio affordances.
+- **Office dark.** An Outlook/Office-inspired charcoal theme with crisp
+  blue command highlights for dense operator workflows.
 - **Daylight (light).** A soft off-white theme with a warm-amber accent.
   Designed for moderate-bright indoor and outdoor use.
 - **High contrast (light).** Pure white surfaces with near-black text
@@ -109,6 +113,7 @@ Token groups in the designer:
 - **Text.** Primary, dim (labels), faint (help text).
 - **Accent.** The highlight / link / button color, plus the matching
   on-accent text color.
+- **Radio dock.** The modem panel's independent green accent family.
 - **Status / semantic.** Unread dot, success, error (and its on-error
   text color), info, form-tag.
 

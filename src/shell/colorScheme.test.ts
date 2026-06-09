@@ -13,6 +13,8 @@ import {
   CUSTOM_THEME_TOKENS,
   DAYLIGHT_TOKENS,
   DEFAULT_DARK_TOKENS,
+  GITHUB_DARK_TOKENS,
+  OFFICE_DARK_TOKENS,
   isColorScheme,
   isPresetScheme,
   loadColorScheme,
@@ -53,9 +55,11 @@ function makeFixtureCustomTheme(overrides: Partial<CustomTheme> = {}): CustomThe
 }
 
 describe('color scheme model', () => {
-  it('offers default, three light presets, night-red, grayscale (in menu order)', () => {
+  it('offers practical dark, light, and specialty presets in menu order', () => {
     expect(COLOR_SCHEMES.map((s) => s.id)).toEqual([
       'default',
+      'github-dark',
+      'office-dark',
       'daylight',
       'high-contrast-light',
       'paper',
@@ -68,6 +72,8 @@ describe('color scheme model', () => {
   it('declares mode (light/dark) for each preset — light family is light, others dark', () => {
     const modeFor = (id: string) => COLOR_SCHEMES.find((s) => s.id === id)?.mode;
     expect(modeFor('default')).toBe('dark');
+    expect(modeFor('github-dark')).toBe('dark');
+    expect(modeFor('office-dark')).toBe('dark');
     expect(modeFor('daylight')).toBe('light');
     expect(modeFor('high-contrast-light')).toBe('light');
     expect(modeFor('paper')).toBe('light');
@@ -77,6 +83,8 @@ describe('color scheme model', () => {
 
   it('isColorScheme accepts known preset ids and the "custom" sentinel', () => {
     expect(isColorScheme('default')).toBe(true);
+    expect(isColorScheme('github-dark')).toBe(true);
+    expect(isColorScheme('office-dark')).toBe(true);
     expect(isColorScheme('daylight')).toBe(true);
     expect(isColorScheme('high-contrast-light')).toBe(true);
     expect(isColorScheme('paper')).toBe(true);
@@ -90,6 +98,8 @@ describe('color scheme model', () => {
 
   it('isPresetScheme rejects "custom" — the designer is not a preset', () => {
     expect(isPresetScheme('default')).toBe(true);
+    expect(isPresetScheme('github-dark')).toBe(true);
+    expect(isPresetScheme('office-dark')).toBe(true);
     expect(isPresetScheme('daylight')).toBe(true);
     expect(isPresetScheme('custom')).toBe(false);
   });
@@ -107,6 +117,13 @@ describe('loadColorScheme', () => {
 
   it('accepts each new light preset', () => {
     for (const id of ['daylight', 'high-contrast-light', 'paper'] as const) {
+      localStorage.setItem(COLOR_SCHEME_STORAGE_KEY, id);
+      expect(loadColorScheme()).toBe(id);
+    }
+  });
+
+  it('accepts each practical dark preset', () => {
+    for (const id of ['github-dark', 'office-dark'] as const) {
       localStorage.setItem(COLOR_SCHEME_STORAGE_KEY, id);
       expect(loadColorScheme()).toBe(id);
     }
@@ -148,6 +165,13 @@ describe('applyColorScheme', () => {
     expect(document.documentElement.dataset.theme).toBe('high-contrast-light');
     applyColorScheme('paper');
     expect(document.documentElement.dataset.theme).toBe('paper');
+  });
+
+  it('sets data-theme for each practical dark preset', () => {
+    applyColorScheme('github-dark');
+    expect(document.documentElement.dataset.theme).toBe('github-dark');
+    applyColorScheme('office-dark');
+    expect(document.documentElement.dataset.theme).toBe('office-dark');
   });
 
   it('removes data-theme for the default scheme (clean :root)', () => {
@@ -269,6 +293,11 @@ describe('tokensForBase', () => {
 
   it('returns the daylight tokens for the daylight preset', () => {
     expect(tokensForBase('daylight')).toEqual(DAYLIGHT_TOKENS);
+  });
+
+  it('returns bundled token snapshots for the practical dark presets', () => {
+    expect(tokensForBase('github-dark')).toEqual(GITHUB_DARK_TOKENS);
+    expect(tokensForBase('office-dark')).toEqual(OFFICE_DARK_TOKENS);
   });
 
   it('falls back to dark tokens for presets without a bundled snapshot', () => {

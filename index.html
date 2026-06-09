@@ -21,6 +21,8 @@
           var scheme = localStorage.getItem('tuxlink.colorScheme') || 'default';
           var presets = [
             'default',
+            'github-dark',
+            'office-dark',
             'daylight',
             'high-contrast-light',
             'paper',
@@ -65,6 +67,8 @@
        * correct color immediately rather than flashing white while App.css
        * streams in with the bundle. */
       html { background: #0d1318; }
+      html[data-theme='github-dark'] { background: #0d1117; }
+      html[data-theme='office-dark'] { background: #111217; }
       html[data-theme='night-red'] { background: #0a0000; }
       html[data-theme='grayscale'] { background: #0d0d0d; }
       html[data-theme='daylight'] { background: #f4f6f9; }

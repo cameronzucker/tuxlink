@@ -16,6 +16,8 @@ import {
   CUSTOM_THEME_TOKENS,
   DEFAULT_DARK_TOKENS,
   DAYLIGHT_TOKENS,
+  GITHUB_DARK_TOKENS,
+  OFFICE_DARK_TOKENS,
   loadColorScheme,
   loadCustomTheme,
   saveCustomTheme,
@@ -104,6 +106,26 @@ describe('ThemeDesigner — base picker', () => {
     const modeSelect = screen.getByTestId('theme-designer-mode') as HTMLSelectElement;
     expect(modeSelect.value).toBe('light');
     expect(document.documentElement.style.colorScheme).toBe('light');
+  });
+
+  it('re-seeds from the GitHub dark bundled snapshot', () => {
+    render(<ThemeDesigner open={true} onClose={() => {}} />);
+    const baseSelect = screen.getByTestId('theme-designer-base') as HTMLSelectElement;
+    fireEvent.change(baseSelect, { target: { value: 'github-dark' } });
+    const bgText = screen.getByTestId('theme-designer-text-bg') as HTMLInputElement;
+    expect(bgText.value).toBe(GITHUB_DARK_TOKENS.bg);
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe(GITHUB_DARK_TOKENS.accent);
+    expect((screen.getByTestId('theme-designer-mode') as HTMLSelectElement).value).toBe('dark');
+  });
+
+  it('re-seeds from the Office dark bundled snapshot', () => {
+    render(<ThemeDesigner open={true} onClose={() => {}} />);
+    const baseSelect = screen.getByTestId('theme-designer-base') as HTMLSelectElement;
+    fireEvent.change(baseSelect, { target: { value: 'office-dark' } });
+    const bgText = screen.getByTestId('theme-designer-text-bg') as HTMLInputElement;
+    expect(bgText.value).toBe(OFFICE_DARK_TOKENS.bg);
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe(OFFICE_DARK_TOKENS.accent);
+    expect((screen.getByTestId('theme-designer-mode') as HTMLSelectElement).value).toBe('dark');
   });
 });
 

@@ -501,7 +501,7 @@ The bd-issue references make this topic self-updating: as parity gaps close, the
 
 ### 6.4 Light vs dark theme considerations
 
-All authored content — markdown, Mermaid diagrams, hand-SVG — MUST work across all 6 bundled color schemes (per `src/shell/colorScheme.ts`). Specifically:
+All authored content — markdown, Mermaid diagrams, hand-SVG — MUST work across all bundled color schemes (per `src/shell/colorScheme.ts`). Specifically:
 
 - Mermaid diagrams: configured via `mermaid.initialize({ theme: 'base', themeVariables: { ... } })` with theme variables pulled from CSS custom properties. The Mermaid renderer re-runs on theme change.
 - Hand-SVG: `stroke="currentColor"` and `fill="currentColor"` so the diagram adopts the theme automatically.
