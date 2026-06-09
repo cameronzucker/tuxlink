@@ -54,6 +54,11 @@ pub fn validate_source_url(url_str: &str) -> Result<Url, String> {
     // string's authority section is empty — no actual host was specified.
     // Detect by checking that `://` is followed immediately by `/` or `?` (i.e.,
     // the authority block is absent or empty) in the original input.
+    //
+    // DO NOT "simplify" this to `url.host_str().is_some()`: the url crate folds
+    // the path into the host for `http:///x`, so `host_str()` returns `Some("x")`
+    // and would WRONGLY accept a hostless URL (the `rejects_missing_host` test
+    // guards this). The raw-authority scan is deliberate, not gratuitous.
     if let Some(after_scheme) = url_str.find("://").map(|i| &url_str[i + 3..]) {
         let authority_end = after_scheme
             .find('/')
@@ -223,8 +228,45 @@ mod ip_tests {
 
     #[test]
     fn allows_rfc1918_and_ula() {
-        for s in ["10.0.0.1", "172.16.5.4", "192.168.1.50", "fd00::1"] {
+        for s in [
+            "10.0.0.1",
+            "172.16.5.4",
+            "192.168.1.50",
+            "fd00::1",
+            // 172.16.0.0/12 inclusive boundaries
+            "172.16.0.0",
+            "172.31.255.255",
+            // ULA fc00::/7 upper boundary
+            "fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            // IPv4-mapped IPv6 of a private address must canonicalize and be allowed
+            "::ffff:192.168.1.1",
+        ] {
             assert!(ip_is_permitted(ip(s), false), "{s} should be permitted");
+        }
+    }
+
+    #[test]
+    fn denies_boundary_and_embedded_public_classes() {
+        // Locks the SSRF allow/deny boundaries against future refactors. None of
+        // these is in the allow-set; default-deny must catch them all.
+        for s in [
+            // 172.16.0.0/12 just-outside boundaries
+            "172.15.255.255",
+            "172.32.0.0",
+            // ULA just-outside boundaries (fb.. below, fe.. above fc00::/7)
+            "fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "fe00::1",
+            // IPv6 link-local upper boundary fe80::/10
+            "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            // IPv4-mapped IPv6 of a PUBLIC address must canonicalize and be denied
+            "::ffff:8.8.8.8",
+            // Embedded-public / transition addresses — public, must fall through to deny
+            "2002:0808:0808::", // 6to4 embedding 8.8.8.8
+            "64:ff9b::8.8.8.8", // NAT64
+            "2001::1",          // Teredo
+            "100.64.0.1",       // CGNAT (RFC 6598) — shared, NOT private LAN
+        ] {
+            assert!(!ip_is_permitted(ip(s), false), "{s} should be denied");
         }
     }
 
