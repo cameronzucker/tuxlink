@@ -160,17 +160,20 @@
   color: var(--form-tag);
   font-weight: 600;
 }
-/* B5 (tuxlink-6c9y) — routing-source chip. Teal-tinted pill; used by the
- * "Post Office" received-session label in the reading-pane meta block. */
+/* B5 (tuxlink-6c9y) — routing-source chip for the "Post Office" received-session
+ * label in the reading-pane meta block. Orange L-pool pill matching the design
+ * mock's `.pill.l` (docs/design/mockups/2026-06-08-post-office-mocks.html line 40).
+ * Uses the theme accent tokens so it adapts across themes rather than a hardcoded,
+ * out-of-rotation color (the prior `--accent-teal` token was never defined). */
 .reading-pane .msg-meta dd .chip {
   display: inline-block;
   padding: 1px 7px;
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
-  background: rgba(45, 212, 191, 0.15);
-  color: var(--accent-teal, #2dd4bf);
-  border: 1px solid rgba(45, 212, 191, 0.35);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent);
   letter-spacing: 0.03em;
 }
 
