@@ -818,10 +818,19 @@ export function AppShell() {
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage, archiveOpen, reportIssueController]);
 
+  const editDraft = useCallback((draftId: string) => {
+    void invoke('compose_window_open', { draftId });
+  }, []);
+
   // The Archive button render gate: only show when something is selected AND
-  // it's not already in Archive (where archive is a no-op). MessageView reads
-  // the absence of onArchive as "don't render the button."
-  const onArchiveMessage = (selectedMessage && selectedMessage.folder !== 'archive')
+  // it's not already in Archive (where archive is a no-op). Local Drafts are
+  // not backend mailbox messages, so they get an explicit Edit Draft action
+  // instead of Archive/Move.
+  const onArchiveMessage = (
+    selectedMessage
+    && selectedMessage.folder !== 'archive'
+    && selectedMessage.folder !== 'drafts'
+  )
     ? archiveOpen
     : undefined;
 
@@ -877,11 +886,6 @@ export function AppShell() {
       // regular folder-scoped browse case.
       const hit = searchResultMessages?.find((m) => m.id === id);
       const folder = (hit?.folder as MailboxFolder | undefined) ?? selectedFolder;
-      if (folder === 'drafts') {
-        setSelectedMessage(null);
-        void invoke('compose_window_open', { draftId: id });
-        return;
-      }
       setSelectedMessage({ folder, id });
     },
     [selectedFolder, searchResultMessages],
@@ -1047,7 +1051,14 @@ export function AppShell() {
           const readingPane = selectedMessage
             ? (
                 <Suspense fallback={<MessageViewLoading />}>
-                  <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} radioDrawerOpen={isCompact && drawerOpen} />
+                  <MessageView
+                    selectedMessage={selectedMessage}
+                    onArchive={onArchiveMessage}
+                    userFolders={userFolders}
+                    onMove={selectedMessage.folder === 'drafts' ? undefined : moveOpen}
+                    onEditDraft={editDraft}
+                    radioDrawerOpen={isCompact && drawerOpen}
+                  />
                 </Suspense>
               )
             : <MessageViewEmpty />;

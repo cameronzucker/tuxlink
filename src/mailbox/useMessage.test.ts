@@ -37,9 +37,11 @@ import {
   buildMessageQueryOptions,
   useMessage,
 } from './useMessage';
+import { saveDraft } from '../compose/useDraft';
 
 beforeEach(() => {
   mockInvoke.mockClear();
+  globalThis.localStorage?.clear?.();
 });
 
 function wrapperWith(qc: QueryClient) {
@@ -174,6 +176,15 @@ describe('useMessage — mark-on-open (Task 7)', () => {
   it('does NOT call message_set_read_state for outbox / drafts / deleted', async () => {
     for (const folder of ['outbox', 'drafts', 'deleted'] as const) {
       mockInvoke.mockClear();
+      if (folder === 'drafts') {
+        saveDraft({
+          draftId: 'X1',
+          to: 'KK4XYZ@winlink.org',
+          subject: 'Local draft',
+          body: 'Local body',
+          requestAck: false,
+        });
+      }
       const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
       const { result } = renderHook(() => useMessage({ folder, id: 'X1' }), {
@@ -187,6 +198,30 @@ describe('useMessage — mark-on-open (Task 7)', () => {
       );
       expect(markCalls).toHaveLength(0);
     }
+  });
+
+  it('reads Drafts messages from localStorage without invoking message_read (tuxlink-2l66)', async () => {
+    saveDraft({
+      draftId: 'draft-hook',
+      to: 'KK4XYZ@winlink.org; W7SRC@winlink.org',
+      cc: 'N0CALL@winlink.org',
+      subject: 'Hook draft',
+      body: 'Draft body for reading pane.',
+      requestAck: true,
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    const { result } = renderHook(() => useMessage({ folder: 'drafts', id: 'draft-hook' }), {
+      wrapper: wrapperWith(qc),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data?.subject).toBe('Hook draft');
+    expect(result.current.data?.to).toEqual(['KK4XYZ@winlink.org', 'W7SRC@winlink.org']);
+    expect(result.current.data?.cc).toEqual(['N0CALL@winlink.org']);
+    expect(result.current.data?.body).toBe('Draft body for reading pane.');
+    expect(mockInvoke).not.toHaveBeenCalledWith('message_read', expect.anything());
   });
 
   it('re-marks when reopening a message after navigating away', async () => {
