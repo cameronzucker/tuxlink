@@ -1329,6 +1329,11 @@ pub struct UserFolderDto {
     pub slug: String,
     pub display_name: String,
     pub created_at: String,
+    /// Parent folder slug (schema v2 / spec D2). `skip_serializing_if` omits the
+    /// key for a top-level folder so the wire shape matches TS `parentSlug?:
+    /// string` (absent, not `null` — A4 / finding #7).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_slug: Option<String>,
 }
 
 impl From<crate::user_folders::UserFolder> for UserFolderDto {
@@ -1337,6 +1342,7 @@ impl From<crate::user_folders::UserFolder> for UserFolderDto {
             slug: f.slug,
             display_name: f.display_name,
             created_at: f.created_at,
+            parent_slug: f.parent_slug,
         }
     }
 }
@@ -1360,12 +1366,33 @@ pub async fn user_folders_list(
 #[tauri::command]
 pub async fn folder_create(
     display_name: String,
+    parent_slug: Option<String>,
     state: State<'_, BackendState>,
 ) -> Result<UserFolderDto, UiError> {
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
-    let folder = backend.create_user_folder(&display_name).await?;
+    let folder = backend
+        .create_user_folder(&display_name, parent_slug.as_deref())
+        .await?;
+    Ok(UserFolderDto::from(folder))
+}
+
+/// Re-parent a user folder (spec D3). `parent_slug == None` promotes it to top
+/// level. Metadata-only — no message files move. D4 validation failures surface
+/// as `UiError::Rejected`.
+#[tauri::command]
+pub async fn folder_move(
+    slug: String,
+    parent_slug: Option<String>,
+    state: State<'_, BackendState>,
+) -> Result<UserFolderDto, UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let folder = backend
+        .move_user_folder(&slug, parent_slug.as_deref())
+        .await?;
     Ok(UserFolderDto::from(folder))
 }
 
@@ -1394,7 +1421,7 @@ pub async fn folder_delete(
     slug: String,
     on_messages: String,
     state: State<'_, BackendState>,
-) -> Result<(), UiError> {
+) -> Result<Vec<String>, UiError> {
     use crate::native_mailbox::DeleteAction;
     let action = match on_messages.as_str() {
         "move_to_inbox" => DeleteAction::MoveToInbox,
@@ -1409,8 +1436,10 @@ pub async fn folder_delete(
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
-    backend.delete_user_folder(&slug, action).await?;
-    Ok(())
+    // Returns parent + cascaded child slugs so the UI can clear a stale
+    // selection when the open folder was among them (A5).
+    let removed = backend.delete_user_folder(&slug, action).await?;
+    Ok(removed)
 }
 
 // Task 14 — message_send command (spec §3.2, §5.4)
@@ -6124,6 +6153,30 @@ pub async fn telnet_set_listen(
 mod tests {
     use super::*;
     use crate::winlink_backend::MessageId;
+
+    #[test]
+    fn user_folder_dto_carries_parent_slug_and_omits_when_top_level() {
+        // tuxlink-ka3z A4/finding #7: a subfolder serializes parentSlug; a
+        // top-level folder omits the key entirely (TS parentSlug?: string).
+        let child = UserFolderDto::from(crate::user_folders::UserFolder {
+            slug: "ares".into(),
+            display_name: "ARES".into(),
+            created_at: "2026-06-09T00:00:00Z".into(),
+            parent_slug: Some("nets".into()),
+        });
+        assert_eq!(child.parent_slug.as_deref(), Some("nets"));
+        let json = serde_json::to_string(&child).unwrap();
+        assert!(json.contains("\"parentSlug\":\"nets\""), "{json}");
+
+        let top = UserFolderDto::from(crate::user_folders::UserFolder {
+            slug: "nets".into(),
+            display_name: "Nets".into(),
+            created_at: "2026-06-09T00:00:00Z".into(),
+            parent_slug: None,
+        });
+        let json_top = serde_json::to_string(&top).unwrap();
+        assert!(!json_top.contains("parentSlug"), "top-level must omit the key: {json_top}");
+    }
 
     #[test]
     fn discover_serial_devices_classifies_usb_bluetooth_uart_and_excludes_others() {

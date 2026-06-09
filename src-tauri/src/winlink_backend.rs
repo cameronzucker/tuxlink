@@ -730,22 +730,38 @@ pub trait WinlinkBackend: Send + Sync {
         Ok(Vec::new())
     }
 
-    /// Create a new user folder with the given display name. Validates and
-    /// slug-derives. Default `NotImplemented`.
+    /// Create a new user folder with the given display name. `parent_slug`
+    /// (spec D2/D3) nests the new folder under an existing top-level folder, or
+    /// `None` creates a top-level folder. Validates and slug-derives. Default
+    /// `NotImplemented`.
     async fn create_user_folder(
         &self,
         _display_name: &str,
+        _parent_slug: Option<&str>,
     ) -> Result<crate::user_folders::UserFolder, BackendError> {
         Err(BackendError::NotImplemented)
     }
 
-    /// Delete a user folder. `on_messages` controls cascade behavior
-    /// (spec §6 D6). Default `NotImplemented`.
+    /// Delete a user folder, cascading to its direct subfolders. `on_messages`
+    /// controls disposition (spec §6 D6). Returns the slugs actually removed
+    /// (parent + children) so the UI can clear a stale selection (A5). Default
+    /// `NotImplemented`.
     async fn delete_user_folder(
         &self,
         _slug: &str,
         _on_messages: crate::native_mailbox::DeleteAction,
-    ) -> Result<(), BackendError> {
+    ) -> Result<Vec<String>, BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
+    /// Re-parent a user folder (spec D3). `new_parent_slug == None` promotes it
+    /// to top level. Metadata-only — no message files move. Default
+    /// `NotImplemented`.
+    async fn move_user_folder(
+        &self,
+        _slug: &str,
+        _new_parent_slug: Option<&str>,
+    ) -> Result<crate::user_folders::UserFolder, BackendError> {
         Err(BackendError::NotImplemented)
     }
 
@@ -1105,20 +1121,25 @@ impl WinlinkBackend for NativeBackend {
     async fn create_user_folder(
         &self,
         display_name: &str,
+        parent_slug: Option<&str>,
     ) -> Result<crate::user_folders::UserFolder, BackendError> {
-        // Trait still creates top-level only; the parent-aware path flows
-        // through the dedicated trait method added for nesting (tuxlink-ka3z A6).
-        self.mailbox.create_user_folder(display_name, None)
+        self.mailbox.create_user_folder(display_name, parent_slug)
     }
 
     async fn delete_user_folder(
         &self,
         slug: &str,
         on_messages: crate::native_mailbox::DeleteAction,
-    ) -> Result<(), BackendError> {
-        // The trait still returns (); the deleted-slug set (A5) flows through the
-        // trait-aware path added for nesting (tuxlink-ka3z A6).
-        self.mailbox.delete_user_folder(slug, on_messages).map(|_| ())
+    ) -> Result<Vec<String>, BackendError> {
+        self.mailbox.delete_user_folder(slug, on_messages)
+    }
+
+    async fn move_user_folder(
+        &self,
+        slug: &str,
+        new_parent_slug: Option<&str>,
+    ) -> Result<crate::user_folders::UserFolder, BackendError> {
+        self.mailbox.move_user_folder(slug, new_parent_slug)
     }
 
     async fn rename_user_folder(
