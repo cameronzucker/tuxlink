@@ -245,7 +245,11 @@ impl Mailbox {
     /// slugs, then creates the on-disk directory + persists the registry.
     /// Returns the newly created `UserFolder` so the caller can echo back to
     /// the UI (no extra round-trip).
-    pub fn create_user_folder(&self, display_name: &str) -> Result<UserFolder, BackendError> {
+    pub fn create_user_folder(
+        &self,
+        display_name: &str,
+        parent_slug: Option<&str>,
+    ) -> Result<UserFolder, BackendError> {
         let display = display_name.trim();
         user_folders::validate_display_name(display)
             .map_err(BackendError::MessageRejected)?;
@@ -260,12 +264,19 @@ impl Mailbox {
                 )));
             }
         }
+        // Validate the parent (spec D4): must be an existing top-level folder so
+        // the new child lands at depth 2, never deeper.
+        if let Some(parent) = parent_slug {
+            user_folders::validate_create_parent(&reg, parent)
+                .map_err(BackendError::MessageRejected)?;
+        }
 
         let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         let folder = UserFolder {
             slug: slug.clone(),
             display_name: display.to_string(),
             created_at: now,
+            parent_slug: parent_slug.map(|s| s.to_string()),
         };
 
         // Create the directory FIRST — if the FS write fails we don't poison
@@ -867,10 +878,10 @@ mod index_hook_tests {
         assert!(mbox.list_user_folders().is_empty());
 
         // Create two folders.
-        let ares = mbox.create_user_folder("ARES Drills").unwrap();
+        let ares = mbox.create_user_folder("ARES Drills", None).unwrap();
         assert_eq!(ares.slug, "ares-drills");
         assert_eq!(ares.display_name, "ARES Drills");
-        let prep = mbox.create_user_folder("Disaster Prep").unwrap();
+        let prep = mbox.create_user_folder("Disaster Prep", None).unwrap();
         assert_eq!(prep.slug, "disaster-prep");
 
         // Listed in creation order.
@@ -899,14 +910,14 @@ mod index_hook_tests {
         let mbox = Mailbox::new(dir.path().to_path_buf());
 
         // Reserved system names (case-insensitive).
-        assert!(mbox.create_user_folder("Inbox").is_err());
-        assert!(mbox.create_user_folder("ARCHIVE").is_err());
+        assert!(mbox.create_user_folder("Inbox", None).is_err());
+        assert!(mbox.create_user_folder("ARCHIVE", None).is_err());
 
         // First create OK, duplicate rejected.
-        mbox.create_user_folder("ARES Drills").unwrap();
-        assert!(mbox.create_user_folder("ARES Drills").is_err());
+        mbox.create_user_folder("ARES Drills", None).unwrap();
+        assert!(mbox.create_user_folder("ARES Drills", None).is_err());
         // Same slug from a different display would also collide.
-        assert!(mbox.create_user_folder("ares drills").is_err());
+        assert!(mbox.create_user_folder("ares drills", None).is_err());
     }
 
     #[test]
@@ -914,7 +925,7 @@ mod index_hook_tests {
         let dir = tempdir().unwrap();
         let mbox = Mailbox::new(dir.path().to_path_buf());
         let id = mbox.store(MailboxFolder::Inbox, &raw("hello", "body")).unwrap();
-        let _ = mbox.create_user_folder("ARES Drills").unwrap();
+        let _ = mbox.create_user_folder("ARES Drills", None).unwrap();
 
         // Inbox → user folder.
         mbox.move_between(
@@ -941,7 +952,7 @@ mod index_hook_tests {
     fn delete_user_folder_with_move_to_inbox_relocates_messages() {
         let dir = tempdir().unwrap();
         let mbox = Mailbox::new(dir.path().to_path_buf());
-        let _ = mbox.create_user_folder("ARES Drills").unwrap();
+        let _ = mbox.create_user_folder("ARES Drills", None).unwrap();
         // Plant a message in the user folder via the move primitive.
         let id = mbox.store(MailboxFolder::Inbox, &raw("hello", "body")).unwrap();
         mbox.move_between(
@@ -964,7 +975,7 @@ mod index_hook_tests {
     fn delete_user_folder_with_delete_cascade_removes_messages() {
         let dir = tempdir().unwrap();
         let mbox = Mailbox::new(dir.path().to_path_buf());
-        let _ = mbox.create_user_folder("ARES Drills").unwrap();
+        let _ = mbox.create_user_folder("ARES Drills", None).unwrap();
         let id = mbox.store(MailboxFolder::Inbox, &raw("hello", "body")).unwrap();
         mbox.move_between(
             FolderRef::System(MailboxFolder::Inbox),
@@ -986,7 +997,7 @@ mod index_hook_tests {
     fn rename_user_folder_updates_display_name_only() {
         let dir = tempdir().unwrap();
         let mbox = Mailbox::new(dir.path().to_path_buf());
-        let f = mbox.create_user_folder("ARES Drills").unwrap();
+        let f = mbox.create_user_folder("ARES Drills", None).unwrap();
         assert_eq!(f.slug, "ares-drills");
 
         let renamed = mbox.rename_user_folder("ares-drills", "June Drills").unwrap();
@@ -1007,7 +1018,7 @@ mod index_hook_tests {
     fn rename_user_folder_rejects_reserved_names_and_missing_slug() {
         let dir = tempdir().unwrap();
         let mbox = Mailbox::new(dir.path().to_path_buf());
-        mbox.create_user_folder("ARES Drills").unwrap();
+        mbox.create_user_folder("ARES Drills", None).unwrap();
 
         // Reserved system folder names rejected.
         assert!(mbox.rename_user_folder("ares-drills", "Inbox").is_err());

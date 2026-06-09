@@ -1106,7 +1106,9 @@ impl WinlinkBackend for NativeBackend {
         &self,
         display_name: &str,
     ) -> Result<crate::user_folders::UserFolder, BackendError> {
-        self.mailbox.create_user_folder(display_name)
+        // Trait still creates top-level only; the parent-aware path flows
+        // through the dedicated trait method added for nesting (tuxlink-ka3z A6).
+        self.mailbox.create_user_folder(display_name, None)
     }
 
     async fn delete_user_folder(
