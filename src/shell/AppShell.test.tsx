@@ -327,7 +327,7 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.getByTestId('status-bar-outbox')).toHaveTextContent('1 to send');
   });
 
-  it('Drafts lists local saved drafts and reopens a selected compose draft', async () => {
+  it('Drafts lists local saved drafts, reads on row click, and edits only by explicit action', async () => {
     saveDraft({
       draftId: 'draft-shell',
       to: 'KK4XYZ@winlink.org',
@@ -347,6 +347,12 @@ describe('<AppShell> — Mock B topology', () => {
 
     vi.mocked(invoke).mockClear();
     fireEvent.click(row);
+    await screen.findByTestId('message-view-loaded', undefined, { timeout: 30000 });
+    expect(screen.getByTestId('message-subject')).toHaveTextContent('Saved local draft');
+    expect(screen.getByTestId('message-body')).toHaveTextContent('Return to this before the net.');
+    expect(invoke).not.toHaveBeenCalledWith('compose_window_open', { draftId: 'draft-shell' });
+
+    fireEvent.click(screen.getByTestId('edit-draft-btn'));
     expect(invoke).toHaveBeenCalledWith('compose_window_open', { draftId: 'draft-shell' });
   });
 
