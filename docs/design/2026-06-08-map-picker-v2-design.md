@@ -182,41 +182,164 @@ room than the Position form's did; this is deferred to the GRIB plan, not decide
 
 The tile source is a **LAN HTTP tile server** (operator decision, 2026-06-08), not a
 local archive file. The design honors the locked 2026-06-07 spec §3 and the #481
-adversarial-review C10 split that deferred it.
+adversarial-review C10 split that deferred it. **This section is post-adversarial-review
+(5 rounds, 2026-06-08, incl. cross-provider Codex — see §8.9 for round provenance and
+dispositions); the resolutions below are decisions, not open defaults.**
 
 **Gatekeeper boundary.** The webview never fetches tiles directly. A Rust backend
-gatekeeper fetches tiles **only** from the single operator-configured permitted LAN host
-and serves them to the picker through a Tauri-local mechanism, so the webview's CSP stays
-`'self'` and no external `img-src` / `connect-src` tile host is ever whitelisted. Public
-OSM remains a non-option in the chain.
+gatekeeper fetches tiles **only** from the operator-configured permitted LAN source and
+serves them to the picker through a Tauri-local mechanism. No network or LAN host is ever
+added to `img-src` / `connect-src`. Public OSM remains a non-option in the chain.
 
-**Defaults carried into adversarial review** (plumbing — documented here, to converge in
-adrev rather than be decided by the operator):
+### 8.1 CRS contract — the source MUST serve EPSG:4326 / geodetic tiles (P1, ship-blocker)
 
-- **Serving mechanism:** a custom Tauri protocol / local asset endpoint that the picker's
-  tile layer targets (the backend returns tile bytes); the webview addresses a local
-  scheme, never the LAN host.
-- **Tile scheme:** standard XYZ `{z}/{x}/{y}` (TMS y-flip handled if a source advertises
-  it).
-- **Cache:** an on-disk tile cache to avoid re-fetching panned/zoomed tiles; size cap and
-  eviction policy to be set in the `dyop` plan.
-- **Fallback:** when no source is configured or the configured host is unreachable or a
-  tile 404s, the picker falls back to the bundled raster and the status pill reflects it.
-- **Zoom ceiling:** `BaseMap`'s `maxZoom` rises to the configured source's advertised max
-  (capped at a sane point-picking level, e.g. ~16) when a source is live, and stays at 2
-  when bundled-only. The "no illusory precision past the raster" rule (C6) is preserved:
-  zoom only exceeds 2 when real tiles back it.
-- **Auth:** none by default (open LAN tile server). If a source needs auth, credentials go
-  to the OS keyring, never to disk config (per the no-disk-creds default).
-- **Host configuration:** a Settings field, "Map tile server URL (permitted source only)".
-  Whether the gatekeeper enforces a private/LAN address (rejecting public hosts) or trusts
-  the operator-of-record is an **open question for the `dyop` plan / adrev** — the project's
-  no-added-safeguards posture and the operator-of-record principle both bear on it.
+`BaseMap` runs `L.CRS.EPSG4326` (equirectangular). "Standard XYZ `{z}/{x}/{y}`" servers
+almost always serve `EPSG:3857` (Web Mercator); overlaying 3857 tiles on a 4326 map
+produces **silently wrong, plausible-looking coordinates** — the worst failure class for a
+position-reporting tool. Leaflet cannot switch CRS on a live map (it is a full remount), so
+a "4326-when-bundled / 3857-when-live" hybrid is rejected.
 
-**Security surface (the reason `dyop` warrants cross-provider adversarial review):** the
-gatekeeper introduces an outbound fetch to an operator-named host and a local serving
-endpoint. SSRF-shaped concerns (what the gatekeeper will fetch and from where), cache
-poisoning, and the CSP-preservation guarantee are the attack angles the review must cover.
+**Decision (Option A):** the map stays `EPSG:4326` for the app's lifetime; the LAN source
+**must serve a geodetic / EPSG:4326 tile pyramid** (`gdal2tiles --profile=geodetic`,
+MapProxy `GLOBAL_GEODETIC`, etc.). This preserves `projection.ts`, the bundled raster, and
+the Maidenhead math unchanged (the §10 "reused, not rebuilt" promise). Option B (switch the
+app to 3857) is rejected: it forces re-rendering the bundled raster to Mercator, rebuilding
+`projection.ts`, and loses ±90° pole coverage.
+
+**Mandatory CRS-mismatch guard.** Because a mismatched source renders plausible-but-wrong
+rather than failing loudly, the gatekeeper MUST positively verify the source's CRS/tiling
+before showing tiles (probe TileJSON/WMTS/`mbtiles` metadata) and refuse on mismatch
+(status pill → "incompatible tile source — expected EPSG:4326"). A test fixture MUST prove
+alignment at equator, mid-latitude, and high-latitude points before any source is trusted.
+The Settings UI states the geodetic requirement explicitly.
+
+### 8.2 Serving mechanism — pinned by a WebKitGTK CSP spike (FIRST plan task) (P1)
+
+The claim "CSP stays `'self'`" is **false as written**: every viable mechanism adds one
+token to `img-src`. The honest, binding guarantee is: **no network/LAN host is ever added
+to `img-src` or `connect-src`; the webview reaches tiles only through a Tauri-local source,
+and the gatekeeper remains the sole network egress for tiles.**
+
+Two candidates remain, and the cross-provider review split on them (Claude favored
+`invoke`+`blob:`; Codex cautioned against adding `blob:` without proof). They are therefore
+**not decided here** — the `dyop` plan's FIRST task is a WebKitGTK spike that pins the
+mechanism against the *packaged* (not dev) CSP:
+
+- **(a) custom `tile` URI scheme** behind a Leaflet `TileLayer`: on Linux/WebKitGTK this
+  resolves to `http://tile.localhost`, so `img-src` gains `tile: http://tile.localhost`;
+  requires an async URI-scheme handler and `subdomains: []` (no `{s}` rotation). Bespoke
+  `tile` scheme ONLY — never the general asset protocol.
+- **(b) `invoke` returning tile bytes** → `blob:` object URLs via a custom `GridLayer`:
+  `img-src` gains only `blob:`; requires `revokeObjectURL` on Leaflet `tileunload` as
+  first-class behavior (un-revoked blobs are a Pi-class OOM) with a leak-assertion test.
+
+**Forbidden:** a loopback-HTTP tile server (would require `img-src http://127.0.0.1:*`,
+turning any webview script into a localhost-port probe; the existing forms-scoped
+`connect-src http://127.0.0.1:*` must NOT be relied on or widened). The spike's output is a
+decision + a real packaged-CSP test asserting tiles render and no external host is listed.
+
+### 8.3 SSRF enforcement — socket-layer, invisible, load-bearing (P1)
+
+SSRF egress hygiene is implementation correctness, NOT a WLE-parity / Part-97 UX safeguard;
+it does **not** conflict with the no-added-safeguards posture (which governs app/UX
+behavior and the operator's deliberate choices, not coercion of a backend deputy). The
+operator is not a boundary against their own webview. Config-time string validation is
+insufficient (DNS rebinding defeats it). The gatekeeper MUST:
+
+- Accept only `http`/`https` schemes; reject URL-embedded credentials; never accept a
+  caller-supplied full URL — only validated integer `{z}/{x}/{y}` against a stored source.
+- **Resolve DNS at fetch time and validate the connected IP** (rebinding defense); reject
+  public, loopback, unspecified, multicast, link-local, cloud-metadata, and IPv4-mapped/
+  link-local IPv6 addresses. **Allow only RFC1918 IPv4 + ULA IPv6** by default; loopback is
+  gated behind an explicit dev opt-in (tests / local tileserver).
+- Build the reqwest client with `redirect::Policy::none()` (a tile 3xx is a hard error →
+  fallback); apply a short timeout; cap response size and require an image `Content-Type` +
+  magic-byte check before caching/serving.
+
+**Config UX stays trusting:** no modals, no hard-blocking the operator's chosen LAN host;
+on a *public*-resolving host, warn (do not block). Enforcement lives at the socket layer,
+invisibly. Model on `forms/updater.rs::classify_transport` + its reqwest client, but write
+a dyop-specific `classify_tile_host` (private-IP `http` OR `https`) — do not reuse the
+updater's `https_only`-only posture unchanged.
+
+### 8.4 Cache — traversal-safe, bounded, poison-resistant (P1/P2)
+
+- **Keys are validated integers only.** Parse `z`/`x`/`y` as `u32`; enforce `z ∈ [0,
+  max_zoom]`, `x,y ∈ [0, 2^z)`; reject otherwise *before* any path or fetch. Compute the
+  TMS flip (if configured) *after* validation and re-assert range; the fetch key and cache
+  key must use the same coordinate.
+- **Namespace per source** = `sha256(normalized source URL + CRS + scheme)` hex digest as
+  the directory name (filesystem-safe, collision-free, and a different source ⇒ a different
+  subtree, so changing servers can't serve stale tiles). Build paths from validated
+  integers, then canonicalize and assert the result is under `cache_root`.
+- **Bounded:** hard total-byte cap (default 256–512 MB, operator-configurable) + LRU
+  eviction by last-access; evict-before-write; a failed/ENOSPC write degrades silently to
+  fetch-through, never a user-facing error. Cache **only** `200 + image magic-bytes +
+  non-empty`; write temp-file + atomic rename; single-flight de-dup per key (thundering
+  herd + racing-write corruption). Location: `app_data_dir()` →
+  `~/.local/share/tuxlink/tile-cache/`. Settings exposes **"Clear tile cache"**; removing a
+  source purges its subtree.
+
+### 8.5 Fallback — source-level states, no UI hang, no mixed precision (P2)
+
+No synchronous network on startup or map mount; the map renders fully from the bundled
+raster with zero network, and the zoom ceiling rises *lazily* only after the first
+validated tile. Per-tile fetches are timeout-bounded (short, ~3–5 s) and cancelled on
+pan/zoom. A source-level **circuit-breaker** (K consecutive failures → "degraded" →
+cooldown, re-probe on expiry) prevents per-tile timeout storms. Source state drives
+behavior, not per-tile mixing:
+
+| Source state | Behavior | Status pill |
+|---|---|---|
+| No source configured | No fetch; ceiling stays z2; bundled only | `z{n} · bundled` |
+| Configured, validated, live | Serve live/cached tiles | `z{n} · LAN live` |
+| Cache hit (offline) | Serve cached | `z{n} · LAN cached as of …` |
+| Tile 404 above raster-native zoom | **No stretched-raster fill** (that is illusory precision, C6) — explicit "no coverage" treatment or clamp pannable zoom to covered extent | `z{n} · LAN live (partial)` |
+| Host unreachable / timeout | Drop tile layer, clamp ceiling to z2, bundled | `tiles unreachable — bundled` |
+
+The bundled raster backstops live tiles only at/below raster-native zoom; above it, a 404
+must not be papered over with upscaled raster.
+
+### 8.6 Zoom ceiling + precision gating (P1)
+
+`maxZoom` does NOT rise merely because a source is "configured." It rises only on
+**validated source metadata + successful tile probes for the current CRS/scheme**, capped
+at a configured maximum (~16), never at server claims alone. **6-char placement in the
+Position picker is disabled/warned unless the view under the pin is backed by validated
+real tiles** (ties precision to proven pixels, not a zoom number). `MaidenheadOverlay`'s
+`levelFromZoom` and `zoomSnap` are re-tuned for the full zoom range (finer lattice levels
+or fade-out at high zoom; consider `zoomSnap=1` once real tiles exist for crisp 1:1
+rendering). Raising the ceiling deliberately widens the frozen `BaseMapProps` contract
+(C11) — coordinated in the `dyop` plan, not bumped ad hoc by `a1cc`/`sdbd`.
+
+### 8.7 Source configuration (Settings) — more than a URL (P2/P3)
+
+A single URL field is insufficient. The source config carries: URL, **source type/CRS**
+(geodetic required), **XYZ vs TMS** scheme flag (default XYZ; `.mbtiles`-backed sources are
+usually TMS and it cannot be auto-detected), min/max zoom, cache budget, an **optional
+local attribution string** (LAN tiles may be OSM-derived and attribution-bound even when
+self-hosted; `BaseMap` currently disables attribution), and a source label. Auth: none by
+default; if ever needed, credentials go to the OS keyring, never to disk config. A
+TileJSON/WMTS-capabilities mode, if added, is a separate supported mode under the same SSRF
+validation.
+
+### 8.8 Offline-first contract (binding)
+
+The feature is **strictly opt-in, invisible until a source is configured, and the app's
+full functionality — including the map — never depends on it.** This sentence is the
+contract that keeps §8 consistent with §10's "works fully offline" guarantee: tiles are a
+pure enhancement over a fully-functional offline base.
+
+### 8.9 Adversarial review outcomes (5 rounds, 2026-06-08)
+
+Rounds: 4 Claude agents (SSRF/host-validation; CSP/serving; projection/CRS/zoom;
+cache/fallback/offline) + 1 cross-provider Codex round. Raw transcripts local-only under
+`dev/adversarial/` (gitignored). Cross-provider convergence on all four P1s (CRS, SSRF,
+CSP-asserted-not-designed, maxZoom-gating) — strong real-not-artifact signal. Unique Codex
+catches folded in: attribution/licensing (§8.7), and gating 6-char precision on
+validated-real-tiles rather than a zoom number (§8.6). Genuine cross-provider tension on
+the serving mechanism (§8.2) is resolved by deferring to a packaged-CSP WebKitGTK spike
+rather than picking blind.
 
 ## 9. Decomposition and sequencing
 
@@ -265,10 +388,23 @@ TDD-against-spec path unless the plan surfaces a hard-to-undo decision.
    file.
 6. Shared control surface across both surfaces (§5), instantiated per mode.
 
+**Post-adversarial-review decisions (2026-06-08, §8.9):**
+
+7. CRS: **require EPSG:4326/geodetic LAN tiles + a mandatory CRS-mismatch guard** (Option A);
+   no runtime CRS switch (§8.1).
+8. SSRF: **socket-layer, fetch-time resolved-IP enforcement** (RFC1918/ULA allow,
+   default-deny public/loopback/link-local/metadata, no-redirect, integer-validated coords);
+   config UX stays trusting — warn-not-block on public host (§8.3).
+9. `maxZoom` + 6-char precision **gated on validated metadata + real tile probes**, not a
+   source being merely "configured" (§8.6).
+10. Serving mechanism (custom `tile` scheme vs `invoke`+`blob:`) **deferred to a packaged-CSP
+    WebKitGTK spike as the `dyop` plan's first task**; loopback-HTTP serving forbidden (§8.2).
+
 ## 12. Open items for the plans / adversarial review
 
-- `dyop`: gatekeeper host-validation posture (enforce LAN-only vs trust operator); cache
-  size/eviction; exact local serving mechanism; SSRF/cache-poisoning review angles.
+- `dyop`: items previously open here (host-validation posture, cache size/eviction, serving
+  mechanism) are **now resolved in §8.1–8.8**. The one genuinely deferred item is the
+  serving-mechanism **spike** (§8.2) — a *plan task*, not an undecided design question.
 - `a1cc`: whether the GRIB region picker gains an expand-to-overlay affordance or stays
   inline-taller (§7).
 - All: visual mockups produced during the 2026-06-08 brainstorm live locally under
