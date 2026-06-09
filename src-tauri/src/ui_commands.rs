@@ -6810,6 +6810,7 @@ hw:CARD=Device,DEV=0
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             review_inbound_before_download: false,
+            map_tile_source: None,
         }
     }
 
@@ -7034,6 +7035,7 @@ hw:CARD=Device,DEV=0
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             review_inbound_before_download: false,
+            map_tile_source: None,
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -7768,6 +7770,7 @@ hw:CARD=Device,DEV=0
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             review_inbound_before_download: false,
+            map_tile_source: None,
         }
     }
 

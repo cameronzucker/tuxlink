@@ -40,5 +40,6 @@ pub fn native_test_config() -> Config {
         modem_vara: None,
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
         review_inbound_before_download: false,
+        map_tile_source: None,
     }
 }
