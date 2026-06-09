@@ -87,3 +87,27 @@ build-robust-features boundary *before* writing the `dyop` implementation plan.
 - Stopped at the design+adrev boundary deliberately: the hardened §8 durably captures the
   adrev synthesis, so writing the plan next session loses no freshness, and a quality
   subagent-ready plan deserves a fresh context budget (process rigor > velocity).
+
+## Update — session continued (operator said "push here")
+
+After the above, the operator chose to keep going, so this session ALSO completed
+build-robust-features Steps 3–4 for `dyop`:
+
+- **`dyop` implementation plan written** → `docs/plans/2026-06-09-dyop-lan-tiles-plan.md`
+  (10 phases, TDD, grounded on `forms/updater.rs` / `config.rs` / `state_dir.rs`
+  precedents). On PR **#495** (now carries design + plan).
+- **3-round plan review run** (3 parallel reviewers: subagent-readiness; ordering/
+  conflicts; pitfalls + grounded-API accuracy). Blocking findings **applied inline**:
+  added Task 1.0 (early shared-type defs — fixed a `TileSource` forward-reference that
+  would fail compile in Phases 3/4/7), a task dependency DAG (the "Phases 1–5 parallel"
+  claim was false), a command-contract table, `pow`-overflow + DNS-rebind + `to_canonical`
+  + status-pill-ownership + SSRF-pitfall-anchor corrections, and pre-flight gates.
+- **Plan state:** Phases **0–5 are subagent-ready**; the compressed Phase-6+ frontend/
+  wiring tasks (6.2, 7.x, 8.1–8.3, 9.x) are flagged **expand-before-dispatch** — the
+  review produced paste-ready test bodies for them (see the plan's "Plan-review status").
+
+**Revised NEXT (supersedes "write the plan" above):** after #495 merges, **EXECUTE `dyop`**
+via `superpowers:subagent-driven-development` in a fresh `bd-tuxlink-dyop` worktree off
+`main`. Phase 0 (the WebKitGTK packaged-CSP spike) is the gate and runs first. Expand each
+Phase-6+ task's test body (per the plan's flagged guidance) as it is claimed. Then `a1cc`,
+then `sdbd`.
