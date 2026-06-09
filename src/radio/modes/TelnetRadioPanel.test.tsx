@@ -15,14 +15,12 @@ const renderPanel = (ui: ReactElement) => {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 };
 
-// The Server (Host) + Transport controls now live in the FavoritesTabs
-// "Manual" tab (Task B6-TELNET). Radix Tabs.Trigger switches on mouseDown
-// (button 0) under jsdom, not click. Tests that need those controls call
-// this to switch to the Manual tab first. (Start/Stop stay OUTSIDE the tabs,
-// so they remain directly reachable.)
+// tuxlink-fr0d: telnet is now Manual-only (no Favorites/Recent tabs) — the
+// Server (Host) + Transport controls render directly, no tab to switch. Kept as
+// a named helper (still called at every prior switch point) that simply waits
+// for the manual controls to mount before tests interact with them.
 const switchToManualTab = async () => {
-  const manual = await screen.findByRole('tab', { name: 'Manual' });
-  fireEvent.mouseDown(manual, { button: 0 });
+  await screen.findByTestId('telnet-host-input');
 };
 
 // Tauri IPC mocks. `invoke` returns command-specific defaults; `listen`
@@ -289,11 +287,16 @@ describe('<TelnetRadioPanel>', () => {
       });
     });
 
-    it('CONSENT NON-BYPASS (M13): a favorite Connect pre-fills only, never transmits', async () => {
+    // tuxlink-fr0d: telnet is now Manual-only (the operator connects to a fixed
+    // CMS host — there is no nearby station to favorite). The prior favorite-
+    // Connect-prefill flow no longer exists for telnet, so the M13 prefill-non-
+    // bypass case is moot. The Start-button consent gate (Start → cms_connect,
+    // nothing transmits before it) is still covered by the sibling Start tests.
+    // This replaces that test with a production-mount-path guard: even a STORED
+    // telnet favorite must not be surfaced in the panel.
+    it('renders Manual-only — a stored telnet favorite is NOT surfaced (tuxlink-fr0d)', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      // Route a starred telnet favorite (gateway + transport) so the Favorites
-      // tab has a row.
       const fav = {
         id: 'fav-1',
         mode: 'telnet' as const,
@@ -313,31 +316,17 @@ describe('<TelnetRadioPanel>', () => {
       });
       renderPanel(<TelnetRadioPanel onClose={() => {}} />);
 
-      // Default tab is Favorites; the favorite's Connect appears there.
-      const connectBtn = await screen.findByTestId('favorite-connect-fav-1');
-      fireEvent.click(connectBtn);
-      // Let any (forbidden) async invoke settle.
-      await new Promise((r) => setTimeout(r, 20));
+      // Host controls render directly — no tab to switch into.
+      expect(await screen.findByTestId('telnet-host-input')).toBeInTheDocument();
 
-      // RADIO-1: the prefill must NOT have fired cms_connect.
-      expect(invokeMock.mock.calls.some(([cmd]) => cmd === 'cms_connect')).toBe(false);
+      // No Favorites/Recent/Manual tab chrome, and the stored favorite's
+      // Connect is NOT surfaced anywhere in the telnet panel.
+      expect(screen.queryByRole('tab', { name: 'Favorites' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('tab', { name: 'Recent' })).not.toBeInTheDocument();
+      expect(screen.queryByTestId('favorite-connect-fav-1')).not.toBeInTheDocument();
 
-      // H7 prefill persists host + transport via config_set_connect so the
-      // operator's later Start dials the right server. (config_set_connect is
-      // config persistence, NOT a connect/transmit.)
-      expect(invokeMock).toHaveBeenCalledWith('config_set_connect', {
-        host: 'cms-z.winlink.org',
-        transport: 'Telnet',
-      });
-
-      // Prefill worked: the Manual tab's Host input + transport radio reflect it.
-      await switchToManualTab();
-      const hostInput = (await screen.findByTestId('telnet-host-input')) as HTMLInputElement;
-      expect(hostInput.value).toBe('cms-z.winlink.org');
-      const telnetRadio = screen.getByTestId('telnet-transport-Telnet') as HTMLInputElement;
-      expect(telnetRadio.checked).toBe(true);
-
-      // Consent gate intact: clicking Start NOW invokes cms_connect.
+      // Consent gate intact: clicking Start invokes cms_connect (the Part 97
+      // consent click), and nothing transmitted before it.
       fireEvent.click(screen.getByRole('button', { name: /Start/i }));
       await waitFor(() => {
         expect(invokeMock).toHaveBeenCalledWith('cms_connect');

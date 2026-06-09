@@ -38,9 +38,15 @@
   color: var(--text);
 }
 
+/* tuxlink-fr0d: active tab uses the radio-panel accent family (green
+ * --modem-accent), not the global app accent (orange --accent). The latter read
+ * as a generic/foreign highlight inside the green-accented radio panel; this
+ * keeps the tab strip consistent with the surrounding .radio-panel-segmented
+ * active state (soft fill + accent text + accent underline). */
 .favorites-tab-trigger[data-state='active'] {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  color: var(--modem-accent);
+  border-bottom-color: var(--modem-accent);
+  background: var(--modem-accent-soft);
 }
 
 .favorites-tab-content:focus {

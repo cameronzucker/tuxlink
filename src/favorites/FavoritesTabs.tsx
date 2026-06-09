@@ -2,11 +2,14 @@
 //
 // Mounts INSIDE a radio mode panel body (B6). Inline only — no popup.
 //
-// M7 — per-mode chrome:
-//   · ardop-hf / packet / telnet → Radix Tabs: Favorites | Recent | Manual.
-//   · vara-hf / vara-fm          → Manual content ONLY (no tabs, no Favorites/
+// M7 — per-mode chrome (amended tuxlink-fr0d):
+//   · ardop-hf / packet          → Radix Tabs: Favorites | Recent | Manual.
+//     These are the genuine pre-dial modes — the operator picks among many
+//     nearby gateways, so favoriting / redialing is meaningful.
+//   · vara-hf / vara-fm / telnet → Manual content ONLY (no tabs, no Favorites/
 //     Recent lists, no FavoriteRow, no Connect button). VARA has no
-//     favorites/recents Connect by design.
+//     favorites/recents Connect by design; telnet connects to a FIXED CMS host
+//     (tuxlink-fr0d operator smoke: Telnet Winlink CMS doesn't need this).
 //
 // C4 — distance source: the operator grid comes from `position_current_fix`
 // (FULL precision), NEVER `position_status`/`useStatus` (those are
@@ -33,9 +36,13 @@ export interface FavoritesTabsProps {
   manualContent: React.ReactNode;
 }
 
-/** VARA modes have no favorites/recents surface (M7). */
-function isVara(mode: RadioMode): boolean {
-  return mode === 'vara-hf' || mode === 'vara-fm';
+/**
+ * Modes with NO favorites/recents surface (M7, amended tuxlink-fr0d): VARA
+ * (by design) and telnet (fixed CMS host — no nearby-station choice to favorite).
+ * These render the Manual content only — no tabs, no FavoriteRow, no Connect.
+ */
+function isManualOnly(mode: RadioMode): boolean {
+  return mode === 'vara-hf' || mode === 'vara-fm' || mode === 'telnet';
 }
 
 export function FavoritesTabs({ mode, onPrefill, manualContent }: FavoritesTabsProps) {
@@ -58,8 +65,8 @@ export function FavoritesTabs({ mode, onPrefill, manualContent }: FavoritesTabsP
   });
   const log = useMemo(() => stationsQuery.data?.log ?? [], [stationsQuery.data]);
 
-  // VARA: Manual content only — no tabs, no rows, no Connect.
-  if (isVara(mode)) {
+  // VARA + telnet: Manual content only — no tabs, no rows, no Connect.
+  if (isManualOnly(mode)) {
     return <div className="favorites-tabs favorites-tabs--manual-only">{manualContent}</div>;
   }
 
