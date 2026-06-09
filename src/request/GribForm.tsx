@@ -202,7 +202,9 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
                 name="grib-mode"
                 data-testid="grib-mode-send"
                 checked={request.mode === 'send'}
-                onChange={() => setRequest((r) => ({ ...r, mode: 'send' as GribMode }))}
+                onChange={() =>
+                  setRequest((r) => ({ ...r, mode: 'send' as GribMode, sub_days: null, sub_time: null }))
+                }
               />
               Send (one-shot)
             </label>

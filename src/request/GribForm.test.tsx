@@ -102,6 +102,35 @@ describe('<GribForm>', () => {
     expect(req.sub_time).toBe('06:00');
   });
 
+  it('a valid forecast-times string round-trips into the emitted request', () => {
+    const onAddSaildocs = vi.fn();
+    render(<GribForm onAddSaildocs={onAddSaildocs} onBack={() => {}} />);
+    fireEvent.change(screen.getByTestId('grib-times'), { target: { value: '6,12..96' } });
+    // No parse error → the success branch wrote request.times.
+    expect(screen.queryByTestId('grib-times-error')).toBeNull();
+    fireEvent.click(screen.getByTestId('grib-add'));
+    expect(onAddSaildocs).toHaveBeenCalledTimes(1);
+    const req = onAddSaildocs.mock.calls[0][0] as GribRequest;
+    expect(req.times).toEqual([{ Hour: 6 }, { Range: { start: 12, end: 96 } }]);
+  });
+
+  it('switching from sub back to send clears the stale sub fields in the emitted request', () => {
+    const onAddSaildocs = vi.fn();
+    render(<GribForm onAddSaildocs={onAddSaildocs} onBack={() => {}} />);
+    // Enter sub mode and set a days value.
+    fireEvent.click(screen.getByTestId('grib-mode-sub'));
+    fireEvent.change(screen.getByTestId('grib-sub-days'), { target: { value: '30' } });
+    // Switch back to send — sub fields must be reset so two logically-identical
+    // send requests produce the same basket id.
+    fireEvent.click(screen.getByTestId('grib-mode-send'));
+    fireEvent.click(screen.getByTestId('grib-add'));
+    expect(onAddSaildocs).toHaveBeenCalledTimes(1);
+    const req = onAddSaildocs.mock.calls[0][0] as GribRequest;
+    expect(req.mode).toBe('send');
+    expect(req.sub_days).toBeNull();
+    expect(req.sub_time).toBeNull();
+  });
+
   it('map box-drag fills the region fields; manual inputs stay editable', () => {
     render(<GribForm onAddSaildocs={() => {}} onBack={() => {}} />);
 

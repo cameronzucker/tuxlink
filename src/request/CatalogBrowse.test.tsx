@@ -213,7 +213,7 @@ describe('<CatalogBrowse>', () => {
       expect(screen.queryByTestId('catalog-browse-item-PUB_PACKET')).toBeNull();
     });
 
-    it('matching is case-insensitive and spans filename, description, and category', () => {
+    it('matches a category name case-insensitively (returns that category’s items)', () => {
       // 'wl2k' matches the WL2K_RMS category (case-insensitive) → both its items.
       render(
         <CatalogBrowse
@@ -226,7 +226,12 @@ describe('<CatalogBrowse>', () => {
       const results = screen.getByTestId('catalog-search-results');
       expect(within(results).getByTestId('catalog-browse-item-PUB_PACKET')).toBeInTheDocument();
       expect(within(results).getByTestId('catalog-browse-item-PUB_VARA')).toBeInTheDocument();
+      // Only the WL2K_RMS items match this category needle.
+      expect(screen.queryByTestId('catalog-browse-item-PROP_WWV')).toBeNull();
+      expect(screen.queryByTestId('catalog-browse-item-AUR_TONIGHT')).toBeNull();
+    });
 
+    it('matches a filename case-insensitively', () => {
       // Filename match (case-insensitive): 'aur_tonight' lowercase needle.
       render(
         <CatalogBrowse
@@ -236,8 +241,14 @@ describe('<CatalogBrowse>', () => {
           onBack={vi.fn()}
         />,
       );
-      expect(screen.getAllByTestId('catalog-browse-item-AUR_TONIGHT').length).toBeGreaterThan(0);
+      const results = screen.getByTestId('catalog-search-results');
+      expect(within(results).getByTestId('catalog-browse-item-AUR_TONIGHT')).toBeInTheDocument();
+      // No other entry matches this filename needle.
+      expect(screen.queryByTestId('catalog-browse-item-PROP_WWV')).toBeNull();
+      expect(screen.queryByTestId('catalog-browse-item-PUB_PACKET')).toBeNull();
+    });
 
+    it('matches a description case-insensitively', () => {
       // Description match: 'solar flux' lives in PROP_WWV's description.
       render(
         <CatalogBrowse
@@ -247,7 +258,11 @@ describe('<CatalogBrowse>', () => {
           onBack={vi.fn()}
         />,
       );
-      expect(screen.getAllByTestId('catalog-browse-item-PROP_WWV').length).toBeGreaterThan(0);
+      const results = screen.getByTestId('catalog-search-results');
+      expect(within(results).getByTestId('catalog-browse-item-PROP_WWV')).toBeInTheDocument();
+      // No other entry matches this description needle.
+      expect(screen.queryByTestId('catalog-browse-item-AUR_TONIGHT')).toBeNull();
+      expect(screen.queryByTestId('catalog-browse-item-PUB_PACKET')).toBeNull();
     });
 
     it('clicking a search result’s Add fires onAddCms with that entry', () => {
@@ -315,7 +330,7 @@ describe('<CatalogBrowse>', () => {
       expect(screen.queryByTestId('catalog-search-results')).toBeNull();
     });
 
-    it('Back still works in search mode', () => {
+    it('the back control is labelled "Clear search" in search mode and still fires onBack', () => {
       const onBack = vi.fn();
       render(
         <CatalogBrowse
@@ -325,7 +340,11 @@ describe('<CatalogBrowse>', () => {
           onBack={onBack}
         />,
       );
-      fireEvent.click(screen.getByTestId('catalog-browse-back'));
+      // In search mode the control clears the search (parent semantics) rather
+      // than navigating back, so it reads "Clear search", not "← Back".
+      const control = screen.getByTestId('catalog-browse-back');
+      expect(control).toHaveTextContent('Clear search');
+      fireEvent.click(control);
       expect(onBack).toHaveBeenCalledTimes(1);
     });
   });

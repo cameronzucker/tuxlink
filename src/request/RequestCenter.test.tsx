@@ -424,6 +424,31 @@ describe('<RequestCenter> — D2 global search', () => {
     expect(screen.queryByTestId('catalog-search-results')).toBeNull();
   });
 
+  it('clearing search via the Clear-search control restores the underlying browse view (not home)', async () => {
+    mockC2('CN87');
+    render(<RequestCenter onClose={() => {}} />);
+    // Drop into the master-detail browse view.
+    fireEvent.click(await screen.findByTestId('request-browse-reveal'));
+    await screen.findByTestId('catalog-browse-nav');
+
+    // Search overrides the view with flat results.
+    fireEvent.change(screen.getByTestId('request-search'), { target: { value: 'forecast' } });
+    expect(await screen.findByTestId('catalog-search-results')).toBeInTheDocument();
+    expect(screen.queryByTestId('catalog-browse-nav')).toBeNull();
+
+    // The search-mode Back control clears the search ONLY → the browse view
+    // underneath returns (not the home sections).
+    const clear = screen.getByTestId('catalog-browse-back');
+    expect(clear).toHaveTextContent('Clear search');
+    fireEvent.click(clear);
+
+    // Browse master-detail is restored; search results gone; home not shown.
+    expect(await screen.findByTestId('catalog-browse-nav')).toBeInTheDocument();
+    expect(screen.getByTestId('request-browse')).toBeInTheDocument();
+    expect(screen.queryByTestId('catalog-search-results')).toBeNull();
+    expect(document.querySelector('.request-sections')).toBeNull();
+  });
+
   it('search overrides the grib view too (search from anywhere)', async () => {
     mockC2('CN87');
     render(<RequestCenter onClose={() => {}} initialView="grib" />);
@@ -472,6 +497,8 @@ describe('<RequestCenter> — D3 GRIB-by-area reveal', () => {
     const basket = screen.getByTestId('request-basket');
     expect(within(basket).getByText('GRIB request')).toBeInTheDocument();
     expect(within(basket).getByTestId(/^basket-item-saildocs:/)).toBeInTheDocument();
+    // Exactly one basket item, and no stray cms extras alongside the saildocs item.
+    expect(within(basket).getAllByTestId(/^basket-item-/)).toHaveLength(1);
   });
 
   it('Back from the GribForm returns to the home view', async () => {

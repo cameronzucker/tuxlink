@@ -152,7 +152,7 @@ export function CatalogBrowse({
             data-testid="catalog-browse-back"
             onClick={onBack}
           >
-            ← Back
+            ← Clear search
           </button>
           <span className="catalog-browse__search-count" data-testid="catalog-search-count">
             {searchResults.length === 1

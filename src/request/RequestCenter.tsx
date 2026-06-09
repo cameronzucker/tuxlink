@@ -175,10 +175,7 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
                 searchQuery={search}
                 onAddCms={addCms}
                 addedFilenames={new Set(basket.cmsFilenames)}
-                onBack={() => {
-                  setSearch('');
-                  setView('home');
-                }}
+                onBack={() => setSearch('')}
               />
             )}
 
