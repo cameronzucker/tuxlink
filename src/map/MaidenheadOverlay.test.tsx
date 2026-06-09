@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { resetMapMock } from './testMapMock';
+import { resetMapMock, setMockZoom } from './testMapMock';
 import { gridLines, GridLevel } from './gridGeometry';
 
 vi.mock('react-leaflet', async () => (await import('./testMapMock')).createReactLeafletMock());
@@ -50,5 +50,12 @@ describe('<MaidenheadOverlay> (shape only)', () => {
     expect(screen.getAllByTestId('leaflet-polyline')).toHaveLength(
       expected.lonLines.length + expected.latLines.length,
     );
+  });
+
+  it('fades the lattice out (renders nothing) at very high self-driven zoom', () => {
+    setMockZoom(15);
+    render(<MaidenheadOverlay />);
+    expect(screen.queryByTestId('leaflet-polyline')).toBeNull();
+    expect(screen.queryByTestId('leaflet-marker')).toBeNull();
   });
 });

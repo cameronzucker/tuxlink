@@ -13,7 +13,7 @@
 import { useMemo, useState } from 'react';
 import { Polyline, Marker, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { gridLines, GridLevel, type GridBounds } from './gridGeometry';
+import { gridLines, levelFromZoom, GridLevel, type GridBounds } from './gridGeometry';
 
 export interface MaidenheadOverlayProps {
   visible?: boolean;
@@ -21,11 +21,6 @@ export interface MaidenheadOverlayProps {
   bounds?: GridBounds;
   /** Override the grid level (else derived from the map zoom). */
   level?: GridLevel;
-}
-
-/** Coarser fields when zoomed out; squares once zoomed in. */
-function levelFromZoom(zoom: number): GridLevel {
-  return zoom >= 3 ? GridLevel.Square : GridLevel.Field;
 }
 
 const LINE_OPTIONS = { color: '#64748b', weight: 1, opacity: 0.5 };
@@ -49,14 +44,16 @@ export function MaidenheadOverlay({ visible = true, bounds, level }: MaidenheadO
       const b = map.getBounds();
       return { south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() };
     })();
-  const effLevel: GridLevel = level ?? levelFromZoom(map.getZoom());
+  // null = lattice fades out (very high zoom). An explicit `level` override
+  // always wins (controlled/testing).
+  const effLevel: GridLevel | null = level ?? levelFromZoom(map.getZoom());
 
   const { lonLines, latLines, labels } = useMemo(
-    () => gridLines(effBounds, effLevel),
+    () => (effLevel === null ? { lonLines: [], latLines: [], labels: [] } : gridLines(effBounds, effLevel)),
     [effBounds.south, effBounds.west, effBounds.north, effBounds.east, effLevel],
   );
 
-  if (!visible) return null;
+  if (!visible || effLevel === null) return null;
 
   return (
     <>

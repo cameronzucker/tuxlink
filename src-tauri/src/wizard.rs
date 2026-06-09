@@ -185,6 +185,7 @@ pub async fn persist_cms_impl(
         // (WLE emcomm default). Operator opts out to auto-download-all via the
         // dashboard ribbon's "On connect" control.
         review_inbound_before_download: true,
+        map_tile_source: None,
     };
 
     // Step 4: Create keyring entry handle (needed for rollback in step 7).
@@ -348,6 +349,7 @@ pub async fn persist_offline_impl(
         // (WLE emcomm default). Operator opts out to auto-download-all via the
         // dashboard ribbon's "On connect" control.
         review_inbound_before_download: true,
+        map_tile_source: None,
     };
 
     // Single atomic write to config.json. No keyring involved.

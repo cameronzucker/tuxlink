@@ -32,6 +32,16 @@ type EventHandler = (e: { latlng: LatLngLiteral }) => void;
 //    test file, since both import this module) ────────────────────────────────
 const handlerRegistry = new Map<string, EventHandler>();
 
+// Overridable current zoom. Defaults to 1 (the historical canonical value that
+// keeps MaidenheadOverlay's self-drive test at Field level). Zoom-sensitive
+// tests (7.3/7.4) set this via `setMockZoom(n)` and `resetMapMock()` restores 1.
+let mockZoom = 1;
+
+/** Override the fake map's `getZoom()`; reset to 1 by `resetMapMock()`. */
+export function setMockZoom(zoom: number): void {
+  mockZoom = zoom;
+}
+
 const fakeMap = {
   on(type: string, handler: EventHandler): void {
     handlerRegistry.set(type, handler);
@@ -46,8 +56,9 @@ const fakeMap = {
   },
   // Fixed world view so map-driven components (MaidenheadOverlay self-drive)
   // render deterministically in jsdom. Real bounds/zoom are grim-verified.
+  // Zoom is overridable via setMockZoom() for zoom-gating tests.
   getZoom(): number {
-    return 1;
+    return mockZoom;
   },
   getBounds() {
     return {
@@ -64,11 +75,12 @@ export function getMockMap(): typeof fakeMap {
   return fakeMap;
 }
 
-/** Clear registered handlers and reset the dragging spies. Call in `beforeEach`. */
+/** Clear registered handlers, reset the dragging spies, and reset zoom to 1. */
 export function resetMapMock(): void {
   handlerRegistry.clear();
   fakeMap.dragging.disable.mockClear();
   fakeMap.dragging.enable.mockClear();
+  mockZoom = 1;
 }
 
 /** Fire a map event (`click`/`mousedown`/`mousemove`/`mouseup`) to the registered handler. */
@@ -108,6 +120,9 @@ export function createReactLeafletMock(): Record<string, unknown> {
   function ImageOverlay(props: Record<string, unknown>): React.ReactElement {
     return leafDiv('image-overlay', props);
   }
+  function TileLayer(props: Record<string, unknown>): React.ReactElement {
+    return leafDiv('leaflet-tilelayer', props);
+  }
   function Marker(props: Record<string, unknown>): React.ReactElement {
     return leafDiv('leaflet-marker', props);
   }
@@ -127,7 +142,17 @@ export function createReactLeafletMock(): Record<string, unknown> {
     for (const [type, handler] of Object.entries(handlers)) handlerRegistry.set(type, handler);
     return fakeMap;
   }
-  return { MapContainer, ImageOverlay, Marker, Rectangle, Polyline, Tooltip, useMap, useMapEvents };
+  return {
+    MapContainer,
+    ImageOverlay,
+    TileLayer,
+    Marker,
+    Rectangle,
+    Polyline,
+    Tooltip,
+    useMap,
+    useMapEvents,
+  };
 }
 
 /** leaflet (`L`) module replacement — provides only what the map subsystem touches. */
