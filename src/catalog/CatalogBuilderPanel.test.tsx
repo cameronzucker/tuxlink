@@ -133,12 +133,14 @@ describe('CatalogBuilderPanel', () => {
     const listing = {
       mode: 'vara-hf', title: null, gateways: [gateway], raw: '', parsedOk: true, fetchedAtMs: null,
     };
-    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return { grid: 'DM43bp' };
       if (cmd === 'catalog_fetch_stations') return [listing];
+      // favorite_upsert returns the STORED record (server-assigned id); the
+      // handler stars THAT id. A fixed record is enough — the call args are
+      // asserted via toHaveBeenCalledWith below, not via this return value.
       if (cmd === 'favorite_upsert') {
-        const fav = (args as { favorite: Record<string, unknown> }).favorite;
-        return { ...fav, id: 'fav-1', starred: false, created_at: 'now', updated_at: 'now' };
+        return { id: 'fav-1', mode: 'vara-hf', gateway: 'W6ABC', starred: false, created_at: 'now', updated_at: 'now' };
       }
       return undefined;
     });
