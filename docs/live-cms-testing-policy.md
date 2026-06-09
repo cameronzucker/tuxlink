@@ -6,6 +6,19 @@
 > gateways, packet gateways, or any other real amateur-radio network
 > infrastructure.
 
+> **Amended 2026-06-09 — [ADR 0018](adr/0018-radio1-gates-operator-execution-not-agent-authorship.md).**
+> This policy gates the **operator's real-time execution of a transmit-capable
+> binary against real infrastructure**. It does **not** gate the agent's
+> authorship, testing, or shipping of RF-path code. The agent's dev shell has
+> no radio attached and cannot key a transmitter, so writing, testing (against
+> mocks / loopback / fakes), committing, and shipping RF-path code — AX.25,
+> VARA, ARDOP, transports, modem internals, abort logic — is ordinary
+> engineering and needs no RF consent gate or operator green-light to *claim*.
+> The consent gate below is honored by the **operator, in the binary, at run
+> time**. Read "transmission" throughout this document as *execution of a
+> transmit-capable binary against real infrastructure*, not *editing source
+> that is transmit-adjacent*. ADR 0018 is canonical for this distinction.
+
 ## The rule
 
 **No agent-autonomous transmission. Ever.**
@@ -149,23 +162,40 @@ for UX discipline).
 NO other exceptions. If you think an exception is warranted, STOP and
 surface it to the licensee in a user-visible message.
 
-## For subagents executing the v0.0.1 plan
+## For agents and subagents working on transmit-capable code
 
-When a task in the plan touches any code path that could transmit on
-amateur infrastructure, you MUST:
+Amended per [ADR 0018](adr/0018-radio1-gates-operator-execution-not-agent-authorship.md).
+**Writing, testing, committing, and shipping RF-path / transmit-capable code
+is unrestricted** — claim the bd issue and do the engineering like any other
+backlog item. The constraint is only on *running a transmit-capable binary
+against real infrastructure*, and that constraint resolves to one practical
+rule for the agent:
 
 1. Read this policy file (you're reading it; good).
-2. Refuse to run the code path in your subagent shell. Even if you
-   have terminal access, even if env vars appear set, even if the
-   code "looks like it would work." The live-CMS binary is an
-   operator-only tool.
-3. Instead, write the code path and commit it. The licensee runs it
-   manually.
-4. If your task seems to require running the live-CMS path to verify
-   completion, STOP and escalate. Your task is misspecified.
+2. Do not run a transmit-capable binary against real hardware or real network
+   infrastructure under the callsign — **not because the agent could commit a
+   RADIO-1 violation (it can't: the dev shell has no radio to key), but because
+   the agent has nothing to validate against.** Per `rf_validation_onair_only`,
+   only a real on-air run against the intended target proves an RF path; the
+   agent's job is to make that test *runnable and observable*, and the operator
+   runs it when they choose. (CMS telnet over the internet is *not* a
+   transmission and *is* authorized for agent dev testing — see the
+   `cms_telnet_testing_authorized` carve-out.)
+3. Ship the code with its operator-facing consent gate intact (see "Required
+   consent gate implementation" above). The gate protects the operator at the
+   moment *they* run the binary; it is not a reason to withhold the code.
+4. If a task literally requires an *on-air* result to mark it complete, that
+   part is the operator's on-air smoke — hand them a runnable, observable test;
+   don't block the code on it.
 
 ## Revision history
 
+- 2026-06-09 — Amended per [ADR 0018](adr/0018-radio1-gates-operator-execution-not-agent-authorship.md):
+  scoped the policy to the operator's execution of transmit-capable binaries
+  against real infrastructure, and removed the agent-authorship gate (the "rf
+  phobia"). The agent's dev shell has no radio and cannot transmit, so RF-path
+  code work is unrestricted; the consent gate is honored by the operator at run
+  time. Licensee directive.
 - 2026-04-22 — Initial policy added after agent-review of the
   v0.0.1 plan flagged the fake-CMS-vs-real-CMS question. Licensee
   instructed the policy be codified with the plan revision.

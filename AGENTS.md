@@ -179,14 +179,20 @@ dirty or untracked source changes:
 Build-cache directories such as `target/` and `node_modules/` may exist there,
 but they must not be treated as a license for agents to work in that tree.
 
-## Live radio network operations: READ BEFORE ANY TRANSMISSION
+## Live radio network operations
 
-No automation, test, subagent, CI job, scheduled task, or AI agent
-initiates a transmission under the project's amateur callsign without
-explicit, scoped, per-invocation consent from the licensee. Full rules
-at [docs/live-cms-testing-policy.md](docs/live-cms-testing-policy.md)
-and RADIO-1 in [docs/pitfalls/implementation-pitfalls.md](docs/pitfalls/implementation-pitfalls.md).
-This is Part 97 regulatory compliance, not a style rule.
+Per [ADR 0018](docs/adr/0018-radio1-gates-operator-execution-not-agent-authorship.md),
+RADIO-1 gates the **operator's real-time execution of a transmit-capable binary
+against real infrastructure** under the project's callsign (a Part 97
+control-operator act). It does **not** gate the agent: the dev shell has no
+radio and cannot transmit, so claiming, writing, testing (mocks / loopback /
+fakes), committing, and shipping RF-path code is unrestricted ordinary
+engineering. The agent does not *run* a transmit-capable binary against real
+infrastructure (no radio to validate against; on-air validation is
+operator-only), and transmit code keeps its operator-facing consent banner +
+working abort. Canonical: ADR 0018 +
+[docs/live-cms-testing-policy.md](docs/live-cms-testing-policy.md); rationale in
+RADIO-1 at [docs/pitfalls/implementation-pitfalls.md](docs/pitfalls/implementation-pitfalls.md).
 
 ## Commit and release discipline
 
