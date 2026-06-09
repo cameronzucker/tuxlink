@@ -95,6 +95,9 @@ export interface UserFolder {
   slug: string;
   displayName: string;
   createdAt: string; // RFC 3339 UTC
+  /// Parent folder slug (schema v2 / spec D2). Absent/undefined for a top-level
+  /// folder — the backend DTO omits the key (not null) for top-level folders.
+  parentSlug?: string;
 }
 
 /// Serializable backend error. Mirrors `UiError` in

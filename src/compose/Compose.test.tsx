@@ -455,6 +455,62 @@ describe('<Compose> send-path group expansion (Task A6)', () => {
   });
 
   // ============================================================================
+  // tuxlink-n3hw — autosave must not re-stamp savedAt on an unedited open
+  // ============================================================================
+  //
+  // savedAt feeds draftToMessageMeta's `date`, which drives the Drafts-list
+  // sort. The 2s autosave previously called saveDraft UNCONDITIONALLY, so just
+  // opening a draft for reading re-stamped savedAt within 2s and bumped the
+  // draft to the top of the list. Recency must track EDITS, not reads.
+
+  it('does NOT re-stamp savedAt when a draft is opened for reading without edits (tuxlink-n3hw)', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+        return null;
+      });
+      seedDraft('n3hw-read', 'W6ABC');
+
+      render(<Compose draftId="n3hw-read" />);
+      // Restore-on-mount, then fire several 2s autosave ticks WITHOUT editing.
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(6000);
+
+      const saved = JSON.parse(localStorage.getItem('tuxlink.drafts.n3hw-read')!);
+      // Opening for reading must not touch recency — savedAt stays seeded.
+      expect(saved.savedAt).toBe(ts);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-stamps savedAt once the draft is actually edited (tuxlink-n3hw)', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+        return null;
+      });
+      seedDraft('n3hw-edit', 'W6ABC');
+
+      render(<Compose draftId="n3hw-edit" />);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // A genuine edit must persist AND bump recency.
+      const subject = screen.getByTestId('compose-subject') as HTMLInputElement;
+      fireEvent.change(subject, { target: { value: 'Edited subject' } });
+      await vi.advanceTimersByTimeAsync(2000);
+
+      const saved = JSON.parse(localStorage.getItem('tuxlink.drafts.n3hw-edit')!);
+      expect(saved.subject).toBe('Edited subject');
+      expect(saved.savedAt).not.toBe(ts);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ============================================================================
   // C2-P1 regression — fresh contacts_read at send (Codex#5 proper fix)
   // ============================================================================
   //

@@ -16,6 +16,73 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.39.3](https://github.com/cameronzucker/tuxlink/compare/v0.39.2...v0.39.3) (2026-06-09)
+
+
+### Bug Fixes
+
+* **mailbox:** print webview form fallback content ([a378766](https://github.com/cameronzucker/tuxlink/commit/a37876646ff649e256932d3b7a7641e60a351ebc))
+* **scripts:** refuse a repo-root target/ in converge-build, ignore-rule-independent ([5356efd](https://github.com/cameronzucker/tuxlink/commit/5356efd0c86dc736b27e713908103eb0be235af6))
+* **ui:** stack inbound selection above app chrome ([dd7a9d4](https://github.com/cameronzucker/tuxlink/commit/dd7a9d4db3aa013ecd3333fcc9f80519178c6d7c))
+
+## [0.39.2](https://github.com/cameronzucker/tuxlink/compare/v0.39.1...v0.39.2) (2026-06-09)
+
+
+### Bug Fixes
+
+* **mailbox:** address 5 Codex P2 findings — search invalidation, Enter-clears-selection, bulk id filter, archived-sent read-state, mark-on-open guard reset (tuxlink-etxt) ([5333411](https://github.com/cameronzucker/tuxlink/commit/5333411470c34156a245196bb570f2076a176c67))
+* **test:** type the invoke mock-call access in the Fix 5 mark-on-open test (tuxlink-kuhk) ([817e2fd](https://github.com/cameronzucker/tuxlink/commit/817e2fddbf7c5462eb03f6e2090756f6371ac553))
+
+## [0.39.1](https://github.com/cameronzucker/tuxlink/compare/v0.39.0...v0.39.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* **catalog:** stack Find a Gateway above app chrome so its controls stay reachable ([9d01ef9](https://github.com/cameronzucker/tuxlink/commit/9d01ef925a68ef689c6d88888c0f686c01cc4fd6))
+* **test:** await async grid before asserting map-mount --active (C9 flake) ([4653b14](https://github.com/cameronzucker/tuxlink/commit/4653b14f48455d71808cf282379eae6834110374))
+
+## [0.39.0](https://github.com/cameronzucker/tuxlink/compare/v0.38.1...v0.39.0) (2026-06-09)
+
+
+### Features
+
+* **catalog:** relocate Find a Gateway to the radio panels + Tools; split out info requests ([8c0c58a](https://github.com/cameronzucker/tuxlink/commit/8c0c58a3e8a0ce4ad8d54944384b30c8da41df43))
+* **ui:** default inbound review ON + move the control to the dashboard ribbon ([e53cd79](https://github.com/cameronzucker/tuxlink/commit/e53cd79d4694ec700f4ff23b9cc4727507330bc0))
+
+## [0.38.1](https://github.com/cameronzucker/tuxlink/compare/v0.38.0...v0.38.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* **catalog:** add backdrop-click and Escape dismiss to Find a Gateway ([ff0f024](https://github.com/cameronzucker/tuxlink/commit/ff0f024970c1dd48906406fc638493250342f9a7))
+* **favorites:** make Telnet Manual-only and align active-tab to modem accent ([3b6759b](https://github.com/cameronzucker/tuxlink/commit/3b6759b01239ba8594dcaeb6ec7edd7895d3e93d))
+* **shell:** span the Contacts surface across the list + reader tracks ([eb34224](https://github.com/cameronzucker/tuxlink/commit/eb34224d2f267c1e6e7613235698b5c264583ddc))
+
+## [0.38.0](https://github.com/cameronzucker/tuxlink/compare/v0.37.1...v0.38.0) (2026-06-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **compose:** Position map now uses a bundled offline world map instead of online OpenStreetMap tiles.
+
+### Features
+
+* **grib:** map-based region selection (item 21, tuxlink-mxmx) ([448b0cf](https://github.com/cameronzucker/tuxlink/commit/448b0cfe9a279c1047a053ab042b0bb6efeb53e7))
+* **map:** BaseMap offline EPSG4326 substrate + shared leaflet icon fix + canonical test mock ([59f2e88](https://github.com/cameronzucker/tuxlink/commit/59f2e8845e229f4a78e445b104dd7b46124e55b9))
+* **map:** GridMapPicker pin + box-drag modes ([e1fd645](https://github.com/cameronzucker/tuxlink/commit/e1fd645dfd12348007b2effe6a54d84fa9b3b5d8))
+* **map:** pure EPSG4326 projection helpers ([e2c4615](https://github.com/cameronzucker/tuxlink/commit/e2c46158703bfef482c007d33e37bdb801d32a9f))
+* **map:** pure maidenhead overlay geometry ([f86b06c](https://github.com/cameronzucker/tuxlink/commit/f86b06c1e1973892377d23137d8e50ddbef9fd73))
+* **map:** pure signed-bbox→GRIB region normalizer ([a8d13a7](https://github.com/cameronzucker/tuxlink/commit/a8d13a7dd003020d78f50c50561cca6c3de3f6fd))
+* **map:** toggleable maidenhead grid overlay ([99d940a](https://github.com/cameronzucker/tuxlink/commit/99d940afdecdcaaeab0d7da3823b55af6f3c2795))
+* **map:** vendor public-domain equirectangular world map asset ([0df33c4](https://github.com/cameronzucker/tuxlink/commit/0df33c465b24f83341f1dc2900df551bcaec5f21))
+
+
+### Bug Fixes
+
+* **compose:** remove public-OSM tiles; use bundled offline map (tuxlink-714t) ([2a6c004](https://github.com/cameronzucker/tuxlink/commit/2a6c004909cd26e83d18cd7d5b5ad99918c8b995))
+* **map:** address Codex adversarial review (4 P2 correctness/UX defects) ([c75c81f](https://github.com/cameronzucker/tuxlink/commit/c75c81f260ece2f841b6472c5c23b005746dfcb2))
+* **winlink:** gate inbound-review prompt on fresh disk preference, not stale live_config ([de32878](https://github.com/cameronzucker/tuxlink/commit/de328785ef746c0d8a3973f8563ab3223d63aa9c))
+
 ## [0.37.1](https://github.com/cameronzucker/tuxlink/compare/v0.37.0...v0.37.1) (2026-06-08)
 
 

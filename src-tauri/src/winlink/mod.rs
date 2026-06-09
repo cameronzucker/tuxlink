@@ -17,6 +17,7 @@ pub mod credentials;
 pub mod modem;
 pub mod compose;
 pub mod handshake;
+pub mod inbound_selection;
 pub mod listener;
 pub mod lzhuf;
 pub mod message;

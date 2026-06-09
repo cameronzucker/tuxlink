@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useUserFolders, useCreateUserFolder, useDeleteUserFolder } from './useUserFolders';
+import {
+  useUserFolders,
+  useCreateUserFolder,
+  useDeleteUserFolder,
+  useMoveUserFolder,
+} from './useUserFolders';
 import type { UserFolder } from './types';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -41,14 +46,26 @@ describe('useUserFolders', () => {
 describe('useCreateUserFolder', () => {
   beforeEach(() => vi.mocked(invoke).mockReset());
 
-  it('invokes folder_create with the displayName arg', async () => {
+  it('invokes folder_create with displayName + parentSlug (top-level)', async () => {
     vi.mocked(invoke).mockResolvedValueOnce(SAMPLE[0]);
     const { result } = renderHook(() => useCreateUserFolder(), { wrapper: wrapper() });
     await act(async () => {
-      const folder = await result.current.mutateAsync('ARES Drills');
+      const folder = await result.current.mutateAsync({ displayName: 'ARES Drills' });
       expect(folder).toEqual(SAMPLE[0]);
     });
-    expect(invoke).toHaveBeenCalledWith('folder_create', { displayName: 'ARES Drills' });
+    expect(invoke).toHaveBeenCalledWith('folder_create', {
+      displayName: 'ARES Drills',
+      parentSlug: undefined,
+    });
+  });
+
+  it('forwards parentSlug when creating a subfolder', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({ ...SAMPLE[0], parentSlug: 'nets' });
+    const { result } = renderHook(() => useCreateUserFolder(), { wrapper: wrapper() });
+    await act(async () => {
+      await result.current.mutateAsync({ displayName: 'ARES', parentSlug: 'nets' });
+    });
+    expect(invoke).toHaveBeenCalledWith('folder_create', { displayName: 'ARES', parentSlug: 'nets' });
   });
 
   it('propagates a UiError::Rejected from the backend', async () => {
@@ -56,8 +73,30 @@ describe('useCreateUserFolder', () => {
     vi.mocked(invoke).mockRejectedValueOnce(err);
     const { result } = renderHook(() => useCreateUserFolder(), { wrapper: wrapper() });
     await act(async () => {
-      await expect(result.current.mutateAsync('Inbox')).rejects.toEqual(err);
+      await expect(result.current.mutateAsync({ displayName: 'Inbox' })).rejects.toEqual(err);
     });
+  });
+});
+
+describe('useMoveUserFolder', () => {
+  beforeEach(() => vi.mocked(invoke).mockReset());
+
+  it('invokes folder_move with slug + parentSlug (nest)', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({ ...SAMPLE[0], parentSlug: 'nets' });
+    const { result } = renderHook(() => useMoveUserFolder(), { wrapper: wrapper() });
+    await act(async () => {
+      await result.current.mutateAsync({ slug: 'weather', parentSlug: 'nets' });
+    });
+    expect(invoke).toHaveBeenCalledWith('folder_move', { slug: 'weather', parentSlug: 'nets' });
+  });
+
+  it('promotes to top level with undefined parentSlug', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(SAMPLE[0]);
+    const { result } = renderHook(() => useMoveUserFolder(), { wrapper: wrapper() });
+    await act(async () => {
+      await result.current.mutateAsync({ slug: 'ares' });
+    });
+    expect(invoke).toHaveBeenCalledWith('folder_move', { slug: 'ares', parentSlug: undefined });
   });
 });
 

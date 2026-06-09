@@ -34,9 +34,9 @@ describe('dispatchMenuAction', () => {
     expect(h.openCompose).toHaveBeenCalledOnce();
   });
 
-  it('routes message:catalog_builder to openCatalogBuilder', () => {
+  it('routes tools:find_gateway to openCatalogBuilder (tuxlink-6jpf)', () => {
     const h = handlers();
-    dispatchMenuAction('menu:message:catalog_builder', h);
+    dispatchMenuAction('menu:tools:find_gateway', h);
     expect(h.openCatalogBuilder).toHaveBeenCalledOnce();
     expect(h.openCatalogRequest).not.toHaveBeenCalled();
   });

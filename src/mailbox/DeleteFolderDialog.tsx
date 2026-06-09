@@ -20,13 +20,21 @@ import './userFolders.css';
 export interface DeleteFolderDialogProps {
   folder: UserFolder | null;
   messageCount?: number;
+  /// Direct-subfolder count + names for the blast-radius line (tuxlink-ka3z A8).
+  /// When > 0, the dialog warns that deletion cascades to these subfolders.
+  childCount?: number;
+  childNames?: string[];
   onClose: () => void;
-  onDeleted?: (slug: string, action: DeleteFolderAction) => void;
+  /// Receives every slug removed (the folder + any cascaded subfolders) so the
+  /// host can clear a stale selection (A5).
+  onDeleted?: (removedSlugs: string[]) => void;
 }
 
 export function DeleteFolderDialog({
   folder,
   messageCount,
+  childCount,
+  childNames,
   onClose,
   onDeleted,
 }: DeleteFolderDialogProps) {
@@ -65,8 +73,8 @@ export function DeleteFolderDialog({
     if (!folder) return;
     setError(null);
     try {
-      await del.mutateAsync({ slug: folder.slug, onMessages: action });
-      onDeleted?.(folder.slug, action);
+      const removed = await del.mutateAsync({ slug: folder.slug, onMessages: action });
+      onDeleted?.(removed);
       onClose();
     } catch (err) {
       setError(reasonFromError(err));
@@ -107,6 +115,17 @@ export function DeleteFolderDialog({
           </button>
         </div>
         <div className="tux-folder-body">
+          {typeof childCount === 'number' && childCount > 0 && (
+            <div
+              data-testid="delete-folder-blast-radius"
+              role="alert"
+              className="tux-folder-help tux-folder-help--warn"
+            >
+              This also removes {childCount} subfolder{childCount === 1 ? '' : 's'}
+              {childNames && childNames.length > 0 ? ` (${childNames.join(', ')})` : ''} and all
+              messages they contain.
+            </div>
+          )}
           <div className="tux-folder-help">
             What should happen to its messages{countCopy}?
           </div>

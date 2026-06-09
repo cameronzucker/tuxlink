@@ -5,7 +5,14 @@
   background: rgba(0, 0, 0, 0.5);
   display: grid;
   place-items: center;
-  z-index: 50;
+  /* tuxlink-tsl5 (follow-up to tuxlink-29zx): must stack ABOVE all app chrome —
+   * the menubar (z-index 90), its dropdown (100), and the resize handles (200)
+   * in src/shell/chrome/chrome.css — or a tall panel's header (and its × close)
+   * lands in the titlebar/menubar band and the chrome paints over it, leaving
+   * the controls unreachable. 1000 matches the sibling CatalogRequestPanel (and
+   * GribRequestPanel / userFolders); the prior value of 50 was below the chrome
+   * and was the root cause of the off-top controls. */
+  z-index: 1000;
 }
 .catalog-builder {
   background: var(--surface);

@@ -79,6 +79,16 @@
   grid-template-columns: 200px 380px 1fr 400px 290px;
 }
 
+/* tuxlink-r4je: the Contacts pseudo-folder mounts ContactsPanel as a single
+ * direct child of `.panes`, replacing the MessageList + reading-pane pair (M8).
+ * Span it across both content tracks (grid lines 2→4 = the 380px list + 1fr
+ * reader) so it fills the main area instead of collapsing into the 380px list
+ * track alone. The radio dock (when open) then auto-places into its own 400px
+ * track (line 4→5) rather than being shoved into the reader track. */
+.layout-b .panes > .contacts-panel {
+  grid-column: 2 / 4;
+}
+
 /* ============================================================================
  * Ribbon + search row wrapper — contains the search-zone (left) and the
  * DashboardRibbon (right). The DashboardRibbon's .dashboard uses flex and
@@ -304,6 +314,36 @@
 }
 .layout-b .dashboard .abort-button:hover {
   background: color-mix(in srgb, var(--error, #e5534b) 16%, transparent);
+}
+/* "On connect" segmented control — Review | Download all (tuxlink-pmp5). Inline
+   opt-out for the review-pending-messages default; lives in the ribbon next to
+   Connect, not in the Settings modal. */
+.layout-b .dashboard .seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.layout-b .dashboard .seg button {
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  border-right: 1px solid var(--border-strong);
+}
+.layout-b .dashboard .seg button:last-child {
+  border-right: none;
+}
+.layout-b .dashboard .seg button.active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.layout-b .dashboard .seg button:hover:not(.active) {
+  color: var(--text);
 }
 /* GridEdit — inline-edit container, source chip, GPS-ready affordance (tuxlink-686 Task 8). */
 .layout-b .dashboard .dash-grid-display {
@@ -547,6 +587,22 @@
   font-size: 11px;
   flex: 0 0 auto;
 }
+/* Nested-folder twisty (tuxlink-ka3z). The expand/collapse chevron on a parent
+   row, and an equal-width spacer on childless rows so icons stay aligned. */
+.layout-b .sidebar .nav-item .folder-twisty,
+.layout-b .sidebar .nav-item .folder-twisty-spacer {
+  width: 12px;
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.layout-b .sidebar .nav-item .folder-twisty {
+  cursor: pointer;
+}
+.layout-b .sidebar .nav-item .folder-twisty:hover {
+  color: var(--accent);
+}
 .layout-b .sidebar .nav-item.active {
   background: var(--accent-soft);
   color: var(--accent-2);
@@ -641,6 +697,63 @@
   outline-offset: 1px;
 }
 
+/* Bulk action bar — replaces the sort control in the rows-pane-header slot
+ * when a selection set is non-empty (tuxlink-etxt Task 10). Occupies the
+ * same flex strip as .rows-pane-header (no extra vertical space added). */
+.layout-b .message-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.layout-b .bulk-count {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.layout-b .bulk-spacer {
+  flex: 1 1 auto;
+}
+.layout-b .bulk-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.layout-b .bulk-btn:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.layout-b .bulk-btn:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+.layout-b .bulk-btn.primary {
+  background: var(--accent, #3b82f6);
+  color: var(--accent-fg, #fff);
+  border-color: transparent;
+}
+.layout-b .bulk-btn.primary:hover {
+  opacity: 0.88;
+}
+.layout-b .bulk-btn.clear {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+  padding: 2px 4px;
+}
+.layout-b .bulk-btn.clear:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
 /* Popup menu — Radix renders into a portal, so the selector is global (not
  * scoped under .layout-b). Surfaces use the same elevated-panel tokens as
  * the rest of the inline overlays (settings, theme designer). */
@@ -716,6 +829,10 @@
 }
 .layout-b .row.selected:hover {
   background: rgba(245, 159, 60, 0.16);
+}
+.layout-b .row.in-selection { background: rgba(245, 159, 60, 0.10); position: relative; }
+.layout-b .row.in-selection::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent);
 }
 .layout-b .row:focus-visible {
   outline: 2px solid var(--tux-focus-ring);

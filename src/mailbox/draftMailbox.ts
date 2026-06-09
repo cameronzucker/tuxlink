@@ -5,7 +5,7 @@ import {
   splitAddrs,
   type DraftData,
 } from '../compose/useDraft';
-import type { MessageMeta } from './types';
+import type { MessageMeta, ParsedMessage } from './types';
 
 export { DRAFTS_CHANGED_EVENT };
 
@@ -27,6 +27,43 @@ export function draftToMessageMeta(draft: DraftData): MessageMeta {
     hasAttachments: false,
     preview: bodyPreview(draft.body),
     folder: 'drafts',
+  };
+}
+
+function blankFormParameters(formId: string) {
+  return {
+    xmlFileVersion: '',
+    rmsExpressVersion: 'Tuxlink draft',
+    submissionDatetime: '',
+    sendersCallsign: '',
+    gridSquare: '',
+    displayForm: `${formId}_Viewer.html`,
+    replyTemplate: '',
+  };
+}
+
+export function draftToParsedMessage(draft: DraftData): ParsedMessage {
+  const formPayload = draft.formId
+    ? {
+        formId: draft.formId,
+        formParameters: blankFormParameters(draft.formId),
+        fields: Object.entries(draft.formFields ?? {}),
+      }
+    : null;
+
+  return {
+    id: draft.draftId,
+    subject: draft.subject.trim() || '(No subject)',
+    from: 'Draft',
+    to: splitAddrs(draft.to),
+    cc: splitAddrs(draft.cc ?? ''),
+    date: draft.savedAt,
+    body: draft.body,
+    attachments: [],
+    isForm: Boolean(draft.formId),
+    routing: null,
+    formId: draft.formId ?? null,
+    formPayload,
   };
 }
 

@@ -52,6 +52,11 @@ export interface ConfigViewDto {
   /** Active position source (tuxlink-686): `Gps` (default) or `Manual` when
    * the operator has pinned a grid square. Task 8 renders a source chip. */
   position_source: PositionSource;
+  /** Opt-in (tuxlink-bsiy): prompt the operator to select which pending inbound
+   * messages to download on a CMS connect (WLE "Review Pending Messages"
+   * parity), instead of auto-downloading all. Default false. The inline
+   * SettingsPanel loads this into its checkbox on open. */
+  review_inbound_before_download: boolean;
 }
 
 /** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-va1i: amended for the

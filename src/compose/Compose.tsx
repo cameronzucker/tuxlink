@@ -326,24 +326,48 @@ export function Compose({ draftId }: ComposeProps) {
     const interval = setInterval(() => {
       // Do NOT autosave after a successful send — the draft was intentionally
       // cleared and the interval must not recreate it (Codex P1 fix).
-      if (!sentRef.current) {
-        // Persist formId in BOTH native form and webview-form modes so a
-        // restored draft picks up the same picker mode (Important #3 from
-        // the P1 Task 10 code review: previously, webview-form drafts saved
-        // with formId: undefined and silently restored as plain-text).
-        // formFields is only populated in native form mode — the webview's
-        // in-flight state lives in the embedded webview, not in Compose's
-        // React state, so we cannot snapshot it from this side.
-        const persistedFormId =
-          formMode.kind === 'form' || formMode.kind === 'webview-form'
-            ? formMode.formId
-            : undefined;
-        saveDraft({
-          draftId, to, cc, subject, body, requestAck,
-          formId: persistedFormId,
-          formFields: formMode.kind === 'form' ? formMode.values : undefined,
-        });
+      if (sentRef.current) return;
+
+      // Persist formId in BOTH native form and webview-form modes so a
+      // restored draft picks up the same picker mode (Important #3 from
+      // the P1 Task 10 code review: previously, webview-form drafts saved
+      // with formId: undefined and silently restored as plain-text).
+      // formFields is only populated in native form mode — the webview's
+      // in-flight state lives in the embedded webview, not in Compose's
+      // React state, so we cannot snapshot it from this side.
+      const persistedFormId =
+        formMode.kind === 'form' || formMode.kind === 'webview-form'
+          ? formMode.formId
+          : undefined;
+      const formFields = formMode.kind === 'form' ? formMode.values : undefined;
+
+      // tuxlink-n3hw: re-stamp savedAt ONLY on a genuine edit. savedAt drives
+      // the Drafts-list sort (draftMailbox.draftToMessageMeta → `date`), so an
+      // unconditional autosave bumped a draft to the top of the list merely by
+      // being opened for reading. Compare the editable content against what is
+      // already on disk and skip the save when nothing changed — leaving
+      // savedAt (and thus list order) untouched. localStorage is the source of
+      // truth, so there is no separate "clean snapshot" ref to keep in sync
+      // across the manual-save / send paths.
+      const existing = loadDraft(draftId);
+      if (
+        existing &&
+        existing.to === to &&
+        (existing.cc ?? '') === cc &&
+        existing.subject === subject &&
+        existing.body === body &&
+        existing.requestAck === requestAck &&
+        existing.formId === persistedFormId &&
+        JSON.stringify(existing.formFields ?? null) === JSON.stringify(formFields ?? null)
+      ) {
+        return;
       }
+
+      saveDraft({
+        draftId, to, cc, subject, body, requestAck,
+        formId: persistedFormId,
+        formFields,
+      });
     }, 2000);
     return () => clearInterval(interval);
   }, [draftId, to, cc, subject, body, requestAck, formMode]);

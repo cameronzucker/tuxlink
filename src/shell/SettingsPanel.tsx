@@ -51,6 +51,8 @@ const PRECISION_OPTIONS: { value: PositionPrecision; label: string; help: string
 interface SettingsView {
   gps_state: GpsState;
   position_precision: PositionPrecision;
+  /** tuxlink-bsiy: opt-in Review-Pending-Messages preference; default false. */
+  review_inbound_before_download: boolean;
 }
 
 export interface SettingsPanelProps {

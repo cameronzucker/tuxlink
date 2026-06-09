@@ -27,7 +27,7 @@ import { useMailbox, useMailboxChangeEvents } from '../mailbox/useMailbox';
 import { DRAFTS_CHANGED_EVENT, listDraftMessages } from '../mailbox/draftMailbox';
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
-import { useUserFolders } from '../mailbox/useUserFolders';
+import { useUserFolders, useMoveUserFolder } from '../mailbox/useUserFolders';
 import { useContacts } from '../contacts/useContacts';
 import { ContactsPanel } from '../contacts/ContactsPanel';
 import { FolderContextMenu } from '../mailbox/FolderContextMenu';
@@ -66,6 +66,13 @@ const CatalogBuilderPanel = lazy(() =>
 const GribRequestPanel = lazy(() =>
   import('../grib/GribRequestPanel').then((m) => ({ default: m.GribRequestPanel })),
 );
+// tuxlink-bsiy: inline pending-message selection panel ("Review Pending
+// Messages"). Event-driven — useInboundSelection (below) subscribes to the
+// b2f-event channel and surfaces a prompt; the panel only paints when a
+// proposal arrives, so it's off the cold-start critical path like the others.
+const InboundSelectionPanel = lazy(() =>
+  import('../connections/InboundSelectionPanel').then((m) => ({ default: m.InboundSelectionPanel })),
+);
 const NewFolderDialog = lazy(() =>
   import('../mailbox/NewFolderDialog').then((m) => ({ default: m.NewFolderDialog })),
 );
@@ -101,6 +108,7 @@ import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus'
 import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
 import { StubPanel } from '../connections/StubPanel';
+import { useInboundSelection } from '../connections/useInboundSelection';
 import { SearchBar } from '../search/SearchBar';
 import { deparseQuery } from '../search/parseQuery';
 
@@ -226,8 +234,11 @@ export function AppShell() {
   // string-equal is enough to drive the sidebar's active-row highlight.
   const [selectedFolder, setSelectedFolder] = useState<MailboxFolderRef>('inbox');
   // tuxlink-f62f: NewFolderDialog visibility (opened from the sidebar's
-  // Folders section `+` button).
+  // Folders section `+` button). tuxlink-ka3z: `newFolderParent` carries the
+  // parent folder when the dialog was opened via "New subfolder here" (null =
+  // top-level create).
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderParent, setNewFolderParent] = useState<UserFolder | null>(null);
   // tuxlink-ejph: rename / delete dialogs + folder context menu state.
   // `renameFolder` / `deleteFolder` hold the target folder when the dialog
   // is open, null when closed. The context menu carries position + slug.
@@ -292,6 +303,12 @@ export function AppShell() {
     setSortState(next);
     saveSortState(next);
   }, []);
+
+  // tuxlink-etxt Task 11: multi-row selection state. Cleared whenever the
+  // active folder changes so stale ids from a previous folder can't bleed
+  // through to a bulk command against a different folder's messages.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  useEffect(() => { setSelectedIds(new Set()); }, [selectedFolder]);
 
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
@@ -379,6 +396,8 @@ export function AppShell() {
   // tuxlink-f62f: operator-created user folders, rendered in the sidebar's
   // Folders section. Backend reads `<root>/.folders.json`.
   const { folders: userFolders } = useUserFolders();
+  // tuxlink-ka3z: re-parent mutation for the context-menu "Move to" + drag-drop.
+  const moveFolder = useMoveUserFolder();
   // tuxlink-raez (A7): contacts count for the sidebar's Address → Contacts
   // pseudo-folder badge. Sourced from useContacts, NOT the mailbox `counts`
   // memo — `'contacts'` is a pseudo-folder, not a MailboxFolder.
@@ -445,7 +464,10 @@ export function AppShell() {
       outbox: outbox.messages.length,
       drafts: draftMessages.length,
       sent: sent.messages.length,
-      archive: archive.messages.length,
+      // tuxlink-etxt: Archive badge = unread count (matches Inbox badge semantics).
+      // User-folder count badges are intentionally deferred — they'd need a per-folder
+      // N+1 query; user-folder unread still surfaces in-list via the unread row style.
+      archive: archive.messages.filter((m) => m.unread).length,
     }),
     [inbox.messages, outbox.messages, draftMessages, sent.messages, archive.messages],
   );
@@ -459,6 +481,12 @@ export function AppShell() {
   // config and emits writes; the shared listener here picks those up). Operator
   // smoke 2026-05-31 caught that the prior code hardcoded SSID=0 in the ribbon.
   const packetConfig = usePacketConfig();
+
+  // tuxlink-bsiy: inbound pending-message selection ("Review Pending Messages").
+  // Subscribes to the b2f-event channel for `inbound_proposals_offered`; when a
+  // proposal arrives, `inbound.prompt` is non-null and the inline panel mounts
+  // below. The operator's choice resolves via cms_resolve_inbound_selection.
+  const inbound = useInboundSelection();
 
   // Modem (ARDOP HF) status — feeds the radio-panel visibility check + the
   // panes-grid column-count swap (tuxlink-4ek Task 4.3 baseline; radio-panel-
@@ -543,6 +571,10 @@ export function AppShell() {
   // backend), not beside the button.
   const queryClient = useQueryClient();
   const [connecting, setConnecting] = useState(false);
+  // tuxlink-pmp5: the "review pending inbound before download" preference, shown
+  // as the inline "On connect" control in the dashboard ribbon. null until
+  // config_read resolves (the ribbon treats null as the on/Review default).
+  const [reviewInbound, setReviewInbound] = useState<boolean | null>(null);
 
   const onConnect = useCallback(async () => {
     // Codex #1: don't start a second connect while one is in flight. The Connect
@@ -571,6 +603,27 @@ export function AppShell() {
     // in-flight cms_connect promise then resolves (Cancelled) and its `finally`
     // clears `connecting`. The session log carries the "Aborting…" line.
     void invoke('cms_abort');
+  }, []);
+
+  // tuxlink-pmp5: load the review-inbound preference once so the ribbon's "On
+  // connect" control reflects the persisted choice. Reads the LIVE config via the
+  // same command SettingsPanel used; a failure leaves it null (Review default).
+  useEffect(() => {
+    let mounted = true;
+    invoke<{ review_inbound_before_download: boolean }>('config_read')
+      .then((c) => { if (mounted) setReviewInbound(c.review_inbound_before_download); })
+      .catch(() => { /* leave null → ribbon shows the Review default */ });
+    return () => { mounted = false; };
+  }, []);
+
+  // Persist the operator's "On connect" choice. Optimistic (mirrors the prior
+  // SettingsPanel toggle); revert on failure so the ribbon never lies about the
+  // persisted state. config_set_review_inbound also refreshes the live backend.
+  const onReviewInboundChange = useCallback((enabled: boolean) => {
+    setReviewInbound(enabled);
+    void invoke('config_set_review_inbound', { enabled }).catch(() => {
+      setReviewInbound(!enabled);
+    });
   }, []);
 
   // Native titlebar: mock B shows "Tuxlink — Inbox". Track the active folder.
@@ -666,6 +719,50 @@ export function AppShell() {
     }
   }, [queryClient]);
 
+  // tuxlink-etxt Task 12+13: single-message read/unread toggle — wired from the
+  // context-menu (T12) and the U key (T13). Mirrors the invoke + invalidate
+  // pattern of the other per-message handlers; the try/catch keeps an unhandled
+  // rejection from surfacing in the UI (failure is recoverable via next refetch).
+  const setMessageReadState = useCallback(async (id: string, folder: MailboxFolderRef, read: boolean) => {
+    try {
+      await invoke('message_set_read_state', { folder, id, read });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [queryClient]);
+
+  // tuxlink-etxt Task 11: bulk read/unread for selected rows. Each id is mapped
+  // to its own folder (present on the row when search is cross-folder; falls back
+  // to the active folder for single-folder views). Mirrors the invoke + invalidate
+  // pattern used by the existing single-message move/archive handlers above.
+  //
+  // Selection is intentionally retained after a bulk action; the operator clears
+  // it via the ✕ button or by switching folders — do not auto-clear on success.
+  const bulkSetReadState = useCallback(async (ids: Set<string>, read: boolean) => {
+    const byId = new Map(visibleMessages.map((m) => [m.id, m] as const));
+    // Fix 3: filter to ids that are actually present in the visible list so
+    // a stale selection (row removed between select and act) never falls back
+    // to selectedFolder for an unknown message — that could target the wrong
+    // folder in a cross-folder search view.
+    const items = [...ids]
+      .filter((id) => byId.has(id))
+      .map((id) => ({
+        folder: (byId.get(id)!.folder as string | undefined) ?? selectedFolder,
+        id,
+      }));
+    try {
+      await invoke('message_set_read_state_bulk', { items, read });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      // Fix 1: also invalidate search results so unread state stays current
+      // when a bulk read/unread action is taken while a search view is active.
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [visibleMessages, selectedFolder, queryClient]);
+
   const handlers: MenuHandlers = useMemo(() => ({
     openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
     connect: onConnect,
@@ -725,10 +822,19 @@ export function AppShell() {
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage, archiveOpen, reportIssueController]);
 
+  const editDraft = useCallback((draftId: string) => {
+    void invoke('compose_window_open', { draftId });
+  }, []);
+
   // The Archive button render gate: only show when something is selected AND
-  // it's not already in Archive (where archive is a no-op). MessageView reads
-  // the absence of onArchive as "don't render the button."
-  const onArchiveMessage = (selectedMessage && selectedMessage.folder !== 'archive')
+  // it's not already in Archive (where archive is a no-op). Local Drafts are
+  // not backend mailbox messages, so they get an explicit Edit Draft action
+  // instead of Archive/Move.
+  const onArchiveMessage = (
+    selectedMessage
+    && selectedMessage.folder !== 'archive'
+    && selectedMessage.folder !== 'drafts'
+  )
     ? archiveOpen
     : undefined;
 
@@ -764,6 +870,8 @@ export function AppShell() {
   // failed on every shell render even when the sidebar's visible state
   // hadn't changed.
   const onCreateFolder = useCallback(() => {
+    // Top-level create from the "+" button: clear any subfolder parent context.
+    setNewFolderParent(null);
     setNewFolderOpen(true);
   }, []);
   const onFolderContextMenu = useCallback(
@@ -782,11 +890,6 @@ export function AppShell() {
       // regular folder-scoped browse case.
       const hit = searchResultMessages?.find((m) => m.id === id);
       const folder = (hit?.folder as MailboxFolder | undefined) ?? selectedFolder;
-      if (folder === 'drafts') {
-        setSelectedMessage(null);
-        void invoke('compose_window_open', { draftId: id });
-        return;
-      }
       setSelectedMessage({ folder, id });
     },
     [selectedFolder, searchResultMessages],
@@ -891,6 +994,8 @@ export function AppShell() {
           radioConn={radioConn}
           ssid={packetConfig.config ? packetConfig.ssid : undefined}
           onSsidChange={packetConfig.config ? packetConfig.setSsid : undefined}
+          reviewInbound={reviewInbound}
+          onReviewInboundChange={onReviewInboundChange}
         />
       </div>
 
@@ -908,6 +1013,7 @@ export function AppShell() {
           onCreateFolder={onCreateFolder}
           onDropMessage={moveByIdToFolder}
           onFolderContextMenu={onFolderContextMenu}
+          onReparentFolder={(slug, parentSlug) => moveFolder.mutate({ slug, parentSlug })}
           selectedConnection={selectedConnection}
           onSelectConnection={onSelectConnection}
         />
@@ -933,6 +1039,10 @@ export function AppShell() {
           userFolders={userFolders}
           onMoveMessage={moveByIdToFolder}
           onArchiveMessage={archiveByIdAndFolder}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          onBulkSetReadState={bulkSetReadState}
+          onSetReadState={setMessageReadState}
         />
         {(() => {
           // tuxlink-djnl: shared render fragment for the reading pane. When
@@ -945,7 +1055,14 @@ export function AppShell() {
           const readingPane = selectedMessage
             ? (
                 <Suspense fallback={<MessageViewLoading />}>
-                  <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} radioDrawerOpen={isCompact && drawerOpen} />
+                  <MessageView
+                    selectedMessage={selectedMessage}
+                    onArchive={onArchiveMessage}
+                    userFolders={userFolders}
+                    onMove={selectedMessage.folder === 'drafts' ? undefined : moveOpen}
+                    onEditDraft={editDraft}
+                    radioDrawerOpen={isCompact && drawerOpen}
+                  />
                 </Suspense>
               )
             : <MessageViewEmpty />;
@@ -1055,6 +1172,7 @@ export function AppShell() {
               intent={radioPanelMode.intent}
               baseCall={statusData.callsign}
               onClose={closeRadioPanel}
+              onFindGateway={() => setCatalogBuilderOpen(true)}
             />
           </Suspense>
         )}
@@ -1062,6 +1180,7 @@ export function AppShell() {
           <Suspense fallback={null}>
             <ArdopRadioPanel
               onClose={closeRadioPanel}
+              onFindGateway={() => setCatalogBuilderOpen(true)}
             />
           </Suspense>
         )}
@@ -1071,6 +1190,7 @@ export function AppShell() {
               <VaraRadioPanel
                 mode={radioPanelMode}
                 onClose={closeRadioPanel}
+                onFindGateway={() => setCatalogBuilderOpen(true)}
               />
             </Suspense>
           )}
@@ -1140,7 +1260,12 @@ export function AppShell() {
         <Suspense fallback={null}>
           <NewFolderDialog
             open={true}
-            onClose={() => setNewFolderOpen(false)}
+            parentSlug={newFolderParent?.slug}
+            parentName={newFolderParent?.displayName}
+            onClose={() => {
+              setNewFolderOpen(false);
+              setNewFolderParent(null);
+            }}
             onCreated={(slug) => {
               // Navigate to the new folder so the operator sees their creation
               // succeed (matches the create-and-select expectation of every
@@ -1165,11 +1290,16 @@ export function AppShell() {
         <Suspense fallback={null}>
           <DeleteFolderDialog
             folder={deleteFolder}
+            childCount={userFolders.filter((f) => f.parentSlug === deleteFolder.slug).length}
+            childNames={userFolders
+              .filter((f) => f.parentSlug === deleteFolder.slug)
+              .map((f) => f.displayName)}
             onClose={() => setDeleteFolder(null)}
-            onDeleted={(slug) => {
-              // If the operator was viewing the now-gone folder, navigate back
-              // to Inbox so they don't sit on a slug that no longer resolves.
-              if (selectedFolder === slug) {
+            onDeleted={(removedSlugs) => {
+              // Cascade-aware (A5): if the operator was viewing the parent OR any
+              // cascaded child that's now gone, navigate back to Inbox so they
+              // don't sit on a slug that no longer resolves.
+              if (removedSlugs.includes(selectedFolder as string)) {
                 setSelectedFolder('inbox');
                 setSelectedMessage(null);
               }
@@ -1181,10 +1311,20 @@ export function AppShell() {
       {folderCtxMenu && (
         <FolderContextMenu
           folder={folderCtxMenu.folder}
+          allFolders={userFolders}
           x={folderCtxMenu.x}
           y={folderCtxMenu.y}
           onRename={() => setRenameFolder(folderCtxMenu.folder)}
           onDelete={() => setDeleteFolder(folderCtxMenu.folder)}
+          onNewSubfolder={() => {
+            // "New subfolder here" — open the create dialog with this folder as
+            // the parent (tuxlink-ka3z).
+            setNewFolderParent(folderCtxMenu.folder);
+            setNewFolderOpen(true);
+          }}
+          onMoveTo={(parentSlug) =>
+            moveFolder.mutate({ slug: folderCtxMenu.folder.slug, parentSlug })
+          }
           onClose={() => setFolderCtxMenu(null)}
         />
       )}
@@ -1202,6 +1342,20 @@ export function AppShell() {
         state={reportIssueState}
         onClose={() => setReportIssueState({ kind: 'idle' })}
       />
+
+      {/* tuxlink-bsiy: inline pending-message selection ("Review Pending
+       *  Messages"). Event-driven — mounts only when the backend offers
+       *  proposals before download (useInboundSelection). Lazy-loaded; the
+       *  panel resolves via cms_resolve_inbound_selection. */}
+      {inbound.prompt && (
+        <Suspense fallback={null}>
+          <InboundSelectionPanel
+            proposals={inbound.prompt.proposals}
+            onSubmit={inbound.submit}
+            onClose={inbound.close}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

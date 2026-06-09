@@ -1217,14 +1217,10 @@ pub async fn message_read(
         FolderRef::System(f) => backend.read_message_in(*f, &mid).await?,
         FolderRef::User(slug) => backend.read_user_message(slug, &mid).await?,
     };
-    // Opening a message marks it read (tuxlink-xgn). Best-effort: a marker-write
-    // failure must not fail the read the user just performed, so the error is
-    // discarded (the message simply stays unread and self-heals on the next
-    // open). User folders don't track unread today so the mark is a no-op for
-    // them — only system folders flow through `mark_read`.
-    if let FolderRef::System(f) = &parsed {
-        let _ = backend.mark_read(*f, &mid).await;
-    }
+    // Opening a message no longer mutates read-state server-side. Mark-on-open is
+    // a once-per-open-transition client effect (useMessage) so an explicit Mark
+    // Unread on the open message is not undone by a reading-pane refetch (window
+    // focus / poll). See tuxlink-etxt design §1.4.
     parse_raw_rfc5322(&id, &body.raw_rfc5322)
 }
 
@@ -1342,6 +1338,54 @@ pub async fn mailbox_move(
     Ok(())
 }
 
+// ---- read-state commands (tuxlink-etxt) ------------------------------------
+
+/// Set a single message's read-state. `read = true` marks read, `false` marks
+/// unread. Folder may be a system folder or a user-folder slug.
+#[tauri::command]
+pub async fn message_set_read_state(
+    folder: String,
+    id: String,
+    read: bool,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let folder_ref = parse_folder_ref(&folder)?;
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    backend.set_read_state(folder_ref, &mid, read).await?;
+    Ok(())
+}
+
+/// One message reference for a bulk operation. Each carries its own folder so a
+/// cross-folder search-results selection (which mixes folders) stays correct.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessageRefDto {
+    pub folder: String,
+    pub id: String,
+}
+
+/// Set the read-state of every listed message. Best-effort per item: a missing
+/// message is a no-op (matching the single-message path). One command call per
+/// bulk action keeps frontend round-trips bounded.
+#[tauri::command]
+pub async fn message_set_read_state_bulk(
+    items: Vec<MessageRefDto>,
+    read: bool,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    for item in items {
+        let folder_ref = parse_folder_ref(&item.folder)?;
+        let mid = MessageId::new(&item.id);
+        backend.set_read_state(folder_ref, &mid, read).await?;
+    }
+    Ok(())
+}
+
 // ---- user-folder commands (tuxlink-f62f) -----------------------------------
 
 /// DTO mirror of [`crate::user_folders::UserFolder`] over Tauri's camelCase
@@ -1353,6 +1397,11 @@ pub struct UserFolderDto {
     pub slug: String,
     pub display_name: String,
     pub created_at: String,
+    /// Parent folder slug (schema v2 / spec D2). `skip_serializing_if` omits the
+    /// key for a top-level folder so the wire shape matches TS `parentSlug?:
+    /// string` (absent, not `null` — A4 / finding #7).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_slug: Option<String>,
 }
 
 impl From<crate::user_folders::UserFolder> for UserFolderDto {
@@ -1361,6 +1410,7 @@ impl From<crate::user_folders::UserFolder> for UserFolderDto {
             slug: f.slug,
             display_name: f.display_name,
             created_at: f.created_at,
+            parent_slug: f.parent_slug,
         }
     }
 }
@@ -1384,12 +1434,33 @@ pub async fn user_folders_list(
 #[tauri::command]
 pub async fn folder_create(
     display_name: String,
+    parent_slug: Option<String>,
     state: State<'_, BackendState>,
 ) -> Result<UserFolderDto, UiError> {
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
-    let folder = backend.create_user_folder(&display_name).await?;
+    let folder = backend
+        .create_user_folder(&display_name, parent_slug.as_deref())
+        .await?;
+    Ok(UserFolderDto::from(folder))
+}
+
+/// Re-parent a user folder (spec D3). `parent_slug == None` promotes it to top
+/// level. Metadata-only — no message files move. D4 validation failures surface
+/// as `UiError::Rejected`.
+#[tauri::command]
+pub async fn folder_move(
+    slug: String,
+    parent_slug: Option<String>,
+    state: State<'_, BackendState>,
+) -> Result<UserFolderDto, UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let folder = backend
+        .move_user_folder(&slug, parent_slug.as_deref())
+        .await?;
     Ok(UserFolderDto::from(folder))
 }
 
@@ -1418,7 +1489,7 @@ pub async fn folder_delete(
     slug: String,
     on_messages: String,
     state: State<'_, BackendState>,
-) -> Result<(), UiError> {
+) -> Result<Vec<String>, UiError> {
     use crate::native_mailbox::DeleteAction;
     let action = match on_messages.as_str() {
         "move_to_inbox" => DeleteAction::MoveToInbox,
@@ -1433,8 +1504,10 @@ pub async fn folder_delete(
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
-    backend.delete_user_folder(&slug, action).await?;
-    Ok(())
+    // Returns parent + cascaded child slugs so the UI can clear a stale
+    // selection when the open folder was among them (A5).
+    let removed = backend.delete_user_folder(&slug, action).await?;
+    Ok(removed)
 }
 
 // Task 14 — message_send command (spec §3.2, §5.4)
@@ -2085,6 +2158,7 @@ pub async fn cms_connect(
     app: AppHandle,
     state: State<'_, BackendState>,
     log: State<'_, std::sync::Arc<SessionLogState>>,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
 ) -> Result<(), UiError> {
     let backend = state
         .current()
@@ -2114,10 +2188,36 @@ pub async fn cms_connect(
     let events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
         std::sync::Arc::new(crate::winlink::b2f_events::TauriEventSink::new(app.clone()));
 
-    match backend
-        .connect(TransportConfig::Cms {
-            mode: cfg.connect.transport,
+    // tuxlink-bsiy: mint ONE attempt_id at the top so the in-flight
+    // InboundProposalsOffered events (emitted from the selecting decider) and the
+    // result-level AuthClassified event in the Err arm share a single correlation
+    // id. The frontend stale-filter keys on this AttemptId (Codex #2).
+    let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+
+    // tuxlink-bsiy connect-path staleness fix: build the selection context — which
+    // makes `native_connect` prompt the operator — from the FRESH on-disk
+    // preference read into `cfg` above (`config::read_config()`), NOT the backend's
+    // in-memory `live_config`. `config_set_review_inbound` refreshes `live_config`
+    // only when the backend is already installed, so a preference enabled during
+    // startup would otherwise be ignored at the next connect. Preference off ⇒ no
+    // context ⇒ accept-all (the WLE-parity default).
+    let selection = if cfg.review_inbound_before_download {
+        Some(crate::winlink_backend::CmsSelectionContext {
+            sink: events_sink.clone(),
+            attempt_id,
+            registry: registry.inner().clone(),
         })
+    } else {
+        None
+    };
+
+    match backend
+        .connect(
+            TransportConfig::Cms {
+                mode: cfg.connect.transport,
+            },
+            selection,
+        )
         .await
     {
         Ok(session) => {
@@ -2182,7 +2282,11 @@ pub async fn cms_connect(
             // give us TcpConnected / RemoteSidReceived / PostAuthExchangeStarted
             // events for Mode 1 vs Mode 5 discrimination) is tracked as
             // bd-tuxlink-7do4-followup-backend-events.
-            let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+            //
+            // tuxlink-bsiy: reuse the top-minted `attempt_id` (no longer re-minted
+            // here) so a pending InboundProposalsOffered event and this
+            // AuthClassified event share one attempt_id — the frontend stale-filter
+            // depends on that (Codex #2).
             use crate::winlink::b2f_events::{B2fEvent, FailureMode};
             let (mode, raw) = match &e {
                 // BackendError::RemoteError carries the *** payload (redaction-
@@ -2225,6 +2329,7 @@ pub async fn cms_abort(
     app: AppHandle,
     state: State<'_, BackendState>,
     log: State<'_, std::sync::Arc<SessionLogState>>,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
 ) -> Result<(), UiError> {
     let backend = state
         .current()
@@ -2236,6 +2341,42 @@ pub async fn cms_abort(
     );
     emit_session_line(&app, &log, LogLevel::Info, "Aborting CMS connection…".to_string());
     backend.abort().await?;
+
+    // tuxlink-bsiy: wake a decider parked on a pending selection prompt. Dropping
+    // the slot drops the only mpsc Sender, so the decider's recv_timeout returns
+    // Disconnected immediately; backend.abort() above already set the `aborting`
+    // flag, so the decider's post-recv abort re-check returns Err(Cancelled) (NOT
+    // accept-all). No-op if no prompt is pending. Order matters: abort() (sets
+    // aborting) BEFORE the slot drop (wakes the decider).
+    *registry.lock().unwrap() = None;
+
+    Ok(())
+}
+
+// ============================================================================
+// Task 5 (tuxlink-bsiy) — cms_resolve_inbound_selection
+// ============================================================================
+
+/// Deliver the operator's inbound-message selection to a decider parked in
+/// native_connect (Task 4b). Matches the pending slot by (attempt_id, request_id)
+/// and take()s it (idempotent); a stale/mismatched key or an empty registry is a
+/// silent no-op (the frontend also stale-filters via attempt_id). The numeric
+/// attempt_id mirrors the AttemptId carried by the InboundProposalsOffered event
+/// the frontend received. Thin wrapper over inbound_selection::resolve_selection
+/// (Task 3), which carries the unit tests for the match/take/no-op semantics.
+#[tauri::command]
+pub async fn cms_resolve_inbound_selection(
+    attempt_id: u64,
+    request_id: u64,
+    selection: crate::winlink::inbound_selection::InboundSelection,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
+) -> Result<(), UiError> {
+    crate::winlink::inbound_selection::resolve_selection(
+        registry.inner(),
+        crate::winlink::b2f_events::AttemptId(attempt_id),
+        request_id,
+        selection,
+    );
     Ok(())
 }
 
@@ -2463,6 +2604,12 @@ pub struct ConfigViewDto {
     /// has pinned a grid square). Mirrors `PrivacyConfig.position_source` in
     /// config.rs. Task 8 renders a source chip from this field.
     pub position_source: PositionSource,
+    /// Opt-in: prompt the operator to select which pending inbound messages to
+    /// download on a CMS connect (WLE "Review Pending Messages" parity), instead
+    /// of auto-downloading all. Default false. Mirrors
+    /// `Config.review_inbound_before_download` (tuxlink-bsiy). The inline
+    /// SettingsPanel loads this into its checkbox on open.
+    pub review_inbound_before_download: bool,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -2479,6 +2626,7 @@ impl From<&config::Config> for ConfigViewDto {
             gps_state: c.privacy.gps_state,
             position_precision: c.privacy.position_precision,
             position_source: c.privacy.position_source,
+            review_inbound_before_download: c.review_inbound_before_download,
         }
     }
 }
@@ -3219,7 +3367,7 @@ pub async fn packet_connect(
         LogLevel::Info,
         format!("Connecting to {call} over packet…"),
     );
-    match backend.connect(transport).await {
+    match backend.connect(transport, None).await {
         Ok(_session) => {
             emit_session_line(
                 &app,
@@ -3284,7 +3432,7 @@ pub async fn packet_listen(
         LogLevel::Info,
         format!("Listening for an incoming packet call as {effective}…"),
     );
-    match backend.connect(transport).await {
+    match backend.connect(transport, None).await {
         Ok(_session) => {
             emit_session_line(
                 &app,
@@ -5175,6 +5323,41 @@ pub async fn config_set_connect(
     Ok(())
 }
 
+// ============================================================================
+// tuxlink-bsiy — config_set_review_inbound (Review Pending Messages preference)
+// ============================================================================
+
+/// Persist the opt-in `review_inbound_before_download` preference (WLE "Review
+/// Pending Messages" parity). Default false = auto-download-all (the default,
+/// WLE parity). Mirrors `config_set_connect`'s read → mutate → persist ordering
+/// and its `UiError` handling exactly.
+///
+/// The live-refresh `set_config` call is load-bearing: the connect path reads
+/// the backend's LIVE config (not the disk), so persisting alone is NOT enough
+/// — without `set_config`, the next connect would use the stale snapshot until
+/// an app restart.
+///
+/// NOTE (test coverage): like `config_set_connect` / `config_set_privacy`, the
+/// full read→write round-trip is NOT unit-tested here — `config::config_path()`
+/// resolves via the process-global `XDG_CONFIG_HOME`, so an isolated round-trip
+/// races under parallel `cargo test`. The persist path is identical to
+/// `config_set_connect`'s and is operator-smoke-covered. The serde
+/// round-trip + default are unit-tested in `config.rs`; the DTO mapping is
+/// unit-tested in `config_view_dto_maps_review_inbound_when_enabled`.
+#[tauri::command]
+pub async fn config_set_review_inbound(
+    state: State<'_, BackendState>,
+    enabled: bool,
+) -> Result<(), UiError> {
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.review_inbound_before_download = enabled;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg); // live refresh: next connect sees it without restart (Codex #9)
+    }
+    Ok(())
+}
+
 /// Validate a user-supplied CMS host. Returns `Some(message)` for the FIRST rule
 /// violated, `None` when valid. Rules (most-actionable first, mirroring
 /// `config::validate_identity_describe`): nonempty → no whitespace. A hostname's
@@ -5593,7 +5776,7 @@ pub async fn telnet_p2p_connect(
                     line.to_string(),
                 );
             },
-            |_proposals| Vec::new(),
+            |_proposals| Ok(Vec::new()),
         )
     })
     .await
@@ -6085,10 +6268,10 @@ pub async fn telnet_listen(
                 // accept every proposal at the B2F layer; mailbox dedup is
                 // a follow-up (filed as a new bd issue tracking inbound-
                 // mail symmetry — outbox-on-inbound + inbox-persistence).
-                proposals
+                Ok(proposals
                     .iter()
                     .map(|_| crate::winlink::proposal::Answer::Accept { resume_offset: 0 })
-                    .collect()
+                    .collect())
             },
         );
         // Clear the handle once the loop exits.
@@ -6137,6 +6320,30 @@ mod tests {
     use super::*;
     use crate::winlink::message::RECEIVED_SESSION_POST_OFFICE;
     use crate::winlink_backend::MessageId;
+
+    #[test]
+    fn user_folder_dto_carries_parent_slug_and_omits_when_top_level() {
+        // tuxlink-ka3z A4/finding #7: a subfolder serializes parentSlug; a
+        // top-level folder omits the key entirely (TS parentSlug?: string).
+        let child = UserFolderDto::from(crate::user_folders::UserFolder {
+            slug: "ares".into(),
+            display_name: "ARES".into(),
+            created_at: "2026-06-09T00:00:00Z".into(),
+            parent_slug: Some("nets".into()),
+        });
+        assert_eq!(child.parent_slug.as_deref(), Some("nets"));
+        let json = serde_json::to_string(&child).unwrap();
+        assert!(json.contains("\"parentSlug\":\"nets\""), "{json}");
+
+        let top = UserFolderDto::from(crate::user_folders::UserFolder {
+            slug: "nets".into(),
+            display_name: "Nets".into(),
+            created_at: "2026-06-09T00:00:00Z".into(),
+            parent_slug: None,
+        });
+        let json_top = serde_json::to_string(&top).unwrap();
+        assert!(!json_top.contains("parentSlug"), "top-level must omit the key: {json_top}");
+    }
 
     #[test]
     fn discover_serial_devices_classifies_usb_bluetooth_uart_and_excludes_others() {
@@ -6780,6 +6987,7 @@ hw:CARD=Device,DEV=0
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             network_po_favorites: Vec::new(),
+            review_inbound_before_download: false,
         }
     }
 
@@ -6800,6 +7008,20 @@ hw:CARD=Device,DEV=0
         assert_eq!(dto.position_precision, PositionPrecision::SixCharGrid);
         // tuxlink-686 Task 7: position_source is surfaced in the DTO.
         assert_eq!(dto.position_source, PositionSource::Gps);
+        // tuxlink-bsiy: review_inbound_before_download maps through the From impl
+        // (default false on the fixture).
+        assert!(!dto.review_inbound_before_download);
+    }
+
+    // tuxlink-bsiy: a config with review_inbound_before_download=true maps to a
+    // true DTO field (proves the From impl reads the real config value, not a
+    // hardcoded default).
+    #[test]
+    fn config_view_dto_maps_review_inbound_when_enabled() {
+        let mut cfg = cms_config_fixture();
+        cfg.review_inbound_before_download = true;
+        let dto = ConfigViewDto::from(&cfg);
+        assert!(dto.review_inbound_before_download);
     }
 
     // Offline-mode mapping: callsign None, identifier Some — mirrors the
@@ -6990,6 +7212,7 @@ hw:CARD=Device,DEV=0
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             network_po_favorites: Vec::new(),
+            review_inbound_before_download: false,
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -8093,6 +8316,7 @@ hw:CARD=Device,DEV=0
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             network_po_favorites: Vec::new(),
+            review_inbound_before_download: false,
         }
     }
 

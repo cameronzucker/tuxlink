@@ -68,6 +68,32 @@ describe('<PositionFormV2>', () => {
     expect((input as HTMLInputElement).value).toBe('EM26');
   });
 
+  it('keeps the manual grid input editable while the offline map is mounted (C9)', async () => {
+    // The map is an aid, never the only path: the manual Maidenhead input must
+    // remain present and editable whenever the (offline) map is mounted.
+    render(<PositionFormV2 onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    const input = await screen.findByLabelText(/Maidenhead grid/i);
+
+    // Default GPS fix → grid set → the map mounts inside the mount div.
+    // Wait for the async GPS fix to populate the grid before asserting the
+    // map-mount's grid-derived `--active` class. `findByLabelText` above only
+    // awaits the input's presence (it renders on the first pass, before the
+    // position_current_fix invoke resolves and setGrid re-renders); asserting
+    // `--active` synchronously here races that re-render. Awaiting the grid's
+    // display value is how the other tests in this file wait for the fix to
+    // land. (This raced and failed the amd64 verify job on the 0.39.1 release
+    // CI run 2026-06-09; arm64 passed the same commit — classic timing flake.)
+    await screen.findByDisplayValue('CN87US');
+    const mount = screen.getByTestId('position-map-mount');
+    expect(mount.className).toContain('--active');
+    expect(mount.children.length).toBeGreaterThan(0);
+
+    // The manual input is still present and editable.
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: 'EM26' } });
+    expect((input as HTMLInputElement).value).toBe('EM26');
+  });
+
   it('Send button calls onSubmit with the wire-format payload', async () => {
     const onSubmit = vi.fn();
     render(<PositionFormV2 onSubmit={onSubmit} onCancel={vi.fn()} />);

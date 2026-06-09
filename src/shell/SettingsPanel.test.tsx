@@ -14,6 +14,7 @@ beforeEach(() => {
       return {
         gps_state: 'BroadcastAtPrecision',
         position_precision: 'FourCharGrid',
+        review_inbound_before_download: false,
       };
     }
     return undefined;

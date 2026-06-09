@@ -98,6 +98,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         modem_vara: None,
         telnet_listen: tuxlink_lib::config::TelnetListenUiConfig::default(),
         network_po_favorites: Vec::new(),
+        review_inbound_before_download: false,
     }
 }
 
@@ -275,7 +276,7 @@ fn native_session_emits_wire_log_on_send() {
         &mut writer,
         &config,
         vec![out],
-        |_| vec![tuxlink_lib::winlink::proposal::Answer::Accept { resume_offset: 0 }],
+        |_| Ok(vec![tuxlink_lib::winlink::proposal::Answer::Accept { resume_offset: 0 }]),
         Some(&wire_log),
     )
     .expect("exchange should succeed");
@@ -407,10 +408,10 @@ async fn two_native_backends_exchange_with_attachment() {
             &server_config,
             vec![], // server has nothing to send
             |proposals| {
-                proposals
+                Ok(proposals
                     .iter()
                     .map(|_| tuxlink_lib::winlink::proposal::Answer::Accept { resume_offset: 0 })
-                    .collect()
+                    .collect())
             },
             None,
         )
@@ -450,7 +451,7 @@ async fn two_native_backends_exchange_with_attachment() {
         &|_| {},
         &|_| {},
         &|_| {},
-        |_| vec![],
+        |_| Ok(vec![]),
     )
     .expect("client-side exchange must succeed");
 

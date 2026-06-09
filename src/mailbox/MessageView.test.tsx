@@ -154,6 +154,46 @@ describe('<MessageViewLoaded>', () => {
     expect(pre).toHaveTextContent('Hello ARES');
   });
 
+  it('does not steal Ctrl+F from global mailbox search (tuxlink-20zd)', () => {
+    render(<MessageViewLoaded message={parsed({ body: 'Findable body' })} />);
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    expect(screen.queryByTestId('message-find-bar')).toBeNull();
+  });
+
+  it('opens in-message Find with Ctrl+Shift+F and highlights body matches (tuxlink-20zd)', () => {
+    render(<MessageViewLoaded message={parsed({ body: 'Alpha net\nBravo alpha\nCharlie' })} />);
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true, shiftKey: true });
+    const input = screen.getByTestId('message-find-input');
+    fireEvent.change(input, { target: { value: 'alpha' } });
+
+    expect(screen.getByTestId('message-find-count')).toHaveTextContent('1/2');
+    expect(screen.getAllByTestId('message-find-match')).toHaveLength(2);
+    expect(screen.getAllByTestId('message-find-match')[0]).toHaveAttribute('data-active', 'true');
+
+    fireEvent.click(screen.getByTestId('message-find-next'));
+    expect(screen.getByTestId('message-find-count')).toHaveTextContent('2/2');
+    expect(screen.getAllByTestId('message-find-match')[1]).toHaveAttribute('data-active', 'true');
+  });
+
+  it('keeps catalog/list message bodies searchable via the raw text view (tuxlink-20zd)', () => {
+    render(
+      <MessageViewLoaded
+        message={parsed({
+          from: 'SERVICE@winlink.org',
+          subject: 'INQUIRY - catalog://weather',
+          body: 'AREA FORECAST\nGateway catalog line\nMore catalog data',
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('message-find-btn'));
+    fireEvent.change(screen.getByTestId('message-find-input'), { target: { value: 'catalog' } });
+
+    expect(screen.getByTestId('message-find-count')).toHaveTextContent('1/2');
+    expect(screen.getAllByTestId('message-find-match')).toHaveLength(2);
+  });
+
   // Winlink form → placeholder for now; never render raw XML.
   it('shows form placeholder when isForm', () => {
     render(<MessageViewLoaded message={parsed({ isForm: true, body: '<?xml...' })} />);
@@ -226,6 +266,58 @@ describe('<MessageViewLoaded>', () => {
     // The viewer chrome is present; the embedded webview itself doesn't
     // mount in jsdom (Tauri APIs no-op).
     expect(screen.getByTestId('webview-form-viewer')).toBeInTheDocument();
+  });
+
+  it('keeps unknown-form field values in the main DOM for printing (tuxlink-x8ct)', () => {
+    const msg = {
+      id: 'TEST-PRINTABLE-UNKNOWN',
+      subject: 'printable unknown',
+      from: 'X@winlink.org',
+      to: ['Y@winlink.org'],
+      cc: [],
+      date: '2026-05-30T14:30:00Z',
+      body: 'sender plain text rendering',
+      attachments: [],
+      isForm: true,
+      routing: null,
+      formId: 'Print_Only_Form',
+      formPayload: {
+        formId: 'Print_Only_Form',
+        formParameters: {
+          xmlFileVersion: '1.0',
+          rmsExpressVersion: '',
+          submissionDatetime: '',
+          sendersCallsign: '',
+          gridSquare: '',
+          displayForm: '',
+          replyTemplate: '',
+        },
+        fields: [['print_field', 'print_value']],
+      },
+    };
+
+    render(<MessageViewLoaded message={msg as any} />);
+
+    expect(screen.getByTestId('webview-form-viewer')).toBeInTheDocument();
+    const fallback = screen.getByTestId('message-form-print-fallback');
+    expect(within(fallback).getByText('print_field')).toBeInTheDocument();
+    expect(within(fallback).getByText('print_value')).toBeInTheDocument();
+    expect(within(fallback).getByText('sender plain text rendering')).toBeInTheDocument();
+  });
+
+  it('CSS swaps child-webview chrome for the DOM form fallback when printing (tuxlink-x8ct)', () => {
+    const screenFallbackRule = messageViewCss.match(
+      /\.reading-pane \.message-form-print-fallback\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    expect(screenFallbackRule).toContain('display: none;');
+
+    const printCss = messageViewCss.slice(messageViewCss.indexOf('@media print'));
+    expect(printCss).toContain('.reading-pane .webview-form-viewer');
+    expect(printCss).toContain('.reading-pane .message-form-print-fallback');
+    expect(printCss).toMatch(/\.reading-pane \.webview-form-viewer\s*\{[\s\S]*display:\s*none\s*!important;/);
+    expect(printCss).toMatch(
+      /\.reading-pane \.message-form-print-fallback\s*\{[\s\S]*display:\s*block\s*!important;/,
+    );
   });
 
   // P1 Task 11: when the operator closes the viewer (or onFallback fires),

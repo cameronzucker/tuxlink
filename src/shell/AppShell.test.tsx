@@ -144,6 +144,18 @@ const inboxMsgs: MessageMeta[] = [
     bodySize: 100,
     hasAttachments: false,
   },
+  // Second inbox message (read) — used by the bulk-read test (Task 11).
+  // unread:false preserves the folder-count-inbox badge assertion (counts only unread=true).
+  {
+    id: 'INBOX2',
+    subject: 'Second inbox message',
+    from: 'W7SRC@winlink.org',
+    to: [],
+    date: '2026-05-19T12:00:00Z',
+    unread: false,
+    bodySize: 80,
+    hasAttachments: false,
+  },
 ];
 const sentMsgs: MessageMeta[] = [
   {
@@ -174,6 +186,41 @@ const outboxMsgs: MessageMeta[] = [
   },
 ];
 
+// tuxlink-etxt Task 14: archive fixture — 3 total, 2 unread — so the badge
+// assertion can distinguish unread count (2) from total count (3).
+const archiveMsgs: MessageMeta[] = [
+  {
+    id: 'ARCHIVE1',
+    subject: 'Archived unread 1',
+    from: 'KK4XYZ@winlink.org',
+    to: [],
+    date: '2026-05-01T10:00:00Z',
+    unread: true,
+    bodySize: 100,
+    hasAttachments: false,
+  },
+  {
+    id: 'ARCHIVE2',
+    subject: 'Archived unread 2',
+    from: 'W7SRC@winlink.org',
+    to: [],
+    date: '2026-05-02T10:00:00Z',
+    unread: true,
+    bodySize: 80,
+    hasAttachments: false,
+  },
+  {
+    id: 'ARCHIVE3',
+    subject: 'Archived read',
+    from: 'N7CPZ@winlink.org',
+    to: [],
+    date: '2026-05-03T10:00:00Z',
+    unread: false,
+    bodySize: 60,
+    hasAttachments: false,
+  },
+];
+
 vi.mock('../mailbox/useMailbox', () => ({
   useMailboxChangeEvents: () => {},
   useMailbox: (folder: string) => ({
@@ -184,6 +231,8 @@ vi.mock('../mailbox/useMailbox', () => ({
         ? sentMsgs
         : folder === 'outbox'
         ? outboxMsgs
+        : folder === 'archive'
+        ? archiveMsgs
         : [],
     isLoading: false,
     isError: false,
@@ -201,6 +250,7 @@ vi.mock('../mailbox/useUserFolders', () => ({
   useCreateUserFolder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteUserFolder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRenameUserFolder: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useMoveUserFolder: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   USER_FOLDERS_QUERY_KEY: ['userFolders'],
 }));
 
@@ -258,6 +308,13 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.getByTestId('folder-count-sent')).toHaveTextContent('1'); // 1 total
   });
 
+  // tuxlink-etxt Task 14: Archive badge must show UNREAD count, not total.
+  // archiveMsgs fixture: 3 total, 2 unread — badge should read "2", not "3".
+  it('Archive folder badge shows unread count (not total) — tuxlink-etxt Task 14', () => {
+    renderShell();
+    expect(screen.getByTestId('folder-count-archive')).toHaveTextContent('2'); // 2 unread, not 3 total
+  });
+
   // tuxlink-gp8b: PR #219 wired the Outbox folder entry into the sidebar but
   // never extended the `counts` map AppShell passes to FolderSidebar — so the
   // status bar's "1 to send" segment and the sidebar drew from the same
@@ -273,7 +330,7 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.getByTestId('status-bar-outbox')).toHaveTextContent('1 to send');
   });
 
-  it('Drafts lists local saved drafts and reopens a selected compose draft', async () => {
+  it('Drafts lists local saved drafts, reads on row click, and edits only by explicit action', async () => {
     saveDraft({
       draftId: 'draft-shell',
       to: 'KK4XYZ@winlink.org',
@@ -293,6 +350,12 @@ describe('<AppShell> — Mock B topology', () => {
 
     vi.mocked(invoke).mockClear();
     fireEvent.click(row);
+    await screen.findByTestId('message-view-loaded', undefined, { timeout: 30000 });
+    expect(screen.getByTestId('message-subject')).toHaveTextContent('Saved local draft');
+    expect(screen.getByTestId('message-body')).toHaveTextContent('Return to this before the net.');
+    expect(invoke).not.toHaveBeenCalledWith('compose_window_open', { draftId: 'draft-shell' });
+
+    fireEvent.click(screen.getByTestId('edit-draft-btn'));
     expect(invoke).toHaveBeenCalledWith('compose_window_open', { draftId: 'draft-shell' });
   });
 
@@ -379,9 +442,10 @@ describe('<AppShell> — Mock B topology', () => {
 
   // tuxlink-a2gd: production mount path — the lazy overlay actually opens from the menu.
   // config_read is mocked to null above; the panel's null-grid is swallowed, so it still renders.
-  it('Message → Find a Gateway opens the Catalog Builder (production mount path)', async () => {
+  // tuxlink-6jpf: Find a Gateway relocated from Message → Tools.
+  it('Tools → Find a Gateway opens the Catalog Builder (production mount path)', async () => {
     renderShell();
-    clickMenu('Message', /find a gateway/i);
+    clickMenu('Tools', /find a gateway/i);
     expect(
       await screen.findByRole('dialog', { name: /find a gateway/i }, { timeout: 10000 }),
     ).toBeInTheDocument();
@@ -720,6 +784,24 @@ describe('AppShell.css radio-panel chrome width (tuxlink-8rng + tuxlink-40u8)', 
   });
 });
 
+// ---------------------------------------------------------------------------
+// Contacts grid span — tuxlink-r4je
+//
+// The Contacts pseudo-folder renders ContactsPanel as a single direct child of
+// the `.panes` grid, REPLACING the MessageList + reading-pane pair (M8). Without
+// an explicit column span it lands in the 380px MessageList track alone — the
+// surface collapses left and (with the radio dock open) the radio panel slides
+// into the 1fr reader track. The span makes ContactsPanel occupy tracks 2–3 so
+// the radio dock auto-places into its own 400px track.
+// ---------------------------------------------------------------------------
+describe('AppShell.css contacts grid span (tuxlink-r4je)', () => {
+  it('spans the Contacts surface across the MessageList + reading-pane tracks', () => {
+    expect(appShellCss).toMatch(
+      /\.layout-b \.panes\s*>\s*\.contacts-panel\s*\{[^}]*grid-column:\s*2\s*\/\s*4/,
+    );
+  });
+});
+
 describe('AppShell.css print stylesheet (tuxlink-zdfj)', () => {
   const printCss = appShellCss.slice(appShellCss.indexOf('@media print'));
 
@@ -793,6 +875,20 @@ describe('<AppShell> — Contacts pseudo-folder (M8 + Codex#11)', () => {
     );
     // M8: MessageList (rows-pane) MUST NOT render alongside the ContactsPanel.
     expect(screen.queryByTestId('rows-pane')).toBeNull();
+  });
+
+  it('mounts ContactsPanel as a direct child of the panes grid (tuxlink-r4je)', async () => {
+    // The grid-column span fix targets `.layout-b .panes > .contacts-panel`.
+    // Guard the selector's precondition: a future wrapper around ContactsPanel
+    // would silently break the span and re-collapse the surface.
+    renderShell();
+    fireEvent.click(screen.getByTestId('folder-contacts'));
+    await waitFor(() =>
+      expect(screen.getByTestId('contacts-panel')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('contacts-panel').parentElement).toBe(
+      screen.getByTestId('shell-panes'),
+    );
   });
 
   it('does NOT fire mailbox_list for the contacts pseudo-folder (Codex#11)', async () => {
@@ -961,5 +1057,166 @@ describe('<AppShell> — Contacts App-level mount with routed data (A9: M9 + Cod
     expect(
       vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'contacts_suggestions'),
     ).toBe(true);
+  });
+});
+
+// ============================================================================
+// Bulk read/unread — selection wiring in AppShell (tuxlink-etxt Task 11)
+//
+// Verifies the production mount path: AppShell owns selectedIds state, clears
+// it on folder change, and fires message_set_read_state_bulk with per-folder
+// items when the bulk-bar "Mark read" button is clicked.
+// ============================================================================
+describe('<AppShell> — bulk Mark read/unread (tuxlink-etxt Task 11)', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    vi.mocked(invoke).mockClear();
+  });
+
+  it('bulk Mark read invokes the batch command with per-folder items and refreshes', async () => {
+    renderShell();
+
+    // Inbox renders INBOX1 + INBOX2 (both present in inboxMsgs fixture).
+    // Ctrl+click INBOX1 to start a selection.
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'), { ctrlKey: true });
+    // Ctrl+click INBOX2 to add to the selection — bulk bar should appear.
+    fireEvent.click(screen.getByTestId('message-row-INBOX2'), { ctrlKey: true });
+
+    // Bulk bar appears when selection.size > 0.
+    expect(await screen.findByTestId('message-bulk-bar')).toBeInTheDocument();
+
+    vi.mocked(invoke).mockClear();
+
+    // Click "Mark read" — fires message_set_read_state_bulk.
+    fireEvent.click(screen.getByRole('button', { name: 'Mark read' }));
+
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+        'message_set_read_state_bulk',
+        expect.objectContaining({
+          items: expect.arrayContaining([
+            { folder: 'inbox', id: 'INBOX1' },
+            { folder: 'inbox', id: 'INBOX2' },
+          ]),
+          read: true,
+        }),
+      ),
+    );
+  });
+
+  it('bulk Mark unread invokes the batch command with read:false', async () => {
+    renderShell();
+
+    // Ctrl+click two rows to build a selection.
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'), { ctrlKey: true });
+    fireEvent.click(screen.getByTestId('message-row-INBOX2'), { ctrlKey: true });
+
+    expect(await screen.findByTestId('message-bulk-bar')).toBeInTheDocument();
+
+    vi.mocked(invoke).mockClear();
+
+    // Click "Mark unread" — fires message_set_read_state_bulk with read:false.
+    fireEvent.click(screen.getByRole('button', { name: 'Mark unread' }));
+
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+        'message_set_read_state_bulk',
+        expect.objectContaining({
+          items: expect.arrayContaining([
+            { folder: 'inbox', id: 'INBOX1' },
+            { folder: 'inbox', id: 'INBOX2' },
+          ]),
+          read: false,
+        }),
+      ),
+    );
+  });
+
+  // Fix 3 (Codex P2): bulkSetReadState must silently drop ids that are no
+  // longer present in the visible message list (stale selection). If an id is
+  // not in byId, the old code fell back to selectedFolder — potentially the
+  // wrong folder for a cross-folder search view. After the fix, stale ids are
+  // filtered out; only ids that appear in the visible list are sent.
+  it('bulk action silently ignores stale ids not in the visible list (Fix 3)', async () => {
+    renderShell();
+
+    // Ctrl+click INBOX1 and INBOX2 to build a selection.
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'), { ctrlKey: true });
+    fireEvent.click(screen.getByTestId('message-row-INBOX2'), { ctrlKey: true });
+    expect(await screen.findByTestId('message-bulk-bar')).toBeInTheDocument();
+
+    vi.mocked(invoke).mockClear();
+
+    // Click "Mark read" — the two visible inbox messages are sent.
+    fireEvent.click(screen.getByRole('button', { name: 'Mark read' }));
+
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+        'message_set_read_state_bulk',
+        expect.objectContaining({
+          // Both ids are in the list → both appear.
+          items: expect.arrayContaining([
+            { folder: 'inbox', id: 'INBOX1' },
+            { folder: 'inbox', id: 'INBOX2' },
+          ]),
+          read: true,
+        }),
+      ),
+    );
+
+    // The items array must NOT contain any id that isn't in the visible list
+    // (no ghost entries from stale selection state). Two real items → length exactly 2.
+    const call = vi.mocked(invoke).mock.calls.find(
+      ([cmd]) => cmd === 'message_set_read_state_bulk',
+    );
+    expect(call).toBeDefined();
+    const { items } = (call![1] as { items: { folder: string; id: string }[]; read: boolean });
+    expect(items).toHaveLength(2);
+  });
+});
+
+// ============================================================================
+// Single-message read/unread — context-menu + U-key wiring in AppShell
+// (tuxlink-etxt Tasks 12 + 13)
+//
+// Verifies the production mount path: AppShell provides onMoveMessage +
+// onArchiveMessage (so MessageList mounts the context menu on right-click)
+// AND provides onSetReadState, which wires through to invoke('message_set_read_state').
+//
+// Path chosen: context-menu (right-click → ctx-set-read-state click).
+// AppShell passes both onMoveMessage and onArchiveMessage to MessageList, so
+// ctxAvailable=true and the onContextMenu prop is wired on every row.
+// The right-click path exercises the full AppShell → MessageList →
+// MessageContextMenu → onSetReadState → invoke chain.
+// ============================================================================
+describe('<AppShell> — single-message Mark read/unread (tuxlink-etxt Tasks 12 + 13)', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    vi.mocked(invoke).mockClear();
+  });
+
+  it('context-menu Mark as read invokes the single command through AppShell', async () => {
+    renderShell();
+
+    // INBOX1 is unread (unread: true in the fixture). Right-click to open the
+    // real MessageContextMenu (AppShell supplies onMoveMessage + onArchiveMessage,
+    // so ctxAvailable=true and the context-menu overlay mounts on right-click).
+    fireEvent.contextMenu(screen.getByTestId('message-row-INBOX1'));
+
+    // The menu renders; find the read-state item (data-testid="ctx-set-read-state").
+    // INBOX1 is unread → label is "Mark as read".
+    const readItem = await screen.findByTestId('ctx-set-read-state');
+    expect(readItem).toBeInTheDocument();
+
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(readItem);
+
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+        'message_set_read_state',
+        expect.objectContaining({ folder: 'inbox', id: 'INBOX1', read: expect.any(Boolean) }),
+      ),
+    );
   });
 });

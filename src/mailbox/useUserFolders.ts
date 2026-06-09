@@ -58,8 +58,22 @@ export function useUserFolders(): {
 export function useCreateUserFolder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (displayName: string) =>
-      invoke<UserFolder>('folder_create', { displayName }),
+    mutationFn: async ({ displayName, parentSlug }: { displayName: string; parentSlug?: string }) =>
+      invoke<UserFolder>('folder_create', { displayName, parentSlug }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: USER_FOLDERS_QUERY_KEY });
+    },
+  });
+}
+
+/// Mutation: re-parent a user folder (spec D3). `parentSlug` undefined/absent
+/// promotes the folder to top level. Metadata-only on the backend — no message
+/// files move. Invalidates `['userFolders']` so the sidebar tree re-renders.
+export function useMoveUserFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ slug, parentSlug }: { slug: string; parentSlug?: string }) =>
+      invoke<UserFolder>('folder_move', { slug, parentSlug }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: USER_FOLDERS_QUERY_KEY });
     },
@@ -84,16 +98,18 @@ export function useRenameUserFolder() {
 /// deleted (spec §6 D6). Mirrors the Rust `DeleteAction` enum on the wire.
 export type DeleteFolderAction = 'move_to_inbox' | 'move_to_archive' | 'delete';
 
-/// Mutation: delete a user folder. The `onMessages` selector controls cascade
-/// (spec §6 D6) — `move_to_inbox` is the safe default the dialog picks. On
-/// success invalidates `['userFolders']` and `['mailbox']` so the sidebar
-/// drops the row AND any folder lists currently showing those messages
-/// re-fetch the cascaded destination.
+/// Mutation: delete a user folder, cascading to its subfolders (spec §6 D6).
+/// The `onMessages` selector controls disposition — `move_to_inbox` is the safe
+/// default the dialog picks. Resolves to the slugs actually removed (parent +
+/// children) so the caller can clear a stale selection (A5). On success
+/// invalidates `['userFolders']` and `['mailbox']` so the sidebar drops the rows
+/// AND any folder lists currently showing those messages re-fetch the cascaded
+/// destination.
 export function useDeleteUserFolder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ slug, onMessages }: { slug: string; onMessages: DeleteFolderAction }) =>
-      invoke<void>('folder_delete', { slug, onMessages }),
+      invoke<string[]>('folder_delete', { slug, onMessages }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: USER_FOLDERS_QUERY_KEY });
       void qc.invalidateQueries({ queryKey: ['mailbox'] });

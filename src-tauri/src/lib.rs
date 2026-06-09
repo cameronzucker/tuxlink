@@ -88,6 +88,11 @@ pub fn run() {
                 .build(),
         )
         .manage(crate::wizard::WizardMutex::new())
+        // tuxlink-bsiy: the single inbound-selection rendezvous. cms_connect threads
+        // a clone of this Arc into the selecting decider; the resolve command (Task
+        // 5) and cms_abort read the SAME managed Arc, so an operator answer/abort
+        // reaches the decider parked in the blocking exchange thread (Codex #1).
+        .manage(crate::winlink::inbound_selection::SelectionRegistry::default())
         // tuxlink-0gsy (spec §8.2): managed theme-state singleton — the help
         // window calls theme_get_scheme to bootstrap and listens for
         // color_scheme_changed events emitted by theme_broadcast_scheme.
@@ -368,7 +373,10 @@ pub fn run() {
             crate::ui_commands::folder_create,         // tuxlink-f62f
             crate::ui_commands::folder_delete,         // tuxlink-f62f
             crate::ui_commands::folder_rename,         // tuxlink-ejph (Phase 3)
+            crate::ui_commands::folder_move,           // tuxlink-ka3z (nesting)
             crate::ui_commands::message_read,          // Task 13 (tuxlink-y5c)
+            crate::ui_commands::message_set_read_state, // tuxlink-etxt (read/unread)
+            crate::ui_commands::message_set_read_state_bulk, // tuxlink-etxt (bulk read/unread)
             crate::ui_commands::message_attachment_preview, // tuxlink-ewtb (image attachment preview)
             crate::ui_commands::message_attachment_save, // tuxlink-0fyj (Save As attachment)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
@@ -398,6 +406,7 @@ pub fn run() {
             crate::ui_commands::open_webview_viewer,
             crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
             crate::ui_commands::cms_abort,             // tuxlink-9z2 (abort in-flight connect)
+            crate::ui_commands::cms_resolve_inbound_selection,    // tuxlink-bsiy (inbound message selection resolve)
             crate::ui_commands::config_read,           // Task 16 (tuxlink-hvv)
             crate::ui_commands::backend_status,        // Task 16 (tuxlink-hvv)
             crate::ui_commands::session_log_snapshot,  // Task 15 (tuxlink-8zg integration round)
@@ -449,6 +458,7 @@ pub fn run() {
             crate::ui_commands::network_po_favorites_add,
             crate::ui_commands::network_po_favorites_remove,
             crate::ui_commands::network_po_favorites_set,
+            crate::ui_commands::config_set_review_inbound, // tuxlink-bsiy (review-pending-messages preference)
             // Task 10 (tuxlink-1hu): find-messages search commands
             crate::search::commands::tauri_search_run,
             crate::search::commands::tauri_search_list_saved,

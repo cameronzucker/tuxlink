@@ -1,0 +1,150 @@
+/* Inbound pending-message selection panel — inline overlay (no pop-up window).
+   Design tokens + flat BEM-ish convention match CatalogBuilderPanel.css. */
+.inbound-selection-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: grid;
+  place-items: center;
+  /* tuxlink-76zy: stack above titlebar/menu/dropdown/resize chrome so a tall
+     pending-message panel keeps its header and close control reachable. */
+  z-index: 1000;
+}
+.inbound-selection {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: min(560px, 92vw);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+}
+.inbound-selection__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.inbound-selection__header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.inbound-selection__countdown {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.inbound-selection__close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.inbound-selection__toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.inbound-selection__toolbar button {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.inbound-selection__count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.inbound-selection__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  min-height: 0;
+}
+.inbound-selection__row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.inbound-selection__row label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  cursor: pointer;
+  min-width: 0;
+}
+.inbound-selection__mid {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbound-selection__size {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  text-align: right;
+}
+.inbound-selection__col-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 10px;
+  padding: 4px 16px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.inbound-selection__col-head span:nth-child(3),
+.inbound-selection__col-head span:nth-child(4) {
+  text-align: right;
+}
+.inbound-selection__footer {
+  border-top: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.inbound-selection__disposition {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+.inbound-selection__disposition legend {
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.inbound-selection__disposition label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 13px;
+  cursor: pointer;
+}
+.inbound-selection__go {
+  margin-left: auto;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+}

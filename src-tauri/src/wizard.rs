@@ -182,6 +182,10 @@ pub async fn persist_cms_impl(
         modem_vara: None,
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
         network_po_favorites: Vec::new(),
+        // tuxlink-pmp5: review pending messages before download is the default
+        // (WLE emcomm default). Operator opts out to auto-download-all via the
+        // dashboard ribbon's "On connect" control.
+        review_inbound_before_download: true,
     };
 
     // Step 4: Create keyring entry handle (needed for rollback in step 7).
@@ -342,6 +346,10 @@ pub async fn persist_offline_impl(
         modem_vara: None,
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
         network_po_favorites: Vec::new(),
+        // tuxlink-pmp5: review pending messages before download is the default
+        // (WLE emcomm default). Operator opts out to auto-download-all via the
+        // dashboard ribbon's "On connect" control.
+        review_inbound_before_download: true,
     };
 
     // Single atomic write to config.json. No keyring involved.
@@ -420,7 +428,7 @@ pub async fn verify_cms_connection_impl(_app: tauri::AppHandle) -> Result<(), Wi
         mode: config.connect.transport,
     };
     let session = backend
-        .connect(transport)
+        .connect(transport, None)
         .await
         .map_err(|e| WizardError::Other {
             detail: format!("CMS connection failed: {e}"),

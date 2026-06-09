@@ -309,3 +309,51 @@ describe('DashboardRibbon — optimistic config_read refresh (tuxlink-c79g T14)'
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// tuxlink-pmp5: the inline "On connect" control (Review | Download all). Renders
+// only when onReviewInboundChange is supplied, reflects reviewInbound (null/true
+// ⇒ Review active — the default; false ⇒ Download all), and persists the choice
+// through the handler. Moved here out of the GPS/Privacy settings modal.
+// ---------------------------------------------------------------------------
+
+describe('DashboardRibbon — On connect review/download-all control (tuxlink-pmp5)', () => {
+  it('is not rendered when onReviewInboundChange is omitted', () => {
+    render(<DashboardRibbon data={makeData()} />);
+    expect(screen.queryByTestId('ribbon-review-inbound')).not.toBeInTheDocument();
+  });
+
+  it('renders Review active by default (reviewInbound null = not yet loaded)', () => {
+    render(<DashboardRibbon data={makeData()} reviewInbound={null} onReviewInboundChange={vi.fn()} />);
+    expect(screen.getByTestId('review-inbound-review')).toHaveClass('active');
+    expect(screen.getByTestId('review-inbound-review')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('review-inbound-download-all')).not.toHaveClass('active');
+  });
+
+  it('renders Review active when reviewInbound is true', () => {
+    render(<DashboardRibbon data={makeData()} reviewInbound onReviewInboundChange={vi.fn()} />);
+    expect(screen.getByTestId('review-inbound-review')).toHaveClass('active');
+    expect(screen.getByTestId('review-inbound-download-all')).not.toHaveClass('active');
+  });
+
+  it('renders Download all active when reviewInbound is false', () => {
+    render(<DashboardRibbon data={makeData()} reviewInbound={false} onReviewInboundChange={vi.fn()} />);
+    expect(screen.getByTestId('review-inbound-download-all')).toHaveClass('active');
+    expect(screen.getByTestId('review-inbound-download-all')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('review-inbound-review')).not.toHaveClass('active');
+  });
+
+  it('calls onReviewInboundChange(false) when Download all is clicked', () => {
+    const onChange = vi.fn();
+    render(<DashboardRibbon data={makeData()} reviewInbound onReviewInboundChange={onChange} />);
+    fireEvent.click(screen.getByTestId('review-inbound-download-all'));
+    expect(onChange).toHaveBeenCalledWith(false);
+  });
+
+  it('calls onReviewInboundChange(true) when Review is clicked', () => {
+    const onChange = vi.fn();
+    render(<DashboardRibbon data={makeData()} reviewInbound={false} onReviewInboundChange={onChange} />);
+    fireEvent.click(screen.getByTestId('review-inbound-review'));
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+});

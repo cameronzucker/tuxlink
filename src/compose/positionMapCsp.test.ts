@@ -9,14 +9,19 @@ function directiveTokens(csp: string, directive: string): string[] {
   return match?.split(/\s+/).slice(1) ?? [];
 }
 
-describe('Position map CSP', () => {
-  it('allows online OpenStreetMap raster tiles while preserving local image sources', () => {
-    const csp = tauriConfig.app.security.csp;
-    const imgSrc = directiveTokens(csp, 'img-src');
+describe('Position map CSP — offline-first, never public OSM', () => {
+  const csp = tauriConfig.app.security.csp;
+  const imgSrc = directiveTokens(csp, 'img-src');
+  const connectSrc = directiveTokens(csp, 'connect-src');
 
-    expect(imgSrc).toContain("'self'");
-    expect(imgSrc).toContain('data:');
-    expect(imgSrc).toContain('https://tile.openstreetmap.org');
-    expect(imgSrc).toContain('https://*.tile.openstreetmap.org');
+  it('forbids any OpenStreetMap tile host in img-src and connect-src', () => {
+    for (const tok of [...imgSrc, ...connectSrc]) expect(tok).not.toContain('openstreetmap');
+  });
+
+  it('preserves the load-bearing retain-list', () => {
+    // data: = position-form dropdown SVGs; 'self' = bundled world-map asset
+    expect(imgSrc).toEqual(expect.arrayContaining(["'self'", 'data:']));
+    // 'self' + the local WLE forms server (127.0.0.1) must survive the revert
+    expect(connectSrc).toEqual(expect.arrayContaining(["'self'", 'http://127.0.0.1:*']));
   });
 });

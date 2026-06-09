@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::winlink::inbound_selection::PendingProposalDto;
+
 /// Monotonic per-attempt correlation ID. Every event from one
 /// cms_connect / cms_connect_test invocation shares the same AttemptId.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -82,6 +84,17 @@ pub enum B2fEvent {
         raw: Option<String>,
         attempt_id: AttemptId,
     },
+    /// The CMS offered a batch of inbound proposals for operator review.
+    ///
+    /// SAFETY-CRITICAL: proposal strings MUST be redacted by the producer
+    /// (`PendingProposalDto::from_proposal_redacted`). The
+    /// `serde_lockdown_no_credential_fields_in_any_variant` test in this
+    /// file's tests mod catches this.
+    InboundProposalsOffered {
+        request_id: u64,
+        proposals: Vec<PendingProposalDto>,
+        attempt_id: AttemptId,
+    },
 }
 
 /// Sink trait the session/handshake/telnet layers emit through.
@@ -152,6 +165,59 @@ impl B2fEventSink for VecEventSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::winlink::inbound_selection::PendingProposalDto;
+    use crate::winlink::proposal::Proposal;
+
+    fn clean_proposal() -> Proposal {
+        Proposal {
+            code: 'C',
+            msg_type: "EM".to_string(),
+            mid: "3F8KD2MABCDE".to_string(),
+            size: 200,
+            compressed_size: 80,
+        }
+    }
+
+    // Test (a): InboundProposalsOffered serializes with all required fields.
+    #[test]
+    fn inbound_proposals_offered_serializes_correctly() {
+        let dto = PendingProposalDto::from_proposal_redacted(&clean_proposal());
+        let event = B2fEvent::InboundProposalsOffered {
+            attempt_id: AttemptId(7),
+            request_id: 3,
+            proposals: vec![dto],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"kind\":\"inbound_proposals_offered\""), "missing kind tag: {json}");
+        assert!(json.contains("\"attempt_id\":7"), "missing attempt_id: {json}");
+        assert!(json.contains("\"request_id\":3"), "missing request_id: {json}");
+        assert!(json.contains("\"mid\""), "missing mid key: {json}");
+        assert!(json.contains("\"uncompressed_size\""), "missing uncompressed_size key: {json}");
+        assert!(json.contains("\"compressed_size\""), "missing compressed_size key: {json}");
+    }
+
+    // Test (b): SECURITY — a token-carrying MID does NOT appear in the serialized event.
+    #[test]
+    fn inbound_proposals_offered_redacts_credential_token_in_mid() {
+        let poisoned_proposal = Proposal {
+            code: 'C',
+            msg_type: "EM".into(),
+            mid: "X ;PR: 72768415".into(),
+            size: 100,
+            compressed_size: 50,
+        };
+        let dto = PendingProposalDto::from_proposal_redacted(&poisoned_proposal);
+        let event = B2fEvent::InboundProposalsOffered {
+            attempt_id: AttemptId(1),
+            request_id: 99,
+            proposals: vec![dto],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            !json.contains("72768415"),
+            "credential token leaked into serialized InboundProposalsOffered: {json}"
+        );
+    }
 
     #[test]
     fn attempt_ids_are_monotonic_within_a_process() {
@@ -203,6 +269,11 @@ mod tests {
                 mode: FailureMode::PasswordRejected,
                 raw: None,
                 attempt_id: AttemptId(1),
+            },
+            B2fEvent::InboundProposalsOffered {
+                attempt_id: AttemptId(1),
+                request_id: 1,
+                proposals: vec![PendingProposalDto::from_proposal_redacted(&clean_proposal())],
             },
         ];
         for v in variants {

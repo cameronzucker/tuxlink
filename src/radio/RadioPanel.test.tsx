@@ -34,6 +34,33 @@ describe('<RadioPanel>', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  // tuxlink-6jpf: RF dial modes get a "Find a gateway" affordance in the panel
+  // chrome (opens the station finder). Telnet/P2P do not pass onFindGateway.
+  it('renders a Find a gateway button that calls onFindGateway when provided', () => {
+    const onFindGateway = vi.fn();
+    render(
+      <RadioPanel
+        mode={{ kind: 'ardop-hf', intent: 'cms' }}
+        onClose={() => {}}
+        onFindGateway={onFindGateway}
+      >
+        <div />
+      </RadioPanel>,
+    );
+    const btn = screen.getByTestId('radio-panel-find-gateway');
+    btn.click();
+    expect(onFindGateway).toHaveBeenCalledOnce();
+  });
+
+  it('omits the Find a gateway button when onFindGateway is not provided', () => {
+    render(
+      <RadioPanel mode={{ kind: 'telnet', intent: 'cms' }} onClose={() => {}}>
+        <div />
+      </RadioPanel>,
+    );
+    expect(screen.queryByTestId('radio-panel-find-gateway')).toBeNull();
+  });
+
   it('renders the state dot with the data-state attribute for CSS theming', () => {
     render(
       <RadioPanel

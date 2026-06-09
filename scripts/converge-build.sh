@@ -262,6 +262,14 @@ _disposable_is_clean() {
   [[ -d "${DISPOSABLE_WT_DIR}" ]] || return 0
   if ! git -C "${DISPOSABLE_WT_DIR}" diff --quiet 2>/dev/null; then return 1; fi
   if ! git -C "${DISPOSABLE_WT_DIR}" diff --quiet --cached 2>/dev/null; then return 1; fi
+  # A repo-root target/ is a convergence regression (a root Cargo workspace was
+  # reintroduced), never a legitimate cache — src-tauri/ and xtask/ own their
+  # target dirs. Refuse on its mere presence, independent of the currently
+  # checked-out commit's .gitignore: this check runs BEFORE the checkout to
+  # origin/main, so a worktree parked at a commit that still ignores /target/
+  # (e.g. the PR #428 window) would otherwise hide a stray root cache from
+  # --exclude-standard below. (Codex edvb.1 adrev 2026-06-09)
+  [[ -d "${DISPOSABLE_WT_DIR}/target" ]] && return 1
   # Untracked NON-gitignored files (cached node_modules + src-tauri/target
   # are gitignored, so --exclude-standard hides them).
   local untracked
@@ -334,6 +342,9 @@ ensure_disposable_worktree() {
     warn "or a manual edit. If intentional, commit + push elsewhere; if accidental,"
     warn "manually clean the specific source paths. Build caches (node_modules/,"
     warn "src-tauri/target/, src-tauri/gen/) are ignored by this guard."
+    warn "NOTE: a repo-root target/ also trips this guard (it signals a"
+    warn "reintroduced root Cargo workspace) and may not show in 'git status'"
+    warn "if a stale .gitignore ignores it — check: ls -d ${DISPOSABLE_WT_DIR}/target"
     audit "disposable_dirty" "$(printf '{"path":"%s"}' "${DISPOSABLE_WT_DIR}")"
     exit 4
   fi

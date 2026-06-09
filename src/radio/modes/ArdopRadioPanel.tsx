@@ -48,6 +48,8 @@ import '../sections/ListenSection.css';
 
 export interface ArdopRadioPanelProps {
   onClose: () => void;
+  /** tuxlink-6jpf: open the station finder ("Find a gateway") from the panel. */
+  onFindGateway?: () => void;
 }
 
 // ARQ state cells — same set the legacy ArdopDock surfaced; kept here
@@ -246,7 +248,7 @@ function resolveWebguiPort(cfg: Pick<ArdopFullConfig, 'cmd_port' | 'webgui_port'
   return null;
 }
 
-export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
+export function ArdopRadioPanel({ onClose, onFindGateway }: ArdopRadioPanelProps) {
   const { status } = useModemStatus();
   const [target, setTarget] = useState('');
   // ARQ bandwidth (restored 2026-05-31 — Codex P1). Loaded from
@@ -666,6 +668,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
       state={mapModemStateToPanelState(status.state)}
       sub={headerSub}
       onClose={onClose}
+      onFindGateway={onFindGateway}
     >
       {/* Connect surface — Favorites / Recent / Manual (Task B6-ARDOP). The
           hand-entry Target + Bandwidth fields are the Manual tab's content;
