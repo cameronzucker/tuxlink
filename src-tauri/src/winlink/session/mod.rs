@@ -371,8 +371,7 @@ where
         }
     };
 
-    let mut result = ExchangeResult::default();
-    result.relay_state = relay_state;
+    let mut result = ExchangeResult { relay_state, ..Default::default() };
     let mut remaining = outbound;
     let mut remote_no_messages = false;
     let mut my_turn = my_turn;
