@@ -30,20 +30,36 @@ export function computePanelMode(
   // Sidebar selection wins when present (operator's explicit context).
   if (reason.sidebarSelected !== null) {
     const { sessionType, protocol } = reason.sidebarSelected;
-    const intent: 'cms' | 'p2p' | 'radio-only' =
-      sessionType === 'p2p' ? 'p2p' :
-      sessionType === 'radio-only' ? 'radio-only' :
+    // post-office and network-po are telnet-only intents; non-telnet kinds
+    // do not support them and coerce them to cms below.
+    const intent: 'cms' | 'p2p' | 'radio-only' | 'post-office' | 'network-po' =
+      sessionType === 'p2p'         ? 'p2p' :
+      sessionType === 'radio-only'  ? 'radio-only' :
+      sessionType === 'post-office' ? 'post-office' :
+      sessionType === 'network-po'  ? 'network-po' :
       'cms';
     switch (protocol) {
       case 'telnet':
-        // telnet is not RF-bearing; radio-only degrades to cms
+        // telnet supports all intents; radio-only degrades to cms (no RF transport)
         return { kind: 'telnet', intent: intent === 'radio-only' ? 'cms' : intent };
       case 'packet':
-        // packet is not RF-bearing; radio-only degrades to cms
-        return { kind: 'packet', intent: intent === 'radio-only' ? 'cms' : intent };
-      case 'ardop-hf': return { kind: 'ardop-hf', intent };
-      case 'vara-hf':  return { kind: 'vara-hf',  intent };
-      case 'vara-fm':  return { kind: 'vara-fm',  intent };
+        // packet supports only cms|p2p; radio-only, post-office, network-po all
+        // coerce to cms (packet is not RF-bearing for Post Office sessions)
+        return { kind: 'packet', intent: intent === 'p2p' ? 'p2p' : 'cms' };
+      case 'ardop-hf': {
+        // ardop-hf supports cms|p2p|radio-only; post-office/network-po are
+        // telnet-only and coerce to cms for RF kinds
+        const rfIntent = (intent === 'post-office' || intent === 'network-po') ? 'cms' : intent;
+        return { kind: 'ardop-hf', intent: rfIntent };
+      }
+      case 'vara-hf': {
+        const rfIntent = (intent === 'post-office' || intent === 'network-po') ? 'cms' : intent;
+        return { kind: 'vara-hf', intent: rfIntent };
+      }
+      case 'vara-fm': {
+        const rfIntent = (intent === 'post-office' || intent === 'network-po') ? 'cms' : intent;
+        return { kind: 'vara-fm', intent: rfIntent };
+      }
     }
   }
 
