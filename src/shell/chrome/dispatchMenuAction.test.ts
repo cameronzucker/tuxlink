@@ -23,6 +23,7 @@ function handlers(): MenuHandlers {
     openCatalogRequest: vi.fn(),
     openCatalogBuilder: vi.fn(),
     openGribRequest: vi.fn(),
+    openRequestCenter: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -182,17 +183,20 @@ describe('dispatchMenuAction', () => {
     expect(h.openSettings).toHaveBeenCalledOnce();
   });
 
-  // tuxlink-ddiq: WLE catalog-request panel.
-  it('routes Message → Catalog Request to openCatalogRequest', () => {
+  // tuxlink-eymu: the Request Center replaces the standalone Catalog Request
+  // panel in the menu and absorbs the GRIB request as an inner view.
+  it('routes Message → Request Center to openRequestCenter (home view)', () => {
     const h = handlers();
-    dispatchMenuAction('menu:message:catalog_request', h);
-    expect(h.openCatalogRequest).toHaveBeenCalledOnce();
+    dispatchMenuAction('menu:message:request_center', h);
+    expect(h.openRequestCenter).toHaveBeenCalledOnce();
   });
 
-  // tuxlink-vrpk: Saildocs GRIB request panel.
-  it('routes Message → GRIB File Request to openGribRequest', () => {
+  // tuxlink-eymu: GRIB File Request now opens the Request Center directly on
+  // its GRIB view (the standalone GribRequestPanel is removed in F1).
+  it('routes Message → GRIB File Request to openRequestCenter with the grib view', () => {
     const h = handlers();
     dispatchMenuAction('menu:message:grib_request', h);
-    expect(h.openGribRequest).toHaveBeenCalledOnce();
+    expect(h.openRequestCenter).toHaveBeenCalledWith('grib');
+    expect(h.openGribRequest).not.toHaveBeenCalled();
   });
 });

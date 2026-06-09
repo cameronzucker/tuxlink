@@ -45,6 +45,10 @@ export interface MenuHandlers {
   /** Open the inline GRIB File Request panel (tuxlink-vrpk) — Saildocs
    *  GRIB-request form that routes through query@saildocs.com. */
   openGribRequest: () => void;
+  /** Open the inline Request Center overlay (tuxlink-eymu) — unified catalog
+   *  browse + WLE inquiries + Saildocs GRIB requests. The optional initialView
+   *  selects the inner view ('home' default; 'grib' from GRIB File Request…). */
+  openRequestCenter: (initialView?: 'home' | 'browse' | 'grib') => void;
   quit: () => void;
 }
 
@@ -64,10 +68,12 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:message:forward': h.forward(); return;
     case 'menu:message:archive': h.archive(); return;
     case 'menu:message:print': h.print(); return;
-    case 'menu:message:catalog_request': h.openCatalogRequest(); return;
+    // tuxlink-eymu: the Request Center replaces the standalone Catalog Request
+    // menu item. GRIB File Request… opens it directly on its 'grib' view.
+    case 'menu:message:request_center': h.openRequestCenter(); return;
     // tuxlink-6jpf: "Find a Gateway" relocated from Message → Tools.
     case 'menu:tools:find_gateway': h.openCatalogBuilder(); return;
-    case 'menu:message:grib_request': h.openGribRequest(); return;
+    case 'menu:message:grib_request': h.openRequestCenter('grib'); return;
     case 'menu:view:status_bar': h.toggleStatusBar(); return;
     case 'menu:view:radio_panel': h.toggleRadioPanel(); return;
     // tuxlink-39b: the consolidated GPS & Privacy settings item opens the inline

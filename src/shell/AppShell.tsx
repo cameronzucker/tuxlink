@@ -66,6 +66,12 @@ const CatalogBuilderPanel = lazy(() =>
 const GribRequestPanel = lazy(() =>
   import('../grib/GribRequestPanel').then((m) => ({ default: m.GribRequestPanel })),
 );
+// tuxlink-eymu: unified Request Center overlay (catalog browse + WLE inquiries
+// + Saildocs GRIB). Replaces the Catalog Request menu item and absorbs GRIB as
+// an inner view.
+const RequestCenter = lazy(() =>
+  import('../request/RequestCenter').then((m) => ({ default: m.RequestCenter })),
+);
 // tuxlink-bsiy: inline pending-message selection panel ("Review Pending
 // Messages"). Event-driven — useInboundSelection (below) subscribes to the
 // b2f-event channel and surfaces a prompt; the panel only paints when a
@@ -283,6 +289,10 @@ export function AppShell() {
   // Inline GRIB request panel (tuxlink-vrpk), opened from Message → GRIB
   // File Request. Composes a Saildocs request and queues it in the outbox.
   const [gribRequestOpen, setGribRequestOpen] = useState(false);
+  // tuxlink-eymu: Request Center overlay. Carries the initial inner view;
+  // null = closed. Opened from Message → Request Center… ('home') and from
+  // Message → GRIB File Request… ('grib').
+  const [requestCenter, setRequestCenter] = useState<{ initialView: 'home' | 'browse' | 'grib' } | null>(null);
   // tuxlink-qjgx Task 8: Report Issue modal state. The controller drives the
   // Save As → export → GitHub URL flow; AppShell owns the state so the modal
   // can be positioned in the global overlay layer.
@@ -757,6 +767,7 @@ export function AppShell() {
     openCatalogRequest: () => setCatalogRequestOpen(true),
     openCatalogBuilder: () => setCatalogBuilderOpen(true),
     openGribRequest: () => setGribRequestOpen(true),
+    openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage, archiveOpen, reportIssueController]);
 
@@ -1157,6 +1168,12 @@ export function AppShell() {
       {gribRequestOpen && (
         <Suspense fallback={null}>
           <GribRequestPanel onClose={() => setGribRequestOpen(false)} />
+        </Suspense>
+      )}
+
+      {requestCenter && (
+        <Suspense fallback={null}>
+          <RequestCenter initialView={requestCenter.initialView} onClose={() => setRequestCenter(null)} />
         </Suspense>
       )}
 
