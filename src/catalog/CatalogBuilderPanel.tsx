@@ -49,6 +49,17 @@ export function CatalogBuilderPanel({ onClose }: CatalogBuilderPanelProps) {
   const [queueState, setQueueState] = useState<QueueState>({ kind: 'idle' });
   const stations = useStations();
 
+  // tuxlink-29zx: Escape closes the panel — the keyboard dismiss path alongside
+  // the × button and backdrop click. Document-level so it fires regardless of
+  // which element inside the panel currently holds focus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   useEffect(() => {
     // Full-precision home grid for distance origin (NOT the precision-reduced status-bar grid).
     invoke<{ grid: string | null }>('config_read')
@@ -100,8 +111,15 @@ export function CatalogBuilderPanel({ onClose }: CatalogBuilderPanelProps) {
   };
 
   return (
-    <div className="catalog-builder-overlay" role="dialog" aria-label="Find a Gateway">
-      <div className="catalog-builder">
+    <div
+      className="catalog-builder-overlay"
+      data-testid="catalog-builder-overlay"
+      role="dialog"
+      aria-label="Find a Gateway"
+      onClick={onClose}
+    >
+      {/* Stop backdrop-dismiss from firing on clicks inside the panel itself. */}
+      <div className="catalog-builder" onClick={(e) => e.stopPropagation()}>
         <header className="catalog-builder__header">
           <h2>Find a Gateway</h2>
           <button className="catalog-builder__close" onClick={onClose} aria-label="Close">
