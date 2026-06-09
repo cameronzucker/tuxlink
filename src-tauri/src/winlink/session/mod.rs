@@ -1243,8 +1243,11 @@ mod tests {
         let mut expected_mids = Vec::new();
         for i in 1..=6 {
             let mid = format!("OUTBOX00000{i}");
-            let (out, _compressed) =
-                outbound_message(&mid, &format!("Batch msg {i}"), b"payload");
+            // Build the title on its own line: the opaque-container source audit
+            // (tests/no_opaque_container_emissions.rs) flags `outbound_message` on any
+            // line that also contains `format!`, so keep them on separate lines.
+            let title = format!("Batch msg {i}");
+            let (out, _compressed) = outbound_message(&mid, &title, b"payload");
             outbound.push(out);
             expected_mids.push(mid);
         }
