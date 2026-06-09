@@ -5,6 +5,24 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 import { invoke } from '@tauri-apps/api/core';
 import { CatalogBuilderPanel } from './CatalogBuilderPanel';
 
+// Raw CSS for the stacking-order invariant (tuxlink-tsl5). The modal overlay must
+// paint ABOVE the app chrome (titlebar/menubar/resize) or its header + × land
+// behind the chrome and become unreachable.
+const CSS_RAW = import.meta.glob(
+  ['./CatalogBuilderPanel.css', '../shell/chrome/chrome.css'],
+  { query: '?raw', import: 'default', eager: true },
+) as Record<string, string>;
+const builderCss = CSS_RAW['./CatalogBuilderPanel.css'];
+const chromeCss = CSS_RAW['../shell/chrome/chrome.css'];
+
+const maxZIndex = (css: string): number =>
+  Math.max(...[...css.matchAll(/z-index:\s*(\d+)/g)].map((m) => Number(m[1])));
+const overlayZIndex = (css: string): number => {
+  const start = css.indexOf('.catalog-builder-overlay');
+  const block = css.slice(start, css.indexOf('}', start));
+  return Number(block.match(/z-index:\s*(\d+)/)?.[1]);
+};
+
 beforeEach(() => {
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -90,5 +108,16 @@ describe('CatalogBuilderPanel', () => {
     render(<CatalogBuilderPanel onClose={onClose} />);
     fireEvent.click(await screen.findByLabelText(/your location/i));
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+// tuxlink-tsl5 (follow-up to tuxlink-29zx): the dialog shipped at z-index 50 —
+// below the app chrome (menubar 90 / dropdown 100 / resize 200) — so a tall
+// panel's header and × landed behind the chrome and were unreachable (operator:
+// "controls outside the top of the main window"). The overlay must stack above
+// ALL chrome.
+describe('CatalogBuilderPanel.css stacking order (tuxlink-tsl5)', () => {
+  it('overlay stacks above every app-chrome z-index', () => {
+    expect(overlayZIndex(builderCss)).toBeGreaterThan(maxZIndex(chromeCss));
   });
 });
