@@ -14,6 +14,7 @@
 import { useEffect, useRef } from 'react';
 import type { MailboxFolderRef, UserFolder } from './types';
 import type { MessageMeta } from './types';
+import { folderBearsReadState } from './readState';
 import './userFolders.css';
 
 export interface MessageContextMenuProps {
@@ -22,6 +23,9 @@ export interface MessageContextMenuProps {
   x: number;
   y: number;
   userFolders: UserFolder[];
+  /// Called with `read=true` (unread→read) or `read=false` (read→unread).
+  /// Only rendered when `folderBearsReadState(folder)` is true.
+  onSetReadState?: (read: boolean) => void;
   onMoveTo: (toFolder: MailboxFolderRef) => void;
   onArchive: () => void;
   onClose: () => void;
@@ -42,6 +46,7 @@ export function MessageContextMenu({
   x,
   y,
   userFolders,
+  onSetReadState,
   onMoveTo,
   onArchive,
   onClose,
@@ -86,6 +91,20 @@ export function MessageContextMenu({
       className="tux-ctx-menu"
       style={{ position: 'fixed', left, top, minWidth: MENU_W }}
     >
+      {folderBearsReadState(folder) && (
+        <>
+          <button
+            type="button"
+            role="menuitem"
+            className="tux-ctx-item"
+            data-testid="ctx-set-read-state"
+            onClick={actAndClose(() => onSetReadState?.(message.unread))}
+          >
+            {message.unread ? 'Mark as read' : 'Mark as unread'}
+          </button>
+          <div className="tux-ctx-separator" />
+        </>
+      )}
       <div className="tux-ctx-label" data-testid="ctx-msg-header">
         Move to
       </div>

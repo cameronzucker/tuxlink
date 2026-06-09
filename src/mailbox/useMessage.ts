@@ -14,10 +14,11 @@
 // The `buildMessageQueryKey` and `buildMessageQueryOptions` exports are
 // factored out for unit testing without requiring a QueryClientProvider.
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import type { ParsedMessage, MailboxFolderRef, UiError } from './types';
+import { folderBearsReadState } from './readState';
 import { DEV_FIXTURE, devMessageFor } from './devFixture';
 
 // ============================================================================
@@ -83,17 +84,28 @@ export function useMessage(selection: MessageSelection | null) {
   const result = useQuery(buildMessageQueryOptions(selection));
   const queryClient = useQueryClient();
 
-  // Opening an inbox message marks it read server-side (message_read →
-  // mark_read). Refresh the mailbox lists so the unread badge updates promptly
-  // instead of waiting for the 10s poll. Inbox-only — Sent/Outbox have no unread
-  // concept. `selection.id` + `dataUpdatedAt` key the effect to each successful
-  // (re)load so it fires once per opened message, not on every render.
-  const inboxLoaded = result.isSuccess && selection?.folder === 'inbox';
+  // Mark the message read on open — once per open transition, never on a
+  // refetch. A ref records the last (folder/id) key that was marked so that
+  // re-renders / TanStack background refetches do NOT re-fire the mark, which
+  // would clobber an explicit "Mark Unread" applied to the currently-open
+  // message (design §1.4). After the mark completes, invalidate ['mailbox'] so
+  // the unread badge updates promptly instead of waiting for the 10s poll.
+  // Received-mail folders only (inbox / archive / user-folder slugs);
+  // sent / outbox / drafts / deleted carry no read-state.
+  const markedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (inboxLoaded) {
-      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
-    }
-  }, [inboxLoaded, selection?.id, result.dataUpdatedAt, queryClient]);
+    if (!selection || !result.isSuccess) return;
+    if (!folderBearsReadState(selection.folder)) return;
+    const key = `${selection.folder}/${selection.id}`;
+    if (markedRef.current === key) return; // once per open transition, not per refetch
+    markedRef.current = key;
+    // Best-effort: on failure the ref stays set (no retry this open); the badge self-heals via the mailbox poll or the next distinct open.
+    void invoke('message_set_read_state', {
+      folder: selection.folder,
+      id: selection.id,
+      read: true,
+    }).then(() => queryClient.invalidateQueries({ queryKey: ['mailbox'] })).catch(() => {});
+  }, [selection?.folder, selection?.id, result.isSuccess, queryClient]);
 
   // Dev fixture: when the real backend has no data (empty / NotConfigured) and
   // the dev fixture is active (vite dev server only), surface a sample parsed
