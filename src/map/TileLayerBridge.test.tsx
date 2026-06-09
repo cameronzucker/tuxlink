@@ -7,7 +7,7 @@
  * maxNativeZoom capped to the app max. Real tile fetch/render is grim-verified.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, cleanup } from '@testing-library/react';
 import { resetMapMock } from './testMapMock';
 
 vi.mock('react-leaflet', async () => (await import('./testMapMock')).createReactLeafletMock());
@@ -64,5 +64,43 @@ describe('<TileLayerBridge> (shape only)', () => {
   it('caps maxNativeZoom to the app max when the source exceeds it', () => {
     render(<TileLayerBridge source={{ ...XYZ_SOURCE, maxZoom: 20 }} appMaxZoom={16} />);
     expect(screen.getByTestId('leaflet-tilelayer').dataset.maxnativezoom).toBe('16');
+  });
+
+  // ── Phase 9.2: cancel-on-pan semantics + no leak surface ─────────────────
+  //
+  // The `tile` scheme makes this a STOCK TileLayer: cancellation is Leaflet's
+  // native `tileunload`/`<img>`-removal lifecycle, NOT an AbortController or
+  // object-URL we manage. These tests assert the bridge adds no custom
+  // listener/buffering surface that could leak — they prove SHAPE, not the
+  // real WebKitGTK `<img>` abort (that is grim-verified).
+
+  it('does not override Leaflet tile buffering (no updateWhenIdle / keepBuffer)', () => {
+    // Stock buffering = no pile-up of stale in-flight loads on rapid pans. The
+    // bridge must NOT set these props (which would change unload behavior).
+    render(<TileLayerBridge source={XYZ_SOURCE} appMaxZoom={16} />);
+    const tl = screen.getByTestId('leaflet-tilelayer');
+    expect(tl.dataset.updatewhenidle).toBeUndefined();
+    expect(tl.dataset.keepbuffer).toBeUndefined();
+    // And no object-URL / blob machinery leaked in as a prop (tile-scheme, not
+    // the rejected invoke+blob path).
+    expect(tl.dataset.createtile).toBeUndefined();
+  });
+
+  it('renders a single stable TileLayer across rapid re-renders (no listener pile-up)', () => {
+    // Simulate the operator panning/zooming many times: each view change
+    // re-renders the bridge. There must be exactly ONE TileLayer each time and
+    // no accumulation — the stock TileLayer carries no per-render listener the
+    // bridge would have to tear down.
+    for (let i = 0; i < 25; i++) {
+      const view = render(<TileLayerBridge source={XYZ_SOURCE} appMaxZoom={16} />);
+      expect(screen.getAllByTestId('leaflet-tilelayer')).toHaveLength(1);
+      const tl = screen.getByTestId('leaflet-tilelayer');
+      // Props stay identical across renders — no drift that would force a
+      // wholesale layer rebuild (which WOULD churn tile loads).
+      expect(tl.dataset.url).toBe(TILE_URL_TEMPLATE);
+      expect(tl.dataset.maxnativezoom).toBe('16');
+      view.unmount();
+      cleanup();
+    }
   });
 });

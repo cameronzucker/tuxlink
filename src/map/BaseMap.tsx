@@ -15,8 +15,8 @@
  * WebKitGTK, NOT through the react-leaflet test mock (C1).
  *
  * C11 WIDENING (Phase 7.3, tuxlink-dyop LAN-tiles plan). The frozen C11
- * interface gains ONE optional prop, `tileSource`, ON PURPOSE: a validated LAN
- * tile source (status `lan-live`/`lan-cached`) renders a `<TileLayerBridge>`
+ * interface gains ONE optional prop, `tileSource`, ON PURPOSE: a tile-backed LAN
+ * source (status `lan-live`/`lan-cached`/`partial`) renders a `<TileLayerBridge>`
  * ABOVE the always-present bundled raster, and the zoom cap rises from 2 to the
  * source's validated max (capped at 16). Every other status — and the absent
  * prop — leaves the map exactly as before (raster-only, maxZoom 2). The raster
@@ -25,6 +25,13 @@
  * raster-native zoom the tile layer (not a stretched raster) governs the view
  * (§8.5). The widening is additive — existing consumers that pass no
  * `tileSource` are unaffected.
+ *
+ * §8.5 `partial` reconcile (Phase 9.2). `partial` is a LIVE source with some
+ * 404s; it is tile-backed exactly like `lan-live`/`lan-cached` — the layer
+ * stays rendered and the zoom cap stays raised. The 404 tiles themselves get
+ * the no-coverage treatment (raster beneath at/below raster-native zoom; NO
+ * stretched raster above, which is Leaflet's default for a tile that fails to
+ * load above `maxNativeZoom`).
  */
 import type { ReactNode } from 'react';
 import { MapContainer, ImageOverlay, useMapEvents } from 'react-leaflet';
@@ -64,9 +71,24 @@ export interface BaseMapProps {
   tileSource?: { source: TileSource; status: TileSourceStatus };
 }
 
-/** True when a status backs a live/cached tile layer the map may serve. */
+/**
+ * True when a status backs a tile layer the map may serve: `lan-live`,
+ * `lan-cached`, OR `partial`.
+ *
+ * `partial` (§8.5 "LAN live (partial)") is a LIVE source with some 404s above
+ * its raster-native zoom — the TileLayer MUST stay rendered (and the zoom cap
+ * raised) so the served zoom levels keep showing real tiles; a 404 tile falls
+ * back to the bundled raster beneath at/below raster-native zoom and to nothing
+ * (no stretched raster) above it, per Leaflet's default for a failed tile above
+ * `maxNativeZoom`. Dropping the layer on `partial` would regress the whole view
+ * to the coarse raster the moment a single edge tile is missing.
+ */
 function isTileBacked(status: TileSourceStatus | undefined): boolean {
-  return status?.kind === 'lan-live' || status?.kind === 'lan-cached';
+  return (
+    status?.kind === 'lan-live' ||
+    status?.kind === 'lan-cached' ||
+    status?.kind === 'partial'
+  );
 }
 
 /** Bridges Leaflet's click event to `onMapClick`, clamped to the world rectangle. */
@@ -91,8 +113,10 @@ export function BaseMap({
     : [0, 0];
 
   const tileBacked = isTileBacked(tileSource?.status);
-  // Zoom rises to the validated source max (capped at 16) ONLY when a
-  // lan-live/lan-cached source backs the view; otherwise stay at raster-native.
+  // Zoom rises to the validated source max (capped at 16) when a tile-backed
+  // source (lan-live/lan-cached/partial) backs the view; otherwise stay at
+  // raster-native. `partial` keeps the raised cap so the served levels still
+  // show real tiles (§8.5).
   const maxZoom = tileBacked
     ? Math.min(tileSource!.source.maxZoom, TILE_MAX_ZOOM_CAP)
     : RASTER_MAX_ZOOM;

@@ -107,6 +107,23 @@ describe('<BaseMap> (shape only)', () => {
     expect(screen.getByTestId('leaflet-map').dataset.maxzoom).toBe('16');
   });
 
+  // §8.5 `partial` is a LIVE source with some 404s — it MUST keep the TileLayer
+  // rendered and the zoom cap raised (Phase 9.2 reconcile). Dropping the layer
+  // would regress the whole view to the coarse raster the moment one edge tile
+  // is missing.
+  it('renders the TileLayer and raises maxZoom when status is partial', () => {
+    render(<BaseMap tileSource={{ source: SOURCE, status: status('partial') }} />);
+    const tl = screen.getByTestId('leaflet-tilelayer');
+    expect(tl).toBeInTheDocument();
+    expect(screen.getByTestId('leaflet-map').dataset.maxzoom).toBe('16');
+    // Layer still DOM-ordered above the always-present bundled raster, so a 404
+    // tile reveals the raster beneath rather than a grey void.
+    const overlay = screen.getByTestId('image-overlay');
+    expect(
+      overlay.compareDocumentPosition(tl) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it('caps the raised maxZoom at 16 even when the source max exceeds it', () => {
     render(
       <BaseMap tileSource={{ source: { ...SOURCE, maxZoom: 19 }, status: status('lan-live') }} />,
