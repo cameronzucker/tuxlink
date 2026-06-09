@@ -373,6 +373,7 @@ pub fn run() {
             crate::ui_commands::folder_create,         // tuxlink-f62f
             crate::ui_commands::folder_delete,         // tuxlink-f62f
             crate::ui_commands::folder_rename,         // tuxlink-ejph (Phase 3)
+            crate::ui_commands::folder_move,           // tuxlink-ka3z (nesting)
             crate::ui_commands::message_read,          // Task 13 (tuxlink-y5c)
             crate::ui_commands::message_set_read_state, // tuxlink-etxt (read/unread)
             crate::ui_commands::message_set_read_state_bulk, // tuxlink-etxt (bulk read/unread)

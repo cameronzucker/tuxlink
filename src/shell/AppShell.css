@@ -587,6 +587,22 @@
   font-size: 11px;
   flex: 0 0 auto;
 }
+/* Nested-folder twisty (tuxlink-ka3z). The expand/collapse chevron on a parent
+   row, and an equal-width spacer on childless rows so icons stay aligned. */
+.layout-b .sidebar .nav-item .folder-twisty,
+.layout-b .sidebar .nav-item .folder-twisty-spacer {
+  width: 12px;
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.layout-b .sidebar .nav-item .folder-twisty {
+  cursor: pointer;
+}
+.layout-b .sidebar .nav-item .folder-twisty:hover {
+  color: var(--accent);
+}
 .layout-b .sidebar .nav-item.active {
   background: var(--accent-soft);
   color: var(--accent-2);

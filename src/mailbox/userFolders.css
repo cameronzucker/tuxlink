@@ -79,6 +79,23 @@
   color: var(--error);
   background: rgba(238, 107, 107, 0.12);
 }
+/* Non-interactive hint row in the context menu (tuxlink-ka3z) — e.g. when a
+   folder with children cannot be nested. Muted, no hover affordance. */
+.tux-ctx-item-disabled {
+  color: var(--text-faint);
+  font-style: italic;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Delete-dialog blast-radius warning (tuxlink-ka3z A8) — flags that the delete
+   cascades to subfolders before the operator confirms. */
+.tux-folder-help--warn {
+  color: var(--warning, #e0a44a);
+  border-left: 2px solid var(--warning, #e0a44a);
+  padding-left: 8px;
+  margin-bottom: 8px;
+}
 
 .tux-ctx-separator {
   height: 1px;
