@@ -104,12 +104,13 @@ impl Mailbox {
             let raw = fs::read(&path)?;
             if let Ok(msg) = Message::from_bytes(&raw) {
                 let mut meta = meta_from_message(&msg);
-                // Unread is a received-mail concept: only the Inbox surfaces it
-                // (the Mock B sidebar shows Sent as a total, not an unread
-                // count). A message is unread until a `<mid>.read` sidecar marks
-                // it read.
+                // Unread is a received-mail concept: the Inbox and Archive (which
+                // holds received mail) surface it. Sent/Outbox are the
+                // operator's own messages. A message is unread until a
+                // `<mid>.read` sidecar marks it read.
                 meta.unread =
-                    folder == MailboxFolder::Inbox && !path.with_extension("read").exists();
+                    matches!(folder, MailboxFolder::Inbox | MailboxFolder::Archive)
+                        && !path.with_extension("read").exists();
                 metas.push(meta);
             }
         }
@@ -370,11 +371,11 @@ impl Mailbox {
     }
 
     /// List messages in a user folder. Mirrors [`Mailbox::list`]'s sort order
-    /// (newest first, id ascending as tiebreaker). User folders don't track
-    /// unread state today; every message reports `unread: false`.
+    /// (newest first, id ascending as tiebreaker). User folders hold received
+    /// mail; unread state is surfaced from the `<mid>.read` sidecar.
     pub fn list_user(&self, slug: &str) -> Result<Vec<MessageMeta>, BackendError> {
         let dir = user_folders::folder_dir(&self.root, slug);
-        Self::list_dir(&dir, /*surface_unread=*/ false)
+        Self::list_dir(&dir, /*surface_unread=*/ true)
     }
 
     /// Read a raw message from a user folder. Returns `NotFound` if the slug
@@ -639,9 +640,9 @@ mod tests {
 
     #[test]
     fn non_inbox_folders_never_report_unread() {
-        // Unread is a received-mail (Inbox) concept; the Mock B sidebar shows
-        // Sent as a total, not an unread count. Sent/Outbox/Archive must always
-        // report unread = false even with no read-marker on disk.
+        // Unread is a received-mail concept; the Mock B sidebar shows Sent as
+        // a total, not an unread count. Sent/Outbox must always report unread =
+        // false even with no read-marker on disk.
         let dir = tempdir().unwrap();
         let mbox = Mailbox::new(dir.path());
         mbox.store(MailboxFolder::Sent, &raw("S", "x")).unwrap();
@@ -649,6 +650,28 @@ mod tests {
 
         assert!(!mbox.list(MailboxFolder::Sent).unwrap()[0].unread);
         assert!(!mbox.list(MailboxFolder::Outbox).unwrap()[0].unread);
+    }
+
+    #[test]
+    fn archive_messages_surface_unread() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let id = mbox.store(MailboxFolder::Archive, &raw("A", "x")).unwrap();
+        assert!(mbox.list(MailboxFolder::Archive).unwrap()[0].unread, "archived received mail surfaces unread");
+
+        mbox.set_read_state(&FolderRef::System(MailboxFolder::Archive), &id, true).unwrap();
+        assert!(!mbox.list(MailboxFolder::Archive).unwrap()[0].unread);
+    }
+
+    #[test]
+    fn user_folder_messages_surface_unread() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let uf = mbox.create_user_folder("Skywarn").unwrap();
+        let id = mbox.store(MailboxFolder::Inbox, &raw("Net", "x")).unwrap();
+        mbox.move_between(FolderRef::System(MailboxFolder::Inbox), FolderRef::User(uf.slug.clone()), &id).unwrap();
+
+        assert!(mbox.list_user(&uf.slug).unwrap()[0].unread, "received mail in a user folder surfaces unread");
     }
 
     #[test]
