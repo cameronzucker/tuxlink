@@ -104,7 +104,8 @@ Review the batch from multiple perspectives (correctness, test quality, scope cr
 
 ### Task A4: catalog mapping helpers
 **Files:** Create `src/request/catalogMap.ts`, `catalogMap.test.ts`. Depends on A0 (`CatalogEntry`).
-- [ ] **Test:** `bestStateForecast(entries, 'WA')` returns the `WX_US_WA` entry whose description matches `/state forecast/i`, preferring a non-tabular `*_FOR_*` filename over `*_TAB_*`; returns `null` if none. `NATIONAL = { propagation:'PROP_3DAY', solar:'PROP_WWV', aurora:'AUR_TONIGHT', winlinkInfo:'INQUIRIES' }`; `gatewayListFilenames(entries)` returns the `WL2K_RMS` `PUB_*` filenames present.
+- [ ] **Test:** `bestStateForecast(entries, 'WA')` returns the `WX_US_WA` entry whose description matches `/state forecast/i`, preferring a non-tabular `*_FOR_*` filename over `*_TAB_*`, **falling back to a tabular entry if that's all that exists**, and returning `null` if the state has none. Include a no-state-forecast case: `bestStateForecast(entries, 'AK')` → `null` → the card hides. `NATIONAL = { propagation:'PROP_3DAY', solar:'PROP_WWV', aurora:'AUR_TONIGHT', winlinkInfo:'INQUIRIES' }`; `gatewayListFilenames(entries)` returns the `WL2K_RMS` `PUB_*` filenames present.
+- [ ] **Coverage reality (Codex-verified 2026-06-09 — fallback is PRIMARY, not defensive):** of 51 `WX_US_<ST>` buckets, **14 have no state-forecast entry** (AK VT SD NM MD NH MA KS DE PR KY SC RI IL → card must hide), **28 are tabular-only** (card resolves to a `*_TAB_*` entry), and only **9** have a clean `*_FOR_*`. The "State forecast" card therefore commonly shows a tabular forecast or is absent. Do NOT assume a clean state forecast exists.
 - [ ] Run red → implement pure helpers over `CatalogEntry[]` → green → commit.
 
 **→ Run the review loop for Group A.**
