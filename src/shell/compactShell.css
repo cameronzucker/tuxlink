@@ -200,6 +200,27 @@
     font-size: 13px;
     flex: 0 0 auto;
   }
+  .layout-b .sidebar-flyout .nav-item .icon.folder-indicator {
+    display: grid;
+    place-items: center;
+    height: 14px;
+  }
+  .layout-b .sidebar-flyout .nav-item .icon.folder-indicator::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid currentColor;
+    border-radius: 999px;
+    background: transparent;
+    box-sizing: border-box;
+  }
+  .layout-b .sidebar-flyout .nav-item.active .icon.folder-indicator::before {
+    background: currentColor;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .layout-b .sidebar-flyout .nav-item .icon.folder-indicator[data-has-count="true"]::before {
+    border-color: var(--accent);
+  }
   .layout-b .sidebar-flyout .nav-item.active .icon {
     color: var(--accent);
   }
