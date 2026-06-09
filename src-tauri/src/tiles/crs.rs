@@ -234,6 +234,61 @@ pub async fn probe_source_crs(client: &reqwest::Client, source: &TileSource) -> 
     CrsCheck::Unknown
 }
 
+// ─── geodetic_tile_index ──────────────────────────────────────────────────────
+
+/// Compute the `(tile_x, tile_y)` index for a `(lon, lat)` point at zoom
+/// level `z` under the **WorldCRS84Quad / `gdal2tiles --profile=geodetic`**
+/// convention (EPSG:4326 equirectangular).
+///
+/// ## Tile-numbering convention
+///
+/// The world is **2 tiles wide × 1 tile tall at z=0** (lon ∈ \[-180, 180\] →
+/// 2 columns; lat ∈ \[-90, 90\] → 1 row). At zoom `z`:
+///
+/// - Columns: `2^(z+1)` total; `x = floor((lon + 180) / 360 * 2^(z+1))`
+/// - Rows (Y=0 at north): `2^z` total; `y = floor((90 - lat) / 180 * 2^z)`
+///
+/// This is **linear in latitude** — constant Δy per degree — which is the
+/// distinguishing property of the equirectangular projection. A Web Mercator
+/// source uses a log-tangent y mapping and would NOT satisfy the alignment
+/// fixture in the tests.
+///
+/// ## Alignment with the frontend projection
+///
+/// Matches `src/map/projection.ts` `latLonToPixel`:
+/// ```text
+/// x_pixel = ((lon + 180) / 360) * width
+/// y_pixel = ((90 - lat) / 180) * height
+/// ```
+/// Dividing pixel space into `2^(z+1)` columns × `2^z` rows of 256 px each
+/// gives exactly the formula above (the same linear numerator/denominator).
+///
+/// ## Clamping
+///
+/// - `lon` is clamped to `[-180, 180]`.
+/// - `lat` is clamped to `[-90, 90]`.
+/// - The date-line column is clamped to `2^(z+1) - 1` (lon=180 maps to the
+///   last column rather than overflowing).
+/// - The south-pole row is clamped to `2^z - 1` (lat=-90 maps to the last
+///   row rather than overflowing).
+pub fn geodetic_tile_index(lon: f64, lat: f64, z: u32) -> (u32, u32) {
+    let lon = lon.clamp(-180.0, 180.0);
+    let lat = lat.clamp(-90.0, 90.0);
+
+    let cols = 1u32 << (z + 1); // 2^(z+1)
+    let rows = 1u32 << z; // 2^z
+
+    let x_f = (lon + 180.0) / 360.0 * (cols as f64);
+    let y_f = (90.0 - lat) / 180.0 * (rows as f64);
+
+    // floor → integer tile index, then clamp to valid range (handles edge values
+    // lon=180 and lat=-90 which would otherwise produce an out-of-range index).
+    let x = (x_f.floor() as u32).min(cols - 1);
+    let y = (y_f.floor() as u32).min(rows - 1);
+
+    (x, y)
+}
+
 // ─── Tests (Task 4.1 — probe_source_crs) ─────────────────────────────────────
 
 #[cfg(test)]
@@ -472,5 +527,103 @@ mod tests {
         let src = source(&server.url());
         let check = probe_source_crs(&plain_client(), &src).await;
         assert_eq!(check, CrsCheck::Rejected, "WMTS WebMercatorQuad must be Rejected");
+    }
+
+    // ── Task 4.2: geodetic_tile_index alignment fixture ─────────────────────
+    //
+    // WorldCRS84Quad convention at z=6:
+    //   cols = 2^(6+1) = 128   rows = 2^6 = 64
+    //   x = floor((lon + 180) / 360 * 128)
+    //   y = floor((90 - lat) / 180 * 64)
+    //
+    // This formula is LINEAR in latitude: Δy per degree = 64/180 ≈ 0.3556.
+    // A Mercator source would use y = floor((π - ln(tan(π/4 + lat*π/360))) / (2π) * 64),
+    // which produces non-uniform Δy per degree — the fixture catches this.
+    //
+    // Alignment with projection.ts `latLonToPixel` (verified against the source):
+    //   x_pixel = ((lon + 180) / 360) * width   →  same linear formula
+    //   y_pixel = ((90 - lat) / 180) * height   →  same linear formula
+    // Dividing into 128×64 tile-sized bins is exactly the formula above.
+
+    /// lon=0, lat=0 (equator, prime meridian) at z=6
+    #[test]
+    fn geodetic_tile_equator() {
+        // lon=0:   x = floor((0+180)/360 * 128) = floor(64.0) = 64
+        // lat=0:   y = floor((90-0)/180 * 64)   = floor(32.0) = 32
+        let (x, y) = geodetic_tile_index(0.0, 0.0, 6);
+        assert_eq!(x, 64, "equator lon=0 tile x");
+        assert_eq!(y, 32, "equator lat=0 tile y");
+    }
+
+    /// lon=0, lat=45 (mid-latitude) at z=6
+    #[test]
+    fn geodetic_tile_mid_latitude() {
+        // lat=45:  y = floor((90-45)/180 * 64) = floor(45/180 * 64) = floor(16.0) = 16
+        let (x, y) = geodetic_tile_index(0.0, 45.0, 6);
+        assert_eq!(x, 64, "mid-lat lon=0 tile x");
+        assert_eq!(y, 16, "mid-lat lat=45 tile y");
+    }
+
+    /// lon=0, lat=80 (high latitude) at z=6
+    #[test]
+    fn geodetic_tile_high_latitude() {
+        // lat=80:  y = floor((90-80)/180 * 64) = floor(10/180 * 64) = floor(3.555…) = 3
+        let (x, y) = geodetic_tile_index(0.0, 80.0, 6);
+        assert_eq!(x, 64, "high-lat lon=0 tile x");
+        assert_eq!(y, 3, "high-lat lat=80 tile y");
+    }
+
+    /// KEY alignment property: the Y-index spacing per degree of latitude is CONSTANT
+    /// (equirectangular, linear). This is the property that a Web Mercator source
+    /// violates: Mercator has growing y-spacing at higher latitudes (log-tangent stretch).
+    ///
+    /// For each test latitude we compute the EXPECTED y index from the linear formula
+    /// directly and assert exact equality, locking the constant-unit-spacing invariant.
+    #[test]
+    fn geodetic_tile_y_spacing_is_linear() {
+        let z: u32 = 6;
+        let rows = 1u32 << z; // 64
+
+        for lat in [-80i32, -45, 0, 45, 80] {
+            let lat_f = lat as f64;
+            let expected_y = ((90.0 - lat_f) / 180.0 * rows as f64).floor() as u32;
+            let expected_y = expected_y.min(rows - 1);
+            let (_, y) = geodetic_tile_index(0.0, lat_f, z);
+            assert_eq!(
+                y, expected_y,
+                "linear y spacing violated at lat={lat_f}: expected {expected_y} got {y}"
+            );
+        }
+    }
+
+    /// Boundary: lon=180 clamps to last column (not overflow).
+    #[test]
+    fn geodetic_tile_dateline_clamp() {
+        let (x, _y) = geodetic_tile_index(180.0, 0.0, 6);
+        let cols = 1u32 << 7; // 128 at z=6
+        assert!(x < cols, "lon=180 must not overflow: x={x} cols={cols}");
+        assert_eq!(x, cols - 1, "lon=180 should map to last column");
+    }
+
+    /// Boundary: lat=-90 clamps to last row (not overflow).
+    #[test]
+    fn geodetic_tile_south_pole_clamp() {
+        let (_x, y) = geodetic_tile_index(0.0, -90.0, 6);
+        let rows = 1u32 << 6; // 64 at z=6
+        assert!(y < rows, "lat=-90 must not overflow: y={y} rows={rows}");
+        assert_eq!(y, rows - 1, "lat=-90 should map to last row");
+    }
+
+    /// z=0: the world is 2 columns × 1 row (the defining property of WorldCRS84Quad).
+    #[test]
+    fn geodetic_tile_zoom_zero() {
+        // Western hemisphere: lon=-90 → x=0, lat=0 → y=0
+        let (x, y) = geodetic_tile_index(-90.0, 0.0, 0);
+        assert_eq!(x, 0);
+        assert_eq!(y, 0);
+        // Eastern hemisphere: lon=90 → x=1, lat=0 → y=0
+        let (x, y) = geodetic_tile_index(90.0, 0.0, 0);
+        assert_eq!(x, 1);
+        assert_eq!(y, 0);
     }
 }
