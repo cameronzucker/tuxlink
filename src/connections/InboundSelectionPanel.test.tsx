@@ -10,6 +10,23 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { InboundSelectionPanel } from './InboundSelectionPanel';
 import type { PendingProposalDto } from './sessionTypes';
 
+// Raw CSS for the stacking-order invariant (tuxlink-76zy). The selection modal
+// must paint above the app chrome or its header controls become unreachable.
+const CSS_RAW = import.meta.glob(
+  ['./InboundSelectionPanel.css', '../shell/chrome/chrome.css'],
+  { query: '?raw', import: 'default', eager: true },
+) as Record<string, string>;
+const inboundCss = CSS_RAW['./InboundSelectionPanel.css'];
+const chromeCss = CSS_RAW['../shell/chrome/chrome.css'];
+
+const maxZIndex = (css: string): number =>
+  Math.max(...[...css.matchAll(/z-index:\s*(\d+)/g)].map((m) => Number(m[1])));
+const overlayZIndex = (css: string): number => {
+  const start = css.indexOf('.inbound-selection-overlay');
+  const block = css.slice(start, css.indexOf('}', start));
+  return Number(block.match(/z-index:\s*(\d+)/)?.[1]);
+};
+
 // Distinct byte values so every formatSize() result is unique — keeps the
 // getByText size assertions unambiguous.
 const PROPOSALS: PendingProposalDto[] = [
@@ -175,5 +192,11 @@ describe('InboundSelectionPanel', () => {
       vi.useRealTimers();
     }
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('InboundSelectionPanel.css stacking order (tuxlink-76zy)', () => {
+  it('overlay stacks above every app-chrome z-index', () => {
+    expect(overlayZIndex(inboundCss)).toBeGreaterThan(maxZIndex(chromeCss));
   });
 });
