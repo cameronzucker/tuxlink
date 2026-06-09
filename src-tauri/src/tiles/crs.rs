@@ -82,18 +82,24 @@ fn is_mercator_indicator(s: &str) -> bool {
         || lo.contains("web mercator")
         || lo.contains("webmercatorquad")
         || lo.contains("googlemapscompatible")
-        // "mercator" substring last — it must not shadow "geodetic" or "worldcrs84quad";
-        // the geodetic check runs first in callers, so this ordering is defensive-only.
         || lo.contains("mercator")
 }
 
 /// Classify a raw CRS string into `Geodetic`, `Rejected`, or `Unknown`.
-/// Geodetic check wins on conflict (no real string should trigger both).
+///
+/// **Reject-biased ordering (§8.1):** the Mercator check runs FIRST. WGS84 is the
+/// DATUM shared by both EPSG:4326 and EPSG:3857 — EPSG:3857's name is literally
+/// "WGS 84 / Pseudo-Mercator" — so a bare "wgs84" substring does NOT imply a
+/// geodetic PROJECTION. A string carrying a Mercator indicator (`mercator`,
+/// `3857`, `pseudo-mercator`, …) must therefore classify as `Rejected` even when
+/// it also contains "wgs84"/"crs84". This cannot false-reject a real geodetic
+/// (EPSG:4326) source: their CRS strings never contain a Mercator indicator.
+/// Accepting a Mercator source is the §8.1 ship-blocker; refusing is the safe bias.
 fn classify_crs_str(s: &str) -> Option<CrsCheck> {
-    if is_geodetic_indicator(s) {
-        Some(CrsCheck::Geodetic)
-    } else if is_mercator_indicator(s) {
+    if is_mercator_indicator(s) {
         Some(CrsCheck::Rejected)
+    } else if is_geodetic_indicator(s) {
+        Some(CrsCheck::Geodetic)
     } else {
         None
     }
@@ -126,15 +132,21 @@ fn classify_tilejson(json: &serde_json::Value) -> Option<CrsCheck> {
 /// production capabilities documents.
 ///
 /// Heuristic: searches for `WorldCRS84Quad` / `GoogleCRS84Quad` (geodetic) and
-/// `WebMercatorQuad` / `GoogleMapsCompatible` (mercator). Geodetic wins on
-/// conflict. Returns `None` when neither is found.
+/// `WebMercatorQuad` / `GoogleMapsCompatible` (mercator).
+///
+/// **Reject-biased (§8.1):** Mercator wins on conflict. A WMTS server commonly
+/// advertises MULTIPLE TileMatrixSets; this gatekeeper's fetcher issues plain
+/// `{z}/{x}/{y}` requests and cannot select which set the server answers with,
+/// so a capabilities document that lists a Mercator set is ambiguous and is
+/// refused rather than risk rendering Mercator tiles on the EPSG:4326 map. A
+/// pure-geodetic server (only WorldCRS84Quad) is still accepted.
 fn classify_wmts_xml(xml: &str) -> Option<CrsCheck> {
     let has_geodetic = xml.contains("WorldCRS84Quad") || xml.contains("GoogleCRS84Quad");
     let has_mercator = xml.contains("WebMercatorQuad") || xml.contains("GoogleMapsCompatible");
-    if has_geodetic {
-        Some(CrsCheck::Geodetic)
-    } else if has_mercator {
+    if has_mercator {
         Some(CrsCheck::Rejected)
+    } else if has_geodetic {
+        Some(CrsCheck::Geodetic)
     } else {
         None
     }
@@ -362,6 +374,33 @@ mod tests {
         let src = source(&server.url());
         let check = probe_source_crs(&plain_client(), &src).await;
         assert_eq!(check, CrsCheck::Geodetic, "EPSG:4326 TileJSON must be Geodetic");
+    }
+
+    #[test]
+    fn pseudo_mercator_named_crs_is_rejected_despite_wgs84_datum() {
+        // §8.1 regression: EPSG:3857 is officially "WGS 84 / Pseudo-Mercator" —
+        // its CRS string carries the WGS84 datum name. A bare "wgs84" substring
+        // must NOT win over the Mercator indicator. These all declare a Mercator
+        // projection on the WGS84 datum and MUST classify Rejected, not Geodetic.
+        assert_eq!(classify_crs_str("WGS84 / Pseudo-Mercator"), Some(CrsCheck::Rejected));
+        assert_eq!(classify_crs_str("WGS 84 / Pseudo-Mercator"), Some(CrsCheck::Rejected));
+        assert_eq!(classify_crs_str("EPSG:3857 (WGS84 Web Mercator)"), Some(CrsCheck::Rejected));
+        // Pure geodetic still classifies Geodetic.
+        assert_eq!(classify_crs_str("WGS84"), Some(CrsCheck::Geodetic));
+        assert_eq!(classify_crs_str("EPSG:4326"), Some(CrsCheck::Geodetic));
+        assert_eq!(classify_crs_str("WorldCRS84Quad"), Some(CrsCheck::Geodetic));
+    }
+
+    #[test]
+    fn wmts_multi_matrixset_with_mercator_is_rejected() {
+        // A capabilities doc advertising BOTH WorldCRS84Quad and WebMercatorQuad
+        // is ambiguous for a plain {z}/{x}/{y} fetcher → reject (Mercator wins).
+        let xml = r#"<Capabilities><TileMatrixSet>WorldCRS84Quad</TileMatrixSet>
+            <TileMatrixSet>WebMercatorQuad</TileMatrixSet></Capabilities>"#;
+        assert_eq!(classify_wmts_xml(xml), Some(CrsCheck::Rejected));
+        // Pure-geodetic capabilities still accepted.
+        let geo = r#"<Capabilities><TileMatrixSet>WorldCRS84Quad</TileMatrixSet></Capabilities>"#;
+        assert_eq!(classify_wmts_xml(geo), Some(CrsCheck::Geodetic));
     }
 
     #[tokio::test]
