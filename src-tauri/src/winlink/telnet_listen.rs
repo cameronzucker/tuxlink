@@ -539,7 +539,7 @@ where
     // (inbound mail still files into Inbox; we just don't ship any
     // outbound until the routing_flag schema lands).
     let outbound = match mailbox {
-        Some(mb) => match crate::winlink_backend::build_outbound_proposals(mb, config.intent) {
+        Some(mb) => match crate::winlink_backend::build_outbound_proposals(mb, config.intent, None) {
             Ok(v) => v,
             Err(e) => {
                 progress(&format!("Outbox read failed (proceeding empty): {e}"));

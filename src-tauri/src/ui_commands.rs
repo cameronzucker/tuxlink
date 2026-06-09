@@ -5376,6 +5376,7 @@ pub async fn telnet_p2p_connect(
     let outbound = match crate::winlink_backend::build_outbound_proposals(
         &mailbox,
         SessionIntent::P2p,
+        None,
     ) {
         Ok(v) => v,
         Err(crate::winlink_backend::BackendError::MessageRejected(reason)) => {
