@@ -30,6 +30,7 @@ This document serves three audiences. Start here, then go directly to the sectio
 | 3 | [Plan and Documentation Discipline](#3-plan-and-documentation-discipline) | Any plan / spec amendment, especially when an AMENDMENT marker (AMD-N) lands in a previously-shipped task's plan body | DRIFT-1 | §3.C |
 | — | [Tool Integration](#tool-integration) | Conflicts between project commitments and tool-installed defaults; Vite frontend testing patterns; reference material discovery; schema versioning | TEST-1, DISCOVERY-1, SCHEMA-1, BD-1 | §Tool-Integration.C |
 | — | [Orchestration](#orchestration) | Parallel subagent dispatch and output persistence | ORCH-1 | §Orchestration.C |
+| 8 | [Network and Filesystem Egress Security](#8-network-and-filesystem-egress-security) | Any code path that fetches an operator- or webview-supplied URL, OR any code path that builds a cache path or upstream URL segment from webview-supplied tile coordinates | SSRF-1, TRAVERSAL-1 | §8.C |
 | A | [Historical Changelog](#appendix-a-historical-changelog) | Provenance, validation dates, review process meta-observations | — | — |
 | B | [Unified Summary Table](#appendix-b-unified-summary-table) | All pitfalls at a glance, with severity and status | — | — |
 
@@ -682,12 +683,114 @@ Pitfalls that arise when a session dispatches parallel subagents and consolidate
 
 ---
 
+# Section 8: Network and Filesystem Egress Security
+
+> **Reader context:** I'm building or reviewing code that fetches a URL that originates from the operator UI or the webview (e.g., a tile-source base URL, a tile download request), OR I'm building code that uses webview-supplied tile coordinates to build a cache path or a remote fetch URL. Both surfaces are attack entry points for SSRF and path traversal. The two entries below are the canonical defenses for these patterns in tuxlink.
+>
+> **Design cross-reference:** §8.3 (outbound egress gatekeeper) and §8.4 (tile-coordinate path traversal) of the tuxlink DYOP spec document the accepted design. These pitfall entries are the implementation-review reinforcement of that design.
+
+---
+
+### SSRF-1: Outbound-egress gatekeeper for operator/webview-influenced hosts
+
+**The Flaw:** A backend code path fetches a URL whose host is derived from operator-supplied configuration or a webview-controlled value (tile-source URL, base URL field, etc.) without enforcing egress hygiene at the socket layer. Common deficient forms:
+
+- Config-time string validation only: the URL is validated as syntactically correct or against an allowlist regex at save time, but the actual fetch resolves a DNS name that may have changed since validation — a DNS-rebinding attack replaces the legitimate A record with a loopback or RFC1918 address between validation and fetch.
+- Full caller-supplied URLs: the webview (or a malicious tile source response) passes a complete URL that the backend fetches verbatim, including schemes like `file://`, `ftp://`, or `http://192.168.X.X/admin`.
+- Redirect following: `reqwest` (or any HTTP client) following redirects allows a redirect chain to eventually land on an internal host even if the originating URL passed all prefix checks.
+- URL-embedded credentials: a source URL of the form `http://user:pass@internal.corp/tiles` bypasses hostname checks because the authority component includes credentials, and some libraries resolve the actual host to `internal.corp` while the security check may look only at the "host" field.
+- Metadata endpoint access: a fetch to `http://169.254.169.254/latest/meta-data/` (AWS IMDS), `http://100.100.100.200/` (Alibaba Cloud), or similar well-known link-local metadata endpoints exposes cloud credentials to a tile source operator who controls a DNS record that briefly resolves to the metadata IP.
+
+**Why It Matters:** tuxlink fetches tile imagery from user-configured tile sources, including community-managed slippy-map servers. A compromised or malicious tile server can serve redirect responses or DNS-rebind its hostname to an internal address. If the fetch implementation does not enforce egress hygiene at the resolved-IP layer, the tile-fetch path becomes a SSRF (Server-Side Request Forgery) oracle: the operator's machine makes HTTP requests to internal services on behalf of the tile source.
+
+Consequences in the tuxlink context:
+1. **LAN service exposure** — a tile source response redirects to `http://192.168.1.1/admin`; the backend follows the redirect and the response body returns to the tile cache (or to an error log visible to the UI).
+2. **Loopback service exposure** — a DNS-rebind attack briefly resolves the tile source hostname to `127.0.0.1`, allowing the tile source to reach a locally-bound service (e.g., a local CMS proxy, development server, or admin port).
+3. **Metadata endpoint exfiltration** — in cloud-hosted or embedded deployments, a DNS-rebind to `169.254.169.254` leaks instance metadata and credentials.
+4. **Regulatory / policy surface** — tuxlink makes outbound HTTP connections on behalf of the operator; if those connections reach infrastructure the operator did not intend (and cannot see), the operator is responsible for the traffic.
+
+The no-added-safeguards posture (per project memory: `feedback_no_tuxlink_added_safeguards.md`) governs **UX**: tuxlink does not block or warn about public hosts as a policy choice. The no-added-safeguards rule does NOT override **egress hygiene at the socket layer** — those are separate concerns. §8.3 of the DYOP spec confirms this distinction.
+
+**The Fix:** Every fetch from an operator/webview-influenced host MUST enforce ALL of the following at the socket layer (not at config-parse time):
+
+1. **Fetch-time resolved-IP gating.** Resolve the hostname immediately before opening the TCP connection. For each resolved IP address, apply `ip_is_permitted()` before the connection proceeds. Permitted addresses: RFC 1918 private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and ULA (`fc00::/7`). Refused addresses: loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`, `fe80::/10`), multicast (`224.0.0.0/4`, `ff00::/8`), unspecified (`0.0.0.0`, `::`), and all other publicly-routable addresses (the function is default-deny, not default-allow). The `// SSRF` boundary in `src-tauri/src/tiles/host.rs` (`validate_source_url`, `ip_is_permitted`) is the canonical implementation.
+2. **DNS-rebind defense.** Config-time string validation is not a substitute for fetch-time IP gating. DNS records can change between validation and fetch. The fetch-time resolved-IP gate applies regardless of what the hostname looked like at configuration time.
+3. **No redirect following.** The HTTP client MUST be constructed with `reqwest::redirect::Policy::none()`. A URL that passes the initial IP check may redirect to an internal address; that redirect MUST be refused rather than followed.
+4. **HTTP and HTTPS schemes only.** The scheme is validated before the fetch. `file://`, `ftp://`, `data:`, and any non-HTTP scheme are refused at `validate_source_url` time.
+5. **No URL-embedded credentials.** `validate_source_url` rejects any URL whose authority component contains a userinfo (`user:pass@`) segment.
+6. **No caller-supplied full URLs for per-tile fetches.** The webview supplies only validated integer parameters (`z`, `x`, `y`; see TRAVERSAL-1 below). The full tile URL is assembled from the stored, validated source base URL plus the integer-derived path segment. The webview does not supply the scheme, host, or path prefix.
+7. **IP-literal vs named-host branch.** When the URL's host is already an IP literal, the literal is passed directly through `ip_is_permitted()`. This prevents a `http://192.168.1.1/` source URL from bypassing the DNS-resolution path. The `src-tauri/src/tiles/fetch.rs` `// SSRF (§8.3)` comment marks this branch.
+
+Code anchors: `src-tauri/src/tiles/host.rs` (functions `validate_source_url` and `ip_is_permitted`, the `// SSRF` boundary comment), `src-tauri/src/tiles/fetch.rs` (the `// SSRF (§8.3)` resolved-IP gate, IP-literal vs named-host dispatch, no-redirect client construction, response-size cap, and magic-byte validation).
+
+**The Lesson:** Config-time validation is defeated by DNS rebinding. The egress gate belongs at the socket layer — at fetch time, against the resolved IP, before the TCP connection opens. Two separate invariants must hold simultaneously: (a) the URL structure is valid (no embedded creds, http(s) only, no caller-supplied host for per-tile fetches), and (b) the resolved IP is in a permitted range. Neither check substitutes for the other. Cross-reference: TRAVERSAL-1 covers the filesystem twin of this entry (tile-coordinate path traversal).
+
+---
+
+### TRAVERSAL-1: Tile-coordinate path traversal via webview-supplied `z/x/y`
+
+**The Flaw:** A tile fetch handler receives `{z}`, `{x}`, `{y}` values directly from the webview and constructs a disk cache path or an upstream URL segment using those values without first parsing and bounding them as integers. Deficient patterns include:
+
+- String interpolation into a path: `format!("{cache_dir}/{source}/{z}/{x}/{y}.png")` where `z`, `x`, `y` are raw strings from the webview — a value of `../../../etc/passwd` for `z` walks outside the cache root.
+- Unbounded integer range: `1u32 << z` without first checking `z <= max_zoom` panics when `z > 31` on 32-bit arithmetic (shift overflow).
+- Bounds check in the wrong order: `x < 2^z` checked before `z <= max_zoom` still evaluates `2^z` for a large `z`, causing the same overflow.
+- Path assembly via string concatenation instead of `PathBuf::join`: `PathBuf::join` normalizes `..` components; string concatenation does not.
+- No canonicalization + `starts_with` guard: the assembled path is written without verifying it still lives under the cache root (a race condition or normalization edge case can escape).
+- Leaf symlink creation: the cache file is created at the resolved path without refusing a symlink at the leaf position — an attacker who pre-creates a symlink at the expected cache path can redirect the write to an arbitrary location.
+
+**Why It Matters:** The tile cache is a user-writable directory under the operator's data dir. A tile-source operator who controls the DNS record for a tile server can observe which `z/x/y` combinations the client requests, or can influence the values in ways that reach the cache path builder (e.g., via a redirect to a URL with traversal characters in the path segment). A path traversal bug here writes attacker-controlled bytes to attacker-controlled paths under the operator's account — up to and including overwriting shell init files, SSH authorized_keys, or the tuxlink config.
+
+The upstream URL segment is equally sensitive: a raw `z/x/y` value interpolated directly into the upstream fetch URL can inject path separators or query characters that change the request semantics.
+
+**The Fix:** Parse and bound `z`, `x`, `y` as integers BEFORE any path or URL construction. The full sequence, in order:
+
+1. **Parse as `u32`.** Reject any non-numeric, negative, or non-integer value immediately.
+2. **Bound `z` before shifting.** Assert `z <= max_zoom` (typically 22 for OSM-style tiles) BEFORE computing `1u32.checked_shl(z)` (or equivalent). `checked_shl` returns `None` on overflow and must be handled — do not use the unchecked `<<` operator. Code anchor: `src-tauri/src/tiles/coord.rs`, `TileCoord`, `checked_shl`.
+3. **Bound `x` and `y`.** Assert `x < 2^z` and `y < 2^z` using the result of step 2 (the checked shift), not a re-evaluated expression. This prevents the range check from silently passing when `z` caused overflow.
+4. **Build the path via `PathBuf::join` from validated integers only.** The path segments are `format!("{}", z)`, `format!("{}", x)`, `format!("{}", y)` — plain integer-to-string. No raw webview strings reach `PathBuf::join`. The cache root is an absolute `PathBuf` derived from the operator's config at startup.
+5. **Namespace by source URL hash.** The per-source subdirectory under the cache root uses a SHA-256 of the source base URL (hex-encoded prefix). This prevents one source from reading or overwriting another source's cache. Code anchor: `src-tauri/src/tiles/cache.rs`, the `// traversal-safety (§8.4)` section.
+6. **Canonicalize parent + `starts_with` assert.** After assembling the full path, canonicalize the parent directory and assert it `starts_with(cache_root)`. This is the backstop for any normalization edge case that slips through steps 2–4.
+7. **Refuse leaf symlinks.** Before writing, verify the leaf path does not exist as a symlink (`std::fs::symlink_metadata` + `FileType::is_symlink`). If a symlink exists at the expected cache path, refuse the write rather than following it. Use atomic temp-file + rename (`write to <path>.tmp`, then `fs::rename`); `rename` is atomic and does not follow symlinks on Linux.
+
+For the upstream URL segment: assemble the URL from the stored source base URL plus the integer-formatted `z`, `x`, `y` path segments. Do not percent-encode or otherwise process raw webview strings into the URL — the integers produce only digit characters and path separators.
+
+Code anchors: `src-tauri/src/tiles/coord.rs` (`TileCoord` type, `checked_shl` usage), `src-tauri/src/tiles/cache.rs` (the `// traversal-safety (§8.4)` gate, per-source SHA-256 namespace, atomic temp+rename, leaf-symlink refusal).
+
+**The Lesson:** Webview-supplied coordinates are untrusted user input, not validated API parameters. The parse-then-bound-then-construct sequence is the invariant: parsing separates string representation from semantics; bounding guards against overflow and range exploits; path construction via typed primitives (`PathBuf::join`, integer formatting) eliminates the injection surface entirely. String-interpolated paths are never safe with untrusted input, regardless of how "obviously numeric" the input looks. Cross-reference: SSRF-1 covers the network twin of this entry (outbound-egress gatekeeper for the host the coordinates are fetched from).
+
+---
+
+### Section 8 Review Checklist
+
+- [ ] **Check derived from SSRF-1** — Every code path that fetches a URL whose host originates from operator config or a webview-supplied value resolves the hostname at fetch time (not config time) and calls `ip_is_permitted()` on each resolved address before opening a TCP connection. Verify by reading `src-tauri/src/tiles/fetch.rs` for the `// SSRF (§8.3)` gate and confirming it runs after DNS resolution.
+- [ ] **Check derived from SSRF-1** — The HTTP client for tile fetches is constructed with `reqwest::redirect::Policy::none()`. Verify by searching `src-tauri/src/tiles/fetch.rs` for `redirect::Policy` — any value other than `none()` is a finding.
+- [ ] **Check derived from SSRF-1** — `validate_source_url` in `src-tauri/src/tiles/host.rs` rejects: (a) non-http(s) schemes, (b) URL-embedded credentials (`user:pass@` in authority), (c) IP literals that fail `ip_is_permitted()`. Verify by reading the function and confirming all three checks are present.
+- [ ] **Check derived from SSRF-1** — Per-tile fetch requests assemble the URL from the stored source base URL plus integer-formatted `z/x/y` path segments. The webview does NOT supply the scheme, host, or base path of the tile URL. Verify by tracing the Tauri command that handles tile fetch requests back to the URL assembly site.
+- [ ] **Check derived from TRAVERSAL-1** — `z`, `x`, `y` values from the webview are parsed as `u32` and bounded before any path or URL assembly. `z <= max_zoom` is asserted BEFORE `checked_shl(z)` is called; `checked_shl` result is `None`-checked and not `.unwrap()`'d without a bounds guarantee. Verify via `src-tauri/src/tiles/coord.rs`.
+- [ ] **Check derived from TRAVERSAL-1** — Cache paths are assembled via `PathBuf::join` from integer-formatted segments only. No raw webview string reaches a `PathBuf::join` or a string-format expression that produces a path. Verify by searching `src-tauri/src/tiles/` for `format!` expressions containing `z`, `x`, or `y` variable names and confirming each is integer-typed.
+- [ ] **Check derived from TRAVERSAL-1** — The per-source cache namespace uses a SHA-256 of the source URL (not the URL verbatim), and the assembled path is canonicalized + `starts_with(cache_root)` asserted before any write. Leaf symlinks at the target path cause the write to be refused, not followed. Verify via `src-tauri/src/tiles/cache.rs`.
+
+---
+
 # Appendix A: Historical Changelog
 
 <!-- Format: -->
 <!-- ## YYYY-MM-DD — <event> -->
 <!-- - Added PREFIX-N (<title>) — <what and why> -->
 <!-- - Updated PREFIX-M — <what changed> -->
+
+## 2026-06-09 — Added SSRF-1, TRAVERSAL-1 (Tile-fetch egress and path-traversal defenses)
+
+Source: tuxlink-dyop DYOP-LAN-tiles plan Phase 10.1 (agent `marten-poplar-dahlia`). Two findings derived from the §8.3/§8.4 security design in the DYOP spec:
+
+1. **SSRF-1** (Outbound-egress gatekeeper): The tile-fetch path fetches URLs whose host is operator-configured. Without fetch-time resolved-IP gating, DNS rebinding or redirect chains reach loopback, RFC1918, link-local, or cloud-metadata addresses. Config-time validation is defeated by DNS rebinding. The fix is enforced at the socket layer: `ip_is_permitted()` after DNS resolution, `reqwest::redirect::Policy::none()`, no caller-supplied full URLs for per-tile fetches, no URL-embedded credentials, http(s)-only. The `no-added-safeguards` posture governs UX; it does not govern socket-layer egress hygiene — these are separate concerns (§8.3 distinguishes them explicitly).
+2. **TRAVERSAL-1** (Tile-coordinate path traversal): Webview-supplied `z/x/y` reach both the disk cache path builder and the upstream URL segment. Without parse-then-bound-then-construct discipline, string-interpolated paths walk outside the cache root and unbounded shifts panic. The fix enforces `z <= max_zoom` before `checked_shl(z)`, `PathBuf::join` from integer-formatted segments only, per-source SHA-256 namespace, canonicalize + `starts_with(cache_root)` assert, and leaf-symlink refusal.
+
+Both entries are marked `UNIMPLEMENTED` pending the tiles module implementation in a later plan phase. Section 8 added to the TOC.
+
+Companion artifacts:
+- Plan: tuxlink-dyop DYOP spec §8.3 (SSRF) + §8.4 (path traversal)
+- Code anchors (planned): `src-tauri/src/tiles/host.rs`, `src-tauri/src/tiles/fetch.rs`, `src-tauri/src/tiles/coord.rs`, `src-tauri/src/tiles/cache.rs`
 
 ## 2026-05-17 — Added RADIO-2 (Encryption decisions on RF require operator approval)
 
@@ -745,6 +848,8 @@ Companion artifacts:
 | SCHEMA-1 | SCHEMA_VERSION bump triggers operator-driven rebuild, not silent ALTER TABLE | HIGH | VALIDATED | Tool Integration |
 | ORCH-1 | Analysis Dispatches Must Persist Findings | HIGH | VALIDATED | Orchestration |
 | BD-1 | bd opinionated-tooling overrides | MEDIUM | VALIDATED | Tool Integration |
+| SSRF-1 | Outbound-egress gatekeeper for operator/webview-influenced hosts | CRITICAL | UNIMPLEMENTED | §8 Network and Filesystem Egress Security |
+| TRAVERSAL-1 | Tile-coordinate path traversal via webview-supplied `z/x/y` | CRITICAL | UNIMPLEMENTED | §8 Network and Filesystem Egress Security |
 
 Severity levels: `CRITICAL` (production data loss / security), `HIGH` (correctness bug under predictable conditions), `MEDIUM` (correctness bug under edge cases), `LOW` (cleanliness / clarity).
 
