@@ -155,10 +155,23 @@
   font-family: var(--mono);
   color: var(--text-faint);
 }
+.reading-pane .message-form-print-fallback {
+  display: none;
+}
 /* "Form" metadata row — the form code in the form-tag color (mock B). */
 .reading-pane .msg-meta dd .form-kind-code {
   color: var(--form-tag);
   font-weight: 600;
+}
+
+@media print {
+  .reading-pane .webview-form-viewer {
+    display: none !important;
+  }
+
+  .reading-pane .message-form-print-fallback {
+    display: block !important;
+  }
 }
 
 /* 5 — attachment strip (names + sizes + explicit actions) */
