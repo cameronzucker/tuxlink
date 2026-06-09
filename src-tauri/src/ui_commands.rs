@@ -1318,6 +1318,54 @@ pub async fn mailbox_move(
     Ok(())
 }
 
+// ---- read-state commands (tuxlink-etxt) ------------------------------------
+
+/// Set a single message's read-state. `read = true` marks read, `false` marks
+/// unread. Folder may be a system folder or a user-folder slug.
+#[tauri::command]
+pub async fn message_set_read_state(
+    folder: String,
+    id: String,
+    read: bool,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let folder_ref = parse_folder_ref(&folder)?;
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    backend.set_read_state(folder_ref, &mid, read).await?;
+    Ok(())
+}
+
+/// One message reference for a bulk operation. Each carries its own folder so a
+/// cross-folder search-results selection (which mixes folders) stays correct.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessageRefDto {
+    pub folder: String,
+    pub id: String,
+}
+
+/// Set the read-state of every listed message. Best-effort per item: a missing
+/// message is a no-op (matching the single-message path). One command call per
+/// bulk action keeps frontend round-trips bounded.
+#[tauri::command]
+pub async fn message_set_read_state_bulk(
+    items: Vec<MessageRefDto>,
+    read: bool,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    for item in items {
+        let folder_ref = parse_folder_ref(&item.folder)?;
+        let mid = MessageId::new(&item.id);
+        backend.set_read_state(folder_ref, &mid, read).await?;
+    }
+    Ok(())
+}
+
 // ---- user-folder commands (tuxlink-f62f) -----------------------------------
 
 /// DTO mirror of [`crate::user_folders::UserFolder`] over Tauri's camelCase
