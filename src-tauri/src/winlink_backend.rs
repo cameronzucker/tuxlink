@@ -1116,7 +1116,9 @@ impl WinlinkBackend for NativeBackend {
         slug: &str,
         on_messages: crate::native_mailbox::DeleteAction,
     ) -> Result<(), BackendError> {
-        self.mailbox.delete_user_folder(slug, on_messages)
+        // The trait still returns (); the deleted-slug set (A5) flows through the
+        // trait-aware path added for nesting (tuxlink-ka3z A6).
+        self.mailbox.delete_user_folder(slug, on_messages).map(|_| ())
     }
 
     async fn rename_user_folder(

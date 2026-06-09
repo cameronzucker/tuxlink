@@ -27,11 +27,24 @@ pub struct Mailbox {
     /// inside `NativeBackend: Send + Sync`). The Mutex makes every index call
     /// exclusive, which is fine — index operations are fast and infrequent.
     index: Option<Arc<Mutex<crate::search::index::Index>>>,
+    /// Serializes registry read-modify-write across create / rename / move /
+    /// delete (tuxlink-ka3z A2). Tauri commands can run concurrently, so two
+    /// folder mutations could otherwise interleave their load→mutate→save and
+    /// strand an orphaned child (Codex finding #3). The lock is held only for
+    /// the brief registry critical section.
+    registry_lock: Arc<Mutex<()>>,
 }
 
 impl Mailbox {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into(), index: None }
+        Self { root: root.into(), index: None, registry_lock: Arc::new(Mutex::new(())) }
+    }
+
+    /// Acquire the registry critical-section lock, recovering from a poisoned
+    /// mutex (a panic in another holder must not wedge folder operations — the
+    /// guarded data is the on-disk registry, re-read fresh under the lock).
+    fn lock_registry(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.registry_lock.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Attach a search index. After each successful filesystem write, the
@@ -256,6 +269,7 @@ impl Mailbox {
         let slug = user_folders::slug_from_display(display);
         user_folders::validate_slug(&slug).map_err(BackendError::MessageRejected)?;
 
+        let _guard = self.lock_registry();
         let mut reg = user_folders::load_registry(&self.root);
         for existing in &reg.folders {
             if existing.slug == slug {
@@ -300,6 +314,7 @@ impl Mailbox {
         let display = new_display_name.trim();
         user_folders::validate_display_name(display)
             .map_err(BackendError::MessageRejected)?;
+        let _guard = self.lock_registry();
         let mut reg = user_folders::load_registry(&self.root);
         let folder = reg
             .folders
@@ -314,40 +329,109 @@ impl Mailbox {
         Ok(renamed)
     }
 
-    /// Delete a user folder. `on_messages` controls what happens to messages
-    /// inside (spec §6 D6):
-    /// - `MoveToInbox` (safe default) — re-home each `.b2f` to the inbox dir
-    /// - `MoveToArchive` — re-home each `.b2f` to the archive dir
-    /// - `Delete` — remove the directory and its contents
+    /// Delete a user folder, cascading to its direct subfolders (spec D6, A1).
+    /// `on_messages` controls the disposition of EVERY message in the parent and
+    /// its children:
+    /// - `MoveToInbox`/`MoveToArchive` — re-home each message to that system
+    ///   folder. PREFLIGHTED: if any message would overwrite an existing file at
+    ///   the destination, or two affected messages share a filename, the whole
+    ///   operation is REFUSED (no partial work, no silent overwrite — data loss
+    ///   is the only irreversible consequence). Search-index rows are re-pointed.
+    /// - `Delete` — remove each message permanently and drop its index row.
     ///
-    /// Either way, the folder directory is removed and the registry entry
-    /// erased on success. Missing folder → no-op-safe Ok.
+    /// Returns the slugs actually removed from the registry (parent + children)
+    /// so the UI can clear a stale selection (A5). Held under the registry lock
+    /// (A2). Missing folder → `Ok(empty)`.
+    ///
+    /// Failure contract: the preflight turns any destination/merge collision into
+    /// a clean up-front rejection. A filesystem error during the commit phase
+    /// returns the error after logging; full transactional rollback is out of
+    /// scope for the single-process desktop store — the preflight is the guard.
     pub fn delete_user_folder(
         &self,
         slug: &str,
         on_messages: DeleteAction,
-    ) -> Result<(), BackendError> {
-        let dir = user_folders::folder_dir(&self.root, slug);
+    ) -> Result<Vec<String>, BackendError> {
+        let _guard = self.lock_registry();
         let mut reg = user_folders::load_registry(&self.root);
-        let in_registry = reg.folders.iter().any(|f| f.slug == slug);
 
-        if dir.exists() {
-            match on_messages {
-                DeleteAction::Delete => {
+        // Affected folders: target + its direct children (depth-capped → leaves).
+        let mut affected = user_folders::children_slugs(&reg, slug);
+        affected.push(slug.to_string());
+
+        let move_dst = match on_messages {
+            DeleteAction::MoveToInbox => Some(MailboxFolder::Inbox),
+            DeleteAction::MoveToArchive => Some(MailboxFolder::Archive),
+            DeleteAction::Delete => None,
+        };
+
+        // PREFLIGHT (move modes): refuse rather than clobber (finding #1).
+        if let Some(sys) = move_dst {
+            let dst_dir = self.folder_dir(sys);
+            let mut seen = std::collections::HashSet::new();
+            for s in &affected {
+                let dir = user_folders::folder_dir(&self.root, s);
+                if !dir.exists() {
+                    continue;
+                }
+                for entry in fs::read_dir(&dir)? {
+                    let name = match entry?.path().file_name() {
+                        Some(n) => n.to_owned(),
+                        None => continue,
+                    };
+                    if dst_dir.join(&name).exists() {
+                        return Err(BackendError::MessageRejected(format!(
+                            "cannot delete: a message named '{}' already exists in the destination folder",
+                            name.to_string_lossy()
+                        )));
+                    }
+                    if !seen.insert(name.clone()) {
+                        return Err(BackendError::MessageRejected(format!(
+                            "cannot delete: two subfolders both contain a message named '{}'",
+                            name.to_string_lossy()
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Registry-present affected slugs (return value + retain target).
+        let removed: Vec<String> = affected
+            .iter()
+            .filter(|s| reg.folders.iter().any(|f| &f.slug == *s))
+            .cloned()
+            .collect();
+
+        // COMMIT.
+        for s in &affected {
+            let dir = user_folders::folder_dir(&self.root, s);
+            if !dir.exists() {
+                continue;
+            }
+            match move_dst {
+                None => {
+                    for entry in fs::read_dir(&dir)? {
+                        let path = entry?.path();
+                        if path.extension().and_then(|e| e.to_str()) == Some("b2f") {
+                            if let Some(mid) = path.file_stem().and_then(|st| st.to_str()) {
+                                self.index_delete(mid);
+                            }
+                        }
+                    }
                     fs::remove_dir_all(&dir)?;
                 }
-                DeleteAction::MoveToInbox | DeleteAction::MoveToArchive => {
-                    let dst_dir = self.folder_dir(match on_messages {
-                        DeleteAction::MoveToInbox => MailboxFolder::Inbox,
-                        DeleteAction::MoveToArchive => MailboxFolder::Archive,
-                        DeleteAction::Delete => unreachable!(),
-                    });
+                Some(sys) => {
+                    let dst_dir = self.folder_dir(sys);
                     fs::create_dir_all(&dst_dir)?;
                     for entry in fs::read_dir(&dir)? {
                         let path = entry?.path();
                         if let Some(name) = path.file_name() {
-                            let dst = dst_dir.join(name);
-                            fs::rename(&path, &dst)?;
+                            fs::rename(&path, &dst_dir.join(name))?;
+                            if path.extension().and_then(|e| e.to_str()) == Some("b2f") {
+                                if let Some(mid) = path.file_stem().and_then(|st| st.to_str()) {
+                                    self.index_set_folder(mid, folder_str(sys));
+                                }
+                            }
                         }
                     }
                     fs::remove_dir_all(&dir)?;
@@ -355,11 +439,63 @@ impl Mailbox {
             }
         }
 
-        if in_registry {
-            reg.folders.retain(|f| f.slug != slug);
-            user_folders::save_registry(&self.root, &reg)?;
+        // Drop all affected slugs from the registry in a single save.
+        let affected_set: std::collections::HashSet<&str> =
+            affected.iter().map(|s| s.as_str()).collect();
+        reg.folders.retain(|f| !affected_set.contains(f.slug.as_str()));
+        user_folders::save_registry(&self.root, &reg)?;
+
+        Ok(removed)
+    }
+
+    /// Re-parent a user folder by editing its `parent_slug` in the registry
+    /// (spec D3). `new_parent == None` promotes it to top level. METADATA ONLY —
+    /// folder directories stay flat at `root/<slug>`, so no message file moves
+    /// regardless of how many messages the folder holds. Validates against the
+    /// D4 rule set; held under the registry lock (A2).
+    pub fn move_user_folder(
+        &self,
+        slug: &str,
+        new_parent: Option<&str>,
+    ) -> Result<UserFolder, BackendError> {
+        let _guard = self.lock_registry();
+        let mut reg = user_folders::load_registry(&self.root);
+        user_folders::validate_reparent(&reg, slug, new_parent)
+            .map_err(BackendError::MessageRejected)?;
+        // validate_reparent guarantees the folder exists.
+        let folder = reg.folders.iter_mut().find(|f| f.slug == slug).unwrap();
+        folder.parent_slug = new_parent.map(|s| s.to_string());
+        let updated = folder.clone();
+        user_folders::save_registry(&self.root, &reg)?;
+        Ok(updated)
+    }
+
+    /// Best-effort search-index row delete (mirrors `move_between`'s logging).
+    fn index_delete(&self, mid: &str) {
+        if let Some(idx) = self.index.as_ref() {
+            match idx.lock() {
+                Ok(guard) => {
+                    if let Err(e) = guard.delete(mid) {
+                        eprintln!("search-index delete failed for mid={mid}: {e}");
+                    }
+                }
+                Err(e) => eprintln!("search-index lock poisoned during delete: {e}"),
+            }
         }
-        Ok(())
+    }
+
+    /// Best-effort search-index folder re-point (mirrors `move_between`).
+    fn index_set_folder(&self, mid: &str, folder: &str) {
+        if let Some(idx) = self.index.as_ref() {
+            match idx.lock() {
+                Ok(guard) => {
+                    if let Err(e) = guard.update_folder(mid, folder) {
+                        eprintln!("search-index update_folder failed for mid={mid}: {e}");
+                    }
+                }
+                Err(e) => eprintln!("search-index lock poisoned during update_folder: {e}"),
+            }
+        }
     }
 
     /// List messages in a user folder. Mirrors [`Mailbox::list`]'s sort order
@@ -1060,5 +1196,140 @@ mod index_hook_tests {
         std::fs::remove_file(dir.path().join("search.db")).unwrap();
         let res = mbox.store(MailboxFolder::Inbox, &raw("x", "y"));
         assert!(res.is_ok(), "mailbox.store must not fail because of index errors");
+    }
+
+    // ---- Nested folders (tuxlink-ka3z): re-parent + cascade delete ----
+
+    fn seed_b2f(root: &std::path::Path, folder: &str, name: &str) {
+        let dir = root.join(folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(name), b"raw").unwrap();
+    }
+
+    #[test]
+    fn move_user_folder_reparents_without_touching_disk() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let nets = mbox.create_user_folder("Nets", None).unwrap();
+        let weather = mbox.create_user_folder("Weather", None).unwrap();
+        seed_b2f(dir.path(), &weather.slug, "M1.b2f");
+
+        mbox.move_user_folder(&weather.slug, Some(&nets.slug)).unwrap();
+
+        let reg = user_folders::load_registry(dir.path());
+        let moved = reg.folders.iter().find(|f| f.slug == weather.slug).unwrap();
+        assert_eq!(moved.parent_slug.as_deref(), Some("nets"));
+        // Metadata-only: the message file never left the weather dir.
+        assert!(dir.path().join(&weather.slug).join("M1.b2f").exists());
+    }
+
+    #[test]
+    fn move_user_folder_rejects_invalid_reparent_and_promotes() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let nets = mbox.create_user_folder("Nets", None).unwrap();
+        let ares = mbox.create_user_folder("ARES", Some(&nets.slug)).unwrap();
+        let weather = mbox.create_user_folder("Weather", None).unwrap();
+        // weather under ares (a subfolder) violates the 2-level cap.
+        assert!(mbox.move_user_folder(&weather.slug, Some(&ares.slug)).is_err());
+        // promoting ares to top level is fine.
+        mbox.move_user_folder(&ares.slug, None).unwrap();
+        let reg = user_folders::load_registry(dir.path());
+        assert_eq!(reg.folders.iter().find(|f| f.slug == ares.slug).unwrap().parent_slug, None);
+    }
+
+    #[test]
+    fn delete_parent_cascades_children_move_to_inbox_and_returns_slugs() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let nets = mbox.create_user_folder("Nets", None).unwrap();
+        let ares = mbox.create_user_folder("ARES", Some(&nets.slug)).unwrap();
+        seed_b2f(dir.path(), &nets.slug, "P1.b2f");
+        seed_b2f(dir.path(), &ares.slug, "C1.b2f");
+
+        let removed = mbox.delete_user_folder(&nets.slug, DeleteAction::MoveToInbox).unwrap();
+
+        // Both folders gone from registry + disk; both messages in Inbox.
+        assert!(user_folders::load_registry(dir.path()).folders.is_empty());
+        assert!(dir.path().join("inbox").join("P1.b2f").exists());
+        assert!(dir.path().join("inbox").join("C1.b2f").exists());
+        assert!(!dir.path().join(&ares.slug).exists());
+        // A5: returns parent + child so the UI can clear a stale selection.
+        let mut got = removed;
+        got.sort();
+        assert_eq!(got, vec!["ares".to_string(), "nets".to_string()]);
+    }
+
+    #[test]
+    fn delete_parent_cascades_children_delete_mode() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let nets = mbox.create_user_folder("Nets", None).unwrap();
+        let ares = mbox.create_user_folder("ARES", Some(&nets.slug)).unwrap();
+        seed_b2f(dir.path(), &ares.slug, "C1.b2f");
+
+        mbox.delete_user_folder(&nets.slug, DeleteAction::Delete).unwrap();
+        assert!(user_folders::load_registry(dir.path()).folders.is_empty());
+        assert!(!dir.path().join(&ares.slug).exists());
+        assert!(!dir.path().join(&nets.slug).exists());
+    }
+
+    #[test]
+    fn delete_cascade_refuses_on_destination_collision() {
+        // P0 finding #1: a MID already in Inbox must NOT be silently overwritten.
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let nets = mbox.create_user_folder("Nets", None).unwrap();
+        seed_b2f(dir.path(), "inbox", "M1.b2f"); // pre-existing in destination
+        seed_b2f(dir.path(), &nets.slug, "M1.b2f"); // collides
+
+        let err = mbox.delete_user_folder(&nets.slug, DeleteAction::MoveToInbox);
+        assert!(err.is_err(), "must refuse rather than overwrite");
+        // Nothing moved: both files still in place, folder still present.
+        assert!(dir.path().join("inbox").join("M1.b2f").exists());
+        assert!(dir.path().join(&nets.slug).join("M1.b2f").exists());
+        assert!(!user_folders::load_registry(dir.path()).folders.is_empty());
+    }
+
+    #[test]
+    fn delete_cascade_refuses_on_child_vs_child_collision() {
+        // P0 finding #1: two affected folders sharing a filename would merge.
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let nets = mbox.create_user_folder("Nets", None).unwrap();
+        let ares = mbox.create_user_folder("ARES", Some(&nets.slug)).unwrap();
+        seed_b2f(dir.path(), &nets.slug, "DUP.b2f");
+        seed_b2f(dir.path(), &ares.slug, "DUP.b2f");
+
+        assert!(mbox.delete_user_folder(&nets.slug, DeleteAction::MoveToInbox).is_err());
+        // Refused before any move: both folders + files intact.
+        assert!(dir.path().join(&nets.slug).join("DUP.b2f").exists());
+        assert!(dir.path().join(&ares.slug).join("DUP.b2f").exists());
+    }
+
+    #[test]
+    fn delete_cascade_updates_search_index() {
+        // A1 step (e): with an index attached, a cascaded permanent-delete drops
+        // the row. Uses a real message so the index has a row keyed by Mid.
+        let dir = tempdir().unwrap();
+        let (mbox, idx) = build_mailbox_with_index(dir.path());
+        let nets = mbox.create_user_folder("Nets", None).unwrap();
+        let ares = mbox.create_user_folder("ARES", Some(&nets.slug)).unwrap();
+        let id = mbox.store(MailboxFolder::Inbox, &raw("netlog", "body")).unwrap();
+        mbox.move_between(
+            FolderRef::System(MailboxFolder::Inbox),
+            FolderRef::User(ares.slug.clone()),
+            &id,
+        )
+        .unwrap();
+        assert_eq!(idx.lock().unwrap().count().unwrap(), 1, "message indexed after store");
+
+        // Deleting the parent cascades the child's message out of the index.
+        mbox.delete_user_folder(&nets.slug, DeleteAction::Delete).unwrap();
+        assert_eq!(
+            idx.lock().unwrap().count().unwrap(),
+            0,
+            "permanently-deleted cascaded message must be gone from the search index"
+        );
     }
 }
