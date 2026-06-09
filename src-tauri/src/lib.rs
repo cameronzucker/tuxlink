@@ -643,6 +643,14 @@ pub fn run() {
             crate::favorites::commands::favorite_record_attempt,
             crate::favorites::commands::favorites_recents,
             crate::favorites::commands::favorite_tod_hint,
+            // tuxlink-dyop Phase 8.1: LAN map-tile command surface. configure
+            // (validate→activate→persist), test (dry-run validate), clear-cache,
+            // and a no-network status reflection of the gatekeeper. All take the
+            // managed `Arc<TileGatekeeper>` set up in the app_data_dir arm above.
+            crate::tiles::commands::configure_tile_source,
+            crate::tiles::commands::test_tile_source,
+            crate::tiles::commands::clear_tile_cache,
+            crate::tiles::commands::tile_source_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

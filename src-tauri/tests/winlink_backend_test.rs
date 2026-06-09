@@ -98,6 +98,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         modem_vara: None,
         telnet_listen: tuxlink_lib::config::TelnetListenUiConfig::default(),
         review_inbound_before_download: false,
+        map_tile_source: None,
     }
 }
 
