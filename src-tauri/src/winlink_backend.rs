@@ -49,7 +49,7 @@ impl MailboxFolder {
 use crate::config::{broadcast_grid, CmsTransport, Config};
 use crate::native_mailbox::Mailbox;
 use crate::winlink::ax25::{Address, KissLinkConfig};
-use crate::winlink::message::Message;
+use crate::winlink::message::{Message, RECEIVED_SESSION_HEADER, RECEIVED_SESSION_POST_OFFICE};
 use crate::winlink::proposal::Answer;
 use crate::winlink::session::{ExchangeRole, SessionIntent};
 use crate::winlink::{compose, session, telnet};
@@ -2403,7 +2403,7 @@ fn file_exchange_result(
     for message in &result.received {
         if intent == SessionIntent::PostOffice {
             let mut m = message.clone();
-            m.set_header("X-Tuxlink-Received-Session", "post-office");
+            m.set_header(RECEIVED_SESSION_HEADER, RECEIVED_SESSION_POST_OFFICE);
             mailbox.store(MailboxFolder::Inbox, &m.to_bytes())?;
         } else {
             mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
@@ -3141,8 +3141,8 @@ mod mailbox_change_tests {
         let stored =
             Message::from_bytes(&body.raw_rfc5322).expect("stored bytes are valid Message");
         assert_eq!(
-            stored.header("X-Tuxlink-Received-Session"),
-            Some("post-office"),
+            stored.header(RECEIVED_SESSION_HEADER),
+            Some(RECEIVED_SESSION_POST_OFFICE),
             "PostOffice session must stamp X-Tuxlink-Received-Session: post-office"
         );
     }
@@ -3180,7 +3180,7 @@ mod mailbox_change_tests {
         let stored =
             Message::from_bytes(&body.raw_rfc5322).expect("stored bytes are valid Message");
         assert_eq!(
-            stored.header("X-Tuxlink-Received-Session"),
+            stored.header(RECEIVED_SESSION_HEADER),
             None,
             "Cms session must NOT stamp X-Tuxlink-Received-Session"
         );

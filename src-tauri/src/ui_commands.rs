@@ -32,6 +32,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::app_backend::{BackendPhase, BackendState};
 use crate::config::{self, CmsTransport, GpsState, PositionPrecision, PositionSource};
 use crate::session_log::SessionLogState;
+use crate::winlink::message::RECEIVED_SESSION_HEADER;
 use crate::winlink_backend::{
     BackendError, BackendStatus, LogLevel, LogLine, LogSource, MailboxFolder, MessageId,
     MessageMeta, OutboundMessage, TransportConfig,
@@ -1064,7 +1065,7 @@ fn extract_routing(msg: &mail_parser::Message<'_>) -> Option<String> {
 /// a single tuxlink-private header and is intentionally separate so
 /// `TRANSPORT_HEADERS` is not polluted with tuxlink-internal metadata.
 fn extract_received_session(msg: &mail_parser::Message<'_>) -> Option<String> {
-    if let Some(mail_parser::HeaderValue::Text(s)) = msg.header("X-Tuxlink-Received-Session") {
+    if let Some(mail_parser::HeaderValue::Text(s)) = msg.header(RECEIVED_SESSION_HEADER) {
         if !s.is_empty() {
             return Some(s.to_string());
         }
@@ -6037,6 +6038,7 @@ pub async fn telnet_set_listen(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::winlink::message::RECEIVED_SESSION_POST_OFFICE;
     use crate::winlink_backend::MessageId;
 
     #[test]
@@ -8273,7 +8275,10 @@ hw:CARD=Device,DEV=0
         raw.extend_from_slice(b"Subject: Post Office Test\r\n");
         raw.extend_from_slice(b"Date: 2026/06/08 12:00\r\n");
         raw.extend_from_slice(b"Body: 5\r\n");
-        raw.extend_from_slice(b"X-Tuxlink-Received-Session: post-office\r\n");
+        raw.extend_from_slice(
+            format!("{}: {}\r\n", RECEIVED_SESSION_HEADER, RECEIVED_SESSION_POST_OFFICE)
+                .as_bytes(),
+        );
         raw.extend_from_slice(b"\r\n");
         raw.extend_from_slice(b"hello");
 
@@ -8282,7 +8287,7 @@ hw:CARD=Device,DEV=0
 
         assert_eq!(
             dto.received_session,
-            Some("post-office".to_string()),
+            Some(RECEIVED_SESSION_POST_OFFICE.to_string()),
             "received_session must be Some(\"post-office\") when header is present"
         );
 
@@ -8290,7 +8295,7 @@ hw:CARD=Device,DEV=0
         let value = serde_json::to_value(&dto).expect("DTO serialises");
         assert_eq!(
             value["receivedSession"],
-            serde_json::Value::String("post-office".to_string()),
+            serde_json::Value::String(RECEIVED_SESSION_POST_OFFICE.to_string()),
             "receivedSession (camelCase) must appear in JSON with value \"post-office\""
         );
     }
