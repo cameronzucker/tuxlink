@@ -114,6 +114,24 @@ describe('<DashboardRibbon> — transport label accuracy (tuxlink-989)', () => {
     const el = screen.getByTestId('ribbon-connection');
     expect(el.textContent).toContain('Error: connection refused');
   });
+
+  it('renders Connection inside a stable slot with an ellipsizable label span (tuxlink-a8x6)', () => {
+    const longLabel = 'Error: RMS gateway refused authentication after an unusually long diagnostic string';
+    render(
+      <DashboardRibbon
+        data={makeData({
+          state: { label: 'Error', tone: 'error' },
+          connection: longLabel,
+        })}
+      />,
+    );
+    const el = screen.getByTestId('ribbon-connection');
+    expect(el.closest('.dash-item')).toHaveClass('dash-item--connection');
+    expect(el).toHaveAttribute('title', longLabel);
+    const text = el.querySelector('.dash-connection-text');
+    expect(text).not.toBeNull();
+    expect(text).toHaveTextContent(longLabel);
+  });
 });
 
 // ---------------------------------------------------------------------------

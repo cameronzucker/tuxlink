@@ -145,12 +145,27 @@
   /* ng3 smoke #6: never let a long connection/rejection string reflow the ribbon
    * or push the right-pinned Connect button off-screen. */
   overflow: hidden;
+  --dash-connection-slot: clamp(210px, 18vw, 260px);
+}
+/* tuxlink-a8x6: keep the whole Connection cell stable as the label changes
+ * between Idle/Connected/Error and Telnet/Packet/ARDOP/VARA. Only the text
+ * inside the slot may ellipsize; neighboring ribbon controls must not shift. */
+.layout-b .dashboard .dash-item--connection {
+  flex: 0 0 var(--dash-connection-slot);
+  inline-size: var(--dash-connection-slot);
 }
 /* The connection value can be a long failure reason; clamp it (full text on hover
  * + in the session log) so the ribbon stays fixed-layout (ng3 smoke #6). */
 .layout-b .dashboard .dash-connection {
-  max-width: 260px;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  display: flex;
+  align-items: center;
   white-space: nowrap;
+  overflow: hidden;
+}
+.layout-b .dashboard .dash-connection-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }

@@ -291,8 +291,11 @@
   .layout-b .dashboard {
     gap: 16px;
   }
+  .layout-b .dashboard .dash-item--connection {
+    --dash-connection-slot: 180px;
+  }
   .layout-b .dashboard .dash-connection {
-    max-width: 180px;
+    max-inline-size: 100%;
   }
   /* Ribbon touch targets >=44px (height). */
   .layout-b .dashboard .connect-button,
