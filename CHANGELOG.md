@@ -16,6 +16,40 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.41.0](https://github.com/cameronzucker/tuxlink/compare/v0.40.0...v0.41.0) (2026-06-09)
+
+
+### Features
+
+* **mailbox:** selection-aware context menu + bulk Archive/Move (tuxlink-l80q) ([dd750ee](https://github.com/cameronzucker/tuxlink/commit/dd750eea2faa03947c09f4e1869105b5d5b00dde))
+* **map:** BaseMap tile layer over raster; validated zoom raise (C11 widened) ([ac498cf](https://github.com/cameronzucker/tuxlink/commit/ac498cf7eeecc2f9fa17c847e698208a7a726701))
+* **map:** cancel in-flight tiles on view change + partial-state tile layer ([6dd79f0](https://github.com/cameronzucker/tuxlink/commit/6dd79f05bcfd5416693352a0d2d1a5fe4673061c))
+* **map:** expose validated-tile gate for 6-char precision ([922e855](https://github.com/cameronzucker/tuxlink/commit/922e855dce1441c3ba6461fa2f57098ed4d97b4a))
+* **map:** re-tune Maidenhead lattice for full zoom range ([58d07a0](https://github.com/cameronzucker/tuxlink/commit/58d07a0ec87a78e337ab9874d644fe0da13da103))
+* **map:** standalone tile-source provenance status pill (a1cc consumes) ([8a7599f](https://github.com/cameronzucker/tuxlink/commit/8a7599f7852bd84324f42881a49089a9f61909ea))
+* **map:** tile layer bridge (stock TileLayer over tile:// scheme) ([466a3cf](https://github.com/cameronzucker/tuxlink/commit/466a3cf7b0304d5c33207bba91f2da9325bc3fae))
+* **map:** tile-source TS types + invoke wrappers ([0b6a604](https://github.com/cameronzucker/tuxlink/commit/0b6a6048856dbadad717384d72efc8953e163433))
+* **settings:** map tile source configuration UI ([07d4ea8](https://github.com/cameronzucker/tuxlink/commit/07d4ea8b399203170740d569a9c3a2d4d6d30330))
+* **tiles:** bounded LRU tile cache + clear/purge ([ce0d307](https://github.com/cameronzucker/tuxlink/commit/ce0d3073a4dc7688e65c230a9f2ea3c9de96d923))
+* **tiles:** cache only verified images via atomic temp+rename ([ae42530](https://github.com/cameronzucker/tuxlink/commit/ae42530d7e9441ce372c4dc4a13597a410b415b7))
+* **tiles:** configure/test/clear/status tile commands ([52ebea7](https://github.com/cameronzucker/tuxlink/commit/52ebea7a318ee3673f9ded62472ccedbddd43840))
+* **tiles:** per-source cache namespace + traversal-safe paths ([f6755a5](https://github.com/cameronzucker/tuxlink/commit/f6755a5446655adc716cdca6fe27e0687dd625c3))
+* **tiles:** persist map tile source config ([6f51ded](https://github.com/cameronzucker/tuxlink/commit/6f51ded4871dd43717c347b8910ab636419b645f))
+* **tiles:** serve tiles via tile:// URI scheme; +1 img-src token (tile:) ([fc6d290](https://github.com/cameronzucker/tuxlink/commit/fc6d2900f024cd05edf003d23c2330876387f7fe))
+* **tiles:** single-flight tile de-duplication ([558a223](https://github.com/cameronzucker/tuxlink/commit/558a22319aa405c8971ea1bd875b6b0024339a22))
+* **tiles:** source circuit-breaker + lazy zoom-raise ([effa0b7](https://github.com/cameronzucker/tuxlink/commit/effa0b7eb655314dd951b7e34bcfc39bc3270615))
+* **tiles:** TileGatekeeper managed state ([5ec5478](https://github.com/cameronzucker/tuxlink/commit/5ec54786be4ca329a24711ac1bb78ecd45c23d28))
+
+
+### Bug Fixes
+
+* **catalog:** repair invoke-mock type signature in CatalogBuilderPanel test ([4a4d76e](https://github.com/cameronzucker/tuxlink/commit/4a4d76e77d14f0637b6ab84722c54a13d3ecae9d))
+* **mailbox:** address Codex P2 review — self-move data-loss guard + selection cleanup (tuxlink-l80q) ([24a7cc2](https://github.com/cameronzucker/tuxlink/commit/24a7cc2f40d9ee10cedd566f6d1ba6d94baaf4c5))
+* **tiles:** gate CRS probe egress, no_proxy all clients, cap probe body ([332c8ba](https://github.com/cameronzucker/tuxlink/commit/332c8ba0f8e2da81cdc6a04a7d3333e7218572b3))
+* **tiles:** geodetic x-bound 2^(z+1) + refuse caching over-budget tiles ([5fca5f9](https://github.com/cameronzucker/tuxlink/commit/5fca5f908925753a14d642ff884d8ebbe5f47aed))
+* **tiles:** reject-biased CROSS-FIELD CRS scan + geodetic_tile_index z-guard ([9bd153b](https://github.com/cameronzucker/tuxlink/commit/9bd153bef61e3cb36e8eac098878eea2542c8ef6))
+* **tiles:** serialize per-namespace cache critical section (concurrency BLOCKER) ([5c712fa](https://github.com/cameronzucker/tuxlink/commit/5c712fabb41d0964c5fda7ad2368b5699cf482e4))
+
 ## [0.40.0](https://github.com/cameronzucker/tuxlink/compare/v0.39.3...v0.40.0) (2026-06-09)
 
 
