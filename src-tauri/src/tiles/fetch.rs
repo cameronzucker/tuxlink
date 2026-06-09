@@ -23,7 +23,14 @@
 //!      `reqwest`'s `resolve_to_addrs`, so the socket can only reach the IPs we
 //!      validated (a TOCTOU rebind to a public IP between our lookup and
 //!      reqwest's connect cannot occur — reqwest does not re-resolve).
-//! 4. **`redirect::Policy::none()`** — a 3xx is a hard error, never followed.
+//! 4. **`redirect::Policy::none()`** — a 3xx is a hard error, never followed
+//!    (a redirect is a classic SSRF pivot).
+//! 5. **Short timeout** (5 s).
+//! 6. **Response size cap** ([`MAX_TILE_BYTES`]) enforced via both the
+//!    `Content-Length` pre-check AND a streaming running-total abort (the
+//!    server may lie about / omit `Content-Length`).
+//! 7. **Image magic-byte validation** — the leading bytes must be a real
+//!    PNG/JPEG/WebP signature; the upstream `Content-Type` is NOT trusted.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -33,6 +40,11 @@ use reqwest::Url;
 use super::coord::TileCoord;
 use super::host::{ip_is_permitted, validate_source_url};
 use super::{TileScheme, TileSource};
+
+/// Hard cap on a single tile's body size. A 256×256 tile is well under this;
+/// the cap exists to bound peak memory against a hostile / misconfigured
+/// server that streams an unbounded body.
+pub const MAX_TILE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Connect/read timeout for a single tile fetch. LAN tile servers are local;
 /// a slow response is a failure, not something to wait minutes on.
@@ -58,8 +70,8 @@ pub enum FetchError {
     /// The body did not begin with a recognized image magic signature.
     #[error("upstream response is not a recognized image (PNG/JPEG/WebP)")]
     NotAnImage,
-    /// The body exceeded the size cap (declared or streamed).
-    #[error("tile body exceeds the size cap")]
+    /// The body exceeded [`MAX_TILE_BYTES`] (declared or streamed).
+    #[error("tile body exceeds size cap of {MAX_TILE_BYTES} bytes")]
     TooLarge,
     /// The upstream returned 404 for this tile.
     #[error("tile not found (404)")]
@@ -73,6 +85,26 @@ pub enum FetchError {
     /// The source URL or built tile URL was malformed.
     #[error("bad URL: {0}")]
     BadUrl(String),
+}
+
+/// MIME type of a fetched tile, derived from the validated magic bytes (NOT
+/// from the upstream `Content-Type`, which is not trusted).
+fn image_mime_from_magic(bytes: &[u8]) -> Option<&'static str> {
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
+    // JPEG: FF D8 FF
+    const JPEG: &[u8] = b"\xFF\xD8\xFF";
+    if bytes.starts_with(PNG) {
+        return Some("image/png");
+    }
+    if bytes.starts_with(JPEG) {
+        return Some("image/jpeg");
+    }
+    // WebP: "RIFF" <4-byte size> "WEBP"
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    None
 }
 
 /// Build the shared no-redirect, short-timeout tile client.
@@ -97,6 +129,7 @@ pub fn build_tile_client() -> Result<reqwest::Client, FetchError> {
 /// difference is normalized so `…/tiles` and `…/tiles/` both yield
 /// `…/tiles/{z}/{x}/{y}.png`.
 fn build_tile_url(source: &TileSource, coord: &TileCoord) -> Result<Url, FetchError> {
+    // Shape-validate the source URL (scheme, no creds, host present).
     let mut url = validate_source_url(&source.url).map_err(FetchError::BadUrl)?;
 
     let tms = matches!(source.scheme, TileScheme::Tms);
@@ -106,6 +139,8 @@ fn build_tile_url(source: &TileSource, coord: &TileCoord) -> Result<Url, FetchEr
         let mut segs = url
             .path_segments_mut()
             .map_err(|()| FetchError::BadUrl("source URL cannot be a base".into()))?;
+        // Drop a trailing empty segment (from a trailing slash) so we don't get
+        // an empty path component before the z/x/y triple.
         segs.pop_if_empty();
         segs.push(&coord.z.to_string());
         segs.push(&coord.x.to_string());
@@ -115,7 +150,7 @@ fn build_tile_url(source: &TileSource, coord: &TileCoord) -> Result<Url, FetchEr
 }
 
 /// Production resolver: resolve `host:port` to a list of `SocketAddr` via the
-/// platform resolver.
+/// platform resolver (blocking `to_socket_addrs`, run on the blocking pool).
 async fn system_resolve(host: &str, port: u16) -> std::io::Result<Vec<SocketAddr>> {
     let target = format!("{host}:{port}");
     tokio::net::lookup_host(target).await.map(|it| it.collect())
@@ -123,11 +158,14 @@ async fn system_resolve(host: &str, port: u16) -> std::io::Result<Vec<SocketAddr
 
 /// Fetch a single tile, building the upstream URL from the stored source and
 /// validated coordinate. Public entry point; uses the system resolver.
+///
+/// On success returns `(body_bytes, image_mime)` where `image_mime` is derived
+/// from the validated magic bytes.
 pub async fn fetch_tile_bytes(
     source: &TileSource,
     coord: &TileCoord,
     allow_loopback: bool,
-) -> Result<Vec<u8>, FetchError> {
+) -> Result<(Vec<u8>, &'static str), FetchError> {
     fetch_tile_bytes_with_resolver(source, coord, allow_loopback, |host, port| async move {
         system_resolve(&host, port).await
     })
@@ -144,7 +182,7 @@ pub async fn fetch_tile_bytes_with_resolver<R, Fut>(
     coord: &TileCoord,
     allow_loopback: bool,
     resolve: R,
-) -> Result<Vec<u8>, FetchError>
+) -> Result<(Vec<u8>, &'static str), FetchError>
 where
     R: Fn(String, u16) -> Fut,
     Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
@@ -155,6 +193,7 @@ where
         .host_str()
         .ok_or_else(|| FetchError::BadUrl("tile URL has no host".into()))?
         .to_string();
+    // Effective port for connect-pinning (scheme default when absent).
     let port = url
         .port_or_known_default()
         .ok_or_else(|| FetchError::BadUrl("tile URL has no known port".into()))?;
@@ -221,6 +260,7 @@ where
 
     let status = resp.status();
     if status.is_redirection() {
+        // The no-redirect policy surfaces a 3xx as a normal response; refuse it.
         return Err(FetchError::Redirect);
     }
     if status.as_u16() == 404 {
@@ -230,11 +270,32 @@ where
         return Err(FetchError::Status(status.as_u16()));
     }
 
-    let body = resp
-        .bytes()
-        .await
-        .map_err(|e| FetchError::Network(format!("read body: {e}")))?;
-    Ok(body.to_vec())
+    // Size cap — pre-check the declared Content-Length …
+    if let Some(len) = resp.content_length() {
+        if len > MAX_TILE_BYTES {
+            return Err(FetchError::TooLarge);
+        }
+    }
+
+    // … then stream the body and abort on the running total (don't trust the
+    // declared length — a hostile server may omit or under-report it; mirrors
+    // forms::updater::download_archive's defense-in-depth).
+    let mut body: Vec<u8> = Vec::new();
+    let mut total: u64 = 0;
+    use futures::StreamExt;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk_res) = stream.next().await {
+        let chunk = chunk_res.map_err(|e| FetchError::Network(format!("read chunk: {e}")))?;
+        total = total.saturating_add(chunk.len() as u64);
+        if total > MAX_TILE_BYTES {
+            return Err(FetchError::TooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    // Image magic-byte validation — do NOT trust the upstream Content-Type.
+    let mime = image_mime_from_magic(&body).ok_or(FetchError::NotAnImage)?;
+    Ok((body, mime))
 }
 
 #[cfg(test)]
@@ -261,6 +322,7 @@ mod tests {
     }
 
     fn png_bytes() -> Vec<u8> {
+        // PNG signature + a little filler.
         let mut v = b"\x89PNG\r\n\x1a\n".to_vec();
         v.extend_from_slice(&[0u8; 32]);
         v
@@ -305,12 +367,14 @@ mod tests {
         let m = server
             .mock("GET", "/3/5/2.png")
             .with_status(200)
+            .with_header("content-type", "image/png")
             .with_body(png_bytes())
             .create_async()
             .await;
         let src = source(&server.url());
-        let bytes = fetch_tile_bytes(&src, &coord(), true).await.unwrap();
+        let (bytes, mime) = fetch_tile_bytes(&src, &coord(), true).await.unwrap();
         m.assert_async().await;
+        assert_eq!(mime, "image/png");
         assert!(bytes.starts_with(b"\x89PNG"));
     }
 
@@ -370,5 +434,130 @@ mod tests {
         let src = source("http://8.8.8.8:8080/");
         let err = fetch_tile_bytes(&src, &coord(), false).await.unwrap_err();
         assert!(matches!(err, FetchError::HostDenied(_)), "got {err:?}");
+    }
+
+    // ---- Task 3.3 ----
+
+    #[tokio::test]
+    async fn non_image_content_type_is_not_an_image() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/3/5/2.png")
+            .with_status(200)
+            .with_header("content-type", "text/html")
+            .with_body("<html>not a tile</html>")
+            .create_async()
+            .await;
+        let src = source(&server.url());
+        let err = fetch_tile_bytes(&src, &coord(), true).await.unwrap_err();
+        assert!(matches!(err, FetchError::NotAnImage), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn declared_content_length_over_cap_is_too_large() {
+        // An honest over-cap Content-Length (body length == declared length, so
+        // hyper doesn't reject the response) must be caught by the pre-check
+        // before the body is streamed. The body starts with PNG magic so the
+        // ONLY thing that can reject it is the size cap.
+        let mut server = mockito::Server::new_async().await;
+        let mut body = png_bytes();
+        body.resize((MAX_TILE_BYTES + 1) as usize, 0u8);
+        let _m = server
+            .mock("GET", "/3/5/2.png")
+            .with_status(200)
+            .with_header("content-type", "image/png")
+            .with_body(body)
+            .create_async()
+            .await;
+        let src = source(&server.url());
+        let err = fetch_tile_bytes(&src, &coord(), true).await.unwrap_err();
+        assert!(matches!(err, FetchError::TooLarge), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn streamed_body_over_cap_is_too_large() {
+        // Server omits Content-Length entirely (chunked transfer) but streams a
+        // body over the cap → the streaming running-total abort must fire. This
+        // is the "server lies/omits Content-Length" production case the pre-check
+        // alone cannot cover. mockito uses chunked encoding (no Content-Length)
+        // when a body stream is supplied without a length header.
+        let mut server = mockito::Server::new_async().await;
+        let body = vec![0xABu8; (MAX_TILE_BYTES + 1024) as usize];
+        let _m = server
+            .mock("GET", "/3/5/2.png")
+            .with_status(200)
+            .with_header("content-type", "image/png")
+            // chunked transfer encoding → no Content-Length, so the pre-check
+            // cannot fire and the streaming running-total guard is the only
+            // thing that can reject the over-cap body.
+            .with_chunked_body(move |w| w.write_all(&body))
+            .create_async()
+            .await;
+        let src = source(&server.url());
+        let err = fetch_tile_bytes(&src, &coord(), true).await.unwrap_err();
+        assert!(matches!(err, FetchError::TooLarge), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn valid_png_magic_is_ok() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/3/5/2.png")
+            .with_status(200)
+            // Deliberately mislabel as octet-stream: magic, not Content-Type, decides.
+            .with_header("content-type", "application/octet-stream")
+            .with_body(png_bytes())
+            .create_async()
+            .await;
+        let src = source(&server.url());
+        let (bytes, mime) = fetch_tile_bytes(&src, &coord(), true).await.unwrap();
+        assert_eq!(mime, "image/png");
+        assert!(bytes.starts_with(b"\x89PNG"));
+    }
+
+    #[tokio::test]
+    async fn status_404_is_not_found() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/3/5/2.png")
+            .with_status(404)
+            .create_async()
+            .await;
+        let src = source(&server.url());
+        let err = fetch_tile_bytes(&src, &coord(), true).await.unwrap_err();
+        assert!(matches!(err, FetchError::NotFound), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn other_non_success_is_status() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/3/5/2.png")
+            .with_status(503)
+            .create_async()
+            .await;
+        let src = source(&server.url());
+        let err = fetch_tile_bytes(&src, &coord(), true).await.unwrap_err();
+        assert!(matches!(err, FetchError::Status(503)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn tms_scheme_flips_y_in_url() {
+        // TMS source: y in the requested path must be the flipped upstream_y.
+        let mut server = mockito::Server::new_async().await;
+        let c = TileCoord::new(2, 1, 0, 19).unwrap();
+        let flipped = c.upstream_y(true); // (1<<2)-1-0 = 3
+        let path = format!("/2/1/{flipped}.png");
+        let m = server
+            .mock("GET", path.as_str())
+            .with_status(200)
+            .with_body(png_bytes())
+            .create_async()
+            .await;
+        let mut src = source(&server.url());
+        src.scheme = TileScheme::Tms;
+        let (_bytes, mime) = fetch_tile_bytes(&src, &c, true).await.unwrap();
+        m.assert_async().await;
+        assert_eq!(mime, "image/png");
     }
 }
