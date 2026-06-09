@@ -54,6 +54,12 @@ export function CatalogBrowse({
   // to the first category (null only when there are no categories at all).
   const resolvedInitial = initialCategory ?? categoryNames[0] ?? null;
 
+  // NOTE: `initialCategory` is read ONCE on mount. This is safe because the
+  // parent remounts CatalogBrowse on each browse entry (openBrowse cards render
+  // only in the home view, so the prop cannot change mid-mount). If a future
+  // task adds a live category-change path (breadcrumbs, an in-browse "jump to
+  // category", a second openBrowse while already in browse), add a useEffect to
+  // sync `initialCategory → activeCategory` — otherwise the change is ignored.
   const [activeCategory, setActiveCategory] = useState<string | null>(resolvedInitial);
   const [filter, setFilter] = useState('');
 
