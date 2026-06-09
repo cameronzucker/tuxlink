@@ -23,8 +23,8 @@ swallowing key events.
 The plain-letter `A` is gated on input focus — pressing it while typing
 into a text input, textarea, or contenteditable does not archive. This
 keeps the accelerator out of the operator's way when composing or
-searching. Catalog Request (Message menu) has no accelerator; the
-inquiry-message workflow is launched from the menu only.
+searching. Request Center (Message menu) has no accelerator; the
+request workflow is launched from the menu only.
 
 ## Session
 
