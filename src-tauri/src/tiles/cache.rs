@@ -253,6 +253,23 @@ fn put_inner(
     tms: bool,
     bytes: &[u8],
 ) -> std::io::Result<()> {
+    // Bounded growth (§8.4), single-tile-over-budget guard (Finding 4): a tile
+    // LARGER than the whole byte cap can never be cached without violating the
+    // cap. `evict_to_fit` would drain the LRU to empty and the write would land
+    // anyway, pushing on-disk bytes + meta.total_bytes past the cap. Refuse to
+    // cache it instead — serve-but-don't-cache (the degrade-silently contract):
+    // return Ok WITHOUT writing or recording. The tile is still served to the
+    // caller upstream; only the persistence is skipped.
+    let cap = byte_cap(source);
+    if bytes.len() as u64 > cap {
+        tracing::warn!(
+            "tile ({} bytes) exceeds the source cache budget ({cap} bytes); \
+             serving but not caching for {coord:?}",
+            bytes.len()
+        );
+        return Ok(());
+    }
+
     let path = tile_path(cache_root, ns, coord, tms)?;
     let parent = path
         .parent()
@@ -261,7 +278,6 @@ fn put_inner(
     // Bounded growth (§8.4): evict LRU entries until this write fits under the
     // byte cap, BEFORE writing the new bytes.
     let ns_root = cache_root.join(ns);
-    let cap = byte_cap(source);
     evict_to_fit(&ns_root, cap, bytes.len() as u64)?;
 
     // Traversal-safety (§8.4), leaf check: `tile_path` canonicalizes the PARENT
@@ -395,10 +411,12 @@ fn store_meta(ns_root: &Path, meta: &CacheMeta) -> std::io::Result<()> {
 
 /// Evict least-recently-accessed entries until `incoming_bytes` fits under
 /// `cap`. Runs BEFORE the new tile is written, so the namespace total never
-/// exceeds the cap. If a single tile is larger than the whole cap, eviction
-/// drains everything and the write still proceeds (best-effort; the next call
-/// will evict it in turn — a degenerate cap is an operator misconfig, not a
-/// reason to refuse service).
+/// exceeds the cap.
+///
+/// The caller ([`put_inner`]) guarantees `incoming_bytes <= cap` (a single tile
+/// larger than the whole budget is refused upstream — serve-but-don't-cache, the
+/// Finding-4 guard), so the loop always terminates with room for the new tile;
+/// it never drains the LRU to empty only to overflow on the subsequent write.
 fn evict_to_fit(ns_root: &Path, cap: u64, incoming_bytes: u64) -> std::io::Result<()> {
     let mut meta = load_meta(ns_root);
     // Sort a working index by last_access ascending (oldest first).
@@ -740,6 +758,55 @@ mod tests {
             "meta total_bytes {} must agree with on-disk {on_disk} within one tile ({slack}); \
              a larger gap means orphaned tile files lost from meta",
             meta.total_bytes
+        );
+    }
+
+    #[test]
+    fn tile_larger_than_budget_is_not_cached() {
+        // Finding 4 regression: a single valid tile LARGER than the source's byte
+        // budget must NOT be cached — evict_to_fit would otherwise drain the LRU
+        // and put_inner would write+record it anyway, blowing past the cap. The
+        // contract is serve-but-don't-cache: put returns Ok, but nothing lands on
+        // disk and meta.total_bytes stays 0.
+        let root = tempfile::tempdir().unwrap();
+        let mut src = source("http://192.168.1.5:8080/tiles/");
+        src.cache_budget_mb = 1; // 1 MiB cap
+        let cap = byte_cap(&src);
+        // A valid PNG of 1.5 MiB — over the 1 MiB budget but a real image.
+        let big = png_sized((cap as usize * 3) / 2);
+        assert!(big.len() as u64 > cap, "test fixture must exceed the cap");
+
+        // put must return Ok (served-but-uncached), never Err.
+        put(root.path(), &src, &coord(), &big).unwrap();
+
+        // Nothing cached: a read is a clean miss.
+        assert!(
+            get(root.path(), &src, &coord()).is_none(),
+            "an over-budget tile must not be readable from cache"
+        );
+        // On-disk bytes and meta accounting are both zero — the cap is not
+        // exceeded by an oversized single tile.
+        let ns_root = root.path().join(source_namespace(&src));
+        assert_eq!(on_disk_tile_bytes(&ns_root), 0, "no tile bytes on disk");
+        let meta = load_meta(&ns_root);
+        assert_eq!(meta.total_bytes, 0, "meta total must stay 0");
+        assert!(meta.entries.is_empty(), "no meta entry recorded");
+    }
+
+    #[test]
+    fn tile_exactly_at_budget_is_cached() {
+        // Boundary companion to the over-budget refusal: a tile EXACTLY at the cap
+        // must still cache (the guard is strictly `> cap`, not `>= cap`).
+        let root = tempfile::tempdir().unwrap();
+        let mut src = source("http://192.168.1.5:8080/tiles/");
+        src.cache_budget_mb = 1;
+        let cap = byte_cap(&src);
+        let exact = png_sized(cap as usize);
+        assert_eq!(exact.len() as u64, cap);
+        put(root.path(), &src, &coord(), &exact).unwrap();
+        assert!(
+            get(root.path(), &src, &coord()).is_some(),
+            "a tile exactly at the cap must be cached"
         );
     }
 
