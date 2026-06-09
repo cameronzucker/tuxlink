@@ -236,6 +236,30 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
     expect(observedReq!.mode).toBe('network');
   });
 
+  // ── Connect-error banner ──────────────────────────────────────────────────
+  //
+  // The Phase-C backend command telnet_post_office_connect is NOT yet wired, so
+  // EVERY real Connect rejects until C1 lands. The error must reach the operator
+  // via the inline po-error banner (mirrors the P2P panel's p2p-error path).
+
+  it('Connect rejection surfaces the error string in the po-error banner', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'telnet_post_office_connect') {
+        throw new Error('connect command not implemented');
+      }
+      return defaultInvokeImpl(cmd);
+    });
+    renderPanel({ mode: 'local' });
+    await screen.findByTestId('po-outbox-row-OUT-1');
+    fireEvent.click(screen.getByTestId('po-connect-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('po-error')).toHaveTextContent(
+        'connect command not implemented',
+      );
+    });
+  });
+
   // ── Login indicator ───────────────────────────────────────────────────────
 
   it('local mode login indicator shows <base>-L (strips SSID + DTN suffix)', async () => {
@@ -252,6 +276,22 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
       expect(screen.getByTestId('po-login-indicator')).toHaveTextContent('N7CPZ-10');
     });
     expect(screen.getByTestId('po-login-indicator')).not.toHaveTextContent('-L');
+  });
+
+  it('local mode login indicator shows "-L" for an empty callsign (matches the unguarded backend)', async () => {
+    // config_read returns no callsign → trimmed base is '' → backend
+    // base_callsign_for_post_office('', true) = format!("{base}-L") = "-L".
+    // The indicator must render that, NOT the '—' placeholder (the dropped guard).
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { callsign: '', grid: '' };
+      return defaultInvokeImpl(cmd);
+    });
+    renderPanel({ mode: 'local' });
+    await screen.findByTestId('po-outbox-row-OUT-1');
+    expect(screen.getByTestId('po-login-indicator')).toHaveTextContent('-L');
+    // The em-dash placeholder must NOT be shown when the backend would send '-L'.
+    expect(screen.getByTestId('po-login-indicator')).not.toHaveTextContent('—');
   });
 
   // ── No-consent assertion (RADIO-1: pure TCP, zero transmit) ────────────────
@@ -366,6 +406,31 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
     });
   });
 
+  it('a rejected favorites add (duplicate host:port) surfaces the error inline', async () => {
+    // network_po_favorites_add is a pure config write — it emits NO
+    // session_log:line events, so a UiError::Rejected (host:port already saved)
+    // must be surfaced in the inline favorites error line, not silently dropped.
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'network_po_favorites_add') {
+        throw new Error('Rejected: relay.local:8772 is already saved');
+      }
+      return defaultInvokeImpl(cmd);
+    });
+    renderPanel({ mode: 'network' });
+    await screen.findByTestId('po-favorites-section');
+    fireEvent.change(screen.getByTestId('po-host-input'), {
+      target: { value: 'relay.local' },
+    });
+    fireEvent.click(screen.getByTestId('po-favorite-add-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('po-favorites-error')).toHaveTextContent(
+        'relay.local:8772 is already saved',
+      );
+    });
+  });
+
   it('removing a favorite fires network_po_favorites_remove with host + port', async () => {
     const core = await import('@tauri-apps/api/core');
     const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
@@ -387,6 +452,53 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
         { host: 'relay.local', port: 8772 },
       );
     });
+  });
+
+  // ── Partial-send survival (selection vs. shrinking Outbox) ─────────────────
+  //
+  // After a connect, sent drafts move Outbox→Sent and invalidateQueries refetches
+  // a SMALLER Outbox. selectedMids is derived as outbox.filter(m => selected.has)
+  // so a checked-but-now-vanished MID drops out automatically — no stale id can
+  // linger in what the next Connect would send (design §4.7). The observable
+  // proof is the Connect button's send-count, which is driven by selectedCount.
+
+  it('drops vanished MIDs from the selection after the Outbox shrinks on connect', async () => {
+    const core = await import('@tauri-apps/api/core');
+    // First mailbox_list returns both drafts; after the connect-triggered
+    // invalidation, the second returns only OUT-2 (OUT-1 was sent).
+    let outboxCall = 0;
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'mailbox_list') {
+        outboxCall += 1;
+        return outboxCall === 1 ? OUTBOX_FIXTURE : [OUTBOX_FIXTURE[1]];
+      }
+      if (cmd === 'telnet_post_office_connect') {
+        return { sent_count: 1, received_count: 0 };
+      }
+      return defaultInvokeImpl(cmd);
+    });
+    renderPanel({ mode: 'local' });
+    await screen.findByTestId('po-outbox-row-OUT-1');
+
+    // Select BOTH drafts → "Connect & send 2".
+    fireEvent.click(screen.getByTestId('po-select-all'));
+    const connect = screen.getByTestId('po-connect-btn') as HTMLButtonElement;
+    expect(connect).toHaveTextContent('Connect & send 2');
+
+    // Connect. OUT-1 leaves the Outbox; OUT-2 remains.
+    fireEvent.click(connect);
+
+    // The vanished OUT-1 row is gone, and the send-count recomputes to 1 — the
+    // stale OUT-1 id no longer counts toward what the next Connect would send.
+    await waitFor(() => {
+      expect(screen.queryByTestId('po-outbox-row-OUT-1')).toBeNull();
+    });
+    expect(screen.getByTestId('po-outbox-row-OUT-2')).toBeInTheDocument();
+    expect(connect).toHaveTextContent('Connect & send 1');
+    // OUT-2 is still checked (its row survived the refetch).
+    expect(
+      (screen.getByTestId('po-outbox-check-OUT-2') as HTMLInputElement).checked,
+    ).toBe(true);
   });
 
   // ── Session log + config + close ──────────────────────────────────────────

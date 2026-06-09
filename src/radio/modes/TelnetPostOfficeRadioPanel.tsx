@@ -78,11 +78,19 @@ interface RelayFavorite {
 const favKey = (f: { host: string; port: number }) => `${f.host}:${f.port}`;
 
 /**
- * Compute the login the relay will receive, mirroring the backend's
- * `GetBaseCallsign`-equivalent extraction (design §5.6):
- *   uppercase → split on '.' take [0] → split on '-' take [0] → base.
- * Local mode appends '-L' (the routing discriminator); network mode logs in
- * with the FULL callsign unchanged.
+ * Compute the login the relay will receive.
+ *
+ * Local mode mirrors the backend's `base_callsign_for_post_office(raw, true)`
+ * (telnet.rs:455): uppercase → split on '.' take [0] → split on '-' take [0] →
+ * base, then append '-L' UNCONDITIONALLY (the local-vs-global routing
+ * discriminator). The backend's final step is `format!("{base}-L")` with NO
+ * empty-base guard, so an empty/whitespace callsign yields the literal '-L'.
+ * The indicator must show exactly what the backend would send and never
+ * silently disagree — the prior `base ? \`${base}-L\` : ''` guard rendered '—'
+ * for empty input while the backend would have sent '-L'.
+ *
+ * Network mode logs in with the FULL callsign unchanged (panel contract above;
+ * empty → '').
  *
  * Exported for unit reuse / parity with the backend vector table.
  */
@@ -90,7 +98,7 @@ export function loginCallsign(myCallsign: string, mode: PostOfficeMode): string 
   const trimmed = myCallsign.trim();
   if (mode === 'network') return trimmed.toUpperCase();
   const base = trimmed.toUpperCase().split('.')[0].split('-')[0];
-  return base ? `${base}-L` : '';
+  return `${base}-L`;
 }
 
 export function TelnetPostOfficeRadioPanel({
@@ -116,6 +124,11 @@ export function TelnetPostOfficeRadioPanel({
   const [favorites, setFavorites] = useState<RelayFavorite[]>([]);
   const [favCallsign, setFavCallsign] = useState<string>('');
   const [favLabel, setFavLabel] = useState<string>('');
+  // Favorites add/remove error. The favorites Tauri commands are pure config
+  // writes that emit NO session_log:line events, so a rejection (e.g. a
+  // duplicate host:port → UiError::Rejected) would be invisible if swallowed.
+  // Surface it inline beside the favorites controls instead.
+  const [favoritesError, setFavoritesError] = useState<string | null>(null);
 
   const { entries: logEntries, clear: clearLog } = useSessionLog();
   const queryClient = useQueryClient();
@@ -210,8 +223,11 @@ export function TelnetPostOfficeRadioPanel({
         favorite,
       });
       if (updated) setFavorites(updated);
-    } catch {
-      // Duplicate / empty-field rejections surface via the session log.
+      setFavoritesError(null);
+    } catch (e) {
+      // Duplicate host:port / empty-field rejections (UiError::Rejected) emit no
+      // session-log events — surface them in the inline favorites error line.
+      setFavoritesError(String(e));
     }
   };
 
@@ -222,8 +238,10 @@ export function TelnetPostOfficeRadioPanel({
         port: f.port,
       });
       if (updated) setFavorites(updated);
-    } catch {
-      // Session log carries any backend error.
+      setFavoritesError(null);
+    } catch (e) {
+      // No session-log event for favorites mutations — surface inline.
+      setFavoritesError(String(e));
     }
   };
 
@@ -415,6 +433,15 @@ export function TelnetPostOfficeRadioPanel({
               + Save this relay
             </button>
           </div>
+          {favoritesError && (
+            <p
+              className="radio-panel-radio-help"
+              data-testid="po-favorites-error"
+              style={{ color: 'var(--error, #f87171)' }}
+            >
+              {favoritesError}
+            </p>
+          )}
           <p className="radio-panel-radio-help">
             AREDN auto-discovery is intentionally omitted — enter the relay
             host:port manually.

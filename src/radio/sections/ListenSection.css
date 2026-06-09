@@ -132,6 +132,15 @@
   margin: 0;
 }
 
+/* Post Office Outbox send-selection checklist (TelnetPostOfficeRadioPanel).
+   Strip the default browser bullets + indent so the rows align with the
+   panel's input-row chrome instead of rendering as a bulleted list. */
+.po-outbox-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
 /* FZ-M1 compact (tuxlink-h7q7 Task 6b): raise the 9px region to the 12px floor. */
 @media (max-width: 1365px) {
   .listen-section {
