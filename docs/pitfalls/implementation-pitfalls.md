@@ -43,18 +43,37 @@ This document serves three audiences. Start here, then go directly to the sectio
 > code path that ends in an RF or network-bridge packet bearing the
 > licensee's callsign.
 >
-> This section is **§0 because it supersedes every other pitfall.**
-> If you are about to trip RADIO-1, stop. Do not continue reading the
-> other sections. Do not write code. Surface it to the licensee.
+> This section is **§0 because it supersedes every other pitfall** where it
+> applies. Note its scope (below): RADIO-1 is about *executing* a
+> transmit-capable binary against real infrastructure, not about *writing*
+> RF-path code. Writing and testing transmit-adjacent code is ordinary
+> engineering — do not stop, do not refuse to claim it.
 
 ---
 
 ### RADIO-1: Agent-autonomous transmission under the licensee's callsign
 
+> **Scope — amended 2026-06-09, [ADR 0018](../adr/0018-radio1-gates-operator-execution-not-agent-authorship.md).**
+> RADIO-1 governs the **operator's real-time execution of a transmit-capable
+> binary against real infrastructure**. It does **not** gate the agent's
+> authorship, testing, or shipping of RF-path code. The agent's dev shell has
+> no radio attached and cannot key a transmitter, so it **freely claims,
+> writes, tests (mocks / loopback / fakes), commits, and ships** RF-path code
+> (AX.25, VARA, ARDOP, transports, modem internals, abort logic). The "Fix"
+> below — the consent gate — is a property of the shipped *binary*, honored by
+> the *operator* at run time; it is not an agent-authorship gate. The genuine
+> Part 97 control-operator obligation, the consent banner, the
+> no-credentials-for-automated-jobs and no-live-tests-in-CI rules, and on-air
+> validation being operator-only all remain in force. ADR 0018 is canonical
+> for the scope; read this entry's "transmission" as *running a transmit-capable
+> binary against real infrastructure*.
+
 **The Flaw:** A test, script, CI job, scheduled task, or AI agent
-invokes a code path that transmits on the amateur radio network under
+invokes (runs) a code path that transmits on the amateur radio network under
 the project's callsign, without the station licensee having given
 explicit, scoped, per-invocation consent at the moment of the run.
+(Authoring or unit-testing that code path is not the flaw — *executing* it
+against real infrastructure without licensee control is.)
 
 Examples of this flaw in the wild:
 - CI runs an integration test against `cms.winlink.org` on every push

@@ -270,25 +270,31 @@ dirty or untracked source changes:
 Build-cache directories such as `target/` and `node_modules/` may exist there,
 but they must not be treated as permission for agents to work in that tree.
 
-## Live radio network operations — READ BEFORE ANY TRANSMISSION
+## Live radio network operations
 
-No automation, test, subagent, CI job, scheduled task, or AI agent
-initiates a transmission under the project's amateur callsign without
-the station licensee giving explicit, scoped, per-invocation consent at
-the moment of the run. Cached credentials, stored env vars, repo
-secrets, and "the user said yes to this last week" are NOT consent.
+Per [ADR 0018](docs/adr/0018-radio1-gates-operator-execution-not-agent-authorship.md),
+RADIO-1 gates the **operator's real-time execution of a transmit-capable binary
+against real infrastructure** under the project's callsign — a Part 97
+control-operator act. It does **not** gate the agent. The dev shell has no radio
+attached and cannot key a transmitter, so the agent **freely claims, writes,
+tests (mocks / loopback / fakes), commits, and ships RF-path code** (AX.25,
+VARA, ARDOP, transports, modem internals, abort logic) like any other backlog —
+no operator green-light to claim, no "rf phobia." The transmission consent gate
+is honored by the operator, in the binary, at run time; cached credentials,
+stored env vars, and "the user said yes last week" are not operator consent for
+that run.
 
-This is a Part 97 regulatory requirement, not a style guideline. Full
-rules, rationale, and the required consent-gate protocol live at
-[docs/live-cms-testing-policy.md](docs/live-cms-testing-policy.md) and
-the RADIO-1 entry in
+What the agent still does **not** do: run a transmit-capable binary against real
+hardware/infrastructure (pointless — no radio to validate against; on-air
+validation is operator-only per `rf_validation_onair_only`), or add in-app
+transmit safeguards beyond legacy WLE behavior (no added airtime caps / TOT
+timers / consent modals). Transmit code must still have a working abort and no
+runaway-TX bug — a correctness bar, not an authorship gate. CMS telnet over the
+internet is not a transmission and is authorized for agent dev testing.
+
+Canonical: ADR 0018 + [docs/live-cms-testing-policy.md](docs/live-cms-testing-policy.md);
+detailed rationale in the RADIO-1 entry in
 [docs/pitfalls/implementation-pitfalls.md](docs/pitfalls/implementation-pitfalls.md).
-
-**Subagent rule:** if your task touches any code path that could
-transmit, refuse to run it in your shell. Write the code, commit it,
-let the licensee run it manually. If your task seems to require you to
-run a live-CMS binary to verify completion, your task is misspecified
-— STOP and escalate.
 
 ## Commit and release discipline
 
