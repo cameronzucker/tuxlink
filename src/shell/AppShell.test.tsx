@@ -548,12 +548,18 @@ describe('<AppShell> — Mock B topology', () => {
     // Panel mounts in the right radio drawer — wait for the lazy chunk.
     const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
     expect(panel).toBeInTheDocument();
-    // Title confirms local mode dispatch.
-    expect(await screen.findByTestId('radio-panel-title', undefined, { timeout: 10000 }))
-      .toHaveTextContent('Post Office');
+    // Title confirms local mode dispatch. "Post Office" is a SUBSTRING of
+    // "Network Post Office", so also assert the negative — otherwise this test
+    // would pass even if the post-office arm wrongly passed mode="network".
+    const title = await screen.findByTestId('radio-panel-title', undefined, { timeout: 10000 });
+    expect(title).toHaveTextContent('Post Office');
+    expect(title).not.toHaveTextContent('Network');
     // po-banner confirms the Post Office pane body rendered (not a StubPanel).
     expect(await screen.findByTestId('po-banner', undefined, { timeout: 10000 }))
       .toBeInTheDocument();
+    // Mode discriminator: local mode must NOT render the favorites section
+    // (network-only). This is what actually locks the arm to mode="local".
+    expect(screen.queryByTestId('po-favorites-section')).not.toBeInTheDocument();
     // Reading pane stays on message-view-empty (no message selected) — confirms
     // the reading-pane branch returns readingPane, not <StubPanel>.
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
