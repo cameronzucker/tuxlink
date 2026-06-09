@@ -161,11 +161,18 @@ impl Mailbox {
         fs::write(dst_dir.join(format!("{}.b2f", id.0)), raw)?;
         fs::remove_file(&src)?;
         // Carry the read-marker so read-state follows the message and no orphan
-        // marker is left behind in the source folder.
+        // marker is left behind in the source folder. When the source is Sent
+        // or Outbox (Fix 4: operator-authored mail), also pre-write the .read
+        // sidecar at the destination so a moved message does not surface as
+        // unread in Archive or a user folder.
         let src_marker = self.folder_dir(from).join(format!("{}.read", id.0));
+        let source_is_sent_or_outbox =
+            matches!(from, MailboxFolder::Sent | MailboxFolder::Outbox);
         if src_marker.exists() {
             fs::write(dst_dir.join(format!("{}.read", id.0)), [])?;
             fs::remove_file(&src_marker)?;
+        } else if source_is_sent_or_outbox {
+            fs::write(dst_dir.join(format!("{}.read", id.0)), [])?;
         }
 
         // Best-effort index hook — filesystem move already succeeded above.
@@ -410,11 +417,23 @@ impl Mailbox {
         fs::create_dir_all(&dst_dir)?;
         fs::write(dst_dir.join(format!("{}.b2f", id.0)), raw)?;
         fs::remove_file(&src)?;
-        // Carry the read-marker if present.
+        // Carry the read-marker if present; and pre-write one at the destination
+        // when the source is Sent or Outbox (Fix 4: messages composed by the
+        // operator are already "read" — they must not surface as unread after
+        // being moved into Archive or a user folder, where the absence of a
+        // .read sidecar would otherwise mark them unread).
         let src_marker = src_dir.join(format!("{}.read", id.0));
+        let source_is_sent_or_outbox = matches!(
+            &from,
+            FolderRef::System(MailboxFolder::Sent) | FolderRef::System(MailboxFolder::Outbox)
+        );
         if src_marker.exists() {
             fs::write(dst_dir.join(format!("{}.read", id.0)), [])?;
             fs::remove_file(&src_marker)?;
+        } else if source_is_sent_or_outbox {
+            // No existing marker, but this is an operator-authored message:
+            // pre-write the .read sidecar at the destination so it surfaces as read.
+            fs::write(dst_dir.join(format!("{}.read", id.0)), [])?;
         }
 
         // Best-effort search-index update. The destination folder string is
@@ -848,6 +867,53 @@ mod tests {
         assert_eq!(sort_key_from_rfc3339("2024/05/20 10:13"), None, "Winlink raw form is not RFC 3339");
         // Properly-shaped RFC 3339 parses to its epoch second.
         assert_eq!(sort_key_from_rfc3339("2024-05-20T10:13:00Z"), Some(1_716_199_980));
+    }
+
+    // Fix 4 (Codex P2): a Sent message moved to Archive must NOT surface as
+    // unread — the operator wrote it, so it is inherently read. Without this
+    // fix, the absence of a .read sidecar in the Archive dir caused it to
+    // appear unread (Archive surfaces unread for received mail).
+    #[test]
+    fn sent_message_moved_to_archive_is_not_unread() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let id = mbox.store(MailboxFolder::Sent, &raw("Sent msg", "body")).unwrap();
+
+        // Confirm Sent itself never reports unread (established behaviour).
+        assert!(!mbox.list(MailboxFolder::Sent).unwrap()[0].unread);
+
+        // Move to Archive via move_to (system → system).
+        mbox.move_to(MailboxFolder::Sent, MailboxFolder::Archive, &id).unwrap();
+
+        // After the move the message must NOT surface as unread.
+        let archived = mbox.list(MailboxFolder::Archive).unwrap();
+        assert_eq!(archived.len(), 1, "moved message must appear in Archive");
+        assert!(
+            !archived[0].unread,
+            "a Sent message moved to Archive must not surface as unread (Fix 4)"
+        );
+    }
+
+    // Fix 4 (cont.): same contract via move_between, covering the Outbox case
+    // and the FolderRef::System path taken by mailbox_move for system folders.
+    #[test]
+    fn outbox_message_moved_to_archive_via_move_between_is_not_unread() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let id = mbox.store(MailboxFolder::Outbox, &raw("Queued msg", "body")).unwrap();
+
+        mbox.move_between(
+            FolderRef::System(MailboxFolder::Outbox),
+            FolderRef::System(MailboxFolder::Archive),
+            &id,
+        ).unwrap();
+
+        let archived = mbox.list(MailboxFolder::Archive).unwrap();
+        assert_eq!(archived.len(), 1);
+        assert!(
+            !archived[0].unread,
+            "an Outbox message moved to Archive must not surface as unread (Fix 4)"
+        );
     }
 }
 

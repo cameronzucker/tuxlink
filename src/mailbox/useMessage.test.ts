@@ -239,4 +239,57 @@ describe('useMessage — mark-on-open (Task 7)', () => {
       expect(total).toBeGreaterThan(countAfterA + 1);
     });
   });
+
+  // Fix 5 (Codex P2): opening a readless folder (Sent/Outbox/Drafts) must
+  // update markedRef so that returning to a previously-marked inbox message
+  // re-marks it (the "Mark Unread" stickiness contract on re-open still works).
+  // Before the fix, the early-return on !folderBearsReadState skipped the
+  // markedRef update, leaving the ref pointing at the prior inbox key; returning
+  // to that inbox message looked like a no-change to the ref and suppressed the
+  // re-mark.
+  //
+  // Test strategy: navigate inbox/C → sent/S2 → inbox/C. We must wait for
+  // sent/S2's isSuccess to become true (after its query resolves) BEFORE
+  // returning to inbox/C, because the ref update for the Sent transition only
+  // fires when isSuccess is true. Without that wait, the ref is still 'inbox/C'
+  // when we return and the guard incorrectly fires.
+  it('re-marks inbox message after navigating through a Sent message (Fix 5)', async () => {
+    type Props = { folder: 'inbox' | 'sent'; id: string };
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    const { result, rerender } = renderHook(
+      ({ folder, id }: Props) => useMessage({ folder, id }),
+      { wrapper: wrapperWith(qc), initialProps: { folder: 'inbox', id: 'C' } },
+    );
+
+    // Wait for inbox/C to be marked read.
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('message_set_read_state', {
+        folder: 'inbox',
+        id: 'C',
+        read: true,
+      }),
+    );
+
+    // Open sent/S2 and wait for the sent query to resolve (isSuccess=true),
+    // which is when the effect fires and updates markedRef to 'sent/S2'.
+    rerender({ folder: 'sent', id: 'S2' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // Sent must NOT have triggered a mark invoke.
+    const sentMarkCalls = mockInvoke.mock.calls.filter(
+      (c) => c[0] === 'message_set_read_state' && (c[1] as { folder: string }).folder === 'sent',
+    );
+    expect(sentMarkCalls).toHaveLength(0);
+
+    // Return to inbox/C — markedRef is now 'sent/S2' so the key 'inbox/C' is new:
+    // the guard passes and the mark fires again.
+    rerender({ folder: 'inbox', id: 'C' });
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls.filter(
+        (c) => c[0] === 'message_set_read_state' && (c[1] as { id: string }).id === 'C',
+      );
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
 });

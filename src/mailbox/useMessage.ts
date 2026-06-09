@@ -95,10 +95,17 @@ export function useMessage(selection: MessageSelection | null) {
   const markedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!selection || !result.isSuccess) return;
-    if (!folderBearsReadState(selection.folder)) return;
     const key = `${selection.folder}/${selection.id}`;
-    if (markedRef.current === key) return; // once per open transition, not per refetch
+    // Deduplicate: same message opened twice in a row (re-render / refetch)
+    // must not re-fire the mark. Check BEFORE updating the ref.
+    if (markedRef.current === key) return;
+    // Update the ref for EVERY open transition — including readless folders
+    // (Sent/Outbox/Drafts). This prevents a stale ref from suppressing the
+    // mark when the operator returns to a previously-marked message after
+    // visiting a readless folder (Fix 5: guard reset on readless opens).
     markedRef.current = key;
+    // Only actually invoke for folders that bear read-state.
+    if (!folderBearsReadState(selection.folder)) return;
     // Best-effort: on failure the ref stays set (no retry this open); the badge self-heals via the mailbox poll or the next distinct open.
     void invoke('message_set_read_state', {
       folder: selection.folder,
