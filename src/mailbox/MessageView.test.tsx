@@ -153,6 +153,46 @@ describe('<MessageViewLoaded>', () => {
     expect(pre).toHaveTextContent('Hello ARES');
   });
 
+  it('does not steal Ctrl+F from global mailbox search (tuxlink-20zd)', () => {
+    render(<MessageViewLoaded message={parsed({ body: 'Findable body' })} />);
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+    expect(screen.queryByTestId('message-find-bar')).toBeNull();
+  });
+
+  it('opens in-message Find with Ctrl+Shift+F and highlights body matches (tuxlink-20zd)', () => {
+    render(<MessageViewLoaded message={parsed({ body: 'Alpha net\nBravo alpha\nCharlie' })} />);
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true, shiftKey: true });
+    const input = screen.getByTestId('message-find-input');
+    fireEvent.change(input, { target: { value: 'alpha' } });
+
+    expect(screen.getByTestId('message-find-count')).toHaveTextContent('1/2');
+    expect(screen.getAllByTestId('message-find-match')).toHaveLength(2);
+    expect(screen.getAllByTestId('message-find-match')[0]).toHaveAttribute('data-active', 'true');
+
+    fireEvent.click(screen.getByTestId('message-find-next'));
+    expect(screen.getByTestId('message-find-count')).toHaveTextContent('2/2');
+    expect(screen.getAllByTestId('message-find-match')[1]).toHaveAttribute('data-active', 'true');
+  });
+
+  it('keeps catalog/list message bodies searchable via the raw text view (tuxlink-20zd)', () => {
+    render(
+      <MessageViewLoaded
+        message={parsed({
+          from: 'SERVICE@winlink.org',
+          subject: 'INQUIRY - catalog://weather',
+          body: 'AREA FORECAST\nGateway catalog line\nMore catalog data',
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('message-find-btn'));
+    fireEvent.change(screen.getByTestId('message-find-input'), { target: { value: 'catalog' } });
+
+    expect(screen.getByTestId('message-find-count')).toHaveTextContent('1/2');
+    expect(screen.getAllByTestId('message-find-match')).toHaveLength(2);
+  });
+
   // Winlink form → placeholder for now; never render raw XML.
   it('shows form placeholder when isForm', () => {
     render(<MessageViewLoaded message={parsed({ isForm: true, body: '<?xml...' })} />);
