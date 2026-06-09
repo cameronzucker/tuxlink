@@ -61,4 +61,31 @@ describe('CatalogBuilderPanel', () => {
     );
     expect(await screen.findByText(/arrive in your inbox after the next connect/i)).toBeTruthy();
   });
+
+  // tuxlink-29zx: the panel shipped with only the × button to dismiss — no
+  // backdrop-click and no Escape. Operator smoke: "no way to close it or click
+  // off of it." These codify the two standard modal-dismiss affordances (the
+  // sibling CatalogRequestPanel already has both).
+  it('dismisses on Escape', async () => {
+    const onClose = vi.fn();
+    render(<CatalogBuilderPanel onClose={onClose} />);
+    await screen.findByLabelText(/your location/i);
+    fireEvent.keyDown(screen.getByRole('dialog', { name: /find a gateway/i }), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('dismisses on backdrop (overlay) click', async () => {
+    const onClose = vi.fn();
+    render(<CatalogBuilderPanel onClose={onClose} />);
+    await screen.findByLabelText(/your location/i);
+    fireEvent.click(screen.getByTestId('catalog-builder-overlay'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT dismiss when clicking inside the panel body', async () => {
+    const onClose = vi.fn();
+    render(<CatalogBuilderPanel onClose={onClose} />);
+    fireEvent.click(await screen.findByLabelText(/your location/i));
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
