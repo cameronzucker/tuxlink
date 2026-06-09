@@ -19,7 +19,7 @@
 // without the full hook + QueryClientProvider.
 
 import './MessageView.css';
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { ContactEditor, emptyContact } from '../contacts/ContactEditor';
 import { useContacts } from '../contacts/useContacts';
@@ -182,6 +182,51 @@ export function senderCallsign(from: string): string {
   return addr;
 }
 
+interface TextMatch {
+  start: number;
+  end: number;
+}
+
+function findTextMatches(text: string, query: string): TextMatch[] {
+  const needle = query.trim();
+  if (!needle) return [];
+  const haystack = text.toLowerCase();
+  const lowerNeedle = needle.toLowerCase();
+  const matches: TextMatch[] = [];
+  let at = 0;
+  while (at < haystack.length) {
+    const found = haystack.indexOf(lowerNeedle, at);
+    if (found === -1) break;
+    matches.push({ start: found, end: found + lowerNeedle.length });
+    at = found + lowerNeedle.length;
+  }
+  return matches;
+}
+
+function highlightedText(text: string, matches: TextMatch[], activeIndex: number): ReactNode {
+  if (matches.length === 0) return text;
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  matches.forEach((match, index) => {
+    if (match.start > cursor) nodes.push(text.slice(cursor, match.start));
+    const active = index === activeIndex;
+    nodes.push(
+      <mark
+        key={`${match.start}-${match.end}`}
+        className={`message-find-match${active ? ' active' : ''}`}
+        data-testid="message-find-match"
+        data-active={active ? 'true' : 'false'}
+        data-message-find-active={active ? 'true' : undefined}
+      >
+        {text.slice(match.start, match.end)}
+      </mark>,
+    );
+    cursor = match.end;
+  });
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return nodes;
+}
+
 // ============================================================================
 // Form-body rendering (Tasks 13 + 11)
 // ============================================================================
@@ -327,10 +372,15 @@ export function MessageViewLoaded({
   /// drawer is open. Threaded from AppShell via MessageView (tuxlink-813d).
   radioDrawerOpen?: boolean;
 }) {
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const findInputRef = useRef<HTMLInputElement | null>(null);
   const from = parseAddress(message.from);
   const toAddrs = message.to.map(parseAddress);
   // G1 — add-from-sender. Active only when contacts state + handler are wired.
   const [addingContact, setAddingContact] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findActiveIndex, setFindActiveIndex] = useState(0);
   const senderCs = senderCallsign(message.from);
   const alreadyContact =
     !!contacts &&
@@ -340,8 +390,61 @@ export function MessageViewLoaded({
   // ParsedMessage carries `isForm` but not the form kind/payload yet.
   const formMeta = message.isForm ? devFormMeta(message.id) : null;
   const [formCode, ...formRest] = (formMeta?.formKind ?? '').split(' · ');
+  const findNeedle = findQuery.trim();
+  const findMatches = useMemo(
+    () => findTextMatches(message.body, findNeedle),
+    [message.body, findNeedle],
+  );
+  const findCountText =
+    findNeedle && findMatches.length > 0
+      ? `${findActiveIndex + 1}/${findMatches.length}`
+      : '0/0';
+  const bodyWithFind = findOpen && findNeedle
+    ? highlightedText(message.body, findMatches, findActiveIndex)
+    : message.body;
+  const showCatalogFindRaw = findOpen && findNeedle && isCatalogReply(message);
+  const moveFind = useCallback((delta: number) => {
+    setFindActiveIndex((cur) => {
+      if (findMatches.length === 0) return 0;
+      return (cur + delta + findMatches.length) % findMatches.length;
+    });
+  }, [findMatches.length]);
+
+  useEffect(() => {
+    setFindActiveIndex(0);
+  }, [findNeedle, message.id]);
+
+  useEffect(() => {
+    if (findMatches.length > 0 && findActiveIndex >= findMatches.length) {
+      setFindActiveIndex(0);
+    }
+  }, [findMatches.length, findActiveIndex]);
+
+  useEffect(() => {
+    if (!findOpen) return;
+    findInputRef.current?.focus();
+  }, [findOpen]);
+
+  useEffect(() => {
+    const active = paneRef.current?.querySelector('[data-message-find-active="true"]');
+    if (active instanceof HTMLElement && typeof active.scrollIntoView === 'function') {
+      active.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
+  }, [findActiveIndex, findNeedle]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setFindOpen(true);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   return (
-    <div className="reading-pane" data-testid="message-view-loaded">
+    <div className="reading-pane" data-testid="message-view-loaded" ref={paneRef}>
       {/* 1 — action bar (Mock B: Reply primary amber · Reply All · Forward) */}
       <div className="actions" role="group" aria-label="Message actions">
         <button
@@ -367,6 +470,15 @@ export function MessageViewLoaded({
           onClick={() => fireReply(message, 'forward')}
         >
           Forward
+        </button>
+        <button
+          type="button"
+          className="action-btn"
+          data-testid="message-find-btn"
+          title="Find in message (Ctrl+Shift+F)"
+          onClick={() => setFindOpen(true)}
+        >
+          Find
         </button>
         {message.isForm
           && message.formId
@@ -414,6 +526,57 @@ export function MessageViewLoaded({
           </button>
         )}
       </div>
+
+      {findOpen && (
+        <div className="message-find-bar" data-testid="message-find-bar" role="search">
+          <input
+            ref={findInputRef}
+            className="message-find-input"
+            data-testid="message-find-input"
+            aria-label="Find in message"
+            value={findQuery}
+            onChange={(e) => setFindQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                moveFind(e.shiftKey ? -1 : 1);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setFindOpen(false);
+              }
+            }}
+          />
+          <span className="message-find-count" data-testid="message-find-count" aria-live="polite">
+            {findCountText}
+          </span>
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="message-find-prev"
+            disabled={findMatches.length < 2}
+            onClick={() => moveFind(-1)}
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="message-find-next"
+            disabled={findMatches.length < 2}
+            onClick={() => moveFind(1)}
+          >
+            Next
+          </button>
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="message-find-close"
+            onClick={() => setFindOpen(false)}
+          >
+            Close
+          </button>
+        </div>
+      )}
 
       {/* G1 — inline ContactEditor prefilled with the sender callsign. Inline
           (no popup window); replaces nothing — sits below the action bar. */}
@@ -519,10 +682,16 @@ export function MessageViewLoaded({
       ) : isCatalogReply(message) ? (
         // tuxlink-a2gd: catalog INQUIRY replies (From: SERVICE, Subject: "INQUIRY - <url>")
         // render via parse-with-fallback — area weather structured, everything else raw.
-        <CatalogReplyView subject={message.subject} body={message.body} />
+        showCatalogFindRaw ? (
+          <pre className="catalog-reply__raw" data-testid="message-body">
+            {bodyWithFind}
+          </pre>
+        ) : (
+          <CatalogReplyView subject={message.subject} body={message.body} />
+        )
       ) : (
         <pre className="msg-body" data-testid="message-body">
-          {message.body}
+          {bodyWithFind}
         </pre>
       )}
 
