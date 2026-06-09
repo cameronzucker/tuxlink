@@ -668,3 +668,89 @@ describe('<FolderSidebar> nested folder rendering (desktop)', () => {
     expect(screen.getByTestId('flyout-user-folder-ares')).toHaveAttribute('data-depth', '1');
   });
 });
+
+describe('<FolderSidebar> drag-drop re-parent (tuxlink-ka3z A9)', () => {
+  const FOLDER_MIME = 'application/x-tuxlink-folder';
+  const MSG_MIME = 'application/x-tuxlink-message';
+  const folders: UserFolder[] = [
+    { slug: 'nets', displayName: 'Nets', createdAt: 'a' },
+    { slug: 'weather', displayName: 'Weather', createdAt: 'b' },
+    { slug: 'ares', displayName: 'ARES', createdAt: 'c', parentSlug: 'nets' },
+  ];
+  // Minimal DataTransfer stub for jsdom (fireEvent doesn't synthesize one).
+  const dt = (mimes: Record<string, string>) => ({
+    types: Object.keys(mimes),
+    getData: (m: string) => mimes[m] ?? '',
+    setData: () => {},
+    dropEffect: '',
+    effectAllowed: '',
+  });
+
+  it('dropping a folder onto a top-level folder re-parents it under that folder', () => {
+    const onReparentFolder = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        userFolders={folders}
+        onReparentFolder={onReparentFolder}
+      />,
+    );
+    fireEvent.drop(screen.getByTestId('user-folder-nets'), {
+      dataTransfer: dt({ [FOLDER_MIME]: 'weather' }),
+    });
+    expect(onReparentFolder).toHaveBeenCalledWith('weather', 'nets');
+  });
+
+  it('dropping a folder on the Folders header promotes it to top level', () => {
+    const onReparentFolder = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        userFolders={folders}
+        onReparentFolder={onReparentFolder}
+      />,
+    );
+    fireEvent.drop(screen.getByTestId('folders-section-header'), {
+      dataTransfer: dt({ [FOLDER_MIME]: 'ares' }),
+    });
+    expect(onReparentFolder).toHaveBeenCalledWith('ares', undefined);
+  });
+
+  it('refuses to nest a folder that has children (would exceed the cap)', () => {
+    const onReparentFolder = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        userFolders={folders}
+        onReparentFolder={onReparentFolder}
+      />,
+    );
+    // nets has child ares; dropping nets onto weather must be a no-op.
+    fireEvent.drop(screen.getByTestId('user-folder-weather'), {
+      dataTransfer: dt({ [FOLDER_MIME]: 'nets' }),
+    });
+    expect(onReparentFolder).not.toHaveBeenCalled();
+  });
+
+  it('ignores an ambiguous payload carrying both folder and message MIMEs', () => {
+    const onReparentFolder = vi.fn();
+    const onDropMessage = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        userFolders={folders}
+        onReparentFolder={onReparentFolder}
+        onDropMessage={onDropMessage}
+      />,
+    );
+    fireEvent.drop(screen.getByTestId('user-folder-nets'), {
+      dataTransfer: dt({ [FOLDER_MIME]: 'weather', [MSG_MIME]: '{"id":"m1","folder":"inbox"}' }),
+    });
+    expect(onReparentFolder).not.toHaveBeenCalled();
+    expect(onDropMessage).not.toHaveBeenCalled();
+  });
+});

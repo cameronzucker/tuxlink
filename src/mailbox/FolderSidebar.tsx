@@ -92,6 +92,10 @@ export interface FolderSidebarProps {
   onDropMessage?: (id: string, fromFolder: MailboxFolderRef, toFolder: MailboxFolderRef) => void;
   /** Right-click on a user folder (tuxlink-ejph). Opens FolderContextMenu. */
   onFolderContextMenu?: (slug: string, x: number, y: number) => void;
+  /** Re-parent a folder via drag-drop (tuxlink-ka3z). `parentSlug === undefined`
+   *  promotes the dragged folder to top level (dropped on the Folders header);
+   *  a slug nests it under that top-level folder. Client-side D4 guards apply. */
+  onReparentFolder?: (slug: string, parentSlug: string | undefined) => void;
   /** Currently selected connection (drives the reading-pane connection panel). */
   selectedConnection?: ConnectionKey | null;
   /** Select a connection (opens its reading-pane panel). */
@@ -111,6 +115,10 @@ export interface FolderSidebarProps {
 /// MessageList.tsx — duplicated here so this module stays free of MessageList
 /// imports (FolderSidebar is rendered before MessageList in the panes grid).
 const TUXLINK_DRAG_MIME = 'application/x-tuxlink-message';
+/// DataTransfer MIME for a FOLDER drag (tuxlink-ka3z) — re-parenting a folder by
+/// dragging it. Distinct from the message MIME so a drop target can tell them
+/// apart; a payload carrying BOTH is treated as ambiguous and ignored (A9).
+const TUXLINK_FOLDER_DRAG_MIME = 'application/x-tuxlink-folder';
 
 interface DragPayload {
   id: string;
@@ -179,6 +187,7 @@ export const FolderSidebar = memo(function FolderSidebar({
   onCreateFolder,
   onDropMessage,
   onFolderContextMenu,
+  onReparentFolder,
   selectedConnection = null,
   onSelectConnection,
   compact = false,
@@ -269,6 +278,59 @@ export const FolderSidebar = memo(function FolderSidebar({
     if (dragOver === slug) setDragOver(null);
   };
 
+  // Folder-drag (re-parent) helpers (tuxlink-ka3z A9). Drop targets inspect the
+  // DataTransfer types to tell a folder drag from a message drag; a payload
+  // carrying BOTH known tuxlink MIMEs is ambiguous and ignored.
+  const onFolderDragStart = (slug: string) => (e: React.DragEvent) => {
+    e.dataTransfer.setData(TUXLINK_FOLDER_DRAG_MIME, slug);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const folderAwareDragOver = (slug: string) => (e: React.DragEvent) => {
+    const types = e.dataTransfer.types;
+    const folder = types.includes(TUXLINK_FOLDER_DRAG_MIME);
+    const message = !!onDropMessage && types.includes(TUXLINK_DRAG_MIME);
+    if (!folder && !message) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOver !== slug) setDragOver(slug);
+  };
+  // Drop onto a user-folder row: re-parent a dragged folder under it (when it is
+  // a valid top-level target, mirroring the backend D4 rules), else fall through
+  // to the existing message-move path.
+  const onUserFolderDrop = (target: UserFolder) => (e: React.DragEvent) => {
+    const types = e.dataTransfer.types;
+    const hasFolder = types.includes(TUXLINK_FOLDER_DRAG_MIME);
+    const hasMessage = types.includes(TUXLINK_DRAG_MIME);
+    if (hasFolder && hasMessage) {
+      e.preventDefault();
+      setDragOver(null);
+      return; // ambiguous payload — no-op
+    }
+    if (hasFolder) {
+      e.preventDefault();
+      setDragOver(null);
+      const dragged = e.dataTransfer.getData(TUXLINK_FOLDER_DRAG_MIME);
+      if (!dragged || dragged === target.slug) return; // self
+      if (target.parentSlug) return; // target must be top-level (cap)
+      if (userFolders.some((f) => f.parentSlug === dragged)) return; // dragged has children → depth 3
+      onReparentFolder?.(dragged, target.slug);
+      return;
+    }
+    makeDropHandler(target.slug)(e); // message move (existing behavior)
+  };
+  // Drop onto the "Folders" section header: promote a dragged folder to top level.
+  const onFoldersHeaderDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(TUXLINK_FOLDER_DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+  const onFoldersHeaderDrop = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(TUXLINK_FOLDER_DRAG_MIME)) return;
+    e.preventDefault();
+    const dragged = e.dataTransfer.getData(TUXLINK_FOLDER_DRAG_MIME);
+    if (dragged) onReparentFolder?.(dragged, undefined);
+  };
+
   // Shared nested-folder row renderer (tuxlink-ka3z, A7). Drives both the desktop
   // list and the compact flyout — both are list-style. `testidPrefix` keeps their
   // testids distinct; `onSelect` differs (desktop selects in place; the flyout
@@ -295,9 +357,11 @@ export const FolderSidebar = memo(function FolderSidebar({
               onFolderContextMenu(uf.slug, e.clientX, e.clientY);
             }
           }}
-          onDragOver={makeDragOver(uf.slug)}
+          draggable
+          onDragStart={onFolderDragStart(uf.slug)}
+          onDragOver={folderAwareDragOver(uf.slug)}
           onDragLeave={handleDragLeave(uf.slug)}
-          onDrop={makeDropHandler(uf.slug)}
+          onDrop={onUserFolderDrop(uf)}
           style={{
             ...(depth ? { paddingLeft: 22 } : null),
             ...(isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : null),
@@ -458,7 +522,12 @@ export const FolderSidebar = memo(function FolderSidebar({
           `+` button that fires onCreateFolder; the section is rendered even
           when empty so the operator's path to creating a first folder is
           always visible. */}
-      <div className="section-label section-label--folders">
+      <div
+        className="section-label section-label--folders"
+        data-testid="folders-section-header"
+        onDragOver={onFoldersHeaderDragOver}
+        onDrop={onFoldersHeaderDrop}
+      >
         <span className="section-label-text">Folders</span>
         {onCreateFolder && (
           <button
@@ -637,7 +706,12 @@ export const FolderSidebar = memo(function FolderSidebar({
           `+` button that fires onCreateFolder; the section is rendered even
           when empty so the operator's path to creating a first folder is
           always visible. */}
-      <div className="section-label section-label--folders">
+      <div
+        className="section-label section-label--folders"
+        data-testid="folders-section-header"
+        onDragOver={onFoldersHeaderDragOver}
+        onDrop={onFoldersHeaderDrop}
+      >
         <span className="section-label-text">Folders</span>
         {onCreateFolder && (
           <button
