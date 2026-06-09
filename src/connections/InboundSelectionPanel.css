@@ -6,7 +6,9 @@
   background: rgba(0, 0, 0, 0.5);
   display: grid;
   place-items: center;
-  z-index: 50;
+  /* tuxlink-76zy: stack above titlebar/menu/dropdown/resize chrome so a tall
+     pending-message panel keeps its header and close control reachable. */
+  z-index: 1000;
 }
 .inbound-selection {
   background: var(--surface);
