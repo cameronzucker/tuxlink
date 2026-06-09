@@ -3002,6 +3002,7 @@ mod mailbox_change_tests {
             sent: vec![queued_id.0],
             rejected: vec![],
             deferred: vec![],
+            relay_state: crate::winlink::relay_banner::RelayState::NotRelay,
         };
         let notified = AtomicUsize::new(0);
         let notify = || {
@@ -3061,6 +3062,7 @@ mod mailbox_change_tests {
             sent: vec![sent.proposal.mid.clone()],
             rejected: vec![rejected.proposal.mid.clone()],
             deferred: vec!["DEFMID00001".to_string()],
+            relay_state: crate::winlink::relay_banner::RelayState::NotRelay,
         };
         let outbound_messages = vec![sent, rejected];
         let outbound = outbound_log_items(&outbound_messages);

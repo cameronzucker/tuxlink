@@ -228,6 +228,9 @@ pub struct ExchangeResult {
     pub sent: Vec<String>,
     pub rejected: Vec<String>,
     pub deferred: Vec<String>,
+    /// What the remote's pre-SID banner revealed about its relay type.
+    /// `NotRelay` for ordinary CMS sessions and P2P-listen (Answer role).
+    pub relay_state: crate::winlink::relay_banner::RelayState,
 }
 
 /// Which side of the FBB master/slave split this exchange plays.
@@ -297,11 +300,13 @@ where
         "exchange started",
     );
 
+    let mut relay_state = crate::winlink::relay_banner::RelayState::NotRelay;
     let my_turn = match role {
         ExchangeRole::Dial => {
             // Slave: the remote speaks first; answer its challenge if present.
             let remote =
                 handshake::read_remote_handshake(reader).map_err(ExchangeError::Handshake)?;
+            relay_state = remote.relay_state;
             tracing::debug!(
                 target: "tuxlink::winlink::session",
                 remote_sid = %remote.sid,
@@ -367,6 +372,7 @@ where
     };
 
     let mut result = ExchangeResult::default();
+    result.relay_state = relay_state;
     let mut remaining = outbound;
     let mut remote_no_messages = false;
     let mut my_turn = my_turn;
