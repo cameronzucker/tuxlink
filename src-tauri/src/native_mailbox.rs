@@ -182,32 +182,50 @@ impl Mailbox {
         Ok(())
     }
 
-    /// Mark a message read by dropping an empty `<mid>.read` sidecar next to its
-    /// `<mid>.b2f`. Tolerant: a message with no file on disk is a no-op (it may
-    /// have been moved or removed between the list view and the open), never an
-    /// error. Read-state is only *surfaced* for the Inbox (see [`Mailbox::list`]),
-    /// but the marker is written for whatever folder is given so it can travel
-    /// with the message in [`Mailbox::move_to`].
-    pub fn mark_read(&self, folder: MailboxFolder, id: &MessageId) -> Result<(), BackendError> {
-        let dir = self.folder_dir(folder);
+    /// Set a message's read-state by adding (`read = true`) or removing
+    /// (`read = false`) the `<mid>.read` sidecar next to its `<mid>.b2f`.
+    /// Folder-ref aware: works for system folders AND user-folder slugs via
+    /// `resolve_dir`. Tolerant: a message with no file on disk is a no-op
+    /// (it may have been moved/removed between the list view and the action),
+    /// and removing an absent marker is not an error.
+    pub fn set_read_state(
+        &self,
+        folder: &FolderRef,
+        id: &MessageId,
+        read: bool,
+    ) -> Result<(), BackendError> {
+        let dir = self.resolve_dir(folder);
         if !dir.join(format!("{}.b2f", id.0)).exists() {
             return Ok(());
         }
-        fs::write(dir.join(format!("{}.read", id.0)), [])?;
-
+        let marker = dir.join(format!("{}.read", id.0));
+        if read {
+            fs::write(&marker, [])?;
+        } else {
+            match fs::remove_file(&marker) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
         // Best-effort index hook — filesystem write already succeeded above.
         if let Some(idx) = self.index.as_ref() {
             match idx.lock() {
                 Ok(guard) => {
-                    if let Err(e) = guard.update_unread(&id.0, false) {
+                    if let Err(e) = guard.update_unread(&id.0, !read) {
                         eprintln!("search-index update_unread failed for mid={}: {e}", id.0);
                     }
                 }
                 Err(e) => eprintln!("search-index lock poisoned during update_unread: {e}"),
             }
         }
-
         Ok(())
+    }
+
+    /// Mark a message read. Thin wrapper over [`Mailbox::set_read_state`] kept for
+    /// existing call sites. System-folder convenience signature.
+    pub fn mark_read(&self, folder: MailboxFolder, id: &MessageId) -> Result<(), BackendError> {
+        self.set_read_state(&FolderRef::System(folder), id, true)
     }
 
     fn folder_dir(&self, folder: MailboxFolder) -> PathBuf {
@@ -668,6 +686,52 @@ mod tests {
         // No such message; marking read is a tolerant no-op (the message may
         // have been moved/removed between list and open).
         mbox.mark_read(MailboxFolder::Inbox, &MessageId::new("NOPE")).unwrap();
+    }
+
+    #[test]
+    fn mark_unread_removes_the_marker() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let id = mbox.store(MailboxFolder::Inbox, &raw("Hello", "Body")).unwrap();
+        mbox.mark_read(MailboxFolder::Inbox, &id).unwrap();
+        assert!(!mbox.list(MailboxFolder::Inbox).unwrap()[0].unread);
+
+        mbox.set_read_state(&FolderRef::System(MailboxFolder::Inbox), &id, false).unwrap();
+
+        assert!(mbox.list(MailboxFolder::Inbox).unwrap()[0].unread, "mark unread must re-surface as unread");
+    }
+
+    #[test]
+    fn set_read_state_on_missing_message_is_not_an_error() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let r = mbox.set_read_state(&FolderRef::System(MailboxFolder::Inbox), &MessageId::new("NOPE"), false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn set_read_state_works_on_a_user_folder() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let uf = mbox.create_user_folder("Net Traffic").unwrap();
+        let id = mbox.store(MailboxFolder::Inbox, &raw("Net", "x")).unwrap();
+        mbox.move_between(FolderRef::System(MailboxFolder::Inbox), FolderRef::User(uf.slug.clone()), &id).unwrap();
+
+        mbox.set_read_state(&FolderRef::User(uf.slug.clone()), &id, true).unwrap();
+
+        // Directly verify the sidecar was written to the user folder directory —
+        // independent of list_user's surface_unread flag (which is false today).
+        // This assertion fails if set_read_state's FolderRef::User arm is broken
+        // even if list_user always returns unread=false.
+        let sidecar = crate::user_folders::folder_dir(dir.path(), &uf.slug)
+            .join(format!("{}.read", id.0));
+        assert!(
+            sidecar.exists(),
+            "set_read_state(FolderRef::User) must write the <mid>.read sidecar at {sidecar:?}"
+        );
+        // Also confirm list_user doesn't blow up (surface flag is false today;
+        // this will flip to true when user-folder unread is implemented).
+        assert!(!mbox.list_user(&uf.slug).unwrap()[0].unread, "list_user must not error on a user folder with a read sidecar");
     }
 
     #[test]
