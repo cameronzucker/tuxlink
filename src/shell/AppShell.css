@@ -79,6 +79,16 @@
   grid-template-columns: 200px 380px 1fr 400px 290px;
 }
 
+/* tuxlink-r4je: the Contacts pseudo-folder mounts ContactsPanel as a single
+ * direct child of `.panes`, replacing the MessageList + reading-pane pair (M8).
+ * Span it across both content tracks (grid lines 2→4 = the 380px list + 1fr
+ * reader) so it fills the main area instead of collapsing into the 380px list
+ * track alone. The radio dock (when open) then auto-places into its own 400px
+ * track (line 4→5) rather than being shoved into the reader track. */
+.layout-b .panes > .contacts-panel {
+  grid-column: 2 / 4;
+}
+
 /* ============================================================================
  * Ribbon + search row wrapper — contains the search-zone (left) and the
  * DashboardRibbon (right). The DashboardRibbon's .dashboard uses flex and
