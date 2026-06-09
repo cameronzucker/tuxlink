@@ -277,7 +277,7 @@ describe('useMessage — mark-on-open (Task 7)', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     // Sent must NOT have triggered a mark invoke.
-    const sentMarkCalls = mockInvoke.mock.calls.filter(
+    const sentMarkCalls = (mockInvoke.mock.calls as unknown[][]).filter(
       (c) => c[0] === 'message_set_read_state' && (c[1] as { folder: string }).folder === 'sent',
     );
     expect(sentMarkCalls).toHaveLength(0);
@@ -286,7 +286,7 @@ describe('useMessage — mark-on-open (Task 7)', () => {
     // the guard passes and the mark fires again.
     rerender({ folder: 'inbox', id: 'C' });
     await waitFor(() => {
-      const calls = mockInvoke.mock.calls.filter(
+      const calls = (mockInvoke.mock.calls as unknown[][]).filter(
         (c) => c[0] === 'message_set_read_state' && (c[1] as { id: string }).id === 'C',
       );
       expect(calls.length).toBeGreaterThanOrEqual(2);
