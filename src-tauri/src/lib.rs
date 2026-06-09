@@ -375,6 +375,8 @@ pub fn run() {
             crate::ui_commands::folder_rename,         // tuxlink-ejph (Phase 3)
             crate::ui_commands::folder_move,           // tuxlink-ka3z (nesting)
             crate::ui_commands::message_read,          // Task 13 (tuxlink-y5c)
+            crate::ui_commands::message_set_read_state, // tuxlink-etxt (read/unread)
+            crate::ui_commands::message_set_read_state_bulk, // tuxlink-etxt (bulk read/unread)
             crate::ui_commands::message_attachment_preview, // tuxlink-ewtb (image attachment preview)
             crate::ui_commands::message_attachment_save, // tuxlink-0fyj (Save As attachment)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)

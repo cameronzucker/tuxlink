@@ -703,6 +703,18 @@ pub trait WinlinkBackend: Send + Sync {
         Ok(())
     }
 
+    /// Set a message's read-state (mark read or unread). Folder-ref aware so
+    /// user folders and Archive are covered. Best-effort: default is a no-op.
+    /// `NativeBackend` overrides it to write/remove the read-marker.
+    async fn set_read_state(
+        &self,
+        _folder: crate::native_mailbox::FolderRef,
+        _id: &MessageId,
+        _read: bool,
+    ) -> Result<(), BackendError> {
+        Ok(())
+    }
+
     /// Move a message between folders (tuxlink-ca5x). The Inbox → Archive path
     /// is the canonical use today; future user folders (tuxlink-f62f) flow
     /// through the same trait method. `NativeBackend` overrides this to
@@ -1101,6 +1113,15 @@ impl WinlinkBackend for NativeBackend {
 
     async fn mark_read(&self, folder: MailboxFolder, id: &MessageId) -> Result<(), BackendError> {
         self.mailbox.mark_read(folder, id)
+    }
+
+    async fn set_read_state(
+        &self,
+        folder: crate::native_mailbox::FolderRef,
+        id: &MessageId,
+        read: bool,
+    ) -> Result<(), BackendError> {
+        self.mailbox.set_read_state(&folder, id, read)
     }
 
     async fn move_message(
@@ -3400,6 +3421,41 @@ mod native_read_state_tests {
         assert!(
             !backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
             "after mark_read the message should be read"
+        );
+    }
+
+    // tuxlink-etxt Task 3: set_read_state round-trips read ↔ unread via
+    // WinlinkBackend::set_read_state (folder-ref aware, covers user folders).
+    #[tokio::test]
+    async fn native_backend_set_read_state_round_trips() {
+        use crate::native_mailbox::FolderRef;
+        let dir = tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+        let raw = compose_message("N7CPZ", &["W1AW"], &[], "Hi", "body", 1_716_200_000).to_bytes();
+        let id = seed.store(MailboxFolder::Inbox, &raw).unwrap();
+
+        let backend = NativeBackend::new(offline_config(), dir.path());
+        assert!(
+            backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
+            "seeded inbox message should start unread"
+        );
+
+        backend
+            .set_read_state(FolderRef::System(MailboxFolder::Inbox), &id, true)
+            .await
+            .unwrap();
+        assert!(
+            !backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
+            "after set_read_state(true) the message should be read"
+        );
+
+        backend
+            .set_read_state(FolderRef::System(MailboxFolder::Inbox), &id, false)
+            .await
+            .unwrap();
+        assert!(
+            backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
+            "after set_read_state(false) the message should be unread again"
         );
     }
 

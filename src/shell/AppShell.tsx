@@ -301,6 +301,12 @@ export function AppShell() {
     saveSortState(next);
   }, []);
 
+  // tuxlink-etxt Task 11: multi-row selection state. Cleared whenever the
+  // active folder changes so stale ids from a previous folder can't bleed
+  // through to a bulk command against a different folder's messages.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  useEffect(() => { setSelectedIds(new Set()); }, [selectedFolder]);
+
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
   // tuxlink-479c: remember the last operator-selected/open transport separately
@@ -454,7 +460,10 @@ export function AppShell() {
       outbox: outbox.messages.length,
       drafts: draftMessages.length,
       sent: sent.messages.length,
-      archive: archive.messages.length,
+      // tuxlink-etxt: Archive badge = unread count (matches Inbox badge semantics).
+      // User-folder count badges are intentionally deferred — they'd need a per-folder
+      // N+1 query; user-folder unread still surfaces in-list via the unread row style.
+      archive: archive.messages.filter((m) => m.unread).length,
     }),
     [inbox.messages, outbox.messages, draftMessages, sent.messages, archive.messages],
   );
@@ -705,6 +714,40 @@ export function AppShell() {
       /* surfaced via Rust logs */
     }
   }, [queryClient]);
+
+  // tuxlink-etxt Task 12+13: single-message read/unread toggle — wired from the
+  // context-menu (T12) and the U key (T13). Mirrors the invoke + invalidate
+  // pattern of the other per-message handlers; the try/catch keeps an unhandled
+  // rejection from surfacing in the UI (failure is recoverable via next refetch).
+  const setMessageReadState = useCallback(async (id: string, folder: MailboxFolderRef, read: boolean) => {
+    try {
+      await invoke('message_set_read_state', { folder, id, read });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [queryClient]);
+
+  // tuxlink-etxt Task 11: bulk read/unread for selected rows. Each id is mapped
+  // to its own folder (present on the row when search is cross-folder; falls back
+  // to the active folder for single-folder views). Mirrors the invoke + invalidate
+  // pattern used by the existing single-message move/archive handlers above.
+  //
+  // Selection is intentionally retained after a bulk action; the operator clears
+  // it via the ✕ button or by switching folders — do not auto-clear on success.
+  const bulkSetReadState = useCallback(async (ids: Set<string>, read: boolean) => {
+    const byId = new Map(visibleMessages.map((m) => [m.id, m] as const));
+    const items = [...ids].map((id) => ({
+      folder: (byId.get(id)?.folder as string | undefined) ?? selectedFolder,
+      id,
+    }));
+    try {
+      await invoke('message_set_read_state_bulk', { items, read });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [visibleMessages, selectedFolder, queryClient]);
 
   const handlers: MenuHandlers = useMemo(() => ({
     openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
@@ -978,6 +1021,10 @@ export function AppShell() {
           userFolders={userFolders}
           onMoveMessage={moveByIdToFolder}
           onArchiveMessage={archiveByIdAndFolder}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          onBulkSetReadState={bulkSetReadState}
+          onSetReadState={setMessageReadState}
         />
         {(() => {
           // tuxlink-djnl: shared render fragment for the reading pane. When

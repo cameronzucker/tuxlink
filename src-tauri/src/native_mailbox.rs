@@ -117,12 +117,13 @@ impl Mailbox {
             let raw = fs::read(&path)?;
             if let Ok(msg) = Message::from_bytes(&raw) {
                 let mut meta = meta_from_message(&msg);
-                // Unread is a received-mail concept: only the Inbox surfaces it
-                // (the Mock B sidebar shows Sent as a total, not an unread
-                // count). A message is unread until a `<mid>.read` sidecar marks
-                // it read.
+                // Unread is a received-mail concept: the Inbox and Archive (which
+                // holds received mail) surface it. Sent/Outbox are the
+                // operator's own messages. A message is unread until a
+                // `<mid>.read` sidecar marks it read.
                 meta.unread =
-                    folder == MailboxFolder::Inbox && !path.with_extension("read").exists();
+                    matches!(folder, MailboxFolder::Inbox | MailboxFolder::Archive)
+                        && !path.with_extension("read").exists();
                 metas.push(meta);
             }
         }
@@ -195,32 +196,50 @@ impl Mailbox {
         Ok(())
     }
 
-    /// Mark a message read by dropping an empty `<mid>.read` sidecar next to its
-    /// `<mid>.b2f`. Tolerant: a message with no file on disk is a no-op (it may
-    /// have been moved or removed between the list view and the open), never an
-    /// error. Read-state is only *surfaced* for the Inbox (see [`Mailbox::list`]),
-    /// but the marker is written for whatever folder is given so it can travel
-    /// with the message in [`Mailbox::move_to`].
-    pub fn mark_read(&self, folder: MailboxFolder, id: &MessageId) -> Result<(), BackendError> {
-        let dir = self.folder_dir(folder);
+    /// Set a message's read-state by adding (`read = true`) or removing
+    /// (`read = false`) the `<mid>.read` sidecar next to its `<mid>.b2f`.
+    /// Folder-ref aware: works for system folders AND user-folder slugs via
+    /// `resolve_dir`. Tolerant: a message with no file on disk is a no-op
+    /// (it may have been moved/removed between the list view and the action),
+    /// and removing an absent marker is not an error.
+    pub fn set_read_state(
+        &self,
+        folder: &FolderRef,
+        id: &MessageId,
+        read: bool,
+    ) -> Result<(), BackendError> {
+        let dir = self.resolve_dir(folder);
         if !dir.join(format!("{}.b2f", id.0)).exists() {
             return Ok(());
         }
-        fs::write(dir.join(format!("{}.read", id.0)), [])?;
-
+        let marker = dir.join(format!("{}.read", id.0));
+        if read {
+            fs::write(&marker, [])?;
+        } else {
+            match fs::remove_file(&marker) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
         // Best-effort index hook — filesystem write already succeeded above.
         if let Some(idx) = self.index.as_ref() {
             match idx.lock() {
                 Ok(guard) => {
-                    if let Err(e) = guard.update_unread(&id.0, false) {
+                    if let Err(e) = guard.update_unread(&id.0, !read) {
                         eprintln!("search-index update_unread failed for mid={}: {e}", id.0);
                     }
                 }
                 Err(e) => eprintln!("search-index lock poisoned during update_unread: {e}"),
             }
         }
-
         Ok(())
+    }
+
+    /// Mark a message read. Thin wrapper over [`Mailbox::set_read_state`] kept for
+    /// existing call sites. System-folder convenience signature.
+    pub fn mark_read(&self, folder: MailboxFolder, id: &MessageId) -> Result<(), BackendError> {
+        self.set_read_state(&FolderRef::System(folder), id, true)
     }
 
     fn folder_dir(&self, folder: MailboxFolder) -> PathBuf {
@@ -499,11 +518,11 @@ impl Mailbox {
     }
 
     /// List messages in a user folder. Mirrors [`Mailbox::list`]'s sort order
-    /// (newest first, id ascending as tiebreaker). User folders don't track
-    /// unread state today; every message reports `unread: false`.
+    /// (newest first, id ascending as tiebreaker). User folders hold received
+    /// mail; unread state is surfaced from the `<mid>.read` sidecar.
     pub fn list_user(&self, slug: &str) -> Result<Vec<MessageMeta>, BackendError> {
         let dir = user_folders::folder_dir(&self.root, slug);
-        Self::list_dir(&dir, /*surface_unread=*/ false)
+        Self::list_dir(&dir, /*surface_unread=*/ true)
     }
 
     /// Read a raw message from a user folder. Returns `NotFound` if the slug
@@ -575,7 +594,11 @@ impl Mailbox {
     /// Shared list-dir helper used by both system and user folder listing.
     /// Returns metadatas sorted newest-first with id ascending as tiebreaker.
     /// `surface_unread` controls whether a missing `.read` sidecar marks the
-    /// message unread — only the inbox surfaces this today (spec §2.1).
+    /// message unread. Its sole caller (`list_user`) passes `true` — received
+    /// mail in user folders surfaces unread (tuxlink-etxt); `list` surfaces
+    /// Inbox + Archive directly (spec §2.1).
+    ///
+    /// Called only for user folders; system folders compute unread in `list` directly.
     fn list_dir(dir: &Path, surface_unread: bool) -> Result<Vec<MessageMeta>, BackendError> {
         if !dir.exists() {
             return Ok(Vec::new());
@@ -767,10 +790,11 @@ mod tests {
     }
 
     #[test]
-    fn non_inbox_folders_never_report_unread() {
-        // Unread is a received-mail (Inbox) concept; the Mock B sidebar shows
-        // Sent as a total, not an unread count. Sent/Outbox/Archive must always
-        // report unread = false even with no read-marker on disk.
+    fn sent_and_outbox_never_report_unread() {
+        // Unread is a received-mail concept; the Mock B sidebar shows Sent as
+        // a total, not an unread count. Sent/Outbox must always report unread =
+        // false even with no read-marker on disk. (Archive, also a non-inbox
+        // system folder, DOES surface unread — see `archive_messages_surface_unread`.)
         let dir = tempdir().unwrap();
         let mbox = Mailbox::new(dir.path());
         mbox.store(MailboxFolder::Sent, &raw("S", "x")).unwrap();
@@ -778,6 +802,28 @@ mod tests {
 
         assert!(!mbox.list(MailboxFolder::Sent).unwrap()[0].unread);
         assert!(!mbox.list(MailboxFolder::Outbox).unwrap()[0].unread);
+    }
+
+    #[test]
+    fn archive_messages_surface_unread() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let id = mbox.store(MailboxFolder::Archive, &raw("A", "x")).unwrap();
+        assert!(mbox.list(MailboxFolder::Archive).unwrap()[0].unread, "archived received mail surfaces unread");
+
+        mbox.set_read_state(&FolderRef::System(MailboxFolder::Archive), &id, true).unwrap();
+        assert!(!mbox.list(MailboxFolder::Archive).unwrap()[0].unread);
+    }
+
+    #[test]
+    fn user_folder_messages_surface_unread() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let uf = mbox.create_user_folder("Skywarn", None).unwrap();
+        let id = mbox.store(MailboxFolder::Inbox, &raw("Net", "x")).unwrap();
+        mbox.move_between(FolderRef::System(MailboxFolder::Inbox), FolderRef::User(uf.slug.clone()), &id).unwrap();
+
+        assert!(mbox.list_user(&uf.slug).unwrap()[0].unread, "received mail in a user folder surfaces unread");
     }
 
     #[test]
@@ -815,6 +861,51 @@ mod tests {
         // No such message; marking read is a tolerant no-op (the message may
         // have been moved/removed between list and open).
         mbox.mark_read(MailboxFolder::Inbox, &MessageId::new("NOPE")).unwrap();
+    }
+
+    #[test]
+    fn mark_unread_removes_the_marker() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let id = mbox.store(MailboxFolder::Inbox, &raw("Hello", "Body")).unwrap();
+        mbox.mark_read(MailboxFolder::Inbox, &id).unwrap();
+        assert!(!mbox.list(MailboxFolder::Inbox).unwrap()[0].unread);
+
+        mbox.set_read_state(&FolderRef::System(MailboxFolder::Inbox), &id, false).unwrap();
+
+        assert!(mbox.list(MailboxFolder::Inbox).unwrap()[0].unread, "mark unread must re-surface as unread");
+    }
+
+    #[test]
+    fn set_read_state_on_missing_message_is_not_an_error() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let r = mbox.set_read_state(&FolderRef::System(MailboxFolder::Inbox), &MessageId::new("NOPE"), false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn set_read_state_works_on_a_user_folder() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let uf = mbox.create_user_folder("Net Traffic", None).unwrap();
+        let id = mbox.store(MailboxFolder::Inbox, &raw("Net", "x")).unwrap();
+        mbox.move_between(FolderRef::System(MailboxFolder::Inbox), FolderRef::User(uf.slug.clone()), &id).unwrap();
+
+        mbox.set_read_state(&FolderRef::User(uf.slug.clone()), &id, true).unwrap();
+
+        // Directly verify the sidecar was written to the user folder directory.
+        // This is the most precise check of set_read_state's FolderRef::User arm:
+        // it fails if that arm is broken, independent of list_user's surfacing.
+        let sidecar = crate::user_folders::folder_dir(dir.path(), &uf.slug)
+            .join(format!("{}.read", id.0));
+        assert!(
+            sidecar.exists(),
+            "set_read_state(FolderRef::User) must write the <mid>.read sidecar at {sidecar:?}"
+        );
+        // And confirm list_user surfaces the now-read state: with the sidecar
+        // written and surface_unread=true (tuxlink-etxt), the message reports read.
+        assert!(!mbox.list_user(&uf.slug).unwrap()[0].unread, "a read message in a user folder must surface unread=false");
     }
 
     #[test]
