@@ -48,6 +48,8 @@ describe('<RadioPanel>', () => {
       </RadioPanel>,
     );
     const btn = screen.getByTestId('radio-panel-find-gateway');
+    expect(btn.closest('.radio-panel-command-row')).toBe(screen.getByTestId('radio-panel-command-row'));
+    expect(btn).toHaveTextContent('Find a gateway');
     btn.click();
     expect(onFindGateway).toHaveBeenCalledOnce();
   });
@@ -59,6 +61,7 @@ describe('<RadioPanel>', () => {
       </RadioPanel>,
     );
     expect(screen.queryByTestId('radio-panel-find-gateway')).toBeNull();
+    expect(screen.queryByTestId('radio-panel-command-row')).toBeNull();
   });
 
   it('renders the state dot with the data-state attribute for CSS theming', () => {
@@ -87,6 +90,18 @@ describe('<RadioPanel>', () => {
     expect(hoverRule).toContain('border-color: var(--error);');
     expect(hoverRule).not.toContain('filter: brightness');
   });
+
+  it('places Find a gateway in a padded command row instead of loose body content (tuxlink-9525)', () => {
+    const rowRule = radioPanelCss.match(/\.radio-panel-command-row\s*\{[^}]+\}/)?.[0] ?? '';
+    expect(rowRule).toContain('padding: 8px 12px;');
+    expect(rowRule).toContain('border-bottom: 1px dashed');
+    expect(rowRule).toContain('display: flex;');
+
+    const buttonRule = radioPanelCss.match(/\.radio-panel-find-gateway\s*\{[^}]+\}/)?.[0] ?? '';
+    expect(buttonRule).toContain('display: inline-flex;');
+    expect(buttonRule).toContain('min-height: 32px;');
+    expect(buttonRule).not.toContain('margin: 0 0 10px');
+  });
 });
 
 // FZ-M1 compact interior (tuxlink-h7q7 Task 6b)
@@ -107,6 +122,7 @@ describe('RadioPanel interior compact CSS (tuxlink-h7q7 Task 6b)', () => {
     const block = RADIO_PANEL_CSS.slice(RADIO_PANEL_CSS.indexOf('@media (max-width: 1365px)'));
     expect(block).toMatch(/\.radio-panel-close \{[\s\S]*?min-height:\s*44px/);
     expect(block).toMatch(/\.radio-panel-chip \{[\s\S]*?min-height:\s*44px/);
+    expect(block).toMatch(/\.radio-panel-find-gateway \{[\s\S]*?min-height:\s*44px/);
     expect(block).toMatch(/\.radio-panel-btn \{[\s\S]*?min-height:\s*44px/);
   });
 });
