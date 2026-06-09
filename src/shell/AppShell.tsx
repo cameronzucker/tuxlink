@@ -22,6 +22,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
 import type { HighlightRange } from '../mailbox/MessageList';
+import { selectionToFolderItems, dropId, dropIds } from '../mailbox/bulkSelection';
 import { type SortState, loadSortState, saveSortState } from '../mailbox/messageSort';
 import { useMailbox, useMailboxChangeEvents } from '../mailbox/useMailbox';
 import { DRAFTS_CHANGED_EVENT, listDraftMessages } from '../mailbox/draftMailbox';
@@ -696,6 +697,10 @@ export function AppShell() {
       // Clear selection if the moved message was the one open — its folder
       // changed under the reading pane.
       setSelectedMessage((cur) => (cur?.id === id ? null : cur));
+      // A moved row leaves the view; drop it from the selection set so it can't
+      // strand the bulk bar on an invisible row (matters now that an
+      // out-of-selection right-click resets the selection to that single row).
+      setSelectedIds((cur) => dropId(cur, id));
     } catch {
       /* surfaced via Rust logs */
     }
@@ -710,6 +715,7 @@ export function AppShell() {
       await invoke('mailbox_move', { from: fromFolder, to: 'archive', id });
       void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
       setSelectedMessage((cur) => (cur?.id === id ? null : cur));
+      setSelectedIds((cur) => dropId(cur, id));
     } catch {
       /* surfaced via Rust logs */
     }
@@ -737,17 +743,11 @@ export function AppShell() {
   // Selection is intentionally retained after a bulk action; the operator clears
   // it via the ✕ button or by switching folders — do not auto-clear on success.
   const bulkSetReadState = useCallback(async (ids: Set<string>, read: boolean) => {
-    const byId = new Map(visibleMessages.map((m) => [m.id, m] as const));
-    // Fix 3: filter to ids that are actually present in the visible list so
-    // a stale selection (row removed between select and act) never falls back
+    // selectionToFolderItems maps each id to its own folder and drops stale ids
+    // (Fix 3, #499): a row removed between select and act must never fall back
     // to selectedFolder for an unknown message — that could target the wrong
     // folder in a cross-folder search view.
-    const items = [...ids]
-      .filter((id) => byId.has(id))
-      .map((id) => ({
-        folder: (byId.get(id)!.folder as string | undefined) ?? selectedFolder,
-        id,
-      }));
+    const items = selectionToFolderItems(ids, visibleMessages, selectedFolder);
     try {
       await invoke('message_set_read_state_bulk', { items, read });
       void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
@@ -758,6 +758,42 @@ export function AppShell() {
       /* surfaced via Rust logs; next refetch resyncs */
     }
   }, [visibleMessages, selectedFolder, queryClient]);
+
+  // tuxlink-l80q: bulk move (and Archive = move-to-archive) for the selected
+  // rows. Drives the bulk bar's Move ▾ / Archive AND the selection-mode context
+  // menu. Same cross-folder id→folder mapping + stale-id filter as the read
+  // handler; additionally drops items already in the destination (a no-op move
+  // — e.g. a cross-folder hit whose own folder equals `to`).
+  //
+  // Unlike bulk read/unread (which retains the selection), a move removes the
+  // rows from the current view, so the moved ids are dropped from the selection
+  // and the reading pane clears if the open message was among them. Mirrors the
+  // single moveByIdToFolder/archiveByIdAndFolder handlers' selectedMessage clear.
+  const bulkMoveToFolder = useCallback(async (ids: Set<string>, to: MailboxFolderRef) => {
+    const items = selectionToFolderItems(ids, visibleMessages, selectedFolder)
+      .filter((it) => it.folder !== to);
+    if (items.length === 0) return;
+    try {
+      await invoke('message_move_bulk', { items, to });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+      // Drop the WHOLE requested set from the selection (Codex P2): items that
+      // moved, plus any stale ids that selectionToFolderItems filtered out
+      // (rows gone from the view before the action) — leaving them selected
+      // would strand the bulk bar count on invisible rows. The reading pane
+      // only clears if the OPEN message actually moved.
+      const movedIds = new Set(items.map((it) => it.id));
+      setSelectedIds((cur) => dropIds(cur, ids));
+      setSelectedMessage((cur) => (cur && movedIds.has(cur.id) ? null : cur));
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [visibleMessages, selectedFolder, queryClient]);
+
+  const bulkArchive = useCallback(
+    (ids: Set<string>) => bulkMoveToFolder(ids, 'archive'),
+    [bulkMoveToFolder],
+  );
 
   const handlers: MenuHandlers = useMemo(() => ({
     openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
@@ -1038,6 +1074,8 @@ export function AppShell() {
           selectedIds={selectedIds}
           onSelectionChange={setSelectedIds}
           onBulkSetReadState={bulkSetReadState}
+          onBulkMove={bulkMoveToFolder}
+          onBulkArchive={bulkArchive}
           onSetReadState={setMessageReadState}
         />
         {(() => {

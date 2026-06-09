@@ -553,6 +553,12 @@ impl Mailbox {
         to: FolderRef,
         id: &MessageId,
     ) -> Result<(), BackendError> {
+        // Self-move guard (tuxlink-l80q / Codex P2, data loss): for from == to,
+        // src and dst are the same path — the write-then-remove sequence below
+        // would delete the message. A self-move is semantically a no-op.
+        if from == to {
+            return Ok(());
+        }
         let src_dir = self.resolve_dir(&from);
         let dst_dir = self.resolve_dir(&to);
         let src = src_dir.join(format!("{}.b2f", id.0));
