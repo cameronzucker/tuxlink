@@ -27,7 +27,7 @@ import { useMailbox, useMailboxChangeEvents } from '../mailbox/useMailbox';
 import { DRAFTS_CHANGED_EVENT, listDraftMessages } from '../mailbox/draftMailbox';
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
-import { useUserFolders } from '../mailbox/useUserFolders';
+import { useUserFolders, useMoveUserFolder } from '../mailbox/useUserFolders';
 import { useContacts } from '../contacts/useContacts';
 import { ContactsPanel } from '../contacts/ContactsPanel';
 import { FolderContextMenu } from '../mailbox/FolderContextMenu';
@@ -231,8 +231,11 @@ export function AppShell() {
   // string-equal is enough to drive the sidebar's active-row highlight.
   const [selectedFolder, setSelectedFolder] = useState<MailboxFolderRef>('inbox');
   // tuxlink-f62f: NewFolderDialog visibility (opened from the sidebar's
-  // Folders section `+` button).
+  // Folders section `+` button). tuxlink-ka3z: `newFolderParent` carries the
+  // parent folder when the dialog was opened via "New subfolder here" (null =
+  // top-level create).
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderParent, setNewFolderParent] = useState<UserFolder | null>(null);
   // tuxlink-ejph: rename / delete dialogs + folder context menu state.
   // `renameFolder` / `deleteFolder` hold the target folder when the dialog
   // is open, null when closed. The context menu carries position + slug.
@@ -383,6 +386,8 @@ export function AppShell() {
   // tuxlink-f62f: operator-created user folders, rendered in the sidebar's
   // Folders section. Backend reads `<root>/.folders.json`.
   const { folders: userFolders } = useUserFolders();
+  // tuxlink-ka3z: re-parent mutation for the context-menu "Move to" + drag-drop.
+  const moveFolder = useMoveUserFolder();
   // tuxlink-raez (A7): contacts count for the sidebar's Address → Contacts
   // pseudo-folder badge. Sourced from useContacts, NOT the mailbox `counts`
   // memo — `'contacts'` is a pseudo-folder, not a MailboxFolder.
@@ -799,6 +804,8 @@ export function AppShell() {
   // failed on every shell render even when the sidebar's visible state
   // hadn't changed.
   const onCreateFolder = useCallback(() => {
+    // Top-level create from the "+" button: clear any subfolder parent context.
+    setNewFolderParent(null);
     setNewFolderOpen(true);
   }, []);
   const onFolderContextMenu = useCallback(
@@ -1164,7 +1171,12 @@ export function AppShell() {
         <Suspense fallback={null}>
           <NewFolderDialog
             open={true}
-            onClose={() => setNewFolderOpen(false)}
+            parentSlug={newFolderParent?.slug}
+            parentName={newFolderParent?.displayName}
+            onClose={() => {
+              setNewFolderOpen(false);
+              setNewFolderParent(null);
+            }}
             onCreated={(slug) => {
               // Navigate to the new folder so the operator sees their creation
               // succeed (matches the create-and-select expectation of every
@@ -1205,10 +1217,20 @@ export function AppShell() {
       {folderCtxMenu && (
         <FolderContextMenu
           folder={folderCtxMenu.folder}
+          allFolders={userFolders}
           x={folderCtxMenu.x}
           y={folderCtxMenu.y}
           onRename={() => setRenameFolder(folderCtxMenu.folder)}
           onDelete={() => setDeleteFolder(folderCtxMenu.folder)}
+          onNewSubfolder={() => {
+            // "New subfolder here" — open the create dialog with this folder as
+            // the parent (tuxlink-ka3z).
+            setNewFolderParent(folderCtxMenu.folder);
+            setNewFolderOpen(true);
+          }}
+          onMoveTo={(parentSlug) =>
+            moveFolder.mutate({ slug: folderCtxMenu.folder.slug, parentSlug })
+          }
           onClose={() => setFolderCtxMenu(null)}
         />
       )}
