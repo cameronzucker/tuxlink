@@ -16,6 +16,15 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.39.3](https://github.com/cameronzucker/tuxlink/compare/v0.39.2...v0.39.3) (2026-06-09)
+
+
+### Bug Fixes
+
+* **mailbox:** print webview form fallback content ([a378766](https://github.com/cameronzucker/tuxlink/commit/a37876646ff649e256932d3b7a7641e60a351ebc))
+* **scripts:** refuse a repo-root target/ in converge-build, ignore-rule-independent ([5356efd](https://github.com/cameronzucker/tuxlink/commit/5356efd0c86dc736b27e713908103eb0be235af6))
+* **ui:** stack inbound selection above app chrome ([dd7a9d4](https://github.com/cameronzucker/tuxlink/commit/dd7a9d4db3aa013ecd3333fcc9f80519178c6d7c))
+
 ## [0.39.2](https://github.com/cameronzucker/tuxlink/compare/v0.39.1...v0.39.2) (2026-06-09)
 
 
