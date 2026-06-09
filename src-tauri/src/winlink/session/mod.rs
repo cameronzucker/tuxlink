@@ -149,9 +149,10 @@ pub enum SessionIntent {
     PostOffice,
     /// MESH — Network Post Office. Deep-dive path 1C
     /// (`TelnetMESHSession` with `B2PeerToPeer=false`). Telnet to a
-    /// locally-run RMS Relay instance, or via AREDN mesh. Carries no
-    /// routing flag at the message layer (the relay tags inbound by
-    /// its own configuration).
+    /// locally-run RMS Relay instance, or via AREDN mesh. Carries the
+    /// normal `C`/CMS routing flag at the message layer (normal mail
+    /// pool); differs from a direct CMS session only on transport
+    /// (spec §1.1/§3/§5.5).
     Mesh,
     /// Peer-to-peer — direct station, no CMS, no creds, no routing
     /// flag. The local mailbox stores P2P messages unpooled.
@@ -162,9 +163,9 @@ pub enum SessionIntent {
 /// a B2F session, per WLE's `B2Protocol.cs:860-900` (`B2CheckSendMessage`)
 /// + `L1125-1155` (inbound `RoutingFlag` tagging on receive).
 ///
-/// `None` means "no flag" — applies to [`SessionIntent::P2p`] and
-/// [`SessionIntent::Mesh`] sessions per the WLE behavior; the local
-/// mailbox treats unflagged messages as belonging to no pool.
+/// `None` means "no flag" — applies to [`SessionIntent::P2p`] sessions
+/// only; the local mailbox treats unflagged messages as belonging to no
+/// pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutingFlag {
     /// `C` — CMS-routed message.
@@ -200,14 +201,14 @@ impl RoutingFlag {
 
 impl SessionIntent {
     /// The routing flag a message takes when it crosses this session.
-    /// Returns `None` for [`SessionIntent::P2p`] and [`SessionIntent::Mesh`]
-    /// — the local mailbox stores unflagged messages for these intents.
+    /// Returns `None` for [`SessionIntent::P2p`] only — the local mailbox
+    /// stores unflagged messages for that intent.
     pub fn routing_flag(self) -> Option<RoutingFlag> {
         match self {
-            Self::Cms => Some(RoutingFlag::Cms),
+            Self::Cms | Self::Mesh => Some(RoutingFlag::Cms), // Mesh = normal/C mail (tuxlink-6c9y §5.5)
             Self::RadioOnly => Some(RoutingFlag::RadioOnly),
             Self::PostOffice => Some(RoutingFlag::PostOffice),
-            Self::Mesh | Self::P2p => None,
+            Self::P2p => None,
         }
     }
 
@@ -917,11 +918,11 @@ mod tests {
     }
 
     #[test]
-    fn mesh_intent_carries_no_routing_flag() {
-        // Network Post Office / MESH sessions don't carry a flag at the
-        // message layer either — the relay's own configuration tags
-        // inbound messages downstream.
-        assert_eq!(SessionIntent::Mesh.routing_flag(), None);
+    fn mesh_intent_carries_cms_routing_flag() {
+        // Network Post Office (Mesh) carries NORMAL mail (the C pool) — distinct from
+        // CMS only on transport, not routing (spec §1.1/§3/§5.5). P2p stays None.
+        assert_eq!(SessionIntent::Mesh.routing_flag(), Some(RoutingFlag::Cms));
+        assert_eq!(SessionIntent::P2p.routing_flag(), None);
     }
 
     #[test]
