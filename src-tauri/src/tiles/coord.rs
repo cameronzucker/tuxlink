@@ -55,6 +55,36 @@ impl TileCoord {
         let y: u32 = y.parse().map_err(|_| format!("invalid y: {y:?}"))?;
         TileCoord::new(z, x, y, max_zoom)
     }
+
+    /// Return the y value for the upstream URL.
+    ///
+    /// For TMS sources the y-axis is flipped relative to XYZ; this converts a
+    /// validated XYZ `y` into the TMS equivalent.  The result is always in
+    /// `[0, 2^z)` because `z`, `x`, and `y` were already validated.
+    pub fn upstream_y(&self, tms: bool) -> u32 {
+        if tms {
+            (1u32 << self.z) - 1 - self.y
+        } else {
+            self.y
+        }
+    }
+
+    /// Return a cache-relative path for this tile.
+    ///
+    /// The path is built entirely from validated integer components — no raw
+    /// string interpolation of webview input — so directory traversal is
+    /// structurally impossible (§8.4).
+    ///
+    /// The y component of the filename matches `upstream_y(tms)` so the cache
+    /// key is identical to the coordinate used when fetching from the upstream
+    /// server.
+    pub fn rel_path(&self, tms: bool) -> std::path::PathBuf {
+        let mut p = std::path::PathBuf::new();
+        p.push(self.z.to_string());
+        p.push(self.x.to_string());
+        p.push(format!("{}.tile", self.upstream_y(tms)));
+        p
+    }
 }
 
 #[cfg(test)]
@@ -88,5 +118,21 @@ mod tests {
         // adversarial z far above cap — must reject BEFORE any 2^z is computed
         // (else `2u32.pow(40)` panics on overflow). Webview-supplied.
         assert!(TileCoord::from_parts("40", "0", "0", 16).is_err());
+    }
+
+    // --- Task 2.2 tests (paste-verbatim per plan) ---
+
+    #[test]
+    #[allow(clippy::identity_op)] // `- 0` is kept to mirror the spec formula exactly
+    fn tms_flip_is_consistent_and_in_range() {
+        let c = TileCoord::new(2, 1, 0, 16).unwrap();
+        assert_eq!(c.upstream_y(/*tms*/ true), (1 << 2) - 1 - 0); // 3
+        assert_eq!(c.upstream_y(false), 0);
+    }
+
+    #[test]
+    fn rel_path_is_integers_only() {
+        let c = TileCoord::new(3, 5, 2, 16).unwrap();
+        assert_eq!(c.rel_path(false), std::path::PathBuf::from("3/5/2.tile"));
     }
 }
