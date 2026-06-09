@@ -7,6 +7,17 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
 ## Unreleased
 
 ### Added
+- Request Center: a full-screen, request-first workspace that replaces the
+  separate Catalog Request and GRIB File Request panels (Message → Request
+  Center…). Location-aware request cards (state forecast, marine forecast,
+  propagation, solar-terrestrial, aurora, public gateway lists, Winlink info)
+  resolve from the operator's grid square; a three-pane category browser and a
+  catalog-wide search request any of the bundled catalog items; the demoted
+  GRIB form composes a Saildocs request. Selected items collect in a unified
+  request basket that dispatches per rail on "Send all" — one inquiry message
+  to the CMS for all catalog items, one Saildocs request per GRIB item — and
+  surfaces a per-rail result. The GRIB File Request menu entry now deep-links
+  into the Request Center's GRIB form.
 - Alpha-logging infrastructure: structured `tracing`-based diagnostic logging,
   exported as a single `.tar.zst` archive via `Help → Logging → Export logs…`
   or auto-attached via `Help → Report Issue`. Six environment probes (keyring,

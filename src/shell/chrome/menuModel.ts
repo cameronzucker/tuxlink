@@ -41,13 +41,12 @@ export const MENU_TREE: TopMenu[] = [
     // The `A` accelerator is gated on input-focus (see useAccelerators.ts).
     { id: 'menu:message:archive', label: 'Archive', accel: 'A' },
     { separator: true },
-    // tuxlink-ddiq: WLE catalog-request feature (Inquiry messages).
-    // Opens the CatalogRequestPanel; routes through the existing outgoing
-    // rails to INQUIRY@winlink.org.
-    { id: 'menu:message:catalog_request', label: 'Catalog Request…' },
-    // tuxlink-vrpk: Saildocs GRIB request (3rd-party SMTP, not Winlink CMS).
-    // Opens GribRequestPanel; routes through outgoing rails to
-    // query@saildocs.com.
+    // tuxlink-eymu: unified Request Center. Opens the inline Request Center
+    // overlay (catalog browse + WLE inquiries + Saildocs GRIB requests), which
+    // routes through the existing outgoing rails per request type.
+    { id: 'menu:message:request_center', label: 'Request Center…' },
+    // tuxlink-eymu: GRIB File Request opens the Request Center directly on its
+    // GRIB view, preserving the dedicated entry point for the Saildocs flow.
     { id: 'menu:message:grib_request', label: 'GRIB File Request…' },
   ] },
   { label: 'Session', items: [

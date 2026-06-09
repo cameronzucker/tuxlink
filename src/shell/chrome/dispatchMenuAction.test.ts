@@ -20,9 +20,8 @@ function handlers(): MenuHandlers {
     openHelp: vi.fn(),
     openLogging: vi.fn(),
     reportIssue: vi.fn(),
-    openCatalogRequest: vi.fn(),
     openCatalogBuilder: vi.fn(),
-    openGribRequest: vi.fn(),
+    openRequestCenter: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -38,7 +37,6 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:tools:find_gateway', h);
     expect(h.openCatalogBuilder).toHaveBeenCalledOnce();
-    expect(h.openCatalogRequest).not.toHaveBeenCalled();
   });
 
   it('routes file:quit to quit', () => {
@@ -182,17 +180,22 @@ describe('dispatchMenuAction', () => {
     expect(h.openSettings).toHaveBeenCalledOnce();
   });
 
-  // tuxlink-ddiq: WLE catalog-request panel.
-  it('routes Message → Catalog Request to openCatalogRequest', () => {
+  // tuxlink-eymu: the Request Center replaces the standalone Catalog Request
+  // panel in the menu and absorbs the GRIB request as an inner view.
+  it('routes Message → Request Center to openRequestCenter (home view)', () => {
     const h = handlers();
-    dispatchMenuAction('menu:message:catalog_request', h);
-    expect(h.openCatalogRequest).toHaveBeenCalledOnce();
+    dispatchMenuAction('menu:message:request_center', h);
+    expect(h.openRequestCenter).toHaveBeenCalledOnce();
+    // Home route passes NO initialView — a stray arg would land on the wrong
+    // inner view (openRequestCenter is arg-overloaded; 'grib' is a valid one).
+    expect(h.openRequestCenter).toHaveBeenCalledWith();
   });
 
-  // tuxlink-vrpk: Saildocs GRIB request panel.
-  it('routes Message → GRIB File Request to openGribRequest', () => {
+  // tuxlink-eymu: GRIB File Request now opens the Request Center directly on
+  // its GRIB view (the standalone GribRequestPanel is removed in F1).
+  it('routes Message → GRIB File Request to openRequestCenter with the grib view', () => {
     const h = handlers();
     dispatchMenuAction('menu:message:grib_request', h);
-    expect(h.openGribRequest).toHaveBeenCalledOnce();
+    expect(h.openRequestCenter).toHaveBeenCalledWith('grib');
   });
 });

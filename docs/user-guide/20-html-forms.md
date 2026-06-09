@@ -93,12 +93,14 @@ directory are planned but not yet shipped.
 
 ## Catalog request (WLE inquiry)
 
-Message → Catalog Request… opens a panel that sends a Winlink Express
-inquiry-message to the CMS — the request that pulls a fresh list of
-available form templates, bulletins, and other catalog items. The reply
-arrives on the next CMS connect and lands in the Inbox alongside ordinary
-mail. The catalog refresh path lets Tuxlink pick up new forms from
-winlink.org without a client update.
+Message → Request Center… opens the request workspace. Its "Browse full
+catalog by category" view and the catalog search request a Winlink Express
+inquiry-message from the CMS — the request that pulls a fresh list of
+available form templates, bulletins, and other catalog items. Selected
+items collect in the request basket; "Send all" queues one inquiry message
+to the CMS. The reply arrives on the next CMS connect and lands in the
+Inbox alongside ordinary mail. The catalog refresh path lets Tuxlink pick
+up new forms from winlink.org without a client update.
 
 ## Position precision and GPS
 
