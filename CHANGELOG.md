@@ -16,6 +16,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.39.0](https://github.com/cameronzucker/tuxlink/compare/v0.38.1...v0.39.0) (2026-06-09)
+
+
+### Features
+
+* **catalog:** relocate Find a Gateway to the radio panels + Tools; split out info requests ([8c0c58a](https://github.com/cameronzucker/tuxlink/commit/8c0c58a3e8a0ce4ad8d54944384b30c8da41df43))
+* **ui:** default inbound review ON + move the control to the dashboard ribbon ([e53cd79](https://github.com/cameronzucker/tuxlink/commit/e53cd79d4694ec700f4ff23b9cc4727507330bc0))
+
 ## [0.38.1](https://github.com/cameronzucker/tuxlink/compare/v0.38.0...v0.38.1) (2026-06-09)
 
 
