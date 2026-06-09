@@ -5210,6 +5210,8 @@ pub async fn network_po_favorites_get() -> Result<Vec<config::RelayFavorite>, Ui
 ///
 /// Validation: `host` and `callsign` must be non-empty (trimmed).
 /// Dedup: `(host case-insensitive, port)` — duplicate returns `UiError::Rejected`.
+/// Trimming: `host`, `callsign`, and `label` are trimmed before storing so that
+/// whitespace-padded inputs cannot evade the case-insensitive dedup.
 /// Returns the updated Vec on success.
 /// Mirrors `config_set_connect`'s unguarded read-modify-write convention.
 #[tauri::command]
@@ -5222,19 +5224,27 @@ pub async fn network_po_favorites_add(
     if favorite.callsign.trim().is_empty() {
         return Err(UiError::Rejected("relay callsign must not be empty".into()));
     }
+    // Build the trimmed version that will actually be stored.
+    let trimmed = config::RelayFavorite {
+        host: favorite.host.trim().to_string(),
+        callsign: favorite.callsign.trim().to_string(),
+        label: favorite.label.trim().to_string(),
+        port: favorite.port,
+    };
     let mut cfg =
         config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
-    // Check for duplicate (host case-insensitive, port).
+    // Check for duplicate using the trimmed host so whitespace-padded inputs
+    // cannot evade the case-insensitive (host, port) dedup.
     let is_dup = cfg.network_po_favorites.iter().any(|f| {
-        f.host.eq_ignore_ascii_case(&favorite.host) && f.port == favorite.port
+        f.host.eq_ignore_ascii_case(&trimmed.host) && f.port == trimmed.port
     });
     if is_dup {
         return Err(UiError::Rejected(format!(
             "a favorite with host '{}' port {} already exists",
-            favorite.host, favorite.port
+            trimmed.host, trimmed.port
         )));
     }
-    cfg.network_po_favorites.push(favorite);
+    cfg.network_po_favorites.push(trimmed);
     config::write_config_atomic(&cfg)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
     Ok(cfg.network_po_favorites)
@@ -5261,6 +5271,11 @@ pub async fn network_po_favorites_remove(
 /// Replace the entire favorites list atomically.
 ///
 /// Returns the updated Vec (the same slice passed in, after persisting).
+///
+/// NOTE: performs NO validation or dedup — unlike `network_po_favorites_add`,
+/// the caller is responsible for ensuring entries are valid (non-empty
+/// host/callsign) and unique on `(host, port)`. Intended for trusted callers
+/// (e.g. reordering an already-validated list).
 #[tauri::command]
 pub async fn network_po_favorites_set(
     favorites: Vec<config::RelayFavorite>,
@@ -7424,6 +7439,171 @@ hw:CARD=Device,DEV=0
         assert!(
             matches!(network_po_favorites_add(bad_callsign).await, Err(UiError::Rejected(_))),
             "empty callsign must be Rejected"
+        );
+
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    // ---- network_po_favorites_set + trim-on-store tests --------------------
+
+    #[tokio::test]
+    async fn network_po_favorites_set_replaces_list() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+
+        let _env_guard = position_set_source_env_lock().await;
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed).expect("seed config");
+
+        let fav_a = crate::config::RelayFavorite {
+            callsign: "W7AUX".into(),
+            label: "Alpha".into(),
+            host: "alpha.local".into(),
+            port: 8772,
+        };
+        let fav_b = crate::config::RelayFavorite {
+            callsign: "K7XYZ".into(),
+            label: "Beta".into(),
+            host: "beta.local".into(),
+            port: 8773,
+        };
+
+        // Seed one favorite via add, then replace with two via set.
+        let _ = network_po_favorites_add(fav_a.clone()).await.expect("add fav_a");
+        let set_result = network_po_favorites_set(vec![fav_a.clone(), fav_b.clone()]).await;
+        assert!(set_result.is_ok(), "set must succeed; got {set_result:?}");
+        let after_set = set_result.unwrap();
+        assert_eq!(after_set.len(), 2, "set must replace to exactly 2 entries");
+
+        // get confirms persistence.
+        let get_result = network_po_favorites_get().await;
+        assert!(get_result.is_ok());
+        let list = get_result.unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0], fav_a);
+        assert_eq!(list[1], fav_b);
+
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn network_po_favorites_set_empty_clears_list() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+
+        let _env_guard = position_set_source_env_lock().await;
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed).expect("seed config");
+
+        let fav = crate::config::RelayFavorite {
+            callsign: "W7AUX".into(),
+            label: "MyFav".into(),
+            host: "relay.local".into(),
+            port: 8772,
+        };
+
+        let _ = network_po_favorites_add(fav).await.expect("add fav");
+
+        // set with empty Vec must clear the list.
+        let set_result = network_po_favorites_set(vec![]).await;
+        assert!(set_result.is_ok(), "set(empty) must succeed; got {set_result:?}");
+        assert!(set_result.unwrap().is_empty(), "set(empty) must return empty Vec");
+
+        let get_result = network_po_favorites_get().await;
+        assert!(get_result.is_ok());
+        assert!(get_result.unwrap().is_empty(), "get after set(empty) must return empty");
+
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn network_po_favorites_add_trims_whitespace_on_store() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+
+        let _env_guard = position_set_source_env_lock().await;
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed).expect("seed config");
+
+        // Add a favorite with surrounding whitespace in host, callsign, and label.
+        let padded = crate::config::RelayFavorite {
+            callsign: "  W7AUX  ".into(),
+            label: "  My Relay  ".into(),
+            host: " relay.local ".into(),
+            port: 8772,
+        };
+        let add_result = network_po_favorites_add(padded).await;
+        assert!(add_result.is_ok(), "padded add must succeed; got {add_result:?}");
+        let stored = add_result.unwrap();
+        assert_eq!(stored.len(), 1);
+        // Host, callsign, and label must be trimmed on store.
+        assert_eq!(stored[0].host, "relay.local", "host must be trimmed");
+        assert_eq!(stored[0].callsign, "W7AUX", "callsign must be trimmed");
+        assert_eq!(stored[0].label, "My Relay", "label must be trimmed");
+
+        // Adding the same host (no padding, same port) must now be rejected as a
+        // duplicate — proving trim-on-store makes the dedup whitespace-robust.
+        let exact = crate::config::RelayFavorite {
+            callsign: "K7XYZ".into(),
+            label: "Other".into(),
+            host: "relay.local".into(), // no padding — matches the trimmed stored entry
+            port: 8772,
+        };
+        let dup_result = network_po_favorites_add(exact).await;
+        assert!(
+            matches!(dup_result, Err(UiError::Rejected(_))),
+            "adding exact host after padded add must be Rejected (trim-on-store dedup); got {dup_result:?}"
         );
 
         unsafe {
