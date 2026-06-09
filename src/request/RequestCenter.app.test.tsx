@@ -109,6 +109,7 @@ vi.mock('../mailbox/useUserFolders', () => ({
   useCreateUserFolder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteUserFolder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRenameUserFolder: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useMoveUserFolder: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   USER_FOLDERS_QUERY_KEY: ['userFolders'],
 }));
 

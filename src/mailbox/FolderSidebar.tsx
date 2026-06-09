@@ -17,7 +17,6 @@ export type { ConnectionKey } from '../connections/sessionTypes';
 interface MailboxItem {
   id?: MailboxFolder; // present → a functional folder
   label: string;
-  icon: string;
   enabled: boolean;
   v01?: boolean;
 }
@@ -52,11 +51,11 @@ const ADDRESS_ITEMS: readonly PseudoFolderItem[] = [
 /// (tuxlink-f62f) will lift Archive into a dedicated "Folders" section
 /// alongside user-created folders; for Phase 1 it stays here.
 const MAILBOX_ITEMS: readonly MailboxItem[] = [
-  { id: 'inbox', label: 'Inbox', icon: '▣', enabled: true },
-  { id: 'sent', label: 'Sent', icon: '▢', enabled: true },
-  { id: 'outbox', label: 'Outbox', icon: '▢', enabled: true },
-  { id: 'drafts', label: 'Drafts', icon: '▢', enabled: true },
-  { id: 'archive', label: 'Archive', icon: '▢', enabled: true },
+  { id: 'inbox', label: 'Inbox', enabled: true },
+  { id: 'sent', label: 'Sent', enabled: true },
+  { id: 'outbox', label: 'Outbox', enabled: true },
+  { id: 'drafts', label: 'Drafts', enabled: true },
+  { id: 'archive', label: 'Archive', enabled: true },
 ];
 
 export interface FolderSidebarProps {
@@ -92,6 +91,10 @@ export interface FolderSidebarProps {
   onDropMessage?: (id: string, fromFolder: MailboxFolderRef, toFolder: MailboxFolderRef) => void;
   /** Right-click on a user folder (tuxlink-ejph). Opens FolderContextMenu. */
   onFolderContextMenu?: (slug: string, x: number, y: number) => void;
+  /** Re-parent a folder via drag-drop (tuxlink-ka3z). `parentSlug === undefined`
+   *  promotes the dragged folder to top level (dropped on the Folders header);
+   *  a slug nests it under that top-level folder. Client-side D4 guards apply. */
+  onReparentFolder?: (slug: string, parentSlug: string | undefined) => void;
   /** Currently selected connection (drives the reading-pane connection panel). */
   selectedConnection?: ConnectionKey | null;
   /** Select a connection (opens its reading-pane panel). */
@@ -111,6 +114,10 @@ export interface FolderSidebarProps {
 /// MessageList.tsx — duplicated here so this module stays free of MessageList
 /// imports (FolderSidebar is rendered before MessageList in the panes grid).
 const TUXLINK_DRAG_MIME = 'application/x-tuxlink-message';
+/// DataTransfer MIME for a FOLDER drag (tuxlink-ka3z) — re-parenting a folder by
+/// dragging it. Distinct from the message MIME so a drop target can tell them
+/// apart; a payload carrying BOTH is treated as ambiguous and ignored (A9).
+const TUXLINK_FOLDER_DRAG_MIME = 'application/x-tuxlink-folder';
 
 interface DragPayload {
   id: string;
@@ -131,6 +138,60 @@ function readDragPayload(e: React.DragEvent): DragPayload | null {
   }
 }
 
+/// One row of the rendered folder tree (tuxlink-ka3z). `depth` is 0 for a
+/// top-level folder, 1 for a subfolder (the 2-level cap means no deeper).
+/// `hasChildren` drives the expand/collapse twisty.
+export interface FolderTreeRow {
+  folder: UserFolder;
+  depth: number;
+  hasChildren: boolean;
+}
+
+/// Order a flat user-folder list into a render tree (spec D2/D3): each top-level
+/// folder, immediately followed by its children (unless the parent is collapsed).
+/// A folder whose `parentSlug` does not resolve to a top-level folder is treated
+/// as top-level so it can never vanish from the sidebar — mirrors the backend's
+/// load-time self-heal (Codex finding #4). Pure + exported for unit testing.
+export function buildFolderTree(
+  folders: UserFolder[],
+  collapsed: ReadonlySet<string>,
+): FolderTreeRow[] {
+  const topLevelSlugs = new Set(folders.filter((f) => !f.parentSlug).map((f) => f.slug));
+  const isTop = (f: UserFolder) => !f.parentSlug || !topLevelSlugs.has(f.parentSlug);
+  const childrenOf = (slug: string) =>
+    folders.filter((f) => f.parentSlug === slug && topLevelSlugs.has(slug));
+
+  const rows: FolderTreeRow[] = [];
+  for (const top of folders.filter(isTop)) {
+    const kids = childrenOf(top.slug);
+    rows.push({ folder: top, depth: 0, hasChildren: kids.length > 0 });
+    if (!collapsed.has(top.slug)) {
+      for (const child of kids) rows.push({ folder: child, depth: 1, hasChildren: false });
+    }
+  }
+  return rows;
+}
+
+function FolderIndicator({
+  active,
+  count,
+  testId,
+}: {
+  active: boolean;
+  count?: number;
+  testId: string;
+}) {
+  return (
+    <span
+      className="icon folder-indicator"
+      data-testid={testId}
+      data-active={active ? 'true' : 'false'}
+      data-has-count={typeof count === 'number' && count > 0 ? 'true' : 'false'}
+      aria-hidden="true"
+    />
+  );
+}
+
 // tuxlink-djnl: React.memo so shell-level renders (status polls, search
 // keystrokes, modem-state changes) skip the sidebar when its inputs are
 // unchanged. counts is memoized in AppShell (PR #305); userFolders is
@@ -145,6 +206,7 @@ export const FolderSidebar = memo(function FolderSidebar({
   onCreateFolder,
   onDropMessage,
   onFolderContextMenu,
+  onReparentFolder,
   selectedConnection = null,
   onSelectConnection,
   compact = false,
@@ -152,6 +214,18 @@ export const FolderSidebar = memo(function FolderSidebar({
   // Drag-over visual state — which folder slug currently has the drag hovering.
   // null when nothing is being dragged or the drag is outside a folder.
   const [dragOver, setDragOver] = useState<string | null>(null);
+
+  // Nested-folder collapse state (tuxlink-ka3z). Slugs in the set render their
+  // subfolders hidden. Default-expanded (empty set). Ephemeral per the inline-UI
+  // convention — not persisted across reloads.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleCollapse = (slug: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
 
   // FZ-M1 compact rail expand overlay (tuxlink-h7q7 → restructured tuxlink-813d
   // D3). The 52px vertical-text rail ALWAYS stays in the grid; the labeled
@@ -222,6 +296,122 @@ export const FolderSidebar = memo(function FolderSidebar({
   const handleDragLeave = (slug: string) => () => {
     if (dragOver === slug) setDragOver(null);
   };
+
+  // Folder-drag (re-parent) helpers (tuxlink-ka3z A9). Drop targets inspect the
+  // DataTransfer types to tell a folder drag from a message drag; a payload
+  // carrying BOTH known tuxlink MIMEs is ambiguous and ignored.
+  const onFolderDragStart = (slug: string) => (e: React.DragEvent) => {
+    e.dataTransfer.setData(TUXLINK_FOLDER_DRAG_MIME, slug);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const folderAwareDragOver = (slug: string) => (e: React.DragEvent) => {
+    const types = e.dataTransfer.types;
+    const folder = types.includes(TUXLINK_FOLDER_DRAG_MIME);
+    const message = !!onDropMessage && types.includes(TUXLINK_DRAG_MIME);
+    if (!folder && !message) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOver !== slug) setDragOver(slug);
+  };
+  // Drop onto a user-folder row: re-parent a dragged folder under it (when it is
+  // a valid top-level target, mirroring the backend D4 rules), else fall through
+  // to the existing message-move path.
+  const onUserFolderDrop = (target: UserFolder) => (e: React.DragEvent) => {
+    const types = e.dataTransfer.types;
+    const hasFolder = types.includes(TUXLINK_FOLDER_DRAG_MIME);
+    const hasMessage = types.includes(TUXLINK_DRAG_MIME);
+    if (hasFolder && hasMessage) {
+      e.preventDefault();
+      setDragOver(null);
+      return; // ambiguous payload — no-op
+    }
+    if (hasFolder) {
+      e.preventDefault();
+      setDragOver(null);
+      const dragged = e.dataTransfer.getData(TUXLINK_FOLDER_DRAG_MIME);
+      if (!dragged || dragged === target.slug) return; // self
+      if (target.parentSlug) return; // target must be top-level (cap)
+      if (userFolders.some((f) => f.parentSlug === dragged)) return; // dragged has children → depth 3
+      onReparentFolder?.(dragged, target.slug);
+      return;
+    }
+    makeDropHandler(target.slug)(e); // message move (existing behavior)
+  };
+  // Drop onto the "Folders" section header: promote a dragged folder to top level.
+  const onFoldersHeaderDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(TUXLINK_FOLDER_DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+  const onFoldersHeaderDrop = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(TUXLINK_FOLDER_DRAG_MIME)) return;
+    e.preventDefault();
+    const dragged = e.dataTransfer.getData(TUXLINK_FOLDER_DRAG_MIME);
+    if (dragged) onReparentFolder?.(dragged, undefined);
+  };
+
+  // Shared nested-folder row renderer (tuxlink-ka3z, A7). Drives both the desktop
+  // list and the compact flyout — both are list-style. `testidPrefix` keeps their
+  // testids distinct; `onSelect` differs (desktop selects in place; the flyout
+  // selects then collapses the rail). Children render indented one level with a
+  // ▸/▾ twisty on parents; the twisty stops propagation so toggling never selects.
+  const renderUserFolderRows = (testidPrefix: string, onSelect: (slug: string) => void) =>
+    buildFolderTree(userFolders, collapsed).map(({ folder: uf, depth, hasChildren }) => {
+      const active = uf.slug === selectedFolder;
+      const isDropTarget = dragOver === uf.slug;
+      return (
+        <button
+          key={uf.slug}
+          type="button"
+          data-testid={`${testidPrefix}-${uf.slug}`}
+          data-depth={depth}
+          className={['nav-item', active ? 'active' : '', isDropTarget ? 'drop-target' : '']
+            .filter(Boolean)
+            .join(' ')}
+          aria-current={active ? 'true' : undefined}
+          onClick={() => onSelect(uf.slug)}
+          onContextMenu={(e) => {
+            if (onFolderContextMenu) {
+              e.preventDefault();
+              onFolderContextMenu(uf.slug, e.clientX, e.clientY);
+            }
+          }}
+          draggable
+          onDragStart={onFolderDragStart(uf.slug)}
+          onDragOver={folderAwareDragOver(uf.slug)}
+          onDragLeave={handleDragLeave(uf.slug)}
+          onDrop={onUserFolderDrop(uf)}
+          style={{
+            ...(depth ? { paddingLeft: 22 } : null),
+            ...(isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : null),
+          }}
+        >
+          {hasChildren ? (
+            <span
+              className="folder-twisty"
+              data-testid={`folder-toggle-${uf.slug}`}
+              role="button"
+              tabIndex={-1}
+              aria-label={collapsed.has(uf.slug) ? 'Expand subfolders' : 'Collapse subfolders'}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleCollapse(uf.slug);
+              }}
+            >
+              {collapsed.has(uf.slug) ? '▸' : '▾'}
+            </span>
+          ) : (
+            depth > 0 && <span className="folder-twisty-spacer" aria-hidden="true" />
+          )}
+          <FolderIndicator
+            active={active}
+            testId={`${testidPrefix}-indicator-${uf.slug}`}
+          />
+          <span className="nav-label">{uf.displayName}</span>
+        </button>
+      );
+    });
+
   const [expanded, setExpanded] = useState<Partial<Record<SessionTypeId, boolean>>>({});
 
   // Ensure the selected session type is always visible — auto-expand its accordion
@@ -336,9 +526,11 @@ export const FolderSidebar = memo(function FolderSidebar({
             onDrop={isFolder && dropSlug ? makeDropHandler(dropSlug as MailboxFolderRef) : undefined}
             style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
           >
-            <span className="icon" aria-hidden="true">
-              {item.icon}
-            </span>
+            <FolderIndicator
+              active={!!active}
+              count={count}
+              testId={`flyout-folder-indicator-${item.id}`}
+            />
             <span className="nav-label">{item.label}</span>
             {typeof count === 'number' && count > 0 && (
               <span className="count" data-testid={`flyout-folder-count-${item.id}`}>
@@ -354,7 +546,12 @@ export const FolderSidebar = memo(function FolderSidebar({
           `+` button that fires onCreateFolder; the section is rendered even
           when empty so the operator's path to creating a first folder is
           always visible. */}
-      <div className="section-label section-label--folders">
+      <div
+        className="section-label section-label--folders"
+        data-testid="folders-section-header"
+        onDragOver={onFoldersHeaderDragOver}
+        onDrop={onFoldersHeaderDrop}
+      >
         <span className="section-label-text">Folders</span>
         {onCreateFolder && (
           <button
@@ -369,35 +566,7 @@ export const FolderSidebar = memo(function FolderSidebar({
           </button>
         )}
       </div>
-      {userFolders.map((uf) => {
-        const active = uf.slug === selectedFolder;
-        const isDropTarget = dragOver === uf.slug;
-        return (
-          <button
-            key={uf.slug}
-            type="button"
-            data-testid={`flyout-user-folder-${uf.slug}`}
-            className={['nav-item', active ? 'active' : '', isDropTarget ? 'drop-target' : '']
-              .filter(Boolean)
-              .join(' ')}
-            aria-current={active ? 'true' : undefined}
-            onClick={() => selectFolderAndCollapse(uf.slug)}
-            onContextMenu={(e) => {
-              if (onFolderContextMenu) {
-                e.preventDefault();
-                onFolderContextMenu(uf.slug, e.clientX, e.clientY);
-              }
-            }}
-            onDragOver={makeDragOver(uf.slug)}
-            onDragLeave={handleDragLeave(uf.slug)}
-            onDrop={makeDropHandler(uf.slug)}
-            style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
-          >
-            <span className="icon" aria-hidden="true">▢</span>
-            <span className="nav-label">{uf.displayName}</span>
-          </button>
-        );
-      })}
+      {renderUserFolderRows('flyout-user-folder', selectFolderAndCollapse)}
       {userFolders.length === 0 && (
         <div className="folders-empty-hint" data-testid="folders-empty-hint">
           {onCreateFolder ? 'Click + to create one' : 'No custom folders yet'}
@@ -543,9 +712,11 @@ export const FolderSidebar = memo(function FolderSidebar({
             onDrop={isFolder && dropSlug ? makeDropHandler(dropSlug as MailboxFolderRef) : undefined}
             style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
           >
-            <span className="icon" aria-hidden="true">
-              {item.icon}
-            </span>
+            <FolderIndicator
+              active={!!active}
+              count={count}
+              testId={`folder-indicator-${item.id}`}
+            />
             <span className="nav-label">{item.label}</span>
             {typeof count === 'number' && count > 0 && (
               <span className="count" data-testid={`folder-count-${item.id}`}>
@@ -561,7 +732,12 @@ export const FolderSidebar = memo(function FolderSidebar({
           `+` button that fires onCreateFolder; the section is rendered even
           when empty so the operator's path to creating a first folder is
           always visible. */}
-      <div className="section-label section-label--folders">
+      <div
+        className="section-label section-label--folders"
+        data-testid="folders-section-header"
+        onDragOver={onFoldersHeaderDragOver}
+        onDrop={onFoldersHeaderDrop}
+      >
         <span className="section-label-text">Folders</span>
         {onCreateFolder && (
           <button
@@ -576,35 +752,7 @@ export const FolderSidebar = memo(function FolderSidebar({
           </button>
         )}
       </div>
-      {userFolders.map((uf) => {
-        const active = uf.slug === selectedFolder;
-        const isDropTarget = dragOver === uf.slug;
-        return (
-          <button
-            key={uf.slug}
-            type="button"
-            data-testid={`user-folder-${uf.slug}`}
-            className={['nav-item', active ? 'active' : '', isDropTarget ? 'drop-target' : '']
-              .filter(Boolean)
-              .join(' ')}
-            aria-current={active ? 'true' : undefined}
-            onClick={() => onSelectFolder(uf.slug)}
-            onContextMenu={(e) => {
-              if (onFolderContextMenu) {
-                e.preventDefault();
-                onFolderContextMenu(uf.slug, e.clientX, e.clientY);
-              }
-            }}
-            onDragOver={makeDragOver(uf.slug)}
-            onDragLeave={handleDragLeave(uf.slug)}
-            onDrop={makeDropHandler(uf.slug)}
-            style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
-          >
-            <span className="icon" aria-hidden="true">▢</span>
-            <span className="nav-label">{uf.displayName}</span>
-          </button>
-        );
-      })}
+      {renderUserFolderRows('user-folder', onSelectFolder)}
       {userFolders.length === 0 && (
         <div className="folders-empty-hint" data-testid="folders-empty-hint">
           {onCreateFolder ? 'Click + to create one' : 'No custom folders yet'}
@@ -762,22 +910,28 @@ export const FolderSidebar = memo(function FolderSidebar({
           });
         })}
 
-        {userFolders.map((uf) =>
-          renderRailTab({
-            key: uf.slug,
-            testId: `user-folder-${uf.slug}`,
-            label: uf.displayName,
-            folderRef: uf.slug,
-            active: uf.slug === selectedFolder,
-            dropSlug: uf.slug,
-            onContextMenu: (e) => {
-              if (onFolderContextMenu) {
-                e.preventDefault();
-                onFolderContextMenu(uf.slug, e.clientX, e.clientY);
-              }
-            },
-          }),
-        )}
+        {/* Nested folders (tuxlink-ka3z A7): the 52px icon rail cannot represent
+            depth, so it shows TOP-LEVEL folders only — subfolders are reachable
+            by expanding the rail to the flyout, which renders the full tree.
+            This is a deliberate rail behavior, not a silent flat fallback. */}
+        {userFolders
+          .filter((uf) => !uf.parentSlug)
+          .map((uf) =>
+            renderRailTab({
+              key: uf.slug,
+              testId: `user-folder-${uf.slug}`,
+              label: uf.displayName,
+              folderRef: uf.slug,
+              active: uf.slug === selectedFolder,
+              dropSlug: uf.slug,
+              onContextMenu: (e) => {
+                if (onFolderContextMenu) {
+                  e.preventDefault();
+                  onFolderContextMenu(uf.slug, e.clientX, e.clientY);
+                }
+              },
+            }),
+          )}
 
         {/* Address pseudo-folder(s) in the compact rail (tuxlink-raez / FZ-M1
             coordination). Mirrors the desktop Address section so Contacts is

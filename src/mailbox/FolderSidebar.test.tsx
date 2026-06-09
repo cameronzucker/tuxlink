@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { FolderSidebar } from './FolderSidebar';
+import { FolderSidebar, buildFolderTree } from './FolderSidebar';
+import type { UserFolder } from './types';
 import { SESSION_TYPES } from '../connections/sessionTypes';
 
 // tuxlink-813d P1 fix: FolderSidebar now branches on the `compact` prop.
@@ -89,6 +90,24 @@ describe('<FolderSidebar> — desktop labeled nav (default / compact=false)', ()
     expect(screen.getByTestId('folder-inbox')).not.toHaveAttribute('aria-current');
   });
 
+  it('uses state-driven folder indicators instead of a hardcoded filled Inbox checkbox', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="sent"
+        onSelectFolder={() => {}}
+        counts={{ inbox: 2 }}
+      />,
+    );
+
+    expect(screen.getByTestId('folder-indicator-sent')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByTestId('folder-indicator-inbox')).toHaveAttribute('data-active', 'false');
+    expect(screen.getByTestId('folder-indicator-inbox')).toHaveAttribute('data-has-count', 'true');
+    expect(screen.getByTestId('folder-indicator-drafts')).toHaveAttribute('data-active', 'false');
+    for (const id of ['inbox', 'sent', 'outbox', 'drafts', 'archive']) {
+      expect(screen.getByTestId(`folder-${id}`).textContent).not.toMatch(/[▣▢]/);
+    }
+  });
+
   it('renders user folders inline with their slugs', () => {
     render(
       <FolderSidebar
@@ -149,6 +168,16 @@ describe('<FolderSidebar> (compact rail + flyout — Mock B)', () => {
     render(<FolderSidebar compact selectedFolder="sent" onSelectFolder={() => {}} />);
     expect(screen.getByTestId('folder-sent')).toHaveAttribute('aria-current', 'true');
     expect(screen.getByTestId('folder-inbox')).not.toHaveAttribute('aria-current');
+  });
+
+  it('uses dynamic folder indicators in the expanded flyout too', () => {
+    render(<FolderSidebar compact selectedFolder="archive" onSelectFolder={() => {}} />);
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
+    expect(screen.getByTestId('flyout-folder-indicator-archive')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByTestId('flyout-folder-indicator-inbox')).toHaveAttribute('data-active', 'false');
+    for (const id of ['inbox', 'sent', 'outbox', 'drafts', 'archive']) {
+      expect(screen.getByTestId(`flyout-folder-${id}`).textContent).not.toMatch(/[▣▢]/);
+    }
   });
 
   it('clicking a functional folder fires onSelectFolder', () => {
@@ -595,5 +624,161 @@ describe('<FolderSidebar> — FZ-M1 compact rail (tuxlink-h7q7 / tuxlink-813d)',
     expect(screen.getByTestId('sidebar-flyout')).toBeInTheDocument();
     fireEvent.pointerDown(document.body);
     expect(screen.queryByTestId('sidebar-flyout')).toBeNull();
+  });
+});
+
+// ============================================================================
+// Nested folders (tuxlink-ka3z) — buildFolderTree + desktop tree render.
+// ============================================================================
+describe('buildFolderTree', () => {
+  const folders: UserFolder[] = [
+    { slug: 'nets', displayName: 'Nets', createdAt: 'a' },
+    { slug: 'ares', displayName: 'ARES', createdAt: 'b', parentSlug: 'nets' },
+    { slug: 'weather', displayName: 'Weather', createdAt: 'c' },
+  ];
+
+  it('orders children directly under their parent with depth + hasChildren', () => {
+    const rows = buildFolderTree(folders, new Set());
+    expect(rows.map((r) => [r.folder.slug, r.depth, r.hasChildren])).toEqual([
+      ['nets', 0, true],
+      ['ares', 1, false],
+      ['weather', 0, false],
+    ]);
+  });
+
+  it('omits children of a collapsed parent', () => {
+    const rows = buildFolderTree(folders, new Set(['nets']));
+    expect(rows.map((r) => r.folder.slug)).toEqual(['nets', 'weather']);
+  });
+
+  it('treats a folder with a dangling parent as top-level (never vanishes)', () => {
+    const orphaned: UserFolder[] = [{ slug: 'lost', displayName: 'Lost', createdAt: 'a', parentSlug: 'ghost' }];
+    const rows = buildFolderTree(orphaned, new Set());
+    expect(rows.map((r) => [r.folder.slug, r.depth])).toEqual([['lost', 0]]);
+  });
+});
+
+describe('<FolderSidebar> nested folder rendering (desktop)', () => {
+  const folders: UserFolder[] = [
+    { slug: 'nets', displayName: 'Nets', createdAt: 'a' },
+    { slug: 'ares', displayName: 'ARES', createdAt: 'b', parentSlug: 'nets' },
+    { slug: 'weather', displayName: 'Weather', createdAt: 'c' },
+  ];
+
+  it('renders subfolders indented under their parent (data-depth)', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} userFolders={folders} />);
+    expect(screen.getByTestId('user-folder-nets')).toHaveAttribute('data-depth', '0');
+    expect(screen.getByTestId('user-folder-ares')).toHaveAttribute('data-depth', '1');
+    expect(screen.getByTestId('user-folder-weather')).toHaveAttribute('data-depth', '0');
+  });
+
+  it('collapsing a parent hides its children but not its siblings', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} userFolders={folders} />);
+    fireEvent.click(screen.getByTestId('folder-toggle-nets'));
+    expect(screen.queryByTestId('user-folder-ares')).toBeNull();
+    expect(screen.getByTestId('user-folder-weather')).toBeInTheDocument();
+  });
+
+  it('clicking the twisty toggles without selecting the folder', () => {
+    const onSelect = vi.fn();
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={onSelect} userFolders={folders} />);
+    fireEvent.click(screen.getByTestId('folder-toggle-nets'));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('the compact rail shows only top-level folders (subfolders via the flyout tree)', () => {
+    render(<FolderSidebar compact selectedFolder="inbox" onSelectFolder={() => {}} userFolders={folders} />);
+    // Rail: top-level present, subfolder absent.
+    expect(screen.getByTestId('user-folder-nets')).toBeInTheDocument();
+    expect(screen.queryByTestId('user-folder-ares')).toBeNull();
+    // Expand the flyout: the full tree (incl. the subfolder) renders there.
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
+    expect(screen.getByTestId('flyout-user-folder-ares')).toHaveAttribute('data-depth', '1');
+  });
+});
+
+describe('<FolderSidebar> drag-drop re-parent (tuxlink-ka3z A9)', () => {
+  const FOLDER_MIME = 'application/x-tuxlink-folder';
+  const MSG_MIME = 'application/x-tuxlink-message';
+  const folders: UserFolder[] = [
+    { slug: 'nets', displayName: 'Nets', createdAt: 'a' },
+    { slug: 'weather', displayName: 'Weather', createdAt: 'b' },
+    { slug: 'ares', displayName: 'ARES', createdAt: 'c', parentSlug: 'nets' },
+  ];
+  // Minimal DataTransfer stub for jsdom (fireEvent doesn't synthesize one).
+  const dt = (mimes: Record<string, string>) => ({
+    types: Object.keys(mimes),
+    getData: (m: string) => mimes[m] ?? '',
+    setData: () => {},
+    dropEffect: '',
+    effectAllowed: '',
+  });
+
+  it('dropping a folder onto a top-level folder re-parents it under that folder', () => {
+    const onReparentFolder = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        userFolders={folders}
+        onReparentFolder={onReparentFolder}
+      />,
+    );
+    fireEvent.drop(screen.getByTestId('user-folder-nets'), {
+      dataTransfer: dt({ [FOLDER_MIME]: 'weather' }),
+    });
+    expect(onReparentFolder).toHaveBeenCalledWith('weather', 'nets');
+  });
+
+  it('dropping a folder on the Folders header promotes it to top level', () => {
+    const onReparentFolder = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        userFolders={folders}
+        onReparentFolder={onReparentFolder}
+      />,
+    );
+    fireEvent.drop(screen.getByTestId('folders-section-header'), {
+      dataTransfer: dt({ [FOLDER_MIME]: 'ares' }),
+    });
+    expect(onReparentFolder).toHaveBeenCalledWith('ares', undefined);
+  });
+
+  it('refuses to nest a folder that has children (would exceed the cap)', () => {
+    const onReparentFolder = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        userFolders={folders}
+        onReparentFolder={onReparentFolder}
+      />,
+    );
+    // nets has child ares; dropping nets onto weather must be a no-op.
+    fireEvent.drop(screen.getByTestId('user-folder-weather'), {
+      dataTransfer: dt({ [FOLDER_MIME]: 'nets' }),
+    });
+    expect(onReparentFolder).not.toHaveBeenCalled();
+  });
+
+  it('ignores an ambiguous payload carrying both folder and message MIMEs', () => {
+    const onReparentFolder = vi.fn();
+    const onDropMessage = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        userFolders={folders}
+        onReparentFolder={onReparentFolder}
+        onDropMessage={onDropMessage}
+      />,
+    );
+    fireEvent.drop(screen.getByTestId('user-folder-nets'), {
+      dataTransfer: dt({ [FOLDER_MIME]: 'weather', [MSG_MIME]: '{"id":"m1","folder":"inbox"}' }),
+    });
+    expect(onReparentFolder).not.toHaveBeenCalled();
+    expect(onDropMessage).not.toHaveBeenCalled();
   });
 });

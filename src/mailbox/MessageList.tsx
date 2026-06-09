@@ -20,6 +20,7 @@ import type { MailboxFolderRef, MessageMeta, UserFolder } from './types';
 import { MessageContextMenu } from './MessageContextMenu';
 import { DEFAULT_SORT_STATE, type SortState, sortMessages } from './messageSort';
 import { MessageListSortControl } from './MessageListSortControl';
+import { MessageBulkBar } from './MessageBulkBar';
 
 /// Empty-folder copy (spec §5.2).
 export const EMPTY_FOLDER_COPY =
@@ -113,7 +114,14 @@ function applyHighlights(text: string, ranges: HighlightRange[], field: 'subject
 export interface MessageRowProps {
   message: MessageMeta;
   folder: MailboxFolderRef;
-  selected: boolean;
+  /// True when this row's message is the open/reading-pane message (was `selected`).
+  isOpen: boolean;
+  /// True when this row is part of the multi-select selection set (tuxlink-etxt Task 8).
+  inSelection: boolean;
+  /// Unified click handler; parent resolves Ctrl/Shift modifiers into selection
+  /// set changes or a plain open. Replaces the direct `onSelect` on each row.
+  onRowClick: (id: string, mods: { ctrl: boolean; shift: boolean }) => void;
+  /// Direct keyboard-select handler (Enter/Space → open). Task 9 may update this.
   onSelect: (id: string) => void;
   /// Highlight ranges for this row (from a search result). Absent → no highlights.
   matchHighlight?: HighlightRange[];
@@ -124,6 +132,11 @@ export interface MessageRowProps {
   /// message so the parent can position a context menu at the cursor.
   /// Absent → browser default context menu (no overlay rendered).
   onContextMenu?: (e: React.MouseEvent, message: MessageMeta) => void;
+  /// U-key read/unread toggle (tuxlink-etxt Task 13). Called with the message
+  /// id, the source folder, and the target read value (true = mark read,
+  /// false = mark unread). Optional — no-op when absent so direct MessageRow
+  /// render tests don't need to supply it.
+  onRowSetReadState?: (id: string, folder: MailboxFolderRef, read: boolean) => void;
 }
 
 /// Custom DataTransfer MIME for tuxlink message drags (tuxlink-ejph). The
@@ -136,7 +149,7 @@ export const TUXLINK_DRAG_MIME = 'application/x-tuxlink-message';
 /// tuxlink-sndh: wrapped in React.memo so a parent re-render (e.g. modem-status
 /// tick, search keystroke, status poll) doesn't repaint every virtuoso row.
 /// Effective only when callers stabilize callback props with useCallback.
-export const MessageRow = memo(function MessageRow({ message, folder, selected, onSelect, matchHighlight, showFolderTag, onContextMenu }: MessageRowProps) {
+export const MessageRow = memo(function MessageRow({ message, folder, isOpen, inSelection, onRowClick, onSelect: _onSelect, matchHighlight, showFolderTag, onContextMenu, onRowSetReadState }: MessageRowProps) {
   // tuxlink-sndh: memoize per-row derived data so it's reused across renders
   // when the row's own props haven't changed.
   const size = useMemo(() => formatSize(message.bodySize), [message.bodySize]);
@@ -166,12 +179,12 @@ export const MessageRow = memo(function MessageRow({ message, folder, selected, 
   return (
     <div
       role="row"
-      aria-selected={selected}
+      aria-selected={isOpen}
       data-testid={`message-row-${message.id}`}
-      className={['row', message.unread ? 'unread' : '', selected ? 'selected' : '']
+      className={['row', message.unread ? 'unread' : '', isOpen ? 'selected' : '', inSelection ? 'in-selection' : '']
         .filter(Boolean)
         .join(' ')}
-      onClick={() => onSelect(message.id)}
+      onClick={(e) => onRowClick(message.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })}
       onContextMenu={(e) => {
         if (onContextMenu) {
           e.preventDefault();
@@ -179,9 +192,20 @@ export const MessageRow = memo(function MessageRow({ message, folder, selected, 
         }
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
+        if (e.key === 'Enter') {
           e.preventDefault();
-          onSelect(message.id);
+          // Route through the plain-click path so Enter clears any selection
+          // set (same behaviour as a bare mouse click, which goes through
+          // onRowClick with ctrl:false/shift:false → clears set + opens).
+          onRowClick(message.id, { ctrl: false, shift: false });
+        } else if (e.key === ' ') {
+          e.preventDefault();
+          onRowClick(message.id, { ctrl: true, shift: false });  // Space toggles selection (grid/listbox semantic)
+        } else if (e.key === 'u' || e.key === 'U') {
+          e.preventDefault();
+          // Toggle: a currently-unread message becomes read (read=true); a read one becomes unread.
+          // message.unread already equals the desired `read` value, by design.
+          onRowSetReadState?.(message.id, srcFolder as MailboxFolderRef, message.unread);
         }
       }}
       draggable
@@ -270,7 +294,32 @@ export interface MessageListProps {
   /// so callers can stash Archive shortcuts (e.g. for telemetry) without
   /// instrumenting the generic move path.
   onArchiveMessage?: (id: string, fromFolder: MailboxFolderRef) => void;
+  /// The multi-select selection set (tuxlink-etxt Task 8). Optional; defaults
+  /// to an empty set so AppShell compiles without change until Task 11 wires
+  /// the real state. ReadonlySet allows the module-level EMPTY_SELECTION
+  /// constant to satisfy the default without allocating per render.
+  selectedIds?: ReadonlySet<string>;
+  /// Called whenever the selection set should change (Ctrl/Shift+click). Optional
+  /// no-op default mirrors the `selectedIds` default (safe for unupgraded callers).
+  onSelectionChange?: (next: Set<string>) => void;
+  /// Mark the given set of messages read or unread (tuxlink-etxt Task 10).
+  /// Optional — Task 11 wires the real AppShell handler; the bulk bar's `?.`
+  /// guard keeps AppShell compiling in the interim.
+  onBulkSetReadState?: (ids: Set<string>, read: boolean) => void;
+  /// Move the given set of messages to a destination folder (tuxlink-l80q).
+  /// Drives the bulk bar's Move ▾ and the selection-mode context menu.
+  onBulkMove?: (ids: Set<string>, to: MailboxFolderRef) => void;
+  /// Archive the given set of messages (tuxlink-l80q). Drives the bulk bar's
+  /// Archive button and the selection-mode context menu's Archive item.
+  onBulkArchive?: (ids: Set<string>) => void;
+  /// Single-message read/unread toggle — context-menu and U-key (tuxlink-etxt
+  /// Tasks 12 + 13). Optional so existing callers compile without change.
+  onSetReadState?: (id: string, folder: MailboxFolderRef, read: boolean) => void;
 }
+
+/// Stable empty-selection default so the no-selection caller (pre-Task-11) does
+/// not allocate a new Set each render and churn MessageRow's memo.
+const EMPTY_SELECTION: ReadonlySet<string> = new Set<string>();
 
 /// The list pane. Renders the mock's `.rows-pane` as its root (the 420px left
 /// column of `.panes`); Virtuoso scrolls inside it.
@@ -287,6 +336,12 @@ export function MessageList({
   userFolders,
   onMoveMessage,
   onArchiveMessage,
+  selectedIds = EMPTY_SELECTION,
+  onSelectionChange = () => {},
+  onBulkSetReadState,
+  onBulkMove,
+  onBulkArchive,
+  onSetReadState,
 }: MessageListProps) {
   // Sort client-side so changing modes doesn't require a backend re-fetch.
   // Memo keyed on (messages, sortState, folder) — folder affects sender-* in
@@ -294,6 +349,36 @@ export function MessageList({
   const sortedMessages = React.useMemo(
     () => sortMessages(messages, sortState, folder),
     [messages, sortState, folder],
+  );
+
+  // Multi-select anchor + row click handler (tuxlink-etxt Task 8).
+  // anchorRef tracks the last Ctrl+clicked row for Shift+click range selection.
+  const anchorRef = React.useRef<string | null>(null);
+  const onRowClick = useCallback(
+    (id: string, mods: { ctrl: boolean; shift: boolean }) => {
+      if (mods.shift && anchorRef.current) {
+        const ids = sortedMessages.map((m) => m.id);
+        const a = ids.indexOf(anchorRef.current);
+        const b = ids.indexOf(id);
+        if (a !== -1 && b !== -1) {
+          const [lo, hi] = a < b ? [a, b] : [b, a];
+          onSelectionChange(new Set(ids.slice(lo, hi + 1)));
+          return;
+        }
+      }
+      if (mods.ctrl) {
+        const next = new Set(selectedIds);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        anchorRef.current = id;
+        onSelectionChange(next);
+        return;
+      }
+      // Plain click: open the message and clear any selection set.
+      anchorRef.current = id;
+      if (selectedIds.size > 0) onSelectionChange(new Set());
+      onSelect(id);
+    },
+    [sortedMessages, selectedIds, onSelectionChange, onSelect],
   );
 
   // Right-click context menu state (tuxlink-ejph). Wires onContextMenu on
@@ -304,15 +389,29 @@ export function MessageList({
     message: MessageMeta;
     x: number;
     y: number;
+    // tuxlink-l80q: true when the right-clicked row was part of the selection
+    // set at open time → the menu acts on ALL selected messages. Captured at
+    // open (not derived live) so the out-of-selection reset below can't flip
+    // an already-open menu back to single mode.
+    selectionMode: boolean;
   } | null>(null);
   // tuxlink-sndh: stabilize the callback so the memoized MessageRow can
   // skip re-render when nothing else about the row's props changed.
   const ctxAvailable = Boolean(onMoveMessage || onArchiveMessage);
+  // tuxlink-l80q: OS convention — right-clicking a row already in the selection
+  // acts on the whole selection; right-clicking a row OUTSIDE the selection
+  // resets the selection to that single row and acts single-target.
   const onContextMenu = useCallback(
     (e: React.MouseEvent, message: MessageMeta) => {
-      setCtxMenu({ message, x: e.clientX, y: e.clientY });
+      const inSelection = selectedIds.size > 0 && selectedIds.has(message.id);
+      // OS convention (Codex P2): right-clicking a row OUTSIDE an existing
+      // selection resets the selection to that single row — which highlights it
+      // — and the menu then acts single-target. With no prior selection,
+      // right-click leaves the selection untouched (no spurious 1-row select).
+      if (!inSelection && selectedIds.size > 0) onSelectionChange(new Set([message.id]));
+      setCtxMenu({ message, x: e.clientX, y: e.clientY, selectionMode: inSelection });
     },
-    [],
+    [selectedIds, onSelectionChange],
   );
   const rowContextMenu = ctxAvailable ? onContextMenu : undefined;
   // The source folder is the row's own message.folder when present
@@ -324,9 +423,22 @@ export function MessageList({
 
   return (
     <div className="rows-pane" data-testid="rows-pane">
-      {onSortStateChange && (
+      {(onSortStateChange || selectedIds.size > 0) && (
         <div className="rows-pane-header" data-testid="rows-pane-header">
-          <MessageListSortControl value={sortState} onChange={onSortStateChange} />
+          {selectedIds.size > 0 ? (
+            <MessageBulkBar
+              count={selectedIds.size}
+              currentFolder={folder}
+              userFolders={userFolders ?? []}
+              onMarkRead={() => onBulkSetReadState?.(new Set(selectedIds), true)}
+              onMarkUnread={() => onBulkSetReadState?.(new Set(selectedIds), false)}
+              onArchive={() => onBulkArchive?.(new Set(selectedIds))}
+              onMove={(to) => onBulkMove?.(new Set(selectedIds), to)}
+              onClear={() => onSelectionChange(new Set())}
+            />
+          ) : (
+            onSortStateChange && <MessageListSortControl value={sortState} onChange={onSortStateChange} />
+          )}
         </div>
       )}
       {sortedMessages.length === 0 ? (
@@ -342,11 +454,14 @@ export function MessageList({
               <MessageRow
                 message={msg}
                 folder={folder}
-                selected={msg.id === selectedId}
+                isOpen={msg.id === selectedId}
+                inSelection={selectedIds.has(msg.id)}
+                onRowClick={onRowClick}
                 onSelect={onSelect}
                 matchHighlight={matchHighlights?.[msg.id]}
                 showFolderTag={showFolderTag}
                 onContextMenu={rowContextMenu}
+                onRowSetReadState={onSetReadState}
               />
             )}
           />
@@ -359,11 +474,18 @@ export function MessageList({
           x={ctxMenu.x}
           y={ctxMenu.y}
           userFolders={userFolders ?? []}
+          selectionCount={ctxMenu.selectionMode ? selectedIds.size : undefined}
+          onSetReadState={(read) => {
+            if (ctxMenu.selectionMode) onBulkSetReadState?.(new Set(selectedIds), read);
+            else onSetReadState?.(ctxMenu.message.id, ctxSourceFolder, read);
+          }}
           onMoveTo={(to) => {
-            onMoveMessage?.(ctxMenu.message.id, ctxSourceFolder, to);
+            if (ctxMenu.selectionMode) onBulkMove?.(new Set(selectedIds), to);
+            else onMoveMessage?.(ctxMenu.message.id, ctxSourceFolder, to);
           }}
           onArchive={() => {
-            onArchiveMessage?.(ctxMenu.message.id, ctxSourceFolder);
+            if (ctxMenu.selectionMode) onBulkArchive?.(new Set(selectedIds));
+            else onArchiveMessage?.(ctxMenu.message.id, ctxSourceFolder);
           }}
           onClose={() => setCtxMenu(null)}
         />

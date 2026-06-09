@@ -1193,14 +1193,10 @@ pub async fn message_read(
         FolderRef::System(f) => backend.read_message_in(*f, &mid).await?,
         FolderRef::User(slug) => backend.read_user_message(slug, &mid).await?,
     };
-    // Opening a message marks it read (tuxlink-xgn). Best-effort: a marker-write
-    // failure must not fail the read the user just performed, so the error is
-    // discarded (the message simply stays unread and self-heals on the next
-    // open). User folders don't track unread today so the mark is a no-op for
-    // them — only system folders flow through `mark_read`.
-    if let FolderRef::System(f) = &parsed {
-        let _ = backend.mark_read(*f, &mid).await;
-    }
+    // Opening a message no longer mutates read-state server-side. Mark-on-open is
+    // a once-per-open-transition client effect (useMessage) so an explicit Mark
+    // Unread on the open message is not undone by a reading-pane refetch (window
+    // focus / poll). See tuxlink-etxt design §1.4.
     parse_raw_rfc5322(&id, &body.raw_rfc5322)
 }
 
@@ -1318,6 +1314,97 @@ pub async fn mailbox_move(
     Ok(())
 }
 
+// ---- read-state commands (tuxlink-etxt) ------------------------------------
+
+/// Set a single message's read-state. `read = true` marks read, `false` marks
+/// unread. Folder may be a system folder or a user-folder slug.
+#[tauri::command]
+pub async fn message_set_read_state(
+    folder: String,
+    id: String,
+    read: bool,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let folder_ref = parse_folder_ref(&folder)?;
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    backend.set_read_state(folder_ref, &mid, read).await?;
+    Ok(())
+}
+
+/// One message reference for a bulk operation. Each carries its own folder so a
+/// cross-folder search-results selection (which mixes folders) stays correct.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessageRefDto {
+    pub folder: String,
+    pub id: String,
+}
+
+/// Set the read-state of every listed message. Best-effort per item: a missing
+/// message is a no-op (matching the single-message path). One command call per
+/// bulk action keeps frontend round-trips bounded.
+#[tauri::command]
+pub async fn message_set_read_state_bulk(
+    items: Vec<MessageRefDto>,
+    read: bool,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    for item in items {
+        let folder_ref = parse_folder_ref(&item.folder)?;
+        let mid = MessageId::new(&item.id);
+        backend.set_read_state(folder_ref, &mid, read).await?;
+    }
+    Ok(())
+}
+
+/// Move every listed message to a single destination folder `to` (tuxlink-l80q).
+/// Each item carries its OWN source folder, so a cross-folder search-results
+/// selection (which mixes folders) lands correctly in one command call. Archive
+/// is just `to = "archive"`. Mirrors [`message_set_read_state_bulk`]; one command
+/// per bulk action keeps frontend round-trips bounded.
+#[tauri::command]
+pub async fn message_move_bulk(
+    items: Vec<MessageRefDto>,
+    to: String,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    move_bulk_with_backend(backend.as_ref(), items, &to).await
+}
+
+/// Backend-facing core of [`message_move_bulk`], split out so it is unit-testable
+/// against a real `NativeBackend` without a Tauri `State` (the `_impl` seam used
+/// elsewhere in this module, e.g. `config_set_grid_impl`).
+pub(crate) async fn move_bulk_with_backend(
+    backend: &dyn crate::winlink_backend::WinlinkBackend,
+    items: Vec<MessageRefDto>,
+    to: &str,
+) -> Result<(), UiError> {
+    let to_ref = parse_folder_ref(to)?;
+    for item in items {
+        let from_ref = parse_folder_ref(&item.folder)?;
+        // Self-move guard (Codex P2, data loss): move_between writes the
+        // destination then removes the source, which is the SAME path when
+        // from == to — deleting the message. Skip it, mirroring the single
+        // mailbox_move's frontend no-op. (move_between itself also guards now.)
+        if from_ref == to_ref {
+            continue;
+        }
+        let mid = MessageId::new(&item.id);
+        backend
+            .move_between_folders(from_ref, to_ref.clone(), &mid)
+            .await?;
+    }
+    Ok(())
+}
+
 // ---- user-folder commands (tuxlink-f62f) -----------------------------------
 
 /// DTO mirror of [`crate::user_folders::UserFolder`] over Tauri's camelCase
@@ -1329,6 +1416,11 @@ pub struct UserFolderDto {
     pub slug: String,
     pub display_name: String,
     pub created_at: String,
+    /// Parent folder slug (schema v2 / spec D2). `skip_serializing_if` omits the
+    /// key for a top-level folder so the wire shape matches TS `parentSlug?:
+    /// string` (absent, not `null` — A4 / finding #7).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_slug: Option<String>,
 }
 
 impl From<crate::user_folders::UserFolder> for UserFolderDto {
@@ -1337,6 +1429,7 @@ impl From<crate::user_folders::UserFolder> for UserFolderDto {
             slug: f.slug,
             display_name: f.display_name,
             created_at: f.created_at,
+            parent_slug: f.parent_slug,
         }
     }
 }
@@ -1360,12 +1453,33 @@ pub async fn user_folders_list(
 #[tauri::command]
 pub async fn folder_create(
     display_name: String,
+    parent_slug: Option<String>,
     state: State<'_, BackendState>,
 ) -> Result<UserFolderDto, UiError> {
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
-    let folder = backend.create_user_folder(&display_name).await?;
+    let folder = backend
+        .create_user_folder(&display_name, parent_slug.as_deref())
+        .await?;
+    Ok(UserFolderDto::from(folder))
+}
+
+/// Re-parent a user folder (spec D3). `parent_slug == None` promotes it to top
+/// level. Metadata-only — no message files move. D4 validation failures surface
+/// as `UiError::Rejected`.
+#[tauri::command]
+pub async fn folder_move(
+    slug: String,
+    parent_slug: Option<String>,
+    state: State<'_, BackendState>,
+) -> Result<UserFolderDto, UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let folder = backend
+        .move_user_folder(&slug, parent_slug.as_deref())
+        .await?;
     Ok(UserFolderDto::from(folder))
 }
 
@@ -1394,7 +1508,7 @@ pub async fn folder_delete(
     slug: String,
     on_messages: String,
     state: State<'_, BackendState>,
-) -> Result<(), UiError> {
+) -> Result<Vec<String>, UiError> {
     use crate::native_mailbox::DeleteAction;
     let action = match on_messages.as_str() {
         "move_to_inbox" => DeleteAction::MoveToInbox,
@@ -1409,8 +1523,10 @@ pub async fn folder_delete(
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
-    backend.delete_user_folder(&slug, action).await?;
-    Ok(())
+    // Returns parent + cascaded child slugs so the UI can clear a stale
+    // selection when the open folder was among them (A5).
+    let removed = backend.delete_user_folder(&slug, action).await?;
+    Ok(removed)
 }
 
 // Task 14 — message_send command (spec §3.2, §5.4)
@@ -6126,6 +6242,30 @@ mod tests {
     use crate::winlink_backend::MessageId;
 
     #[test]
+    fn user_folder_dto_carries_parent_slug_and_omits_when_top_level() {
+        // tuxlink-ka3z A4/finding #7: a subfolder serializes parentSlug; a
+        // top-level folder omits the key entirely (TS parentSlug?: string).
+        let child = UserFolderDto::from(crate::user_folders::UserFolder {
+            slug: "ares".into(),
+            display_name: "ARES".into(),
+            created_at: "2026-06-09T00:00:00Z".into(),
+            parent_slug: Some("nets".into()),
+        });
+        assert_eq!(child.parent_slug.as_deref(), Some("nets"));
+        let json = serde_json::to_string(&child).unwrap();
+        assert!(json.contains("\"parentSlug\":\"nets\""), "{json}");
+
+        let top = UserFolderDto::from(crate::user_folders::UserFolder {
+            slug: "nets".into(),
+            display_name: "Nets".into(),
+            created_at: "2026-06-09T00:00:00Z".into(),
+            parent_slug: None,
+        });
+        let json_top = serde_json::to_string(&top).unwrap();
+        assert!(!json_top.contains("parentSlug"), "top-level must omit the key: {json_top}");
+    }
+
+    #[test]
     fn discover_serial_devices_classifies_usb_bluetooth_uart_and_excludes_others() {
         let tmp = tempfile::tempdir().unwrap();
         let dev = tmp.path();
@@ -6766,6 +6906,7 @@ hw:CARD=Device,DEV=0
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             review_inbound_before_download: false,
+            map_tile_source: None,
         }
     }
 
@@ -6990,6 +7131,7 @@ hw:CARD=Device,DEV=0
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             review_inbound_before_download: false,
+            map_tile_source: None,
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -7724,6 +7866,7 @@ hw:CARD=Device,DEV=0
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             review_inbound_before_download: false,
+            map_tile_source: None,
         }
     }
 
@@ -8359,6 +8502,82 @@ hw:CARD=Device,DEV=0
         assert_eq!(rfc3339_to_epoch("2024-05-20T10:13:00Z"), Some(1_716_199_980));
         assert_eq!(rfc3339_to_epoch("not-a-date"), None);
         assert_eq!(rfc3339_to_epoch(""), None);
+    }
+
+    // tuxlink-l80q: message_move_bulk moves every listed message to a single
+    // destination, honoring each item's own source folder so a cross-folder
+    // selection (inbox + sent) lands correctly in one command call. Mirrors the
+    // seed-via-sibling-Mailbox seam used by the NativeBackend read-state tests.
+    #[tokio::test]
+    async fn message_move_bulk_moves_all_listed_messages_across_source_folders() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::compose::compose_message;
+        use crate::winlink_backend::{MailboxFolder, NativeBackend, WinlinkBackend};
+
+        let dir = tempfile::tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+        let a = seed
+            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "A", "a", 1_716_200_000).to_bytes())
+            .unwrap();
+        let b = seed
+            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "B", "b", 1_716_200_001).to_bytes())
+            .unwrap();
+        let c = seed
+            .store(MailboxFolder::Sent, &compose_message("N7CPZ", &["W1AW"], &[], "C", "c", 1_716_200_002).to_bytes())
+            .unwrap();
+
+        let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
+
+        let items = vec![
+            MessageRefDto { folder: "inbox".into(), id: a.0.clone() },
+            MessageRefDto { folder: "inbox".into(), id: b.0.clone() },
+            MessageRefDto { folder: "sent".into(), id: c.0.clone() },
+        ];
+        move_bulk_with_backend(&backend, items, "archive")
+            .await
+            .expect("bulk move succeeds");
+
+        assert!(
+            backend.list_messages(MailboxFolder::Inbox).await.unwrap().is_empty(),
+            "both inbox messages left the source folder"
+        );
+        assert!(
+            backend.list_messages(MailboxFolder::Sent).await.unwrap().is_empty(),
+            "the sent message left the source folder"
+        );
+        assert_eq!(
+            backend.list_messages(MailboxFolder::Archive).await.unwrap().len(),
+            3,
+            "all three messages landed in the single destination folder"
+        );
+    }
+
+    // tuxlink-l80q (Codex P2): a self-move (item.folder == to) must be a no-op,
+    // NOT a delete. Mailbox::move_between writes dst then removes src — the same
+    // path for a self-move — so without a guard the message is destroyed.
+    #[tokio::test]
+    async fn message_move_bulk_self_move_is_a_no_op_not_a_delete() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::compose::compose_message;
+        use crate::winlink_backend::{MailboxFolder, NativeBackend, WinlinkBackend};
+
+        let dir = tempfile::tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+        let a = seed
+            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "A", "a", 1_716_200_000).to_bytes())
+            .unwrap();
+        let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
+
+        let items = vec![MessageRefDto { folder: "inbox".into(), id: a.0.clone() }];
+        move_bulk_with_backend(&backend, items, "inbox")
+            .await
+            .expect("self-move is accepted as a no-op");
+
+        assert_eq!(
+            backend.list_messages(MailboxFolder::Inbox).await.unwrap().len(),
+            1,
+            "a self-move must not delete the message"
+        );
     }
 }
 

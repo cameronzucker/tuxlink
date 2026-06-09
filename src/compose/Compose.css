@@ -394,9 +394,13 @@
  *
  * The Compose window is a SEPARATE Tauri document — the shell's `.compact`
  * root class never reaches it — so the compact treatment is a pure
- * `@media (max-width: 1365px)` block evaluated against the compose window's
- * own width (default 1100, so it matches naturally). Strictly below the
- * 1366px desktop floor (Codex adrev R1 #1): desktop is byte-identical.
+ * `@media (max-width: 1365px) and (any-pointer: coarse)` block. tuxlink-mt73:
+ * the `and (any-pointer: coarse)` gate is load-bearing HERE. The compose window
+ * is a fixed 1100px wide, so a width-ONLY query matched on every host
+ * (1100 < 1366) and forced FZ-M1 touch mode on a normal desktop. Gating on a
+ * coarse (touch) pointer keeps the FZ-M1 touchscreen compact while a mouse-only
+ * desktop stays desktop at any window width. Strictly below the 1366px desktop
+ * floor (Codex adrev R1 #1).
  *
  * DENSITY, not uniform shrink. We do NOT touch `.compose-root`'s 14px
  * font-size — the embedded ICS-309 form sizes its text in `rem`, so any
@@ -404,7 +408,7 @@
  * are bumped to >=44px; only specific sub-floor chrome fonts are raised.
  * ============================================================ */
 
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* --- Compose-titlebar window controls -> 44x44 touch targets ---
    * Scoped to `.tux-compose-titlebar` (Integration Risk R4): the bare
    * `.tux-ctrl` (shell titlebar) is owned by the shell surface; this rule

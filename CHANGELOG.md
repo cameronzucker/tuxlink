@@ -27,6 +27,43 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.40.0](https://github.com/cameronzucker/tuxlink/compare/v0.39.3...v0.40.0) (2026-06-09)
+
+
+### Features
+
+* **mailbox:** add in-message find ([58282ba](https://github.com/cameronzucker/tuxlink/commit/58282ba9256a44c9bb554736d980dde0bd769f0b))
+
+
+### Bug Fixes
+
+* **compose:** gate FZ-M1 compact mode on a touch pointer, not viewport width alone ([fabc408](https://github.com/cameronzucker/tuxlink/commit/fabc408a940a5badf0c1e8008993e14d7bb23e8f))
+
+## [0.39.3](https://github.com/cameronzucker/tuxlink/compare/v0.39.2...v0.39.3) (2026-06-09)
+
+
+### Bug Fixes
+
+* **mailbox:** print webview form fallback content ([a378766](https://github.com/cameronzucker/tuxlink/commit/a37876646ff649e256932d3b7a7641e60a351ebc))
+* **scripts:** refuse a repo-root target/ in converge-build, ignore-rule-independent ([5356efd](https://github.com/cameronzucker/tuxlink/commit/5356efd0c86dc736b27e713908103eb0be235af6))
+* **ui:** stack inbound selection above app chrome ([dd7a9d4](https://github.com/cameronzucker/tuxlink/commit/dd7a9d4db3aa013ecd3333fcc9f80519178c6d7c))
+
+## [0.39.2](https://github.com/cameronzucker/tuxlink/compare/v0.39.1...v0.39.2) (2026-06-09)
+
+
+### Bug Fixes
+
+* **mailbox:** address 5 Codex P2 findings — search invalidation, Enter-clears-selection, bulk id filter, archived-sent read-state, mark-on-open guard reset (tuxlink-etxt) ([5333411](https://github.com/cameronzucker/tuxlink/commit/5333411470c34156a245196bb570f2076a176c67))
+* **test:** type the invoke mock-call access in the Fix 5 mark-on-open test (tuxlink-kuhk) ([817e2fd](https://github.com/cameronzucker/tuxlink/commit/817e2fddbf7c5462eb03f6e2090756f6371ac553))
+
+## [0.39.1](https://github.com/cameronzucker/tuxlink/compare/v0.39.0...v0.39.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* **catalog:** stack Find a Gateway above app chrome so its controls stay reachable ([9d01ef9](https://github.com/cameronzucker/tuxlink/commit/9d01ef925a68ef689c6d88888c0f686c01cc4fd6))
+* **test:** await async grid before asserting map-mount --active (C9 flake) ([4653b14](https://github.com/cameronzucker/tuxlink/commit/4653b14f48455d71808cf282379eae6834110374))
+
 ## [0.39.0](https://github.com/cameronzucker/tuxlink/compare/v0.38.1...v0.39.0) (2026-06-09)
 
 

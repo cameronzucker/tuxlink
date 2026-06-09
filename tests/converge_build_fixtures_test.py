@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runner for the 7 convergence-build failure-mode fixtures.
+"""Runner for the 8 convergence-build failure-mode fixtures.
 
 Each fixture lives at tests/converge_build_fixtures/NN-name.sh and is a
 self-contained bash script that sets up a fake scenario, exercises the
@@ -92,19 +92,23 @@ class ConvergeBuildFixturesTest(unittest.TestCase):
         """Port 1420 held by parallel tauri dev → verify_port_free exits 7."""
         self._assert_fixture("07-port-1420-collision.sh")
 
+    def test_mode_8_root_target_refusal(self):
+        """Repo-root target/ hidden by a lagging .gitignore → _disposable_is_clean refuses."""
+        self._assert_fixture("08-root-target-refusal.sh")
+
 
 class FixtureBundleSanityTest(unittest.TestCase):
     """Lightweight checks on the bundle structure itself."""
 
-    def test_all_seven_fixtures_present(self):
-        """The 7 catalogued modes each have one fixture file."""
+    def test_all_eight_fixtures_present(self):
+        """The 8 catalogued modes each have one fixture file."""
         fixtures = _all_fixtures()
         self.assertEqual(
-            len(fixtures), 7, msg=f"expected 7 fixtures, found {len(fixtures)}"
+            len(fixtures), 8, msg=f"expected 8 fixtures, found {len(fixtures)}"
         )
-        # Each should be numbered 01..07.
+        # Each should be numbered 01..08.
         names = [f.name for f in fixtures]
-        for i in range(1, 8):
+        for i in range(1, 9):
             prefix = f"{i:02d}-"
             self.assertTrue(
                 any(n.startswith(prefix) for n in names),
@@ -125,10 +129,10 @@ class FixtureBundleSanityTest(unittest.TestCase):
                 msg=f"{fixture.name} does not source _lib.sh",
             )
 
-    def test_readme_lists_all_seven_modes(self):
-        """The README explains all 7 modes."""
+    def test_readme_lists_all_eight_modes(self):
+        """The README explains all 8 modes."""
         readme = (FIXTURE_DIR / "README.md").read_text()
-        for i in range(1, 8):
+        for i in range(1, 9):
             self.assertIn(
                 f"`0{i}-",
                 readme,

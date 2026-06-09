@@ -191,14 +191,15 @@
  * FZ-M1 compact mode (tuxlink-h7q7)
  *
  * Embedded in the Compose window (a separate Tauri document), so this is a
- * pure `@media (max-width: 1365px)` block evaluated against the compose
- * window's own width. Strictly below the 1366px desktop floor (Codex adrev
- * R1 #1). DENSITY: tighten the wasteful 16px card padding to 10px; raise
+ * pure `@media (max-width: 1365px) and (any-pointer: coarse)` block. The
+ * `and (any-pointer: coarse)` gate (tuxlink-mt73) stops the fixed-1100px
+ * compose window from forcing FZ-M1 touch mode on a mouse-only desktop.
+ * Strictly below the 1366px desktop floor (Codex adrev R1 #1). DENSITY: tighten the wasteful 16px card padding to 10px; raise
  * touch targets to >=44px; the native radios get a comfortable size. No
  * whole-form font shrink. Desktop is byte-identical.
  * ============================================================ */
 
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* Density: tighten the card padding (16->10) so taller 44px controls fit
    * the compact Compose body without overflowing. */
   .checkin-form {

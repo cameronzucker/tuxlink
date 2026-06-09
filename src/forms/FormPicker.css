@@ -129,7 +129,7 @@
  * both to >=44px for the 1280x800 capacitive-touch tablet.
  * Strictly below the 1366px desktop floor (Codex adrev R1 #1).
  * ============================================================ */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* --- Touch: form-picker list rows --- */
   .form-picker-list li {
     min-height: 44px;

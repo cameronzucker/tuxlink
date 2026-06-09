@@ -19,7 +19,7 @@
 // without the full hook + QueryClientProvider.
 
 import './MessageView.css';
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { ContactEditor, emptyContact } from '../contacts/ContactEditor';
 import { useContacts } from '../contacts/useContacts';
@@ -182,6 +182,51 @@ export function senderCallsign(from: string): string {
   return addr;
 }
 
+interface TextMatch {
+  start: number;
+  end: number;
+}
+
+function findTextMatches(text: string, query: string): TextMatch[] {
+  const needle = query.trim();
+  if (!needle) return [];
+  const haystack = text.toLowerCase();
+  const lowerNeedle = needle.toLowerCase();
+  const matches: TextMatch[] = [];
+  let at = 0;
+  while (at < haystack.length) {
+    const found = haystack.indexOf(lowerNeedle, at);
+    if (found === -1) break;
+    matches.push({ start: found, end: found + lowerNeedle.length });
+    at = found + lowerNeedle.length;
+  }
+  return matches;
+}
+
+function highlightedText(text: string, matches: TextMatch[], activeIndex: number): ReactNode {
+  if (matches.length === 0) return text;
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  matches.forEach((match, index) => {
+    if (match.start > cursor) nodes.push(text.slice(cursor, match.start));
+    const active = index === activeIndex;
+    nodes.push(
+      <mark
+        key={`${match.start}-${match.end}`}
+        className={`message-find-match${active ? ' active' : ''}`}
+        data-testid="message-find-match"
+        data-active={active ? 'true' : 'false'}
+        data-message-find-active={active ? 'true' : undefined}
+      >
+        {text.slice(match.start, match.end)}
+      </mark>,
+    );
+    cursor = match.end;
+  });
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return nodes;
+}
+
 // ============================================================================
 // Form-body rendering (Tasks 13 + 11)
 // ============================================================================
@@ -269,6 +314,13 @@ function FormMessageBody({
         onFallback={() => setViewerFailed(true)}
         suppressed={radioDrawerOpen}
       />
+      <div
+        className="message-form-print-fallback"
+        data-testid="message-form-print-fallback"
+        aria-hidden="true"
+      >
+        <KeyValueView payload={payload} bodyText={bodyText} />
+      </div>
     </div>
   );
 }
@@ -291,6 +343,7 @@ export function MessageViewLoaded({
   currentFolder,
   userFolders,
   onMove,
+  onEditDraft,
   contacts,
   onAddContact,
   radioDrawerOpen = false,
@@ -307,6 +360,8 @@ export function MessageViewLoaded({
   /// Move-to-folder callback. When supplied + `currentFolder` is present,
   /// the reading-pane toolbar renders a "Move ▾" dropdown alongside Archive.
   onMove?: (to: MailboxFolderRef) => void;
+  /// Drafts are local-only; editing is an explicit reading-pane action.
+  onEditDraft?: () => void;
   /// G1 (Task A8) — the operator's saved contacts. When supplied (with
   /// `onAddContact`), the action bar renders an "Add to contacts" button for a
   /// sender that is NOT already a contact; clicking it opens an inline
@@ -320,10 +375,15 @@ export function MessageViewLoaded({
   /// drawer is open. Threaded from AppShell via MessageView (tuxlink-813d).
   radioDrawerOpen?: boolean;
 }) {
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const findInputRef = useRef<HTMLInputElement | null>(null);
   const from = parseAddress(message.from);
   const toAddrs = message.to.map(parseAddress);
   // G1 — add-from-sender. Active only when contacts state + handler are wired.
   const [addingContact, setAddingContact] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findActiveIndex, setFindActiveIndex] = useState(0);
   const senderCs = senderCallsign(message.from);
   const alreadyContact =
     !!contacts &&
@@ -333,49 +393,125 @@ export function MessageViewLoaded({
   // ParsedMessage carries `isForm` but not the form kind/payload yet.
   const formMeta = message.isForm ? devFormMeta(message.id) : null;
   const [formCode, ...formRest] = (formMeta?.formKind ?? '').split(' · ');
+  const isDraft = currentFolder === 'drafts';
+  const findNeedle = findQuery.trim();
+  const findMatches = useMemo(
+    () => findTextMatches(message.body, findNeedle),
+    [message.body, findNeedle],
+  );
+  const findCountText =
+    findNeedle && findMatches.length > 0
+      ? `${findActiveIndex + 1}/${findMatches.length}`
+      : '0/0';
+  const bodyWithFind = findOpen && findNeedle
+    ? highlightedText(message.body, findMatches, findActiveIndex)
+    : message.body;
+  const showCatalogFindRaw = findOpen && findNeedle && isCatalogReply(message);
+  const moveFind = useCallback((delta: number) => {
+    setFindActiveIndex((cur) => {
+      if (findMatches.length === 0) return 0;
+      return (cur + delta + findMatches.length) % findMatches.length;
+    });
+  }, [findMatches.length]);
+
+  useEffect(() => {
+    setFindActiveIndex(0);
+  }, [findNeedle, message.id]);
+
+  useEffect(() => {
+    if (findMatches.length > 0 && findActiveIndex >= findMatches.length) {
+      setFindActiveIndex(0);
+    }
+  }, [findMatches.length, findActiveIndex]);
+
+  useEffect(() => {
+    if (!findOpen) return;
+    findInputRef.current?.focus();
+  }, [findOpen]);
+
+  useEffect(() => {
+    const active = paneRef.current?.querySelector('[data-message-find-active="true"]');
+    if (active instanceof HTMLElement && typeof active.scrollIntoView === 'function') {
+      active.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
+  }, [findActiveIndex, findNeedle]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setFindOpen(true);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   return (
-    <div className="reading-pane" data-testid="message-view-loaded">
+    <div className="reading-pane" data-testid="message-view-loaded" ref={paneRef}>
       {/* 1 — action bar (Mock B: Reply primary amber · Reply All · Forward) */}
       <div className="actions" role="group" aria-label="Message actions">
-        <button
-          type="button"
-          className="action-btn primary"
-          data-testid="reply-btn"
-          onClick={() => fireReply(message, 'reply')}
-        >
-          Reply (Ctrl+R)
-        </button>
-        <button
-          type="button"
-          className="action-btn"
-          data-testid="reply-all-btn"
-          onClick={() => fireReply(message, 'replyAll')}
-        >
-          Reply All
-        </button>
-        <button
-          type="button"
-          className="action-btn"
-          data-testid="forward-btn"
-          onClick={() => fireReply(message, 'forward')}
-        >
-          Forward
-        </button>
-        {message.isForm
-          && message.formId
-          && lookupForm(message.formId)
-          && hasReplyWithFormSupport(message.formId) && (
+        {isDraft ? (
+          <button
+            type="button"
+            className="action-btn primary"
+            data-testid="edit-draft-btn"
+            onClick={onEditDraft}
+          >
+            Edit Draft
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="action-btn primary"
+              data-testid="reply-btn"
+              onClick={() => fireReply(message, 'reply')}
+            >
+              Reply (Ctrl+R)
+            </button>
             <button
               type="button"
               className="action-btn"
-              data-testid="reply-with-form-btn"
-              title="Reply with the same form type, pre-populated with sender↔recipient swap"
-              onClick={() => fireReply(message, 'replyWithForm')}
+              data-testid="reply-all-btn"
+              onClick={() => fireReply(message, 'replyAll')}
             >
-              Reply with form…
+              Reply All
             </button>
-          )}
-        {onArchive && (
+            <button
+              type="button"
+              className="action-btn"
+              data-testid="forward-btn"
+              onClick={() => fireReply(message, 'forward')}
+            >
+              Forward
+            </button>
+            {message.isForm
+              && message.formId
+              && lookupForm(message.formId)
+              && hasReplyWithFormSupport(message.formId) && (
+                <button
+                  type="button"
+                  className="action-btn"
+                  data-testid="reply-with-form-btn"
+                  title="Reply with the same form type, pre-populated with sender↔recipient swap"
+                  onClick={() => fireReply(message, 'replyWithForm')}
+                >
+                  Reply with form…
+                </button>
+              )}
+          </>
+        )}
+        <button
+          type="button"
+          className="action-btn"
+          data-testid="message-find-btn"
+          title="Find in message (Ctrl+Shift+F)"
+          onClick={() => setFindOpen(true)}
+        >
+          Find
+        </button>
+        {!isDraft && onArchive && (
           <button
             type="button"
             className="action-btn"
@@ -386,7 +522,7 @@ export function MessageViewLoaded({
             Archive
           </button>
         )}
-        {onMove && currentFolder && (
+        {!isDraft && onMove && currentFolder && (
           <MoveToButton
             currentFolder={currentFolder}
             userFolders={userFolders ?? []}
@@ -395,7 +531,7 @@ export function MessageViewLoaded({
         )}
         {/* G1 — Add the sender to contacts (suggest-only counterpart for an
             individual message). Hidden when the sender is already a contact. */}
-        {canAddContact && !addingContact && (
+        {!isDraft && canAddContact && !addingContact && (
           <button
             type="button"
             className="action-btn"
@@ -408,9 +544,60 @@ export function MessageViewLoaded({
         )}
       </div>
 
+      {findOpen && (
+        <div className="message-find-bar" data-testid="message-find-bar" role="search">
+          <input
+            ref={findInputRef}
+            className="message-find-input"
+            data-testid="message-find-input"
+            aria-label="Find in message"
+            value={findQuery}
+            onChange={(e) => setFindQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                moveFind(e.shiftKey ? -1 : 1);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setFindOpen(false);
+              }
+            }}
+          />
+          <span className="message-find-count" data-testid="message-find-count" aria-live="polite">
+            {findCountText}
+          </span>
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="message-find-prev"
+            disabled={findMatches.length < 2}
+            onClick={() => moveFind(-1)}
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="message-find-next"
+            disabled={findMatches.length < 2}
+            onClick={() => moveFind(1)}
+          >
+            Next
+          </button>
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="message-find-close"
+            onClick={() => setFindOpen(false)}
+          >
+            Close
+          </button>
+        </div>
+      )}
+
       {/* G1 — inline ContactEditor prefilled with the sender callsign. Inline
           (no popup window); replaces nothing — sits below the action bar. */}
-      {addingContact && onAddContact && (
+      {!isDraft && addingContact && onAddContact && (
         <div className="message-add-contact" data-testid="message-add-contact">
           <ContactEditor
             contact={emptyContact(senderCs)}
@@ -512,10 +699,16 @@ export function MessageViewLoaded({
       ) : isCatalogReply(message) ? (
         // tuxlink-a2gd: catalog INQUIRY replies (From: SERVICE, Subject: "INQUIRY - <url>")
         // render via parse-with-fallback — area weather structured, everything else raw.
-        <CatalogReplyView subject={message.subject} body={message.body} />
+        showCatalogFindRaw ? (
+          <pre className="catalog-reply__raw" data-testid="message-body">
+            {bodyWithFind}
+          </pre>
+        ) : (
+          <CatalogReplyView subject={message.subject} body={message.body} />
+        )
       ) : (
         <pre className="msg-body" data-testid="message-body">
-          {message.body}
+          {bodyWithFind}
         </pre>
       )}
 
@@ -748,6 +941,8 @@ export interface MessageViewProps {
   /** Move-to-folder callback. When supplied, the reading pane renders a
    *  "Move ▾" dropdown that lists system folders + user folders. */
   onMove?: (to: MailboxFolderRef) => void;
+  /** Open a selected local draft in the compose editor. */
+  onEditDraft?: (draftId: string) => void;
   /** When true, any open form-viewer child webview is hidden while the
    *  radio drawer is open (compact-mode overlay coexistence, tuxlink-813d).
    *  Defaults to false so existing call sites that omit it keep working. */
@@ -777,6 +972,7 @@ export default function MessageView({
   onArchive,
   userFolders,
   onMove,
+  onEditDraft,
   radioDrawerOpen = false,
 }: MessageViewProps) {
   const { data, isLoading, isError, error } = useMessage(selectedMessage);
@@ -825,6 +1021,11 @@ export default function MessageView({
       currentFolder={selectedMessage.folder}
       userFolders={userFolders}
       onMove={onMove}
+      onEditDraft={
+        selectedMessage.folder === 'drafts' && onEditDraft
+          ? () => onEditDraft(selectedMessage.id)
+          : undefined
+      }
       contacts={contacts}
       onAddContact={upsertContact}
       radioDrawerOpen={radioDrawerOpen}

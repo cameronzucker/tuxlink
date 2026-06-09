@@ -154,7 +154,7 @@
  * gap 6->10 so adjacent links don't collide under a fingertip. Additive +
  * scoped: desktop (>=1366px) is byte-identical. The shared DRY close-button rule
  * lives in SettingsPanel.css. */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   .tux-about-meta {
     row-gap: 10px;
     font-size: 13px;

@@ -703,6 +703,18 @@ pub trait WinlinkBackend: Send + Sync {
         Ok(())
     }
 
+    /// Set a message's read-state (mark read or unread). Folder-ref aware so
+    /// user folders and Archive are covered. Best-effort: default is a no-op.
+    /// `NativeBackend` overrides it to write/remove the read-marker.
+    async fn set_read_state(
+        &self,
+        _folder: crate::native_mailbox::FolderRef,
+        _id: &MessageId,
+        _read: bool,
+    ) -> Result<(), BackendError> {
+        Ok(())
+    }
+
     /// Move a message between folders (tuxlink-ca5x). The Inbox → Archive path
     /// is the canonical use today; future user folders (tuxlink-f62f) flow
     /// through the same trait method. `NativeBackend` overrides this to
@@ -730,22 +742,38 @@ pub trait WinlinkBackend: Send + Sync {
         Ok(Vec::new())
     }
 
-    /// Create a new user folder with the given display name. Validates and
-    /// slug-derives. Default `NotImplemented`.
+    /// Create a new user folder with the given display name. `parent_slug`
+    /// (spec D2/D3) nests the new folder under an existing top-level folder, or
+    /// `None` creates a top-level folder. Validates and slug-derives. Default
+    /// `NotImplemented`.
     async fn create_user_folder(
         &self,
         _display_name: &str,
+        _parent_slug: Option<&str>,
     ) -> Result<crate::user_folders::UserFolder, BackendError> {
         Err(BackendError::NotImplemented)
     }
 
-    /// Delete a user folder. `on_messages` controls cascade behavior
-    /// (spec §6 D6). Default `NotImplemented`.
+    /// Delete a user folder, cascading to its direct subfolders. `on_messages`
+    /// controls disposition (spec §6 D6). Returns the slugs actually removed
+    /// (parent + children) so the UI can clear a stale selection (A5). Default
+    /// `NotImplemented`.
     async fn delete_user_folder(
         &self,
         _slug: &str,
         _on_messages: crate::native_mailbox::DeleteAction,
-    ) -> Result<(), BackendError> {
+    ) -> Result<Vec<String>, BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
+    /// Re-parent a user folder (spec D3). `new_parent_slug == None` promotes it
+    /// to top level. Metadata-only — no message files move. Default
+    /// `NotImplemented`.
+    async fn move_user_folder(
+        &self,
+        _slug: &str,
+        _new_parent_slug: Option<&str>,
+    ) -> Result<crate::user_folders::UserFolder, BackendError> {
         Err(BackendError::NotImplemented)
     }
 
@@ -1087,6 +1115,15 @@ impl WinlinkBackend for NativeBackend {
         self.mailbox.mark_read(folder, id)
     }
 
+    async fn set_read_state(
+        &self,
+        folder: crate::native_mailbox::FolderRef,
+        id: &MessageId,
+        read: bool,
+    ) -> Result<(), BackendError> {
+        self.mailbox.set_read_state(&folder, id, read)
+    }
+
     async fn move_message(
         &self,
         from: MailboxFolder,
@@ -1105,16 +1142,25 @@ impl WinlinkBackend for NativeBackend {
     async fn create_user_folder(
         &self,
         display_name: &str,
+        parent_slug: Option<&str>,
     ) -> Result<crate::user_folders::UserFolder, BackendError> {
-        self.mailbox.create_user_folder(display_name)
+        self.mailbox.create_user_folder(display_name, parent_slug)
     }
 
     async fn delete_user_folder(
         &self,
         slug: &str,
         on_messages: crate::native_mailbox::DeleteAction,
-    ) -> Result<(), BackendError> {
+    ) -> Result<Vec<String>, BackendError> {
         self.mailbox.delete_user_folder(slug, on_messages)
+    }
+
+    async fn move_user_folder(
+        &self,
+        slug: &str,
+        new_parent_slug: Option<&str>,
+    ) -> Result<crate::user_folders::UserFolder, BackendError> {
+        self.mailbox.move_user_folder(slug, new_parent_slug)
     }
 
     async fn rename_user_folder(
@@ -3120,6 +3166,7 @@ mod native_read_state_tests {
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             review_inbound_before_download: false,
+            map_tile_source: None,
         }
     }
 
@@ -3375,6 +3422,41 @@ mod native_read_state_tests {
         assert!(
             !backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
             "after mark_read the message should be read"
+        );
+    }
+
+    // tuxlink-etxt Task 3: set_read_state round-trips read ↔ unread via
+    // WinlinkBackend::set_read_state (folder-ref aware, covers user folders).
+    #[tokio::test]
+    async fn native_backend_set_read_state_round_trips() {
+        use crate::native_mailbox::FolderRef;
+        let dir = tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+        let raw = compose_message("N7CPZ", &["W1AW"], &[], "Hi", "body", 1_716_200_000).to_bytes();
+        let id = seed.store(MailboxFolder::Inbox, &raw).unwrap();
+
+        let backend = NativeBackend::new(offline_config(), dir.path());
+        assert!(
+            backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
+            "seeded inbox message should start unread"
+        );
+
+        backend
+            .set_read_state(FolderRef::System(MailboxFolder::Inbox), &id, true)
+            .await
+            .unwrap();
+        assert!(
+            !backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
+            "after set_read_state(true) the message should be read"
+        );
+
+        backend
+            .set_read_state(FolderRef::System(MailboxFolder::Inbox), &id, false)
+            .await
+            .unwrap();
+        assert!(
+            backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
+            "after set_read_state(false) the message should be unread again"
         );
     }
 
@@ -4172,6 +4254,7 @@ mod native_read_state_tests {
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             review_inbound_before_download: false,
+            map_tile_source: None,
         }
     }
 

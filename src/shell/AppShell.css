@@ -587,6 +587,43 @@
   font-size: 11px;
   flex: 0 0 auto;
 }
+.layout-b .sidebar .nav-item .icon.folder-indicator {
+  display: grid;
+  place-items: center;
+  height: 14px;
+}
+.layout-b .sidebar .nav-item .icon.folder-indicator::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  box-sizing: border-box;
+}
+.layout-b .sidebar .nav-item.active .icon.folder-indicator::before {
+  background: currentColor;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.layout-b .sidebar .nav-item .icon.folder-indicator[data-has-count="true"]::before {
+  border-color: var(--accent);
+}
+/* Nested-folder twisty (tuxlink-ka3z). The expand/collapse chevron on a parent
+   row, and an equal-width spacer on childless rows so icons stay aligned. */
+.layout-b .sidebar .nav-item .folder-twisty,
+.layout-b .sidebar .nav-item .folder-twisty-spacer {
+  width: 12px;
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.layout-b .sidebar .nav-item .folder-twisty {
+  cursor: pointer;
+}
+.layout-b .sidebar .nav-item .folder-twisty:hover {
+  color: var(--accent);
+}
 .layout-b .sidebar .nav-item.active {
   background: var(--accent-soft);
   color: var(--accent-2);
@@ -681,6 +718,94 @@
   outline-offset: 1px;
 }
 
+/* Bulk action bar — replaces the sort control in the rows-pane-header slot
+ * when a selection set is non-empty (tuxlink-etxt Task 10). Occupies the
+ * same flex strip as .rows-pane-header (no extra vertical space added). */
+.layout-b .message-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.layout-b .bulk-count {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.layout-b .bulk-spacer {
+  flex: 1 1 auto;
+}
+.layout-b .bulk-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.layout-b .bulk-btn:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.layout-b .bulk-btn:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+.layout-b .bulk-btn.primary {
+  background: var(--accent, #3b82f6);
+  color: var(--accent-fg, #fff);
+  border-color: transparent;
+}
+.layout-b .bulk-btn.primary:hover {
+  opacity: 0.88;
+}
+.layout-b .bulk-btn.clear {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+  padding: 2px 4px;
+}
+.layout-b .bulk-btn.clear:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+/* Archive disabled when the current folder is already Archive (tuxlink-l80q). */
+.layout-b .bulk-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.layout-b .bulk-btn:disabled:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+/* The Move ▾ control reuses MoveToButton (.action-btn); align it to the bulk
+ * strip's button styling so it doesn't inherit the reading-pane's only (tuxlink-l80q). */
+.layout-b .message-bulk-bar .action-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.layout-b .message-bulk-bar .action-btn:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.layout-b .message-bulk-bar .action-btn:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
 /* Popup menu — Radix renders into a portal, so the selector is global (not
  * scoped under .layout-b). Surfaces use the same elevated-panel tokens as
  * the rest of the inline overlays (settings, theme designer). */
@@ -756,6 +881,10 @@
 }
 .layout-b .row.selected:hover {
   background: rgba(245, 159, 60, 0.16);
+}
+.layout-b .row.in-selection { background: rgba(245, 159, 60, 0.10); position: relative; }
+.layout-b .row.in-selection::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent);
 }
 .layout-b .row:focus-visible {
   outline: 2px solid var(--tux-focus-ring);

@@ -20,9 +20,19 @@ export interface NewFolderDialogProps {
   open: boolean;
   onClose: () => void;
   onCreated?: (slug: string) => void;
+  /// When set, the new folder is created as a subfolder of this slug (spec D3).
+  /// `parentName` is shown in the dialog so the operator knows where it lands.
+  parentSlug?: string;
+  parentName?: string;
 }
 
-export function NewFolderDialog({ open, onClose, onCreated }: NewFolderDialogProps) {
+export function NewFolderDialog({
+  open,
+  onClose,
+  onCreated,
+  parentSlug,
+  parentName,
+}: NewFolderDialogProps) {
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const create = useCreateUserFolder();
@@ -64,7 +74,7 @@ export function NewFolderDialog({ open, onClose, onCreated }: NewFolderDialogPro
     e.preventDefault();
     setError(null);
     try {
-      const folder = await create.mutateAsync(name);
+      const folder = await create.mutateAsync({ displayName: name, parentSlug });
       onCreated?.(folder.slug);
       onClose();
     } catch (err) {
@@ -89,7 +99,7 @@ export function NewFolderDialog({ open, onClose, onCreated }: NewFolderDialogPro
         className="tux-folder-dialog"
       >
         <div className="tux-folder-header">
-          <h3 className="tux-folder-title">New folder</h3>
+          <h3 className="tux-folder-title">{parentName ? 'New subfolder' : 'New folder'}</h3>
           <button
             type="button"
             className="tux-folder-close"
@@ -100,6 +110,11 @@ export function NewFolderDialog({ open, onClose, onCreated }: NewFolderDialogPro
           </button>
         </div>
         <div className="tux-folder-body">
+          {parentName && (
+            <div className="tux-folder-help" data-testid="new-folder-parent-context">
+              Inside: <strong>{parentName}</strong>
+            </div>
+          )}
           <label htmlFor="new-folder-name" className="tux-folder-field-label">
             Folder name
           </label>

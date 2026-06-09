@@ -1822,6 +1822,7 @@ mod tests {
             modem_vara: None,
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             review_inbound_before_download: false,
+            map_tile_source: None,
         };
         assert!(check_identity_present(&cfg).is_err());
     }

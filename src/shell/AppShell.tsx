@@ -22,12 +22,13 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
 import type { HighlightRange } from '../mailbox/MessageList';
+import { selectionToFolderItems, dropId, dropIds } from '../mailbox/bulkSelection';
 import { type SortState, loadSortState, saveSortState } from '../mailbox/messageSort';
 import { useMailbox, useMailboxChangeEvents } from '../mailbox/useMailbox';
 import { DRAFTS_CHANGED_EVENT, listDraftMessages } from '../mailbox/draftMailbox';
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
-import { useUserFolders } from '../mailbox/useUserFolders';
+import { useUserFolders, useMoveUserFolder } from '../mailbox/useUserFolders';
 import { useContacts } from '../contacts/useContacts';
 import { ContactsPanel } from '../contacts/ContactsPanel';
 import { FolderContextMenu } from '../mailbox/FolderContextMenu';
@@ -231,8 +232,11 @@ export function AppShell() {
   // string-equal is enough to drive the sidebar's active-row highlight.
   const [selectedFolder, setSelectedFolder] = useState<MailboxFolderRef>('inbox');
   // tuxlink-f62f: NewFolderDialog visibility (opened from the sidebar's
-  // Folders section `+` button).
+  // Folders section `+` button). tuxlink-ka3z: `newFolderParent` carries the
+  // parent folder when the dialog was opened via "New subfolder here" (null =
+  // top-level create).
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderParent, setNewFolderParent] = useState<UserFolder | null>(null);
   // tuxlink-ejph: rename / delete dialogs + folder context menu state.
   // `renameFolder` / `deleteFolder` hold the target folder when the dialog
   // is open, null when closed. The context menu carries position + slug.
@@ -294,6 +298,12 @@ export function AppShell() {
     setSortState(next);
     saveSortState(next);
   }, []);
+
+  // tuxlink-etxt Task 11: multi-row selection state. Cleared whenever the
+  // active folder changes so stale ids from a previous folder can't bleed
+  // through to a bulk command against a different folder's messages.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  useEffect(() => { setSelectedIds(new Set()); }, [selectedFolder]);
 
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
@@ -380,6 +390,8 @@ export function AppShell() {
   // tuxlink-f62f: operator-created user folders, rendered in the sidebar's
   // Folders section. Backend reads `<root>/.folders.json`.
   const { folders: userFolders } = useUserFolders();
+  // tuxlink-ka3z: re-parent mutation for the context-menu "Move to" + drag-drop.
+  const moveFolder = useMoveUserFolder();
   // tuxlink-raez (A7): contacts count for the sidebar's Address → Contacts
   // pseudo-folder badge. Sourced from useContacts, NOT the mailbox `counts`
   // memo — `'contacts'` is a pseudo-folder, not a MailboxFolder.
@@ -446,7 +458,10 @@ export function AppShell() {
       outbox: outbox.messages.length,
       drafts: draftMessages.length,
       sent: sent.messages.length,
-      archive: archive.messages.length,
+      // tuxlink-etxt: Archive badge = unread count (matches Inbox badge semantics).
+      // User-folder count badges are intentionally deferred — they'd need a per-folder
+      // N+1 query; user-folder unread still surfaces in-list via the unread row style.
+      archive: archive.messages.filter((m) => m.unread).length,
     }),
     [inbox.messages, outbox.messages, draftMessages, sent.messages, archive.messages],
   );
@@ -679,6 +694,10 @@ export function AppShell() {
       // Clear selection if the moved message was the one open — its folder
       // changed under the reading pane.
       setSelectedMessage((cur) => (cur?.id === id ? null : cur));
+      // A moved row leaves the view; drop it from the selection set so it can't
+      // strand the bulk bar on an invisible row (matters now that an
+      // out-of-selection right-click resets the selection to that single row).
+      setSelectedIds((cur) => dropId(cur, id));
     } catch {
       /* surfaced via Rust logs */
     }
@@ -693,10 +712,85 @@ export function AppShell() {
       await invoke('mailbox_move', { from: fromFolder, to: 'archive', id });
       void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
       setSelectedMessage((cur) => (cur?.id === id ? null : cur));
+      setSelectedIds((cur) => dropId(cur, id));
     } catch {
       /* surfaced via Rust logs */
     }
   }, [queryClient]);
+
+  // tuxlink-etxt Task 12+13: single-message read/unread toggle — wired from the
+  // context-menu (T12) and the U key (T13). Mirrors the invoke + invalidate
+  // pattern of the other per-message handlers; the try/catch keeps an unhandled
+  // rejection from surfacing in the UI (failure is recoverable via next refetch).
+  const setMessageReadState = useCallback(async (id: string, folder: MailboxFolderRef, read: boolean) => {
+    try {
+      await invoke('message_set_read_state', { folder, id, read });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [queryClient]);
+
+  // tuxlink-etxt Task 11: bulk read/unread for selected rows. Each id is mapped
+  // to its own folder (present on the row when search is cross-folder; falls back
+  // to the active folder for single-folder views). Mirrors the invoke + invalidate
+  // pattern used by the existing single-message move/archive handlers above.
+  //
+  // Selection is intentionally retained after a bulk action; the operator clears
+  // it via the ✕ button or by switching folders — do not auto-clear on success.
+  const bulkSetReadState = useCallback(async (ids: Set<string>, read: boolean) => {
+    // selectionToFolderItems maps each id to its own folder and drops stale ids
+    // (Fix 3, #499): a row removed between select and act must never fall back
+    // to selectedFolder for an unknown message — that could target the wrong
+    // folder in a cross-folder search view.
+    const items = selectionToFolderItems(ids, visibleMessages, selectedFolder);
+    try {
+      await invoke('message_set_read_state_bulk', { items, read });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      // Fix 1: also invalidate search results so unread state stays current
+      // when a bulk read/unread action is taken while a search view is active.
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [visibleMessages, selectedFolder, queryClient]);
+
+  // tuxlink-l80q: bulk move (and Archive = move-to-archive) for the selected
+  // rows. Drives the bulk bar's Move ▾ / Archive AND the selection-mode context
+  // menu. Same cross-folder id→folder mapping + stale-id filter as the read
+  // handler; additionally drops items already in the destination (a no-op move
+  // — e.g. a cross-folder hit whose own folder equals `to`).
+  //
+  // Unlike bulk read/unread (which retains the selection), a move removes the
+  // rows from the current view, so the moved ids are dropped from the selection
+  // and the reading pane clears if the open message was among them. Mirrors the
+  // single moveByIdToFolder/archiveByIdAndFolder handlers' selectedMessage clear.
+  const bulkMoveToFolder = useCallback(async (ids: Set<string>, to: MailboxFolderRef) => {
+    const items = selectionToFolderItems(ids, visibleMessages, selectedFolder)
+      .filter((it) => it.folder !== to);
+    if (items.length === 0) return;
+    try {
+      await invoke('message_move_bulk', { items, to });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+      // Drop the WHOLE requested set from the selection (Codex P2): items that
+      // moved, plus any stale ids that selectionToFolderItems filtered out
+      // (rows gone from the view before the action) — leaving them selected
+      // would strand the bulk bar count on invisible rows. The reading pane
+      // only clears if the OPEN message actually moved.
+      const movedIds = new Set(items.map((it) => it.id));
+      setSelectedIds((cur) => dropIds(cur, ids));
+      setSelectedMessage((cur) => (cur && movedIds.has(cur.id) ? null : cur));
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [visibleMessages, selectedFolder, queryClient]);
+
+  const bulkArchive = useCallback(
+    (ids: Set<string>) => bulkMoveToFolder(ids, 'archive'),
+    [bulkMoveToFolder],
+  );
 
   const handlers: MenuHandlers = useMemo(() => ({
     openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
@@ -756,10 +850,19 @@ export function AppShell() {
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage, archiveOpen, reportIssueController]);
 
+  const editDraft = useCallback((draftId: string) => {
+    void invoke('compose_window_open', { draftId });
+  }, []);
+
   // The Archive button render gate: only show when something is selected AND
-  // it's not already in Archive (where archive is a no-op). MessageView reads
-  // the absence of onArchive as "don't render the button."
-  const onArchiveMessage = (selectedMessage && selectedMessage.folder !== 'archive')
+  // it's not already in Archive (where archive is a no-op). Local Drafts are
+  // not backend mailbox messages, so they get an explicit Edit Draft action
+  // instead of Archive/Move.
+  const onArchiveMessage = (
+    selectedMessage
+    && selectedMessage.folder !== 'archive'
+    && selectedMessage.folder !== 'drafts'
+  )
     ? archiveOpen
     : undefined;
 
@@ -795,6 +898,8 @@ export function AppShell() {
   // failed on every shell render even when the sidebar's visible state
   // hadn't changed.
   const onCreateFolder = useCallback(() => {
+    // Top-level create from the "+" button: clear any subfolder parent context.
+    setNewFolderParent(null);
     setNewFolderOpen(true);
   }, []);
   const onFolderContextMenu = useCallback(
@@ -813,11 +918,6 @@ export function AppShell() {
       // regular folder-scoped browse case.
       const hit = searchResultMessages?.find((m) => m.id === id);
       const folder = (hit?.folder as MailboxFolder | undefined) ?? selectedFolder;
-      if (folder === 'drafts') {
-        setSelectedMessage(null);
-        void invoke('compose_window_open', { draftId: id });
-        return;
-      }
       setSelectedMessage({ folder, id });
     },
     [selectedFolder, searchResultMessages],
@@ -941,6 +1041,7 @@ export function AppShell() {
           onCreateFolder={onCreateFolder}
           onDropMessage={moveByIdToFolder}
           onFolderContextMenu={onFolderContextMenu}
+          onReparentFolder={(slug, parentSlug) => moveFolder.mutate({ slug, parentSlug })}
           selectedConnection={selectedConnection}
           onSelectConnection={onSelectConnection}
         />
@@ -966,6 +1067,12 @@ export function AppShell() {
           userFolders={userFolders}
           onMoveMessage={moveByIdToFolder}
           onArchiveMessage={archiveByIdAndFolder}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          onBulkSetReadState={bulkSetReadState}
+          onBulkMove={bulkMoveToFolder}
+          onBulkArchive={bulkArchive}
+          onSetReadState={setMessageReadState}
         />
         {(() => {
           // tuxlink-djnl: shared render fragment for the reading pane. When
@@ -978,7 +1085,14 @@ export function AppShell() {
           const readingPane = selectedMessage
             ? (
                 <Suspense fallback={<MessageViewLoading />}>
-                  <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} radioDrawerOpen={isCompact && drawerOpen} />
+                  <MessageView
+                    selectedMessage={selectedMessage}
+                    onArchive={onArchiveMessage}
+                    userFolders={userFolders}
+                    onMove={selectedMessage.folder === 'drafts' ? undefined : moveOpen}
+                    onEditDraft={editDraft}
+                    radioDrawerOpen={isCompact && drawerOpen}
+                  />
                 </Suspense>
               )
             : <MessageViewEmpty />;
@@ -1154,7 +1268,12 @@ export function AppShell() {
         <Suspense fallback={null}>
           <NewFolderDialog
             open={true}
-            onClose={() => setNewFolderOpen(false)}
+            parentSlug={newFolderParent?.slug}
+            parentName={newFolderParent?.displayName}
+            onClose={() => {
+              setNewFolderOpen(false);
+              setNewFolderParent(null);
+            }}
             onCreated={(slug) => {
               // Navigate to the new folder so the operator sees their creation
               // succeed (matches the create-and-select expectation of every
@@ -1179,11 +1298,16 @@ export function AppShell() {
         <Suspense fallback={null}>
           <DeleteFolderDialog
             folder={deleteFolder}
+            childCount={userFolders.filter((f) => f.parentSlug === deleteFolder.slug).length}
+            childNames={userFolders
+              .filter((f) => f.parentSlug === deleteFolder.slug)
+              .map((f) => f.displayName)}
             onClose={() => setDeleteFolder(null)}
-            onDeleted={(slug) => {
-              // If the operator was viewing the now-gone folder, navigate back
-              // to Inbox so they don't sit on a slug that no longer resolves.
-              if (selectedFolder === slug) {
+            onDeleted={(removedSlugs) => {
+              // Cascade-aware (A5): if the operator was viewing the parent OR any
+              // cascaded child that's now gone, navigate back to Inbox so they
+              // don't sit on a slug that no longer resolves.
+              if (removedSlugs.includes(selectedFolder as string)) {
                 setSelectedFolder('inbox');
                 setSelectedMessage(null);
               }
@@ -1195,10 +1319,20 @@ export function AppShell() {
       {folderCtxMenu && (
         <FolderContextMenu
           folder={folderCtxMenu.folder}
+          allFolders={userFolders}
           x={folderCtxMenu.x}
           y={folderCtxMenu.y}
           onRename={() => setRenameFolder(folderCtxMenu.folder)}
           onDelete={() => setDeleteFolder(folderCtxMenu.folder)}
+          onNewSubfolder={() => {
+            // "New subfolder here" — open the create dialog with this folder as
+            // the parent (tuxlink-ka3z).
+            setNewFolderParent(folderCtxMenu.folder);
+            setNewFolderOpen(true);
+          }}
+          onMoveTo={(parentSlug) =>
+            moveFolder.mutate({ slug: folderCtxMenu.folder.slug, parentSlug })
+          }
           onClose={() => setFolderCtxMenu(null)}
         />
       )}
