@@ -174,10 +174,10 @@ Important details:
   pool (`-L`) holds mail at the relay; normal routing (full callsign)
   forwards it.
 - Tuxlink exposes Network Post Office as a built operating mode,
-  selectable in the Connections sidebar. The pane provides a saved relay
-  endpoints list (Network Post Office favorites) of `host:port` entries,
-  plus the same send-time Outbox selection and inbound message-selection
-  controls as Telnet RMS Post Office.
+  selectable in the Connections sidebar. The pane provides a saved list of
+  relay `host:port` endpoints — the Network Post Office favorites, which the
+  operator names and reuses — plus the same send-time Outbox selection and
+  inbound message-selection controls as Telnet RMS Post Office.
 - Tuxlink locates relays by **manual `host:port`** rather than mesh
   auto-discovery. Winlink Express auto-discovers mesh relays through a
   mechanism that rides the OLSR mesh routing protocol. AREDN is replacing
@@ -226,8 +226,8 @@ without assuming every Winlink Express cell is already shipped.
 | Winlink (CMS) | Built | Telnet, Packet, ARDOP HF, VARA HF, VARA FM |
 | Radio-only | Built for the alpha RF panes | ARDOP HF, VARA HF, VARA FM |
 | Peer-to-peer | Built for the alpha panes | Telnet, Packet, VARA HF, VARA FM |
-| Post Office | Built | Telnet |
-| Network Post Office | Built | Telnet |
+| Post Office | Built (pane; relay dial unvalidated) | Telnet |
+| Network Post Office | Built (pane; relay dial unvalidated) | Telnet |
 
 "Built" means the pane and its backend path exist in the alpha build. It
 does not replace the operator's normal validation. On-air RF paths need
