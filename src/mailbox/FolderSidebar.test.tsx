@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { FolderSidebar } from './FolderSidebar';
+import { FolderSidebar, buildFolderTree } from './FolderSidebar';
+import type { UserFolder } from './types';
 import { SESSION_TYPES } from '../connections/sessionTypes';
 
 // tuxlink-813d P1 fix: FolderSidebar now branches on the `compact` prop.
@@ -595,5 +596,75 @@ describe('<FolderSidebar> — FZ-M1 compact rail (tuxlink-h7q7 / tuxlink-813d)',
     expect(screen.getByTestId('sidebar-flyout')).toBeInTheDocument();
     fireEvent.pointerDown(document.body);
     expect(screen.queryByTestId('sidebar-flyout')).toBeNull();
+  });
+});
+
+// ============================================================================
+// Nested folders (tuxlink-ka3z) — buildFolderTree + desktop tree render.
+// ============================================================================
+describe('buildFolderTree', () => {
+  const folders: UserFolder[] = [
+    { slug: 'nets', displayName: 'Nets', createdAt: 'a' },
+    { slug: 'ares', displayName: 'ARES', createdAt: 'b', parentSlug: 'nets' },
+    { slug: 'weather', displayName: 'Weather', createdAt: 'c' },
+  ];
+
+  it('orders children directly under their parent with depth + hasChildren', () => {
+    const rows = buildFolderTree(folders, new Set());
+    expect(rows.map((r) => [r.folder.slug, r.depth, r.hasChildren])).toEqual([
+      ['nets', 0, true],
+      ['ares', 1, false],
+      ['weather', 0, false],
+    ]);
+  });
+
+  it('omits children of a collapsed parent', () => {
+    const rows = buildFolderTree(folders, new Set(['nets']));
+    expect(rows.map((r) => r.folder.slug)).toEqual(['nets', 'weather']);
+  });
+
+  it('treats a folder with a dangling parent as top-level (never vanishes)', () => {
+    const orphaned: UserFolder[] = [{ slug: 'lost', displayName: 'Lost', createdAt: 'a', parentSlug: 'ghost' }];
+    const rows = buildFolderTree(orphaned, new Set());
+    expect(rows.map((r) => [r.folder.slug, r.depth])).toEqual([['lost', 0]]);
+  });
+});
+
+describe('<FolderSidebar> nested folder rendering (desktop)', () => {
+  const folders: UserFolder[] = [
+    { slug: 'nets', displayName: 'Nets', createdAt: 'a' },
+    { slug: 'ares', displayName: 'ARES', createdAt: 'b', parentSlug: 'nets' },
+    { slug: 'weather', displayName: 'Weather', createdAt: 'c' },
+  ];
+
+  it('renders subfolders indented under their parent (data-depth)', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} userFolders={folders} />);
+    expect(screen.getByTestId('user-folder-nets')).toHaveAttribute('data-depth', '0');
+    expect(screen.getByTestId('user-folder-ares')).toHaveAttribute('data-depth', '1');
+    expect(screen.getByTestId('user-folder-weather')).toHaveAttribute('data-depth', '0');
+  });
+
+  it('collapsing a parent hides its children but not its siblings', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} userFolders={folders} />);
+    fireEvent.click(screen.getByTestId('folder-toggle-nets'));
+    expect(screen.queryByTestId('user-folder-ares')).toBeNull();
+    expect(screen.getByTestId('user-folder-weather')).toBeInTheDocument();
+  });
+
+  it('clicking the twisty toggles without selecting the folder', () => {
+    const onSelect = vi.fn();
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={onSelect} userFolders={folders} />);
+    fireEvent.click(screen.getByTestId('folder-toggle-nets'));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('the compact rail shows only top-level folders (subfolders via the flyout tree)', () => {
+    render(<FolderSidebar compact selectedFolder="inbox" onSelectFolder={() => {}} userFolders={folders} />);
+    // Rail: top-level present, subfolder absent.
+    expect(screen.getByTestId('user-folder-nets')).toBeInTheDocument();
+    expect(screen.queryByTestId('user-folder-ares')).toBeNull();
+    // Expand the flyout: the full tree (incl. the subfolder) renders there.
+    fireEvent.click(screen.getByTestId('rail-expand-btn'));
+    expect(screen.getByTestId('flyout-user-folder-ares')).toHaveAttribute('data-depth', '1');
   });
 });
