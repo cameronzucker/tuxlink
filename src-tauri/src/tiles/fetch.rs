@@ -199,11 +199,20 @@ where
         .ok_or_else(|| FetchError::BadUrl("tile URL has no known port".into()))?;
 
     // SSRF (§8.3): the resolved-IP gate. Branch on host type.
-    let client = match host.parse::<std::net::IpAddr>() {
+    // `Url::host_str` returns IPv6 literals in bracketed form (`[fd00::1]`),
+    // which does not parse as `IpAddr`; strip the brackets so BOTH IPv4 and
+    // IPv6 literals are recognized and take the direct-vet branch below (a v6
+    // literal must not be misrouted through the resolver path). Domains never
+    // carry brackets, so this is a no-op for them.
+    let host_for_ip = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host.as_str());
+    let client = match host_for_ip.parse::<std::net::IpAddr>() {
         Ok(ip) => {
-            // IP-literal host (common LAN case, e.g. http://192.168.1.5:8080/).
-            // There is no DNS to rebind: vet the literal directly and connect
-            // normally with the shared no-redirect client.
+            // IP-literal host (common LAN case, e.g. http://192.168.1.5:8080/ or
+            // http://[fd00::1]:8080/). There is no DNS to rebind: vet the literal
+            // directly and connect normally with the shared no-redirect client.
             if !ip_is_permitted(ip, allow_loopback) {
                 return Err(FetchError::HostDenied(format!(
                     "IP literal {ip} is not a permitted LAN destination"
@@ -432,6 +441,18 @@ mod tests {
     async fn ip_literal_public_host_is_denied_before_connect() {
         // A public IP-literal source URL must be denied without any network I/O.
         let src = source("http://8.8.8.8:8080/");
+        let err = fetch_tile_bytes(&src, &coord(), false).await.unwrap_err();
+        assert!(matches!(err, FetchError::HostDenied(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn ipv6_literal_public_host_is_denied() {
+        // A bracketed public IPv6 literal must be recognized as an IP literal
+        // (brackets stripped) and DENIED by the direct-vet branch — not misrouted
+        // through the resolver. (ULA v6 literals like [fd00::1] take the same
+        // branch and pass vetting; we assert the deny direction here since it
+        // needs no live server.)
+        let src = source("http://[2001:4860:4860::8888]:8080/");
         let err = fetch_tile_bytes(&src, &coord(), false).await.unwrap_err();
         assert!(matches!(err, FetchError::HostDenied(_)), "got {err:?}");
     }
