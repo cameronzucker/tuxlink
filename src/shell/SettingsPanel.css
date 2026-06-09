@@ -165,7 +165,7 @@
  * dialogs (Settings/Theme/About) — see the multi-selector rule below. The other
  * two dialog stylesheets (ThemeDesigner.css, AboutDialog.css) intentionally do
  * NOT restate it. */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* DRY close-button touch target — one rule, all three modals. The bare 22px
    * glyph buttons are half the 44px floor; bump every dialog's close control at
    * once. Negative inline margin keeps the larger hit area from shoving the

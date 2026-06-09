@@ -14,7 +14,7 @@
   display: none;
 }
 
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* Compact (tuxlink-813d D1): the drawer is an ABSOLUTE OVERLAY pinned to the
    * right edge of .panes. It is taken out of grid flow (position: absolute), so
    * it does NOT occupy or create a 4th grid column; the reading pane keeps its

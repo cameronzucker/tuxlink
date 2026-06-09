@@ -71,7 +71,7 @@
 /* FZ-M1 compact (tuxlink-h7q7 Task 6b). The .radio-panel-segmented primitive is
    reused by the Contacts+Favorites agent's Favorites/Recent/Manual tab strip,
    so making it compact-correct here covers that surface for free. */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   .radio-panel-segmented button {
     min-height: 44px;
     font-size: 12px;
@@ -80,7 +80,7 @@
 
 /* FZ-M1 compact — Codex post-impl review: small action buttons (refresh etc.)
    were ~22px. */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   .radio-panel-btn-sm {
     min-height: 44px;
   }

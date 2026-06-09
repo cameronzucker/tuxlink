@@ -142,7 +142,7 @@
 
 /* FZ-M1 compact (tuxlink-h7q7 Task 6b): the session log's 240px floor is ~32%
    of a 760px drawer; tighten it so the dial controls stay above the fold. */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   .session-log-section {
     min-height: 160px;
   }

@@ -159,9 +159,10 @@
  * FZ-M1 compact mode (tuxlink-h7q7)
  *
  * Embedded in the Compose window (a separate Tauri document), so this is a
- * pure `@media (max-width: 1365px)` block evaluated against the compose
- * window's own width. Strictly below the 1366px desktop floor (Codex adrev
- * R1 #1).
+ * pure `@media (max-width: 1365px) and (any-pointer: coarse)` block. The
+ * `and (any-pointer: coarse)` gate (tuxlink-mt73) stops the fixed-1100px
+ * compose window from forcing FZ-M1 touch mode on a mouse-only desktop.
+ * Strictly below the 1366px desktop floor (Codex adrev R1 #1).
  *
  * CRITICAL: this form sizes its fonts in `rem`. We must NOT add any root /
  * `.ics309-form-v2` font-size shrink — at the 14px root the `0.85rem`
@@ -171,7 +172,7 @@
  * it never scales the form down. Desktop is byte-identical.
  * ============================================================ */
 
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* datetime-local pickers -> >=44px tall touch target + 12px font floor
    * (0.85rem ≈ 11.9px at the 14px root, just under the floor — pin it). */
   .ics309-form-v2__custom-range input[type="datetime-local"] {
