@@ -48,6 +48,11 @@ export function bestStateForecast(
  * Return the `WL2K_RMS` entries whose filename starts with `PUB_` — the public
  * gateway frequency lists by mode (PUB_ARDOP, PUB_PACKET, PUB_VARA, …), sorted
  * by filename.
+ *
+ * Consumed by the Task D1 browse pane (per-mode PUB_* enumeration). The C2
+ * "Public gateway lists" card uses openBrowse('WL2K_RMS') to navigate there, so
+ * this resolver is intentionally not wired into sections.ts — do not delete it
+ * as "unused"; D1 selects the mode-specific list from these entries.
  */
 export function gatewayListFilenames(entries: CatalogEntry[]): CatalogEntry[] {
   return entries
