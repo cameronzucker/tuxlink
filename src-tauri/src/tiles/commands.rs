@@ -437,9 +437,22 @@ mod tests {
     // ── clear_tile_cache core ───────────────────────────────────────────────
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn clear_cache_empties_active_source_subtree() {
         let server = geodetic_png_server().await;
         let cache = tempfile::tempdir().unwrap();
+        // configure_core persists the activated source to the global config
+        // (resolved from TUXLINK_CONFIG_DIR). Isolate + serialize it exactly like
+        // the other persisting tests so a parallel run (amd64 CI has more cores →
+        // more parallelism) can't race the config write into an Err that fails the
+        // configure_core().unwrap() below. (Root cause of the 2026-06-09 amd64-only
+        // CI flake: this test persisted without the serial+TUXLINK_CONFIG_DIR guard.)
+        let cfg = tempfile::tempdir().unwrap();
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: single-threaded (serial) test; no concurrent env access.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", cfg.path()); }
+        seed_config(cfg.path());
+
         let gk = TileGatekeeper::new(cache.path());
         let src = source(&server.url());
         // Configure → activates + caches the probe tile.
@@ -455,6 +468,14 @@ mod tests {
             cache::get(cache.path(), &src, &probe).is_none(),
             "clear must empty the active source's cache subtree"
         );
+
+        // SAFETY: symmetric restore; single-threaded test.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
     }
 
     #[tokio::test]
