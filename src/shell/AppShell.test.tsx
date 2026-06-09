@@ -967,4 +967,32 @@ describe('<AppShell> — bulk Mark read/unread (tuxlink-etxt Task 11)', () => {
       ),
     );
   });
+
+  it('bulk Mark unread invokes the batch command with read:false', async () => {
+    renderShell();
+
+    // Ctrl+click two rows to build a selection.
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'), { ctrlKey: true });
+    fireEvent.click(screen.getByTestId('message-row-INBOX2'), { ctrlKey: true });
+
+    expect(await screen.findByTestId('message-bulk-bar')).toBeInTheDocument();
+
+    vi.mocked(invoke).mockClear();
+
+    // Click "Mark unread" — fires message_set_read_state_bulk with read:false.
+    fireEvent.click(screen.getByRole('button', { name: 'Mark unread' }));
+
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+        'message_set_read_state_bulk',
+        expect.objectContaining({
+          items: expect.arrayContaining([
+            { folder: 'inbox', id: 'INBOX1' },
+            { folder: 'inbox', id: 'INBOX2' },
+          ]),
+          read: false,
+        }),
+      ),
+    );
+  });
 });

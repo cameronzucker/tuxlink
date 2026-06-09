@@ -686,14 +686,21 @@ export function AppShell() {
   // to its own folder (present on the row when search is cross-folder; falls back
   // to the active folder for single-folder views). Mirrors the invoke + invalidate
   // pattern used by the existing single-message move/archive handlers above.
+  //
+  // Selection is intentionally retained after a bulk action; the operator clears
+  // it via the ✕ button or by switching folders — do not auto-clear on success.
   const bulkSetReadState = useCallback(async (ids: Set<string>, read: boolean) => {
     const byId = new Map(visibleMessages.map((m) => [m.id, m] as const));
     const items = [...ids].map((id) => ({
       folder: (byId.get(id)?.folder as string | undefined) ?? selectedFolder,
       id,
     }));
-    await invoke('message_set_read_state_bulk', { items, read });
-    void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+    try {
+      await invoke('message_set_read_state_bulk', { items, read });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
   }, [visibleMessages, selectedFolder, queryClient]);
 
   const handlers: MenuHandlers = useMemo(() => ({
