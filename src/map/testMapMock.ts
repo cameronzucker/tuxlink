@@ -44,6 +44,19 @@ const fakeMap = {
     // identity-ish — proves wiring, NOT projection (C1).
     return { lat: pt.clientY, lng: pt.clientX };
   },
+  // Fixed world view so map-driven components (MaidenheadOverlay self-drive)
+  // render deterministically in jsdom. Real bounds/zoom are grim-verified.
+  getZoom(): number {
+    return 1;
+  },
+  getBounds() {
+    return {
+      getSouth: () => -90,
+      getWest: () => -180,
+      getNorth: () => 90,
+      getEast: () => 180,
+    };
+  },
 };
 
 /** The fake Leaflet map instance returned by `useMap()`/`useMapEvents()`. */
@@ -122,6 +135,7 @@ export function createLeafletMock(): { default: Record<string, unknown> } {
   return {
     default: {
       CRS: { EPSG4326: { code: 'EPSG:4326' } },
+      divIcon: (opts: unknown) => opts,
       Icon: {
         Default: {
           prototype: {} as Record<string, unknown>,
