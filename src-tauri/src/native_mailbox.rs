@@ -448,6 +448,8 @@ impl Mailbox {
     /// Returns metadatas sorted newest-first with id ascending as tiebreaker.
     /// `surface_unread` controls whether a missing `.read` sidecar marks the
     /// message unread — only the inbox surfaces this today (spec §2.1).
+    ///
+    /// Called only for user folders; system folders compute unread in `list` directly.
     fn list_dir(dir: &Path, surface_unread: bool) -> Result<Vec<MessageMeta>, BackendError> {
         if !dir.exists() {
             return Ok(Vec::new());
@@ -639,10 +641,11 @@ mod tests {
     }
 
     #[test]
-    fn non_inbox_folders_never_report_unread() {
+    fn sent_and_outbox_never_report_unread() {
         // Unread is a received-mail concept; the Mock B sidebar shows Sent as
         // a total, not an unread count. Sent/Outbox must always report unread =
-        // false even with no read-marker on disk.
+        // false even with no read-marker on disk. (Archive, also a non-inbox
+        // system folder, DOES surface unread — see `archive_messages_surface_unread`.)
         let dir = tempdir().unwrap();
         let mbox = Mailbox::new(dir.path());
         mbox.store(MailboxFolder::Sent, &raw("S", "x")).unwrap();
