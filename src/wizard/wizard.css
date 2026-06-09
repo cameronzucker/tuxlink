@@ -408,7 +408,7 @@
  * flagged for a DESIGN call (plan §"design open item" / Codex item 2) and is
  * deliberately NOT restyled speculatively here.
  */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* Reclaim vertical budget: lower the top padding and tighten card padding so
    * the credentials / probing steps are less likely to overflow ~760px. */
   .wizard-root {

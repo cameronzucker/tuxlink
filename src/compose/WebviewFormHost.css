@@ -113,7 +113,7 @@
  * ResizeObserver position is not disturbed. Strictly below the
  * 1366px desktop floor (Codex adrev R1 #1).
  * ============================================================ */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* --- Touch: chrome action buttons --- */
   .webview-form-host__btn {
     min-height: 44px;

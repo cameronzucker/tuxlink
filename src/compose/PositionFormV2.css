@@ -223,16 +223,17 @@
  * FZ-M1 compact mode (tuxlink-h7q7)
  *
  * Embedded in the Compose window (a separate Tauri document), so this is a
- * pure `@media (max-width: 1365px)` block evaluated against the compose
- * window's own width. Strictly below the 1366px desktop floor (Codex adrev
- * R1 #1). This file also owns the shared `.form-slot-toolbar` (used by all
+ * pure `@media (max-width: 1365px) and (any-pointer: coarse)` block. The
+ * `and (any-pointer: coarse)` gate (tuxlink-mt73) stops the fixed-1100px
+ * compose window from forcing FZ-M1 touch mode on a mouse-only desktop.
+ * Strictly below the 1366px desktop floor (Codex adrev R1 #1). This file also owns the shared `.form-slot-toolbar` (used by all
  * P2 native forms), so its compact touch bumps cover every form's slot
  * toolbar. DENSITY: 16px card padding -> 10px; sub-floor 11px fonts on the
  * fix-badge and the load-bearing submit-time grid-error -> 12px. Desktop is
  * byte-identical.
  * ============================================================ */
 
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* Density: tighten the card padding (16->10). */
   .position-form-v2 {
     padding: 10px;

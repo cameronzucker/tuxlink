@@ -450,7 +450,7 @@
  * Density, not uniform shrink — sub-floor fonts are raised, the
  * 13px body font is left alone.
  * ============================================================ */
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* --- Reflow: ICS-309 log entry 3-col grid -> single column --- */
   .ics309-log-entry {
     grid-template-columns: 1fr;

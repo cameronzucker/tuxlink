@@ -327,7 +327,7 @@
   color: var(--text-faint, #5d6975);
 }
 
-@media (max-width: 1365px) {
+@media (max-width: 1365px) and (any-pointer: coarse) {
   /* Touch + legibility in the icon rail. The 44px `+` button fits the 48px rail
      once the section-label horizontal padding is trimmed. */
   .layout-b .sidebar .section-label {
