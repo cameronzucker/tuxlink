@@ -20,6 +20,8 @@ import { useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-
 import type { ParsedMessage, MailboxFolderRef, UiError } from './types';
 import { folderBearsReadState } from './readState';
 import { DEV_FIXTURE, devMessageFor } from './devFixture';
+import { draftToParsedMessage } from './draftMailbox';
+import { loadDraft } from '../compose/useDraft';
 
 // ============================================================================
 // Wire types — what the Rust command returns on the wire (camelCase already
@@ -56,6 +58,11 @@ export function buildMessageQueryOptions(
       : buildMessageQueryKey('inbox', '__none__'),
     queryFn: async () => {
       if (!selection) throw new Error('no selection');
+      if (selection.folder === 'drafts') {
+        const draft = loadDraft(selection.id);
+        if (!draft) throw { kind: 'NotFound', detail: selection.id } satisfies UiError;
+        return draftToParsedMessage(draft);
+      }
       return invoke<ParsedMessage>('message_read', {
         folder: selection.folder,
         id: selection.id,

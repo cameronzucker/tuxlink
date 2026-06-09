@@ -343,6 +343,7 @@ export function MessageViewLoaded({
   currentFolder,
   userFolders,
   onMove,
+  onEditDraft,
   contacts,
   onAddContact,
   radioDrawerOpen = false,
@@ -359,6 +360,8 @@ export function MessageViewLoaded({
   /// Move-to-folder callback. When supplied + `currentFolder` is present,
   /// the reading-pane toolbar renders a "Move ▾" dropdown alongside Archive.
   onMove?: (to: MailboxFolderRef) => void;
+  /// Drafts are local-only; editing is an explicit reading-pane action.
+  onEditDraft?: () => void;
   /// G1 (Task A8) — the operator's saved contacts. When supplied (with
   /// `onAddContact`), the action bar renders an "Add to contacts" button for a
   /// sender that is NOT already a contact; clicking it opens an inline
@@ -390,6 +393,7 @@ export function MessageViewLoaded({
   // ParsedMessage carries `isForm` but not the form kind/payload yet.
   const formMeta = message.isForm ? devFormMeta(message.id) : null;
   const [formCode, ...formRest] = (formMeta?.formKind ?? '').split(' · ');
+  const isDraft = currentFolder === 'drafts';
   const findNeedle = findQuery.trim();
   const findMatches = useMemo(
     () => findTextMatches(message.body, findNeedle),
@@ -447,30 +451,57 @@ export function MessageViewLoaded({
     <div className="reading-pane" data-testid="message-view-loaded" ref={paneRef}>
       {/* 1 — action bar (Mock B: Reply primary amber · Reply All · Forward) */}
       <div className="actions" role="group" aria-label="Message actions">
-        <button
-          type="button"
-          className="action-btn primary"
-          data-testid="reply-btn"
-          onClick={() => fireReply(message, 'reply')}
-        >
-          Reply (Ctrl+R)
-        </button>
-        <button
-          type="button"
-          className="action-btn"
-          data-testid="reply-all-btn"
-          onClick={() => fireReply(message, 'replyAll')}
-        >
-          Reply All
-        </button>
-        <button
-          type="button"
-          className="action-btn"
-          data-testid="forward-btn"
-          onClick={() => fireReply(message, 'forward')}
-        >
-          Forward
-        </button>
+        {isDraft ? (
+          <button
+            type="button"
+            className="action-btn primary"
+            data-testid="edit-draft-btn"
+            onClick={onEditDraft}
+          >
+            Edit Draft
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="action-btn primary"
+              data-testid="reply-btn"
+              onClick={() => fireReply(message, 'reply')}
+            >
+              Reply (Ctrl+R)
+            </button>
+            <button
+              type="button"
+              className="action-btn"
+              data-testid="reply-all-btn"
+              onClick={() => fireReply(message, 'replyAll')}
+            >
+              Reply All
+            </button>
+            <button
+              type="button"
+              className="action-btn"
+              data-testid="forward-btn"
+              onClick={() => fireReply(message, 'forward')}
+            >
+              Forward
+            </button>
+            {message.isForm
+              && message.formId
+              && lookupForm(message.formId)
+              && hasReplyWithFormSupport(message.formId) && (
+                <button
+                  type="button"
+                  className="action-btn"
+                  data-testid="reply-with-form-btn"
+                  title="Reply with the same form type, pre-populated with sender↔recipient swap"
+                  onClick={() => fireReply(message, 'replyWithForm')}
+                >
+                  Reply with form…
+                </button>
+              )}
+          </>
+        )}
         <button
           type="button"
           className="action-btn"
@@ -480,21 +511,7 @@ export function MessageViewLoaded({
         >
           Find
         </button>
-        {message.isForm
-          && message.formId
-          && lookupForm(message.formId)
-          && hasReplyWithFormSupport(message.formId) && (
-            <button
-              type="button"
-              className="action-btn"
-              data-testid="reply-with-form-btn"
-              title="Reply with the same form type, pre-populated with sender↔recipient swap"
-              onClick={() => fireReply(message, 'replyWithForm')}
-            >
-              Reply with form…
-            </button>
-          )}
-        {onArchive && (
+        {!isDraft && onArchive && (
           <button
             type="button"
             className="action-btn"
@@ -505,7 +522,7 @@ export function MessageViewLoaded({
             Archive
           </button>
         )}
-        {onMove && currentFolder && (
+        {!isDraft && onMove && currentFolder && (
           <MoveToButton
             currentFolder={currentFolder}
             userFolders={userFolders ?? []}
@@ -514,7 +531,7 @@ export function MessageViewLoaded({
         )}
         {/* G1 — Add the sender to contacts (suggest-only counterpart for an
             individual message). Hidden when the sender is already a contact. */}
-        {canAddContact && !addingContact && (
+        {!isDraft && canAddContact && !addingContact && (
           <button
             type="button"
             className="action-btn"
@@ -580,7 +597,7 @@ export function MessageViewLoaded({
 
       {/* G1 — inline ContactEditor prefilled with the sender callsign. Inline
           (no popup window); replaces nothing — sits below the action bar. */}
-      {addingContact && onAddContact && (
+      {!isDraft && addingContact && onAddContact && (
         <div className="message-add-contact" data-testid="message-add-contact">
           <ContactEditor
             contact={emptyContact(senderCs)}
@@ -924,6 +941,8 @@ export interface MessageViewProps {
   /** Move-to-folder callback. When supplied, the reading pane renders a
    *  "Move ▾" dropdown that lists system folders + user folders. */
   onMove?: (to: MailboxFolderRef) => void;
+  /** Open a selected local draft in the compose editor. */
+  onEditDraft?: (draftId: string) => void;
   /** When true, any open form-viewer child webview is hidden while the
    *  radio drawer is open (compact-mode overlay coexistence, tuxlink-813d).
    *  Defaults to false so existing call sites that omit it keep working. */
@@ -953,6 +972,7 @@ export default function MessageView({
   onArchive,
   userFolders,
   onMove,
+  onEditDraft,
   radioDrawerOpen = false,
 }: MessageViewProps) {
   const { data, isLoading, isError, error } = useMessage(selectedMessage);
@@ -1001,6 +1021,11 @@ export default function MessageView({
       currentFolder={selectedMessage.folder}
       userFolders={userFolders}
       onMove={onMove}
+      onEditDraft={
+        selectedMessage.folder === 'drafts' && onEditDraft
+          ? () => onEditDraft(selectedMessage.id)
+          : undefined
+      }
       contacts={contacts}
       onAddContact={upsertContact}
       radioDrawerOpen={radioDrawerOpen}
