@@ -20,7 +20,8 @@ const LABEL_COL: usize = 67;
 /// `deck::active_hf_frequencies_khz`) — these EXACT kHz values are carried into
 /// each [`ChannelReliability::frequency_khz`] by column index (F1).
 /// `ssn`/`year`/`month` are provenance passthrough (F12).
-/// REL, SNR, and MUFday are read positionally; `-` tokens are skipped.
+/// REL, SNR, and MUFday are read positionally; `-` tokens in trailing unused
+/// slots (beyond `freq_count`) are never reached and are harmless.
 pub fn parse_voacapx_out(
     text: &str,
     active_freqs_khz: &[f64],
@@ -138,9 +139,17 @@ fn line_label(line: &str) -> Option<&str> {
 /// Parse the numeric data tokens from a non-FREQ data row.
 ///
 /// Slices to [`LABEL_COL`] first so the label text never bleeds into the token
-/// stream (F4 fix).  Then collects the first `freq_count` values that parse as
-/// `f64` (skipping `-` placeholders).  Returns a `ParseFailed` error if fewer
-/// than `freq_count` numeric values are found.
+/// stream (F4 fix).
+///
+/// **Column-alignment assumption:** METHOD-30 emits a numeric value (0.00
+/// minimum) for every active channel; `-` appears only in unused deck slots
+/// beyond `freq_count`.  A `-` (or any non-numeric token) within the first
+/// `freq_count` whitespace-split tokens indicates broken column alignment and
+/// is treated as a parse error rather than silently compacted away.
+///
+/// The implementation takes the FIRST `freq_count` tokens positionally and
+/// requires each to parse as `f64`.  Trailing `-`-padded slots beyond
+/// `freq_count` are never reached by the `take`, so they remain harmless.
 fn parse_data_row(line: &str, freq_count: usize) -> Result<Vec<f64>, PropagationError> {
     let data_region = if line.len() > LABEL_COL {
         &line[..LABEL_COL]
@@ -148,19 +157,32 @@ fn parse_data_row(line: &str, freq_count: usize) -> Result<Vec<f64>, Propagation
         line
     };
 
-    let vals: Vec<f64> = data_region
-        .split_whitespace()
-        .filter_map(|tok| tok.parse::<f64>().ok())
-        .take(freq_count)
-        .collect();
+    let tokens: Vec<&str> = data_region.split_whitespace().collect();
 
-    if vals.len() < freq_count {
+    if tokens.len() < freq_count {
         return Err(PropagationError::ParseFailed(format!(
-            "data row has {} numeric tokens, need {} (line: {:?})",
-            vals.len(),
+            "data row has {} whitespace tokens, need {} (line: {:?})",
+            tokens.len(),
             freq_count,
             &line[..line.len().min(80)]
         )));
+    }
+
+    // Take exactly the first freq_count tokens positionally; any non-numeric
+    // within that window is a column-alignment error — fail closed.
+    let mut vals = Vec::with_capacity(freq_count);
+    for tok in tokens.iter().take(freq_count) {
+        match tok.parse::<f64>() {
+            Ok(v) => vals.push(v),
+            Err(_) => {
+                return Err(PropagationError::ParseFailed(format!(
+                    "non-numeric token {:?} in first {} columns of data row (line: {:?})",
+                    tok,
+                    freq_count,
+                    &line[..line.len().min(80)]
+                )));
+            }
+        }
     }
 
     Ok(vals)
@@ -217,11 +239,18 @@ fn parse_voacap_mhz_display(
 /// Finds the header line containing both "AZIMUTHS" and "KM", then reads the
 /// numeric tokens from the immediately following line.
 ///
+/// **Layout assumption:** the summary data line immediately follows the
+/// AZIMUTHS/KM header with no intervening blank line — holds for the METHOD-30
+/// page layout as observed in the fixture.
+///
 /// Summary line format (from the fixture):
 /// ```text
 ///   33.50 N  111.00 W - 34.50 N  113.00 W    301.65  120.54     116.2    215.2
 /// ```
-/// All numeric tokens in that line: [33.50, 111.00, 34.50, 113.00, 301.65, 120.54, 116.2, 215.2]
+/// The hemisphere letters (N, W, N, W) and the `-` separator are
+/// space-separated in real VOACAP output and therefore filter out as
+/// non-numeric tokens, leaving 8 numbers: [33.50, 111.00, 34.50, 113.00,
+/// 301.65, 120.54, 116.2, 215.2].
 ///
 /// F19 layout — magic indices (documented):
 ///   nums[len-4] = TX→RX azimuth (301.65 in example)
@@ -390,6 +419,39 @@ mod tests {
         assert_eq!(p.ssn, 100.0);
         assert_eq!(p.year, 2026);
         assert_eq!(p.month, 6);
+    }
+
+    /// Fix 1: a `-` in the 2nd of 3 active columns must produce ParseFailed, not
+    /// silently shift columns.  freq_count=3 via a 3-element active_freqs slice.
+    #[test]
+    fn dash_in_active_column_is_parse_error() {
+        // Minimal output: AZIMUTHS/KM summary + 1 FREQ row + 24 REL/SNR/MUFday rows.
+        // REL row 1 has `-` in the 2nd of 3 active columns — should trigger ParseFailed.
+        let summary_block = "\
+  DM43 ref            N0DAJ DM34            AZIMUTHS          N. MI.      KM\n\
+  33.50 N  111.00 W - 34.50 N  113.00 W    301.65  120.54     116.2    215.2\n\
+   1.0  7.8  3.6  7.1  0.0  0.0  0.0  0.0  0.0  0.0  0.0  0.0  0.0 FREQ\n";
+
+        // 24 rows each for REL, SNR, MUFday; row 3 of REL has `-` in column 2.
+        let mut text = summary_block.to_string();
+        for i in 0..24usize {
+            if i == 2 {
+                // `-` in the 2nd active column — must fail closed
+                text.push_str("       0.10  -   0.30   -    -    -    -    -    -    -    -  REL   \n");
+            } else {
+                text.push_str("       0.10 0.20 0.30   -    -    -    -    -    -    -    -  REL   \n");
+            }
+            text.push_str("        59   65   66   -    -    -    -    -    -    -    -  SNR   \n");
+            text.push_str("       0.50 1.00 0.69   -    -    -    -    -    -    -    -  MUFday\n");
+        }
+
+        let active_3 = vec![3590.0, 7103.0, 7108.0];
+        let result = parse_voacapx_out(&text, &active_3, 100.0, 2026, 6);
+        assert!(
+            matches!(result, Err(PropagationError::ParseFailed(_))),
+            "expected ParseFailed when '-' appears in an active column, got: {:?}",
+            result
+        );
     }
 
     #[test]

@@ -8,6 +8,9 @@ pub mod parse;
 use serde::{Deserialize, Serialize};
 
 /// Inputs for one operator→station HF circuit prediction.
+///
+/// No Serialize/Deserialize: inputs are constructed Rust-side from the command
+/// args, never round-tripped through JSON.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PredictionInputs {
     /// Operator Maidenhead grid (reference point; from the status bar).

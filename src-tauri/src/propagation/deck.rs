@@ -35,12 +35,23 @@ pub fn active_hf_frequencies_khz(input: &[f64]) -> Result<Vec<f64>, PropagationE
 pub fn build_deck(inputs: &PredictionInputs) -> Result<String, PropagationError> {
     let freqs_khz = active_hf_frequencies_khz(&inputs.frequencies_khz)?;
 
+    // Guard req_snr_db to the SYSTEM card's 4-char Fortran field width ({:4.1}).
+    // Values ≥ 100.0 format as "100.0" (5 chars) and silently overflow, shifting
+    // the rest of the SYSTEM card. Negative or non-finite values are also invalid.
+    if !inputs.req_snr_db.is_finite() || !(0.0..100.0).contains(&inputs.req_snr_db) {
+        return Err(PropagationError::RunFailed(format!(
+            "req_snr_db {} out of range (0..100 dB) — SYSTEM card uses a 4-char field",
+            inputs.req_snr_db
+        )));
+    }
+
     let (tx_lat, tx_lon) = grid_to_lat_lon(&inputs.tx_grid)
         .ok_or_else(|| PropagationError::InvalidGrid(inputs.tx_grid.clone()))?;
     let (rx_lat, rx_lon) = grid_to_lat_lon(&inputs.rx_grid)
         .ok_or_else(|| PropagationError::InvalidGrid(inputs.rx_grid.clone()))?;
 
     // Split signed coordinates into hemisphere letter + magnitude.
+    // t=tx, r=rx; la=lat, lo=lon magnitude; *h = hemisphere letter (N/S/E/W).
     let (tla, tlah) = (tx_lat.abs(), if tx_lat >= 0.0 { 'N' } else { 'S' });
     let (tlo, tloh) = (tx_lon.abs(), if tx_lon >= 0.0 { 'E' } else { 'W' });
     let (rla, rlah) = (rx_lat.abs(), if rx_lat >= 0.0 { 'N' } else { 'S' });
@@ -51,13 +62,17 @@ pub fn build_deck(inputs: &PredictionInputs) -> Result<String, PropagationError>
     mhz_padded.resize(11, 0.0);
     let freq_slots: String = mhz_padded.iter().map(|f| format!("{:5.2}", f)).collect();
 
-    // SUNSPOT: F5.0 with trailing dot.
+    // SUNSPOT: Fortran F5.0 field; the trailing '.' is required by VOACAP.
+    // {:.0} on f64 yields fixed-decimal (e.g. 100), and the literal '.' appends
+    // the Fortran dot.
     let sunspot = format!("SUNSPOT   {:>5}", format!("{:.0}.", inputs.ssn));
 
     // SYSTEM card: REQ.SNR comes from inputs.req_snr_db (F7).
     // v1 default 73.0 (VOACAP standard, matching the captured fixture).
     // The data-mode-calibrated value (VARA/ARDOP) is a documented empirical
     // tunable — do NOT invent a VARA SNR number here.
+    // {:4.1} is a 4-char Fortran field ("73.0"); values ≥ 100.0 would overflow
+    // to 5 chars and shift the rest of the card — guarded above in build_deck.
     let system = format!(
         "SYSTEM       1. 145. 0.10  90. {:4.1} 3.00 0.10",
         inputs.req_snr_db
@@ -244,5 +259,45 @@ mod tests {
             .find(|l| l.starts_with("SYSTEM"))
             .expect("SYSTEM line missing");
         assert!(system_line.contains("20.0"), "req_snr_db=20.0 must appear in SYSTEM card");
+    }
+
+    /// Fix 3: req_snr_db ≥ 100.0 (or non-finite) must be rejected before building
+    /// the deck — the SYSTEM card uses a 4-char Fortran field ({:4.1}) that would
+    /// silently overflow for values ≥ 100.0, shifting the rest of the card.
+    #[test]
+    fn req_snr_out_of_range_is_error() {
+        let mut inputs = dm43_dm34();
+        inputs.req_snr_db = 150.0;
+        assert!(
+            matches!(build_deck(&inputs), Err(PropagationError::RunFailed(_))),
+            "expected RunFailed for req_snr_db=150.0"
+        );
+
+        // Also check boundary: 100.0 itself overflows the 4-char field.
+        inputs.req_snr_db = 100.0;
+        assert!(
+            matches!(build_deck(&inputs), Err(PropagationError::RunFailed(_))),
+            "expected RunFailed for req_snr_db=100.0"
+        );
+
+        // Negative and non-finite values are also rejected.
+        inputs.req_snr_db = -1.0;
+        assert!(
+            matches!(build_deck(&inputs), Err(PropagationError::RunFailed(_))),
+            "expected RunFailed for req_snr_db=-1.0"
+        );
+
+        inputs.req_snr_db = f64::NAN;
+        assert!(
+            matches!(build_deck(&inputs), Err(PropagationError::RunFailed(_))),
+            "expected RunFailed for req_snr_db=NaN"
+        );
+
+        // 99.9 is the maximum valid value (fits in 4 chars as "99.9").
+        inputs.req_snr_db = 99.9;
+        assert!(
+            build_deck(&inputs).is_ok(),
+            "expected Ok for req_snr_db=99.9"
+        );
     }
 }
