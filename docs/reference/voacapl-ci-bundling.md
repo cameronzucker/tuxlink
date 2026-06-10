@@ -1,5 +1,32 @@
 # voacapl CI bundling — reference
 
+## Why `externalBin` and `itshfbc` are not in `tauri.conf.json`
+
+Tauri 2 validates `externalBin` entries at `cargo build` time: it requires the
+per-triple binary (`src-tauri/binaries/voacapl-<triple>`) to be present on disk
+or the build fails with `resource path binaries/voacapl-... doesn't exist`. The
+binary is gitignored (CI-generated), so committing `externalBin` breaks
+`cargo build` on any clean checkout or CI runner that hasn't staged it yet.
+
+The same applies to the `resources/itshfbc/**/*` glob: Tauri requires at least
+one matching file; the `.gitkeep` satisfies that during staging, but the glob
+match also trips the existence check in some Tauri versions when the full data
+tree is absent.
+
+**At the bundle-wiring step** (after staging the binary and itshfbc tree per the
+instructions below), re-add both entries to `tauri.conf.json` — or inject them
+via a `TAURI_CONFIG` environment variable patch — before running
+`pnpm tauri build`:
+
+```json
+"externalBin": ["binaries/voacapl"],
+"resources": ["resources/wle-forms/**/*", "resources/itshfbc/**/*", "resources/propagation/ssn-forecast.json"]
+```
+
+Do not commit this change; it must remain a CI-only step.
+
+---
+
 Before `pnpm tauri build` (or `pnpm tauri build --bundles deb,...`) can produce
 a bundle, three artifacts must be staged in the worktree:
 

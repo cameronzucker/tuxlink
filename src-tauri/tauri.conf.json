@@ -39,12 +39,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/voacapl"
-    ],
     "resources": [
       "resources/wle-forms/**/*",
-      "resources/itshfbc/**/*",
       "resources/propagation/ssn-forecast.json"
     ],
     "linux": {

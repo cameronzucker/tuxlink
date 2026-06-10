@@ -230,6 +230,14 @@ mod tests {
             matches!(e, UiError::Internal { .. }),
             "Ssn should map to Internal, got {e:?}"
         );
+
+        // Io → Internal (catch-all coverage)
+        let e: UiError =
+            PropagationError::Io(std::io::Error::other("x")).into();
+        assert!(
+            matches!(e, UiError::Internal { .. }),
+            "Io should map to Internal, got {e:?}"
+        );
     }
 
     // -------------------------------------------------------------------------
