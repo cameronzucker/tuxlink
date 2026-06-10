@@ -1,0 +1,671 @@
+FPUS55 KFGZ 090632
+ZFPFGZ
+
+Zone Forecast Product for Northern Arizona
+National Weather Service Flagstaff AZ
+1132 PM MST Mon Jun 8 2026
+
+These forecasts provide average values for large geographical
+areas. They may not be representative of the location you are
+interested in. For a more specific forecast...please visit 
+weather.gov/flagstaff and either (1) select a location from the 
+dropdown menu above the map...or (2) click a location on the map. 
+you can refine your selection by clicking on the map displayed on 
+the resulting page.
+
+AZZ015-091100-
+Western Mogollon Rim-
+Including the cities of Flagstaff, Williams, and Munds Park
+1132 PM MST Mon Jun 8 2026
+
+.REST OF TONIGHT...Mostly clear. Lows 43 to 53. Light winds
+becoming south around 15 mph early in the morning. 
+.TUESDAY...Windy, sunny. Highs 77 to 85. Southwest winds 20 to
+30 mph with gusts to around 45 mph. 
+.TUESDAY NIGHT...Clear. Lows 41 to 49. Southwest winds 15 to
+20 mph with gusts to around 35 mph early in the evening becoming
+light, then becoming southwest around 15 mph early in the
+morning. 
+.WEDNESDAY...Sunny. Highs 82 to 90. Light winds becoming
+southwest 15 to 20 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows 44 to 54. Southwest winds around
+15 mph. Gusts up to 30 mph in the evening. 
+.THURSDAY...Sunny. Highs 83 to 91. 
+.THURSDAY NIGHT AND FRIDAY...Partly cloudy. Lows 45 to 55. Highs
+81 to 91. 
+.FRIDAY NIGHT...Mostly cloudy in the evening then becoming partly
+cloudy. Lows 51 to 61. 
+.SATURDAY...Partly cloudy with a chance of rain showers and a
+slight chance of thunderstorms. Highs 81 to 89. Chance of
+precipitation 30 percent. 
+.SATURDAY NIGHT...Partly cloudy with a 10 percent chance of
+thunderstorms. Lows 51 to 61. 
+.SUNDAY...Mostly sunny in the morning then becoming partly
+cloudy. A 20 percent chance of thunderstorms. Highs 81 to 89. 
+.SUNDAY NIGHT...Partly cloudy. Lows 50 to 60. 
+.MONDAY...Mostly sunny in the morning then becoming partly
+cloudy. A 20 percent chance of thunderstorms. Highs 79 to 87. 
+
+$$
+=
+
+AZZ006-091100-
+Grand Canyon Country-
+Including the cities of Grand Canyon Village, Tusayan, Supai, 
+and Grand Canyon North Rim
+1132 PM MST Mon Jun 8 2026
+
+.REST OF TONIGHT...Partly cloudy. Lows around 56 on the North Rim
+to around 64 along the Colorado River. South winds around 15 mph
+late in the evening becoming light, then becoming south around
+15 mph early in the morning. 
+.TUESDAY...Breezy, sunny. Highs around 77 on the North Rim to
+around 103 along the Colorado River. Southwest winds 15 to
+25 mph. 
+.TUESDAY NIGHT...Clear. Lows around 53 on the North Rim to around
+62 along the Colorado River. Southwest winds around 15 mph with
+gusts to around 30 mph early in the evening becoming light. 
+.WEDNESDAY...Sunny. Highs 91 to 101. Light winds becoming west
+around 15 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows 53 to 63. Light winds. 
+.THURSDAY...Sunny. Highs around 82 on the North Rim to around
+109 along the Colorado River. 
+.THURSDAY NIGHT AND FRIDAY...Mostly clear. Lows around 57 on the
+North Rim to around 66 along the Colorado River. Highs around
+82 on the North Rim to around 108 along the Colorado River. 
+.FRIDAY NIGHT...Partly cloudy. Lows around 64 on the North Rim to
+around 71 along the Colorado River. 
+.SATURDAY...Partly cloudy with a 10 percent chance of
+thunderstorms. Highs around 81 on the North Rim to around
+104 along the Colorado River. 
+.SATURDAY NIGHT AND SUNDAY...Mostly clear. A 10 percent chance of
+thunderstorms. Lows around 63 on the North Rim to around 70 along
+the Colorado River. Highs around 81 on the North Rim to around
+104 along the Colorado River. 
+.SUNDAY NIGHT AND MONDAY...Mostly clear. Lows around 63 on the
+North Rim to around 70 along the Colorado River. Highs around
+80 on the North Rim to around 104 along the Colorado River. 
+
+$$
+=
+
+AZZ008-091100-
+Yavapai County Mountains-
+Including the cities of Prescott, Seligman, Ash Fork, 
+and Crown King
+1132 PM MST Mon Jun 8 2026
+
+.REST OF TONIGHT...Mostly clear. Lows 48 to 58. South winds
+around 15 mph. 
+.TUESDAY...Sunny. Highs 82 to 88. South winds 15 to 20 mph. Gusts
+up to 35 mph in the late morning and afternoon. 
+.TUESDAY NIGHT...Clear. Lows 46 to 56. Southwest winds around
+15 mph with gusts to around 30 mph early in the evening becoming
+light. 
+.WEDNESDAY...Sunny. Highs 87 to 93. Light winds becoming
+southwest around 15 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows 49 to 59. Southwest winds around
+15 mph in the evening becoming light. 
+.THURSDAY...Sunny. Highs 88 to 94. 
+.THURSDAY NIGHT...Mostly clear. Lows 51 to 61. 
+.FRIDAY...Partly cloudy with a 20 percent chance of
+thunderstorms. Highs 87 to 93. 
+.FRIDAY NIGHT...Partly cloudy with a 10 percent chance of
+thunderstorms. Lows 57 to 67. 
+.SATURDAY...Partly cloudy with a 20 percent chance of
+thunderstorms. Highs 88 to 94. 
+.SATURDAY NIGHT AND SUNDAY...Mostly clear. A 10 percent chance of
+thunderstorms. Lows 58 to 68. Highs 88 to 94. 
+.SUNDAY NIGHT...Mostly clear. Lows 57 to 67. 
+.MONDAY...Mostly sunny with a 20 percent chance of thunderstorms.
+Highs 86 to 92. 
+
+$$
+=
+
+AZZ037-091100-
+Yavapai County Valleys and Basins-
+Including the cities of Cottonwood, Camp Verde, Cordes Junction, 
+and Bagdad
+1132 PM MST Mon Jun 8 2026
+
+.REST OF TONIGHT...Clear. Lows 56 to 66. Light winds. 
+.TUESDAY...Sunny. Highs 89 to 97. Light winds becoming south
+15 to 20 mph in the late morning and afternoon. 
+.TUESDAY NIGHT...Clear. Lows 54 to 64. Southwest winds around
+15 mph early in the evening becoming light. 
+.WEDNESDAY...Sunny. Highs 94 to 102. Light winds becoming
+southwest around 15 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows 57 to 67. Light winds. 
+.THURSDAY...Mostly sunny. Highs 94 to 102. 
+.THURSDAY NIGHT...Partly cloudy. Lows 59 to 69. 
+.FRIDAY AND FRIDAY NIGHT...Partly cloudy with a 10 percent chance
+of thunderstorms. Highs 94 to 102. Lows 62 to 72. 
+.SATURDAY...Mostly sunny with a 10 percent chance of
+thunderstorms. Highs 95 to 103. 
+.SATURDAY NIGHT...Mostly clear. Lows 66 to 76. 
+.SUNDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs 95 to 103. 
+.SUNDAY NIGHT...Mostly clear. Lows 65 to 75. 
+.MONDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs 92 to 100. 
+
+$$
+=
+
+AZZ038-091100-
+Oak Creek and Sycamore Canyons-
+Including the cities of Sedona and Village of Oak Creek
+1132 PM MST Mon Jun 8 2026
+
+.REST OF TONIGHT...Clear. Lows 54 to 62. Light winds. 
+.TUESDAY...Breezy, sunny. Highs 85 to 93. Light winds becoming
+south 15 to 25 mph in the late morning and afternoon. 
+.TUESDAY NIGHT...Clear. Lows 49 to 57. Southwest winds around
+15 mph with gusts to around 30 mph early in the evening becoming
+light, then becoming northeast around 15 mph early in the
+morning. 
+.WEDNESDAY...Sunny. Highs 90 to 98. Light winds becoming
+southwest around 15 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows 53 to 61. Light winds. 
+.THURSDAY...Sunny. Highs 91 to 99. 
+.THURSDAY NIGHT AND FRIDAY...Partly cloudy. Lows 54 to 62. Highs
+90 to 99. 
+.FRIDAY NIGHT...Partly cloudy. Lows 60 to 70. 
+.SATURDAY...Partly cloudy with a 20 percent chance of
+thunderstorms. Highs 90 to 98. 
+.SATURDAY NIGHT...Partly cloudy with a 10 percent chance of
+thunderstorms. Lows 61 to 69. 
+.SUNDAY...Mostly sunny in the morning then becoming partly
+cloudy. A 20 percent chance of thunderstorms. Highs 89 to 97. 
+.SUNDAY NIGHT...Mostly clear. Lows 61 to 69. 
+.MONDAY...Mostly sunny in the morning then becoming partly
+cloudy. A 20 percent chance of thunderstorms. Highs 88 to 96. 
+
+$$
+=
+
+AZZ005-091100-
+Marble and Glen Canyons-
+Including the cities of Page and Lees Ferry
+1132 PM MST Mon Jun 8 2026 /1232 AM MDT Tue Jun 9 2026/
+
+.REST OF TONIGHT...Mostly clear late in the evening then becoming
+mostly cloudy. Lows 59 to 65. Southwest winds around 15 mph late
+in the evening becoming light, then becoming south around 15 mph
+early in the morning. 
+.TUESDAY...Sunny. Highs 90 to 98. Southwest winds 15 to 20 mph. 
+.TUESDAY NIGHT...Mostly clear. Lows 56 to 62. West winds 15 to
+20 mph in the evening becoming light, then becoming southwest
+around 15 mph early in the morning. 
+.WEDNESDAY...Sunny. Highs 94 to 102. Light winds becoming west
+around 15 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows around 62. West winds around
+15 mph. 
+.THURSDAY...Sunny. Highs 92 to 100. 
+.THURSDAY NIGHT AND FRIDAY...Mostly clear. Lows around 61. Highs
+92 to 102. 
+.FRIDAY NIGHT...Mostly clear. Lows around 68. 
+.SATURDAY...Partly cloudy with a 20 percent chance of
+thunderstorms. Highs 94 to 100. 
+.SATURDAY NIGHT...Partly cloudy. Lows around 67. 
+.SUNDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs 94 to 100. 
+.SUNDAY NIGHT AND MONDAY...Mostly clear. Lows around 67. Highs
+93 to 100. 
+
+$$
+=
+
+AZZ004-091100-
+Kaibab Plateau-
+Including the cities of Jacob Lake and Fredonia
+1132 PM MST Mon Jun 8 2026
+
+.REST OF TONIGHT...Partly cloudy. Lows 49 to 59. Southwest winds
+around 15 mph. 
+.TUESDAY...Breezy, sunny. Highs 78 to 86 above 6000 feet...84 to
+90 below 6000 feet. Southwest winds 15 to 25 mph. Gusts up to
+40 mph in the late morning and afternoon. 
+.TUESDAY NIGHT...Clear. Lows 47 to 57. Southwest winds 15 to
+20 mph with gusts to around 35 mph in the evening becoming light,
+then becoming southwest around 15 mph early in the morning. 
+.WEDNESDAY...Sunny. Highs 83 to 93. Light winds becoming west
+15 to 20 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows 50 to 60. West winds around
+15 mph. Gusts up to 30 mph in the evening. 
+.THURSDAY AND THURSDAY NIGHT...Clear. Highs 83 to 91 above
+6000 feet...90 to 96 below 6000 feet. Lows 50 to 60. 
+.FRIDAY AND FRIDAY NIGHT...Mostly clear. Highs 82 to 92 above
+6000 feet...90 to 96 below 6000 feet. Lows 53 to 63. 
+.SATURDAY...Partly cloudy with a 10 percent chance of
+thunderstorms. Highs 83 to 91 above 6000 feet...90 to 96 below
+6000 feet. 
+.SATURDAY NIGHT AND SUNDAY...Mostly clear. A 10 percent chance of
+thunderstorms. Lows 55 to 65. Highs 82 to 91 above 6000 feet...
+89 to 96 below 6000 feet. 
+.SUNDAY NIGHT...Mostly clear. Lows 55 to 65. 
+.MONDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs 81 to 89 above 6000 feet...88 to 94 below 6000 feet. 
+
+$$
+=
+
+AZZ007-091100-
+Coconino Plateau-
+Including the city of Valle
+1132 PM MST Mon Jun 8 2026 /1232 AM MDT Tue Jun 9 2026/
+
+.REST OF TONIGHT...Mostly clear. Lows around 55 on the plateau to
+around 68 along the Colorado River. South winds around 15 mph
+late in the evening becoming light, then becoming south around
+15 mph early in the morning. 
+.TUESDAY...Breezy, sunny. Highs around 82 on the plateau to
+around 96 along the Colorado River. Southwest winds 15 to 25 mph.
+Gusts up to 40 mph in the late morning and afternoon. 
+.TUESDAY NIGHT...Clear. Lows around 54 on the plateau to around
+65 along the Colorado River. Southwest winds around 15 mph with
+gusts to around 30 mph early in the evening becoming light. 
+.WEDNESDAY...Sunny. Highs 87 to 93. Light winds becoming
+southwest 15 to 20 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows 48 to 58. Southwest winds around
+15 mph in the evening becoming light. 
+.THURSDAY...Sunny. Highs around 90 on the plateau to around
+104 along the Colorado River. 
+.THURSDAY NIGHT...Mostly clear. Lows around 58 on the plateau to
+around 70 along the Colorado River. 
+.FRIDAY AND FRIDAY NIGHT...Partly cloudy. Highs around 87 on the
+plateau to around 101 along the Colorado River. Lows 58 to 64 on
+the plateau to 70 to 75 along the Colorado River. 
+.SATURDAY...Partly cloudy with a 20 percent chance of
+thunderstorms. Highs around 89 on the plateau to around 101 along
+the Colorado River. 
+.SATURDAY NIGHT...Partly cloudy with a 10 percent chance of
+thunderstorms. Lows around 64 on the plateau to around 76 along
+the Colorado River. 
+.SUNDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs around 89 on the plateau to around 101 along the Colorado
+River. 
+.SUNDAY NIGHT...Mostly clear. Lows around 64 on the plateau to
+around 75 along the Colorado River. 
+.MONDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs around 87 on the plateau to around 100 along the Colorado
+River. 
+
+$$
+=
+
+AZZ009-091100-
+Northeast Plateaus and Mesas Hwy 264 Northward-
+Including the cities of Keams Canyon and Kaibito
+1132 PM MST Mon Jun 8 2026 /1232 AM MDT Tue Jun 9 2026/
+
+.REST OF TONIGHT...Mostly clear. Lows 50 to 58. South winds
+around 15 mph. 
+.TUESDAY...Windy, sunny. Highs 86 to 92. Southwest winds 20 to
+30 mph with gusts to around 45 mph. 
+.TUESDAY NIGHT...Mostly clear. Lows 46 to 54. Southwest winds
+15 to 20 mph with gusts to around 35 mph in the evening becoming
+light, then becoming southwest around 15 mph early in the
+morning. 
+.WEDNESDAY...Sunny. Highs 89 to 95. Light winds becoming
+southwest around 15 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows 49 to 57. West winds around
+15 mph. 
+.THURSDAY...Sunny. Highs 88 to 94. 
+.THURSDAY NIGHT AND FRIDAY...Mostly clear. Lows 50 to 56. Highs
+88 to 94. 
+.FRIDAY NIGHT THROUGH SATURDAY NIGHT...Partly cloudy. Lows 56 to
+63. Highs 88 to 94. 
+.SUNDAY THROUGH MONDAY...Mostly clear. Highs 87 to 94. Lows 56 to
+62. 
+
+$$
+=
+
+AZZ040-091100-
+Northeast Plateaus and Mesas South of Hwy 264-
+Including the cities of Chambers, Dilkon, and Kykotsmovi
+1132 PM MST Mon Jun 8 2026 /1232 AM MDT Tue Jun 9 2026/
+
+.REST OF TONIGHT...Mostly clear. Lows around 53. Light winds
+becoming southeast around 15 mph early in the morning. 
+.TUESDAY...Windy, sunny. Highs around 90. South winds 15 to
+25 mph shifting to the southwest 20 to 30 mph with gusts to
+around 45 mph in the afternoon. 
+.TUESDAY NIGHT...Breezy. Mostly clear. Lows around 48. Southwest
+winds 15 to 25 mph with gusts to around 40 mph in the evening
+becoming light, then becoming south around 15 mph early in the
+morning. 
+.WEDNESDAY...Sunny. Highs 89 to 95. Light winds becoming
+southwest around 15 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows around 52. Southwest winds around
+15 mph. Gusts up to 30 mph in the evening. 
+.THURSDAY...Sunny. Highs around 92. 
+.THURSDAY NIGHT AND FRIDAY...Partly cloudy. Lows around 52. Highs
+around 93. 
+.FRIDAY NIGHT...Partly cloudy in the evening then becoming mostly
+cloudy. Lows around 59. 
+.SATURDAY...Partly cloudy in the morning then clearing. Highs
+around 92. 
+.SATURDAY NIGHT...Partly cloudy. Lows around 58. 
+.SUNDAY...Mostly sunny. Highs around 92. 
+.SUNDAY NIGHT...Partly cloudy. Lows around 58. 
+.MONDAY...Mostly sunny. Highs around 90. 
+
+$$
+=
+
+AZZ010-091100-
+Chinle Valley-
+Including the cities of Canyon De Chelly, Chinle, and Kayenta
+1232 AM MDT Tue Jun 9 2026
+
+.REST OF TONIGHT...Mostly clear. Lows 52 to 58. South winds
+around 15 mph. 
+.TUESDAY...Windy. Mostly sunny. Highs around 90. Southwest winds
+20 to 30 mph with gusts to around 45 mph. 
+.TUESDAY NIGHT...Breezy. Mostly clear. Lows 49 to 55. Southwest
+winds 15 to 25 mph. 
+.WEDNESDAY...Sunny. Highs around 92. Light winds becoming west
+15 to 20 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows 51 to 57. Southwest winds around
+15 mph. 
+.THURSDAY...Sunny. Highs around 90. 
+.THURSDAY NIGHT AND FRIDAY...Mostly clear. Lows 49 to 55. Highs
+around 91. 
+.FRIDAY NIGHT...Partly cloudy. Lows 56 to 62. 
+.SATURDAY...Mostly sunny. Highs around 92. 
+.SATURDAY NIGHT...Partly cloudy. Lows 55 to 61. 
+.SUNDAY...Mostly sunny. Highs around 91. 
+.SUNDAY NIGHT...Partly cloudy. Lows 55 to 61. 
+.MONDAY...Mostly sunny. Highs around 90. 
+
+$$
+=
+
+AZZ011-091100-
+Chuska Mountains and Defiance Plateau-
+Including the cities of Sanders, Fort Defiance, Window Rock, 
+Ganado, Klagetoh, and Wide Ruins
+1132 PM MST Mon Jun 8 2026 /1232 AM MDT Tue Jun 9 2026/
+
+.REST OF TONIGHT...Mostly clear. Lows 50 to 56. Light winds
+becoming south around 15 mph early in the morning. 
+.TUESDAY...Windy. Mostly sunny. Highs 80 to 88. Southwest winds
+20 to 30 mph with gusts to around 45 mph. 
+.TUESDAY NIGHT...Breezy. Mostly clear. Lows 47 to 53. Southwest
+winds 15 to 25 mph with gusts to around 40 mph in the evening
+becoming light, then becoming southwest around 15 mph early in
+the morning. 
+.WEDNESDAY...Sunny. Highs 82 to 90. Light winds becoming west
+15 to 20 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows 49 to 55. Southwest winds around
+15 mph. Gusts up to 30 mph in the evening. 
+.THURSDAY...Sunny. Highs 82 to 90. 
+.THURSDAY NIGHT AND FRIDAY...Partly cloudy. Lows 49 to 55. Highs
+82 to 91. 
+.FRIDAY NIGHT THROUGH SATURDAY NIGHT...Partly cloudy. Lows 53 to
+60. Highs 83 to 91. 
+.SUNDAY...Mostly sunny. Highs 83 to 89. 
+.SUNDAY NIGHT...Partly cloudy. Lows 53 to 59. 
+.MONDAY...Mostly sunny. Highs 82 to 88. 
+
+$$
+=
+
+AZZ039-091100-
+Black Mesa Area-
+Including the cities of Steamboat Canyon, 
+Navajo National Monument, Shonto, and Jadito
+1132 PM MST Mon Jun 8 2026 /1232 AM MDT Tue Jun 9 2026/
+
+.REST OF TONIGHT...Mostly clear. Lows around 53. Southwest winds
+15 to 20 mph. 
+.TUESDAY...Windy, sunny. Highs around 84. South winds 15 to
+20 mph shifting to the southwest 20 to 30 mph with gusts to
+around 45 mph in the late morning and afternoon. 
+.TUESDAY NIGHT...Breezy. Mostly clear. Lows 46 to 52. Southwest
+winds 15 to 25 mph. Gusts up to 40 mph. 
+.WEDNESDAY...Sunny. Highs around 87. Light winds becoming west
+15 to 20 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows around 52. West winds around
+15 mph. 
+.THURSDAY...Sunny. Highs around 86. 
+.THURSDAY NIGHT AND FRIDAY...Mostly clear. Lows around 51. Highs
+around 87. 
+.FRIDAY NIGHT THROUGH SATURDAY NIGHT...Partly cloudy. Lows around
+58. Highs around 88. 
+.SUNDAY...Mostly sunny. Highs around 87. 
+.SUNDAY NIGHT...Partly cloudy. Lows around 57. 
+.MONDAY...Mostly sunny. Highs around 86. 
+
+$$
+=
+
+AZZ012-091100-
+Little Colorado River Valley in Coconino County-
+Including the cities of Tuba City and Wupatki National Monument
+1132 PM MST Mon Jun 8 2026 /1232 AM MDT Tue Jun 9 2026/
+
+.REST OF TONIGHT...Clear. Lows around 53. Light winds becoming
+south around 15 mph early in the morning. 
+.TUESDAY...Windy, sunny. Highs 89 to 95. South winds 15 to 20 mph
+with gusts to around 40 mph shifting to the southwest 20 to
+30 mph with gusts to around 45 mph in the afternoon. 
+.TUESDAY NIGHT...Mostly clear. Lows around 50. Southwest winds
+15 to 20 mph with gusts to around 35 mph in the evening becoming
+light, then becoming southwest around 15 mph early in the
+morning. 
+.WEDNESDAY...Sunny. Highs 94 to 100. Light winds becoming
+southwest around 15 mph with gusts to around 30 mph in the
+afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows around 55. Southwest winds around
+15 mph. Gusts up to 30 mph in the evening. 
+.THURSDAY...Sunny. Highs 93 to 99. 
+.THURSDAY NIGHT AND FRIDAY...Partly cloudy. Lows around 56. Highs
+93 to 99. 
+.FRIDAY NIGHT...Partly cloudy. Lows around 63. 
+.SATURDAY...Partly cloudy in the morning then clearing. A
+10 percent chance of thunderstorms. Highs 92 to 98. 
+.SATURDAY NIGHT...Partly cloudy. Lows around 62. 
+.SUNDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs 92 to 98. 
+.SUNDAY NIGHT...Mostly clear. Lows around 62. 
+.MONDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs 91 to 97. 
+
+$$
+=
+
+AZZ013-091100-
+Little Colorado River Valley in Navajo County-
+Including the cities of Winslow, Holbrook, and Snowflake
+1132 PM MST Mon Jun 8 2026 /1232 AM MDT Tue Jun 9 2026/
+
+.REST OF TONIGHT...Clear. Lows around 54. Light winds becoming
+south around 15 mph early in the morning. 
+.TUESDAY...Windy, sunny. Highs around 91. South winds 20 to
+30 mph with gusts to around 45 mph shifting to the southwest with
+gusts to around 45 mph late in the afternoon. 
+.TUESDAY NIGHT...Breezy. Mostly clear. Lows around 48. Southwest
+winds 15 to 25 mph in the evening becoming light, then becoming
+south around 15 mph early in the morning. 
+.WEDNESDAY...Sunny. Highs around 95. Light winds becoming
+southwest 15 to 20 mph in the afternoon. 
+.WEDNESDAY NIGHT...Clear. Lows around 53. Southwest winds 15 to
+20 mph. 
+.THURSDAY...Mostly sunny. Highs around 93. 
+.THURSDAY NIGHT AND FRIDAY...Partly cloudy. Lows around 54. Highs
+around 93. 
+.FRIDAY NIGHT...Partly cloudy. Lows around 61. 
+.SATURDAY...Partly cloudy in the morning then clearing. Highs
+around 92. 
+.SATURDAY NIGHT...Partly cloudy. Lows around 61. 
+.SUNDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs around 92. 
+.SUNDAY NIGHT...Mostly clear. Lows around 61. 
+.MONDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs around 91. 
+
+$$
+=
+
+AZZ014-091100-
+Little Colorado River Valley in Apache County-
+Including the cities of St. Johns and Springerville
+1132 PM MST Mon Jun 8 2026 /1232 AM MDT Tue Jun 9 2026/
+
+.REST OF TONIGHT...Partly cloudy with a chance of sprinkles and a
+slight chance of thunderstorms. Lows around 54. Light winds
+becoming southeast around 15 mph early in the morning. Chance of
+precipitation 10 percent. 
+.TUESDAY...Windy. Mostly sunny. Highs 86 to 92. South winds 15 to
+20 mph with gusts to around 35 mph shifting to the southwest
+20 to 30 mph with gusts to around 45 mph in the afternoon. 
+.TUESDAY NIGHT...Breezy, clear. Lows around 49. Southwest winds
+15 to 25 mph with gusts to around 40 mph in the evening becoming
+light, then becoming south around 15 mph early in the morning. 
+.WEDNESDAY...Sunny. Highs 89 to 95. Light winds becoming west
+15 to 20 mph in the afternoon. 
+.WEDNESDAY NIGHT...Mostly clear. Lows around 52. Southwest winds
+15 to 20 mph. 
+.THURSDAY...Mostly sunny. Highs around 90. 
+.THURSDAY NIGHT AND FRIDAY...Partly cloudy. Lows around 54. Highs
+around 91. 
+.FRIDAY NIGHT...Partly cloudy in the evening then becoming mostly
+cloudy. Lows around 59. 
+.SATURDAY...Partly cloudy in the morning then clearing. A chance
+of rain showers and a slight chance of thunderstorms. Highs 86 to
+92. Chance of precipitation 30 percent. 
+.SATURDAY NIGHT...Partly cloudy. Lows around 58. 
+.SUNDAY...Mostly sunny. Highs 87 to 93. 
+.SUNDAY NIGHT...Partly cloudy. Lows around 59. 
+.MONDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs 85 to 91. 
+
+$$
+=
+
+AZZ016-091100-
+Eastern Mogollon Rim-
+Including the cities of Heber, Happy Jack, and Forest Lakes
+1132 PM MST Mon Jun 8 2026
+
+.REST OF TONIGHT...Clear. Lows 49 to 55. Light winds becoming
+south around 15 mph early in the morning. 
+.TUESDAY...Windy, sunny. Highs 78 to 86. Southwest winds 20 to
+30 mph. 
+.TUESDAY NIGHT...Clear. Lows 45 to 51. Southwest winds 15 to
+20 mph early in the evening becoming light, then becoming
+southwest around 15 mph early in the morning. 
+.WEDNESDAY...Sunny. Highs 84 to 90. Light winds becoming
+southwest 15 to 20 mph in the afternoon. 
+.WEDNESDAY NIGHT...Mostly clear. Lows 48 to 54. Southwest winds
+around 15 mph. 
+.THURSDAY...Mostly sunny. Highs 85 to 91. 
+.THURSDAY NIGHT...Partly cloudy. Lows around 53. 
+.FRIDAY...Partly cloudy with a 10 percent chance of
+thunderstorms. Highs 84 to 90. 
+.FRIDAY NIGHT...Partly cloudy. Lows 56 to 62. 
+.SATURDAY...Partly cloudy with a 20 percent chance of
+thunderstorms. Highs 83 to 89. 
+.SATURDAY NIGHT...Partly cloudy. Lows around 58. 
+.SUNDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs 82 to 88. 
+.SUNDAY NIGHT...Mostly clear. Lows around 58. 
+.MONDAY...Mostly sunny in the morning then becoming partly
+cloudy. A 20 percent chance of thunderstorms. Highs 80 to 86. 
+
+$$
+=
+
+AZZ017-091100-
+White Mountains-
+Including the cities of Show Low, Greer, and Pinetop-Lakeside
+1132 PM MST Mon Jun 8 2026
+
+.REST OF TONIGHT...Partly cloudy with a chance of sprinkles and a
+slight chance of thunderstorms. Lows 43 to 51 above 7000 feet...
+51 to 57 below 7000 feet. Light winds. Chance of precipitation
+10 percent. 
+.TUESDAY...Breezy. Mostly sunny. Highs 74 to 82 above 7000 feet...
+83 to 89 below 7000 feet. Southwest winds 15 to 25 mph. Gusts up
+to 40 mph in the late morning and afternoon. 
+.TUESDAY NIGHT...Clear. Lows 40 to 48 above 7000 feet...49 to
+55 below 7000 feet. Southwest winds around 15 mph with gusts to
+around 30 mph early in the evening becoming light. 
+.WEDNESDAY...Sunny. Highs 78 to 88. Southwest winds 15 to 20 mph.
+.WEDNESDAY NIGHT...Mostly clear. Lows 42 to 52. Southwest winds
+around 15 mph. 
+.THURSDAY...Mostly sunny in the morning then becoming partly
+cloudy. Highs 77 to 85 above 7000 feet...around 89 below
+7000 feet. 
+.THURSDAY NIGHT...Partly cloudy. Lows 43 to 51 above 7000 feet...
+52 to 58 below 7000 feet. 
+.FRIDAY...Partly cloudy with a 20 percent chance of
+thunderstorms. Highs 75 to 83 above 7000 feet...86 to 92 below
+7000 feet. 
+.FRIDAY NIGHT...Mostly cloudy in the evening then becoming partly
+cloudy. Lows 46 to 54 above 7000 feet...around 59 below
+7000 feet. 
+.SATURDAY...Partly cloudy in the morning then becoming mostly
+cloudy. A 40 percent chance of thunderstorms. Highs 74 to
+82 above 7000 feet...84 to 90 below 7000 feet. 
+.SATURDAY NIGHT...Partly cloudy. Lows 45 to 53 above 7000 feet...
+around 58 below 7000 feet. 
+.SUNDAY...Mostly sunny in the morning then becoming partly
+cloudy. A 20 percent chance of thunderstorms. Highs 74 to
+82 above 7000 feet...around 87 below 7000 feet. 
+.SUNDAY NIGHT...Mostly clear. Lows 45 to 53 above 7000 feet...
+around 57 below 7000 feet. 
+.MONDAY...Mostly sunny in the morning then becoming partly
+cloudy. A 30 percent chance of thunderstorms. Highs 72 to
+80 above 7000 feet...around 85 below 7000 feet. 
+
+$$
+=
+
+AZZ018-091100-
+Northern Gila County-
+Including the cities of Payson, Strawberry, and Young
+1132 PM MST Mon Jun 8 2026
+
+.REST OF TONIGHT...Clear. Lows 53 to 63. Light winds. 
+.TUESDAY...Sunny. Highs 85 to 93. Light winds becoming southwest
+15 to 20 mph in the late morning and afternoon. 
+.TUESDAY NIGHT...Clear. Lows 50 to 60. West winds around 15 mph
+early in the evening becoming light. 
+.WEDNESDAY...Sunny. Highs 88 to 96. Light winds becoming
+southwest around 15 mph in the afternoon. 
+.WEDNESDAY NIGHT...Mostly clear. Lows 52 to 62. Light winds. 
+.THURSDAY...Mostly sunny. Highs 89 to 97. 
+.THURSDAY NIGHT...Partly cloudy. Lows 54 to 64. 
+.FRIDAY...Partly cloudy with a 10 percent chance of
+thunderstorms. Highs 89 to 97. 
+.FRIDAY NIGHT...Partly cloudy. Lows 59 to 69. 
+.SATURDAY...Partly cloudy in the morning then becoming mostly
+sunny. A 10 percent chance of thunderstorms. Highs 89 to 97. 
+.SATURDAY NIGHT...Partly cloudy. Lows 59 to 69. 
+.SUNDAY...Mostly sunny with a 10 percent chance of thunderstorms.
+Highs 88 to 96. 
+.SUNDAY NIGHT...Mostly clear. Lows 58 to 68. 
+.MONDAY...Mostly sunny with a 20 percent chance of thunderstorms.
+Highs 86 to 94. 
+
+$$
+=
+
+
+
+
+
+=====
+Thanks for using Winlink, an Amateur Radio Safety Foundation 
+sponsored project. For information about Winlink or to manage
+your Winlink account please visit: 
+https://www.winlink.org
+
+For information on how you can help support Winlink and other
+Amateur Radio Safety Foundation projects please visit:
+https://www.arsfi.org

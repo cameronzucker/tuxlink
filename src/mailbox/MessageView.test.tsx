@@ -240,6 +240,8 @@ describe('<MessageViewLoaded>', () => {
       product: 'FPUS65 KPSR 091103',
       office: 'National Weather Service Phoenix AZ',
       issued: '',
+      title: '',
+      forecast: { kind: 'none' },
       raw: body,
     });
 

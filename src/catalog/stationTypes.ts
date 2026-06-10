@@ -37,8 +37,53 @@ export interface StationListing {
   fetchedAtMs: number | null;
 }
 
+// ---- catalog reply views (mirror src-tauri/src/catalog/reply.rs) ----
+
+export interface ForecastDay {
+  dow: string; // "Tue"
+  date: string; // "Jun 09"
+}
+export interface ForecastCell {
+  condition: string; // "Vryhot"
+  low: string; // "77" (may be "MM"/"-"/"")
+  high: string; // "106"
+  popNight: string; // "00"
+  popDay: string; // "00"
+}
+export interface ForecastLocation {
+  name: string; // "Phoenix"
+  cells: ForecastCell[];
+}
+export interface ForecastRegion {
+  name: string; // "SOUTH-CENTRAL ARIZONA"
+  locations: ForecastLocation[];
+}
+export interface ForecastPeriod {
+  label: string; // "REST OF TONIGHT"
+  text: string;
+}
+export interface ForecastZone {
+  name: string; // "Western Mogollon Rim"
+  cities: string; // "Flagstaff, Williams, and Munds Park"
+  periods: ForecastPeriod[];
+}
+
+/// The decoded forecast body (internally tagged on `kind`).
+export type Forecast =
+  | { kind: 'tabular'; days: ForecastDay[]; regions: ForecastRegion[] }
+  | { kind: 'zone'; zones: ForecastZone[] }
+  | { kind: 'none' };
+
 export type ReplyView =
-  | { kind: 'area-weather'; product: string; office: string; issued: string; raw: string }
+  | {
+      kind: 'area-weather';
+      product: string;
+      office: string;
+      issued: string;
+      title: string;
+      forecast: Forecast;
+      raw: string;
+    }
   | { kind: 'raw'; text: string };
 
 /// Extract a human-readable message from a thrown Tauri UiError (or anything).
