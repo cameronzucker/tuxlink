@@ -27,6 +27,7 @@ pub mod winlink_backend;
 pub mod wizard;
 pub mod modem_commands;
 pub mod modem_status;
+pub mod propagation;
 
 #[cfg(test)]
 pub mod test_helpers;
