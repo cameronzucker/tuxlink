@@ -301,11 +301,11 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.queryByTestId('tab-strip')).toBeNull();
   });
 
-  it('sidebar shows Inbox active + counts (Inbox unread, Sent total)', () => {
+  it('sidebar shows actionable folder badges without a Sent total', () => {
     renderShell();
     expect(screen.getByTestId('folder-inbox')).toHaveAttribute('aria-current', 'true');
     expect(screen.getByTestId('folder-count-inbox')).toHaveTextContent('1'); // 1 unread
-    expect(screen.getByTestId('folder-count-sent')).toHaveTextContent('1'); // 1 total
+    expect(screen.queryByTestId('folder-count-sent')).toBeNull();
   });
 
   // tuxlink-etxt Task 14: Archive badge must show UNREAD count, not total.
