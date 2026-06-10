@@ -76,7 +76,15 @@ impl Mailbox {
                 &msg,
                 folder,
                 direction_for_folder(folder),
-                /*unread=*/ folder == MailboxFolder::Inbox,
+                // tuxlink-mzm4: seed `unread` with the SAME predicate list() uses
+                // (received-mail folders = Inbox | Archive), not Inbox-only. A
+                // message stored directly into Archive surfaces as unread in
+                // list() (no .read sidecar yet), so the index must agree or a
+                // search filtered by unread silently drops it. Sent/Outbox stay
+                // read (operator-authored). A fresh store has no .read sidecar,
+                // so list()'s extra `!<mid>.read exists` clause is implicitly
+                // true here and the predicates align.
+                /*unread=*/ matches!(folder, MailboxFolder::Inbox | MailboxFolder::Archive),
                 /*transport_used=*/ None,
             );
             match idx.lock() {
@@ -1096,6 +1104,50 @@ mod index_hook_tests {
         let (mbox, idx) = build_mailbox_with_index(dir.path());
         mbox.store(MailboxFolder::Inbox, &raw("Hello", "body")).unwrap();
         assert_eq!(idx.lock().unwrap().count().unwrap(), 1);
+    }
+
+    // tuxlink-mzm4: store() must seed the search-index `unread` column with the
+    // SAME predicate list() uses — matches!(folder, Inbox | Archive) — not
+    // Inbox-only. A message stored DIRECTLY into Archive surfaces as unread in
+    // list() (no .read sidecar yet), but the old Inbox-only seed recorded it
+    // read in the index, so a search filtered by unread silently dropped it.
+    // This pins index↔list agreement at store time. (Fails against the old
+    // `folder == MailboxFolder::Inbox` seed: the Archive case recorded 0.)
+    #[test]
+    fn store_seeds_index_unread_matching_list_predicate() {
+        let dir = tempdir().unwrap();
+        let (mbox, idx) = build_mailbox_with_index(dir.path());
+
+        let index_unread = |mid: &str| -> i64 {
+            idx.lock()
+                .unwrap()
+                .conn
+                .query_row("SELECT unread FROM messages_meta WHERE mid = ?1", [mid], |r| r.get(0))
+                .unwrap()
+        };
+
+        // Inbox: unread in both list() and the index (established behaviour).
+        let inbox = mbox.store(MailboxFolder::Inbox, &raw("In", "x")).unwrap();
+        assert!(mbox.list(MailboxFolder::Inbox).unwrap()[0].unread);
+        assert_eq!(index_unread(&inbox.0), 1, "Inbox: index unread must match list()");
+
+        // Archive (the bug): list() surfaces a freshly-stored Archive message as
+        // unread (no .read sidecar), so the index must agree.
+        let archived = mbox.store(MailboxFolder::Archive, &raw("Arch", "y")).unwrap();
+        assert!(
+            mbox.list(MailboxFolder::Archive).unwrap()[0].unread,
+            "list() surfaces a freshly-stored Archive message as unread"
+        );
+        assert_eq!(
+            index_unread(&archived.0),
+            1,
+            "Archive: index unread must match list() (tuxlink-mzm4)"
+        );
+
+        // Sent: never unread in list() nor the index (control — predicate excludes it).
+        let sent = mbox.store(MailboxFolder::Sent, &raw("Sent", "z")).unwrap();
+        assert!(!mbox.list(MailboxFolder::Sent).unwrap()[0].unread);
+        assert_eq!(index_unread(&sent.0), 0, "Sent: not unread in index");
     }
 
     #[test]
