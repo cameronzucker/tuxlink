@@ -41,6 +41,7 @@ import { ListenArmButton } from '../sections/ListenArmButton';
 import { useListenerState } from '../sections/useListenerState';
 import { FavoritesTabs } from '../../favorites/FavoritesTabs';
 import { useFavorites } from '../../favorites/useFavorites';
+import { listenGatewayPrefill } from '../../favorites/prefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
 import './ArdopRadioPanel.css';
@@ -301,10 +302,15 @@ export function ArdopRadioPanel({ onClose, onFindGateway }: ArdopRadioPanelProps
   // connection record IFF it matches the live peer. Cleared on a manual target
   // edit (a hand-typed target is not the prefilled favorite).
   const pendingDialRef = useRef<FavoriteDial | null>(null);
-  const handlePrefill = (dial: FavoriteDial) => {
+  const handlePrefill = useCallback((dial: FavoriteDial) => {
     setTarget(dial.gateway);
     pendingDialRef.current = dial;
-  };
+  }, []);
+
+  useEffect(
+    () => listenGatewayPrefill('ardop-hf', handlePrefill),
+    [handlePrefill],
+  );
   // Build the dial for a connection record from the LIVE peer. If the prefilled
   // favorite matches the peer callsign, carry its metadata (freq/band/grid/
   // transport) into the record; otherwise record a minimal dial (manual connect).

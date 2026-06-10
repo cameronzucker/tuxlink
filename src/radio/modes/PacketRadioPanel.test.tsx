@@ -1,9 +1,10 @@
 // src/radio/modes/PacketRadioPanel.test.tsx
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
 import type { FavoriteDial } from '../../favorites/types';
+import { emitGatewayPrefill } from '../../favorites/prefillEvent';
 import { PacketRadioPanel } from './PacketRadioPanel';
 
 // The panel now mounts FavoritesTabs/useFavorites (react-query), so every
@@ -476,6 +477,28 @@ describe('<PacketRadioPanel>', () => {
           expect.objectContaining({ call: 'W7RPT-1' }),
         );
       });
+    });
+
+    it('station-picker prefill event fills the packet target without transmitting', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+
+      act(() => {
+        emitGatewayPrefill({
+          mode: 'packet',
+          gateway: 'W6ABC-10',
+          freq: '14.105',
+          grid: 'CN87',
+        });
+      });
+
+      await switchToManualTab();
+      const target = (await screen.findByTestId('packet-target-input')) as HTMLInputElement;
+      expect(target.value).toBe('W6ABC-10');
+      expect(
+        invokeMock.mock.calls.some(([cmd]) => cmd === 'packet_connect'),
+      ).toBe(false);
     });
 
     it('records an offset-bearing ts_local (M4) — not a UTC Z timestamp', async () => {

@@ -24,7 +24,7 @@
 // panel renders with fallback defaults and persistence is a no-op until
 // a config exists.
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { RadioPanel } from '../RadioPanel';
@@ -37,6 +37,7 @@ import { effectiveCall, pathPreview, ssidOptions } from '../../packet/packetConf
 import type { PacketConfigDto } from '../../packet/packetTypes';
 import { FavoritesTabs } from '../../favorites/FavoritesTabs';
 import { useFavorites } from '../../favorites/useFavorites';
+import { listenGatewayPrefill } from '../../favorites/prefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
 import '../sections/ListenSection.css';
@@ -78,10 +79,15 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
   // connection record IFF its gateway matches the connect target. Cleared on a
   // manual target edit (a hand-typed target is not the prefilled favorite).
   const pendingDialRef = useRef<FavoriteDial | null>(null);
-  const handlePrefill = (dial: FavoriteDial) => {
+  const handlePrefill = useCallback((dial: FavoriteDial) => {
     setTarget(dial.gateway);
     pendingDialRef.current = dial;
-  };
+  }, []);
+
+  useEffect(
+    () => listenGatewayPrefill('packet', handlePrefill),
+    [handlePrefill],
+  );
   // Build the dial for a connection record. The gateway is the connect target.
   // If the prefilled favorite matches it (case-insensitive), carry its metadata
   // (band/grid/note) into the record; otherwise record a minimal manual dial.

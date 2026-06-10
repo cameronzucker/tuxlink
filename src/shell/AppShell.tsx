@@ -533,6 +533,12 @@ export function AppShell() {
     activeModem,
     togglePinned: pinRadioPanel,
   });
+  const catalogPrefillMode =
+    radioPanelMode?.kind === 'packet'
+      ? 'packet'
+      : radioPanelMode?.kind === 'ardop-hf'
+      ? 'ardop-hf'
+      : undefined;
 
   // Close the radio panel entirely (drop the connection + unpin). Shared by the
   // per-mode panels' close buttons (DRY) and also collapses the compact drawer
@@ -1274,7 +1280,10 @@ export function AppShell() {
 
       {catalogBuilderOpen && (
         <Suspense fallback={null}>
-          <CatalogBuilderPanel onClose={() => setCatalogBuilderOpen(false)} />
+          <CatalogBuilderPanel
+            activePrefillMode={catalogPrefillMode}
+            onClose={() => setCatalogBuilderOpen(false)}
+          />
         </Suspense>
       )}
 
