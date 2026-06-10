@@ -77,6 +77,9 @@ That makes tuxlink complementary rather than universally superior:
 | **Setup → Connections → Packet Winlink** | Tools → Settings → Packet → KISS host + KISS port + SSID |
 | **Open Session → New Message** | Compose window (Ctrl+N) |
 | **Open Session → Read Selected Message** | Message list → click → reading pane |
+| **Contacts / Address Book** | Address -> Contacts in the sidebar |
+| **Group Addresses** | Address -> Contacts -> Groups |
+| **Import / Export Contacts** | Not yet provided; recreate high-value entries manually for now |
 | **Channel Selection** | Catalog request → RMS_LIST → results show in the radio panel's gateway picker |
 | **Color preferences** | Tools → Settings → Color schemes (6 bundled schemes) |
 
@@ -143,6 +146,18 @@ Express also has the concept of "user folders" but exposes them
 through a separate "folder management" surface. Tuxlink's user folders
 appear inline in the sidebar, right-click to create / rename / delete.
 See [User folders](22-user-folders.md).
+
+### Contacts and group addresses
+
+Express separates Address Book and Group Addresses into their own menu
+items. Tuxlink puts both under **Address -> Contacts** in the sidebar.
+Saved people, suggested correspondents, and groups live in one surface,
+and Compose autocompletes from all of them.
+
+Tuxlink does not yet import an Express address book or export contacts as
+CSV. Recreate the high-value contacts and distribution groups by hand
+while keeping Express available as a reference. See
+[Contacts and groups](34-contacts-and-groups.md).
 
 ### No catalog auto-fetch
 
@@ -246,6 +261,8 @@ Stay with the prior client if:
 - The operator needs PACTOR — tuxlink does not support PACTOR.
 - The operator depends on Pat's web UI / API for integration with other
   systems — tuxlink does not provide either.
+- The operator depends on bulk contact import/export from another client -
+  recreate critical contacts manually until Tuxlink ships migration tooling.
 - The operator's served agency has standardized on Outpost, Paclink, or a
   specific Express workflow for an exercise.
 - The operator's practical station is a phone or tablet — RadioMail or
@@ -265,6 +282,8 @@ be living documentation — it gets updated as parity gaps close and the
 operating practice evolves.
 
 ## Where next
+
+- [Contacts and groups](34-contacts-and-groups.md) - address book, groups, suggestions, and migration limits.
 
 - [What is tuxlink](01-what-is-tuxlink.md) — the framing, including who tuxlink is for.
 - [First-launch wizard](02-first-launch-wizard.md) — the start of the install.

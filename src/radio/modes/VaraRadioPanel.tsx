@@ -16,7 +16,7 @@
 // disabled-with-banner state so the operator understands why the controls
 // are unusable. The Start button is disabled regardless of the form state.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { RadioPanel, type RadioPanelState } from '../RadioPanel';
@@ -28,6 +28,11 @@ import type { RadioPanelMode } from '../types';
 import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
 import { ListenArmButton } from '../sections/ListenArmButton';
 import { useListenerState } from '../sections/useListenerState';
+import { FavoritesTabs } from '../../favorites/FavoritesTabs';
+import { useFavorites } from '../../favorites/useFavorites';
+import { listenGatewayPrefill } from '../../favorites/prefillEvent';
+import { tsLocal } from '../../favorites/ts-local';
+import type { FavoriteDial } from '../../favorites/types';
 import './VaraRadioPanel.css';
 import '../sections/ListenSection.css';
 
@@ -93,6 +98,28 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   const [hostInput, setHostInput] = useState<string>('');
   const [cmdPortInput, setCmdPortInput] = useState<string>('');
   const [dataPortInput, setDataPortInput] = useState<string>('');
+
+  // Dial surface (tuxlink-xglf) — mirrors ARDOP/Packet. `target` is the RMS
+  // gateway callsign; `exchanging` drives the Send/Receive in-flight label and
+  // re-entrancy guard. VARA's b2f is a SINGLE blocking connect→B2F→disconnect
+  // (modem_vara_b2f_exchange) requiring a prior open session, so `reached` is
+  // recorded on the call's resolve and `failed` in its catch (Packet semantics).
+  const [target, setTarget] = useState<string>('');
+  const [exchanging, setExchanging] = useState(false);
+  // recordAttempt logs the HONEST on-air outcome. mode.kind is literally
+  // 'vara-hf' / 'vara-fm' — the same strings as the favorites RadioMode union.
+  const { recordAttempt } = useFavorites(mode.kind);
+  // The favorite whose Connect was last clicked. Carries its metadata into the
+  // connection record IFF its gateway matches the dial target. Cleared on a
+  // manual target edit (a hand-typed target is not the prefilled favorite).
+  const pendingDialRef = useRef<FavoriteDial | null>(null);
+  // RADIO-1: a favorite's Connect is PRE-FILL ONLY — it sets `target` and NEVER
+  // invokes the exchange. The operator's later Send/Receive click is the Part 97
+  // consent gate.
+  const handlePrefill = useCallback((dial: FavoriteDial) => {
+    setTarget(dial.gateway);
+    pendingDialRef.current = dial;
+  }, []);
 
   const { entries: logEntries, clear: clearLog } = useSessionLog();
 
@@ -264,6 +291,76 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     }
   };
 
+  // Station-picker / favorite prefill → fills the target only (RADIO-1). Never
+  // transmits. The subscription filters on mode.kind so a vara-fm prefill does
+  // not land in a vara-hf pane and vice-versa.
+  useEffect(
+    () => listenGatewayPrefill(mode.kind, handlePrefill),
+    [mode.kind, handlePrefill],
+  );
+
+  // Build the dial for a connection record. The gateway is the dial target. If
+  // the prefilled favorite matches it (case-insensitive), carry its metadata
+  // (band/grid/note) into the record; otherwise record a minimal manual dial.
+  const buildRecordDial = (call: string): FavoriteDial => {
+    const gw = call.trim();
+    const pend = pendingDialRef.current;
+    if (pend && pend.gateway.trim().toUpperCase() === gw.toUpperCase()) {
+      return { ...pend, mode: mode.kind, gateway: gw };
+    }
+    return { mode: mode.kind, gateway: gw };
+  };
+
+  // Send/Receive — the on-air dial. modem_vara_b2f_exchange is a SINGLE blocking
+  // connect→B2F→disconnect that REQUIRES an open session (vara_open_session
+  // installed the transport). The pre-air guard returns BEFORE any record path,
+  // so an empty-target / not-open / re-entrant click logs nothing. `reached` is
+  // recorded on resolve, `failed` in the catch (NEVER the finally) so a pre-air
+  // bail never logs a spurious gateway failure. Bounded airtime + working abort
+  // live in the backend; the operator aborts an in-flight dial via Stop
+  // (vara_close_session → abort_in_flight, bounded ~2s ABORT).
+  const onSendReceive = async () => {
+    const call = target.trim();
+    if (!call || exchanging || status.state !== 'open') return;
+    const dial = buildRecordDial(call);
+    setExchanging(true);
+    setActionError(null);
+    try {
+      // intent 'cms' transitionally (Phase 5's RadioSessionPanel derives it from
+      // the mode props); transportKind is the panel's mode.kind so the backend
+      // records the operator-meaningful HF/FM discriminator on session state.
+      await invoke('modem_vara_b2f_exchange', {
+        target: call,
+        intent: 'cms',
+        transportKind: mode.kind,
+      });
+      void recordAttempt(dial, 'reached', tsLocal());
+    } catch (e) {
+      const msg = String(e);
+      setActionError(`Send/Receive failed: ${msg}`);
+      // Codex 2026-06-10 P2 #2: a pre-air ownership failure (the transport was
+      // never available — the backend's take_transport returned None, e.g. the
+      // listener consumer holds it, or a stale-status race) NEVER transmitted,
+      // so it is not an on-air outcome. Recording `failed` for it would pollute
+      // the favorite's reach/fail history with a non-dial. Only a failure AFTER
+      // the exchange went on-air is an honest `failed`. The backend signals the
+      // pre-air bail with the "session not open" message.
+      if (!/session not open/i.test(msg)) {
+        void recordAttempt(dial, 'failed', tsLocal());
+      }
+    } finally {
+      setExchanging(false);
+      // The exchange returns the session to Open (within-session dial); re-read
+      // status so any backend-side state change surfaces in the UI.
+      try {
+        const s = await invoke<VaraStatusDto>('vara_status');
+        setStatus(s);
+      } catch {
+        /* keep prior status */
+      }
+    }
+  };
+
   const headerSub = status.boundHost
     ? `${status.boundHost}:${status.boundCmdPort ?? '?'}`
     : `${hostInput || config.host}:${cmdPortInput || config.cmd_port}`;
@@ -377,6 +474,70 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             {status.lastError}
           </p>
         )}
+      </section>
+
+      {/* Connect (tuxlink-xglf) — Favorites / Recent / Manual surface + the
+          on-air Send/Receive. M7's VARA Manual-only exclusion was retired here:
+          VARA HF dials RMS gateways like ARDOP, so favorites are meaningful. A
+          favorite's Connect PRE-FILLS the target via handlePrefill and never
+          transmits (RADIO-1); Send/Receive stays OUTSIDE the tabs so it is
+          visible on every tab. Send/Receive requires an open session — it is
+          disabled until Start (above) reports the transport Open. */}
+      <section className="radio-panel-sec" data-testid="vara-connect-section">
+        <h5>Connect</h5>
+        <FavoritesTabs
+          mode={mode.kind}
+          onPrefill={handlePrefill}
+          manualContent={
+            <label className="radio-panel-input-row">
+              <span>To</span>
+              <input
+                type="text"
+                className="radio-panel-input"
+                data-testid="vara-target-input"
+                placeholder="RMS gateway call sign"
+                value={target}
+                spellCheck={false}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                onChange={(e) => {
+                  setTarget(e.target.value);
+                  // A hand-typed target is not the prefilled favorite — drop the
+                  // association so the record doesn't carry stale metadata.
+                  pendingDialRef.current = null;
+                }}
+              />
+            </label>
+          }
+        />
+        <button
+          type="button"
+          className="radio-panel-btn radio-panel-btn-primary"
+          data-testid="vara-send-receive-btn"
+          disabled={
+            busy ||
+            exchanging ||
+            status.state !== 'open' ||
+            target.trim() === '' ||
+            varaListener.armed
+          }
+          onClick={onSendReceive}
+          title={
+            status.state !== 'open'
+              ? 'Open Session first — Send/Receive needs an open VARA transport (press Start)'
+              : varaListener.armed
+                ? 'Disarm the listener first — it owns the VARA transport while armed'
+                : target.trim() === ''
+                  ? 'Enter a target RMS gateway call sign'
+                  : 'Connect to the target and exchange Winlink mail (transmits)'
+          }
+        >
+          {exchanging
+            ? 'Exchanging…'
+            : target.trim()
+              ? `Send / Receive (${target.trim()})`
+              : 'Send / Receive'}
+        </button>
       </section>
 
       {/* Listen (Accept Inbound) — VARA P2P listener arms + allowlist.

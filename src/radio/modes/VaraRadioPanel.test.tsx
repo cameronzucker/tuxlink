@@ -7,8 +7,11 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { VaraRadioPanel } from './VaraRadioPanel';
 import type { RadioPanelMode } from '../types';
+import { emitGatewayPrefill } from '../../favorites/prefillEvent';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -17,6 +20,21 @@ vi.mock('@tauri-apps/api/core', () => ({
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(async () => () => {}),
 }));
+
+// The VARA pane now mounts FavoritesTabs/useFavorites (react-query, B6 mirror
+// of ARDOP/Packet), so every render must be wrapped in a QueryClientProvider or
+// the queries throw "No QueryClient set". retry:false keeps a rejected favorites
+// read from retry-looping in jsdom.
+const renderPanel = (ui: ReactElement) => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+};
+
+// Mirror of ARDOP's test helper — clicks the Manual tab trigger by role.
+const switchToManualTab = async () => {
+  const manual = await screen.findByRole('tab', { name: 'Manual' });
+  fireEvent.mouseDown(manual, { button: 0 });
+};
 
 const HF_MODE: RadioPanelMode = { kind: 'vara-hf', intent: 'cms' };
 const FM_MODE: RadioPanelMode = { kind: 'vara-fm', intent: 'cms' };
@@ -56,6 +74,14 @@ function makeInvoke(overrides: Record<string, unknown> = {}) {
     if (cmd === 'vara_status') return closedStatus;
     if (cmd === 'platform_info') return x86Platform;
     if (cmd === 'session_log_snapshot') return [];
+    // Favorites surface (B6 VARA mirror). The mounted FavoritesTabs/useFavorites
+    // issue these reads; return empty/benign shapes so the queries RESOLVE
+    // (rejecting noisily fails in jsdom). Tests needing a clickable favorite
+    // override favorites_read / favorites_recents per-test.
+    if (cmd === 'favorites_read') return { schema_version: 1, favorites: [], log: [] };
+    if (cmd === 'favorites_recents') return [];
+    if (cmd === 'position_current_fix') return { grid: null };
+    if (cmd === 'favorite_tod_hint') return null;
     return undefined;
   };
 }
@@ -68,12 +94,12 @@ describe('<VaraRadioPanel>', () => {
   });
 
   it('renders the VARA HF panel title for vara-hf mode', async () => {
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara HF');
   });
 
   it('renders the VARA FM panel title for vara-fm mode', async () => {
-    render(<VaraRadioPanel mode={FM_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={FM_MODE} onClose={() => {}} />);
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM');
   });
 
@@ -84,7 +110,7 @@ describe('<VaraRadioPanel>', () => {
         config_get_vara: { host: '10.0.0.5', cmd_port: 8400, data_port: 8401, bandwidth_hz: 2300 },
       }),
     );
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
       expect((screen.getByTestId('vara-host-input') as HTMLInputElement).value).toBe('10.0.0.5');
     });
@@ -97,7 +123,7 @@ describe('<VaraRadioPanel>', () => {
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
       makeInvoke({ config_get_vara: new Error('NotConfigured') }),
     );
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
       expect((screen.getByTestId('vara-host-input') as HTMLInputElement).value).toBe('127.0.0.1');
     });
@@ -109,7 +135,7 @@ describe('<VaraRadioPanel>', () => {
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
       makeInvoke({ vara_status: openStatus }),
     );
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByTestId('vara-state-display')).toHaveTextContent('State: open');
     });
@@ -120,14 +146,14 @@ describe('<VaraRadioPanel>', () => {
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
       makeInvoke({ vara_status: openStatus }),
     );
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByTestId('vara-start-btn')).toBeDisabled();
     });
   });
 
   it('disables Stop when transport is closed', async () => {
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByTestId('vara-stop-btn')).toBeDisabled();
     });
@@ -139,7 +165,7 @@ describe('<VaraRadioPanel>', () => {
     invokeSpy.mockImplementation(
       makeInvoke({ vara_open_session: openStatus }),
     );
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByTestId('vara-start-btn')).not.toBeDisabled();
     });
@@ -167,7 +193,7 @@ describe('<VaraRadioPanel>', () => {
     invokeSpy.mockImplementation(
       makeInvoke({ vara_open_session: openStatus }),
     );
-    render(<VaraRadioPanel mode={FM_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={FM_MODE} onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByTestId('vara-start-btn')).not.toBeDisabled();
     });
@@ -189,7 +215,7 @@ describe('<VaraRadioPanel>', () => {
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
       makeInvoke({ vara_open_session: new Error('TCP connect failed: Connection refused (os error 111)') }),
     );
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByTestId('vara-start-btn')).not.toBeDisabled();
     });
@@ -212,7 +238,7 @@ describe('<VaraRadioPanel>', () => {
         vara_close_session: closedStatus,
       }),
     );
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByTestId('vara-stop-btn')).not.toBeDisabled();
     });
@@ -241,7 +267,7 @@ describe('<VaraRadioPanel>', () => {
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
       makeInvoke({ platform_info: armPlatform }),
     );
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByTestId('vara-platform-banner')).toBeInTheDocument();
     });
@@ -270,7 +296,7 @@ describe('<VaraRadioPanel>', () => {
         vara_open_session: openStatus,
       }),
     );
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByTestId('vara-start-btn')).not.toBeDisabled();
     });
@@ -289,7 +315,7 @@ describe('<VaraRadioPanel>', () => {
   });
 
   it('does not render the banner on x86_64', async () => {
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
       // Wait for at least one hydration so platform_info has been awaited.
       expect((screen.getByTestId('vara-host-input') as HTMLInputElement).value).toBe('127.0.0.1');
@@ -298,7 +324,7 @@ describe('<VaraRadioPanel>', () => {
   });
 
   it('rejects an out-of-range cmd_port and reverts the input', async () => {
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     const input = screen.getByTestId('vara-cmd-port-input') as HTMLInputElement;
     await waitFor(() => expect(input.value).toBe('8300'));
 
@@ -314,7 +340,7 @@ describe('<VaraRadioPanel>', () => {
   });
 
   it('renders the bandwidth options and reflects null as Auto', async () => {
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     const select = await waitFor(() => screen.getByTestId('vara-bandwidth-select') as HTMLSelectElement);
     expect(select.value).toBe(''); // null bandwidth = "" (Auto)
     expect(screen.getByText(/2300 Hz \(HF Standard\)/)).toBeInTheDocument();
@@ -324,7 +350,7 @@ describe('<VaraRadioPanel>', () => {
   it('persists bandwidth change via setConfig → config_set_vara', async () => {
     const core = await import('@tauri-apps/api/core');
     const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     const select = await waitFor(() => screen.getByTestId('vara-bandwidth-select') as HTMLSelectElement);
 
     await act(async () => {
@@ -350,7 +376,7 @@ describe('<VaraRadioPanel>', () => {
     // Default mock: vara_status returns closedStatus → status.state === "closed"
     // → isOpen === false. Pre-fix: button label was "Arming…". Post-fix: the
     // precondition gates `disabled`, not `busy`, so the label stays steady.
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     const armBtn = await waitFor(
       () => screen.getByTestId('vara-listen-arm-btn') as HTMLButtonElement,
     );
@@ -363,12 +389,263 @@ describe('<VaraRadioPanel>', () => {
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
       makeInvoke({ vara_status: openStatus }),
     );
-    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     const armBtn = await waitFor(() => {
       const b = screen.getByTestId('vara-listen-arm-btn') as HTMLButtonElement;
       expect(b.disabled).toBe(false);
       return b;
     });
     expect(armBtn.textContent).toBe('Arm listener');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// VARA HF/FM dial (Connect section) — tuxlink-xglf. Mirrors the ARDOP/Packet
+// FavoritesTabs + target + Send/Receive flow. VARA's b2f is a SINGLE blocking
+// modem_vara_b2f_exchange (connect→B2F→disconnect, like Packet's packet_connect)
+// requiring a prior open session — so `reached` is recorded on the call's
+// resolve and `failed` in its catch. A favorite Connect is PREFILL-ONLY
+// (RADIO-1); the operator's Send/Receive click is the Part 97 consent gate.
+// ─────────────────────────────────────────────────────────────────────────
+describe('<VaraRadioPanel> dial (Connect)', () => {
+  const findRecordCalls = (invokeMock: ReturnType<typeof vi.fn>) =>
+    invokeMock.mock.calls.filter(([cmd]) => cmd === 'favorite_record_attempt');
+
+  beforeEach(async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockReset();
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      makeInvoke({ vara_status: openStatus }),
+    );
+  });
+
+  it('renders Favorites/Recent/Manual tabs for VARA (M7 retired)', async () => {
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    expect(await screen.findByRole('tab', { name: 'Favorites' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Recent' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Manual' })).toBeInTheDocument();
+  });
+
+  it('Send/Receive invokes modem_vara_b2f_exchange with the typed target + transportKind vara-hf', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+
+    await switchToManualTab();
+    const target = (await screen.findByTestId('vara-target-input')) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(target, { target: { value: 'W7RPT-10' } });
+    });
+    fireEvent.click(screen.getByTestId('vara-send-receive-btn'));
+
+    await waitFor(() => {
+      expect(invokeSpy).toHaveBeenCalledWith('modem_vara_b2f_exchange', {
+        target: 'W7RPT-10',
+        intent: 'cms',
+        transportKind: 'vara-hf',
+      });
+    });
+  });
+
+  it('passes transportKind vara-fm when mounted in vara-fm mode', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    renderPanel(<VaraRadioPanel mode={FM_MODE} onClose={() => {}} />);
+
+    await switchToManualTab();
+    const target = (await screen.findByTestId('vara-target-input')) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(target, { target: { value: 'W7RPT-10' } });
+    });
+    fireEvent.click(screen.getByTestId('vara-send-receive-btn'));
+
+    await waitFor(() => {
+      expect(invokeSpy).toHaveBeenCalledWith(
+        'modem_vara_b2f_exchange',
+        expect.objectContaining({ transportKind: 'vara-fm' }),
+      );
+    });
+  });
+
+  it('disables Send/Receive until the session is Open AND a target is present', async () => {
+    const core = await import('@tauri-apps/api/core');
+
+    // Session CLOSED: even WITH a target typed, Send/Receive stays disabled —
+    // the exchange needs an open transport.
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      makeInvoke({ vara_status: closedStatus }),
+    );
+    const { unmount } = renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await switchToManualTab();
+    const closedTarget = (await screen.findByTestId('vara-target-input')) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(closedTarget, { target: { value: 'W7RPT-10' } });
+    });
+    // Stays disabled despite a non-empty target (session is closed).
+    await waitFor(() =>
+      expect((screen.getByTestId('vara-send-receive-btn') as HTMLButtonElement).disabled).toBe(true),
+    );
+    unmount();
+
+    // Fresh mount, session OPEN but target empty → still disabled. (VARA loads
+    // status via a one-time mount effect, so a fresh mount — not a rerender — is
+    // what re-reads the new status mock.)
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      makeInvoke({ vara_status: openStatus }),
+    );
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    const btn = (await screen.findByTestId('vara-send-receive-btn')) as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(true));
+
+    // Type a target → now Open + target present → enabled.
+    await switchToManualTab();
+    const target = (await screen.findByTestId('vara-target-input')) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(target, { target: { value: 'W7RPT-10' } });
+    });
+    await waitFor(() =>
+      expect((screen.getByTestId('vara-send-receive-btn') as HTMLButtonElement).disabled).toBe(false),
+    );
+  });
+
+  it('records reached on a resolved exchange and failed on a rejected one', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+
+    // First: resolving exchange → reached.
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await switchToManualTab();
+    const target = (await screen.findByTestId('vara-target-input')) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(target, { target: { value: 'W7RPT-10' } });
+    });
+    fireEvent.click(screen.getByTestId('vara-send-receive-btn'));
+    await waitFor(() => {
+      const reached = findRecordCalls(invokeSpy).filter(
+        ([, a]) => (a as { outcome: string }).outcome === 'reached',
+      );
+      expect(reached).toHaveLength(1);
+      expect((reached[0][1] as { dial: { gateway: string } }).dial.gateway).toBe('W7RPT-10');
+    });
+
+    // Second: rejecting exchange → failed (recorded in the catch).
+    invokeSpy.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'modem_vara_b2f_exchange') throw new Error('CMS rejected');
+      return makeInvoke({ vara_status: openStatus })(cmd, args);
+    });
+    fireEvent.click(screen.getByTestId('vara-send-receive-btn'));
+    await waitFor(() => {
+      const failed = findRecordCalls(invokeSpy).filter(
+        ([, a]) => (a as { outcome: string }).outcome === 'failed',
+      );
+      expect(failed).toHaveLength(1);
+      expect((failed[0][1] as { dial: { gateway: string } }).dial.gateway).toBe('W7RPT-10');
+    });
+  });
+
+  it('CONSENT NON-BYPASS: a favorite Connect pre-fills the target only, never transmits', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    const fav = {
+      id: 'fav-1',
+      mode: 'vara-hf' as const,
+      gateway: 'W7RPT-10',
+      band: '40m',
+      starred: true,
+      created_at: '2026-06-08T00:00:00-07:00',
+      updated_at: '2026-06-08T00:00:00-07:00',
+    };
+    invokeSpy.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'favorites_read') return { schema_version: 1, favorites: [fav], log: [] };
+      if (cmd === 'favorites_recents') return [];
+      return makeInvoke({ vara_status: openStatus })(cmd, args);
+    });
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+
+    // Default tab is Favorites; the favorite's Connect appears there.
+    const connectBtn = await screen.findByTestId('favorite-connect-fav-1');
+    fireEvent.click(connectBtn);
+    await new Promise((r) => setTimeout(r, 20));
+
+    // RADIO-1: the prefill must NOT have transmitted.
+    expect(
+      invokeSpy.mock.calls.some(([cmd]) => cmd === 'modem_vara_b2f_exchange'),
+    ).toBe(false);
+
+    // Prefill worked: the Manual tab target now holds the gateway.
+    await switchToManualTab();
+    const target = (await screen.findByTestId('vara-target-input')) as HTMLInputElement;
+    expect(target.value).toBe('W7RPT-10');
+  });
+
+  it('station-picker prefill event fills the VARA target without transmitting', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+
+    act(() => {
+      emitGatewayPrefill({ mode: 'vara-hf', gateway: 'KQ4XYZ-10' });
+    });
+
+    await switchToManualTab();
+    const target = (await screen.findByTestId('vara-target-input')) as HTMLInputElement;
+    await waitFor(() => expect(target.value).toBe('KQ4XYZ-10'));
+    expect(
+      invokeSpy.mock.calls.some(([cmd]) => cmd === 'modem_vara_b2f_exchange'),
+    ).toBe(false);
+  });
+
+  // Codex 2026-06-10 P2 #2: a pre-air ownership failure (the transport was never
+  // available — e.g. the listener consumer holds it) never transmitted, so it is
+  // NOT an on-air outcome and must not pollute the favorite's reach/fail history.
+  it('does NOT record a failed attempt when the exchange fails pre-air (session not open)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    invokeSpy.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'modem_vara_b2f_exchange') {
+        throw new Error('VARA session not open — press Open Session (VARA HF/FM) before Send/Receive');
+      }
+      return makeInvoke({ vara_status: openStatus })(cmd, args);
+    });
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await switchToManualTab();
+    const target = (await screen.findByTestId('vara-target-input')) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(target, { target: { value: 'W7RPT-10' } });
+    });
+    fireEvent.click(screen.getByTestId('vara-send-receive-btn'));
+    // The error surfaces, but NO `failed` attempt is recorded (it never went on-air).
+    await waitFor(() =>
+      expect(screen.getByTestId('vara-action-error')).toHaveTextContent('session not open'),
+    );
+    expect(
+      findRecordCalls(invokeSpy).filter(([, a]) => (a as { outcome: string }).outcome === 'failed'),
+    ).toHaveLength(0);
+  });
+
+  // Codex 2026-06-10 P2 #2: while the listener is armed it owns the single VARA
+  // transport, so an outbound dial would fail pre-air. Disable Send/Receive so
+  // the operator disarms first rather than clicking into a guaranteed pre-air bail.
+  it('disables Send/Receive while the VARA listener is armed', async () => {
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await switchToManualTab();
+    const target = (await screen.findByTestId('vara-target-input')) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(target, { target: { value: 'W7RPT-10' } });
+    });
+    // Open session + target present + listener disarmed → enabled.
+    await waitFor(() =>
+      expect((screen.getByTestId('vara-send-receive-btn') as HTMLButtonElement).disabled).toBe(false),
+    );
+    // Arm the listener (enabled because the transport is Open).
+    const armBtn = screen.getByTestId('vara-listen-arm-btn') as HTMLButtonElement;
+    await waitFor(() => expect(armBtn.disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(armBtn);
+    });
+    // Armed → Send/Receive disabled (listener owns the transport).
+    await waitFor(() =>
+      expect((screen.getByTestId('vara-send-receive-btn') as HTMLButtonElement).disabled).toBe(true),
+    );
   });
 });

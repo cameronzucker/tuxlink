@@ -37,6 +37,11 @@ Three paths:
 
 ## Addressing practice
 
+The **To** and **Cc** fields autocomplete from saved contacts and groups.
+Pick a suggested callsign, email, tactical address, or group, or press Enter
+with no suggestion selected to keep the typed recipient as a raw entry. See
+[Contacts and groups](34-contacts-and-groups.md).
+
 The message recipient and the connection target are different things. For a
 normal CMS/RMS session, address the message to the person or service that
 should receive it; the selected gateway only carries the traffic. Do not put a
@@ -103,5 +108,6 @@ the form. See [HTML forms](20-html-forms.md) for details.
 ## Where next
 
 - [HTML forms](20-html-forms.md) — the form-based composition path.
+- [Contacts and groups](34-contacts-and-groups.md) - saved recipients, autocomplete, and groups.
 - [Picking a transport](08-picking-a-transport.md) — when to pick which transport.
 - [Keyboard](28-keyboard.md) — compose-window accelerators.

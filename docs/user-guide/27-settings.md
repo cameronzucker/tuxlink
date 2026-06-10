@@ -177,6 +177,12 @@ The keyring-backed approach makes that failure mode go away — the
 password lives outside any tuxlink-owned file, in a system service
 that survives across tuxlink installs.
 
+Contacts, groups, messages, drafts, stations, logs, cache, and visible
+settings remain app-local data. A normal package removal keeps that data;
+a full data-removal uninstall deletes it. See
+[Contacts and groups](34-contacts-and-groups.md) for the address-book
+file behavior.
+
 ### Moving to a new machine
 
 The keyring is per-Linux-user-account. Moving to a new machine (or a
@@ -211,4 +217,5 @@ wizard and tuxlink's keyring is now in sync with Winlink's.
 ## Where next
 
 - [Picking a transport](08-picking-a-transport.md) — what each transport needs, including how Abort behaves and what an emergency RF stop actually looks like.
+- [Contacts and groups](34-contacts-and-groups.md) - local address-book state.
 - [Troubleshooting](29-troubleshooting.md) — when a setting does not take effect.

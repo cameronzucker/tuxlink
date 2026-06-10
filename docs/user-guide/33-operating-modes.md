@@ -214,6 +214,38 @@ select-none. You choose what to send. Connecting with nothing selected is
 valid and supported — receive-only is a primary use, pulling waiting local
 mail without sending anything.
 
+## Winlink Express session names in Tuxlink
+
+Winlink Express names many session windows directly after the transport. Tuxlink
+separates the routing decision from the transport, so the same capability often
+appears as an operating mode plus a protocol row in the Connections sidebar.
+
+| Winlink Express term | Tuxlink equivalent or status |
+|---|---|
+| Telnet Winlink / Telnet CMS | **Winlink (CMS) -> Telnet**. Direct TCP session to CMS. |
+| Packet Winlink / Packet RMS | **Winlink (CMS) -> Packet (AX.25)**. KISS/Dire Wolf path to a Packet RMS. |
+| ARDOP Winlink | **Winlink (CMS) -> ARDOP HF**. `ardopcf` modem path to an HF RMS. |
+| VARA HF Winlink / VARA FM Winlink | **Winlink (CMS) -> VARA HF** or **VARA FM**. External VARA modem path to an RMS. |
+| Telnet P2P | **Peer-to-peer -> Telnet**. One station listens on TCP, one station connects. |
+| Packet P2P | **Peer-to-peer -> Packet (AX.25)**. Direct AX.25 station-to-station B2F. |
+| VARA P2P | **Peer-to-peer -> VARA HF** or **VARA FM**. Direct VARA station-to-station B2F. |
+| Radio-only / Hybrid client sessions | **Radio-only -> ARDOP HF / VARA HF / VARA FM**. Telnet and Packet are disabled for this operating mode in Tuxlink. |
+| Telnet Radio-only / Use RMS Relay | Split in Tuxlink between **Radio-only** for Hybrid/RF-only routing and the Post Office modes below. Use the mode named by the event plan. |
+| Telnet RMS Post Office | **Post Office -> Telnet**. Client-to-relay local-pool mail using `CALL-L` login; this is not "be the hub." |
+| AREDN Mesh / Network Post Office | **Network Post Office -> Telnet**. Client-to-relay onward routing using full-callsign login. Tuxlink uses manual/saved `host:port`, not OLSR mesh auto-discovery. |
+| Pending incoming / Review Pending Messages | Tuxlink shows an inline **Review Pending Messages** prompt when the remote side offers proposals before download. |
+| Channel Selection / update channel data | Use the gateway finder, saved favorites, and [Catalog requests](23-catalog-requests.md) to refresh RMS data. |
+| HF Auto Connect / scheduled polling | Not shipped. Tuxlink is attended-operation-first; each session starts from an operator action. |
+| PACTOR | Not supported. Keep Winlink Express for SCS PACTOR hardware sessions. |
+| Robust Packet / RPR | Not supported. Use Packet, ARDOP, or VARA instead. |
+| Iridium GO | Not supported as a dedicated session type. If the satellite link presents ordinary internet to Linux, Tuxlink can still use normal Telnet CMS over that IP connection, but it has no Iridium-specific setup surface. |
+
+Project-facing parity rationale lives in
+`docs/design/2026-06-02-wle-client-parity-closure-plan.md` and
+`docs/design/2026-06-08-telnet-post-office-design.md`; they are referenced
+here as maintainer breadcrumbs rather than help-window links because the
+in-app guide only links within the user-guide bundle.
+
 ## What Tuxlink exposes
 
 The Connections sidebar is organized by operating mode first, then
