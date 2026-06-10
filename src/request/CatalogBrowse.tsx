@@ -15,6 +15,7 @@
 
 import { useMemo, useState } from 'react';
 import { groupByCategory, type CatalogEntry } from '../catalog/types';
+import { Icon } from './icons';
 import './CatalogBrowse.css';
 
 export interface CatalogBrowseProps {
@@ -89,7 +90,8 @@ export function CatalogBrowse({
             className="catalog-browse__added"
             aria-label={`${entry.filename} already in request`}
           >
-            ✓ Added
+            <Icon name="check" size={14} />
+            Added
           </span>
         ) : (
           <button
@@ -98,7 +100,7 @@ export function CatalogBrowse({
             onClick={() => onAddCms(entry)}
             aria-label={`Add ${entry.filename} to request`}
           >
-            Add
+            <Icon name="plus" size={14} />
           </button>
         )}
       </li>
@@ -152,7 +154,8 @@ export function CatalogBrowse({
             data-testid="catalog-browse-back"
             onClick={onBack}
           >
-            ← Clear search
+            <Icon name="arrow" size={14} className="catalog-browse__back-icon catalog-browse__back-icon--flip" />
+            Clear search
           </button>
           <span className="catalog-browse__search-count" data-testid="catalog-search-count">
             {searchResults.length === 1
@@ -164,7 +167,7 @@ export function CatalogBrowse({
         <div className="catalog-browse__items" data-testid="catalog-search-results">
           {searchResults.length === 0 ? (
             <div className="catalog-browse__noitems">
-              No items match “{searchQuery?.trim()}”.
+              No items match "{searchQuery?.trim()}".
             </div>
           ) : (
             <ul className="catalog-browse__list">{searchResults.map(renderItemRow)}</ul>
@@ -187,8 +190,10 @@ export function CatalogBrowse({
           data-testid="catalog-browse-back"
           onClick={onBack}
         >
-          ← Back
+          <Icon name="arrow" size={14} className="catalog-browse__back-icon catalog-browse__back-icon--flip" />
+          Back
         </button>
+        <span className="catalog-browse__crumb-here">Browse catalog</span>
         <input
           type="search"
           className="catalog-browse__filter"
