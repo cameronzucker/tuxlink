@@ -212,7 +212,7 @@ describe('Mode 2: client_rejected', () => {
     fireEvent.click(screen.getByTestId('diag-issue-tracker-btn'));
     await waitFor(() => {
       expect(mockShellOpen).toHaveBeenCalledWith(
-        'https://github.com/cameronzucker/tuxlink/issues/new',
+        'https://github.com/cameronzucker/tuxlink/issues/new/choose',
       );
     });
   });

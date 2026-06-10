@@ -12,8 +12,8 @@ describe('winlinkOrgUrls', () => {
   it('WINLINK_ORG_ACCOUNT_URL targets winlink.org over https', () => {
     expect(WINLINK_ORG_ACCOUNT_URL.startsWith('https://winlink.org/')).toBe(true);
   });
-  it('TUXLINK_GITHUB_ISSUE_NEW_URL targets the tuxlink repo issues new endpoint', () => {
+  it('TUXLINK_GITHUB_ISSUE_NEW_URL targets the issue-template chooser (uhpn — not the blank /issues/new)', () => {
     expect(TUXLINK_GITHUB_ISSUE_NEW_URL.startsWith('https://github.com/cameronzucker/tuxlink/')).toBe(true);
-    expect(TUXLINK_GITHUB_ISSUE_NEW_URL.includes('/issues/new')).toBe(true);
+    expect(TUXLINK_GITHUB_ISSUE_NEW_URL.endsWith('/issues/new/choose')).toBe(true);
   });
 });

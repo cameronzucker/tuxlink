@@ -109,8 +109,9 @@ describe('ReportIssueModal — success (browser opened)', () => {
     kind: 'success',
     archivePath: '/home/user/tuxlink-logs.tar.zst',
     archiveSizeBytes: 2048,
-    githubUrl: 'https://github.com/cameronzucker/tuxlink/issues/new?labels=alpha-report&body=test',
+    githubUrl: 'https://github.com/cameronzucker/tuxlink/issues/new/choose',
     browserOpened: true,
+    diagnostics: 'Build: tuxlink v0.41.1 (git abc1234, release)\nPlatform: Ubuntu 24.04 · 6.8.0',
   };
 
   it('renders archive path', () => {
@@ -118,9 +119,18 @@ describe('ReportIssueModal — success (browser opened)', () => {
     expect(screen.getByTestId('report-issue-archive-path')).toHaveTextContent('/home/user/tuxlink-logs.tar.zst');
   });
 
-  it('shows "Opened GitHub Issues in your browser" message', () => {
+  it('guides the operator to the Bug report template + Logs field (uhpn)', () => {
     renderModal(successState);
-    expect(screen.getByText(/GitHub Issues opened in your browser/i)).toBeInTheDocument();
+    expect(screen.getByText(/GitHub opened in your browser/i)).toBeInTheDocument();
+    expect(screen.getByText(/Bug report/i)).toBeInTheDocument();
+  });
+
+  it('Copy diagnostics copies the build/env summary (uhpn)', async () => {
+    renderModal(successState);
+    fireEvent.click(screen.getByTestId('report-issue-copy-diagnostics-btn'));
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(successState.diagnostics);
+    });
   });
 
   it('does NOT show URL textarea when browser opened', () => {
@@ -149,8 +159,9 @@ describe('ReportIssueModal — success (no browser)', () => {
     kind: 'success',
     archivePath: '/home/user/tuxlink-logs.tar.zst',
     archiveSizeBytes: 4096,
-    githubUrl: 'https://github.com/cameronzucker/tuxlink/issues/new?labels=alpha-report&body=test',
+    githubUrl: 'https://github.com/cameronzucker/tuxlink/issues/new/choose',
     browserOpened: false,
+    diagnostics: 'Build: tuxlink v0.41.1 (git abc1234, release)\nPlatform: Ubuntu 24.04 · 6.8.0',
   };
 
   it('renders URL textarea', () => {
@@ -191,7 +202,7 @@ describe('ReportIssueModal — error', () => {
     kind: 'error',
     message: 'Report Issue failed: disk full',
     archivePath: '/home/user/partial.tar.zst',
-    githubUrl: 'https://github.com/cameronzucker/tuxlink/issues/new?labels=alpha-report&body=test',
+    githubUrl: 'https://github.com/cameronzucker/tuxlink/issues/new/choose',
   };
 
   it('renders error message', () => {
@@ -281,9 +292,10 @@ describe('useReportIssueController — full flow', () => {
     mockInvoke.mockResolvedValue({
       archive_path: '/tmp/tuxlink-issue.tar.zst',
       archive_size_bytes: 8192,
-      github_url: 'https://github.com/cameronzucker/tuxlink/issues/new?labels=alpha-report&body=x',
+      github_url: 'https://github.com/cameronzucker/tuxlink/issues/new/choose',
       browser_opened: true,
       correlation_id: 'abc123',
+      diagnostics: 'Build: tuxlink v0.41.1 (git abc1234, release)',
     });
 
     render(<Harness />);
