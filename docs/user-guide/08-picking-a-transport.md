@@ -186,10 +186,7 @@ and Packet rows are disabled for this operating mode.
 1. Select **Connections -> Radio-only -> ARDOP HF**, **VARA HF**, or
    **VARA FM**.
 2. Choose the Hybrid/Radio-only station named by the net plan or gateway data.
-3. Confirm the routing intent before transmitting. In the current alpha, VARA
-   carries the selected intent through its panel. ARDOP's Radio-only row is
-   visible, but the ARDOP panel still needs intent-aware validation; prefer
-   VARA for Radio-only operations until that path is explicitly exercised.
+3. Confirm the routing intent in the panel title before transmitting.
 4. Run the RF pre-flight.
 5. Click **Connect**.
 

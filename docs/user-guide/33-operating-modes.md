@@ -229,7 +229,7 @@ appears as an operating mode plus a protocol row in the Connections sidebar.
 | Telnet P2P | **Peer-to-peer -> Telnet**. One station listens on TCP, one station connects. |
 | Packet P2P | **Peer-to-peer -> Packet (AX.25)**. Direct AX.25 station-to-station B2F. |
 | VARA P2P | **Peer-to-peer -> VARA HF** or **VARA FM**. Direct VARA station-to-station B2F. |
-| Radio-only / Hybrid client sessions | **Radio-only -> VARA HF / VARA FM** for the cleanest current alpha path. **Radio-only -> ARDOP HF** is visible, but the ARDOP panel still needs intent-aware validation before operational reliance. Telnet and Packet are disabled for this operating mode in Tuxlink. |
+| Radio-only / Hybrid client sessions | **Radio-only -> ARDOP HF / VARA HF / VARA FM**. Telnet and Packet are disabled for this operating mode in Tuxlink. |
 | Telnet Radio-only / Use RMS Relay | Split in Tuxlink between **Radio-only** for Hybrid/RF-only routing and the Post Office modes below. Use the mode named by the event plan. |
 | Telnet RMS Post Office | **Post Office -> Telnet**. Client-to-relay local-pool mail using `CALL-L` login; this is not "be the hub." |
 | AREDN Mesh / Network Post Office | **Network Post Office -> Telnet**. Client-to-relay onward routing using full-callsign login. Tuxlink uses manual/saved `host:port`, not OLSR mesh auto-discovery. |
