@@ -326,6 +326,33 @@ mod build_outbound_proposals_tests {
     use std::collections::HashSet;
     use tempfile::tempdir;
 
+    // tuxlink-9efs: the DIAL outbound drain degrades ONLY the safety-gate
+    // rejection (MessageRejected) to an empty outbound; every other error
+    // propagates so a corrupt / unreadable mailbox fail-closes instead of
+    // masquerading as a successful empty send. (The OLD `unwrap_or_else`
+    // degraded ALL errors — this test fails against that behavior.)
+    #[test]
+    fn dial_outbound_or_propagate_degrades_only_message_rejected() {
+        // Safety-gate rejection -> degrade to empty (the intended skip).
+        let degraded =
+            dial_outbound_or_propagate(Err(BackendError::MessageRejected("gate".into())), "test");
+        assert!(
+            matches!(&degraded, Ok(v) if v.is_empty()),
+            "MessageRejected should degrade to empty outbound; got {degraded:?}"
+        );
+
+        // Any OTHER error must propagate (fail-closed), NOT silently empty.
+        let propagated = dial_outbound_or_propagate(Err(BackendError::InvalidSession), "test");
+        assert!(
+            matches!(propagated, Err(BackendError::InvalidSession)),
+            "non-MessageRejected errors must propagate, not degrade to empty"
+        );
+
+        // Ok passes through unchanged.
+        let ok = dial_outbound_or_propagate(Ok(Vec::new()), "test");
+        assert!(matches!(ok, Ok(v) if v.is_empty()));
+    }
+
     #[test]
     fn empty_outbox_returns_empty_vec() {
         let dir = tempdir().unwrap();
@@ -2571,6 +2598,34 @@ pub(crate) fn file_exchange_result(
 /// invoking this function. This function does NO consent gating of its own —
 /// the gate is upstream at the Tauri command boundary, where it can refuse
 /// I/O / state mutation pre-gate.
+/// Dial-path outbound drain (tuxlink-9efs). ONLY the safety-gate rejection
+/// ([`BackendError::MessageRejected`]) degrades to an empty outbound list —
+/// failing closed there would orphan the already-up ARQ/VARA session for an
+/// intended skip, and an empty batch proposes nothing so no off-spec routing
+/// flag rides out. EVERY OTHER error (corrupt / unreadable mailbox, I/O, etc.)
+/// propagates so a data error fail-closes instead of masquerading as a
+/// successful empty send/receive. Mirrors the narrow handling in
+/// [`crate::ui_commands::telnet_p2p_connect`].
+///
+/// NOTE: the listen/answer paths ([`run_ardop_b2f_answer`] /
+/// [`run_vara_b2f_answer`]) intentionally degrade ALL errors and do NOT use
+/// this helper — narrowing them is out of scope for tuxlink-9efs.
+fn dial_outbound_or_propagate(
+    result: Result<Vec<session::OutboundMessage>, BackendError>,
+    ctx: &str,
+) -> Result<Vec<session::OutboundMessage>, BackendError> {
+    match result {
+        Ok(v) => Ok(v),
+        Err(BackendError::MessageRejected(reason)) => {
+            eprintln!(
+                "{ctx}: outbound drain skipped ({reason}); dial proceeds with empty outbound"
+            );
+            Ok(Vec::new())
+        }
+        Err(e) => Err(e),
+    }
+}
+
 pub fn run_ardop_b2f_exchange(
     transport: &mut dyn crate::winlink::modem::ModemTransport,
     target: &str,
@@ -2611,20 +2666,19 @@ pub fn run_ardop_b2f_exchange(
     // Turn each queued outbox message into a proposal + compressed body.
     //
     // Intent-filtered drain (tuxlink-u5hl Codex Round 5 P1 #3 +
-    // Phase 3-4 RE-REVIEW P2): for non-CMS intents the safety gate fires
-    // and returns `MessageRejected`; degrade to an empty outbound list
-    // rather than failing the dial. The ARQ link is already up by the
-    // time we get here — failing closed would only orphan the operator's
-    // session, while degrading lets the spec §8 build-walk-revise loop
-    // exercise the non-CMS combos. Symmetric with `run_ardop_b2f_answer`'s
-    // all-errors-degrade pattern. The peer never sees off-spec routing
-    // flags either way because no proposal is sent when outbound is empty.
-    let outbound = build_outbound_proposals(mailbox, intent, None).unwrap_or_else(|e| {
-        eprintln!(
-            "run_ardop_b2f_exchange: outbound drain skipped ({e}); dial proceeds with empty outbound"
-        );
-        Vec::new()
-    });
+    // Phase 3-4 RE-REVIEW P2; narrowed tuxlink-9efs): for non-CMS intents the
+    // safety gate fires and returns `MessageRejected` — degrade THAT to an empty
+    // outbound rather than failing the dial. The ARQ link is already up by the
+    // time we get here, so failing closed on the intended skip would only orphan
+    // the operator's session, and an empty batch proposes nothing so no off-spec
+    // routing flag rides out. Any OTHER error (corrupt / unreadable mailbox,
+    // etc.) fail-closes via `?` so a data error cannot masquerade as a
+    // successful empty send. NOT symmetric with `run_ardop_b2f_answer`, which
+    // still degrades every error by design.
+    let outbound = dial_outbound_or_propagate(
+        build_outbound_proposals(mailbox, intent, None),
+        "run_ardop_b2f_exchange",
+    )?;
     let outbound_log = outbound_log_items(&outbound);
 
     let exchange_config = session::ExchangeConfig {
@@ -2935,18 +2989,19 @@ pub fn run_vara_b2f_exchange(
     };
 
     // Intent-filtered drain (tuxlink-u5hl Codex Round 5 P1 #3 +
-    // Phase 3-4 RE-REVIEW P2): for non-CMS intents, degrade to empty
+    // Phase 3-4 RE-REVIEW P2; narrowed tuxlink-9efs): for non-CMS intents the
+    // safety gate fires and returns `MessageRejected` — degrade THAT to an empty
     // outbound rather than failing the dial. The VARA CONNECT has already
-    // completed by the time we reach here; failing closed would only
-    // orphan the operator's session. The peer sees no proposal sent
-    // (empty outbound) so no off-spec routing flag rides out. Matches
-    // `run_vara_b2f_answer`'s all-errors-degrade pattern.
-    let outbound = build_outbound_proposals(mailbox, intent, None).unwrap_or_else(|e| {
-        eprintln!(
-            "run_vara_b2f_exchange: outbound drain skipped ({e}); dial proceeds with empty outbound"
-        );
-        Vec::new()
-    });
+    // completed by the time we reach here, so failing closed on the intended
+    // skip would only orphan the operator's session, and an empty batch proposes
+    // nothing so no off-spec routing flag rides out. Any OTHER error (corrupt /
+    // unreadable mailbox, etc.) fail-closes via `?` so a data error cannot
+    // masquerade as a successful empty send. NOT symmetric with
+    // `run_vara_b2f_answer`, which still degrades every error by design.
+    let outbound = dial_outbound_or_propagate(
+        build_outbound_proposals(mailbox, intent, None),
+        "run_vara_b2f_exchange",
+    )?;
     let outbound_log = outbound_log_items(&outbound);
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
