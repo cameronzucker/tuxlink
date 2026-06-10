@@ -296,6 +296,8 @@ function renderRow(props: {
   operatorGrid: string | null;
   onPrefill?: (d: FavoriteDial) => void;
   onToggleStar?: (id: string, s: boolean) => void;
+  onUpsert?: (f: Favorite) => void;
+  onDelete?: (id: string) => void;
 }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) =>
@@ -306,6 +308,8 @@ function renderRow(props: {
       operatorGrid: props.operatorGrid,
       onPrefill: props.onPrefill ?? (() => {}),
       onToggleStar: props.onToggleStar ?? (() => {}),
+      onUpsert: props.onUpsert,
+      onDelete: props.onDelete,
     }),
     { wrapper },
   );
@@ -381,5 +385,148 @@ describe('<FavoriteRow>', () => {
       /_connect$|connect_|transmit|record_attempt/.test(cmd),
     );
     expect(forbidden).toEqual([]);
+  });
+});
+
+// ---- FavoriteRow edit/delete (tuxlink-oi1g) ----
+describe('<FavoriteRow> edit/delete (oi1g)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'favorite_tod_hint') return Promise.resolve(null);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  it('renders NO overflow menu when no edit handlers are provided (view-only)', () => {
+    renderRow({ favorite: RF_FAV, operatorGrid: 'CN85nx' });
+    expect(screen.queryByTestId('favorite-menu-rf1')).toBeNull();
+  });
+
+  it('shows the overflow menu with Edit + Delete when edit handlers are provided', () => {
+    renderRow({ favorite: RF_FAV, operatorGrid: 'CN85nx', onUpsert: () => {}, onDelete: () => {} });
+    fireEvent.click(screen.getByTestId('favorite-menu-rf1'));
+    expect(screen.getByTestId('favorite-edit-rf1')).toBeInTheDocument();
+    expect(screen.getByTestId('favorite-delete-rf1')).toBeInTheDocument();
+  });
+
+  it('Edit reveals the inline form pre-filled with current values', () => {
+    renderRow({ favorite: RF_FAV, operatorGrid: 'CN85nx', onUpsert: () => {}, onDelete: () => {} });
+    fireEvent.click(screen.getByTestId('favorite-menu-rf1'));
+    fireEvent.click(screen.getByTestId('favorite-edit-rf1'));
+    expect((screen.getByTestId('favorite-edit-gateway-rf1') as HTMLInputElement).value).toBe('W7DXG');
+    expect((screen.getByTestId('favorite-edit-band-rf1') as HTMLInputElement).value).toBe('20m');
+    expect((screen.getByTestId('favorite-edit-grid-rf1') as HTMLInputElement).value).toBe('CN87');
+    expect((screen.getByTestId('favorite-edit-freq-rf1') as HTMLInputElement).value).toBe('14105.0');
+  });
+
+  it('Save calls onUpsert with the merged favorite (edited fields applied, id + mode preserved)', () => {
+    const onUpsert = vi.fn();
+    renderRow({ favorite: RF_FAV, operatorGrid: 'CN85nx', onUpsert, onDelete: () => {} });
+    fireEvent.click(screen.getByTestId('favorite-menu-rf1'));
+    fireEvent.click(screen.getByTestId('favorite-edit-rf1'));
+    fireEvent.change(screen.getByTestId('favorite-edit-gateway-rf1'), { target: { value: 'W7NEW' } });
+    fireEvent.change(screen.getByTestId('favorite-edit-band-rf1'), { target: { value: '40m' } });
+    fireEvent.click(screen.getByTestId('favorite-edit-save-rf1'));
+    expect(onUpsert).toHaveBeenCalledTimes(1);
+    const saved = onUpsert.mock.calls[0][0] as Favorite;
+    expect(saved.id).toBe('rf1');
+    expect(saved.mode).toBe('ardop-hf');
+    expect(saved.gateway).toBe('W7NEW');
+    expect(saved.band).toBe('40m');
+    expect(saved.grid).toBe('CN87'); // untouched field preserved
+  });
+
+  it('Cancel collapses the edit form without calling onUpsert', () => {
+    const onUpsert = vi.fn();
+    renderRow({ favorite: RF_FAV, operatorGrid: 'CN85nx', onUpsert, onDelete: () => {} });
+    fireEvent.click(screen.getByTestId('favorite-menu-rf1'));
+    fireEvent.click(screen.getByTestId('favorite-edit-rf1'));
+    fireEvent.click(screen.getByTestId('favorite-edit-cancel-rf1'));
+    expect(onUpsert).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('favorite-edit-gateway-rf1')).toBeNull();
+  });
+
+  it('Delete requires an inline confirm before calling onDelete(id)', () => {
+    const onDelete = vi.fn();
+    renderRow({ favorite: RF_FAV, operatorGrid: 'CN85nx', onUpsert: () => {}, onDelete });
+    fireEvent.click(screen.getByTestId('favorite-menu-rf1'));
+    fireEvent.click(screen.getByTestId('favorite-delete-rf1'));
+    // Not deleted yet — a confirm affordance appears first.
+    expect(onDelete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('favorite-delete-confirm-rf1'));
+    expect(onDelete).toHaveBeenCalledWith('rf1');
+  });
+});
+
+// ---- FavoritesTabs filter + edit wiring (tuxlink-oi1g) ----
+function makeFavs(n: number, prefix = 'W'): Favorite[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `gen-${i}`,
+    mode: 'ardop-hf' as const,
+    gateway: `${prefix}7G${String(i).padStart(2, '0')}`,
+    band: '20m',
+    grid: 'CN87',
+    starred: true,
+    created_at: '2026-06-01T00:00:00-07:00',
+    updated_at: '2026-06-01T00:00:00-07:00',
+  }));
+}
+
+describe('<FavoritesTabs> filter + edit (oi1g)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('does NOT show the filter box when the favorites list is short (<= 8)', async () => {
+    routeInvoke({ favorites: makeFavs(3), recents: [] });
+    renderTabs({ mode: 'ardop-hf' });
+    expect(await screen.findByTestId('favorite-row-gen-0')).toBeInTheDocument();
+    expect(screen.queryByTestId('favorites-filter-input')).toBeNull();
+  });
+
+  it('shows the filter box when the favorites list is long (> 8) and narrows on input', async () => {
+    routeInvoke({ favorites: makeFavs(10), recents: [] });
+    renderTabs({ mode: 'ardop-hf' });
+    const filter = await screen.findByTestId('favorites-filter-input');
+    expect(filter).toBeInTheDocument();
+    // All 10 present initially.
+    expect(screen.getByTestId('favorite-row-gen-0')).toBeInTheDocument();
+    expect(screen.getByTestId('favorite-row-gen-9')).toBeInTheDocument();
+    // Filter to a single gateway substring.
+    fireEvent.change(filter, { target: { value: 'G09' } });
+    expect(screen.getByTestId('favorite-row-gen-9')).toBeInTheDocument();
+    expect(screen.queryByTestId('favorite-row-gen-0')).toBeNull();
+  });
+
+  it('editing a favorite from the row invokes favorite_upsert', async () => {
+    routeInvoke({ favorites: makeFavs(3), recents: [] });
+    renderTabs({ mode: 'ardop-hf' });
+    await screen.findByTestId('favorite-row-gen-0');
+    fireEvent.click(screen.getByTestId('favorite-menu-gen-0'));
+    fireEvent.click(screen.getByTestId('favorite-edit-gen-0'));
+    fireEvent.change(screen.getByTestId('favorite-edit-band-gen-0'), { target: { value: '40m' } });
+    fireEvent.click(screen.getByTestId('favorite-edit-save-gen-0'));
+    await waitFor(() => {
+      const calls = invokeMock.mock.calls.filter(([cmd]) => cmd === 'favorite_upsert');
+      expect(calls).toHaveLength(1);
+      expect((calls[0][1] as { favorite: Favorite }).favorite.band).toBe('40m');
+      expect((calls[0][1] as { favorite: Favorite }).favorite.id).toBe('gen-0');
+    });
+  });
+
+  it('deleting a favorite from the row invokes favorite_delete after confirm', async () => {
+    routeInvoke({ favorites: makeFavs(3), recents: [] });
+    renderTabs({ mode: 'ardop-hf' });
+    await screen.findByTestId('favorite-row-gen-1');
+    fireEvent.click(screen.getByTestId('favorite-menu-gen-1'));
+    fireEvent.click(screen.getByTestId('favorite-delete-gen-1'));
+    expect(invokeMock.mock.calls.filter(([c]) => c === 'favorite_delete')).toHaveLength(0);
+    fireEvent.click(screen.getByTestId('favorite-delete-confirm-gen-1'));
+    await waitFor(() => {
+      const calls = invokeMock.mock.calls.filter(([cmd]) => cmd === 'favorite_delete');
+      expect(calls).toHaveLength(1);
+      expect((calls[0][1] as { id: string }).id).toBe('gen-1');
+    });
   });
 });

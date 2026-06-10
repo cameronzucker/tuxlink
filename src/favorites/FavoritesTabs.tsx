@@ -19,7 +19,7 @@
 // FavoriteRow's Connect drops a dial into the host form; the operator clicks the
 // panel's own Send/Receive (the Part 97 consent click).
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import * as Tabs from '@radix-ui/react-tabs';
@@ -45,8 +45,26 @@ function isManualOnly(mode: RadioMode): boolean {
   return mode === 'vara-hf' || mode === 'vara-fm' || mode === 'telnet';
 }
 
+/** oi1g: above this row count a tab shows a filter box. Short lists stay clean. */
+const FILTER_THRESHOLD = 8;
+
+function matchesFavoriteFilter(f: { gateway: string; grid?: string; note?: string }, q: string): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  return (
+    f.gateway.toLowerCase().includes(needle) ||
+    (f.grid ?? '').toLowerCase().includes(needle) ||
+    (f.note ?? '').toLowerCase().includes(needle)
+  );
+}
+
 export function FavoritesTabs({ mode, onPrefill, manualContent }: FavoritesTabsProps) {
-  const { favorites, recents, star } = useFavorites(mode);
+  const { favorites, recents, star, upsert, remove } = useFavorites(mode);
+
+  // oi1g: client-side filter over the rendered list (gateway / grid / note),
+  // shown only when a tab's list exceeds FILTER_THRESHOLD. One shared input
+  // narrows whichever tab is active.
+  const [filter, setFilter] = useState('');
 
   // C4: full-precision operator grid for distance. Fetched ONCE; shared down.
   const fixQuery = useQuery({
@@ -70,23 +88,50 @@ export function FavoritesTabs({ mode, onPrefill, manualContent }: FavoritesTabsP
     return <div className="favorites-tabs favorites-tabs--manual-only">{manualContent}</div>;
   }
 
-  const renderRows = (list: typeof favorites) =>
-    list.length === 0 ? (
-      <p className="favorites-empty">No stations</p>
-    ) : (
-      <div className="favorites-list">
-        {list.map((f) => (
-          <FavoriteRow
-            key={f.id}
-            favorite={f}
-            operatorGrid={operatorGrid}
-            onPrefill={onPrefill}
-            onToggleStar={star}
-            attempts={log.filter((a) => a.unit_id === f.id)}
-          />
-        ))}
-      </div>
+  const renderRows = (list: typeof favorites) => {
+    const showFilter = list.length > FILTER_THRESHOLD;
+    const shown = showFilter ? list.filter((f) => matchesFavoriteFilter(f, filter)) : list;
+    return (
+      <>
+        {showFilter && (
+          <div className="favorites-filter">
+            <input
+              type="text"
+              data-testid="favorites-filter-input"
+              placeholder="Filter… (call / grid / note)"
+              value={filter}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              aria-label="Filter favorites"
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            <span className="favorites-filter-count" data-testid="favorites-filter-count">
+              {shown.length}/{list.length}
+            </span>
+          </div>
+        )}
+        {shown.length === 0 ? (
+          <p className="favorites-empty">{list.length === 0 ? 'No stations' : 'No matches'}</p>
+        ) : (
+          <div className="favorites-list">
+            {shown.map((f) => (
+              <FavoriteRow
+                key={f.id}
+                favorite={f}
+                operatorGrid={operatorGrid}
+                onPrefill={onPrefill}
+                onToggleStar={star}
+                attempts={log.filter((a) => a.unit_id === f.id)}
+                onUpsert={upsert}
+                onDelete={remove}
+              />
+            ))}
+          </div>
+        )}
+      </>
     );
+  };
 
   return (
     <div className="favorites-tabs">
