@@ -13,6 +13,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+import { invoke } from '@tauri-apps/api/core';
+
 import {
   MessageViewLoaded,
   MessageViewEmpty,
@@ -60,6 +64,7 @@ vi.mock('./replyActions', async (importOriginal) => {
 });
 import { openReplyWindow } from './replyActions';
 import type { ParsedMessage } from './types';
+import type { FormPayload } from '../forms/types';
 
 // Raw CSS import keeps layout-regression assertions inside Vitest without
 // using node:fs, matching the AppShell.css contract-test pattern.
@@ -86,6 +91,38 @@ function parsed(over: Partial<ParsedMessage> = {}): ParsedMessage {
     ...over,
   };
 }
+
+const FORM_PARAMETERS = {
+  xmlFileVersion: '1.0',
+  rmsExpressVersion: 'Tuxlink/test',
+  submissionDatetime: '20260605143000',
+  sendersCallsign: 'N0CALL',
+  gridSquare: 'CN87',
+  displayForm: '',
+  replyTemplate: '',
+};
+
+function payloadFor(formId: string, fields: [string, string][] = []): FormPayload {
+  return {
+    formId,
+    formParameters: { ...FORM_PARAMETERS },
+    fields,
+  };
+}
+
+const ICS213_REPLY_PAYLOAD = payloadFor('ICS213_Initial', [
+  ['fm_name', 'Original sender'],
+  ['inc_name', 'Incident Alpha'],
+  ['subjectline', 'Status update'],
+  ['isexercise', ''],
+]);
+
+const BULLETIN_REPLY_PAYLOAD = payloadFor('Bulletin_Initial', [
+  ['level', 'PRIORITY'],
+  ['subjectline', 'ARES Activation'],
+  ['title', 'EOC Notice'],
+  ['from_name', 'W7CPZ'],
+]);
 
 // ============================================================================
 // Task-13 test (7): no-selection → "Select a message." empty state.
@@ -192,6 +229,32 @@ describe('<MessageViewLoaded>', () => {
 
     expect(screen.getByTestId('message-find-count')).toHaveTextContent('1/2');
     expect(screen.getAllByTestId('message-find-match')).toHaveLength(2);
+  });
+
+  it('renders structured catalog replies for bare SERVICE B2F senders (tuxlink-ii1z)', async () => {
+    const subject = 'INQUIRY - https://tgftp.nws.noaa.gov/data/raw/fp/fpus65.kpsr.sft.az.txt';
+    const body = 'FPUS65 KPSR 091103\nNational Weather Service Phoenix AZ\n';
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValueOnce({
+      kind: 'area-weather',
+      product: 'FPUS65 KPSR 091103',
+      office: 'National Weather Service Phoenix AZ',
+      issued: '',
+      raw: body,
+    });
+
+    render(
+      <MessageViewLoaded
+        message={parsed({
+          from: 'SERVICE',
+          subject,
+          body,
+        })}
+      />,
+    );
+
+    expect(await screen.findByText('National Weather Service Phoenix AZ')).toBeInTheDocument();
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('catalog_parse_reply', { subject, body });
   });
 
   // Winlink form → placeholder for now; never render raw XML.
@@ -498,7 +561,11 @@ describe('<MessageViewLoaded> reply action bar', () => {
   it('does NOT show the Reply-with-form button for a form with an unknown formId', () => {
     render(
       <MessageViewLoaded
-        message={parsed({ isForm: true, formId: 'Unknown_Form_v1', formPayload: undefined })}
+        message={parsed({
+          isForm: true,
+          formId: 'Unknown_Form_v1',
+          formPayload: payloadFor('Unknown_Form_v1'),
+        })}
       />,
     );
     expect(screen.queryByTestId('reply-with-form-btn')).toBeNull();
@@ -506,13 +573,32 @@ describe('<MessageViewLoaded> reply action bar', () => {
 
   it('shows the Reply-with-form button when formId is registered (ICS213_Initial)', () => {
     render(
-      <MessageViewLoaded message={parsed({ isForm: true, formId: 'ICS213_Initial' })} />,
+      <MessageViewLoaded
+        message={parsed({
+          isForm: true,
+          formId: 'ICS213_Initial',
+          formPayload: ICS213_REPLY_PAYLOAD,
+        })}
+      />,
     );
     expect(screen.getByTestId('reply-with-form-btn')).toBeInTheDocument();
   });
 
+  it('does NOT show the Reply-with-form button for a supported form when XML payload parsing failed (tuxlink-8t66)', () => {
+    render(
+      <MessageViewLoaded
+        message={parsed({ isForm: true, formId: 'ICS213_Initial', formPayload: null })}
+      />,
+    );
+    expect(screen.queryByTestId('reply-with-form-btn')).toBeNull();
+  });
+
   it('Reply-with-form opens a replyWithForm compose window', () => {
-    const m = parsed({ isForm: true, formId: 'ICS213_Initial' });
+    const m = parsed({
+      isForm: true,
+      formId: 'ICS213_Initial',
+      formPayload: ICS213_REPLY_PAYLOAD,
+    });
     render(<MessageViewLoaded message={m} />);
     fireEvent.click(screen.getByTestId('reply-with-form-btn'));
     expect(openReplyWindow).toHaveBeenCalledWith(m, 'replyWithForm');
@@ -529,7 +615,13 @@ describe('<MessageViewLoaded> reply action bar', () => {
   // intentionally unsupported (see REPLY_WITH_FORM_SUPPORTED for rationale).
   it('shows the Reply-with-form button for Bulletin_Initial (tuxlink-ltkv)', () => {
     render(
-      <MessageViewLoaded message={parsed({ isForm: true, formId: 'Bulletin_Initial' })} />,
+      <MessageViewLoaded
+        message={parsed({
+          isForm: true,
+          formId: 'Bulletin_Initial',
+          formPayload: BULLETIN_REPLY_PAYLOAD,
+        })}
+      />,
     );
     expect(screen.queryByTestId('reply-with-form-btn')).not.toBeNull();
   });
@@ -537,7 +629,9 @@ describe('<MessageViewLoaded> reply action bar', () => {
   it('does NOT show the Reply-with-form button for forms without reply mappings (Position / 309 / DA / Check-In)', () => {
     for (const formId of ['Position_Report', 'Form-309_Initial', 'Damage_Assessment_Initial', 'Winlink_Check-In']) {
       const { unmount } = render(
-        <MessageViewLoaded message={parsed({ isForm: true, formId })} />,
+        <MessageViewLoaded
+          message={parsed({ isForm: true, formId, formPayload: payloadFor(formId) })}
+        />,
       );
       expect(screen.queryByTestId('reply-with-form-btn'), `formId=${formId}`).toBeNull();
       unmount();

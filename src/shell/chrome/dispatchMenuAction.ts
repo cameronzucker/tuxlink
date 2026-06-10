@@ -26,6 +26,8 @@ export interface MenuHandlers {
   setScheme: (id: ColorScheme) => void;
   /** Open the inline Settings panel (GPS state + position precision), tuxlink-39b. */
   openSettings: () => void;
+  /** Open the inline LAN map-tile source settings overlay (tuxlink-a1cc / dyop, design §8.7). */
+  openMapTileSettings: () => void;
   /** Open the inline Theme Designer (View → Color Scheme → Customize…), tuxlink-vgth. */
   openThemeDesigner: () => void;
   /** Open the inline About Tuxlink dialog (tuxlink-35g0). */
@@ -36,6 +38,8 @@ export interface MenuHandlers {
   openLogging: () => void;
   /** Open the Report Issue modal — auto-export + pre-filled GitHub URL (tuxlink-qjgx Task 8). */
   reportIssue: () => void;
+  /** Open the inline uninstall cleanup dialog (tuxlink-uodl). */
+  openUninstallCleanup: () => void;
   /** Open the inline Catalog Builder panel (tuxlink-a2gd) — location-aware
    *  station finder (direct /listings poll) + by-message info-category requests. */
   openCatalogBuilder: () => void;
@@ -75,6 +79,10 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     // post-merge smoke of #113).
     case 'menu:tools:settings_privacy':
       h.openSettings(); return;
+    // tuxlink-a1cc / dyop: opens the LAN map-tile source config overlay — the
+    // one reachable home for the dyop tile backend (design §8.7).
+    case 'menu:tools:settings_map_tiles':
+      h.openMapTileSettings(); return;
     // tuxlink-vgth: opens the inline Theme Designer panel.
     case 'menu:view:customize_theme':
       h.openThemeDesigner(); return;
@@ -89,6 +97,8 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
       h.openLogging(); return;
     case 'menu:help:report_issue':
       h.reportIssue(); return;
+    case 'menu:help:uninstall_cleanup':
+      h.openUninstallCleanup(); return;
     case 'menu:mailbox:inbox':
     case 'menu:mailbox:sent':
     case 'menu:mailbox:outbox':

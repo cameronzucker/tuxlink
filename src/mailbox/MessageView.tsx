@@ -488,6 +488,7 @@ export function MessageViewLoaded({
             </button>
             {message.isForm
               && message.formId
+              && message.formPayload
               && lookupForm(message.formId)
               && hasReplyWithFormSupport(message.formId) && (
                 <button

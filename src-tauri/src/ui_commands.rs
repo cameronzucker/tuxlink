@@ -599,15 +599,15 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
         .map(|s| s.to_string())
         .unwrap_or_default();
 
-    // From — first address's display form.
-    // msg.from() returns Option<&Address<'x>> (spec §2.3).
-    let from = extract_first_address(msg.from());
+    // From — first address's display form. Native Winlink/B2F headers often
+    // contain bare service/callsign identities (`From: SERVICE`, `To: N7CPZ`)
+    // that are not RFC mailbox addresses; preserve the raw header when
+    // mail-parser cannot materialize an address object.
+    let from = extract_first_address_or_raw(&msg);
 
-    // To — collect all address strings.
-    let to = extract_address_list(msg.to());
-
-    // Cc — collect all address strings.
-    let cc = extract_address_list(msg.cc());
+    // To/Cc — collect all address strings, with the same bare-call fallback.
+    let to = extract_address_list_or_raw(msg.to(), msg.header_raw(HeaderName::To));
+    let cc = extract_address_list_or_raw(msg.cc(), msg.header_raw(HeaderName::Cc));
 
     // Date — emit as RFC 3339 UTC from the Date header. Fallback chain:
     //   1. mail-parser strict RFC5322 Date (the standard path).
@@ -709,6 +709,14 @@ fn extract_first_address(addr: Option<&mail_parser::Address<'_>>) -> String {
     }
 }
 
+fn extract_first_address_or_raw(msg: &mail_parser::Message<'_>) -> String {
+    let parsed = extract_first_address(msg.from());
+    if !parsed.trim().is_empty() {
+        return parsed;
+    }
+    clean_raw_header_value(msg.header_raw(HeaderName::From).unwrap_or_default())
+}
+
 /// Collect all address strings from a `mail_parser::Address`.
 fn extract_address_list(addr: Option<&mail_parser::Address<'_>>) -> Vec<String> {
     let Some(a) = addr else {
@@ -721,6 +729,32 @@ fn extract_address_list(addr: Option<&mail_parser::Address<'_>>) -> Vec<String> 
             .flat_map(|g| g.addresses.iter().map(addr_to_string))
             .collect(),
     }
+}
+
+fn extract_address_list_or_raw(
+    addr: Option<&mail_parser::Address<'_>>,
+    raw: Option<&str>,
+) -> Vec<String> {
+    let parsed: Vec<String> = extract_address_list(addr)
+        .into_iter()
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    if !parsed.is_empty() {
+        return parsed;
+    }
+
+    split_raw_address_header(raw.unwrap_or_default())
+}
+
+fn split_raw_address_header(raw: &str) -> Vec<String> {
+    raw.split([',', ';'])
+        .map(clean_raw_header_value)
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn clean_raw_header_value(raw: &str) -> String {
+    raw.trim().trim_matches('"').trim().to_string()
 }
 
 /// Format a `mail_parser::Addr` to a display string.

@@ -158,7 +158,9 @@ logs, webview cache, and keyring credentials may still exist in the user's XDG
 profile.
 
 Run the cleanup flow from the same user account before uninstalling, or after
-reinstalling if you already removed the package:
+reinstalling if you already removed the package. In the desktop app, open
+**Help → Uninstall Cleanup…** to preview the current user's cleanup targets and
+run the same cleanup modes from the UI. From a terminal, use:
 
 ```bash
 tuxlink cleanup --dry-run

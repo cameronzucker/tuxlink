@@ -68,7 +68,9 @@ export interface FolderSidebarProps {
    *  passes both to `setSelectedFolder` interchangeably; the Tauri
    *  commands accept either string at the boundary (tuxlink-f62f). */
   onSelectFolder: (folder: MailboxFolderRef) => void;
-  /// Per-folder counts for system folders (Inbox = unread, Sent = total).
+  /// Per-folder counts for system folders. Actionable badges only:
+  /// Inbox/Archive = unread, Outbox = queue depth, Drafts = draft count.
+  /// Sent totals are intentionally suppressed.
   /// Missing/zero → no count. User-folder counts are deferred to Phase 2.5
   /// (N+1 query optimization — backend `user_folders_list_with_counts`).
   counts?: Partial<Record<MailboxFolder, number>>;
@@ -190,6 +192,14 @@ function FolderIndicator({
       aria-hidden="true"
     />
   );
+}
+
+function visibleMailboxCount(
+  folder: MailboxFolder | undefined,
+  counts: Partial<Record<MailboxFolder, number>>,
+): number | undefined {
+  if (!folder || folder === 'sent') return undefined;
+  return counts[folder];
 }
 
 // tuxlink-djnl: React.memo so shell-level renders (status polls, search
@@ -498,7 +508,7 @@ export const FolderSidebar = memo(function FolderSidebar({
       {MAILBOX_ITEMS.map((item) => {
         const isFolder = item.id !== undefined && item.enabled;
         const active = isFolder && item.id === selectedFolder;
-        const count = item.id ? counts[item.id] : undefined;
+        const count = visibleMailboxCount(item.id, counts);
         const isDropTarget = isFolder && dragOver === item.id;
         const className = [
           'nav-item',
@@ -685,7 +695,7 @@ export const FolderSidebar = memo(function FolderSidebar({
       {MAILBOX_ITEMS.map((item) => {
         const isFolder = item.id !== undefined && item.enabled;
         const active = isFolder && item.id === selectedFolder;
-        const count = item.id ? counts[item.id] : undefined;
+        const count = visibleMailboxCount(item.id, counts);
         const isDropTarget = isFolder && dragOver === item.id;
         const className = [
           'nav-item',
@@ -895,7 +905,7 @@ export const FolderSidebar = memo(function FolderSidebar({
         {MAILBOX_ITEMS.map((item) => {
           const isFolder = item.id !== undefined && item.enabled;
           const active = isFolder && item.id === selectedFolder;
-          const count = item.id ? counts[item.id] : undefined;
+          const count = visibleMailboxCount(item.id, counts);
           const testId = item.id ? `folder-${item.id}` : `folder-${item.label.toLowerCase()}`;
           // Disabled (non-folder) system items render as a flat, non-selecting
           // tab; today every MAILBOX_ITEM is enabled, but keep the guard.

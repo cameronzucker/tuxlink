@@ -44,7 +44,7 @@
 }
 .statusbar .status-dot.warn {
   background: var(--accent);
-  box-shadow: 0 0 5px rgba(245, 159, 60, 0.5);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 .statusbar .status-dot.error {
   background: var(--error);

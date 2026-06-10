@@ -209,7 +209,7 @@ body,
   color-scheme: dark;
 }
 
-/* GitHub dark — code-host-inspired neutrals with blue links / highlights and
+/* Repository Dark — code-host-inspired neutrals with blue links / highlights and
  * green radio identity. Practical for operators who live in developer tools. */
 :root[data-theme='github-dark'] {
   --bg: #0d1117;
@@ -229,7 +229,7 @@ body,
   --modem-accent-2: #56d364;
   --modem-accent-soft: rgba(63, 185, 80, 0.14);
   --modem-accent-fg: #0d1117;
-  --unread-dot: #f2cc60;
+  --unread-dot: #58a6ff;
   --success: #3fb950;
   --error: #ff7b72;
   --info: #58a6ff;
@@ -262,7 +262,7 @@ body,
   --modem-accent-2: #5ed99e;
   --modem-accent-soft: rgba(68, 192, 138, 0.14);
   --modem-accent-fg: #08130e;
-  --unread-dot: #ffcc4d;
+  --unread-dot: #4f9cf9;
   --success: #4ecb8f;
   --error: #ff6b6b;
   --info: #6db9ff;
@@ -325,39 +325,40 @@ body,
   color-scheme: light;
 }
 
-/* High-contrast light — pure white surface, near-black text, deep accents.
- * For harsh direct-sun viewing where Daylight still washes out. WCAG-AAA
- * level contrast on every primary surface combination. */
+/* High-contrast light — white reading surfaces on a visible neutral ladder,
+ * near-black text, hard borders, and deep semantic accents. For harsh direct-
+ * sun viewing where Daylight still washes out, without falling into the old
+ * industrial black/yellow high-contrast look. */
 :root[data-theme='high-contrast-light'] {
-  --bg: #ffffff;
+  --bg: #f2f2f2;
   --surface: #ffffff;
-  --surface-2: #f0f0f0;
-  --elevated: #e0e0e0;
-  --border: #6e6e6e;
-  --border-strong: #333333;
-  --border-soft: #c8c8c8;
-  --text: #000000;
-  --text-dim: #2a2a2a;
-  --text-faint: #555555;
-  --accent: #8a3700;
-  --accent-2: #5f2600;
-  --accent-soft: rgba(138, 55, 0, 0.13);
+  --surface-2: #e8e8e8;
+  --elevated: #d4d4d4;
+  --border: #4f4f4f;
+  --border-strong: #121212;
+  --border-soft: #8c8c8c;
+  --text: #050505;
+  --text-dim: #1f1f1f;
+  --text-faint: #333333;
+  --accent: #6f2b00;
+  --accent-2: #4a1b00;
+  --accent-soft: rgba(111, 43, 0, 0.18);
   /* tuxlink-2ief: very deep green for max contrast on the pure-white
      surface; the radio dock identity carries even in harsh-sun. */
-  --modem-accent: #00532a;
-  --modem-accent-2: #006e37;
-  --modem-accent-soft: rgba(0, 83, 42, 0.13);
+  --modem-accent: #003f1f;
+  --modem-accent-2: #004d26;
+  --modem-accent-soft: rgba(0, 63, 31, 0.18);
   --modem-accent-fg: #ffffff;
-  --unread-dot: #8a3700;
-  --success: #00532a;
-  --error: #8a0014;
-  --info: #002e6e;
-  --form-tag: #4a1a85;
+  --unread-dot: #5f2600;
+  --success: #00491f;
+  --error: #740014;
+  --info: #00285d;
+  --form-tag: #3d116e;
   /* literal --tux-* tokens (no primitive to alias) */
   --tux-accent-fg: #ffffff;
   --tux-danger-fg: #ffffff;
-  --tux-danger-surface: rgba(138, 0, 20, 0.10);
-  --tux-focus-ring: rgba(138, 55, 0, 0.6);
+  --tux-danger-surface: rgba(116, 0, 20, 0.16);
+  --tux-focus-ring: rgba(111, 43, 0, 0.72);
   color-scheme: light;
 }
 

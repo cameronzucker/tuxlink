@@ -1,0 +1,122 @@
+/* GridPickerOverlay — in-app dimmed-backdrop overlay with a width-CONSTRAINED
+ * centered panel (no-stretched-full-width-ui). The map viewport is
+ * bounded-height so Leaflet renders under WebKitGTK. */
+
+.grid-picker-overlay__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.grid-picker-overlay__panel {
+  /* Capped — never edge-to-edge. Roughly the readable picker slot. */
+  width: 100%;
+  max-width: 640px;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--panel, var(--bg));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.grid-picker-overlay__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.grid-picker-overlay__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.grid-picker-overlay__close {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.grid-picker-overlay__close:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.grid-picker-overlay__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+/* Bounded map viewport (Leaflet needs a sized container; bounded, not
+ * fixed-tall, per the WebKitGTK layout-fit discipline). */
+.grid-picker-overlay__map {
+  min-height: 280px;
+  height: 360px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.grid-picker-overlay__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.grid-picker-overlay__readout {
+  font-size: 12px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.grid-picker-overlay__actions {
+  display: inline-flex;
+  gap: 8px;
+}
+.grid-picker-overlay__cancel,
+.grid-picker-overlay__confirm {
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.grid-picker-overlay__cancel {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.grid-picker-overlay__cancel:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+.grid-picker-overlay__confirm {
+  background: var(--accent);
+  color: var(--bg);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+}
+.grid-picker-overlay__confirm:hover:not(:disabled) {
+  background: var(--accent-2, var(--accent));
+}
+.grid-picker-overlay__confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

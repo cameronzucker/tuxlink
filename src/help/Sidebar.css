@@ -41,7 +41,7 @@
 
 .tux-help-sb-item:hover {
   color: var(--text);
-  background: rgba(245, 159, 60, 0.04);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .tux-help-sb-item.active {
@@ -131,7 +131,7 @@
   text-decoration: none;
   cursor: pointer;
 }
-.tux-help-sb-hit:hover { background: rgba(245, 159, 60, 0.04); }
+.tux-help-sb-hit:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .tux-help-sb-hit.active {
   background: var(--accent-soft);
   border-left-color: var(--accent);

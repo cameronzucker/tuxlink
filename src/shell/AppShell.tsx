@@ -51,11 +51,17 @@ import { applyColorScheme, saveColorScheme } from './colorScheme';
 const SettingsPanel = lazy(() =>
   import('./SettingsPanel').then((m) => ({ default: m.SettingsPanel })),
 );
+const MapTileSettingsPanel = lazy(() =>
+  import('../settings/MapTileSettingsPanel').then((m) => ({ default: m.MapTileSettingsPanel })),
+);
 const ThemeDesigner = lazy(() =>
   import('./ThemeDesigner').then((m) => ({ default: m.ThemeDesigner })),
 );
 const AboutDialog = lazy(() =>
   import('./AboutDialog').then((m) => ({ default: m.AboutDialog })),
+);
+const UninstallCleanupDialog = lazy(() =>
+  import('./UninstallCleanupDialog').then((m) => ({ default: m.UninstallCleanupDialog })),
 );
 // tuxlink-a2gd: location-aware Catalog Builder (sibling overlay panel, not a main-content view).
 const CatalogBuilderPanel = lazy(() =>
@@ -274,6 +280,10 @@ export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Inline LAN map-tile source config overlay (tuxlink-a1cc / dyop, design §8.7),
+  // opened from Tools → Settings → Map tiles…. The one reachable home for the
+  // dyop tile backend; same backdrop pattern as SettingsPanel.
+  const [mapTileSettingsOpen, setMapTileSettingsOpen] = useState(false);
   // Inline theme designer overlay (tuxlink-vgth), opened from View → Color
   // Scheme → Customize…. Same backdrop pattern as SettingsPanel.
   const [themeDesignerOpen, setThemeDesignerOpen] = useState(false);
@@ -281,6 +291,8 @@ export function AppShell() {
   // Help → Documentation now opens a separate Tauri webview window via
   // help_window_open (tuxlink-0gsy / spec §4); no in-process state.
   const [aboutOpen, setAboutOpen] = useState(false);
+  // Inline uninstall cleanup dialog (tuxlink-uodl), opened from Help.
+  const [uninstallCleanupOpen, setUninstallCleanupOpen] = useState(false);
   // tuxlink-a2gd: inline Catalog Builder ("Find a Gateway"), opened from Message → Find a Gateway.
   const [catalogBuilderOpen, setCatalogBuilderOpen] = useState(false);
   // tuxlink-eymu: Request Center overlay. Carries the initial inner view;
@@ -380,15 +392,13 @@ export function AppShell() {
 
   const { messages, error } = useMailbox(selectedFolder);
   const inbox = useMailbox('inbox');
-  const sent = useMailbox('sent');
   // tuxlink-qxqj: the redesigned mailbox bar surfaces outbox-queue depth so
   // the operator knows what's waiting on the next CMS connect without
   // navigating to the Outbox folder. Cheap query — the 10s refetch matches
-  // inbox/sent's polling cadence; no extra IPC burden.
+  // the other sidebar badge queries; no extra IPC burden.
   const outbox = useMailbox('outbox');
-  // tuxlink-ca5x: Archive count for the sidebar badge. Per spec §6 (D9), user
-  // folders show total count (matching Sent), not unread — archived messages
-  // are almost always already read; "0 unread / 180 total" would mislead.
+  // tuxlink-ca5x + tuxlink-etxt: Archive participates in read/unread state,
+  // so its sidebar badge follows Inbox semantics (unread only), not total.
   const archive = useMailbox('archive');
   useMailboxChangeEvents();
   // tuxlink-f62f: operator-created user folders, rendered in the sidebar's
@@ -450,7 +460,9 @@ export function AppShell() {
 
   // Sidebar badges (mock B): Inbox = unread count ("3"), Outbox = queue depth
   // ("1 to send" mirrored from the status bar — same `outbox.messages.length`),
-  // Drafts = local draft count, Sent = total ("87"). tuxlink-gp8b: Outbox was wired into the sidebar by
+  // Drafts = local draft count, Archive = unread count. Sent intentionally has
+  // no total badge: it is history, not an actionable queue/unread surface.
+  // tuxlink-gp8b: Outbox was wired into the sidebar by
   // tuxlink-su2h (PR #219) but its count never made it into this object, so the
   // sidebar showed no badge while the status bar showed the same number — same
   // source data, two surfaces, only one rendered.
@@ -461,13 +473,12 @@ export function AppShell() {
       inbox: inbox.messages.filter((m) => m.unread).length,
       outbox: outbox.messages.length,
       drafts: draftMessages.length,
-      sent: sent.messages.length,
       // tuxlink-etxt: Archive badge = unread count (matches Inbox badge semantics).
       // User-folder count badges are intentionally deferred — they'd need a per-folder
       // N+1 query; user-folder unread still surfaces in-list via the unread row style.
       archive: archive.messages.filter((m) => m.unread).length,
     }),
-    [inbox.messages, outbox.messages, draftMessages, sent.messages, archive.messages],
+    [inbox.messages, outbox.messages, draftMessages, archive.messages],
   );
 
   // Status data (callsign / grid / connection) — single poll, shared by the
@@ -830,6 +841,7 @@ export function AppShell() {
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => setSettingsOpen(true),
+    openMapTileSettings: () => setMapTileSettingsOpen(true),
     openThemeDesigner: () => setThemeDesignerOpen(true),
     openAbout: () => setAboutOpen(true),
     // tuxlink-0gsy / spec §4.1: Help → Documentation opens the separate
@@ -849,6 +861,7 @@ export function AppShell() {
         console.error('logging_window_open failed:', err);
       });
     },
+    openUninstallCleanup: () => setUninstallCleanupOpen(true),
     reportIssue: () => {
       // tuxlink-qjgx Task 8: Report Issue flow — auto-export + pre-filled
       // GitHub URL. The controller handles Save As → export → browser open
@@ -1266,6 +1279,12 @@ export function AppShell() {
         </Suspense>
       )}
 
+      {mapTileSettingsOpen && (
+        <Suspense fallback={null}>
+          <MapTileSettingsPanel open={true} onClose={() => setMapTileSettingsOpen(false)} />
+        </Suspense>
+      )}
+
       {themeDesignerOpen && (
         <Suspense fallback={null}>
           <ThemeDesigner open={true} onClose={() => setThemeDesignerOpen(false)} />
@@ -1275,6 +1294,12 @@ export function AppShell() {
       {aboutOpen && (
         <Suspense fallback={null}>
           <AboutDialog open={true} onClose={() => setAboutOpen(false)} />
+        </Suspense>
+      )}
+
+      {uninstallCleanupOpen && (
+        <Suspense fallback={null}>
+          <UninstallCleanupDialog open={true} onClose={() => setUninstallCleanupOpen(false)} />
         </Suspense>
       )}
 

@@ -194,13 +194,13 @@ describe('<FolderSidebar> (compact rail + flyout — Mock B)', () => {
     expect(onSelect).toHaveBeenCalledWith('archive');
   });
 
-  it('shows counts for Inbox + Sent (suppresses zero/missing) as vertical chips', () => {
+  it('shows actionable counts and suppresses Sent totals as vertical chips', () => {
     render(
       <FolderSidebar compact selectedFolder="inbox" onSelectFolder={() => {}} counts={{ inbox: 3, sent: 87 }} />,
     );
     // Rail count chips (`.vcount`) carry the `folder-count-<id>` testid.
     expect(screen.getByTestId('folder-count-inbox')).toHaveTextContent('3');
-    expect(screen.getByTestId('folder-count-sent')).toHaveTextContent('87');
+    expect(screen.queryByTestId('folder-count-sent')).toBeNull();
     // Outbox has no count → no chip.
     expect(screen.queryByTestId('folder-count-outbox')).toBeNull();
   });

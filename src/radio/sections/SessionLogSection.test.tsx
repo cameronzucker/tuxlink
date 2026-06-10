@@ -88,6 +88,53 @@ describe('<SessionLogSection>', () => {
     expect(copied).toContain(`line ${SESSION_LOG_VISIBLE_ENTRY_LIMIT + 2}`);
   });
 
+  it('preserves scrollback when new entries arrive after the operator scrolls upward', () => {
+    const { container, rerender } = render(<SessionLogSection entries={FIXTURE} />);
+    const scroll = container.querySelector('.log-scroll') as HTMLDivElement;
+    Object.defineProperty(scroll, 'scrollHeight', { configurable: true, value: 1200 });
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 160 });
+
+    scroll.scrollTop = 0;
+    fireEvent.scroll(scroll);
+
+    rerender(
+      <SessionLogSection
+        entries={[
+          ...FIXTURE,
+          { ts: '05:36:02', level: 'info', message: 'late line' },
+        ]}
+      />,
+    );
+
+    expect(scroll.scrollTop).toBe(0);
+  });
+
+  it('keeps following the live tail when new entries arrive near the bottom', () => {
+    let scrollHeight = 1200;
+    const { container, rerender } = render(<SessionLogSection entries={FIXTURE} />);
+    const scroll = container.querySelector('.log-scroll') as HTMLDivElement;
+    Object.defineProperty(scroll, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 160 });
+
+    scroll.scrollTop = 1030;
+    fireEvent.scroll(scroll);
+    scrollHeight = 1400;
+
+    rerender(
+      <SessionLogSection
+        entries={[
+          ...FIXTURE,
+          { ts: '05:36:02', level: 'info', message: 'late line' },
+        ]}
+      />,
+    );
+
+    expect(scroll.scrollTop).toBe(1400);
+  });
+
   // Operator smoke 2026-05-31: Clear button alongside Copy. The owning hook
   // decides whether clear is local-only or also drains backend history.
   describe('Clear control', () => {

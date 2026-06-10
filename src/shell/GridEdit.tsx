@@ -33,6 +33,7 @@
 import { useState } from 'react';
 import type { PositionSource } from './useStatus';
 import { validateGrid, normalizeGrid } from '../wizard/validators';
+import { GridPickerOverlay } from './GridPickerOverlay';
 
 function extractErrorMessage(err: unknown): string {
   if (err && typeof err === 'object' && 'detail' in err) {
@@ -57,6 +58,7 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps, onUseManu
   const [editing, setEditing] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
 
   function enterEdit() {
     setInputValue(grid ?? '');
@@ -103,6 +105,28 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps, onUseManu
     }
   }
 
+  // Commit a grid chosen on the map (triage #18). The overlay returns an
+  // already-normalized, on-map-derived grid; commit it via the same onCommit
+  // path the typed-entry flow uses (config_set_grid → sticky-Manual).
+  function commitPickedGrid(grid: string) {
+    setShowPicker(false);
+    const result = onCommit(grid);
+    if (result instanceof Promise) {
+      result
+        .then(() => {
+          setEditing(false);
+          setError(null);
+        })
+        .catch((err: unknown) => {
+          setError(extractErrorMessage(err));
+          // Stay in edit mode so the operator can retry / type instead.
+        });
+    } else {
+      setEditing(false);
+      setError(null);
+    }
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Escape') {
       cancelEdit();
@@ -138,12 +162,37 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps, onUseManu
             setError(null);
           }}
           onKeyDown={handleKeyDown}
-          onBlur={() => finishEdit('revert')}
+          // Don't revert-on-blur while the map picker is open — opening it
+          // moves focus off the input, which must not cancel the edit.
+          onBlur={() => {
+            if (!showPicker) finishEdit('revert');
+          }}
         />
+        {/* Triage #18: set the locator by dropping a pin on the offline map,
+            for operators without Geographica / a geocoder. */}
+        <button
+          type="button"
+          className="dash-grid-pick-map"
+          data-testid="grid-pick-on-map"
+          // Use onMouseDown so the click registers before the input's onBlur.
+          onMouseDown={(e) => {
+            e.preventDefault();
+            setShowPicker(true);
+          }}
+        >
+          ▸ Pick on map…
+        </button>
         {error && (
           <div className="dash-grid-error" data-testid="grid-error" role="alert">
             {error}
           </div>
+        )}
+        {showPicker && (
+          <GridPickerOverlay
+            initialGrid={inputValue.trim() || grid}
+            onConfirm={commitPickedGrid}
+            onCancel={() => setShowPicker(false)}
+          />
         )}
       </div>
     );

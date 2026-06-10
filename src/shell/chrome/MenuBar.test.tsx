@@ -49,7 +49,7 @@ describe('MenuBar', () => {
     const onAction = vi.fn();
     render(<MenuBar onAction={onAction} />);
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
-    fireEvent.click(screen.getByRole('button', { name: 'GitHub dark' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Repository Dark' }));
     expect(onAction).toHaveBeenCalledWith('menu:view:scheme:github-dark');
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
     fireEvent.click(screen.getByRole('button', { name: 'Office dark' }));

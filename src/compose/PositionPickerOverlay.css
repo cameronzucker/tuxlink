@@ -1,0 +1,193 @@
+/* PositionPickerOverlay — large in-app dimmed-backdrop picker (design §6).
+ * Width-CONSTRAINED centered panel (no-stretched-full-width-ui); the map
+ * viewport is bounded-height so Leaflet renders under WebKitGTK. Mirrors the
+ * GridPickerOverlay chrome so the two pickers feel like one tool. */
+
+.position-picker-overlay__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.position-picker-overlay__panel {
+  /* Larger than the grid picker — this is the "expand to a roomy map" fix for
+   * the cramped inline strip — but still capped, never edge-to-edge. */
+  width: 100%;
+  max-width: 860px;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--panel, var(--bg));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.position-picker-overlay__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.position-picker-overlay__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.position-picker-overlay__close {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.position-picker-overlay__close:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.position-picker-overlay__tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.position-picker-overlay__hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.position-picker-overlay__reset {
+  margin-left: auto;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.position-picker-overlay__reset:hover {
+  border-color: var(--border-strong);
+  background: var(--bg);
+}
+
+/* Roomy, bounded map viewport (Leaflet needs a sized container; bounded, not
+ * fixed-tall, per the WebKitGTK layout-fit discipline). */
+.position-picker-overlay__map {
+  min-height: 320px;
+  height: 46vh;
+  max-height: 460px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.position-picker-overlay__locrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.position-picker-overlay__readout {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+}
+.position-picker-overlay__precision {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.position-picker-overlay__precision-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.position-picker-overlay__precision-seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.position-picker-overlay__precision-seg button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 11px;
+  background: var(--bg);
+  color: var(--text-dim);
+  border: none;
+  cursor: pointer;
+}
+.position-picker-overlay__precision-seg button + button {
+  border-left: 1px solid var(--border);
+}
+.position-picker-overlay__precision-seg button.is-active {
+  background: var(--accent);
+  color: var(--bg);
+}
+.position-picker-overlay__precision-seg button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.position-picker-overlay__precision-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.position-picker-overlay__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.position-picker-overlay__cancel,
+.position-picker-overlay__confirm {
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.position-picker-overlay__cancel {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.position-picker-overlay__cancel:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+.position-picker-overlay__confirm {
+  background: var(--accent);
+  color: var(--bg);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+}
+.position-picker-overlay__confirm:hover:not(:disabled) {
+  background: var(--accent-2, var(--accent));
+}
+.position-picker-overlay__confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

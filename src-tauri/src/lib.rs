@@ -37,6 +37,20 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[tauri::command]
+fn uninstall_cleanup_preview(
+    mode: crate::uninstall_cleanup::CleanupMode,
+) -> Result<crate::uninstall_cleanup::CleanupReport, String> {
+    crate::uninstall_cleanup::preview_current_user_cleanup(mode)
+}
+
+#[tauri::command]
+fn uninstall_cleanup_execute(
+    mode: crate::uninstall_cleanup::CleanupMode,
+) -> Result<crate::uninstall_cleanup::CleanupReport, String> {
+    crate::uninstall_cleanup::execute_current_user_cleanup(mode)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // tuxlink-wfw: on Linux/GTK the webkit2gtk DMA-BUF renderer (Mesa V3D on
@@ -437,6 +451,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            uninstall_cleanup_preview,
+            uninstall_cleanup_execute,
             crate::wizard::get_wizard_completed,
             crate::wizard::wizard_persist_cms,
             crate::wizard::wizard_persist_offline,

@@ -30,6 +30,49 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.45.0](https://github.com/cameronzucker/tuxlink/compare/v0.44.0...v0.45.0) (2026-06-10)
+
+
+### Features
+
+* **compose:** Position expand-to-overlay picker + precision selector (tuxlink-sdbd) ([d47bfac](https://github.com/cameronzucker/tuxlink/commit/d47bfac8114b73d6656f7d05441a60501e6aab44))
+
+## [0.44.0](https://github.com/cameronzucker/tuxlink/compare/v0.43.2...v0.44.0) (2026-06-10)
+
+
+### Features
+
+* **catalog:** pin-on-map location picker in Find a Gateway (tuxlink-3iav) ([9c86900](https://github.com/cameronzucker/tuxlink/commit/9c869005aa79d0c0835c6367f29215176e284744))
+* **map:** mount LAN tile-source settings at Tools → Settings → Map tiles… (tuxlink-a1cc) ([8528f23](https://github.com/cameronzucker/tuxlink/commit/8528f23a87282ade89cc6d0097ed0672ffaebd3f))
+
+
+### Bug Fixes
+
+* **favorites:** stop ARDOP favorites list overlapping panel controls (tuxlink-sm22) ([602a77f](https://github.com/cameronzucker/tuxlink/commit/602a77f9a3a6f918c220751f326ff925a6b125ec))
+* **mailbox:** suppress sent folder total badge ([30ce669](https://github.com/cameronzucker/tuxlink/commit/30ce669a5595a516e9619b18adb8c97a5ca05abd))
+* **mailbox:** suppress Sent folder total badge ([1ef915e](https://github.com/cameronzucker/tuxlink/commit/1ef915e64d5c73940d26033d4b5aa26ca6f3475a))
+* **radio:** preserve live log scrollback ([ce01f9a](https://github.com/cameronzucker/tuxlink/commit/ce01f9ace51854fd52d1cd7cb795bcd353c7659b))
+* **radio:** preserve live log scrollback ([f3a129f](https://github.com/cameronzucker/tuxlink/commit/f3a129f6b1b3f2ec8174d7b83a01b13bab904625))
+* **theme:** polish repository dark state colors ([ad5dbfb](https://github.com/cameronzucker/tuxlink/commit/ad5dbfb3c31c41ac1ec80996b2654e59ace49aad))
+* **theme:** polish Repository Dark state colors ([833fb76](https://github.com/cameronzucker/tuxlink/commit/833fb76c8fd59126863b061a9b3c4ecd4f275281))
+
+## [0.43.2](https://github.com/cameronzucker/tuxlink/compare/v0.43.1...v0.43.2) (2026-06-10)
+
+
+### Bug Fixes
+
+* **favorites:** align selector with radio panel controls ([6e9d5f2](https://github.com/cameronzucker/tuxlink/commit/6e9d5f2f918cbd52291fb16898cebb692825b86b))
+* **mailbox:** gate form replies on parsed payload ([570c4f1](https://github.com/cameronzucker/tuxlink/commit/570c4f14ee3128f9484dd951b0770498008e868e))
+* **mailbox:** preserve bare B2F catalog senders ([c29a101](https://github.com/cameronzucker/tuxlink/commit/c29a10137ef53b3a72f37d0352ac663d92761fe4))
+* **theme:** strengthen high contrast light tokens ([12dd8ad](https://github.com/cameronzucker/tuxlink/commit/12dd8ad290ef3895b453f7ec8a6baa4070627d87))
+
+## [0.43.1](https://github.com/cameronzucker/tuxlink/compare/v0.43.0...v0.43.1) (2026-06-10)
+
+
+### Bug Fixes
+
+* **logging:** keep local session log tail unredacted ([6e52bcb](https://github.com/cameronzucker/tuxlink/commit/6e52bcb340d7947937af6a7d179a4649e2f2a9dd))
+
 ## [0.43.0](https://github.com/cameronzucker/tuxlink/compare/v0.42.2...v0.43.0) (2026-06-10)
 
 

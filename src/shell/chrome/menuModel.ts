@@ -81,7 +81,7 @@ export const MENU_TREE: TopMenu[] = [
     // Customize action opens an inline panel, not a window.
     { label: 'Color scheme', submenu: [
       { id: 'menu:view:scheme:default', label: 'Default (dark)' },
-      { id: 'menu:view:scheme:github-dark', label: 'GitHub dark' },
+      { id: 'menu:view:scheme:github-dark', label: 'Repository Dark' },
       { id: 'menu:view:scheme:office-dark', label: 'Office dark' },
       { id: 'menu:view:scheme:daylight', label: 'Daylight (light)' },
       { id: 'menu:view:scheme:high-contrast-light', label: 'High contrast (light)' },
@@ -109,6 +109,9 @@ export const MENU_TREE: TopMenu[] = [
       // position precision). The former granular leaves (GPS state / Position
       // precision / a duplicate GPS) all opened the same box — consolidated.
       { id: 'menu:tools:settings_privacy', label: 'GPS & Privacy…' },
+      // tuxlink-a1cc / dyop: configure a LAN map-tile source (design §8.7) — the
+      // one reachable home for the dyop tile backend (no general prefs surface).
+      { id: 'menu:tools:settings_map_tiles', label: 'Map tiles…' },
     ] },
     // "Preferences" removed — it duplicated "Settings" (operator call 2026-05-22).
   ] },
@@ -119,6 +122,8 @@ export const MENU_TREE: TopMenu[] = [
     // tuxlink-qjgx alpha-logging Task 8: Logging window + Report Issue flow.
     { id: 'menu:help:logging', label: 'Logging…' },
     { id: 'menu:help:report_issue', label: 'Report Issue…' },
+    { separator: true },
+    { id: 'menu:help:uninstall_cleanup', label: 'Uninstall Cleanup…' },
   ] },
 ];
 

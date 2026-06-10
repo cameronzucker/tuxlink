@@ -15,11 +15,13 @@ function handlers(): MenuHandlers {
     selectFolder: vi.fn(),
     setScheme: vi.fn(),
     openSettings: vi.fn(),
+    openMapTileSettings: vi.fn(),
     openThemeDesigner: vi.fn(),
     openAbout: vi.fn(),
     openHelp: vi.fn(),
     openLogging: vi.fn(),
     reportIssue: vi.fn(),
+    openUninstallCleanup: vi.fn(),
     openCatalogBuilder: vi.fn(),
     openRequestCenter: vi.fn(),
     quit: vi.fn(),
@@ -172,12 +174,26 @@ describe('dispatchMenuAction', () => {
     expect(h.reportIssue).toHaveBeenCalledOnce();
   });
 
+  it('routes Help → Uninstall Cleanup to openUninstallCleanup', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:help:uninstall_cleanup', h);
+    expect(h.openUninstallCleanup).toHaveBeenCalledOnce();
+  });
+
   // tuxlink-39b: the consolidated GPS & Privacy settings item opens the panel
   // (previously a cluster of dead no-op stubs).
   it('routes the GPS & Privacy settings item to openSettings', () => {
     const h = handlers();
     dispatchMenuAction('menu:tools:settings_privacy', h);
     expect(h.openSettings).toHaveBeenCalledOnce();
+  });
+
+  // tuxlink-a1cc / dyop: the Map tiles settings item opens the LAN tile-source
+  // config overlay (design §8.7) — the reachable home for the dyop backend.
+  it('routes the Map tiles settings item to openMapTileSettings', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:tools:settings_map_tiles', h);
+    expect(h.openMapTileSettings).toHaveBeenCalledOnce();
   });
 
   // tuxlink-eymu: the Request Center replaces the standalone Catalog Request

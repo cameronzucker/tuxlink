@@ -7,7 +7,7 @@
 // localStorage — a UI preference, not validated app config — and is applied
 // before React mounts (main.tsx) so there's no flash of the default theme.
 //
-// Practical dark schemes (GitHub dark, Office dark), light schemes (Daylight,
+// Practical dark schemes (Repository Dark, Office dark), light schemes (Daylight,
 // High-Contrast Light, Paper), and specialty schemes (Night-Red, Grayscale)
 // join the dark slate default. Each preset declares its mode via
 // `color-scheme: light|dark` in the matching App.css block so WebKitGTK
@@ -45,7 +45,7 @@ export interface ColorSchemeOption {
  *  then light family, then specialty). */
 export const COLOR_SCHEMES: ColorSchemeOption[] = [
   { id: 'default', label: 'Default (dark)', mode: 'dark' },
-  { id: 'github-dark', label: 'GitHub dark', mode: 'dark' },
+  { id: 'github-dark', label: 'Repository Dark', mode: 'dark' },
   { id: 'office-dark', label: 'Office dark', mode: 'dark' },
   { id: 'daylight', label: 'Daylight (light)', mode: 'light' },
   { id: 'high-contrast-light', label: 'High contrast (light)', mode: 'light' },
@@ -319,7 +319,7 @@ export const DEFAULT_DARK_TOKENS: Record<CustomThemeToken, string> = {
   'tux-danger-fg': '#1a0e02',
 };
 
-/** GitHub dark inspired preset. Mirrored from App.css's github-dark block. */
+/** Repository Dark preset. Mirrored from App.css's github-dark block. */
 export const GITHUB_DARK_TOKENS: Record<CustomThemeToken, string> = {
   'bg': '#0d1117',
   'surface': '#161b22',
@@ -333,7 +333,7 @@ export const GITHUB_DARK_TOKENS: Record<CustomThemeToken, string> = {
   'text-faint': '#6e7681',
   'accent': '#58a6ff',
   'accent-2': '#79c0ff',
-  'unread-dot': '#f2cc60',
+  'unread-dot': '#58a6ff',
   'success': '#3fb950',
   'error': '#ff7b72',
   'info': '#58a6ff',
@@ -360,7 +360,7 @@ export const OFFICE_DARK_TOKENS: Record<CustomThemeToken, string> = {
   'text-faint': '#8a9099',
   'accent': '#4f9cf9',
   'accent-2': '#7bbcff',
-  'unread-dot': '#ffcc4d',
+  'unread-dot': '#4f9cf9',
   'success': '#4ecb8f',
   'error': '#ff6b6b',
   'info': '#6db9ff',
@@ -401,6 +401,35 @@ export const DAYLIGHT_TOKENS: Record<CustomThemeToken, string> = {
   'tux-danger-fg': '#ffffff',
 };
 
+/** High-contrast light preset token values. Mirrored from App.css so the
+ *  designer can start from the stronger harsh-sun palette instead of falling
+ *  back to dark tokens. */
+export const HIGH_CONTRAST_LIGHT_TOKENS: Record<CustomThemeToken, string> = {
+  'bg': '#f2f2f2',
+  'surface': '#ffffff',
+  'surface-2': '#e8e8e8',
+  'elevated': '#d4d4d4',
+  'border': '#4f4f4f',
+  'border-strong': '#121212',
+  'border-soft': '#8c8c8c',
+  'text': '#050505',
+  'text-dim': '#1f1f1f',
+  'text-faint': '#333333',
+  'accent': '#6f2b00',
+  'accent-2': '#4a1b00',
+  'unread-dot': '#5f2600',
+  'success': '#00491f',
+  'error': '#740014',
+  'info': '#00285d',
+  'form-tag': '#3d116e',
+  'modem-accent': '#003f1f',
+  'modem-accent-2': '#004d26',
+  'modem-accent-soft': 'rgba(0, 63, 31, 0.18)',
+  'modem-accent-fg': '#ffffff',
+  'tux-accent-fg': '#ffffff',
+  'tux-danger-fg': '#ffffff',
+};
+
 /** Map a base scheme id to its token values for the designer's "base from"
  *  picker. Only presets bundled with token snapshots are listed; the rest
  *  fall through to DEFAULT_DARK_TOKENS for safety. */
@@ -408,5 +437,6 @@ export function tokensForBase(base: PresetScheme): Record<CustomThemeToken, stri
   if (base === 'github-dark') return GITHUB_DARK_TOKENS;
   if (base === 'office-dark') return OFFICE_DARK_TOKENS;
   if (base === 'daylight') return DAYLIGHT_TOKENS;
+  if (base === 'high-contrast-light') return HIGH_CONTRAST_LIGHT_TOKENS;
   return DEFAULT_DARK_TOKENS;
 }

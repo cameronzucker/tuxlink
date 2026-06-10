@@ -81,7 +81,7 @@ mailbox, or any configuration.
 View → Color Scheme lists the eight bundled presets:
 
 - **Default (dark).** The cool-slate dark theme; the design baseline.
-- **GitHub dark.** A code-host-inspired dark theme with neutral
+- **Repository Dark.** A code-host-inspired dark theme with neutral
   surfaces, blue highlights, and green radio affordances.
 - **Office dark.** An Outlook/Office-inspired charcoal theme with crisp
   blue command highlights for dense operator workflows.

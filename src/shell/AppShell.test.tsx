@@ -301,11 +301,11 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.queryByTestId('tab-strip')).toBeNull();
   });
 
-  it('sidebar shows Inbox active + counts (Inbox unread, Sent total)', () => {
+  it('sidebar shows actionable folder badges without a Sent total', () => {
     renderShell();
     expect(screen.getByTestId('folder-inbox')).toHaveAttribute('aria-current', 'true');
     expect(screen.getByTestId('folder-count-inbox')).toHaveTextContent('1'); // 1 unread
-    expect(screen.getByTestId('folder-count-sent')).toHaveTextContent('1'); // 1 total
+    expect(screen.queryByTestId('folder-count-sent')).toBeNull();
   });
 
   // tuxlink-etxt Task 14: Archive badge must show UNREAD count, not total.
@@ -449,6 +449,18 @@ describe('<AppShell> — Mock B topology', () => {
     expect(
       await screen.findByRole('dialog', { name: /find a gateway/i }, { timeout: 10000 }),
     ).toBeInTheDocument();
+  });
+
+  // tuxlink-a1cc / dyop: production mount path — the lazy LAN tile-source config
+  // overlay actually opens from Tools → Settings → Map tiles…. Until this mounts,
+  // the merged dyop tile backend is unreachable dead weight.
+  it('Tools → Map tiles opens the LAN tile-source settings (production mount path)', async () => {
+    renderShell();
+    clickMenu('Tools', /map tiles/i);
+    expect(
+      await screen.findByRole('dialog', { name: /map tiles/i }, { timeout: 10000 }),
+    ).toBeInTheDocument();
+    expect(await screen.findByTestId('map-tile-source-settings')).toBeInTheDocument();
   });
 
   // Option (b): with a message selected, Message → Reply opens a reply window.
@@ -799,6 +811,41 @@ describe('AppShell.css contacts grid span (tuxlink-r4je)', () => {
     expect(appShellCss).toMatch(
       /\.layout-b \.panes\s*>\s*\.contacts-panel\s*\{[^}]*grid-column:\s*2\s*\/\s*4/,
     );
+  });
+});
+
+describe('AppShell.css theme-derived interaction colors (tuxlink-36h1 + tuxlink-23ck)', () => {
+  it('derives selected and range-selected message row colors from the active accent', () => {
+    const rowStateCss = appShellCss.slice(
+      appShellCss.indexOf('.layout-b .row.selected'),
+      appShellCss.indexOf('.layout-b .row:focus-visible'),
+    );
+    expect(rowStateCss).toContain('color-mix(in srgb, var(--accent) 18%, transparent)');
+    expect(rowStateCss).toContain('color-mix(in srgb, var(--accent) 12%, transparent)');
+    expect(rowStateCss).not.toContain('245, 159, 60');
+  });
+
+  it('derives the unread indicator glow from --unread-dot', () => {
+    const unreadDotCss = appShellCss.slice(
+      appShellCss.indexOf('.layout-b .row .from .unread-dot'),
+      appShellCss.indexOf('.layout-b .row:not(.unread) .from'),
+    );
+    expect(unreadDotCss).toContain('background: var(--unread-dot)');
+    expect(unreadDotCss).toContain('color-mix(in srgb, var(--unread-dot) 60%, transparent)');
+    expect(unreadDotCss).not.toContain('255, 209, 102');
+  });
+
+  it('derives dashboard source segment state colors from theme tokens', () => {
+    const sourceSegmentCss = appShellCss.slice(
+      appShellCss.indexOf('.layout-b .dashboard .dash-source-segment.manual.selected'),
+      appShellCss.indexOf('.layout-b .dashboard .dash-source-segment:focus-visible'),
+    );
+    expect(sourceSegmentCss).toContain('color-mix(in srgb, var(--accent) 45%, transparent)');
+    expect(sourceSegmentCss).toContain('color-mix(in srgb, var(--success) 14%, transparent)');
+    expect(sourceSegmentCss).toContain('color-mix(in srgb, var(--success) 8%, transparent)');
+    expect(sourceSegmentCss).toContain('background: var(--surface-2)');
+    expect(sourceSegmentCss).not.toContain('245, 159, 60');
+    expect(sourceSegmentCss).not.toContain('93, 214, 160');
   });
 });
 

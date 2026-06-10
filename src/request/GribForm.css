@@ -11,6 +11,11 @@
   gap: 0;
   font-size: 13px;
   color: var(--text);
+  /* Cap the form at a readable column so its width:100% fields (and the region
+     map) don't stretch edge-to-edge when the window is maximized (smoke-walk
+     item 23 / no-stretched-full-width-ui). Mirrors the .position-form-v2 /
+     .check-in-form / .ics309-form-v2 cap so all native forms agree. */
+  max-width: 700px;
 }
 
 /* ── Crumb / back row ── */
