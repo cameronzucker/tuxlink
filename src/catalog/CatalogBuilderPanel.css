@@ -69,12 +69,39 @@
   color: var(--text-dim);
 }
 .catalog-field input[type='text'],
-.catalog-field > input:not([type]) {
+.catalog-field > input:not([type]),
+.catalog-field__location input:not([type]) {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 6px 8px;
+}
+
+/* Your-location row: grid field + "Pick on map…" affordance (tuxlink-3iav). */
+.catalog-field__location {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.catalog-field__location input {
+  flex: 1;
+  min-width: 0;
+}
+.catalog-field__pick {
+  flex: none;
+  white-space: nowrap;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.catalog-field__pick:hover {
+  border-color: var(--border-strong);
+  background: var(--elevated);
 }
 .catalog-check {
   display: flex;

@@ -1,7 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
+
+// The "Pick on map…" affordance mounts GridPickerOverlay → GridMapPicker → BaseMap,
+// which pulls in react-leaflet/leaflet + its CSS/image assets. Mock them the same
+// way GridPickerOverlay.test.tsx does so the panel's tests run headless in jsdom.
+import { fireMapEvent, resetMapMock } from '../map/testMapMock';
+vi.mock('react-leaflet', async () => (await import('../map/testMapMock')).createReactLeafletMock());
+vi.mock('leaflet', async () => (await import('../map/testMapMock')).createLeafletMock());
+vi.mock('../map/assets/world-equirect-2048.png', () => ({ default: '/world-equirect-2048.png' }));
+vi.mock('leaflet/dist/leaflet.css', () => ({}));
+vi.mock('leaflet/dist/images/marker-icon.png', () => ({ default: '/marker-icon.png' }));
+vi.mock('leaflet/dist/images/marker-icon-2x.png', () => ({ default: '/marker-icon-2x.png' }));
+vi.mock('leaflet/dist/images/marker-shadow.png', () => ({ default: '/marker-shadow.png' }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 import { invoke } from '@tauri-apps/api/core';
@@ -34,6 +46,7 @@ const overlayZIndex = (css: string): number => {
 };
 
 beforeEach(() => {
+  resetMapMock();
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     if (cmd === 'config_read') return { grid: 'DM43bp' };
@@ -56,6 +69,42 @@ describe('CatalogBuilderPanel', () => {
   it('prefills location from config_read full-precision grid', async () => {
     renderPanel(<CatalogBuilderPanel onClose={() => {}} />);
     await waitFor(() => expect(screen.getByLabelText(/your location/i)).toHaveValue('DM43bp'));
+  });
+
+  // tuxlink-3iav (Map-Picker v2 P1 / triage #18): the "Your location" field was
+  // type-only — an operator without Geographica/a geocoder has no way to derive
+  // their Maidenhead to seed the distance origin. A "Pick on map…" affordance
+  // opens the shared GridPickerOverlay (pin mode, 4-char) and writes the picked
+  // grid back to the field. Reuses the same overlay GridEdit wired for #18.
+  it('opens the map picker from "Pick on map…" and writes the pinned grid to Your location (tuxlink-3iav)', async () => {
+    renderPanel(<CatalogBuilderPanel onClose={() => {}} />);
+    // Wait for the config_read prefill so we can prove the pin OVERWRITES it.
+    await waitFor(() => expect(screen.getByLabelText(/your location/i)).toHaveValue('DM43bp'));
+
+    fireEvent.click(screen.getByRole('button', { name: /pick on map/i }));
+    expect(screen.getByTestId('grid-picker-overlay')).toBeInTheDocument();
+
+    act(() => {
+      fireMapEvent('click', { lat: 33.6, lng: -118.2 });
+    });
+    fireEvent.click(screen.getByTestId('grid-picker-confirm'));
+
+    // Field holds the pinned 4-char locator; the overlay closed.
+    const loc = screen.getByLabelText(/your location/i) as HTMLInputElement;
+    expect(loc.value).toMatch(/^[A-Z]{2}\d{2}$/);
+    expect(loc.value).not.toBe('DM43bp');
+    expect(screen.queryByTestId('grid-picker-overlay')).toBeNull();
+  });
+
+  it('cancelling the map picker leaves Your location unchanged (tuxlink-3iav)', async () => {
+    renderPanel(<CatalogBuilderPanel onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByLabelText(/your location/i)).toHaveValue('DM43bp'));
+    fireEvent.click(screen.getByRole('button', { name: /pick on map/i }));
+    // The overlay has both a text "Cancel" button and an aria-label="Cancel" ×;
+    // target the text button by its content (mirrors GridPickerOverlay's test).
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(screen.queryByTestId('grid-picker-overlay')).toBeNull();
+    expect(screen.getByLabelText(/your location/i)).toHaveValue('DM43bp');
   });
 
   it('calls catalog_fetch_stations with the checked modes on Get Stations', async () => {

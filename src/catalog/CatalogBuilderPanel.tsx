@@ -23,6 +23,7 @@ import {
 import { FAVORITES_QUERY_KEY } from '../favorites/useFavorites';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
 import type { Favorite, FavoriteDial, StationsFile } from '../favorites/types';
+import { GridPickerOverlay } from '../shell/GridPickerOverlay';
 import './CatalogBuilderPanel.css';
 
 export interface CatalogBuilderPanelProps {
@@ -90,6 +91,7 @@ function gatewayToPrefillDial(g: Gateway, mode: ListingMode): FavoriteDial | nul
 
 export function CatalogBuilderPanel({ onClose, activePrefillMode }: CatalogBuilderPanelProps) {
   const [grid, setGrid] = useState('');
+  const [pickingLocation, setPickingLocation] = useState(false);
   const [modes, setModes] = useState<Set<ListingMode>>(new Set());
   const [radiusMi, setRadiusMi] = useState(DEFAULT_RADIUS_MI);
   const [queueState, setQueueState] = useState<QueueState>({ kind: 'idle' });
@@ -228,12 +230,26 @@ export function CatalogBuilderPanel({ onClose, activePrefillMode }: CatalogBuild
           >
             <label className="catalog-field">
               <span>Your location</span>
-              <input
-                aria-label="Your location"
-                value={grid}
-                onChange={(e) => setGrid(e.target.value)}
-                placeholder="Set your location"
-              />
+              {/* tuxlink-3iav (#18): the grid is the distance origin. Type it, or
+                  drop a pin on the offline map — the only path for an operator
+                  without Geographica/a geocoder to derive their Maidenhead. The
+                  pin reports a 4-char locator (broadcast default), which is the
+                  right precision for a distance origin. */}
+              <div className="catalog-field__location">
+                <input
+                  aria-label="Your location"
+                  value={grid}
+                  onChange={(e) => setGrid(e.target.value)}
+                  placeholder="Set your location"
+                />
+                <button
+                  type="button"
+                  className="catalog-field__pick"
+                  onClick={() => setPickingLocation(true)}
+                >
+                  Pick on map…
+                </button>
+              </div>
             </label>
 
             <fieldset className="catalog-field">
@@ -292,6 +308,19 @@ export function CatalogBuilderPanel({ onClose, activePrefillMode }: CatalogBuild
           </footer>
         )}
       </div>
+
+      {/* Pin-on-map location picker (tuxlink-3iav / #18). Portals to body, so it
+          centers over the whole app rather than clipping inside this panel. */}
+      {pickingLocation && (
+        <GridPickerOverlay
+          initialGrid={grid}
+          onConfirm={(picked) => {
+            setGrid(picked);
+            setPickingLocation(false);
+          }}
+          onCancel={() => setPickingLocation(false)}
+        />
+      )}
     </div>
   );
 }
