@@ -140,6 +140,7 @@ describe('color scheme model', () => {
       'night-red',
       'grayscale',
     ]);
+    expect(COLOR_SCHEMES.find((s) => s.id === 'github-dark')?.label).toBe('Repository Dark');
     expect(COLOR_SCHEMES.every((s) => s.label.length > 0)).toBe(true);
   });
 
@@ -232,6 +233,18 @@ describe('high-contrast light preset tokens (tuxlink-msoy)', () => {
       expect(ratio).toBeGreaterThanOrEqual(1.3);
       expect(ratio).toBeLessThanOrEqual(1.8);
     }
+  });
+});
+
+describe('practical dark preset tokens (tuxlink-pfhw + tuxlink-23ck)', () => {
+  it('keeps the renamed Repository Dark CSS preset mirrored into the designer tokens', () => {
+    expect(cssTokens(":root[data-theme='github-dark']")['unread-dot']).toBe(GITHUB_DARK_TOKENS['unread-dot']);
+    expect(GITHUB_DARK_TOKENS['unread-dot']).toBe(GITHUB_DARK_TOKENS.accent);
+  });
+
+  it('uses theme-native unread indicators for Office dark instead of the default amber dot', () => {
+    expect(cssTokens(":root[data-theme='office-dark']")['unread-dot']).toBe(OFFICE_DARK_TOKENS['unread-dot']);
+    expect(OFFICE_DARK_TOKENS['unread-dot']).toBe(OFFICE_DARK_TOKENS.accent);
   });
 });
 
