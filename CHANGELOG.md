@@ -27,6 +27,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.46.0](https://github.com/cameronzucker/tuxlink/compare/v0.45.0...v0.46.0) (2026-06-10)
+
+
+### Features
+
+* **uninstall:** expose cleanup flow in app ([a3422b8](https://github.com/cameronzucker/tuxlink/commit/a3422b859fa1c3fc6c2d77fdeb0cfde4cd16cd7b))
+
 ## [0.45.0](https://github.com/cameronzucker/tuxlink/compare/v0.44.0...v0.45.0) (2026-06-10)
 
 
