@@ -17,6 +17,12 @@
 
 import { useEffect } from 'react';
 import { MapTileSourceSettings } from './MapTileSourceSettings';
+// The shared `.tux-settings-*` overlay chrome (backdrop position:fixed, centered
+// panel, header/close) lives in SettingsPanel.css. This panel is lazy-loaded into
+// its OWN chunk, so it MUST import that chrome itself — relying on the GPS
+// SettingsPanel chunk being loaded first left the backdrop unpositioned and the
+// overlay rendered inline, shoving the app under the bottom bar (tuxlink-jgom).
+import '../shell/SettingsPanel.css';
 import './MapTileSettingsPanel.css';
 
 export interface MapTileSettingsPanelProps {
