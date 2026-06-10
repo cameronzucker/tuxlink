@@ -25,6 +25,7 @@ import {
 } from '../grib/types';
 import { GridMapPicker } from '../map/GridMapPicker';
 import { signedBboxToGribRegion } from '../map/gribRegion';
+import { Icon } from './icons';
 import './GribForm.css';
 
 export interface GribFormProps {
@@ -79,30 +80,32 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
   };
 
   return (
-    <div className="grib-form" data-testid="request-grib">
-      <header className="grib-form__header">
+    <div className="grib" data-testid="request-grib">
+      {/* Crumb / back row */}
+      <div className="crumb">
         <button
           type="button"
-          className="grib-form__back"
+          className="back"
           data-testid="grib-back"
           onClick={onBack}
         >
-          ← Back
+          <Icon name="arrow" size={15} />
+          Back
         </button>
-        <div className="grib-form__title">
-          <h3>GRIB by area</h3>
-          <p className="grib-form__subtitle">
-            Build a weather GRIB request from Saildocs (3rd-party service) and add it to your
-            request. The response arrives in your inbox as a Private message with a GRIB-1
-            attachment — save it and open in zyGrib, OpenCPN, or another GRIB viewer.
-          </p>
-        </div>
-      </header>
+        <span className="crumb-title">GRIB by area</span>
+      </div>
 
-      <div className="grib-form__body">
-        <section className="grib-section">
-          <h4>Region</h4>
-          <div className="grib-region-map" data-testid="grib-region-map">
+      <p className="grib-blurb">
+        Build a weather GRIB request from Saildocs (3rd-party service) and add it to your
+        request. The response arrives in your inbox as a Private message with a GRIB-1
+        attachment — save it and open in zyGrib, OpenCPN, or another GRIB viewer.
+      </p>
+
+      <div className="grib-body">
+        {/* ── Region ── */}
+        <section className="gsec">
+          <h5>Region</h5>
+          <div className="map" data-testid="grib-region-map">
             <GridMapPicker
               mode="box"
               onBoxChange={(a, b) => {
@@ -115,7 +118,7 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
             />
           </div>
           <p className="grib-hint">Drag a box on the map to set the region, or edit the fields below.</p>
-          <div className="grib-region-row">
+          <div className="grow">
             <LatField label="Lat 0" value={request.lat0} onChange={(d, dir) => setLat('lat0', d, dir)} testId="grib-lat0" />
             <LatField label="Lat 1" value={request.lat1} onChange={(d, dir) => setLat('lat1', d, dir)} testId="grib-lat1" />
             <LonField label="Lon 0" value={request.lon0} onChange={(d, dir) => setLon('lon0', d, dir)} testId="grib-lon0" />
@@ -123,10 +126,11 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
           </div>
         </section>
 
-        <section className="grib-section">
-          <h4>Grid spacing (degrees)</h4>
-          <div className="grib-grid-row">
-            <label className="grib-field">
+        {/* ── Grid spacing ── */}
+        <section className="gsec">
+          <h5>Grid spacing (degrees)</h5>
+          <div className="grow">
+            <label className="fld">
               <span>dlat</span>
               <input
                 type="number"
@@ -140,7 +144,7 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
                 }
               />
             </label>
-            <label className="grib-field">
+            <label className="fld">
               <span>dlon</span>
               <input
                 type="number"
@@ -158,8 +162,9 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
           </div>
         </section>
 
-        <section className="grib-section">
-          <h4>Forecast times (hours)</h4>
+        {/* ── Forecast times ── */}
+        <section className="gsec">
+          <h5>Forecast times (hours)</h5>
           <input
             type="text"
             className="grib-times-input"
@@ -175,26 +180,32 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
           )}
         </section>
 
-        <section className="grib-section">
-          <h4>Parameters</h4>
-          <div className="grib-params-row">
-            {ALL_GRIB_PARAMETERS.map((p) => (
-              <label key={p} className="grib-param-label">
-                <input
-                  type="checkbox"
-                  data-testid={`grib-param-${p}`}
-                  checked={request.params.includes(p)}
-                  onChange={() => toggleParam(p)}
-                />
-                {PARAM_LABELS[p]}
-              </label>
-            ))}
+        {/* ── Parameters ── */}
+        <section className="gsec">
+          <h5>Parameters</h5>
+          <div className="params">
+            {ALL_GRIB_PARAMETERS.map((p) => {
+              const checked = request.params.includes(p);
+              return (
+                <label key={p} className={'pchip' + (checked ? ' on' : '')}>
+                  <input
+                    type="checkbox"
+                    data-testid={`grib-param-${p}`}
+                    checked={checked}
+                    onChange={() => toggleParam(p)}
+                  />
+                  <span className="dot" />
+                  {PARAM_LABELS[p]}
+                </label>
+              );
+            })}
           </div>
           <div className="grib-hint">Empty = Saildocs default (PRESS, WIND).</div>
         </section>
 
-        <section className="grib-section">
-          <h4>Mode</h4>
+        {/* ── Mode ── */}
+        <section className="gsec">
+          <h5>Mode</h5>
           <div className="grib-mode-row">
             <label className="grib-mode-option">
               <input
@@ -221,7 +232,7 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
           </div>
           {request.mode === 'sub' && (
             <div className="grib-sub-row">
-              <label className="grib-field">
+              <label className="fld">
                 <span>Days</span>
                 <input
                   type="number"
@@ -239,7 +250,7 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
                   placeholder="optional"
                 />
               </label>
-              <label className="grib-field">
+              <label className="fld">
                 <span>Time (HH:MM UTC)</span>
                 <input
                   type="text"
@@ -255,8 +266,9 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
           )}
         </section>
 
-        <section className="grib-section">
-          <h4>Subject</h4>
+        {/* ── Subject ── */}
+        <section className="gsec">
+          <h5>Subject</h5>
           <input
             type="text"
             className="grib-subject-input"
@@ -268,14 +280,15 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
         </section>
       </div>
 
-      <footer className="grib-form__footer">
+      <footer className="grib-footer">
         <button
           type="button"
-          className="grib-form__add"
+          className="gadd"
           data-testid="grib-add"
           onClick={onAdd}
           disabled={addDisabled}
         >
+          <Icon name="plus" size={16} />
           Add to request
         </button>
       </footer>
@@ -292,7 +305,7 @@ interface LatFieldProps {
 
 function LatField({ label, value, onChange, testId }: LatFieldProps) {
   return (
-    <label className="grib-field">
+    <label className="fld">
       <span>{label}</span>
       <div className="grib-field-row">
         <input
@@ -319,7 +332,7 @@ function LatField({ label, value, onChange, testId }: LatFieldProps) {
 
 function LonField({ label, value, onChange, testId }: LatFieldProps) {
   return (
-    <label className="grib-field">
+    <label className="fld">
       <span>{label}</span>
       <div className="grib-field-row">
         <input
