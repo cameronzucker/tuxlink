@@ -387,15 +387,13 @@ export function AppShell() {
 
   const { messages, error } = useMailbox(selectedFolder);
   const inbox = useMailbox('inbox');
-  const sent = useMailbox('sent');
   // tuxlink-qxqj: the redesigned mailbox bar surfaces outbox-queue depth so
   // the operator knows what's waiting on the next CMS connect without
   // navigating to the Outbox folder. Cheap query — the 10s refetch matches
-  // inbox/sent's polling cadence; no extra IPC burden.
+  // the other sidebar badge queries; no extra IPC burden.
   const outbox = useMailbox('outbox');
-  // tuxlink-ca5x: Archive count for the sidebar badge. Per spec §6 (D9), user
-  // folders show total count (matching Sent), not unread — archived messages
-  // are almost always already read; "0 unread / 180 total" would mislead.
+  // tuxlink-ca5x + tuxlink-etxt: Archive participates in read/unread state,
+  // so its sidebar badge follows Inbox semantics (unread only), not total.
   const archive = useMailbox('archive');
   useMailboxChangeEvents();
   // tuxlink-f62f: operator-created user folders, rendered in the sidebar's
@@ -457,7 +455,9 @@ export function AppShell() {
 
   // Sidebar badges (mock B): Inbox = unread count ("3"), Outbox = queue depth
   // ("1 to send" mirrored from the status bar — same `outbox.messages.length`),
-  // Drafts = local draft count, Sent = total ("87"). tuxlink-gp8b: Outbox was wired into the sidebar by
+  // Drafts = local draft count, Archive = unread count. Sent intentionally has
+  // no total badge: it is history, not an actionable queue/unread surface.
+  // tuxlink-gp8b: Outbox was wired into the sidebar by
   // tuxlink-su2h (PR #219) but its count never made it into this object, so the
   // sidebar showed no badge while the status bar showed the same number — same
   // source data, two surfaces, only one rendered.
@@ -468,13 +468,12 @@ export function AppShell() {
       inbox: inbox.messages.filter((m) => m.unread).length,
       outbox: outbox.messages.length,
       drafts: draftMessages.length,
-      sent: sent.messages.length,
       // tuxlink-etxt: Archive badge = unread count (matches Inbox badge semantics).
       // User-folder count badges are intentionally deferred — they'd need a per-folder
       // N+1 query; user-folder unread still surfaces in-list via the unread row style.
       archive: archive.messages.filter((m) => m.unread).length,
     }),
-    [inbox.messages, outbox.messages, draftMessages, sent.messages, archive.messages],
+    [inbox.messages, outbox.messages, draftMessages, archive.messages],
   );
 
   // Status data (callsign / grid / connection) — single poll, shared by the
