@@ -27,6 +27,26 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.42.1](https://github.com/cameronzucker/tuxlink/compare/v0.42.0...v0.42.1) (2026-06-10)
+
+
+### Bug Fixes
+
+* **about:** update product status to Alpha ([3c99b6d](https://github.com/cameronzucker/tuxlink/commit/3c99b6db4bb444d280454b2bc10fd594c135c77a))
+
+## [0.42.0](https://github.com/cameronzucker/tuxlink/compare/v0.41.1...v0.42.0) (2026-06-10)
+
+
+### Features
+
+* add practical dark theme presets ([5e57537](https://github.com/cameronzucker/tuxlink/commit/5e575374b71b9a9f9b6cb24ad0fca01f41f43d13))
+
+
+### Bug Fixes
+
+* **catalog:** make gateway results selectable and toggle favorites ([471e3d6](https://github.com/cameronzucker/tuxlink/commit/471e3d63cf1ff1b73de9dbc0f0971333e0d682f2))
+* **catalog:** make gateway results selectable and toggle favorites ([8f91768](https://github.com/cameronzucker/tuxlink/commit/8f9176811e6933c1459665937446558ce7145230))
+
 ## [0.41.1](https://github.com/cameronzucker/tuxlink/compare/v0.41.0...v0.41.1) (2026-06-09)
 
 

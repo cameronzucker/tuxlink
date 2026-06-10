@@ -25,9 +25,10 @@ describe('AboutDialog', () => {
     expect(screen.getByTestId('about-panel')).toBeInTheDocument();
     expect(screen.getByText('Tuxlink')).toBeInTheDocument();
     expect(screen.getByTestId('about-version').textContent ?? '').toMatch(/^v\d+\.\d+\.\d+/);
-    // The pre-alpha disclaimer is load-bearing — the operator must see it.
-    expect(screen.getByText(/Pre-alpha developer preview/i)).toBeInTheDocument();
+    // The Alpha caution is load-bearing: the operator must see the status.
+    expect(screen.getByText(/Alpha release/i)).toBeInTheDocument();
     expect(screen.getByText(/not for operational deployment/i)).toBeInTheDocument();
+    expect(screen.queryByText(/pre-alpha/i)).toBeNull();
     expect(screen.getByText(/version\.txt via release-please/i)).toBeInTheDocument();
   });
 

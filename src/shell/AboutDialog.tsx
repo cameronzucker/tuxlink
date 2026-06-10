@@ -94,16 +94,16 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
             B2F engine for amateur-radio operators.
           </p>
 
-          <p className="tux-about-prealpha" role="note">
-            <strong>Pre-alpha developer preview.</strong> Working code paths
-            exist, but this build is not release-ready: installable packages,
-            production CMS registration, and on-air RF validation remain
-            pending. Do not rely on Tuxlink for live emergency traffic.
+          <p className="tux-about-status-note" role="note">
+            <strong>Alpha release.</strong> Core workflows are available for
+            operator testing, but this build is still evolving: production CMS
+            registration and on-air RF validation remain pending. Do not rely
+            on Tuxlink for live emergency traffic.
           </p>
 
           <dl className="tux-about-meta">
             <dt>Status</dt>
-            <dd>Pre-alpha; not for operational deployment</dd>
+            <dd>Alpha; not for operational deployment</dd>
             <dt>Build</dt>
             <dd>Version from version.txt via release-please</dd>
             <dt>License</dt>

@@ -7,8 +7,8 @@
 // handshake). This test fails loudly the moment a source falls out of sync —
 // it is the regression guard for the 0.0.1-forever bug.
 //
-// `Cargo.lock` is intentionally NOT checked here: `cargo --locked` in CI already
-// enforces Cargo.lock-vs-Cargo.toml consistency.
+// `pnpm run sync:version` repairs the static sources from version.txt; this
+// test is the CI-visible check that the repair has already been applied.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -29,6 +29,11 @@ function jsonVersion(rel: string): string {
   return JSON.parse(read(rel)).version;
 }
 
+/// Root package version from the release-please manifest.
+function releasePleaseManifestVersion(): string {
+  return JSON.parse(read('.github/.release-please-manifest.json'))['.'];
+}
+
 /// `[package] version` of a Cargo.toml (first `version = "..."` inside the
 /// `[package]` table, before any later section).
 function cargoPackageVersion(rel: string): string {
@@ -37,9 +42,22 @@ function cargoPackageVersion(rel: string): string {
   return m[1];
 }
 
+/// `[[package]] name = "tuxlink"` version from Cargo.lock.
+function cargoLockTuxlinkVersion(): string {
+  const m = read('src-tauri/Cargo.lock').match(
+    /\[\[package\]\]\nname = "tuxlink"\nversion = "([^"]+)"/,
+  );
+  if (!m) throw new Error('no tuxlink package version found in Cargo.lock');
+  return m[1];
+}
+
 describe('version consistency (tuxlink-1k3x)', () => {
   it('canonical version.txt is a clean semver', () => {
     expect(canonical).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it('release-please manifest matches version.txt', () => {
+    expect(releasePleaseManifestVersion()).toBe(canonical);
   });
 
   it('package.json matches version.txt', () => {
@@ -52,5 +70,9 @@ describe('version consistency (tuxlink-1k3x)', () => {
 
   it('src-tauri/Cargo.toml (CARGO_PKG_VERSION → Winlink handshake) matches version.txt', () => {
     expect(cargoPackageVersion('src-tauri/Cargo.toml')).toBe(canonical);
+  });
+
+  it('src-tauri/Cargo.lock tuxlink package entry matches version.txt', () => {
+    expect(cargoLockTuxlinkVersion()).toBe(canonical);
   });
 });
