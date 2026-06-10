@@ -80,7 +80,7 @@
   line-height: 1.5;
 }
 
-.tux-about-prealpha {
+.tux-about-status-note {
   margin: 0 0 16px;
   padding: 10px 12px;
   font-size: 12px;
@@ -170,7 +170,7 @@
   .tux-about-credit {
     font-size: 12px;
   }
-  .tux-about-prealpha {
+  .tux-about-status-note {
     font-size: 13px;
   }
 }
