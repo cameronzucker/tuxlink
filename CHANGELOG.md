@@ -27,6 +27,16 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.43.2](https://github.com/cameronzucker/tuxlink/compare/v0.43.1...v0.43.2) (2026-06-10)
+
+
+### Bug Fixes
+
+* **favorites:** align selector with radio panel controls ([6e9d5f2](https://github.com/cameronzucker/tuxlink/commit/6e9d5f2f918cbd52291fb16898cebb692825b86b))
+* **mailbox:** gate form replies on parsed payload ([570c4f1](https://github.com/cameronzucker/tuxlink/commit/570c4f14ee3128f9484dd951b0770498008e868e))
+* **mailbox:** preserve bare B2F catalog senders ([c29a101](https://github.com/cameronzucker/tuxlink/commit/c29a10137ef53b3a72f37d0352ac663d92761fe4))
+* **theme:** strengthen high contrast light tokens ([12dd8ad](https://github.com/cameronzucker/tuxlink/commit/12dd8ad290ef3895b453f7ec8a6baa4070627d87))
+
 ## [0.43.1](https://github.com/cameronzucker/tuxlink/compare/v0.43.0...v0.43.1) (2026-06-10)
 
 
