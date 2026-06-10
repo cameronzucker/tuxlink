@@ -1,58 +1,68 @@
-# 2026-06-09 fox-bog-hawk — Post Office modes BUILT end-to-end → PR #516
+# 2026-06-09 fox-bog-hawk — Post Office modes SHIPPED + MERGED (PR #516)
 
-## Arc
+## Outcome
 
 Executed the execution-ready plan `docs/superpowers/plans/2026-06-08-telnet-post-office.md`
-(`tuxlink-6c9y`) end-to-end via `superpowers:subagent-driven-development`: every task TDD'd
-with a two-stage subagent review (spec compliance, then code quality), findings remediated.
-Shipped **the complete feature** — Phases A (backend), B (frontend), C (connect command), D
-(docs) — as **READY PR [#516](https://github.com/cameronzucker/tuxlink/pull/516)** (no
-self-merge; operator smokes).
+(`tuxlink-6c9y`) **end to end** via `superpowers:subagent-driven-development` — every task TDD'd
+with a two-stage subagent review (spec compliance → code quality), findings remediated. Shipped
+the **complete feature** (Phases A backend / B frontend / C connect command / D docs) as
+**PR [#516](https://github.com/cameronzucker/tuxlink/pull/516) — now MERGED** to `main`.
+**`bd tuxlink-6c9y` is CLOSED.**
 
 Phase C was gated on `bsiy`. `bsiy` **merged to `main` mid-session** (PR #480), so — with the
-operator's explicit go-ahead — the branch merged `origin/main` (128 commits; bsiy's
-`winlink::inbound_selection`) and Phase C was built on bsiy's generalized decide-seam, rather
-than stopping at A/B/D.
+operator's explicit go-ahead — the branch merged `origin/main` (bsiy's `winlink::inbound_selection`)
+and Phase C was built on bsiy's generalized decide-seam rather than stopping at A/B/D. A later
+re-merge cleared a CONFLICTING state (one keep-both conflict in the `ui_commands.rs` test module);
+the operator then merged.
 
-## State
+## State (re-verified at handoff)
 
-- **Branch `bd-tuxlink-6c9y/telnet-post-office`:** fully pushed, 0/0 vs its origin counterpart.
-- **PR #516:** OPEN, **READY** (not draft). `mergeable: CONFLICTING` — the branch is ~15 commits
-  behind `origin/main` (main advanced during the session). **Re-merge `origin/main` before
-  landing** (the prior merge resolution was all Config-literal keep-both + one decide-closure
-  signature fix; the next re-merge will be similar). This does NOT block the operator smoke.
-- **Verification (all green, on the branch HEAD):** clippy `--all-targets -D warnings` 0 warnings;
-  full `cargo test` 1505 lib + integration, 0 failed; full `pnpm vitest run` 174 files / 1994
-  tests, 0 failed; typecheck clean; lint:docs clean.
-- **Worktree `worktrees/bd-tuxlink-6c9y-telnet-post-office`:** clean. Gitignored local-only:
-  `dev/scratch/po-operator-smoke-checklist.md` (full Tier-B checklist, also folded into the PR
-  body); `dev/scratch/pr-body-6c9y.md`; `src-tauri/target/` (clean up when done).
-- **`bd tuxlink-6c9y`:** still `in_progress` (PR open, not merged). Move to done on merge.
+- **PR #516:** `MERGED`. Origin branch `bd-tuxlink-6c9y/telnet-post-office` **deleted** on merge.
+- **`bd tuxlink-6c9y`:** `CLOSED` (force-closed — the `6c9y → bsiy` dep blocked normal close; see
+  cleanup item 2).
+- **Verification at the merged HEAD (`31e43d0`):** clippy `--all-targets -D warnings` 0 warnings ·
+  cargo test 1626 lib + integration, 0 failed · vitest 181 files / 2063 tests, 0 failed · typecheck
+  · lint:docs — all green.
+- **Worktree `worktrees/bd-tuxlink-6c9y-telnet-post-office`:** tracked-clean, no untracked; local
+  branch is **dead** (ADR 0017 — its PR merged), no live bd claim (6c9y closed) → **disposal
+  candidate** (cleanup item 1). Gitignored local-only content: design-phase scratch from the
+  design session (`.superpowers/brainstorm/...`, `dev/adversarial/2026-06-08-post-office-*-codex.md`,
+  `dev/scratch/plan-grounding/*.md`, `dev/scratch/codex-*.txt`) + this session's
+  `dev/scratch/po-operator-smoke-checklist.md` (also folded into the merged PR body) +
+  `dev/scratch/pr-body-6c9y.md`; **`src-tauri/target/` is 30G**. The 7 `git stash` entries belong to
+  OTHER branches (task-amd-main-ui, fl6e, main) — NOT this session; leave them.
 
-## What shipped (detail is in the PR #516 body)
+## What shipped (detail in the merged PR #516 body)
 
-A: base-callsign `-L`, Mesh→C routing, narrowed gate + send-time MID selection, multi-batch
-send, relay-banner wiring, inbound marker, favorites persistence. B: enabled session types +
-titles, panel-mode mapping, `TelnetPostOfficeRadioPanel`, AppShell dispatch, inbound chip. C:
-`telnet_post_office_connect`/`_abort` on bsiy's decide-seam (abort force-closes the socket;
-Drop-guarded single-flight), relay-state banner. D: `33-operating-modes.md` routing-model +
-`-L` + AREDN-omission + built-status update.
+A: base-callsign `-L`, Mesh→C routing, narrowed gate + send-time MID selection, multi-batch send,
+relay-banner wiring, inbound marker, favorites persistence. B: enabled session types + titles,
+panel-mode mapping, `TelnetPostOfficeRadioPanel` (host/favorites + Outbox-selection, no consent
+modal), AppShell dispatch, inbound chip. C: `telnet_post_office_connect`/`_abort` on bsiy's
+decide-seam (abort force-closes the socket; Drop-guarded single-flight), relay-state banner.
+D: `33-operating-modes.md` routing model + `-L` login + AREDN-omission + built status.
 
-## Pending / next
+## Cleanup / follow-ups (operator, non-blocking — the feature is shipped)
 
-1. **Operator smoke (Tier B, pure TCP, no RF):** stand up a local RMS Relay on `127.0.0.1:8772`
-   and walk the checklist in the PR #516 body (or `dev/scratch/po-operator-smoke-checklist.md`):
-   local `-L` login + send-selection + inbound-selection prompt + Post Office chip + relay
-   banner; network full-callsign + favorites; N=0 receive-only; abort cancels an in-flight dial.
-2. **Re-merge `origin/main`** into the branch to clear the PR's CONFLICTING state before landing.
-3. **Known-minors (recorded in the PR, non-blocking):** PostOffice-only marker (Mesh unmarked,
-   by design); MID same-second collision is a pre-existing `generate_mid` property; the
-   empty-callsign `-L` indicator deliberately mirrors the backend; `panelTitle`'s `intentSuffix`
-   ternary is non-exhaustive-by-construction (plan's deliberate spot-test choice) — hardening
-   candidate.
+1. **Dispose the post-merge worktree** `worktrees/bd-tuxlink-6c9y-telnet-post-office` per the ADR 0009
+   ritual (reclaims 30G of `target/`; clears the dead branch). Nothing to propagate — all merged.
+   The design-phase scratch (grounding / adversarial transcripts) is local-only reference per
+   CLAUDE.md; archive only if you want to keep those traces.
+2. **`bd tuxlink-bsiy` is stale-open** despite merging as PR #480 (that session left its bd issue
+   open). Close it for tracker hygiene; it was the only dep blocking `6c9y`'s normal close.
+3. **Known-minors (recorded in the merged PR, all non-blocking):** PostOffice-only marker (Mesh
+   unmarked, by design); `generate_mid` same-second-same-callsign MID collision is pre-existing
+   (the selection guard keys on MID); the empty-callsign `-L` indicator deliberately mirrors the
+   backend (no tuxlink-added validation); `panelTitle`'s `intentSuffix` ternary is
+   non-exhaustive-by-construction (the plan's deliberate spot-test choice) — a hardening candidate.
 
-## Note on the merge cadence
+## Operator smoke (optional now — already merged)
 
-The branch will keep drifting behind `main` (this Pi has several concurrent agent sessions —
-`eymu`/request-center, an `n3hw` drafts session, etc., all landing PRs). The re-merge before
-land is the only outstanding integration step; the work itself is complete + green.
+The Tier-B checklist (pure TCP, local RMS Relay on `127.0.0.1:8772`) is in the merged PR #516 body
+and in the worktree's `dev/scratch/po-operator-smoke-checklist.md`. Worth running post-merge to
+confirm the live relay-dial path before relying on Post Office operationally.
+
+## Note
+
+This Pi runs several concurrent agent sessions (eymu/request-center, l80q/message_move_bulk, an
+n3hw drafts session) — branches drift behind `main` fast; the re-merge dance this session did twice
+is the routine integration tax, not a problem.
