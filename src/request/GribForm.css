@@ -175,7 +175,7 @@
 /* ── Times error ── */
 .grib-times-error {
   margin-top: 6px;
-  color: var(--danger, #c0392b);
+  color: var(--error);
   font-size: 11px;
 }
 
@@ -220,6 +220,10 @@
   width: 0;
   height: 0;
   margin: 0;
+}
+.pchip:focus-within {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 2px;
 }
 
 .pchip .dot {

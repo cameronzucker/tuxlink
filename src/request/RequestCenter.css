@@ -568,8 +568,7 @@
 .send:hover:not(:disabled) {
   filter: brightness(1.04);
 }
-.send:disabled,
-.send.dis {
+.send:disabled {
   background: var(--surface-2);
   color: var(--text-faint);
   box-shadow: none;
@@ -597,15 +596,6 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-.result .ok {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--success);
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 5px;
 }
 .result .ln {
   font-size: 12.5px;
