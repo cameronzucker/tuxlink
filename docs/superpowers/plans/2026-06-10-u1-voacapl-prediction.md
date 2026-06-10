@@ -13,6 +13,45 @@
 - Real captured fixtures (tracked in this branch): `src-tauri/tests/fixtures/voacap/dm43-dm34-input-deck.dat` and `dm43-dm34-voacapx.out` (24 hourly blocks, DM43→DM34, N0DAJ VARA HF dials).
 - Reference prototypes (gitignored scratch): `gen_voacap_deck.py`, `parse_voacapx_out.py` — both verified against the fixtures.
 
+---
+
+## ⚠️ REVISION 2 — adversarial-review dispositions (READ BEFORE EXECUTING)
+
+This plan passed a `build-robust-features` cross-provider adversarial review (4 reviewers, 2 providers). The companion doc **[`2026-06-10-u1-voacapl-prediction-adrev.md`](2026-06-10-u1-voacapl-prediction-adrev.md)** holds the ranked findings (F1–F19) and their dispositions. **The executor MUST apply every "FIX in plan" disposition from that table** — they are mandatory plan amendments, not optional. The DTO contract (Task 1) and the TDD scaffolding (below) are already revised here; the remaining per-finding fixes are specified against their task numbers in the dispositions table.
+
+Highest-impact amendments (do not skip):
+- **F1/F12 (Task 1 DTO — already revised below):** carry the *exact input* `frequencies_khz` through to results; never re-derive frequency from VOACAP's lossy 1-decimal display. Expose `snr`, `mufday`, `ssn`, `month`, `year` so U3 can rank by a defensible composite, not raw REL.
+- **F7 (Tasks 1/2):** REL alone (vs VOACAP's generic `REQ.SNR=73 dB`) mis-ranks data modes — set a data-mode `REQ.SNR`/bandwidth and rank on REL gated by SNR-margin/MUF.
+- **F2 (Tasks 6/7):** resolve the sidecar via `ShellExt::shell(&app).sidecar("voacapl")`, NOT `BaseDirectory::Resource`.
+- **F5 (Task 7):** bundle `database/version.w32` or voacapl hard-aborts.
+- **F4/F16 (Task 3):** tokenize to the label column (col 67), validate `freqs.len()==freq_count`, guard SNR length.
+- **F8 (Tasks 4/6):** inject `Clock`; use the real UTC year (not hardcoded 2026).
+- **F9 (Task 2):** clamp frequencies to the HF window (≈1.8–30 MHz); error on >11, don't silent-truncate.
+- **F10 (Task 5):** use `tempfile::TempDir` (RAII cleanup), fail-closed if `app_cache_dir()` is unavailable.
+
+### Mandatory per-task scaffolding (build-robust-features)
+
+**Every task** below carries this preamble and completion check; **every task group** ends with the review loop.
+
+```
+BEFORE starting work:
+1. Invoke superpowers:test-driven-development (or read .claude/skills/test-driven-development/).
+2. Read docs/pitfalls/testing-pitfalls.md and docs/pitfalls/implementation-pitfalls.md.
+Follow TDD: write the failing test → run it red → implement minimal code → run green.
+
+BEFORE marking the task complete:
+1. Review your tests against docs/pitfalls/testing-pitfalls.md (error paths? edge cases?).
+2. Run the task's tests + `cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings` (re-run clippy to exit 0; it hides later-target lints).
+3. Confirm green with pasted output before claiming done (verification-before-completion).
+
+AFTER each task group: do a minimum of three review rounds from multiple
+perspectives; if substantive issues remain in round 3, keep going. Then continue.
+```
+
+Task groups for the review loop: **{1,2,3}** (pure logic: DTO + deck + parser), **{4,5}** (SSN + engine), **{6,7}** (command wiring + bundling/CI).
+
+---
+
 **Reused existing code:**
 - `crate::position::grid_to_lat_lon(grid: &str) -> Option<(f64, f64)>` (`src-tauri/src/position/maidenhead.rs`) — signed decimal degrees (W/S negative), square-center. The deck builder splits sign into VOACAP's hemisphere letter.
 - `Gateway` / `StationListing` / `ListingMode` (`src-tauri/src/catalog/stations.rs`) — `frequencies_khz: Vec<f64>` is **kHz**; VOACAP wants MHz (÷1000).
@@ -69,25 +108,40 @@ pub struct PredictionInputs {
     /// Station Maidenhead grid (from `Gateway.grid`).
     pub rx_grid: String,
     /// Frequencies in kHz (from `Gateway.frequencies_khz`); converted to MHz for VOACAP.
+    /// F1: these EXACT values are carried through to results by index — never
+    /// re-derived from VOACAP's lossy display.
     pub frequencies_khz: Vec<f64>,
+    /// UTC year (F8: used for the SSN lookup; do NOT hardcode).
+    pub year: i32,
     /// UTC month 1-12.
     pub month: u8,
     /// Smoothed sunspot number (from the SSN cache).
     pub ssn: f64,
     /// TX power in watts (v1 default 100 W; operator-configurable).
     pub tx_power_w: f64,
+    /// F7: required SNR (dB) for the SYSTEM card, calibrated to the data mode
+    /// (VARA/ARDOP), NOT VOACAP's generic 73 dB default. v1 default documented
+    /// in Task 2; this is what REL is computed against.
+    pub req_snr_db: f64,
 }
 
 /// Per-frequency reliability over the 24 UTC hours.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelReliability {
-    /// Frequency in kHz (echoes the input, rounded to VOACAP's 2-decimal MHz display).
+    /// F1: the EXACT input dial in kHz (e.g. 7103.0), carried through by column
+    /// index — the value U3 maps back to the operator's channel.
     pub frequency_khz: f64,
-    /// 24 reliability values (0.0-1.0), index = UTC hour 0..23.
+    /// The rounded MHz VOACAP actually computed this column at (informational;
+    /// 7103 kHz and 7108 kHz both compute at ~7.10/7.11 MHz). Lets the UI show
+    /// "computed at 7.10 MHz" without losing the real dial.
+    pub voacap_mhz: f64,
+    /// 24 reliability values (0.0-1.0), index = UTC hour 0..23. REL is vs `req_snr_db`.
     pub rel_by_hour: Vec<f64>,
-    /// 24 SNR values (dB), index = UTC hour 0..23.
+    /// 24 SNR values (dB), index = UTC hour 0..23 (F7: lets U3 rank by SNR margin).
     pub snr_by_hour: Vec<f64>,
+    /// 24 MUFday values (0.0-1.0), index = UTC hour 0..23 (F7: MUF-gating context).
+    pub mufday_by_hour: Vec<f64>,
 }
 
 /// Full prediction result for one path.
@@ -98,6 +152,10 @@ pub struct PathPrediction {
     pub bearing_deg: f64,
     /// Path distance in km (from VOACAP).
     pub distance_km: f64,
+    /// F12: SSN provenance so U3 can render "solar data N old".
+    pub ssn: f64,
+    pub year: i32,
+    pub month: u8,
     pub channels: Vec<ChannelReliability>,
 }
 
@@ -128,17 +186,26 @@ mod tests {
         let p = PathPrediction {
             bearing_deg: 301.65,
             distance_km: 215.2,
+            ssn: 100.0,
+            year: 2026,
+            month: 6,
             channels: vec![ChannelReliability {
                 frequency_khz: 7103.0,
+                voacap_mhz: 7.10,
                 rel_by_hour: vec![0.21; 24],
                 snr_by_hour: vec![65.0; 24],
+                mufday_by_hour: vec![0.69; 24],
             }],
         };
         let json = serde_json::to_string(&p).unwrap();
         assert!(json.contains("\"bearingDeg\":301.65"));
         assert!(json.contains("\"distanceKm\":215.2"));
         assert!(json.contains("\"relByHour\""));
+        assert!(json.contains("\"mufdayByHour\""));
+        assert!(json.contains("\"voacapMhz\":7.1"));
+        // F1: the exact dial survives, not a rounded 7100.
         assert!(json.contains("\"frequencyKhz\":7103.0"));
+        assert!(json.contains("\"ssn\":100.0"));
     }
 }
 ```
