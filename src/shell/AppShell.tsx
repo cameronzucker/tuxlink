@@ -60,6 +60,9 @@ const ThemeDesigner = lazy(() =>
 const AboutDialog = lazy(() =>
   import('./AboutDialog').then((m) => ({ default: m.AboutDialog })),
 );
+const UninstallCleanupDialog = lazy(() =>
+  import('./UninstallCleanupDialog').then((m) => ({ default: m.UninstallCleanupDialog })),
+);
 // tuxlink-a2gd: location-aware Catalog Builder (sibling overlay panel, not a main-content view).
 const CatalogBuilderPanel = lazy(() =>
   import('../catalog/CatalogBuilderPanel').then((m) => ({ default: m.CatalogBuilderPanel })),
@@ -288,6 +291,8 @@ export function AppShell() {
   // Help → Documentation now opens a separate Tauri webview window via
   // help_window_open (tuxlink-0gsy / spec §4); no in-process state.
   const [aboutOpen, setAboutOpen] = useState(false);
+  // Inline uninstall cleanup dialog (tuxlink-uodl), opened from Help.
+  const [uninstallCleanupOpen, setUninstallCleanupOpen] = useState(false);
   // tuxlink-a2gd: inline Catalog Builder ("Find a Gateway"), opened from Message → Find a Gateway.
   const [catalogBuilderOpen, setCatalogBuilderOpen] = useState(false);
   // tuxlink-eymu: Request Center overlay. Carries the initial inner view;
@@ -856,6 +861,7 @@ export function AppShell() {
         console.error('logging_window_open failed:', err);
       });
     },
+    openUninstallCleanup: () => setUninstallCleanupOpen(true),
     reportIssue: () => {
       // tuxlink-qjgx Task 8: Report Issue flow — auto-export + pre-filled
       // GitHub URL. The controller handles Save As → export → browser open
@@ -1288,6 +1294,12 @@ export function AppShell() {
       {aboutOpen && (
         <Suspense fallback={null}>
           <AboutDialog open={true} onClose={() => setAboutOpen(false)} />
+        </Suspense>
+      )}
+
+      {uninstallCleanupOpen && (
+        <Suspense fallback={null}>
+          <UninstallCleanupDialog open={true} onClose={() => setUninstallCleanupOpen(false)} />
         </Suspense>
       )}
 

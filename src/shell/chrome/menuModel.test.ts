@@ -22,7 +22,7 @@ const EXPECTED_IDS = [
   'menu:view:customize_theme',
   'menu:tools:find_gateway', 'menu:tools:templates', 'menu:tools:rig_control',
   'menu:tools:settings_connection', 'menu:tools:settings_privacy', 'menu:tools:settings_map_tiles',
-  'menu:help:about', 'menu:help:docs', 'menu:help:logging', 'menu:help:report_issue',
+  'menu:help:about', 'menu:help:docs', 'menu:help:logging', 'menu:help:report_issue', 'menu:help:uninstall_cleanup',
 ];
 
 describe('menu model', () => {
