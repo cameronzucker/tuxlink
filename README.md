@@ -182,8 +182,9 @@ toolchain only (no Go).
 
 Removing the package keeps operator data by default: messages, contacts,
 settings, station catalogs, logs, and OS-keyring credentials remain in the
-current user's profile so a reinstall resumes cleanly. To preview or remove
-that data deliberately, run:
+current user's profile so a reinstall resumes cleanly. Open **Help → Uninstall
+Cleanup…** in the app, or use the terminal, to preview or remove that data
+deliberately:
 
 ```bash
 tuxlink cleanup --dry-run

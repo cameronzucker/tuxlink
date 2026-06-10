@@ -122,6 +122,8 @@ export const MENU_TREE: TopMenu[] = [
     // tuxlink-qjgx alpha-logging Task 8: Logging window + Report Issue flow.
     { id: 'menu:help:logging', label: 'Logging…' },
     { id: 'menu:help:report_issue', label: 'Report Issue…' },
+    { separator: true },
+    { id: 'menu:help:uninstall_cleanup', label: 'Uninstall Cleanup…' },
   ] },
 ];
 

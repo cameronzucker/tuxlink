@@ -38,6 +38,8 @@ export interface MenuHandlers {
   openLogging: () => void;
   /** Open the Report Issue modal — auto-export + pre-filled GitHub URL (tuxlink-qjgx Task 8). */
   reportIssue: () => void;
+  /** Open the inline uninstall cleanup dialog (tuxlink-uodl). */
+  openUninstallCleanup: () => void;
   /** Open the inline Catalog Builder panel (tuxlink-a2gd) — location-aware
    *  station finder (direct /listings poll) + by-message info-category requests. */
   openCatalogBuilder: () => void;
@@ -95,6 +97,8 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
       h.openLogging(); return;
     case 'menu:help:report_issue':
       h.reportIssue(); return;
+    case 'menu:help:uninstall_cleanup':
+      h.openUninstallCleanup(); return;
     case 'menu:mailbox:inbox':
     case 'menu:mailbox:sent':
     case 'menu:mailbox:outbox':

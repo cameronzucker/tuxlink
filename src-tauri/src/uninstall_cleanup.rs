@@ -4,7 +4,7 @@
 //! explicit operator-run cleanup path (`tuxlink cleanup`) that can preview and
 //! remove known Tuxlink paths from the current user's XDG directories.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::io::{self, Write};
@@ -16,7 +16,7 @@ const KEYRING_SERVICE: &str = "tuxlink";
 const LEGACY_KEYRING_SERVICE: &str = "tuxlink-pat";
 const LISTENER_PASSWORD_ACCOUNT: &str = "p2p-listener:station-password";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupMode {
     Keep,
@@ -678,6 +678,18 @@ pub fn execute_plan(
     }
 }
 
+pub fn preview_current_user_cleanup(mode: CleanupMode) -> Result<CleanupReport, String> {
+    let env = CleanupEnv::from_process()?;
+    let plan = build_plan(mode, &env);
+    Ok(execute_plan(&plan, true, &NoopKeyringDeleter))
+}
+
+pub fn execute_current_user_cleanup(mode: CleanupMode) -> Result<CleanupReport, String> {
+    let env = CleanupEnv::from_process()?;
+    let plan = build_plan(mode, &env);
+    Ok(execute_plan(&plan, false, &RealKeyringDeleter))
+}
+
 fn remove_path(path: &Path) -> RemovalOutcome {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -1161,5 +1173,21 @@ mod tests {
             .iter()
             .any(|p| p.path == env.state_dir().join("logs")
                 && matches!(p.outcome, RemovalOutcome::WouldRemove)));
+    }
+
+    #[test]
+    fn cleanup_mode_deserializes_snake_case_for_tauri_commands() {
+        assert_eq!(
+            serde_json::from_str::<CleanupMode>("\"keep\"").unwrap(),
+            CleanupMode::Keep
+        );
+        assert_eq!(
+            serde_json::from_str::<CleanupMode>("\"transient\"").unwrap(),
+            CleanupMode::Transient
+        );
+        assert_eq!(
+            serde_json::from_str::<CleanupMode>("\"full\"").unwrap(),
+            CleanupMode::Full
+        );
     }
 }

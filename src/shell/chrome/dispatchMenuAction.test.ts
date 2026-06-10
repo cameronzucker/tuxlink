@@ -21,6 +21,7 @@ function handlers(): MenuHandlers {
     openHelp: vi.fn(),
     openLogging: vi.fn(),
     reportIssue: vi.fn(),
+    openUninstallCleanup: vi.fn(),
     openCatalogBuilder: vi.fn(),
     openRequestCenter: vi.fn(),
     quit: vi.fn(),
@@ -171,6 +172,12 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:help:report_issue', h);
     expect(h.reportIssue).toHaveBeenCalledOnce();
+  });
+
+  it('routes Help → Uninstall Cleanup to openUninstallCleanup', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:help:uninstall_cleanup', h);
+    expect(h.openUninstallCleanup).toHaveBeenCalledOnce();
   });
 
   // tuxlink-39b: the consolidated GPS & Privacy settings item opens the panel
