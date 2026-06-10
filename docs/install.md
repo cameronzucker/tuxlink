@@ -148,6 +148,40 @@ and unread count.
 **After the first CMS sync**, new messages appear in the Inbox. The Inbox remains
 empty until the first sync completes; this behavior is expected, not an error.
 
+## Uninstall and user-data cleanup
+
+Package removal keeps user data by default. This matches Linux desktop package
+expectations and avoids root-level maintainer scripts deleting data from the
+wrong home directory or OS keyring. After `apt remove tuxlink`, `dnf remove
+tuxlink`, or AppImage deletion, messages, contacts, settings, station catalogs,
+logs, webview cache, and keyring credentials may still exist in the user's XDG
+profile.
+
+Run the cleanup flow from the same user account before uninstalling, or after
+reinstalling if you already removed the package:
+
+```bash
+tuxlink cleanup --dry-run
+tuxlink cleanup
+```
+
+Choices:
+
+1. Keep user data. This is the normal uninstall behavior.
+2. Remove transient state only: webview cache/storage, map tile cache, logs,
+   window state, and stale pid files. Mailbox messages, contacts, stations,
+   drafts, settings, and credentials are kept.
+3. Remove all Tuxlink operator data: config, mailbox/messages, contacts,
+   stations, drafts/search databases, logs/cache/state, user-local launcher
+   leftovers, and known Tuxlink keyring entries.
+
+Full cleanup deletes keyring entries for the configured callsigns it can
+discover, the fixed listener station-password entry, and peer-password entries
+for callsigns found in Tuxlink listener/favorites files. Secret Service does not
+let Tuxlink enumerate every account under the `tuxlink` or legacy `tuxlink-pat`
+services, so inspect those services manually with a keyring manager if you used
+old builds with callsigns no longer present on disk.
+
 ## Troubleshooting
 
 ### "Keyring backend unavailable" or "secret-service not running"

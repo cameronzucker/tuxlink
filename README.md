@@ -178,6 +178,21 @@ Full install and first-run instructions live in
 **[docs/development.md](docs/development.md)**; the build needs the Rust
 toolchain only (no Go).
 
+### Uninstall and data cleanup
+
+Removing the package keeps operator data by default: messages, contacts,
+settings, station catalogs, logs, and OS-keyring credentials remain in the
+current user's profile so a reinstall resumes cleanly. To preview or remove
+that data deliberately, run:
+
+```bash
+tuxlink cleanup --dry-run
+tuxlink cleanup
+```
+
+The cleanup flow offers keep-data, transient/cache/log cleanup, and full
+operator-data cleanup choices.
+
 ## Interface
 
 The first-run wizard takes a new operator from install to first message with no
