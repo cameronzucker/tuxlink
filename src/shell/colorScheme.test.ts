@@ -14,6 +14,7 @@ import {
   DAYLIGHT_TOKENS,
   DEFAULT_DARK_TOKENS,
   GITHUB_DARK_TOKENS,
+  HIGH_CONTRAST_LIGHT_TOKENS,
   OFFICE_DARK_TOKENS,
   isColorScheme,
   isPresetScheme,
@@ -29,6 +30,13 @@ import {
   type CustomTheme,
   type CustomThemeToken,
 } from './colorScheme';
+
+const APP_CSS_MODULES = import.meta.glob('../App.css', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+});
+const APP_CSS = Object.values(APP_CSS_MODULES)[0] as string;
 
 beforeEach(() => {
   localStorage.clear();
@@ -52,6 +60,72 @@ function makeFixtureCustomTheme(overrides: Partial<CustomTheme> = {}): CustomThe
     tokens,
     ...overrides,
   };
+}
+
+type Rgb = [number, number, number];
+
+function cssBlock(selector: string): string {
+  const start = APP_CSS.indexOf(selector);
+  expect(start).toBeGreaterThan(-1);
+  return APP_CSS.slice(start, APP_CSS.indexOf('}', start) + 1);
+}
+
+function cssTokens(selector: string): Record<string, string> {
+  const block = cssBlock(selector);
+  const tokens: Record<string, string> = {};
+  for (const match of block.matchAll(/--([a-z0-9-]+):\s*([^;]+);/gi)) {
+    tokens[match[1]] = match[2].trim();
+  }
+  return tokens;
+}
+
+function parseHexColor(value: string): Rgb {
+  const match = /^#([0-9a-f]{6})$/i.exec(value.trim());
+  if (!match) throw new Error(`Expected 6-digit hex color, got ${value}`);
+  const hex = match[1];
+  return [
+    Number.parseInt(hex.slice(0, 2), 16),
+    Number.parseInt(hex.slice(2, 4), 16),
+    Number.parseInt(hex.slice(4, 6), 16),
+  ];
+}
+
+function relativeLuminance([r, g, b]: Rgb): number {
+  const linear = (channel: number) => {
+    const s = channel / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+}
+
+function contrastRatio(a: Rgb, b: Rgb): number {
+  const [lighter, darker] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function cssContrast(foreground: string, background: string): number {
+  return contrastRatio(parseHexColor(foreground), parseHexColor(background));
+}
+
+function compositeRgbaOverSurface(value: string, surface: string): Rgb {
+  const match = /^rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([0-9.]+)\s*\)$/i.exec(value.trim());
+  if (!match) throw new Error(`Expected rgba() color, got ${value}`);
+  const foreground: Rgb = [
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+  ];
+  const alpha = Number(match[4]);
+  const background = parseHexColor(surface);
+  return [
+    Math.round(foreground[0] * alpha + background[0] * (1 - alpha)),
+    Math.round(foreground[1] * alpha + background[1] * (1 - alpha)),
+    Math.round(foreground[2] * alpha + background[2] * (1 - alpha)),
+  ];
+}
+
+function highContrastLightCssTokens(): Record<string, string> {
+  return cssTokens(":root[data-theme='high-contrast-light']");
 }
 
 describe('color scheme model', () => {
@@ -102,6 +176,62 @@ describe('color scheme model', () => {
     expect(isPresetScheme('office-dark')).toBe(true);
     expect(isPresetScheme('daylight')).toBe(true);
     expect(isPresetScheme('custom')).toBe(false);
+  });
+});
+
+describe('high-contrast light preset tokens (tuxlink-msoy)', () => {
+  it('mirrors the shipped CSS preset into the designer base tokens', () => {
+    const tokens = highContrastLightCssTokens();
+    for (const token of CUSTOM_THEME_TOKENS) {
+      expect(tokens[token]).toBe(HIGH_CONTRAST_LIGHT_TOKENS[token]);
+    }
+    expect(tokensForBase('high-contrast-light')).toEqual(HIGH_CONTRAST_LIGHT_TOKENS);
+  });
+
+  it('uses a visible surface ladder and stronger border contrast', () => {
+    const tokens = highContrastLightCssTokens();
+    expect(tokens.bg).not.toBe(tokens.surface);
+    expect(cssContrast(tokens['border-soft'], tokens.surface)).toBeGreaterThanOrEqual(3);
+    expect(cssContrast(tokens.border, tokens.surface)).toBeGreaterThanOrEqual(7);
+    expect(cssContrast(tokens['border-strong'], tokens.surface)).toBeGreaterThanOrEqual(15);
+  });
+
+  it('keeps text tokens AAA-readable across the light filled surfaces', () => {
+    const tokens = highContrastLightCssTokens();
+    for (const foreground of ['text', 'text-dim', 'text-faint']) {
+      for (const background of ['bg', 'surface', 'surface-2', 'elevated']) {
+        expect(cssContrast(tokens[foreground], tokens[background])).toBeGreaterThanOrEqual(7);
+      }
+    }
+  });
+
+  it('keeps semantic and radio accents readable on light controls', () => {
+    const tokens = highContrastLightCssTokens();
+    const accents = [
+      'accent',
+      'accent-2',
+      'modem-accent',
+      'modem-accent-2',
+      'unread-dot',
+      'success',
+      'error',
+      'info',
+      'form-tag',
+    ];
+    for (const foreground of accents) {
+      expect(cssContrast(tokens[foreground], tokens.surface)).toBeGreaterThanOrEqual(7);
+      expect(cssContrast(tokens[foreground], tokens['surface-2'])).toBeGreaterThanOrEqual(7);
+    }
+  });
+
+  it('makes low-alpha selected/status fills visible without becoming solid blocks', () => {
+    const tokens = highContrastLightCssTokens();
+    for (const fillToken of ['accent-soft', 'modem-accent-soft', 'tux-danger-surface']) {
+      const composite = compositeRgbaOverSurface(tokens[fillToken], tokens.surface);
+      const ratio = contrastRatio(composite, parseHexColor(tokens.surface));
+      expect(ratio).toBeGreaterThanOrEqual(1.3);
+      expect(ratio).toBeLessThanOrEqual(1.8);
+    }
   });
 });
 
@@ -298,12 +428,13 @@ describe('tokensForBase', () => {
   it('returns bundled token snapshots for the practical dark presets', () => {
     expect(tokensForBase('github-dark')).toEqual(GITHUB_DARK_TOKENS);
     expect(tokensForBase('office-dark')).toEqual(OFFICE_DARK_TOKENS);
+    expect(tokensForBase('high-contrast-light')).toEqual(HIGH_CONTRAST_LIGHT_TOKENS);
   });
 
   it('falls back to dark tokens for presets without a bundled snapshot', () => {
-    // night-red / grayscale / high-contrast-light / paper are valid bases for
-    // the designer but the loader doesn't carry their snapshots — falling
-    // back to the dark tokens lets the designer start from a known-good base.
+    // night-red / grayscale / paper are valid bases for the designer but the
+    // loader doesn't carry their snapshots — falling back to the dark tokens
+    // lets the designer start from a known-good base.
     expect(tokensForBase('night-red')).toEqual(DEFAULT_DARK_TOKENS);
     expect(tokensForBase('paper')).toEqual(DEFAULT_DARK_TOKENS);
   });
