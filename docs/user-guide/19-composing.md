@@ -23,10 +23,10 @@ Three paths:
 
 ## Fields
 
-- **To.** One or more callsigns separated by commas or semicolons.
-  Whitespace is trimmed. Telnet supports operator-to-server delivery;
-  Packet and ARDOP require the recipients to be reachable on the chosen
-  transport.
+- **To.** One or more Winlink callsigns or email addresses separated by
+  commas or semicolons. Whitespace is trimmed. Bare callsigns are accepted;
+  `CALL@winlink.org` is the explicit mailbox form and is easiest to read when
+  copying addresses between clients.
 - **Cc.** Carbon-copy recipients. Carries through the native B2F path
   end-to-end (the prior "Cc dropped silently" behavior was tied to the
   legacy Pat backend, which has been stripped).
@@ -35,10 +35,29 @@ Three paths:
 - **Body.** Plain text. Markdown and HTML are not rendered on the
   receiver side — assume plain text only.
 
+## Addressing practice
+
 The **To** and **Cc** fields autocomplete from saved contacts and groups.
-Pick a suggested callsign, email, tactical address, or group, or press
-Enter with no suggestion selected to keep the typed recipient as a raw
-entry. See [Contacts and groups](34-contacts-and-groups.md).
+Pick a suggested callsign, email, tactical address, or group, or press Enter
+with no suggestion selected to keep the typed recipient as a raw entry. See
+[Contacts and groups](34-contacts-and-groups.md).
+
+The message recipient and the connection target are different things. For a
+normal CMS/RMS session, address the message to the person or service that
+should receive it; the selected gateway only carries the traffic. Do not put a
+gateway callsign in To unless you are intentionally writing to that gateway's
+sysop.
+
+Winlink can carry internet email as well as callsign mail. Use the recipient's
+normal email address for internet mail. If a message from an internet sender
+does not arrive, remember that Winlink's spam and Accept List controls live on
+the Winlink account side. Tuxlink does not yet expose Accept List management in
+Settings; manage it from Winlink's account tools or another client until that
+surface lands.
+
+For served-agency or tactical traffic, prefer the address format the event
+plan specifies. If the plan says `K7ABC@winlink.org`, use the full address; if
+the local net uses bare callsigns in every client, bare callsigns are fine.
 
 ## Drafts
 
@@ -62,6 +81,11 @@ the HTML Forms epic.
 Received attachments DO work end-to-end. The message reading pane shows
 an attachment strip with name and size; clicking an entry opens the
 native Save As dialog and writes the file to disk via the backend.
+
+Tuxlink does not yet include Winlink Express-style image crop / resize tools.
+When outbound attachments are wired, resize images before attaching them and
+pick the smallest file that still preserves the operational detail. A sharp
+200 KB site photo beats a multi-megabyte phone original on every RF path.
 
 Indicative size limits once outbound is wired (the receiver still applies
 its own caps):

@@ -181,6 +181,12 @@ operationally significant:
 | AGW / Linbpq packet drivers | Not supported — Dire Wolf KISS is the canonical path |
 | Mid-session resume after disconnect | Not supported — interrupted transfers restart from the beginning |
 | RMS Express Telnet (the special variant) | Not relevant — tuxlink speaks standard B2F over standard Telnet |
+| Send-as / message-type selector | Not yet — Compose currently sends ordinary Winlink messages, while forms, catalog requests, and weather requests use dedicated compose paths |
+| Outbound file attachments and image resize/crop | Partial — received attachments work; outbound attachment send and Express-style image tools are not shipped yet |
+| Message templates | Not yet — the Compose template button is visible but disabled |
+| Accept List / spam controls | Not yet — manage Winlink account-side Accept List rules outside tuxlink for now |
+| In-app import / export / archive conversion | Not yet — copy `native-mbox/` for backup; Express/Pat conversion remains a manual or one-time-script migration task |
+| Background auto-fetch, unattended connects, and traffic statistics | Not provided — tuxlink is currently attended-operation-first, with the session log as the per-session record |
 
 The mapping the other way — features tuxlink has that Express does not —
 includes the per-session consent affordance (above), the privacy-default
@@ -216,9 +222,10 @@ For an operator moving from another client to tuxlink:
 6. **Migrate the local archive.** Optional — tuxlink starts with an empty
    mailbox. If preserving history matters, the Pat mailbox or Express's
    exported messages can be copied into tuxlink's
-   `~/.local/share/com.tuxlink.app/native-mbox/` directory. The format is
-   different; expect a one-time conversion script (or hand-conversion for
-   small archives).
+   `~/.local/share/com.tuxlink.app/native-mbox/` directory after conversion.
+   The format is different; tuxlink does not yet ship the conversion tool, so
+   keep the source archive untouched until the migrated messages have been
+   verified.
 7. **Run as primary for a defined window** (a week, two weeks). If no
    surprises, the prior client is now the backup.
 8. **Remove the prior client** when confident.

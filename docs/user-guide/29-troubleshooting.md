@@ -34,6 +34,24 @@ flowchart TD
     J -- "Yes" --> L
 ```
 
+## Read the session log first
+
+The radio panel's session log is the fastest way to diagnose mailbox and
+transport failures. Read one attempt from top to bottom before changing
+settings. The important milestones are:
+
+- Transport opened: TCP, KISS, ARDOP, or VARA reached the configured peer.
+- Login accepted: the callsign and password challenge were accepted.
+- Proposals exchanged: the log shows outbound MIDs being offered and inbound
+  MIDs being accepted.
+- Filing completed: sent messages report `-> Sent`; received messages report
+  `-> Inbox`.
+- Clean close: both sides finish with `FF`.
+
+The log is operator-facing evidence, not just developer debug output. If a
+bug report involves mail not moving, include the relevant lines around the
+failed attempt.
+
 ## "Not configured" in the message list
 
 The backend has no callsign / grid / transport. Either re-run the wizard
@@ -80,6 +98,40 @@ The wizard re-runs on next launch.
   paid VARA license tier; "Standard" works on the free tier and is
   operationally confirmed against RMS gateways.
 
+## Message remains in Outbox after Connect
+
+- Confirm the session reached B2F exchange. If the log stops at transport
+  setup or login, the message was never offered.
+- Look for `Sent "<subject>" (MID ...) -> Sent.` If present, the accepted
+  message should be in Sent even if a later message in the same batch failed.
+- Look for `Remote rejected` or `Remote deferred`. A reject usually means the
+  remote side declined that MID; check the recipient address, message type, and
+  whether the remote already has it. A defer means retry later.
+- Check that the message is not relying on a not-yet-shipped surface. Outbound
+  file attachments are visible in the Compose UI but are not sent yet; received
+  attachments do work.
+- For large messages, retry with Telnet or a faster RF mode. Packet and narrow
+  HF links are easy to exhaust with catalog responses, form bundles, and
+  image-heavy traffic.
+
+## Internet mail, spam, and Accept List issues
+
+If outgoing mail to an internet address works but replies never appear in
+Tuxlink, the failure may be outside tuxlink. Winlink's CMS applies account-side
+spam controls and Accept List rules before a message ever reaches the client.
+
+Tuxlink does not yet expose Accept List management in Settings. Manage those
+rules from Winlink's account tools or another Winlink client, then reconnect
+with tuxlink to pull any newly-allowed mail.
+
+## Background tasks and statistics
+
+Tuxlink is currently designed for attended operation. It does not run
+Express-style unattended background connects, catalog auto-fetch, or a
+separate traffic-statistics console. The authoritative per-session record is
+the live session log, and the durable traffic record is the local mailbox plus
+any exported bug-report logs.
+
 ## GPS shows nothing
 
 - Tools → Settings → GPS state must be `Broadcast at precision` or
@@ -103,6 +155,15 @@ The wizard re-runs on next launch.
 - The native title-bar Close on the compose window does NOT save in some
   early builds — confirm via Drafts that the in-progress text persisted.
 
+## Archive, import, or export questions
+
+The supported mailbox backup path is a copy of
+`~/.local/share/com.tuxlink.app/native-mbox/` while tuxlink is closed. Tuxlink
+does not yet have a one-click Import / Export command or an automatic Winlink
+Express / Pat archive converter. See [Mailbox model](07-mailbox-model.md) and
+[Moving from other Winlink clients](32-from-express-or-pat.md) before moving
+history between clients.
+
 ## Reporting a bug
 
 The Help → Report Issue menu opens the GitHub issue tracker in the
@@ -117,4 +178,5 @@ operator's default browser. Include:
 
 - [Settings](27-settings.md) — every preference's effect.
 - [Picking a transport](08-picking-a-transport.md) — what each transport needs.
+- [Mailbox model](07-mailbox-model.md) — message states, backup, and local archive behavior.
 - [First-launch wizard](02-first-launch-wizard.md) — wizard recovery.
