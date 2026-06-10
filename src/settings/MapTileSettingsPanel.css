@@ -1,0 +1,157 @@
+/* MapTileSettingsPanel — LAN map-tile source config overlay (tuxlink-a1cc / dyop,
+   design §8.7). Reuses the shared `tux-settings-*` dialog chrome (SettingsPanel.css)
+   for the backdrop / panel / header / close button; this file styles only the
+   `tux-mts-*` form section. Theme tokens so it follows the active color scheme. */
+
+/* The tile form is denser than the GPS dialog (URL templates run long); give it a
+   slightly wider readable column than the 520px GPS panel, still well under any
+   full-width stretch (no-stretched-full-width-ui). */
+.tux-map-tile-settings-panel {
+  width: min(560px, calc(100vw - 48px));
+}
+
+.tux-map-tile-source {
+  padding: 14px 18px 18px;
+}
+
+.tux-map-tile-source > h2 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+}
+
+.tux-mts-intro {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+/* Stacked label + input + help. Inputs fill the (already-capped) panel column. */
+.tux-mts-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+
+.tux-mts-field > span:first-child {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.tux-mts-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+}
+.tux-mts-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.tux-mts-help {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+.tux-mts-help code {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+}
+
+.tux-mts-warning {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid rgba(245, 159, 60, 0.3);
+}
+
+.tux-mts-scheme {
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+}
+.tux-mts-scheme legend {
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.tux-mts-scheme label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  padding: 4px 0;
+}
+.tux-mts-scheme input[type='radio'] {
+  accent-color: var(--accent);
+}
+
+.tux-mts-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.tux-mts-actions button {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+.tux-mts-actions button:hover {
+  border-color: var(--accent);
+}
+
+.tux-mts-feedback {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+/* FZ-M1 compact mode (tuxlink-h7q7) — touch-target floors for the rugged tablet.
+   The shared close-button rule lives in SettingsPanel.css (all dialogs); this adds
+   the tile-form-specific tap targets. */
+@media (max-width: 1365px) and (any-pointer: coarse) {
+  .tux-mts-actions button {
+    min-height: 44px;
+  }
+  .tux-mts-scheme label {
+    min-height: 44px;
+  }
+  .tux-mts-scheme input[type='radio'] {
+    width: 20px;
+    height: 20px;
+  }
+  .tux-mts-help,
+  .tux-mts-intro {
+    font-size: 13px;
+  }
+}

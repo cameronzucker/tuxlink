@@ -451,6 +451,18 @@ describe('<AppShell> — Mock B topology', () => {
     ).toBeInTheDocument();
   });
 
+  // tuxlink-a1cc / dyop: production mount path — the lazy LAN tile-source config
+  // overlay actually opens from Tools → Settings → Map tiles…. Until this mounts,
+  // the merged dyop tile backend is unreachable dead weight.
+  it('Tools → Map tiles opens the LAN tile-source settings (production mount path)', async () => {
+    renderShell();
+    clickMenu('Tools', /map tiles/i);
+    expect(
+      await screen.findByRole('dialog', { name: /map tiles/i }, { timeout: 10000 }),
+    ).toBeInTheDocument();
+    expect(await screen.findByTestId('map-tile-source-settings')).toBeInTheDocument();
+  });
+
   // Option (b): with a message selected, Message → Reply opens a reply window.
   // openReplyWindow seeds a draft then opens a compose window via
   // compose_window_open. The message_read mock resolves so useMessage's
