@@ -462,86 +462,138 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
           </div>
 
           <aside className="request-basket" data-testid="request-basket" aria-label="Request basket">
-            <ul className="request-basket__list">
-              {basket.items.map((item) => (
-                <li
-                  key={item.id}
-                  className="request-basket__item"
-                  data-testid={`basket-item-${item.id}`}
-                >
-                  <span className="request-basket__item-label">{item.label}</span>
-                  <button
-                    type="button"
-                    className="request-basket__remove"
-                    data-testid={`basket-remove-${item.id}`}
-                    onClick={() => basket.remove(item.id)}
-                    aria-label={`Remove ${item.label}`}
-                    title="Remove"
-                  >
-                    ✕
-                  </button>
-                </li>
-              ))}
-            </ul>
+            {/* basket header */}
+            <div className="bk-head">
+              <Icon name="basket" size={18} />
+              <h4>
+                Request basket
+                {!basket.isEmpty && (
+                  <span className="ct">{basket.items.length}</span>
+                )}
+              </h4>
+            </div>
 
-            {!basket.isEmpty && (
-              <p className="request-basket__summary" data-testid="request-basket-summary">
-                {basketSummary(basket.cmsFilenames.length, basket.saildocsItems.length)}
-              </p>
-            )}
-
-            <button
-              type="button"
-              className="request-basket__send"
-              data-testid="request-basket-send"
-              onClick={sendAll}
-              disabled={basket.isEmpty || sendState.kind === 'sending'}
-            >
-              {sendState.kind === 'sending' ? 'Sending…' : 'Send all'}
-            </button>
-
-            {sendState.kind === 'done' &&
-              (() => {
-                const { result } = sendState;
-                const okSaildocs = result.saildocs.filter((e) => e.ok);
-                return (
-                  <div
-                    className="request-basket__result"
-                    data-testid="request-basket-result"
-                    role="status"
-                  >
-                    {result.cms?.ok && (
-                      <p className="request-basket__result-line">
-                        Queued 1 inquiry message to the CMS
-                        {result.cms.mid ? ` (MID ${result.cms.mid}).` : '.'}
-                      </p>
-                    )}
-                    {result.cms && !result.cms.ok && (
-                      <p className="request-basket__result-error">
-                        CMS failed: {result.cms.error}
-                      </p>
-                    )}
-                    {okSaildocs.length > 0 && (
-                      <p className="request-basket__result-line">
-                        Queued {okSaildocs.length} Saildocs{' '}
-                        {okSaildocs.length === 1 ? 'request' : 'requests'}.
-                      </p>
-                    )}
-                    {result.saildocs
-                      .filter((e) => !e.ok)
-                      .map((e) => (
-                        <p key={e.item.id} className="request-basket__result-error">
-                          Saildocs failed: {e.error}
-                        </p>
-                      ))}
-                    {(result.cms?.ok || okSaildocs.length > 0) && (
-                      <p className="request-basket__result-note">
-                        Responses arrive in your Inbox after the next connect.
-                      </p>
-                    )}
+            {/* scrollable list region */}
+            <div className="bk-list">
+              {/* empty placeholder — only when no items and not in done state */}
+              {basket.isEmpty && sendState.kind !== 'done' && (
+                <div className="bk-empty">
+                  <div className="ring">
+                    <Icon name="basket" size={24} />
                   </div>
-                );
-              })()}
+                  <p>Your basket is empty. Add requests from the cards or browse.</p>
+                </div>
+              )}
+
+              {/* item list — visible whenever items exist */}
+              {!basket.isEmpty && (
+                <ul className="request-basket__list">
+                  {basket.items.map((item) => (
+                    <li
+                      key={item.id}
+                      className="request-basket__item bk-item"
+                      data-testid={`basket-item-${item.id}`}
+                    >
+                      <span className={`ic ${item.rail === 'saildocs' ? 'sail' : 'cms'}`}>
+                        <Icon name={item.rail === 'saildocs' ? 'map' : 'check'} size={15} />
+                      </span>
+                      <span className="bd">
+                        <span className="lb">{item.label}</span>
+                        <span className="rl">
+                          {item.rail === 'saildocs' ? 'Saildocs' : 'CMS inquiry'}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="request-basket__remove rm"
+                        data-testid={`basket-remove-${item.id}`}
+                        onClick={() => basket.remove(item.id)}
+                        aria-label={`Remove ${item.label}`}
+                        title="Remove"
+                      >
+                        <Icon name="trash" size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* result block — visible when send completed */}
+              {sendState.kind === 'done' &&
+                (() => {
+                  const { result } = sendState;
+                  const okSaildocs = result.saildocs.filter((e) => e.ok);
+                  return (
+                    <div
+                      className="request-basket__result result"
+                      data-testid="request-basket-result"
+                      role="status"
+                    >
+                      {result.cms?.ok && (
+                        <p className="request-basket__result-line ln">
+                          Queued 1 inquiry message to the CMS
+                          {result.cms.mid ? ` (MID ${result.cms.mid}).` : '.'}
+                        </p>
+                      )}
+                      {result.cms && !result.cms.ok && (
+                        <p className="request-basket__result-error">
+                          CMS failed: {result.cms.error}
+                        </p>
+                      )}
+                      {okSaildocs.length > 0 && (
+                        <p className="request-basket__result-line ln">
+                          Queued {okSaildocs.length} Saildocs{' '}
+                          {okSaildocs.length === 1 ? 'request' : 'requests'}.
+                        </p>
+                      )}
+                      {result.saildocs
+                        .filter((e) => !e.ok)
+                        .map((e) => (
+                          <p key={e.item.id} className="request-basket__result-error">
+                            Saildocs failed: {e.error}
+                          </p>
+                        ))}
+                      {(result.cms?.ok || okSaildocs.length > 0) && (
+                        <p className="request-basket__result-note">
+                          Responses arrive in your Inbox after the next connect.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+            </div>
+
+            {/* footer: summary + send + arrival note */}
+            <div className="bk-foot">
+              {!basket.isEmpty && (
+                <p className="request-basket__summary bk-sum" data-testid="request-basket-summary">
+                  {basketSummary(basket.cmsFilenames.length, basket.saildocsItems.length)}
+                </p>
+              )}
+
+              <button
+                type="button"
+                className="request-basket__send send"
+                data-testid="request-basket-send"
+                onClick={sendAll}
+                disabled={basket.isEmpty || sendState.kind === 'sending'}
+              >
+                {sendState.kind === 'sending' ? (
+                  'Sending…'
+                ) : (
+                  <>
+                    Send all
+                    <Icon name="arrow" size={15} />
+                  </>
+                )}
+              </button>
+
+              {sendState.kind !== 'done' && (
+                <p className="snote">
+                  Responses arrive in your Inbox after the next connect.
+                </p>
+              )}
+            </div>
           </aside>
         </div>
       </div>
