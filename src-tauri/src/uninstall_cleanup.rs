@@ -702,9 +702,7 @@ where
 {
     let mut args = args.into_iter();
     let _program = args.next();
-    let Some(subcommand) = args.next() else {
-        return None;
-    };
+    let subcommand = args.next()?;
     let subcommand = subcommand.to_string_lossy();
     if subcommand != "cleanup" && subcommand != "uninstall-cleanup" {
         return None;
