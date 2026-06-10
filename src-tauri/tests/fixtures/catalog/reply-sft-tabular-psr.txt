@@ -1,0 +1,67 @@
+FPUS65 KPSR 090626
+SFTPSR
+AZZ530>563-CAZ560>570-091200-
+
+Tabular State Forecast for Southwest Arizona/Southeast California
+National Weather Service Phoenix AZ
+1126 PM MST Mon Jun 8 2026
+
+ROWS INCLUDE...
+   Daily predominant daytime weather 6AM-6PM
+   Forecast temperatures...early morning low/daytime high
+         Probability of precipitation nighttime 6PM-6AM/daytime 6AM-6PM
+          - indicates temperatures below zero
+         MM indicates missing data
+
+
+   FCST     FCST     FCST     FCST     FCST     FCST     FCST     
+   Tue      Wed      Thu      Fri      Sat      Sun      Mon      
+   Jun 09   Jun 10   Jun 11   Jun 12   Jun 13   Jun 14   Jun 15   
+
+...SOUTH-CENTRAL ARIZONA...
+   Phoenix
+   Vryhot   Vryhot   Vryhot   Vryhot   Vryhot   Vryhot   Vryhot   
+   77/106   77/108   79/108   82/107   82/110   84/110   83/107   
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00   
+
+   Globe
+   Sunny    Sunny    Sunny    Ptcldy   Sunny    Sunny    Sunny    
+   67/98    67/100   68/99    71/99    73/100   73/100   72/97    
+    00/00    00/00    00/00    00/00    00/00    00/00    00/10   
+
+...SOUTHWEST ARIZONA...
+   Yuma
+   Sunny    Vryhot   Vryhot   Vryhot   Vryhot   Vryhot   Vryhot   
+   69/104   71/107   74/106   77/107   77/112   78/111   77/109   
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00   
+
+...SOUTHEAST CALIFORNIA...
+   Blythe
+   Sunny    Vryhot   Vryhot   Vryhot   Vryhot   Vryhot   Vryhot   
+   68/105   71/109   72/109   74/109   77/112   79/113   77/110   
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00   
+
+   Imperial
+   Sunny    Vryhot   Vryhot   Vryhot   Vryhot   Vryhot   Vryhot   
+   68/104   72/108   74/108   77/108   79/113   80/113   78/110   
+    00/00    00/00    00/00    00/00    00/00    00/00    00/00   
+
+
+$$
+
+National Weather Service Phoenix is on the internet at
+
+weather.gov/phoenix
+
+
+
+
+=====
+Thanks for using Winlink, an Amateur Radio Safety Foundation 
+sponsored project. For information about Winlink or to manage
+your Winlink account please visit: 
+https://www.winlink.org
+
+For information on how you can help support Winlink and other
+Amateur Radio Safety Foundation projects please visit:
+https://www.arsfi.org
