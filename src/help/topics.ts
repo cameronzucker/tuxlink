@@ -77,6 +77,7 @@ export const SECTIONS: readonly HelpSection[] = [
     topicSlugs: [
       '18-the-mailbox',
       '19-composing',
+      '34-contacts-and-groups',
       '20-html-forms',
       '21-search',
       '22-user-folders',

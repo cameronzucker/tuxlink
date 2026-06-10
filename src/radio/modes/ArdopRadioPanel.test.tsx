@@ -130,6 +130,16 @@ describe('<ArdopRadioPanel>', () => {
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Ardop Winlink');
   });
 
+  it('renders the selected ARDOP intent in the RadioPanel chrome', () => {
+    renderPanel(
+      <ArdopRadioPanel
+        mode={{ kind: 'ardop-hf', intent: 'radio-only' }}
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Ardop Radio-only');
+  });
+
   it('mounts the SessionLogSection (children of RadioPanel body)', () => {
     renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     expect(screen.getByTestId('session-log-section')).toBeInTheDocument();
@@ -206,6 +216,35 @@ describe('<ArdopRadioPanel>', () => {
       // stopped state; the structural test is that it's not enabled.
       expect(btn).not.toBeInTheDocument();
     }
+  });
+
+  it('passes the selected ARDOP intent to Send/Receive exchange', async () => {
+    mockUseModemStatus.mockReturnValue({
+      status: RUNNING,
+      loading: false,
+      error: null,
+    });
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    renderPanel(
+      <ArdopRadioPanel
+        mode={{ kind: 'ardop-hf', intent: 'radio-only' }}
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('ardop-send-receive-btn'));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'modem_ardop_b2f_exchange',
+        expect.objectContaining({
+          target: 'W7RMS-10',
+          intent: 'radio-only',
+          transportKind: 'ardop',
+        }),
+      );
+    });
   });
 
   it('Open WebGUI button opens a URL on cmd_port - 1 (defaults to 8514) via tauri-plugin-shell', async () => {

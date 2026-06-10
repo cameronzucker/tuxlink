@@ -79,6 +79,25 @@ opaque string generated when the message is composed. The MID is the
 operator-facing handle in the message-list and the deduplication key on
 the CMS side.
 
+## Backup, import, and export
+
+The current supported export path is a filesystem copy of the whole
+`native-mbox/` directory while tuxlink is closed. Copy the entire directory,
+not individual message files, so built-in folders, user folders, message
+metadata, and searchable message bodies stay together.
+
+Tuxlink does not yet provide an in-app Import / Export command, nor an
+automatic Winlink Express or Pat archive converter. Operators migrating from
+another client should keep the source client intact until the tuxlink mailbox
+has been verified, and should treat any archive migration as a one-time
+conversion step. See [Moving from other Winlink clients](32-from-express-or-pat.md)
+for the migration sequence.
+
+Direct filesystem copy is also the recovery path after a machine rebuild:
+install tuxlink, quit it, replace the generated `native-mbox/` directory with
+the backed-up copy, then relaunch. The CMS is not consulted during this step;
+it restores local history only.
+
 ## Message states
 
 A message moves through a small set of states:

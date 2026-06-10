@@ -2,14 +2,18 @@
 //
 // Mounts INSIDE a radio mode panel body (B6). Inline only — no popup.
 //
-// M7 — per-mode chrome (amended tuxlink-fr0d):
-//   · ardop-hf / packet          → Radix Tabs: Favorites | Recent | Manual.
-//     These are the genuine pre-dial modes — the operator picks among many
-//     nearby gateways, so favoriting / redialing is meaningful.
-//   · vara-hf / vara-fm / telnet → Manual content ONLY (no tabs, no Favorites/
-//     Recent lists, no FavoriteRow, no Connect button). VARA has no
-//     favorites/recents Connect by design; telnet connects to a FIXED CMS host
-//     (tuxlink-fr0d operator smoke: Telnet Winlink CMS doesn't need this).
+// M7 — per-mode chrome (amended tuxlink-fr0d; VARA exclusion retired tuxlink-xglf):
+//   · ardop-hf / packet / vara-hf / vara-fm → Radix Tabs: Favorites | Recent |
+//     Manual. These are the genuine pre-dial modes — the operator picks among
+//     many nearby gateways, so favoriting / redialing is meaningful. VARA HF
+//     dials RMS gateways exactly like ARDOP HF; it was Manual-only at M7 only
+//     because it had no working dial yet (a favorite's Connect would have been
+//     dead). tuxlink-xglf wired modem_vara_b2f_exchange to the pane, so VARA
+//     now gets the full chrome.
+//   · telnet → Manual content ONLY (no tabs, no Favorites/Recent lists, no
+//     FavoriteRow, no Connect button). Telnet connects to a FIXED CMS host —
+//     there is no nearby-station choice to favorite (tuxlink-fr0d operator
+//     smoke: Telnet Winlink CMS doesn't need this).
 //
 // C4 — distance source: the operator grid comes from `position_current_fix`
 // (FULL precision), NEVER `position_status`/`useStatus` (those are
@@ -37,12 +41,13 @@ export interface FavoritesTabsProps {
 }
 
 /**
- * Modes with NO favorites/recents surface (M7, amended tuxlink-fr0d): VARA
- * (by design) and telnet (fixed CMS host — no nearby-station choice to favorite).
- * These render the Manual content only — no tabs, no FavoriteRow, no Connect.
+ * Modes with NO favorites/recents surface: only telnet (fixed CMS host — no
+ * nearby-station choice to favorite). It renders the Manual content only — no
+ * tabs, no FavoriteRow, no Connect. VARA's exclusion was retired in tuxlink-xglf
+ * once its dial path landed (see the M7 note above).
  */
 function isManualOnly(mode: RadioMode): boolean {
-  return mode === 'vara-hf' || mode === 'vara-fm' || mode === 'telnet';
+  return mode === 'telnet';
 }
 
 /** oi1g: above this row count a tab shows a filter box. Short lists stay clean. */
@@ -83,7 +88,7 @@ export function FavoritesTabs({ mode, onPrefill, manualContent }: FavoritesTabsP
   });
   const log = useMemo(() => stationsQuery.data?.log ?? [], [stationsQuery.data]);
 
-  // VARA + telnet: Manual content only — no tabs, no rows, no Connect.
+  // Telnet: Manual content only — no tabs, no rows, no Connect.
   if (isManualOnly(mode)) {
     return <div className="favorites-tabs favorites-tabs--manual-only">{manualContent}</div>;
   }
