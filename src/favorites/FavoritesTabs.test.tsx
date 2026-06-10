@@ -535,3 +535,31 @@ describe('<FavoritesTabs> filter + edit (oi1g)', () => {
     });
   });
 });
+
+// ---- VARA favorites are editable post-xglf merge (tuxlink-oi1g P1) ----
+describe('<FavoritesTabs> VARA favorites editable (oi1g + xglf)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('vara-hf renders an editable FavoriteRow (⋯ menu) — M7 retired, edit handlers wired', async () => {
+    const varaFav: Favorite = {
+      id: 'vara1',
+      mode: 'vara-hf',
+      gateway: 'W7VARA-10',
+      band: '2m',
+      grid: 'CN87',
+      starred: true,
+      created_at: '2026-06-01T00:00:00-07:00',
+      updated_at: '2026-06-01T00:00:00-07:00',
+    };
+    routeInvoke({ favorites: [varaFav], recents: [] });
+    renderTabs({ mode: 'vara-hf' });
+    // VARA now shows tabs (xglf) AND the row exposes the edit menu (oi1g).
+    expect(await screen.findByRole('tab', { name: 'Favorites' })).toBeInTheDocument();
+    expect(await screen.findByTestId('favorite-menu-vara1')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('favorite-menu-vara1'));
+    expect(screen.getByTestId('favorite-edit-vara1')).toBeInTheDocument();
+    expect(screen.getByTestId('favorite-delete-vara1')).toBeInTheDocument();
+  });
+});
