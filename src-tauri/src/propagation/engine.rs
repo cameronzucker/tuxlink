@@ -75,9 +75,9 @@ pub fn run_voacapl_with_timeout(
     // Poll until done or timeout.
     let deadline = std::time::Instant::now() + timeout;
     let status = loop {
-        match child.try_wait()? {
-            Some(s) => break s,
-            None => {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) => {
                 if std::time::Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -88,6 +88,12 @@ pub fn run_voacapl_with_timeout(
                     )));
                 }
                 std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stderr_handle.join();
+                return Err(PropagationError::Io(e));
             }
         }
     };
