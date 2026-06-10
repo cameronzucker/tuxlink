@@ -108,7 +108,7 @@ describe('ThemeDesigner — base picker', () => {
     expect(document.documentElement.style.colorScheme).toBe('light');
   });
 
-  it('re-seeds from the GitHub dark bundled snapshot', () => {
+  it('re-seeds from the Repository Dark bundled snapshot', () => {
     render(<ThemeDesigner open={true} onClose={() => {}} />);
     const baseSelect = screen.getByTestId('theme-designer-base') as HTMLSelectElement;
     fireEvent.change(baseSelect, { target: { value: 'github-dark' } });

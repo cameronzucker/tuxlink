@@ -81,7 +81,7 @@ export const MENU_TREE: TopMenu[] = [
     // Customize action opens an inline panel, not a window.
     { label: 'Color scheme', submenu: [
       { id: 'menu:view:scheme:default', label: 'Default (dark)' },
-      { id: 'menu:view:scheme:github-dark', label: 'GitHub dark' },
+      { id: 'menu:view:scheme:github-dark', label: 'Repository Dark' },
       { id: 'menu:view:scheme:office-dark', label: 'Office dark' },
       { id: 'menu:view:scheme:daylight', label: 'Daylight (light)' },
       { id: 'menu:view:scheme:high-contrast-light', label: 'High contrast (light)' },

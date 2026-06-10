@@ -275,7 +275,7 @@
   display: inline-block;
   margin-right: 6px;
   vertical-align: middle;
-  box-shadow: 0 0 8px rgba(93, 214, 160, 0.5);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--success) 55%, transparent);
 }
 .layout-b .dashboard .dash-status-dot.idle {
   background: var(--text-faint);
@@ -397,8 +397,7 @@
  *
  * Design tokens reused from the prior .dash-source-chip styles:
  *   - .manual selected fill = --accent / --accent-soft (amber/warn)
- *   - .gps selected fill (with fresh fix) = --success (green) +
- *     rgba(93, 214, 160, *) translucent green
+ *   - .gps selected fill (with fresh fix) = --success (green)
  *   - .gps selected-but-no-fix (State 4/5) = dimmed via opacity + neutral hue
  *   - Outlined (unselected) segments use --border-strong
  *
@@ -441,19 +440,19 @@
   border-top-right-radius: 3px;
   border-bottom-right-radius: 3px;
 }
-/* Selected MANUAL: amber/warn fill — mirrors .dash-status-dot.connecting */
+/* Selected MANUAL: accent fill — mirrors the warning/manual status color. */
 .layout-b .dashboard .dash-source-segment.manual.selected {
   color: var(--accent);
   background: var(--accent-soft);
-  border-color: rgba(245, 159, 60, 0.4);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 /* Selected GPS with a fresh fix (State 3): green/success fill — reads as
    ACTIVE (live/working) rather than greyed-out-as-if-disabled (tuxlink-39b
    lineage). */
 .layout-b .dashboard .dash-source-segment.gps.selected.gps-ready {
   color: var(--success);
-  background: rgba(93, 214, 160, 0.12);
-  border-color: rgba(93, 214, 160, 0.4);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
 }
 /* Selected GPS WITHOUT a fresh fix (State 4/5): dimmed — selected, but the
    visual signal is muted to differentiate from State 3. This is the
@@ -461,7 +460,7 @@
    spec §2.4 names as the State 4/5 differentiation cue. */
 .layout-b .dashboard .dash-source-segment.gps.selected:not(.gps-ready) {
   color: var(--text-faint);
-  background: rgba(93, 214, 160, 0.05);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
   border-color: var(--border-strong);
   opacity: 0.75;
 }
@@ -472,12 +471,12 @@
    currently available." */
 .layout-b .dashboard .dash-source-segment.gps.gps-ready:not(.selected) {
   color: var(--success);
-  border-color: rgba(93, 214, 160, 0.3);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
 }
 /* Hover state: discoverability cue for the unselected segment. The selected
    segment doesn't change on hover (clicking it is a no-op). */
 .layout-b .dashboard .dash-source-segment:not(.selected):hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-2);
   color: var(--text);
 }
 .layout-b .dashboard .dash-source-segment:focus-visible {
@@ -914,12 +913,12 @@
 }
 .layout-b .row.selected {
   background: var(--accent-soft);
-  border-bottom-color: rgba(245, 159, 60, 0.25);
+  border-bottom-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .layout-b .row.selected:hover {
-  background: rgba(245, 159, 60, 0.16);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
-.layout-b .row.in-selection { background: rgba(245, 159, 60, 0.10); position: relative; }
+.layout-b .row.in-selection { background: color-mix(in srgb, var(--accent) 12%, transparent); position: relative; }
 .layout-b .row.in-selection::before {
   content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent);
 }
@@ -949,7 +948,7 @@
   border-radius: 50%;
   background: var(--unread-dot);
   flex: 0 0 auto;
-  box-shadow: 0 0 6px rgba(255, 209, 102, 0.6);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--unread-dot) 60%, transparent);
 }
 .layout-b .row:not(.unread) .from {
   font-weight: 500;

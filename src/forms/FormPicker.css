@@ -77,7 +77,7 @@
 }
 
 .form-picker-list li.selected:hover {
-  background: rgba(245, 159, 60, 0.18);
+  background: color-mix(in srgb, var(--tux-accent) 18%, transparent);
 }
 
 .form-picker-actions {

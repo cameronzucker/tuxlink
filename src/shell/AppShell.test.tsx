@@ -802,6 +802,41 @@ describe('AppShell.css contacts grid span (tuxlink-r4je)', () => {
   });
 });
 
+describe('AppShell.css theme-derived interaction colors (tuxlink-36h1 + tuxlink-23ck)', () => {
+  it('derives selected and range-selected message row colors from the active accent', () => {
+    const rowStateCss = appShellCss.slice(
+      appShellCss.indexOf('.layout-b .row.selected'),
+      appShellCss.indexOf('.layout-b .row:focus-visible'),
+    );
+    expect(rowStateCss).toContain('color-mix(in srgb, var(--accent) 18%, transparent)');
+    expect(rowStateCss).toContain('color-mix(in srgb, var(--accent) 12%, transparent)');
+    expect(rowStateCss).not.toContain('245, 159, 60');
+  });
+
+  it('derives the unread indicator glow from --unread-dot', () => {
+    const unreadDotCss = appShellCss.slice(
+      appShellCss.indexOf('.layout-b .row .from .unread-dot'),
+      appShellCss.indexOf('.layout-b .row:not(.unread) .from'),
+    );
+    expect(unreadDotCss).toContain('background: var(--unread-dot)');
+    expect(unreadDotCss).toContain('color-mix(in srgb, var(--unread-dot) 60%, transparent)');
+    expect(unreadDotCss).not.toContain('255, 209, 102');
+  });
+
+  it('derives dashboard source segment state colors from theme tokens', () => {
+    const sourceSegmentCss = appShellCss.slice(
+      appShellCss.indexOf('.layout-b .dashboard .dash-source-segment.manual.selected'),
+      appShellCss.indexOf('.layout-b .dashboard .dash-source-segment:focus-visible'),
+    );
+    expect(sourceSegmentCss).toContain('color-mix(in srgb, var(--accent) 45%, transparent)');
+    expect(sourceSegmentCss).toContain('color-mix(in srgb, var(--success) 14%, transparent)');
+    expect(sourceSegmentCss).toContain('color-mix(in srgb, var(--success) 8%, transparent)');
+    expect(sourceSegmentCss).toContain('background: var(--surface-2)');
+    expect(sourceSegmentCss).not.toContain('245, 159, 60');
+    expect(sourceSegmentCss).not.toContain('93, 214, 160');
+  });
+});
+
 describe('AppShell.css print stylesheet (tuxlink-zdfj)', () => {
   const printCss = appShellCss.slice(appShellCss.indexOf('@media print'));
 
