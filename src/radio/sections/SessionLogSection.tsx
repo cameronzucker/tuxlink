@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import './SessionLogSection.css';
 
 export const SESSION_LOG_VISIBLE_ENTRY_LIMIT = 500;
+const SESSION_LOG_AUTO_FOLLOW_THRESHOLD_PX = 16;
 
 export type SessionLogLevel = 'info' | 'ok' | 'warn' | 'alert' | 'raw';
 
@@ -51,14 +52,30 @@ export function SessionLogSection({
   const [showRaw, setShowRaw] = useState(initialShowRaw);
   const [autoScroll, setAutoScroll] = useState(initialAutoScroll);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const shouldFollowScrollRef = useRef(initialAutoScroll);
 
-  // Auto-scroll on new entries when the toggle is on. The operator
-  // scroll-back pauses auto-scroll via the onScroll handler.
+  // Auto-follow only while the operator is already near the live tail. Once
+  // they scroll upward, new log lines preserve their scrollback position until
+  // they manually return to the bottom or explicitly re-enable Auto-scroll.
   useEffect(() => {
-    if (autoScroll && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const scrollEl = scrollRef.current;
+    if (!autoScroll || !scrollEl) return;
+    if (shouldFollowScrollRef.current || isScrolledNearBottom(scrollEl)) {
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+      shouldFollowScrollRef.current = true;
     }
   }, [entries, autoScroll, showRaw]);
+
+  const handleScroll = () => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+    shouldFollowScrollRef.current = isScrolledNearBottom(scrollEl);
+  };
+
+  const handleAutoScrollChange = (checked: boolean) => {
+    shouldFollowScrollRef.current = checked;
+    setAutoScroll(checked);
+  };
 
   const filtered = showRaw ? entries : entries.filter(e => e.level !== 'raw');
   const hiddenCount = Math.max(0, filtered.length - SESSION_LOG_VISIBLE_ENTRY_LIMIT);
@@ -73,7 +90,7 @@ export function SessionLogSection({
         Session log
         <span className="live">live tail</span>
       </h5>
-      <div className="log-scroll" ref={scrollRef}>
+      <div className="log-scroll" ref={scrollRef} onScroll={handleScroll}>
         {hiddenCount > 0 && (
           <div className="log-entry log-entry-info log-entry-limit-note"
                data-testid="session-log-limit-note">
@@ -103,7 +120,7 @@ export function SessionLogSection({
         </label>
         <label>
           <input type="checkbox" checked={autoScroll}
-                 onChange={(ev) => setAutoScroll(ev.target.checked)} />
+                 onChange={(ev) => handleAutoScrollChange(ev.target.checked)} />
           Auto-scroll
         </label>
         <button type="button" className="log-copy"
@@ -121,6 +138,11 @@ export function SessionLogSection({
       </div>
     </section>
   );
+}
+
+function isScrolledNearBottom(el: HTMLElement): boolean {
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+  return distanceFromBottom <= SESSION_LOG_AUTO_FOLLOW_THRESHOLD_PX;
 }
 
 function copyEntries(entries: SessionLogEntry[]): void {
