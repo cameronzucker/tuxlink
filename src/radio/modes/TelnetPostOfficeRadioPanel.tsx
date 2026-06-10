@@ -149,6 +149,15 @@ export function TelnetPostOfficeRadioPanel({
   // Surface it inline beside the favorites controls instead.
   const [favoritesError, setFavoritesError] = useState<string | null>(null);
 
+  // oi1g: relay-favorite edit-in-place. `editingFavKey` is the OLD host:port key
+  // of the favorite being edited (stable even when host/port are changed in the
+  // form); null when no edit is open. Field mirrors seed from the favorite on open.
+  const [editingFavKey, setEditingFavKey] = useState<string | null>(null);
+  const [editFavCallsign, setEditFavCallsign] = useState<string>('');
+  const [editFavLabel, setEditFavLabel] = useState<string>('');
+  const [editFavHost, setEditFavHost] = useState<string>('');
+  const [editFavPort, setEditFavPort] = useState<string>('');
+
   const { entries: logEntries, clear: clearLog } = useSessionLog();
   const queryClient = useQueryClient();
 
@@ -260,6 +269,45 @@ export function TelnetPostOfficeRadioPanel({
       setFavoritesError(null);
     } catch (e) {
       // No session-log event for favorites mutations — surface inline.
+      setFavoritesError(String(e));
+    }
+  };
+
+  // oi1g: open the inline edit form for a relay favorite, seeding the field
+  // mirrors from its persisted values.
+  const openEditFavorite = (f: RelayFavorite) => {
+    setEditingFavKey(favKey(f));
+    setEditFavCallsign(f.callsign);
+    setEditFavLabel(f.label);
+    setEditFavHost(f.host);
+    setEditFavPort(String(f.port));
+  };
+
+  // oi1g: edit-in-place via network_po_favorites_set (replaces the whole list),
+  // instead of the prior remove + re-add dance. Build the next list by swapping
+  // the edited favorite (matched by its OLD host:port key) for the updated one.
+  const saveEditFavorite = async () => {
+    if (editingFavKey === null) return;
+    const parsedPort = Number(editFavPort.trim());
+    if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+      setFavoritesError(`Invalid port "${editFavPort.trim()}" — must be 1..65535.`);
+      return;
+    }
+    const updated: RelayFavorite = {
+      callsign: editFavCallsign.trim().toUpperCase(),
+      label: editFavLabel.trim(),
+      host: editFavHost.trim(),
+      port: parsedPort,
+    };
+    const nextList = favorites.map((f) => (favKey(f) === editingFavKey ? updated : f));
+    try {
+      const result = await invoke<RelayFavorite[]>('network_po_favorites_set', {
+        favorites: nextList,
+      });
+      if (result) setFavorites(result);
+      setFavoritesError(null);
+      setEditingFavKey(null);
+    } catch (e) {
       setFavoritesError(String(e));
     }
   };
@@ -403,6 +451,19 @@ export function TelnetPostOfficeRadioPanel({
                 <button
                   type="button"
                   className="radio-panel-chip-x"
+                  data-testid={`po-favorite-edit-${favKey(f)}`}
+                  aria-label={`Edit relay ${favKey(f)}`}
+                  title="Edit relay"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openEditFavorite(f);
+                  }}
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  className="radio-panel-chip-x"
                   data-testid={`po-favorite-remove-${favKey(f)}`}
                   aria-label={`Remove relay ${favKey(f)}`}
                   onClick={(e) => {
@@ -415,6 +476,84 @@ export function TelnetPostOfficeRadioPanel({
               </span>
             ))}
           </div>
+
+          {/* oi1g: inline edit-in-place form for the relay favorite whose ✎ was
+              clicked. network_po_favorites_set replaces the whole list, so Save
+              swaps the edited favorite (matched by its OLD host:port key) — no
+              remove + re-add. */}
+          {editingFavKey !== null && (
+            <div
+              className="po-favorite-edit"
+              data-testid={`po-favorite-edit-form-${editingFavKey}`}
+            >
+              <label className="radio-panel-input-row">
+                <span>Callsign</span>
+                <input
+                  type="text"
+                  className="radio-panel-input"
+                  data-testid={`po-favorite-edit-callsign-${editingFavKey}`}
+                  value={editFavCallsign}
+                  spellCheck={false}
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  onChange={(e) => setEditFavCallsign(e.target.value.toUpperCase())}
+                />
+              </label>
+              <label className="radio-panel-input-row">
+                <span>Label</span>
+                <input
+                  type="text"
+                  className="radio-panel-input"
+                  data-testid={`po-favorite-edit-label-${editingFavKey}`}
+                  value={editFavLabel}
+                  onChange={(e) => setEditFavLabel(e.target.value)}
+                />
+              </label>
+              <label className="radio-panel-input-row">
+                <span>Host</span>
+                <input
+                  type="text"
+                  className="radio-panel-input"
+                  data-testid={`po-favorite-edit-host-${editingFavKey}`}
+                  value={editFavHost}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  onChange={(e) => setEditFavHost(e.target.value)}
+                />
+              </label>
+              <label className="radio-panel-input-row">
+                <span>Port</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  className="radio-panel-input"
+                  data-testid={`po-favorite-edit-port-${editingFavKey}`}
+                  value={editFavPort}
+                  spellCheck={false}
+                  onChange={(e) => setEditFavPort(e.target.value)}
+                />
+              </label>
+              <div className="radio-panel-chip-row">
+                <button
+                  type="button"
+                  className="radio-panel-btn radio-panel-btn-primary"
+                  data-testid={`po-favorite-edit-save-${editingFavKey}`}
+                  onClick={() => void saveEditFavorite()}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  className="radio-panel-btn"
+                  data-testid={`po-favorite-edit-cancel-${editingFavKey}`}
+                  onClick={() => setEditingFavKey(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           {/* Add-favorite row: callsign + label, using the current host:port
               as the endpoint. */}
           <label className="radio-panel-input-row">
