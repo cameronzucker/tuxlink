@@ -5,6 +5,12 @@
  * WebKitGTK: use auto / min-height, never fixed pixel heights — fixed heights
  * clip content in the real WebKitGTK webview even though they fit in Chromium. */
 
+/* The mock uses an amber edge token the app does not define; pin it to the
+ * literal once so the hero / chip / reveal hover borders share one value. */
+.request-overlay {
+  --accent-edge: rgba(245, 159, 60, 0.55);
+}
+
 .request-overlay {
   position: fixed;
   inset: 0;
@@ -19,7 +25,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .request-header {
@@ -35,9 +41,21 @@
 .request-header__lead {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
   flex: 0 0 auto;
   min-width: 0;
+}
+
+/* Amber-tinted RC glyph tile (mock `.hd-title .g`). */
+.request-header__glyph {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
 }
 
 .request-header__title {
@@ -47,23 +65,37 @@
   white-space: nowrap;
 }
 
+/* Location chip (mock `.loc`): pin + "Near <grid>" + dimmer state sub-span. */
 .request-location-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
+  gap: 8px;
+  padding: 7px 14px 7px 11px;
   border-radius: 999px;
-  background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
-  color: var(--text-dim);
-  border: 1px solid var(--border-soft);
-  font-size: 11px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-edge);
+  color: var(--accent-2);
+  font-size: 13px;
+  font-weight: 600;
   white-space: nowrap;
+}
+.request-location-chip .sub {
+  color: var(--text-dim);
+  font-weight: 500;
 }
 
 .request-header__search {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.request-search__icon {
+  flex: 0 0 auto;
+  color: var(--text-dim);
 }
 
 .request-search {
@@ -72,10 +104,10 @@
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 10px;
+  border-radius: 8px;
+  padding: 8px 12px;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 .request-search:focus-visible {
   outline: 2px solid var(--tux-focus-ring);
@@ -86,10 +118,9 @@
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-dim);
-  font-size: 14px;
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -126,72 +157,235 @@
   background: var(--surface);
 }
 
-/* --- C2: request-first sections + cards --------------------------------- */
+/* --- request-first home: hero + chip grids + reveals -------------------- */
+
+/* The content column is width-constrained (mock `.content-inner`). */
+.content-inner {
+  max-width: 840px;
+}
 
 .request-sections {
   display: flex;
   flex-direction: column;
-  gap: 24px;
-}
-
-.request-section__title {
-  margin: 0 0 10px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-dim);
-}
-
-.request-section__cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
-}
-
-.request-card {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: var(--surface);
 }
 
 .request-card__body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
   min-width: 0;
 }
 
-.request-card__label {
+/* --- HERO (the location section) ---------------------------------------- */
+
+.request-hero {
+  border: 1px solid var(--accent-edge);
+  border-radius: 12px;
+  background: linear-gradient(
+    135deg,
+    rgba(245, 159, 60, 0.1),
+    rgba(245, 159, 60, 0.02) 60%,
+    var(--surface)
+  );
+  padding: 20px 22px 22px;
+  margin-bottom: 30px;
+}
+
+.hero-h {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 18px;
+}
+.hero-h .pin {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #2a1500;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+.hero-h h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+.hero-h .where {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.feat {
+  display: flex;
+  gap: 15px;
+  align-items: flex-start;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+}
+.feat .fi {
+  width: 48px;
+  height: 48px;
+  border-radius: 11px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.feat .fn {
+  font-size: 16px;
+  font-weight: 650;
+}
+.feat .fd {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  line-height: 1.45;
+}
+.feat .fa {
+  margin-top: 14px;
+}
+
+.badd {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  padding: 7px 15px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  font: inherit;
+  font-size: 13px;
   font-weight: 600;
 }
-
-.request-card__desc {
-  font-size: 11px;
-  color: var(--text-dim);
+.badd:hover {
+  background: rgba(245, 159, 60, 0.2);
+}
+.bopen {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  padding: 7px 15px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+.bopen:hover {
+  border-color: var(--accent-edge);
+}
+.badd:focus-visible,
+.bopen:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
 }
 
-.request-card__action {
-  flex: 0 0 auto;
-  background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 12px;
-  font: inherit;
+/* --- CHIP GRIDS (the national sections) --------------------------------- */
+
+.request-subt {
   font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 0 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.request-subt .bar {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.85;
+}
+
+.request-chips {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(252px, 1fr));
+  gap: 12px;
+  margin-bottom: 30px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  cursor: default;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.chip:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+.chip .ci {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  color: var(--accent-2);
+  flex: 0 0 auto;
+}
+.chip .cb {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.chip .ct {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.chip .cd {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  line-height: 1.35;
+}
+.chip .cs {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  margin-top: 3px;
+  display: inline-block;
+}
+.chip .cadd {
+  flex: 0 0 auto;
+  color: var(--accent);
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  display: grid;
+  place-items: center;
   cursor: pointer;
 }
-.request-card__action:hover {
+.chip .cadd:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
 }
-.request-card__action:focus-visible {
+.chip .cadd:focus-visible {
   outline: 2px solid var(--tux-focus-ring);
   outline-offset: 1px;
 }
@@ -297,27 +491,40 @@
   color: var(--danger, #c0392b);
 }
 
-.request-browse-reveal {
+/* --- REVEALS (browse-everything + GRIB-by-area) ------------------------- */
+
+.request-reveals {
   display: flex;
-  justify-content: flex-start;
+  gap: 13px;
+  flex-wrap: wrap;
 }
 
-.request-browse-reveal__button {
-  background: transparent;
+.request-rev {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  padding: 14px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 8px 14px;
   font: inherit;
-  font-size: 12px;
+  font-size: 13.5px;
   font-weight: 600;
   cursor: pointer;
 }
-.request-browse-reveal__button:hover {
-  background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
-  border-color: var(--accent);
+.request-rev:hover {
+  border-color: var(--accent-edge);
+  background: var(--surface-2);
 }
-.request-browse-reveal__button:focus-visible {
+.request-rev .m {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+.request-rev .lead {
+  color: var(--accent);
+}
+.request-rev:focus-visible {
   outline: 2px solid var(--tux-focus-ring);
   outline-offset: 1px;
 }
