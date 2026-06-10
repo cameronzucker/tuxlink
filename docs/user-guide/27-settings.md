@@ -1,214 +1,275 @@
 # Settings
 
-Tools → Settings (or the GPS & Privacy item in the same submenu) opens
-the inline Settings panel. Closing the panel persists changes.
+Tuxlink alpha does not have one large preferences window. Settings live where
+the operator uses them: GPS and map settings are under Tools, themes are under
+View, logging controls are in the Logging window, and transport settings sit in
+their transport panels.
 
-## GPS state
+## Quick reference
 
-<!-- screenshot-needed: docs/user-guide/images/27-settings/gps-and-privacy-panel.png
-     Show: Tools → Settings → GPS & Privacy panel with the three GPS
-     state options (Off / On / Always-broadcast) and the broadcast
-     precision dropdown visible (4-character Maidenhead selected by
-     default). Inline settings panel crop, ~600x500. -->
+| Setting | Where to change it | Notes |
+|---|---|---|
+| Callsign | First-launch wizard; auth recovery can reopen the callsign step after a CMS identity failure | Tuxlink alpha assumes one primary callsign per install. |
+| Winlink password | First-launch wizard; auth recovery can re-enter the password after a CMS auth failure | Stored in the OS keyring, not in `config.json`. |
+| Manual grid | Dashboard ribbon -> Grid | Click the grid value to type a grid, or choose **Pick on map...** from the grid editor. |
+| GPS/manual position source | Dashboard ribbon -> Grid source segments | Pick **GPS** to use a receiver when available; pick **MANUAL** to pin a manual grid. |
+| GPS broadcast behavior | Tools -> Settings -> GPS & Privacy... | Controls whether GPS is read and what precision may leave the station. |
+| CMS Telnet host and TLS/plaintext | Connections sidebar -> CMS -> Telnet | The Telnet radio panel owns the CMS server and transport choice. |
+| ARDOP HF modem | Connections sidebar -> ARDOP HF | The ARDOP panel owns sound devices, PTT, command port, and bandwidth. |
+| VARA modem | Connections sidebar -> VARA HF/FM | The VARA panel owns host, command port, data port, and bandwidth. |
+| Packet KISS and SSID | Connections sidebar -> Packet; dashboard callsign SSID picker | Packet uses the operator's callsign plus the selected AX.25 SSID. |
+| Pending inbound review | Dashboard ribbon -> On connect | **Review** prompts before downloading pending messages; **Download all** accepts all pending messages. |
+| LAN map tiles | Tools -> Settings -> Map tiles... | Optional local tile server for finer map zoom and six-character map picks. |
+| Color scheme | View -> Color scheme | Presets and the saved custom theme are here. |
+| Custom theme tokens | View -> Color scheme -> Customize... | Opens the inline theme designer. |
+| Logging detail and retention | Help -> Logging... -> Settings | Controls detailed logging mode, age retention, and size cap. |
 
-Three options control whether GPS is read and whether the read value is
-broadcast.
+## Identity
 
-- **Broadcast at precision** (default). GPS is read; the position is
-  broadcast on air at the precision setting below.
-- **Local display only.** GPS is read; the dashboard ribbon shows the
-  live position; the broadcast grid is the configured manual grid.
-- **Off.** GPS is not read at all. The broadcast grid is the configured
-  manual grid.
+The wizard writes the operator identity into Tuxlink's config file:
 
-## Broadcast precision
+- **Callsign** for Winlink/CMS operation.
+- **Station identifier** for offline/radio-only deployments that do not log
+  into CMS.
+- **Manual grid** as the fallback position when GPS is unavailable or disabled.
 
-The granularity of the on-air position. Two options:
+The callsign and grid are not secrets. They live in
+`~/.config/tuxlink/config.json` unless `TUXLINK_CONFIG_DIR` points Tuxlink at a
+custom config directory. Tuxlink validates the basic shape of the callsign or
+identifier, but the CMS is the authority for whether a callsign/password pair is
+accepted.
 
-- **4-character grid (~1°)** (default). Approximately 110 km × 60 km cell.
-  Recommended for privacy.
-- **6-character grid (~5 km)**. Approximately 5 km × 3 km cell.
-  Opt-in.
+Alpha limitation: there is not yet a polished general-purpose **Identity**
+settings panel. To change the station's grid, use the dashboard ribbon. To
+recover from a bad callsign or password, use the auth recovery banner that
+appears after a failed CMS login.
 
-The precision setting only affects the on-air broadcast — the dashboard
-ribbon shows the full-precision live position regardless.
+## Position and privacy
 
-## ARDOP HF
+Position has two related controls:
 
-The ARDOP modem configuration:
+- **Position source** chooses where the working position comes from.
+- **Broadcast behavior** chooses what position may be sent over Winlink.
 
-- **`ardopcf` binary.** The path to the ARDOP daemon (`ardopcf` if it is
-  on $PATH).
-- **Capture device (ALSA).** The audio capture device that hears the
-  radio's receive audio (e.g. `plughw:1,0`).
-- **Playback device (ALSA).** The audio playback device that drives the
-  radio's mic input.
-- **PTT serial path.** The serial device for PTT control (e.g.
-  `/dev/ttyUSB0`). Blank means VOX-only — the operator's radio must be
-  configured to PTT on audio detection.
-- **Cmd port.** The TCP port `ardopcf` listens on for commands. Default
-  8515.
-- **ARQ bandwidth.** 200, 500, 1000, or 2000 Hz. Auto leaves it at the
-  daemon's default. Pick narrower for marginal HF, wider for clean band
-  conditions.
+### Manual grid
 
-The settings persist on field blur. Connection failures surface in the
-session log; the panel itself reports inline errors for the
-GPS/precision pair.
+The dashboard ribbon shows the current grid. Click the grid value to edit it.
+The editor accepts a valid four- or six-character Maidenhead grid. The **Pick on
+map...** button opens the map picker and writes the selected grid through the
+same manual-grid path.
 
-## VARA HF
+Committing a manual grid pins the position source to **MANUAL**. A fresh GPS fix
+does not silently override it; switch the source segment back to **GPS** when
+the receiver should be authoritative again.
 
-VARA configuration does not live in Tools → Settings — the VARA radio
-panel itself owns the **Host**, **Cmd Port**, **Data Port**, and optional
-**Bandwidth** fields. See [Picking a transport](08-picking-a-transport.md) for the
-defaults and what each field controls.
+### GPS source
+
+The dashboard ribbon's **GPS** segment uses the live GPS source when one is
+available. If GPS is selected but no fix is available, the ribbon falls back to
+the manual grid when one exists and marks the GPS state as unavailable.
+
+### GPS & Privacy panel
+
+Tools -> Settings -> GPS & Privacy... opens the inline privacy panel.
+
+**GPS state**
+
+- **Broadcast at precision** (default). GPS is read; the position may be sent on
+  air at the selected broadcast precision.
+- **Local display only.** GPS is read for the local UI, but outbound traffic uses
+  the configured manual grid instead.
+- **Off.** GPS is not read; outbound traffic uses the configured manual grid.
+
+**Broadcast precision**
+
+- **4-char grid (~1 degree)** (default). County-scale location. Recommended for
+  ordinary public amateur traffic.
+- **6-char grid (~5 km)**. Town-scale location. Opt in only when the extra
+  precision is operationally useful.
+
+The precision setting affects outbound position data, not the raw receiver fix
+used for local display.
+
+See [Position and privacy](26-position-and-privacy.md) for the operating
+practice behind these defaults.
+
+## Connection settings
+
+The disabled Tools -> Settings -> Connection menu item is a placeholder. Current
+alpha transport settings live in the connection panels themselves.
+
+### CMS Telnet
+
+Open Connections -> CMS -> Telnet.
+
+- **Host** is the CMS server hostname.
+- **cms-z (dev)** and **server (prod)** quick-picks fill common hosts.
+- **TLS** uses the TLS-wrapped CMS port, 8773.
+- **Plaintext** uses the plain Telnet CMS port, 8772.
+
+The panel persists changes as soon as the host or transport changes. The
+connection ribbon and session log then reflect the selected transport.
+
+### Packet
+
+Open a Packet connection panel to configure the KISS link. The packet station
+call is the base callsign plus the dashboard ribbon's AX.25 SSID picker
+(`-0` through `-15`). Tuxlink stores the SSID and the last KISS link so the next
+packet session starts from the same station identity.
+
+### ARDOP HF
+
+Open an ARDOP HF connection panel. The panel owns:
+
+- `ardopcf` binary path.
+- ALSA capture device.
+- ALSA playback device.
+- PTT serial path, or blank for VOX-only operation.
+- Command port.
+- ARQ bandwidth.
+
+Use narrower bandwidth for marginal HF paths and wider bandwidth when the band
+and station audio are clean.
+
+### VARA
+
+Open a VARA HF or VARA FM connection panel. VARA runs as a separate modem
+application, so Tuxlink stores the TCP host, command port, data port, and
+bandwidth used to talk to that modem.
+
+## Pending inbound review
+
+The dashboard ribbon's **On connect** control sets what happens when CMS offers
+pending inbound messages:
+
+- **Review** asks which pending messages to download.
+- **Download all** accepts every pending message automatically.
+
+Review is the safer field default when bandwidth is scarce or a large attachment
+could block more urgent traffic. Download-all is convenient on broadband or when
+the operator knows the pending queue is small.
+
+## Map tiles
+
+Tools -> Settings -> Map tiles... configures an optional LAN tile source for map
+views. Without a LAN tile source, Tuxlink uses the bundled offline raster and
+keeps map zoom coarse. With a validated local tile source, map-backed position
+selection can zoom farther and can permit six-character grid picks where the
+view is detailed enough.
+
+Tile settings are not an internet map switch. The source is expected to be a
+local or LAN tile service the operator controls.
 
 ## Color schemes
 
-<!-- screenshot-needed: docs/user-guide/images/27-settings/color-scheme-picker.png
-     Show: Tools → Settings → Color schemes panel with the bundled
-     scheme tiles visible (Default, Light, High contrast, etc.). The
-     currently-active scheme should be marked. Settings-panel crop,
-     ~700x500. -->
+View -> Color scheme lists the bundled presets:
 
-The color scheme controls the entire UI's appearance — surfaces, text,
-accents, semantic state colors (success / error / info). Schemes are
-purely presentational; switching does not touch the operator's identity,
-mailbox, or any configuration.
-
-### Picking a preset
-
-View → Color Scheme lists the eight bundled presets:
-
-- **Default (dark).** The cool-slate dark theme; the design baseline.
-- **Repository Dark.** A code-host-inspired dark theme with neutral
-  surfaces, blue highlights, and green radio affordances.
-- **Office dark.** An Outlook/Office-inspired charcoal theme with crisp
-  blue command highlights for dense operator workflows.
-- **Daylight (light).** A soft off-white theme with a warm-amber accent.
-  Designed for moderate-bright indoor and outdoor use.
-- **High contrast (light).** Pure white surfaces with near-black text
-  and deep accents. For harsh direct-sun LCD viewing where Daylight
-  still washes out.
-- **Paper (warm light).** Warm beige surfaces with a saddle-brown
-  accent. Reads like a printed sheet.
-- **Night / tactical (red).** Deep-red surfaces with brighter red text.
-  Night-vision-preserving; designed for after-dark net operations.
-- **Grayscale.** Hueless. Pairs with an external red-gel or NVG filter
-  that retints the entire screen.
+- **Default (dark).** The cool-slate dark theme and design baseline.
+- **Repository Dark.** A code-host-inspired dark theme with neutral surfaces,
+  blue highlights, and green radio affordances.
+- **Office dark.** A charcoal theme with blue command highlights for dense
+  operator workflows.
+- **Daylight (light).** A soft light theme for moderate-bright conditions.
+- **High contrast (light).** White surfaces, near-black text, and deep accents
+  for bright LCD use.
+- **Paper (warm light).** Warm paper-like surfaces with a brown accent.
+- **Night / tactical (red).** A red dark theme for after-dark operating.
+- **Grayscale.** Hueless; useful with an external colored screen filter.
 
 The choice persists between sessions.
 
 ### Customizing
 
-View → Color Scheme → Customize… opens the inline Theme Designer. Pick a
-base preset to start from, then tweak any token via the native color
-picker or by typing a hex / rgb / oklch value in the text input. The
-preview is live — the whole app re-paints as edits land.
+View -> Color scheme -> Customize... opens the inline Theme Designer. Pick a base
+preset, adjust the tokens, and save. The preview is live while the designer is
+open.
 
-Token groups in the designer:
+Editable groups include surfaces, borders, text, accent, radio dock, and
+status/semantic colors. Saving creates **My custom theme** in the color-scheme
+menu. Cancel, Esc, or backdrop-click restores the previously applied scheme
+without saving.
 
-- **Surfaces.** The window background and the elevation ladder.
-- **Borders.** The three tiers of dividing lines.
-- **Text.** Primary, dim (labels), faint (help text).
-- **Accent.** The highlight / link / button color, plus the matching
-  on-accent text color.
-- **Radio dock.** The modem panel's independent green accent family.
-- **Status / semantic.** Unread dot, success, error (and its on-error
-  text color), info, form-tag.
+## Logging
 
-Saving persists the theme as "My custom theme" — it appears in the View
-→ Color Scheme list. Cancel, Esc, or backdrop-click restores the
-previously-applied scheme without saving.
+Help -> Logging... opens the operator-facing logging window. Its **Settings**
+section controls:
 
-### Light vs dark mode
+- **Detailed mode.** Off, on until disabled, or bounded for a chosen number of
+  hours.
+- **Retention days.** How long logs remain eligible for retention.
+- **Size cap.** The retained log budget, from 50 MB through 10 GB.
 
-Each preset declares a CSS `color-scheme` (light or dark). This affects
-the browser's native form controls — scrollbars, select dropdowns,
-selection highlights — so they match the theme on WebKitGTK. The
-designer's Mode toggle does the same for custom themes.
+These settings affect diagnostic logs. They do not change the per-session radio
+panel log shown during a connection.
 
 ## Credentials and the keyring
 
-Tuxlink stores your Winlink password in the **OS keyring** — the system
-service that GNOME Keyring, KWallet, KeePassXC, and other desktop
-credential managers all expose under the Linux **Secret Service** API.
-Tuxlink does not write the password to `~/.config/tuxlink/config.json`
-or to any other file under tuxlink's data directories.
+Tuxlink stores the Winlink password in the **OS keyring**, the Linux Secret
+Service API exposed by GNOME Keyring, KWallet, KeePassXC, and similar desktop
+credential managers. Tuxlink does not write the password to
+`~/.config/tuxlink/config.json` or to the mailbox directory.
 
 ### What gets stored
 
 One keyring entry:
 
 - **Service name:** `tuxlink`
-- **Account:** your callsign (the same value the wizard captured)
-- **Secret:** your Winlink password
+- **Account:** the callsign from the wizard.
+- **Secret:** the Winlink password.
 
-That single entry is all of tuxlink's credential state. Everything
-else — callsign, grid, transport configuration, color scheme — lives
-in plaintext config files because none of it is secret.
+Everything else in normal settings is non-secret configuration.
 
 ### Inspecting the entry
 
-On GNOME desktops, **Seahorse** (Passwords and Keys) shows the entry
-under the *Login* keyring with `Service: tuxlink`. On KDE, the
-**KWalletManager** GUI exposes the same entry via the Secret Service
-bridge. Command-line:
+On GNOME desktops, Seahorse (Passwords and Keys) shows the entry under the
+login keyring with `Service: tuxlink`. On KDE, KWalletManager exposes the same
+entry through the Secret Service bridge.
+
+Command line:
 
 ```sh
-# Read the password (will prompt to unlock the keyring on first read):
+# Read the password; the desktop may prompt to unlock the keyring.
 secret-tool lookup service tuxlink account <YOUR-CALLSIGN>
 
-# List all secret-service entries that mention "tuxlink":
+# List secret-service entries that mention tuxlink.
 secret-tool search service tuxlink
 ```
 
-### Surviving a tuxlink reinstall
+### Reinstalling or uninstalling Tuxlink
 
-The keyring is a system service — it is not part of tuxlink's install
-footprint. `apt remove tuxlink`, `apt install tuxlink=<another-version>`,
-and `apt reinstall tuxlink` all leave the keyring entry untouched. On
-next launch the wizard sees credentials already configured and skips
-the password step.
+The keyring is a system service, not part of the package files. A normal package
+remove/reinstall leaves the password entry in place, just as it leaves the
+operator's mailbox and config data in the home directory unless the operator
+chooses a cleanup path.
 
-This is a deliberate design choice. The WLE-era pattern of storing
-the password in app-local state means reinstalling loses the password.
-The keyring-backed approach makes that failure mode go away — the
-password lives outside any tuxlink-owned file, in a system service
-that survives across tuxlink installs.
-
-### Moving to a new machine
-
-The keyring is per-Linux-user-account. Moving to a new machine (or a
-new Linux user account on the same machine) means re-entering the
-password once; tuxlink writes it to the new machine's keyring on
-wizard completion. The password value is unchanged — it's the same
-Winlink password your account was registered with at winlink.org.
-
-There is no "tuxlink backup file" that includes the password. The
-keyring backup story is your **desktop environment's** backup story:
-GNOME Keyring lives at `~/.local/share/keyrings/` (encrypted); KDE's
-KWallet stores at `~/.local/share/kwalletd/`. Backing those up + the
-login-keyring unlock secret (your Linux login password by default)
-restores credentials. Most operators don't need to do this
-explicitly — the password is short, you re-enter it on the new
-machine, and the keyring writes through.
-
-### Forgetting / rotating the password
-
-To remove tuxlink's keyring entry (e.g., rotating to a fresh password
-after suspected compromise):
+To remove the password entry manually:
 
 ```sh
 secret-tool clear service tuxlink account <YOUR-CALLSIGN>
 ```
 
-The next tuxlink launch re-prompts for the password through the
-wizard. If you also reset the password on Winlink's side (via
-winlink.org's password-reset flow), enter the new password in the
-wizard and tuxlink's keyring is now in sync with Winlink's.
+The next CMS-authenticated flow that needs the password will ask for it again.
+
+## Not yet in alpha
+
+Winlink Express exposes several preference families that Tuxlink does not yet
+ship as settings:
+
+- Multiple callsigns or full multi-profile switching.
+- Automatic forwarding rules and inbox rules.
+- Form-preference panels for HTML form behavior.
+- PACTOR, Robust Packet, Iridium GO, and other unsupported transport setup
+  pages.
+- Fully scheduled AutoConnect rules.
+
+When a setting is absent, do not assume Tuxlink is hiding it in a config file.
+If the UI does not expose it, treat it as not shipped yet unless another guide
+names the exact workflow.
 
 ## Where next
 
-- [Picking a transport](08-picking-a-transport.md) — what each transport needs, including how Abort behaves and what an emergency RF stop actually looks like.
-- [Troubleshooting](29-troubleshooting.md) — when a setting does not take effect.
+- [Position and privacy](26-position-and-privacy.md) - why Tuxlink defaults to
+  coarse broadcast position.
+- [Picking a transport](08-picking-a-transport.md) - what each transport needs
+  before a connection.
+- [Troubleshooting](29-troubleshooting.md) - when settings do not take effect.
