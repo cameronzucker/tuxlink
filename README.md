@@ -12,7 +12,7 @@ external CMS sidecar.
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg" alt="License: GPL v3"></a>
-  <a href="https://github.com/cameronzucker/tuxlink/releases"><img src="https://img.shields.io/github/v/release/cameronzucker/tuxlink?label=release" alt="Latest release"></a>
+  <a href="https://github.com/cameronzucker/tuxlink/releases/latest"><img src="https://img.shields.io/badge/release-latest-blue.svg" alt="Latest release"></a>
   <a href="https://github.com/cameronzucker/tuxlink/releases/latest"><img src="https://img.shields.io/badge/downloads-deb%20%7C%20rpm%20%7C%20AppImage-success" alt="Downloads: deb, rpm, AppImage"></a>
   <a href="https://github.com/cameronzucker/tuxlink/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/cameronzucker/tuxlink/release.yml?label=build" alt="Build status"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.75+-orange.svg?logo=rust" alt="Rust 1.75+"></a>
