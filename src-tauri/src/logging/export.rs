@@ -508,10 +508,14 @@ mod tests {
         write_event(&log_dir, 11, "warn", "second");
         write_event(&log_dir, 12, "error", "third");
         let session_log = SessionLogState::new(8);
-        session_log.append_redacted(
+        session_log.append_operator_line(
             LogLevel::Info,
             LogSource::Wire,
             "\x1b[31m< ;PQ: 23753528 ;PR: 72768415\r",
+        );
+        assert!(
+            session_log.snapshot()[0].message.contains("23753528"),
+            "local operator session log should retain raw wire tokens before export"
         );
 
         let out_path = tmp.path().join("export.tar.zst");
@@ -601,7 +605,7 @@ mod tests {
         write_event(&log_dir, 10, "info", "first");
         let session_log = SessionLogState::unbounded();
         for idx in 0..=500 {
-            session_log.append_redacted(
+            session_log.append_operator_line(
                 LogLevel::Info,
                 LogSource::Transport,
                 format!("operator line {idx}"),
