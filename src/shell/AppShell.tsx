@@ -1232,6 +1232,7 @@ export function AppShell() {
         {radioPanelMode && radioPanelMode.kind === 'ardop-hf' && (
           <Suspense fallback={null}>
             <ArdopRadioPanel
+              mode={radioPanelMode}
               onClose={closeRadioPanel}
               onFindGateway={() => setCatalogBuilderOpen(true)}
             />
