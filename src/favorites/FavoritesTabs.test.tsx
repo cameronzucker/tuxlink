@@ -140,17 +140,68 @@ describe('<FavoritesTabs> — per-mode chrome (M7)', () => {
   });
 });
 
-// tuxlink-fr0d: the active tab highlighted with the GLOBAL app accent (orange
-// --accent) read as generic/foreign inside the green --modem-accent radio
-// panel. Pin the active state to the radio-panel accent family so it stays
-// consistent with the surrounding .radio-panel-segmented chrome.
-describe('FavoritesTabs.css active-tab styling (tuxlink-fr0d)', () => {
+// tuxlink-fgc1: the first Contacts+Favorites tab chrome used generic web tabs
+// and global app accent actions. Pin it to the radio-panel segmented/action
+// language so the selector feels native to the modem pane.
+describe('FavoritesTabs.css radio-panel styling (tuxlink-fgc1)', () => {
+  it('renders the tab list as a bounded segmented control, not an underline tab strip', () => {
+    const start = FAVORITES_TABS_CSS.indexOf('.favorites-tabs-list');
+    expect(start).toBeGreaterThan(-1);
+    const block = FAVORITES_TABS_CSS.slice(start, FAVORITES_TABS_CSS.indexOf('}', start) + 1);
+    expect(block).toMatch(/display:\s*grid/);
+    expect(block).toMatch(/grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+    expect(block).toMatch(/border:\s*1px solid var\(--border\)/);
+    expect(block).toMatch(/border-radius:\s*6px/);
+    expect(block).not.toMatch(/border-bottom/);
+  });
+
+  it('uses button-like triggers instead of border-bottom tabs', () => {
+    const start = FAVORITES_TABS_CSS.indexOf('.favorites-tab-trigger {');
+    expect(start).toBeGreaterThan(-1);
+    const block = FAVORITES_TABS_CSS.slice(start, FAVORITES_TABS_CSS.indexOf('}', start) + 1);
+    expect(block).toMatch(/border:\s*1px solid transparent/);
+    expect(block).toMatch(/border-radius:\s*4px/);
+    expect(block).not.toMatch(/border-bottom/);
+  });
+
   it('uses the radio-panel modem-accent (not the global app accent) for the active tab', () => {
     const start = FAVORITES_TABS_CSS.indexOf(".favorites-tab-trigger[data-state='active']");
     expect(start).toBeGreaterThan(-1);
     const block = FAVORITES_TABS_CSS.slice(start, FAVORITES_TABS_CSS.indexOf('}', start) + 1);
     expect(block).toMatch(/color:\s*var\(--modem-accent\)/);
+    expect(block).toMatch(/background:\s*var\(--modem-accent-soft\)/);
+    expect(block).toMatch(/border-color:\s*color-mix\(in srgb,\s*var\(--modem-accent\) 35%, transparent\)/);
     expect(block).not.toMatch(/var\(--accent\)/);
+    expect(block).not.toMatch(/border-bottom/);
+  });
+
+  it('uses the radio-panel modem-accent for stars, records, and Connect', () => {
+    const starStart = FAVORITES_TABS_CSS.indexOf('.favorite-star--on');
+    const connectStart = FAVORITES_TABS_CSS.indexOf('.favorite-connect {');
+    const glyphStart = FAVORITES_TABS_CSS.indexOf('.favorite-record-glyph--ok');
+    expect(starStart).toBeGreaterThan(-1);
+    expect(connectStart).toBeGreaterThan(-1);
+    expect(glyphStart).toBeGreaterThan(-1);
+
+    const starBlock = FAVORITES_TABS_CSS.slice(
+      starStart,
+      FAVORITES_TABS_CSS.indexOf('}', starStart) + 1,
+    );
+    const connectBlock = FAVORITES_TABS_CSS.slice(
+      connectStart,
+      FAVORITES_TABS_CSS.indexOf('}', connectStart) + 1,
+    );
+    const glyphBlock = FAVORITES_TABS_CSS.slice(
+      glyphStart,
+      FAVORITES_TABS_CSS.indexOf('}', glyphStart) + 1,
+    );
+
+    expect(starBlock).toMatch(/color:\s*var\(--modem-accent\)/);
+    expect(connectBlock).toMatch(/color:\s*var\(--modem-accent\)/);
+    expect(connectBlock).toMatch(/background:\s*var\(--modem-accent-soft\)/);
+    expect(connectBlock).toMatch(/border:\s*1px solid color-mix\(in srgb,\s*var\(--modem-accent\) 35%, transparent\)/);
+    expect(glyphBlock).toMatch(/color:\s*var\(--modem-accent\)/);
+    expect(`${starBlock}\n${connectBlock}\n${glyphBlock}`).not.toMatch(/var\(--accent\)/);
   });
 });
 
