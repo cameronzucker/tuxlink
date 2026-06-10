@@ -1,5 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
+
+// The "Pick on map…" affordance opens PositionPickerOverlay → PositionMapWidget →
+// BaseMap, which pulls in react-leaflet/leaflet + its assets. Mock them via the
+// shared testMapMock so the overlay renders headless and a pin can be simulated.
+import { fireMapEvent, resetMapMock } from '../map/testMapMock';
+vi.mock('react-leaflet', async () => (await import('../map/testMapMock')).createReactLeafletMock());
+vi.mock('leaflet', async () => (await import('../map/testMapMock')).createLeafletMock());
+vi.mock('../map/assets/world-equirect-2048.png', () => ({ default: '/world-equirect-2048.png' }));
+vi.mock('leaflet/dist/leaflet.css', () => ({}));
+vi.mock('leaflet/dist/images/marker-icon.png', () => ({ default: '/marker-icon.png' }));
+vi.mock('leaflet/dist/images/marker-icon-2x.png', () => ({ default: '/marker-icon-2x.png' }));
+vi.mock('leaflet/dist/images/marker-shadow.png', () => ({ default: '/marker-shadow.png' }));
+
 import { PositionFormV2 } from './PositionFormV2';
 
 // Default mock: fresh GPS fix with a valid grid.
@@ -9,6 +22,10 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (cmd: string) => {
     if (cmd === 'position_current_fix') {
       return { grid: 'CN87us', source: 'Gps', fresh: true };
+    }
+    // PositionPickerOverlay fetches tile-source status to gate 6-char precision.
+    if (cmd === 'tile_source_status') {
+      return { kind: 'bundled', zoom: 2, label: null, cachedAt: null };
     }
     if (cmd === 'send_form') return 'MID-MOCK-123';
     if (cmd === 'form_draft_library_list') return [];
@@ -29,11 +46,15 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 // Reset mock to defaults before each test so per-test overrides don't bleed.
 beforeEach(async () => {
+  resetMapMock();
   const { invoke } = await import('@tauri-apps/api/core');
   const mockInvoke = invoke as ReturnType<typeof vi.fn>;
   mockInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'position_current_fix') {
       return { grid: 'CN87us', source: 'Gps', fresh: true };
+    }
+    if (cmd === 'tile_source_status') {
+      return { kind: 'bundled', zoom: 2, label: null, cachedAt: null };
     }
     if (cmd === 'send_form') return 'MID-MOCK-123';
     if (cmd === 'form_draft_library_list') return [];
@@ -68,30 +89,53 @@ describe('<PositionFormV2>', () => {
     expect((input as HTMLInputElement).value).toBe('EM26');
   });
 
-  it('keeps the manual grid input editable while the offline map is mounted (C9)', async () => {
-    // The map is an aid, never the only path: the manual Maidenhead input must
-    // remain present and editable whenever the (offline) map is mounted.
+  // §6 (tuxlink-sdbd): the cramped inline 240px map is replaced by an
+  // expand-to-overlay picker. The manual Maidenhead input stays the
+  // always-available path (C9), and a "Pick on map…" button opens the large
+  // overlay — there is no inline map mount anymore.
+  it('keeps the manual grid input editable; the map lives behind "Pick on map…" (§6, C9)', async () => {
     render(<PositionFormV2 onSubmit={vi.fn()} onCancel={vi.fn()} />);
     const input = await screen.findByLabelText(/Maidenhead grid/i);
-
-    // Default GPS fix → grid set → the map mounts inside the mount div.
-    // Wait for the async GPS fix to populate the grid before asserting the
-    // map-mount's grid-derived `--active` class. `findByLabelText` above only
-    // awaits the input's presence (it renders on the first pass, before the
-    // position_current_fix invoke resolves and setGrid re-renders); asserting
-    // `--active` synchronously here races that re-render. Awaiting the grid's
-    // display value is how the other tests in this file wait for the fix to
-    // land. (This raced and failed the amd64 verify job on the 0.39.1 release
-    // CI run 2026-06-09; arm64 passed the same commit — classic timing flake.)
     await screen.findByDisplayValue('CN87US');
-    const mount = screen.getByTestId('position-map-mount');
-    expect(mount.className).toContain('--active');
-    expect(mount.children.length).toBeGreaterThan(0);
+
+    // No cramped inline map; the picker is the expand-to-overlay button.
+    expect(screen.queryByTestId('position-map-mount')).toBeNull();
+    expect(screen.getByTestId('position-pick-on-map')).toBeInTheDocument();
 
     // The manual input is still present and editable.
     expect(input).toBeEnabled();
     fireEvent.change(input, { target: { value: 'EM26' } });
     expect((input as HTMLInputElement).value).toBe('EM26');
+  });
+
+  it('opens the expand-to-overlay picker from "Pick on map…" and confirms the chosen grid (§6)', async () => {
+    render(<PositionFormV2 onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByDisplayValue('CN87US');
+
+    fireEvent.click(screen.getByTestId('position-pick-on-map'));
+    expect(screen.getByTestId('position-picker-overlay')).toBeInTheDocument();
+
+    act(() => {
+      fireMapEvent('click', { lat: 33.6, lng: -118.2 });
+    });
+    fireEvent.click(screen.getByTestId('position-picker-confirm'));
+
+    // Overlay closed; grid input now holds the picked 4-char locator.
+    expect(screen.queryByTestId('position-picker-overlay')).toBeNull();
+    const input = screen.getByLabelText(/Maidenhead grid/i) as HTMLInputElement;
+    expect(input.value).toMatch(/^[A-Z]{2}\d{2}$/);
+    expect(input.value).not.toBe('CN87US');
+  });
+
+  it('cancelling the picker leaves the grid unchanged (§6)', async () => {
+    render(<PositionFormV2 onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByDisplayValue('CN87US');
+    fireEvent.click(screen.getByTestId('position-pick-on-map'));
+    // Both the form and the overlay have a "Cancel" button — scope to the overlay.
+    const overlay = screen.getByTestId('position-picker-overlay');
+    fireEvent.click(within(overlay).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByTestId('position-picker-overlay')).toBeNull();
+    expect((screen.getByLabelText(/Maidenhead grid/i) as HTMLInputElement).value).toBe('CN87US');
   });
 
   it('Send button calls onSubmit with the wire-format payload', async () => {

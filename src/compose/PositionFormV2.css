@@ -154,22 +154,44 @@
   font-style: italic;
 }
 
-/* ── Map widget (Leaflet) ──
+/* ── Location picker row (§6 expand-to-overlay) ──
  *
- * .position-form-v2__map collapses to 0 by default (no grid → no widget
- * rendered → no phantom whitespace). The --active modifier is added by
- * PositionFormV2 when grid is non-empty and sets an explicit 240px height.
- *
- * Explicit pixel height is required: Leaflet's MapContainer needs a
- * concrete height on its container to render; auto / percentage heights
- * produce a 0px tall map (blank black bar). */
-.position-form-v2__map {
-  overflow: hidden;
+ * Replaces the cramped inline 240px Leaflet map. A "Pick on map…" button opens
+ * the large PositionPickerOverlay; a compact confirm-only preview echoes the
+ * chosen locator + decimal center so the operator can verify without a map. */
+.position-form-v2__pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.position-form-v2__map--active {
-  height: 240px;
+.position-form-v2__pick-btn {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 12px;
   border-radius: 4px;
+  border: 1px solid var(--tux-border);
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.position-form-v2__pick-btn:hover {
+  background: var(--tux-elevated);
+}
+
+.position-form-v2__pick-btn:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+.position-form-v2__pick-preview {
+  font-size: 12px;
+  color: var(--tux-fg-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Action buttons ── */
@@ -255,6 +277,11 @@
   .position-form-v2__actions button {
     min-height: 44px;
     padding: 8px 14px;
+  }
+
+  /* "Pick on map…" -> >=44px touch target. */
+  .position-form-v2__pick-btn {
+    min-height: 44px;
   }
 
   /* Sub-floor font floors -> 12px. The grid-error is load-bearing (it is the
