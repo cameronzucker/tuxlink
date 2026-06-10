@@ -4,6 +4,7 @@
 
 pub mod deck;
 pub mod parse;
+pub mod ssn;
 
 use serde::{Deserialize, Serialize};
 
