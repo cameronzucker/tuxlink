@@ -26,6 +26,12 @@
   display: flex;
   flex-direction: column;
   font-size: 14px;
+  /* Cap + center the whole workspace. The content column (max 840px) + the
+   * 340px basket rail fit within this; without the cap a wide/maximized window
+   * left a large dead band between the content and the basket (tuxlink-lfz4). */
+  width: 100%;
+  max-width: 1240px;
+  margin-inline: auto;
 }
 
 .request-header {
@@ -115,11 +121,14 @@
 }
 
 .request-close {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-dim);
-  width: 30px;
-  height: 30px;
+  background: var(--surface-2);
+  /* A visible resting border + brighter glyph so the close control reads as a
+   * button — at text-dim with a transparent border it was nearly invisible
+   * against the header and operators could not find it (tuxlink-lfz4). */
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
   cursor: pointer;
   display: inline-flex;
@@ -130,6 +139,7 @@
 .request-close:hover {
   color: var(--text);
   background: var(--accent-soft);
+  border-color: var(--accent-edge);
 }
 
 .request-body {
@@ -548,25 +558,26 @@
   font-weight: 600;
 }
 
-/* send button */
+/* send button — matches the app's primary-button language (solid --accent,
+ * --bg text, brightness hover, opacity disabled), not a bespoke amber gradient
+ * with a drop shadow, which read as foreign to the rest of the UI (tuxlink-lfz4). */
 .send {
   width: 100%;
-  padding: 13px;
-  border-radius: 9px;
+  padding: 11px;
+  border-radius: 6px;
   border: none;
   cursor: pointer;
-  background: linear-gradient(180deg, var(--accent-2), var(--accent));
-  color: #2a1500;
-  font-weight: 700;
-  font-size: 14.5px;
-  box-shadow: 0 5px 16px rgba(245, 159, 60, 0.22);
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
 }
 .send:hover:not(:disabled) {
-  filter: brightness(1.04);
+  filter: brightness(1.12);
 }
 .send:disabled {
   background: var(--surface-2);

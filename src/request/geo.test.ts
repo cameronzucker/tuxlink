@@ -32,6 +32,18 @@ describe('gridToLatLon', () => {
     expect(p!.lon).toBeCloseTo(-130, 0);
   });
 
+  it('decodes a 6-char subsquare to its center (CN87uo ≈ Seattle), not null (tuxlink-lfz4)', () => {
+    // The app stores the grid at full 6-char precision; a strict 2/4-only
+    // decode returned null here and collapsed the whole location section.
+    const p = gridToLatLon('CN87uo');
+    expect(p).not.toBeNull();
+    expect(p!.lat).toBeCloseTo(47.6, 1);
+    expect(p!.lon).toBeCloseTo(-122.3, 1);
+    // The subsquare lands inside the CN87 square, so downstream resolution holds.
+    expect(latLonToUsState(p!.lat, p!.lon)).toBe('WA');
+    expect(latLonToSeaArea(p!.lat, p!.lon)).toBe('WX_EASTPAC');
+  });
+
   it('returns null for empty string', () => {
     expect(gridToLatLon('')).toBeNull();
   });
