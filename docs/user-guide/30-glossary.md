@@ -5,6 +5,11 @@ defined here. Reference page; not meant to be read top-to-bottom.
 
 ## A
 
+ACCEPTLIST
+:   Winlink's allow-list mechanism for internet-origin mail. Operators can
+    restrict which non-Winlink senders may deliver to their Winlink address.
+    Tuxlink does not yet expose a dedicated ACCEPTLIST helper flow.
+
 AFSK
 :   Audio Frequency Shift Keying. The modulation scheme used by 1200-baud
     AX.25 packet. Two audio tones (1200 Hz and 2200 Hz) encode bits as
@@ -68,6 +73,13 @@ Catalog request
 :   A Winlink message asking the CMS for catalog data (RMS gateway list,
     weather, position reports, etc.). See
     [Catalog requests](23-catalog-requests.md).
+
+Channel data
+:   The station/channel directory that lets a client show usable RMS
+    gateways, frequencies, modes, and other dial details. In Tuxlink, RMS
+    gateway discovery is handled through catalog/listing flows and the
+    connection panel's station picker rather than a Winlink Express-style
+    channel selector.
 
 CMS
 :   Common Message Server. The central Winlink server cluster operated by
@@ -176,6 +188,11 @@ ICS
 ICS-213 / ICS-205 / ICS-309
 :   Standard ICS forms. ICS-213 = general message; ICS-205 =
     communications plan; ICS-309 = communications log.
+
+Iridium GO
+:   A satellite hotspot used by some Winlink Express workflows for offshore
+    or remote-area internet access. Tuxlink does not ship an Iridium GO
+    transport.
 
 ## K
 
@@ -325,6 +342,22 @@ RMS Relay
     Office operation, including local store-and-forward behavior. See
     [Operating modes](33-operating-modes.md).
 
+RMS Packet
+:   Winlink gateway software for AX.25 packet gateways. A client reaches
+    it through packet radio; the gateway forwards mail to or from the CMS.
+
+RMS Trimode
+:   Winlink gateway software for HF RMS operation, commonly associated
+    with PACTOR, ARDOP, and VARA-capable gateways.
+
+Robust Packet
+:   A specialized packet mode used with SCS hardware and Winlink Express
+    Robust Packet sessions. Tuxlink does not ship a Robust Packet
+    transport.
+
+RPR
+:   Robust Packet Radio. See Robust Packet.
+
 Routing intent
 :   Tuxlink's implementation term for the selected operating mode. It
     controls which message pool a session should exchange. See
@@ -359,6 +392,12 @@ SSID
     [Packet on AX.25](14-packet-on-ax25.md).
 
 ## T
+
+Tactical address
+:   A role or incident address used in some Winlink operations instead of a
+    personal callsign, such as an EOC desk or served-agency function.
+    Treat it as an operational identity: it needs to be planned, assigned,
+    and understood by the net before traffic depends on it.
 
 Telnet
 :   The internet-only Winlink transport. TCP to the CMS, no radio. See
