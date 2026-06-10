@@ -2,6 +2,8 @@
 //! no network, no transmit, no writes outside a per-call scratch dir.
 //! Plan: docs/superpowers/plans/2026-06-10-u1-voacapl-prediction.md
 
+pub mod deck;
+
 use serde::{Deserialize, Serialize};
 
 /// Inputs for one operator→station HF circuit prediction.
