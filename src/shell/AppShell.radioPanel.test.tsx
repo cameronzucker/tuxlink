@@ -274,6 +274,15 @@ describe('<AppShell> radio panel', () => {
     expect(shellPanes).not.toHaveClass('panes--with-legacy-dock');
   });
 
+  it('renders ArdopRadioPanel with Radio-only title when ARDOP HF is selected under Radio-only', async () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShell();
+    selectConnection('sess-radio-only', 'proto-radio-only-ardop-hf');
+    expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Ardop Radio-only');
+    expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
+  });
+
   // Codex P1 finding (radio-panel-shell): a running ARDOP modem with no
   // sidebar selection (the "operator clicked Close while ARDOP was on-air"
   // scenario) must show the Ardop panel. P4 means the ArdopRadioPanel

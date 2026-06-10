@@ -172,4 +172,14 @@ pub static BUNDLED_TOPICS: &[DocTopic<'static>] = &[
         title: "From Winlink Express or Pat",
         markdown: include_str!("../../../docs/user-guide/32-from-express-or-pat.md"),
     },
+    DocTopic {
+        slug: "33-operating-modes",
+        title: "Operating modes",
+        markdown: include_str!("../../../docs/user-guide/33-operating-modes.md"),
+    },
+    DocTopic {
+        slug: "34-contacts-and-groups",
+        title: "Contacts and groups",
+        markdown: include_str!("../../../docs/user-guide/34-contacts-and-groups.md"),
+    },
 ];

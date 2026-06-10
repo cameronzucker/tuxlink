@@ -1,7 +1,8 @@
 // FavoritesTabs + FavoriteRow tests (Task B5).
 //
-// Covers: per-mode tabs (M7 — ARDOP/packet get Favorites/Recent/Manual; VARA +
-// telnet get Manual-only with NO tabs + NO Connect), FavoriteRow head/detail lines
+// Covers: per-mode tabs (ARDOP/packet/VARA get Favorites/Recent/Manual; only
+// telnet is Manual-only — M7's VARA exclusion retired in tuxlink-xglf once the
+// VARA dial path landed), FavoriteRow head/detail lines
 // (gateway·band, freq·grid·distance), telnet head (gateway·transport, no
 // freq/band, H7), C4 distance source (position_current_fix NOT position_status)
 // + null-grid safety, star-to-promote, and the RADIO-1 purity of Connect
@@ -118,25 +119,29 @@ describe('<FavoritesTabs> — per-mode chrome (M7)', () => {
     expect(screen.queryByRole('tab', { name: 'Manual' })).not.toBeInTheDocument();
   });
 
-  it('VARA (vara-hf) renders manualContent and NO Favorites/Recent triggers and NO Connect button', async () => {
+  // tuxlink-xglf: M7's VARA exclusion is RETIRED. It grouped VARA with telnet
+  // when VARA had no working dial path (a favorite's Connect would have been
+  // dead). The dial now exists (modem_vara_b2f_exchange wired to the pane), and
+  // VARA HF dials RMS gateways exactly like ARDOP HF — so favoriting is
+  // meaningful and VARA gets the full three-tab chrome. Telnet stays Manual-only
+  // (fixed CMS host — nothing to favorite).
+  it('VARA (vara-hf) renders the three-tab chrome (M7 retired, tuxlink-xglf)', async () => {
+    routeInvoke({ favorites: FIXTURE_FAVORITES });
     renderTabs({ mode: 'vara-hf' });
+    expect(await screen.findByRole('tab', { name: 'Favorites' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Recent' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Manual' })).toBeInTheDocument();
 
-    // Manual content is shown directly.
+    // Manual tab still surfaces the passthrough content.
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Manual' }), { button: 0 });
     expect(await screen.findByTestId('manual-content')).toBeInTheDocument();
-
-    // No tab chrome at all.
-    expect(screen.queryByRole('tab', { name: 'Favorites' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Recent' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Manual' })).not.toBeInTheDocument();
-
-    // No FavoriteRow, hence no Connect button, anywhere.
-    expect(screen.queryByText('Connect')).not.toBeInTheDocument();
   });
 
-  it('VARA (vara-fm) is also Manual-only', async () => {
+  it('VARA (vara-fm) also gets the three-tab chrome', async () => {
+    routeInvoke({ favorites: FIXTURE_FAVORITES });
     renderTabs({ mode: 'vara-fm' });
-    expect(await screen.findByTestId('manual-content')).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Favorites' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: 'Favorites' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Manual' })).toBeInTheDocument();
   });
 });
 

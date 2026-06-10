@@ -44,10 +44,16 @@ import { useFavorites } from '../../favorites/useFavorites';
 import { listenGatewayPrefill } from '../../favorites/prefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
+import type { RadioPanelMode } from '../types';
 import './ArdopRadioPanel.css';
 import '../sections/ListenSection.css';
 
+type ArdopPanelMode = Extract<RadioPanelMode, { kind: 'ardop-hf' }>;
+
+const DEFAULT_ARDOP_MODE: ArdopPanelMode = { kind: 'ardop-hf', intent: 'cms' };
+
 export interface ArdopRadioPanelProps {
+  mode?: ArdopPanelMode;
   onClose: () => void;
   /** tuxlink-6jpf: open the station finder ("Find a gateway") from the panel. */
   onFindGateway?: () => void;
@@ -249,7 +255,11 @@ function resolveWebguiPort(cfg: Pick<ArdopFullConfig, 'cmd_port' | 'webgui_port'
   return null;
 }
 
-export function ArdopRadioPanel({ onClose, onFindGateway }: ArdopRadioPanelProps) {
+export function ArdopRadioPanel({
+  mode = DEFAULT_ARDOP_MODE,
+  onClose,
+  onFindGateway,
+}: ArdopRadioPanelProps) {
   const { status } = useModemStatus();
   const [target, setTarget] = useState('');
   // ARQ bandwidth (restored 2026-05-31 — Codex P1). Loaded from
@@ -585,16 +595,12 @@ export function ArdopRadioPanel({ onClose, onFindGateway }: ArdopRadioPanelProps
     setExchanging(true);
     setConnectError(null);
     try {
-      // tuxlink-0ye6 Task 3.6: widened modem_ardop_b2f_exchange signature
-      // takes `intent: SessionIntent` + `transportKind: TransportKind`
-      // (Codex Round 2 P2 — match the new lifecycle command shape so the
-      // Phase 5 RadioSessionPanel can route uniformly with VARA).
-      // `intent: 'cms'` is hardcoded transitionally; Phase 5's
-      // RadioSessionPanel will derive the intent from RadioPanelMode props.
+      // tuxlink-nnws: derive the routing intent from the sidebar-selected
+      // RadioPanelMode, matching VARA's intent-aware panel path.
       // `transportKind: 'ardop'` is the panel's mode.kind.
       await invoke('modem_ardop_b2f_exchange', {
         target: effectiveTarget,
-        intent: 'cms',
+        intent: mode.intent,
         transportKind: 'ardop',
       });
     } catch (e) {
@@ -670,7 +676,7 @@ export function ArdopRadioPanel({ onClose, onFindGateway }: ArdopRadioPanelProps
 
   return (
     <RadioPanel
-      mode={{ kind: 'ardop-hf', intent: 'cms' }}
+      mode={mode}
       state={mapModemStateToPanelState(status.state)}
       sub={headerSub}
       onClose={onClose}

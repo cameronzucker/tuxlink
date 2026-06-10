@@ -242,7 +242,39 @@ remove/reinstall leaves the password entry in place, just as it leaves the
 operator's mailbox and config data in the home directory unless the operator
 chooses a cleanup path.
 
-To remove the password entry manually:
+This is a deliberate design choice. The WLE-era pattern of storing
+the password in app-local state means reinstalling loses the password.
+The keyring-backed approach makes that failure mode go away: the
+password lives outside any tuxlink-owned file, in a system service
+that survives across tuxlink installs.
+
+Contacts, groups, messages, drafts, stations, logs, cache, and visible
+settings remain app-local data. A normal package removal keeps that data;
+a full data-removal uninstall deletes it. See
+[Contacts and groups](34-contacts-and-groups.md) for the address-book
+file behavior.
+
+### Moving to a new machine
+
+The keyring is per-Linux-user-account. Moving to a new machine (or a
+new Linux user account on the same machine) means re-entering the
+password once; tuxlink writes it to the new machine's keyring on
+wizard completion. The password value is unchanged — it's the same
+Winlink password your account was registered with at winlink.org.
+
+There is no "tuxlink backup file" that includes the password. The
+keyring backup story is your **desktop environment's** backup story:
+GNOME Keyring lives at `~/.local/share/keyrings/` (encrypted); KDE's
+KWallet stores at `~/.local/share/kwalletd/`. Backing those up + the
+login-keyring unlock secret (your Linux login password by default)
+restores credentials. Most operators don't need to do this
+explicitly — the password is short, you re-enter it on the new
+machine, and the keyring writes through.
+
+### Forgetting / rotating the password
+
+To remove tuxlink's keyring entry (e.g., rotating to a fresh password
+after suspected compromise):
 
 ```sh
 secret-tool clear service tuxlink account <YOUR-CALLSIGN>
@@ -272,4 +304,5 @@ names the exact workflow.
   coarse broadcast position.
 - [Picking a transport](08-picking-a-transport.md) - what each transport needs
   before a connection.
+- [Contacts and groups](34-contacts-and-groups.md) - local address-book state.
 - [Troubleshooting](29-troubleshooting.md) - when settings do not take effect.
