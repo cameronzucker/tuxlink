@@ -25,7 +25,7 @@ export type ReportIssueState =
   | { kind: 'idle' }
   | { kind: 'choosing-path' }
   | { kind: 'exporting'; path: string }
-  | { kind: 'success'; archivePath: string; archiveSizeBytes: number; githubUrl: string; browserOpened: boolean }
+  | { kind: 'success'; archivePath: string; archiveSizeBytes: number; githubUrl: string; browserOpened: boolean; diagnostics: string }
   | { kind: 'canceled' }
   | { kind: 'error'; message: string; archivePath?: string; githubUrl?: string };
 
@@ -35,6 +35,8 @@ export interface ReportIssueResult {
   github_url: string;
   browser_opened: boolean;
   correlation_id: string | null;
+  /// Pasteable build/environment summary for the bug-report Logs field (uhpn).
+  diagnostics: string;
 }
 
 // ── Controller ref pattern ─────────────────────────────────────────────────────
@@ -150,8 +152,9 @@ export function ReportIssueModal({ state, onClose }: ReportIssueModalProps) {
 
               {state.browserOpened ? (
                 <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--text-dim)' }}>
-                  GitHub Issues opened in your browser. Drag the archive file into the
-                  comment box to attach it.
+                  GitHub opened in your browser. Choose <strong>Bug report</strong>, paste
+                  the diagnostics into the <strong>Logs</strong> field, and drag the archive
+                  file into the comment box to attach it.
                 </p>
               ) : (
                 <div>
@@ -276,6 +279,18 @@ export function ReportIssueModal({ state, onClose }: ReportIssueModalProps) {
             <button
               type="button"
               className="tux-about-button"
+              data-testid="report-issue-copy-diagnostics-btn"
+              onClick={() => void copyText(state.diagnostics)}
+              style={{ background: 'none', color: 'var(--text)', border: '1px solid var(--border)' }}
+            >
+              Copy diagnostics
+            </button>
+          )}
+
+          {state.kind === 'success' && (
+            <button
+              type="button"
+              className="tux-about-button"
               data-testid="report-issue-copy-path-btn"
               onClick={() => void copyText(state.archivePath)}
               style={{ background: 'none', color: 'var(--text)', border: '1px solid var(--border)' }}
@@ -371,6 +386,7 @@ export function useReportIssueController(
           archiveSizeBytes: result.archive_size_bytes,
           githubUrl: result.github_url,
           browserOpened: result.browser_opened,
+          diagnostics: result.diagnostics,
         });
       } catch (e) {
         set({

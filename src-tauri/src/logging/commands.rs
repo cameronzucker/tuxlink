@@ -434,10 +434,64 @@ pub struct ReportIssueResult {
     pub github_url: String,
     pub browser_opened: bool,
     pub correlation_id: Option<String>,
+    /// Pasteable build/environment summary for the bug-report Logs field.
+    /// Surfaced as a "Copy diagnostics" affordance because the github_url no
+    /// longer carries the context (see `report_issue_chooser_url`).
+    pub diagnostics: String,
 }
 
-/// Auto-export the logs archive, build a pre-filled GitHub Issues URL with a
-/// Markdown-safe body, and attempt to open it in the operator's default browser.
+/// The GitHub Issues template-chooser URL. Static, no query params.
+///
+/// uhpn: the prior `?labels=…&body=…` form opened GitHub's BLANK issue editor
+/// and prefilled its body — but this repo sets `blank_issues_enabled: false`
+/// with a structured `bug_report.yml`, so GitHub bounced the blank-form URL to
+/// the chooser and DROPPED the body, landing the operator on an empty issue.
+/// `?template=bug_report.yml` does not help: GitHub's template query-prefill is
+/// unreliable for YAML issue forms and also falls back to a blank issue
+/// (operator-verified 2026-06-10). The chooser reliably presents the Bug report
+/// form; the diagnostics the operator pastes into it come from
+/// `build_diagnostics` + the attached log archive, not from dropped URL params.
+fn report_issue_chooser_url() -> &'static str {
+    "https://github.com/cameronzucker/tuxlink/issues/new/choose"
+}
+
+/// Build the pasteable diagnostics block for the bug-report Logs field. Each
+/// runtime field is markdown-escaped (values are not operator-controlled, but a
+/// path or kernel string can carry backticks / ANSI); lines join with real
+/// newlines so the block pastes as multi-line Markdown.
+#[allow(clippy::too_many_arguments)]
+fn build_diagnostics(
+    version: &str,
+    git_sha: &str,
+    profile: &str,
+    os: &str,
+    kernel: &str,
+    correlation_id: &str,
+    exported_at: &str,
+    archive_path: &str,
+    archive_size: &str,
+) -> String {
+    format!(
+        "Build: tuxlink {} (git {}, {})\n\
+         Platform: {} · {}\n\
+         Correlation ID: {}\n\
+         Exported at: {}\n\
+         Log archive: `{}` ({}) — drag this file into the issue to attach it.",
+        markdown_escape(version),
+        markdown_escape(git_sha),
+        markdown_escape(profile),
+        markdown_escape(os),
+        markdown_escape(kernel),
+        markdown_escape(correlation_id),
+        markdown_escape(exported_at),
+        markdown_escape(archive_path),
+        markdown_escape(archive_size),
+    )
+}
+
+/// Auto-export the logs archive, build the pasteable diagnostics summary + the
+/// GitHub Issues template-chooser URL, and attempt to open it in the operator's
+/// default browser.
 ///
 /// Called from the frontend's ReportIssueModal after the operator confirms the
 /// Save As path. Returns `ReportIssueResult` on success; the frontend handles
@@ -491,64 +545,30 @@ pub fn report_issue_flow(
     // Drop the settings lock before doing I/O.
     drop(settings);
 
-    // 2. Build the pre-filled GitHub Issues URL with a Markdown-safe body.
+    // 2. Build the pasteable diagnostics + the template-chooser URL.
     let build = crate::logging::manifest::build_info();
     let platform = crate::logging::manifest::platform_info();
     let exported_at = chrono::Utc::now().to_rfc3339();
     let correlation_id = export.correlation_id.as_deref().unwrap_or("(none)");
     let archive_size = format_bytes(export.archive_size_bytes);
 
-    let body = format!(
-        r#"<!-- tuxlink auto-generated bug report template -->
-
-**Build:** tuxlink {} (git {}, {})
-**Platform:** {} · {}
-**Correlation ID:** {}
-**Exported at:** {}
-
-**📎 Log archive saved at:** `{}` ({})
-
-👉 **Please drag the file above into this comment box now** so it attaches to the issue.
-
----
-
-## What happened
-(Describe what you were trying to do, what happened instead, and what you expected.)
-
-## Steps to reproduce
-1.
-2.
-3.
-
-## Anything else
-(Screenshots, related context, anything you noticed.)
-"#,
-        markdown_escape(&build.version),
-        markdown_escape(&build.git_sha),
-        markdown_escape(&build.profile),
-        markdown_escape(&platform.os),
-        markdown_escape(&platform.kernel),
-        markdown_escape(correlation_id),
-        markdown_escape(&exported_at),
-        markdown_escape(&export.output_path.display().to_string()),
-        markdown_escape(&archive_size),
+    let diagnostics = build_diagnostics(
+        &build.version,
+        &build.git_sha,
+        &build.profile,
+        &platform.os,
+        &platform.kernel,
+        correlation_id,
+        &exported_at,
+        &export.output_path.display().to_string(),
+        &archive_size,
     );
 
-    // Truncate using char count to avoid UTF-8 byte-boundary panics.
-    let body_capped = if body.len() > 6 * 1024 {
-        let truncated: String = body.chars().take(6000).collect();
-        format!(
-            "{}…\n\n[body truncated; correlation ID: {}]",
-            truncated, correlation_id
-        )
-    } else {
-        body
-    };
-
-    let url = format!(
-        "https://github.com/cameronzucker/tuxlink/issues/new?labels=alpha-report&body={}",
-        urlencoding::encode(&body_capped)
-    );
+    // Route to the template chooser (not a prefilled blank issue) — see
+    // `report_issue_chooser_url`. The diagnostics above are surfaced to the
+    // operator for paste into the Bug report form; they are not carried in the
+    // URL (GitHub drops them, landing the operator on a blank issue).
+    let url = report_issue_chooser_url().to_string();
 
     // 3. Attempt to open the URL in the operator's default browser.
     //    tauri_plugin_shell::Shell::open is deprecated upstream in favor of
@@ -566,6 +586,7 @@ pub fn report_issue_flow(
         github_url: url,
         browser_opened,
         correlation_id: export.correlation_id,
+        diagnostics,
     })
 }
 
@@ -780,20 +801,49 @@ mod tests {
         assert_eq!(format_bytes(1024), "1.0 KB");
     }
 
-    // ── body_truncation test ──────────────────────────────────────────────
+    // ── report-issue URL + diagnostics (uhpn) ─────────────────────────────
 
     #[test]
-    fn body_capped_uses_char_count_not_byte_count() {
-        // Build a body with multi-byte chars (a = U+00E0, 2 bytes in UTF-8).
-        // If we used byte slicing, this would panic at the char boundary.
-        let body: String = "à".repeat(7000); // 14000 bytes
-        let capped = if body.len() > 6 * 1024 {
-            let truncated: String = body.chars().take(6000).collect();
-            format!("{}…\n\n[body truncated; correlation ID: test]", truncated)
-        } else {
-            body.clone()
-        };
-        // Must not panic and must contain 6000 à chars.
-        assert_eq!(capped.chars().take(6000).count(), 6000);
+    fn report_issue_url_is_the_template_chooser_not_a_blank_issue() {
+        let url = report_issue_chooser_url();
+        // The chooser presents bug_report.yml reliably; the prior forms landed
+        // the operator on a blank issue.
+        assert!(
+            url.ends_with("/issues/new/choose"),
+            "must route to the template chooser: {url}"
+        );
+        assert!(
+            !url.contains("?body="),
+            "must not use the blank-issue body form (dropped under blank_issues_enabled:false): {url}"
+        );
+        assert!(
+            !url.contains("?template="),
+            "?template= falls back to a blank issue for YAML forms (operator-verified): {url}"
+        );
+    }
+
+    #[test]
+    fn diagnostics_carry_build_and_archive_context_multiline() {
+        let d = build_diagnostics(
+            "v0.41.1",
+            "abc1234",
+            "release",
+            "Ubuntu 24.04",
+            "6.8.0-generic",
+            "corr-1",
+            "2026-06-10T00:00:00Z",
+            "/home/op/tuxlink-logs.tar.zst",
+            "1.2 MB",
+        );
+        assert!(d.contains("v0.41.1"), "carries the build version: {d}");
+        assert!(d.contains("Ubuntu 24.04"), "carries the platform: {d}");
+        assert!(
+            d.contains("/home/op/tuxlink-logs.tar.zst"),
+            "carries the archive path: {d}"
+        );
+        assert!(
+            d.contains('\n'),
+            "diagnostics must be multi-line so it pastes cleanly: {d}"
+        );
     }
 }
