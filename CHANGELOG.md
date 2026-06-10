@@ -27,6 +27,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.45.0](https://github.com/cameronzucker/tuxlink/compare/v0.44.0...v0.45.0) (2026-06-10)
+
+
+### Features
+
+* **compose:** Position expand-to-overlay picker + precision selector (tuxlink-sdbd) ([d47bfac](https://github.com/cameronzucker/tuxlink/commit/d47bfac8114b73d6656f7d05441a60501e6aab44))
+
 ## [0.44.0](https://github.com/cameronzucker/tuxlink/compare/v0.43.2...v0.44.0) (2026-06-10)
 
 
