@@ -27,6 +27,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.42.2](https://github.com/cameronzucker/tuxlink/compare/v0.42.1...v0.42.2) (2026-06-10)
+
+
+### Bug Fixes
+
+* **help:** report-issue opens the Bug report template, not a blank issue (tuxlink-uhpn) ([ac6f854](https://github.com/cameronzucker/tuxlink/commit/ac6f8546222efba5f2164995ddec88b7b856157d))
+* **release:** sync version sources to 0.42.1 + wire release-please ([41bbb40](https://github.com/cameronzucker/tuxlink/commit/41bbb404e3762da485f4d97b3f790c4e545337ad))
+
 ## [0.42.1](https://github.com/cameronzucker/tuxlink/compare/v0.42.0...v0.42.1) (2026-06-10)
 
 
