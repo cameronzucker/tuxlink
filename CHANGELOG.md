@@ -30,6 +30,19 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.47.0](https://github.com/cameronzucker/tuxlink/compare/v0.46.0...v0.47.0) (2026-06-10)
+
+
+### Features
+
+* **catalog:** decode NWS area-weather replies into forecast table + zone sections (tuxlink-qyjr) ([74ac4c3](https://github.com/cameronzucker/tuxlink/commit/74ac4c390e4d716ec987e55226d223b9e12b37e4))
+
+
+### Bug Fixes
+
+* **catalog:** harden area-weather parser per Codex review (tuxlink-qyjr) ([d51193d](https://github.com/cameronzucker/tuxlink/commit/d51193d32d9ff00d930cc51b42c49fdc21193f34))
+* **mailbox:** align store() search-index unread seed with list() predicate (tuxlink-mzm4) ([3955552](https://github.com/cameronzucker/tuxlink/commit/3955552b0326347bbb6f54a280d0f109821503f9))
+
 ## [0.46.0](https://github.com/cameronzucker/tuxlink/compare/v0.45.0...v0.46.0) (2026-06-10)
 
 
