@@ -336,8 +336,18 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
       });
       void recordAttempt(dial, 'reached', tsLocal());
     } catch (e) {
-      setActionError(`Send/Receive failed: ${String(e)}`);
-      void recordAttempt(dial, 'failed', tsLocal());
+      const msg = String(e);
+      setActionError(`Send/Receive failed: ${msg}`);
+      // Codex 2026-06-10 P2 #2: a pre-air ownership failure (the transport was
+      // never available — the backend's take_transport returned None, e.g. the
+      // listener consumer holds it, or a stale-status race) NEVER transmitted,
+      // so it is not an on-air outcome. Recording `failed` for it would pollute
+      // the favorite's reach/fail history with a non-dial. Only a failure AFTER
+      // the exchange went on-air is an honest `failed`. The backend signals the
+      // pre-air bail with the "session not open" message.
+      if (!/session not open/i.test(msg)) {
+        void recordAttempt(dial, 'failed', tsLocal());
+      }
     } finally {
       setExchanging(false);
       // The exchange returns the session to Open (within-session dial); re-read
@@ -504,14 +514,22 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
           type="button"
           className="radio-panel-btn radio-panel-btn-primary"
           data-testid="vara-send-receive-btn"
-          disabled={busy || exchanging || status.state !== 'open' || target.trim() === ''}
+          disabled={
+            busy ||
+            exchanging ||
+            status.state !== 'open' ||
+            target.trim() === '' ||
+            varaListener.armed
+          }
           onClick={onSendReceive}
           title={
             status.state !== 'open'
               ? 'Open Session first — Send/Receive needs an open VARA transport (press Start)'
-              : target.trim() === ''
-                ? 'Enter a target RMS gateway call sign'
-                : 'Connect to the target and exchange Winlink mail (transmits)'
+              : varaListener.armed
+                ? 'Disarm the listener first — it owns the VARA transport while armed'
+                : target.trim() === ''
+                  ? 'Enter a target RMS gateway call sign'
+                  : 'Connect to the target and exchange Winlink mail (transmits)'
           }
         >
           {exchanging

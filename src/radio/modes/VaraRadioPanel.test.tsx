@@ -594,4 +594,58 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       invokeSpy.mock.calls.some(([cmd]) => cmd === 'modem_vara_b2f_exchange'),
     ).toBe(false);
   });
+
+  // Codex 2026-06-10 P2 #2: a pre-air ownership failure (the transport was never
+  // available — e.g. the listener consumer holds it) never transmitted, so it is
+  // NOT an on-air outcome and must not pollute the favorite's reach/fail history.
+  it('does NOT record a failed attempt when the exchange fails pre-air (session not open)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    invokeSpy.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'modem_vara_b2f_exchange') {
+        throw new Error('VARA session not open — press Open Session (VARA HF/FM) before Send/Receive');
+      }
+      return makeInvoke({ vara_status: openStatus })(cmd, args);
+    });
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await switchToManualTab();
+    const target = (await screen.findByTestId('vara-target-input')) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(target, { target: { value: 'W7RPT-10' } });
+    });
+    fireEvent.click(screen.getByTestId('vara-send-receive-btn'));
+    // The error surfaces, but NO `failed` attempt is recorded (it never went on-air).
+    await waitFor(() =>
+      expect(screen.getByTestId('vara-action-error')).toHaveTextContent('session not open'),
+    );
+    expect(
+      findRecordCalls(invokeSpy).filter(([, a]) => (a as { outcome: string }).outcome === 'failed'),
+    ).toHaveLength(0);
+  });
+
+  // Codex 2026-06-10 P2 #2: while the listener is armed it owns the single VARA
+  // transport, so an outbound dial would fail pre-air. Disable Send/Receive so
+  // the operator disarms first rather than clicking into a guaranteed pre-air bail.
+  it('disables Send/Receive while the VARA listener is armed', async () => {
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await switchToManualTab();
+    const target = (await screen.findByTestId('vara-target-input')) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(target, { target: { value: 'W7RPT-10' } });
+    });
+    // Open session + target present + listener disarmed → enabled.
+    await waitFor(() =>
+      expect((screen.getByTestId('vara-send-receive-btn') as HTMLButtonElement).disabled).toBe(false),
+    );
+    // Arm the listener (enabled because the transport is Open).
+    const armBtn = screen.getByTestId('vara-listen-arm-btn') as HTMLButtonElement;
+    await waitFor(() => expect(armBtn.disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(armBtn);
+    });
+    // Armed → Send/Receive disabled (listener owns the transport).
+    await waitFor(() =>
+      expect((screen.getByTestId('vara-send-receive-btn') as HTMLButtonElement).disabled).toBe(true),
+    );
+  });
 });
