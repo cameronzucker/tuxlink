@@ -20,22 +20,19 @@ external CMS sidecar.
 </p>
 
 > [!NOTE]
-> **Tuxlink is pre-alpha software under active development.** It installs and
-> runs from `.deb`, `.rpm`, and `.AppImage` artifacts (published with
-> `SHA256SUMS`) on every release, and a broad feature set works end to end. It
-> is not yet hardened for production emergency-communications use.
+> **Tuxlink is in alpha, and it works.** This is a full-featured Winlink
+> client, not an aspirational sketch: it installs from `.deb`, `.rpm`, and
+> `.AppImage` artifacts on every release, and the feature set already reaches
+> well past a minimal mail client. It is not yet ready for field deployment,
+> which is exactly where testing helps. Install it, put it through real workflows, and
+> [file an issue](https://github.com/cameronzucker/tuxlink/issues) with a clear
+> repro and the exported logs (Help → Logging → Export logs).
 >
-> Version tags on this repository are generated automatically from
-> conventional-commit activity by
-> [release-please](https://github.com/googleapis/release-please). They track
-> repository velocity, not release readiness. Anything below `v1.0` remains
-> breakable and unsuitable as the sole client for a live Winlink workflow.
->
-> On-air RF paths and production Winlink CMS access are operator-verified.
-> **Do not rely on Tuxlink for live emergency traffic.** The
-> [Maturity](#maturity-what-is-and-is-not-proven) section gives the
-> verified-versus-pending breakdown. Watch the repository for the first tagged
-> release that drops this banner.
+> Version tags are generated automatically from conventional-commit activity by
+> [release-please](https://github.com/googleapis/release-please) and track
+> repository velocity, not release readiness. The
+> [Maturity](#maturity-what-is-and-is-not-proven) section covers which paths
+> are validated and which are operator-verified.
 
 <p align="center">
   <img src="docs/design/mockups/images/mock-b-principles-faithful.png" width="860"
@@ -62,11 +59,13 @@ credentials in `~/.config/pat/config.json`, and routes transport configuration
 transport.
 
 Tuxlink occupies a third axis: a native desktop GUI, delivered as a single
-[Tauri](https://tauri.app/) application, that pursues feature parity with
-Winlink Express. First run requires no README and no video tutorial. The OS
-keyring holds the Winlink CMS password; Tuxlink never writes it to a config
-file on disk. The mailbox, compose pane, address book, and session log all
-render inside a desktop window.
+[Tauri](https://tauri.app/) application. It is a full-featured client, not a
+minimal one. The complete Winlink Express Standard Forms catalog, an address
+book, station finding, location-aware request workflows, full-text search, and
+an offline map all ship in the box, and first run needs no README and no video
+tutorial. The OS keyring holds the Winlink CMS password; Tuxlink never writes
+it to a config file on disk. The mailbox, compose pane, address book, and
+session log all render inside one desktop window.
 
 ## Features
 
