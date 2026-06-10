@@ -27,6 +27,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.43.1](https://github.com/cameronzucker/tuxlink/compare/v0.43.0...v0.43.1) (2026-06-10)
+
+
+### Bug Fixes
+
+* **logging:** keep local session log tail unredacted ([6e52bcb](https://github.com/cameronzucker/tuxlink/commit/6e52bcb340d7947937af6a7d179a4649e2f2a9dd))
+
 ## [0.43.0](https://github.com/cameronzucker/tuxlink/compare/v0.42.2...v0.43.0) (2026-06-10)
 
 
