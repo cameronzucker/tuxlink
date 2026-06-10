@@ -1,7 +1,7 @@
 {
   "name": "tuxlink",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.42.1",
   "type": "module",
   "license": "GPL-3.0-or-later",
   "scripts": {
@@ -9,6 +9,8 @@
     "dev": "vite",
     "dev:converged": "bash scripts/converge-build.sh",
     "lint:docs": "tsx scripts/lint-docs-links.ts",
+    "sync:version": "tsx scripts/sync-version-sources.ts",
+    "check:version": "tsx scripts/sync-version-sources.ts --check",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri"
