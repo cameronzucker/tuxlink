@@ -7,6 +7,17 @@
 .favorites-tabs {
   display: flex;
   flex-direction: column;
+  /* tuxlink-sm22: ARDOP mounts FavoritesTabs as a BARE flex child of the
+   * .radio-panel-body column (Packet/Telnet wrap it in a .radio-panel-sec,
+   * whose implicit min-height:auto refuses to shrink). With min-height:0 and
+   * no overflow clip, a long favorites list let the body's flex context shrink
+   * this surface below its content height; the overflowing rows then painted
+   * OVER the Radio + Start sections that flow below, and the body never
+   * scrolled (flex "fit" everything by shrinking) — the favorites appeared to
+   * cover the whole ARDOP panel with nothing clickable. flex-shrink:0 keeps the
+   * surface at content height so the body's overflow-y:auto scrolls instead.
+   * No-op where FavoritesTabs is a block child of a section (Packet/Telnet). */
+  flex-shrink: 0;
   min-height: 0;
   color: var(--text);
 }

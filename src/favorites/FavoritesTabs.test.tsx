@@ -205,6 +205,24 @@ describe('FavoritesTabs.css radio-panel styling (tuxlink-fgc1)', () => {
   });
 });
 
+// tuxlink-sm22: ARDOP mounts <FavoritesTabs> as a BARE flex child of the
+// .radio-panel-body column (Packet/Telnet wrap it in a .radio-panel-sec, which
+// has implicit min-height:auto and refuses to shrink). .favorites-tabs sets
+// min-height:0 with no overflow clip, so a long favorites list let flexbox
+// shrink the surface below its content height — and the overflowing rows
+// painted OVER the Radio + Start sections that flow below it (the panel body
+// never scrolled because flex "fit" everything by shrinking). flex-shrink:0
+// keeps the surface at content height so the body's overflow-y:auto scrolls
+// instead. No-op where FavoritesTabs is a block child of a section.
+describe('FavoritesTabs.css flow containment (tuxlink-sm22)', () => {
+  it('refuses flex shrink so a long list cannot overflow and overlap sibling sections', () => {
+    const start = FAVORITES_TABS_CSS.indexOf('.favorites-tabs {');
+    expect(start).toBeGreaterThan(-1);
+    const block = FAVORITES_TABS_CSS.slice(start, FAVORITES_TABS_CSS.indexOf('}', start) + 1);
+    expect(block).toMatch(/flex-shrink:\s*0/);
+  });
+});
+
 describe('<FavoritesTabs> — C4 distance source', () => {
   it('invokes position_current_fix and NOT position_status for the operator grid', async () => {
     renderTabs({ mode: 'ardop-hf' });
