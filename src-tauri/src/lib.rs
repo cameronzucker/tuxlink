@@ -422,6 +422,60 @@ pub fn run() {
                 },
             );
 
+            // tuxlink-ipjt Task 6: offline HF path-prediction state.
+            // Registers PropagationState ONLY when all resources resolve.
+            // Failures are soft (eprintln + no state registered = prediction
+            // unavailable, app still launches — F17/F10).
+            // F2: voacapl binary is a Tauri externalBin sidecar placed ADJACENT
+            // to the main exe (not under Resource). The packaged-.deb path must
+            // be confirmed by the Task 7 gated test / operator smoke.
+            {
+                use crate::propagation::{commands::PropagationState, engine::EnginePaths, ssn};
+                match (app.path().app_cache_dir(), std::env::current_exe()) {
+                    (Ok(cache), Ok(exe)) => {
+                        if let Some(bindir) = exe.parent() {
+                            if let Err(e) = std::fs::create_dir_all(&cache) {
+                                eprintln!("propagation: prediction disabled (could not create cache dir: {e})");
+                            } else {
+                                match (
+                                    app.path().resolve(
+                                        "resources/itshfbc",
+                                        tauri::path::BaseDirectory::Resource,
+                                    ),
+                                    ssn::SsnForecast::from_json(ssn::BUNDLED_SSN_FORECAST),
+                                ) {
+                                    (Ok(itshfbc), Ok(forecast)) => {
+                                        app.manage(PropagationState {
+                                            paths: EnginePaths {
+                                                binary: bindir.join("voacapl"),
+                                                itshfbc_root: itshfbc,
+                                            },
+                                            scratch_parent: cache,
+                                            clock: std::sync::Arc::new(
+                                                crate::catalog::stations_cache::SystemClock,
+                                            ),
+                                            forecast,
+                                        });
+                                    }
+                                    (it, fc) => eprintln!(
+                                        "propagation: prediction disabled (itshfbc={:?}, forecast_ok={})",
+                                        it.err(),
+                                        fc.is_ok()
+                                    ),
+                                }
+                            }
+                        } else {
+                            eprintln!("propagation: prediction disabled (current_exe has no parent dir)");
+                        }
+                    }
+                    (cache, exe) => eprintln!(
+                        "propagation: prediction disabled (cache_dir={:?}, current_exe={:?})",
+                        cache.err(),
+                        exe.err()
+                    ),
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -575,6 +629,8 @@ pub fn run() {
             // tuxlink-a2gd: location-aware station-list direct poll + reply parse-with-fallback.
             crate::catalog::commands::catalog_fetch_stations,
             crate::catalog::commands::catalog_parse_reply,
+            // tuxlink-ipjt Task 6: offline HF path prediction (voacapl sidecar).
+            crate::propagation::commands::propagation_predict_path,
             // tuxlink-vrpk: GRIB request via Saildocs (3rd-party SMTP).
             crate::grib::commands::grib_send_request,
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)
