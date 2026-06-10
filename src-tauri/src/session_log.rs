@@ -10,7 +10,6 @@
 use std::collections::VecDeque;
 use std::sync::RwLock;
 
-use crate::winlink::redaction::redact_freeform;
 use crate::winlink_backend::{LogLevel, LogLine, LogSource};
 
 /// Durable, seq-stamped session-log history. The bridge appends here (durable)
@@ -78,10 +77,14 @@ impl SessionLogState {
         seq
     }
 
-    /// Redact credential-equivalent tokens, append the line, and return the
-    /// stored line with its assigned sequence. Explicit operator-log APIs use
-    /// this path before emitting live `session_log:line` notifications.
-    pub fn append_redacted(
+    /// Append a local operator-visible line and return the stored line with
+    /// its assigned sequence.
+    ///
+    /// This intentionally preserves raw text for the local diagnostic tail:
+    /// operators must be able to inspect their own connection transcript. Any
+    /// path where logs leave the operator's machine is responsible for
+    /// redacting at that export/share boundary.
+    pub fn append_operator_line(
         &self,
         level: LogLevel,
         source: LogSource,
@@ -92,7 +95,7 @@ impl SessionLogState {
             timestamp_iso: chrono::Utc::now().to_rfc3339(),
             level,
             source,
-            message: redact_freeform(message.as_ref()).into_owned(),
+            message: message.as_ref().to_string(),
         };
         line.seq = self.append(line.clone());
         line
@@ -142,26 +145,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn append_redacted_scrubs_wire_credentials_before_retention() {
+    fn append_operator_line_preserves_wire_credentials_for_local_tail() {
         let ring = SessionLogState::new(8);
 
-        let line = ring.append_redacted(
+        let line = ring.append_operator_line(
             LogLevel::Info,
             LogSource::Transport,
             "server saw ;PQ: 23753528 and ;PR: 72768415",
         );
 
         assert_eq!(line.seq, 1);
-        assert!(!line.message.contains("23753528"));
-        assert!(!line.message.contains("72768415"));
+        assert!(line.message.contains("23753528"));
+        assert!(line.message.contains("72768415"));
         assert_eq!(ring.snapshot()[0].message, line.message);
     }
 
     #[test]
-    fn append_redacted_preserves_source() {
+    fn append_operator_line_preserves_source() {
         let ring = SessionLogState::new(8);
 
-        let line = ring.append_redacted(LogLevel::Trace, LogSource::Wire, "< ;FW: header");
+        let line = ring.append_operator_line(LogLevel::Trace, LogSource::Wire, "< ;FW: header");
 
         assert_eq!(line.source, LogSource::Wire);
         assert_eq!(ring.snapshot()[0].source, LogSource::Wire);
@@ -171,9 +174,9 @@ mod tests {
     fn bounded_state_still_evicts_oldest_lines() {
         let ring = SessionLogState::new(2);
 
-        ring.append_redacted(LogLevel::Info, LogSource::Transport, "first");
-        ring.append_redacted(LogLevel::Info, LogSource::Transport, "second");
-        ring.append_redacted(LogLevel::Info, LogSource::Transport, "third");
+        ring.append_operator_line(LogLevel::Info, LogSource::Transport, "first");
+        ring.append_operator_line(LogLevel::Info, LogSource::Transport, "second");
+        ring.append_operator_line(LogLevel::Info, LogSource::Transport, "third");
 
         let messages: Vec<String> = ring.snapshot().into_iter().map(|l| l.message).collect();
         assert_eq!(messages, vec!["second", "third"]);
@@ -183,9 +186,9 @@ mod tests {
     fn unbounded_state_retains_complete_operator_history() {
         let ring = SessionLogState::unbounded();
 
-        ring.append_redacted(LogLevel::Info, LogSource::Transport, "first");
-        ring.append_redacted(LogLevel::Info, LogSource::Transport, "second");
-        ring.append_redacted(LogLevel::Info, LogSource::Transport, "third");
+        ring.append_operator_line(LogLevel::Info, LogSource::Transport, "first");
+        ring.append_operator_line(LogLevel::Info, LogSource::Transport, "second");
+        ring.append_operator_line(LogLevel::Info, LogSource::Transport, "third");
 
         let snapshot = ring.snapshot();
         assert_eq!(snapshot.len(), 3);
