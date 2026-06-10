@@ -179,20 +179,32 @@ fn parse_area_weather(body: &str) -> Option<AreaWeather> {
         .unwrap_or_default()
         .to_string();
 
-    let forecast = parse_tabular(&lines)
-        .map(Forecast::Tabular)
-        .or_else(|| parse_zone(&lines).map(Forecast::Zone))
-        .unwrap_or(Forecast::None);
+    // Pick the body decoder from the product title so a malformed SFT can't fall
+    // through to the ZFP parser (which would misread SFT region headers as zone
+    // "periods") and vice versa. An unrecognised title tries both, tabular first.
+    let tl = title.to_ascii_lowercase();
+    let forecast = if tl.contains("tabular") {
+        parse_tabular(&lines).map(Forecast::Tabular).unwrap_or(Forecast::None)
+    } else if tl.contains("zone forecast") {
+        parse_zone(&lines).map(Forecast::Zone).unwrap_or(Forecast::None)
+    } else {
+        parse_tabular(&lines)
+            .map(Forecast::Tabular)
+            .or_else(|| parse_zone(&lines).map(Forecast::Zone))
+            .unwrap_or(Forecast::None)
+    };
 
     Some(AreaWeather { product, office, issued, title, forecast, raw: body.to_string() })
 }
 
-/// An issued-time line: has " AM "/" PM " and ends with a 4-digit year.
+/// An issued-time line: has " AM "/" PM " and a bare 4-digit year token anywhere.
+/// (`any`, not last-token, so dual-time lines like
+/// "1132 PM MST Mon Jun 8 2026 /1232 AM MDT Tue Jun 9 2026/" — whose last token is
+/// "2026/" — are still recognised; otherwise the ZFP city loop swallows them.)
 fn is_issued_line(l: &str) -> bool {
     (l.contains(" AM ") || l.contains(" PM "))
         && l.split_whitespace()
-            .next_back()
-            .is_some_and(|y| y.len() == 4 && y.chars().all(|c| c.is_ascii_digit()))
+            .any(|y| y.len() == 4 && y.chars().all(|c| c.is_ascii_digit()))
 }
 
 // ---- SFT tabular parser ----------------------------------------------------
@@ -229,19 +241,37 @@ fn split2(tok: &str) -> (&str, &str) {
     (p.next().unwrap_or(""), p.next().unwrap_or(""))
 }
 
-/// Parse the SFT grid. Anchored on the temp data row (the only line that is N
-/// slash-pairs preceded by a condition row); the name is the line above the
-/// conditions, the precip row the line below the temps.
+/// A condition token: alphabetic, allowing a hyphen (NWS uses "T-Storm").
+fn is_cond_token(t: &str) -> bool {
+    !t.is_empty() && t.chars().all(|c| c.is_ascii_alphabetic() || c == '-')
+}
+
+/// Parse the SFT grid, FAIL-CLOSED. The data region runs from the first region
+/// header to the "$$" product terminator (excluding the legend before it and the
+/// footer after). Inside that region every non-blank line MUST be a region header
+/// or a clean 4-line location block [name][cond:N][temps:N][precip:N]; anything
+/// else makes the WHOLE forecast `None` (header + raw) rather than a partial table
+/// that silently drops a location (parse-with-fallback contract).
 fn parse_tabular(lines: &[&str]) -> Option<TabularForecast> {
     let days = parse_day_columns(lines)?;
     let n = days.len();
+    let raw_tokens: Vec<Vec<&str>> = lines.iter().map(|l| l.split_whitespace().collect()).collect();
+
+    let start = lines.iter().position(|l| region_name(l).is_some())?;
+    let end = lines[start..]
+        .iter()
+        .position(|l| l.trim() == "$$")
+        .map(|p| start + p)
+        .unwrap_or(lines.len());
 
     let mut regions: Vec<ForecastRegion> = Vec::new();
     let mut cur_region: Option<ForecastRegion> = None;
-    let raw_tokens: Vec<Vec<&str>> = lines.iter().map(|l| l.split_whitespace().collect()).collect();
-
-    let mut i = 0usize;
-    while i < lines.len() {
+    let mut i = start;
+    while i < end {
+        if lines[i].trim().is_empty() {
+            i += 1;
+            continue;
+        }
         if let Some(name) = region_name(lines[i]) {
             if let Some(r) = cur_region.take() {
                 if !r.locations.is_empty() {
@@ -253,43 +283,35 @@ fn parse_tabular(lines: &[&str]) -> Option<TabularForecast> {
             continue;
         }
 
-        // Try to anchor a location block at i:
-        // [name][conditions:N alpha][temps:N slash][precip:N slash]
+        // Must be a location block: [name][cond:N][temps:N slash][precip:N slash].
         let cond = raw_tokens.get(i + 1);
         let temps = raw_tokens.get(i + 2);
         let precip = raw_tokens.get(i + 3);
-        let name_ok = !lines[i].trim().is_empty();
-        let cond_ok = cond
-            .is_some_and(|c| c.len() == n && c.iter().all(|t| t.chars().all(|ch| ch.is_ascii_alphabetic())));
-        let temps_ok = temps.is_some_and(|t| t.len() == n && is_slash_row(t));
-        let precip_ok = precip.is_some_and(|p| p.len() == n && is_slash_row(p));
-
-        if name_ok && cond_ok && temps_ok && precip_ok {
-            let cond = cond.unwrap();
-            let temps = temps.unwrap();
-            let precip = precip.unwrap();
-            let cells = (0..n)
-                .map(|d| {
-                    let (low, high) = split2(temps[d]);
-                    let (pn, pd) = split2(precip[d]);
-                    ForecastCell {
-                        condition: cond[d].to_string(),
-                        low: low.to_string(),
-                        high: high.to_string(),
-                        pop_night: pn.to_string(),
-                        pop_day: pd.to_string(),
-                    }
-                })
-                .collect();
-            let loc = ForecastLocation { name: lines[i].trim().to_string(), cells };
-            cur_region
-                .get_or_insert_with(|| ForecastRegion { name: String::new(), locations: Vec::new() })
-                .locations
-                .push(loc);
-            i += 4;
-            continue;
+        let ok = cond.is_some_and(|c| c.len() == n && c.iter().all(|t| is_cond_token(t)))
+            && temps.is_some_and(|t| t.len() == n && is_slash_row(t))
+            && precip.is_some_and(|p| p.len() == n && is_slash_row(p));
+        if !ok {
+            return None; // malformed grid → fail closed
         }
-        i += 1;
+        let (cond, temps, precip) = (cond.unwrap(), temps.unwrap(), precip.unwrap());
+        let cells = (0..n)
+            .map(|d| {
+                let (low, high) = split2(temps[d]);
+                let (pn, pd) = split2(precip[d]);
+                ForecastCell {
+                    condition: cond[d].to_string(),
+                    low: low.to_string(),
+                    high: high.to_string(),
+                    pop_night: pn.to_string(),
+                    pop_day: pd.to_string(),
+                }
+            })
+            .collect();
+        cur_region
+            .get_or_insert_with(|| ForecastRegion { name: String::new(), locations: Vec::new() })
+            .locations
+            .push(ForecastLocation { name: lines[i].trim().to_string(), cells });
+        i += 4;
     }
     if let Some(r) = cur_region.take() {
         if !r.locations.is_empty() {
@@ -297,7 +319,7 @@ fn parse_tabular(lines: &[&str]) -> Option<TabularForecast> {
         }
     }
 
-    if regions.is_empty() {
+    if regions.iter().all(|r| r.locations.is_empty()) {
         return None;
     }
     Some(TabularForecast { days, regions })
@@ -340,9 +362,14 @@ fn is_ugc_line(l: &str) -> bool {
         && b[3].is_ascii_digit()
 }
 
-/// A period line: ".REST OF TONIGHT...Mostly clear. Lows 43 to 53."
+/// A period line: ".REST OF TONIGHT...Mostly clear. Lows 43 to 53." A real period
+/// starts with exactly ONE dot; an SFT region header ("...SOUTH-CENTRAL ARIZONA...")
+/// starts with three, and must NOT be mistaken for a period.
 fn parse_period_line(l: &str) -> Option<(String, String)> {
     let t = l.trim();
+    if t.starts_with("..") {
+        return None;
+    }
     let rest = t.strip_prefix('.')?;
     let (label, text) = rest.split_once("...")?;
     if label.is_empty() {
@@ -503,6 +530,64 @@ mod tests {
         let body = include_str!("../../tests/fixtures/catalog/reply-area-weather-nws.txt");
         let w = area(parse_reply(subject, body));
         assert!(matches!(w.forecast, Forecast::Tabular(_)), "az fixture is tabular");
+    }
+
+    // Codex P1 #1: a malformed SFT (Tabular title) must NOT fall through to the
+    // ZFP parser and render its region headers as bogus zone "periods".
+    #[test]
+    fn malformed_tabular_does_not_become_a_bogus_zone() {
+        let subject = "INQUIRY - https://tgftp.nws.noaa.gov/data/raw/fp/fpus65.kpsr.sft.psr.txt";
+        let body = "FPUS65 KPSR 090626\nTabular State Forecast for Test\nNational Weather Service Phoenix AZ\n1126 PM MST Mon Jun 8 2026\n\n...SOUTH-CENTRAL ARIZONA...\n   Phoenix\n   (no day-column header, no grid)\n$$\n";
+        let w = area(parse_reply(subject, body));
+        assert!(matches!(w.forecast, Forecast::None), "malformed tabular → None, not a zone; got {:?}", w.forecast);
+    }
+
+    // Codex P1 #2: a malformed location block inside the grid fails the WHOLE
+    // forecast closed (header + raw), never a partial table. And "T-Storm"
+    // (hyphenated NWS condition) parses cleanly.
+    #[test]
+    fn tabular_fails_closed_on_bad_block_and_accepts_hyphen_conditions() {
+        let header = "FPUS65 KPSR 090626\nTabular State Forecast for Test\nNational Weather Service Phoenix AZ\n1126 PM MST Mon Jun 8 2026\n\n   FCST     FCST\n   Tue      Wed\n   Jun 09   Jun 10\n";
+        let subject = "INQUIRY - https://tgftp.nws.noaa.gov/data/raw/fp/fpus65.kpsr.sft.psr.txt";
+
+        // Good grid with a hyphenated condition → structured, T-Storm preserved.
+        let good = format!("{header}\n...TEST REGION...\n   Phoenix\n   T-Storm  Sunny\n   70/90    71/91\n    20/10    00/00\n\n$$\n");
+        let w = area(parse_reply(subject, &good));
+        let t = match w.forecast {
+            Forecast::Tabular(t) => t,
+            other => panic!("expected Tabular, got {other:?}"),
+        };
+        let c0 = &t.regions[0].locations[0].cells[0];
+        assert_eq!(c0.condition, "T-Storm");
+        assert_eq!(c0.high, "90");
+        assert_eq!(c0.pop_day, "10");
+
+        // Second location block is broken (temps row missing) → whole thing falls
+        // back, rather than silently dropping the bad location.
+        let bad = format!("{header}\n...TEST REGION...\n   Phoenix\n   Sunny    Sunny\n   70/90    71/91\n    00/00    00/00\n   BadTown\n   Sunny    Sunny\n   notatemp here\n$$\n");
+        let w = area(parse_reply(subject, &bad));
+        assert!(matches!(w.forecast, Forecast::None), "bad block → fail closed; got {:?}", w.forecast);
+    }
+
+    // Codex P2: dual issued-time zones ("... 2026 /1232 AM MDT ... 2026/") must
+    // not leak the timestamp into the zone's `cities`.
+    #[test]
+    fn zfp_dual_issued_time_does_not_leak_into_cities() {
+        let subject = "INQUIRY - https://tgftp.nws.noaa.gov/data/raw/fp/fpus55.kfgz.zfp.fgz.txt";
+        let body = include_str!("../../tests/fixtures/catalog/reply-zfp-zone-fgz.txt");
+        let w = area(parse_reply(subject, body));
+        let z = match w.forecast {
+            Forecast::Zone(z) => z,
+            other => panic!("expected Zone, got {other:?}"),
+        };
+        let marble = z
+            .zones
+            .iter()
+            .find(|zo| zo.name == "Marble and Glen Canyons")
+            .expect("dual-issued zone present");
+        assert!(!marble.cities.contains("1232"), "issued time leaked: {:?}", marble.cities);
+        assert!(!marble.cities.contains("MDT"), "issued time leaked: {:?}", marble.cities);
+        assert!(marble.cities.contains("Page"), "real cities kept: {:?}", marble.cities);
     }
 
     #[test]
