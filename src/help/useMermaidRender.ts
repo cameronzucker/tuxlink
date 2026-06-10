@@ -18,6 +18,39 @@ import { loadMermaid } from './mermaidLoader';
 
 let renderCounter = 0;
 
+/**
+ * Pin a rendered Mermaid SVG to its intrinsic pixel size.
+ *
+ * Mermaid v11 emits `<svg width="100%" style="max-width: Npx" viewBox="0 0 W H">`
+ * with no height attribute (its `useMaxWidth` default). Chromium derives the
+ * intrinsic size from the viewBox and honors the inline max-width, so the
+ * diagram renders at its natural W×H. WebKitGTK — the production webview — does
+ * NOT: it stretches `width="100%"` to the full container width and scales the
+ * height off the aspect ratio, rendering simple flowcharts enormously, and its
+ * foreignObject-in-scaled-SVG handling then clips the HTML node labels. Both
+ * symptoms, one cause (tuxlink-3xnf).
+ *
+ * Setting explicit intrinsic `width`/`height` from the viewBox and dropping
+ * Mermaid's inline `max-width` makes WebKit render at natural size; the CSS rule
+ * `.mermaid-diagram svg { max-width: 100%; height: auto }` then scales the
+ * diagram DOWN responsively on panes narrower than its natural width.
+ *
+ * Verified against real Mermaid 11.15.0 output (dev/scratch/mermaid-probe). The
+ * visual result must be confirmed in a WebKitGTK render (grim) — jsdom/Chromium
+ * cannot reproduce the WebKit sizing bug.
+ */
+export function normalizeMermaidSvgSize(root: ParentNode): void {
+  const svgEl = root.querySelector('svg');
+  if (!svgEl) return;
+  const viewBox = svgEl.getAttribute('viewBox');
+  if (!viewBox) return;
+  const [, , w, h] = viewBox.split(/\s+/).map(Number);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return;
+  svgEl.setAttribute('width', String(w));
+  svgEl.setAttribute('height', String(h));
+  svgEl.style.removeProperty('max-width');
+}
+
 export function useMermaidRender(
   containerRef: RefObject<HTMLElement | null>,
   contentSignal: string,
@@ -45,6 +78,7 @@ export function useMermaidRender(
           // svg is Mermaid-generated markup from trusted help-doc source;
           // securityLevel:'strict' in mermaidLoader sanitizes diagram input.
           wrapper.innerHTML = svg;
+          normalizeMermaidSvgSize(wrapper);
           pre.replaceWith(wrapper);
         }).catch((err) => {
           console.error('Mermaid render failed:', err);
