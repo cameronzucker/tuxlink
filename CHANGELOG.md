@@ -27,6 +27,20 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.43.0](https://github.com/cameronzucker/tuxlink/compare/v0.42.2...v0.43.0) (2026-06-10)
+
+
+### Features
+
+* **uninstall:** add user-owned cleanup flow ([4c9db54](https://github.com/cameronzucker/tuxlink/commit/4c9db54c30ab5e279cf429531eca9ebdc919fee9))
+* **uninstall:** add user-owned cleanup flow (tuxlink-qbej) ([f06db36](https://github.com/cameronzucker/tuxlink/commit/f06db36747b832a47fcb3a9f51cc1ea37e7f1918))
+
+
+### Bug Fixes
+
+* **ci:** correct release-please Cargo.lock jsonpath so the lock version actually bumps (tuxlink-sglu) ([303a22b](https://github.com/cameronzucker/tuxlink/commit/303a22b39fdc843ed7a5fe803096cb7c99df6d9f))
+* **uninstall:** satisfy cleanup CLI clippy lint (tuxlink-qbej) ([4ea566e](https://github.com/cameronzucker/tuxlink/commit/4ea566e9b0992e61220e757a13b2fdde1dc952f2))
+
 ## [0.42.2](https://github.com/cameronzucker/tuxlink/compare/v0.42.1...v0.42.2) (2026-06-10)
 
 
