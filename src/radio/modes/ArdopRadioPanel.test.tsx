@@ -9,12 +9,13 @@
 // SignalSection + Sparkline tests, not duplicated here.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
 import type { ModemStatus } from '../../modem/types';
 import { STOPPED } from '../../modem/types';
 import type { FavoriteDial } from '../../favorites/types';
+import { emitGatewayPrefill } from '../../favorites/prefillEvent';
 
 // The panel now mounts FavoritesTabs/useFavorites (react-query), so every
 // render must be wrapped in a QueryClientProvider or the queries throw
@@ -1216,6 +1217,32 @@ describe('<ArdopRadioPanel>', () => {
           expect.objectContaining({ target: 'W7RMS-10' }),
         );
       });
+    });
+
+    it('station-picker prefill event fills the ARDOP target without transmitting', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+
+      act(() => {
+        emitGatewayPrefill({
+          mode: 'ardop-hf',
+          gateway: 'W6ABC',
+          freq: '14.105',
+          grid: 'CN87',
+        });
+      });
+
+      await switchToManualTab();
+      const target = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
+      expect(target.value).toBe('W6ABC');
+      expect(
+        invokeMock.mock.calls.some(([cmd]) => cmd === 'modem_ardop_connect'),
+      ).toBe(false);
+      expect(
+        invokeMock.mock.calls.some(([cmd]) => cmd === 'modem_ardop_b2f_exchange'),
+      ).toBe(false);
     });
 
     it('records an offset-bearing ts_local (M4) — not a UTC Z timestamp', async () => {

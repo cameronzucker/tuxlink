@@ -8,20 +8,28 @@
 // bundled catalog (those entries — US.ALL, AUR_TONIGHT, INQUIRIES — are in it). This panel is now
 // the station finder only.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LISTING_MODES, type Gateway, type ListingMode } from './stationTypes';
 import { useStations } from './useStations';
 import { sendCatalogInquiry } from './useCatalog';
 import { catalogErrorMessage } from './stationTypes';
-import { StationResults } from './StationResults';
+import {
+  StationResults,
+  stationFavoriteKey,
+  type GatewayFavoriteState,
+} from './StationResults';
 import { FAVORITES_QUERY_KEY } from '../favorites/useFavorites';
-import type { Favorite } from '../favorites/types';
+import { emitGatewayPrefill } from '../favorites/prefillEvent';
+import type { Favorite, FavoriteDial, StationsFile } from '../favorites/types';
 import './CatalogBuilderPanel.css';
 
 export interface CatalogBuilderPanelProps {
   onClose: () => void;
+  /** Active RF modem that can consume station-result prefill. VARA has no
+   *  gateway target field yet, so it is intentionally absent here. */
+  activePrefillMode?: 'packet' | 'ardop-hf';
 }
 
 const DEFAULT_RADIUS_MI = 300; // confirmed default (design §Builder UX)
@@ -41,13 +49,81 @@ type QueueState =
   | { kind: 'done'; count: number }
   | { kind: 'error'; message: string };
 
-export function CatalogBuilderPanel({ onClose }: CatalogBuilderPanelProps) {
+type FavoritableListingMode = Extract<ListingMode, 'vara-hf' | 'ardop-hf' | 'packet'>;
+
+function favoriteModeForListing(mode: string): FavoritableListingMode | null {
+  if (mode === 'vara-hf' || mode === 'ardop-hf' || mode === 'packet') return mode;
+  return null;
+}
+
+function frequencyMhz(g: Gateway): string | undefined {
+  return g.frequenciesKhz.length ? (g.frequenciesKhz[0] / 1000).toFixed(3) : undefined;
+}
+
+function gatewayToDraftFavorite(g: Gateway, mode: ListingMode): Favorite | null {
+  const favoriteMode = favoriteModeForListing(mode);
+  if (!favoriteMode) return null;
+  return {
+    id: '', // empty → backend mints a uuid + stamps timestamps
+    mode: favoriteMode,
+    gateway: g.callsign,
+    // Record-only metadata (never read back into a form, H8); use the same
+    // MHz form the results row displays so a catalog-sourced favorite reads
+    // consistently with what the operator saw.
+    freq: frequencyMhz(g),
+    grid: g.grid ?? undefined,
+    starred: false, // backend forces false on create; star() below promotes it
+    created_at: '',
+    updated_at: '',
+  };
+}
+
+function gatewayToPrefillDial(g: Gateway, mode: ListingMode): FavoriteDial | null {
+  if (mode !== 'packet' && mode !== 'ardop-hf') return null;
+  return {
+    mode,
+    gateway: g.callsign,
+    freq: frequencyMhz(g),
+    grid: g.grid ?? undefined,
+  };
+}
+
+export function CatalogBuilderPanel({ onClose, activePrefillMode }: CatalogBuilderPanelProps) {
   const [grid, setGrid] = useState('');
   const [modes, setModes] = useState<Set<ListingMode>>(new Set());
   const [radiusMi, setRadiusMi] = useState(DEFAULT_RADIUS_MI);
   const [queueState, setQueueState] = useState<QueueState>({ kind: 'idle' });
   const stations = useStations();
   const qc = useQueryClient();
+  const favoritesQuery = useQuery({
+    queryKey: FAVORITES_QUERY_KEY,
+    queryFn: () => invoke<StationsFile>('favorites_read'),
+  });
+
+  const favoriteStates = useMemo(() => {
+    const map = new Map<string, GatewayFavoriteState>();
+    for (const favorite of favoritesQuery.data?.favorites ?? []) {
+      const mode = favoriteModeForListing(favorite.mode);
+      if (!mode) continue;
+      const gateway: Gateway = {
+        channel: favorite.id,
+        callsign: favorite.gateway,
+        sysopName: null,
+        grid: favorite.grid ?? null,
+        location: null,
+        frequenciesKhz: [],
+        lastUpdate: null,
+        email: null,
+        homepage: null,
+      };
+      const key = stationFavoriteKey(mode, gateway);
+      const previous = map.get(key);
+      if (!previous || favorite.starred) {
+        map.set(key, { id: favorite.id, starred: favorite.starred });
+      }
+    }
+    return map;
+  }, [favoritesQuery.data]);
 
   // tuxlink-29zx: Escape closes the panel — the keyboard dismiss path alongside
   // the × button and backdrop click. Document-level so it fires regardless of
@@ -78,36 +154,39 @@ export function CatalogBuilderPanel({ onClose }: CatalogBuilderPanelProps) {
 
   const onGetStations = () => stations.fetch([...modes]);
 
-  // ★ on a result row → save the gateway as a STARRED favorite (tuxlink-dqte).
+  // ☆/★ on a result row → toggle the gateway's persisted favorite state.
   // The favorites store is star-to-promote: `favorite_upsert` mints the record
   // but forces `starred:false` (an unstarred "recent"), then `favorite_star`
-  // promotes it so it lands in the Favorites tab. StationResults disables the ★
-  // for non-favoritable modes (pactor/robust-packet), so `mode` is always one of
-  // the three that maps to a favorite RadioMode — guarded here defensively too.
-  const onAddFavorite = async (g: Gateway, mode: ListingMode) => {
-    if (mode !== 'vara-hf' && mode !== 'ardop-hf' && mode !== 'packet') return;
-    const draft: Favorite = {
-      id: '', // empty → backend mints a uuid + stamps timestamps
-      mode,
-      gateway: g.callsign,
-      // Record-only metadata (never read back into a form, H8); use the same
-      // MHz form the results row displays so a catalog-sourced favorite reads
-      // consistently with what the operator saw.
-      freq: g.frequenciesKhz.length ? (g.frequenciesKhz[0] / 1000).toFixed(3) : undefined,
-      grid: g.grid ?? undefined,
-      starred: false, // backend forces false on create; star() below promotes it
-      created_at: '',
-      updated_at: '',
-    };
+  // promotes it so it lands in the Favorites tab. Existing starred records can
+  // now be unstarred from this same list (tuxlink-0ml3).
+  const onToggleFavorite = async (
+    g: Gateway,
+    mode: ListingMode,
+    state: GatewayFavoriteState | null,
+  ) => {
     try {
-      const stored = await invoke<Favorite>('favorite_upsert', { favorite: draft });
-      await invoke('favorite_star', { id: stored.id, starred: true });
+      if (state) {
+        await invoke('favorite_star', { id: state.id, starred: !state.starred });
+      } else {
+        const draft = gatewayToDraftFavorite(g, mode);
+        if (!draft) return;
+        const stored = await invoke<Favorite>('favorite_upsert', { favorite: draft });
+        await invoke('favorite_star', { id: stored.id, starred: true });
+      }
       // Refresh the shared ['favorites'] cache so the radio dock's FavoritesTabs
       // reflects the new entry (prefix-match also refetches recents).
       await qc.invalidateQueries({ queryKey: FAVORITES_QUERY_KEY });
     } catch {
       // Non-blocking — persistence failures surface in the backend session log.
     }
+  };
+
+  const onSelectGateway = (g: Gateway, mode: ListingMode) => {
+    if (mode !== activePrefillMode) return;
+    const dial = gatewayToPrefillDial(g, mode);
+    if (!dial) return;
+    emitGatewayPrefill(dial);
+    onClose();
   };
 
   // Direct-poll failed → offer the station list by in-band message (PUB_<mode> inquiry).
@@ -193,7 +272,10 @@ export function CatalogBuilderPanel({ onClose }: CatalogBuilderPanelProps) {
               originGrid={grid}
               radiusMi={radiusMi}
               onRequestByMessage={modes.size > 0 ? onRequestStationsByMessage : undefined}
-              onAddFavorite={onAddFavorite}
+              onToggleFavorite={onToggleFavorite}
+              favoriteStates={favoriteStates}
+              selectableMode={activePrefillMode}
+              onSelectGateway={activePrefillMode ? onSelectGateway : undefined}
             />
           </div>
         </div>

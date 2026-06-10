@@ -135,12 +135,41 @@
 .catalog-row__freq {
   font-family: var(--mono);
 }
+.catalog-row__actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+}
+.catalog-row__use {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 8px;
+}
+.catalog-row__use:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--elevated);
+}
+.catalog-row__use:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .catalog-row__star {
   background: none;
   border: none;
-  color: var(--accent);
+  color: var(--text-dim);
   cursor: pointer;
   font-size: 14px;
+  line-height: 1;
+  min-width: 24px;
+}
+.catalog-row__star--on {
+  color: var(--accent);
 }
 .catalog-row__star:disabled {
   color: var(--text-dim);

@@ -1,7 +1,6 @@
 // Distance-sorted station results column for the Catalog Builder.
-// Rows dim (not vanish) beyond the radius (design §Builder UX). The ★ is a forward hook:
-// disabled until CF's favorite_upsert lands (threaded via onAddFavorite), and additionally
-// disabled for pactor/robust-packet (CF's favorite RadioMode union lacks those — bd-tuxlink-raez).
+// Rows dim (not vanish) beyond the radius (design §Builder UX). Star controls
+// reflect persisted favorite state; Use is prefill-only for active modem modes.
 
 import { useMemo } from 'react';
 import { distanceFromGrids, kmToMi } from './distance';
@@ -16,13 +15,30 @@ interface Props {
   originGrid: string;
   radiusMi: number;
   onRequestByMessage?: () => void; // direct-poll failure → offer the message-request fallback
-  onAddFavorite?: (g: Gateway, mode: ListingMode) => void; // CF-owned consumer; gated until it lands
+  onToggleFavorite?: (
+    g: Gateway,
+    mode: ListingMode,
+    state: GatewayFavoriteState | null,
+  ) => void;
+  favoriteStates?: ReadonlyMap<string, GatewayFavoriteState>;
+  /** Active modem mode that can consume a prefill-only station selection. */
+  selectableMode?: ListingMode;
+  onSelectGateway?: (g: Gateway, mode: ListingMode) => void;
+}
+
+export interface GatewayFavoriteState {
+  id: string;
+  starred: boolean;
 }
 
 interface Row {
   g: Gateway;
   mode: ListingMode;
   distMi: number | null;
+}
+
+export function stationFavoriteKey(mode: ListingMode, gateway: Gateway): string {
+  return `${mode}:${gateway.callsign.trim().toUpperCase()}`;
 }
 
 function StaleCaption({ listings }: { listings: StationListing[] }) {
@@ -39,7 +55,17 @@ function StaleCaption({ listings }: { listings: StationListing[] }) {
   );
 }
 
-export function StationResults({ listings, error, originGrid, radiusMi, onRequestByMessage, onAddFavorite }: Props) {
+export function StationResults({
+  listings,
+  error,
+  originGrid,
+  radiusMi,
+  onRequestByMessage,
+  onToggleFavorite,
+  favoriteStates,
+  selectableMode,
+  onSelectGateway,
+}: Props) {
   const rows = useMemo<Row[]>(() => {
     const all: Row[] = listings.flatMap((l) =>
       l.gateways.map((g) => {
@@ -75,6 +101,8 @@ export function StationResults({ listings, error, originGrid, radiusMi, onReques
         {rows.map(({ g, mode, distMi }) => {
           const dim = distMi != null && distMi > radiusMi;
           const favoritable = FAVORITABLE_MODES.has(mode);
+          const favoriteState = favoriteStates?.get(stationFavoriteKey(mode, g)) ?? null;
+          const selectable = Boolean(onSelectGateway && selectableMode === mode);
           return (
             <li key={`${mode}:${g.channel}`} data-testid="gateway-row" className={`catalog-row${dim ? ' is-dim' : ''}`}>
               <span className="catalog-row__badge">{mode}</span>
@@ -84,16 +112,44 @@ export function StationResults({ listings, error, originGrid, radiusMi, onReques
               </span>
               <span className="catalog-row__grid">{g.grid ?? '—'}</span>
               <span className="catalog-row__dist">{distMi == null ? '—' : `${Math.round(distMi)} mi`}</span>
-              <button
-                type="button"
-                className="catalog-row__star"
-                aria-label={`Add ${g.callsign} to ${mode} favorites`}
-                disabled={!onAddFavorite || !favoritable}
-                title={!favoritable ? 'Favorites for this mode are not yet supported' : 'Add to favorites'}
-                onClick={() => onAddFavorite?.(g, mode)}
-              >
-                ★
-              </button>
+              <span className="catalog-row__actions">
+                {onSelectGateway && (
+                  <button
+                    type="button"
+                    className="catalog-row__use"
+                    disabled={!selectable}
+                    title={
+                      selectable
+                        ? 'Use this station in the active modem panel'
+                        : 'Open the matching Packet or ARDOP modem panel to use this station'
+                    }
+                    onClick={() => onSelectGateway(g, mode)}
+                  >
+                    Use
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={`catalog-row__star${favoriteState?.starred ? ' catalog-row__star--on' : ''}`}
+                  aria-pressed={favoriteState?.starred ?? false}
+                  aria-label={
+                    favoriteState?.starred
+                      ? `Remove ${g.callsign} from ${mode} favorites`
+                      : `Add ${g.callsign} to ${mode} favorites`
+                  }
+                  disabled={!onToggleFavorite || !favoritable}
+                  title={
+                    !favoritable
+                      ? 'Favorites for this mode are not yet supported'
+                      : favoriteState?.starred
+                      ? 'Remove from favorites'
+                      : 'Add to favorites'
+                  }
+                  onClick={() => onToggleFavorite?.(g, mode, favoriteState)}
+                >
+                  {favoriteState?.starred ? '★' : '☆'}
+                </button>
+              </span>
             </li>
           );
         })}

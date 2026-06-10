@@ -6,6 +6,7 @@ import type { ReactElement } from 'react';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 import { invoke } from '@tauri-apps/api/core';
 import { CatalogBuilderPanel } from './CatalogBuilderPanel';
+import { GATEWAY_PREFILL_EVENT } from '../favorites/prefillEvent';
 
 // The panel invalidates the shared ['favorites'] query after a ★ add, so it
 // needs a QueryClientProvider in scope (mirrors the app-root provider).
@@ -36,6 +37,7 @@ beforeEach(() => {
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     if (cmd === 'config_read') return { grid: 'DM43bp' };
+    if (cmd === 'favorites_read') return { schema_version: 1, favorites: [], log: [] };
     if (cmd === 'catalog_fetch_stations') return [];
     if (cmd === 'catalog_send_inquiry') return 'MID123';
     return undefined;
@@ -135,6 +137,7 @@ describe('CatalogBuilderPanel', () => {
     };
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return { grid: 'DM43bp' };
+      if (cmd === 'favorites_read') return { schema_version: 1, favorites: [], log: [] };
       if (cmd === 'catalog_fetch_stations') return [listing];
       // favorite_upsert returns the STORED record (server-assigned id); the
       // handler stars THAT id. A fixed record is enough — the call args are
@@ -162,6 +165,84 @@ describe('CatalogBuilderPanel', () => {
       );
       expect(vi.mocked(invoke)).toHaveBeenCalledWith('favorite_star', { id: 'fav-1', starred: true });
     });
+  });
+
+  it('★ unstars an already-starred station instead of creating a duplicate', async () => {
+    const gateway = {
+      channel: 'CHAN-1', callsign: 'W6ABC', sysopName: null, grid: 'CN87',
+      location: null, frequenciesKhz: [14105], lastUpdate: null, email: null, homepage: null,
+    };
+    const listing = {
+      mode: 'packet', title: null, gateways: [gateway], raw: '', parsedOk: true, fetchedAtMs: null,
+    };
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { grid: 'DM43bp' };
+      if (cmd === 'favorites_read') {
+        return {
+          schema_version: 1,
+          favorites: [{
+            id: 'fav-1',
+            mode: 'packet',
+            gateway: 'W6ABC',
+            freq: '14.105',
+            grid: 'CN87',
+            starred: true,
+            created_at: 'then',
+            updated_at: 'then',
+          }],
+          log: [],
+        };
+      }
+      if (cmd === 'catalog_fetch_stations') return [listing];
+      return undefined;
+    });
+
+    renderPanel(<CatalogBuilderPanel onClose={() => {}} />);
+    fireEvent.click(await screen.findByLabelText('Packet'));
+    fireEvent.click(screen.getByRole('button', { name: /get stations/i }));
+
+    const star = await screen.findByRole('button', { name: /remove W6ABC from packet favorites/i });
+    expect(star).toHaveTextContent('★');
+    fireEvent.click(star);
+
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('favorite_star', { id: 'fav-1', starred: false });
+    });
+    expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'favorite_upsert')).toBe(false);
+  });
+
+  it('Use emits a prefill-only packet dial and closes the picker', async () => {
+    const gateway = {
+      channel: 'CHAN-1', callsign: 'W6ABC', sysopName: null, grid: 'CN87',
+      location: null, frequenciesKhz: [14105], lastUpdate: null, email: null, homepage: null,
+    };
+    const listing = {
+      mode: 'packet', title: null, gateways: [gateway], raw: '', parsedOk: true, fetchedAtMs: null,
+    };
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { grid: 'DM43bp' };
+      if (cmd === 'favorites_read') return { schema_version: 1, favorites: [], log: [] };
+      if (cmd === 'catalog_fetch_stations') return [listing];
+      return undefined;
+    });
+    const onClose = vi.fn();
+    const onPrefill = vi.fn();
+    window.addEventListener(GATEWAY_PREFILL_EVENT, onPrefill);
+
+    renderPanel(<CatalogBuilderPanel activePrefillMode="packet" onClose={onClose} />);
+    fireEvent.click(await screen.findByLabelText('Packet'));
+    fireEvent.click(screen.getByRole('button', { name: /get stations/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Use' }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onPrefill).toHaveBeenCalledTimes(1);
+    expect((onPrefill.mock.calls[0][0] as CustomEvent).detail).toEqual({
+      mode: 'packet',
+      gateway: 'W6ABC',
+      freq: '14.105',
+      grid: 'CN87',
+    });
+    window.removeEventListener(GATEWAY_PREFILL_EVENT, onPrefill);
   });
 });
 

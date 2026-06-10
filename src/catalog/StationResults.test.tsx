@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { StationResults } from './StationResults';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { StationResults, stationFavoriteKey } from './StationResults';
 import type { Gateway, StationListing } from './stationTypes';
 
 function gw(callsign: string, grid: string): Gateway {
@@ -56,12 +56,63 @@ describe('StationResults', () => {
   });
 
   it('disables the ★ for pactor/robust-packet (no CF favorite target) even when wired', () => {
-    const onAddFavorite = vi.fn();
+    const onToggleFavorite = vi.fn();
     const pactor: StationListing = { ...listing, mode: 'pactor' };
     render(
-      <StationResults listings={[pactor]} error={null} originGrid="DM43bp" radiusMi={300} onAddFavorite={onAddFavorite} />,
+      <StationResults listings={[pactor]} error={null} originGrid="DM43bp" radiusMi={300} onToggleFavorite={onToggleFavorite} />,
     );
     const star = screen.getAllByRole('button', { name: /favorites/i })[0];
     expect(star).toBeDisabled();
+  });
+
+  it('renders favorite star state from persisted favorites and toggles that state', () => {
+    const onToggleFavorite = vi.fn();
+    const favoriteStates = new Map([
+      [stationFavoriteKey('ardop-hf', listing.gateways[1]), { id: 'fav-near', starred: true }],
+    ]);
+    render(
+      <StationResults
+        listings={[listing]}
+        error={null}
+        originGrid="DM43bp"
+        radiusMi={300}
+        favoriteStates={favoriteStates}
+        onToggleFavorite={onToggleFavorite}
+      />,
+    );
+
+    const starred = screen.getByRole('button', { name: /remove NEAR from ardop-hf favorites/i });
+    expect(starred).toHaveTextContent('★');
+    expect(starred).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(starred);
+    expect(onToggleFavorite).toHaveBeenCalledWith(
+      expect.objectContaining({ callsign: 'NEAR' }),
+      'ardop-hf',
+      { id: 'fav-near', starred: true },
+    );
+
+    const unstarred = screen.getByRole('button', { name: /add FAR to ardop-hf favorites/i });
+    expect(unstarred).toHaveTextContent('☆');
+    expect(unstarred).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('offers Use only for rows matching the active selectable modem mode', () => {
+    const onSelectGateway = vi.fn();
+    render(
+      <StationResults
+        listings={[listing]}
+        error={null}
+        originGrid="DM43bp"
+        radiusMi={300}
+        selectableMode="ardop-hf"
+        onSelectGateway={onSelectGateway}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Use' })[0]);
+    expect(onSelectGateway).toHaveBeenCalledWith(
+      expect.objectContaining({ callsign: 'NEAR' }),
+      'ardop-hf',
+    );
   });
 });
