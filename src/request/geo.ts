@@ -32,8 +32,13 @@ export interface LatLon {
  * 2-char field case the Request Center needs.
  */
 export function gridToLatLon(grid: string): LatLon | null {
-  const g = grid.toUpperCase();
-  if (g.length !== 2 && g.length !== 4) return null;
+  const g = grid.trim().toUpperCase();
+  // Accept field (2 chars), square (4), or subsquare (6) — and tolerate
+  // extended precision (8+) by decoding only the pairs it recognises. The app
+  // stores the grid at full 6-char precision (config.rs), so a strict 2/4-only
+  // decode dropped the operator's real location to null, collapsing the whole
+  // location section + the state-name suffix (tuxlink-lfz4).
+  if (g.length < 2) return null;
 
   // Field pair: A–R (18 values)
   const fieldA = g.charCodeAt(0) - 65; // 'A' = 65
@@ -43,24 +48,28 @@ export function gridToLatLon(grid: string): LatLon | null {
   let lon = fieldA * 20.0 - 180.0;
   let lat = fieldB * 10.0 - 90.0;
 
-  if (g.length === 2) {
-    // Center of the 20°×10° field
-    lon += 10.0;
-    lat += 5.0;
-    return { lat, lon };
+  // Field only (or a malformed square pair) → center of the 20°×10° field.
+  if (g.length < 4 || !isDigit(g[2]) || !isDigit(g[3])) {
+    return { lat: lat + 5.0, lon: lon + 10.0 };
   }
 
-  // Square pair: 0–9
-  if (!isDigit(g[2]) || !isDigit(g[3])) return null;
-  const sqA = parseInt(g[2], 10);
-  const sqB = parseInt(g[3], 10);
-  lon += sqA * 2.0;
-  lat += sqB * 1.0;
-  // Center of the 2°×1° square
-  lon += 1.0;
-  lat += 0.5;
+  // Square pair: 0–9 → 2°×1° cell.
+  lon += parseInt(g[2], 10) * 2.0;
+  lat += parseInt(g[3], 10) * 1.0;
 
-  return { lat, lon };
+  // Subsquare pair: A–X (24 values) → 5′×2.5′ cell. Absent/malformed → square center.
+  if (g.length < 6) {
+    return { lat: lat + 0.5, lon: lon + 1.0 };
+  }
+  const subA = g.charCodeAt(4) - 65;
+  const subB = g.charCodeAt(5) - 65;
+  if (subA < 0 || subA > 23 || subB < 0 || subB > 23) {
+    return { lat: lat + 0.5, lon: lon + 1.0 };
+  }
+  lon += subA * (2.0 / 24.0);
+  lat += subB * (1.0 / 24.0);
+  // Center of the subsquare.
+  return { lat: lat + 1.0 / 48.0, lon: lon + 1.0 / 24.0 };
 }
 
 function isDigit(ch: string): boolean {

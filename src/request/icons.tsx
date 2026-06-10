@@ -141,6 +141,10 @@ export function Icon({ name, size = 18, className }: IconProps) {
       height={size}
       aria-hidden="true"
       className={className}
+      // display:block removes the inline-SVG baseline descender gap that
+      // mis-centers icons inside `place-items:center` tiles in WebKitGTK (the
+      // mock relied on a global `svg{display:block}` rule that was not ported).
+      style={{ display: 'block' }}
     >
       {ICON_PATHS[name]}
     </svg>

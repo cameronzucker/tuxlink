@@ -274,22 +274,24 @@
   padding-top: 8px;
 }
 
+/* Matches the app's primary-button language (solid --accent / --bg text),
+ * not a bespoke amber gradient (tuxlink-lfz4). */
 .gadd {
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  padding: 12px 22px;
-  border-radius: 9px;
+  padding: 11px 20px;
+  border-radius: 6px;
   border: none;
   cursor: pointer;
-  background: linear-gradient(180deg, var(--accent-2), var(--accent));
-  color: #2a1500;
+  background: var(--accent);
+  color: var(--bg);
   font: inherit;
-  font-weight: 700;
+  font-weight: 600;
   font-size: 14px;
 }
 .gadd:hover:not(:disabled) {
-  opacity: 0.9;
+  filter: brightness(1.12);
 }
 .gadd:disabled {
   background: var(--surface-2);
