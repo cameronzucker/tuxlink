@@ -39,6 +39,8 @@ export interface RequestCard {
 export interface RequestSection {
   id: string;
   title: string;
+  /** Whether this section is geo-derived ('location') or location-independent ('national'). */
+  kind: 'location' | 'national';
   cards: RequestCard[];
 }
 
@@ -84,13 +86,14 @@ export function buildSections(
     }
   }
   if (weatherCards.length > 0) {
-    sections.push({ id: 'weather', title: 'Weather', cards: weatherCards });
+    sections.push({ id: 'weather', title: 'Weather', kind: 'location', cards: weatherCards });
   }
 
   // --- Propagation & space (national, always shown, one-click) ---------------
   sections.push({
     id: 'propagation',
     title: 'Propagation & space',
+    kind: 'national',
     cards: [
       {
         id: 'prop-forecast',
@@ -117,6 +120,7 @@ export function buildSections(
   sections.push({
     id: 'nearby',
     title: 'Nearby stations',
+    kind: 'national',
     cards: [
       {
         id: 'nearby-gateways',

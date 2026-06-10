@@ -17,9 +17,25 @@ import { invoke } from '@tauri-apps/api/core';
 import { useCatalog } from '../catalog/useCatalog';
 import { useRequestBasket, dispatchBasket, type DispatchResult } from './basket';
 import { buildSections, type CardAction } from './sections';
+import { gridToLatLon, latLonToUsState } from './geo';
+import { usStateName } from './usStateName';
+import { Icon, type IconName } from './icons';
 import { CatalogBrowse } from './CatalogBrowse';
 import { GribForm } from './GribForm';
 import './RequestCenter.css';
+
+// Card id → glyph for the feat cards (hero) and chips (national grids).
+// Unmapped ids fall back to `info`.
+const CARD_ICONS: Record<string, IconName> = {
+  'wx-state-forecast': 'weather',
+  'wx-marine-forecast': 'wave',
+  'prop-forecast': 'prop',
+  'prop-solar': 'sun',
+  'prop-aurora': 'aurora',
+  'nearby-gateways': 'tower',
+  'nearby-winlink-info': 'info',
+};
+const cardIcon = (id: string): IconName => CARD_ICONS[id] ?? 'info';
 
 export interface RequestCenterProps {
   onClose: () => void;
@@ -122,6 +138,17 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
 
   const locationLabel = grid ? `Near ${grid}` : 'Location not set';
 
+  // Resolve the chip's state suffix the same way buildSections derives geo:
+  // grid → lat/lon → USPS → full name. null when the grid is unset/unresolvable
+  // or maps to no U.S. state (the chip then shows no suffix). Keyed on grid.
+  const stateName = useMemo(() => {
+    if (!grid) return null;
+    const latLon = gridToLatLon(grid);
+    if (!latLon) return null;
+    const stateCode = latLonToUsState(latLon.lat, latLon.lon);
+    return stateCode ? usStateName(stateCode) : null;
+  }, [grid]);
+
   // Global search (Task D2). A non-empty trimmed needle shows cross-category
   // search results, overriding the current view (home/browse/grib). Cleared →
   // the view-based content returns. The header search input stays visible in
@@ -160,17 +187,23 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
     <div className="request-overlay" data-testid="request-overlay" role="dialog" aria-label="Request Center">
       <div className="request-workspace">
         <header className="request-header">
-          <div className="request-header__lead">
+          <div className="request-header__lead hd-title">
+            <span className="request-header__glyph g" aria-hidden="true">
+              <Icon name="radio" size={18} />
+            </span>
             <h2 className="request-header__title">Request Center</h2>
             <span
-              className="request-location-chip"
+              className="request-location-chip loc"
               data-testid="request-center-location"
               aria-label={`Origin: ${locationLabel}`}
             >
-              {locationLabel}
+              <Icon name="pin" size={14} className="pin" />
+              <span>{locationLabel}</span>
+              {stateName && <span className="sub"> · {stateName}</span>}
             </span>
           </div>
           <div className="request-header__search">
+            <Icon name="search" size={15} className="request-search__icon" />
             <input
               type="search"
               className="request-search"
@@ -189,7 +222,7 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
             aria-label="Close Request Center"
             title="Close"
           >
-            ✕
+            <Icon name="close" size={16} />
           </button>
         </header>
 
@@ -264,74 +297,164 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
             {/* Request-first home sections. Home renders only when not loading,
                 no error, entries present, and the home view is active. */}
             {!searchActive && view === 'home' && !loading && !error && entries && entries.length > 0 && (
-              <div className="request-sections">
-                {sections.map((section) => (
-                  <section
-                    key={section.id}
-                    className="request-section"
-                    data-testid={`request-section-${section.id}`}
-                    aria-label={section.title}
-                  >
-                    <h3 className="request-section__title">{section.title}</h3>
-                    <div className="request-section__cards">
-                      {section.cards.map((card) => (
-                        <article
-                          key={card.id}
-                          className="request-card"
-                          data-testid={`request-card-${card.id}`}
-                        >
-                          <div className="request-card__body">
-                            <span className="request-card__label">{card.label}</span>
-                            {card.description && (
-                              <span className="request-card__desc">{card.description}</span>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            className="request-card__action"
-                            onClick={() => runAction(card.action, card.label)}
-                            aria-label={
-                              card.action.kind === 'addCms'
-                                ? `Add ${card.label} to request`
-                                : `Open ${card.label}`
-                            }
-                          >
-                            {card.action.kind === 'addCms' ? 'Add' : 'Open'}
-                          </button>
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-                ))}
+              <div className="request-sections content-inner">
+                {/* HERO — the location ('location' kind) section. An amber-edged
+                    panel; each card is a large feat card (icon tile + label +
+                    description + action). Rendered only when the geo-derived
+                    Weather section has cards. */}
+                {sections
+                  .filter((section) => section.kind === 'location')
+                  .map((section) => (
+                    <section
+                      key={section.id}
+                      className="request-hero hero"
+                      data-testid={`request-section-${section.id}`}
+                      aria-label={section.title}
+                    >
+                      <div className="hero-h">
+                        <span className="pin" aria-hidden="true">
+                          <Icon name="pin" size={17} />
+                        </span>
+                        <h4>For your location</h4>
+                        {grid && (
+                          <span className="where">
+                            {grid}
+                            {stateName ? ` · ${stateName}` : ''}
+                          </span>
+                        )}
+                      </div>
+                      <div className="hero-grid">
+                        {section.cards.map((card) => {
+                          const isAdd = card.action.kind === 'addCms';
+                          return (
+                            <article
+                              key={card.id}
+                              className="feat"
+                              data-testid={`request-card-${card.id}`}
+                            >
+                              <span className="fi" aria-hidden="true">
+                                <Icon name={cardIcon(card.id)} size={24} />
+                              </span>
+                              <div className="request-card__body">
+                                <div className="fn request-card__label">{card.label}</div>
+                                {card.description && (
+                                  <div className="fd request-card__desc">{card.description}</div>
+                                )}
+                                <div className="fa">
+                                  <button
+                                    type="button"
+                                    className={isAdd ? 'badd' : 'bopen'}
+                                    onClick={() => runAction(card.action, card.label)}
+                                    aria-label={
+                                      isAdd
+                                        ? `Add ${card.label} to request`
+                                        : `Open ${card.label}`
+                                    }
+                                  >
+                                    {isAdd ? (
+                                      <>
+                                        <Icon name="plus" size={15} />
+                                        Add request
+                                      </>
+                                    ) : (
+                                      <>
+                                        Browse {card.label}
+                                        <Icon name="arrow" size={15} />
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
 
-                {/* Browse-everything reveal — drops into the full master-detail
-                    catalog browser (Task D1). Opens with no category preselected
-                    so the browser defaults to its first category. */}
-                <div className="request-browse-reveal">
+                {/* CHIP GRIDS — the 'national' sections. Each card is a compact
+                    chip (icon tile + title + one-line description + the catalog
+                    filename/category in mono + an add/→ control). */}
+                {sections
+                  .filter((section) => section.kind === 'national')
+                  .map((section) => (
+                    <section
+                      key={section.id}
+                      className="request-section"
+                      data-testid={`request-section-${section.id}`}
+                      aria-label={section.title}
+                    >
+                      <div className="request-subt subt">
+                        <span className="bar" aria-hidden="true" />
+                        {section.title}
+                      </div>
+                      <div className="request-chips chips">
+                        {section.cards.map((card) => {
+                          const isAdd = card.action.kind === 'addCms';
+                          const sub =
+                            card.action.kind === 'addCms'
+                              ? card.action.filename
+                              : card.action.category;
+                          return (
+                            <article
+                              key={card.id}
+                              className="chip"
+                              data-testid={`request-card-${card.id}`}
+                            >
+                              <span className="ci" aria-hidden="true">
+                                <Icon name={cardIcon(card.id)} size={20} />
+                              </span>
+                              <div className="cb">
+                                <div className="ct request-card__label">{card.label}</div>
+                                {card.description && (
+                                  <div className="cd request-card__desc">{card.description}</div>
+                                )}
+                                <span className="cs">{sub}</span>
+                              </div>
+                              <button
+                                type="button"
+                                className="cadd"
+                                onClick={() => runAction(card.action, card.label)}
+                                aria-label={
+                                  isAdd
+                                    ? `Add ${card.label} to request`
+                                    : `Open ${card.label}`
+                                }
+                              >
+                                <Icon name={isAdd ? 'plus' : 'arrow'} size={16} />
+                              </button>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+
+                {/* Reveals — drop into the full master-detail catalog browser
+                    (Task D1) and the Saildocs GRIB request form (Task D3). */}
+                <div className="request-reveals reveals">
                   <button
                     type="button"
-                    className="request-browse-reveal__button"
+                    className="request-rev rev request-browse-reveal__button"
                     data-testid="request-browse-reveal"
                     onClick={() => {
                       setBrowseCategory(null);
                       setView('browse');
                     }}
                   >
-                    Browse full catalog by category →
+                    <Icon name="list" size={16} className="lead" />
+                    Browse full catalog
+                    <span className="m">by category</span>
                   </button>
-                </div>
-
-                {/* GRIB-by-area reveal — drops into the Saildocs GRIB request
-                    form (Task D3). Adds a saildocs request to the basket; the
-                    send happens later from the basket rail (Task E1). */}
-                <div className="request-browse-reveal">
                   <button
                     type="button"
-                    className="request-browse-reveal__button"
+                    className="request-rev rev request-browse-reveal__button"
                     data-testid="request-grib-reveal"
                     onClick={() => setView('grib')}
                   >
-                    More: GRIB by area →
+                    <Icon name="map" size={16} className="lead" />
+                    GRIB
+                    <span className="m">by area</span>
                   </button>
                 </div>
               </div>
@@ -339,86 +462,138 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
           </div>
 
           <aside className="request-basket" data-testid="request-basket" aria-label="Request basket">
-            <ul className="request-basket__list">
-              {basket.items.map((item) => (
-                <li
-                  key={item.id}
-                  className="request-basket__item"
-                  data-testid={`basket-item-${item.id}`}
-                >
-                  <span className="request-basket__item-label">{item.label}</span>
-                  <button
-                    type="button"
-                    className="request-basket__remove"
-                    data-testid={`basket-remove-${item.id}`}
-                    onClick={() => basket.remove(item.id)}
-                    aria-label={`Remove ${item.label}`}
-                    title="Remove"
-                  >
-                    ✕
-                  </button>
-                </li>
-              ))}
-            </ul>
+            {/* basket header */}
+            <div className="bk-head">
+              <Icon name="basket" size={18} />
+              <h4>
+                Request basket
+                {!basket.isEmpty && (
+                  <span className="ct">{basket.items.length}</span>
+                )}
+              </h4>
+            </div>
 
-            {!basket.isEmpty && (
-              <p className="request-basket__summary" data-testid="request-basket-summary">
-                {basketSummary(basket.cmsFilenames.length, basket.saildocsItems.length)}
-              </p>
-            )}
-
-            <button
-              type="button"
-              className="request-basket__send"
-              data-testid="request-basket-send"
-              onClick={sendAll}
-              disabled={basket.isEmpty || sendState.kind === 'sending'}
-            >
-              {sendState.kind === 'sending' ? 'Sending…' : 'Send all'}
-            </button>
-
-            {sendState.kind === 'done' &&
-              (() => {
-                const { result } = sendState;
-                const okSaildocs = result.saildocs.filter((e) => e.ok);
-                return (
-                  <div
-                    className="request-basket__result"
-                    data-testid="request-basket-result"
-                    role="status"
-                  >
-                    {result.cms?.ok && (
-                      <p className="request-basket__result-line">
-                        Queued 1 inquiry message to the CMS
-                        {result.cms.mid ? ` (MID ${result.cms.mid}).` : '.'}
-                      </p>
-                    )}
-                    {result.cms && !result.cms.ok && (
-                      <p className="request-basket__result-error">
-                        CMS failed: {result.cms.error}
-                      </p>
-                    )}
-                    {okSaildocs.length > 0 && (
-                      <p className="request-basket__result-line">
-                        Queued {okSaildocs.length} Saildocs{' '}
-                        {okSaildocs.length === 1 ? 'request' : 'requests'}.
-                      </p>
-                    )}
-                    {result.saildocs
-                      .filter((e) => !e.ok)
-                      .map((e) => (
-                        <p key={e.item.id} className="request-basket__result-error">
-                          Saildocs failed: {e.error}
-                        </p>
-                      ))}
-                    {(result.cms?.ok || okSaildocs.length > 0) && (
-                      <p className="request-basket__result-note">
-                        Responses arrive in your Inbox after the next connect.
-                      </p>
-                    )}
+            {/* scrollable list region */}
+            <div className="bk-list">
+              {/* empty placeholder — only when no items and not in done state */}
+              {basket.isEmpty && sendState.kind !== 'done' && (
+                <div className="bk-empty">
+                  <div className="ring">
+                    <Icon name="basket" size={24} />
                   </div>
-                );
-              })()}
+                  <p>Your basket is empty. Add requests from the cards or browse.</p>
+                </div>
+              )}
+
+              {/* item list — visible whenever items exist */}
+              {!basket.isEmpty && (
+                <ul className="request-basket__list">
+                  {basket.items.map((item) => (
+                    <li
+                      key={item.id}
+                      className="request-basket__item bk-item"
+                      data-testid={`basket-item-${item.id}`}
+                    >
+                      <span className={`ic ${item.rail === 'saildocs' ? 'sail' : 'cms'}`}>
+                        <Icon name={item.rail === 'saildocs' ? 'map' : 'check'} size={15} />
+                      </span>
+                      <span className="bd">
+                        <span className="lb">{item.label}</span>
+                        <span className="rl">
+                          {item.rail === 'saildocs' ? 'Saildocs' : 'CMS inquiry'}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="request-basket__remove rm"
+                        data-testid={`basket-remove-${item.id}`}
+                        onClick={() => basket.remove(item.id)}
+                        aria-label={`Remove ${item.label}`}
+                        title="Remove"
+                      >
+                        <Icon name="trash" size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* result block — visible when send completed */}
+              {sendState.kind === 'done' &&
+                (() => {
+                  const { result } = sendState;
+                  const okSaildocs = result.saildocs.filter((e) => e.ok);
+                  return (
+                    <div
+                      className="request-basket__result result"
+                      data-testid="request-basket-result"
+                      role="status"
+                    >
+                      {result.cms?.ok && (
+                        <p className="request-basket__result-line ln">
+                          Queued 1 inquiry message to the CMS
+                          {result.cms.mid ? ` (MID ${result.cms.mid}).` : '.'}
+                        </p>
+                      )}
+                      {result.cms && !result.cms.ok && (
+                        <p className="request-basket__result-error">
+                          CMS failed: {result.cms.error}
+                        </p>
+                      )}
+                      {okSaildocs.length > 0 && (
+                        <p className="request-basket__result-line ln">
+                          Queued {okSaildocs.length} Saildocs{' '}
+                          {okSaildocs.length === 1 ? 'request' : 'requests'}.
+                        </p>
+                      )}
+                      {result.saildocs
+                        .filter((e) => !e.ok)
+                        .map((e) => (
+                          <p key={e.item.id} className="request-basket__result-error">
+                            Saildocs failed: {e.error}
+                          </p>
+                        ))}
+                      {(result.cms?.ok || okSaildocs.length > 0) && (
+                        <p className="request-basket__result-note">
+                          Responses arrive in your Inbox after the next connect.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+            </div>
+
+            {/* footer: summary + send + arrival note */}
+            <div className="bk-foot">
+              {!basket.isEmpty && (
+                <p className="request-basket__summary bk-sum" data-testid="request-basket-summary">
+                  {basketSummary(basket.cmsFilenames.length, basket.saildocsItems.length)}
+                </p>
+              )}
+
+              <button
+                type="button"
+                className="request-basket__send send"
+                data-testid="request-basket-send"
+                onClick={sendAll}
+                disabled={basket.isEmpty || sendState.kind === 'sending'}
+              >
+                {sendState.kind === 'sending' ? (
+                  'Sending…'
+                ) : (
+                  <>
+                    Send all
+                    <Icon name="arrow" size={15} />
+                  </>
+                )}
+              </button>
+
+              {sendState.kind !== 'done' && (
+                <p className="snote">
+                  Responses arrive in your Inbox after the next connect.
+                </p>
+              )}
+            </div>
           </aside>
         </div>
       </div>

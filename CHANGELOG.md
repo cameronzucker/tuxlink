@@ -6,6 +6,9 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
 
 ## Unreleased
 
+### Changed
+- Request Center — visual redesign: request-first location hero, compact category chips, line-icon set, and true-window proportions.
+
 ### Added
 - Request Center: a full-screen, request-first workspace that replaces the
   separate Catalog Request and GRIB File Request panels (Message → Request

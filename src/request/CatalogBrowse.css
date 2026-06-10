@@ -1,4 +1,4 @@
-/* CatalogBrowse — master-detail catalog browser (bd-tuxlink-eymu, Task D1).
+/* CatalogBrowse — master-detail catalog browser (bd-tuxlink-hbbw, Task 5 re-skin).
  *
  * Two columns (category nav + item list) inside RequestCenter's
  * `request-content` region. Matches the `request-*` design-token vocabulary.
@@ -15,31 +15,50 @@
   flex: 1 1 auto;
 }
 
+/* ── Crumb / top bar ─────────────────────────────────────────────────────── */
+
 .catalog-browse__bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
 }
 
 .catalog-browse__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   flex: 0 0 auto;
-  background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 5px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 7px 13px;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 .catalog-browse__back:hover {
-  background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
-  border-color: var(--accent);
+  border-color: var(--accent-edge, rgba(245, 159, 60, 0.55));
 }
 .catalog-browse__back:focus-visible {
   outline: 2px solid var(--tux-focus-ring);
   outline-offset: 1px;
+}
+
+/* The arrow icon is rotated 180° to point left (the SVG arrow points right). */
+.catalog-browse__back-icon--flip {
+  transform: rotate(180deg);
+  flex-shrink: 0;
+}
+
+.catalog-browse__crumb-here {
+  color: var(--text);
+  font-size: 13px;
 }
 
 .catalog-browse__filter {
@@ -48,7 +67,7 @@
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 6px 10px;
   font: inherit;
   font-size: 12px;
@@ -66,6 +85,8 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Empty / no-items states ─────────────────────────────────────────────── */
+
 .catalog-browse__empty,
 .catalog-browse__noitems {
   padding: 24px;
@@ -73,54 +94,64 @@
   color: var(--text-dim);
 }
 
+/* ── Two-column panes ────────────────────────────────────────────────────── */
+
 .catalog-browse__panes {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(160px, 220px) 1fr;
-  gap: 16px;
+  grid-template-columns: 240px 1fr;
+  gap: 18px;
 }
 
+/* ── Category nav (left column) ──────────────────────────────────────────── */
+
 .catalog-browse__nav {
-  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  align-self: start;
+  /* Scrolls when categories overflow without a fixed height */
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-right: 1px solid var(--border-soft);
-  padding-right: 8px;
 }
 
 .catalog-browse__cat {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   text-align: left;
-  background: transparent;
-  color: var(--text);
-  border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 0;
+  padding: 12px 15px;
   font: inherit;
-  font-size: 12px;
+  font-size: 13.5px;
+  color: var(--text-dim);
   cursor: pointer;
 }
+.catalog-browse__cat:last-child {
+  border-bottom: none;
+}
 .catalog-browse__cat:hover {
-  background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
+  background: var(--surface-2);
+  color: var(--text);
 }
 .catalog-browse__cat--active {
   background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
-  border-color: var(--accent);
-  font-weight: 600;
+  color: var(--accent-2);
+  font-weight: 650;
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .catalog-browse__cat:focus-visible {
   outline: 2px solid var(--tux-focus-ring);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }
 
 .catalog-browse__cat-name {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -128,11 +159,14 @@
 }
 
 .catalog-browse__cat-count {
+  margin-left: auto;
   flex: 0 0 auto;
-  color: var(--text-dim);
+  color: var(--text-faint);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Item list (center column) ───────────────────────────────────────────── */
 
 .catalog-browse__items {
   min-height: 0;
@@ -145,55 +179,71 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .catalog-browse__item {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
   background: var(--surface);
+}
+.catalog-browse__item:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
 }
 
 .catalog-browse__item-body {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
 .catalog-browse__item-filename {
+  font-size: 13.5px;
   font-weight: 600;
-  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--accent-2);
 }
 
 .catalog-browse__item-desc {
-  font-size: 11px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
   color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .catalog-browse__item-size {
-  font-size: 11px;
-  color: var(--text-dim);
+  font-size: 12px;
+  color: var(--text-faint);
+  flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
 }
 
+/* Add button — icon-only square */
 .catalog-browse__add {
   flex: 0 0 auto;
-  background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 12px;
-  font: inherit;
-  font-size: 12px;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
   cursor: pointer;
+  padding: 0;
 }
 .catalog-browse__add:hover {
+  background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
   border-color: var(--accent);
 }
 .catalog-browse__add:focus-visible {
@@ -201,10 +251,15 @@
   outline-offset: 1px;
 }
 
+/* Added affordance — check icon + "Added" text */
 .catalog-browse__added {
   flex: 0 0 auto;
-  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--success);
   font-size: 12px;
-  padding: 4px 8px;
+  font-weight: 600;
+  padding: 0 8px;
   white-space: nowrap;
 }
