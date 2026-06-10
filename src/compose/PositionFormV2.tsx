@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { FormComposeProps } from '../forms/forms';
 import { gridToLatLon } from '../forms/position/maidenhead';
-import { PositionMapWidget } from './PositionMapWidget';
+import { PositionPickerOverlay } from './PositionPickerOverlay';
 import { listSlots, upsertSlot, deleteSlot, type FormDraftSlot } from './FormDraftLibrary';
 import './PositionFormV2.css';
 
@@ -54,6 +54,8 @@ export function PositionFormV2({
   // with the user-typed uppercase normalization in the input handler.
   const [grid, setGrid] = useState((initialValues?.grid ?? '').toUpperCase());
   const [remark, setRemark] = useState(initialValues?.message ?? '');
+  // §6 expand-to-overlay: the large map picker is launched on demand, not inline.
+  const [pickingLocation, setPickingLocation] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // gridError is only for submit-time Maidenhead validation — kept separate
   // from `error` so a bad grid doesn't replace the whole form with the fatal
@@ -131,6 +133,12 @@ export function PositionFormV2({
   }
 
   const noFixAvailable = fix !== null && fix.grid === null;
+
+  // Confirm-only preview: the chosen grid's square/subsquare center as decimals.
+  const previewLl = grid ? gridToLatLon(grid) : null;
+  const previewLatLon = previewLl
+    ? `${previewLl.lat.toFixed(2)}°, ${previewLl.lon.toFixed(2)}°`
+    : null;
 
   const onSubmitClick = () => {
     const ll = gridToLatLon(grid);
@@ -212,19 +220,22 @@ export function PositionFormV2({
         </p>
       )}
 
-      <div
-        className={`position-form-v2__map${grid ? ' position-form-v2__map--active' : ''}`}
-        data-testid="position-map-mount"
-      >
+      {/* §6 expand-to-overlay: a small confirm-only preview + a "Pick on map…"
+          button that opens the large in-app overlay picker, instead of a cramped
+          inline map bounded by the Compose window. */}
+      <div className="position-form-v2__pick" data-testid="position-pick-row">
+        <button
+          type="button"
+          className="position-form-v2__pick-btn"
+          data-testid="position-pick-on-map"
+          onClick={() => setPickingLocation(true)}
+        >
+          🗺 Pick on map…
+        </button>
         {grid && (
-          <PositionMapWidget
-            grid={grid}
-            onGridChange={(newGrid) => {
-              setGrid(newGrid);
-              setGridError(null);
-              onChange?.({ grid: newGrid, message: remark });
-            }}
-          />
+          <span className="position-form-v2__pick-preview" data-testid="position-pick-preview">
+            {previewLatLon ? `${grid} · ${previewLatLon}` : grid}
+          </span>
         )}
       </div>
 
@@ -251,6 +262,20 @@ export function PositionFormV2({
           Send
         </button>
       </div>
+
+      {pickingLocation && (
+        <PositionPickerOverlay
+          initialGrid={grid}
+          gpsGrid={fix?.grid ?? null}
+          onConfirm={(picked) => {
+            setGrid(picked);
+            setGridError(null);
+            onChange?.({ grid: picked, message: remark });
+            setPickingLocation(false);
+          }}
+          onCancel={() => setPickingLocation(false)}
+        />
+      )}
     </div>
   );
 }
