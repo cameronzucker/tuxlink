@@ -166,6 +166,19 @@ fn simple_rfc5322(headers: &[(&str, &str)], body: &str) -> Vec<u8> {
     out.into_bytes()
 }
 
+/// Build a minimal native Winlink/B2F message. `Body:` is byte-counted and
+/// headers use the B2F shapes found in the local operator mailbox.
+fn simple_b2f(headers: &[(&str, &str)], body: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(format!("Body: {}\r\n", body.len()).as_bytes());
+    for (name, val) in headers {
+        out.extend_from_slice(format!("{name}: {val}\r\n").as_bytes());
+    }
+    out.extend_from_slice(b"\r\n");
+    out.extend_from_slice(body.as_bytes());
+    out
+}
+
 // ============================================================================
 // Task-13 test (1): simple RFC5322 message parses subject/from/to/cc/date/body
 // ============================================================================
@@ -193,6 +206,31 @@ fn test_parse_rfc5322_extracts_headers_and_body() {
     assert!(dto.body.contains("Hello from the ARES net."));
     assert!(!dto.is_form);
     assert!(dto.attachments.is_empty());
+}
+
+// tuxlink-ii1z: real catalog replies are native B2F with bare Winlink
+// identities (`From: SERVICE`, `To: <callsign>`). mail-parser does not always
+// surface those as RFC address objects; the DTO must preserve the raw header so
+// MessageView's catalog-reply classifier can mount CatalogReplyView.
+#[test]
+fn test_parse_b2f_catalog_reply_preserves_bare_service_sender() {
+    let raw = simple_b2f(
+        &[
+            ("Mid", "UOALNZHR35HK"),
+            ("Date", "2026/06/09 12:57"),
+            ("From", "SERVICE"),
+            ("Mbo", "SYSTEM"),
+            ("Subject", "INQUIRY - https://tgftp.nws.noaa.gov/data/raw/fp/fpus65.kpsr.sft.az.txt"),
+            ("To", "N7CPZ"),
+        ],
+        "FPUS65 KPSR 091103\r\nNational Weather Service Phoenix AZ\r\n",
+    );
+
+    let dto = parse_raw_rfc5322("UOALNZHR35HK", &raw).expect("B2F catalog reply parses");
+    assert_eq!(dto.from, "SERVICE");
+    assert_eq!(dto.to, vec!["N7CPZ"]);
+    assert!(dto.subject.starts_with("INQUIRY - "));
+    assert!(dto.body.contains("FPUS65 KPSR"));
 }
 
 // ============================================================================

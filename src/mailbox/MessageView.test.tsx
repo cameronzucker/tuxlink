@@ -13,6 +13,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+import { invoke } from '@tauri-apps/api/core';
+
 import {
   MessageViewLoaded,
   MessageViewEmpty,
@@ -192,6 +196,32 @@ describe('<MessageViewLoaded>', () => {
 
     expect(screen.getByTestId('message-find-count')).toHaveTextContent('1/2');
     expect(screen.getAllByTestId('message-find-match')).toHaveLength(2);
+  });
+
+  it('renders structured catalog replies for bare SERVICE B2F senders (tuxlink-ii1z)', async () => {
+    const subject = 'INQUIRY - https://tgftp.nws.noaa.gov/data/raw/fp/fpus65.kpsr.sft.az.txt';
+    const body = 'FPUS65 KPSR 091103\nNational Weather Service Phoenix AZ\n';
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValueOnce({
+      kind: 'area-weather',
+      product: 'FPUS65 KPSR 091103',
+      office: 'National Weather Service Phoenix AZ',
+      issued: '',
+      raw: body,
+    });
+
+    render(
+      <MessageViewLoaded
+        message={parsed({
+          from: 'SERVICE',
+          subject,
+          body,
+        })}
+      />,
+    );
+
+    expect(await screen.findByText('National Weather Service Phoenix AZ')).toBeInTheDocument();
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('catalog_parse_reply', { subject, body });
   });
 
   // Winlink form → placeholder for now; never render raw XML.
