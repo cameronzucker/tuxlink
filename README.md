@@ -20,11 +20,9 @@ external CMS sidecar.
 </p>
 
 > [!NOTE]
-> **Tuxlink is in alpha, and it works.** This is a full-featured Winlink
-> client, not an aspirational sketch: it installs from `.deb`, `.rpm`, and
-> `.AppImage` artifacts on every release, and the feature set already reaches
-> well past a minimal mail client. It is not yet ready for field deployment,
-> which is exactly where testing helps. Install it, put it through real workflows, and
+> **Tuxlink is in alpha and looking for testers.** It installs from `.deb`,
+> `.rpm`, and `.AppImage` artifacts on every release. It is not yet ready for
+> field deployment. Install it, run it through real workflows, and
 > [file an issue](https://github.com/cameronzucker/tuxlink/issues) with a clear
 > repro and the exported logs (Help → Logging → Export logs).
 >
@@ -59,11 +57,10 @@ credentials in `~/.config/pat/config.json`, and routes transport configuration
 transport.
 
 Tuxlink occupies a third axis: a native desktop GUI, delivered as a single
-[Tauri](https://tauri.app/) application. It is a full-featured client, not a
-minimal one. The complete Winlink Express Standard Forms catalog, an address
-book, station finding, location-aware request workflows, full-text search, and
-an offline map all ship in the box, and first run needs no README and no video
-tutorial. The OS keyring holds the Winlink CMS password; Tuxlink never writes
+[Tauri](https://tauri.app/) application. The complete Winlink Express Standard
+Forms catalog, an address book, station finding, location-aware request
+workflows, full-text search, and an offline map all ship in the box, and first
+run needs no README and no video tutorial. The OS keyring holds the Winlink CMS password; Tuxlink never writes
 it to a config file on disk. The mailbox, compose pane, address book, and
 session log all render inside one desktop window.
 
@@ -203,7 +200,7 @@ Tuxlink is a native desktop application, shown here on an Ubuntu 24.04 desktop:
 
 ## Maturity: what is and is not proven
 
-Tuxlink is direct about its edges:
+Where each path stands:
 
 - **Validated:** native CMS connection over telnet and real Winlink message
   receive and render, against the Winlink CMS test server.
