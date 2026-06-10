@@ -693,3 +693,50 @@ describe('<TelnetPostOfficeRadioPanel> relay-favorite edit-in-place (oi1g)', () 
     expect(invokeSpy.mock.calls.some(([c]) => c === 'network_po_favorites_set')).toBe(false);
   });
 });
+
+// ── PO edit-in-place validation (Codex 2026-06-10 P2 ×2) ─────────────────────
+describe('<TelnetPostOfficeRadioPanel> relay-favorite edit validation (oi1g)', () => {
+  beforeEach(async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  const TWO = [
+    { callsign: 'W7AAA', label: 'A', host: '10.0.0.5', port: 8772 },
+    { callsign: 'W7BBB', label: 'B', host: '10.0.0.9', port: 8772 },
+  ];
+  const withTwo = (extra: Record<string, unknown> = {}) => async (cmd: string, args?: unknown) => {
+    if (cmd === 'config_read') return { callsign: 'N7CPZ-10', grid: 'CN87' };
+    if (cmd === 'session_log_snapshot') return [];
+    if (cmd === 'mailbox_list') return OUTBOX_FIXTURE;
+    if (cmd === 'network_po_favorites_get') return TWO;
+    if (cmd in extra) return extra[cmd];
+    if (cmd === 'network_po_favorites_set') return (args as { favorites: unknown[] }).favorites;
+    return undefined;
+  };
+
+  it('does NOT persist an edit that blanks the host (no network_po_favorites_set)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    invokeSpy.mockImplementation(withTwo());
+    renderPanel({ mode: 'network' });
+    fireEvent.click(await screen.findByTestId('po-favorite-edit-10.0.0.5:8772'));
+    fireEvent.change(screen.getByTestId('po-favorite-edit-host-10.0.0.5:8772'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByTestId('po-favorite-edit-save-10.0.0.5:8772'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(invokeSpy.mock.calls.some(([c]) => c === 'network_po_favorites_set')).toBe(false);
+  });
+
+  it('does NOT persist an edit whose new host:port collides with another favorite', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    invokeSpy.mockImplementation(withTwo());
+    renderPanel({ mode: 'network' });
+    // Edit A (10.0.0.5:8772) to take B's endpoint (10.0.0.9:8772) → collision.
+    fireEvent.click(await screen.findByTestId('po-favorite-edit-10.0.0.5:8772'));
+    fireEvent.change(screen.getByTestId('po-favorite-edit-host-10.0.0.5:8772'), { target: { value: '10.0.0.9' } });
+    fireEvent.click(screen.getByTestId('po-favorite-edit-save-10.0.0.5:8772'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(invokeSpy.mock.calls.some(([c]) => c === 'network_po_favorites_set')).toBe(false);
+  });
+});

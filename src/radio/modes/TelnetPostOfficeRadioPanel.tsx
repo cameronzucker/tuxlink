@@ -293,10 +293,27 @@ export function TelnetPostOfficeRadioPanel({
       setFavoritesError(`Invalid port "${editFavPort.trim()}" — must be 1..65535.`);
       return;
     }
+    const callsign = editFavCallsign.trim().toUpperCase();
+    const host = editFavHost.trim();
+    // network_po_favorites_set does NO validation (unlike _add), so the UI is
+    // the gate. Empty host/callsign would persist an invalid relay that later
+    // picks an empty endpoint (Codex 2026-06-10 P2).
+    if (callsign === '' || host === '') {
+      setFavoritesError('Callsign and host are required.');
+      return;
+    }
+    // A host:port collision with a DIFFERENT favorite would persist a duplicate
+    // (the backend does no dedup), breaking React keys + making remove-by-host/
+    // port delete both. Reject it like _add rejects duplicates (Codex P2).
+    const newKey = `${host}:${parsedPort}`;
+    if (newKey !== editingFavKey && favorites.some((f) => favKey(f) === newKey)) {
+      setFavoritesError(`A saved relay already uses ${newKey}.`);
+      return;
+    }
     const updated: RelayFavorite = {
-      callsign: editFavCallsign.trim().toUpperCase(),
+      callsign,
       label: editFavLabel.trim(),
-      host: editFavHost.trim(),
+      host,
       port: parsedPort,
     };
     const nextList = favorites.map((f) => (favKey(f) === editingFavKey ? updated : f));
