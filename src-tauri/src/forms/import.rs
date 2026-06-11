@@ -843,6 +843,143 @@ pub(crate) fn summarize(entries: &[ImportEntry]) -> ImportSummary {
     s
 }
 
+/// The set of authoring-form ids surfaced from a forms root — the same
+/// predicate the catalog walker applies (`is_authoring_template_stem`,
+/// `.html`/`.htm`). Used to detect collisions during classification.
+pub(crate) fn stem_set(root: &Path) -> HashSet<String> {
+    use crate::forms::wle_templates::is_authoring_template_stem;
+    let mut s = HashSet::new();
+    if !root.exists() {
+        return s;
+    }
+    for e in walkdir::WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+        if !e.file_type().is_file() {
+            continue;
+        }
+        if !is_html_ext(&ext_lower(e.path())) {
+            continue;
+        }
+        if let Some(stem) = e.path().file_stem().and_then(|s| s.to_str()) {
+            if is_authoring_template_stem(stem) {
+                s.insert(stem.to_string());
+            }
+        }
+    }
+    s
+}
+
+// ============================================================================
+// Staging registry (§11.4) — owns staged dirs by opaque token; commit is
+// single-shot. Tokens die with the process (no cross-session replay).
+// ============================================================================
+
+struct StagedEntry {
+    staged: Staged,
+    created_at: std::time::SystemTime,
+}
+
+/// Token → staged-dir map. Tauri-`manage`d as `Arc<ImportStagingRegistry>`.
+pub struct ImportStagingRegistry {
+    inner: std::sync::Mutex<std::collections::HashMap<String, StagedEntry>>,
+}
+
+impl Default for ImportStagingRegistry {
+    fn default() -> Self {
+        ImportStagingRegistry {
+            inner: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+impl ImportStagingRegistry {
+    /// Register a staged tree; returns its opaque 16-hex token.
+    pub fn insert(&self, staged: Staged) -> String {
+        let mut g = self.inner.lock().unwrap();
+        let mut tok = mint_import_token();
+        while g.contains_key(&tok) {
+            tok = mint_import_token();
+        }
+        g.insert(
+            tok.clone(),
+            StagedEntry {
+                staged,
+                created_at: std::time::SystemTime::now(),
+            },
+        );
+        tok
+    }
+
+    /// Single-shot consume — remove + return the staged tree (or `None` if the
+    /// token is unknown/already used).
+    pub fn take(&self, token: &str) -> Option<Staged> {
+        self.inner.lock().unwrap().remove(token).map(|e| e.staged)
+    }
+
+    /// Drop a staged tree (cancel). Removal → `Staged`'s `TempDir` drop `rm -rf`s it.
+    pub fn cancel(&self, token: &str) {
+        let _ = self.inner.lock().unwrap().remove(token);
+    }
+
+    /// Reap entries older than `ttl_secs`.
+    pub fn reap(&self, ttl_secs: u64) {
+        let now = std::time::SystemTime::now();
+        self.inner.lock().unwrap().retain(|_, e| {
+            now.duration_since(e.created_at)
+                .map(|d| d.as_secs() < ttl_secs)
+                .unwrap_or(true)
+        });
+    }
+
+    #[cfg(test)]
+    pub fn insert_with_age(&self, staged: Staged, secs_ago: u64) -> String {
+        let mut g = self.inner.lock().unwrap();
+        let mut tok = mint_import_token();
+        while g.contains_key(&tok) {
+            tok = mint_import_token();
+        }
+        let created_at =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(secs_ago);
+        g.insert(tok.clone(), StagedEntry { staged, created_at });
+        tok
+    }
+}
+
+/// 16 hex chars from `rand::random` — identical shape to
+/// `http_server::mint_session_token`. Process-lifetime only.
+fn mint_import_token() -> String {
+    (0..16)
+        .map(|_| {
+            let n: u8 = rand::random::<u8>() & 0xF;
+            std::char::from_digit(n as u32, 16).unwrap()
+        })
+        .collect()
+}
+
+/// Stage + validate + classify sources and register the staging dir. Writes
+/// NOTHING to `custom_root` (the security boundary — §11.4). Synchronous; the
+/// Tauri command runs it under `spawn_blocking`.
+pub(crate) fn preview_sources(
+    sources: &[String],
+    custom_root: &Path,
+    bundle_root: &Path,
+    reg: &ImportStagingRegistry,
+) -> Result<ImportPlan, ImportError> {
+    let staged = stage_sources(sources)?;
+    let cands = detect_candidates(&staged.dir).map_err(|e| ImportError::Io {
+        reason: format!("detect: {e}"),
+    })?;
+    let existing_custom = stem_set(custom_root);
+    let bundled = stem_set(bundle_root);
+    let entries = classify(cands, &existing_custom, &bundled);
+    let summary = summarize(&entries);
+    let staging_token = reg.insert(staged);
+    Ok(ImportPlan {
+        staging_token,
+        entries,
+        summary,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1238,5 +1375,78 @@ mod tests {
         assert_eq!(s.updated, 1);
         assert_eq!(s.overrides_standard, 1);
         assert_eq!(s.companions, 1);
+    }
+
+    // ---- Task 6: registry + preview ----
+
+    fn make_staged_fixture() -> Staged {
+        let td = tempfile::tempdir().unwrap();
+        let src = td.path().join("f");
+        write_bytes(&src.join("X Initial.html"), FORM_HTML);
+        stage_sources(&[src.to_string_lossy().into_owned()]).unwrap()
+        // `td` drops here; the source is gone but the staged copy persists.
+    }
+
+    #[test]
+    fn registry_mint_resolve_consume_is_single_shot() {
+        let reg = ImportStagingRegistry::default();
+        let token = reg.insert(make_staged_fixture());
+        assert_eq!(token.len(), 16);
+        assert!(reg.take(&token).is_some(), "first take resolves");
+        assert!(reg.take(&token).is_none(), "second take → gone (single-shot)");
+    }
+
+    #[test]
+    fn registry_cancel_drops_staging_dir() {
+        let reg = ImportStagingRegistry::default();
+        let staged = make_staged_fixture();
+        let path = staged.dir.clone();
+        let token = reg.insert(staged);
+        assert!(path.exists());
+        reg.cancel(&token);
+        assert!(reg.take(&token).is_none());
+        assert!(!path.exists(), "cancel rm -rf'd the staging dir");
+    }
+
+    #[test]
+    fn registry_reaps_entries_older_than_ttl() {
+        let reg = ImportStagingRegistry::default();
+        let token = reg.insert_with_age(make_staged_fixture(), 7200);
+        reg.reap(3600);
+        assert!(reg.take(&token).is_none(), "stale staging reaped");
+    }
+
+    #[test]
+    fn preview_classifies_without_writing_to_custom_root() {
+        let td = tempfile::tempdir().unwrap();
+        let custom_root = td.path().join("custom");
+        std::fs::create_dir_all(&custom_root).unwrap();
+        let bundle_root = td.path().join("bundle");
+        std::fs::create_dir_all(&bundle_root).unwrap();
+        let src = td.path().join("org");
+        write_bytes(
+            &src.join("AAMRON/Net Check-in.txt"),
+            b"Form: Net Check-in Initial.html, Net Check-in Viewer.html\r\n",
+        );
+        write_bytes(&src.join("AAMRON/Net Check-in Initial.html"), FORM_HTML);
+        write_bytes(&src.join("AAMRON/Net Check-in Viewer.html"), b"<html>v</html>");
+        let reg = ImportStagingRegistry::default();
+        let plan = preview_sources(
+            &[src.to_string_lossy().into_owned()],
+            &custom_root,
+            &bundle_root,
+            &reg,
+        )
+        .unwrap();
+        assert!(plan
+            .entries
+            .iter()
+            .any(|e| e.kind == ImportKind::Added && e.id == "Net Check-in Initial"));
+        assert_eq!(plan.staging_token.len(), 16);
+        assert_eq!(
+            std::fs::read_dir(&custom_root).unwrap().count(),
+            0,
+            "preview must not write custom_root"
+        );
     }
 }

@@ -1947,6 +1947,40 @@ pub async fn forms_list_catalog(
     crate::forms::wle_templates::list(&bundle, custom_opt).map_err(|e| e.to_string())
 }
 
+/// Preview an import (tuxlink-z0le/fwob, spec §11.4): stage + validate +
+/// classify the sources WITHOUT writing to the custom-forms dir, returning a
+/// plan + an opaque staging token. The synchronous fs work runs under
+/// `spawn_blocking` so it never stalls the async runtime.
+#[tauri::command]
+pub async fn forms_import_preview(
+    sources: Vec<String>,
+    app: AppHandle,
+    reg: State<'_, std::sync::Arc<crate::forms::import::ImportStagingRegistry>>,
+) -> Result<crate::forms::import::ImportPlan, crate::forms::import::ImportError> {
+    let custom_root = crate::forms::wle_templates::custom_root_for_app(&app);
+    let bundle_root = crate::forms::wle_templates::bundle_root_for_app(&app)
+        .map_err(|e| crate::forms::import::ImportError::Io { reason: e.to_string() })?;
+    let reg = reg.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        crate::forms::import::preview_sources(&sources, &custom_root, &bundle_root, &reg)
+    })
+    .await
+    .map_err(|e| crate::forms::import::ImportError::Io {
+        reason: format!("join: {e}"),
+    })?
+}
+
+/// Cancel an in-flight import preview, dropping its staging dir. Idempotent —
+/// an unknown/expired token is a no-op (fired on ImportSheet unmount/Escape).
+#[tauri::command]
+pub async fn forms_import_cancel(
+    staging_token: String,
+    reg: State<'_, std::sync::Arc<crate::forms::import::ImportStagingRegistry>>,
+) -> Result<(), ()> {
+    reg.cancel(&staging_token);
+    Ok(())
+}
+
 /// Open a new webview form session: spawn the loopback http_server bound
 /// to a fresh ephemeral port, register it in `FormSessionRegistry` under a
 /// freshly-minted token, and start a forwarder task that drains parsed
