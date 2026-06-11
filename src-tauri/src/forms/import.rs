@@ -750,6 +750,99 @@ fn stage_zip(src: &Path, dir: &Path, counters: &mut Counters) -> Result<(), Impo
     Ok(())
 }
 
+// ============================================================================
+// Classification (§11.2/§6) — detected candidates → ImportEntry, against the
+// live custom + bundled catalog, with folder-aware cross-stem dupe detection.
+// ============================================================================
+
+/// Classify staged candidates against the existing custom-form ids and the
+/// bundled-form ids. Cross-folder stem collisions (intra-batch) become `Skip`
+/// (first wins) — never silently collapsed (the catalog is keyed by stem;
+/// the `(folder,id)` engine fix is the separate issue tuxlink-8v3l).
+pub(crate) fn classify(
+    cands: Vec<Candidate>,
+    existing_custom: &HashSet<String>,
+    bundled: &HashSet<String>,
+) -> Vec<ImportEntry> {
+    let mut out: Vec<ImportEntry> = Vec::with_capacity(cands.len());
+    // stem → folder of the first authoring candidate that claimed it this batch.
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    for c in cands {
+        let entry = match c.kind {
+            CandidateKind::Reject => ImportEntry {
+                rel_path: c.rel_path,
+                id: c.id,
+                folder: c.folder,
+                kind: ImportKind::Reject,
+                reason: c.reason,
+                has_viewer: c.has_viewer,
+            },
+            CandidateKind::Companion => ImportEntry {
+                rel_path: c.rel_path,
+                id: c.id,
+                folder: c.folder,
+                kind: ImportKind::Companion,
+                reason: None,
+                has_viewer: c.has_viewer,
+            },
+            CandidateKind::Authoring => {
+                if let Some(first_folder) = seen.get(&c.id) {
+                    ImportEntry {
+                        reason: Some(format!(
+                            "duplicate stem \"{}\" in {} (already importing from {})",
+                            c.id, c.folder, first_folder
+                        )),
+                        kind: ImportKind::Skip,
+                        rel_path: c.rel_path,
+                        id: c.id,
+                        folder: c.folder,
+                        has_viewer: c.has_viewer,
+                    }
+                } else {
+                    seen.insert(c.id.clone(), c.folder.clone());
+                    let (kind, reason) = if existing_custom.contains(&c.id) {
+                        (ImportKind::Update, None)
+                    } else if bundled.contains(&c.id) {
+                        (
+                            ImportKind::OverridesStandard,
+                            Some(format!("Replaces the standard {}", c.id)),
+                        )
+                    } else {
+                        (ImportKind::Added, None)
+                    };
+                    ImportEntry {
+                        rel_path: c.rel_path,
+                        id: c.id,
+                        folder: c.folder,
+                        kind,
+                        reason,
+                        has_viewer: c.has_viewer,
+                    }
+                }
+            }
+        };
+        out.push(entry);
+    }
+    out
+}
+
+/// Tally an [`ImportSummary`] from classified entries.
+pub(crate) fn summarize(entries: &[ImportEntry]) -> ImportSummary {
+    let mut s = ImportSummary::default();
+    for e in entries {
+        match e.kind {
+            ImportKind::Added => s.added += 1,
+            ImportKind::Update => s.updated += 1,
+            ImportKind::OverridesStandard => s.overrides_standard += 1,
+            ImportKind::Companion => s.companions += 1,
+            ImportKind::Skip => s.skipped += 1,
+            ImportKind::Reject => s.rejected += 1,
+        }
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1049,5 +1142,101 @@ mod tests {
         assert!(staged.dir().join("Net Check-in Initial.html").exists());
         assert!(staged.dir().join("Net Check-in.txt").exists(), "governing .txt pulled");
         assert!(staged.dir().join("Net Check-in Viewer.html").exists(), "display companion pulled");
+    }
+
+    // ---- Task 5: classification ----
+
+    fn auth_cand(id: &str, folder: &str) -> Candidate {
+        Candidate {
+            id: id.to_string(),
+            folder: folder.to_string(),
+            rel_path: format!("{folder}/{id}.html"),
+            abs_path: PathBuf::from(format!("/staging/{folder}/{id}.html")),
+            kind: CandidateKind::Authoring,
+            reason: None,
+            has_viewer: true,
+        }
+    }
+    fn comp_cand(id: &str, folder: &str) -> Candidate {
+        Candidate {
+            kind: CandidateKind::Companion,
+            ..auth_cand(id, folder)
+        }
+    }
+    fn kind_of(entries: &[ImportEntry], id: &str) -> ImportKind {
+        entries.iter().find(|e| e.id == id).unwrap().kind.clone()
+    }
+    fn set(items: &[&str]) -> HashSet<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn classifies_added_update_override_skip() {
+        let existing_custom = set(&["Net Check-in Initial"]);
+        let bundled = set(&["ICS213_Initial"]);
+        let cands = vec![
+            auth_cand("Brand New Initial", "AAMRON"),
+            auth_cand("Net Check-in Initial", "AAMRON"), // collides custom → Update
+            auth_cand("ICS213_Initial", "ICS Forms"),    // collides bundled → OverridesStandard
+            auth_cand("Dup Initial", "FolderX"),
+            auth_cand("Dup Initial", "FolderY"), // same stem twice → 2nd Skip
+        ];
+        let entries = classify(cands, &existing_custom, &bundled);
+        assert_eq!(kind_of(&entries, "Brand New Initial"), ImportKind::Added);
+        assert_eq!(kind_of(&entries, "Net Check-in Initial"), ImportKind::Update);
+        assert_eq!(kind_of(&entries, "ICS213_Initial"), ImportKind::OverridesStandard);
+        let dups: Vec<_> = entries.iter().filter(|e| e.id == "Dup Initial").collect();
+        assert_eq!(dups.iter().filter(|e| e.kind == ImportKind::Skip).count(), 1);
+        assert!(dups
+            .iter()
+            .find(|e| e.kind == ImportKind::Skip)
+            .unwrap()
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("duplicate stem"));
+    }
+
+    #[test]
+    fn override_standard_carries_amber_warning_reason() {
+        let entries = classify(
+            vec![auth_cand("ICS213_Initial", "ICS Forms")],
+            &HashSet::new(),
+            &set(&["ICS213_Initial"]),
+        );
+        let e = &entries[0];
+        assert_eq!(e.kind, ImportKind::OverridesStandard);
+        assert!(e.reason.as_deref().unwrap().to_lowercase().contains("replaces the standard"));
+    }
+
+    #[test]
+    fn companions_pass_through_as_companion_kind() {
+        let entries = classify(
+            vec![comp_cand("Net Check-in Viewer", "AAMRON")],
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+        assert_eq!(entries[0].kind, ImportKind::Companion);
+    }
+
+    #[test]
+    fn summarize_counts_each_kind() {
+        let existing_custom = set(&["U Initial"]);
+        let bundled = set(&["O Initial"]);
+        let entries = classify(
+            vec![
+                auth_cand("A Initial", "x"),
+                auth_cand("U Initial", "x"),
+                auth_cand("O Initial", "x"),
+                comp_cand("A Viewer", "x"),
+            ],
+            &existing_custom,
+            &bundled,
+        );
+        let s = summarize(&entries);
+        assert_eq!(s.added, 1);
+        assert_eq!(s.updated, 1);
+        assert_eq!(s.overrides_standard, 1);
+        assert_eq!(s.companions, 1);
     }
 }
