@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tuxlink · bd backlog</title>
+<style>
+  :root {
+    --bg: #0e1116; --bg2: #161b22; --bg3: #1c232c; --line: #2a323c;
+    --fg: #e6edf3; --fg-dim: #9aa7b4; --fg-faint: #6b7782;
+    --accent: #4493f8; --accent-dim: #1f6feb;
+    --p0: #f85149; --p1: #fb8500; --p2: #d29922; --p3: #3fb950; --p4: #6b7782;
+    --inprog: #a371f7; --blocked: #f85149; --open: #4493f8;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  header {
+    padding: 10px 16px; background: var(--bg2); border-bottom: 1px solid var(--line);
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header h1 .muted { color: var(--fg-faint); font-weight: 400; }
+  .grow { flex: 1; }
+  input#search {
+    background: var(--bg3); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 6px; padding: 7px 11px; min-width: 260px; font-size: 13px;
+  }
+  input#search:focus { outline: none; border-color: var(--accent); }
+  select, button.ctl {
+    background: var(--bg3); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 6px; padding: 6px 9px; font-size: 12.5px; cursor: pointer;
+  }
+  .filterbar { padding: 7px 16px; background: var(--bg); border-bottom: 1px solid var(--line);
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 12.5px; }
+  .chips { display: flex; gap: 5px; }
+  .chip {
+    border: 1px solid var(--line); background: var(--bg2); color: var(--fg-dim);
+    border-radius: 20px; padding: 3px 11px; cursor: pointer; user-select: none; font-size: 12px;
+  }
+  .chip.on { color: #fff; border-color: transparent; }
+  .chip.on.s-open { background: var(--open); }
+  .chip.on.s-inprog { background: var(--inprog); }
+  .chip.on.s-blocked { background: var(--blocked); }
+  .chip.on.p0 { background: var(--p0); } .chip.on.p1 { background: var(--p1); }
+  .chip.on.p2 { background: var(--p2); color:#1a1200;} .chip.on.p3 { background: var(--p3); color:#04210c;} .chip.on.p4 { background: var(--p4); }
+  .lbl { color: var(--fg-faint); margin-right: 2px; }
+  main { display: flex; flex: 1; min-height: 0; }
+  #list { width: 46%; max-width: 620px; min-width: 320px; overflow-y: auto; border-right: 1px solid var(--line); }
+  .row {
+    padding: 9px 14px; border-bottom: 1px solid var(--line); cursor: pointer; display: flex; gap: 9px; align-items: baseline;
+  }
+  .row:hover { background: var(--bg2); }
+  .row.sel { background: var(--bg3); box-shadow: inset 3px 0 0 var(--accent); }
+  .pbadge { font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; color:#fff; flex: none; min-width: 22px; text-align:center; }
+  .pbadge.p0 { background: var(--p0); } .pbadge.p1 { background: var(--p1); }
+  .pbadge.p2 { background: var(--p2); color:#1a1200;} .pbadge.p3 { background: var(--p3); color:#04210c;} .pbadge.p4 { background: var(--p4); }
+  .row .id { color: var(--fg-faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; flex: none; }
+  .row .title { flex: 1; }
+  .row .sdot { width: 8px; height: 8px; border-radius: 50%; flex: none; align-self: center; }
+  .sdot.s-open { background: var(--open); } .sdot.s-inprog { background: var(--inprog); } .sdot.s-blocked { background: var(--blocked); }
+  .type-tag { font-size: 10px; color: var(--fg-faint); border:1px solid var(--line); border-radius:3px; padding:0 4px; flex:none; }
+  #detail { flex: 1; overflow-y: auto; padding: 22px 28px; }
+  #detail .empty { color: var(--fg-faint); margin-top: 40px; text-align: center; }
+  #detail h2 { margin: 0 0 4px; font-size: 19px; line-height: 1.35; }
+  .meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0 18px; color: var(--fg-dim); font-size: 12.5px; }
+  .meta .k { color: var(--fg-faint); }
+  .meta code { font-family: ui-monospace, Menlo, monospace; color: var(--fg); }
+  .section { margin: 18px 0; }
+  .section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--fg-faint); margin: 0 0 6px; }
+  .section .body { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; white-space: pre-wrap; word-break: break-word; }
+  .deps a { color: var(--accent); cursor: pointer; text-decoration: none; font-family: ui-monospace, Menlo, monospace; }
+  .deps a:hover { text-decoration: underline; }
+  .deps .di { padding: 4px 0; border-bottom: 1px dashed var(--line); }
+  .deps .di:last-child { border: 0; }
+  .deps .dtype { color: var(--fg-faint); font-size: 11px; }
+  .deps .dstatus { font-size: 11px; }
+  .loading, .errbox { padding: 40px; text-align: center; color: var(--fg-dim); }
+  .errbox { color: var(--p0); white-space: pre-wrap; text-align:left; font-family: ui-monospace, monospace; font-size:12px; }
+  a.ext { color: var(--accent); }
+  kbd { background: var(--bg3); border:1px solid var(--line); border-radius:4px; padding:0 5px; font-size:11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>tuxlink <span class="muted">· bd backlog</span></h1>
+  <input id="search" type="search" placeholder="Search id / title / description / notes…  ( / to focus )" />
+  <div class="grow"></div>
+  <label class="lbl">sort</label>
+  <select id="sort">
+    <option value="prio">Priority ↑</option>
+    <option value="updated">Recently updated</option>
+    <option value="created">Newest</option>
+    <option value="id">ID</option>
+  </select>
+  <button class="ctl" id="refresh" title="Reload from bd">⟳ refresh</button>
+</header>
+<div class="filterbar">
+  <span class="lbl">status</span>
+  <div class="chips" id="statusChips">
+    <span class="chip s-open on" data-status="open">open</span>
+    <span class="chip s-inprog on" data-status="in_progress">in&nbsp;progress</span>
+    <span class="chip s-blocked on" data-status="blocked">blocked</span>
+  </div>
+  <span class="lbl">priority</span>
+  <div class="chips" id="prioChips">
+    <span class="chip p0 on" data-p="0">P0</span>
+    <span class="chip p1 on" data-p="1">P1</span>
+    <span class="chip p2 on" data-p="2">P2</span>
+    <span class="chip p3 on" data-p="3">P3</span>
+    <span class="chip p4 on" data-p="4">P4</span>
+  </div>
+  <span class="lbl">type</span>
+  <select id="typeFilter"><option value="">all</option></select>
+  <div class="grow"></div>
+  <span id="count" class="lbl"></span>
+</div>
+<main>
+  <div id="list"><div class="loading">loading…</div></div>
+  <div id="detail"><div class="empty">Select an issue to view full detail.</div></div>
+</main>
+<script>
+const PRIO = {0:"P0",1:"P1",2:"P2",3:"P3",4:"P4"};
+const SLABEL = {open:"open", in_progress:"in progress", blocked:"blocked"};
+let ALL = [], BYID = {}, SEL = null;
+
+const state = {
+  status: new Set(["open","in_progress","blocked"]),
+  prio: new Set([0,1,2,3,4]),
+  type: "",
+  q: "",
+  sort: "prio",
+};
+
+function scls(s){ return s==="in_progress" ? "s-inprog" : "s-"+s; }
+function esc(s){ return (s||"").replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function fmtDate(d){ if(!d) return ""; return d.replace("T"," ").replace("Z","").slice(0,16); }
+
+async function load(){
+  document.getElementById("list").innerHTML = '<div class="loading">loading from bd…</div>';
+  try {
+    const r = await fetch("/api/issues?status=open,in_progress,blocked");
+    const data = await r.json();
+    if (!Array.isArray(data)) throw new Error(JSON.stringify(data,null,2));
+    ALL = data;
+    BYID = {}; ALL.forEach(i => BYID[i.id]=i);
+    // populate type filter
+    const types = [...new Set(ALL.map(i=>i.issue_type).filter(Boolean))].sort();
+    const tf = document.getElementById("typeFilter");
+    tf.innerHTML = '<option value="">all</option>' + types.map(t=>`<option value="${t}">${t}</option>`).join("");
+    render();
+  } catch(e) {
+    document.getElementById("list").innerHTML = '<div class="errbox">Failed to load from bd:\n\n'+esc(String(e.message||e))+'</div>';
+  }
+}
+
+function matches(i){
+  if (!state.status.has(i.status)) return false;
+  if (!state.prio.has(i.priority)) return false;
+  if (state.type && i.issue_type !== state.type) return false;
+  if (state.q){
+    const hay = (i.id+" "+i.title+" "+(i.description||"")+" "+(i.notes||"")+" "+(i.design||"")).toLowerCase();
+    if (!hay.includes(state.q)) return false;
+  }
+  return true;
+}
+
+function sortIssues(a,b){
+  switch(state.sort){
+    case "updated": return (b.updated_at||"").localeCompare(a.updated_at||"");
+    case "created": return (b.created_at||"").localeCompare(a.created_at||"");
+    case "id": return a.id.localeCompare(b.id);
+    default: // prio: P0 first, then by updated desc
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return (b.updated_at||"").localeCompare(a.updated_at||"");
+  }
+}
+
+function render(){
+  const rows = ALL.filter(matches).sort(sortIssues);
+  document.getElementById("count").textContent = rows.length + " / " + ALL.length + " shown";
+  const html = rows.map(i => `
+    <div class="row ${i.id===SEL?'sel':''}" data-id="${i.id}">
+      <span class="pbadge p${i.priority}">${PRIO[i.priority]||"?"}</span>
+      <span class="sdot ${scls(i.status)}" title="${SLABEL[i.status]||i.status}"></span>
+      <span class="id">${i.id.replace(/^tuxlink-/,'')}</span>
+      <span class="title">${esc(i.title)}</span>
+      <span class="type-tag">${esc(i.issue_type||"")}</span>
+    </div>`).join("");
+  document.getElementById("list").innerHTML = html || '<div class="loading">no issues match the filters</div>';
+}
+
+function section(title, content){
+  if (!content) return "";
+  return `<div class="section"><h3>${title}</h3><div class="body">${esc(content)}</div></div>`;
+}
+
+function depsBlock(i){
+  const d = i.dependencies||[];
+  if (!d.length) return "";
+  const items = d.map(dep => {
+    const tid = dep.depends_on_id || dep.id;
+    const t = BYID[tid];
+    const title = t ? esc(t.title) : (dep.title?esc(dep.title):"(not in current view)");
+    const st = (t&&t.status) || dep.status || "";
+    const ty = dep.type || dep.dependency_type || "";
+    return `<div class="di"><a data-jump="${tid}">${tid.replace(/^tuxlink-/,'')}</a>
+      <span class="dtype">[${esc(ty)}]</span> ${title}
+      ${st?`<span class="dstatus">· ${esc(st)}</span>`:""}</div>`;
+  }).join("");
+  return `<div class="section deps"><h3>Dependencies (${d.length})</h3><div class="body">${items}</div></div>`;
+}
+
+function showDetail(id){
+  SEL = id;
+  const i = BYID[id];
+  render();
+  if (!i){ document.getElementById("detail").innerHTML='<div class="empty">not found</div>'; return; }
+  const ghUrl = `https://github.com/cameronzucker/tuxlink/issues?q=${encodeURIComponent(i.id)}`;
+  const d = document.getElementById("detail");
+  d.innerHTML = `
+    <h2><span class="pbadge p${i.priority}">${PRIO[i.priority]}</span> ${esc(i.title)}</h2>
+    <div class="meta">
+      <code>${i.id}</code>
+      <span class="sdot ${scls(i.status)}"></span><span>${SLABEL[i.status]||i.status}</span>
+      <span>·</span><span class="k">type</span> ${esc(i.issue_type||"")}
+      <span>·</span><span class="k">assignee</span> ${esc(i.assignee||i.owner||"—")}
+      <span>·</span><span class="k">created</span> ${fmtDate(i.created_at)}
+      <span>·</span><span class="k">updated</span> ${fmtDate(i.updated_at)}
+      ${i.started_at?`<span>·</span><span class="k">started</span> ${fmtDate(i.started_at)}`:""}
+    </div>
+    ${section("Description", i.description)}
+    ${section("Acceptance criteria", i.acceptance_criteria)}
+    ${section("Design", i.design)}
+    ${section("Notes", i.notes)}
+    ${depsBlock(i)}
+    <div class="section"><a class="ext" href="${ghUrl}" target="_blank" rel="noopener">search GitHub for ${i.id} ↗</a></div>
+  `;
+  d.scrollTop = 0;
+}
+
+// events
+document.getElementById("list").addEventListener("click", e=>{
+  const row = e.target.closest(".row"); if (row) showDetail(row.dataset.id);
+});
+document.getElementById("detail").addEventListener("click", e=>{
+  const j = e.target.closest("[data-jump]"); if (j) showDetail(j.dataset.jump);
+});
+document.getElementById("search").addEventListener("input", e=>{ state.q = e.target.value.trim().toLowerCase(); render(); });
+document.getElementById("sort").addEventListener("change", e=>{ state.sort = e.target.value; render(); });
+document.getElementById("typeFilter").addEventListener("change", e=>{ state.type = e.target.value; render(); });
+document.getElementById("refresh").addEventListener("click", load);
+function wireChips(containerId, set, parse){
+  document.getElementById(containerId).addEventListener("click", e=>{
+    const c = e.target.closest(".chip"); if(!c) return;
+    const v = parse(c);
+    if (set.has(v)) { set.delete(v); c.classList.remove("on"); }
+    else { set.add(v); c.classList.add("on"); }
+    render();
+  });
+}
+wireChips("statusChips", state.status, c=>c.dataset.status);
+wireChips("prioChips", state.prio, c=>parseInt(c.dataset.p,10));
+document.addEventListener("keydown", e=>{
+  if (e.key === "/" && document.activeElement.id !== "search"){ e.preventDefault(); document.getElementById("search").focus(); }
+  if (e.key === "Escape" && document.activeElement.id === "search"){ document.getElementById("search").blur(); }
+});
+
+load();
+</script>
+</body>
+</html>
