@@ -66,6 +66,9 @@
     "UT_ZON_EAST": "multi-zone regional",
     "UT_ZON_SLC": "multi-zone regional",
     "VT_ZON_STAT": "multi-zone regional",
-    "WA_FOR_EAST": "multi-zone regional"
+    "WA_FOR_EAST": "multi-zone regional",
+    "WA_ZON_SW": "multi-zone regional",
+    "WA_ZON_WEST": "multi-zone regional",
+    "WA_ZON_CHRVM": "duplicate catalog entry for WAZ319 (mapped to WA_ZON_CHRVL)"
   }
 }
