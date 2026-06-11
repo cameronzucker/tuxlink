@@ -1,0 +1,69 @@
+/* WeatherGlyph (tuxlink-n6tp) — sizing + palette-token colours for the NWS
+   condition icons. fill/stroke inherit down the SVG tree, so a class on a <g>
+   colours all its children; hex fallbacks keep the icons sane if a CSS var is
+   ever absent. */
+
+.wx-glyph {
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: 0 auto 1px;
+}
+
+/* sun family — circle (filled) + rays (stroked) inherit both */
+.wx-sun {
+  fill: var(--warn, #f0883e);
+  stroke: var(--warn, #f0883e);
+}
+.wx-danger {
+  fill: var(--danger, #e5534b);
+  stroke: var(--danger, #e5534b);
+}
+.wx-haze-sun {
+  fill: #caa24a;
+  stroke: #caa24a;
+}
+
+/* clouds — filled body + coloured outline */
+.wx-cloud {
+  fill: var(--surface, #161b22);
+  stroke: var(--text-dim, #8b949e);
+}
+.wx-cloud-hi {
+  fill: var(--surface, #161b22);
+  stroke: var(--text, #e6edf3);
+}
+.wx-cloud-dim {
+  fill: var(--bg, #0d1117);
+  stroke: var(--text-dim, #8b949e);
+}
+
+/* stroke-only groups (open paths/lines — no fill so arcs don't fill in) */
+.wx-cloud-hi-stroke,
+.wx-rain,
+.wx-snow,
+.wx-dust,
+.wx-smoke {
+  fill: none;
+}
+.wx-cloud-hi-stroke {
+  stroke: var(--text-dim, #8b949e);
+}
+.wx-rain,
+.wx-snow {
+  stroke: var(--info, #6cb6ff);
+}
+.wx-drop {
+  fill: var(--info, #6cb6ff);
+  stroke: none;
+}
+.wx-bolt {
+  fill: var(--accent-amber, #f0c674);
+  stroke: var(--accent-amber, #f0c674);
+}
+.wx-dust {
+  stroke: #c2a878;
+}
+.wx-smoke {
+  stroke: #9aa4af;
+}
