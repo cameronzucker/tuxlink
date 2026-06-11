@@ -135,6 +135,15 @@ const CATALOG_FIXTURE: CatalogEntry[] = [
   entry('WX_US_WA', 'WX_WA_FORECAST', 'Washington State forecast', 4096),
 ];
 
+// Augmented fixture for the location-hero production-path test (Task 13).
+// CN87uo → WAZ315 "City of Seattle" → WA_ZON_SEA; radar US.RAD.PSND; sea WX_EASTPAC.
+const CATALOG_FIXTURE_WITH_LOCATION: CatalogEntry[] = [
+  ...CATALOG_FIXTURE,
+  entry('WX_US_WA', 'WA_ZON_SEA', 'City of Seattle Washington Zone Forecast', 2500),
+  entry('WX_US_RAD', 'US.RAD.PSND', 'SNAPSHOT CURRENT RADAR U.S. PUGET SOUND & SJDF', 20799),
+  entry('WX_EASTPAC', 'EPAC_COASTAL', 'NE Pacific coastal waters', 7300),
+];
+
 // Per-test routing of the Request-Center-relevant commands. Everything else the
 // shell fires gets a shape-correct default so AppShell mounts identically across
 // scenarios. A custom mockImplementation fully replaces the factory, so every
@@ -361,5 +370,27 @@ describe('<RequestCenter> — App-level production mount path (E3 / tuxlink-eymu
     expect(result).toHaveTextContent('CMS failed: CMS unreachable');
     // The failed item is KEPT in the basket (adrev #4 keep/clear semantics).
     expect(within(dialog).getByTestId('basket-item-cms:PROP_3DAY')).toBeInTheDocument();
+  });
+
+  // (7) Task 13 — App-level production-path test for the resolved location hero
+  // (tuxlink-n4hz discipline: unit tests can pass while the production mount path
+  // crashes due to missing context; this test exercises config_read → grid →
+  // buildSections → all three location cards rendered, NO hand-injected section
+  // props — the exact path that runs when the operator opens Request Center with
+  // a saved grid).
+  it('renders the resolved location hero from config + catalog (production path)', async () => {
+    routeRequest({
+      config: async () => ({ grid: 'CN87uo' }),
+      catalog: async () => CATALOG_FIXTURE_WITH_LOCATION,
+    });
+    renderShell();
+    const dialog = await openRequestCenter();
+
+    // Zone forecast card (primary hero — "City of Seattle" via WAZ315 → WA_ZON_SEA)
+    expect(await within(dialog).findByTestId('request-card-loc-zone-forecast')).toBeInTheDocument();
+    // Radar card (US.RAD.PSND — Puget Sound)
+    expect(within(dialog).getByTestId('request-card-loc-radar')).toBeInTheDocument();
+    // Marine card (WX_EASTPAC sea area)
+    expect(within(dialog).getByTestId('request-card-loc-marine')).toBeInTheDocument();
   });
 });
