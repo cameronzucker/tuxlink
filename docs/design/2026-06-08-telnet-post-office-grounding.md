@@ -7,6 +7,19 @@
 > the Hamexandria YT vector DB. Precedence: decompiled-WLE primary source **>** repo-doc summaries **>**
 > community/AI recollection. Where a community claim and the decompile disagree, the decompile wins.
 
+> **CORRECTION (2026-06-10, grouse-thistle-wren).** This doc's §3 scope decision —
+> "AREDN auto-discovery is OUT, the `sysinfo.json?services=1` services path is
+> OLSR-coupled and breaks on Babel-only nodes" — is **superseded**. Verified against
+> AREDN firmware source (`aredn/aredn` @ d3f7282, 2026-06-10): `sysinfo.json` now
+> 307-redirects to `/a/sysinfo`, whose `services=1` handler reads
+> `/var/run/arednlink/services/` — populated by the **`arednlink`** daemon
+> (Babel-coupled pub/sub, `LINK.path=/var/run/arednlink.sock`), **not** OLSR (1
+> vestigial OLSR ref remains in firmware). Discovery is durable under Babel; WLE's
+> early-Babel breakage was the OLSR path, which AREDN re-homed onto arednlink.
+> Client-side AREDN Post Office discovery is therefore back IN scope — see
+> [`docs/design/2026-06-10-aredn-post-office-discovery-design.md`](2026-06-10-aredn-post-office-discovery-design.md)
+> (tuxlink-1w7t, APPROVED).
+
 ## 1. Executive summary
 
 "Telnet Post Office" and "Network Post Office" are **two distinct WLE session types**, not one feature.
