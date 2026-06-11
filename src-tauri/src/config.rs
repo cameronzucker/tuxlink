@@ -27,6 +27,57 @@ pub fn detect_schema_action(found: u32) -> SchemaAction {
     }
 }
 
+/// The exact v1 `identity` shape, parsed standalone so the migration can read a
+/// v1 config without going through the v2 `Config` (whose schema_version guard
+/// rejects 1). Phase 2 (tuxlink-7iy2).
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)] // consumed by IdentityMigration::execute in the next Phase-2 task
+pub struct LegacyConfigV1 {
+    #[serde(default)]
+    pub callsign: Option<String>,
+    #[serde(default)]
+    pub identifier: Option<String>,
+    #[serde(default)]
+    pub grid: Option<String>,
+}
+
+/// The pure decision of the v1->v2 identity migration (no I/O). Phase 2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // fields consumed by IdentityMigration::execute in the next Phase-2 task
+pub struct MigrationPlan {
+    /// The legacy callsign promoted to the single FULL identity (None for an
+    /// offline-only v1 with no callsign).
+    pub full_callsign: Option<String>,
+    /// Subdir name under the mailbox root for this FULL's per-callsign inbox
+    /// (Phase 4 reads from here). `Some(callsign)` iff `full_callsign` is Some.
+    pub per_full_subdir: Option<String>,
+    /// Whether the flat `native-mbox/inbox` must be moved under the per-FULL root.
+    pub move_inbox: bool,
+}
+
+/// The v1->v2 identity migration. Phase 2 adds the pure `plan`; a later task adds
+/// the I/O `execute` method on `MigrationPlan`.
+pub struct IdentityMigration;
+
+impl IdentityMigration {
+    /// Pure: decide the migration from a legacy v1 config. An empty/whitespace
+    /// callsign is treated as absent.
+    pub fn plan(v1: &LegacyConfigV1) -> MigrationPlan {
+        match v1.callsign.as_deref().filter(|c| !c.is_empty()) {
+            Some(c) => MigrationPlan {
+                full_callsign: Some(c.to_string()),
+                per_full_subdir: Some(c.to_string()),
+                move_inbox: true,
+            },
+            None => MigrationPlan {
+                full_callsign: None,
+                per_full_subdir: None,
+                move_inbox: false,
+            },
+        }
+    }
+}
+
 /// Top-level config struct. `deny_unknown_fields` is the AMD-11 drift defense:
 /// any stale field (e.g. `winlink_password_present` from the pre-AMD-1 flat schema)
 /// hard-fails at deserialize time rather than silently being dropped.
@@ -745,6 +796,27 @@ mod tests {
         assert_eq!(super::detect_schema_action(1), super::SchemaAction::MigrateFromV1);
         assert_eq!(super::detect_schema_action(CONFIG_SCHEMA_VERSION), super::SchemaAction::Current);
         assert_eq!(super::detect_schema_action(999), super::SchemaAction::Unsupported { found: 999 });
+    }
+
+    #[test]
+    fn migration_plan_promotes_legacy_callsign_to_single_full_identity() {
+        let v1 = LegacyConfigV1 {
+            callsign: Some("W1ABC".into()),
+            identifier: None,
+            grid: Some("CN87ux".into()),
+        };
+        let plan = IdentityMigration::plan(&v1);
+        assert_eq!(plan.full_callsign.as_deref(), Some("W1ABC"));
+        assert!(plan.move_inbox, "an existing callsign means the flat inbox migrates under it");
+        assert_eq!(plan.per_full_subdir.as_deref(), Some("W1ABC"));
+    }
+
+    #[test]
+    fn migration_plan_offline_only_config_creates_no_full_identity() {
+        let v1 = LegacyConfigV1 { callsign: None, identifier: Some("FIELD-1".into()), grid: None };
+        let plan = IdentityMigration::plan(&v1);
+        assert!(plan.full_callsign.is_none());
+        assert!(!plan.move_inbox, "no callsign => nothing to move; the flat store stays where it is");
     }
 
     // tuxlink-686: position_source defaults to Gps when the field is absent from an
