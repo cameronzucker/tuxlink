@@ -5715,6 +5715,7 @@ fn emit_p2p_status(app: &AppHandle, status: StatusDto) {
 #[tauri::command]
 pub async fn telnet_p2p_connect(
     app: AppHandle,
+    state: State<'_, BackendState>,
     p2p_state: State<'_, P2pConnectState>,
     log: State<'_, std::sync::Arc<SessionLogState>>,
     req: P2pDialRequest,
@@ -5723,6 +5724,13 @@ pub async fn telnet_p2p_connect(
     use crate::winlink::credentials::KeyringError;
     use crate::winlink::session::{ExchangeConfig, SessionIntent};
     use crate::winlink::telnet_p2p;
+
+    // Phase 3 (bd-tuxlink-0063): the on-air station ID comes from the
+    // authenticated active SessionIdentity, not req.my_callsign (advisory).
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let session_id = backend.active_identity()?;
 
     // Single-flight: reject a second concurrent connect.
     if p2p_state
@@ -5840,7 +5848,8 @@ pub async fn telnet_p2p_connect(
     };
 
     let config = ExchangeConfig {
-        mycall: req.my_callsign.clone(),
+        // req.my_callsign is advisory; mycall authority is the active SessionIdentity.
+        mycall: session_id.mycall().as_str().to_string(),
         targetcall: req.peer_callsign.clone(),
         locator: req.locator.clone(),
         // P2P never uses B2F secure-login (spec §4.3 — no secure-login for P2P).
@@ -6171,14 +6180,14 @@ impl Drop for PostOfficeConnectGuard {
 /// [`SessionIntent::PostOffice`]: crate::winlink::session::SessionIntent::PostOffice
 /// [`SessionIntent::Mesh`]: crate::winlink::session::SessionIntent::Mesh
 fn post_office_exchange_config(
-    my_callsign: &str,
+    mycall: &crate::identity::Callsign,
     locator: &str,
     local: bool,
 ) -> crate::winlink::session::ExchangeConfig {
     use crate::winlink::session::SessionIntent;
     let intent = if local { SessionIntent::PostOffice } else { SessionIntent::Mesh };
     crate::winlink::session::ExchangeConfig {
-        mycall: crate::winlink::telnet::base_callsign_for_post_office(my_callsign, local),
+        mycall: crate::winlink::telnet::base_callsign_for_post_office(mycall.as_str(), local),
         targetcall: crate::winlink::telnet::CMS_TARGET_CALL.to_string(),
         locator: locator.to_string(),
         // Post Office uses no keyring — see the function doc + RADIO-1 note.
@@ -6230,7 +6239,7 @@ fn post_office_exchange<F>(
     mailbox: &crate::native_mailbox::Mailbox,
     host: &str,
     port: u16,
-    my_callsign: &str,
+    mycall: &crate::identity::Callsign,
     locator: &str,
     local: bool,
     selected: &std::collections::HashSet<String>,
@@ -6245,7 +6254,7 @@ where
         &[crate::winlink::proposal::Proposal],
     ) -> Result<Vec<crate::winlink::proposal::Answer>, crate::winlink::session::ExchangeError>,
 {
-    let config = post_office_exchange_config(my_callsign, locator, local);
+    let config = post_office_exchange_config(mycall, locator, local);
     let intent = config.intent;
 
     // Drain the Outbox. Network PO (Mesh) carries normal mail into normal
@@ -6305,6 +6314,7 @@ where
 #[tauri::command]
 pub async fn telnet_post_office_connect(
     app: AppHandle,
+    state: State<'_, BackendState>,
     po_state: State<'_, PostOfficeConnectState>,
     log: State<'_, std::sync::Arc<SessionLogState>>,
     registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
@@ -6313,6 +6323,14 @@ pub async fn telnet_post_office_connect(
     use std::sync::atomic::Ordering;
 
     let local = req.mode == "local";
+
+    // Phase 3 (bd-tuxlink-0063): the on-air station ID comes from the
+    // authenticated active SessionIdentity, not the wire DTO. req.my_callsign is
+    // advisory; mycall authority is the active SessionIdentity.
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let session_id = backend.active_identity()?;
 
     // Single-flight: reject a second concurrent connect. The RAII guard
     // (constructed immediately) releases the flag + clears the abort handle on
@@ -6364,7 +6382,8 @@ pub async fn telnet_post_office_connect(
         mailbox = mailbox.with_index(svc.index.clone());
     }
 
-    let login = crate::winlink::telnet::base_callsign_for_post_office(&req.my_callsign, local);
+    let login =
+        crate::winlink::telnet::base_callsign_for_post_office(session_id.mycall().as_str(), local);
     emit_session_line(
         &app,
         &log,
@@ -6387,7 +6406,9 @@ pub async fn telnet_post_office_connect(
     // Values moved into the blocking task.
     let host = req.host.clone();
     let port = req.port;
-    let my_callsign = req.my_callsign.clone();
+    // The active identity's full callsign is the station authority for this
+    // exchange (Phase 3). req.my_callsign is advisory and intentionally unused.
+    let mycall = session_id.mycall().clone();
     let locator = req.locator.clone();
     let selected: std::collections::HashSet<String> =
         req.selected_mids.iter().cloned().collect();
@@ -6453,7 +6474,7 @@ pub async fn telnet_post_office_connect(
             &mailbox,
             &host,
             port,
-            &my_callsign,
+            &mycall,
             &locator,
             local,
             &selected,
@@ -6809,6 +6830,7 @@ pub async fn telnet_listen_config_set(req: TelnetListenConfigDto) -> Result<(), 
 #[tauri::command]
 pub async fn telnet_listen(
     app: AppHandle,
+    backend_state: State<'_, BackendState>,
     state: State<'_, std::sync::Arc<TelnetListenState>>,
     log: State<'_, std::sync::Arc<SessionLogState>>,
 ) -> Result<(), UiError> {
@@ -6829,12 +6851,18 @@ pub async fn telnet_listen(
 
     let cfg = config::read_config()
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
-    let mycall = cfg.identity.active_full.clone().unwrap_or_default();
-    if mycall.is_empty() {
-        return Err(UiError::NotConfigured(
-            "no callsign configured — cannot arm listener without identity".into(),
-        ));
-    }
+
+    // Phase 3 (bd-tuxlink-0063): the station ID the listener answers as comes
+    // from the authenticated active SessionIdentity captured AT ARM TIME, not
+    // from `cfg.identity.active_full`. `session_id` is moved into the spawned
+    // listener task below so the listener answers as the identity active when
+    // armed (full listener independence is Phase 6; this lands the
+    // capture-at-arm seam).
+    let backend = backend_state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let session_id = backend.active_identity()?;
+    let mycall = session_id.mycall().as_str().to_uppercase();
     let locator = cfg.identity.grid.clone().unwrap_or_default();
 
     // Bind the TCP socket up-front so a bind failure is surfaced
@@ -6915,6 +6943,13 @@ pub async fn telnet_listen(
     let log_wire = log.inner().clone();
 
     let state_for_thread = Arc::clone(state.inner());
+    // Phase 3 capture-at-arm seam (bd-tuxlink-0063): move the SessionIdentity
+    // resolved above into the listener task so the listener is bound to the
+    // identity active when armed, independent of later identity switches. The
+    // station callsign already flows through `exchange_cfg.mycall`; holding the
+    // whole `session_id` here is the seam Phase 6 (full listener independence)
+    // builds on. Prefixed `_` because nothing in the loop reads it yet.
+    let _listen_identity = session_id;
     tokio::task::spawn_blocking(move || {
         crate::winlink::telnet_listen::run_accept_loop(
             listener,
@@ -6968,14 +7003,16 @@ pub async fn telnet_listen(
 #[tauri::command]
 pub async fn telnet_set_listen(
     app: AppHandle,
+    backend_state: State<'_, BackendState>,
     state: State<'_, std::sync::Arc<TelnetListenState>>,
     log: State<'_, std::sync::Arc<SessionLogState>>,
     enabled: bool,
 ) -> Result<(), UiError> {
     use std::sync::atomic::Ordering;
     if enabled {
-        // Equivalent to telnet_listen().
-        telnet_listen(app, state, log).await
+        // Equivalent to telnet_listen() — forward BackendState so the listener
+        // captures the active SessionIdentity at arm time (Phase 3).
+        telnet_listen(app, backend_state, state, log).await
     } else {
         let mut guard = state.inner.lock().unwrap();
         if let Some(handle) = guard.take() {
@@ -9721,7 +9758,11 @@ hw:CARD=Device,DEV=0
     /// Office path never reads the OS keyring (`password: None`).
     #[test]
     fn post_office_config_local_uses_dash_l_and_no_keyring() {
-        let cfg = post_office_exchange_config("n7cpz-7", "CN87", true);
+        let cfg = post_office_exchange_config(
+            &crate::identity::Callsign::parse("n7cpz-7").unwrap(),
+            "CN87",
+            true,
+        );
         assert_eq!(cfg.mycall, "N7CPZ-L", "local PO login is the base call + -L");
         assert_eq!(
             cfg.targetcall,
@@ -9745,7 +9786,11 @@ hw:CARD=Device,DEV=0
     /// still NO keyring password.
     #[test]
     fn post_office_config_network_uses_full_base_and_mesh_intent() {
-        let cfg = post_office_exchange_config("N7CPZ-7", "CN87", false);
+        let cfg = post_office_exchange_config(
+            &crate::identity::Callsign::parse("N7CPZ-7").unwrap(),
+            "CN87",
+            false,
+        );
         assert_eq!(cfg.mycall, "N7CPZ", "network PO login is the bare base call, no -L");
         assert_eq!(cfg.targetcall, crate::winlink::telnet::CMS_TARGET_CALL);
         assert!(cfg.password.is_none(), "network PO also reads no keyring");
@@ -10042,7 +10087,7 @@ hw:CARD=Device,DEV=0
             &client_mailbox,
             "127.0.0.1",
             listen_port,
-            "N7CPZ",
+            &crate::identity::Callsign::parse("N7CPZ").unwrap(),
             "CN87",
             /* local */ true,
             &selected_set,

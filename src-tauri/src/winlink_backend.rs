@@ -1008,6 +1008,17 @@ pub trait WinlinkBackend: Send + Sync {
     fn status(&self) -> BackendStatus;
 
     fn stream_log(&self) -> BoxStream<'static, LogLine>;
+
+    /// The authenticated identity active for this backend (Phase 3,
+    /// bd-tuxlink-0063). The on-air station callsign for every transmit/listen
+    /// path comes from here — `mycall()` — not from a wire DTO or
+    /// `cfg.identity.active_full`. `Err(BackendError::NoActiveIdentity)` when no
+    /// identity has been authenticated. `NativeBackend` overrides this with its
+    /// inherent slot accessor; the default errors so non-native backends fail
+    /// closed (no transmit identity ⇒ no transmit).
+    fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
+        Err(BackendError::NoActiveIdentity)
+    }
 }
 
 // ============================================================================
@@ -1249,6 +1260,15 @@ impl NativeBackend {
 
 #[async_trait]
 impl WinlinkBackend for NativeBackend {
+    /// Phase 3 (bd-tuxlink-0063): expose the inherent active-identity slot on
+    /// the trait so the Tauri command layer (which holds an
+    /// `Arc<dyn WinlinkBackend>`) can read the authenticated station call.
+    /// Delegates to the inherent accessor; named explicitly to avoid resolving
+    /// back into this trait method.
+    fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
+        NativeBackend::active_identity(self)
+    }
+
     async fn list_messages(&self, folder: MailboxFolder) -> Result<Vec<MessageMeta>, BackendError> {
         self.mailbox.list(folder)
     }
