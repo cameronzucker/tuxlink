@@ -10,7 +10,8 @@
 // layer is validated by browser smoke, not unit tests: the test map mock renders
 // Marker children as a div and cannot represent divIcon HTML or eventHandlers.
 
-import { Marker } from 'react-leaflet';
+import { useEffect } from 'react';
+import { Marker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { BaseMap } from '../map/BaseMap';
 import { gridToLatLon } from '../forms/position/maidenhead';
@@ -63,11 +64,36 @@ function operatorPinIcon(): L.DivIcon {
   });
 }
 
+// Zoom applied when recentering on the operator (clamped by BaseMap's
+// raster-native maxZoom). Mirrors the map's `initialZoom` for a placed operator.
+const OPERATOR_ZOOM = 3;
+
+/**
+ * Imperatively recenter the map on the operator's location.
+ *
+ * `<MapContainer>`'s `center`/`zoom` are read ONCE at mount and are NOT
+ * reactive (react-leaflet contract). The operator grid arrives asynchronously
+ * (StationFinderPanel's `config_read`) AFTER the map has mounted, so a static
+ * `initialCenter` leaves the view parked at [0,0] (mid-Atlantic) forever. This
+ * child lives inside the MapContainer, gets the live map via `useMap()`, and
+ * `setView`s whenever the operator latlon changes (null→value on first load, or
+ * a later grid edit). It does not fight panning: the effect only fires when the
+ * lat/lon/zoom deps change, not on every render.
+ */
+function RecenterOnOperator({ lat, lon, zoom }: { lat: number; lon: number; zoom: number }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView([lat, lon], zoom);
+  }, [map, lat, lon, zoom]);
+  return null;
+}
+
 export function StationFinderMap(props: StationFinderMapProps) {
   const me = props.operatorGrid ? gridToLatLon(props.operatorGrid) : null;
   return (
     <div className="station-finder__map" data-testid="station-map">
-      <BaseMap initialCenter={me ?? undefined} initialZoom={me ? 3 : 1}>
+      <BaseMap initialCenter={me ?? undefined} initialZoom={me ? OPERATOR_ZOOM : 1}>
+        {me && <RecenterOnOperator lat={me.lat} lon={me.lon} zoom={OPERATOR_ZOOM} />}
         {me && (
           <Marker
             position={[me.lat, me.lon]}

@@ -8,7 +8,8 @@ vi.mock('leaflet/dist/leaflet.css', () => ({}));
 vi.mock('leaflet/dist/images/marker-icon.png', () => ({ default: '/marker-icon.png' }));
 vi.mock('leaflet/dist/images/marker-icon-2x.png', () => ({ default: '/marker-icon-2x.png' }));
 vi.mock('leaflet/dist/images/marker-shadow.png', () => ({ default: '/marker-shadow.png' }));
-import { resetMapMock } from '../map/testMapMock';
+import { resetMapMock, getMockMap } from '../map/testMapMock';
+import { gridToLatLon } from '../forms/position/maidenhead';
 
 import { StationFinderMap, stationPinIcon } from './StationFinderMap';
 import type { Station } from './stationModel';
@@ -65,5 +66,25 @@ describe('StationFinderMap', () => {
     );
     // 2 placeable stations, no "you" pin.
     expect(screen.getAllByTestId('leaflet-marker')).toHaveLength(2);
+  });
+
+  // Regression: react-leaflet's MapContainer center/zoom are mount-only props,
+  // but StationFinderPanel loads the operator grid asynchronously (config_read)
+  // AFTER the map mounts. Without an imperative recenter the map stays parked at
+  // [0,0] (mid-Atlantic). The component must setView() to the operator latlon
+  // once a grid is present, and re-setView when the grid changes.
+  it('recenters the map on the operator grid once it is provided', () => {
+    const { rerender } = render(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    // No grid yet → no imperative recenter.
+    expect(getMockMap().setView).not.toHaveBeenCalled();
+
+    // Grid resolves (as config_read would) → recenter to the operator location.
+    rerender(
+      <StationFinderMap stations={stations} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    const me = gridToLatLon('DM43bp')!;
+    expect(getMockMap().setView).toHaveBeenCalledWith([me.lat, me.lon], expect.any(Number));
   });
 });
