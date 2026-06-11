@@ -15,6 +15,7 @@
 //! (never held across `await`) + a registry of per-key `tokio::sync::Mutex` for single-flight.
 
 use crate::catalog::stations::{ListingMode, StationListing};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -34,7 +35,7 @@ impl Clock for SystemClock {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CacheKey {
     pub mode: ListingMode,
     pub service_codes: String,

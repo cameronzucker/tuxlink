@@ -15,6 +15,7 @@ pub mod parser;
 pub mod reply;
 pub mod stations;
 pub mod stations_cache;
+pub mod stations_disk;
 
 pub use parser::{parse_catalog, CatalogEntry, CatalogParseError, BUNDLED_CATALOG};
 pub use reply::{parse_reply, ReplyView};
