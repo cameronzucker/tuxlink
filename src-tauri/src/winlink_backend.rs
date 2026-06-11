@@ -1351,17 +1351,14 @@ impl WinlinkBackend for NativeBackend {
         &self,
         msg: OutboundMessage,
     ) -> Result<MessageId, BackendError> {
-        let callsign = self
-            .live_config()
-            .identity
-            .active_full
-            .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
+        let session_id = self.active_identity()?;
+        let from = address_string(session_id.address_as());
         // The trait carries an RFC 3339 date; fall back to now if unparseable.
         let unix_secs = parse_rfc3339_secs(&msg.date).unwrap_or_else(now_unix_secs);
         let to: Vec<&str> = msg.to.iter().map(String::as_str).collect();
         let cc: Vec<&str> = msg.cc.iter().map(String::as_str).collect();
         let message = compose::compose_message_with_files(
-            &callsign,
+            from,
             &to,
             &cc,
             &msg.subject,
@@ -3120,6 +3117,15 @@ fn parse_rfc3339_secs(s: &str) -> Option<u64> {
         .map(|dt| dt.timestamp().max(0) as u64)
 }
 
+/// The `&str` a Winlink `From:` header uses for a session: the full callsign for
+/// a FULL identity, or the tactical label for a tactical one.
+fn address_string(a: &crate::identity::Address) -> &str {
+    match a {
+        crate::identity::Address::Full(c) => c.as_str(),
+        crate::identity::Address::Tactical(s) => s.as_str(),
+    }
+}
+
 /// Format the current wall-clock instant as an RFC 3339 / ISO-8601 UTC string
 /// (`YYYY-MM-DDTHH:MM:SSZ`). Minimal epoch-based formatter. Mirrors the manual
 /// formatter in `ui_commands.rs` (`format_unix_ts`) and `wizard.rs`; precision
@@ -3180,13 +3186,19 @@ mod mailbox_change_tests {
 
     #[tokio::test]
     async fn send_message_notifies_mailbox_change() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
         let dir = tempdir().unwrap();
         let notified = Arc::new(AtomicUsize::new(0));
         let notified_for_sink = notified.clone();
+        // native_test_config() has active_full = "N7CPZ"; set a matching active
+        // identity so send_message no longer errors on NoActiveIdentity.
         let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path())
             .with_mailbox_change(Arc::new(move || {
                 notified_for_sink.fetch_add(1, Ordering::SeqCst);
             }));
+        backend.set_active_identity(SessionIdentity::full(
+            IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()),
+        ));
 
         backend
             .send_message(OutboundMessage {
@@ -3403,6 +3415,55 @@ mod mailbox_change_tests {
         assert_eq!(
             body.raw_rfc5322, original_bytes,
             "Cms stored bytes must be byte-identical to original"
+        );
+    }
+
+    // =========================================================================
+    // Task 3.3 (tuxlink-0063): send_message writes From: from the active
+    // SessionIdentity.address_as(), NOT from config.identity.active_full.
+    //
+    // Config callsign: W7AUX. Active session authenticates N7CPZ (FULL).
+    // After send_message, the stored Outbox message must contain "From: N7CPZ"
+    // and must NOT contain "From: W7AUX".
+    // =========================================================================
+    #[tokio::test]
+    async fn send_message_from_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        let dir = tempdir().unwrap();
+
+        // Build a backend whose config callsign is W7AUX but whose active session
+        // authenticates as N7CPZ.
+        let mut cfg = crate::test_helpers::native_test_config();
+        cfg.identity.active_full = Some("W7AUX".to_string());
+        let backend = NativeBackend::new(cfg, dir.path());
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+        backend.set_active_identity(session_id);
+
+        let id = backend
+            .send_message(OutboundMessage {
+                to: vec!["W1AW".to_string()],
+                cc: vec![],
+                subject: "From-header test".to_string(),
+                body: "body".to_string(),
+                date: "2026-06-11T00:00:00Z".to_string(),
+                attachments: vec![],
+            })
+            .await
+            .expect("message queues");
+
+        // Read the raw bytes from the Outbox and inspect the From header.
+        let mailbox = &backend.mailbox;
+        let body = mailbox.read(MailboxFolder::Outbox, &id).expect("read stored message");
+        let raw = String::from_utf8_lossy(&body.raw_rfc5322);
+
+        assert!(
+            raw.contains("From: N7CPZ"),
+            "From header must be the session callsign N7CPZ; got:\n{raw}"
+        );
+        assert!(
+            !raw.contains("From: W7AUX"),
+            "From header must NOT be the config callsign W7AUX; got:\n{raw}"
         );
     }
 }
