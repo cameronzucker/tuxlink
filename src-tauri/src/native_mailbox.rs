@@ -696,6 +696,27 @@ fn folder_str(f: MailboxFolder) -> &'static str {
     }
 }
 
+/// The per-FULL mailbox root for `callsign` (Phase 4 namespacing target):
+/// `<root>/<CALLSIGN>/` — the inbox for that FULL lives at `<root>/<CALLSIGN>/inbox`.
+pub fn per_full_root(root: &std::path::Path, callsign: &str) -> std::path::PathBuf {
+    root.join(callsign)
+}
+
+/// Write the default identity-tag sidecar for a message in a SHARED folder
+/// (Sent/Outbox stay shared per spec; the tag records which FULL owns it).
+/// Non-shared folders (Inbox/Archive) are a no-op.
+pub fn tag_identity(root: &std::path::Path, folder: MailboxFolder, id: &MessageId, callsign: &str)
+    -> std::io::Result<()> {
+    let dir = match folder {
+        MailboxFolder::Sent => "sent",
+        MailboxFolder::Outbox => "outbox",
+        _ => return Ok(()),
+    };
+    let folder_path = root.join(dir);
+    std::fs::create_dir_all(&folder_path)?;
+    std::fs::write(folder_path.join(format!("{}.identity", id.0)), callsign.as_bytes())
+}
+
 /// Build the header-only list view from a parsed message.
 fn meta_from_message(msg: &Message) -> MessageMeta {
     let body_size = msg

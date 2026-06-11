@@ -106,7 +106,7 @@ mod tests {
             wizard_completed: true,
             connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: crate::config::default_cms_host() },
             identity: IdentityConfig {
-                callsign: None,
+                active_full: None,
                 identifier: None,
                 grid: grid.map(|s| s.to_string()),
             },

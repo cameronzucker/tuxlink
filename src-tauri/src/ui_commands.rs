@@ -2702,7 +2702,7 @@ impl From<&config::Config> for ConfigViewDto {
             connect_to_cms: c.connect.connect_to_cms,
             transport: c.connect.transport,
             host: c.connect.host.clone(),
-            callsign: c.identity.callsign.clone(),
+            callsign: c.identity.active_full.clone(),
             identifier: c.identity.identifier.clone(),
             grid: c.identity.grid.clone(),
             gps_state: c.privacy.gps_state,
@@ -3523,7 +3523,7 @@ pub async fn packet_listen(
     // Effective call = <callsign>-<ssid> (the SSID'd link address we answer on).
     let effective = cfg
         .identity
-        .callsign
+        .active_full
         .as_deref()
         .map(|c| format!("{}-{}", c.trim().to_uppercase(), cfg.packet.ssid))
         .unwrap_or_else(|| format!("(no callsign)-{}", cfg.packet.ssid));
@@ -6205,6 +6205,23 @@ fn post_office_exchange_config(
 ///
 /// [`ExchangeConfig`]: crate::winlink::session::ExchangeConfig
 /// [`Transport::Plaintext`]: crate::winlink::telnet::Transport::Plaintext
+/// Outbound drain selection for a Post Office session (tuxlink-b6ad). Network PO
+/// (Mesh intent) carries normal mail into normal Winlink routing — the same
+/// destination as CMS — so it drains the whole Outbox (`None`), exactly like
+/// `cms_connect`; no per-message picker. Telnet RMS Post Office (`local`, the
+/// `-L` pool whose mail is never forwarded globally) keeps the operator's
+/// explicit send-time selection as its leakage guard (`Some`).
+fn po_drain_selection(
+    local: bool,
+    selected: &std::collections::HashSet<String>,
+) -> Option<&std::collections::HashSet<String>> {
+    if local {
+        Some(selected)
+    } else {
+        None
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn post_office_exchange<F>(
     mailbox: &crate::native_mailbox::Mailbox,
@@ -6228,10 +6245,15 @@ where
     let config = post_office_exchange_config(my_callsign, locator, local);
     let intent = config.intent;
 
-    // Drain the Outbox filtered to the operator's selection (advisory set ∩
-    // live Outbox; a vanished MID is skipped, not fatal — A3's filter).
-    let outbound = crate::winlink_backend::build_outbound_proposals(mailbox, intent, Some(selected))
-        .map_err(|e| UiError::Internal { detail: format!("outbox drain: {e}") })?;
+    // Drain the Outbox. Network PO (Mesh) carries normal mail into normal
+    // Winlink routing — same destination as CMS — so it drains the WHOLE Outbox
+    // (`None`), exactly like `cms_connect`. Telnet RMS Post Office (local `-L`
+    // pool, never forwarded globally) keeps the explicit send-time selection as
+    // its leakage guard (`Some`; advisory set ∩ live Outbox, vanished MID
+    // skipped). tuxlink-b6ad.
+    let outbound =
+        crate::winlink_backend::build_outbound_proposals(mailbox, intent, po_drain_selection(local, selected))
+            .map_err(|e| UiError::Internal { detail: format!("outbox drain: {e}") })?;
 
     let result = crate::winlink::telnet::connect_and_exchange(
         host,
@@ -6804,7 +6826,7 @@ pub async fn telnet_listen(
 
     let cfg = config::read_config()
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
-    let mycall = cfg.identity.callsign.clone().unwrap_or_default();
+    let mycall = cfg.identity.active_full.clone().unwrap_or_default();
     if mycall.is_empty() {
         return Err(UiError::NotConfigured(
             "no callsign configured — cannot arm listener without identity".into(),
@@ -7628,7 +7650,7 @@ hw:CARD=Device,DEV=0
                 host: config::default_cms_host(),
             },
             identity: IdentityConfig {
-                callsign: Some("W4PHS".into()),
+                active_full: Some("W4PHS".into()),
                 identifier: None,
                 grid: Some("EM10ab".into()),
             },
@@ -7690,7 +7712,7 @@ hw:CARD=Device,DEV=0
         cfg.connect.connect_to_cms = false;
         cfg.connect.transport = CmsTransport::Telnet;
         cfg.connect.host = "server.winlink.org".into();
-        cfg.identity.callsign = None;
+        cfg.identity.active_full = None;
         cfg.identity.identifier = Some("OFFLINE-STATION".into());
         cfg.privacy.gps_state = GpsState::Off;
         cfg.privacy.position_precision = PositionPrecision::FourCharGrid;
@@ -7858,7 +7880,7 @@ hw:CARD=Device,DEV=0
                 transport: CmsTransport::CmsSsl,
                 host: crate::config::default_cms_host(),
             },
-            identity: IdentityConfig { callsign: Some("N0CALL".into()), identifier: None, grid: None },
+            identity: IdentityConfig { active_full: Some("N0CALL".into()), identifier: None, grid: None },
             privacy: PrivacyConfig {
                 gps_state: GpsState::Off,
                 position_precision: PositionPrecision::FourCharGrid,
@@ -8961,7 +8983,7 @@ hw:CARD=Device,DEV=0
             wizard_completed: true,
             connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: config::default_cms_host() },
             identity: IdentityConfig {
-                callsign: None,
+                active_full: None,
                 identifier: None,
                 grid: grid.map(|s| s.to_string()),
             },
@@ -9729,6 +9751,22 @@ hw:CARD=Device,DEV=0
             crate::winlink::session::SessionIntent::Mesh,
             "network mode → Mesh intent (normal C-mail pool)"
         );
+    }
+
+    /// tuxlink-b6ad: Network PO drains the whole Outbox like CMS (`None`),
+    /// ignoring any selection set; Telnet RMS Post Office (local `-L` pool)
+    /// keeps the explicit selection as its leakage guard (`Some`).
+    #[test]
+    fn po_drain_selection_network_drains_all_local_keeps_guard() {
+        use std::collections::HashSet;
+        let sel: HashSet<String> = ["A".to_string(), "B".to_string()].into_iter().collect();
+        // local `-L` pool: explicit send-time selection is the leakage guard.
+        assert_eq!(po_drain_selection(true, &sel), Some(&sel));
+        // network (Mesh): drains all, even when a non-empty selection was passed.
+        assert_eq!(po_drain_selection(false, &sel), None);
+        // network with an empty selection still drains all — NOT receive-only.
+        let empty: HashSet<String> = HashSet::new();
+        assert_eq!(po_drain_selection(false, &empty), None);
     }
 
     /// The connect-request DTO deserializes the snake_case keys the B3 pane

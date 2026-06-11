@@ -505,6 +505,78 @@ describe('<MessageList> — selection-aware context menu (tuxlink-l80q)', () => 
   });
 });
 
+describe('<MessageList> — selection-aware drag (tuxlink-hh1j)', () => {
+  const MSG_MIME = 'application/x-tuxlink-message';
+  // DataTransfer stub that captures setData so we can assert the drag payload.
+  function captureDt() {
+    const store: Record<string, string> = {};
+    return {
+      store,
+      dt: {
+        setData: (mime: string, val: string) => {
+          store[mime] = val;
+        },
+        getData: (mime: string) => store[mime] ?? '',
+        types: [] as string[],
+        dropEffect: '',
+        effectAllowed: '',
+      },
+    };
+  }
+
+  it('dragging a row inside a multi-selection carries the WHOLE selection', () => {
+    const { store, dt } = captureDt();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={() => {}}
+        selectedIds={new Set(['M1', 'M3'])}
+        onSelectionChange={() => {}}
+      />,
+    );
+    fireEvent.dragStart(screen.getByTestId('message-row-M1'), { dataTransfer: dt });
+    const payload = JSON.parse(store[MSG_MIME]);
+    expect(new Set(payload.ids)).toEqual(new Set(['M1', 'M3']));
+  });
+
+  it('dragging an UNSELECTED row carries only that row (single move)', () => {
+    const { store, dt } = captureDt();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={() => {}}
+        selectedIds={new Set(['M1', 'M3'])}
+        onSelectionChange={() => {}}
+      />,
+    );
+    // M2 is not part of the highlighted set — OS convention: drag just it.
+    fireEvent.dragStart(screen.getByTestId('message-row-M2'), { dataTransfer: dt });
+    const payload = JSON.parse(store[MSG_MIME]);
+    expect(payload.ids).toEqual(['M2']);
+  });
+
+  it('a single-row selection drags just that row (no spurious bulk)', () => {
+    const { store, dt } = captureDt();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={THREE_MSGS}
+        selectedId={null}
+        onSelect={() => {}}
+        selectedIds={new Set(['M2'])}
+        onSelectionChange={() => {}}
+      />,
+    );
+    fireEvent.dragStart(screen.getByTestId('message-row-M2'), { dataTransfer: dt });
+    const payload = JSON.parse(store[MSG_MIME]);
+    expect(payload.ids).toEqual(['M2']);
+  });
+});
+
 describe('<MessageList> — sort wiring (tuxlink-2x0l)', () => {
   it('omits the sort header when onSortStateChange is absent and selection is empty', () => {
     render(<MessageList folder="inbox" messages={[meta()]} selectedId={null} onSelect={() => {}} />);

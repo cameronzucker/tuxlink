@@ -167,6 +167,28 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
     expect(connect).toHaveTextContent('Connect & send 2');
   });
 
+  // ── Network PO send-flow (tuxlink-b6ad): no checklist, drains like CMS ──────
+
+  it('network mode does NOT render the Send-from-Outbox checklist', async () => {
+    renderPanel({ mode: 'network' });
+    await screen.findByTestId('po-network-send-note');
+    expect(screen.queryByTestId('po-outbox-section')).toBeNull();
+    expect(screen.queryByTestId('po-select-all')).toBeNull();
+    expect(screen.queryByTestId('po-outbox-row-OUT-1')).toBeNull();
+  });
+
+  it('network mode Connect button is plain "Connect" (no per-message send count)', async () => {
+    renderPanel({ mode: 'network' });
+    await screen.findByTestId('po-network-send-note');
+    expect(screen.getByTestId('po-connect-btn')).toHaveTextContent(/^Connect$/);
+  });
+
+  it('local mode still renders the Send-from-Outbox checklist (leakage guard kept)', async () => {
+    renderPanel({ mode: 'local' });
+    expect(await screen.findByTestId('po-outbox-section')).toBeInTheDocument();
+    expect(screen.queryByTestId('po-network-send-note')).toBeNull();
+  });
+
   // ── Connect action / invoke contract ──────────────────────────────────────
 
   it('Connect (local) fires telnet_post_office_connect with the { req } wrapper shape', async () => {
@@ -230,7 +252,8 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
       },
     );
     renderPanel({ mode: 'network' });
-    await screen.findByTestId('po-outbox-row-OUT-1');
+    // Network PO has no Outbox checklist (tuxlink-b6ad) — wait on the send note.
+    await screen.findByTestId('po-network-send-note');
     fireEvent.click(screen.getByTestId('po-connect-btn'));
     await waitFor(() => expect(observedReq).not.toBeNull());
     expect(observedReq!.mode).toBe('network');
@@ -312,7 +335,8 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
       return defaultInvokeImpl(cmd);
     });
     renderPanel({ mode: 'network' });
-    await screen.findByTestId('po-outbox-row-OUT-1');
+    // Network PO has no Outbox checklist (tuxlink-b6ad) — wait on the send note.
+    await screen.findByTestId('po-network-send-note');
     fireEvent.click(screen.getByTestId('po-connect-btn'));
     await waitFor(() => {
       expect(screen.getByTestId('po-relay-banner')).toBeInTheDocument();

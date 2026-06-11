@@ -122,3 +122,47 @@ describe('CatalogReplyView (tuxlink-qyjr)', () => {
   // The degrade-to-raw CONTRACT is exhaustively tested in Rust
   // (src-tauri/src/catalog/reply.rs); no brittle invoke-rejection test is duplicated here.
 });
+
+describe('CatalogReplyView — radio station-list ingest (tuxlink-xrbw)', () => {
+  const LISTING = 'WINLINK VARA CHANNEL LISTING - (x)\nAI4Y.WINLINK, Bob/AI4Y, [FM07], (...)';
+
+  /** parse_reply returns raw for a station listing; ingest returns a count. */
+  function mockListing(ingest: { mode: string; count: number } | Error) {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'catalog_parse_reply') {
+        return { kind: 'raw', text: LISTING } as unknown as never;
+      }
+      if (cmd === 'catalog_ingest_listing_reply') {
+        if (ingest instanceof Error) throw ingest;
+        return ingest as unknown as never;
+      }
+      return undefined as unknown as never;
+    });
+  }
+
+  it('offers ingest for a channel-listing reply and reports the count', async () => {
+    mockListing({ mode: 'VARA HF', count: 42 });
+    render(<CatalogReplyView subject="INQUIRY - ..." body={LISTING} />);
+
+    const btn = await screen.findByTestId('ingest-stations');
+    fireEvent.click(btn);
+
+    await waitFor(() => expect(screen.getByTestId('ingest-done')).toBeTruthy());
+    expect(screen.getByTestId('ingest-done').textContent).toContain('42 VARA HF gateways');
+    expect(invoke).toHaveBeenCalledWith('catalog_ingest_listing_reply', { body: LISTING });
+  });
+
+  it('does NOT offer ingest for an ordinary (non-listing) raw reply', async () => {
+    vi.mocked(invoke).mockResolvedValue({ kind: 'raw', text: 'just an ordinary message' } as unknown as never);
+    render(<CatalogReplyView subject="x" body="just an ordinary message" />);
+    await waitFor(() => expect(screen.getByText('just an ordinary message')).toBeTruthy());
+    expect(screen.queryByTestId('ingest-stations')).toBeNull();
+  });
+
+  it('surfaces an ingest error without crashing', async () => {
+    mockListing(new Error('channel listing contained no readable gateways'));
+    render(<CatalogReplyView subject="x" body={LISTING} />);
+    fireEvent.click(await screen.findByTestId('ingest-stations'));
+    await waitFor(() => expect(screen.getByTestId('ingest-error')).toBeTruthy());
+  });
+});

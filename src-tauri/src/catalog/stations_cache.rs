@@ -142,6 +142,19 @@ impl StationsCache {
         locks.entry(key.clone()).or_default().clone()
     }
 
+    /// Insert a listing directly, bypassing the network (tuxlink-xrbw). Used to
+    /// ingest a radio-delivered station list parsed from a received `PUB_*`
+    /// "Update Via Radio" reply: it lands under `key` exactly as a fetch would, so
+    /// the finder's next `get_or_fetch` for that key serves it fresh-from-cache
+    /// with no internet. Stamps `fetched_at_ms = now` and persists to disk.
+    /// Mirrors the post-fetch insert path in `get_or_fetch` (lock dropped before
+    /// `persist`, which must not run while the data mutex is held).
+    pub fn insert(&self, key: CacheKey, mut listing: StationListing) {
+        listing.fetched_at_ms = Some(self.clock.now_millis());
+        self.data.lock().unwrap().insert(key, listing);
+        self.persist();
+    }
+
     /// Serve fresh-from-cache, else fetch (coalescing same-key concurrent callers), else stale.
     pub async fn get_or_fetch<F, E>(&self, key: CacheKey, fetch: F) -> Result<StationListing, E>
     where
@@ -505,5 +518,27 @@ mod tests {
         clock.advance(30_000);
         cache.get_or_fetch(key(ListingMode::VaraHf), failing()).await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn inserted_listing_is_served_without_fetching() {
+        // tuxlink-xrbw: a radio-delivered listing inserted directly must be served
+        // fresh-from-cache so the finder shows it with no network round-trip.
+        let clock = Arc::new(MockClock::new(1_000));
+        let cache = StationsCache::new(60_000, 0, clock.clone());
+        cache.insert(key(ListingMode::VaraHf), listing(ListingMode::VaraHf, "radio-delivered"));
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mk = || {
+            let c = calls.clone();
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, String>(listing(ListingMode::VaraHf, "from-network"))
+            }
+        };
+        let got = cache.get_or_fetch(key(ListingMode::VaraHf), mk()).await.unwrap();
+        assert_eq!(got.raw, "radio-delivered"); // the ingested copy, not a fetch
+        assert_eq!(got.fetched_at_ms, Some(1_000)); // stamped fresh at insert time
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "insert must satisfy the finder without a fetch");
     }
 }

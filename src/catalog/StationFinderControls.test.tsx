@@ -12,15 +12,24 @@ const baseProps = {
   ssn: 118,
   ssnAgeDays: 2,
   predictionAvailable: true,
+  radiusMi: 500 as number | null,
+  onRadiusChange: vi.fn(),
+  hasOperatorGrid: true,
+  search: '',
+  onSearchChange: vi.fn(),
   onRefresh: vi.fn(),
   refreshing: false,
 };
 
 describe('StationFinderControls', () => {
-  it('renders the four HF bands and marks the selected one', () => {
+  it('renders the full amateur HF band set and marks the selected one', () => {
     render(<StationFinderControls {...baseProps} />);
-    expect(screen.getByRole('button', { name: /80 m/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /40 m/ }).getAttribute('aria-pressed')).toBe('true');
+    // Every amateur HF band is offered (not the old ALE-derived 80/40/30/20m subset).
+    // Anchor the name match — "60 m" is a substring of "160 m".
+    for (const label of ['160 m', '80 m', '60 m', '40 m', '30 m', '20 m', '17 m', '15 m', '12 m', '10 m']) {
+      expect(screen.getByRole('button', { name: new RegExp(`^${label}$`) })).toBeTruthy();
+    }
+    expect(screen.getByRole('button', { name: /^40 m$/ }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('fires onBandChange when another band is clicked', () => {
@@ -48,6 +57,26 @@ describe('StationFinderControls', () => {
   it('notes when prediction is unavailable (distance-only)', () => {
     render(<StationFinderControls {...baseProps} predictionAvailable={false} />);
     expect(screen.getByText(/no forecast/i)).toBeTruthy();
+  });
+
+  it('fires onSearchChange as the operator types a callsign filter', () => {
+    const onSearchChange = vi.fn();
+    render(<StationFinderControls {...baseProps} onSearchChange={onSearchChange} />);
+    fireEvent.change(screen.getByLabelText(/filter stations by callsign/i), { target: { value: 'N0D' } });
+    expect(onSearchChange).toHaveBeenCalledWith('N0D');
+  });
+
+  it('changes the search radius', () => {
+    const onRadiusChange = vi.fn();
+    render(<StationFinderControls {...baseProps} onRadiusChange={onRadiusChange} />);
+    fireEvent.change(screen.getByLabelText(/search radius/i), { target: { value: '250' } });
+    expect(onRadiusChange).toHaveBeenCalledWith(250);
+  });
+
+  it('disables the radius selector + prompts when no operator grid is set', () => {
+    render(<StationFinderControls {...baseProps} hasOperatorGrid={false} />);
+    expect((screen.getByLabelText(/search radius/i) as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.getByText(/set your location/i)).toBeTruthy();
   });
 
   it('shows the station-list freshness caption when a fetch stamp is present', () => {

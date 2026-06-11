@@ -30,6 +30,39 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.52.2](https://github.com/cameronzucker/tuxlink/compare/v0.52.1...v0.52.2) (2026-06-11)
+
+
+### Bug Fixes
+
+* **catalog:** center Find-a-Station map on the operator's location ([d30ac31](https://github.com/cameronzucker/tuxlink/commit/d30ac31ae3cce0cf5bdcf42406aa23b44946b4dc))
+
+
+### Performance
+
+* **catalog:** run Find-a-Station reachability predictions concurrently ([fe159fb](https://github.com/cameronzucker/tuxlink/commit/fe159fb60da801e47b91e37520592dd6044e8625))
+
+## [0.52.1](https://github.com/cameronzucker/tuxlink/compare/v0.52.0...v0.52.1) (2026-06-11)
+
+
+### Features
+
+* **catalog:** ingest radio-delivered station-list replies into Find-a-Station (tuxlink-xrbw) ([681a51d](https://github.com/cameronzucker/tuxlink/commit/681a51d0a2eabe4d6b4339aebd195fb2989f21ba))
+* **identity:** identity_list/add_full/add_tactical/remove Tauri commands ([64036b8](https://github.com/cameronzucker/tuxlink/commit/64036b8cc97321f9315549dcce10d0c06fb4d2a6))
+* **post-office:** Network PO drains the Outbox on Connect, like CMS ([a2b05bf](https://github.com/cameronzucker/tuxlink/commit/a2b05bff1e5f2ea276b82b0c30bc6bbe288b8274))
+
+
+### Chores
+
+* force release 0.52.1 to ship stranded Find-a-Station fix ([7128a25](https://github.com/cameronzucker/tuxlink/commit/7128a251bf0b839e340034accdab2447627865d6))
+
+## [0.52.0](https://github.com/cameronzucker/tuxlink/compare/v0.51.0...v0.52.0) (2026-06-11)
+
+
+### Features
+
+* **catalog:** operator-configurable service codes, keyring-stored (tuxlink-6j14) ([54afb74](https://github.com/cameronzucker/tuxlink/commit/54afb743500504780b83c1d1b5c2764ca25f1b09))
+
 ## [0.51.0](https://github.com/cameronzucker/tuxlink/compare/v0.50.0...v0.51.0) (2026-06-11)
 
 

@@ -10,7 +10,8 @@
 //!    E  ishmael.cadogan@barbados.gov.bb     <- E = sysop email
 //!    H  -                                    <- H = homepage
 //!    A  BRIDGESTOWN, -                       <- A = additional info (city, state)
-//!    -  3647.0 7092.0 10147.5                <- "-" line = frequency list in kHz
+//!    -  3647.0 7092.0 10147.5                <- "-" line = frequency list (HF in kHz,
+//!                                                VHF/UHF packet in MHz; normalized to kHz)
 //! ```
 //!
 //! The parser DEGRADES TO RAW: any deviation yields `parsed_ok=false` with empty `gateways`
@@ -151,6 +152,41 @@ pub fn parse_listing(body: &str, mode: ListingMode) -> StationListing {
     }
 }
 
+/// Detect the mode of a received station-listing reply from its self-identifying
+/// header line (`WINLINK <MODE> CHANNEL LISTING`). This is how a radio-delivered
+/// `PUB_*` "Update Via Radio" reply (tuxlink-xrbw) is recognized and routed to the
+/// right `parse_listing` mode without subject-line or request-ID correlation.
+///
+/// Returns `None` when the body is not a recognizable channel listing (an NWS
+/// weather reply, ordinary mail, an error page) — the caller then leaves it as a
+/// plain message. VARA FM is excluded (no confirmed listing endpoint; the only
+/// VARA listing tuxlink ingests is VARA HF).
+pub fn detect_listing_mode(body: &str) -> Option<ListingMode> {
+    let body = body.strip_prefix('\u{FEFF}').unwrap_or(body);
+    let title = body
+        .lines()
+        .map(str::trim)
+        .find(|l| l.contains("CHANNEL LISTING"))?
+        .to_uppercase();
+    // Order matters: "ROBUST PACKET" must be tested before "PACKET", and the
+    // VARA-FM exclusion before the bare VARA match.
+    if title.contains("ROBUST PACKET") {
+        Some(ListingMode::RobustPacket)
+    } else if title.contains("VARA FM") {
+        None
+    } else if title.contains("VARA") {
+        Some(ListingMode::VaraHf)
+    } else if title.contains("ARDOP") {
+        Some(ListingMode::ArdopHf)
+    } else if title.contains("PACTOR") {
+        Some(ListingMode::Pactor)
+    } else if title.contains("PACKET") {
+        Some(ListingMode::Packet)
+    } else {
+        None
+    }
+}
+
 fn parse_station_blocks(body: &str) -> Vec<Gateway> {
     let mut out = Vec::new();
     let mut current: Option<Gateway> = None;
@@ -246,6 +282,20 @@ fn parse_header_line(line: &str) -> Option<Gateway> {
     })
 }
 
+/// Normalize a parsed dial to kHz. Winlink listings give HF dials in kHz
+/// (e.g. `3589.0`) but VHF/UHF packet dials in MHz (e.g. `144.925`) on the same
+/// `-` line shape, so `frequencies_khz` was effectively mixed-unit. Any value
+/// below 1000 is MHz — no amateur Winlink dial sits in the 30 kHz–1 MHz gap, and
+/// the lowest HF-in-kHz dial (160 m) is ≥1800 — so scale it to kHz. Already-kHz
+/// values (≥1000) pass through unchanged, so this is idempotent.
+fn normalize_freq_to_khz(f: f64) -> f64 {
+    if f < 1000.0 {
+        f * 1000.0
+    } else {
+        f
+    }
+}
+
 fn apply_subline(g: &mut Gateway, line: &str) {
     let t = line.trim_start();
     let Some((code, rest)) = t.split_once(char::is_whitespace) else {
@@ -265,6 +315,7 @@ fn apply_subline(g: &mut Gateway, line: &str) {
                 .split_whitespace()
                 .filter_map(|f| f.parse::<f64>().ok())
                 .filter(|f| f.is_finite() && *f > 0.0) // reject NaN/inf/negatives
+                .map(normalize_freq_to_khz)
                 .collect();
         }
         _ => {}
@@ -366,6 +417,23 @@ mod tests {
     }
 
     #[test]
+    fn vhf_mhz_dials_normalize_to_khz_hf_khz_unchanged() {
+        // Regression (tuxlink-ku2b): Winlink lists HF dials in kHz but VHF/UHF
+        // packet dials in MHz on the same `-` line. frequencies_khz must be
+        // uniform kHz, or the UI shows packet at "0.145 MHz" and can't band-map it.
+        let body = one_station("Bob/AI4Y").replace(
+            "-  3589.0 7101.6 10146.4 14096.4",
+            "-  3589.0 145.710 441.300 14096.4",
+        );
+        let listing = parse_listing(&body, ListingMode::Packet);
+        assert_eq!(
+            listing.gateways[0].frequencies_khz,
+            vec![3589.0, 145710.0, 441300.0, 14096.4],
+            "HF kHz dials unchanged; VHF/UHF MHz dials scaled to kHz"
+        );
+    }
+
+    #[test]
     fn frequency_line_rejects_nan_inf_and_negatives() {
         let body = one_station("Bob/AI4Y").replace(
             "-  3589.0 7101.6 10146.4 14096.4",
@@ -388,7 +456,8 @@ mod tests {
         assert!(listing.parsed_ok);
         assert_eq!(listing.gateways[0].sysop_name.as_deref(), Some("André"));
         assert_eq!(listing.gateways[0].callsign, "PI1ZTM");
-        assert_eq!(listing.gateways[0].frequencies_khz, vec![144.925]);
+        // 144.925 is a VHF packet dial given by Winlink in MHz; normalized to kHz.
+        assert_eq!(listing.gateways[0].frequencies_khz, vec![144925.0]);
     }
 
     #[test]
@@ -397,5 +466,50 @@ mod tests {
         let listing = parse_listing(&body, ListingMode::ArdopHf);
         assert!(listing.parsed_ok);
         assert!(listing.title.as_deref().unwrap().starts_with("WINLINK"));
+    }
+
+    // ---- detect_listing_mode (tuxlink-xrbw) ----------------------------------
+
+    fn header(mode_words: &str) -> String {
+        format!("WINLINK {mode_words} CHANNEL LISTING - (x)\r\nbody\r\n")
+    }
+
+    #[test]
+    fn detect_mode_from_each_header() {
+        assert_eq!(detect_listing_mode(&header("VARA")), Some(ListingMode::VaraHf));
+        assert_eq!(detect_listing_mode(&header("ARDOP")), Some(ListingMode::ArdopHf));
+        assert_eq!(detect_listing_mode(&header("PACTOR")), Some(ListingMode::Pactor));
+        assert_eq!(detect_listing_mode(&header("PACKET")), Some(ListingMode::Packet));
+    }
+
+    #[test]
+    fn detect_robust_packet_before_packet() {
+        // "ROBUST PACKET" contains "PACKET" — order must not misclassify it.
+        assert_eq!(
+            detect_listing_mode(&header("ROBUST PACKET")),
+            Some(ListingMode::RobustPacket)
+        );
+    }
+
+    #[test]
+    fn detect_mode_from_a_real_listing_body() {
+        // one_station() carries a "WINLINK ARDOP CHANNEL LISTING" header.
+        assert_eq!(detect_listing_mode(&one_station("Bob/AI4Y")), Some(ListingMode::ArdopHf));
+        // BOM-prefixed bodies still detect.
+        let bom = format!("\u{FEFF}{}", one_station("Bob/AI4Y"));
+        assert_eq!(detect_listing_mode(&bom), Some(ListingMode::ArdopHf));
+    }
+
+    #[test]
+    fn detect_mode_none_for_non_listings() {
+        assert_eq!(detect_listing_mode(""), None);
+        assert_eq!(detect_listing_mode("Just an ordinary email body.\r\nNothing here."), None);
+        // An NWS area-weather reply is not a channel listing.
+        assert_eq!(
+            detect_listing_mode("FPUS55 KFGZ 032234\r\nZone Forecast Product for Northern Arizona"),
+            None
+        );
+        // VARA FM is intentionally excluded (no confirmed listing endpoint).
+        assert_eq!(detect_listing_mode(&header("VARA FM")), None);
     }
 }

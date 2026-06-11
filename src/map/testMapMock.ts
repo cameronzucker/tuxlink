@@ -50,6 +50,10 @@ const fakeMap = {
     handlerRegistry.delete(type);
   },
   dragging: { disable: vi.fn(), enable: vi.fn() },
+  // Imperative recenter used by consumers that center on async-loaded state
+  // (e.g. StationFinderMap recentering on the operator grid once config_read
+  // resolves). Shape-only spy: asserts the call + args, NOT real projection (C1).
+  setView: vi.fn(),
   mouseEventToLatLng(pt: { clientX: number; clientY: number }): LatLngLiteral {
     // identity-ish — proves wiring, NOT projection (C1).
     return { lat: pt.clientY, lng: pt.clientX };
@@ -80,6 +84,7 @@ export function resetMapMock(): void {
   handlerRegistry.clear();
   fakeMap.dragging.disable.mockClear();
   fakeMap.dragging.enable.mockClear();
+  fakeMap.setView.mockClear();
   mockZoom = 1;
 }
 

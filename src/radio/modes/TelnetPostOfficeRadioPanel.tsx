@@ -454,9 +454,11 @@ export function TelnetPostOfficeRadioPanel({
 
   const login = loginCallsign(myCallsign, mode);
 
+  // Only the local `-L` pool surfaces a per-message selection, so only it shows
+  // a send count; Network PO drains the whole Outbox on Connect (tuxlink-b6ad).
   const connectLabel = busy
     ? 'Connecting…'
-    : selectedCount > 0
+    : mode === 'local' && selectedCount > 0
       ? `Connect & send ${selectedCount}`
       : 'Connect';
 
@@ -792,57 +794,72 @@ export function TelnetPostOfficeRadioPanel({
         </section>
       )}
 
-      {/* Outbox send-selection checklist (design §4.3 + §4.6). */}
-      <section className="radio-panel-sec" data-testid="po-outbox-section">
-        <h5>Send from Outbox</h5>
-        <div className="radio-panel-chip-row">
-          <button
-            type="button"
-            className="radio-panel-chip"
-            data-testid="po-select-all"
-            disabled={outbox.length === 0}
-            onClick={selectAll}
-          >
-            Select all
-          </button>
-          <button
-            type="button"
-            className="radio-panel-chip"
-            data-testid="po-select-none"
-            disabled={selectedCount === 0}
-            onClick={selectNone}
-          >
-            Select none
-          </button>
-        </div>
-        {outbox.length === 0 ? (
-          <p className="radio-panel-radio-help" data-testid="po-outbox-empty">
-            Outbox is empty — Connect to receive only.
+      {/* Outbound posture (tuxlink-b6ad). Telnet RMS Post Office (local `-L`
+          pool — mail held at the relay, never forwarded globally) keeps the
+          per-message send-selection checklist as its leakage guard: the operator
+          consciously chooses what to deposit. Network PO carries NORMAL mail into
+          normal Winlink routing — the same destination as CMS — so it drains the
+          whole Outbox on Connect, with no picker, matching every other transport.
+          (Design §1.1: Network PO differs from CMS on transport, not routing.) */}
+      {mode === 'local' ? (
+        <section className="radio-panel-sec" data-testid="po-outbox-section">
+          <h5>Send from Outbox</h5>
+          <div className="radio-panel-chip-row">
+            <button
+              type="button"
+              className="radio-panel-chip"
+              data-testid="po-select-all"
+              disabled={outbox.length === 0}
+              onClick={selectAll}
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              className="radio-panel-chip"
+              data-testid="po-select-none"
+              disabled={selectedCount === 0}
+              onClick={selectNone}
+            >
+              Select none
+            </button>
+          </div>
+          {outbox.length === 0 ? (
+            <p className="radio-panel-radio-help" data-testid="po-outbox-empty">
+              Outbox is empty — connecting will only receive.
+            </p>
+          ) : (
+            <ul className="po-outbox-list" data-testid="po-outbox-list">
+              {outbox.map((m) => (
+                <li key={m.id}>
+                  <label
+                    className="radio-panel-input-row"
+                    data-testid={`po-outbox-row-${m.id}`}
+                  >
+                    <input
+                      type="checkbox"
+                      data-testid={`po-outbox-check-${m.id}`}
+                      checked={selected.has(m.id)}
+                      onChange={() => toggleRow(m.id)}
+                    />
+                    <span>
+                      {m.subject || '(no subject)'} →{' '}
+                      {m.to.join(', ') || '(no recipient)'} · {m.bodySize} B
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : (
+        <section className="radio-panel-sec" data-testid="po-network-send-note">
+          <p className="radio-panel-radio-help">
+            Connecting sends your queued Outbox mail and receives any waiting
+            messages.
           </p>
-        ) : (
-          <ul className="po-outbox-list" data-testid="po-outbox-list">
-            {outbox.map((m) => (
-              <li key={m.id}>
-                <label
-                  className="radio-panel-input-row"
-                  data-testid={`po-outbox-row-${m.id}`}
-                >
-                  <input
-                    type="checkbox"
-                    data-testid={`po-outbox-check-${m.id}`}
-                    checked={selected.has(m.id)}
-                    onChange={() => toggleRow(m.id)}
-                  />
-                  <span>
-                    {m.subject || '(no subject)'} →{' '}
-                    {m.to.join(', ') || '(no recipient)'} · {m.bodySize} B
-                  </span>
-                </label>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+        </section>
+      )}
 
       <SessionLogSection entries={logEntries} onClear={clearLog} />
 
