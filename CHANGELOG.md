@@ -30,6 +30,18 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.52.2](https://github.com/cameronzucker/tuxlink/compare/v0.52.1...v0.52.2) (2026-06-11)
+
+
+### Bug Fixes
+
+* **catalog:** center Find-a-Station map on the operator's location ([d30ac31](https://github.com/cameronzucker/tuxlink/commit/d30ac31ae3cce0cf5bdcf42406aa23b44946b4dc))
+
+
+### Performance
+
+* **catalog:** run Find-a-Station reachability predictions concurrently ([fe159fb](https://github.com/cameronzucker/tuxlink/commit/fe159fb60da801e47b91e37520592dd6044e8625))
+
 ## [0.52.1](https://github.com/cameronzucker/tuxlink/compare/v0.52.0...v0.52.1) (2026-06-11)
 
 
