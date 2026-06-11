@@ -11,27 +11,38 @@
   --accent-edge: rgba(245, 159, 60, 0.55);
 }
 
+/* Dimmed backdrop over the app; the Request Center is a centered dialog, not a
+ * full-bleed surface (a full-viewport panel left big empty gutters + dead space
+ * on a 1920-wide window — operator call tuxlink-4ls0). Backdrop clicks do NOT
+ * close it; ESC + the Close button are the only close paths. */
 .request-overlay {
   position: fixed;
   inset: 0;
-  background: var(--bg);
+  background: rgba(0, 0, 0, 0.55);
   color: var(--text);
   z-index: 1000;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
 }
 
 .request-workspace {
-  flex: 1 1 auto;
+  /* A centered dialog sized to its content, capped so it never fills the whole
+   * screen or stretches text. Internal scroll once content exceeds the cap. */
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: 92vh;
+  width: 100%;
+  max-width: 1080px;
   display: flex;
   flex-direction: column;
   font-size: 14px;
-  /* Cap + center the whole workspace. The content column (max 840px) + the
-   * 340px basket rail fit within this; without the cap a wide/maximized window
-   * left a large dead band between the content and the basket (tuxlink-lfz4). */
-  width: 100%;
-  max-width: 1240px;
-  margin-inline: auto;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
 }
 
 .request-header {
@@ -135,6 +146,8 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+  padding: 0;
+  line-height: 0;
 }
 .request-close:hover {
   color: var(--text);
@@ -389,6 +402,10 @@
   background: var(--bg);
   display: grid;
   place-items: center;
+  /* Reset the UA button padding/line-height that offset the grid-centered glyph
+   * toward the lower-right of icon-only tiles (tuxlink-4ls0). */
+  padding: 0;
+  line-height: 0;
   cursor: pointer;
 }
 .chip .cadd:hover {
@@ -504,6 +521,8 @@
   flex: 0 0 auto;
   background: none;
   border: none;
+  padding: 0;
+  line-height: 0;
 }
 .bk-item .rm:hover {
   color: var(--error);

@@ -189,7 +189,7 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
         <header className="request-header">
           <div className="request-header__lead hd-title">
             <span className="request-header__glyph g" aria-hidden="true">
-              <Icon name="radio" size={18} />
+              <Icon name="inbox" size={19} />
             </span>
             <h2 className="request-header__title">Request Center</h2>
             <span
