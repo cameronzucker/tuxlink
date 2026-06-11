@@ -328,11 +328,15 @@ Run: `pnpm vitest run src/request/catalogMap.test.ts` → both tests PASS.
 Run: `pnpm vitest run src/request/catalogMap.test.ts`
 Expected: PASS, all zone forecasts accounted for.
 
-- [ ] **Step 4: Final commit for the batch**
+- [ ] **Step 4: Prune `nws-zones.geo.json` to mapped zones only (size + architecture)**
+
+Task 2 emitted the FULL 3943-zone geometry (~4.7 MB) as an intermediate. The runtime only needs geometry for zones that map to a catalog forecast — a grid in an unmapped zone omits the zone card regardless. Add a final step to `scripts/build-request-geo.ts` that, when `nws-zone-to-catalog.json` exists, prunes the emitted `nws-zones.geo.json` to only features whose `id` is a key in the `map`. Re-run `pnpm tsx scripts/build-request-geo.ts` and confirm the feature count drops to the mapped-zone count (~400–600) and the file is well under 1 MB. The Task-6 `gridToNwsZone` test (Seattle → WAZ315) must still pass against the pruned bundle (WAZ315 is mapped, so it survives the prune).
+
+- [ ] **Step 5: Final commit for the batch**
 
 ```bash
-git add src/request/nws-zone-to-catalog.json src/request/nws-zone-unmapped.json src/request/catalogMap.test.ts
-git commit -m "feat(request): complete vetted zone↔catalog mapping; completeness gate green (tuxlink-96lu)"
+git add scripts/build-request-geo.ts src/request/nws-zones.geo.json src/request/nws-zone-to-catalog.json src/request/nws-zone-unmapped.json src/request/catalogMap.test.ts
+git commit -m "feat(request): complete vetted zone↔catalog mapping; prune geometry to mapped zones; completeness gate green (tuxlink-96lu)"
 ```
 
 ---
