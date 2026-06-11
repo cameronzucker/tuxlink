@@ -6,7 +6,7 @@
 // share the base call.
 
 import { bandForKhz, type Band } from './bandPlan';
-import type { Gateway, ListingMode, StationListing } from './stationTypes';
+import type { ListingMode, StationListing } from './stationTypes';
 
 export interface Channel {
   mode: ListingMode;
