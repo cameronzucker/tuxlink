@@ -6232,6 +6232,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "tracing-test",
+ "tuxlink",
  "urlencoding",
  "uuid",
  "walkdir",

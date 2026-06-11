@@ -10,6 +10,15 @@ license = "GPL-3.0-or-later"
 # `cargo run` / `tauri dev` is ambiguous; name the app binary as the default.
 default-run = "tuxlink"
 
+[features]
+# test-support exposes test-only seams (e.g. IdentityHandle::for_test) to
+# integration tests under tests/ + examples/benches, which link the non-test
+# lib build and therefore cannot see #[cfg(test)] items. The [dev-dependencies]
+# self-path-dep below turns this feature on automatically for test/example/bench
+# builds; release `cargo build` does NOT pull dev-dependencies, so the seam
+# stays out of production (the keyring-mintable-only security property holds).
+test-support = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -83,6 +92,11 @@ once_cell = "1.20"
 regex = "1.10"
 
 [dev-dependencies]
+# Self path-dependency: enables the `test-support` feature for test/example/bench
+# builds (plain `cargo test` picks it up automatically — no CI flag needed).
+# Release `cargo build` does not resolve dev-dependencies, so `for_test` and
+# other test-support seams stay out of production binaries.
+tuxlink = { path = ".", features = ["test-support"] }
 filetime = "0.2"           # retention sweep clock-grace test fixtures (unit + integration)
 mockito = "1.5"
 serial_test = "3"          # NEW — gates env-var-mutating tests

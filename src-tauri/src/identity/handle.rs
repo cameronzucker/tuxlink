@@ -59,7 +59,7 @@ impl IdentityHandle {
     /// Test-only seam (cross-phase reconciliation #2): lets Phases 3–7 build a
     /// `SessionIdentity` in unit tests without a real keyring. NOT compiled into
     /// release builds.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_test(full_callsign: Callsign) -> Self {
         Self::new(full_callsign)
     }
