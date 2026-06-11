@@ -241,6 +241,7 @@
   place-items: center;
   cursor: pointer;
   padding: 0;
+  line-height: 0;
 }
 .catalog-browse__add:hover {
   background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
