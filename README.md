@@ -33,10 +33,10 @@ external CMS sidecar.
 > are validated and which are operator-verified.
 
 <p align="center">
-  <img src="docs/design/mockups/images/mock-b-principles-faithful.png" width="860"
-       alt="The Tuxlink mailbox showing the dashboard ribbon, folder sidebar, message list, reading pane, and the live B2F session log">
+  <img src="docs/readme/images/tuxlink-mailbox.png" width="860"
+       alt="Running Tuxlink mailbox showing the dashboard ribbon, folder sidebar, message list, reading pane, and status bar">
 </p>
-<p align="center"><sub>The Tuxlink mailbox: dashboard ribbon, folder sidebar, reading pane, and the live B2F session log.</sub></p>
+<p align="center"><sub>The running Tuxlink mailbox with privacy-safe sample data: dashboard ribbon, folder sidebar, message list, reading pane, and status bar.</sub></p>
 
 ## What Tuxlink is
 
@@ -201,18 +201,19 @@ README and no tutorial, on a CMS-connected path or an offline / radio-only
 path:
 
 <p align="center">
-  <img src="docs/design/mockups/images/wizard-a-welcome.png" width="820"
-       alt="Tuxlink first-run wizard welcome screen offering a CMS-connected or an offline / radio-only path">
+  <img src="docs/readme/images/tuxlink-first-run-wizard.png" width="820"
+       alt="Tuxlink first-run wizard connection-choice step offering CMS-connected and radio-only paths">
 </p>
 
-Tuxlink is a native desktop application, shown here on an Ubuntu 24.04 desktop:
+The Request Center resolves location-aware catalog requests, searches the
+Winlink catalog, and collects selected items in a unified send basket:
 
 <p align="center">
-  <img src="docs/design/mockups/images/in-situ-ubuntu-2404.png" width="820"
-       alt="Tuxlink running as a native desktop application on Ubuntu 24.04">
+  <img src="docs/readme/images/tuxlink-request-center.png" width="820"
+       alt="Tuxlink Request Center dialog showing weather, propagation, gateway list, catalog search, and GRIB request cards">
 </p>
 
-<sub>The images reflect the interface design the application renders.</sub>
+<sub>Images are generated from the current frontend in WebKitGTK using privacy-safe sample data.</sub>
 
 ## Maturity: what is and is not proven
 
