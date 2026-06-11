@@ -1071,6 +1071,7 @@ export function AppShell() {
           userFolders={userFolders}
           onCreateFolder={onCreateFolder}
           onDropMessage={moveByIdToFolder}
+          onBulkDropMessage={bulkMoveToFolder}
           onFolderContextMenu={onFolderContextMenu}
           onReparentFolder={(slug, parentSlug) => moveFolder.mutate({ slug, parentSlug })}
           selectedConnection={selectedConnection}

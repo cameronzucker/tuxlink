@@ -781,4 +781,65 @@ describe('<FolderSidebar> drag-drop re-parent (tuxlink-ka3z A9)', () => {
     expect(onReparentFolder).not.toHaveBeenCalled();
     expect(onDropMessage).not.toHaveBeenCalled();
   });
+
+  // tuxlink-hh1j: a message drag carrying a multi-id payload routes to the bulk
+  // handler so the whole selection moves; a single-id payload keeps the legacy
+  // single-message path.
+  it('dropping a multi-id message payload routes to onBulkDropMessage with the whole set', () => {
+    const onDropMessage = vi.fn();
+    const onBulkDropMessage = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        userFolders={folders}
+        onDropMessage={onDropMessage}
+        onBulkDropMessage={onBulkDropMessage}
+      />,
+    );
+    fireEvent.drop(screen.getByTestId('user-folder-weather'), {
+      dataTransfer: dt({ [MSG_MIME]: '{"ids":["m1","m2","m3"],"id":"m1","folder":"inbox"}' }),
+    });
+    expect(onBulkDropMessage).toHaveBeenCalledWith(new Set(['m1', 'm2', 'm3']), 'weather');
+    expect(onDropMessage).not.toHaveBeenCalled();
+  });
+
+  it('dropping a single-id message payload still routes to onDropMessage', () => {
+    const onDropMessage = vi.fn();
+    const onBulkDropMessage = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        userFolders={folders}
+        onDropMessage={onDropMessage}
+        onBulkDropMessage={onBulkDropMessage}
+      />,
+    );
+    fireEvent.drop(screen.getByTestId('user-folder-weather'), {
+      dataTransfer: dt({ [MSG_MIME]: '{"ids":["m1"],"id":"m1","folder":"inbox"}' }),
+    });
+    expect(onDropMessage).toHaveBeenCalledWith('m1', 'inbox', 'weather');
+    expect(onBulkDropMessage).not.toHaveBeenCalled();
+  });
+
+  it('back-compat: a legacy single-id-only payload still moves one message', () => {
+    const onDropMessage = vi.fn();
+    const onBulkDropMessage = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        userFolders={folders}
+        onDropMessage={onDropMessage}
+        onBulkDropMessage={onBulkDropMessage}
+      />,
+    );
+    // No `ids` array — the pre-hh1j payload shape.
+    fireEvent.drop(screen.getByTestId('user-folder-weather'), {
+      dataTransfer: dt({ [MSG_MIME]: '{"id":"m1","folder":"inbox"}' }),
+    });
+    expect(onDropMessage).toHaveBeenCalledWith('m1', 'inbox', 'weather');
+    expect(onBulkDropMessage).not.toHaveBeenCalled();
+  });
 });
