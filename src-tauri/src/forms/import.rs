@@ -425,9 +425,11 @@ pub(crate) fn exceeds_ratio(compressed: u64, uncompressed: u64) -> bool {
 // ============================================================================
 
 /// A validated staging tree owned by its `TempDir` guard. Dropping `Staged`
-/// (on cancel, commit, or registry reap) `rm -rf`s the dir.
+/// (on cancel, commit, or registry reap) `rm -rf`s the dir. `pub` only so the
+/// `pub ImportStagingRegistry` method signatures don't expose a more-private
+/// type; it carries no public API surface beyond the `dir` path.
 #[derive(Debug)]
-pub(crate) struct Staged {
+pub struct Staged {
     /// Canonicalized staging root.
     pub dir: PathBuf,
     _guard: tempfile::TempDir,
