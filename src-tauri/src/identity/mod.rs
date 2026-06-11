@@ -15,10 +15,12 @@
 pub mod address;
 pub mod handle;
 pub mod keyring_keys;
+pub mod service;
 pub mod store;
 
 pub use address::{Address, Callsign};
 pub use handle::{IdentityHandle, SessionIdentity};
+pub use service::IdentityService;
 pub use store::{FullIdentity, IdentityStore, TacticalCmsState, TacticalIdentity};
 
 /// Errors surfaced by the identity core. Variant names are the canonical
