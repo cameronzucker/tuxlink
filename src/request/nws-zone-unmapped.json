@@ -69,6 +69,8 @@
     "WA_FOR_EAST": "multi-zone regional",
     "WA_ZON_SW": "multi-zone regional",
     "WA_ZON_WEST": "multi-zone regional",
-    "WA_ZON_CHRVM": "duplicate catalog entry for WAZ319 (mapped to WA_ZON_CHRVL)"
+    "WA_ZON_CHRVM": "duplicate catalog entry for WAZ319 (mapped to WA_ZON_CHRVL)",
+    "ME_ZON_HANCC": "no NWS zone named Central Hancock; county splits into Interior Hancock (MEZ016) and Coastal Hancock (MEZ029) only",
+    "ME_ZON_WALDC": "no NWS zone named Central Waldo; county splits into Interior Waldo (MEZ022) and Coastal Waldo (MEZ028) only"
   }
 }
