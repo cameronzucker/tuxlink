@@ -304,6 +304,95 @@ pub fn write_password(callsign: &str, password: &str) -> Result<(), KeyringError
 }
 
 // ──────────────────────────────────────────────────────────────
+// Winlink station-listing service codes (tuxlink-6j14)
+// ──────────────────────────────────────────────────────────────
+//
+// A service code is a sysop-assigned TAG that filters which gateways the
+// listing endpoint returns (`…/listings/<Mode>Listing.aspx?serviceCodes=X`).
+// It is a client-side DIRECTORY FILTER only — never sent at connect time, never
+// a connection credential. PUBLIC and EMCOMM are the only publicly-blessed
+// codes; group codes (MARS/SHARES) are member-issued FOUO secrets. The operator
+// supplies their own; tuxlink hardcodes NONE and stores whatever they enter in
+// the OS keyring rather than plaintext config, so a FOUO code is not left on
+// disk. (WLE ships these as plaintext constants in the binary — the failure
+// mode this deliberately avoids.)
+
+/// Keyring account string for the configured service codes. Per-installation
+/// (one tagging policy per station), distinct from per-callsign credentials.
+const SERVICE_CODES_ACCOUNT: &str = "catalog-service-codes";
+
+/// The default when nothing is configured: the public amateur gateway set.
+pub const DEFAULT_SERVICE_CODES: &str = "PUBLIC";
+
+/// Normalize an operator-entered service-code string: trim, collapse internal
+/// whitespace to single spaces (Winlink lists multiple codes space-separated),
+/// and fall back to [`DEFAULT_SERVICE_CODES`] when the result is empty. Case is
+/// preserved — FOUO codes may be case-sensitive.
+pub fn normalize_service_codes(input: &str) -> String {
+    let joined = input.split_whitespace().collect::<Vec<_>>().join(" ");
+    if joined.is_empty() {
+        DEFAULT_SERVICE_CODES.to_string()
+    } else {
+        joined
+    }
+}
+
+/// Read the configured service codes, with an injected entry factory.
+///
+/// Always returns a usable, non-empty code string: any keyring miss or backend
+/// error (no entry yet, no keyring daemon, locked store) degrades cleanly to
+/// [`DEFAULT_SERVICE_CODES`] so station fetching keeps working everywhere
+/// (including CI and headless shells with no secret service).
+pub fn service_codes_read_with_factory<F>(factory: &F) -> String
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    let entry = factory(SERVICE, SERVICE_CODES_ACCOUNT);
+    match entry.get_password() {
+        Ok(value) => normalize_service_codes(&value),
+        Err(_) => DEFAULT_SERVICE_CODES.to_string(),
+    }
+}
+
+/// Read the configured service codes from the OS keyring, defaulting to
+/// [`DEFAULT_SERVICE_CODES`] on any miss/error. Never panics, never errors.
+pub fn service_codes_read() -> String {
+    service_codes_read_with_factory(&real_entry_factory)
+}
+
+/// Write service codes to the keyring (normalized first), with an injected factory.
+///
+/// # Errors
+///
+/// - `KeyringError::Backend` — the keyring backend returned an error on write.
+pub fn service_codes_write_with_factory<F>(codes: &str, factory: &F) -> Result<(), KeyringError>
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    let normalized = normalize_service_codes(codes);
+    let entry = factory(SERVICE, SERVICE_CODES_ACCOUNT);
+    entry
+        .set_password(&normalized)
+        .map_err(|e| KeyringError::Backend(format!("{e}")))
+}
+
+/// Write the configured service codes to the OS keyring.
+///
+/// # Errors
+///
+/// - `KeyringError::Backend` — unexpected backend error.
+pub fn service_codes_write(codes: &str) -> Result<(), KeyringError> {
+    service_codes_write_with_factory(codes, &real_entry_factory)
+}
+
+/// The production keyring entry factory (wraps `keyring::Entry::new`).
+fn real_entry_factory(service: &str, account: &str) -> Box<dyn EntryLike> {
+    let entry = keyring::Entry::new(service, account)
+        .expect("keyring::Entry::new should not fail for valid service/account strings");
+    Box::new(RealEntry(entry))
+}
+
+// ──────────────────────────────────────────────────────────────
 // Unit tests
 // ──────────────────────────────────────────────────────────────
 

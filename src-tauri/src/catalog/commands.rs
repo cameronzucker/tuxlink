@@ -135,30 +135,49 @@ pub(crate) async fn fetch_listing_from_url(
 }
 
 /// Fetch station lists for the given modes via the polite cache (TTL + per-key coalescing +
-/// stale-on-error). v1 is PUBLIC-only — `serviceCodes` is fixed to `PUBLIC`, not caller-supplied.
-/// Independent modes fetch concurrently (per-key cache locks don't cross-block).
+/// stale-on-error). The `serviceCodes` filter is operator-configured (default `PUBLIC`),
+/// read from the keyring per [`catalog_set_service_codes`]; it is part of the cache key so a
+/// `PUBLIC` listing and a group-coded listing never collide. Independent modes fetch
+/// concurrently (per-key cache locks don't cross-block).
 #[tauri::command]
 pub async fn catalog_fetch_stations(
     modes: Vec<ListingMode>,
     history_hours: Option<u32>,
     cache: State<'_, Arc<StationsCache>>,
 ) -> Result<Vec<StationListing>, UiError> {
-    const SERVICE_CODES: &str = "PUBLIC"; // locked v1 scope — PUBLIC only
+    let service_codes = crate::winlink::credentials::service_codes_read();
     let history_hours = history_hours.unwrap_or(168);
     let cache = cache.inner().clone();
     let futures = modes.into_iter().map(|mode| {
         let cache = cache.clone();
+        let service_codes = service_codes.clone();
         async move {
-            let url = mode.listing_url(SERVICE_CODES, history_hours);
+            let url = mode.listing_url(&service_codes, history_hours);
             let key = CacheKey {
                 mode,
-                service_codes: SERVICE_CODES.to_string(),
+                service_codes,
                 history_hours,
             };
             cache.get_or_fetch(key, fetch_listing_from_url(&url, mode)).await
         }
     });
     futures::future::try_join_all(futures).await
+}
+
+/// Read the operator-configured station-listing service codes (default `PUBLIC`).
+/// Returns the raw configured string for the settings field to display/edit.
+#[tauri::command]
+pub fn catalog_get_service_codes() -> Result<String, UiError> {
+    Ok(crate::winlink::credentials::service_codes_read())
+}
+
+/// Persist the station-listing service codes to the OS keyring (normalized).
+/// Group codes (MARS/SHARES) are member-issued FOUO secrets the operator supplies;
+/// they are NOT hardcoded and NOT written to plaintext config.
+#[tauri::command]
+pub fn catalog_set_service_codes(codes: String) -> Result<(), UiError> {
+    crate::winlink::credentials::service_codes_write(&codes)
+        .map_err(|e| UiError::Unavailable { reason: e.to_string() })
 }
 
 /// Parse a received catalog reply (subject + decoded body) into a structured view, or raw.

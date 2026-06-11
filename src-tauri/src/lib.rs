@@ -669,6 +669,9 @@ pub fn run() {
             // tuxlink-a2gd: location-aware station-list direct poll + reply parse-with-fallback.
             crate::catalog::commands::catalog_fetch_stations,
             crate::catalog::commands::catalog_parse_reply,
+            // tuxlink-6j14: operator-configurable service codes (MARS/SHARES/EMCOMM).
+            crate::catalog::commands::catalog_get_service_codes,
+            crate::catalog::commands::catalog_set_service_codes,
             // tuxlink-ipjt Task 6: offline HF path prediction (voacapl sidecar).
             crate::propagation::commands::propagation_predict_path,
             // tuxlink-vrpk: GRIB request via Saildocs (3rd-party SMTP).

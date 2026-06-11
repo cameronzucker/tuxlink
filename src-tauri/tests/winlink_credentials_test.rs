@@ -26,8 +26,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tuxlink_lib::winlink::credentials::{
-    p2p_peer_password_delete_with_factory, p2p_peer_password_read_with_factory,
-    p2p_peer_password_write_with_factory, read_password_with_factory, EntryLike, KeyringError,
+    normalize_service_codes, p2p_peer_password_delete_with_factory,
+    p2p_peer_password_read_with_factory, p2p_peer_password_write_with_factory,
+    read_password_with_factory, service_codes_read_with_factory, service_codes_write_with_factory,
+    EntryLike, KeyringError, DEFAULT_SERVICE_CODES,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -233,4 +235,53 @@ fn p2p_peer_password_keyring_account_uses_p2p_peer_prefix() {
     // should return NoEntry — proves no namespace collision.
     let cms_side = read_password_with_factory("N7CPZ", &factory);
     assert!(matches!(cms_side, Err(KeyringError::NoEntry { .. })));
+}
+
+// ──────────────────────────────────────────────────────────────
+// Service codes (tuxlink-6j14)
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn service_codes_default_when_unset() {
+    // No keyring entry yet → the read degrades to PUBLIC so station fetch works.
+    let store: Arc<Mutex<HashMap<(String, String), String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let factory = mock_factory(Arc::clone(&store));
+    assert_eq!(service_codes_read_with_factory(&factory), "PUBLIC");
+}
+
+#[test]
+fn service_codes_write_then_read_roundtrips() {
+    let store: Arc<Mutex<HashMap<(String, String), String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let factory = mock_factory(Arc::clone(&store));
+    // A FOUO-shaped code the operator pasted; preserved verbatim (case-sensitive).
+    service_codes_write_with_factory("PUBLIC EMCOMM", &factory).unwrap();
+    assert_eq!(service_codes_read_with_factory(&factory), "PUBLIC EMCOMM");
+}
+
+#[test]
+fn service_codes_write_normalizes_whitespace() {
+    let store: Arc<Mutex<HashMap<(String, String), String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let factory = mock_factory(Arc::clone(&store));
+    service_codes_write_with_factory("  PUBLIC   EMCOMM \n", &factory).unwrap();
+    assert_eq!(service_codes_read_with_factory(&factory), "PUBLIC EMCOMM");
+}
+
+#[test]
+fn service_codes_write_empty_falls_back_to_default() {
+    // Clearing the field (empty / whitespace) must not produce an empty query —
+    // it resets to PUBLIC.
+    let store: Arc<Mutex<HashMap<(String, String), String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let factory = mock_factory(Arc::clone(&store));
+    service_codes_write_with_factory("   ", &factory).unwrap();
+    assert_eq!(service_codes_read_with_factory(&factory), DEFAULT_SERVICE_CODES);
+}
+
+#[test]
+fn normalize_service_codes_cases() {
+    assert_eq!(normalize_service_codes(""), "PUBLIC");
+    assert_eq!(normalize_service_codes("   "), "PUBLIC");
+    assert_eq!(normalize_service_codes("  PUBLIC  "), "PUBLIC");
+    assert_eq!(normalize_service_codes("PUBLIC\tEMCOMM"), "PUBLIC EMCOMM");
+    // Case preserved (FOUO codes may be case-sensitive; do not upcase).
+    assert_eq!(normalize_service_codes("MixedCase99"), "MixedCase99");
 }
