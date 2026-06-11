@@ -275,7 +275,9 @@
   line-height: 1.45;
 }
 .feat .fa {
-  margin-top: 14px;
+  margin-left: auto;
+  align-self: center;
+  flex: 0 0 auto;
 }
 
 .badd {
@@ -314,6 +316,97 @@
 }
 .badd:focus-visible,
 .bopen:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+/* --- ZONE card (primary location product: the operator's exact NWS zone) -- */
+
+/* Full-width primary card inside the hero; amber tile + structured body */
+.zone {
+  display: flex;
+  gap: 15px;
+  align-items: flex-start;
+  background: var(--bg);
+  border: 1px solid var(--accent-edge);
+  border-radius: 11px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+
+/* Amber icon tile — filled accent background, dark icon */
+.zone .zi {
+  width: 50px;
+  height: 50px;
+  border-radius: 12px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #2a1500;
+}
+
+.zone .zn {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.zone .zd {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+/* Catalog target / filename in mono — faint grey, small */
+.zone .zmeta {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  margin-top: 5px;
+}
+
+/* Action area — pushed to the end of the flex row */
+.zone .za {
+  margin-left: auto;
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+/* --- LOCGRID (2-column grid of supporting location cards) --------------- */
+
+.locgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* Catalog annotation for feat cards inside .locgrid (and anywhere .fmeta is used) */
+.feat .fmeta {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  margin-top: 4px;
+}
+
+/* Icon-only add/browse button for supporting cards (.iadd) */
+.iadd {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.iadd:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.iadd:focus-visible {
   outline: 2px solid var(--tux-focus-ring);
   outline-offset: 1px;
 }

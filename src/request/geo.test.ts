@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { gridToLatLon, latLonToUsState, latLonToSeaArea } from './geo';
+import { gridToLatLon, latLonToUsState, latLonToSeaArea, gridToNwsZone, gridToRadarRegion } from './geo';
 
 describe('gridToLatLon', () => {
   it('decodes a 4-char square to its center (CN87 ≈ Seattle area)', () => {
@@ -90,6 +90,28 @@ describe('latLonToUsState', () => {
   it('returns null for a point in central Canada', () => {
     // Near Winnipeg, MB
     expect(latLonToUsState(49.9, -97.1)).toBeNull();
+  });
+});
+
+describe('gridToRadarRegion', () => {
+  it('resolves Seattle to the tightest region (Puget Sound, not PNW)', () => {
+    const { lat, lon } = gridToLatLon('CN87uo')!;
+    expect(gridToRadarRegion(lat, lon)?.filename).toBe('US.RAD.PSND');
+  });
+  it('returns null for a point in no curated region (mid-ocean)', () => {
+    expect(gridToRadarRegion(0, -150)).toBeNull();
+  });
+});
+
+describe('gridToNwsZone', () => {
+  it('resolves Seattle (CN87uo) to its NWS public zone', () => {
+    const { lat, lon } = gridToLatLon('CN87uo')!;
+    const zone = gridToNwsZone(lat, lon);
+    expect(zone?.id).toBe('WAZ315');
+    expect(zone?.name).toBe('City of Seattle');
+  });
+  it('returns null for an ocean/non-US point', () => {
+    expect(gridToNwsZone(0, -150)).toBeNull();
   });
 });
 

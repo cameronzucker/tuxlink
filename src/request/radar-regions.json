@@ -1,0 +1,1615 @@
+{
+  "_source": "Derived from us-states.geo.json state extents + region-name direction parsing; metro/feature regions hand-curated (see scripts/build-request-geo.ts radar section). bbox = [west, south, east, north] decimal degrees.",
+  "regions": [
+    {
+      "filename": "US.RAD.ALASK",
+      "name": "Alaska",
+      "bbox": [
+        -180.0,
+        51.6127,
+        -129.9863,
+        71.3516
+      ]
+    },
+    {
+      "filename": "US.RAD.AR",
+      "name": "Arkansas",
+      "bbox": [
+        -94.6162,
+        33.0021,
+        -89.7308,
+        36.5019
+      ]
+    },
+    {
+      "filename": "US.RAD.AZ",
+      "name": "Arizona",
+      "bbox": [
+        -114.8152,
+        31.3316,
+        -109.0425,
+        37.0057
+      ]
+    },
+    {
+      "filename": "US.RAD.CCA",
+      "name": "S Central Ca",
+      "bbox": [
+        -123.4108,
+        35.3791,
+        -115.6361,
+        39.1692
+      ]
+    },
+    {
+      "filename": "US.RAD.CCO",
+      "name": "Central Colorado",
+      "bbox": [
+        -107.3049,
+        37.9971,
+        -103.797,
+        40.0016
+      ]
+    },
+    {
+      "filename": "US.RAD.CEFL",
+      "name": "Central Florida",
+      "bbox": [
+        -85.7326,
+        26.5913,
+        -81.9316,
+        29.5325
+      ]
+    },
+    {
+      "filename": "US.RAD.CEOK",
+      "name": "Central Oklahoma",
+      "bbox": [
+        -100.8586,
+        34.4781,
+        -96.5729,
+        36.1596
+      ]
+    },
+    {
+      "filename": "US.RAD.CGI",
+      "name": "Cape Giardeau Mo Area",
+      "bbox": [
+        -90.5,
+        36.5,
+        -88.5,
+        38.0
+      ]
+    },
+    {
+      "filename": "US.RAD.CME",
+      "name": "Coastal Maine",
+      "bbox": [
+        -69.9409,
+        43.0578,
+        -66.9796,
+        47.4612
+      ]
+    },
+    {
+      "filename": "US.RAD.CMT",
+      "name": "Central Mt",
+      "bbox": [
+        -113.0461,
+        45.5456,
+        -107.0435,
+        47.8487
+      ]
+    },
+    {
+      "filename": "US.RAD.CND",
+      "name": "Central North Dakota",
+      "bbox": [
+        -102.1758,
+        46.7,
+        -98.4323,
+        48.2334
+      ]
+    },
+    {
+      "filename": "US.RAD.CNE",
+      "name": "Central Nebraska",
+      "bbox": [
+        -101.8663,
+        40.752,
+        -97.493,
+        42.2527
+      ]
+    },
+    {
+      "filename": "US.RAD.CNESC",
+      "name": "Cst NE S Carol & Cst SE N Carol",
+      "bbox": [
+        -81.4403,
+        33.1155,
+        -75.7153,
+        35.7175
+      ]
+    },
+    {
+      "filename": "US.RAD.CNM",
+      "name": "Central New Mexico",
+      "bbox": [
+        -107.5363,
+        32.7488,
+        -104.5131,
+        35.5831
+      ]
+    },
+    {
+      "filename": "US.RAD.CNNY",
+      "name": "Central N New York & Montreal Ca",
+      "bbox": [
+        -77.8472,
+        41.6625,
+        -73.2,
+        45.6
+      ]
+    },
+    {
+      "filename": "US.RAD.COCAC",
+      "name": "Ca Coast Monterey - Santa Monica",
+      "bbox": [
+        -122.5,
+        33.8,
+        -117.5,
+        37.0
+      ]
+    },
+    {
+      "filename": "US.RAD.COCAS",
+      "name": "Ca Cst San Luis Obispo - San Die",
+      "bbox": [
+        -121.5,
+        32.5,
+        -116.5,
+        35.5
+      ]
+    },
+    {
+      "filename": "US.RAD.CONUS",
+      "name": "Conus",
+      "bbox": [
+        -130.0,
+        23.0,
+        -65.0,
+        50.0
+      ]
+    },
+    {
+      "filename": "US.RAD.CSC",
+      "name": "Coastal Sc",
+      "bbox": [
+        -81.9201,
+        32.0327,
+        -78.5414,
+        35.1983
+      ]
+    },
+    {
+      "filename": "US.RAD.CTN",
+      "name": "Cent Tennessee & Cent Kentucky",
+      "bbox": [
+        -88.1535,
+        35.4078,
+        -83.8321,
+        38.4517
+      ]
+    },
+    {
+      "filename": "US.RAD.CTX",
+      "name": "Central Texas",
+      "bbox": [
+        -103.3643,
+        28.5412,
+        -96.8056,
+        33.8483
+      ]
+    },
+    {
+      "filename": "US.RAD.CWI",
+      "name": "Central Wisconsin / N Illinois",
+      "bbox": [
+        -91.5053,
+        39.2469,
+        -87.4962,
+        45.8414
+      ]
+    },
+    {
+      "filename": "US.RAD.EALAK",
+      "name": "E Aleutian Isl to Palmer Ak",
+      "bbox": [
+        -180.0,
+        51.6,
+        -145.0,
+        62.0
+      ]
+    },
+    {
+      "filename": "US.RAD.ECA",
+      "name": "E Cent Alabama & W Georgia",
+      "bbox": [
+        -87.3592,
+        30.2472,
+        -82.7462,
+        35.0012
+      ]
+    },
+    {
+      "filename": "US.RAD.ECMS",
+      "name": "E Central Missouri & S Illinois",
+      "bbox": [
+        -92.9501,
+        35.998,
+        -87.4962,
+        40.615
+      ]
+    },
+    {
+      "filename": "US.RAD.ECNE",
+      "name": "E Central Nebraska & S S Dakota",
+      "bbox": [
+        -104.0585,
+        40.0016,
+        -95.3063,
+        44.7161
+      ]
+    },
+    {
+      "filename": "US.RAD.ECNM",
+      "name": "E Central New Mexico",
+      "bbox": [
+        -106.827,
+        31.3316,
+        -103.0014,
+        37.0003
+      ]
+    },
+    {
+      "filename": "US.RAD.EFLPH",
+      "name": "East Florida Ph & S Georgia",
+      "bbox": [
+        -85.6067,
+        25.1208,
+        -80.0311,
+        33.179
+      ]
+    },
+    {
+      "filename": "US.RAD.EIA",
+      "name": "E Iowa / W Il",
+      "bbox": [
+        -93.8867,
+        36.9838,
+        -89.0008,
+        43.5014
+      ]
+    },
+    {
+      "filename": "US.RAD.EKS",
+      "name": "E Kansas",
+      "bbox": [
+        -98.8323,
+        36.9948,
+        -94.6108,
+        40.0016
+      ]
+    },
+    {
+      "filename": "US.RAD.EKSWM",
+      "name": "E Kansas / W Missouri",
+      "bbox": [
+        -98.8323,
+        35.998,
+        -91.9501,
+        40.615
+      ]
+    },
+    {
+      "filename": "US.RAD.EMI",
+      "name": "E Mich / N Indiana",
+      "bbox": [
+        -88.0603,
+        39.2743,
+        -82.4136,
+        48.1732
+      ]
+    },
+    {
+      "filename": "US.RAD.ENC",
+      "name": "Eastern North Carolina",
+      "bbox": [
+        -80.5174,
+        33.8455,
+        -75.7153,
+        36.5895
+      ]
+    },
+    {
+      "filename": "US.RAD.END",
+      "name": "E N. Dakota & W Minnesota",
+      "bbox": [
+        -100.804,
+        43.5014,
+        -92.9222,
+        49.3836
+      ]
+    },
+    {
+      "filename": "US.RAD.ENE",
+      "name": "E Ne / E Ks / NW Ms / SW Ia",
+      "bbox": [
+        -100.1796,
+        36.9948,
+        -91.9501,
+        43.003
+      ]
+    },
+    {
+      "filename": "US.RAD.ENY",
+      "name": "E New York",
+      "bbox": [
+        -76.4316,
+        40.5438,
+        -72.1005,
+        45.0185
+      ]
+    },
+    {
+      "filename": "US.RAD.ETN",
+      "name": "E Tenn / E Kent & W N. Carolina",
+      "bbox": [
+        -86.4956,
+        33.8455,
+        -79.5174,
+        39.1034
+      ]
+    },
+    {
+      "filename": "US.RAD.EVA",
+      "name": "E Virginia & E N Carolina",
+      "bbox": [
+        -80.5174,
+        33.8455,
+        -75.2443,
+        39.4649
+      ]
+    },
+    {
+      "filename": "US.RAD.EWA",
+      "name": "E Washington & Idaho Ph",
+      "bbox": [
+        -121.3124,
+        41.9952,
+        -111.0471,
+        49.0002
+      ]
+    },
+    {
+      "filename": "US.RAD.EWI",
+      "name": "E Wisconsin / L Mich",
+      "bbox": [
+        -90.4581,
+        41.694,
+        -85.9145,
+        48.1732
+      ]
+    },
+    {
+      "filename": "US.RAD.FLKW",
+      "name": "S Fl & Key West",
+      "bbox": [
+        -87.6331,
+        25.1208,
+        -80.0311,
+        27.3855
+      ]
+    },
+    {
+      "filename": "US.RAD.GA",
+      "name": "Georgia",
+      "bbox": [
+        -85.6067,
+        30.3567,
+        -80.8856,
+        35.0012
+      ]
+    },
+    {
+      "filename": "US.RAD.GRLAK",
+      "name": "Cent Great Lakes",
+      "bbox": [
+        -92.8855,
+        39.2469,
+        -76.0,
+        48.1732
+      ]
+    },
+    {
+      "filename": "US.RAD.GUAM",
+      "name": "Guam",
+      "bbox": [
+        144.5,
+        13.2,
+        145.0,
+        13.7
+      ]
+    },
+    {
+      "filename": "US.RAD.HAWAI",
+      "name": "Hawaii",
+      "bbox": [
+        -159.7644,
+        18.9483,
+        -154.8078,
+        22.229
+      ]
+    },
+    {
+      "filename": "US.RAD.HIKO",
+      "name": "Hawaii Kauai & Oahu",
+      "bbox": [
+        -160.3,
+        21.2,
+        -157.6,
+        22.3
+      ]
+    },
+    {
+      "filename": "US.RAD.HIMH",
+      "name": "Hawaii Maui & Hawaii Isl",
+      "bbox": [
+        -156.7,
+        18.9,
+        -154.8,
+        21.0
+      ]
+    },
+    {
+      "filename": "US.RAD.HIMMH",
+      "name": "Hawaii Maui Molokai & Hawaii Isl",
+      "bbox": [
+        -157.4,
+        18.9,
+        -154.8,
+        21.3
+      ]
+    },
+    {
+      "filename": "US.RAD.HOMMH",
+      "name": "Hi Oah Maui Molokai & Hawaii Isl",
+      "bbox": [
+        -158.3,
+        18.9,
+        -154.8,
+        21.5
+      ]
+    },
+    {
+      "filename": "US.RAD.IA",
+      "name": "Iowa",
+      "bbox": [
+        -96.6318,
+        40.3795,
+        -90.1416,
+        43.5014
+      ]
+    },
+    {
+      "filename": "US.RAD.IL",
+      "name": "Illinois",
+      "bbox": [
+        -91.5053,
+        36.9838,
+        -87.4962,
+        42.5101
+      ]
+    },
+    {
+      "filename": "US.RAD.IN",
+      "name": "Indiana",
+      "bbox": [
+        -88.0603,
+        37.7889,
+        -84.8016,
+        41.7597
+      ]
+    },
+    {
+      "filename": "US.RAD.KY",
+      "name": "Kentucky",
+      "bbox": [
+        -89.4186,
+        36.4964,
+        -81.97,
+        39.1034
+      ]
+    },
+    {
+      "filename": "US.RAD.LINY",
+      "name": "Long Isl Ny / Conn / Ri / N Nj",
+      "bbox": [
+        -76.4316,
+        39.6769,
+        -71.1202,
+        43.2811
+      ]
+    },
+    {
+      "filename": "US.RAD.MARI",
+      "name": "Ri & Ma",
+      "bbox": [
+        -73.5081,
+        41.3216,
+        -69.9371,
+        42.888
+      ]
+    },
+    {
+      "filename": "US.RAD.MD",
+      "name": "Md / Ri Pa Va",
+      "bbox": [
+        -83.6733,
+        37.5025,
+        -71.1202,
+        42.2691
+      ]
+    },
+    {
+      "filename": "US.RAD.MI",
+      "name": "E Mich / N Indiana",
+      "bbox": [
+        -88.0603,
+        39.2743,
+        -82.4136,
+        48.1732
+      ]
+    },
+    {
+      "filename": "US.RAD.MIUP",
+      "name": "Michigan Up / N Wisconsin",
+      "bbox": [
+        -92.8855,
+        44.2254,
+        -82.4136,
+        48.1732
+      ]
+    },
+    {
+      "filename": "US.RAD.NAL",
+      "name": "N Alabama",
+      "bbox": [
+        -88.4711,
+        32.1242,
+        -84.8892,
+        35.0012
+      ]
+    },
+    {
+      "filename": "US.RAD.NALTN",
+      "name": "N Ala & S Tenn & NW Geo",
+      "bbox": [
+        -90.3114,
+        32.1242,
+        -81.6797,
+        36.3309
+      ]
+    },
+    {
+      "filename": "US.RAD.NCA",
+      "name": "N Coastal Ca",
+      "bbox": [
+        -124.4108,
+        38.2217,
+        -122.9108,
+        42.0117
+      ]
+    },
+    {
+      "filename": "US.RAD.NCAZ",
+      "name": "SE South Dakota / W Minn",
+      "bbox": [
+        -100.7465,
+        42.4882,
+        -92.9222,
+        49.3836
+      ]
+    },
+    {
+      "filename": "US.RAD.NCCA",
+      "name": "N Central Ca",
+      "bbox": [
+        -122.9108,
+        37.7479,
+        -116.1361,
+        42.0117
+      ]
+    },
+    {
+      "filename": "US.RAD.NCMI",
+      "name": "North Central Minnesota",
+      "bbox": [
+        -97.2287,
+        45.9425,
+        -89.6158,
+        49.3836
+      ]
+    },
+    {
+      "filename": "US.RAD.NCMT",
+      "name": "North Central Mt",
+      "bbox": [
+        -116.0475,
+        46.1972,
+        -104.0421,
+        49.0002
+      ]
+    },
+    {
+      "filename": "US.RAD.NCNV",
+      "name": "N Central Nevada",
+      "bbox": [
+        -120.0019,
+        38.001,
+        -114.043,
+        42.0007
+      ]
+    },
+    {
+      "filename": "US.RAD.NCTX",
+      "name": "Central Texas",
+      "bbox": [
+        -103.3643,
+        28.5412,
+        -96.8056,
+        33.8483
+      ]
+    },
+    {
+      "filename": "US.RAD.NEAST",
+      "name": "Northeast",
+      "bbox": [
+        -80.5186,
+        38.9939,
+        -66.9796,
+        47.4612
+      ]
+    },
+    {
+      "filename": "US.RAD.NEFL",
+      "name": "N Florida / SE Georgia",
+      "bbox": [
+        -87.6331,
+        27.5619,
+        -80.0311,
+        33.179
+      ]
+    },
+    {
+      "filename": "US.RAD.NEIA",
+      "name": "NE Iowa & S Wisconsin",
+      "bbox": [
+        -93.8867,
+        41.4404,
+        -87.0307,
+        45.2254
+      ]
+    },
+    {
+      "filename": "US.RAD.NEIL",
+      "name": "NE Illinois & SE Wisconsin",
+      "bbox": [
+        -90.4581,
+        39.2469,
+        -87.0307,
+        45.2254
+      ]
+    },
+    {
+      "filename": "US.RAD.NEMT",
+      "name": "Northeast Montana",
+      "bbox": [
+        -110.5448,
+        46.1972,
+        -104.0421,
+        49.0002
+      ]
+    },
+    {
+      "filename": "US.RAD.NEOH",
+      "name": "NE Ohio & NW Pennsylvania",
+      "bbox": [
+        -83.1683,
+        39.7015,
+        -77.1076,
+        42.2691
+      ]
+    },
+    {
+      "filename": "US.RAD.NEOK",
+      "name": "NE Oklahoma & NW Ark & SE Kansas",
+      "bbox": [
+        -99.2157,
+        34.252,
+        -91.6735,
+        38.9982
+      ]
+    },
+    {
+      "filename": "US.RAD.NEOR",
+      "name": "NE Oregon & SE Washington",
+      "bbox": [
+        -121.3124,
+        43.6258,
+        -116.4638,
+        47.775
+      ]
+    },
+    {
+      "filename": "US.RAD.NESD",
+      "name": "NE S Dakota & SE N Dakota",
+      "bbox": [
+        -100.804,
+        43.7161,
+        -96.4346,
+        47.9667
+      ]
+    },
+    {
+      "filename": "US.RAD.NFL",
+      "name": "N Florida / S Georgia",
+      "bbox": [
+        -87.6331,
+        27.5619,
+        -80.0311,
+        33.179
+      ]
+    },
+    {
+      "filename": "US.RAD.NGA",
+      "name": "N Georgia / NE Alabama",
+      "bbox": [
+        -87.1801,
+        32.1242,
+        -80.8856,
+        35.0012
+      ]
+    },
+    {
+      "filename": "US.RAD.NIN",
+      "name": "N Indiana & S Michigan",
+      "bbox": [
+        -90.4154,
+        39.2743,
+        -82.4136,
+        45.4336
+      ]
+    },
+    {
+      "filename": "US.RAD.NJ",
+      "name": "Nj Swct De Epa",
+      "bbox": [
+        -77.8165,
+        38.4517,
+        -72.2632,
+        42.2691
+      ]
+    },
+    {
+      "filename": "US.RAD.NKS",
+      "name": "N Kansas / SW Neb & E Co",
+      "bbox": [
+        -106.051,
+        36.9948,
+        -94.6108,
+        42.0023
+      ]
+    },
+    {
+      "filename": "US.RAD.NNC",
+      "name": "N Carolina / SE Virginia",
+      "bbox": [
+        -84.3196,
+        34.7175,
+        -75.2443,
+        38.5025
+      ]
+    },
+    {
+      "filename": "US.RAD.NNY",
+      "name": "NNY & Montreal Ca",
+      "bbox": [
+        -79.7628,
+        42.2811,
+        -72.1005,
+        45.6
+      ]
+    },
+    {
+      "filename": "US.RAD.NOH",
+      "name": "N Ohio & E Mi",
+      "bbox": [
+        -86.9145,
+        39.7015,
+        -80.5186,
+        48.1732
+      ]
+    },
+    {
+      "filename": "US.RAD.NROC",
+      "name": "North Rockies",
+      "bbox": [
+        -117.2415,
+        38.4993,
+        -102.043,
+        49.0002
+      ]
+    },
+    {
+      "filename": "US.RAD.NSEAK",
+      "name": "N SE Alaska to South Central Ak",
+      "bbox": [
+        -155.0,
+        55.0,
+        -129.9,
+        66.0
+      ]
+    },
+    {
+      "filename": "US.RAD.NTX",
+      "name": "N Texas / SW Oklahoma",
+      "bbox": [
+        -106.6436,
+        29.1026,
+        -93.5263,
+        36.5019
+      ]
+    },
+    {
+      "filename": "US.RAD.NUT",
+      "name": "N Utah / SE Idaho & E Nevada",
+      "bbox": [
+        -117.5225,
+        35.0012,
+        -109.0425,
+        45.9977
+      ]
+    },
+    {
+      "filename": "US.RAD.NVA",
+      "name": "N Virginia / Maryland SE Penn",
+      "bbox": [
+        -83.6733,
+        37.5025,
+        -74.6966,
+        41.4957
+      ]
+    },
+    {
+      "filename": "US.RAD.NWAL",
+      "name": "NW Alabama / NE Miss / SW Tenn",
+      "bbox": [
+        -90.3678,
+        32.0886,
+        -85.4956,
+        36.3309
+      ]
+    },
+    {
+      "filename": "US.RAD.NWAR",
+      "name": "NW Arkansas & NE Texas",
+      "bbox": [
+        -100.585,
+        32.8176,
+        -91.6735,
+        36.5019
+      ]
+    },
+    {
+      "filename": "US.RAD.NWFL",
+      "name": "NW Florida/SE Al/SW Ga",
+      "bbox": [
+        -87.6331,
+        27.5619,
+        -82.7462,
+        33.179
+      ]
+    },
+    {
+      "filename": "US.RAD.NWI",
+      "name": "N Wi & E Mn",
+      "bbox": [
+        -93.9222,
+        43.5014,
+        -87.0307,
+        49.3836
+      ]
+    },
+    {
+      "filename": "US.RAD.NWLA",
+      "name": "NW Louisana & E Tx & SW Arkansas",
+      "bbox": [
+        -97.9615,
+        25.8876,
+        -91.0218,
+        36.5019
+      ]
+    },
+    {
+      "filename": "US.RAD.NWMI",
+      "name": "NW Michigan & E Up",
+      "bbox": [
+        -90.4154,
+        45.0815,
+        -85.9145,
+        48.1732
+      ]
+    },
+    {
+      "filename": "US.RAD.NWNY",
+      "name": "NNY & Toronto Ca",
+      "bbox": [
+        -79.7628,
+        42.2811,
+        -72.1005,
+        45.0185
+      ]
+    },
+    {
+      "filename": "US.RAD.NWOR",
+      "name": "NW Oregon & SW Washington",
+      "bbox": [
+        -124.7066,
+        43.6258,
+        -120.0085,
+        47.775
+      ]
+    },
+    {
+      "filename": "US.RAD.NWPA",
+      "name": "NW Pa",
+      "bbox": [
+        -80.5186,
+        40.4957,
+        -77.1076,
+        42.2691
+      ]
+    },
+    {
+      "filename": "US.RAD.NWSC",
+      "name": "NW S Carolina / NE Ga & SW N Car",
+      "bbox": [
+        -84.3196,
+        32.179,
+        -79.5174,
+        35.7175
+      ]
+    },
+    {
+      "filename": "US.RAD.NWWA",
+      "name": "W Washington & NW Oregon",
+      "bbox": [
+        -124.9,
+        45.2,
+        -120.8,
+        49.0
+      ]
+    },
+    {
+      "filename": "US.RAD.OKPH",
+      "name": "Oklahoma Ph & Texas Ph",
+      "bbox": [
+        -106.6436,
+        28.5719,
+        -93.5263,
+        37.0003
+      ]
+    },
+    {
+      "filename": "US.RAD.PACSW",
+      "name": "Pacific Southwest",
+      "bbox": [
+        -124.4108,
+        31.3316,
+        -109.0425,
+        39.001
+      ]
+    },
+    {
+      "filename": "US.RAD.PNW",
+      "name": "Pacific Northwest",
+      "bbox": [
+        -125.0,
+        41.9,
+        -116.5,
+        49.1
+      ]
+    },
+    {
+      "filename": "US.RAD.PR",
+      "name": "Puerto Rico",
+      "bbox": [
+        -67.2699,
+        17.9296,
+        -65.6268,
+        18.5156
+      ]
+    },
+    {
+      "filename": "US.RAD.PSND",
+      "name": "Puget Sound & SJDF",
+      "bbox": [
+        -124.9,
+        46.9,
+        -121.4,
+        49.0
+      ]
+    },
+    {
+      "filename": "US.RAD.SAL",
+      "name": "S Alabama / S Miss & W Fl",
+      "bbox": [
+        -91.6368,
+        25.1208,
+        -83.3321,
+        33.1242
+      ]
+    },
+    {
+      "filename": "US.RAD.SAZ",
+      "name": "S Arizona",
+      "bbox": [
+        -114.8152,
+        31.3316,
+        -109.0425,
+        34.6686
+      ]
+    },
+    {
+      "filename": "US.RAD.SCA",
+      "name": "S Calf to Los Angeles",
+      "bbox": [
+        -124.4108,
+        32.5366,
+        -118.7734,
+        37.3004
+      ]
+    },
+    {
+      "filename": "US.RAD.SCAK",
+      "name": "South Central Alaska",
+      "bbox": [
+        -156.0,
+        58.0,
+        -142.0,
+        63.0
+      ]
+    },
+    {
+      "filename": "US.RAD.SCCA",
+      "name": "S Central California",
+      "bbox": [
+        -123.4108,
+        34.4316,
+        -115.6361,
+        37.7479
+      ]
+    },
+    {
+      "filename": "US.RAD.SCKS",
+      "name": "S Central Ks",
+      "bbox": [
+        -100.5653,
+        36.9948,
+        -96.0994,
+        38.7989
+      ]
+    },
+    {
+      "filename": "US.RAD.SCMT",
+      "name": "South Central Mt",
+      "bbox": [
+        -113.0461,
+        44.3941,
+        -107.0435,
+        47.1578
+      ]
+    },
+    {
+      "filename": "US.RAD.SCTX",
+      "name": "S Central Texas",
+      "bbox": [
+        -104.0201,
+        25.8876,
+        -96.1498,
+        31.1947
+      ]
+    },
+    {
+      "filename": "US.RAD.SEAK",
+      "name": "Southeast Alaska",
+      "bbox": [
+        -138.0,
+        54.0,
+        -129.9,
+        60.5
+      ]
+    },
+    {
+      "filename": "US.RAD.SEAST",
+      "name": "Southeast",
+      "bbox": [
+        -91.6368,
+        25.1208,
+        -75.7153,
+        36.6771
+      ]
+    },
+    {
+      "filename": "US.RAD.SECO",
+      "name": "SE Colorado",
+      "bbox": [
+        -106.051,
+        36.9948,
+        -102.043,
+        39.4993
+      ]
+    },
+    {
+      "filename": "US.RAD.SECTX",
+      "name": "NE Coast Texas & S Cst Louisiana",
+      "bbox": [
+        -97.9615,
+        28.0412,
+        -89.0024,
+        36.5019
+      ]
+    },
+    {
+      "filename": "US.RAD.SEID",
+      "name": "SE Idaho & N Utah",
+      "bbox": [
+        -114.6443,
+        39.0005,
+        -109.0425,
+        45.9977
+      ]
+    },
+    {
+      "filename": "US.RAD.SEKS",
+      "name": "SE Kansas / NE Oklahoma",
+      "bbox": [
+        -99.2157,
+        34.8188,
+        -94.43,
+        38.9982
+      ]
+    },
+    {
+      "filename": "US.RAD.SELA",
+      "name": "SE Louisiana / S Missippi",
+      "bbox": [
+        -92.0218,
+        29.0094,
+        -88.0987,
+        33.0886
+      ]
+    },
+    {
+      "filename": "US.RAD.SENM",
+      "name": "SE New Mexico",
+      "bbox": [
+        -106.5247,
+        31.3316,
+        -103.0014,
+        34.666
+      ]
+    },
+    {
+      "filename": "US.RAD.SESD",
+      "name": "SE South Dakota / W Minn",
+      "bbox": [
+        -100.7465,
+        42.4882,
+        -92.9222,
+        49.3836
+      ]
+    },
+    {
+      "filename": "US.RAD.SEVA",
+      "name": "SE Virginia & E S Carolina",
+      "bbox": [
+        -81.4403,
+        32.0327,
+        -75.2443,
+        38.5025
+      ]
+    },
+    {
+      "filename": "US.RAD.SFL",
+      "name": "Southern Florida",
+      "bbox": [
+        -87.6331,
+        25.1208,
+        -80.0311,
+        27.9737
+      ]
+    },
+    {
+      "filename": "US.RAD.SIN",
+      "name": "S Indianna / N Kentucky & W Ohio",
+      "bbox": [
+        -89.4186,
+        37.2999,
+        -81.97,
+        41.9788
+      ]
+    },
+    {
+      "filename": "US.RAD.SINAK",
+      "name": "S Cent to Int Palmer 2 Fort Yukon",
+      "bbox": [
+        -155.0,
+        60.0,
+        -142.0,
+        67.0
+      ]
+    },
+    {
+      "filename": "US.RAD.SMS",
+      "name": "S Mississippi",
+      "bbox": [
+        -91.6368,
+        30.1815,
+        -88.0987,
+        33.0886
+      ]
+    },
+    {
+      "filename": "US.RAD.SMVAL",
+      "name": "South Miss Valley",
+      "bbox": [
+        -96.6443,
+        32.0886,
+        -85.4956,
+        38.8065
+      ]
+    },
+    {
+      "filename": "US.RAD.SMVLR",
+      "name": "South Miss Valley (Low Res)",
+      "bbox": [
+        -96.6443,
+        32.0886,
+        -85.4956,
+        38.8065
+      ]
+    },
+    {
+      "filename": "US.RAD.SNV",
+      "name": "S Nv / NW Az / E Ca",
+      "bbox": [
+        -120.0019,
+        32.5366,
+        -111.4289,
+        42.0117
+      ]
+    },
+    {
+      "filename": "US.RAD.SPLA",
+      "name": "South Plains",
+      "bbox": [
+        -106.6436,
+        30.164,
+        -93.5263,
+        36.5019
+      ]
+    },
+    {
+      "filename": "US.RAD.SROC",
+      "name": "South Rockies",
+      "bbox": [
+        -114.8152,
+        27.5105,
+        -93.5263,
+        39.4993
+      ]
+    },
+    {
+      "filename": "US.RAD.SWAK",
+      "name": "Southwest Alaska",
+      "bbox": [
+        -170.0,
+        54.0,
+        -155.0,
+        62.5
+      ]
+    },
+    {
+      "filename": "US.RAD.SWAZ",
+      "name": "SW Arizona & SE California",
+      "bbox": [
+        -119.7734,
+        31.3316,
+        -111.4289,
+        37.7741
+      ]
+    },
+    {
+      "filename": "US.RAD.SWCA",
+      "name": "SW California",
+      "bbox": [
+        -124.4108,
+        32.5366,
+        -118.7734,
+        36.8266
+      ]
+    },
+    {
+      "filename": "US.RAD.SWID",
+      "name": "SW Id & SE Or",
+      "bbox": [
+        -121.0085,
+        41.9898,
+        -113.6443,
+        45.9977
+      ]
+    },
+    {
+      "filename": "US.RAD.SWME",
+      "name": "SW Maine / New Hampshire & NE Vt",
+      "bbox": [
+        -72.9647,
+        42.6963,
+        -68.5307,
+        45.7595
+      ]
+    },
+    {
+      "filename": "US.RAD.SWNM",
+      "name": "SW Nw to S Central Nm",
+      "bbox": [
+        -109.048,
+        31.3316,
+        -105.42,
+        34.666
+      ]
+    },
+    {
+      "filename": "US.RAD.SWOR",
+      "name": "SW Oregon / NW California",
+      "bbox": [
+        -124.5532,
+        36.7741,
+        -118.7734,
+        44.6258
+      ]
+    },
+    {
+      "filename": "US.RAD.SWTX",
+      "name": "SW Tx",
+      "bbox": [
+        -106.6436,
+        25.8876,
+        -99.585,
+        31.6947
+      ]
+    },
+    {
+      "filename": "US.RAD.SWUT",
+      "name": "SW Utah / NW Az & SE Nv",
+      "bbox": [
+        -117.5225,
+        33.6686,
+        -111.0455,
+        40.0005
+      ]
+    },
+    {
+      "filename": "US.RAD.TN",
+      "name": "Tennessee / W Kentucky",
+      "bbox": [
+        -90.3114,
+        34.9847,
+        -81.6797,
+        39.1034
+      ]
+    },
+    {
+      "filename": "US.RAD.TXCO",
+      "name": "NE Coast Texas & S Cst Louisiana",
+      "bbox": [
+        -98.6174,
+        28.5719,
+        -89.0024,
+        36.5019
+      ]
+    },
+    {
+      "filename": "US.RAD.TXPH",
+      "name": "Texas Panhandle (Southern Part)",
+      "bbox": [
+        -106.6436,
+        33.5019,
+        -101.1436,
+        36.5019
+      ]
+    },
+    {
+      "filename": "US.RAD.TXPI",
+      "name": "Tx & Padre Isl",
+      "bbox": [
+        -97.0263,
+        25.8876,
+        -93.5263,
+        28.8876
+      ]
+    },
+    {
+      "filename": "US.RAD.UMVAL",
+      "name": "Up Miss Valley",
+      "bbox": [
+        -97.2287,
+        37.8065,
+        -87.0307,
+        49.3836
+      ]
+    },
+    {
+      "filename": "US.RAD.UMVLR",
+      "name": "Up Miss Valley (Low Res)",
+      "bbox": [
+        -97.2287,
+        37.8065,
+        -87.0307,
+        49.3836
+      ]
+    },
+    {
+      "filename": "US.RAD.WCNV",
+      "name": "W Central Nevada & E Ca",
+      "bbox": [
+        -120.0019,
+        32.5366,
+        -114.1361,
+        42.0117
+      ]
+    },
+    {
+      "filename": "US.RAD.WCO",
+      "name": "W Colorado / E Utah",
+      "bbox": [
+        -112.0455,
+        36.9948,
+        -105.051,
+        42.0007
+      ]
+    },
+    {
+      "filename": "US.RAD.WCTX",
+      "name": "W Central Tx",
+      "bbox": [
+        -105.6436,
+        30.8876,
+        -99.1436,
+        35.3876
+      ]
+    },
+    {
+      "filename": "US.RAD.WFNAK",
+      "name": "Point Hope to Hooper Bay Alaska",
+      "bbox": [
+        -170.0,
+        58.0,
+        -155.0,
+        68.5
+      ]
+    },
+    {
+      "filename": "US.RAD.WLA",
+      "name": "W Louisiana & NE Texas",
+      "bbox": [
+        -100.585,
+        29.0094,
+        -91.0218,
+        36.5019
+      ]
+    },
+    {
+      "filename": "US.RAD.WMI",
+      "name": "W Mich / N Indiana",
+      "bbox": [
+        -90.4154,
+        39.2743,
+        -84.8016,
+        48.1732
+      ]
+    },
+    {
+      "filename": "US.RAD.WMO",
+      "name": "W Missouri & NE Arkansas",
+      "bbox": [
+        -95.7664,
+        34.252,
+        -89.7308,
+        40.615
+      ]
+    },
+    {
+      "filename": "US.RAD.WMT",
+      "name": "Western Montana",
+      "bbox": [
+        -116.0475,
+        44.3941,
+        -109.5448,
+        49.0002
+      ]
+    },
+    {
+      "filename": "US.RAD.WOH",
+      "name": "W Ohio / SE Indiana & N Kentucky",
+      "bbox": [
+        -89.4186,
+        37.2999,
+        -81.97,
+        41.9788
+      ]
+    },
+    {
+      "filename": "US.RAD.WSD",
+      "name": "Western South Dakota",
+      "bbox": [
+        -104.0585,
+        42.4882,
+        -99.7465,
+        45.9441
+      ]
+    },
+    {
+      "filename": "US.RAD.WTN",
+      "name": "W Tenn / E Ark / N Miss",
+      "bbox": [
+        -92.6735,
+        32.0886,
+        -85.4956,
+        36.6771
+      ]
+    },
+    {
+      "filename": "US.RAD.WWV",
+      "name": "W W. Va & SE Ohio & W Va",
+      "bbox": [
+        -83.1683,
+        37.2029,
+        -77.7199,
+        40.7015
+      ]
+    },
+    {
+      "filename": "US.RAD.WY",
+      "name": "Wyoming",
+      "bbox": [
+        -111.0525,
+        40.9984,
+        -104.053,
+        45.0021
+      ]
+    },
+    {
+      "filename": "US.RAD.WYCO",
+      "name": "Wyoming & Colorado",
+      "bbox": [
+        -111.0525,
+        36.9948,
+        -102.043,
+        45.0021
+      ]
+    }
+  ]
+}

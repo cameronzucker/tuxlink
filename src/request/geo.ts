@@ -12,6 +12,8 @@
  */
 
 import statesGeoJson from './us-states.geo.json';
+import nwsZonesGeoJson from './nws-zones.geo.json';
+import radarRegionsJson from './radar-regions.json';
 
 export interface LatLon {
   lat: number;
@@ -158,7 +160,59 @@ function pointInRing(lon: number, lat: number, ring: number[][]): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Function 3 — latLonToSeaArea
+// Function 3 — gridToNwsZone
+// ---------------------------------------------------------------------------
+
+export interface NwsZone { id: string; name: string; state: string; }
+
+interface ZoneFeature {
+  properties: { id: string; name: string; state: string };
+  geometry:
+    | { type: 'Polygon'; coordinates: number[][][] }
+    | { type: 'MultiPolygon'; coordinates: number[][][][] };
+}
+const ZONE_FEATURES = (nwsZonesGeoJson as { features: ZoneFeature[] }).features;
+
+/** Point-in-polygon over bundled NWS public-zone geometry. Returns the zone
+ *  covering the point, or null for ocean / non-US / a gap in the bundled set.
+ *  Same ray-casting technique as latLonToUsState. */
+export function gridToNwsZone(lat: number, lon: number): NwsZone | null {
+  for (const f of ZONE_FEATURES) {
+    const polys =
+      f.geometry.type === 'Polygon'
+        ? [f.geometry.coordinates]
+        : f.geometry.coordinates;
+    for (const poly of polys) {
+      if (pointInPolygonWithHoles(lon, lat, poly)) return f.properties;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Function 4 — gridToRadarRegion
+// ---------------------------------------------------------------------------
+
+export interface RadarRegion { filename: string; name: string; bbox: [number, number, number, number]; }
+const RADAR_REGIONS = (radarRegionsJson as unknown as { regions: RadarRegion[] }).regions
+  .filter((r) => Array.isArray(r.bbox) && r.bbox.length === 4);
+
+/** Smallest-area radar region whose bbox contains the point; null if none. */
+export function gridToRadarRegion(lat: number, lon: number): RadarRegion | null {
+  let best: RadarRegion | null = null;
+  let bestArea = Infinity;
+  for (const r of RADAR_REGIONS) {
+    const [w, s, e, n] = r.bbox;
+    if (lon >= w && lon <= e && lat >= s && lat <= n) {
+      const area = (e - w) * (n - s);
+      if (area < bestArea) { bestArea = area; best = r; }
+    }
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------------------
+// Function 5 — latLonToSeaArea
 // ---------------------------------------------------------------------------
 
 /**

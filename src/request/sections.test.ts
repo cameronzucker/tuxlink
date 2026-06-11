@@ -62,10 +62,14 @@ describe('buildSections — section kind tagging', () => {
       expect(nearby?.kind).toBe('national');
     });
 
-    it('the Weather section includes both State forecast and Marine forecast cards', () => {
+    it('the location section includes the marine card (CN87 resolves to WX_EASTPAC; zone+radar absent from this fixture)', () => {
+      // CN87 (47.5, -123): zone=WAZ321→WA_ZON_HOCS (not in FIXTURE_ENTRIES) → no zone card;
+      // radar=US.RAD.PSND but no WX_US_RAD entry in FIXTURE_ENTRIES → no radar card;
+      // sea-area=WX_EASTPAC → loc-marine card present.
       const weather = sections.find((s) => s.id === 'weather');
-      expect(weather?.cards.map((c) => c.id)).toContain('wx-state-forecast');
-      expect(weather?.cards.map((c) => c.id)).toContain('wx-marine-forecast');
+      expect(weather?.cards.map((c) => c.id)).toContain('loc-marine');
+      expect(weather?.cards.map((c) => c.id)).not.toContain('wx-state-forecast');
+      expect(weather?.cards.map((c) => c.id)).not.toContain('wx-marine-forecast');
     });
   });
 
@@ -112,5 +116,49 @@ describe('buildSections — section kind tagging', () => {
         expect(section.kind).toBe('national');
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 10 — adaptive zone/radar/marine location hero section.
+//
+// CN87uo → lat≈47.6, lon≈-122.3:
+//   - gridToNwsZone → WAZ315 "City of Seattle" → WA_ZON_SEA
+//   - gridToRadarRegion → US.RAD.PSND
+//   - latLonToSeaArea → WX_EASTPAC
+//
+// DM79 → lat=39.5, lon=-105 (Denver area):
+//   - gridToNwsZone → null (zone falls outside the bundled set)
+//   - gridToRadarRegion → US.RAD.CCO (but NOT in CAT below)
+//   - latLonToSeaArea → null (inland)
+//
+// IO91 → UK grid → gridToNwsZone returns null + no US radar/sea → no location section.
+// ---------------------------------------------------------------------------
+const CAT = [
+  { category: 'WX_US_WA', filename: 'WA_ZON_SEA', description: 'City of Seattle Washington Zone Forecast', size_bytes: 2500 },
+  { category: 'WX_US_RAD', filename: 'US.RAD.PSND', description: 'SNAPSHOT CURRENT RADAR U.S. PUGET SOUND & SJDF', size_bytes: 20799 },
+  { category: 'WX_EASTPAC', filename: 'EPAC_COASTAL', description: 'NE Pacific coastal waters', size_bytes: 7300 },
+  { category: 'PROPAGATION', filename: 'PROP_3DAY', description: '3-day', size_bytes: 1 },
+];
+describe('buildSections location hero', () => {
+  it('coastal grid → zone (primary) + radar + marine, in order', () => {
+    const loc = buildSections(CAT, 'CN87uo').find((s) => s.kind === 'location')!;
+    expect(loc.cards.map((c) => c.id)).toEqual(['loc-zone-forecast', 'loc-radar', 'loc-marine']);
+    expect(loc.cards[0].primary).toBe(true);
+    expect(loc.cards[0].label).toBe('City of Seattle');
+    expect(loc.cards[0].action).toEqual({ kind: 'addCms', filename: 'WA_ZON_SEA' });
+    expect(loc.cards[0].meta).toContain('WAZ315');
+    expect(loc.cards[0].meta).toContain('WA_ZON_SEA');
+    expect(loc.cards[1].action).toEqual({ kind: 'addCms', filename: 'US.RAD.PSND' });
+    expect(loc.cards[2].action).toEqual({ kind: 'openBrowse', category: 'WX_EASTPAC' });
+  });
+  it('inland grid → no marine card', () => {
+    const loc = buildSections(CAT, 'DM79').find((s) => s.kind === 'location');
+    // DM79 is inland (latLonToSeaArea null) → marine omitted. Radar (US.RAD.CCO) present
+    // only if CAT contains its filename — so this asserts marine ABSENCE specifically.
+    if (loc) expect(loc.cards.some((c) => c.id === 'loc-marine')).toBe(false);
+  });
+  it('non-US grid → no location section', () => {
+    expect(buildSections(CAT, 'IO91').find((s) => s.kind === 'location')).toBeUndefined();
   });
 });

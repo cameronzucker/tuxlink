@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { CatalogEntry } from '../catalog/types';
 import {
   NATIONAL,
-  bestStateForecast,
   gatewayListFilenames,
+  zoneForecastEntry,
+  radarEntry,
 } from './catalogMap';
+import zonesGeo from './nws-zones.geo.json';
+import zoneMap from './nws-zone-to-catalog.json';
+import unmappedJson from './nws-zone-unmapped.json';
+import radar from './radar-regions.json';
 
 /** Build a CatalogEntry with sensible defaults for fixtures. */
 function entry(partial: Partial<CatalogEntry> & Pick<CatalogEntry, 'category' | 'filename'>): CatalogEntry {
@@ -14,51 +19,6 @@ function entry(partial: Partial<CatalogEntry> & Pick<CatalogEntry, 'category' | 
     ...partial,
   };
 }
-
-describe('bestStateForecast', () => {
-  it('prefers a non-tabular state-forecast entry over a tabular one', () => {
-    const entries: CatalogEntry[] = [
-      entry({ category: 'WX_US_WA', filename: 'WA_FOR_WA', description: 'State Forecast for Washington' }),
-      entry({ category: 'WX_US_WA', filename: 'WA_TAB_NW', description: 'Tabular State Forecast for Northwest Washington' }),
-    ];
-
-    const result = bestStateForecast(entries, 'WA');
-
-    expect(result?.filename).toBe('WA_FOR_WA');
-  });
-
-  it('falls back to a tabular state-forecast entry when no non-tabular exists', () => {
-    const entries: CatalogEntry[] = [
-      entry({ category: 'WX_US_AZ', filename: 'AZ_TAB_PHOE', description: 'Tabular State Forecast for Arizona Phoenix NWS' }),
-      entry({ category: 'WX_US_AZ', filename: 'AZ_ZON_FOO', description: 'Zone Forecast for somewhere in Arizona' }),
-    ];
-
-    const result = bestStateForecast(entries, 'AZ');
-
-    expect(result?.filename).toBe('AZ_TAB_PHOE');
-  });
-
-  it('returns null for a state with no state-forecast entry', () => {
-    const entries: CatalogEntry[] = [
-      entry({ category: 'WX_US_AK', filename: 'AK_TAB_JUNE', description: 'Tabular Forecast Alaska Juneau NWS' }),
-      entry({ category: 'WX_US_AK', filename: 'AK_ZON_ANC1', description: 'Zone Forecast Alaska Anchorage NWS' }),
-    ];
-
-    const result = bestStateForecast(entries, 'AK');
-
-    expect(result).toBeNull();
-  });
-
-  it('only matches the requested state category', () => {
-    const entries: CatalogEntry[] = [
-      entry({ category: 'WX_US_OR', filename: 'OR_FOR_OR', description: 'State Forecast for Oregon' }),
-    ];
-
-    const result = bestStateForecast(entries, 'WA');
-
-    expect(result).toBeNull();
-  });
-});
 
 describe('NATIONAL constants — real-catalog guard', () => {
   // Read the REAL bundled catalog so this test fails loudly if the catalog ever
@@ -126,5 +86,141 @@ describe('gatewayListFilenames', () => {
     ];
 
     expect(gatewayListFilenames(entries)).toEqual([]);
+  });
+});
+
+const ENTRIES = [
+  { category: 'WX_US_WA', filename: 'WA_ZON_SEA', description: 'City of Seattle Washington Zone Forecast', size_bytes: 2500 },
+  { category: 'WX_US_RAD', filename: 'US.RAD.PSND', description: 'SNAPSHOT CURRENT RADAR U.S. PUGET SOUND & SJDF', size_bytes: 20799 },
+];
+
+describe('zoneForecastEntry', () => {
+  it('maps an NWS zone id to its catalog entry', () => {
+    expect(zoneForecastEntry(ENTRIES, 'WAZ315')?.filename).toBe('WA_ZON_SEA');
+  });
+  it('returns null for an unmapped zone', () => {
+    expect(zoneForecastEntry(ENTRIES, 'WAZ999')).toBeNull();
+  });
+  it('returns null when the mapped filename is not in the loaded catalog', () => {
+    expect(zoneForecastEntry([], 'WAZ315')).toBeNull();
+  });
+});
+
+describe('radarEntry', () => {
+  it('returns the catalog entry for a region filename', () => {
+    expect(radarEntry(ENTRIES, 'US.RAD.PSND')?.filename).toBe('US.RAD.PSND');
+  });
+});
+
+describe('NWS zone mapping referential integrity', () => {
+  it('every mapped NWS zone id exists in the bundled geometry', () => {
+    const geoIds = new Set(
+      (zonesGeo as { features: { properties: { id: string } }[] }).features.map(
+        (f) => f.properties.id,
+      ),
+    );
+    const orphan = Object.keys(
+      (zoneMap as { map: Record<string, string> }).map,
+    ).filter((id) => !geoIds.has(id));
+    expect(orphan, `Mapped zone ids absent from geometry:\n${orphan.join('\n')}`).toEqual([]);
+  });
+});
+
+describe('NWS zone mapping completeness (DoD #5)', () => {
+  // Per TEST-1 (docs/pitfalls/implementation-pitfalls.md): filesystem-scan tests
+  // in this Vite frontend use import.meta.glob with ?raw, NOT node:fs, so both
+  // vitest and `tsc --noEmit` stay green.
+  const catalogModules = import.meta.glob(
+    '/src-tauri/resources/catalog/winlink-queries.txt',
+    { eager: true, query: '?raw', import: 'default' },
+  ) as Record<string, string>;
+  const catalogRaw = Object.values(catalogModules)[0];
+
+  // Parse zone-forecast entries the same way as the Rust catalog parser:
+  // pipe-delimited, BOM-stripped, filter to WX_US_<ST> + description matching
+  // /zone forecast/i (DoD #5 completeness-test target rule).
+  const catalogZoneForecasts: string[] = (catalogRaw ?? '')
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^﻿/, '').trim())
+    .filter(Boolean)
+    .flatMap((l) => {
+      const [category, filename, description] = l.split('|');
+      if (
+        /^WX_US_[A-Z]{2}$/.test(category ?? '') &&
+        /zone forecast/i.test(description ?? '')
+      ) {
+        return [filename];
+      }
+      return [];
+    });
+
+  it('every catalog zone-forecast filename is mapped or explicitly unmapped-by-design', () => {
+    const mappedFilenames = new Set(
+      Object.values((zoneMap as { map: Record<string, string> }).map),
+    );
+    const unmappedFilenames = new Set(
+      Object.keys((unmappedJson as { unmapped: Record<string, string> }).unmapped),
+    );
+    const missing = catalogZoneForecasts.filter(
+      (f) => !mappedFilenames.has(f) && !unmappedFilenames.has(f),
+    );
+    expect(missing, `Unresolved catalog zone forecasts:\n${missing.join('\n')}`).toEqual([]);
+  });
+});
+
+describe('radar-region coverage', () => {
+  // Load WX_US_RAD filenames from the bundled catalog using the same import.meta.glob
+  // pattern as the completeness test above (TEST-1: no node:fs in frontend tests).
+  const catalogModules = import.meta.glob(
+    '/src-tauri/resources/catalog/winlink-queries.txt',
+    { eager: true, query: '?raw', import: 'default' },
+  ) as Record<string, string>;
+  const catalogRaw = Object.values(catalogModules)[0];
+
+  const radarFilenames: string[] = (catalogRaw ?? '')
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^﻿/, '').trim())
+    .filter(Boolean)
+    .flatMap((l) => {
+      const parts = l.split('|');
+      if (parts[0] === 'WX_US_RAD' && parts.length >= 2) {
+        return [parts[1]];
+      }
+      return [];
+    });
+
+  it('every WX_US_RAD catalog filename has a curated bbox', () => {
+    const byName = new Map(
+      (radar as { regions: { filename: string; bbox: number[] | null }[] }).regions.map(
+        (r) => [r.filename, r.bbox],
+      ),
+    );
+    const missing = radarFilenames.filter((f) => {
+      const b = byName.get(f);
+      return !b || b.length !== 4;
+    });
+    expect(missing, `Radar regions missing a bbox:\n${missing.join('\n')}`).toEqual([]);
+  });
+
+  it('Seattle resolves PSND tighter than NWWA tighter than PNW (area ordering)', () => {
+    const area = (fn: string): number => {
+      const r = (radar as { regions: { filename: string; bbox: number[] }[] }).regions.find(
+        (x) => x.filename === fn,
+      );
+      if (!r) throw new Error(`Radar region not found: ${fn}`);
+      return (r.bbox[2] - r.bbox[0]) * (r.bbox[3] - r.bbox[1]);
+    };
+    expect(area('US.RAD.PSND')).toBeLessThan(area('US.RAD.NWWA'));
+    expect(area('US.RAD.NWWA')).toBeLessThan(area('US.RAD.PNW'));
+
+    const inside = (fn: string): boolean => {
+      const r = (radar as { regions: { filename: string; bbox: number[] }[] }).regions.find(
+        (x) => x.filename === fn,
+      );
+      if (!r) return false;
+      // Seattle: lon = -122.2917, lat = 47.6042
+      return -122.2917 >= r.bbox[0] && -122.2917 <= r.bbox[2] && 47.6042 >= r.bbox[1] && 47.6042 <= r.bbox[3];
+    };
+    expect(inside('US.RAD.PSND') && inside('US.RAD.NWWA') && inside('US.RAD.PNW')).toBe(true);
   });
 });

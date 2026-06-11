@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Request Center — location-aware "For your location" hero (tuxlink-96lu)</title>
+<style>
+:root{
+  --bg:#0d1318; --surface:#141c23; --surface-2:#1a2330; --elevated:#1e2832;
+  --border:#1f2832; --border-strong:#2c3744; --border-soft:#1a2028;
+  --text:#e4ebf2; --text-dim:#94a0ad; --text-faint:#5d6975;
+  --accent:#f59f3c; --accent-2:#ffba6e; --accent-soft:rgba(245,159,60,.12); --accent-edge:rgba(245,159,60,.55);
+  --success:#5dd6a0; --info:#6bb8ee; --mono:'JetBrains Mono','SF Mono',Menlo,monospace;
+  --r:9px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#06090c;color:var(--text);
+  font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+svg{display:block}
+.icon{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.85;stroke-linecap:round;stroke-linejoin:round}
+.sm{width:15px;height:15px}.lg{width:23px;height:23px}
+
+.note{width:1180px;margin:20px auto 6px;color:var(--text-dim);font-size:13px}
+.note h1{color:var(--text);font-size:18px;margin:0 0 4px}
+.note code{background:var(--surface-2);color:var(--accent-2);padding:1px 5px;border-radius:4px;font-size:.9em}
+
+/* dimmed backdrop + centered dialog (the shipped form factor, PR #576) */
+.scrim{background:rgba(0,0,0,.55);padding:28px;display:flex;align-items:center;justify-content:center}
+.dlg{width:100%;max-width:1080px;max-height:none;background:var(--bg);border:1px solid var(--border-strong);
+  border-radius:12px;box-shadow:0 24px 64px rgba(0,0,0,.55);overflow:hidden;display:flex;flex-direction:column;margin:0 auto}
+
+/* header */
+.hd{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--border-soft);background:var(--surface)}
+.g{width:34px;height:34px;border-radius:9px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;flex:0 0 auto}
+.title{font-size:16px;font-weight:650;white-space:nowrap}
+.loc{display:inline-flex;align-items:center;gap:8px;padding:7px 14px 7px 11px;border-radius:999px;background:var(--accent-soft);border:1px solid var(--accent-edge);color:var(--accent-2);font-size:13px;font-weight:600;white-space:nowrap}
+.loc .sub{color:var(--text-dim);font-weight:500}
+.search{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-faint);font-size:13px}
+.x{width:32px;height:32px;border-radius:8px;background:var(--surface-2);border:1px solid var(--border-strong);color:var(--text);display:grid;place-items:center;flex:0 0 auto}
+
+.body{display:flex;min-height:0}
+.content{flex:1 1 auto;min-width:0;overflow-y:auto;padding:18px 20px}
+.basket{flex:0 0 320px;border-left:1px solid var(--border-soft);background:var(--surface);display:flex;flex-direction:column}
+
+/* HERO — location-aware */
+.hero{border:1px solid var(--accent-edge);border-radius:12px;
+  background:linear-gradient(135deg,rgba(245,159,60,.10),rgba(245,159,60,.02) 60%,var(--surface));padding:18px 20px 20px;margin-bottom:26px}
+.hero-h{display:flex;align-items:center;gap:11px;margin-bottom:16px}
+.hero-h .pin{width:30px;height:30px;border-radius:8px;background:var(--accent);color:#2a1500;display:grid;place-items:center}
+.hero-h h4{margin:0;font-size:15px;font-weight:650}
+.hero-h .where{color:var(--text-dim);font-size:13px}
+
+/* the exact-zone headline card (the most-local product) */
+.zone{display:flex;gap:15px;align-items:flex-start;background:var(--bg);border:1px solid var(--accent-edge);border-radius:11px;padding:16px 18px;margin-bottom:14px}
+.zone .zi{width:50px;height:50px;border-radius:12px;flex:0 0 auto;display:grid;place-items:center;background:var(--accent);color:#2a1500}
+.zone .zn{font-size:17px;font-weight:700;letter-spacing:-.01em}
+.zone .zd{font-size:12.5px;color:var(--text-dim);margin-top:3px}
+.zone .zmeta{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-top:5px}
+.zone .za{margin-left:auto;align-self:center;flex:0 0 auto}
+
+/* supporting local products — 2x2 grid of feat cards */
+.locgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.feat{display:flex;gap:13px;align-items:flex-start;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 15px}
+.feat .fi{width:42px;height:42px;border-radius:11px;flex:0 0 auto;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
+.feat .fn{font-size:14.5px;font-weight:650}
+.feat .fd{font-size:12px;color:var(--text-dim);margin-top:3px;line-height:1.4}
+.feat .fmeta{font-size:10.5px;color:var(--text-faint);font-family:var(--mono);margin-top:4px}
+.feat .fa{margin-left:auto;align-self:center;flex:0 0 auto}
+
+.badd{display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:7px 13px;border-radius:8px;border:1px solid var(--accent);background:var(--accent-soft);color:var(--accent-2);font-size:12.5px;font-weight:600;white-space:nowrap}
+.iadd{width:30px;height:30px;border-radius:8px;border:1px solid var(--border-strong);background:var(--bg);color:var(--accent);display:grid;place-items:center;cursor:pointer;flex:0 0 auto}
+
+/* national chips (unchanged from the shipped re-skin) */
+.subt{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim);margin:0 0 12px;display:flex;align-items:center;gap:9px}
+.subt .bar{width:3px;height:14px;border-radius:2px;background:var(--accent);opacity:.85}
+.chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(252px,1fr));gap:12px;margin-bottom:26px}
+.chip{display:flex;align-items:center;gap:13px;padding:13px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+.chip .ci{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;background:var(--surface-2);color:var(--accent-2);flex:0 0 auto}
+.chip .cb{flex:1 1 auto;min-width:0}
+.chip .ct{font-size:14px;font-weight:600}.chip .cd{font-size:12px;color:var(--text-dim);margin-top:2px}
+.chip .cs{font-size:10.5px;color:var(--text-faint);font-family:var(--mono);margin-top:3px;display:inline-block}
+
+.reveals{display:flex;gap:12px;flex-wrap:wrap}
+.rev{display:inline-flex;align-items:center;gap:10px;padding:13px 16px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;font-weight:600}
+.rev .m{color:var(--text-faint);font-weight:500}.rev .lead{color:var(--accent)}
+
+/* basket */
+.bk-head{padding:16px 18px 12px;border-bottom:1px solid var(--border-soft);display:flex;align-items:center;gap:9px;font-size:14px;font-weight:650}
+.bk-empty{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text-faint);text-align:center;padding:28px}
+.bk-empty .ring{width:58px;height:58px;border-radius:50%;border:1.5px dashed var(--border-strong);display:grid;place-items:center}
+.bk-empty p{margin:0;font-size:13px;max-width:24ch}
+.bk-foot{border-top:1px solid var(--border-soft);padding:14px 16px 16px}
+.send{width:100%;padding:11px;border-radius:6px;border:none;background:var(--surface-2);color:var(--text-faint);font-weight:600;font-size:14px;display:flex;align-items:center;justify-content:center;gap:8px}
+.snote{margin:10px 0 0;font-size:12px;color:var(--text-faint);text-align:center}
+
+footer{width:1180px;margin:18px auto 60px;color:var(--text-faint);font-size:12.5px;line-height:1.6}
+footer b{color:var(--text-dim)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.5-7-11a7 7 0 1 1 14 0c0 4.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+  <symbol id="i-weather" viewBox="0 0 24 24"><circle cx="8" cy="9" r="3.2"/><path d="M8 2.5v1.6M3.2 4l1.1 1.1M2 9h1.6M13 16.5a3.5 3.5 0 0 0-1-6.8 5 5 0 0 0-9.5 1.6A3.5 3.5 0 0 0 4 18h9a2.6 2.6 0 0 0 0-1.5z"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 8c2 0 2 1.6 4 1.6S8 8 10 8s2 1.6 4 1.6S16 8 18 8s2 1.6 4 1.6"/><path d="M2 13c2 0 2 1.6 4 1.6S8 13 10 13s2 1.6 4 1.6 2-1.6 4-1.6 2 1.6 4 1.6"/><path d="M2 18c2 0 2 1.6 4 1.6S8 18 10 18s2 1.6 4 1.6 2-1.6 4-1.6 2 1.6 4 1.6"/></symbol>
+  <symbol id="i-buoy" viewBox="0 0 24 24"><path d="M12 2v6M9 5h6M7 8h10l-1.5 6h-7z"/><path d="M5 20c1.5 0 1.5-1.2 3-1.2s1.5 1.2 3 1.2 1.5-1.2 3-1.2 1.5 1.2 3 1.2"/><path d="M9.5 14 9 18M14.5 14l.5 4"/></symbol>
+  <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 12V3M12 12l6.4 6.4"/><path d="M12 7a5 5 0 0 1 5 5"/></symbol>
+  <symbol id="i-prop" viewBox="0 0 24 24"><path d="M4.5 9a10 10 0 0 1 15 0"/><path d="M7.5 12a6 6 0 0 1 9 0"/><circle cx="12" cy="16" r="1.6"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/></symbol>
+  <symbol id="i-aurora" viewBox="0 0 24 24"><path d="M4 20c1.5-7 3-11 5-11s2 5 3 5 2.5-5 4.5-5 2.5 4 3.5 6"/><path d="M6 5l.6 1.6L8 7l-1.4.4L6 9l-.6-1.6L4 7l1.4-.4z"/><path d="M17 3l.5 1.3L19 5l-1.5.4L17 7l-.5-1.6L15 5l1.5-.3z"/></symbol>
+  <symbol id="i-tower" viewBox="0 0 24 24"><path d="M12 9v12M8 21h8"/><path d="M7.5 6.5a6 6 0 0 1 9 0"/><path d="M5 4a9 9 0 0 1 14 0"/><circle cx="12" cy="9" r="1.4"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.6" cy="6" r="1"/><circle cx="3.6" cy="12" r="1"/><circle cx="3.6" cy="18" r="1"/></symbol>
+  <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4 3 6.5v13L9 17l6 2.5 6-2.5v-13L15 7 9 4.5z"/><path d="M9 4.5v12.5M15 7v12.5"/></symbol>
+  <symbol id="i-basket" viewBox="0 0 24 24"><path d="M5 8h14l-1.2 10.2a2 2 0 0 1-2 1.8H8.2a2 2 0 0 1-2-1.8z"/><path d="M9 8l3-4 3 4"/></symbol>
+</defs></svg>
+
+<div class="note">
+  <h1>Request Center — location-aware "For your location" (tuxlink-96lu)</h1>
+  Centered dialog (shipped form factor). Operator at <code>CN87uo</code> (Seattle). The hero presents the complete set of location products that resolve <b>and apply</b> for the grid: the <b>exact NWS zone</b> forecast (primary; grid → bundled NWS public-zone geometry → Winlink filename), <b>regional radar</b> (tightest region — Puget Sound), and <b>marine forecast</b> (coastal only). Inland grids show zone + radar; the set adapts to where you are. State forecast, the other 67 WA zones, and marine-point products (buoy / NAVTEX / satellite / fax) live in Browse.
+</div>
+
+<div class="scrim">
+  <div class="dlg">
+    <div class="hd">
+      <span class="g"><svg class="icon lg"><use href="#i-inbox"/></svg></span>
+      <span class="title">Request Center</span>
+      <span class="loc"><svg class="icon sm"><use href="#i-pin"/></svg> Near CN87uo <span class="sub">· Washington</span></span>
+      <div class="search"><svg class="icon sm"><use href="#i-search"/></svg> Search the catalog…</div>
+      <div class="x"><svg class="icon sm"><use href="#i-close"/></svg></div>
+    </div>
+    <div class="body">
+      <div class="content">
+
+        <div class="hero">
+          <div class="hero-h"><span class="pin"><svg class="icon sm"><use href="#i-pin"/></svg></span><h4>For your location</h4><span class="where">CN87uo · Seattle, Washington · NE Pacific</span></div>
+
+          <!-- PRIMARY: the operator's exact NWS public forecast zone text forecast -->
+          <div class="zone">
+            <span class="zi"><svg class="icon lg"><use href="#i-weather"/></svg></span>
+            <div>
+              <div class="zn">Seattle and Vicinity</div>
+              <div class="zd">Your NWS public forecast zone — the local text forecast for your grid. Returns text (~2.5 KB).</div>
+              <div class="zmeta">WAZ558 · WA_ZON_SEA</div>
+            </div>
+            <span class="za"><span class="badd"><svg class="icon sm"><use href="#i-plus"/></svg> Add request</span></span>
+          </div>
+
+          <!-- supporting products that resolve + apply for this grid: radar (always, US land) + marine (coastal) -->
+          <div class="locgrid">
+            <div class="feat">
+              <span class="fi"><svg class="icon"><use href="#i-radar"/></svg></span>
+              <div>
+                <div class="fn">Regional radar</div>
+                <div class="fd">Current precipitation radar snapshot for your area. Returns an image (~20 KB).</div>
+                <div class="fmeta">Puget Sound &amp; SJDF · US.RAD.PSND</div>
+              </div>
+              <span class="fa"><span class="iadd"><svg class="icon sm"><use href="#i-plus"/></svg></span></span>
+            </div>
+            <div class="feat">
+              <span class="fi"><svg class="icon"><use href="#i-wave"/></svg></span>
+              <div>
+                <div class="fn">Marine forecast</div>
+                <div class="fd">Wind, wave and sea-state forecasts for your offshore sea area. Returns text.</div>
+                <div class="fmeta">NE Pacific (EASTPAC) · 27 products →</div>
+              </div>
+              <span class="fa"><span class="iadd"><svg class="icon sm"><use href="#i-arrow"/></svg></span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="subt"><span class="bar"></span>Propagation &amp; space weather</div>
+        <div class="chips">
+          <div class="chip"><div class="ci"><svg class="icon"><use href="#i-prop"/></svg></div><div class="cb"><div class="ct">Propagation forecast</div><div class="cd">3-day HF propagation outlook.</div><span class="cs">PROP_3DAY</span></div><div class="iadd"><svg class="icon sm"><use href="#i-plus"/></svg></div></div>
+          <div class="chip"><div class="ci"><svg class="icon"><use href="#i-sun"/></svg></div><div class="cb"><div class="ct">Solar-terrestrial</div><div class="cd">WWV solar flux, A/K indices, storms.</div><span class="cs">PROP_WWV</span></div><div class="iadd"><svg class="icon sm"><use href="#i-plus"/></svg></div></div>
+          <div class="chip"><div class="ci"><svg class="icon"><use href="#i-aurora"/></svg></div><div class="cb"><div class="ct">Aurora tonight</div><div class="cd">Tonight's auroral activity forecast.</div><span class="cs">AUR_TONIGHT</span></div><div class="iadd"><svg class="icon sm"><use href="#i-plus"/></svg></div></div>
+        </div>
+
+        <div class="subt"><span class="bar"></span>Nearby stations</div>
+        <div class="chips">
+          <div class="chip"><div class="ci"><svg class="icon"><use href="#i-tower"/></svg></div><div class="cb"><div class="ct">Public gateway lists</div><div class="cd">RMS gateway frequencies by mode.</div><span class="cs">WL2K_RMS</span></div><div class="iadd"><svg class="icon sm"><use href="#i-arrow"/></svg></div></div>
+        </div>
+
+        <div class="reveals">
+          <div class="rev"><svg class="icon lead"><use href="#i-list"/></svg> Browse all WA local forecasts <span class="m">68 zones</span></div>
+          <div class="rev"><svg class="icon lead"><use href="#i-map"/></svg> GRIB by area <span class="m">Saildocs</span></div>
+        </div>
+      </div>
+
+      <div class="basket">
+        <div class="bk-head"><svg class="icon sm"><use href="#i-basket"/></svg> Request basket</div>
+        <div class="bk-empty"><div class="ring"><svg class="icon lg"><use href="#i-basket"/></svg></div><p>Your basket is empty. Add requests from the cards or browse.</p></div>
+        <div class="bk-foot"><button class="send">Send all <svg class="icon sm"><use href="#i-arrow"/></svg></button><p class="snote">Responses arrive in your Inbox after the next connect.</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <b>Location-aware hero.</b> The exact-zone forecast headlines (most local), then the supporting products that resolve and apply for <code>CN87uo</code>: regional radar (always, US land) and marine (coastal). Reveal scales to "Browse all WA local forecasts · 68 zones" for the long tail. Build: bundle NWS public-zone geometry + a vetted NWS-zone→Winlink-filename table; curate the radar-region table; reuse the existing sea-area marine resolver.
+</footer>
+</body>
+</html>
