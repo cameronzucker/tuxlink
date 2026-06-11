@@ -2702,7 +2702,7 @@ impl From<&config::Config> for ConfigViewDto {
             connect_to_cms: c.connect.connect_to_cms,
             transport: c.connect.transport,
             host: c.connect.host.clone(),
-            callsign: c.identity.callsign.clone(),
+            callsign: c.identity.active_full.clone(),
             identifier: c.identity.identifier.clone(),
             grid: c.identity.grid.clone(),
             gps_state: c.privacy.gps_state,
@@ -3523,7 +3523,7 @@ pub async fn packet_listen(
     // Effective call = <callsign>-<ssid> (the SSID'd link address we answer on).
     let effective = cfg
         .identity
-        .callsign
+        .active_full
         .as_deref()
         .map(|c| format!("{}-{}", c.trim().to_uppercase(), cfg.packet.ssid))
         .unwrap_or_else(|| format!("(no callsign)-{}", cfg.packet.ssid));
@@ -6804,7 +6804,7 @@ pub async fn telnet_listen(
 
     let cfg = config::read_config()
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
-    let mycall = cfg.identity.callsign.clone().unwrap_or_default();
+    let mycall = cfg.identity.active_full.clone().unwrap_or_default();
     if mycall.is_empty() {
         return Err(UiError::NotConfigured(
             "no callsign configured — cannot arm listener without identity".into(),
@@ -7628,7 +7628,7 @@ hw:CARD=Device,DEV=0
                 host: config::default_cms_host(),
             },
             identity: IdentityConfig {
-                callsign: Some("W4PHS".into()),
+                active_full: Some("W4PHS".into()),
                 identifier: None,
                 grid: Some("EM10ab".into()),
             },
@@ -7690,7 +7690,7 @@ hw:CARD=Device,DEV=0
         cfg.connect.connect_to_cms = false;
         cfg.connect.transport = CmsTransport::Telnet;
         cfg.connect.host = "server.winlink.org".into();
-        cfg.identity.callsign = None;
+        cfg.identity.active_full = None;
         cfg.identity.identifier = Some("OFFLINE-STATION".into());
         cfg.privacy.gps_state = GpsState::Off;
         cfg.privacy.position_precision = PositionPrecision::FourCharGrid;
@@ -7858,7 +7858,7 @@ hw:CARD=Device,DEV=0
                 transport: CmsTransport::CmsSsl,
                 host: crate::config::default_cms_host(),
             },
-            identity: IdentityConfig { callsign: Some("N0CALL".into()), identifier: None, grid: None },
+            identity: IdentityConfig { active_full: Some("N0CALL".into()), identifier: None, grid: None },
             privacy: PrivacyConfig {
                 gps_state: GpsState::Off,
                 position_precision: PositionPrecision::FourCharGrid,
@@ -8961,7 +8961,7 @@ hw:CARD=Device,DEV=0
             wizard_completed: true,
             connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: config::default_cms_host() },
             identity: IdentityConfig {
-                callsign: None,
+                active_full: None,
                 identifier: None,
                 grid: grid.map(|s| s.to_string()),
             },

@@ -163,7 +163,7 @@ pub async fn persist_cms_impl(
             host: crate::config::default_cms_host(),
         },
         identity: crate::config::IdentityConfig {
-            callsign: Some(callsign.clone()),
+            active_full: Some(callsign.clone()),
             identifier: None,   // offline-only; not used in CMS path
             grid: if grid.trim().is_empty() { None } else { Some(grid.trim().to_string()) },
         },
@@ -333,7 +333,7 @@ pub async fn persist_offline_impl(
             host: crate::config::default_cms_host(),
         },
         identity: crate::config::IdentityConfig {
-            callsign: None,           // offline path: no callsign (spec §3.6)
+            active_full: None,           // offline path: no callsign (spec §3.6)
             identifier: identifier_opt,
             grid: grid_opt,
         },
@@ -546,7 +546,7 @@ mod tests {
 
         assert!(cfg.wizard_completed);
         assert!(!cfg.connect.connect_to_cms, "offline path must set connect_to_cms=false");
-        assert!(cfg.identity.callsign.is_none(), "offline path must NOT set callsign");
+        assert!(cfg.identity.active_full.is_none(), "offline path must NOT set callsign");
         assert!(cfg.identity.identifier.is_none(), "blank identifier → None");
         assert!(cfg.identity.grid.is_none(), "blank grid → None");
         assert!(cfg.pat_mbo_address.is_none(), "offline path has no MBO address");
@@ -562,7 +562,7 @@ mod tests {
 
         assert_eq!(cfg.identity.identifier.as_deref(), Some("EOC-1"));
         assert_eq!(cfg.identity.grid.as_deref(), Some("EM75"));
-        assert!(cfg.identity.callsign.is_none());
+        assert!(cfg.identity.active_full.is_none());
         assert!(!cfg.connect.connect_to_cms);
     }
 

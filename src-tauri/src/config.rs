@@ -6,7 +6,179 @@
 use crate::winlink::ax25::KissLinkConfig;
 use serde::{Deserialize, Deserializer, Serialize};
 
-pub const CONFIG_SCHEMA_VERSION: u32 = 1;
+pub const CONFIG_SCHEMA_VERSION: u32 = 2;
+
+/// What to do with an on-disk config of a given `schema_version` (Phase 2,
+/// tuxlink-7iy2). A v1 file is a migration candidate, not an error; the current
+/// version loads normally; anything else is unsupported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaAction {
+    Current,
+    MigrateFromV1,
+    Unsupported { found: u32 },
+}
+
+/// Pure classifier (no I/O) so it is unit-testable without the filesystem.
+pub fn detect_schema_action(found: u32) -> SchemaAction {
+    match found {
+        v if v == CONFIG_SCHEMA_VERSION => SchemaAction::Current,
+        1 => SchemaAction::MigrateFromV1,
+        other => SchemaAction::Unsupported { found: other },
+    }
+}
+
+/// The exact v1 `identity` shape, parsed standalone so the migration can read a
+/// v1 config without going through the v2 `Config` (whose schema_version guard
+/// rejects 1). Phase 2 (tuxlink-7iy2).
+#[derive(Debug, Clone, Deserialize)]
+// `callsign` is read by IdentityMigration::plan/execute; `identifier`/`grid` are
+// consumed by a later Phase-2 task, so the allow stays scoped to those fields.
+#[allow(dead_code)]
+pub struct LegacyConfigV1 {
+    #[serde(default)]
+    pub callsign: Option<String>,
+    #[serde(default)]
+    pub identifier: Option<String>,
+    #[serde(default)]
+    pub grid: Option<String>,
+}
+
+/// The pure decision of the v1->v2 identity migration (no I/O). Phase 2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationPlan {
+    /// The legacy callsign promoted to the single FULL identity (None for an
+    /// offline-only v1 with no callsign).
+    pub full_callsign: Option<String>,
+    /// Subdir name under the mailbox root for this FULL's per-callsign inbox
+    /// (Phase 4 reads from here). `Some(callsign)` iff `full_callsign` is Some.
+    pub per_full_subdir: Option<String>,
+    /// Whether the flat `native-mbox/inbox` must be moved under the per-FULL root.
+    pub move_inbox: bool,
+}
+
+/// The v1->v2 identity migration. Phase 2 adds the pure `plan`; a later task adds
+/// the I/O `execute` method on `MigrationPlan`.
+pub struct IdentityMigration;
+
+impl IdentityMigration {
+    /// Pure: decide the migration from a legacy v1 config. An empty/whitespace
+    /// callsign is treated as absent.
+    pub fn plan(v1: &LegacyConfigV1) -> MigrationPlan {
+        match v1.callsign.as_deref().filter(|c| !c.is_empty()) {
+            Some(c) => MigrationPlan {
+                full_callsign: Some(c.to_string()),
+                per_full_subdir: Some(c.to_string()),
+                move_inbox: true,
+            },
+            None => MigrationPlan {
+                full_callsign: None,
+                per_full_subdir: None,
+                move_inbox: false,
+            },
+        }
+    }
+}
+
+/// Outcome of running the v1->v2 identity migration. Phase 2 (tuxlink-7iy2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationReport {
+    pub sent_tagged: usize,
+    pub outbox_tagged: usize,
+    pub inbox_moved: bool,
+    /// True when the migration found nothing to do (already migrated / no FULL).
+    pub was_noop: bool,
+}
+
+impl MigrationPlan {
+    /// Execute the migration (idempotent). Sentinel: if the IdentityStore at
+    /// `store_path` already has >=1 FULL identity, this is a no-op.
+    pub fn execute(
+        &self,
+        svc: &crate::identity::IdentityService,
+        mbox_root: &std::path::Path,
+        store_path: &std::path::Path,
+        has_cms_account: bool,
+        activation_secret: Option<&str>,
+    ) -> Result<MigrationReport, crate::identity::IdentityError> {
+        use crate::identity::{Address, Callsign, FullIdentity, IdentityError, IdentityStore};
+
+        let mut store = IdentityStore::load(store_path)?;
+        // Idempotency sentinel: a store with a FULL means migration already ran.
+        if !store.full().is_empty() {
+            return Ok(MigrationReport { sent_tagged: 0, outbox_tagged: 0, inbox_moved: false, was_noop: true });
+        }
+        // Offline-only v1 (no callsign): nothing to promote.
+        let Some(call_str) = self.full_callsign.as_deref() else {
+            return Ok(MigrationReport { sent_tagged: 0, outbox_tagged: 0, inbox_moved: false, was_noop: true });
+        };
+
+        let callsign = Callsign::parse(call_str)?;
+        store.add_full(FullIdentity {
+            callsign: callsign.clone(),
+            label: None,
+            has_cms_account,
+            cms_registered: false,
+        })?;
+        store.set_last_selected(Address::Full(callsign.clone()));
+        store.save()?;
+
+        if let Some(secret) = activation_secret {
+            svc.set_activation_secret(&callsign, secret)?;
+        }
+
+        // Move the flat inbox under the per-FULL root (intact), if present + not already moved.
+        let mut inbox_moved = false;
+        if self.move_inbox {
+            let flat_inbox = mbox_root.join("inbox");
+            let per_full_inbox = crate::native_mailbox::per_full_root(mbox_root, call_str).join("inbox");
+            if flat_inbox.exists() && !per_full_inbox.exists() {
+                if let Some(parent) = per_full_inbox.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| IdentityError::Io(format!("mkdir {}: {e}", parent.display())))?;
+                }
+                std::fs::rename(&flat_inbox, &per_full_inbox)
+                    .map_err(|e| IdentityError::Io(format!("move inbox: {e}")))?;
+                inbox_moved = true;
+            }
+        }
+
+        // Default-tag existing Sent + Outbox messages in place (shared store).
+        let sent_tagged = tag_folder(mbox_root, crate::winlink_backend::MailboxFolder::Sent, call_str)?;
+        let outbox_tagged = tag_folder(mbox_root, crate::winlink_backend::MailboxFolder::Outbox, call_str)?;
+
+        Ok(MigrationReport { sent_tagged, outbox_tagged, inbox_moved, was_noop: false })
+    }
+}
+
+/// Tag every `.b2f` in a shared folder with the FULL identity; returns the count.
+fn tag_folder(
+    mbox_root: &std::path::Path,
+    folder: crate::winlink_backend::MailboxFolder,
+    callsign: &str,
+) -> Result<usize, crate::identity::IdentityError> {
+    use crate::identity::IdentityError;
+    use crate::winlink_backend::MessageId;
+    let dir = mbox_root.join(match folder {
+        crate::winlink_backend::MailboxFolder::Sent => "sent",
+        crate::winlink_backend::MailboxFolder::Outbox => "outbox",
+        _ => return Ok(0),
+    });
+    if !dir.exists() {
+        return Ok(0);
+    }
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).map_err(|e| IdentityError::Io(format!("read {}: {e}", dir.display())))? {
+        let path = entry.map_err(|e| IdentityError::Io(format!("{e}")))?.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("b2f") {
+            continue;
+        }
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
+        crate::native_mailbox::tag_identity(mbox_root, folder, &MessageId::new(stem), callsign)
+            .map_err(|e| IdentityError::Io(format!("tag identity: {e}")))?;
+        n += 1;
+    }
+    Ok(n)
+}
 
 /// Top-level config struct. `deny_unknown_fields` is the AMD-11 drift defense:
 /// any stale field (e.g. `winlink_password_present` from the pre-AMD-1 flat schema)
@@ -151,12 +323,13 @@ pub enum CmsTransport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityConfig {
-    /// Required when `connect_to_cms = true` (CMS path requires callsign).
-    /// Must be absent (`None`) when `connect_to_cms = false` (offline path forbids callsign;
-    /// use `identifier` instead). Enforced by `Config::validate`. Loose validator per
-    /// `validate_identity()`: nonempty + no whitespace + ≤32 + ASCII-printable.
-    #[serde(deserialize_with = "deserialize_optional_nonempty_string", default)]
-    pub callsign: Option<String>,
+    /// PHASE 2 TRANSITIONAL MIRROR (deleted in Phase 3, tuxlink-0063). The active
+    /// FULL callsign — a projection of `IdentityStore::last_selected()`'s FULL,
+    /// written here so the legacy `cfg.identity.<callsign>` readers compile
+    /// unchanged until Phase 3 threads `SessionIdentity` through them. The
+    /// IdentityStore (separate file) is the source of truth; this is a cache.
+    #[serde(rename = "callsign", deserialize_with = "deserialize_optional_nonempty_string", default)]
+    pub active_full: Option<String>,
     /// Free-form station identifier for offline-mode operators (optional).
     /// Allowed on the offline path (`connect_to_cms = false`); not validated as required
     /// in v0.0.1. Same loose-validator rules as `callsign`.
@@ -380,6 +553,15 @@ pub fn config_path() -> std::path::PathBuf {
     )
 }
 
+/// The identity store (`identities.json`) lives next to `config.json` (Phase 1
+/// store.rs design + the TUXLINK_CONFIG_DIR per-worktree isolation). Phase 2.
+pub fn identity_store_path() -> std::path::PathBuf {
+    config_path()
+        .parent()
+        .map(|p| p.join("identities.json"))
+        .unwrap_or_else(|| std::path::PathBuf::from("identities.json"))
+}
+
 /// Pure resolver behind [`config_path`] (testable without process-global env).
 /// `TUXLINK_CONFIG_DIR` (tuxlink-efo) is a tuxlink-specific override so a per-worktree
 /// dev build points at its OWN config dir — concurrent builds then stop contaminating
@@ -405,10 +587,8 @@ fn resolve_config_path(
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigValidationError {
-    #[error("CMS path requires identity.callsign to be set")]
-    CmsPathMissingCallsign,
-    #[error("offline path must NOT have identity.callsign set (use identity.identifier instead)")]
-    OfflinePathHasCallsign,
+    #[error("CMS path requires an active FULL identity to be selected")]
+    CmsPathNoActiveFull,
     #[error("invalid identity field `{field}`: {rule}")]
     InvalidIdentity { field: &'static str, rule: &'static str },
     #[error("packet.ssid {ssid} is out of the 0–15 AX.25 range")]
@@ -420,13 +600,14 @@ impl Config {
     /// Callers (wizard's `wizard_persist_cms`, `read_config`) invoke after deserialization.
     /// NOT auto-called by `write_config_atomic` — caller responsibility per spec §3.3.
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
-        if self.connect.connect_to_cms && self.identity.callsign.is_none() {
-            return Err(ConfigValidationError::CmsPathMissingCallsign);
+        if self.connect.connect_to_cms && self.identity.active_full.is_none() {
+            return Err(ConfigValidationError::CmsPathNoActiveFull);
         }
-        if !self.connect.connect_to_cms && self.identity.callsign.is_some() {
-            return Err(ConfigValidationError::OfflinePathHasCallsign);
-        }
-        if let Some(ref c) = self.identity.callsign {
+        // The offline-forbids-callsign rule is intentionally removed (Phase 2,
+        // tuxlink-7iy2): a P2P/RF-only deployment may select a FULL identity, and a
+        // tactical operates with no own CMS account. The CMS<->callsign biconditional
+        // was false under tactical identities.
+        if let Some(ref c) = self.identity.active_full {
             if let Some(rule) = validate_identity_describe(c) {
                 return Err(ConfigValidationError::InvalidIdentity { field: "callsign", rule });
             }
@@ -523,9 +704,12 @@ pub fn write_config_atomic(config: &Config) -> Result<(), ConfigWriteError> {
     match std::fs::read(&path) {
         Ok(bytes) => {
             if let Ok(probe) = serde_json::from_slice::<SchemaVersionProbe>(&bytes) {
-                if probe.schema_version != CONFIG_SCHEMA_VERSION {
+                // Refuse only versions we can neither load nor migrate (future /
+                // unknown); a MigrateFromV1 file is a legitimate overwrite target so
+                // the Phase-2 migration can rewrite config.json at v2.
+                if let SchemaAction::Unsupported { found } = detect_schema_action(probe.schema_version) {
                     return Err(ConfigWriteError::SchemaVersionMismatch {
-                        existing: probe.schema_version,
+                        existing: found,
                         ours: CONFIG_SCHEMA_VERSION,
                     });
                 }
@@ -717,6 +901,34 @@ impl Default for TelnetListenUiConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_version_1_is_recognized_as_migratable_not_rejected() {
+        assert_eq!(super::detect_schema_action(1), super::SchemaAction::MigrateFromV1);
+        assert_eq!(super::detect_schema_action(CONFIG_SCHEMA_VERSION), super::SchemaAction::Current);
+        assert_eq!(super::detect_schema_action(999), super::SchemaAction::Unsupported { found: 999 });
+    }
+
+    #[test]
+    fn migration_plan_promotes_legacy_callsign_to_single_full_identity() {
+        let v1 = LegacyConfigV1 {
+            callsign: Some("W1ABC".into()),
+            identifier: None,
+            grid: Some("CN87ux".into()),
+        };
+        let plan = IdentityMigration::plan(&v1);
+        assert_eq!(plan.full_callsign.as_deref(), Some("W1ABC"));
+        assert!(plan.move_inbox, "an existing callsign means the flat inbox migrates under it");
+        assert_eq!(plan.per_full_subdir.as_deref(), Some("W1ABC"));
+    }
+
+    #[test]
+    fn migration_plan_offline_only_config_creates_no_full_identity() {
+        let v1 = LegacyConfigV1 { callsign: None, identifier: Some("FIELD-1".into()), grid: None };
+        let plan = IdentityMigration::plan(&v1);
+        assert!(plan.full_callsign.is_none());
+        assert!(!plan.move_inbox, "no callsign => nothing to move; the flat store stays where it is");
+    }
 
     // tuxlink-686: position_source defaults to Gps when the field is absent from an
     // existing (schema_version 1) config. This is the additive-migration test: old
@@ -1011,6 +1223,17 @@ mod tests {
             "pat_mbo_address": null
         })
         .to_string()
+    }
+
+    #[test]
+    fn identity_config_v2_carries_active_full_mirror_and_round_trips() {
+        let mut cfg: Config = serde_json::from_str(&sample_config_json_without_packet()).unwrap();
+        cfg.identity.active_full = Some("W1ABC".into());
+        cfg.identity.grid = Some("CN87ux".into());
+        let s = serde_json::to_string(&cfg).unwrap();
+        let back: Config = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.identity.active_full.as_deref(), Some("W1ABC"));
+        assert_eq!(back.identity.grid.as_deref(), Some("CN87ux"));
     }
 
     #[test]
@@ -1473,5 +1696,62 @@ mod tests {
         let serialized = serde_json::to_string(&cfg).unwrap();
         let cfg2: Config = serde_json::from_str(&serialized).unwrap();
         assert_eq!(cfg2.network_po_favorites, cfg.network_po_favorites);
+    }
+
+    // tuxlink-7iy2 Phase 2: the v1->v2 identity-migration EXECUTOR. A
+    // single-callsign v1 config + an existing flat mailbox migrates to one FULL
+    // identity, the inbox moves under the per-FULL root intact, existing Sent
+    // messages are tagged with the FULL identity in place, the activation secret
+    // is provisioned in the keyring, and a second run is a clean no-op.
+    #[test]
+    fn migrate_single_callsign_config_promotes_one_full_and_keeps_inbox_intact() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink_backend::MailboxFolder;
+
+        fn sample_raw_message(subject: &str) -> Vec<u8> {
+            crate::winlink::compose::compose_message("N7CPZ", &["W1AW"], &[], subject, "body", 1_716_200_000).to_bytes()
+        }
+
+        let mbox_root = tempfile::TempDir::new().unwrap();
+        let store_path = mbox_root.path().join("identities.json");
+
+        // Seed a legacy flat mailbox: one inbox message + one sent message.
+        let mbox = Mailbox::new(mbox_root.path());
+        let inbox_id = mbox.store(MailboxFolder::Inbox, &sample_raw_message("INBOX-1")).unwrap();
+        let sent_id  = mbox.store(MailboxFolder::Sent,  &sample_raw_message("SENT-1")).unwrap();
+
+        let v1 = LegacyConfigV1 { callsign: Some("W1ABC".into()), identifier: None, grid: Some("CN87".into()) };
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+
+        let report = IdentityMigration::plan(&v1)
+            .execute(&svc, mbox_root.path(), &store_path, /*has_cms_account=*/true, /*activation_secret=*/Some("cms-pw"))
+            .expect("migration must succeed");
+
+        // (a) exactly one FULL identity, last_selected = it.
+        let store = crate::identity::IdentityStore::load(&store_path).unwrap();
+        assert_eq!(store.full().len(), 1);
+        assert_eq!(store.full()[0].callsign.as_str(), "W1ABC");
+        assert!(matches!(store.last_selected(), Some(crate::identity::Address::Full(c)) if c.as_str() == "W1ABC"));
+
+        // (b) the inbox moved under the per-FULL root, contents intact.
+        let per_full = Mailbox::new(mbox_root.path().join("W1ABC"));
+        let metas = per_full.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(metas.len(), 1, "the one inbox message survived the move");
+        assert_eq!(metas[0].id, inbox_id);
+        assert!(!mbox_root.path().join("inbox").join(format!("{}.b2f", inbox_id.0)).exists(),
+                "the flat inbox no longer holds the migrated message");
+
+        // (c) the sent message is tagged with the FULL identity, in place (shared store).
+        assert!(mbox_root.path().join("sent").join(format!("{}.identity", sent_id.0)).exists(),
+                "existing Sent messages get a default identity tag");
+        assert_eq!(report.sent_tagged + report.outbox_tagged, 1);
+
+        // (d) the activation secret was set in the keyring.
+        assert!(svc.has_activation_secret(&crate::identity::Callsign::parse("W1ABC").unwrap()));
+
+        // (e) idempotent: a second run is a clean no-op.
+        let again = IdentityMigration::plan(&v1)
+            .execute(&svc, mbox_root.path(), &store_path, true, Some("cms-pw")).unwrap();
+        assert!(again.was_noop, "re-running the migration must be a no-op");
     }
 }

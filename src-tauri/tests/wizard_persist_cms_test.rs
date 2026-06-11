@@ -79,7 +79,7 @@ async fn persist_cms_happy_path_writes_keyring_and_config() {
     let config = tuxlink_lib::config::read_config().expect("config should be readable after persist");
     assert!(config.wizard_completed, "wizard_completed must be true");
     assert!(config.connect.connect_to_cms, "connect_to_cms must be true (CMS path)");
-    assert_eq!(config.identity.callsign.as_deref(), Some("W4PHS"), "callsign must be normalized to uppercase");
+    assert_eq!(config.identity.active_full.as_deref(), Some("W4PHS"), "callsign must be normalized to uppercase");
     assert_eq!(config.identity.grid.as_deref(), Some("EM75"), "grid preserved");
     // pat_mbo_address is deprecated + skip_serializing (tuxlink-9phd T8.1): the field is never
     // written to config.json, so reading back always yields None regardless of what was passed.

@@ -1068,7 +1068,7 @@ pub async fn vara_open_session(
     // but the right fix for that is wizard completion, not a backend bandaid).
     let callsign = config::read_config()
         .ok()
-        .and_then(|c| c.identity.callsign);
+        .and_then(|c| c.identity.active_full);
     let host_label = format!("{}:{}", ui_cfg.host, ui_cfg.cmd_port);
     emit_vara_log(
         &app,
@@ -1715,7 +1715,7 @@ fn run_vara_b2f_with_transport(
     // error before transmitting.
     let mycall = cfg
         .identity
-        .callsign
+        .active_full
         .clone()
         .ok_or_else(|| {
             "callsign not configured — complete the setup wizard before dialing".to_string()

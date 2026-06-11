@@ -75,7 +75,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision, PrivacyConfig,
     };
     Config {
-        schema_version: 1,
+        schema_version: tuxlink_lib::config::CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: ConnectConfig {
             connect_to_cms: true,
@@ -83,7 +83,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
             host: tuxlink_lib::config::default_cms_host(),
         },
         identity: IdentityConfig {
-            callsign: Some("N7CPZ".to_string()),
+            active_full: Some("N7CPZ".to_string()),
             identifier: None,
             grid: Some("DM33".to_string()),
         },

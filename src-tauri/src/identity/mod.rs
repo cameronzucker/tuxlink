@@ -13,6 +13,7 @@
 //! never a raw `Config` callsign.
 
 pub mod address;
+pub mod commands;
 pub mod handle;
 pub mod keyring_keys;
 pub mod service;

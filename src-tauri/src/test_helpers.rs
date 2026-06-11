@@ -7,7 +7,7 @@
 
 use crate::config::{
     CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PacketConfig,
-    PositionPrecision, PrivacyConfig,
+    PositionPrecision, PrivacyConfig, CONFIG_SCHEMA_VERSION,
 };
 
 /// Returns a test-only `Config` with a real callsign (N7CPZ) and blank identity
@@ -17,7 +17,7 @@ use crate::config::{
 #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
 pub fn native_test_config() -> Config {
     Config {
-        schema_version: 1,
+        schema_version: CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: ConnectConfig {
             connect_to_cms: true,
@@ -25,7 +25,7 @@ pub fn native_test_config() -> Config {
             host: crate::config::default_cms_host(),
         },
         identity: IdentityConfig {
-            callsign: Some("N7CPZ".to_string()),
+            active_full: Some("N7CPZ".to_string()),
             identifier: None,
             grid: Some("DM33".to_string()),
         },

@@ -92,11 +92,59 @@ impl IdentityService {
             Err(other) => Err(IdentityError::Keyring(format!("{other}"))),
         }
     }
+
+    /// True iff an activation secret is stored in the keyring for `full`.
+    pub fn has_activation_secret(&self, full: &Callsign) -> bool {
+        let account = activation_account(full.as_str());
+        let entry = (self.factory)(SERVICE, &account);
+        entry.get_password().is_ok()
+    }
 }
 
 impl Default for IdentityService {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+impl IdentityService {
+    /// Test-only: an in-memory-keyring service (no OS keyring). Cross-module
+    /// test helper for Phase-2 migration + command tests.
+    pub fn with_memory_keyring() -> Self {
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+        let store: Arc<Mutex<HashMap<(String, String), String>>> = Arc::new(Mutex::new(HashMap::new()));
+        let factory: EntryFactory = Box::new(move |service: &str, account: &str| {
+            Box::new(MemEntry {
+                store: Arc::clone(&store),
+                service: service.to_string(),
+                account: account.to_string(),
+            }) as Box<dyn EntryLike>
+        });
+        Self::with_factory(factory)
+    }
+}
+
+#[cfg(test)]
+struct MemEntry {
+    store: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<(String, String), String>>>,
+    service: String,
+    account: String,
+}
+#[cfg(test)]
+impl EntryLike for MemEntry {
+    fn get_password(&self) -> Result<String, keyring::Error> {
+        self.store.lock().unwrap().get(&(self.service.clone(), self.account.clone()))
+            .cloned().ok_or(keyring::Error::NoEntry)
+    }
+    fn set_password(&self, password: &str) -> Result<(), keyring::Error> {
+        self.store.lock().unwrap().insert((self.service.clone(), self.account.clone()), password.to_string());
+        Ok(())
+    }
+    fn delete_password(&self) -> Result<(), keyring::Error> {
+        if self.store.lock().unwrap().remove(&(self.service.clone(), self.account.clone())).is_some() { Ok(()) }
+        else { Err(keyring::Error::NoEntry) }
     }
 }
 

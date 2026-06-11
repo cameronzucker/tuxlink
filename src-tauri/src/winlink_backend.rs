@@ -1327,7 +1327,7 @@ impl WinlinkBackend for NativeBackend {
         let callsign = self
             .live_config()
             .identity
-            .callsign
+            .active_full
             .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
         // The trait carries an RFC 3339 date; fall back to now if unparseable.
         let unix_secs = parse_rfc3339_secs(&msg.date).unwrap_or_else(now_unix_secs);
@@ -1524,7 +1524,7 @@ impl WinlinkBackend for NativeBackend {
 
         let callsign = config
             .identity
-            .callsign
+            .active_full
             .clone()
             .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
             .trim()
@@ -1685,7 +1685,7 @@ impl NativeBackend {
         let base = self
             .live_config()
             .identity
-            .callsign
+            .active_full
             .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
         // Decide the armed-state status before `role` is moved into resolve
         // (tuxlink-orj): Listen → Listening (armed), DialTo → Connecting (dial).
@@ -2266,7 +2266,7 @@ fn native_connect(
 ) -> Result<(), BackendError> {
     let callsign = config
         .identity
-        .callsign
+        .active_full
         .clone()
         .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
         .trim()
@@ -2639,7 +2639,7 @@ pub fn run_ardop_b2f_exchange(
 
     let callsign = config
         .identity
-        .callsign
+        .active_full
         .clone()
         .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
         .trim()
@@ -2743,7 +2743,7 @@ pub fn run_ardop_b2f_answer(
     use crate::winlink::modem::ardop::b2f;
     let callsign = config
         .identity
-        .callsign
+        .active_full
         .clone()
         .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
         .trim()
@@ -2830,7 +2830,7 @@ pub fn run_vara_b2f_answer(
 
     let callsign = config
         .identity
-        .callsign
+        .active_full
         .clone()
         .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
         .trim()
@@ -2967,7 +2967,7 @@ pub fn run_vara_b2f_exchange(
 
     let callsign = config
         .identity
-        .callsign
+        .active_full
         .clone()
         .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
         .trim()
@@ -3392,7 +3392,7 @@ mod native_read_state_tests {
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: crate::config::default_cms_host() },
-            identity: IdentityConfig { callsign: None, identifier: None, grid: None },
+            identity: IdentityConfig { active_full: None, identifier: None, grid: None },
             privacy: PrivacyConfig {
                 gps_state: GpsState::Off,
                 position_precision: PositionPrecision::FourCharGrid,
@@ -4482,7 +4482,7 @@ mod native_read_state_tests {
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig { connect_to_cms: true, transport: CmsTransport::Telnet, host: crate::config::default_cms_host() },
-            identity: IdentityConfig { callsign: Some("N7CPZ".into()), identifier: None, grid: None },
+            identity: IdentityConfig { active_full: Some("N7CPZ".into()), identifier: None, grid: None },
             privacy: PrivacyConfig {
                 gps_state: GpsState::Off,
                 position_precision: PositionPrecision::FourCharGrid,
@@ -4652,7 +4652,7 @@ mod native_read_state_tests {
 
     fn config_with_call(call: &str) -> Config {
         let mut cfg = offline_config();
-        cfg.identity.callsign = Some(call.to_string());
+        cfg.identity.active_full = Some(call.to_string());
         cfg.identity.grid = Some("CN87".to_string());
         cfg
     }

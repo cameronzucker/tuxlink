@@ -248,6 +248,8 @@ pub fn run() {
         // in that the transport is externally-managed (operator must
         // vara_open_session before vara_listen can arm).
         .manage(std::sync::Arc::new(crate::ui_commands::VaraListenState::default()))
+        // Phase 2 (tuxlink-7iy2): identity CRUD command state (keyring-backed; no store path held).
+        .manage(crate::identity::IdentityService::new())
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
 
@@ -609,6 +611,10 @@ pub fn run() {
             crate::ui_commands::app_quit,             // tuxlink-ng3 (HTML File→Quit / Ctrl+Q)
             crate::ui_commands::packet_config_get,    // tuxlink-7fr (packet config read)
             crate::ui_commands::packet_config_set,    // tuxlink-7fr (packet config write)
+            crate::identity::commands::identity_list,        // tuxlink-7iy2 (Phase 2 identity CRUD)
+            crate::identity::commands::identity_add_full,    // tuxlink-7iy2
+            crate::identity::commands::identity_add_tactical,// tuxlink-7iy2
+            crate::identity::commands::identity_remove,      // tuxlink-7iy2
             crate::ui_commands::packet_connect,       // tuxlink-7fr (packet dial)
             crate::ui_commands::packet_listen,        // tuxlink-7fr (arm Listen — answer inbound)
             crate::ui_commands::packet_set_listen,    // tuxlink-7fr (sticky listen)

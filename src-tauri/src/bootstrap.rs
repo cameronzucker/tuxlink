@@ -82,6 +82,101 @@ pub fn bootstrap_decision(cfg: Result<Config, ConfigReadError>) -> BootstrapActi
 }
 
 // ============================================================================
+// v1 -> v2 identity migration (Phase 2, tuxlink-7iy2)
+// ============================================================================
+
+/// Whether startup must run the one-time v1->v2 identity migration before
+/// reading the config. Phase 2 (tuxlink-7iy2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationStep {
+    MigrateThenContinue,
+    ContinueNoMigration,
+    AbortUnsupported,
+}
+
+/// Pure mapping from a detected on-disk schema action to the startup step.
+pub fn migration_step(action: crate::config::SchemaAction) -> MigrationStep {
+    match action {
+        crate::config::SchemaAction::MigrateFromV1 => MigrationStep::MigrateThenContinue,
+        crate::config::SchemaAction::Current => MigrationStep::ContinueNoMigration,
+        crate::config::SchemaAction::Unsupported { .. } => MigrationStep::AbortUnsupported,
+    }
+}
+
+/// One-time v1->v2 identity migration at startup. Reads the on-disk config at
+/// `config_path`; if it is a v1 (MigrateFromV1) config, promotes the legacy
+/// callsign to the single FULL identity (via IdentityMigration), relocates the
+/// flat inbox + tags Sent/Outbox, then rewrites `config_path` at v2 so the
+/// subsequent read_config() succeeds. Returns Some(report) iff a migration ran.
+/// All-paths-non-fatal at the caller; this returns Err(String) for the caller to
+/// log. activation_secret is None at migration time (the operator activates on
+/// next launch, Phase 6) — migration does not block on a missing secret.
+pub fn migrate_identity_if_v1(
+    config_path: &std::path::Path,
+    mbox_dir: &std::path::Path,
+    store_path: &std::path::Path,
+    svc: &crate::identity::IdentityService,
+) -> Result<Option<crate::config::MigrationReport>, String> {
+    let bytes = match std::fs::read(config_path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None), // fresh install
+        Err(e) => return Err(format!("read config {}: {e}", config_path.display())),
+    };
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse config json: {e}"))?;
+    let version = value
+        .get("schema_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    match crate::config::detect_schema_action(version) {
+        crate::config::SchemaAction::MigrateFromV1 => {}
+        // Current or Unsupported: nothing to migrate here.
+        _ => return Ok(None),
+    }
+
+    // Parse the legacy identity block + the connect flag.
+    let v1: crate::config::LegacyConfigV1 = match value.get("identity").cloned() {
+        Some(block) => {
+            serde_json::from_value(block).map_err(|e| format!("parse legacy identity: {e}"))?
+        }
+        None => crate::config::LegacyConfigV1 {
+            callsign: None,
+            identifier: None,
+            grid: None,
+        },
+    };
+    let has_cms_account = value
+        .get("connect")
+        .and_then(|c| c.get("connect_to_cms"))
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false);
+
+    let report = crate::config::IdentityMigration::plan(&v1)
+        .execute(svc, mbox_dir, store_path, has_cms_account, None)
+        .map_err(|e| format!("identity migration execute: {e}"))?;
+
+    // Rewrite config at v2 so read_config() succeeds. v1->v2 wire format differs
+    // only by schema_version (active_full reads wire-name "callsign"), so bump the
+    // version and round-trip through Config to validate the shape, then write.
+    let mut bumped = value;
+    bumped["schema_version"] = serde_json::json!(crate::config::CONFIG_SCHEMA_VERSION);
+    let cfg: crate::config::Config =
+        serde_json::from_value(bumped).map_err(|e| format!("v1->v2 config shape: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(&cfg).map_err(|e| format!("serialize v2 config: {e}"))?;
+    // Atomic-ish write to the SAME path (not the global config_path()).
+    let parent = config_path
+        .parent()
+        .ok_or_else(|| "config path has no parent".to_string())?;
+    let tmp = tempfile::NamedTempFile::new_in(parent).map_err(|e| format!("tempfile: {e}"))?;
+    std::fs::write(tmp.path(), json.as_bytes()).map_err(|e| format!("write tmp: {e}"))?;
+    tmp.persist(config_path)
+        .map_err(|e| format!("persist config: {e}"))?;
+
+    Ok(Some(report))
+}
+
+// ============================================================================
 // .setup() bootstrap worker
 // ============================================================================
 
@@ -94,6 +189,54 @@ pub fn bootstrap_decision(cfg: Result<Config, ConfigReadError>) -> BootstrapActi
 /// (managed-state lookups, `emit`), never via a borrowed `app`/`State`.
 pub fn run(app_handle: AppHandle) {
     std::thread::spawn(move || {
+        // Phase 2 (tuxlink-7iy2): one-time v1->v2 identity migration BEFORE
+        // read_config (which rejects a v1 schema_version). Non-fatal: on any error
+        // we log and fall through to the normal bootstrap with the un-migrated
+        // store rather than refuse to launch.
+        if let Ok(data_dir) = app_handle.path().app_data_dir() {
+            let config_path = crate::config::config_path();
+            let mbox_dir = data_dir.join("native-mbox");
+            let store_path = crate::config::identity_store_path();
+            let svc = crate::identity::IdentityService::new();
+            match migrate_identity_if_v1(&config_path, &mbox_dir, &store_path, &svc) {
+                Ok(Some(report)) => {
+                    tracing::info!(
+                        target: "tuxlink::bootstrap",
+                        sent_tagged = report.sent_tagged,
+                        outbox_tagged = report.outbox_tagged,
+                        inbox_moved = report.inbox_moved,
+                        was_noop = report.was_noop,
+                        "identity migration v1->v2 completed",
+                    );
+                    emit_backend_line(
+                        &app_handle,
+                        LogLevel::Info,
+                        "Migrated configuration to the multi-identity format.".to_string(),
+                    );
+                    // Rebuild the search index over the relocated inbox + identity tags.
+                    if let Some(search) =
+                        app_handle.try_state::<crate::search::commands::SearchService>()
+                    {
+                        if let Err(e) = search.rebuild_index(mbox_dir.clone()) {
+                            tracing::warn!(
+                                target: "tuxlink::bootstrap",
+                                error = %e,
+                                "post-migration index rebuild failed",
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        target: "tuxlink::bootstrap",
+                        error = %e,
+                        "identity migration skipped (non-fatal)",
+                    );
+                }
+            }
+        }
+
         let action = bootstrap_decision(crate::config::read_config());
         let state = app_handle.state::<BackendState>();
 
@@ -305,7 +448,7 @@ mod tests {
                 host: crate::config::default_cms_host(),
             },
             identity: IdentityConfig {
-                callsign: Some("W4PHS".into()),
+                active_full: Some("W4PHS".into()),
                 identifier: None,
                 grid: Some("EM10ab".into()),
             },
@@ -353,11 +496,11 @@ mod tests {
     #[test]
     fn validation_error_is_config_error() {
         let action = bootstrap_decision(Err(ConfigReadError::Validation {
-            source: ConfigValidationError::CmsPathMissingCallsign,
+            source: ConfigValidationError::CmsPathNoActiveFull,
         }));
         match action {
             BootstrapAction::ConfigError(reason) => {
-                assert!(reason.contains("callsign"), "reason mentions the validation cause");
+                assert!(reason.contains("FULL"), "reason mentions the validation cause");
             }
             other => panic!("expected ConfigError, got {other:?}"),
         }
@@ -392,7 +535,7 @@ mod tests {
         // Offline config forbids a callsign (Config::validate), but
         // bootstrap_decision does not re-validate — it only reads the two
         // gating flags. Clear callsign anyway to keep the fixture coherent.
-        cfg.identity.callsign = None;
+        cfg.identity.active_full = None;
         let action = bootstrap_decision(Ok(cfg));
         assert!(matches!(action, BootstrapAction::NotConnected));
     }
@@ -417,6 +560,92 @@ mod tests {
         assert!(!bootstrap_line_visible_in_session_log(LogLevel::Trace));
         assert!(bootstrap_line_visible_in_session_log(LogLevel::Warn));
         assert!(bootstrap_line_visible_in_session_log(LogLevel::Error));
+    }
+
+    // ========================================================================
+    // v1 -> v2 identity migration (Phase 2, tuxlink-7iy2)
+    // ========================================================================
+
+    #[test]
+    fn startup_runs_migration_for_v1_then_spawns() {
+        use crate::config::SchemaAction;
+        assert_eq!(
+            super::migration_step(SchemaAction::MigrateFromV1),
+            super::MigrationStep::MigrateThenContinue
+        );
+        assert_eq!(
+            super::migration_step(SchemaAction::Current),
+            super::MigrationStep::ContinueNoMigration
+        );
+        assert_eq!(
+            super::migration_step(SchemaAction::Unsupported { found: 9 }),
+            super::MigrationStep::AbortUnsupported
+        );
+    }
+
+    #[test]
+    fn migrate_identity_if_v1_promotes_callsign_and_rewrites_config_v2() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink_backend::MailboxFolder;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mbox_dir = dir.path().join("native-mbox");
+        let store_path = dir.path().join("identities.json");
+
+        // A v1 CMS config on disk (schema_version 1, identity.callsign set).
+        std::fs::write(
+            &config_path,
+            br#"{
+            "schema_version": 1, "wizard_completed": true,
+            "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
+            "identity": {"callsign": "W1ABC", "identifier": null, "grid": "CN87"},
+            "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
+            "pat_mbo_address": null
+        }"#,
+        )
+        .unwrap();
+
+        // A seeded flat inbox message.
+        let mbox = Mailbox::new(&mbox_dir);
+        let inbox_id = mbox
+            .store(
+                MailboxFolder::Inbox,
+                &crate::winlink::compose::compose_message("N7CPZ", &["W1AW"], &[], "M", "b", 1_716_200_000)
+                    .to_bytes(),
+            )
+            .unwrap();
+
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+        let report = super::migrate_identity_if_v1(&config_path, &mbox_dir, &store_path, &svc)
+            .expect("migration ok")
+            .expect("a migration ran");
+        assert!(!report.was_noop);
+
+        // Store has the one FULL.
+        let store = crate::identity::IdentityStore::load(&store_path).unwrap();
+        assert_eq!(store.full().len(), 1);
+        assert_eq!(store.full()[0].callsign.as_str(), "W1ABC");
+
+        // Config rewritten to v2 and now read_config-shaped: parse it as Config.
+        let bytes = std::fs::read(&config_path).unwrap();
+        let cfg: crate::config::Config =
+            serde_json::from_slice(&bytes).expect("rewritten config is valid v2");
+        assert_eq!(cfg.schema_version, crate::config::CONFIG_SCHEMA_VERSION);
+        assert_eq!(cfg.identity.active_full.as_deref(), Some("W1ABC"));
+
+        // Inbox relocated under the per-FULL root.
+        let per_full = Mailbox::new(mbox_dir.join("W1ABC"));
+        assert_eq!(per_full.list(MailboxFolder::Inbox).unwrap().len(), 1);
+        let _ = inbox_id;
+
+        // Idempotent: a second run no-ops (store already has a FULL).
+        let again =
+            super::migrate_identity_if_v1(&config_path, &mbox_dir, &store_path, &svc).unwrap();
+        assert!(
+            again.is_none() || again.unwrap().was_noop,
+            "second startup migration is a no-op"
+        );
     }
 
     // ========================================================================

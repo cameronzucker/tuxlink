@@ -19,7 +19,7 @@ fn main() {
     let config = config::read_config().expect("read tuxlink config");
     let callsign = config
         .identity
-        .callsign
+        .active_full
         .clone()
         .expect("config has a callsign")
         .trim()
