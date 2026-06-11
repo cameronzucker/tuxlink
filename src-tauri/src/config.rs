@@ -6,7 +6,26 @@
 use crate::winlink::ax25::KissLinkConfig;
 use serde::{Deserialize, Deserializer, Serialize};
 
-pub const CONFIG_SCHEMA_VERSION: u32 = 1;
+pub const CONFIG_SCHEMA_VERSION: u32 = 2;
+
+/// What to do with an on-disk config of a given `schema_version` (Phase 2,
+/// tuxlink-7iy2). A v1 file is a migration candidate, not an error; the current
+/// version loads normally; anything else is unsupported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaAction {
+    Current,
+    MigrateFromV1,
+    Unsupported { found: u32 },
+}
+
+/// Pure classifier (no I/O) so it is unit-testable without the filesystem.
+pub fn detect_schema_action(found: u32) -> SchemaAction {
+    match found {
+        v if v == CONFIG_SCHEMA_VERSION => SchemaAction::Current,
+        1 => SchemaAction::MigrateFromV1,
+        other => SchemaAction::Unsupported { found: other },
+    }
+}
 
 /// Top-level config struct. `deny_unknown_fields` is the AMD-11 drift defense:
 /// any stale field (e.g. `winlink_password_present` from the pre-AMD-1 flat schema)
@@ -717,6 +736,13 @@ impl Default for TelnetListenUiConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_version_1_is_recognized_as_migratable_not_rejected() {
+        assert_eq!(super::detect_schema_action(1), super::SchemaAction::MigrateFromV1);
+        assert_eq!(super::detect_schema_action(CONFIG_SCHEMA_VERSION), super::SchemaAction::Current);
+        assert_eq!(super::detect_schema_action(999), super::SchemaAction::Unsupported { found: 999 });
+    }
 
     // tuxlink-686: position_source defaults to Gps when the field is absent from an
     // existing (schema_version 1) config. This is the additive-migration test: old
