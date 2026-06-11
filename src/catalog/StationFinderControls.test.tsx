@@ -22,10 +22,14 @@ const baseProps = {
 };
 
 describe('StationFinderControls', () => {
-  it('renders the four HF bands and marks the selected one', () => {
+  it('renders the full amateur HF band set and marks the selected one', () => {
     render(<StationFinderControls {...baseProps} />);
-    expect(screen.getByRole('button', { name: /80 m/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /40 m/ }).getAttribute('aria-pressed')).toBe('true');
+    // Every amateur HF band is offered (not the old ALE-derived 80/40/30/20m subset).
+    // Anchor the name match — "60 m" is a substring of "160 m".
+    for (const label of ['160 m', '80 m', '60 m', '40 m', '30 m', '20 m', '17 m', '15 m', '12 m', '10 m']) {
+      expect(screen.getByRole('button', { name: new RegExp(`^${label}$`) })).toBeTruthy();
+    }
+    expect(screen.getByRole('button', { name: /^40 m$/ }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('fires onBandChange when another band is clicked', () => {
