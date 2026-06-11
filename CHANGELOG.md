@@ -30,6 +30,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.51.0](https://github.com/cameronzucker/tuxlink/compare/v0.50.0...v0.51.0) (2026-06-11)
+
+
+### Features
+
+* **catalog:** NWS weather glyphs for the SFT tabular forecast ([146baf9](https://github.com/cameronzucker/tuxlink/commit/146baf90a26b699fad5911e6ed0d3f250ba326f4))
+
 ## [0.50.0](https://github.com/cameronzucker/tuxlink/compare/v0.49.1...v0.50.0) (2026-06-11)
 
 
