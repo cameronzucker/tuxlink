@@ -5,8 +5,8 @@
  *
  * Fields (§8.7): tile URL template, XYZ/TMS scheme (default XYZ), min/max
  * zoom, cache budget (MB), optional attribution, source label. The source
- * MUST serve EPSG:4326 (geodetic) tiles — overlaying Web-Mercator (EPSG:3857)
- * tiles on the 4326 base is the rejected hybrid (design §8 / C-series).
+ * serves standard Web Mercator (EPSG:3857) XYZ tiles; no CRS negotiation is
+ * needed on the wire (tuxlink-7h2m, Task 3).
  *
  * Actions consume the Phase-7 wrappers in ../map/tileSource:
  *   - Test source     → testTileSource(source)      (probe, no persist)
@@ -36,7 +36,7 @@ function statusMessage(status: TileSourceStatus): string {
     case 'partial':
       return 'source validated';
     case 'incompatible':
-      return 'incompatible tile source — expected EPSG:4326';
+      return 'incompatible tile source — the server responded but did not return standard image tiles';
     case 'unreachable':
       return 'tiles unreachable';
     case 'bundled':
@@ -91,7 +91,6 @@ export function MapTileSourceSettings() {
   function buildSource(): TileSource {
     return {
       url,
-      crs: 'Geodetic',
       scheme,
       minZoom: parseInt(minZoom, 10) || 0,
       maxZoom: parseInt(maxZoom, 10) || 0,
@@ -149,8 +148,9 @@ export function MapTileSourceSettings() {
           onChange={(e) => setUrl(e.target.value)}
         />
         <span className="tux-mts-help">
-          The source MUST serve EPSG:4326 (geodetic) tiles. Web-Mercator
-          (EPSG:3857) sources are incompatible with the base map.
+          The source serves standard Web Mercator (EPSG:3857) XYZ tiles — e.g.
+          a self-hosted TileServer GL, OpenStreetMap-format LAN server, or any
+          standard {'{z}/{x}/{y}'} source. Only private/LAN hosts are accepted.
         </span>
       </label>
 

@@ -63,7 +63,6 @@ describe('MapTileSourceSettings', () => {
       expect(testMock).toHaveBeenCalledWith(
         expect.objectContaining({
           url: 'http://192.168.1.10:8080/{z}/{x}/{y}.png',
-          crs: 'Geodetic',
           scheme: 'Xyz',
           minZoom: expect.any(Number),
           maxZoom: expect.any(Number),
@@ -71,16 +70,18 @@ describe('MapTileSourceSettings', () => {
         }),
       );
     });
+    // crs field must NOT be present on the wire.
+    expect(testMock.mock.calls[0][0]).not.toHaveProperty('crs');
     expect(await screen.findByText(/source validated/i)).toBeInTheDocument();
   });
 
-  it('Test source surfaces the incompatible-CRS message plainly', async () => {
+  it('Test source surfaces the incompatible message plainly', async () => {
     testMock.mockResolvedValue(INCOMPATIBLE);
     render(<MapTileSourceSettings />);
     fillLanUrl();
     fireEvent.click(screen.getByRole('button', { name: /Test source/i }));
     expect(
-      await screen.findByText(/incompatible tile source — expected EPSG:4326/i),
+      await screen.findByText(/incompatible tile source — the server responded but did not return standard image tiles/i),
     ).toBeInTheDocument();
   });
 
@@ -100,11 +101,12 @@ describe('MapTileSourceSettings', () => {
       expect(configureMock).toHaveBeenCalledWith(
         expect.objectContaining({
           url: 'http://192.168.1.10:8080/{z}/{x}/{y}.png',
-          crs: 'Geodetic',
           scheme: 'Xyz',
         }),
       );
     });
+    // crs field must NOT be present on the wire.
+    expect(configureMock.mock.calls[0][0]).not.toHaveProperty('crs');
     expect(await screen.findByText(/source validated/i)).toBeInTheDocument();
   });
 

@@ -3,11 +3,12 @@
  * plus thin `invoke` wrappers for the four tile commands.
  *
  * Wire-shape contract (verbatim from the Rust serde):
- *   - Struct fields are camelCase: `{ url, crs, scheme, minZoom, maxZoom,
+ *   - Struct fields are camelCase: `{ url, scheme, minZoom, maxZoom,
  *     cacheBudgetMb, attribution, label }` for `TileSource`; `{ kind, zoom,
  *     label, cachedAt }` for `TileSourceStatus`.
- *   - `crs` / `scheme` are PascalCase enum variants ("Geodetic" / "Xyz" /
- *     "Tms"), NOT camelCase — they cross the wire as their Rust variant names.
+ *   - `scheme` is a PascalCase enum variant ("Xyz" / "Tms"), NOT camelCase —
+ *     it crosses the wire as the Rust variant name. Standard Web Mercator
+ *     (EPSG:3857) is assumed; there is no `crs` field on the wire.
  *   - `StatusKind` is the kebab-case union (serde rename_all = "kebab-case").
  *
  * Commands (names verbatim): configure_tile_source, test_tile_source,
@@ -16,9 +17,6 @@
  * see TileLayerBridge.
  */
 import { invoke } from '@tauri-apps/api/core';
-
-/** Coordinate reference system of the tile source. Only Geodetic (EPSG:4326). */
-export type TileCrs = 'Geodetic';
 
 /** Tile addressing scheme: XYZ (Slippy, y top-down) or TMS (y flipped). */
 export type TileScheme = 'Xyz' | 'Tms';
@@ -43,7 +41,6 @@ export type StatusKind =
 /** A LAN tile source. Field names + casing mirror the Rust serde exactly. */
 export interface TileSource {
   url: string;
-  crs: TileCrs;
   scheme: TileScheme;
   minZoom: number;
   maxZoom: number;
