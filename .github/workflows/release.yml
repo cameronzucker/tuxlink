@@ -84,6 +84,16 @@ jobs:
           sudo apt-get install -y gfortran
           git clone --depth=1 https://github.com/jawatson/voacapl.git /tmp/voacapl-src
           cd /tmp/voacapl-src
+          # A fresh clone gives every file the same mtime, so make's autotools
+          # maintainer-mode rules think aclocal.m4/configure/Makefile.in are stale
+          # and try to re-run aclocal-1.15 (not installed) → Error 127. Touch the
+          # shipped generated files strictly newer than their sources, in
+          # dependency order, so make treats them as up-to-date and never
+          # regenerates them. (No autotools install needed.)
+          find . -type f -exec touch {} +
+          sleep 1; find . -name 'aclocal.m4' -exec touch {} +
+          sleep 1; find . \( -name 'configure' -o -name 'config.h.in' \) -exec touch {} +
+          sleep 1; find . -name 'Makefile.in' -exec touch {} +
           ./configure --prefix=/tmp/voacapl-install
           make -j"$(nproc)"
           make install
