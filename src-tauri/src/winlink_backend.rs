@@ -1555,13 +1555,12 @@ impl WinlinkBackend for NativeBackend {
             transport: "CmsAuthTest".to_string(),
         });
 
-        let callsign = config
-            .identity
-            .active_full
-            .clone()
-            .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
-            .trim()
-            .to_uppercase();
+        // tuxlink-0063 (Phase 3): the on-air station ID is the session's full
+        // callsign — the Part 97 principal — not `config.identity.active_full`.
+        // Resolve before spawn_blocking so `?` surfaces NoActiveIdentity to the
+        // caller immediately (mirrors native_connect / NativeBackend::connect).
+        let session_id = self.active_identity()?;
+        let callsign = session_id.mycall().as_str().to_uppercase();
         let locator = crate::position::effective_broadcast_locator(&config, self.position.as_deref());
         let password = crate::winlink::credentials::read_password(&callsign)
             .ok()
@@ -4280,6 +4279,96 @@ mod native_read_state_tests {
             observed.as_deref(),
             Some("N7CPZ"),
             "the on-air login callsign must be the session mycall (N7CPZ), not the config callsign (W7AUX)"
+        );
+    }
+
+    // =========================================================================
+    // Task 3.2 (tuxlink-0063): cms_connect_test derives the on-air station ID
+    // (the telnet-login callsign → ExchangeConfig.mycall) from the
+    // SessionIdentity stored in the backend, NOT from
+    // `config.identity.active_full`. The config carries W7AUX; the active
+    // session authenticates N7CPZ; the callsign the client sends at the
+    // `Callsign :` prompt MUST be N7CPZ.
+    //
+    // The fake server captures the first non-prompt line after the
+    // `Callsign :` prompt then closes the socket (mirrors Task 3.1's
+    // native_connect_mycall_comes_from_session_not_config). The exchange
+    // errors after login — irrelevant: the only load-bearing assertion is
+    // which callsign went on the wire. `#[serial]` because it sets the
+    // process-global TUXLINK_CMS_PORT.
+    // =========================================================================
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn cms_connect_test_mycall_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        use crate::winlink::b2f_events::{AttemptId, B2fEvent, B2fEventSink};
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::Mutex as StdMutex;
+
+        // A no-op event sink: the test only cares about the wire callsign, not events.
+        struct NoopSink;
+        impl B2fEventSink for NoopSink {
+            fn push(&self, _: B2fEvent) {}
+        }
+
+        // The fake server records the login callsign the client sends.
+        let captured: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let listen_port = listener.local_addr().expect("listener addr").port();
+
+        let server = {
+            let captured = captured.clone();
+            std::thread::spawn(move || {
+                let (sock, _) = listener.accept().expect("accept");
+                let mut writer = sock.try_clone().expect("clone for write");
+                // Prompt for the callsign, read the client's reply, capture it, close.
+                writer.write_all(b"Callsign :\r").expect("write callsign prompt");
+                let mut reader = BufReader::new(sock);
+                let mut line = Vec::new();
+                reader.read_until(b'\r', &mut line).expect("read callsign reply");
+                let call = String::from_utf8_lossy(&line).trim_end_matches('\r').to_string();
+                *captured.lock().unwrap() = Some(call);
+                // Drop the socket: the client's login/exchange then errors out.
+            })
+        };
+
+        // Config callsign is W7AUX; the active session authenticates N7CPZ.
+        let mut cfg = config_with_call("W7AUX");
+        cfg.connect.host = "127.0.0.1".to_string();
+        let dir = tempfile::tempdir().unwrap();
+        let backend = NativeBackend::new(cfg.clone(), dir.path());
+        // Refresh the backend's live config to pick up the host override.
+        backend.set_config(cfg);
+        // Set the active session identity to N7CPZ (different from config callsign).
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+        backend.set_active_identity(session_id);
+
+        // RAII guard clears TUXLINK_CMS_PORT on drop, even on panic.
+        struct CmsPortGuard;
+        impl Drop for CmsPortGuard {
+            fn drop(&mut self) {
+                std::env::remove_var("TUXLINK_CMS_PORT");
+            }
+        }
+        std::env::set_var("TUXLINK_CMS_PORT", listen_port.to_string());
+        let _cms_port_guard = CmsPortGuard;
+
+        let events: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
+            std::sync::Arc::new(NoopSink);
+        let attempt_id = AttemptId::fresh();
+
+        // The call is expected to error (server closes after login); we only
+        // care about which callsign the client put on the wire.
+        let _ = backend.cms_connect_test(events, attempt_id).await;
+
+        server.join().expect("server thread panicked");
+        let observed = captured.lock().unwrap().clone();
+        assert_eq!(
+            observed.as_deref(),
+            Some("N7CPZ"),
+            "cms_connect_test must use the session mycall (N7CPZ), not the config callsign (W7AUX)"
         );
     }
 
