@@ -17,7 +17,7 @@ VITE_TUXLINK_FIXTURE=1 pnpm exec vite --host 127.0.0.1 --port 1420 --strictPort
 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
   python3 dev/render-harness/snapshot.py \
     "http://127.0.0.1:1420/dev/readme-screenshot-harness/harness.html?view=shell&dock=vara" \
-    docs/readme/images/tuxlink-mailbox.png 1760 920 13000
+    docs/readme/images/tuxlink-mailbox.png 1920 920 13000
 
 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
   python3 dev/render-harness/snapshot.py \
