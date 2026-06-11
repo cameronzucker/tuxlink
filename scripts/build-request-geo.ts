@@ -113,12 +113,40 @@ async function sleep(ms: number): Promise<void> {
 interface ZoneGeomResponse {
   type: string;
   properties?: Record<string, unknown>;
-  geometry: GeoGeometry | null;
+  geometry: AnyGeometry | null;
 }
 
 interface GeoGeometry {
   type: 'Polygon' | 'MultiPolygon';
   coordinates: number[][][] | number[][][][];
+}
+
+interface GeoGeometryCollection {
+  type: 'GeometryCollection';
+  geometries: Array<GeoGeometry | GeoGeometryCollection>;
+}
+
+type AnyGeometry = GeoGeometry | GeoGeometryCollection;
+
+/**
+ * Flatten a GeoJSON geometry (including GeometryCollections) to a list of
+ * Polygon coordinate arrays (each a number[][][]).  Used to normalise NWS
+ * GeometryCollection responses — NWS sometimes returns a GeometryCollection
+ * with a MultiPolygon (land) + Polygon (water boundary) pair for coastal zones.
+ */
+function flattenToPolygons(geom: AnyGeometry): number[][][][] {
+  if (geom.type === 'Polygon') {
+    return [geom.coordinates as number[][][]];
+  } else if (geom.type === 'MultiPolygon') {
+    return geom.coordinates as number[][][][];
+  } else if (geom.type === 'GeometryCollection') {
+    const polys: number[][][][] = [];
+    for (const sub of geom.geometries) {
+      polys.push(...flattenToPolygons(sub as AnyGeometry));
+    }
+    return polys;
+  }
+  return [];
 }
 
 async function fetchZoneGeometry(zoneId: string): Promise<ZoneGeomResponse> {
@@ -203,50 +231,133 @@ function round4(x: number): number {
   return Math.round(x * 10000) / 10000;
 }
 
-/** Simplify a Polygon ring array. Returns null if any ring degenerates to < 4 points. */
+/**
+ * Fallback tolerance ladder: try progressively less aggressive simplification
+ * when DP at the primary tolerance degenerates a ring.
+ * Tolerance 0 means "keep original ring vertices" — always a valid polygon.
+ */
+const FALLBACK_TOLERANCES = [0.01, 0.005, 0] as const;
+
+/**
+ * Attempt to simplify a single ring at the given tolerance.
+ * Returns the simplified (and closed) ring if valid (>= 4 points), or null.
+ */
+function trySimplifyRing(
+  pts: [number, number][],
+  tol: number,
+): [number, number][] | null {
+  let simple = tol === 0 ? [...pts] : douglasPeucker(pts, tol);
+  // Ensure ring is closed
+  if (
+    simple.length > 0 &&
+    (simple[0][0] !== simple[simple.length - 1][0] ||
+      simple[0][1] !== simple[simple.length - 1][1])
+  ) {
+    simple = [...simple, simple[0]];
+  }
+  // A valid polygon ring needs at least 4 points (3 unique + closing repeat)
+  if (simple.length < 4) return null;
+  return simple;
+}
+
+/**
+ * Simplify a single ring at primaryTol, falling back through FALLBACK_TOLERANCES
+ * (including tolerance 0 = original) if the ring degenerates.
+ * Returns the simplified ring (never null — tolerance 0 always succeeds if the
+ * source ring was valid) and whether a fallback was needed.
+ */
+function simplifyRingWithFallback(
+  pts: [number, number][],
+  primaryTol: number,
+): { ring: [number, number][]; usedFallback: boolean } {
+  const result = trySimplifyRing(pts, primaryTol);
+  if (result) return { ring: result, usedFallback: false };
+
+  for (const tol of FALLBACK_TOLERANCES) {
+    if (tol >= primaryTol) continue; // only fall BACK (less aggressive)
+    const fb = trySimplifyRing(pts, tol);
+    if (fb) return { ring: fb, usedFallback: true };
+  }
+
+  // Tolerance 0 always produces the original ring as long as it has >= 4 points.
+  // If the source ring has < 4 points it was already degenerate before simplification.
+  const original = trySimplifyRing(pts, 0);
+  if (original) return { ring: original, usedFallback: true };
+
+  // Degenerate source ring — cannot save.
+  return { ring: pts as [number, number][], usedFallback: true };
+}
+
+/** Simplify a Polygon ring array using per-ring fallback on degeneration.
+ *  Returns null only if a source ring was already degenerate before simplification. */
 function simplifyPolygon(
   coords: number[][][],
   tol: number,
-): number[][][] | null {
+): { result: number[][][]; hadFallback: boolean } | null {
   const simplified: number[][][] = [];
+  let hadFallback = false;
   for (const ring of coords) {
-    // Cast to [number,number][] for DP
     const pts = ring as [number, number][];
-    let simple = douglasPeucker(pts, tol);
-    // Ensure ring is closed
-    if (
-      simple.length > 0 &&
-      (simple[0][0] !== simple[simple.length - 1][0] ||
-        simple[0][1] !== simple[simple.length - 1][1])
-    ) {
-      simple = [...simple, simple[0]];
-    }
-    // A valid polygon ring needs at least 4 points (3 unique + closing repeat)
-    if (simple.length < 4) return null;
-    simplified.push(simple.map(([x, y]) => [round4(x), round4(y)]));
+    // Check source ring validity first
+    if (pts.length < 4) return null; // degenerate source
+    const { ring: simplifiedRing, usedFallback } = simplifyRingWithFallback(pts, tol);
+    if (usedFallback) hadFallback = true;
+    simplified.push(simplifiedRing.map(([x, y]) => [round4(x), round4(y)]));
   }
-  return simplified;
+  return { result: simplified, hadFallback };
 }
 
-/** Simplify a GeoJSON geometry. Returns null if the geometry becomes degenerate. */
+/** Simplify a GeoJSON geometry with per-ring fallback. Returns null only if source is degenerate.
+ *  GeometryCollection is flattened to MultiPolygon before simplification. */
 function simplifyGeometry(
-  geom: GeoGeometry,
+  geom: AnyGeometry,
   tol: number,
-): GeoGeometry | null {
+): { geom: GeoGeometry; hadFallback: boolean } | null {
+  // Flatten GeometryCollection to MultiPolygon
+  if (geom.type === 'GeometryCollection') {
+    const allPolys = flattenToPolygons(geom);
+    if (allPolys.length === 0) return null;
+    const simplifiedPolys: number[][][][] = [];
+    let hadFallback = false;
+    for (const poly of allPolys) {
+      const r = simplifyPolygon(poly, tol);
+      if (r) {
+        simplifiedPolys.push(r.result);
+        if (r.hadFallback) hadFallback = true;
+      }
+    }
+    if (simplifiedPolys.length === 0) return null;
+    return {
+      geom: { type: 'MultiPolygon', coordinates: simplifiedPolys },
+      hadFallback,
+    };
+  }
+
   if (geom.type === 'Polygon') {
     const coords = geom.coordinates as number[][][];
-    const simplified = simplifyPolygon(coords, tol);
-    if (!simplified) return null;
-    return { type: 'Polygon', coordinates: simplified };
+    const r = simplifyPolygon(coords, tol);
+    if (!r) return null;
+    return {
+      geom: { type: 'Polygon', coordinates: r.result },
+      hadFallback: r.hadFallback,
+    };
   } else if (geom.type === 'MultiPolygon') {
     const coords = geom.coordinates as number[][][][];
     const simplifiedPolys: number[][][][] = [];
+    let hadFallback = false;
     for (const poly of coords) {
-      const sp = simplifyPolygon(poly, tol);
-      if (sp) simplifiedPolys.push(sp);
+      const r = simplifyPolygon(poly, tol);
+      if (r) {
+        simplifiedPolys.push(r.result);
+        if (r.hadFallback) hadFallback = true;
+      }
+      // If a sub-polygon's source is degenerate, skip only that sub-polygon
     }
     if (simplifiedPolys.length === 0) return null;
-    return { type: 'MultiPolygon', coordinates: simplifiedPolys };
+    return {
+      geom: { type: 'MultiPolygon', coordinates: simplifiedPolys },
+      hadFallback,
+    };
   }
   return null;
 }
@@ -424,8 +535,10 @@ async function fetchGeometryAndEmit(): Promise<void> {
 
   const features: OutputFeature[] = [];
   let nullGeom = 0;
-  let degenGeom = 0;
+  let degenSourceGeom = 0;
+  let fallbackUsed = 0;
   const nullGeomIds: string[] = [];
+  const degenSourceIds: string[] = [];
 
   for (const { id: zoneId, name, state } of allZones) {
     const cachePath = resolve(GEOM_CACHE_DIR, `${zoneId}.json`);
@@ -454,25 +567,34 @@ async function fetchGeometryAndEmit(): Promise<void> {
 
     const simplified = simplifyGeometry(data.geometry, DP_TOLERANCE);
     if (!simplified) {
-      console.warn(`  [${zoneId}] geometry degenerated after simplification — skipping`);
-      degenGeom++;
+      // Only reaches here if source geometry itself was degenerate (< 4 points)
+      console.warn(`  [${zoneId}] source geometry is degenerate — skipping`);
+      degenSourceGeom++;
+      degenSourceIds.push(zoneId);
       continue;
+    }
+
+    if (simplified.hadFallback) {
+      fallbackUsed++;
     }
 
     features.push({
       type: 'Feature',
       properties: { id: zoneId, name, state },
-      geometry: simplified,
+      geometry: simplified.geom,
     });
   }
 
   if (nullGeomIds.length > 0) {
     console.log(
-      `\nSkipped ${nullGeomIds.length} zones with null geometry: ${nullGeomIds.slice(0, 10).join(', ')}${nullGeomIds.length > 10 ? ` … (+${nullGeomIds.length - 10} more)` : ''}`,
+      `\nSkipped ${nullGeomIds.length} zones with null/missing geometry: ${nullGeomIds.slice(0, 10).join(', ')}${nullGeomIds.length > 10 ? ` … (+${nullGeomIds.length - 10} more)` : ''}`,
     );
   }
-  if (degenGeom > 0) {
-    console.log(`Skipped ${degenGeom} zones with degenerate simplified geometry.`);
+  if (degenSourceGeom > 0) {
+    console.log(`Skipped ${degenSourceGeom} zones with degenerate SOURCE geometry (< 4 pts): ${degenSourceIds.join(', ')}`);
+  }
+  if (fallbackUsed > 0) {
+    console.log(`Used min-vertex fallback tolerance for ${fallbackUsed} tiny zone(s) — preserved in output.`);
   }
 
   const geojson = {
