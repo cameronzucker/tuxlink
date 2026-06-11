@@ -30,6 +30,29 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.50.0](https://github.com/cameronzucker/tuxlink/compare/v0.49.1...v0.50.0) (2026-06-11)
+
+
+### Features
+
+* **catalog:** assemble StationFinderPanel (Mock-D surface) with FZ-M1 compact (tuxlink-gife) ([b9f89ec](https://github.com/cameronzucker/tuxlink/commit/b9f89ecb71b4b8c69f5b5c1a63e9d23b2a86d9be))
+* **catalog:** Find-a-Station conditions/band/mode controls bar (tuxlink-gife) ([86b9506](https://github.com/cameronzucker/tuxlink/commit/86b9506ceca2dd3e84cfbacca6b198c9760b8c04))
+* **catalog:** Find-a-Station right rail (aiming + forecast + channels) (tuxlink-gife) ([7840bab](https://github.com/cameronzucker/tuxlink/commit/7840bab045159e41503affbaf0ea40aeb6637654))
+* **catalog:** reachability-weighted station map pane (tuxlink-gife) ([c4e074a](https://github.com/cameronzucker/tuxlink/commit/c4e074a1b03870eb038eb50251de4bf36a667312))
+* **catalog:** station-list freshness caption (U2 last-known-good surface, design §6) (tuxlink-gife) ([2509f24](https://github.com/cameronzucker/tuxlink/commit/2509f24a3e2a2a51a57cdc6018849bdf444f76d5))
+* **shell:** wire StationFinderPanel into AppShell; rename menu to Find a Station; widen prefill to VARA; remove CatalogBuilderPanel + StationResults + [#550](https://github.com/cameronzucker/tuxlink/issues/550) pin (tuxlink-gife) ([b2ea18f](https://github.com/cameronzucker/tuxlink/commit/b2ea18f8a00080320e2b7d85bf8af38262e07c80))
+
+
+### Bug Fixes
+
+* **catalog:** guard listings against a non-array backend response (CI amd64 crash) ([b81e6e1](https://github.com/cameronzucker/tuxlink/commit/b81e6e1d38e12b5dd3cdc72e4625ab2a44708e26))
+* **readme:** un-jumble the mailbox hero — resolved GPS fixture state + wider capture ([39d1b49](https://github.com/cameronzucker/tuxlink/commit/39d1b4981546601b10fd89413518df9e47243cd2))
+
+
+### Refactors
+
+* **request:** drop dead bestStateForecast; clamp AK radar bboxes to valid lon range (tuxlink-96lu) ([23f8dd5](https://github.com/cameronzucker/tuxlink/commit/23f8dd5b1da4298d3077248ea53e18ef8491ca31))
+
 ## [0.49.1](https://github.com/cameronzucker/tuxlink/compare/v0.49.0...v0.49.1) (2026-06-11)
 
 
