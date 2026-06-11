@@ -12,6 +12,7 @@
  */
 
 import statesGeoJson from './us-states.geo.json';
+import nwsZonesGeoJson from './nws-zones.geo.json';
 
 export interface LatLon {
   lat: number;
@@ -158,7 +159,37 @@ function pointInRing(lon: number, lat: number, ring: number[][]): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Function 3 — latLonToSeaArea
+// Function 3 — gridToNwsZone
+// ---------------------------------------------------------------------------
+
+export interface NwsZone { id: string; name: string; state: string; }
+
+interface ZoneFeature {
+  properties: { id: string; name: string; state: string };
+  geometry:
+    | { type: 'Polygon'; coordinates: number[][][] }
+    | { type: 'MultiPolygon'; coordinates: number[][][][] };
+}
+const ZONE_FEATURES = (nwsZonesGeoJson as { features: ZoneFeature[] }).features;
+
+/** Point-in-polygon over bundled NWS public-zone geometry. Returns the zone
+ *  covering the point, or null for ocean / non-US / a gap in the bundled set.
+ *  Same ray-casting technique as latLonToUsState. */
+export function gridToNwsZone(lat: number, lon: number): NwsZone | null {
+  for (const f of ZONE_FEATURES) {
+    const polys =
+      f.geometry.type === 'Polygon'
+        ? [f.geometry.coordinates]
+        : f.geometry.coordinates;
+    for (const poly of polys) {
+      if (pointInPolygonWithHoles(lon, lat, poly)) return f.properties;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Function 5 — latLonToSeaArea
 // ---------------------------------------------------------------------------
 
 /**
