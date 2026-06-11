@@ -31,7 +31,9 @@ pub fn detect_schema_action(found: u32) -> SchemaAction {
 /// v1 config without going through the v2 `Config` (whose schema_version guard
 /// rejects 1). Phase 2 (tuxlink-7iy2).
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)] // consumed by IdentityMigration::execute in the next Phase-2 task
+// `callsign` is read by IdentityMigration::plan/execute; `identifier`/`grid` are
+// consumed by a later Phase-2 task, so the allow stays scoped to those fields.
+#[allow(dead_code)]
 pub struct LegacyConfigV1 {
     #[serde(default)]
     pub callsign: Option<String>,
@@ -43,7 +45,6 @@ pub struct LegacyConfigV1 {
 
 /// The pure decision of the v1->v2 identity migration (no I/O). Phase 2.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // fields consumed by IdentityMigration::execute in the next Phase-2 task
 pub struct MigrationPlan {
     /// The legacy callsign promoted to the single FULL identity (None for an
     /// offline-only v1 with no callsign).
@@ -76,6 +77,107 @@ impl IdentityMigration {
             },
         }
     }
+}
+
+/// Outcome of running the v1->v2 identity migration. Phase 2 (tuxlink-7iy2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationReport {
+    pub sent_tagged: usize,
+    pub outbox_tagged: usize,
+    pub inbox_moved: bool,
+    /// True when the migration found nothing to do (already migrated / no FULL).
+    pub was_noop: bool,
+}
+
+impl MigrationPlan {
+    /// Execute the migration (idempotent). Sentinel: if the IdentityStore at
+    /// `store_path` already has >=1 FULL identity, this is a no-op.
+    pub fn execute(
+        &self,
+        svc: &crate::identity::IdentityService,
+        mbox_root: &std::path::Path,
+        store_path: &std::path::Path,
+        has_cms_account: bool,
+        activation_secret: Option<&str>,
+    ) -> Result<MigrationReport, crate::identity::IdentityError> {
+        use crate::identity::{Address, Callsign, FullIdentity, IdentityError, IdentityStore};
+
+        let mut store = IdentityStore::load(store_path)?;
+        // Idempotency sentinel: a store with a FULL means migration already ran.
+        if !store.full().is_empty() {
+            return Ok(MigrationReport { sent_tagged: 0, outbox_tagged: 0, inbox_moved: false, was_noop: true });
+        }
+        // Offline-only v1 (no callsign): nothing to promote.
+        let Some(call_str) = self.full_callsign.as_deref() else {
+            return Ok(MigrationReport { sent_tagged: 0, outbox_tagged: 0, inbox_moved: false, was_noop: true });
+        };
+
+        let callsign = Callsign::parse(call_str)?;
+        store.add_full(FullIdentity {
+            callsign: callsign.clone(),
+            label: None,
+            has_cms_account,
+            cms_registered: false,
+        })?;
+        store.set_last_selected(Address::Full(callsign.clone()));
+        store.save()?;
+
+        if let Some(secret) = activation_secret {
+            svc.set_activation_secret(&callsign, secret)?;
+        }
+
+        // Move the flat inbox under the per-FULL root (intact), if present + not already moved.
+        let mut inbox_moved = false;
+        if self.move_inbox {
+            let flat_inbox = mbox_root.join("inbox");
+            let per_full_inbox = crate::native_mailbox::per_full_root(mbox_root, call_str).join("inbox");
+            if flat_inbox.exists() && !per_full_inbox.exists() {
+                if let Some(parent) = per_full_inbox.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| IdentityError::Io(format!("mkdir {}: {e}", parent.display())))?;
+                }
+                std::fs::rename(&flat_inbox, &per_full_inbox)
+                    .map_err(|e| IdentityError::Io(format!("move inbox: {e}")))?;
+                inbox_moved = true;
+            }
+        }
+
+        // Default-tag existing Sent + Outbox messages in place (shared store).
+        let sent_tagged = tag_folder(mbox_root, crate::winlink_backend::MailboxFolder::Sent, call_str)?;
+        let outbox_tagged = tag_folder(mbox_root, crate::winlink_backend::MailboxFolder::Outbox, call_str)?;
+
+        Ok(MigrationReport { sent_tagged, outbox_tagged, inbox_moved, was_noop: false })
+    }
+}
+
+/// Tag every `.b2f` in a shared folder with the FULL identity; returns the count.
+fn tag_folder(
+    mbox_root: &std::path::Path,
+    folder: crate::winlink_backend::MailboxFolder,
+    callsign: &str,
+) -> Result<usize, crate::identity::IdentityError> {
+    use crate::identity::IdentityError;
+    use crate::winlink_backend::MessageId;
+    let dir = mbox_root.join(match folder {
+        crate::winlink_backend::MailboxFolder::Sent => "sent",
+        crate::winlink_backend::MailboxFolder::Outbox => "outbox",
+        _ => return Ok(0),
+    });
+    if !dir.exists() {
+        return Ok(0);
+    }
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).map_err(|e| IdentityError::Io(format!("read {}: {e}", dir.display())))? {
+        let path = entry.map_err(|e| IdentityError::Io(format!("{e}")))?.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("b2f") {
+            continue;
+        }
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
+        crate::native_mailbox::tag_identity(mbox_root, folder, &MessageId::new(stem), callsign)
+            .map_err(|e| IdentityError::Io(format!("tag identity: {e}")))?;
+        n += 1;
+    }
+    Ok(n)
 }
 
 /// Top-level config struct. `deny_unknown_fields` is the AMD-11 drift defense:
