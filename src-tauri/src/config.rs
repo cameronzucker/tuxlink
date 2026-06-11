@@ -553,6 +553,15 @@ pub fn config_path() -> std::path::PathBuf {
     )
 }
 
+/// The identity store (`identities.json`) lives next to `config.json` (Phase 1
+/// store.rs design + the TUXLINK_CONFIG_DIR per-worktree isolation). Phase 2.
+pub fn identity_store_path() -> std::path::PathBuf {
+    config_path()
+        .parent()
+        .map(|p| p.join("identities.json"))
+        .unwrap_or_else(|| std::path::PathBuf::from("identities.json"))
+}
+
 /// Pure resolver behind [`config_path`] (testable without process-global env).
 /// `TUXLINK_CONFIG_DIR` (tuxlink-efo) is a tuxlink-specific override so a per-worktree
 /// dev build points at its OWN config dir — concurrent builds then stop contaminating

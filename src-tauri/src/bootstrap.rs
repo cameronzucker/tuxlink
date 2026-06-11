@@ -196,7 +196,7 @@ pub fn run(app_handle: AppHandle) {
         if let Ok(data_dir) = app_handle.path().app_data_dir() {
             let config_path = crate::config::config_path();
             let mbox_dir = data_dir.join("native-mbox");
-            let store_path = data_dir.join("identities.json");
+            let store_path = crate::config::identity_store_path();
             let svc = crate::identity::IdentityService::new();
             match migrate_identity_if_v1(&config_path, &mbox_dir, &store_path, &svc) {
                 Ok(Some(report)) => {
