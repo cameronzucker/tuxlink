@@ -33,6 +33,11 @@ function bandDial(station: Station, band: Band): number | null {
 
 const EMPTY_TIERS: Map<string, ReachTier> = new Map();
 
+// Max voacapl predictions in flight at once. Each run is a short CPU-bound
+// process on a backend blocking thread; a small pool keeps the cores busy
+// without oversubscribing the dev Pi (4 cores) when a band has many stations.
+const PREDICT_CONCURRENCY = 6;
+
 export function useReachabilityMap(
   operatorGrid: string,
   stations: Station[],
@@ -73,24 +78,40 @@ export function useReachabilityMap(
     (async () => {
       const tiers = new Map<string, ReachTier>();
       let sawUnavailable = false;
-      for (const s of onBand) {
-        const dial = bandDial(s, band)!;
-        // Two-arg .then (single call, not .then().catch()) → no intermediate
-        // rejected promise; the awaited result never rejects.
-        const outcome = await predictPath(grid, s.grid, [dial]).then(
-          (p) => ({ ok: true as const, p }),
-          (err) => ({ ok: false as const, err }),
-        );
-        if (cancelled) return;
-        if (outcome.ok) {
-          const rel = outcome.p.channels[0]?.relByHour[utcHour] ?? 0;
-          tiers.set(stationKey(s), relToTier(rel));
-        } else if (isUnavailable(outcome.err)) {
-          sawUnavailable = true;
-          break;
+
+      // Each prediction is an independent voacapl run; the Rust command runs on
+      // a blocking thread, so the calls can overlap. Dispatch them through a
+      // bounded worker pool rather than a serial `for await` (which made the map
+      // fill in tier-by-tier over seconds). JS is single-threaded so the shared
+      // `tiers`/flag writes are race-free — workers only yield at the `await`.
+      let next = 0;
+      const worker = async () => {
+        while (!cancelled && !sawUnavailable) {
+          const i = next++;
+          if (i >= onBand.length) return;
+          const s = onBand[i];
+          const dial = bandDial(s, band)!;
+          // Two-arg .then (single call, not .then().catch()) → no intermediate
+          // rejected promise; the awaited result never rejects.
+          const outcome = await predictPath(grid, s.grid, [dial]).then(
+            (p) => ({ ok: true as const, p }),
+            (err) => ({ ok: false as const, err }),
+          );
+          if (cancelled) return;
+          if (outcome.ok) {
+            const rel = outcome.p.channels[0]?.relByHour[utcHour] ?? 0;
+            tiers.set(stationKey(s), relToTier(rel));
+          } else if (isUnavailable(outcome.err)) {
+            // Engine not bundled — every call would fail the same way; stop
+            // dispatching and degrade to distance-only ranking.
+            sawUnavailable = true;
+          }
+          // A single non-Unavailable failure is non-fatal: leave it untiered.
         }
-        // A single non-Unavailable failure is non-fatal: leave it untiered.
-      }
+      };
+      const poolSize = Math.min(PREDICT_CONCURRENCY, onBand.length);
+      await Promise.all(Array.from({ length: poolSize }, worker));
+
       if (!cancelled) {
         setData({
           tiers: sawUnavailable ? EMPTY_TIERS : tiers,
