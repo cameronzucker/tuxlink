@@ -8,6 +8,7 @@ import {
 import zonesGeo from './nws-zones.geo.json';
 import zoneMap from './nws-zone-to-catalog.json';
 import unmappedJson from './nws-zone-unmapped.json';
+import radar from './radar-regions.json';
 
 /** Build a CatalogEntry with sensible defaults for fixtures. */
 function entry(partial: Partial<CatalogEntry> & Pick<CatalogEntry, 'category' | 'filename'>): CatalogEntry {
@@ -185,5 +186,62 @@ describe('NWS zone mapping completeness (DoD #5)', () => {
       (f) => !mappedFilenames.has(f) && !unmappedFilenames.has(f),
     );
     expect(missing, `Unresolved catalog zone forecasts:\n${missing.join('\n')}`).toEqual([]);
+  });
+});
+
+describe('radar-region coverage', () => {
+  // Load WX_US_RAD filenames from the bundled catalog using the same import.meta.glob
+  // pattern as the completeness test above (TEST-1: no node:fs in frontend tests).
+  const catalogModules = import.meta.glob(
+    '/src-tauri/resources/catalog/winlink-queries.txt',
+    { eager: true, query: '?raw', import: 'default' },
+  ) as Record<string, string>;
+  const catalogRaw = Object.values(catalogModules)[0];
+
+  const radarFilenames: string[] = (catalogRaw ?? '')
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^﻿/, '').trim())
+    .filter(Boolean)
+    .flatMap((l) => {
+      const parts = l.split('|');
+      if (parts[0] === 'WX_US_RAD' && parts.length >= 2) {
+        return [parts[1]];
+      }
+      return [];
+    });
+
+  it('every WX_US_RAD catalog filename has a curated bbox', () => {
+    const byName = new Map(
+      (radar as { regions: { filename: string; bbox: number[] | null }[] }).regions.map(
+        (r) => [r.filename, r.bbox],
+      ),
+    );
+    const missing = radarFilenames.filter((f) => {
+      const b = byName.get(f);
+      return !b || b.length !== 4;
+    });
+    expect(missing, `Radar regions missing a bbox:\n${missing.join('\n')}`).toEqual([]);
+  });
+
+  it('Seattle resolves PSND tighter than NWWA tighter than PNW (area ordering)', () => {
+    const area = (fn: string): number => {
+      const r = (radar as { regions: { filename: string; bbox: number[] }[] }).regions.find(
+        (x) => x.filename === fn,
+      );
+      if (!r) throw new Error(`Radar region not found: ${fn}`);
+      return (r.bbox[2] - r.bbox[0]) * (r.bbox[3] - r.bbox[1]);
+    };
+    expect(area('US.RAD.PSND')).toBeLessThan(area('US.RAD.NWWA'));
+    expect(area('US.RAD.NWWA')).toBeLessThan(area('US.RAD.PNW'));
+
+    const inside = (fn: string): boolean => {
+      const r = (radar as { regions: { filename: string; bbox: number[] }[] }).regions.find(
+        (x) => x.filename === fn,
+      );
+      if (!r) return false;
+      // Seattle: lon = -122.2917, lat = 47.6042
+      return -122.2917 >= r.bbox[0] && -122.2917 <= r.bbox[2] && 47.6042 >= r.bbox[1] && 47.6042 <= r.bbox[3];
+    };
+    expect(inside('US.RAD.PSND') && inside('US.RAD.NWWA') && inside('US.RAD.PNW')).toBe(true);
   });
 });

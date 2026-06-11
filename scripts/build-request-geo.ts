@@ -23,12 +23,21 @@
 //   the map. Safe to run after Tasks 2+3 without risk of clobbering mapping JSONs.
 //   Idempotent: re-running on an already-pruned file is a no-op (same IDs filtered).
 //
+// Task 5 (--radar): emit src/request/radar-regions.json — bbox table for all 161 WX_US_RAD
+//   catalog entries. Bboxes are derived from us-states.geo.json state extents, applying
+//   direction-qualifier parsing (W/E/N/S/NE/NW/SE/SW/CENTRAL splits) plus a hand-curated
+//   OVERRIDE map for metro/feature names that don't parse to a state+direction.
+//   Merge-preserves any existing manual override entries on re-run.
+//   Critical nesting verified: PSND area < NWWA area < PNW area, Seattle inside all three.
+//   Output: src/request/radar-regions.json
+//
 // Usage:
 //   pnpm tsx scripts/build-request-geo.ts --fetch-only      # Task 1 zone-list fetch
 //   pnpm tsx scripts/build-request-geo.ts                   # Tasks 2+3 full pipeline
 //   pnpm tsx scripts/build-request-geo.ts --match-only      # Task 3 match only (skip geometry)
 //   pnpm tsx scripts/build-request-geo.ts --force           # re-fetch everything
 //   pnpm tsx scripts/build-request-geo.ts --prune-geometry  # Task 4 prune to mapped zones
+//   pnpm tsx scripts/build-request-geo.ts --radar           # Task 5 radar-region bbox table
 
 import { readFileSync, mkdirSync, writeFileSync, existsSync, appendFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -45,6 +54,8 @@ const OUTPUT_PATH = resolve(REPO_ROOT, 'src/request/nws-zones.geo.json');
 const ZONE_MAP_PATH = resolve(REPO_ROOT, 'src/request/nws-zone-to-catalog.json');
 const ZONE_UNMAPPED_PATH = resolve(REPO_ROOT, 'src/request/nws-zone-unmapped.json');
 const UNRESOLVED_PATH = resolve(REPO_ROOT, 'dev/scratch/request-geo/unresolved.txt');
+const RADAR_REGIONS_PATH = resolve(REPO_ROOT, 'src/request/radar-regions.json');
+const US_STATES_GEO_PATH = resolve(REPO_ROOT, 'src/request/us-states.geo.json');
 
 const UA = 'tuxlink-dev (cameronzucker@gmail.com)';
 
@@ -56,6 +67,7 @@ const SIMPLIFY_ONLY = process.argv.includes('--simplify-only');
 const MATCH_ONLY = process.argv.includes('--match-only');
 const FORCE = process.argv.includes('--force');
 const PRUNE_GEOMETRY = process.argv.includes('--prune-geometry');
+const RADAR = process.argv.includes('--radar');
 
 // Simplification tolerance in degrees (Douglas–Peucker).
 // 0.005 → ~4.7 MB, 0.01 → ~2.9 MB, 0.02 → ~1.8 MB (< 2 MB target; chosen).
@@ -1089,7 +1101,529 @@ function pruneGeometry(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Task 5 — Radar-region bbox table
+//
+// Derives bboxes for all 161 WX_US_RAD catalog entries from us-states.geo.json
+// state extents. Direction qualifiers (W/E/N/S/NE/NW/SE/SW/CENTRAL) are applied
+// as fractional bbox splits with a small overlap buffer. Metro/feature names that
+// don't parse to a state+direction are handled via the RADAR_OVERRIDES map below.
+//
+// Merge-preservation: if radar-regions.json already exists and contains entries
+// not in the derived map (e.g., manual corrections), they are preserved on re-run.
+// The derived entries take precedence over preserved ones for any filename conflict.
+//
+// Critical nesting invariant (verified at runtime):
+//   area(PSND) < area(NWWA) < area(PNW)  AND  Seattle (47.6042, -122.2917) ∈ all three.
+// ---------------------------------------------------------------------------
+
+interface StateBbox {
+  usps: string;
+  bbox: [number, number, number, number]; // [west, south, east, north]
+}
+
+/** Read all state bboxes from us-states.geo.json by computing min/max of coordinates. */
+function loadStateBboxes(): Map<string, [number, number, number, number]> {
+  const raw = JSON.parse(readFileSync(US_STATES_GEO_PATH, 'utf8')) as {
+    features: Array<{
+      properties: { usps: string };
+      geometry: {
+        type: string;
+        coordinates: number[][][] | number[][][][];
+      };
+    }>;
+  };
+
+  const map = new Map<string, [number, number, number, number]>();
+
+  for (const feat of raw.features) {
+    const usps = feat.properties.usps;
+    const coords: number[][] = [];
+
+    const geom = feat.geometry;
+    if (geom.type === 'Polygon') {
+      for (const ring of geom.coordinates as number[][][]) {
+        coords.push(...ring);
+      }
+    } else if (geom.type === 'MultiPolygon') {
+      for (const poly of geom.coordinates as number[][][][]) {
+        for (const ring of poly) {
+          coords.push(...ring);
+        }
+      }
+    }
+
+    if (coords.length === 0) continue;
+    const lons = coords.map((c) => c[0]);
+    const lats = coords.map((c) => c[1]);
+    map.set(usps, [
+      Math.round(Math.min(...lons) * 10000) / 10000,
+      Math.round(Math.min(...lats) * 10000) / 10000,
+      Math.round(Math.max(...lons) * 10000) / 10000,
+      Math.round(Math.max(...lats) * 10000) / 10000,
+    ]);
+  }
+
+  return map;
+}
+
+type Bbox = [number, number, number, number];
+
+function r4(b: number[]): Bbox {
+  return b.map((x) => Math.round(x * 10000) / 10000) as Bbox;
+}
+
+function unionBbox(...bbs: Bbox[]): Bbox {
+  return r4([
+    Math.min(...bbs.map((b) => b[0])),
+    Math.min(...bbs.map((b) => b[1])),
+    Math.max(...bbs.map((b) => b[2])),
+    Math.max(...bbs.map((b) => b[3])),
+  ]);
+}
+
+function splitBbox(
+  b: Bbox,
+  dir: 'W' | 'E' | 'N' | 'S' | 'NW' | 'NE' | 'SW' | 'SE' | 'CENT',
+  frac = 0.5,
+  ov = 0.5,
+): Bbox {
+  const [w, s, e, n] = b;
+  const lm = w + (e - w) * frac;
+  const lam = s + (n - s) * frac;
+  switch (dir) {
+    case 'W': return r4([w, s, lm + ov, n]);
+    case 'E': return r4([lm - ov, s, e, n]);
+    case 'N': return r4([w, lam - ov, e, n]);
+    case 'S': return r4([w, s, e, lam + ov]);
+    case 'NW': return r4([w, lam - ov, lm + ov, n]);
+    case 'NE': return r4([lm - ov, lam - ov, e, n]);
+    case 'SW': return r4([w, s, lm + ov, lam + ov]);
+    case 'SE': return r4([lm - ov, s, e, lam + ov]);
+    case 'CENT': return r4([w + (e - w) * 0.25, s + (n - s) * 0.25, e - (e - w) * 0.25, n - (n - s) * 0.25]);
+  }
+}
+
+/**
+ * Build the complete radar-region bbox table.
+ *
+ * Every WX_US_RAD catalog entry must have an entry with a 4-element bbox (no nulls).
+ * Uses state bboxes + directional splits for the majority; RADAR_OVERRIDES covers
+ * the metro/feature/territory/Alaska sub-regions that don't parse to a state+direction.
+ *
+ * Override map rationale comments explain each hand-curated entry.
+ */
+function buildRadarRegions(): void {
+  console.log('\n=== Task 5: radar-region bbox table ===');
+
+  const stateBboxes = loadStateBboxes();
+  console.log(`Loaded ${stateBboxes.size} state bboxes from us-states.geo.json`);
+
+  function st(code: string): Bbox {
+    const b = stateBboxes.get(code);
+    if (!b) throw new Error(`State bbox not found: ${code}`);
+    return b;
+  }
+
+  function W(c: string, frac = 0.5, ov = 0.5): Bbox { return splitBbox(st(c), 'W', frac, ov); }
+  function E(c: string, frac = 0.5, ov = 0.5): Bbox { return splitBbox(st(c), 'E', frac, ov); }
+  function N(c: string, frac = 0.5, ov = 0.5): Bbox { return splitBbox(st(c), 'N', frac, ov); }
+  function S(c: string, frac = 0.5, ov = 0.5): Bbox { return splitBbox(st(c), 'S', frac, ov); }
+  function NW(c: string, lf = 0.5, af = 0.5, ov = 0.5): Bbox {
+    const b = st(c);
+    const lm = b[0] + (b[2] - b[0]) * lf;
+    const lam = b[1] + (b[3] - b[1]) * af;
+    return r4([b[0], lam - ov, lm + ov, b[3]]);
+  }
+  function NE(c: string, lf = 0.5, af = 0.5, ov = 0.5): Bbox {
+    const b = st(c);
+    const lm = b[0] + (b[2] - b[0]) * lf;
+    const lam = b[1] + (b[3] - b[1]) * af;
+    return r4([lm - ov, lam - ov, b[2], b[3]]);
+  }
+  function SW(c: string, lf = 0.5, af = 0.5, ov = 0.5): Bbox {
+    const b = st(c);
+    const lm = b[0] + (b[2] - b[0]) * lf;
+    const lam = b[1] + (b[3] - b[1]) * af;
+    return r4([b[0], b[1], lm + ov, lam + ov]);
+  }
+  function SE(c: string, lf = 0.5, af = 0.5, ov = 0.5): Bbox {
+    const b = st(c);
+    const lm = b[0] + (b[2] - b[0]) * lf;
+    const lam = b[1] + (b[3] - b[1]) * af;
+    return r4([lm - ov, b[1], b[2], lam + ov]);
+  }
+  function CENT(c: string, lf1 = 0.25, lf2 = 0.75, af1 = 0.25, af2 = 0.75): Bbox {
+    const b = st(c);
+    return r4([
+      b[0] + (b[2] - b[0]) * lf1,
+      b[1] + (b[3] - b[1]) * af1,
+      b[2] - (b[2] - b[0]) * (1 - lf2),
+      b[3] - (b[3] - b[1]) * (1 - af2),
+    ]);
+  }
+
+  // -----------------------------------------------------------------------
+  // Override map for hand-curated metro/feature/territory regions.
+  // Entries here take precedence over derived bboxes for the same filename.
+  // Each entry has a comment explaining the basis for the bbox choice.
+  // -----------------------------------------------------------------------
+  const RADAR_OVERRIDES: Record<string, { name: string; bbox: Bbox }> = {
+    // Alaska sub-regions — AK state bbox covers the whole chain; sub-regions hand-curated
+    // from geographic knowledge of the Aleutian chain, Kenai Peninsula, SE panhandle.
+    'US.RAD.EALAK': { name: 'E Aleutian Isl to Palmer Ak', bbox: r4([-188.9, 51.6, -145.0, 62.0]) },
+    'US.RAD.NSEAK': { name: 'N SE Alaska to South Central Ak', bbox: r4([-155.0, 55.0, -129.9, 66.0]) },
+    'US.RAD.SCAK': { name: 'South Central Alaska', bbox: r4([-156.0, 58.0, -142.0, 63.0]) },
+    'US.RAD.SEAK': { name: 'Southeast Alaska', bbox: r4([-138.0, 54.0, -129.9, 60.5]) },
+    'US.RAD.SWAK': { name: 'Southwest Alaska', bbox: r4([-170.0, 54.0, -155.0, 62.5]) },
+    'US.RAD.WFNAK': { name: 'Point Hope to Hooper Bay Alaska', bbox: r4([-170.0, 58.0, -155.0, 68.5]) },
+    'US.RAD.SINAK': { name: 'S Cent to Int Palmer 2 Fort Yukon', bbox: r4([-155.0, 60.0, -142.0, 67.0]) },
+    // Guam — Pacific island territory; coordinates from standard geographic references
+    'US.RAD.GUAM': { name: 'Guam', bbox: r4([144.5, 13.2, 145.0, 13.7]) },
+    // Hawaii sub-island groups — HI state bbox covers all; sub-groups hand-curated
+    'US.RAD.HIKO': { name: 'Hawaii Kauai & Oahu', bbox: r4([-160.3, 21.2, -157.6, 22.3]) },
+    'US.RAD.HIMH': { name: 'Hawaii Maui & Hawaii Isl', bbox: r4([-156.7, 18.9, -154.8, 21.0]) },
+    'US.RAD.HIMMH': { name: 'Hawaii Maui Molokai & Hawaii Isl', bbox: r4([-157.4, 18.9, -154.8, 21.3]) },
+    'US.RAD.HOMMH': { name: 'Hi Oah Maui Molokai & Hawaii Isl', bbox: r4([-158.3, 18.9, -154.8, 21.5]) },
+    // CA coastal strips — coast-strip geometry doesn't match state directional splits well
+    'US.RAD.COCAC': { name: 'Ca Coast Monterey - Santa Monica', bbox: r4([-122.5, 33.8, -117.5, 37.0]) },
+    'US.RAD.COCAS': { name: 'Ca Cst San Luis Obispo - San Die', bbox: r4([-121.5, 32.5, -116.5, 35.5]) },
+    // Cape Girardeau MO area — named metro region, not a state subdivision
+    'US.RAD.CGI': { name: 'Cape Giardeau Mo Area', bbox: r4([-90.5, 36.5, -88.5, 38.0]) },
+    // Texas Panhandle — irregular geometry; southern portion of the narrow panhandle strip
+    'US.RAD.TXPH': { name: 'Texas Panhandle (Southern Part)', bbox: (() => { const b = st('TX'); return r4([b[0], b[3] - 3.0, b[0] + 5.5, b[3]]); })() },
+    // TX & Padre Island — southernmost TX coast + barrier island strip
+    'US.RAD.TXPI': { name: 'Tx & Padre Isl', bbox: (() => { const b = st('TX'); return r4([b[2] - 3.5, b[1], b[2], b[1] + 3.0]); })() },
+    // NY cross-border regions including Canadian cities — added ~0.5° buffer north for Montreal/Toronto
+    'US.RAD.CNNY': { name: 'Central N New York & Montreal Ca', bbox: unionBbox(CENT('NY'), r4([-73.8, 45.0, -73.2, 45.6])) },
+    'US.RAD.NNY': { name: 'NNY & Montreal Ca', bbox: unionBbox(N('NY'), r4([-73.8, 45.0, -73.2, 45.6])) },
+    'US.RAD.NWNY': { name: 'NNY & Toronto Ca', bbox: unionBbox(N('NY'), r4([-79.5, 43.5, -79.0, 43.9])) },
+    // Pacific Northwest nested set — hand-curated to enforce area(PSND) < area(NWWA) < area(PNW)
+    // with Seattle (47.6042, -122.2917) contained in all three. These are the critical
+    // Task 8 resolver anchors; do NOT change without re-running the nesting verification test.
+    'US.RAD.PSND': { name: 'Puget Sound & SJDF', bbox: r4([-124.9, 46.9, -121.4, 49.0]) },
+    'US.RAD.NWWA': { name: 'W Washington & NW Oregon', bbox: r4([-124.9, 45.2, -120.8, 49.0]) },
+    'US.RAD.PNW': { name: 'Pacific Northwest', bbox: r4([-125.0, 41.9, -116.5, 49.1]) },
+    // CONUS full extent
+    'US.RAD.CONUS': { name: 'Conus', bbox: r4([-130.0, 23.0, -65.0, 50.0]) },
+    // Puerto Rico — PR state bbox from us-states.geo.json is accurate; no override needed
+    // (included here as a comment to document that it's derived, not overridden)
+  };
+
+  // -----------------------------------------------------------------------
+  // Derived entries — state bboxes + direction splits
+  // -----------------------------------------------------------------------
+  const derived: Record<string, { name: string; bbox: Bbox }> = {
+    // Alaska (full state)
+    'US.RAD.ALASK': { name: 'Alaska', bbox: st('AK') },
+    // Arizona
+    'US.RAD.AZ': { name: 'Arizona', bbox: st('AZ') },
+    'US.RAD.SAZ': { name: 'S Arizona', bbox: S('AZ') },
+    'US.RAD.SWAZ': { name: 'SW Arizona & SE California', bbox: unionBbox(SW('AZ'), SE('CA')) },
+    // Arkansas
+    'US.RAD.AR': { name: 'Arkansas', bbox: st('AR') },
+    'US.RAD.NWAR': { name: 'NW Arkansas & NE Texas', bbox: unionBbox(NW('AR'), NE('TX', 0.5, 0.7)) },
+    'US.RAD.WMO': { name: 'W Missouri & NE Arkansas', bbox: unionBbox(W('MO'), NE('AR')) },
+    // California
+    'US.RAD.NCA': { name: 'N Coastal Ca', bbox: (() => { const b = st('CA'); return r4([b[0], b[1] + (b[3] - b[1]) * 0.6, b[0] + 1.5, b[3]]); })() },
+    'US.RAD.NCCA': { name: 'N Central Ca', bbox: (() => { const b = st('CA'); return r4([b[0] + 1.5, b[1] + (b[3] - b[1]) * 0.55, b[2] - 2.0, b[3]]); })() },
+    'US.RAD.CCA': { name: 'S Central Ca', bbox: (() => { const b = st('CA'); return r4([b[0] + 1.0, b[1] + (b[3] - b[1]) * 0.3, b[2] - 1.5, b[1] + (b[3] - b[1]) * 0.7]); })() },
+    'US.RAD.SCCA': { name: 'S Central California', bbox: (() => { const b = st('CA'); return r4([b[0] + 1.0, b[1] + (b[3] - b[1]) * 0.2, b[2] - 1.5, b[1] + (b[3] - b[1]) * 0.55]); })() },
+    'US.RAD.SCA': { name: 'S Calf to Los Angeles', bbox: SW('CA', 0.5, 0.45) },
+    'US.RAD.SWCA': { name: 'SW California', bbox: SW('CA', 0.5, 0.4) },
+    'US.RAD.SNV': { name: 'S Nv / NW Az / E Ca', bbox: unionBbox(S('NV'), NW('AZ'), E('CA', 0.6)) },
+    // Colorado
+    'US.RAD.CCO': { name: 'Central Colorado', bbox: CENT('CO') },
+    'US.RAD.SECO': { name: 'SE Colorado', bbox: SE('CO') },
+    'US.RAD.WCO': { name: 'W Colorado / E Utah', bbox: unionBbox(W('CO'), E('UT')) },
+    'US.RAD.WYCO': { name: 'Wyoming & Colorado', bbox: unionBbox(st('WY'), st('CO')) },
+    // Florida
+    'US.RAD.CEFL': { name: 'Central Florida', bbox: CENT('FL') },
+    'US.RAD.EFLPH': { name: 'East Florida Ph & S Georgia', bbox: unionBbox(E('FL'), S('GA')) },
+    'US.RAD.FLKW': { name: 'S Fl & Key West', bbox: S('FL', 0.3) },
+    'US.RAD.NEFL': { name: 'N Florida / SE Georgia', bbox: unionBbox(N('FL'), SE('GA')) },
+    'US.RAD.NFL': { name: 'N Florida / S Georgia', bbox: unionBbox(N('FL'), S('GA')) },
+    'US.RAD.NWFL': { name: 'NW Florida/SE Al/SW Ga', bbox: unionBbox(NW('FL'), SE('AL'), SW('GA')) },
+    'US.RAD.SFL': { name: 'Southern Florida', bbox: S('FL', 0.4) },
+    // Georgia
+    'US.RAD.GA': { name: 'Georgia', bbox: st('GA') },
+    'US.RAD.NGA': { name: 'N Georgia / NE Alabama', bbox: unionBbox(N('GA'), NE('AL')) },
+    // Hawaii (full state)
+    'US.RAD.HAWAI': { name: 'Hawaii', bbox: st('HI') },
+    // Idaho-related
+    'US.RAD.EWA': { name: 'E Washington & Idaho Ph', bbox: unionBbox(E('WA'), st('ID')) },
+    'US.RAD.NEOR': { name: 'NE Oregon & SE Washington', bbox: unionBbox(NE('OR'), SE('WA')) },
+    'US.RAD.SEID': { name: 'SE Idaho & N Utah', bbox: unionBbox(SE('ID'), N('UT')) },
+    'US.RAD.SWID': { name: 'SW Id & SE Or', bbox: unionBbox(SW('ID'), SE('OR')) },
+    'US.RAD.NUT': { name: 'N Utah / SE Idaho & E Nevada', bbox: unionBbox(N('UT'), SE('ID'), E('NV')) },
+    // Illinois
+    'US.RAD.IL': { name: 'Illinois', bbox: st('IL') },
+    'US.RAD.CWI': { name: 'Central Wisconsin / N Illinois', bbox: unionBbox(CENT('WI'), N('IL')) },
+    'US.RAD.EIA': { name: 'E Iowa / W Il', bbox: unionBbox(E('IA'), W('IL')) },
+    'US.RAD.ECMS': { name: 'E Central Missouri & S Illinois', bbox: unionBbox(E('MO', 0.5), S('IL')) },
+    // Indiana
+    'US.RAD.IN': { name: 'Indiana', bbox: st('IN') },
+    'US.RAD.NIN': { name: 'N Indiana & S Michigan', bbox: unionBbox(N('IN'), S('MI')) },
+    'US.RAD.SIN': { name: 'S Indianna / N Kentucky & W Ohio', bbox: unionBbox(S('IN'), N('KY'), W('OH')) },
+    // Iowa
+    'US.RAD.IA': { name: 'Iowa', bbox: st('IA') },
+    'US.RAD.NEIA': { name: 'NE Iowa & S Wisconsin', bbox: unionBbox(NE('IA'), S('WI')) },
+    'US.RAD.ENE': { name: 'E Ne / E Ks / NW Ms / SW Ia', bbox: unionBbox(E('NE'), E('KS'), NW('MO'), SW('IA')) },
+    // Kansas
+    'US.RAD.EKS': { name: 'E Kansas', bbox: E('KS') },
+    'US.RAD.EKSWM': { name: 'E Kansas / W Missouri', bbox: unionBbox(E('KS'), W('MO')) },
+    'US.RAD.NKS': { name: 'N Kansas / SW Neb & E Co', bbox: unionBbox(N('KS'), SW('NE'), E('CO')) },
+    'US.RAD.SCKS': { name: 'S Central Ks', bbox: (() => { const b = st('KS'); return r4([b[0] + (b[2] - b[0]) * 0.2, b[1], b[2] - (b[2] - b[0]) * 0.2, b[1] + (b[3] - b[1]) * 0.6]); })() },
+    'US.RAD.SEKS': { name: 'SE Kansas / NE Oklahoma', bbox: unionBbox(SE('KS'), NE('OK')) },
+    // Kentucky
+    'US.RAD.KY': { name: 'Kentucky', bbox: st('KY') },
+    'US.RAD.CTN': { name: 'Cent Tennessee & Cent Kentucky', bbox: unionBbox(CENT('TN'), CENT('KY')) },
+    'US.RAD.ETN': { name: 'E Tenn / E Kent & W N. Carolina', bbox: unionBbox(E('TN'), E('KY'), W('NC')) },
+    'US.RAD.TN': { name: 'Tennessee / W Kentucky', bbox: unionBbox(st('TN'), W('KY')) },
+    // Louisiana
+    'US.RAD.NWLA': { name: 'NW Louisana & E Tx & SW Arkansas', bbox: unionBbox(NW('LA'), E('TX', 0.7), SW('AR')) },
+    'US.RAD.SELA': { name: 'SE Louisiana / S Missippi', bbox: unionBbox(SE('LA'), S('MS')) },
+    'US.RAD.WLA': { name: 'W Louisiana & NE Texas', bbox: unionBbox(W('LA'), NE('TX', 0.5, 0.6)) },
+    // Maine
+    'US.RAD.CME': { name: 'Coastal Maine', bbox: E('ME', 0.4) },
+    'US.RAD.SWME': { name: 'SW Maine / New Hampshire & NE Vt', bbox: unionBbox(SW('ME'), st('NH'), NE('VT')) },
+    // Michigan
+    'US.RAD.EMI': { name: 'E Mich / N Indiana', bbox: unionBbox(E('MI'), N('IN')) },
+    'US.RAD.MI': { name: 'E Mich / N Indiana', bbox: unionBbox(E('MI'), N('IN')) },
+    'US.RAD.MIUP': { name: 'Michigan Up / N Wisconsin', bbox: unionBbox(N('MI', 0.7), N('WI')) },
+    'US.RAD.NWMI': { name: 'NW Michigan & E Up', bbox: NW('MI', 0.5, 0.6) },
+    'US.RAD.WMI': { name: 'W Mich / N Indiana', bbox: unionBbox(W('MI'), N('IN')) },
+    'US.RAD.EWI': { name: 'E Wisconsin / L Mich', bbox: unionBbox(E('WI'), W('MI')) },
+    // Minnesota
+    'US.RAD.NCMI': { name: 'North Central Minnesota', bbox: N('MN', 0.5) },
+    'US.RAD.NWI': { name: 'N Wi & E Mn', bbox: unionBbox(N('WI'), E('MN')) },
+    'US.RAD.END': { name: 'E N. Dakota & W Minnesota', bbox: unionBbox(E('ND'), W('MN')) },
+    // Mississippi
+    'US.RAD.SMS': { name: 'S Mississippi', bbox: S('MS') },
+    'US.RAD.NWAL': { name: 'NW Alabama / NE Miss / SW Tenn', bbox: unionBbox(NW('AL'), NE('MS'), SW('TN')) },
+    'US.RAD.SAL': { name: 'S Alabama / S Miss & W Fl', bbox: unionBbox(S('AL'), S('MS'), W('FL')) },
+    // Missouri
+    'US.RAD.WTN': { name: 'W Tenn / E Ark / N Miss', bbox: unionBbox(W('TN'), E('AR'), N('MS')) },
+    'US.RAD.SMVAL': { name: 'South Miss Valley', bbox: unionBbox(S('MO'), N('AR'), N('MS'), W('TN'), E('OK', 0.8)) },
+    'US.RAD.SMVLR': { name: 'South Miss Valley (Low Res)', bbox: unionBbox(S('MO'), N('AR'), N('MS'), W('TN'), E('OK', 0.8)) },
+    // Montana
+    'US.RAD.CMT': { name: 'Central Mt', bbox: CENT('MT') },
+    'US.RAD.NCMT': { name: 'North Central Mt', bbox: N('MT', 0.5) },
+    'US.RAD.NEMT': { name: 'Northeast Montana', bbox: NE('MT') },
+    'US.RAD.SCMT': { name: 'South Central Mt', bbox: (() => { const b = st('MT'); return r4([b[0] + (b[2] - b[0]) * 0.25, b[1], b[2] - (b[2] - b[0]) * 0.25, b[1] + (b[3] - b[1]) * 0.6]); })() },
+    'US.RAD.WMT': { name: 'Western Montana', bbox: W('MT') },
+    // Nebraska / Dakotas
+    'US.RAD.CNE': { name: 'Central Nebraska', bbox: CENT('NE') },
+    'US.RAD.ECNE': { name: 'E Central Nebraska & S S Dakota', bbox: unionBbox(E('NE', 0.45), S('SD')) },
+    'US.RAD.NESD': { name: 'NE S Dakota & SE N Dakota', bbox: unionBbox(NE('SD'), SE('ND')) },
+    'US.RAD.SESD': { name: 'SE South Dakota / W Minn', bbox: unionBbox(SE('SD'), W('MN')) },
+    'US.RAD.NCAZ': { name: 'SE South Dakota / W Minn', bbox: unionBbox(SE('SD'), W('MN')) },
+    // Nevada
+    'US.RAD.NCNV': { name: 'N Central Nevada', bbox: N('NV', 0.5) },
+    'US.RAD.WCNV': { name: 'W Central Nevada & E Ca', bbox: unionBbox(W('NV', 0.4), E('CA', 0.8)) },
+    // New Mexico
+    'US.RAD.CNM': { name: 'Central New Mexico', bbox: CENT('NM') },
+    'US.RAD.ECNM': { name: 'E Central New Mexico', bbox: E('NM', 0.45) },
+    'US.RAD.SENM': { name: 'SE New Mexico', bbox: SE('NM') },
+    'US.RAD.SWNM': { name: 'SW Nw to S Central Nm', bbox: unionBbox(SW('NM'), CENT('NM', 0.1, 0.6, 0.0, 0.55)) },
+    // New York
+    'US.RAD.ENY': { name: 'E New York', bbox: E('NY') },
+    'US.RAD.LINY': { name: 'Long Isl Ny / Conn / Ri / N Nj', bbox: unionBbox(SE('NY'), st('CT'), st('RI'), N('NJ')) },
+    // North Carolina
+    'US.RAD.ENC': { name: 'Eastern North Carolina', bbox: E('NC') },
+    'US.RAD.NNC': { name: 'N Carolina / SE Virginia', bbox: unionBbox(N('NC'), SE('VA')) },
+    'US.RAD.CNESC': { name: 'Cst NE S Carol & Cst SE N Carol', bbox: unionBbox(NE('SC'), SE('NC')) },
+    'US.RAD.NWSC': { name: 'NW S Carolina / NE Ga & SW N Car', bbox: unionBbox(NW('SC'), NE('GA'), SW('NC')) },
+    'US.RAD.CSC': { name: 'Coastal Sc', bbox: E('SC', 0.4) },
+    // North Dakota
+    'US.RAD.CND': { name: 'Central North Dakota', bbox: CENT('ND') },
+    // Ohio
+    'US.RAD.NEOH': { name: 'NE Ohio & NW Pennsylvania', bbox: unionBbox(NE('OH'), NW('PA')) },
+    'US.RAD.NOH': { name: 'N Ohio & E Mi', bbox: unionBbox(N('OH'), E('MI')) },
+    'US.RAD.WOH': { name: 'W Ohio / SE Indiana & N Kentucky', bbox: unionBbox(W('OH'), SE('IN'), N('KY')) },
+    // Oklahoma
+    'US.RAD.CEOK': { name: 'Central Oklahoma', bbox: CENT('OK') },
+    'US.RAD.NEOK': { name: 'NE Oklahoma & NW Ark & SE Kansas', bbox: unionBbox(NE('OK'), NW('AR'), SE('KS')) },
+    'US.RAD.NTX': { name: 'N Texas / SW Oklahoma', bbox: unionBbox(N('TX', 0.35), SW('OK')) },
+    'US.RAD.OKPH': { name: 'Oklahoma Ph & Texas Ph', bbox: unionBbox(N('OK'), N('TX', 0.3)) },
+    // Oregon
+    'US.RAD.NWOR': { name: 'NW Oregon & SW Washington', bbox: unionBbox(NW('OR'), SW('WA')) },
+    'US.RAD.SWOR': { name: 'SW Oregon / NW California', bbox: unionBbox(SW('OR'), NW('CA')) },
+    // Pennsylvania
+    'US.RAD.NWPA': { name: 'NW Pa', bbox: NW('PA') },
+    'US.RAD.NJ': { name: 'Nj Swct De Epa', bbox: unionBbox(st('NJ'), SW('CT'), st('DE'), E('PA', 0.55)) },
+    'US.RAD.MD': { name: 'Md / Ri Pa Va', bbox: unionBbox(st('MD'), st('RI'), st('PA'), N('VA')) },
+    // Puerto Rico (full territory)
+    'US.RAD.PR': { name: 'Puerto Rico', bbox: st('PR') },
+    // South Carolina
+    'US.RAD.SEVA': { name: 'SE Virginia & E S Carolina', bbox: unionBbox(SE('VA'), E('SC')) },
+    'US.RAD.EVA': { name: 'E Virginia & E N Carolina', bbox: unionBbox(E('VA'), E('NC')) },
+    // South Dakota
+    'US.RAD.WSD': { name: 'Western South Dakota', bbox: W('SD') },
+    // Tennessee
+    'US.RAD.NALTN': { name: 'N Ala & S Tenn & NW Geo', bbox: unionBbox(N('AL'), S('TN'), NW('GA')) },
+    'US.RAD.NAL': { name: 'N Alabama', bbox: N('AL') },
+    'US.RAD.ECA': { name: 'E Cent Alabama & W Georgia', bbox: unionBbox(E('AL', 0.45), W('GA')) },
+    // Texas
+    'US.RAD.CTX': { name: 'Central Texas', bbox: CENT('TX') },
+    'US.RAD.NCTX': { name: 'Central Texas', bbox: CENT('TX') },
+    'US.RAD.SCTX': { name: 'S Central Texas', bbox: (() => { const b = st('TX'); return r4([b[0] + (b[2] - b[0]) * 0.2, b[1], b[2] - (b[2] - b[0]) * 0.2, b[1] + (b[3] - b[1]) * 0.5]); })() },
+    'US.RAD.SECTX': { name: 'NE Coast Texas & S Cst Louisiana', bbox: unionBbox(NE('TX', 0.7, 0.25), S('LA', 0.4)) },
+    'US.RAD.SPLA': { name: 'South Plains', bbox: unionBbox(N('TX', 0.45), SE('NM'), SW('OK')) },
+    'US.RAD.SWTX': { name: 'SW Tx', bbox: SW('TX') },
+    'US.RAD.TXCO': { name: 'NE Coast Texas & S Cst Louisiana', bbox: unionBbox(NE('TX', 0.65, 0.3), S('LA', 0.35)) },
+    'US.RAD.WCTX': { name: 'W Central Tx', bbox: (() => { const b = st('TX'); return r4([b[0] + 1.0, b[1] + 5.0, b[0] + 7.5, b[1] + 9.5]); })() },
+    // Utah
+    'US.RAD.SWUT': { name: 'SW Utah / NW Az & SE Nv', bbox: unionBbox(SW('UT'), NW('AZ'), SE('NV')) },
+    // Virginia / West Virginia
+    'US.RAD.NVA': { name: 'N Virginia / Maryland SE Penn', bbox: unionBbox(N('VA'), st('MD'), SE('PA')) },
+    'US.RAD.WWV': { name: 'W W. Va & SE Ohio & W Va', bbox: unionBbox(W('WV'), SE('OH'), st('WV')) },
+    // Wide regional
+    'US.RAD.GRLAK': { name: 'Cent Great Lakes', bbox: unionBbox(st('MI'), N('IN'), N('OH'), N('IL'), N('WI'), r4([-79.0, 43.0, -76.0, 45.5])) },
+    'US.RAD.NEAST': { name: 'Northeast', bbox: unionBbox(st('ME'), st('NH'), st('VT'), st('MA'), st('CT'), st('RI'), st('NY'), st('NJ'), st('PA')) },
+    'US.RAD.NROC': { name: 'North Rockies', bbox: unionBbox(st('MT'), st('ID'), N('WY'), N('CO')) },
+    'US.RAD.SROC': { name: 'South Rockies', bbox: unionBbox(S('CO'), st('NM'), N('AZ'), N('TX', 0.2)) },
+    'US.RAD.SEAST': { name: 'Southeast', bbox: unionBbox(st('GA'), st('AL'), st('MS'), st('FL'), st('SC'), st('NC'), st('TN')) },
+    'US.RAD.UMVAL': { name: 'Up Miss Valley', bbox: unionBbox(st('MN'), N('WI'), N('IA'), N('IL'), N('MO')) },
+    'US.RAD.UMVLR': { name: 'Up Miss Valley (Low Res)', bbox: unionBbox(st('MN'), N('WI'), N('IA'), N('IL'), N('MO')) },
+    'US.RAD.PACSW': { name: 'Pacific Southwest', bbox: unionBbox(st('AZ'), SW('CA'), SW('NV')) },
+    // Misc multi-state
+    'US.RAD.MARI': { name: 'Ri & Ma', bbox: unionBbox(st('RI'), st('MA')) },
+    'US.RAD.NEIL': { name: 'NE Illinois & SE Wisconsin', bbox: unionBbox(NE('IL'), SE('WI')) },
+    // Wyoming
+    'US.RAD.WY': { name: 'Wyoming', bbox: st('WY') },
+  };
+
+  // -----------------------------------------------------------------------
+  // Merge: overrides take precedence over derived for the same filename
+  // -----------------------------------------------------------------------
+  const merged: Record<string, { name: string; bbox: Bbox }> = {
+    ...derived,
+    ...RADAR_OVERRIDES,
+  };
+
+  // -----------------------------------------------------------------------
+  // Load catalog WX_US_RAD filenames for completeness check
+  // -----------------------------------------------------------------------
+  const rawCatalog = readFileSync(CATALOG_PATH, 'utf8');
+  const catalogText = rawCatalog.startsWith('﻿') ? rawCatalog.slice(1) : rawCatalog;
+
+  const catalogRadarFilenames = new Set<string>();
+  for (const line of catalogText.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split('|');
+    if (parts.length < 2) continue;
+    if (parts[0] === 'WX_US_RAD') {
+      catalogRadarFilenames.add(parts[1]);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Merge-preserve existing overrides from the on-disk file (if any)
+  // -----------------------------------------------------------------------
+  if (existsSync(RADAR_REGIONS_PATH)) {
+    const existing = JSON.parse(readFileSync(RADAR_REGIONS_PATH, 'utf8')) as {
+      regions: Array<{ filename: string; name: string; bbox: number[] }>;
+    };
+    // Preserve any entry that is NOT in the derived map — those are manual corrections
+    for (const r of existing.regions) {
+      if (!(r.filename in merged) && catalogRadarFilenames.has(r.filename)) {
+        merged[r.filename] = { name: r.name, bbox: r.bbox as Bbox };
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Completeness check
+  // -----------------------------------------------------------------------
+  const missing = [...catalogRadarFilenames].filter((fn) => !(fn in merged));
+  if (missing.length > 0) {
+    console.error(`ERROR: ${missing.length} WX_US_RAD filename(s) have no bbox entry:`);
+    for (const fn of missing) console.error(`  ${fn}`);
+    process.exit(1);
+  }
+
+  // -----------------------------------------------------------------------
+  // Nesting verification: PSND < NWWA < PNW, Seattle inside all three
+  // -----------------------------------------------------------------------
+  const bboxArea = (b: Bbox): number => (b[2] - b[0]) * (b[3] - b[1]);
+  const bboxContains = (b: Bbox, lon: number, lat: number): boolean =>
+    lon >= b[0] && lon <= b[2] && lat >= b[1] && lat <= b[3];
+  const seattleLon = -122.2917;
+  const seattleLat = 47.6042;
+
+  const psndEntry = merged['US.RAD.PSND'];
+  const nwwaEntry = merged['US.RAD.NWWA'];
+  const pnwEntry = merged['US.RAD.PNW'];
+
+  if (!psndEntry || !nwwaEntry || !pnwEntry) {
+    console.error('ERROR: PSND / NWWA / PNW entries missing — cannot verify nesting');
+    process.exit(1);
+  }
+
+  const psndArea = bboxArea(psndEntry.bbox);
+  const nwwaArea = bboxArea(nwwaEntry.bbox);
+  const pnwArea = bboxArea(pnwEntry.bbox);
+
+  if (!(psndArea < nwwaArea && nwwaArea < pnwArea)) {
+    console.error(`ERROR: nesting area ordering violated: PSND=${psndArea.toFixed(2)} NWWA=${nwwaArea.toFixed(2)} PNW=${pnwArea.toFixed(2)}`);
+    process.exit(1);
+  }
+
+  const seattleInAll =
+    bboxContains(psndEntry.bbox, seattleLon, seattleLat) &&
+    bboxContains(nwwaEntry.bbox, seattleLon, seattleLat) &&
+    bboxContains(pnwEntry.bbox, seattleLon, seattleLat);
+
+  if (!seattleInAll) {
+    console.error('ERROR: Seattle (47.6042, -122.2917) is not contained in all three of PSND/NWWA/PNW');
+    process.exit(1);
+  }
+
+  console.log(`Nesting OK: PSND(${psndArea.toFixed(2)}) < NWWA(${nwwaArea.toFixed(2)}) < PNW(${pnwArea.toFixed(2)}); Seattle in all three ✓`);
+
+  // -----------------------------------------------------------------------
+  // Emit
+  // -----------------------------------------------------------------------
+  const regions = [...catalogRadarFilenames]
+    .sort()
+    .map((fn) => ({ filename: fn, name: merged[fn].name, bbox: merged[fn].bbox }));
+
+  const derivedCount = regions.filter((r) => !(r.filename in RADAR_OVERRIDES)).length;
+  const overrideCount = regions.filter((r) => r.filename in RADAR_OVERRIDES).length;
+
+  const output = {
+    _source:
+      'Derived from us-states.geo.json state extents + region-name direction parsing; metro/feature regions hand-curated (see scripts/build-request-geo.ts radar section). bbox = [west, south, east, north] decimal degrees.',
+    regions,
+  };
+
+  writeFileSync(RADAR_REGIONS_PATH, JSON.stringify(output, null, 2));
+
+  console.log(`\nEmitted: ${RADAR_REGIONS_PATH}`);
+  console.log(`Total regions: ${regions.length} (derived: ${derivedCount}, overrides: ${overrideCount})`);
+
+  // Spot-check sample
+  const samples = ['US.RAD.PSND', 'US.RAD.NWWA', 'US.RAD.PNW', 'US.RAD.AZ', 'US.RAD.IL', 'US.RAD.CONUS', 'US.RAD.GUAM', 'US.RAD.PR'];
+  console.log('\nSpot-checks:');
+  const byFn = new Map(regions.map((r) => [r.filename, r]));
+  for (const fn of samples) {
+    const r = byFn.get(fn);
+    if (r) {
+      console.log(`  ${fn} → "${r.name}" → [${r.bbox.join(', ')}]`);
+    } else {
+      console.warn(`  ${fn} → NOT FOUND`);
+    }
+  }
+}
+
 async function main(): Promise<void> {
+  if (RADAR) {
+    buildRadarRegions();
+    return;
+  }
+
   if (PRUNE_GEOMETRY) {
     pruneGeometry();
     return;
