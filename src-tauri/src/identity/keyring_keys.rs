@@ -7,7 +7,6 @@
 //! resolved design decision #2 fixes.
 
 /// Canonical keyring service name (must match `winlink::credentials`' `"tuxlink"`).
-#[allow(dead_code)]
 pub(crate) const SERVICE: &str = "tuxlink";
 
 /// Build the keyring account string for a FULL identity's activation secret.
@@ -15,7 +14,6 @@ pub(crate) const SERVICE: &str = "tuxlink";
 /// Format: `tuxlink-identity-activation:<CALLSIGN-UPPER>`. Uppercasing the
 /// callsign keeps case variants from minting duplicate keyring entries (same
 /// discipline as `credentials::p2p_peer_account`).
-#[allow(dead_code)]
 pub(crate) fn activation_account(callsign: &str) -> String {
     format!("tuxlink-identity-activation:{}", callsign.to_uppercase())
 }

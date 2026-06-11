@@ -52,7 +52,6 @@ pub struct IdentityHandle(Arc<HandleInner>);
 impl IdentityHandle {
     /// Crate-internal constructor. NOT public: only `IdentityService::authenticate`
     /// (same crate) may mint a handle, and only after keyring validation.
-    #[allow(dead_code)] // consumed by IdentityService::authenticate (Task 5)
     pub(crate) fn new(full_callsign: Callsign) -> Self {
         IdentityHandle(Arc::new(HandleInner { full_callsign }))
     }
