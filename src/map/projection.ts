@@ -23,6 +23,12 @@ export const WORLD_BOUNDS: [[number, number], [number, number]] = [
   [90, 180],
 ];
 
+/** World rectangle for EPSG:3857: Leaflet clips Web Mercator at ±85.0511°. */
+export const MERCATOR_BOUNDS: [[number, number], [number, number]] = [
+  [-85.0511, -180],
+  [85.0511, 180],
+];
+
 /** Convert an image pixel to lat/lon, clamped to the world rectangle. */
 export function pixelToLatLon(px: number, py: number, width: number, height: number): LatLon {
   const lon = (px / width) * 360 - 180;

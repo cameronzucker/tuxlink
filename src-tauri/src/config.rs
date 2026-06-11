@@ -1026,7 +1026,6 @@ mod tests {
                 }},
                 "map_tile_source": {{
                     "url": "http://192.168.1.5:8080/tiles/",
-                    "crs": "Geodetic",
                     "scheme": "Xyz",
                     "minZoom": 0,
                     "maxZoom": 16,

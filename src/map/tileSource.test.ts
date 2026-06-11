@@ -26,7 +26,6 @@ import {
 
 const SOURCE: TileSource = {
   url: 'http://192.168.1.10:8080/{z}/{x}/{y}.png',
-  crs: 'Geodetic',
   scheme: 'Xyz',
   minZoom: 0,
   maxZoom: 16,
@@ -74,11 +73,11 @@ describe('tileSource invoke wrappers', () => {
     expect(out).toEqual(STATUS);
   });
 
-  it('preserves the PascalCase enum variants and kebab-case kind across the wire', async () => {
+  it('preserves the PascalCase scheme variant and kebab-case kind across the wire; no crs field', async () => {
     invokeMock.mockResolvedValue({ ...STATUS, kind: 'lan-cached' });
-    await configureTileSource({ ...SOURCE, scheme: 'Tms', crs: 'Geodetic' });
+    await configureTileSource({ ...SOURCE, scheme: 'Tms' });
     const arg = invokeMock.mock.calls[0][1] as { source: TileSource };
     expect(arg.source.scheme).toBe('Tms');
-    expect(arg.source.crs).toBe('Geodetic');
+    expect(arg.source).not.toHaveProperty('crs');
   });
 });

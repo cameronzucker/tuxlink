@@ -1,15 +1,15 @@
 /**
- * BaseMap — the offline EPSG4326 map substrate shared by every map consumer.
+ * BaseMap — the offline EPSG:3857 map substrate shared by every map consumer.
  *
- * Renders a bundled equirectangular world raster as an `<ImageOverlay>` under
- * `L.CRS.EPSG4326` (plate carrée → linear pixel↔lat/lon). No tile layer, no
- * network: the map works fully offline, served entirely from `'self'`.
+ * Renders a bundled Mercator world raster as an `<ImageOverlay>` under
+ * `L.CRS.EPSG3857` (Web Mercator). No tile layer, no network: the map works
+ * fully offline, served entirely from `'self'`.
  *
- * `maxZoom={2}` caps zoom at the raster's native resolution so the view cannot
- * magnify past it into illusory precision (C6): under `L.CRS.EPSG4326` the world
- * is 512×256 CSS px at zoom 0 and doubles each level, so the 2048×1024 raster is
- * 1:1 at zoom 2. Panning is bounded to the world rectangle (`maxBounds` + full
- * viscosity) so there is no grey void.
+ * `maxZoom={3}` caps zoom at the raster's native resolution so the view cannot
+ * magnify past it into illusory precision (C6): under `L.CRS.EPSG3857` the world
+ * is 256×256 CSS px at zoom 0 and doubles each level, so the 2048×2048 raster is
+ * 1:1 at zoom 3. Panning is bounded to the Mercator world rectangle
+ * (`maxBounds` ±85.0511° + full viscosity) so there is no grey void.
  *
  * Real projection / render / pan correctness is verified via grim on
  * WebKitGTK, NOT through the react-leaflet test mock (C1).
@@ -17,9 +17,9 @@
  * C11 WIDENING (Phase 7.3, tuxlink-dyop LAN-tiles plan). The frozen C11
  * interface gains ONE optional prop, `tileSource`, ON PURPOSE: a tile-backed LAN
  * source (status `lan-live`/`lan-cached`/`partial`) renders a `<TileLayerBridge>`
- * ABOVE the always-present bundled raster, and the zoom cap rises from 2 to the
+ * ABOVE the always-present bundled raster, and the zoom cap rises from 3 to the
  * source's validated max (capped at 16). Every other status — and the absent
- * prop — leaves the map exactly as before (raster-only, maxZoom 2). The raster
+ * prop — leaves the map exactly as before (raster-only, maxZoom 3). The raster
  * remains the always-present base so a missing/404 tile shows the raster
  * beneath at/below raster-native zoom rather than a grey void; above
  * raster-native zoom the tile layer (not a stretched raster) governs the view
@@ -36,15 +36,19 @@
 import type { ReactNode } from 'react';
 import { MapContainer, ImageOverlay, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { WORLD_BOUNDS, clampLatLon, type LatLon } from './projection';
+import { MERCATOR_BOUNDS, clampLatLon, type LatLon } from './projection';
 import { TileLayerBridge } from './TileLayerBridge';
 import type { TileSource, TileSourceStatus } from './tileSource';
 import './leafletIconFix';
-import worldEquirectPng from './assets/world-equirect-2048.png';
+import worldMercatorPng from './assets/world-mercator-2048.png';
 import 'leaflet/dist/leaflet.css';
 
-/** Raster-native zoom cap when no validated LAN tile source backs the view. */
-const RASTER_MAX_ZOOM = 2;
+/**
+ * Raster-native zoom cap when no validated LAN tile source backs the view.
+ * Under `L.CRS.EPSG3857` the world tile is 256×256 px at z0; the 2048-px
+ * Mercator raster is 1:1 at z3 (256·2³ = 2048).
+ */
+const RASTER_MAX_ZOOM = 3;
 /** Hard upper bound on the raised zoom even when the LAN source claims higher. */
 const TILE_MAX_ZOOM_CAP = 16;
 
@@ -66,9 +70,15 @@ export interface BaseMapProps {
    * Optional validated LAN tile source (C11 widening, Phase 7.3). When its
    * `status.kind` is `lan-live`/`lan-cached`, a TileLayer renders above the
    * raster and the zoom cap rises to the source's validated max (≤ 16). Any
-   * other status leaves the raster-only map at maxZoom 2.
+   * other status leaves the raster-only map at maxZoom 3.
    */
   tileSource?: { source: TileSource; status: TileSourceStatus };
+  /**
+   * Called with the new zoom level after every `zoomend` event (Task 5 bridge).
+   * Used by consumers that need to gate UI (e.g. the 6-char Maidenhead grid)
+   * on a minimum zoom level without polling `useMap()` themselves.
+   */
+  onZoomChange?: (zoom: number) => void;
 }
 
 /**
@@ -101,12 +111,19 @@ function MapClickHandler({ onMapClick }: { onMapClick?: (latlon: LatLon) => void
   return null;
 }
 
+/** Bridges Leaflet's `zoomend` event to `onZoomChange` with the new zoom level. */
+function MapZoomHandler({ onZoomChange }: { onZoomChange?: (zoom: number) => void }) {
+  useMapEvents({ zoomend(e) { onZoomChange?.(e.target.getZoom()); } });
+  return null;
+}
+
 export function BaseMap({
   children,
   onMapClick,
   initialCenter,
   initialZoom,
   tileSource,
+  onZoomChange,
 }: BaseMapProps) {
   const center: [number, number] = initialCenter
     ? [initialCenter.lat, initialCenter.lon]
@@ -123,30 +140,31 @@ export function BaseMap({
 
   return (
     <MapContainer
-      crs={L.CRS.EPSG4326}
+      crs={L.CRS.EPSG3857}
       center={center}
       zoom={initialZoom ?? 1}
-      maxBounds={WORLD_BOUNDS}
+      maxBounds={MERCATOR_BOUNDS}
       maxBoundsViscosity={1.0}
       minZoom={0}
       maxZoom={maxZoom}
       zoomSnap={0.5}
       worldCopyJump={false}
       // Native shift-drag box-zoom is disabled: it conflicts with the
-      // GridMapPicker drag-to-select gesture, and the zoom-4 cap makes it
+      // GridMapPicker drag-to-select gesture, and the zoom-cap makes it
       // pointless on the offline substrate.
       boxZoom={false}
       attributionControl={false}
       style={{ height: '100%', width: '100%' }}
     >
-      {/* Bundled raster is the ALWAYS-present base. The validated LAN tile
-          layer (when present) renders ABOVE it so a 404 tile reveals the
+      {/* Bundled Mercator raster is the ALWAYS-present base. The validated LAN
+          tile layer (when present) renders ABOVE it so a 404 tile reveals the
           raster beneath at/below raster-native zoom (§8.5). */}
-      <ImageOverlay url={worldEquirectPng} bounds={WORLD_BOUNDS} />
+      <ImageOverlay url={worldMercatorPng} bounds={MERCATOR_BOUNDS} />
       {tileBacked && (
         <TileLayerBridge source={tileSource!.source} appMaxZoom={TILE_MAX_ZOOM_CAP} />
       )}
       <MapClickHandler onMapClick={onMapClick} />
+      <MapZoomHandler onZoomChange={onZoomChange} />
       {children}
     </MapContainer>
   );

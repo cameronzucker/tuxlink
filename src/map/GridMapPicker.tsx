@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Marker, Rectangle, useMap, useMapEvents } from 'react-leaflet';
 import { BaseMap } from './BaseMap';
+import { useTileSource } from './useTileSource';
 import { MaidenheadOverlay } from './MaidenheadOverlay';
 import { gridToLatLon, latLonToGrid } from '../forms/position/maidenhead';
 import type { LatLon } from './projection';
@@ -122,13 +123,14 @@ export function GridMapPicker({
   onBoxChange,
   gridOverlay = true,
 }: GridMapPickerProps) {
+  const tileSource = useTileSource();
   const [temp, setTemp] = useState<Corners | null>(null);
 
   const ll = grid ? gridToLatLon(grid) : null;
   const pinBounds = mode === 'pin' && grid && ll ? gridSquareBounds(grid, ll) : null;
 
   return (
-    <BaseMap initialCenter={ll ?? undefined} initialZoom={ll ? 2 : 1}>
+    <BaseMap initialCenter={ll ?? undefined} initialZoom={ll ? 2 : 1} tileSource={tileSource ?? undefined}>
       {gridOverlay && <MaidenheadOverlay visible />}
       <PickerInteractions
         mode={mode}

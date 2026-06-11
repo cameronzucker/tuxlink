@@ -94,6 +94,20 @@ export function fireMapEvent(type: string, latlng: LatLngLiteral): void {
   if (handler) handler({ latlng });
 }
 
+/**
+ * Fire a synthetic `zoomend` event to the registered handler.
+ *
+ * The `zoomend` handler shape differs from click — `e.target.getZoom()` is the
+ * value rather than `e.latlng`. This seam fires with `{ target: fakeMap }` so
+ * `MapZoomHandler`'s `e.target.getZoom()` call returns the current `mockZoom`
+ * (overridable via `setMockZoom(n)` before calling this function).
+ */
+export function fireZoomEvent(): void {
+  type ZoomHandler = (e: { target: typeof fakeMap }) => void;
+  const handler = handlerRegistry.get('zoomend') as ZoomHandler | undefined;
+  if (handler) handler({ target: fakeMap });
+}
+
 /** Mirror props onto `data-*` (skips children + function props to avoid React warnings). */
 function dataProps(props: Record<string, unknown>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -164,7 +178,7 @@ export function createReactLeafletMock(): Record<string, unknown> {
 export function createLeafletMock(): { default: Record<string, unknown> } {
   return {
     default: {
-      CRS: { EPSG4326: { code: 'EPSG:4326' } },
+      CRS: { EPSG4326: { code: 'EPSG:4326' }, EPSG3857: { code: 'EPSG:3857' } },
       divIcon: (opts: unknown) => opts,
       Icon: {
         Default: {

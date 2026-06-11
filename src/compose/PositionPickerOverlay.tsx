@@ -37,15 +37,9 @@ import {
 } from '../map/tileSource';
 import './PositionPickerOverlay.css';
 
-/**
- * The picker's live view zoom. PositionMapWidget passes no `tileSource` to
- * BaseMap (frozen C11), so the substrate is capped at the raster-native zoom and
- * the view cannot zoom past it. Until the map gains a tile layer + zoom controls
- * (a1cc/dyop), this is the live `view.zoom` the 6-char gate sees — structurally
- * below SIX_CHAR_MIN_ZOOM, so the gate correctly disables 6-char. Naming it
- * keeps the gate honest and auto-correct once the substrate supports higher zoom.
- */
-const RASTER_VIEW_ZOOM = 2;
+// (RASTER_VIEW_ZOOM constant removed in Task 8 — the overlay now tracks the
+// live view zoom via onZoomChange forwarded from PositionMapWidget → BaseMap's
+// zoomend bridge, so the 6-char gate reflects the operator's actual zoom.)
 
 type Precision = 4 | 6;
 
@@ -71,6 +65,10 @@ export function PositionPickerOverlay({
   const [pickedFull, setPickedFull] = useState<string>(() => initialGrid.trim().toUpperCase());
   const [precision, setPrecision] = useState<Precision>(4);
   const [status, setStatus] = useState<TileSourceStatus | null>(null);
+  // Live view zoom, updated via onZoomChange from PositionMapWidget's zoomend
+  // bridge. Initial value matches PositionMapWidget's initialZoom fallback (1)
+  // so the gate starts closed and only opens once the operator zooms in.
+  const [viewZoom, setViewZoom] = useState<number>(1);
 
   useEffect(() => {
     let mounted = true;
@@ -82,7 +80,7 @@ export function PositionPickerOverlay({
     };
   }, []);
 
-  const sixAllowed = status ? sixCharAllowed(status, { zoom: RASTER_VIEW_ZOOM }) : false;
+  const sixAllowed = status ? sixCharAllowed(status, { zoom: viewZoom }) : false;
   // If 6-char is selected but not (or no longer) allowed, fall back to 4-char.
   const effectivePrecision: Precision = precision === 6 && !sixAllowed ? 4 : precision;
 
@@ -136,6 +134,7 @@ export function PositionPickerOverlay({
           <PositionMapWidget
             grid={pickedFull}
             onGridChange={(g) => setPickedFull(g.toUpperCase())}
+            onZoomChange={setViewZoom}
           />
         </div>
 

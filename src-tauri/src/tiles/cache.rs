@@ -9,8 +9,8 @@
 //! Concretely:
 //!
 //! - **Per-source namespace.** A source's cache subtree is keyed by
-//!   `sha256(normalized_url + crs + scheme)` so two sources that differ only in
-//!   CRS or scheme cannot collide, and rotating a source's URL transparently
+//!   `sha256(normalized_url + scheme)` so two sources that differ only in
+//!   scheme cannot collide, and rotating a source's URL transparently
 //!   re-namespaces (the old subtree becomes orphan and is reclaimed by
 //!   [`purge`]).
 //! - **Traversal-safety.** [`tile_path`] builds `cache_root/<ns>/<rel_path>`
@@ -34,7 +34,7 @@ use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
 
 use super::coord::TileCoord;
-use super::{Crs, TileScheme, TileSource};
+use super::{TileScheme, TileSource};
 
 /// Process-wide registry of per-namespace critical-section locks.
 ///
@@ -79,28 +79,23 @@ fn ns_lock(ns: &str) -> Arc<Mutex<()>> {
 /// (§8.7). Mirrors `TileSource::cache_budget_mb`'s configured default.
 pub const DEFAULT_CACHE_BUDGET_MB: u64 = 384;
 
-/// Compute the per-source cache namespace: `sha256(normalized_url + crs +
-/// scheme)` rendered as lowercase hex.
+/// Compute the per-source cache namespace: `sha256(normalized_url + scheme)`
+/// rendered as lowercase hex.
 ///
 /// The URL is normalized by trimming a single trailing `/` (so `…/tiles` and
 /// `…/tiles/` share a namespace, matching `fetch::build_tile_url`'s
 /// trailing-slash normalization) and lowercasing — the latter folds host-case
 /// differences without changing path semantics for the integer tile segments
-/// the cache actually keys on. CRS and scheme are appended as stable discriminant
-/// strings so two sources differing only in projection/scheme never collide.
+/// the cache actually keys on. Scheme is appended as a stable discriminant
+/// so two sources differing only in scheme never collide.
 pub fn source_namespace(source: &TileSource) -> String {
     let normalized_url = source.url.trim_end_matches('/').to_ascii_lowercase();
-    let crs = match source.crs {
-        Crs::Geodetic => "geodetic",
-    };
     let scheme = match source.scheme {
         TileScheme::Xyz => "xyz",
         TileScheme::Tms => "tms",
     };
     let mut hasher = Sha256::new();
     hasher.update(normalized_url.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(crs.as_bytes());
     hasher.update(b"\0");
     hasher.update(scheme.as_bytes());
     let digest = hasher.finalize();
@@ -489,12 +484,11 @@ pub fn purge(cache_root: &Path, source: &TileSource) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tiles::{Crs, TileScheme, TileSource};
+    use crate::tiles::{TileScheme, TileSource};
 
     fn source(url: &str) -> TileSource {
         TileSource {
             url: url.into(),
-            crs: Crs::Geodetic,
             scheme: TileScheme::Xyz,
             min_zoom: 0,
             max_zoom: 19,

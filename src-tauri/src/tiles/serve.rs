@@ -184,7 +184,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tiles::{Crs, TileScheme, TileSource};
+    use crate::tiles::{TileScheme, TileSource};
     use tempfile::TempDir;
 
     fn png_bytes() -> Vec<u8> {
@@ -196,7 +196,6 @@ mod tests {
     fn source(url: &str) -> TileSource {
         TileSource {
             url: url.into(),
-            crs: Crs::Geodetic,
             scheme: TileScheme::Xyz,
             min_zoom: 0,
             max_zoom: 19,
