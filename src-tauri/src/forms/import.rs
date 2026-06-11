@@ -88,6 +88,279 @@ pub enum ImportError {
     Io { reason: String },
 }
 
+// ============================================================================
+// Detection (§11.1) — the import unit is the `.txt` template, NOT the HTML.
+// ============================================================================
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+/// A single file discovered during detection, pre-classification against the
+/// live catalog. `Authoring` candidates become catalog-surfaced forms;
+/// `Companion`s (viewer/.txt/assets) are copied but never surfaced; `Reject`s
+/// are never written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CandidateKind {
+    Authoring,
+    Companion,
+    Reject,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Candidate {
+    pub id: String,
+    pub folder: String,
+    pub rel_path: String,
+    pub abs_path: PathBuf,
+    pub kind: CandidateKind,
+    pub reason: Option<String>,
+    pub has_viewer: bool,
+}
+
+/// Decode any file as text without panicking on Windows-1252 byte sequences
+/// (the real WLE bundle is cp1252, not UTF-8). NEVER use `read_to_string`.
+fn read_text_lossy(p: &Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(p)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Org-package metadata that should be silently ignored on import (§11.2) —
+/// never surfaced as a `reject` row.
+fn is_metadata_file(name_lower: &str) -> bool {
+    name_lower.ends_with(".dat")
+        || name_lower == "changelog.txt"
+        || name_lower.ends_with("_version.dat")
+}
+
+/// Tolerant orphan-fallback probe: does this HTML look like a Winlink
+/// authoring form? Only used when no `.txt` governs the file. Real forms are
+/// frequently malformed HTML, so this is a lowercased substring scan, NOT a
+/// strict parser (a strict parser rejects valid forms).
+fn html_looks_like_form(lowered: &str) -> bool {
+    if !lowered.contains("<form") {
+        return false;
+    }
+    let has_post = lowered.contains("method=post")
+        || lowered.contains("method =post")
+        || lowered.contains("method= post")
+        || lowered.contains("method = post")
+        || lowered.contains("method=\"post\"")
+        || lowered.contains("method='post'");
+    let has_multipart = lowered.contains("multipart/form-data");
+    let targets_local = ["{formserver}", "{formport}", "localhost", "127.0.0.1"]
+        .iter()
+        .any(|t| lowered.contains(t));
+    has_post && has_multipart && targets_local
+}
+
+/// Lowercased extension of a path ("" if none).
+fn ext_lower(p: &Path) -> String {
+    p.extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+fn is_html_ext(ext: &str) -> bool {
+    ext == "html" || ext == "htm"
+}
+
+/// Resolve a directive-named filename against the actual on-disk siblings in
+/// `folder`, case-insensitively (the WLE catalog drifts on case). Returns the
+/// real path preserving on-disk case, or `None` if absent.
+fn resolve_on_disk(folder: &Path, filename: &str) -> Option<PathBuf> {
+    let want = filename.trim().to_lowercase();
+    std::fs::read_dir(folder)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.to_lowercase() == want)
+                .unwrap_or(false)
+        })
+}
+
+/// Parse a `.txt` template's `Form:` directive → (input_filename, optional
+/// display_filename). Returns `None` if there's no `Form:` line. Filenames may
+/// contain spaces; the separator is the first comma.
+fn parse_form_directive(txt: &str) -> Option<(String, Option<String>)> {
+    for line in txt.lines() {
+        let trimmed = line.trim_start();
+        let lower = trimmed.to_lowercase();
+        if let Some(rest) = lower.strip_prefix("form:") {
+            // Recover the original-case value at the same byte offset.
+            let val = &trimmed[trimmed.len() - rest.len()..];
+            let mut parts = val.splitn(2, ',');
+            let input = parts.next()?.trim().to_string();
+            if input.is_empty() {
+                return None;
+            }
+            let display = parts.next().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            return Some((input, display));
+        }
+    }
+    None
+}
+
+/// Compute (rel_path, folder, id) for a file under `root`. rel_path uses
+/// forward slashes; folder is the parent (relative; "" = root); id is the stem.
+fn rel_parts(root: &Path, abs: &Path) -> Option<(String, String, String)> {
+    let rel = abs.strip_prefix(root).ok()?;
+    let rel_str = rel.to_str()?.replace('\\', "/");
+    let folder = rel
+        .parent()
+        .and_then(|p| p.to_str())
+        .map(|s| s.replace('\\', "/"))
+        .unwrap_or_default();
+    let id = abs.file_stem().and_then(|s| s.to_str())?.to_string();
+    Some((rel_str, folder, id))
+}
+
+/// Two-pass detection over a staged source tree (§11.1):
+/// pass 1 parses every `.txt` `Form:` directive (input → Authoring, display →
+/// Companion); pass 2 classifies orphan HTML (viewer/sendreply stems →
+/// Companion via `is_authoring_template_stem`; otherwise the fallback HTML
+/// probe → Authoring or Reject). All other non-metadata files → Companion
+/// (assets). Metadata files are skipped silently.
+pub(crate) fn detect_candidates(root: &Path) -> std::io::Result<Vec<Candidate>> {
+    use crate::forms::wle_templates::{is_authoring_template_stem, resolve_viewer_for};
+
+    let mut candidates: Vec<Candidate> = Vec::new();
+    let mut governed: HashSet<PathBuf> = HashSet::new();
+
+    // Collect every regular file once.
+    let files: Vec<PathBuf> = walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.path().to_path_buf())
+        .collect();
+
+    // --- Pass 1: .txt directives bind input (authoring) + display (companion).
+    for abs in &files {
+        if ext_lower(abs) != "txt" {
+            continue;
+        }
+        let name_lower = abs
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if is_metadata_file(&name_lower) {
+            continue;
+        }
+        let folder_path = match abs.parent() {
+            Some(p) => p,
+            None => continue,
+        };
+        let txt = read_text_lossy(abs)?;
+        if let Some((input_name, display_name)) = parse_form_directive(&txt) {
+            let input_abs = resolve_on_disk(folder_path, &input_name);
+            let display_abs = display_name
+                .as_deref()
+                .and_then(|d| resolve_on_disk(folder_path, d));
+            if let Some(input_abs) = input_abs {
+                governed.insert(input_abs.clone());
+                if let Some(ref d) = display_abs {
+                    governed.insert(d.clone());
+                }
+                // has_viewer: the directive named a display that exists, OR a
+                // sibling viewer resolves by the catalog's own heuristic.
+                let has_viewer =
+                    display_abs.is_some() || resolve_viewer_for(&input_abs).is_some();
+                if let Some((rel_path, folder, id)) = rel_parts(root, &input_abs) {
+                    candidates.push(Candidate {
+                        id,
+                        folder,
+                        rel_path,
+                        abs_path: input_abs,
+                        kind: CandidateKind::Authoring,
+                        reason: None,
+                        has_viewer,
+                    });
+                }
+            }
+        }
+    }
+
+    // --- Pass 2: everything not already governed-as-authoring.
+    for abs in &files {
+        // Skip the authoring forms we already emitted in pass 1.
+        if governed.contains(abs)
+            && candidates
+                .iter()
+                .any(|c| &c.abs_path == abs && c.kind == CandidateKind::Authoring)
+        {
+            continue;
+        }
+        let name_lower = abs
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if is_metadata_file(&name_lower) {
+            continue; // org-package cruft, silently ignored (§11.2)
+        }
+        let (rel_path, folder, id) = match rel_parts(root, abs) {
+            Some(t) => t,
+            None => continue,
+        };
+        let ext = ext_lower(abs);
+
+        if is_html_ext(&ext) {
+            // A display HTML governed by a .txt is a companion.
+            if governed.contains(abs) || !is_authoring_template_stem(&id) {
+                candidates.push(companion(id, folder, rel_path, abs.clone()));
+                continue;
+            }
+            // Orphan authoring-stem HTML → fallback probe.
+            let lowered = read_text_lossy(abs)?.to_lowercase();
+            if html_looks_like_form(&lowered) {
+                let has_viewer = resolve_viewer_for(abs).is_some();
+                candidates.push(Candidate {
+                    id,
+                    folder,
+                    rel_path,
+                    abs_path: abs.clone(),
+                    kind: CandidateKind::Authoring,
+                    reason: None,
+                    has_viewer,
+                });
+            } else {
+                candidates.push(Candidate {
+                    id,
+                    folder,
+                    rel_path,
+                    abs_path: abs.clone(),
+                    kind: CandidateKind::Reject,
+                    reason: Some("not a Winlink form".to_string()),
+                    has_viewer: false,
+                });
+            }
+        } else {
+            // .txt template bodies + css/js/image assets → companions (copied,
+            // never catalog-surfaced).
+            candidates.push(companion(id, folder, rel_path, abs.clone()));
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn companion(id: String, folder: String, rel_path: String, abs_path: PathBuf) -> Candidate {
+    Candidate {
+        id,
+        folder,
+        rel_path,
+        abs_path,
+        kind: CandidateKind::Companion,
+        reason: None,
+        has_viewer: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +391,134 @@ mod tests {
         let v = serde_json::to_value(&err).unwrap();
         assert_eq!(v["kind"], "commitConflict");
         assert_eq!(v["reason"], "catalog changed, re-preview");
+    }
+
+    // ---- Task 2: detection ----
+
+    fn write_bytes(p: &std::path::Path, b: &[u8]) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, b).unwrap();
+    }
+
+    fn kinds_for<'a>(c: &'a [Candidate], rel_suffix: &str) -> Vec<&'a Candidate> {
+        c.iter().filter(|x| x.rel_path.ends_with(rel_suffix)).collect()
+    }
+
+    #[test]
+    fn detects_authoring_form_via_txt_form_directive() {
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path();
+        write_bytes(
+            &root.join("AAMRON/Net Check-in.txt"),
+            b"Form: Net Check-in Initial.html, Net Check-in Viewer.html\r\nMsg Type: ...\r\n",
+        );
+        // authoring HTML: Windows-1252 (0x92 = right single quote), unsubstituted action
+        write_bytes(
+            &root.join("AAMRON/Net Check-in Initial.html"),
+            b"<html><body><form method=post enctype=multipart/form-data \
+              action=\"http://{FormServer}:{FormPort}\">It\x92s here</form></body></html>",
+        );
+        write_bytes(&root.join("AAMRON/Net Check-in Viewer.html"), b"<html>viewer</html>");
+
+        let cands = detect_candidates(root).unwrap();
+        let authoring: Vec<_> = cands
+            .iter()
+            .filter(|c| c.kind == CandidateKind::Authoring)
+            .collect();
+        assert_eq!(authoring.len(), 1, "exactly one authoring form");
+        assert_eq!(authoring[0].id, "Net Check-in Initial");
+        assert_eq!(authoring[0].folder, "AAMRON");
+        assert!(authoring[0].has_viewer, "viewer named in the .txt directive");
+        // The viewer is a companion, never an authoring candidate.
+        assert!(cands.iter().any(|c| c.kind == CandidateKind::Companion
+            && c.rel_path.ends_with("Net Check-in Viewer.html")));
+    }
+
+    #[test]
+    fn authoring_form_with_zero_form_tag_still_detected_via_txt() {
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path();
+        write_bytes(&root.join("ARC 213 Message.txt"), b"Form: ARC 213 Message Initial.html\r\n");
+        write_bytes(
+            &root.join("ARC 213 Message Initial.html"),
+            b"<html><body>no form element here, JS builds it</body></html>",
+        );
+        let cands = detect_candidates(root).unwrap();
+        assert!(
+            cands.iter().any(|c| c.kind == CandidateKind::Authoring
+                && c.id == "ARC 213 Message Initial"),
+            "trust the .txt directive even when the <form> probe is inconclusive"
+        );
+    }
+
+    #[test]
+    fn orphan_html_with_form_action_placeholder_is_authoring() {
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path();
+        write_bytes(
+            &root.join("Loose Initial.html"),
+            b"<form METHOD=POST EncType=Multipart/Form-Data action='HTTP://LOCALHOST:8001'>x</form>",
+        );
+        let cands = detect_candidates(root).unwrap();
+        assert!(cands
+            .iter()
+            .any(|c| c.kind == CandidateKind::Authoring && c.id == "Loose Initial"));
+    }
+
+    #[test]
+    fn orphan_non_form_html_is_rejected_not_added() {
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path();
+        write_bytes(&root.join("readme.html"), b"<html><body>About our group</body></html>");
+        let cands = detect_candidates(root).unwrap();
+        let r = kinds_for(&cands, "readme.html");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].kind, CandidateKind::Reject);
+        assert!(r[0].reason.as_deref().unwrap().contains("not a Winlink form"));
+    }
+
+    #[test]
+    fn viewer_and_sendreply_stems_are_companions_never_authoring() {
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path();
+        // orphan viewer/sendreply (no .txt) that DO contain <form> — must not
+        // import as compose options.
+        write_bytes(
+            &root.join("Foo Viewer.html"),
+            b"<form method=post enctype=multipart/form-data action=\"http://{FormServer}:{FormPort}\">x</form>",
+        );
+        write_bytes(
+            &root.join("Foo SendReply.html"),
+            b"<form method=post enctype=multipart/form-data action=\"http://{FormServer}:{FormPort}\">x</form>",
+        );
+        let cands = detect_candidates(root).unwrap();
+        assert!(
+            cands.iter().all(|c| c.kind != CandidateKind::Authoring),
+            "Viewer/SendReply stems are companions even when they contain a form"
+        );
+    }
+
+    #[test]
+    fn reads_windows1252_without_panicking() {
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path();
+        write_bytes(&root.join("W.txt"), b"Form: W Initial.html\r\n");
+        // lone 0x92/0xA0 bytes are invalid UTF-8 — read_to_string().unwrap() panics
+        write_bytes(
+            &root.join("W Initial.html"),
+            &[b'<', b'f', b'o', b'r', b'm', b' ', 0x92, 0xA0, b'>'],
+        );
+        let cands = detect_candidates(root).unwrap(); // must not panic
+        assert!(cands.iter().any(|c| c.kind == CandidateKind::Authoring && c.id == "W Initial"));
+    }
+
+    #[test]
+    fn metadata_files_are_silently_ignored() {
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path();
+        write_bytes(&root.join("Standard_Forms_Version.dat"), b"1.2.3");
+        write_bytes(&root.join("Changelog.txt"), b"changes...");
+        let cands = detect_candidates(root).unwrap();
+        assert!(cands.is_empty(), "metadata produces no candidates, not reject rows");
     }
 }
