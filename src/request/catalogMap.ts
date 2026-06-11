@@ -6,6 +6,9 @@
 // real filenames (CatalogEntry.filename), never a category.
 
 import type { CatalogEntry } from '../catalog/types';
+import zoneMap from './nws-zone-to-catalog.json';
+
+const ZONE_MAP = (zoneMap as { map: Record<string, string> }).map;
 
 /// Real catalog FILENAMES (not categories) backing the national request cards.
 /// Guarded against catalog drift by a real-file test in catalogMap.test.ts.
@@ -42,6 +45,19 @@ export function bestStateForecast(
 
   const tabular = stateForecasts.find((e) => e.filename.includes('_TAB_'));
   return tabular ?? null;
+}
+
+/** Resolve an NWS zone id → the backing catalog entry (via the vetted map),
+ *  or null if the zone is unmapped or its filename isn't in the loaded catalog. */
+export function zoneForecastEntry(entries: CatalogEntry[], zoneId: string): CatalogEntry | null {
+  const filename = ZONE_MAP[zoneId];
+  if (!filename) return null;
+  return entries.find((e) => e.filename === filename) ?? null;
+}
+
+/** Resolve a radar region filename → its catalog entry, or null if absent. */
+export function radarEntry(entries: CatalogEntry[], filename: string): CatalogEntry | null {
+  return entries.find((e) => e.category === 'WX_US_RAD' && e.filename === filename) ?? null;
 }
 
 /**

@@ -4,6 +4,8 @@ import {
   NATIONAL,
   bestStateForecast,
   gatewayListFilenames,
+  zoneForecastEntry,
+  radarEntry,
 } from './catalogMap';
 import zonesGeo from './nws-zones.geo.json';
 import zoneMap from './nws-zone-to-catalog.json';
@@ -130,6 +132,29 @@ describe('gatewayListFilenames', () => {
     ];
 
     expect(gatewayListFilenames(entries)).toEqual([]);
+  });
+});
+
+const ENTRIES = [
+  { category: 'WX_US_WA', filename: 'WA_ZON_SEA', description: 'City of Seattle Washington Zone Forecast', size_bytes: 2500 },
+  { category: 'WX_US_RAD', filename: 'US.RAD.PSND', description: 'SNAPSHOT CURRENT RADAR U.S. PUGET SOUND & SJDF', size_bytes: 20799 },
+];
+
+describe('zoneForecastEntry', () => {
+  it('maps an NWS zone id to its catalog entry', () => {
+    expect(zoneForecastEntry(ENTRIES, 'WAZ315')?.filename).toBe('WA_ZON_SEA');
+  });
+  it('returns null for an unmapped zone', () => {
+    expect(zoneForecastEntry(ENTRIES, 'WAZ999')).toBeNull();
+  });
+  it('returns null when the mapped filename is not in the loaded catalog', () => {
+    expect(zoneForecastEntry([], 'WAZ315')).toBeNull();
+  });
+});
+
+describe('radarEntry', () => {
+  it('returns the catalog entry for a region filename', () => {
+    expect(radarEntry(ENTRIES, 'US.RAD.PSND')?.filename).toBe('US.RAD.PSND');
   });
 });
 
