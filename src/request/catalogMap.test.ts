@@ -5,6 +5,8 @@ import {
   bestStateForecast,
   gatewayListFilenames,
 } from './catalogMap';
+import zoneMap from './nws-zone-to-catalog.json';
+import unmappedJson from './nws-zone-unmapped.json';
 
 /** Build a CatalogEntry with sensible defaults for fixtures. */
 function entry(partial: Partial<CatalogEntry> & Pick<CatalogEntry, 'category' | 'filename'>): CatalogEntry {
@@ -126,5 +128,47 @@ describe('gatewayListFilenames', () => {
     ];
 
     expect(gatewayListFilenames(entries)).toEqual([]);
+  });
+});
+
+describe('NWS zone mapping completeness (DoD #5)', () => {
+  // Per TEST-1 (docs/pitfalls/implementation-pitfalls.md): filesystem-scan tests
+  // in this Vite frontend use import.meta.glob with ?raw, NOT node:fs, so both
+  // vitest and `tsc --noEmit` stay green.
+  const catalogModules = import.meta.glob(
+    '/src-tauri/resources/catalog/winlink-queries.txt',
+    { eager: true, query: '?raw', import: 'default' },
+  ) as Record<string, string>;
+  const catalogRaw = Object.values(catalogModules)[0];
+
+  // Parse zone-forecast entries the same way as the Rust catalog parser:
+  // pipe-delimited, BOM-stripped, filter to WX_US_<ST> + description matching
+  // /zone forecast/i (DoD #5 completeness-test target rule).
+  const catalogZoneForecasts: string[] = (catalogRaw ?? '')
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^﻿/, '').trim())
+    .filter(Boolean)
+    .flatMap((l) => {
+      const [category, filename, description] = l.split('|');
+      if (
+        /^WX_US_[A-Z]{2}$/.test(category ?? '') &&
+        /zone forecast/i.test(description ?? '')
+      ) {
+        return [filename];
+      }
+      return [];
+    });
+
+  it('every catalog zone-forecast filename is mapped or explicitly unmapped-by-design', () => {
+    const mappedFilenames = new Set(
+      Object.values((zoneMap as { map: Record<string, string> }).map),
+    );
+    const unmappedFilenames = new Set(
+      Object.keys((unmappedJson as { unmapped: Record<string, string> }).unmapped),
+    );
+    const missing = catalogZoneForecasts.filter(
+      (f) => !mappedFilenames.has(f) && !unmappedFilenames.has(f),
+    );
+    expect(missing, `Unresolved catalog zone forecasts:\n${missing.join('\n')}`).toEqual([]);
   });
 });
