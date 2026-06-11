@@ -10,7 +10,7 @@
 //! | `clear_tile_cache`     | `{}`                  | `()`               |
 //! | `tile_source_status`   | `{}`                  | `TileSourceStatus` |
 //!
-//! ## Activation policy (§8.1 / §4.1 / §8.3)
+//! ## Activation policy (§8.1 / §8.3)
 //!
 //! [`validate`] is the plain-async core (cache root + allow_loopback) that
 //! both `configure` and `test` delegate to. In order:
@@ -18,29 +18,16 @@
 //! 1. **URL shape** ([`validate_source_url`]) — a malformed URL, non-http(s)
 //!    scheme, embedded creds, or missing host yields [`StatusKind::Incompatible`]
 //!    and does NOT activate. This is the cheap first gate before any network I/O.
-//! 2. **CRS probe** ([`probe_source_crs`]):
-//!    - `Rejected` (Mercator) → [`StatusKind::Incompatible`] — never activate; a
-//!      Mercator source renders plausible-but-WRONG coordinates (§4.1 ship-blocker).
-//!    - `Unknown` → [`StatusKind::Incompatible`] UNLESS the operator set the
-//!      explicit `source.crs == Crs::Geodetic` override. `Crs` has only the
-//!      `Geodetic` variant, so the field's presence IS the explicit operator
-//!      assertion "this server is geodetic but exposes no probeable metadata"
-//!      (§4.1 caller note in `crs.rs`). With the override present, `Unknown`
-//!      proceeds; without it, `Unknown` rejects. (`Crs::Geodetic` is currently
-//!      the only variant, so the override always holds — by design: the field
-//!      exists to be widened later, and the policy is written to honor it now.)
-//!    - `Geodetic` → proceed.
-//! 3. **Reachability probe** — fetch ONE tile (`{z=0, x=0, y=0}` at the source's
+//! 2. **Reachability probe** — fetch ONE tile (`{z=0, x=0, y=0}` at the source's
 //!    `max_zoom` bound) via [`fetch_tile_single_flight`] with `allow_loopback`
 //!    threaded through (production passes `false`; tests pass `true` to reach a
 //!    mockito loopback server):
 //!    - `Ok` → reachable + serves a real image → [`StatusKind::LanLive`].
 //!    - `HostDenied` / `Network` (covers DNS + timeout) → [`StatusKind::Unreachable`].
 //!    - `NotFound` (the probe tile is simply absent on an otherwise-reachable
-//!      server) → [`StatusKind::LanLive`]: the host answered and the CRS already
-//!      validated; a missing `0/0/0` tile is not an incompatibility, only a
-//!      coverage gap the cache/serve layer handles per-tile. We do NOT reject a
-//!      working geodetic server because its world-tile is absent.
+//!      server) → [`StatusKind::LanLive`]: a missing `0/0/0` tile is not an
+//!      incompatibility, only a coverage gap the cache/serve layer handles
+//!      per-tile. We do NOT reject a working server because its world-tile is absent.
 //!    - `NotAnImage` / `TooLarge` / `Redirect` / `Status` / `BadUrl` →
 //!      [`StatusKind::Incompatible`]: the server responded but the response is
 //!      not a usable tile (wrong content, oversized, a redirect pivot, an error
@@ -56,10 +43,9 @@ use std::sync::Arc;
 
 use super::cache;
 use super::coord::TileCoord;
-use super::crs::{probe_source_crs, CrsCheck};
 use super::fetch::{fetch_tile_single_flight, FetchError};
 use super::host::validate_source_url;
-use super::{Crs, StatusKind, TileGatekeeper, TileSource, TileSourceStatus};
+use super::{StatusKind, TileGatekeeper, TileSource, TileSourceStatus};
 use crate::config::{read_config, write_config_atomic, ConfigWriteError};
 use crate::ui_commands::UiError;
 
@@ -81,10 +67,9 @@ fn status(kind: StatusKind, source: &TileSource, zoom: u32) -> TileSourceStatus 
 /// earns, WITHOUT mutating any state. The plain-async core both `configure` and
 /// `test` call (the `#[tauri::command]` wrappers are thin `State` extractors).
 ///
-/// `cache_root` + `allow_loopback` are threaded into BOTH the CRS metadata probe
-/// (which builds its own vetted/pinned/no-proxy client internally — Findings 1+2)
-/// and the single reachability fetch. See the module-level docs for the full
-/// branch table.
+/// `cache_root` + `allow_loopback` are threaded into the single reachability
+/// fetch (which builds its own vetted/pinned/no-proxy client internally —
+/// Findings 1+2). See the module-level docs for the full branch table.
 async fn validate(
     cache_root: &std::path::Path,
     source: &TileSource,
@@ -95,27 +80,7 @@ async fn validate(
         return status(StatusKind::Incompatible, source, 0);
     }
 
-    // 2. CRS probe + the Unknown-with-override policy (§4.1).
-    //
-    // SSRF (Findings 1+2): `probe_source_crs` now builds the SAME vetted+pinned+
-    // no-proxy client the reachability fetch uses, vetting the host BEFORE any
-    // probe GET — `allow_loopback` is threaded through so a public-IP source is
-    // denied before the probe can connect (it returns Unknown → rejected below).
-    match probe_source_crs(source, allow_loopback).await {
-        CrsCheck::Rejected => return status(StatusKind::Incompatible, source, 0),
-        CrsCheck::Unknown => {
-            // `Crs::Geodetic` is the explicit operator override for a
-            // known-geodetic server with no probeable metadata. The enum has
-            // only this variant, so the match below always proceeds — written
-            // as a match so widening `Crs` later forces a deliberate decision.
-            match source.crs {
-                Crs::Geodetic => { /* operator asserts geodetic — proceed */ }
-            }
-        }
-        CrsCheck::Geodetic => { /* proceed */ }
-    }
-
-    // 3. Reachability probe — fetch ONE world tile (0/0/0 at the source bound).
+    // 2. Reachability probe — fetch ONE world tile (0/0/0 at the source bound).
     // `TileCoord::new(0,0,0, max_zoom)` is always valid (0 < 2^0 = 1) for any
     // max_zoom ≥ 0; the `.unwrap_or` keeps the fn total even on a degenerate
     // (pathological) coord build.
@@ -128,9 +93,9 @@ async fn validate(
         Err(FetchError::HostDenied(_)) | Err(FetchError::Network(_)) => {
             status(StatusKind::Unreachable, source, 0)
         }
-        // The host answered but has no 0/0/0 tile — still a reachable, geodetic,
-        // image-serving server (the CRS gate already passed). A missing world
-        // tile is a coverage gap, not an incompatibility.
+        // The host answered but has no 0/0/0 tile — still a reachable,
+        // image-serving server. A missing world tile is a coverage gap, not
+        // an incompatibility.
         Err(FetchError::NotFound) => status(StatusKind::LanLive, source, source.max_zoom),
         // Responded with something that is not a usable tile → incompatible.
         Err(FetchError::NotAnImage)
@@ -141,12 +106,13 @@ async fn validate(
     }
 }
 
-/// Core of [`configure_tile_source`]: validate, then on `LanLive` activate the
-/// source on the gatekeeper AND persist it to the config (so it survives a
-/// restart). On any non-`LanLive` outcome: do NOT activate, do NOT persist;
-/// return the status so the UI can explain. Persistence failure is surfaced as
-/// `Err` (the source DID validate; the operator should know the on-disk write
-/// failed even though the in-memory gatekeeper is now live).
+/// Core of [`configure_tile_source`]: validate (URL shape + reachability probe),
+/// then on `LanLive` activate the source on the gatekeeper AND persist it to
+/// the config (so it survives a restart). On any non-`LanLive` outcome: do NOT
+/// activate, do NOT persist; return the status so the UI can explain.
+/// Persistence failure is surfaced as `Err` (the source DID validate; the
+/// operator should know the on-disk write failed even though the in-memory
+/// gatekeeper is now live).
 async fn configure_core(
     gatekeeper: &TileGatekeeper,
     source: &TileSource,
@@ -242,8 +208,8 @@ pub async fn configure_tile_source(
     gatekeeper: tauri::State<'_, Arc<TileGatekeeper>>,
 ) -> Result<TileSourceStatus, UiError> {
     // Production: never permit loopback (only tests opt in via the core fn). The
-    // CRS probe + reachability fetch each build their own vetted/pinned/no-proxy
-    // client internally (Findings 1+2); no shared client is threaded in.
+    // reachability fetch builds its own vetted/pinned/no-proxy client internally
+    // (Findings 1+2); no shared client is threaded in.
     configure_core(gatekeeper.inner(), &source, false).await
 }
 
@@ -277,12 +243,11 @@ pub async fn tile_source_status(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tiles::{TileScheme, TileSource};
+    use crate::tiles::TileScheme;
 
     fn source(url: &str) -> TileSource {
         TileSource {
             url: url.into(),
-            crs: Crs::Geodetic,
             scheme: TileScheme::Xyz,
             min_zoom: 0,
             max_zoom: 16,
@@ -333,32 +298,18 @@ mod tests {
         assert_eq!(st.label.as_deref(), Some("shack"));
     }
 
-    // ── validate: Mercator → Incompatible, and configure does NOT activate ──
-
-    #[tokio::test]
-    async fn validate_mercator_is_incompatible() {
-        let mut server = mockito::Server::new_async().await;
-        server
-            .mock("GET", "/tilejson.json")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"tilejson":"3.0.0","crs":"EPSG:3857"}"#)
-            .create_async()
-            .await;
-        let cache = tempfile::tempdir().unwrap();
-        let src = source(&server.url());
-        let st = validate(cache.path(), &src, true).await;
-        assert_eq!(st.kind, StatusKind::Incompatible, "got {st:?}");
-    }
+    // ── validate: non-image response → Incompatible; configure does NOT activate ──
 
     #[tokio::test]
     async fn configure_does_not_activate_on_incompatible() {
+        // A server that responds to the probe tile with text/html (not an image):
+        // the reachability probe returns NotAnImage → Incompatible.
         let mut server = mockito::Server::new_async().await;
         server
-            .mock("GET", "/tilejson.json")
+            .mock("GET", "/0/0/0.png")
             .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"tilejson":"3.0.0","crs":"EPSG:3857"}"#)
+            .with_header("content-type", "text/html")
+            .with_body("<html>not a tile</html>")
             .create_async()
             .await;
         let cache = tempfile::tempdir().unwrap();
@@ -369,40 +320,6 @@ mod tests {
         assert!(
             gk.active_source().is_none(),
             "incompatible source must NOT be activated on the gatekeeper"
-        );
-    }
-
-    // ── validate: Unknown CRS + explicit Geodetic override → proceed ────────
-
-    #[tokio::test]
-    async fn validate_unknown_crs_with_geodetic_override_proceeds() {
-        // No probeable metadata (all probes 404) → Unknown. The source carries
-        // the explicit `crs: Geodetic` override, so validation proceeds to the
-        // reachability probe and the 0/0/0 PNG yields LanLive.
-        let mut server = mockito::Server::new_async().await;
-        server.mock("GET", "/tilejson.json").with_status(404).create_async().await;
-        server.mock("GET", "/").with_status(404).create_async().await;
-        server
-            .mock("GET", mockito::Matcher::Regex(r"SERVICE=WMTS".to_string()))
-            .with_status(404)
-            .create_async()
-            .await;
-        server.mock("GET", "/metadata.json").with_status(404).create_async().await;
-        server.mock("GET", "/metadata").with_status(404).create_async().await;
-        server
-            .mock("GET", "/0/0/0.png")
-            .with_status(200)
-            .with_header("content-type", "image/png")
-            .with_body(png_bytes())
-            .create_async()
-            .await;
-        let cache = tempfile::tempdir().unwrap();
-        let src = source(&server.url()); // crs == Geodetic (the override)
-        let st = validate(cache.path(), &src, true).await;
-        assert_eq!(
-            st.kind,
-            StatusKind::LanLive,
-            "Unknown CRS + explicit Geodetic override must proceed: got {st:?}"
         );
     }
 

@@ -143,9 +143,8 @@ pub fn build_tile_client() -> Result<reqwest::Client, FetchError> {
 }
 
 /// Vet a tile source's host against the SSRF policy and build the reqwest client
-/// that will reach it — the SINGLE shared egress chokepoint for BOTH the tile
-/// fetch ([`fetch_tile_bytes_with_resolver`]) AND the CRS metadata probe
-/// ([`crate::tiles::crs::probe_source_crs`]).
+/// that will reach it — the SINGLE shared egress chokepoint for the tile fetch
+/// ([`fetch_tile_bytes_with_resolver`]).
 ///
 /// Vetting branches on the source URL's host type (§8.3):
 /// - **IP literal** (`http://192.168.1.5:8080/`, `http://[fd00::1]:8080/`): there
@@ -478,13 +477,12 @@ fn clone_fetch_error(e: &FetchError) -> FetchError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tiles::{Crs, TileScheme, TileSource};
+    use crate::tiles::{TileScheme, TileSource};
     use std::net::SocketAddr;
 
     fn source(url: &str) -> TileSource {
         TileSource {
             url: url.into(),
-            crs: Crs::Geodetic,
             scheme: TileScheme::Xyz,
             min_zoom: 0,
             max_zoom: 19,

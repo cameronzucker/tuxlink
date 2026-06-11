@@ -12,7 +12,6 @@ pub mod breaker;
 pub mod cache;
 pub mod commands;
 pub mod coord;
-pub mod crs;
 pub mod fetch;
 pub mod host;
 pub mod serve;
@@ -33,8 +32,6 @@ use serde::{Deserialize, Serialize};
 pub struct TileSource {
     /// Base URL of the tile server (e.g. `http://192.168.1.5:8080/tiles/`).
     pub url: String,
-    /// Coordinate reference system this source uses.
-    pub crs: Crs,
     /// Tile-numbering scheme.
     pub scheme: TileScheme,
     pub min_zoom: u32,
@@ -45,13 +42,6 @@ pub struct TileSource {
     pub attribution: Option<String>,
     /// Short operator-visible label ("shack", "field kit", …).
     pub label: String,
-}
-
-/// Coordinate Reference System for a tile source.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub enum Crs {
-    /// EPSG:4326 — standard GPS / Winlink grid-square mapping.
-    Geodetic,
 }
 
 /// Tile URL numbering scheme.
@@ -230,7 +220,6 @@ mod tests {
     fn sample_source() -> TileSource {
         TileSource {
             url: "http://192.168.1.5:8080/tiles/".into(),
-            crs: Crs::Geodetic,
             scheme: TileScheme::Xyz,
             min_zoom: 0,
             max_zoom: 16,
@@ -268,7 +257,6 @@ mod tests {
     fn tile_source_and_status_serde_round_trip() {
         let s = TileSource {
             url: "http://192.168.1.5:8080/".into(),
-            crs: Crs::Geodetic,
             scheme: TileScheme::Xyz,
             min_zoom: 0,
             max_zoom: 16,
