@@ -28,7 +28,7 @@ import './RequestCenter.css';
 // Unmapped ids fall back to `info`.
 const CARD_ICONS: Record<string, IconName> = {
   'loc-zone-forecast': 'weather',
-  'loc-radar': 'weather',
+  'loc-radar': 'radar',
   'loc-marine': 'wave',
   'prop-forecast': 'prop',
   'prop-solar': 'sun',
@@ -300,78 +300,120 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
             {!searchActive && view === 'home' && !loading && !error && entries && entries.length > 0 && (
               <div className="request-sections content-inner">
                 {/* HERO — the location ('location' kind) section. An amber-edged
-                    panel; each card is a large feat card (icon tile + label +
-                    description + action). Rendered only when the geo-derived
-                    Weather section has cards. */}
+                    panel; the primary card (zone forecast) renders as the
+                    full-width .zone hero card; the rest (radar, marine) render
+                    in a .locgrid of .feat cards. Each card shows its .meta
+                    mono line (catalog target / filename). */}
                 {sections
                   .filter((section) => section.kind === 'location')
-                  .map((section) => (
-                    <section
-                      key={section.id}
-                      className="request-hero hero"
-                      data-testid={`request-section-${section.id}`}
-                      aria-label={section.title}
-                    >
-                      <div className="hero-h">
-                        <span className="pin" aria-hidden="true">
-                          <Icon name="pin" size={17} />
-                        </span>
-                        <h4>For your location</h4>
-                        {grid && (
-                          <span className="where">
-                            {grid}
-                            {stateName ? ` · ${stateName}` : ''}
+                  .map((section) => {
+                    const primaryCard = section.cards.find((c) => c.primary) ?? null;
+                    const supportingCards = section.cards.filter((c) => !c.primary);
+                    return (
+                      <section
+                        key={section.id}
+                        className="request-hero hero"
+                        data-testid={`request-section-${section.id}`}
+                        aria-label={section.title}
+                      >
+                        <div className="hero-h">
+                          <span className="pin" aria-hidden="true">
+                            <Icon name="pin" size={17} />
                           </span>
-                        )}
-                      </div>
-                      <div className="hero-grid">
-                        {section.cards.map((card) => {
-                          const isAdd = card.action.kind === 'addCms';
-                          return (
-                            <article
-                              key={card.id}
-                              className="feat"
-                              data-testid={`request-card-${card.id}`}
-                            >
-                              <span className="fi" aria-hidden="true">
-                                <Icon name={cardIcon(card.id)} size={24} />
-                              </span>
-                              <div className="request-card__body">
-                                <div className="fn request-card__label">{card.label}</div>
-                                {card.description && (
-                                  <div className="fd request-card__desc">{card.description}</div>
-                                )}
-                                <div className="fa">
-                                  <button
-                                    type="button"
-                                    className={isAdd ? 'badd' : 'bopen'}
-                                    onClick={() => runAction(card.action, card.label)}
-                                    aria-label={
-                                      isAdd
-                                        ? `Add ${card.label} to request`
-                                        : `Open ${card.label}`
-                                    }
-                                  >
-                                    {isAdd ? (
-                                      <>
-                                        <Icon name="plus" size={15} />
-                                        Add request
-                                      </>
-                                    ) : (
-                                      <>
-                                        Browse {card.label}
-                                        <Icon name="arrow" size={15} />
-                                      </>
-                                    )}
-                                  </button>
-                                </div>
+                          <h4>For your location</h4>
+                          {grid && (
+                            <span className="where">
+                              {grid}
+                              {stateName ? ` · ${stateName}` : ''}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Primary zone card — the most-local product */}
+                        {primaryCard && (
+                          <article
+                            className="zone"
+                            data-testid={`request-card-${primaryCard.id}`}
+                          >
+                            <span className="zi" aria-hidden="true">
+                              <Icon name={cardIcon(primaryCard.id)} size={23} />
+                            </span>
+                            <div className="request-card__body">
+                              <div className="zn request-card__label">{primaryCard.label}</div>
+                              {primaryCard.description && (
+                                <div className="zd request-card__desc">{primaryCard.description}</div>
+                              )}
+                              {primaryCard.meta && (
+                                <div className="zmeta">{primaryCard.meta}</div>
+                              )}
+                              <div className="za">
+                                <button
+                                  type="button"
+                                  className="badd"
+                                  onClick={() => runAction(primaryCard.action, primaryCard.label)}
+                                  aria-label={`Add ${primaryCard.label} to request`}
+                                >
+                                  <Icon name="plus" size={15} />
+                                  Add request
+                                </button>
                               </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ))}
+                            </div>
+                          </article>
+                        )}
+
+                        {/* Supporting cards — radar + marine in a 2-column locgrid */}
+                        {supportingCards.length > 0 && (
+                          <div className="locgrid">
+                            {supportingCards.map((card) => {
+                              const isAdd = card.action.kind === 'addCms';
+                              return (
+                                <article
+                                  key={card.id}
+                                  className="feat"
+                                  data-testid={`request-card-${card.id}`}
+                                >
+                                  <span className="fi" aria-hidden="true">
+                                    <Icon name={cardIcon(card.id)} size={20} />
+                                  </span>
+                                  <div className="request-card__body">
+                                    <div className="fn request-card__label">{card.label}</div>
+                                    {card.description && (
+                                      <div className="fd request-card__desc">{card.description}</div>
+                                    )}
+                                    {card.meta && (
+                                      <div className="fmeta">{card.meta}</div>
+                                    )}
+                                    <div className="fa">
+                                      {isAdd ? (
+                                        <button
+                                          type="button"
+                                          className="iadd"
+                                          onClick={() => runAction(card.action, card.label)}
+                                          aria-label={`Add ${card.label} to request`}
+                                        >
+                                          <Icon name="plus" size={15} />
+                                        </button>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          className="iadd"
+                                          onClick={() => runAction(card.action, card.label)}
+                                          aria-label={`Open ${card.label}`}
+                                        >
+                                          <Icon name="arrow" size={15} />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                      </section>
+                    );
+                  })}
 
                 {/* CHIP GRIDS — the 'national' sections. Each card is a compact
                     chip (icon tile + title + one-line description + the catalog

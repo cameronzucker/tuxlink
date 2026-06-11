@@ -23,6 +23,7 @@ export type IconName =
   | 'radio'
   | 'weather'
   | 'wave'
+  | 'radar'
   | 'prop'
   | 'sun'
   | 'aurora'
@@ -69,6 +70,13 @@ const ICON_PATHS: Record<IconName, ReactNode> = {
       <path d="M2 8c2 0 2 1.6 4 1.6S8 8 10 8s2 1.6 4 1.6S16 8 18 8s2 1.6 4 1.6" />
       <path d="M2 13c2 0 2 1.6 4 1.6S8 13 10 13s2 1.6 4 1.6 2-1.6 4-1.6 2 1.6 4 1.6" />
       <path d="M2 18c2 0 2 1.6 4 1.6S8 18 10 18s2 1.6 4 1.6 2-1.6 4-1.6 2 1.6 4 1.6" />
+    </>
+  ),
+  radar: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 12V3M12 12l6.4 6.4" />
+      <path d="M12 7a5 5 0 0 1 5 5" />
     </>
   ),
   prop: (

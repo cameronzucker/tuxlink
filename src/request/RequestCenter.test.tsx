@@ -829,3 +829,75 @@ describe('<RequestCenter> — E1 basket UI + Send all', () => {
     expect(vi.mocked(invoke)).not.toHaveBeenCalled();
   });
 });
+
+// ===========================================================================
+// Task 11 — primary zone card (.zone) + supporting radar/marine grid (.locgrid)
+//
+// CN87uo (Seattle) → zone WAZ315 "City of Seattle" → WA_ZON_SEA.
+// Radar: US.RAD.PSND. Marine: WX_EASTPAC.
+// ===========================================================================
+
+const T11_ENTRIES: CatalogEntry[] = [
+  entry('WX_US_WA', 'WA_ZON_SEA', 'City of Seattle Washington Zone Forecast', 2500),
+  entry('WX_US_RAD', 'US.RAD.PSND', 'SNAPSHOT CURRENT RADAR U.S. PUGET SOUND & SJDF', 20799),
+  entry('WX_EASTPAC', 'EPAC_HIGH', 'NE Pacific — high seas forecast', 9100),
+  entry('WX_EASTPAC', 'EPAC_COASTAL', 'NE Pacific — coastal waters', 7300),
+  entry('PROPAGATION', 'PROP_3DAY', '3-Day Propagation Forecast', 800),
+  entry('PROPAGATION', 'PROP_WWV', 'Daily WWV Solar Flux summary', 621),
+  entry('PROPAGATION', 'AUR_TONIGHT', 'Aurora Forecast Tonight', 900),
+  entry('WL2K_RMS', 'PUB_PACKET', 'Packet Public Gateways Frequency List', 219867),
+  entry('INQUIRIES', 'INQUIRIES', 'Winlink Catalog Inquiries Help', 1200),
+];
+
+function mockT11(grid: string | null = 'CN87uo') {
+  vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+    if (cmd === 'catalog_list') return T11_ENTRIES;
+    if (cmd === 'config_read') return { grid };
+    return null;
+  });
+}
+
+describe('<RequestCenter> — Task 11 zone card + locgrid', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders the zone forecast as the primary hero card with its meta line', async () => {
+    mockT11('CN87uo');
+    render(<RequestCenter onClose={() => {}} />);
+    const card = await screen.findByTestId('request-card-loc-zone-forecast');
+    expect(card).toHaveClass('zone');
+    expect(within(card).getByText(/City of Seattle/)).toBeInTheDocument();
+    expect(within(card).getByText(/WAZ315 · WA_ZON_SEA/)).toBeInTheDocument();
+    expect(screen.getByTestId('request-card-loc-radar')).toBeInTheDocument();
+    expect(screen.getByTestId('request-card-loc-marine')).toBeInTheDocument();
+  });
+
+  it('supporting cards render inside a .locgrid wrapper with their meta lines', async () => {
+    mockT11('CN87uo');
+    render(<RequestCenter onClose={() => {}} />);
+    await screen.findByTestId('request-card-loc-zone-forecast');
+
+    const radarCard = screen.getByTestId('request-card-loc-radar');
+    expect(radarCard).toHaveClass('feat');
+    expect(within(radarCard).getByText(/US\.RAD\.PSND/)).toBeInTheDocument();
+
+    const marineCard = screen.getByTestId('request-card-loc-marine');
+    expect(marineCard).toHaveClass('feat');
+    expect(within(marineCard).getByText(/WX_EASTPAC/)).toBeInTheDocument();
+
+    // Both supporting cards must be wrapped in a .locgrid container
+    const locgrid = document.querySelector('.locgrid');
+    expect(locgrid).not.toBeNull();
+    expect(locgrid!.contains(radarCard)).toBe(true);
+    expect(locgrid!.contains(marineCard)).toBe(true);
+  });
+
+  it('zone card Add button adds the cms item to the basket', async () => {
+    mockT11('CN87uo');
+    render(<RequestCenter onClose={() => {}} />);
+    const card = await screen.findByTestId('request-card-loc-zone-forecast');
+    fireEvent.click(within(card).getByRole('button', { name: /add/i }));
+    expect(await screen.findByTestId('basket-item-cms:WA_ZON_SEA')).toBeInTheDocument();
+  });
+});
