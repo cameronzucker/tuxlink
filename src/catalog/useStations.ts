@@ -23,7 +23,12 @@ export function useStations(): UseStations {
     setError(null);
     void (async () => {
       try {
-        setListings(await fetchStations(modes, opts));
+        // The hook's contract is `listings: StationListing[]` — never expose a
+        // non-array even if the backend returns null/undefined (a degenerate
+        // mock or a malformed response), or consumers' `.map`/spread crash on a
+        // post-fetch re-render. (CI caught this via the production mount path.)
+        const result = await fetchStations(modes, opts);
+        setListings(Array.isArray(result) ? result : []);
       } catch (e) {
         setError(catalogErrorMessage(e));
       } finally {

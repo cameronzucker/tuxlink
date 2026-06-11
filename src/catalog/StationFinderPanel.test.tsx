@@ -71,6 +71,20 @@ describe('StationFinderPanel', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('does not crash when catalog_fetch_stations resolves undefined (degenerate backend)', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { grid: 'DM43bp' } as unknown as never;
+      if (cmd === 'catalog_fetch_stations') return undefined as unknown as never; // null/empty response
+      return undefined as unknown as never;
+    });
+    renderPanel(<StationFinderPanel onClose={() => {}} />);
+    // The dialog renders on first paint; the crash (if any) is on the post-fetch
+    // re-render. Wait a tick so the fetch resolves, then assert still mounted.
+    expect(await screen.findByRole('dialog', { name: /find a station/i })).toBeTruthy();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('catalog_fetch_stations', expect.anything()));
+    expect(screen.getByRole('dialog', { name: /find a station/i })).toBeTruthy();
+  });
+
   it('closes on Escape', async () => {
     const onClose = vi.fn();
     renderPanel(<StationFinderPanel onClose={onClose} />);

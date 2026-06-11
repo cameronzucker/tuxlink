@@ -92,7 +92,9 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
   const ssnAgeDays = pred.prediction ? ssnAge(pred.prediction.year, pred.prediction.month) : null;
   // Freshest station-list fetch stamp across loaded listings (U2 freshness).
   const listFetchedAtMs = useMemo(() => {
-    const stamps = stations.listings.map((l) => l.fetchedAtMs).filter((t): t is number => t != null);
+    const stamps = (stations.listings ?? [])
+      .map((l) => l.fetchedAtMs)
+      .filter((t): t is number => t != null);
     return stamps.length ? Math.max(...stamps) : null;
   }, [stations.listings]);
 
