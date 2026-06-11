@@ -91,6 +91,11 @@ export interface FolderSidebarProps {
    *  this callback with the dragged message id + source folder + dropped-on
    *  destination. */
   onDropMessage?: (id: string, fromFolder: MailboxFolderRef, toFolder: MailboxFolderRef) => void;
+  /** Drag-drop a MULTI-SELECTION of message rows onto a folder (tuxlink-hh1j).
+   *  Fired when the dragged payload carries more than one id. The handler
+   *  (AppShell's `bulkMoveToFolder`) resolves each id's own source folder and
+   *  skips ids already in the destination, so no source folder is passed here. */
+  onBulkDropMessage?: (ids: Set<string>, toFolder: MailboxFolderRef) => void;
   /** Right-click on a user folder (tuxlink-ejph). Opens FolderContextMenu. */
   onFolderContextMenu?: (slug: string, x: number, y: number) => void;
   /** Re-parent a folder via drag-drop (tuxlink-ka3z). `parentSlug === undefined`
@@ -122,19 +127,30 @@ const TUXLINK_DRAG_MIME = 'application/x-tuxlink-message';
 const TUXLINK_FOLDER_DRAG_MIME = 'application/x-tuxlink-folder';
 
 interface DragPayload {
-  id: string;
+  /// One-or-more dragged message ids (tuxlink-hh1j). A multi-select drag carries
+  /// the whole selection; a single drag carries one id. `folder` is the source
+  /// folder of the row under the cursor — meaningful for the single case; for a
+  /// multi-select the bulk handler re-resolves each id's own folder.
+  ids: string[];
   folder: string;
 }
 
 /// Parse the DataTransfer payload set by MessageRow on dragstart. Returns
 /// null when the payload is missing or malformed — drop is then a no-op.
+/// Accepts both the hh1j `{ ids: [...] }` shape and the legacy `{ id }` shape.
 function readDragPayload(e: React.DragEvent): DragPayload | null {
   try {
     const raw = e.dataTransfer.getData(TUXLINK_DRAG_MIME);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<DragPayload>;
-    if (typeof parsed.id !== 'string' || typeof parsed.folder !== 'string') return null;
-    return { id: parsed.id, folder: parsed.folder };
+    const parsed = JSON.parse(raw) as Partial<DragPayload> & { id?: string };
+    if (typeof parsed.folder !== 'string') return null;
+    const ids = Array.isArray(parsed.ids)
+      ? parsed.ids.filter((v): v is string => typeof v === 'string')
+      : typeof parsed.id === 'string'
+        ? [parsed.id]
+        : [];
+    if (ids.length === 0) return null;
+    return { ids, folder: parsed.folder };
   } catch {
     return null;
   }
@@ -215,6 +231,7 @@ export const FolderSidebar = memo(function FolderSidebar({
   userFolders = [],
   onCreateFolder,
   onDropMessage,
+  onBulkDropMessage,
   onFolderContextMenu,
   onReparentFolder,
   selectedConnection = null,
@@ -289,8 +306,15 @@ export const FolderSidebar = memo(function FolderSidebar({
     setDragOver(null);
     const payload = readDragPayload(e);
     if (!payload) return;
-    if (payload.folder === toFolder) return; // no-op self-drop
-    onDropMessage?.(payload.id, payload.folder as MailboxFolderRef, toFolder);
+    if (payload.ids.length > 1) {
+      // Multi-select drag (tuxlink-hh1j): route to the bulk handler, which
+      // resolves each id's own source folder (cross-folder selections) and
+      // skips ids already in `toFolder`. No single self-drop guard needed.
+      onBulkDropMessage?.(new Set(payload.ids), toFolder);
+      return;
+    }
+    if (payload.folder === toFolder) return; // no-op self-drop (single)
+    onDropMessage?.(payload.ids[0], payload.folder as MailboxFolderRef, toFolder);
   };
 
   // dragOver listeners — call preventDefault so the drop event actually fires

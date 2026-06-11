@@ -137,6 +137,11 @@ export interface MessageRowProps {
   /// false = mark unread). Optional — no-op when absent so direct MessageRow
   /// render tests don't need to supply it.
   onRowSetReadState?: (id: string, folder: MailboxFolderRef, read: boolean) => void;
+  /// Selection-aware dragstart (tuxlink-hh1j). The parent owns this because the
+  /// drag payload depends on the full multi-select set, which the row does not
+  /// hold (it only knows `inSelection`). When absent (direct MessageRow render
+  /// tests), the row falls back to a single-message payload.
+  onRowDragStart?: (e: React.DragEvent, message: MessageMeta) => void;
 }
 
 /// Custom DataTransfer MIME for tuxlink message drags (tuxlink-ejph). The
@@ -149,7 +154,7 @@ export const TUXLINK_DRAG_MIME = 'application/x-tuxlink-message';
 /// tuxlink-sndh: wrapped in React.memo so a parent re-render (e.g. modem-status
 /// tick, search keystroke, status poll) doesn't repaint every virtuoso row.
 /// Effective only when callers stabilize callback props with useCallback.
-export const MessageRow = memo(function MessageRow({ message, folder, isOpen, inSelection, onRowClick, onSelect: _onSelect, matchHighlight, showFolderTag, onContextMenu, onRowSetReadState }: MessageRowProps) {
+export const MessageRow = memo(function MessageRow({ message, folder, isOpen, inSelection, onRowClick, onSelect: _onSelect, matchHighlight, showFolderTag, onContextMenu, onRowSetReadState, onRowDragStart }: MessageRowProps) {
   // tuxlink-sndh: memoize per-row derived data so it's reused across renders
   // when the row's own props haven't changed.
   const size = useMemo(() => formatSize(message.bodySize), [message.bodySize]);
@@ -210,9 +215,16 @@ export const MessageRow = memo(function MessageRow({ message, folder, isOpen, in
       }}
       draggable
       onDragStart={(e) => {
+        // Selection-aware drag (tuxlink-hh1j): the parent resolves whether this
+        // drag carries the whole multi-selection or just this row. Fallback (no
+        // parent handler — direct MessageRow render tests) is single-message.
+        if (onRowDragStart) {
+          onRowDragStart(e, message);
+          return;
+        }
         e.dataTransfer.setData(
           TUXLINK_DRAG_MIME,
-          JSON.stringify({ id: message.id, folder: srcFolder }),
+          JSON.stringify({ ids: [message.id], id: message.id, folder: srcFolder }),
         );
         e.dataTransfer.effectAllowed = 'move';
       }}
@@ -381,6 +393,31 @@ export function MessageList({
     [sortedMessages, selectedIds, onSelectionChange, onSelect],
   );
 
+  // Selection-aware dragstart (tuxlink-hh1j). Dragging a row that is part of a
+  // multi-selection carries the WHOLE selection so the drop moves every selected
+  // message; dragging a row outside the selection carries just that row (OS
+  // file-manager convention, mirroring the selection-aware context menu).
+  // selectedIds is read through a ref so this callback's identity stays stable
+  // across selection changes — otherwise every memoized MessageRow would repaint
+  // on each Ctrl+click (tuxlink-sndh perf regression).
+  const selectedIdsRef = React.useRef(selectedIds);
+  selectedIdsRef.current = selectedIds;
+  const onRowDragStart = useCallback(
+    (e: React.DragEvent, message: MessageMeta) => {
+      const sel = selectedIdsRef.current;
+      const srcFolder = (message.folder as string | undefined) ?? (folder as string);
+      const ids = sel.size > 1 && sel.has(message.id) ? [...sel] : [message.id];
+      e.dataTransfer.setData(
+        TUXLINK_DRAG_MIME,
+        // `id` retained alongside `ids` for back-compat with any consumer that
+        // reads the pre-hh1j single-id shape.
+        JSON.stringify({ ids, id: message.id, folder: srcFolder }),
+      );
+      e.dataTransfer.effectAllowed = 'move';
+    },
+    [folder],
+  );
+
   // Right-click context menu state (tuxlink-ejph). Wires onContextMenu on
   // each row to a positioned overlay. Only mounted when handlers are
   // supplied — absence acts as feature-flag for tests that don't exercise
@@ -462,6 +499,7 @@ export function MessageList({
                 showFolderTag={showFolderTag}
                 onContextMenu={rowContextMenu}
                 onRowSetReadState={onSetReadState}
+                onRowDragStart={onRowDragStart}
               />
             )}
           />
