@@ -28,9 +28,26 @@ export interface StationFinderControlsProps {
   /** Freshest station-list fetch stamp (Unix ms) for the "updated N ago"
    *  caption — the U2 last-known-good freshness surface (design §6). */
   listFetchedAtMs?: number | null;
+  /** Search radius in miles from the operator location; null = no limit (All).
+   *  Disabled when the operator has no home grid set. */
+  radiusMi: number | null;
+  onRadiusChange: (mi: number | null) => void;
+  hasOperatorGrid: boolean;
+  /** Callsign substring filter (design §7 search). */
+  search: string;
+  onSearchChange: (q: string) => void;
   onRefresh: () => void;
   refreshing: boolean;
 }
+
+/** Radius options (miles) for the search-radius selector; null = All. */
+const RADIUS_OPTIONS: { mi: number | null; label: string }[] = [
+  { mi: 250, label: '250 mi' },
+  { mi: 500, label: '500 mi' },
+  { mi: 1000, label: '1000 mi' },
+  { mi: 2500, label: '2500 mi' },
+  { mi: null, label: 'All' },
+];
 
 /** Compact relative-age label for a Unix-ms timestamp ("updated 3 min ago"). */
 function listAgeLabel(fetchedAtMs: number): string {
@@ -124,6 +141,36 @@ export function StationFinderControls(props: StationFinderControlsProps) {
         >
           {props.refreshing ? 'Checking…' : 'Check for newer list'}
         </button>
+      </div>
+
+      <div className="station-finder__filterbar">
+        <input
+          type="search"
+          className="station-finder__search"
+          aria-label="Filter stations by callsign"
+          placeholder="Filter by callsign…"
+          value={props.search}
+          onChange={(e) => props.onSearchChange(e.target.value)}
+        />
+        <label className="station-finder__radius">
+          <span className="station-finder__lab">Within</span>
+          <select
+            aria-label="Search radius"
+            value={props.radiusMi == null ? 'all' : String(props.radiusMi)}
+            disabled={!props.hasOperatorGrid}
+            title={props.hasOperatorGrid ? undefined : 'Set your location in the status bar to filter by distance'}
+            onChange={(e) => props.onRadiusChange(e.target.value === 'all' ? null : Number(e.target.value))}
+          >
+            {RADIUS_OPTIONS.map((o) => (
+              <option key={o.label} value={o.mi == null ? 'all' : String(o.mi)}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!props.hasOperatorGrid && (
+          <span className="station-finder__stale">set your location (status bar) for distance + bearing</span>
+        )}
       </div>
     </div>
   );

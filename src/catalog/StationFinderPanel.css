@@ -156,6 +156,43 @@
   color: var(--faint, #6f8aa3);
   font-family: var(--mono, ui-monospace, monospace);
 }
+
+/* filter row: callsign search + search radius (design §7) */
+.station-finder__filterbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  border-top: 1px solid var(--border, #243a52);
+  flex-wrap: wrap;
+}
+.station-finder__search {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text, #e8f1fa);
+  background: #0b1722;
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 7px;
+  padding: 5px 10px;
+  min-width: 180px;
+}
+.station-finder__radius {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.station-finder__radius select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text, #e8f1fa);
+  background: #0b1722;
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 7px;
+  padding: 5px 8px;
+}
+.station-finder__radius select:disabled {
+  opacity: 0.5;
+}
 .station-finder__refresh {
   font: inherit;
   font-size: 11.5px;
@@ -194,77 +231,52 @@
   color: var(--faint, #6f8aa3);
 }
 
-/* pins */
-.station-finder__pin {
-  position: relative;
+/* Station pins — rendered as L.divIcon HTML by StationFinderMap (global classes,
+   since Leaflet injects markers outside the React tree). The dot's width/height
+   are set inline per tier; these rules supply colour, shape, and selection ring. */
+.station-finder__divpin {
   background: none;
   border: none;
-  cursor: pointer;
-  padding: 0;
 }
-.station-finder__pin-dot {
+.station-finder__pindot {
   display: block;
   border-radius: 50%;
   border: 2px solid #0a121b;
   background: var(--reach-fair);
-  width: 14px;
-  height: 14px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
 }
-.station-finder__pin--good .station-finder__pin-dot {
+.station-finder__pindot--good {
   background: var(--reach-good);
-  width: 18px;
-  height: 18px;
 }
-.station-finder__pin--fair .station-finder__pin-dot {
+.station-finder__pindot--fair {
   background: var(--reach-fair);
-  width: 15px;
-  height: 15px;
 }
-.station-finder__pin--marginal .station-finder__pin-dot {
+.station-finder__pindot--marginal {
   background: var(--reach-marginal);
-  width: 12px;
-  height: 12px;
 }
-.station-finder__pin--skip .station-finder__pin-dot {
+.station-finder__pindot--skip {
   background: transparent;
   border-style: dashed;
   border-color: #6c5a5a;
-  opacity: 0.7;
-  width: 9px;
-  height: 9px;
+  opacity: 0.75;
 }
-.station-finder__pin--untiered .station-finder__pin-dot {
+.station-finder__pindot--untiered {
   background: #9fb6cc;
 }
-.station-finder__pin.is-selected .station-finder__pin-dot {
+.station-finder__pindot.is-selected {
   outline: 2px solid #fff;
   outline-offset: 3px;
-}
-.station-finder__pin-tag {
-  position: absolute;
-  left: 16px;
-  top: -4px;
-  white-space: nowrap;
-  font-size: 10px;
-  font-family: var(--mono, ui-monospace, monospace);
-  background: rgba(8, 16, 24, 0.86);
-  border: 1px solid var(--border, #243a52);
-  border-radius: 4px;
-  padding: 1px 5px;
-  opacity: 0;
-}
-.station-finder__pin:hover .station-finder__pin-tag,
-.station-finder__pin.is-selected .station-finder__pin-tag {
-  opacity: 1;
 }
 .station-finder__me {
   display: block;
   width: 13px;
   height: 13px;
+  margin: 1px;
   border-radius: 50%;
   background: #eaf3fb;
   border: 3px solid var(--accent, #2f86f0);
-  box-shadow: 0 0 0 3px rgba(47, 134, 240, 0.25);
+  box-shadow: 0 0 0 3px rgba(47, 134, 240, 0.3);
 }
 .station-finder__reachkey {
   position: absolute;
