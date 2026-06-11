@@ -28,6 +28,7 @@ pub mod wizard;
 pub mod modem_commands;
 pub mod modem_status;
 pub mod propagation;
+pub mod mesh;
 
 #[cfg(test)]
 pub mod test_helpers;
@@ -625,6 +626,8 @@ pub fn run() {
             crate::ui_commands::render_ics309_pdf,            // tuxlink-hnkn P2 Task 2 (ICS-309 PDF export)
             crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
+            crate::ui_commands::config_set_aredn_master_node_host, // tuxlink-1w7t (AREDN mesh discovery host)
+            crate::mesh::mesh_discover_post_offices,    // tuxlink-1w7t (AREDN Post Office discovery)
             // tuxlink-6c9y (Task A7): Network PO relay favorites — persist in config.
             crate::ui_commands::network_po_favorites_get,
             crate::ui_commands::network_po_favorites_add,

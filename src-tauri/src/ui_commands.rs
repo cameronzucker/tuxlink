@@ -2687,6 +2687,11 @@ pub struct ConfigViewDto {
     /// `Config.review_inbound_before_download` (tuxlink-bsiy). The inline
     /// SettingsPanel loads this into its checkbox on open.
     pub review_inbound_before_download: bool,
+    /// AREDN mesh master-node host for Post Office discovery (tuxlink-1w7t).
+    /// `None` → discovery uses `localnode.local.mesh`. Mirrors
+    /// `Config.aredn_master_node_host`; the Network Post Office panel loads it
+    /// into the discovery section's node-host input on open.
+    pub aredn_master_node_host: Option<String>,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -2704,8 +2709,27 @@ impl From<&config::Config> for ConfigViewDto {
             position_precision: c.privacy.position_precision,
             position_source: c.privacy.position_source,
             review_inbound_before_download: c.review_inbound_before_download,
+            aredn_master_node_host: c.aredn_master_node_host.clone(),
         }
     }
+}
+
+/// Persist the AREDN mesh master-node host for Post Office discovery (tuxlink-1w7t).
+///
+/// `host = None` or blank clears the override (discovery falls back to
+/// `localnode.local.mesh`). Pure config write — discovery reads config fresh on
+/// each invocation, so no live-backend refresh is needed (unlike
+/// `config_set_connect`).
+#[tauri::command]
+pub async fn config_set_aredn_master_node_host(host: Option<String>) -> Result<(), UiError> {
+    let normalized = host
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty());
+    let mut cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.aredn_master_node_host = normalized;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
 }
 
 /// Read the tuxlink config and project it to the flat [`ConfigViewDto`] the
@@ -7621,6 +7645,7 @@ hw:CARD=Device,DEV=0
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
             map_tile_source: None,
+            aredn_master_node_host: None,
         }
     }
 
@@ -7847,6 +7872,7 @@ hw:CARD=Device,DEV=0
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
             map_tile_source: None,
+            aredn_master_node_host: None,
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -8952,6 +8978,7 @@ hw:CARD=Device,DEV=0
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
             map_tile_source: None,
+            aredn_master_node_host: None,
         }
     }
 

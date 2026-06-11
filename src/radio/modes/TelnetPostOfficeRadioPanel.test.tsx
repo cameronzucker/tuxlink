@@ -740,3 +740,92 @@ describe('<TelnetPostOfficeRadioPanel> relay-favorite edit validation (oi1g)', (
     expect(invokeSpy.mock.calls.some(([c]) => c === 'network_po_favorites_set')).toBe(false);
   });
 });
+
+// ── tuxlink-1w7t: AREDN mesh Post Office discovery ──────────────────────────
+describe('<TelnetPostOfficeRadioPanel> AREDN mesh discovery (1w7t)', () => {
+  beforeEach(async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockReset();
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(defaultInvokeImpl);
+  });
+
+  const MESH_FIXTURE = [
+    { name: 'W7ABC-10 Winlink Post Office', ip: '10.5.3.2', port: 8772, link: 'http://10.5.3.2:8772/', reachable: true, rtt_ms: 12 },
+    { name: 'N7XYZ Post Office', ip: '10.5.9.1', port: 8772, link: 'http://10.5.9.1:8772/', reachable: false, rtt_ms: null },
+  ];
+
+  const withMesh = async (impl: (cmd: string, args?: unknown) => Promise<unknown>) => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string, args?: unknown) => {
+      const base = await defaultInvokeImpl(cmd);
+      if (base !== undefined) return base;
+      return impl(cmd, args);
+    });
+  };
+
+  it('local mode does NOT render the mesh discovery section', () => {
+    renderPanel({ mode: 'local' });
+    expect(screen.queryByTestId('po-mesh-discovery')).not.toBeInTheDocument();
+  });
+
+  it('network mode renders the mesh discovery section (replacing the old "omitted" note)', async () => {
+    renderPanel({ mode: 'network' });
+    expect(await screen.findByTestId('po-mesh-discovery')).toBeInTheDocument();
+    expect(screen.getByTestId('po-mesh-discover-btn')).toBeInTheDocument();
+  });
+
+  it('Discover invokes mesh_discover_post_offices and renders reachable + down rows', async () => {
+    await withMesh(async (cmd) => (cmd === 'mesh_discover_post_offices' ? MESH_FIXTURE : undefined));
+    renderPanel({ mode: 'network' });
+    fireEvent.click(await screen.findByTestId('po-mesh-discover-btn'));
+    expect(await screen.findByTestId('po-mesh-row-10.5.3.2:8772')).toBeInTheDocument();
+    expect(screen.getByTestId('po-mesh-reach-10.5.3.2:8772')).toHaveTextContent('●');
+    expect(screen.getByTestId('po-mesh-reach-10.5.9.1:8772')).toHaveTextContent('○');
+  });
+
+  it('"Use" on a discovered relay loads its numeric IP + port into the connect form', async () => {
+    await withMesh(async (cmd) => (cmd === 'mesh_discover_post_offices' ? MESH_FIXTURE : undefined));
+    renderPanel({ mode: 'network' });
+    fireEvent.click(await screen.findByTestId('po-mesh-discover-btn'));
+    fireEvent.click(await screen.findByTestId('po-mesh-use-10.5.3.2:8772'));
+    expect((screen.getByTestId('po-host-input') as HTMLInputElement).value).toBe('10.5.3.2');
+    expect((screen.getByTestId('po-port-input') as HTMLInputElement).value).toBe('8772');
+  });
+
+  it('empty discovery result → "No Post Offices advertised" empty state', async () => {
+    await withMesh(async (cmd) => (cmd === 'mesh_discover_post_offices' ? [] : undefined));
+    renderPanel({ mode: 'network' });
+    fireEvent.click(await screen.findByTestId('po-mesh-discover-btn'));
+    expect(await screen.findByTestId('po-mesh-empty')).toBeInTheDocument();
+  });
+
+  it('a DNS failure renders the off-mesh error message', async () => {
+    await withMesh(async (cmd) => {
+      if (cmd === 'mesh_discover_post_offices') throw 'error sending request: dns error: failed to lookup address';
+      return undefined;
+    });
+    renderPanel({ mode: 'network' });
+    fireEvent.click(await screen.findByTestId('po-mesh-discover-btn'));
+    const err = await screen.findByTestId('po-mesh-error');
+    expect(err).toHaveTextContent(/Not on an AREDN mesh/i);
+  });
+
+  it('editing the mesh node host persists it via config_set_aredn_master_node_host on blur', async () => {
+    const core = await import('@tauri-apps/api/core');
+    await withMesh(async () => undefined);
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    renderPanel({ mode: 'network' });
+    const input = await screen.findByTestId('po-mesh-host-input');
+    fireEvent.change(input, { target: { value: 'master.local.mesh' } });
+    fireEvent.blur(input);
+    await waitFor(() =>
+      expect(
+        invokeSpy.mock.calls.some(
+          ([c, a]) =>
+            c === 'config_set_aredn_master_node_host' &&
+            (a as { host?: string })?.host === 'master.local.mesh',
+        ),
+      ).toBe(true),
+    );
+  });
+});

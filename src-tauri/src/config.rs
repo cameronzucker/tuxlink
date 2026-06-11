@@ -75,6 +75,15 @@ pub struct Config {
     /// config byte-identical to its pre-dyop shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub map_tile_source: Option<crate::tiles::TileSource>,
+    /// AREDN mesh master-node host for Post Office discovery (tuxlink-1w7t).
+    /// `None` → discovery defaults to `localnode.local.mesh`. WLE stores a
+    /// "Mesh Master Node" setting but IGNORES it (hardcodes localnode); tuxlink
+    /// HONORS this value as the sysinfo base host (the P3a divergence/bugfix).
+    /// `#[serde(default)]` migrates pre-1w7t configs (absent → `None`); the field
+    /// is now KNOWN, satisfying `deny_unknown_fields`. `skip_serializing_if`
+    /// keeps a no-override config byte-identical to its pre-1w7t shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aredn_master_node_host: Option<String>,
 }
 
 /// A saved Network Post Office relay server entry.

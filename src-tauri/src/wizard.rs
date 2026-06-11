@@ -187,6 +187,7 @@ pub async fn persist_cms_impl(
         // dashboard ribbon's "On connect" control.
         review_inbound_before_download: true,
         map_tile_source: None,
+        aredn_master_node_host: None,
     };
 
     // Step 4: Create keyring entry handle (needed for rollback in step 7).
@@ -352,6 +353,7 @@ pub async fn persist_offline_impl(
         // dashboard ribbon's "On connect" control.
         review_inbound_before_download: true,
         map_tile_source: None,
+        aredn_master_node_host: None,
     };
 
     // Single atomic write to config.json. No keyring involved.

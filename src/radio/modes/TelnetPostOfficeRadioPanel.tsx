@@ -79,7 +79,24 @@ const RELAY_STATE_LABELS: Record<Exclude<RelayState, 'not-relay'>, string> = {
 interface ConfigSlice {
   callsign?: string;
   grid?: string;
+  /** AREDN mesh master-node host for discovery (tuxlink-1w7t); null/absent → default. */
+  aredn_master_node_host?: string | null;
 }
+
+/// A Post Office / RMS Relay discovered on the local AREDN mesh (tuxlink-1w7t).
+/// Mirrors the Rust `MeshPostOffice` DTO (snake_case). `ip` is the numeric node
+/// IP to dial; `reachable`/`rtt_ms` come from the bounded TCP liveness probe.
+interface MeshPostOffice {
+  name: string;
+  ip: string;
+  port: number;
+  link: string;
+  reachable: boolean;
+  rtt_ms: number | null;
+}
+
+/// Default AREDN mesh node when the operator has set no master-node host.
+const DEFAULT_MESH_NODE = 'localnode.local.mesh';
 
 /// A saved Network PO relay favorite — mirrors the Rust `config::RelayFavorite`
 /// (`{ callsign, label, host, port }`); the `(host case-insensitive, port)`
@@ -158,6 +175,17 @@ export function TelnetPostOfficeRadioPanel({
   const [editFavHost, setEditFavHost] = useState<string>('');
   const [editFavPort, setEditFavPort] = useState<string>('');
 
+  // tuxlink-1w7t: AREDN mesh Post Office discovery (network mode only).
+  // `meshHost` is the configured master-node host (default localnode.local.mesh),
+  // loaded from config on mount and persisted on blur. `discovered` is the
+  // ephemeral result of the last on-demand Refresh — NOT persisted. `discoverError`
+  // distinguishes off-mesh (DNS) from a reachable-node fetch failure.
+  const [meshHost, setMeshHost] = useState<string>(DEFAULT_MESH_NODE);
+  const [discovered, setDiscovered] = useState<MeshPostOffice[]>([]);
+  const [discovering, setDiscovering] = useState<boolean>(false);
+  const [discoverError, setDiscoverError] = useState<string | null>(null);
+  const [discoverRan, setDiscoverRan] = useState<boolean>(false);
+
   const { entries: logEntries, clear: clearLog } = useSessionLog();
   const queryClient = useQueryClient();
 
@@ -174,6 +202,7 @@ export function TelnetPostOfficeRadioPanel({
         if (cancelled) return;
         if (c.callsign) setMyCallsign(c.callsign);
         if (c.grid) setLocator(c.grid);
+        if (c.aredn_master_node_host) setMeshHost(c.aredn_master_node_host);
       })
       .catch(() => {
         // Pre-wizard / config absent — identity stays empty; the backend will
@@ -327,6 +356,60 @@ export function TelnetPostOfficeRadioPanel({
     } catch (e) {
       setFavoritesError(String(e));
     }
+  };
+
+  // tuxlink-1w7t: persist the mesh master-node host on blur (clears the override
+  // when blank → discovery falls back to localnode.local.mesh).
+  const saveMeshHost = () => {
+    const trimmed = meshHost.trim();
+    if (trimmed !== meshHost) setMeshHost(trimmed);
+    void invoke('config_set_aredn_master_node_host', {
+      host: trimmed === '' ? null : trimmed,
+    }).catch(() => {
+      // Pure config write; failures are non-fatal — keep the in-memory value.
+    });
+  };
+
+  // tuxlink-1w7t: on-demand AREDN Post Office discovery. ONE local sysinfo GET on
+  // the operator's node + a bounded liveness probe (backend enforces local-mesh
+  // only). No timer, no background poll. Distinguishes off-mesh (DNS) from a
+  // reachable-node fetch failure so the empty/error states read correctly.
+  const discover = async () => {
+    if (discovering) return;
+    setDiscovering(true);
+    setDiscoverError(null);
+    try {
+      const host = meshHost.trim();
+      const list = await invoke<MeshPostOffice[]>('mesh_discover_post_offices', {
+        masterNodeHost: host === '' ? null : host,
+      });
+      setDiscovered(list ?? []);
+      setDiscoverRan(true);
+    } catch (e) {
+      const reason = String(e);
+      // Off-mesh manifests as a DNS/lookup failure resolving localnode.local.mesh.
+      const offMesh = /dns|lookup|resolve|name or service|no address/i.test(reason);
+      setDiscoverError(
+        offMesh
+          ? `Not on an AREDN mesh — can't resolve "${meshHost.trim() || DEFAULT_MESH_NODE}". Connect to a mesh node, or enter the relay host:port manually below.`
+          : `Couldn't reach the mesh node (${reason}). Check the node host and retry.`,
+      );
+      setDiscovered([]);
+      setDiscoverRan(true);
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  // tuxlink-1w7t: load a discovered relay into the connect form (host = numeric
+  // IP, NOT the node name — .local.mesh names often fail to connect) and prefill
+  // the save-favorite label with its advertised name. The operator supplies the
+  // relay callsign and clicks "+ Save this relay" to persist via the validated
+  // network_po_favorites_add path (discovered names are not callsigns).
+  const useDiscovered = (po: MeshPostOffice) => {
+    setHost(po.ip);
+    setPort(po.port);
+    setFavLabel(po.name);
   };
 
   // Connect — mirrors the P2P panel's `start()`. telnet_post_office_connect
@@ -617,10 +700,95 @@ export function TelnetPostOfficeRadioPanel({
               {favoritesError}
             </p>
           )}
-          <p className="radio-panel-radio-help">
-            AREDN auto-discovery is intentionally omitted — enter the relay
-            host:port manually.
-          </p>
+          {/* tuxlink-1w7t: AREDN mesh Post Office discovery. One local sysinfo
+              GET on the operator's node + a bounded on-demand liveness probe
+              (local-mesh only — no supernode crawl, no background poll). */}
+          <div className="po-mesh-discovery" data-testid="po-mesh-discovery">
+            <label className="radio-panel-input-row">
+              <span>Mesh node</span>
+              <input
+                type="text"
+                className="radio-panel-input"
+                data-testid="po-mesh-host-input"
+                value={meshHost}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                placeholder={DEFAULT_MESH_NODE}
+                onChange={(e) => setMeshHost(e.target.value)}
+                onBlur={saveMeshHost}
+                onKeyDown={onHostKey}
+              />
+            </label>
+            <div className="radio-panel-chip-row">
+              <button
+                type="button"
+                className="radio-panel-chip radio-panel-chip-add"
+                data-testid="po-mesh-discover-btn"
+                disabled={discovering}
+                onClick={() => void discover()}
+              >
+                {discovering ? 'Discovering…' : '⟳ Discover on mesh'}
+              </button>
+            </div>
+
+            {discoverError && (
+              <p
+                className="radio-panel-radio-help"
+                data-testid="po-mesh-error"
+                style={{ color: 'var(--error, #f87171)' }}
+              >
+                {discoverError}
+              </p>
+            )}
+
+            {!discovering && !discoverError && discoverRan && discovered.length === 0 && (
+              <p className="radio-panel-radio-help" data-testid="po-mesh-empty">
+                No Post Offices advertised on this mesh.
+              </p>
+            )}
+
+            {discovered.length > 0 && (
+              <ul className="po-mesh-list" data-testid="po-mesh-list">
+                {discovered.map((po) => (
+                  <li
+                    key={`${po.ip}:${po.port}`}
+                    className="po-mesh-row"
+                    data-testid={`po-mesh-row-${po.ip}:${po.port}`}
+                  >
+                    <span
+                      className={`po-mesh-dot ${po.reachable ? 'po-mesh-dot-up' : 'po-mesh-dot-down'}`}
+                      data-testid={`po-mesh-reach-${po.ip}:${po.port}`}
+                      aria-label={po.reachable ? 'reachable' : 'down'}
+                      title={po.reachable ? 'TCP-reachable (not a verified B2F handshake)' : 'no TCP response'}
+                    >
+                      {po.reachable ? '●' : '○'}
+                    </span>
+                    <span className="po-mesh-name">{po.name}</span>
+                    <span className="po-mesh-endpoint">
+                      {po.ip}:{po.port}
+                    </span>
+                    <span className="po-mesh-rtt">
+                      {po.reachable ? (po.rtt_ms != null ? `${po.rtt_ms}ms` : 'up') : 'down'}
+                    </span>
+                    <button
+                      type="button"
+                      className="radio-panel-chip"
+                      data-testid={`po-mesh-use-${po.ip}:${po.port}`}
+                      onClick={() => useDiscovered(po)}
+                    >
+                      Use
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="radio-panel-radio-help">
+              Discovery lists Winlink Post Offices your mesh node advertises and
+              probes which are reachable. "Use" loads the relay below; set its
+              callsign and save it. Local mesh only.
+            </p>
+          </div>
         </section>
       )}
 
