@@ -353,11 +353,11 @@ mod tests {
     #[test]
     fn validation_error_is_config_error() {
         let action = bootstrap_decision(Err(ConfigReadError::Validation {
-            source: ConfigValidationError::CmsPathMissingCallsign,
+            source: ConfigValidationError::CmsPathNoActiveFull,
         }));
         match action {
             BootstrapAction::ConfigError(reason) => {
-                assert!(reason.contains("callsign"), "reason mentions the validation cause");
+                assert!(reason.contains("FULL"), "reason mentions the validation cause");
             }
             other => panic!("expected ConfigError, got {other:?}"),
         }

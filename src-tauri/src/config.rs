@@ -425,10 +425,8 @@ fn resolve_config_path(
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigValidationError {
-    #[error("CMS path requires identity.callsign to be set")]
-    CmsPathMissingCallsign,
-    #[error("offline path must NOT have identity.callsign set (use identity.identifier instead)")]
-    OfflinePathHasCallsign,
+    #[error("CMS path requires an active FULL identity to be selected")]
+    CmsPathNoActiveFull,
     #[error("invalid identity field `{field}`: {rule}")]
     InvalidIdentity { field: &'static str, rule: &'static str },
     #[error("packet.ssid {ssid} is out of the 0–15 AX.25 range")]
@@ -441,11 +439,12 @@ impl Config {
     /// NOT auto-called by `write_config_atomic` — caller responsibility per spec §3.3.
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if self.connect.connect_to_cms && self.identity.active_full.is_none() {
-            return Err(ConfigValidationError::CmsPathMissingCallsign);
+            return Err(ConfigValidationError::CmsPathNoActiveFull);
         }
-        if !self.connect.connect_to_cms && self.identity.active_full.is_some() {
-            return Err(ConfigValidationError::OfflinePathHasCallsign);
-        }
+        // The offline-forbids-callsign rule is intentionally removed (Phase 2,
+        // tuxlink-7iy2): a P2P/RF-only deployment may select a FULL identity, and a
+        // tactical operates with no own CMS account. The CMS<->callsign biconditional
+        // was false under tactical identities.
         if let Some(ref c) = self.identity.active_full {
             if let Some(rule) = validate_identity_describe(c) {
                 return Err(ConfigValidationError::InvalidIdentity { field: "callsign", rule });
@@ -543,9 +542,12 @@ pub fn write_config_atomic(config: &Config) -> Result<(), ConfigWriteError> {
     match std::fs::read(&path) {
         Ok(bytes) => {
             if let Ok(probe) = serde_json::from_slice::<SchemaVersionProbe>(&bytes) {
-                if probe.schema_version != CONFIG_SCHEMA_VERSION {
+                // Refuse only versions we can neither load nor migrate (future /
+                // unknown); a MigrateFromV1 file is a legitimate overwrite target so
+                // the Phase-2 migration can rewrite config.json at v2.
+                if let SchemaAction::Unsupported { found } = detect_schema_action(probe.schema_version) {
                     return Err(ConfigWriteError::SchemaVersionMismatch {
-                        existing: probe.schema_version,
+                        existing: found,
                         ours: CONFIG_SCHEMA_VERSION,
                     });
                 }

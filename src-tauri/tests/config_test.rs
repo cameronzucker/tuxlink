@@ -84,7 +84,7 @@ use tuxlink_lib::config::{
 #[allow(deprecated)] // reads pat_mbo_address on deserialized Config; field deprecated per tuxlink-9phd T8.1
 fn test_deserialize_minimal_cms_config() {
     let json = r#"{
-        "schema_version": 1,
+        "schema_version": 2,
         "wizard_completed": true,
         "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
         "identity": {"callsign": "W4PHS", "identifier": null, "grid": "EM75xx"},
@@ -108,7 +108,7 @@ fn test_deserialize_minimal_cms_config() {
 #[allow(deprecated)] // reads pat_mbo_address on deserialized Config; field deprecated per tuxlink-9phd T8.1
 fn test_deserialize_offline_config() {
     let json = r#"{
-        "schema_version": 1,
+        "schema_version": 2,
         "wizard_completed": true,
         "connect": {"connect_to_cms": false, "transport": "CmsSsl"},
         "identity": {"callsign": null, "identifier": "EOC-1", "grid": "EM75"},
@@ -141,7 +141,7 @@ fn test_reject_amd11_dropped_field_winlink_password_present() {
     // Stale top-level field MUST be rejected by deny_unknown_fields on Config.
     // The pre-AMD-1 flat schema had winlink_password_present at the TOP LEVEL.
     let json = r#"{
-        "schema_version": 1,
+        "schema_version": 2,
         "wizard_completed": true,
         "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
         "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
@@ -160,7 +160,7 @@ fn test_reject_amd11_dropped_field_winlink_password_present() {
 fn test_deny_unknown_fields_on_each_substruct() {
     // Unknown field on ConnectConfig must fail.
     let json_connect = r#"{
-        "schema_version": 1, "wizard_completed": true,
+        "schema_version": 2, "wizard_completed": true,
         "connect": {"connect_to_cms": true, "transport": "CmsSsl", "extra_field": "x"},
         "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
         "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
@@ -171,7 +171,7 @@ fn test_deny_unknown_fields_on_each_substruct() {
 
     // Unknown field on IdentityConfig must fail.
     let json_id = r#"{
-        "schema_version": 1, "wizard_completed": true,
+        "schema_version": 2, "wizard_completed": true,
         "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
         "identity": {"callsign": "W4PHS", "identifier": null, "grid": null, "extra": "x"},
         "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
@@ -182,7 +182,7 @@ fn test_deny_unknown_fields_on_each_substruct() {
 
     // Unknown field on PrivacyConfig must fail.
     let json_priv = r#"{
-        "schema_version": 1, "wizard_completed": true,
+        "schema_version": 2, "wizard_completed": true,
         "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
         "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
         "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid", "extra": "x"},
@@ -202,7 +202,7 @@ fn test_cms_transport_both_variants_round_trip() {
         (CmsTransport::Telnet, "Telnet"),
     ] {
         let json = format!(r#"{{
-            "schema_version": 1, "wizard_completed": true,
+            "schema_version": 2, "wizard_completed": true,
             "connect": {{"connect_to_cms": true, "transport": "{}"}},
             "identity": {{"callsign": "W4PHS", "identifier": null, "grid": null}},
             "privacy": {{"gps_state": "Off", "position_precision": "FourCharGrid"}},
@@ -225,7 +225,7 @@ fn test_gps_state_three_variants_round_trip() {
         (GpsState::BroadcastAtPrecision, "BroadcastAtPrecision"),
     ] {
         let json = format!(r#"{{
-            "schema_version": 1, "wizard_completed": true,
+            "schema_version": 2, "wizard_completed": true,
             "connect": {{"connect_to_cms": false, "transport": "CmsSsl"}},
             "identity": {{"callsign": null, "identifier": "X", "grid": null}},
             "privacy": {{"gps_state": "{}", "position_precision": "FourCharGrid"}},
@@ -246,7 +246,7 @@ fn test_position_precision_two_variants_round_trip() {
         (PositionPrecision::SixCharGrid, "SixCharGrid"),
     ] {
         let json = format!(r#"{{
-            "schema_version": 1, "wizard_completed": true,
+            "schema_version": 2, "wizard_completed": true,
             "connect": {{"connect_to_cms": false, "transport": "CmsSsl"}},
             "identity": {{"callsign": null, "identifier": "X", "grid": null}},
             "privacy": {{"gps_state": "Off", "position_precision": "{}"}},
@@ -264,7 +264,7 @@ fn test_empty_string_identity_field_normalizes_to_none() {
     // Spec §3.1: deserialize_optional_nonempty_string maps "" → None.
     // This is the offline-mode-when-operator-types-then-clears case.
     let json = r#"{
-        "schema_version": 1, "wizard_completed": true,
+        "schema_version": 2, "wizard_completed": true,
         "connect": {"connect_to_cms": false, "transport": "CmsSsl"},
         "identity": {"callsign": "", "identifier": "EOC-1", "grid": ""},
         "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
@@ -292,7 +292,7 @@ fn make_config(
     // attributes (rename_all, deny_unknown_fields, etc.) are honored.
     // Empty-string → None happens via deserialize_optional_nonempty_string.
     let json = format!(r#"{{
-        "schema_version": 1, "wizard_completed": false,
+        "schema_version": 2, "wizard_completed": false,
         "connect": {{"connect_to_cms": {}, "transport": "CmsSsl"}},
         "identity": {{
             "callsign": {},
@@ -313,14 +313,16 @@ fn make_config(
 fn test_validate_cms_path_requires_callsign() {
     let config = make_config(true, None, None);
     let err = config.validate().unwrap_err();
-    assert!(matches!(err, ConfigValidationError::CmsPathMissingCallsign));
+    assert!(matches!(err, ConfigValidationError::CmsPathNoActiveFull));
 }
 
 #[test]
-fn test_validate_offline_path_rejects_callsign() {
+fn test_validate_offline_path_allows_callsign() {
+    // Phase 2 (tuxlink-7iy2): offline + a selected FULL identity is now VALID.
+    // A P2P/RF-only deployment may select a FULL identity (tactical posture); the
+    // old offline-forbids-callsign biconditional was removed.
     let config = make_config(false, Some("W4PHS"), None);
-    let err = config.validate().unwrap_err();
-    assert!(matches!(err, ConfigValidationError::OfflinePathHasCallsign));
+    assert!(config.validate().is_ok());
 }
 
 #[test]
@@ -371,12 +373,8 @@ fn test_validation_error_display_strings_stable() {
     // them into operator-visible messages via format!("{e}"). Any future change is a
     // breaking change for the wizard's UX tests. Plan-review R2 P0-2 + R3 P1-3 caught
     // earlier under-coverage (3 of 12 variants tested); v2 of this test covers all 3 enums.
-    let e = ConfigValidationError::CmsPathMissingCallsign;
-    assert_eq!(e.to_string(), "CMS path requires identity.callsign to be set");
-
-    let e = ConfigValidationError::OfflinePathHasCallsign;
-    assert_eq!(e.to_string(),
-        "offline path must NOT have identity.callsign set (use identity.identifier instead)");
+    let e = ConfigValidationError::CmsPathNoActiveFull;
+    assert_eq!(e.to_string(), "CMS path requires an active FULL identity to be selected");
 
     let e = ConfigValidationError::InvalidIdentity { field: "callsign", rule: "must not be empty" };
     assert_eq!(e.to_string(), "invalid identity field `callsign`: must not be empty");
@@ -443,18 +441,20 @@ fn test_read_config_validation_runs_after_deserialize() {
     with_xdg_temp(|xdg| {
         let path = xdg.join("tuxlink").join("config.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        // Valid JSON shape but offline-with-callsign — should fail validation.
+        // Valid JSON shape but CMS-path-with-no-active-FULL — should fail validation.
+        // (Phase 2: offline+callsign is now VALID, so the still-invalid case under v2
+        // is connect_to_cms=true with a null callsign.)
         std::fs::write(&path, r#"{
-            "schema_version": 1, "wizard_completed": true,
-            "connect": {"connect_to_cms": false, "transport": "CmsSsl"},
-            "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
+            "schema_version": 2, "wizard_completed": true,
+            "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
+            "identity": {"callsign": null, "identifier": null, "grid": null},
             "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
             "pat_mbo_address": null
         }"#).unwrap();
         let err = read_config().unwrap_err();
         match err {
-            ConfigReadError::Validation { source: ConfigValidationError::OfflinePathHasCallsign } => {}
-            other => panic!("expected Validation(OfflinePathHasCallsign), got {other:?}"),
+            ConfigReadError::Validation { source: ConfigValidationError::CmsPathNoActiveFull } => {}
+            other => panic!("expected Validation(CmsPathNoActiveFull), got {other:?}"),
         }
     });
 }
@@ -466,7 +466,7 @@ fn test_read_config_happy_path() {
         let path = xdg.join("tuxlink").join("config.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{
-            "schema_version": 1, "wizard_completed": true,
+            "schema_version": 2, "wizard_completed": true,
             "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
             "identity": {"callsign": "W4PHS", "identifier": null, "grid": "EM75"},
             "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
@@ -522,7 +522,7 @@ use tuxlink_lib::config::{write_config_atomic, ConfigWriteError};
 
 fn make_valid_cms_config() -> Config {
     serde_json::from_str(r#"{
-        "schema_version": 1, "wizard_completed": true,
+        "schema_version": 2, "wizard_completed": true,
         "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
         "identity": {"callsign": "W4PHS", "identifier": null, "grid": "EM75"},
         "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
@@ -568,8 +568,8 @@ fn test_write_atomic_refuses_schema_version_mismatch_future() {
         let config = make_valid_cms_config();
         let err = write_config_atomic(&config).unwrap_err();
         match err {
-            ConfigWriteError::SchemaVersionMismatch { existing: 99, ours: 1 } => {}
-            other => panic!("expected SchemaVersionMismatch{{99,1}}, got {other:?}"),
+            ConfigWriteError::SchemaVersionMismatch { existing: 99, ours: 2 } => {}
+            other => panic!("expected SchemaVersionMismatch{{99,2}}, got {other:?}"),
         }
         // PRESERVATION CONTRACT: original file MUST be untouched.
         let current = std::fs::read(&path).unwrap();
@@ -589,8 +589,8 @@ fn test_write_atomic_refuses_schema_version_mismatch_past() {
         let config = make_valid_cms_config();
         let err = write_config_atomic(&config).unwrap_err();
         match err {
-            ConfigWriteError::SchemaVersionMismatch { existing: 0, ours: 1 } => {}
-            other => panic!("expected SchemaVersionMismatch{{0,1}}, got {other:?}"),
+            ConfigWriteError::SchemaVersionMismatch { existing: 0, ours: 2 } => {}
+            other => panic!("expected SchemaVersionMismatch{{0,2}}, got {other:?}"),
         }
     });
 }
@@ -741,7 +741,7 @@ fn config_reads_legacy_pat_mbo_address_without_error() {
     // Note: Config has #[serde(deny_unknown_fields)] but pat_mbo_address is
     // still a KNOWN field (just deprecated) — so this round-trips cleanly.
     let json = r#"{
-        "schema_version": 1,
+        "schema_version": 2,
         "wizard_completed": true,
         "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
         "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
