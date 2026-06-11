@@ -70,26 +70,50 @@ same shape whether composed in Tuxlink or Winlink Express.
 
 Escape closes the picker; the search input auto-focuses on open.
 
-## Custom forms
+## Custom forms — importing your group's forms
 
-Drop a Winlink Express-shaped HTML form template into
+Many groups (ARES, AAMRON, club nets) publish their own Winlink forms.
+Import them from the form picker:
 
-```
-~/.local/share/tuxlink/forms/custom/
-```
+1. In Compose, click **Pick a form**, then **Import group forms…**.
+2. Choose how the set was distributed: a **ZIP** (the common case), a
+   **folder**, or a single **HTML file**.
+3. Tuxlink validates every form and shows a report **before writing
+   anything**. Each entry is marked **New**, **Replaces your form** (a
+   checkbox confirms the overwrite — existing forms are kept by default),
+   **Replaces a standard form**, **Skipped**, or **Rejected** with a
+   reason. A form that sends but ships no viewer file carries a note: the
+   form transmits fine, but receiving stations see raw data until the
+   group's viewer file is imported alongside it.
+4. Confirm any overwrites and click **Import**. The forms appear in the
+   picker under their category, badged **custom**. Custom categories are
+   listed first.
 
-and it appears in the CatalogBrowser's **Custom** folder on the next
-tuxlink launch. The form composes through the webview path; submissions
-build a `RMS_Express_Form_<id>.xml` attachment using WLE filename
-conventions for `display_form` (`<id>_Viewer.html`) and `reply_template`
-(`<id>_SendReply.0`). If a corresponding `<id>_Viewer.html` ships
-alongside the form, received messages of that type render the viewer;
-otherwise the receive-side falls back to the key/value listing.
+A Winlink form is a `.txt` template plus its input HTML and an optional
+viewer HTML; import keeps these together and detects them from the `.txt`
+`Form:` directive. A ZIP that wraps everything under a `Standard_Forms/`
+folder is unwrapped automatically. Subfolders become catalog categories.
 
-Use cases: club-specific incident forms, WLE templates published after
-the bundled snapshot, or short-lived ad-hoc forms for an exercise. An
-operator-overridable custom-forms directory and live hot-reload of that
-directory are planned but not yet shipped.
+**Removing a form:** each custom form has a **Remove** control in the
+picker, which deletes the form and its companion files after a
+confirmation.
+
+**The folder:** custom forms live in
+`~/.local/share/tuxlink/forms/custom/`. **Open forms folder** in the picker
+reveals it in the file manager. This directory survives reinstalls and
+standard-forms updates. Forms placed there by hand also appear, on the
+next launch.
+
+The form composes through the webview path; submissions build an
+`RMS_Express_Form_<id>.xml` attachment using WLE filename conventions for
+`display_form` (`<id>_Viewer.html`) and `reply_template`
+(`<id>_SendReply.0`). When a viewer ships alongside the form, received
+messages of that type render the viewer; otherwise the receive side falls
+back to the key/value listing.
+
+Use cases: club-specific incident forms, an organization's form set
+handed to new members, WLE templates published after the bundled
+snapshot, or short-lived forms for an exercise.
 
 ## Catalog request (WLE inquiry)
 
