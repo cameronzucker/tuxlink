@@ -1586,4 +1586,61 @@ mod tests {
         let cfg2: Config = serde_json::from_str(&serialized).unwrap();
         assert_eq!(cfg2.network_po_favorites, cfg.network_po_favorites);
     }
+
+    // tuxlink-7iy2 Phase 2: the v1->v2 identity-migration EXECUTOR. A
+    // single-callsign v1 config + an existing flat mailbox migrates to one FULL
+    // identity, the inbox moves under the per-FULL root intact, existing Sent
+    // messages are tagged with the FULL identity in place, the activation secret
+    // is provisioned in the keyring, and a second run is a clean no-op.
+    #[test]
+    fn migrate_single_callsign_config_promotes_one_full_and_keeps_inbox_intact() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink_backend::MailboxFolder;
+
+        fn sample_raw_message(subject: &str) -> Vec<u8> {
+            crate::winlink::compose::compose_message("N7CPZ", &["W1AW"], &[], subject, "body", 1_716_200_000).to_bytes()
+        }
+
+        let mbox_root = tempfile::TempDir::new().unwrap();
+        let store_path = mbox_root.path().join("identities.json");
+
+        // Seed a legacy flat mailbox: one inbox message + one sent message.
+        let mbox = Mailbox::new(mbox_root.path());
+        let inbox_id = mbox.store(MailboxFolder::Inbox, &sample_raw_message("INBOX-1")).unwrap();
+        let sent_id  = mbox.store(MailboxFolder::Sent,  &sample_raw_message("SENT-1")).unwrap();
+
+        let v1 = LegacyConfigV1 { callsign: Some("W1ABC".into()), identifier: None, grid: Some("CN87".into()) };
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+
+        let report = IdentityMigration::plan(&v1)
+            .execute(&svc, mbox_root.path(), &store_path, /*has_cms_account=*/true, /*activation_secret=*/Some("cms-pw"))
+            .expect("migration must succeed");
+
+        // (a) exactly one FULL identity, last_selected = it.
+        let store = crate::identity::IdentityStore::load(&store_path).unwrap();
+        assert_eq!(store.full().len(), 1);
+        assert_eq!(store.full()[0].callsign.as_str(), "W1ABC");
+        assert!(matches!(store.last_selected(), Some(crate::identity::Address::Full(c)) if c.as_str() == "W1ABC"));
+
+        // (b) the inbox moved under the per-FULL root, contents intact.
+        let per_full = Mailbox::new(mbox_root.path().join("W1ABC"));
+        let metas = per_full.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(metas.len(), 1, "the one inbox message survived the move");
+        assert_eq!(metas[0].id, inbox_id);
+        assert!(!mbox_root.path().join("inbox").join(format!("{}.b2f", inbox_id.0)).exists(),
+                "the flat inbox no longer holds the migrated message");
+
+        // (c) the sent message is tagged with the FULL identity, in place (shared store).
+        assert!(mbox_root.path().join("sent").join(format!("{}.identity", sent_id.0)).exists(),
+                "existing Sent messages get a default identity tag");
+        assert_eq!(report.sent_tagged + report.outbox_tagged, 1);
+
+        // (d) the activation secret was set in the keyring.
+        assert!(svc.has_activation_secret(&crate::identity::Callsign::parse("W1ABC").unwrap()));
+
+        // (e) idempotent: a second run is a clean no-op.
+        let again = IdentityMigration::plan(&v1)
+            .execute(&svc, mbox_root.path(), &store_path, true, Some("cms-pw")).unwrap();
+        assert!(again.was_noop, "re-running the migration must be a no-op");
+    }
 }
