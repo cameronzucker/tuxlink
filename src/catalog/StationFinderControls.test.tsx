@@ -12,6 +12,11 @@ const baseProps = {
   ssn: 118,
   ssnAgeDays: 2,
   predictionAvailable: true,
+  radiusMi: 500 as number | null,
+  onRadiusChange: vi.fn(),
+  hasOperatorGrid: true,
+  search: '',
+  onSearchChange: vi.fn(),
   onRefresh: vi.fn(),
   refreshing: false,
 };
@@ -48,6 +53,26 @@ describe('StationFinderControls', () => {
   it('notes when prediction is unavailable (distance-only)', () => {
     render(<StationFinderControls {...baseProps} predictionAvailable={false} />);
     expect(screen.getByText(/no forecast/i)).toBeTruthy();
+  });
+
+  it('fires onSearchChange as the operator types a callsign filter', () => {
+    const onSearchChange = vi.fn();
+    render(<StationFinderControls {...baseProps} onSearchChange={onSearchChange} />);
+    fireEvent.change(screen.getByLabelText(/filter stations by callsign/i), { target: { value: 'N0D' } });
+    expect(onSearchChange).toHaveBeenCalledWith('N0D');
+  });
+
+  it('changes the search radius', () => {
+    const onRadiusChange = vi.fn();
+    render(<StationFinderControls {...baseProps} onRadiusChange={onRadiusChange} />);
+    fireEvent.change(screen.getByLabelText(/search radius/i), { target: { value: '250' } });
+    expect(onRadiusChange).toHaveBeenCalledWith(250);
+  });
+
+  it('disables the radius selector + prompts when no operator grid is set', () => {
+    render(<StationFinderControls {...baseProps} hasOperatorGrid={false} />);
+    expect((screen.getByLabelText(/search radius/i) as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.getByText(/set your location/i)).toBeTruthy();
   });
 
   it('shows the station-list freshness caption when a fetch stamp is present', () => {

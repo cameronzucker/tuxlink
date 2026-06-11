@@ -1,10 +1,17 @@
 // Left-pane station map (design §7). One pin per station at its grid centroid,
 // coloured/sized by its reachability tier on the selected band; an operator
-// "you" pin; click-to-select. Pins are BaseMap children (its props are frozen,
-// C11). When a station has no known tier (engine unavailable / off-band) it
-// renders 'untiered' and stays clickable — distance-only still selects.
+// "you" pin; click-to-select.
+//
+// Pins are real Leaflet markers built with L.divIcon (the MaidenheadOverlay.tsx
+// pattern) + click wired via Marker `eventHandlers`. The earlier implementation
+// rendered custom <button> elements as <Marker> CHILDREN — which real
+// react-leaflet ignores (children are only for Popup/Tooltip), so the live map
+// showed default blue markers with no colour and no click (tuxlink-ku2b). This
+// layer is validated by browser smoke, not unit tests: the test map mock renders
+// Marker children as a div and cannot represent divIcon HTML or eventHandlers.
 
 import { Marker } from 'react-leaflet';
+import L from 'leaflet';
 import { BaseMap } from '../map/BaseMap';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { type ReachTier } from './reachability';
@@ -19,37 +26,68 @@ export interface StationFinderMapProps {
   onSelect: (station: Station) => void;
 }
 
+// Pin diameter (px) per reachability tier — good biggest, skip smallest,
+// untiered (no prediction / off-band) a neutral medium dot.
+const PIN_SIZE: Record<string, number> = {
+  good: 20,
+  fair: 16,
+  marginal: 13,
+  skip: 10,
+  untiered: 14,
+};
+
+export function stationPinIcon(tier: ReachTier | undefined, selected: boolean, label: string): L.DivIcon {
+  const t = tier ?? 'untiered';
+  const sz = PIN_SIZE[t];
+  // The visible dot is a styled <span> in the icon HTML; classes are global CSS
+  // (StationFinderPanel.css) since Leaflet injects this outside the React tree.
+  const sel = selected ? ' is-selected' : '';
+  const safeLabel = label.replace(/"/g, '');
+  return L.divIcon({
+    className: 'station-finder__divpin',
+    html:
+      `<span class="station-finder__pindot station-finder__pindot--${t}${sel}" ` +
+      `style="width:${sz}px;height:${sz}px" title="${safeLabel}"></span>`,
+    iconSize: [sz, sz],
+    iconAnchor: [sz / 2, sz / 2],
+  });
+}
+
+const ME_SIZE = 16;
+function operatorPinIcon(): L.DivIcon {
+  return L.divIcon({
+    className: 'station-finder__divpin',
+    html: `<span class="station-finder__me" title="Your location"></span>`,
+    iconSize: [ME_SIZE, ME_SIZE],
+    iconAnchor: [ME_SIZE / 2, ME_SIZE / 2],
+  });
+}
+
 export function StationFinderMap(props: StationFinderMapProps) {
   const me = props.operatorGrid ? gridToLatLon(props.operatorGrid) : null;
   return (
     <div className="station-finder__map" data-testid="station-map">
-      <BaseMap initialCenter={me ?? undefined} initialZoom={2}>
+      <BaseMap initialCenter={me ?? undefined} initialZoom={me ? 3 : 1}>
         {me && (
-          <Marker position={[me.lat, me.lon]}>
-            <span data-testid="me-pin" className="station-finder__me" />
-          </Marker>
+          <Marker
+            position={[me.lat, me.lon]}
+            icon={operatorPinIcon()}
+            interactive={false}
+            zIndexOffset={1000}
+          />
         )}
         {props.stations.map((s) => {
           const ll = gridToLatLon(s.grid);
           if (!ll) return null;
           const key = stationKey(s);
           const tier = props.tiers.get(key);
-          const cls = tier
-            ? `station-finder__pin station-finder__pin--${tier}`
-            : 'station-finder__pin station-finder__pin--untiered';
           return (
-            <Marker key={key} position={[ll.lat, ll.lon]}>
-              <button
-                type="button"
-                data-testid="station-pin"
-                className={`${cls}${props.selectedKey === key ? ' is-selected' : ''}`}
-                onClick={() => props.onSelect(s)}
-                title={`${s.baseCallsign} · ${s.grid}`}
-              >
-                <span className="station-finder__pin-dot" />
-                <span className="station-finder__pin-tag">{s.baseCallsign}</span>
-              </button>
-            </Marker>
+            <Marker
+              key={key}
+              position={[ll.lat, ll.lon]}
+              icon={stationPinIcon(tier, props.selectedKey === key, `${s.baseCallsign} · ${s.grid}`)}
+              eventHandlers={{ click: () => props.onSelect(s) }}
+            />
           );
         })}
       </BaseMap>

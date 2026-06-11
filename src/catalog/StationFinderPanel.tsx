@@ -12,6 +12,7 @@ import { useStations } from './useStations';
 import { aggregateStations, type Station } from './stationModel';
 import { useReachabilityMap, stationKey } from './useReachabilityMap';
 import { useStationPrediction } from './useStationPrediction';
+import { distanceFromGrids, kmToMi } from './distance';
 import { StationFinderControls, type FilterMode } from './StationFinderControls';
 import { ServiceCodesField } from './ServiceCodesField';
 import { StationFinderMap } from './StationFinderMap';
@@ -50,6 +51,8 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
   const [enabledModes, setEnabledModes] = useState<Set<FilterMode>>(new Set(FILTER_MODES));
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [utcHour] = useState(currentUtcHour);
+  const [radiusMi, setRadiusMi] = useState<number | null>(500);
+  const [search, setSearch] = useState('');
   const stations = useStations();
 
   useEffect(() => {
@@ -75,13 +78,28 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
   }, [onClose]);
 
   const allStations = useMemo(() => aggregateStations(stations.listings), [stations.listings]);
-  const visible = useMemo(
+  const modeVisible = useMemo(
     () =>
       allStations.filter((s) =>
         s.modes.some((m) => (FILTER_MODES as ListingMode[]).includes(m) && enabledModes.has(m as FilterMode)),
       ),
     [allStations, enabledModes],
   );
+
+  // Callsign search + radius filter (design §7). Radius needs a home grid;
+  // without one it is a no-op (the whole list shows, and the controls disable
+  // the selector + prompt the operator to set their location).
+  const visible = useMemo(() => {
+    const q = search.trim().toUpperCase();
+    return modeVisible.filter((s) => {
+      if (q && !s.baseCallsign.includes(q)) return false;
+      if (radiusMi != null && grid) {
+        const km = distanceFromGrids(grid, s.grid);
+        if (km != null && kmToMi(km) > radiusMi) return false;
+      }
+      return true;
+    });
+  }, [modeVisible, search, radiusMi, grid]);
 
   const reach = useReachabilityMap(grid, visible, band, utcHour);
   const selected: Station | null = useMemo(
@@ -134,6 +152,11 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
           ssnAgeDays={ssnAgeDays}
           predictionAvailable={reach.available || pred.status === 'ok'}
           listFetchedAtMs={listFetchedAtMs}
+          radiusMi={radiusMi}
+          onRadiusChange={setRadiusMi}
+          hasOperatorGrid={grid.trim().length > 0}
+          search={search}
+          onSearchChange={setSearch}
           onRefresh={() => stations.fetch(FILTER_MODES as ListingMode[])}
           refreshing={stations.loading}
         />
