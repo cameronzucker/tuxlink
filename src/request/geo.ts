@@ -13,6 +13,7 @@
 
 import statesGeoJson from './us-states.geo.json';
 import nwsZonesGeoJson from './nws-zones.geo.json';
+import radarRegionsJson from './radar-regions.json';
 
 export interface LatLon {
   lat: number;
@@ -186,6 +187,28 @@ export function gridToNwsZone(lat: number, lon: number): NwsZone | null {
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Function 4 — gridToRadarRegion
+// ---------------------------------------------------------------------------
+
+export interface RadarRegion { filename: string; name: string; bbox: [number, number, number, number]; }
+const RADAR_REGIONS = (radarRegionsJson as unknown as { regions: RadarRegion[] }).regions
+  .filter((r) => Array.isArray(r.bbox) && r.bbox.length === 4);
+
+/** Smallest-area radar region whose bbox contains the point; null if none. */
+export function gridToRadarRegion(lat: number, lon: number): RadarRegion | null {
+  let best: RadarRegion | null = null;
+  let bestArea = Infinity;
+  for (const r of RADAR_REGIONS) {
+    const [w, s, e, n] = r.bbox;
+    if (lon >= w && lon <= e && lat >= s && lat <= n) {
+      const area = (e - w) * (n - s);
+      if (area < bestArea) { bestArea = area; best = r; }
+    }
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------------------
