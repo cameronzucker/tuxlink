@@ -12,7 +12,10 @@
 //! constant-time compare. Transmit/listen APIs (later phases) take a handle,
 //! never a raw `Config` callsign.
 
+pub mod address;
 pub mod keyring_keys;
+
+pub use address::{Address, Callsign};
 
 /// Errors surfaced by the identity core. Variant names are the canonical
 /// interface-contract names (master plan §"Canonical interface contract").
