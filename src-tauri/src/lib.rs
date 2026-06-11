@@ -672,6 +672,8 @@ pub fn run() {
             // tuxlink-6j14: operator-configurable service codes (MARS/SHARES/EMCOMM).
             crate::catalog::commands::catalog_get_service_codes,
             crate::catalog::commands::catalog_set_service_codes,
+            // tuxlink-xrbw: ingest a radio-delivered PUB_* station-list reply into the cache.
+            crate::catalog::commands::catalog_ingest_listing_reply,
             // tuxlink-ipjt Task 6: offline HF path prediction (voacapl sidecar).
             crate::propagation::commands::propagation_predict_path,
             // tuxlink-vrpk: GRIB request via Saildocs (3rd-party SMTP).
