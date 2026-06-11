@@ -82,6 +82,15 @@
     "SC_ZON_GRESP": "multi-zone regional",
     "SC_ZON_SC": "multi-zone regional",
     "VA_ZON_VA": "multi-zone regional",
-    "VA_ZON_WAKE": "multi-zone regional"
+    "VA_ZON_WAKE": "multi-zone regional",
+    "OR_ZON_BLUFH": "covers both northern and southern Blue Mountains foothills (ORZ507+ORZ508); no single zone",
+    "OR_ZON_NESCW": "multi-zone regional",
+    "OR_ZON_NW": "multi-zone regional",
+    "OR_ZON_NWSG": "no NWS zone named Northern Wheeler/Southern Gilliam; area straddles ORZ505/ORZ510",
+    "OR_ZON_SE": "multi-zone regional",
+    "AK_ZON_ANC1": "names NWS office/town (Aniak and Sleetmute), no single public zone",
+    "AK_ZON_EFAI": "names NWS office (Fairbanks) + East Brooks Range region; multi-zone",
+    "AK_ZON_JUNE": "names NWS office only (Juneau); multi-zone SE Alaska product",
+    "AK_ZON_WFAI": "names NWS office (Fairbanks) + West Brooks Range region; multi-zone"
   }
 }
