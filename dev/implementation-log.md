@@ -5,6 +5,37 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-06-11 — Align Network Post Office send-flow with CMS (tuxlink-b6ad)
+
+Network Post Office was the only send/receive mode with a per-message Outbox
+selection checklist (the source of the confusing "Connect to receive only" copy
+the operator flagged). The 6c9y design's own §1.1 routing table shows Network PO
+carries **normal** mail into normal Winlink routing — same destination as CMS,
+differing only on the transport axis — so the send-time-selection *leakage guard*
+is justified only for **Telnet RMS Post Office** (local `-L` pool, never
+forwarded globally); it was applied to Network PO purely for UI symmetry between
+the two PO panes, breaking consistency with every other transport (CMS/VARA/
+ARDOP/Packet all just Connect + drain). Operator chose to align it.
+
+**Change:**
+- Backend `ui_commands.rs`: new `po_drain_selection(local, selected)` →
+  `if local { Some(selected) } else { None }`. `post_office_exchange` uses it, so
+  Network PO (Mesh) drains the whole Outbox like CMS (`build_outbound_proposals`
+  already treats `None` as drain-all); local `-L` keeps the explicit-selection
+  leakage guard. One pure helper, unit-tested.
+- Frontend `TelnetPostOfficeRadioPanel.tsx`: the "Send from Outbox" checklist
+  renders only for `mode === 'local'`; network shows a one-line send note; the
+  Connect label drops "& send N" outside local mode. Confusing empty-state copy
+  removed for network; local empty-state tidied.
+
+Gates: typecheck clean; cargo 4/4 (new `po_drain_selection` test + existing
+local-mode PO integration still green); clippy `--all-targets` clean; vitest
+2361 passing (panel 47/47; the 3 App-mount timeouts were clippy/CPU contention,
+confirmed passing in isolation). Relates to `tuxlink-u5hl` (compose-time routing
+flag stays unnecessary for Network PO — its mail is undifferentiated from CMS).
+
+---
+
 ## 2026-06-11 — NWS weather glyphs for the SFT tabular forecast (tuxlink-n6tp)
 
 Replaced the raw NWS condition codes (`Vryhot`, `Ptcldy`, `Mosunny`, …) in the
