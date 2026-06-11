@@ -100,6 +100,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         network_po_favorites: Vec::new(),
         review_inbound_before_download: false,
         map_tile_source: None,
+        aredn_master_node_host: None,
     }
 }
 
