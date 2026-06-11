@@ -6,6 +6,7 @@
 
 import { Marker } from 'react-leaflet';
 import { BaseMap } from '../map/BaseMap';
+import { useTileSource } from '../map/useTileSource';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { type ReachTier } from './reachability';
 import { stationKey } from './useReachabilityMap';
@@ -20,10 +21,11 @@ export interface StationFinderMapProps {
 }
 
 export function StationFinderMap(props: StationFinderMapProps) {
+  const tileSource = useTileSource();
   const me = props.operatorGrid ? gridToLatLon(props.operatorGrid) : null;
   return (
     <div className="station-finder__map" data-testid="station-map">
-      <BaseMap initialCenter={me ?? undefined} initialZoom={2}>
+      <BaseMap initialCenter={me ?? undefined} initialZoom={2} tileSource={tileSource ?? undefined}>
         {me && (
           <Marker position={[me.lat, me.lon]}>
             <span data-testid="me-pin" className="station-finder__me" />

@@ -14,6 +14,7 @@
 
 import { Marker, Rectangle } from 'react-leaflet';
 import { BaseMap } from '../map/BaseMap';
+import { useTileSource } from '../map/useTileSource';
 import { gridToLatLon, latLonToGrid } from '../forms/position/maidenhead';
 
 export interface PositionMapWidgetProps {
@@ -21,6 +22,12 @@ export interface PositionMapWidgetProps {
   grid: string;
   /** Called when the operator clicks the map, with the new 6-char grid. */
   onGridChange: (newGrid: string) => void;
+  /**
+   * Optional zoom-change bridge (Task 8 seam). Forwarded to BaseMap so
+   * PositionPickerOverlay can gate 6-char Maidenhead precision on the live zoom
+   * without polling useMap() directly.
+   */
+  onZoomChange?: (zoom: number) => void;
 }
 
 /** Half-widths for the grid-square rectangle overlay (in degrees).
@@ -32,7 +39,8 @@ const HALF_LAT_6 = 1.25 / 60; // ~0.02083°
 const HALF_LON_4 = 1.0;
 const HALF_LAT_4 = 0.5;
 
-export function PositionMapWidget({ grid, onGridChange }: PositionMapWidgetProps) {
+export function PositionMapWidget({ grid, onGridChange, onZoomChange }: PositionMapWidgetProps) {
+  const tileSource = useTileSource();
   const ll = gridToLatLon(grid);
 
   // Grid-square rectangle bounds (per-consumer, C15): width by locator length.
@@ -55,6 +63,8 @@ export function PositionMapWidget({ grid, onGridChange }: PositionMapWidgetProps
       }}
       initialCenter={ll ?? undefined}
       initialZoom={ll ? 2 : 1}
+      tileSource={tileSource ?? undefined}
+      onZoomChange={onZoomChange}
     >
       {ll && <Marker position={[ll.lat, ll.lon]} />}
       {bounds && (

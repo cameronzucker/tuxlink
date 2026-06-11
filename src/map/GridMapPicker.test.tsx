@@ -18,12 +18,27 @@ vi.mock('leaflet/dist/leaflet.css', () => ({}));
 vi.mock('leaflet/dist/images/marker-icon.png', () => ({ default: '/marker-icon.png' }));
 vi.mock('leaflet/dist/images/marker-icon-2x.png', () => ({ default: '/marker-icon-2x.png' }));
 vi.mock('leaflet/dist/images/marker-shadow.png', () => ({ default: '/marker-shadow.png' }));
+vi.mock('./useTileSource', () => ({ useTileSource: vi.fn() }));
 
 import { GridMapPicker } from './GridMapPicker';
+import { useTileSource } from './useTileSource';
+import type { TileSource, TileSourceStatus } from './tileSource';
+
+const LAN_SOURCE: TileSource = {
+  url: 'http://192.168.1.10:8080/{z}/{x}/{y}.png',
+  scheme: 'Xyz',
+  minZoom: 0,
+  maxZoom: 16,
+  cacheBudgetMb: 256,
+  attribution: null,
+  label: 'LAN source',
+};
+const LAN_STATUS: TileSourceStatus = { kind: 'lan-live', zoom: 16, label: 'LAN source', cachedAt: null };
 
 describe('<GridMapPicker> (shape only)', () => {
   beforeEach(() => {
     resetMapMock();
+    vi.mocked(useTileSource).mockReturnValue(null);
   });
 
   it('disables native box-zoom on the substrate', () => {
@@ -100,5 +115,19 @@ describe('<GridMapPicker> (shape only)', () => {
     expect(screen.queryByTestId('leaflet-rectangle')).toBeNull(); // temp cleared
     expect(getMockMap().dragging.enable).toHaveBeenCalled(); // panning restored
     expect(onBoxChange).not.toHaveBeenCalled(); // abort, not a completed box
+  });
+
+  // Task 7: validate tile source is wired through to BaseMap
+  it('passes tileSource to BaseMap when useTileSource returns a lan-live source', () => {
+    vi.mocked(useTileSource).mockReturnValue({ source: LAN_SOURCE, status: LAN_STATUS });
+    render(<GridMapPicker mode="pin" gridOverlay={false} />);
+    // When tileSource is tile-backed, BaseMap renders TileLayerBridge → leaflet-tilelayer
+    expect(screen.getByTestId('leaflet-tilelayer')).toBeInTheDocument();
+  });
+
+  it('renders no TileLayer when useTileSource returns null (offline fallback)', () => {
+    vi.mocked(useTileSource).mockReturnValue(null);
+    render(<GridMapPicker mode="pin" gridOverlay={false} />);
+    expect(screen.queryByTestId('leaflet-tilelayer')).toBeNull();
   });
 });
