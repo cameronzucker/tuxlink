@@ -10,3 +10,13 @@
 # Per-target-triple naming per Tauri 2.x externalBin convention.
 sidecars/pat-*
 !sidecars/.gitkeep
+
+# voacapl bundle artifacts — populated by CI (or a local pre-bundle script)
+# at Tauri bundle time; NOT committed to the repo.
+# See docs/reference/voacapl-ci-bundling.md for the staging commands.
+# The .gitkeep in each directory is tracked so the Tauri resource glob
+# (resources/itshfbc/**/*) always matches at least one file during cargo build.
+/binaries/*
+!/binaries/.gitkeep
+/resources/itshfbc/*
+!/resources/itshfbc/.gitkeep

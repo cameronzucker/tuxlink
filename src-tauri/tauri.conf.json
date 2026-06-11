@@ -40,7 +40,8 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "resources/wle-forms/**/*"
+      "resources/wle-forms/**/*",
+      "resources/propagation/ssn-forecast.json"
     ],
     "linux": {
       "deb": {

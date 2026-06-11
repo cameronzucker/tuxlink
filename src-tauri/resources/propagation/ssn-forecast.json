@@ -1,0 +1,8 @@
+{
+  "schema": "tuxlink-ssn-forecast-v1",
+  "source": "Single verified smoothed sunspot number captured during the 2026-06-10 voacapl grounding run. NOT a forecast table. The operator extends this with authoritative SWPC monthly smoothed-SSN values (https://www.swpc.noaa.gov/products/predicted-sunspot-number-and-radio-flux) before relying on out-of-month predictions; until then the fallback serves this verified value (stale, but real — not fabricated).",
+  "captured": "2026-06-10",
+  "monthly": {
+    "2026-06": 100.0
+  }
+}
