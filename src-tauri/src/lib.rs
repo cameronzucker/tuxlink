@@ -246,16 +246,6 @@ pub fn run() {
         // in that the transport is externally-managed (operator must
         // vara_open_session before vara_listen can arm).
         .manage(std::sync::Arc::new(crate::ui_commands::VaraListenState::default()))
-        // tuxlink-a2gd: polite station-list cache (TTL 30 min; per-key coalescing +
-        // stale-on-error). Needs no app_data_dir, so it lives in the top-level chain
-        // (NOT the .setup() app_data_dir arm where per-feature stores register).
-        .manage(std::sync::Arc::new(
-            crate::catalog::stations_cache::StationsCache::new(
-                30 * 60 * 1000, // TTL: 30 min
-                15 * 60 * 1000, // min-refetch floor: 15 min (bounds retries during an outage)
-                std::sync::Arc::new(crate::catalog::stations_cache::SystemClock),
-            ),
-        ))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
 
@@ -306,6 +296,19 @@ pub fn run() {
                     // so an unconfigured serve returns 404 (NoSource), never panics.
                     app.manage(std::sync::Arc::new(
                         crate::tiles::TileGatekeeper::new(data_dir.join("tile-cache")),
+                    ));
+
+                    // tuxlink-dx57 U2: persistent station-list cache. Seeds from
+                    // disk on launch so a cold offline start shows last-known-good
+                    // results. TTL and min-refetch are identical to the former
+                    // in-memory-only registration (30 min / 15 min).
+                    app.manage(std::sync::Arc::new(
+                        crate::catalog::stations_cache::StationsCache::new_persistent(
+                            30 * 60 * 1000, // TTL: 30 min
+                            15 * 60 * 1000, // min-refetch floor: 15 min
+                            std::sync::Arc::new(crate::catalog::stations_cache::SystemClock),
+                            data_dir.join("station-listings-cache.json"),
+                        ),
                     ));
 
                     // contacts (tuxlink-raez, Task A2): the contacts.json address
@@ -363,7 +366,19 @@ pub fn run() {
                         }
                     }
                 }
-                Err(e) => eprintln!("search: could not resolve app_data_dir: {e}"),
+                Err(e) => {
+                    eprintln!("search: could not resolve app_data_dir: {e}");
+                    // tuxlink-dx57 U2: app_data_dir unavailable — fall back to an
+                    // in-memory cache so catalog_fetch_stations always resolves its
+                    // State<Arc<StationsCache>> extractor. No persistence in this path.
+                    app.manage(std::sync::Arc::new(
+                        crate::catalog::stations_cache::StationsCache::new(
+                            30 * 60 * 1000, // TTL: 30 min
+                            15 * 60 * 1000, // min-refetch floor: 15 min
+                            std::sync::Arc::new(crate::catalog::stations_cache::SystemClock),
+                        ),
+                    ));
+                }
             }
 
             // Task D (tuxlink-22l) app-start backend bootstrap (spec §3.3). Runs
