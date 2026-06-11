@@ -95,7 +95,11 @@ jobs:
           sleep 1; find . \( -name 'configure' -o -name 'config.h.in' \) -exec touch {} +
           sleep 1; find . -name 'Makefile.in' -exec touch {} +
           ./configure --prefix=/tmp/voacapl-install
-          make -j"$(nproc)"
+          # Serial build (no -j): an itshfbc helper tool (anttyp99) compiles
+          # Fortran sources that `use Cant99` before cant99.mod exists under
+          # parallel make — the Makefile omits the .mod dependency, so -j races.
+          # voacapl builds in well under a minute, so serial costs nothing.
+          make
           make install
           # makeitshfbc populates $HOME/itshfbc by default (coeffs/antennas/database/geo*).
           /tmp/voacapl-install/bin/makeitshfbc
