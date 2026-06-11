@@ -30,6 +30,18 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.49.0](https://github.com/cameronzucker/tuxlink/compare/v0.48.0...v0.49.0) (2026-06-11)
+
+
+### Features
+
+* **mesh:** AREDN Network Post Office discovery (tuxlink-1w7t) ([34cc93b](https://github.com/cameronzucker/tuxlink/commit/34cc93ba08f7d0d11f5224db9a853812eeee86a0))
+
+
+### Bug Fixes
+
+* **mesh:** add aredn_master_node_host to Config literals in integration tests ([727e200](https://github.com/cameronzucker/tuxlink/commit/727e200d680f1d8f8d3ca4ef33d75749c73a7a95))
+
 ## [0.48.0](https://github.com/cameronzucker/tuxlink/compare/v0.47.1...v0.48.0) (2026-06-11)
 
 
