@@ -262,7 +262,9 @@
   line-height: 1.45;
 }
 .feat .fa {
-  margin-top: 14px;
+  margin-left: auto;
+  align-self: center;
+  flex: 0 0 auto;
 }
 
 .badd {

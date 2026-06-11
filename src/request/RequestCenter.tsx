@@ -346,18 +346,18 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
                               {primaryCard.meta && (
                                 <div className="zmeta">{primaryCard.meta}</div>
                               )}
-                              <div className="za">
-                                <button
-                                  type="button"
-                                  className="badd"
-                                  onClick={() => runAction(primaryCard.action, primaryCard.label)}
-                                  aria-label={`Add ${primaryCard.label} to request`}
-                                >
-                                  <Icon name="plus" size={15} />
-                                  Add request
-                                </button>
-                              </div>
                             </div>
+                            <span className="za">
+                              <button
+                                type="button"
+                                className="badd"
+                                onClick={() => runAction(primaryCard.action, primaryCard.label)}
+                                aria-label={`Add ${primaryCard.label} to request`}
+                              >
+                                <Icon name="plus" size={15} />
+                                Add request
+                              </button>
+                            </span>
                           </article>
                         )}
 
@@ -383,28 +383,28 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
                                     {card.meta && (
                                       <div className="fmeta">{card.meta}</div>
                                     )}
-                                    <div className="fa">
-                                      {isAdd ? (
-                                        <button
-                                          type="button"
-                                          className="iadd"
-                                          onClick={() => runAction(card.action, card.label)}
-                                          aria-label={`Add ${card.label} to request`}
-                                        >
-                                          <Icon name="plus" size={15} />
-                                        </button>
-                                      ) : (
-                                        <button
-                                          type="button"
-                                          className="iadd"
-                                          onClick={() => runAction(card.action, card.label)}
-                                          aria-label={`Open ${card.label}`}
-                                        >
-                                          <Icon name="arrow" size={15} />
-                                        </button>
-                                      )}
-                                    </div>
                                   </div>
+                                  <span className="fa">
+                                    {isAdd ? (
+                                      <button
+                                        type="button"
+                                        className="iadd"
+                                        onClick={() => runAction(card.action, card.label)}
+                                        aria-label={`Add ${card.label} to request`}
+                                      >
+                                        <Icon name="plus" size={15} />
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="iadd"
+                                        onClick={() => runAction(card.action, card.label)}
+                                        aria-label={`Open ${card.label}`}
+                                      >
+                                        <Icon name="arrow" size={15} />
+                                      </button>
+                                    )}
+                                  </span>
                                 </article>
                               );
                             })}
