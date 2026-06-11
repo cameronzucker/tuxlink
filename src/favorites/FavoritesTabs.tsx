@@ -2,14 +2,18 @@
 //
 // Mounts INSIDE a radio mode panel body (B6). Inline only — no popup.
 //
-// M7 — per-mode chrome (amended tuxlink-fr0d):
-//   · ardop-hf / packet          → Radix Tabs: Favorites | Recent | Manual.
-//     These are the genuine pre-dial modes — the operator picks among many
-//     nearby gateways, so favoriting / redialing is meaningful.
-//   · vara-hf / vara-fm / telnet → Manual content ONLY (no tabs, no Favorites/
-//     Recent lists, no FavoriteRow, no Connect button). VARA has no
-//     favorites/recents Connect by design; telnet connects to a FIXED CMS host
-//     (tuxlink-fr0d operator smoke: Telnet Winlink CMS doesn't need this).
+// M7 — per-mode chrome (amended tuxlink-fr0d; VARA exclusion retired tuxlink-xglf):
+//   · ardop-hf / packet / vara-hf / vara-fm → Radix Tabs: Favorites | Recent |
+//     Manual. These are the genuine pre-dial modes — the operator picks among
+//     many nearby gateways, so favoriting / redialing is meaningful. VARA HF
+//     dials RMS gateways exactly like ARDOP HF; it was Manual-only at M7 only
+//     because it had no working dial yet (a favorite's Connect would have been
+//     dead). tuxlink-xglf wired modem_vara_b2f_exchange to the pane, so VARA
+//     now gets the full chrome.
+//   · telnet → Manual content ONLY (no tabs, no Favorites/Recent lists, no
+//     FavoriteRow, no Connect button). Telnet connects to a FIXED CMS host —
+//     there is no nearby-station choice to favorite (tuxlink-fr0d operator
+//     smoke: Telnet Winlink CMS doesn't need this).
 //
 // C4 — distance source: the operator grid comes from `position_current_fix`
 // (FULL precision), NEVER `position_status`/`useStatus` (those are
@@ -19,7 +23,7 @@
 // FavoriteRow's Connect drops a dial into the host form; the operator clicks the
 // panel's own Send/Receive (the Part 97 consent click).
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import * as Tabs from '@radix-ui/react-tabs';
@@ -37,16 +41,35 @@ export interface FavoritesTabsProps {
 }
 
 /**
- * Modes with NO favorites/recents surface (M7, amended tuxlink-fr0d): VARA
- * (by design) and telnet (fixed CMS host — no nearby-station choice to favorite).
- * These render the Manual content only — no tabs, no FavoriteRow, no Connect.
+ * Modes with NO favorites/recents surface: only telnet (fixed CMS host — no
+ * nearby-station choice to favorite). It renders the Manual content only — no
+ * tabs, no FavoriteRow, no Connect. VARA's exclusion was retired in tuxlink-xglf
+ * once its dial path landed (see the M7 note above).
  */
 function isManualOnly(mode: RadioMode): boolean {
-  return mode === 'vara-hf' || mode === 'vara-fm' || mode === 'telnet';
+  return mode === 'telnet';
+}
+
+/** oi1g: above this row count a tab shows a filter box. Short lists stay clean. */
+const FILTER_THRESHOLD = 8;
+
+function matchesFavoriteFilter(f: { gateway: string; grid?: string; note?: string }, q: string): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  return (
+    f.gateway.toLowerCase().includes(needle) ||
+    (f.grid ?? '').toLowerCase().includes(needle) ||
+    (f.note ?? '').toLowerCase().includes(needle)
+  );
 }
 
 export function FavoritesTabs({ mode, onPrefill, manualContent }: FavoritesTabsProps) {
-  const { favorites, recents, star } = useFavorites(mode);
+  const { favorites, recents, star, upsert, remove } = useFavorites(mode);
+
+  // oi1g: client-side filter over the rendered list (gateway / grid / note),
+  // shown only when a tab's list exceeds FILTER_THRESHOLD. One shared input
+  // narrows whichever tab is active.
+  const [filter, setFilter] = useState('');
 
   // C4: full-precision operator grid for distance. Fetched ONCE; shared down.
   const fixQuery = useQuery({
@@ -65,28 +88,55 @@ export function FavoritesTabs({ mode, onPrefill, manualContent }: FavoritesTabsP
   });
   const log = useMemo(() => stationsQuery.data?.log ?? [], [stationsQuery.data]);
 
-  // VARA + telnet: Manual content only — no tabs, no rows, no Connect.
+  // Telnet: Manual content only — no tabs, no rows, no Connect.
   if (isManualOnly(mode)) {
     return <div className="favorites-tabs favorites-tabs--manual-only">{manualContent}</div>;
   }
 
-  const renderRows = (list: typeof favorites) =>
-    list.length === 0 ? (
-      <p className="favorites-empty">No stations</p>
-    ) : (
-      <div className="favorites-list">
-        {list.map((f) => (
-          <FavoriteRow
-            key={f.id}
-            favorite={f}
-            operatorGrid={operatorGrid}
-            onPrefill={onPrefill}
-            onToggleStar={star}
-            attempts={log.filter((a) => a.unit_id === f.id)}
-          />
-        ))}
-      </div>
+  const renderRows = (list: typeof favorites) => {
+    const showFilter = list.length > FILTER_THRESHOLD;
+    const shown = showFilter ? list.filter((f) => matchesFavoriteFilter(f, filter)) : list;
+    return (
+      <>
+        {showFilter && (
+          <div className="favorites-filter">
+            <input
+              type="text"
+              data-testid="favorites-filter-input"
+              placeholder="Filter… (call / grid / note)"
+              value={filter}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              aria-label="Filter favorites"
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            <span className="favorites-filter-count" data-testid="favorites-filter-count">
+              {shown.length}/{list.length}
+            </span>
+          </div>
+        )}
+        {shown.length === 0 ? (
+          <p className="favorites-empty">{list.length === 0 ? 'No stations' : 'No matches'}</p>
+        ) : (
+          <div className="favorites-list">
+            {shown.map((f) => (
+              <FavoriteRow
+                key={f.id}
+                favorite={f}
+                operatorGrid={operatorGrid}
+                onPrefill={onPrefill}
+                onToggleStar={star}
+                attempts={log.filter((a) => a.unit_id === f.id)}
+                onUpsert={upsert}
+                onDelete={remove}
+              />
+            ))}
+          </div>
+        )}
+      </>
     );
+  };
 
   return (
     <div className="favorites-tabs">

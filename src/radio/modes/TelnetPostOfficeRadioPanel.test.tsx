@@ -632,3 +632,111 @@ describe('<TelnetPostOfficeRadioPanel>', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
+
+// ── Network PO relay-favorite edit-in-place (tuxlink-oi1g) ────────────────────
+describe('<TelnetPostOfficeRadioPanel> relay-favorite edit-in-place (oi1g)', () => {
+  // Sibling describe — does NOT inherit the main block's beforeEach, so reset the
+  // shared invoke mock here or call counts leak between these tests.
+  beforeEach(async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  const FAV = { callsign: 'W7RELAY', label: 'PDX relay', host: '10.0.0.5', port: 8772 };
+
+  const withOneFavorite = async (cmd: string, args?: unknown) => {
+    if (cmd === 'config_read') return { callsign: 'N7CPZ-10', grid: 'CN87' };
+    if (cmd === 'session_log_snapshot') return [];
+    if (cmd === 'mailbox_list') return OUTBOX_FIXTURE;
+    if (cmd === 'network_po_favorites_get') return [FAV];
+    if (cmd === 'network_po_favorites_set') {
+      return (args as { favorites: unknown[] }).favorites;
+    }
+    return undefined;
+  };
+
+  it('edits a relay favorite in place via network_po_favorites_set (no remove+re-add)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    invokeSpy.mockImplementation(withOneFavorite);
+    renderPanel({ mode: 'network' });
+
+    fireEvent.click(await screen.findByTestId('po-favorite-edit-10.0.0.5:8772'));
+    fireEvent.change(screen.getByTestId('po-favorite-edit-label-10.0.0.5:8772'), {
+      target: { value: 'Portland relay' },
+    });
+    fireEvent.click(screen.getByTestId('po-favorite-edit-save-10.0.0.5:8772'));
+
+    await waitFor(() => {
+      const calls = invokeSpy.mock.calls.filter(([c]) => c === 'network_po_favorites_set');
+      expect(calls).toHaveLength(1);
+      const list = (calls[0][1] as { favorites: Array<Record<string, unknown>> }).favorites;
+      expect(list).toHaveLength(1);
+      expect(list[0].label).toBe('Portland relay');
+      expect(list[0].callsign).toBe('W7RELAY'); // untouched field preserved
+      expect(list[0].host).toBe('10.0.0.5');
+      expect(list[0].port).toBe(8772);
+    });
+    // remove was NOT used to effect the edit.
+    expect(invokeSpy.mock.calls.some(([c]) => c === 'network_po_favorites_remove')).toBe(false);
+  });
+
+  it('Cancel closes the edit form without calling network_po_favorites_set', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    invokeSpy.mockImplementation(withOneFavorite);
+    renderPanel({ mode: 'network' });
+
+    fireEvent.click(await screen.findByTestId('po-favorite-edit-10.0.0.5:8772'));
+    fireEvent.click(screen.getByTestId('po-favorite-edit-cancel-10.0.0.5:8772'));
+    expect(screen.queryByTestId('po-favorite-edit-label-10.0.0.5:8772')).toBeNull();
+    expect(invokeSpy.mock.calls.some(([c]) => c === 'network_po_favorites_set')).toBe(false);
+  });
+});
+
+// ── PO edit-in-place validation (Codex 2026-06-10 P2 ×2) ─────────────────────
+describe('<TelnetPostOfficeRadioPanel> relay-favorite edit validation (oi1g)', () => {
+  beforeEach(async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  const TWO = [
+    { callsign: 'W7AAA', label: 'A', host: '10.0.0.5', port: 8772 },
+    { callsign: 'W7BBB', label: 'B', host: '10.0.0.9', port: 8772 },
+  ];
+  const withTwo = (extra: Record<string, unknown> = {}) => async (cmd: string, args?: unknown) => {
+    if (cmd === 'config_read') return { callsign: 'N7CPZ-10', grid: 'CN87' };
+    if (cmd === 'session_log_snapshot') return [];
+    if (cmd === 'mailbox_list') return OUTBOX_FIXTURE;
+    if (cmd === 'network_po_favorites_get') return TWO;
+    if (cmd in extra) return extra[cmd];
+    if (cmd === 'network_po_favorites_set') return (args as { favorites: unknown[] }).favorites;
+    return undefined;
+  };
+
+  it('does NOT persist an edit that blanks the host (no network_po_favorites_set)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    invokeSpy.mockImplementation(withTwo());
+    renderPanel({ mode: 'network' });
+    fireEvent.click(await screen.findByTestId('po-favorite-edit-10.0.0.5:8772'));
+    fireEvent.change(screen.getByTestId('po-favorite-edit-host-10.0.0.5:8772'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByTestId('po-favorite-edit-save-10.0.0.5:8772'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(invokeSpy.mock.calls.some(([c]) => c === 'network_po_favorites_set')).toBe(false);
+  });
+
+  it('does NOT persist an edit whose new host:port collides with another favorite', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    invokeSpy.mockImplementation(withTwo());
+    renderPanel({ mode: 'network' });
+    // Edit A (10.0.0.5:8772) to take B's endpoint (10.0.0.9:8772) → collision.
+    fireEvent.click(await screen.findByTestId('po-favorite-edit-10.0.0.5:8772'));
+    fireEvent.change(screen.getByTestId('po-favorite-edit-host-10.0.0.5:8772'), { target: { value: '10.0.0.9' } });
+    fireEvent.click(screen.getByTestId('po-favorite-edit-save-10.0.0.5:8772'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(invokeSpy.mock.calls.some(([c]) => c === 'network_po_favorites_set')).toBe(false);
+  });
+});
