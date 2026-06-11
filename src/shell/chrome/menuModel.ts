@@ -94,11 +94,13 @@ export const MENU_TREE: TopMenu[] = [
     ] },
   ] },
   { label: 'Tools', items: [
-    // tuxlink-6jpf: location-aware station finder ("Find a Gateway") — direct
-    // /listings poll → distance-sorted stations. Relocated here from the Message
-    // menu (operator smoke: it's a modem-context action, not a message action);
-    // also surfaced in-panel from the ARDOP/Packet/VARA radio panels.
-    { id: 'menu:tools:find_gateway', label: 'Find a Gateway…' },
+    // tuxlink-gife: propagation-aware station finder ("Find a Station") — direct
+    // /listings poll → stations ranked by predicted HF reachability on a map.
+    // Relocated here from the Message menu (it's a modem-context action, not a
+    // message action); also surfaced in-panel from the ARDOP/Packet/VARA radio
+    // panels. The action id stays `find_gateway` (the menuModel contract test
+    // keys on it) though the surface is now Find a Station.
+    { id: 'menu:tools:find_gateway', label: 'Find a Station…' },
     // Not-yet-wired: disabled + badged so they read as "coming", not broken.
     { id: 'menu:tools:templates', label: 'Templates', disabled: true },
     { id: 'menu:tools:rig_control', label: 'Rig Control', disabled: true },

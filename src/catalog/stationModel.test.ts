@@ -78,6 +78,10 @@ describe('aggregateStations — distinct stations', () => {
     const stations = aggregateStations(listings);
     expect(stations.map((s: Station) => s.baseCallsign).slice().sort()).toEqual(['K7UAZ', 'N0DAJ']);
   });
+  it('degrades to empty for a non-array (malformed backend response)', () => {
+    expect(aggregateStations(undefined as unknown as StationListing[])).toEqual([]);
+    expect(aggregateStations(null as unknown as StationListing[])).toEqual([]);
+  });
   it('drops gateways with no grid (cannot place on map)', () => {
     const listings: StationListing[] = [
       { mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,

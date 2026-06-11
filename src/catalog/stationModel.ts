@@ -41,6 +41,9 @@ function hasSsid(call: string): boolean {
 
 export function aggregateStations(listings: StationListing[]): Station[] {
   const byKey = new Map<string, Station>();
+  // Defensive: a malformed/empty backend response (null/undefined) must degrade
+  // to an empty map, never crash the panel (production-mount-path robustness).
+  if (!Array.isArray(listings)) return [];
 
   for (const listing of listings) {
     for (const g of listing.gateways) {
