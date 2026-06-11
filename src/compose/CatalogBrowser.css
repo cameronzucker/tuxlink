@@ -316,3 +316,55 @@
   justify-content: flex-end;
   margin-top: auto;
 }
+
+/* Import wiring (tuxlink-z0le) */
+.catalog-browser__custom-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  border: 1px dashed var(--border, #2b3340);
+  border-radius: 6px;
+}
+.catalog-browser__custom-cta-text {
+  margin: 0;
+  color: var(--text-muted, #9aa4b2);
+}
+.catalog-browser__custom-badge {
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent, #4c8bf5);
+}
+.catalog-browser__template-row--new .catalog-browser__template-btn {
+  outline: 2px solid var(--accent, #4c8bf5);
+  border-radius: 4px;
+}
+.catalog-browser__remove,
+.catalog-browser__remove-yes,
+.catalog-browser__remove-no {
+  background: none;
+  border: none;
+  color: var(--text-muted, #9aa4b2);
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.catalog-browser__remove:hover { color: var(--danger, #e0574a); }
+.catalog-browser__remove-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+}
+.catalog-browser__btn--ghost {
+  background: none;
+  border: none;
+  color: var(--text-muted, #9aa4b2);
+}
+.catalog-browser__notice {
+  font-size: 0.82rem;
+  color: var(--warn, #e0a64a);
+  padding: 0.25rem 0;
+}

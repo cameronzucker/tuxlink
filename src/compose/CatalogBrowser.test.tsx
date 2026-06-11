@@ -124,14 +124,14 @@ describe('<CatalogBrowser>', () => {
     expect(onPick).toHaveBeenCalledWith('Winlink_Check-In');
   });
 
-  it('places the Custom folder last regardless of alphabetical order', async () => {
+  it('places the Custom folder first (tuxlink-z0le §7 — the org member’s forms are the point)', async () => {
     render(<CatalogBrowser onPick={vi.fn()} onCancel={vi.fn()} />);
     // Wait for the catalog to load.
     await screen.findByText('Custom');
     const folderHeadings = screen.getAllByTestId('catalog-folder-name');
     const names = folderHeadings.map((el) => el.textContent);
-    // ARC Forms, General, ICS Forms sort alphabetically; Custom is last.
-    expect(names).toEqual(['ARC Forms', 'General', 'ICS Forms', 'Custom']);
+    // Custom first, then ARC Forms / General / ICS Forms alphabetically.
+    expect(names).toEqual(['Custom', 'ARC Forms', 'General', 'ICS Forms']);
   });
 
   it('renders an error banner when forms_list_catalog rejects', async () => {
