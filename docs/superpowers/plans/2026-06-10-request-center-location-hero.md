@@ -14,6 +14,20 @@
 
 ---
 
+## GROUNDING CORRECTIONS (discovered during Task 1 execution — supersede the mock/spec where they conflict)
+
+The mock used **stale NWS zone data**. Verified against the live dataset 2026-06-10:
+
+1. **Seattle is NWS zone `WAZ315` "City of Seattle"** — NOT `WAZ558` "Seattle and Vicinity" (the mock's value; that zone no longer exists). The catalog entry is `WA_ZON_SEA` ("City of Seattle Washington Zone Forecast Bellevue, Redmo"). So the canonical worked example everywhere in this plan is **`WAZ315` → `WA_ZON_SEA`, display name "City of Seattle"**. Replace every `WAZ558`/`"Seattle and Vicinity"` in test fixtures, the harness catalog, and UI assertions with `WAZ315`/`"City of Seattle"`. **Always verify the real id/name from the bundled `nws-zones.geo.json` + catalog — never from the mock.**
+
+2. **The collection endpoint no longer returns geometry.** `api.weather.gov/zones?type=public&area=<ST>&include_geometry=true` returns `geometry: null` for all features now. Geometry must be fetched **per-zone** from individual endpoints: `api.weather.gov/zones/forecast/<ZONEID>` (returns a full Polygon/MultiPolygon, no params needed). Task 1's raw cache holds the zone id+name list per state; Task 2 drives per-zone geometry fetches from it. (~3500 requests at ~150–200 ms each ≈ 10–15 min; cache each per-zone response idempotently.)
+
+3. **Normalisation must also strip a trailing state name and normalise `&`→`and`** (the catalog appends "Washington" and uses "&"/abbreviations). E.g. `WA_ZON_OLYPS` "Olympia and Southern Puget Sound Washington" → NWS `WAZ317` "Olympia and Southern Puget Sound". The abbreviated tail (`WA_ZON_PIKIL` "Lowlands of Pierce & S King County Washington" → `WAZ316`; `WA_ZON_CAKCF` "F-hills & Valleys of cent King County Cascades" → `WAZ307`) still goes to hand-resolution (Task 5).
+
+4. Catalog state count is **49** (WV has only a tabular forecast, no `/zone forecast/i` entry, so it's correctly excluded). The `_source.zoneCount` in the data contract is illustrative — use the real fetched count.
+
+---
+
 ## Pre-flight (read before Task 1)
 
 - **All commands run from the worktree:** `/home/administrator/Code/tuxlink/worktrees/bd-tuxlink-loc-location-hero/`. `node_modules` is a symlink — already present. Do **not** `cd` into the main checkout.
@@ -143,11 +157,15 @@ git commit -m "feat(request): NWS public-zone fetch for location hero geo data (
 
 ---
 
-## Task 2: Simplify + prune → `nws-zones.geo.json`
+## Task 2: Fetch per-zone geometry, simplify + prune → `nws-zones.geo.json`
 
 **Files:**
 - Modify: `scripts/build-request-geo.ts`
 - Create: `src/request/nws-zones.geo.json`
+
+- [ ] **Step 0: Fetch geometry per zone (NEW — collection endpoint returns null geometry)**
+
+For every zone id in the Task-1 raw cache, GET `https://api.weather.gov/zones/forecast/<ZONEID>` (same polite client + UA; ~150–200 ms spacing; retry-once). Cache each response to `dev/scratch/request-geo/geom/<ZONEID>.json` and skip already-cached ids (idempotent; `--force` to refetch). This is ~3500 requests / ~10–15 min — log progress every 100 zones. The geometry is in the response's `geometry` field (Polygon or MultiPolygon).
 
 - [ ] **Step 1: Simplify geometry**
 
