@@ -63,9 +63,10 @@ const AboutDialog = lazy(() =>
 const UninstallCleanupDialog = lazy(() =>
   import('./UninstallCleanupDialog').then((m) => ({ default: m.UninstallCleanupDialog })),
 );
-// tuxlink-a2gd: location-aware Catalog Builder (sibling overlay panel, not a main-content view).
-const CatalogBuilderPanel = lazy(() =>
-  import('../catalog/CatalogBuilderPanel').then((m) => ({ default: m.CatalogBuilderPanel })),
+// tuxlink-gife: propagation-aware Find a Station overlay (sibling panel, not a
+// main-content view). Supersedes the location-aware Catalog Builder (a2gd).
+const StationFinderPanel = lazy(() =>
+  import('../catalog/StationFinderPanel').then((m) => ({ default: m.StationFinderPanel })),
 );
 // tuxlink-eymu: unified Request Center overlay (catalog browse + WLE inquiries
 // + Saildocs GRIB). Replaces the Catalog Request menu item and absorbs GRIB as
@@ -544,11 +545,18 @@ export function AppShell() {
     activeModem,
     togglePinned: pinRadioPanel,
   });
+  // tuxlink-gife: VARA HF/FM modems now consume station prefill (VaraRadioPanel
+  // listens via listenGatewayPrefill + sets its RMS-gateway target), so the
+  // Find-a-Station map's VARA channels — the HF majority — are usable too.
   const catalogPrefillMode =
     radioPanelMode?.kind === 'packet'
       ? 'packet'
       : radioPanelMode?.kind === 'ardop-hf'
       ? 'ardop-hf'
+      : radioPanelMode?.kind === 'vara-hf'
+      ? 'vara-hf'
+      : radioPanelMode?.kind === 'vara-fm'
+      ? 'vara-fm'
       : undefined;
 
   // Close the radio panel entirely (drop the connection + unpin). Shared by the
@@ -1306,7 +1314,7 @@ export function AppShell() {
 
       {catalogBuilderOpen && (
         <Suspense fallback={null}>
-          <CatalogBuilderPanel
+          <StationFinderPanel
             activePrefillMode={catalogPrefillMode}
             onClose={() => setCatalogBuilderOpen(false)}
           />
