@@ -141,6 +141,57 @@
   padding: 0;
 }
 
+/* tuxlink-1w7t: AREDN mesh Post Office discovery rows. */
+.po-mesh-discovery {
+  margin-top: 8px;
+}
+.po-mesh-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.po-mesh-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border, #2a323c);
+}
+.po-mesh-row:last-child {
+  border-bottom: none;
+}
+.po-mesh-dot {
+  flex: none;
+  font-size: 11px;
+  line-height: 1;
+}
+.po-mesh-dot-up {
+  color: var(--ok, #3fb950);
+}
+.po-mesh-dot-down {
+  color: var(--fg-faint, #6b7782);
+}
+.po-mesh-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.po-mesh-endpoint {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--fg-dim, #9aa7b4);
+}
+.po-mesh-rtt {
+  flex: none;
+  font-size: 12px;
+  color: var(--fg-faint, #6b7782);
+  min-width: 36px;
+  text-align: right;
+}
+
 /* FZ-M1 compact (tuxlink-h7q7 Task 6b): raise the 9px region to the 12px floor. */
 @media (max-width: 1365px) and (any-pointer: coarse) {
   .listen-section {

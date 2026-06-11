@@ -3406,6 +3406,7 @@ mod native_read_state_tests {
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
             map_tile_source: None,
+            aredn_master_node_host: None,
         }
     }
 
@@ -4495,6 +4496,7 @@ mod native_read_state_tests {
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
             map_tile_source: None,
+            aredn_master_node_host: None,
         }
     }
 
