@@ -30,6 +30,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.49.1](https://github.com/cameronzucker/tuxlink/compare/v0.49.0...v0.49.1) (2026-06-11)
+
+
+### Bug Fixes
+
+* **ribbon:** keep the On-Connect segments on one line (tuxlink-7ygy) ([851a64c](https://github.com/cameronzucker/tuxlink/commit/851a64cf3c84db8ff755c46fc93030a25507201a))
+
 ## [0.49.0](https://github.com/cameronzucker/tuxlink/compare/v0.48.0...v0.49.0) (2026-06-11)
 
 
