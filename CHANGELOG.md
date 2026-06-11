@@ -30,6 +30,20 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.52.1](https://github.com/cameronzucker/tuxlink/compare/v0.52.0...v0.52.1) (2026-06-11)
+
+
+### Features
+
+* **catalog:** ingest radio-delivered station-list replies into Find-a-Station (tuxlink-xrbw) ([681a51d](https://github.com/cameronzucker/tuxlink/commit/681a51d0a2eabe4d6b4339aebd195fb2989f21ba))
+* **identity:** identity_list/add_full/add_tactical/remove Tauri commands ([64036b8](https://github.com/cameronzucker/tuxlink/commit/64036b8cc97321f9315549dcce10d0c06fb4d2a6))
+* **post-office:** Network PO drains the Outbox on Connect, like CMS ([a2b05bf](https://github.com/cameronzucker/tuxlink/commit/a2b05bff1e5f2ea276b82b0c30bc6bbe288b8274))
+
+
+### Chores
+
+* force release 0.52.1 to ship stranded Find-a-Station fix ([7128a25](https://github.com/cameronzucker/tuxlink/commit/7128a251bf0b839e340034accdab2447627865d6))
+
 ## [0.52.0](https://github.com/cameronzucker/tuxlink/compare/v0.51.0...v0.52.0) (2026-06-11)
 
 
