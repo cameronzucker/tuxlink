@@ -92,8 +92,11 @@ A `SessionIdentity` whose `address_as` is a tactical label is **blocked from CMS
 
 ## UI (textual spec; mock during design-review)
 
-- **Ribbon identity control.** Active call shown (e.g. `● W1ABC ▾`); the dropdown lists FULL identities with their TACTICAL labels nested underneath, a lock glyph on any identity that needs authentication, and a per-tactical "CMS ✓/blocked" badge.
-- **Authenticated switch.** Selecting a FULL identity that needs auth opens an **inline** auth row in the ribbon (`Unlock W7XYZ  [password]  [Unlock]`) — not a popup window, consistent with the inline-UI rule. This is an access-control credential entry, distinct from the removed TX-consent modal (RADIO-1 governs transmission, not identity switching).
+**The switcher IS the existing callsign control in the top status bar** — not a new menu, not buried under clicks. Today that control is `.dash-callsign-row` (`data-testid="ribbon-callsign"`) in `DashboardRibbon.tsx` (the active callsign + its SSID select). It becomes the identity-switcher trigger, reusing pixels already on screen for space efficiency:
+
+- **One click opens the list.** Clicking the active-callsign control in the top status bar opens a dropdown **anchored to it**, listing FULL identities with their TACTICAL labels nested underneath, a lock glyph on any identity needing authentication, and a per-tactical "CMS ✓ / blocked" badge. Picking an entry switches (or begins the unlock). No separate menu, no multi-step drill-down, no non-obvious path.
+- **Authenticated switch, inline in the same dropdown.** Selecting a FULL identity that needs auth reveals an inline unlock field *within the open dropdown* (`Unlock W7XYZ  [password]  [Unlock]`) — no popup window. Access-control credential entry, distinct from the removed TX-consent modal (RADIO-1 governs transmission, not identity switching).
+- When closed, the control keeps showing the active call (and its SSID) exactly as today, so the top bar's footprint is unchanged.
 - **Mailbox identity filter** to view one identity's mail.
 
 ## Open questions (resolve in the implementation plan)
