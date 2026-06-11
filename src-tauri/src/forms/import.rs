@@ -361,6 +361,64 @@ fn companion(id: String, folder: String, rel_path: String, abs_path: PathBuf) ->
     }
 }
 
+// ============================================================================
+// Path safety + archive caps (§11.5). Import is a WRITE path, so it validates
+// every path component strictly — stricter than `is_valid_form_id`, whose
+// space/dot/`&` relaxation is a receive-path concession.
+// ============================================================================
+
+/// Entry-count cap applied uniformly to folder + zip sources (the existing
+/// updater extractor lacks one — §11.5).
+const MAX_IMPORT_ENTRIES: usize = 5_000;
+/// Per-file uncompressed cap.
+const MAX_SINGLE_FILE_BYTES: u64 = 16 * 1_048_576;
+/// Aggregate uncompressed cap across a whole import.
+const MAX_TOTAL_BYTES: u64 = 300 * 1_048_576;
+/// Per-entry compression-ratio guard (zip-bomb defense).
+const MAX_COMPRESSION_RATIO: u64 = 200;
+
+/// Windows reserved device names (rejected as path components — these can
+/// behave specially even on Linux if the tree is later moved to Windows, and
+/// they signal a hostile archive).
+const RESERVED_WIN: &[&str] = &[
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// Validate a relative path destined for `custom_root`. Rejects `..`/`.`,
+/// absolute paths, empty/leading-dot components, control/NUL chars, and
+/// reserved Windows device names — on EVERY component, not just the stem.
+pub(crate) fn is_safe_rel_path(rel: &str) -> bool {
+    if rel.is_empty() || rel.starts_with('/') || rel.starts_with('\\') {
+        return false;
+    }
+    for c in rel.split(['/', '\\']) {
+        if c.is_empty() || c == "." || c == ".." {
+            return false;
+        }
+        if c.starts_with('.') {
+            return false; // leading-dot component (.hidden, .prev-*)
+        }
+        if c.bytes().any(|b| b < 0x20 || b == 0x7f) {
+            return false; // control / NUL / DEL
+        }
+        let stem_lower = c.split('.').next().unwrap_or("").to_ascii_lowercase();
+        if RESERVED_WIN.contains(&stem_lower.as_str()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Per-entry zip-bomb ratio check. Stored/empty entries (compressed == 0)
+/// can't be ratio bombs and avoid division by zero.
+pub(crate) fn exceeds_ratio(compressed: u64, uncompressed: u64) -> bool {
+    if compressed == 0 {
+        return false;
+    }
+    uncompressed / compressed > MAX_COMPRESSION_RATIO
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,5 +578,33 @@ mod tests {
         write_bytes(&root.join("Changelog.txt"), b"changes...");
         let cands = detect_candidates(root).unwrap();
         assert!(cands.is_empty(), "metadata produces no candidates, not reject rows");
+    }
+
+    // ---- Task 3: path safety + ratio guard ----
+
+    #[test]
+    fn rejects_dotdot_and_absolute_and_reserved_components() {
+        assert!(!is_safe_rel_path("a/../b"));
+        assert!(!is_safe_rel_path("../b"));
+        assert!(!is_safe_rel_path("/etc/passwd"));
+        assert!(!is_safe_rel_path("a/./b"));
+        assert!(!is_safe_rel_path("a//b"));
+        assert!(!is_safe_rel_path(".hidden/b"));
+        assert!(!is_safe_rel_path("a/\u{0}b"));
+        assert!(!is_safe_rel_path("a/b\tc"));
+        assert!(!is_safe_rel_path("CON/x.html"));
+        assert!(!is_safe_rel_path("a/PRN"));
+        assert!(!is_safe_rel_path("com1.html"));
+        // happy path:
+        assert!(is_safe_rel_path("AAMRON/Net Check-in Initial.html"));
+        assert!(is_safe_rel_path("Foo & Bar/Form.v1.html"));
+    }
+
+    #[test]
+    fn ratio_guard_flags_zip_bomb_entry() {
+        assert!(exceeds_ratio(1024, 1024 * 1024 * 1024)); // ~1e6 ratio
+        assert!(!exceeds_ratio(1_000_000, 5_000_000)); // 5x, fine
+        assert!(!exceeds_ratio(0, 0)); // empty entry, no div-by-zero
+        assert!(!exceeds_ratio(0, 9_999)); // stored entry, ratio undefined → allow
     }
 }
