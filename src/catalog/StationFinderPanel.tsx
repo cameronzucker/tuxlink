@@ -90,6 +90,11 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
   const pred = useStationPrediction(grid, selected);
 
   const ssnAgeDays = pred.prediction ? ssnAge(pred.prediction.year, pred.prediction.month) : null;
+  // Freshest station-list fetch stamp across loaded listings (U2 freshness).
+  const listFetchedAtMs = useMemo(() => {
+    const stamps = stations.listings.map((l) => l.fetchedAtMs).filter((t): t is number => t != null);
+    return stamps.length ? Math.max(...stamps) : null;
+  }, [stations.listings]);
 
   const toggleMode = (m: FilterMode) =>
     setEnabledModes((prev) => {
@@ -125,6 +130,7 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
           ssn={pred.prediction?.ssn ?? null}
           ssnAgeDays={ssnAgeDays}
           predictionAvailable={reach.available || pred.status === 'ok'}
+          listFetchedAtMs={listFetchedAtMs}
           onRefresh={() => stations.fetch(FILTER_MODES as ListingMode[])}
           refreshing={stations.loading}
         />

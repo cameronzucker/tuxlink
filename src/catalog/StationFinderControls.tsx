@@ -25,8 +25,21 @@ export interface StationFinderControlsProps {
   sfi?: number | null;
   kIndex?: number | null;
   predictionAvailable: boolean;
+  /** Freshest station-list fetch stamp (Unix ms) for the "updated N ago"
+   *  caption — the U2 last-known-good freshness surface (design §6). */
+  listFetchedAtMs?: number | null;
   onRefresh: () => void;
   refreshing: boolean;
+}
+
+/** Compact relative-age label for a Unix-ms timestamp ("updated 3 min ago"). */
+function listAgeLabel(fetchedAtMs: number): string {
+  const ageMin = Math.max(0, Math.round((Date.now() - fetchedAtMs) / 60_000));
+  if (ageMin < 1) return 'stations updated just now';
+  if (ageMin < 60) return `stations updated ${ageMin} min ago`;
+  const ageHr = Math.round(ageMin / 60);
+  if (ageHr < 24) return `stations updated ${ageHr} h ago`;
+  return `stations updated ${Math.round(ageHr / 24)} d ago`;
 }
 
 export function StationFinderControls(props: StationFinderControlsProps) {
@@ -98,6 +111,11 @@ export function StationFinderControls(props: StationFinderControlsProps) {
           ))}
         </span>
 
+        {props.listFetchedAtMs != null && (
+          <span className="station-finder__listage" data-testid="list-age">
+            {listAgeLabel(props.listFetchedAtMs)}
+          </span>
+        )}
         <button
           type="button"
           className="station-finder__refresh"

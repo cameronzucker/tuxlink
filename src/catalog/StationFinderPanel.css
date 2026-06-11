@@ -151,6 +151,11 @@
 .station-finder__sw--packet {
   background: var(--m-packet);
 }
+.station-finder__listage {
+  font-size: 11px;
+  color: var(--faint, #6f8aa3);
+  font-family: var(--mono, ui-monospace, monospace);
+}
 .station-finder__refresh {
   font: inherit;
   font-size: 11.5px;

@@ -49,4 +49,15 @@ describe('StationFinderControls', () => {
     render(<StationFinderControls {...baseProps} predictionAvailable={false} />);
     expect(screen.getByText(/no forecast/i)).toBeTruthy();
   });
+
+  it('shows the station-list freshness caption when a fetch stamp is present', () => {
+    const tenMinAgo = Date.now() - 10 * 60_000;
+    render(<StationFinderControls {...baseProps} listFetchedAtMs={tenMinAgo} />);
+    expect(screen.getByTestId('list-age').textContent).toMatch(/stations updated 10 min ago/);
+  });
+
+  it('omits the freshness caption when no fetch stamp is available', () => {
+    render(<StationFinderControls {...baseProps} listFetchedAtMs={null} />);
+    expect(screen.queryByTestId('list-age')).toBeNull();
+  });
 });
