@@ -100,7 +100,7 @@ impl MigrationPlan {
         has_cms_account: bool,
         activation_secret: Option<&str>,
     ) -> Result<MigrationReport, crate::identity::IdentityError> {
-        use crate::identity::{Address, Callsign, FullIdentity, IdentityError, IdentityStore};
+        use crate::identity::{Address, Callsign, FullIdentity, IdentityStore};
 
         let mut store = IdentityStore::load(store_path)?;
         // Idempotency sentinel: a store with a FULL means migration already ran.
@@ -126,21 +126,15 @@ impl MigrationPlan {
             svc.set_activation_secret(&callsign, secret)?;
         }
 
-        // Move the flat inbox under the per-FULL root (intact), if present + not already moved.
-        let mut inbox_moved = false;
-        if self.move_inbox {
-            let flat_inbox = mbox_root.join("inbox");
-            let per_full_inbox = crate::native_mailbox::per_full_root(mbox_root, call_str).join("inbox");
-            if flat_inbox.exists() && !per_full_inbox.exists() {
-                if let Some(parent) = per_full_inbox.parent() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| IdentityError::Io(format!("mkdir {}: {e}", parent.display())))?;
-                }
-                std::fs::rename(&flat_inbox, &per_full_inbox)
-                    .map_err(|e| IdentityError::Io(format!("move inbox: {e}")))?;
-                inbox_moved = true;
-            }
-        }
+        // The v1->v2 migration deliberately does NOT relocate the inbox (tuxlink-ej7a).
+        // The flat `<mbox>/inbox` is the only location the read path knows
+        // (`Mailbox::folder_dir` is not per-FULL aware until Phase 4, tuxlink-2ns7).
+        // Moving the inbox here — while the read path stayed flat — hid every inbox
+        // message after the 0.52.1 upgrade (data displaced, not destroyed). Phase 4
+        // owns the per-FULL inbox MOVE *together with* the per-FULL READ change, so
+        // the two land atomically. `self.move_inbox` / `per_full_subdir` describe that
+        // future intent; the v1->v2 step leaves the inbox in place.
+        let inbox_moved = false;
 
         // Default-tag existing Sent + Outbox messages in place (shared store).
         let sent_tagged = tag_folder(mbox_root, crate::winlink_backend::MailboxFolder::Sent, call_str)?;
@@ -918,7 +912,10 @@ mod tests {
         };
         let plan = IdentityMigration::plan(&v1);
         assert_eq!(plan.full_callsign.as_deref(), Some("W1ABC"));
-        assert!(plan.move_inbox, "an existing callsign means the flat inbox migrates under it");
+        // move_inbox records PHASE 4 intent (the per-FULL inbox move lands with the
+        // per-FULL read change). The v1->v2 executor itself does NOT move the inbox
+        // (tuxlink-ej7a); see `MigrationPlan::execute`.
+        assert!(plan.move_inbox, "an existing callsign flags the inbox for Phase 4 per-FULL relocation");
         assert_eq!(plan.per_full_subdir.as_deref(), Some("W1ABC"));
     }
 
@@ -1698,11 +1695,13 @@ mod tests {
         assert_eq!(cfg2.network_po_favorites, cfg.network_po_favorites);
     }
 
-    // tuxlink-7iy2 Phase 2: the v1->v2 identity-migration EXECUTOR. A
-    // single-callsign v1 config + an existing flat mailbox migrates to one FULL
-    // identity, the inbox moves under the per-FULL root intact, existing Sent
-    // messages are tagged with the FULL identity in place, the activation secret
-    // is provisioned in the keyring, and a second run is a clean no-op.
+    // tuxlink-7iy2 Phase 2 + tuxlink-ej7a P0 fix: the v1->v2 identity-migration
+    // EXECUTOR. A single-callsign v1 config + an existing flat mailbox migrates to
+    // one FULL identity, the inbox STAYS FLAT and visible to the production read
+    // path (the per-FULL inbox move is Phase 4's job, landed together with the
+    // per-FULL read change — see tuxlink-ej7a), existing Sent messages are tagged
+    // with the FULL identity in place, the activation secret is provisioned in the
+    // keyring, and a second run is a clean no-op.
     #[test]
     fn migrate_single_callsign_config_promotes_one_full_and_keeps_inbox_intact() {
         use crate::native_mailbox::Mailbox;
@@ -1733,13 +1732,19 @@ mod tests {
         assert_eq!(store.full()[0].callsign.as_str(), "W1ABC");
         assert!(matches!(store.last_selected(), Some(crate::identity::Address::Full(c)) if c.as_str() == "W1ABC"));
 
-        // (b) the inbox moved under the per-FULL root, contents intact.
-        let per_full = Mailbox::new(mbox_root.path().join("W1ABC"));
-        let metas = per_full.list(MailboxFolder::Inbox).unwrap();
-        assert_eq!(metas.len(), 1, "the one inbox message survived the move");
+        // (b) REGRESSION (tuxlink-ej7a): the inbox stays FLAT and is visible to the
+        // PRODUCTION read path — a flat-root `Mailbox`, exactly how the app reads it.
+        // The pre-fix migration moved it under `<root>/W1ABC/inbox`, which the flat
+        // `folder_dir(Inbox)` never reads, so the inbox showed empty after upgrade.
+        let production_mbox = Mailbox::new(mbox_root.path());
+        let metas = production_mbox.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(metas.len(), 1, "the inbox message is still visible to the production read path");
         assert_eq!(metas[0].id, inbox_id);
-        assert!(!mbox_root.path().join("inbox").join(format!("{}.b2f", inbox_id.0)).exists(),
-                "the flat inbox no longer holds the migrated message");
+        assert!(mbox_root.path().join("inbox").join(format!("{}.b2f", inbox_id.0)).exists(),
+                "the message stays in the flat inbox the app reads");
+        assert!(!mbox_root.path().join("W1ABC").exists(),
+                "the v1->v2 migration must NOT create a per-FULL inbox dir (that is Phase 4)");
+        assert!(!report.inbox_moved, "migration report records no inbox relocation");
 
         // (c) the sent message is tagged with the FULL identity, in place (shared store).
         assert!(mbox_root.path().join("sent").join(format!("{}.identity", sent_id.0)).exists(),
