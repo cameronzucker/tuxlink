@@ -4,6 +4,7 @@
 pub mod catalog;
 pub mod draft_library; // tuxlink-hnkn P2 Task 4 — save/reuse named slots
 pub mod http_server;
+pub mod import; // tuxlink-z0le/fwob — in-app form import (G5+G6)
 pub mod multipart;
 pub mod parse;
 pub mod serialize;
