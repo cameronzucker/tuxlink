@@ -10,11 +10,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
-import { fireMapEvent, resetMapMock } from '../map/testMapMock';
+import { fireMapEvent, fireZoomEvent, resetMapMock, setMockZoom } from '../map/testMapMock';
 
 vi.mock('react-leaflet', async () => (await import('../map/testMapMock')).createReactLeafletMock());
 vi.mock('leaflet', async () => (await import('../map/testMapMock')).createLeafletMock());
-vi.mock('../map/assets/world-equirect-2048.png', () => ({ default: '/world-equirect-2048.png' }));
+vi.mock('../map/assets/world-mercator-2048.png', () => ({ default: '/world-mercator-2048.png' }));
 vi.mock('leaflet/dist/leaflet.css', () => ({}));
 vi.mock('leaflet/dist/images/marker-icon.png', () => ({ default: '/marker-icon.png' }));
 vi.mock('leaflet/dist/images/marker-icon-2x.png', () => ({ default: '/marker-icon-2x.png' }));
@@ -113,5 +113,44 @@ describe('PositionPickerOverlay (tuxlink-sdbd / §6)', () => {
   it('confirm is disabled until a locator is set (no initial grid, no pin)', () => {
     render(<PositionPickerOverlay initialGrid="" onConfirm={vi.fn()} onCancel={vi.fn()} />);
     expect(screen.getByTestId('position-picker-confirm')).toBeDisabled();
+  });
+
+  it('6-char gate tracks live map zoom via onZoomChange (Task 8)', async () => {
+    // Override the invoke mock: lan-live status with zoom cap 16 — tile source
+    // alone satisfies the status check, but sixCharAllowed also requires
+    // view.zoom >= SIX_CHAR_MIN_ZOOM (12).
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'tile_source_status') {
+        return { kind: 'lan-live', zoom: 16, label: 'Local tiles', cachedAt: null };
+      }
+      return undefined;
+    });
+
+    render(<PositionPickerOverlay initialGrid="CN87us" onConfirm={vi.fn()} onCancel={vi.fn()} />);
+
+    // Wait for the tile-status fetch to settle.
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith('tile_source_status'));
+
+    // At initial view zoom (1 — below SIX_CHAR_MIN_ZOOM=12) the gate must still
+    // block 6-char even though the tile source is lan-live.
+    expect(screen.getByTestId('precision-6char')).toBeDisabled();
+
+    // Simulate the user zooming to 8 — still below SIX_CHAR_MIN_ZOOM.
+    act(() => {
+      setMockZoom(8);
+      fireZoomEvent();
+    });
+    expect(screen.getByTestId('precision-6char')).toBeDisabled();
+
+    // Simulate the user zooming to 14 — above SIX_CHAR_MIN_ZOOM (12).
+    // onZoomChange should fire with 14, updating viewZoom state, unblocking 6-char.
+    act(() => {
+      setMockZoom(14);
+      fireZoomEvent();
+    });
+    await waitFor(() => expect(screen.getByTestId('precision-6char')).not.toBeDisabled());
+
+    // The precision hint must also disappear once 6-char is allowed.
+    expect(screen.queryByTestId('precision-hint')).toBeNull();
   });
 });

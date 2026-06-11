@@ -17,7 +17,6 @@ import type { TileSource } from './tileSource';
 
 const XYZ_SOURCE: TileSource = {
   url: 'http://192.168.1.10:8080/{z}/{x}/{y}.png',
-  crs: 'Geodetic',
   scheme: 'Xyz',
   minZoom: 0,
   maxZoom: 16,

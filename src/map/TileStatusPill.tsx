@@ -19,7 +19,7 @@
  *   lan-cached   → "z{zoom} · LAN cached as of {humanized cachedAt}"
  *   partial      → "z{zoom} · LAN live (partial)"
  *   unreachable  → "tiles unreachable — bundled"
- *   incompatible → "incompatible tile source — expected EPSG:4326"
+ *   incompatible → "incompatible tile source — the server responded but did not return standard image tiles"
  */
 import type { TileSourceStatus } from './tileSource';
 
@@ -52,7 +52,7 @@ function pillText(status: TileSourceStatus): string {
     case 'unreachable':
       return 'tiles unreachable — bundled';
     case 'incompatible':
-      return 'incompatible tile source — expected EPSG:4326';
+      return 'incompatible tile source — the server responded but did not return standard image tiles';
     default: {
       // Exhaustiveness guard: a new StatusKind must be handled above.
       const _exhaustive: never = kind;

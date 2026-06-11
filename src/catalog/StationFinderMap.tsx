@@ -14,6 +14,7 @@ import { useEffect } from 'react';
 import { Marker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { BaseMap } from '../map/BaseMap';
+import { useTileSource } from '../map/useTileSource';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { type ReachTier } from './reachability';
 import { stationKey } from './useReachabilityMap';
@@ -89,10 +90,11 @@ function RecenterOnOperator({ lat, lon, zoom }: { lat: number; lon: number; zoom
 }
 
 export function StationFinderMap(props: StationFinderMapProps) {
+  const tileSource = useTileSource();
   const me = props.operatorGrid ? gridToLatLon(props.operatorGrid) : null;
   return (
     <div className="station-finder__map" data-testid="station-map">
-      <BaseMap initialCenter={me ?? undefined} initialZoom={me ? OPERATOR_ZOOM : 1}>
+      <BaseMap initialCenter={me ?? undefined} initialZoom={me ? OPERATOR_ZOOM : 1} tileSource={tileSource ?? undefined}>
         {me && <RecenterOnOperator lat={me.lat} lon={me.lon} zoom={OPERATOR_ZOOM} />}
         {me && (
           <Marker

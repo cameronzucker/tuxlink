@@ -9,25 +9,20 @@
 //! raw input), so a malicious coordinate cannot traverse the cache directory or
 //! inject path separators.
 //!
-//! ## Geodetic tile-numbering convention (EPSG:4326 / WorldCRS84Quad)
+//! ## Tile-numbering convention (EPSG:3857 / WebMercatorQuad)
 //!
-//! The feature serves ONLY geodetic (EPSG:4326 / WorldCRS84Quad) tiles. That
-//! pyramid is `2^(z+1)` COLUMNS (x) wide and `2^z` ROWS (y) tall at every zoom
-//! `z` — the world is 2 tiles wide × 1 tile tall at z=0 (lon ∈ [-180,180] → 2
-//! columns; lat ∈ [-90,90] → 1 row). Leaflet under `L.CRS.EPSG4326` therefore
-//! requests `x=1` at z=0 (the eastern hemisphere). Bounding x by `2^z` (the
-//! square Web-Mercator convention) would reject the entire eastern half of every
-//! zoom level. See `crate::tiles::crs::geodetic_tile_index`, which documents and
-//! computes the same `2^(z+1)×2^z` convention.
+//! The feature serves standard Web Mercator (EPSG:3857 / WebMercatorQuad) XYZ
+//! tiles — the universal slippy-map convention. That pyramid is a square grid:
+//! `2^z` COLUMNS (x) × `2^z` ROWS (y) at every zoom `z` — one tile covering the
+//! whole world at z=0. Leaflet under `L.CRS.EPSG3857` requests `x,y ∈ [0, 2^z)`.
 
 /// A validated tile coordinate.
 ///
 /// Construction via [`TileCoord::new`] or [`TileCoord::from_parts`] enforces:
 /// - `z ≤ max_zoom` (checked **first** to prevent the bound-shift overflowing for
 ///   huge adversarial zoom values before the bound is computed)
-/// - `x < 2^(z+1)` (geodetic columns: the EPSG:4326 world is twice as wide as it
-///   is tall — `2^(z+1)` columns × `2^z` rows; see the module-level docs)
-/// - `y < 2^z` (geodetic rows)
+/// - `x < 2^z` (WebMercatorQuad columns; square grid — see the module-level docs)
+/// - `y < 2^z` (WebMercatorQuad rows)
 ///
 /// After construction all arithmetic on `z`/`x`/`y` is provably safe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -43,9 +38,8 @@ impl TileCoord {
     /// The zoom cap is checked **before** the bound shifts to ensure that an
     /// adversarial `z` (e.g. 40) cannot cause a panic via overflow.
     ///
-    /// Geodetic (EPSG:4326) bounds: `x < 2^(z+1)` columns, `y < 2^z` rows. The
-    /// x bound uses `z + 1` because the EPSG:4326 world is twice as wide as it is
-    /// tall (see the module-level docs and `crs::geodetic_tile_index`).
+    /// WebMercatorQuad (EPSG:3857) bounds: `x < 2^z` columns, `y < 2^z` rows —
+    /// a square tile grid (see the module-level docs).
     pub fn new(z: u32, x: u32, y: u32, max_zoom: u32) -> Result<TileCoord, String> {
         if z > max_zoom {
             return Err(format!(
@@ -53,17 +47,14 @@ impl TileCoord {
             ));
         }
         // `z` is now `≤ max_zoom`, but a caller could pass an absurd `max_zoom`
-        // (≥ 32, or ≥ 31 for the x bound's `z + 1` shift). `checked_shl` returns
-        // `None` for a shift `≥ 32` instead of panicking, and `checked_add(1)`
-        // guards the `z = u32::MAX` edge, so both bound computations are
-        // panic-safe regardless of what `max_zoom` the caller supplies
-        // (defense-in-depth — the config-time cap is NOT relied on for this
-        // primitive's panic-safety).
+        // (≥ 32). `checked_shl` returns `None` for a shift `≥ 32` instead of
+        // panicking, so both bound computations are panic-safe regardless of
+        // what `max_zoom` the caller supplies (defense-in-depth — the
+        // config-time cap is NOT relied on for this primitive's panic-safety).
         //
-        // x bound = 2^(z+1) columns (geodetic: world is 2 tiles wide at z=0).
-        let x_bound = z
-            .checked_add(1)
-            .and_then(|zp1| 1u32.checked_shl(zp1))
+        // x bound = 2^z columns (WebMercatorQuad: square grid, 1 tile at z=0).
+        let x_bound = 1u32
+            .checked_shl(z)
             .ok_or_else(|| format!("zoom {z} too large to compute a tile column bound"))?;
         // y bound = 2^z rows.
         let y_bound = 1u32
@@ -132,29 +123,14 @@ mod tests {
     }
 
     #[test]
-    fn geodetic_x_bound_is_2_pow_z_plus_1_y_bound_is_2_pow_z() {
-        // EPSG:4326 / WorldCRS84Quad: 2^(z+1) columns (x) × 2^z rows (y).
-        // x bound = 2^(z+1): at z=1, x=2 is IN range (2 < 2^2 = 4) — this is the
-        // eastern-hemisphere column the old square `2^z` bound wrongly rejected.
-        assert!(TileCoord::new(1, 2, 0, 16).is_ok(), "x=2 < 2^(1+1)=4 must be Ok");
-        // x boundary at z=1: last valid column is 2^2 - 1 = 3; 4 is out of range.
-        assert!(TileCoord::new(1, 3, 0, 16).is_ok()); // x = 2^(z+1)-1 Ok
-        assert!(TileCoord::new(1, 4, 0, 16).is_err()); // x = 2^(z+1) Err
-        // y bound = 2^z (unchanged): at z=0, y must be < 2^0 = 1.
-        assert!(TileCoord::new(0, 0, 1, 16).is_err()); // y = 2^0 Err
-        // x=1 at z=0 (eastern hemisphere) is now accepted (Finding 3 regression):
-        // x = 2^(0+1)-1 = 1 < 2 Ok; the old bound rejected it → BadPath → half map.
-        assert!(TileCoord::new(0, 1, 0, 16).is_ok(), "x=1@z0 (eastern hemisphere) must be Ok");
-        assert!(TileCoord::new(0, 2, 0, 16).is_err()); // x = 2^(0+1) Err
-    }
-
-    #[test]
-    fn geodetic_boundaries_at_higher_zoom() {
-        // z=6: 2^7 = 128 columns, 2^6 = 64 rows.
-        assert!(TileCoord::new(6, 127, 0, 16).is_ok()); // x = 2^(z+1)-1 Ok
-        assert!(TileCoord::new(6, 128, 0, 16).is_err()); // x = 2^(z+1) Err
-        assert!(TileCoord::new(6, 0, 63, 16).is_ok()); // y = 2^z-1 Ok
-        assert!(TileCoord::new(6, 0, 64, 16).is_err()); // y = 2^z Err
+    fn mercator_x_and_y_bounds_are_2_pow_z() {
+        // WebMercatorQuad: square grid. z0 = 1×1, z1 = 2×2, z6 = 64×64.
+        assert!(TileCoord::new(0, 0, 0, 16).is_ok());
+        assert!(TileCoord::new(0, 1, 0, 16).is_err()); // x=1 invalid at z0 (was valid under geodetic)
+        assert!(TileCoord::new(1, 1, 1, 16).is_ok());
+        assert!(TileCoord::new(1, 2, 0, 16).is_err()); // x=2 invalid at z1
+        assert!(TileCoord::new(6, 63, 63, 16).is_ok());
+        assert!(TileCoord::new(6, 64, 0, 16).is_err());
     }
 
     #[test]
