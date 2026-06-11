@@ -5,7 +5,7 @@
       "filename": "US.RAD.ALASK",
       "name": "Alaska",
       "bbox": [
-        -188.9049,
+        -180.0,
         51.6127,
         -129.9863,
         71.3516
@@ -225,7 +225,7 @@
       "filename": "US.RAD.EALAK",
       "name": "E Aleutian Isl to Palmer Ak",
       "bbox": [
-        -188.9,
+        -180.0,
         51.6,
         -145.0,
         62.0

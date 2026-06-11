@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { CatalogEntry } from '../catalog/types';
 import {
   NATIONAL,
-  bestStateForecast,
   gatewayListFilenames,
   zoneForecastEntry,
   radarEntry,
@@ -20,51 +19,6 @@ function entry(partial: Partial<CatalogEntry> & Pick<CatalogEntry, 'category' | 
     ...partial,
   };
 }
-
-describe('bestStateForecast', () => {
-  it('prefers a non-tabular state-forecast entry over a tabular one', () => {
-    const entries: CatalogEntry[] = [
-      entry({ category: 'WX_US_WA', filename: 'WA_FOR_WA', description: 'State Forecast for Washington' }),
-      entry({ category: 'WX_US_WA', filename: 'WA_TAB_NW', description: 'Tabular State Forecast for Northwest Washington' }),
-    ];
-
-    const result = bestStateForecast(entries, 'WA');
-
-    expect(result?.filename).toBe('WA_FOR_WA');
-  });
-
-  it('falls back to a tabular state-forecast entry when no non-tabular exists', () => {
-    const entries: CatalogEntry[] = [
-      entry({ category: 'WX_US_AZ', filename: 'AZ_TAB_PHOE', description: 'Tabular State Forecast for Arizona Phoenix NWS' }),
-      entry({ category: 'WX_US_AZ', filename: 'AZ_ZON_FOO', description: 'Zone Forecast for somewhere in Arizona' }),
-    ];
-
-    const result = bestStateForecast(entries, 'AZ');
-
-    expect(result?.filename).toBe('AZ_TAB_PHOE');
-  });
-
-  it('returns null for a state with no state-forecast entry', () => {
-    const entries: CatalogEntry[] = [
-      entry({ category: 'WX_US_AK', filename: 'AK_TAB_JUNE', description: 'Tabular Forecast Alaska Juneau NWS' }),
-      entry({ category: 'WX_US_AK', filename: 'AK_ZON_ANC1', description: 'Zone Forecast Alaska Anchorage NWS' }),
-    ];
-
-    const result = bestStateForecast(entries, 'AK');
-
-    expect(result).toBeNull();
-  });
-
-  it('only matches the requested state category', () => {
-    const entries: CatalogEntry[] = [
-      entry({ category: 'WX_US_OR', filename: 'OR_FOR_OR', description: 'State Forecast for Oregon' }),
-    ];
-
-    const result = bestStateForecast(entries, 'WA');
-
-    expect(result).toBeNull();
-  });
-});
 
 describe('NATIONAL constants — real-catalog guard', () => {
   // Read the REAL bundled catalog so this test fails loudly if the catalog ever

@@ -19,34 +19,6 @@ export const NATIONAL = {
   winlinkInfo: 'INQUIRIES',
 } as const;
 
-/**
- * Return the best "state forecast" entry for a US state, looking in category
- * `WX_US_<USPS>`.
- *
- * - Prefer an entry whose description matches /state forecast/i AND whose
- *   filename does NOT contain `_TAB_` (the non-tabular, narrative forecast).
- * - Fall back to a tabular (`_TAB_`) state-forecast entry if no non-tabular
- *   one exists.
- * - Return null if the state has no state-forecast entry at all.
- */
-export function bestStateForecast(
-  entries: CatalogEntry[],
-  usps: string,
-): CatalogEntry | null {
-  const category = `WX_US_${usps}`;
-  const stateForecasts = entries.filter(
-    (e) => e.category === category && /state forecast/i.test(e.description),
-  );
-
-  const nonTabular = stateForecasts.find((e) => !e.filename.includes('_TAB_'));
-  if (nonTabular) {
-    return nonTabular;
-  }
-
-  const tabular = stateForecasts.find((e) => e.filename.includes('_TAB_'));
-  return tabular ?? null;
-}
-
 /** Resolve an NWS zone id → the backing catalog entry (via the vetted map),
  *  or null if the zone is unmapped or its filename isn't in the loaded catalog. */
 export function zoneForecastEntry(entries: CatalogEntry[], zoneId: string): CatalogEntry | null {

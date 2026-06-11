@@ -1271,7 +1271,9 @@ function buildRadarRegions(): void {
   const RADAR_OVERRIDES: Record<string, { name: string; bbox: Bbox }> = {
     // Alaska sub-regions — AK state bbox covers the whole chain; sub-regions hand-curated
     // from geographic knowledge of the Aleutian chain, Kenai Peninsula, SE panhandle.
-    'US.RAD.EALAK': { name: 'E Aleutian Isl to Palmer Ak', bbox: r4([-188.9, 51.6, -145.0, 62.0]) },
+    // West longitudes clamped to -180: far-western Aleutians past the antimeridian are out of
+    // scope for alpha (proper antimeridian split would require two bbox tiles).
+    'US.RAD.EALAK': { name: 'E Aleutian Isl to Palmer Ak', bbox: r4([Math.max(-180, -188.9), 51.6, -145.0, 62.0]) },
     'US.RAD.NSEAK': { name: 'N SE Alaska to South Central Ak', bbox: r4([-155.0, 55.0, -129.9, 66.0]) },
     'US.RAD.SCAK': { name: 'South Central Alaska', bbox: r4([-156.0, 58.0, -142.0, 63.0]) },
     'US.RAD.SEAK': { name: 'Southeast Alaska', bbox: r4([-138.0, 54.0, -129.9, 60.5]) },
@@ -1314,8 +1316,9 @@ function buildRadarRegions(): void {
   // Derived entries — state bboxes + direction splits
   // -----------------------------------------------------------------------
   const derived: Record<string, { name: string; bbox: Bbox }> = {
-    // Alaska (full state)
-    'US.RAD.ALASK': { name: 'Alaska', bbox: st('AK') },
+    // Alaska (full state) — west clamped to -180: far-western Aleutians past the antimeridian
+    // are out of scope for alpha (proper antimeridian split requires two bbox tiles).
+    'US.RAD.ALASK': { name: 'Alaska', bbox: (() => { const b = st('AK'); return r4([Math.max(-180, b[0]), b[1], b[2], b[3]]); })() },
     // Arizona
     'US.RAD.AZ': { name: 'Arizona', bbox: st('AZ') },
     'US.RAD.SAZ': { name: 'S Arizona', bbox: S('AZ') },
