@@ -419,6 +419,337 @@ pub(crate) fn exceeds_ratio(compressed: u64, uncompressed: u64) -> bool {
     uncompressed / compressed > MAX_COMPRESSION_RATIO
 }
 
+// ============================================================================
+// Staging (§11.4/§11.5) — copy sources into a fresh 0700 temp dir, validated.
+// Nothing reaches `custom_root` until commit. Sources are file / folder / zip.
+// ============================================================================
+
+/// A validated staging tree owned by its `TempDir` guard. Dropping `Staged`
+/// (on cancel, commit, or registry reap) `rm -rf`s the dir.
+#[derive(Debug)]
+pub(crate) struct Staged {
+    /// Canonicalized staging root.
+    pub dir: PathBuf,
+    _guard: tempfile::TempDir,
+}
+
+impl Staged {
+    #[cfg(test)]
+    pub(crate) fn dir(&self) -> &Path {
+        &self.dir
+    }
+}
+
+/// Running totals enforced uniformly across all sources of one import.
+struct Counters {
+    entries: usize,
+    total: u64,
+}
+
+impl Counters {
+    fn new() -> Self {
+        Counters { entries: 0, total: 0 }
+    }
+
+    /// Account one staged file; reject if any cap is exceeded.
+    fn enforce(&mut self, file_size: u64) -> Result<(), ImportError> {
+        self.entries += 1;
+        if self.entries > MAX_IMPORT_ENTRIES {
+            return Err(ImportError::StagingFailed {
+                reason: format!("too many entries (> {MAX_IMPORT_ENTRIES})"),
+            });
+        }
+        if file_size > MAX_SINGLE_FILE_BYTES {
+            return Err(ImportError::StagingFailed {
+                reason: format!("file exceeds {MAX_SINGLE_FILE_BYTES} bytes"),
+            });
+        }
+        self.total = self.total.saturating_add(file_size);
+        if self.total > MAX_TOTAL_BYTES {
+            return Err(ImportError::StagingFailed {
+                reason: format!("total uncompressed size exceeds {MAX_TOTAL_BYTES} bytes"),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Stage every source into a fresh owner-only temp dir. The dir lives until
+/// the returned [`Staged`] drops.
+pub(crate) fn stage_sources(sources: &[String]) -> Result<Staged, ImportError> {
+    let guard = tempfile::Builder::new()
+        .prefix("tuxlink-formimport-")
+        .tempdir()
+        .map_err(|e| ImportError::StagingFailed {
+            reason: format!("mkdir staging: {e}"),
+        })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(guard.path(), std::fs::Permissions::from_mode(0o700)).map_err(
+            |e| ImportError::StagingFailed {
+                reason: format!("chmod staging: {e}"),
+            },
+        )?;
+    }
+    let dir = guard.path().canonicalize().map_err(|e| ImportError::StagingFailed {
+        reason: format!("canonicalize staging: {e}"),
+    })?;
+
+    let mut counters = Counters::new();
+    for src in sources {
+        let sp = Path::new(src);
+        let md = std::fs::symlink_metadata(sp).map_err(|e| ImportError::StagingFailed {
+            reason: format!("stat {src}: {e}"),
+        })?;
+        if md.file_type().is_symlink() {
+            return Err(ImportError::StagingFailed {
+                reason: format!("source is a symlink: {src}"),
+            });
+        }
+        if md.is_dir() {
+            stage_folder(sp, &dir, &mut counters)?;
+        } else if md.is_file() && ext_lower(sp) == "zip" {
+            stage_zip(sp, &dir, &mut counters)?;
+        } else if md.is_file() {
+            stage_single_file(sp, &dir, &mut counters)?;
+        } else {
+            return Err(ImportError::StagingFailed {
+                reason: format!("unsupported source type: {src}"),
+            });
+        }
+    }
+    Ok(Staged { dir, _guard: guard })
+}
+
+/// Copy a vetted set of (absolute source, relative dest) pairs into the
+/// staging dir: strip a uniform `Standard_Forms/` wrapper, drop metadata,
+/// validate each rel path, enforce caps.
+fn stage_pairs(
+    pairs: Vec<(PathBuf, String)>,
+    dir: &Path,
+    counters: &mut Counters,
+) -> Result<(), ImportError> {
+    let all_wrapped =
+        !pairs.is_empty() && pairs.iter().all(|(_, r)| r.starts_with("Standard_Forms/"));
+    for (abs, rel) in pairs {
+        let rel = if all_wrapped {
+            rel.strip_prefix("Standard_Forms/").unwrap_or(&rel).to_string()
+        } else {
+            rel
+        };
+        if rel.is_empty() {
+            continue;
+        }
+        let name_lower = rel.rsplit('/').next().unwrap_or("").to_lowercase();
+        if is_metadata_file(&name_lower) {
+            continue;
+        }
+        if !is_safe_rel_path(&rel) {
+            return Err(ImportError::StagingFailed {
+                reason: format!("unsafe path: {rel}"),
+            });
+        }
+        let size = std::fs::metadata(&abs)
+            .map_err(|e| ImportError::StagingFailed {
+                reason: format!("stat {abs:?}: {e}"),
+            })?
+            .len();
+        counters.enforce(size)?;
+        let dest = dir.join(&rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| ImportError::StagingFailed {
+                reason: format!("mkdir {parent:?}: {e}"),
+            })?;
+        }
+        std::fs::copy(&abs, &dest).map_err(|e| ImportError::StagingFailed {
+            reason: format!("copy {abs:?}: {e}"),
+        })?;
+    }
+    Ok(())
+}
+
+/// Folder source: walk (NOT following symlinks), reject any symlink, collect
+/// regular files as (abs, rel-to-folder).
+fn stage_folder(src: &Path, dir: &Path, counters: &mut Counters) -> Result<(), ImportError> {
+    let mut pairs: Vec<(PathBuf, String)> = Vec::new();
+    for entry in walkdir::WalkDir::new(src).follow_links(false) {
+        let entry = entry.map_err(|e| ImportError::StagingFailed {
+            reason: format!("walk {src:?}: {e}"),
+        })?;
+        let ft = entry.file_type();
+        if ft.is_symlink() {
+            return Err(ImportError::StagingFailed {
+                reason: format!("symlink in source folder: {:?}", entry.path()),
+            });
+        }
+        if !ft.is_file() {
+            continue; // dirs created implicitly; non-regular skipped
+        }
+        let rel = entry
+            .path()
+            .strip_prefix(src)
+            .map_err(|_| ImportError::StagingFailed {
+                reason: "path escapes source root".into(),
+            })?
+            .to_string_lossy()
+            .replace('\\', "/");
+        pairs.push((entry.path().to_path_buf(), rel));
+    }
+    stage_pairs(pairs, dir, counters)
+}
+
+/// Single-file source: copy the HTML plus its governing `.txt` (the one whose
+/// `Form:` directive names this file) and that directive's display companion,
+/// or a sibling viewer as a fallback.
+fn stage_single_file(src: &Path, dir: &Path, counters: &mut Counters) -> Result<(), ImportError> {
+    use crate::forms::wle_templates::resolve_viewer_for;
+    let folder = src.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = src
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| ImportError::StagingFailed {
+            reason: "source has no filename".into(),
+        })?;
+
+    let mut pairs: Vec<(PathBuf, String)> = vec![(src.to_path_buf(), file_name.to_string())];
+
+    // Find a sibling .txt whose Form: directive names this html as input.
+    let mut governing_txt: Option<PathBuf> = None;
+    if let Ok(rd) = std::fs::read_dir(folder) {
+        for e in rd.filter_map(|e| e.ok()) {
+            let p = e.path();
+            if ext_lower(&p) != "txt" {
+                continue;
+            }
+            if let Ok(txt) = read_text_lossy(&p) {
+                if let Some((input, display)) = parse_form_directive(&txt) {
+                    if input.trim().eq_ignore_ascii_case(file_name) {
+                        governing_txt = Some(p.clone());
+                        if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
+                            pairs.push((p.clone(), n.to_string()));
+                        }
+                        if let Some(d) = display {
+                            if let Some(dp) = resolve_on_disk(folder, &d) {
+                                if let Some(n) = dp.file_name().and_then(|n| n.to_str()) {
+                                    pairs.push((dp.clone(), n.to_string()));
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    // No governing .txt → best-effort sibling viewer.
+    if governing_txt.is_none() {
+        if let Some(viewer_name) = resolve_viewer_for(src) {
+            let vp = folder.join(&viewer_name);
+            if vp.is_file() {
+                pairs.push((vp, viewer_name));
+            }
+        }
+    }
+    stage_pairs(pairs, dir, counters)
+}
+
+/// Zip source: hardened extraction — `enclosed_name` + caps + ratio guard +
+/// `Standard_Forms/` unwrap. Mirrors `updater::extract_zip`'s traversal guard.
+fn stage_zip(src: &Path, dir: &Path, counters: &mut Counters) -> Result<(), ImportError> {
+    let file = std::fs::File::open(src).map_err(|e| ImportError::StagingFailed {
+        reason: format!("open zip {src:?}: {e}"),
+    })?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| ImportError::StagingFailed {
+        reason: format!("read zip: {e}"),
+    })?;
+    if archive.len() > MAX_IMPORT_ENTRIES {
+        return Err(ImportError::StagingFailed {
+            reason: format!("archive has too many entries (> {MAX_IMPORT_ENTRIES})"),
+        });
+    }
+
+    // Pass 1: detect whether every entry is wrapped under Standard_Forms/.
+    let mut all_wrapped = !archive.is_empty();
+    for i in 0..archive.len() {
+        let entry = archive.by_index(i).map_err(|e| ImportError::StagingFailed {
+            reason: format!("zip entry {i}: {e}"),
+        })?;
+        let p = match entry.enclosed_name() {
+            Some(p) => p.to_path_buf(),
+            None => {
+                return Err(ImportError::StagingFailed {
+                    reason: format!("zip entry {i} path traversal: {}", entry.name()),
+                })
+            }
+        };
+        if !p.starts_with("Standard_Forms") {
+            all_wrapped = false;
+        }
+    }
+
+    // Pass 2: extract.
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| ImportError::StagingFailed {
+            reason: format!("zip entry {i}: {e}"),
+        })?;
+        let entry_path = match entry.enclosed_name() {
+            Some(p) => p.to_path_buf(),
+            None => {
+                return Err(ImportError::StagingFailed {
+                    reason: format!("zip entry {i} path traversal: {}", entry.name()),
+                })
+            }
+        };
+        if entry.is_dir() {
+            continue;
+        }
+        let stripped = if all_wrapped {
+            entry_path.strip_prefix("Standard_Forms").unwrap_or(&entry_path).to_path_buf()
+        } else {
+            entry_path.clone()
+        };
+        let rel = stripped.to_string_lossy().replace('\\', "/");
+        if rel.is_empty() {
+            continue;
+        }
+        let name_lower = rel.rsplit('/').next().unwrap_or("").to_lowercase();
+        if is_metadata_file(&name_lower) {
+            continue;
+        }
+        if !is_safe_rel_path(&rel) {
+            return Err(ImportError::StagingFailed {
+                reason: format!("unsafe zip path: {rel}"),
+            });
+        }
+        if exceeds_ratio(entry.compressed_size(), entry.size()) {
+            return Err(ImportError::StagingFailed {
+                reason: format!("entry {rel} exceeds compression-ratio guard (zip bomb?)"),
+            });
+        }
+        counters.enforce(entry.size())?;
+        let dest = dir.join(&rel);
+        // Defense in depth: the canonical parent must stay under the staging dir.
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| ImportError::StagingFailed {
+                reason: format!("mkdir {parent:?}: {e}"),
+            })?;
+        }
+        if !dest.starts_with(dir) {
+            return Err(ImportError::StagingFailed {
+                reason: format!("zip entry escapes staging: {rel}"),
+            });
+        }
+        let mut out = std::fs::File::create(&dest).map_err(|e| ImportError::StagingFailed {
+            reason: format!("create {dest:?}: {e}"),
+        })?;
+        std::io::copy(&mut entry, &mut out).map_err(|e| ImportError::StagingFailed {
+            reason: format!("extract {rel}: {e}"),
+        })?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,5 +937,117 @@ mod tests {
         assert!(!exceeds_ratio(1_000_000, 5_000_000)); // 5x, fine
         assert!(!exceeds_ratio(0, 0)); // empty entry, no div-by-zero
         assert!(!exceeds_ratio(0, 9_999)); // stored entry, ratio undefined → allow
+    }
+
+    // ---- Task 4: staging ----
+
+    fn build_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        let f = std::fs::File::create(path).unwrap();
+        let mut w = zip::ZipWriter::new(f);
+        let opts = SimpleFileOptions::default();
+        for (name, data) in entries {
+            w.start_file(*name, opts).unwrap();
+            w.write_all(data).unwrap();
+        }
+        w.finish().unwrap();
+    }
+
+    const FORM_HTML: &[u8] =
+        b"<form method=post enctype=multipart/form-data action=\"http://{FormServer}:{FormPort}\">x</form>";
+
+    #[test]
+    fn caps_reject_oversize_single_file() {
+        let mut c = Counters::new();
+        assert!(c.enforce(MAX_SINGLE_FILE_BYTES + 1).is_err());
+    }
+
+    #[test]
+    fn caps_reject_entry_count() {
+        let mut c = Counters::new();
+        c.entries = MAX_IMPORT_ENTRIES;
+        assert!(c.enforce(1).is_err());
+    }
+
+    #[test]
+    fn caps_reject_total_bytes() {
+        let mut c = Counters::new();
+        c.total = MAX_TOTAL_BYTES;
+        assert!(c.enforce(1).is_err());
+    }
+
+    #[test]
+    fn stage_folder_copies_tree_into_0700_staging() {
+        let td = tempfile::tempdir().unwrap();
+        let src = td.path().join("org");
+        write_bytes(&src.join("A/Form.txt"), b"Form: Form Initial.html\r\n");
+        write_bytes(&src.join("A/Form Initial.html"), FORM_HTML);
+        let staged = stage_sources(&[src.to_string_lossy().into_owned()]).unwrap();
+        assert!(staged.dir().join("A/Form Initial.html").exists());
+        assert!(staged.dir().join("A/Form.txt").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(staged.dir()).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "staging dir must be owner-only");
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn stage_rejects_symlink_in_folder_source() {
+        let td = tempfile::tempdir().unwrap();
+        let src = td.path().join("org");
+        std::fs::create_dir_all(&src).unwrap();
+        write_bytes(&src.join("real.html"), FORM_HTML);
+        std::os::unix::fs::symlink("/etc/passwd", src.join("evil.html")).unwrap();
+        let err = stage_sources(&[src.to_string_lossy().into_owned()]).unwrap_err();
+        assert!(matches!(err, ImportError::StagingFailed { .. }));
+    }
+
+    #[test]
+    fn stage_zip_unwraps_standard_forms_wrapper() {
+        let td = tempfile::tempdir().unwrap();
+        let zip = td.path().join("org.zip");
+        build_zip(
+            &zip,
+            &[
+                ("Standard_Forms/AAMRON/Form.txt", b"Form: Form Initial.html\r\n"),
+                ("Standard_Forms/AAMRON/Form Initial.html", FORM_HTML),
+            ],
+        );
+        let staged = stage_sources(&[zip.to_string_lossy().into_owned()]).unwrap();
+        assert!(
+            staged.dir().join("AAMRON/Form Initial.html").exists(),
+            "leading Standard_Forms/ wrapper stripped"
+        );
+        assert!(!staged.dir().join("Standard_Forms").exists());
+    }
+
+    #[test]
+    fn stage_zip_rejects_path_traversal() {
+        let td = tempfile::tempdir().unwrap();
+        let zip = td.path().join("evil.zip");
+        build_zip(&zip, &[("../escape.html", b"x")]);
+        let err = stage_sources(&[zip.to_string_lossy().into_owned()]).unwrap_err();
+        assert!(matches!(err, ImportError::StagingFailed { .. }));
+    }
+
+    #[test]
+    fn stage_single_file_pulls_governing_txt_and_viewer() {
+        let td = tempfile::tempdir().unwrap();
+        let src = td.path().join("loose");
+        write_bytes(
+            &src.join("Net Check-in.txt"),
+            b"Form: Net Check-in Initial.html, Net Check-in Viewer.html\r\n",
+        );
+        write_bytes(&src.join("Net Check-in Initial.html"), FORM_HTML);
+        write_bytes(&src.join("Net Check-in Viewer.html"), b"<html>viewer</html>");
+        let html = src.join("Net Check-in Initial.html");
+        let staged = stage_sources(&[html.to_string_lossy().into_owned()]).unwrap();
+        assert!(staged.dir().join("Net Check-in Initial.html").exists());
+        assert!(staged.dir().join("Net Check-in.txt").exists(), "governing .txt pulled");
+        assert!(staged.dir().join("Net Check-in Viewer.html").exists(), "display companion pulled");
     }
 }
