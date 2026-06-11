@@ -15,8 +15,11 @@
 //! (never held across `await`) + a registry of per-key `tokio::sync::Mutex` for single-flight.
 
 use crate::catalog::stations::{ListingMode, StationListing};
+use crate::catalog::stations_disk;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -34,7 +37,7 @@ impl Clock for SystemClock {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CacheKey {
     pub mode: ListingMode,
     pub service_codes: String,
@@ -56,6 +59,9 @@ pub struct StationsCache {
     attempts: Mutex<HashMap<CacheKey, u64>>,
     /// Per-key single-flight locks (registry locked only briefly to clone an Arc).
     locks: Mutex<HashMap<CacheKey, Arc<tokio::sync::Mutex<()>>>>,
+    /// Optional path for disk persistence. `None` → pure in-memory (default); `Some` →
+    /// snapshot written after every successful fetch so cold restarts can serve stale data.
+    persist_path: Option<PathBuf>,
 }
 
 impl StationsCache {
@@ -67,6 +73,56 @@ impl StationsCache {
             data: Mutex::new(HashMap::new()),
             attempts: Mutex::new(HashMap::new()),
             locks: Mutex::new(HashMap::new()),
+            persist_path: None,
+        }
+    }
+
+    /// Build a cache backed by disk persistence at `path`.
+    ///
+    /// Seeds both `data` and `attempts` from the existing file (if any) so that a cold
+    /// restart can immediately serve the last-known-good entries via the stale-on-error
+    /// path. If the file is missing or unparseable, both maps start empty — a load error
+    /// is never fatal (mirrors `stations_disk::load`'s quarantine behaviour).
+    ///
+    /// After every successful network fetch the cache atomically snapshots both maps to
+    /// `path` via [`stations_disk::save`]. A write error is logged but never propagated —
+    /// a cache that cannot write to disk continues serving in-memory results correctly.
+    pub fn new_persistent(
+        ttl_ms: u64,
+        min_refetch_ms: u64,
+        clock: Arc<dyn Clock>,
+        path: PathBuf,
+    ) -> Self {
+        let (loaded_data, loaded_attempts) = stations_disk::load(&path);
+        Self {
+            ttl_ms,
+            min_refetch_ms,
+            clock,
+            data: Mutex::new(loaded_data),
+            attempts: Mutex::new(loaded_attempts),
+            locks: Mutex::new(HashMap::new()),
+            persist_path: Some(path),
+        }
+    }
+
+    /// Snapshot both maps to disk if a `persist_path` is configured.
+    ///
+    /// IMPORTANT — no `std::sync::Mutex` guard is held across this call:
+    /// the snapshot is taken under a brief lock scope, the guards are dropped,
+    /// and then the synchronous `stations_disk::save` (pure `std::fs`) runs
+    /// with no locks held. This is safe to call from any point in `get_or_fetch`
+    /// after the relevant guards have been released.
+    fn persist(&self) {
+        let path = match &self.persist_path {
+            Some(p) => p,
+            None => return,
+        };
+        // Take snapshots under their respective locks, then release immediately.
+        let data_snapshot = self.data.lock().unwrap().clone();
+        let attempts_snapshot = self.attempts.lock().unwrap().clone();
+        // Locks are dropped here — no Mutex guard crosses the save call.
+        if let Err(e) = stations_disk::save(path, &data_snapshot, &attempts_snapshot) {
+            eprintln!("stations_cache: failed to persist to {}: {e}", path.display());
         }
     }
 
@@ -121,7 +177,11 @@ impl StationsCache {
         match fetch.await {
             Ok(mut listing) => {
                 listing.fetched_at_ms = Some(self.clock.now_millis());
+                // Insert into the data map; the Mutex guard is dropped at the end of this
+                // block — persist() must not be called while holding it.
                 self.data.lock().unwrap().insert(key, listing.clone());
+                // Guard is released here. Now safe to snapshot + save with no lock held.
+                self.persist();
                 Ok(listing)
             }
             Err(e) => {
@@ -271,6 +331,150 @@ mod tests {
             .await;
         assert_eq!(res.unwrap_err(), "network down");
     }
+
+    // ---- disk-persistence tests (Task 2 — RED phase) --------------------------------
+
+    /// `cold_load_serves_last_known_good`: a NEW `new_persistent` cache loaded from a
+    /// pre-existing file with one good entry must return that entry via the stale-on-error
+    /// path when the fetch closure returns `Err`. This is the core U2 value: offline cold
+    /// start serves disk data.
+    #[tokio::test]
+    async fn cold_load_serves_last_known_good() {
+        use crate::catalog::stations_disk;
+        use std::collections::HashMap;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("station_cache.json");
+
+        // Seed the disk file with one good entry stamped at T=1000.
+        let seed_key = key(ListingMode::VaraHf);
+        let mut seed_listing = listing(ListingMode::VaraHf, "seed-raw");
+        seed_listing.parsed_ok = true;
+        seed_listing.fetched_at_ms = Some(1_000);
+
+        let mut seed_data = HashMap::new();
+        seed_data.insert(seed_key.clone(), seed_listing.clone());
+        let seed_attempts: HashMap<CacheKey, u64> = HashMap::new();
+        stations_disk::save(&path, &seed_data, &seed_attempts).expect("seed save must succeed");
+
+        // Build a NEW cache from the same path; clock is far ahead (TTL=60s, clock=200s)
+        // so the entry is stale. The fetch returns Err → stale-on-error must serve the disk entry.
+        let clock = Arc::new(MockClock::new(200_000));
+        let cache = StationsCache::new_persistent(60_000, 0, clock, path.clone());
+
+        let result = cache
+            .get_or_fetch(
+                seed_key.clone(),
+                async { Err::<StationListing, String>("network is down".into()) },
+            )
+            .await
+            .expect("stale-on-error must succeed");
+
+        assert_eq!(result.raw, "seed-raw", "must serve the disk entry's raw content");
+        assert_eq!(
+            result.fetched_at_ms,
+            Some(1_000),
+            "must preserve the original fetched_at_ms (the 'as of' stamp)"
+        );
+    }
+
+    /// `good_fetch_persists_to_disk`: after a successful fetch on a `new_persistent` cache,
+    /// the file must exist and a fresh `stations_disk::load` of it must return the entry.
+    #[tokio::test]
+    async fn good_fetch_persists_to_disk() {
+        use crate::catalog::stations_disk;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("station_cache.json");
+
+        let clock = Arc::new(MockClock::new(0));
+        let cache = StationsCache::new_persistent(60_000, 0, clock, path.clone());
+
+        cache
+            .get_or_fetch(
+                key(ListingMode::ArdopHf),
+                async {
+                    let mut l = listing(ListingMode::ArdopHf, "persisted-raw");
+                    l.parsed_ok = true;
+                    Ok::<_, String>(l)
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(path.exists(), "disk file must exist after a successful fetch");
+
+        let (loaded_data, _) = stations_disk::load(&path);
+        let loaded = loaded_data.get(&key(ListingMode::ArdopHf)).expect("entry must be in file");
+        assert_eq!(loaded.raw, "persisted-raw");
+    }
+
+    /// `failed_first_fetch_does_not_persist`: if the first fetch fails and there is no prior
+    /// entry, nothing must be written to disk (or the file has no entries).
+    #[tokio::test]
+    async fn failed_first_fetch_does_not_persist() {
+        use crate::catalog::stations_disk;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("station_cache.json");
+
+        let clock = Arc::new(MockClock::new(0));
+        let cache = StationsCache::new_persistent(60_000, 0, clock, path.clone());
+
+        let _ = cache
+            .get_or_fetch(
+                key(ListingMode::VaraHf),
+                async { Err::<StationListing, String>("first-time failure".into()) },
+            )
+            .await;
+
+        // Either the file was never written, or if written it contains no entries.
+        if path.exists() {
+            let (data, _) = stations_disk::load(&path);
+            assert!(data.is_empty(), "a first-fetch error must not persist any entries to disk");
+        }
+        // else: file not written at all — also correct.
+    }
+
+    /// `in_memory_new_does_no_disk_io`: `new(...)` (no path); a good fetch completes
+    /// and persist is a no-op (no file created anywhere in the temp dir).
+    #[tokio::test]
+    async fn in_memory_new_does_no_disk_io() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let clock = Arc::new(MockClock::new(0));
+        // Plain new() — no persist_path.
+        let cache = StationsCache::new(60_000, 0, clock);
+
+        cache
+            .get_or_fetch(
+                key(ListingMode::VaraHf),
+                async {
+                    let mut l = listing(ListingMode::VaraHf, "in-memory-only");
+                    l.parsed_ok = true;
+                    Ok::<_, String>(l)
+                },
+            )
+            .await
+            .unwrap();
+
+        // Assert no file was written anywhere in the temp dir (the dir is otherwise empty).
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(
+            entries.is_empty(),
+            "in-memory-only cache must not write any file; found: {:?}",
+            entries.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
+    }
+
+    // ---- pre-existing tests (unchanged) ------------------------------------------
 
     #[tokio::test]
     async fn min_refetch_floor_throttles_retries_during_outage() {
