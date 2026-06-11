@@ -161,6 +161,189 @@
   outline-offset: 2px;
 }
 
+/* ---- row actions (Connect + overflow menu) — oi1g ---- */
+.favorite-row-acts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.favorite-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.favorite-menu-btn {
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.favorite-menu-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+  border-color: var(--border-soft);
+}
+
+.favorite-menu-btn:focus-visible {
+  outline: 2px solid var(--tux-focus-ring, var(--modem-accent));
+  outline-offset: 2px;
+}
+
+.favorite-menu-pop {
+  position: absolute;
+  right: 0;
+  top: 32px;
+  z-index: 10;
+  min-width: 130px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.favorite-menu-pop button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.favorite-menu-pop button:hover {
+  background: var(--surface);
+}
+
+.favorite-menu-del {
+  color: var(--error, #f87171) !important;
+}
+
+.favorite-menu-del:hover {
+  background: rgba(248, 113, 113, 0.12) !important;
+}
+
+/* ---- inline edit form (oi1g) — spans all row columns ---- */
+.favorite-edit {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.favorite-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.favorite-edit-row label {
+  flex: 0 0 auto;
+  min-width: 34px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.favorite-edit-row input {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: var(--mono, monospace);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+.favorite-edit-row input:focus-visible {
+  outline: none;
+  border-color: var(--modem-accent);
+}
+
+.favorite-edit-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.favorite-edit-save {
+  min-height: 30px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--modem-accent-fg, #0d1b14);
+  background: var(--modem-accent);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.favorite-edit-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.favorite-edit-cancel {
+  min-height: 30px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* ---- filter box (oi1g) — shown only when the list is long ---- */
+.favorites-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.favorites-filter input {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+.favorites-filter-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
 /* ---- connect ---- */
 .favorite-connect {
   flex: 0 0 auto;
