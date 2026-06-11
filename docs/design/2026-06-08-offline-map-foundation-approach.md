@@ -1,5 +1,14 @@
 # Offline-first map foundation — implementation approach
 
+> **CRS DECISION SUPERSEDED (2026-06-11, tuxlink-7h2m).** §1's "EPSG:4326 not
+> EPSG:3857 / reject Mercator" choice was a wrong over-rotation of the
+> never-public-OSM posture: that posture means no public-tile-server *abuse*, not
+> "refuse Web Mercator / no network ingestion." The map is now `L.CRS.EPSG3857`
+> and ingests standard Web Mercator XYZ tiles from a self-hosted/LAN source; the
+> LAN-only/SSRF host gatekeeper is the real control. The offline-first posture
+> itself stands (now a bundled Mercator base raster). See
+> [`docs/superpowers/specs/2026-06-11-map-mercator-lan-tiles-design.md`](../superpowers/specs/2026-06-11-map-mercator-lan-tiles-design.md).
+
 > Status: **proposed** (agent `moss-basalt-hawk`, 2026-06-08). Resolves the
 > "Open items for the implementation plan" deferred by the **locked** design
 > [`2026-06-07-map-pin-grid-design.md`](2026-06-07-map-pin-grid-design.md).

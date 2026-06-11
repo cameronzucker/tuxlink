@@ -1,5 +1,13 @@
 # tuxlink-dyop — LAN tile-server ingest Implementation Plan
 
+> **CRS DECISION SUPERSEDED (2026-06-11, tuxlink-7h2m).** The Architecture line's
+> "`BaseMap` stays `EPSG:4326`; the source must serve geodetic tiles and is
+> rejected on CRS mismatch" was wrong — it mis-encoded the never-public-OSM
+> posture as a coordinate-system restriction. The map is now `L.CRS.EPSG3857`
+> and ingests standard Web Mercator XYZ tiles; the CRS gate is deleted; the
+> LAN-only/SSRF host gatekeeper (still correct) is the only control. See
+> [`docs/superpowers/specs/2026-06-11-map-mercator-lan-tiles-design.md`](../superpowers/specs/2026-06-11-map-mercator-lan-tiles-design.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add an opt-in LAN HTTP tile source that gives the map picker higher-zoom precision, fetched through a Rust gatekeeper so the webview never touches the network and CSP never lists a network host.
