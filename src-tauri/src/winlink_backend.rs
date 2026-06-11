@@ -1436,9 +1436,15 @@ impl WinlinkBackend for NativeBackend {
         let aborting = self.aborting.clone();
         let position = self.position.clone();
         let mailbox_change = self.mailbox_change.clone();
+        // tuxlink-0063 (Phase 3): resolve the active identity BEFORE the blocking
+        // task and thread it in. `?` surfaces `NoActiveIdentity` to the operator
+        // if no identity has been authenticated — the dial cannot proceed without
+        // a Part 97 station principal to ID as on air.
+        let session_id = self.active_identity()?;
         let outcome = tokio::task::spawn_blocking(move || {
             native_connect(
                 &config,
+                &session_id,
                 &mailbox,
                 mode,
                 &*progress,
@@ -2281,6 +2287,7 @@ type InboundDecider =
 #[allow(clippy::too_many_arguments)]
 fn native_connect(
     config: &Config,
+    session_id: &crate::identity::SessionIdentity,
     mailbox: &Mailbox,
     mode: CmsTransport,
     progress: &dyn Fn(&str),
@@ -2291,13 +2298,12 @@ fn native_connect(
     position: Option<&crate::position::PositionArbiter>,
     selection: Option<CmsSelectionContext>,
 ) -> Result<(), BackendError> {
-    let callsign = config
-        .identity
-        .active_full
-        .clone()
-        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
-        .trim()
-        .to_uppercase();
+    // tuxlink-0063 (Phase 3): the on-air station ID is the session's full
+    // callsign — the Part 97 principal — not `config.identity.active_full`.
+    // Threading `&SessionIdentity` makes on-air impersonation a compile error:
+    // the dial path can no longer read a callsign out of config. The password
+    // lookup keyed on this callsign follows the session too, which is correct.
+    let callsign = session_id.mycall().as_str().to_uppercase();
     // tuxlink-686 / Codex P1-A: resolve the on-air locator via the single shared
     // helper that honors BOTH precision (tuxlink-882) AND the gps_state privacy
     // control. GPS grids go on air only when gps_state == BroadcastAtPrecision;
@@ -4138,8 +4144,17 @@ mod native_read_state_tests {
             attempt_id,
             registry: registry.clone(),
         };
+        // tuxlink-0063 (Phase 3): native_connect now takes the session. The on-air
+        // callsign comes from this session (N7CPZ), matching the prior config-derived
+        // callsign so the exchange behavior is unchanged.
+        let session_id = crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        );
         let result = native_connect(
             &cfg,
+            &session_id,
             &client_mailbox,
             CmsTransport::Telnet,
             &|_| {},
@@ -4178,6 +4193,94 @@ mod native_read_state_tests {
         // -------------------------------------------------------------------
         let inbox = client_mailbox.list(MailboxFolder::Inbox).expect("list inbox");
         assert_eq!(inbox.len(), 1, "the selected message must be in the Inbox; got {inbox:?}");
+    }
+
+    // =========================================================================
+    // Task 3.1 (tuxlink-0063): native_connect derives the on-air station ID
+    // (the telnet-login callsign → ExchangeConfig.mycall) from the SessionIdentity
+    // it is handed, NOT from `config.identity.active_full`. The config carries
+    // W7AUX; the active session authenticates N7CPZ; the callsign the client sends
+    // at the `Callsign :` prompt MUST be N7CPZ.
+    //
+    // The fake server captures the first non-prompt line the client writes after
+    // the `Callsign :` prompt (the login callsign) and then closes the socket. The
+    // client's exchange therefore errors after login — irrelevant here: the only
+    // load-bearing assertion is which callsign went on the wire. `#[serial]`
+    // because it sets the process-global TUXLINK_CMS_PORT to point native_connect
+    // at the ephemeral loopback listener.
+    // =========================================================================
+    #[test]
+    #[serial_test::serial]
+    fn native_connect_mycall_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::Mutex as StdMutex;
+
+        // The fake server records the login callsign the client sends.
+        let captured: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let listen_port = listener.local_addr().expect("listener addr").port();
+
+        let server = {
+            let captured = captured.clone();
+            std::thread::spawn(move || {
+                let (sock, _) = listener.accept().expect("accept");
+                let mut writer = sock.try_clone().expect("clone for write");
+                // Prompt for the callsign, read the client's reply, capture it, close.
+                writer.write_all(b"Callsign :\r").expect("write callsign prompt");
+                let mut reader = BufReader::new(sock);
+                let mut line = Vec::new();
+                reader.read_until(b'\r', &mut line).expect("read callsign reply");
+                let call = String::from_utf8_lossy(&line).trim_end_matches('\r').to_string();
+                *captured.lock().unwrap() = Some(call);
+                // Drop the socket: the client's login/exchange then errors out.
+            })
+        };
+
+        // Config callsign is W7AUX; the active session authenticates N7CPZ.
+        let client_dir = tempdir().unwrap();
+        let client_mailbox = Mailbox::new(client_dir.path());
+        let mut cfg = config_with_call("W7AUX");
+        cfg.connect.host = "127.0.0.1".to_string();
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+
+        // RAII guard clears TUXLINK_CMS_PORT on drop, even on panic.
+        struct CmsPortGuard;
+        impl Drop for CmsPortGuard {
+            fn drop(&mut self) {
+                std::env::remove_var("TUXLINK_CMS_PORT");
+            }
+        }
+        std::env::set_var("TUXLINK_CMS_PORT", listen_port.to_string());
+        let _cms_port_guard = CmsPortGuard;
+
+        let abort_handle: Mutex<Option<TcpStream>> = Mutex::new(None);
+        let aborting = Arc::new(AtomicBool::new(false));
+        // The connect is expected to error (server closes after login); we only
+        // care about which callsign the client put on the wire.
+        let _ = native_connect(
+            &cfg,
+            &session_id,
+            &client_mailbox,
+            CmsTransport::Telnet,
+            &|_| {},
+            &|_| {},
+            &|| {},
+            &abort_handle,
+            aborting,
+            None,
+            None,
+        );
+
+        server.join().expect("server thread panicked");
+        let observed = captured.lock().unwrap().clone();
+        assert_eq!(
+            observed.as_deref(),
+            Some("N7CPZ"),
+            "the on-air login callsign must be the session mycall (N7CPZ), not the config callsign (W7AUX)"
+        );
     }
 
     // =========================================================================
