@@ -152,9 +152,12 @@ One large single pane (FZ-M1 caveat below). Layout from
 artifact; this document is authoritative).
 
 **Conditions + band bar (top).** A conditions readout (UTC + local time, SFI/SSN,
-K-index if available, SSN provenance). A **band selector** ("Reachability on:
-80/40/30/20 m") that drives the map colouring, plus **mode** toggles
-(VARA/ARDOP/Packet) and a radius/search filter.
+K-index if available, SSN provenance). A **band selector** ("Reachability on:"
+the full amateur HF allocation — 160/80/60/40/30/20/17/15/12/10 m; gateways
+operate across all of it, and voacapl runs per-frequency so nothing limits the
+set) that drives the map colouring, plus **mode** toggles (VARA/ARDOP/Packet) and
+a radius/search filter. (The original 80/40/30/20 m subset was ALE-channel-shaped
+and has been corrected — tuxlink-37vi.)
 
 **Map (left, ~55%).** One **pin per station location** (callsign + SSIDs collapse
 to one pin). For HF on the selected band/time, pins are **weighted by predicted
