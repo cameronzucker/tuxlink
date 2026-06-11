@@ -479,7 +479,14 @@ const DEV_FIXTURE_STATUS: StatusBarData = {
   state: { label: 'Idle', tone: 'idle' },
   connection: 'Idle · CMS-SSL',
   position_source: 'Gps',
-  gpsReady: false,
+  // A resolved GPS fix (matches DEV_POSITION = 'GPS · 35.05° -90.04°'). With
+  // source = Gps, a FALSE value here trips GridEdit's `source==='Gps' && !gpsReady`
+  // no-fix branch, which renders the widest fallback (grid + GPS/MANUAL toggle +
+  // "GPS no fix · broadcasting fallback" + "Set manually"). In the fixed-width
+  // README hero capture that overflowed the ribbon — jumbled text + a Connect
+  // button clipped off the right edge (tuxlink-8h16). A live fix is the clean,
+  // self-consistent hero state.
+  gpsReady: true,
   status: null,
 };
 
