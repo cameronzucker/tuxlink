@@ -2005,6 +2005,38 @@ pub async fn forms_import_commit(
     .await
 }
 
+/// Reveal the custom-forms folder in the OS file manager (the power-user
+/// escape hatch). Resolves the dir strictly via the platform data dir (refuses
+/// if unavailable — never a CWD-relative fallback; §11.4), creates it if
+/// absent, then launches `xdg-open` via the shell plugin (backend-initiated,
+/// so it bypasses the URL-scoped frontend `shell:allow-open`). Returns a typed
+/// message when no file-manager handler is registered (labwc/Wayland).
+#[tauri::command]
+pub async fn open_forms_folder(app: AppHandle) -> Result<(), String> {
+    let dir = app
+        .path()
+        .data_dir()
+        .map_err(|_| "platform data dir unavailable".to_string())?
+        .join("tuxlink/forms/custom");
+    crate::forms::import::ensure_custom_dir(&dir).map_err(|e| format!("create folder: {e}"))?;
+    use tauri_plugin_shell::ShellExt;
+    app.shell()
+        .command("xdg-open")
+        .arg(dir.to_string_lossy().to_string())
+        .spawn()
+        .map_err(|e| format!("No file manager is registered to open folders ({e})."))?;
+    Ok(())
+}
+
+/// Remove custom forms (+ companions) from the custom-forms dir (tuxlink-z0le
+/// §11.3). Confirm-gated in the UI. Only ever touches custom_root; a bundled id
+/// is a no-op.
+#[tauri::command]
+pub async fn forms_custom_delete(ids: Vec<String>, app: AppHandle) -> Result<Vec<String>, String> {
+    let custom_root = crate::forms::wle_templates::custom_root_for_app(&app);
+    crate::forms::import::delete_custom_forms(&ids, &custom_root)
+}
+
 /// Open a new webview form session: spawn the loopback http_server bound
 /// to a fresh ephemeral port, register it in `FormSessionRegistry` under a
 /// freshly-minted token, and start a forwarder task that drains parsed

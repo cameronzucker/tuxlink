@@ -1190,6 +1190,122 @@ pub(crate) fn commit_core(
     })
 }
 
+// ============================================================================
+// Folder reveal + boot-time staging sweep (§11.4).
+// ============================================================================
+
+/// Default TTL for orphaned staging dirs left by a crashed run.
+const STAGING_TTL_SECS: u64 = 3600;
+
+/// Create the custom-forms dir if absent (the folder-reveal affordance opens it).
+pub fn ensure_custom_dir(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(path)
+}
+
+/// Remove `tuxlink-formimport-*` staging dirs under `root` older than
+/// `ttl_secs`. Best-effort; ignores errors.
+pub(crate) fn sweep_stale_staging_in(root: &Path, ttl_secs: u64) {
+    let entries = match std::fs::read_dir(root) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for e in entries.filter_map(|e| e.ok()) {
+        let name = e.file_name();
+        if !name.to_string_lossy().starts_with("tuxlink-formimport-") {
+            continue;
+        }
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let stale = std::fs::metadata(&p)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.elapsed().ok())
+            .map(|d| d.as_secs() >= ttl_secs)
+            .unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_dir_all(&p);
+        }
+    }
+}
+
+/// Boot-time sweep of stale staging dirs in the OS temp root. Call from `setup`.
+pub fn sweep_stale_staging() {
+    sweep_stale_staging_in(&std::env::temp_dir(), STAGING_TTL_SECS);
+}
+
+// ============================================================================
+// Uninstall (§11.3) — remove a custom form + its companions. Only ever touches
+// `custom_root`; a bundled id is a no-op (not found there).
+// ============================================================================
+
+fn find_authoring_by_stem(root: &Path, stem: &str) -> Option<PathBuf> {
+    walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.path().to_path_buf())
+        .find(|p| {
+            is_html_ext(&ext_lower(p))
+                && p.file_stem().and_then(|s| s.to_str()).map(|s| s == stem).unwrap_or(false)
+        })
+}
+
+/// Remove the named custom forms (+ their resolved viewer + governing `.txt`)
+/// from `custom_root`. Invalid ids (path-escaping) abort the whole operation
+/// before any deletion. Returns the ids actually removed.
+pub fn delete_custom_forms(ids: &[String], custom_root: &Path) -> Result<Vec<String>, String> {
+    use crate::forms::wle_templates::resolve_viewer_for;
+    for id in ids {
+        if !crate::forms::validation::is_valid_form_id(id) {
+            return Err(format!("invalid form id: {id}"));
+        }
+    }
+    let mut removed = Vec::new();
+    for id in ids {
+        let html = match find_authoring_by_stem(custom_root, id) {
+            Some(p) => p,
+            None => continue, // bundled / unknown id → no-op
+        };
+        let folder = html.parent().unwrap_or(custom_root).to_path_buf();
+        let html_name = html.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        let mut targets: Vec<PathBuf> = vec![html.clone()];
+        if let Some(v) = resolve_viewer_for(&html) {
+            let vp = folder.join(v);
+            if vp.is_file() {
+                targets.push(vp);
+            }
+        }
+        if let Ok(rd) = std::fs::read_dir(&folder) {
+            for e in rd.filter_map(|e| e.ok()) {
+                let p = e.path();
+                if ext_lower(&p) != "txt" {
+                    continue;
+                }
+                if let Ok(txt) = read_text_lossy(&p) {
+                    if let Some((input, _)) = parse_form_directive(&txt) {
+                        if input.trim().eq_ignore_ascii_case(&html_name) {
+                            targets.push(p);
+                        }
+                    }
+                }
+            }
+        }
+        let mut any = false;
+        for t in targets {
+            // remove_file on a symlink removes the link, not its target — safe.
+            if std::fs::remove_file(&t).is_ok() {
+                any = true;
+            }
+        }
+        if any {
+            removed.push(id.clone());
+        }
+    }
+    Ok(removed)
+}
+
 /// Async commit: consume the token single-shot, hold the shared forms-data-dir
 /// lock across the (brief) promote, delegate to [`commit_core`]. The staged dir
 /// is `rm -rf`'d when `staged` drops at the end.
@@ -1823,5 +1939,67 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ImportError::TokenExpired));
+    }
+
+    // ---- Task 8: folder reveal + boot sweep ----
+
+    #[test]
+    fn ensure_custom_dir_creates_when_absent() {
+        let td = tempfile::tempdir().unwrap();
+        let target = td.path().join("tuxlink/forms/custom");
+        assert!(!target.exists());
+        ensure_custom_dir(&target).unwrap();
+        assert!(target.is_dir());
+    }
+
+    #[test]
+    fn sweep_removes_matching_staging_dirs_only() {
+        let td = tempfile::tempdir().unwrap();
+        let stale = td.path().join("tuxlink-formimport-abc123");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("f.html"), b"x").unwrap();
+        let keep = td.path().join("some-other-dir");
+        std::fs::create_dir_all(&keep).unwrap();
+        sweep_stale_staging_in(td.path(), 0); // ttl 0 → any age qualifies
+        assert!(!stale.exists(), "stale staging dir reaped");
+        assert!(keep.exists(), "unrelated dir untouched");
+    }
+
+    // ---- Task 9: uninstall ----
+
+    #[test]
+    fn delete_removes_custom_form_and_companions() {
+        let td = tempfile::tempdir().unwrap();
+        let custom = td.path().join("custom");
+        write_bytes(
+            &custom.join("Foo.txt"),
+            b"Form: Foo Initial.html, Foo Viewer.html\r\n",
+        );
+        write_bytes(&custom.join("Foo Initial.html"), FORM_HTML);
+        write_bytes(&custom.join("Foo Viewer.html"), b"<html>v</html>");
+        let removed = delete_custom_forms(&["Foo Initial".to_string()], &custom).unwrap();
+        assert_eq!(removed, vec!["Foo Initial".to_string()]);
+        assert!(!custom.join("Foo Initial.html").exists());
+        assert!(!custom.join("Foo Viewer.html").exists(), "viewer companion removed");
+        assert!(!custom.join("Foo.txt").exists(), "governing .txt removed");
+    }
+
+    #[test]
+    fn delete_unknown_id_is_noop() {
+        let td = tempfile::tempdir().unwrap();
+        let custom = td.path().join("custom");
+        std::fs::create_dir_all(&custom).unwrap();
+        let removed = delete_custom_forms(&["Not Here".to_string()], &custom).unwrap();
+        assert!(removed.is_empty(), "unknown/bundled id removes nothing");
+    }
+
+    #[test]
+    fn delete_rejects_path_escaping_id() {
+        let td = tempfile::tempdir().unwrap();
+        let custom = td.path().join("custom");
+        write_bytes(&custom.join("Foo Initial.html"), FORM_HTML);
+        let err = delete_custom_forms(&["../Foo Initial".to_string()], &custom);
+        assert!(err.is_err(), "path-escaping id rejected");
+        assert!(custom.join("Foo Initial.html").exists(), "nothing deleted on rejection");
     }
 }
