@@ -14,8 +14,10 @@
 
 pub mod address;
 pub mod keyring_keys;
+pub mod store;
 
 pub use address::{Address, Callsign};
+pub use store::{FullIdentity, IdentityStore, TacticalCmsState, TacticalIdentity};
 
 /// Errors surfaced by the identity core. Variant names are the canonical
 /// interface-contract names (master plan §"Canonical interface contract").
