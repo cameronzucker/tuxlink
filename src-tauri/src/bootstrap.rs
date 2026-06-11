@@ -176,6 +176,55 @@ pub fn migrate_identity_if_v1(
     Ok(Some(report))
 }
 
+/// Heal installs damaged by the 0.52.1 v1->v2 migration (tuxlink-ej7a).
+///
+/// That migration renamed the flat `<mbox>/inbox` under a per-FULL subdir
+/// (`<mbox>/<CALLSIGN>/inbox`) that the read path does not read yet — the
+/// per-FULL inbox read is Phase 4 (tuxlink-2ns7), unbuilt — so every inbox
+/// message vanished from the UI after upgrade (displaced, never destroyed).
+///
+/// For each FULL identity in the store, if `<mbox>/<CALLSIGN>/inbox` exists and
+/// the flat `<mbox>/inbox` does NOT, move it back so the current flat read path
+/// (`Mailbox::folder_dir`) sees it again, then drop the now-empty per-FULL root.
+///
+/// Idempotent (a no-op once the flat inbox is present) and non-clobbering (never
+/// overwrites an existing flat inbox). Runs every launch independent of the v2
+/// schema sentinel, because a damaged install's config is already at v2 and the
+/// one-shot migration will not run again. Returns `true` iff anything moved, so
+/// the caller can rebuild the search index over the restored inbox.
+pub fn heal_misplaced_inbox(
+    mbox_dir: &std::path::Path,
+    store_path: &std::path::Path,
+) -> Result<bool, String> {
+    let store = crate::identity::IdentityStore::load(store_path)
+        .map_err(|e| format!("load identity store: {e}"))?;
+    let flat_inbox = mbox_dir.join("inbox");
+    let mut healed = false;
+    for full in store.full() {
+        // Guard each iteration: once we restore the single flat inbox, a second
+        // FULL must not clobber it (only one flat inbox can exist).
+        if flat_inbox.exists() {
+            break;
+        }
+        let call = full.callsign.as_str();
+        let per_full_root = crate::native_mailbox::per_full_root(mbox_dir, call);
+        let per_full_inbox = per_full_root.join("inbox");
+        if !per_full_inbox.exists() {
+            continue;
+        }
+        std::fs::rename(&per_full_inbox, &flat_inbox)
+            .map_err(|e| format!("restore inbox from {}: {e}", per_full_inbox.display()))?;
+        healed = true;
+        // Remove the per-FULL root if the inbox was the only thing under it.
+        if let Ok(mut entries) = std::fs::read_dir(&per_full_root) {
+            if entries.next().is_none() {
+                let _ = std::fs::remove_dir(&per_full_root);
+            }
+        }
+    }
+    Ok(healed)
+}
+
 // ============================================================================
 // .setup() bootstrap worker
 // ============================================================================
@@ -232,6 +281,44 @@ pub fn run(app_handle: AppHandle) {
                         target: "tuxlink::bootstrap",
                         error = %e,
                         "identity migration skipped (non-fatal)",
+                    );
+                }
+            }
+
+            // P0 heal (tuxlink-ej7a): restore an inbox that the 0.52.1 migration
+            // moved under a per-FULL subdir the read path cannot see. Runs
+            // unconditionally — a damaged install's config is already v2, so the
+            // migration above is a no-op for it. Non-fatal: a failure here just
+            // leaves the install in its current (damaged) state and logs.
+            match heal_misplaced_inbox(&mbox_dir, &store_path) {
+                Ok(true) => {
+                    tracing::info!(
+                        target: "tuxlink::bootstrap",
+                        "restored a misplaced inbox to the flat read path (tuxlink-ej7a)",
+                    );
+                    emit_backend_line(
+                        &app_handle,
+                        LogLevel::Info,
+                        "Restored your inbox after a configuration upgrade.".to_string(),
+                    );
+                    if let Some(search) =
+                        app_handle.try_state::<crate::search::commands::SearchService>()
+                    {
+                        if let Err(e) = search.rebuild_index(mbox_dir.clone()) {
+                            tracing::warn!(
+                                target: "tuxlink::bootstrap",
+                                error = %e,
+                                "post-heal index rebuild failed",
+                            );
+                        }
+                    }
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        target: "tuxlink::bootstrap",
+                        error = %e,
+                        "inbox heal skipped (non-fatal)",
                     );
                 }
             }
@@ -634,10 +721,14 @@ mod tests {
         assert_eq!(cfg.schema_version, crate::config::CONFIG_SCHEMA_VERSION);
         assert_eq!(cfg.identity.active_full.as_deref(), Some("W1ABC"));
 
-        // Inbox relocated under the per-FULL root.
-        let per_full = Mailbox::new(mbox_dir.join("W1ABC"));
-        assert_eq!(per_full.list(MailboxFolder::Inbox).unwrap().len(), 1);
-        let _ = inbox_id;
+        // tuxlink-ej7a: the inbox stays FLAT and visible to the production read
+        // path; the migration must NOT relocate it under a per-FULL root.
+        let production_mbox = Mailbox::new(&mbox_dir);
+        let metas = production_mbox.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(metas.len(), 1, "inbox still visible to the flat production read path");
+        assert_eq!(metas[0].id, inbox_id);
+        assert!(!mbox_dir.join("W1ABC").exists(), "no per-FULL inbox dir created by v1->v2");
+        assert!(!report.inbox_moved);
 
         // Idempotent: a second run no-ops (store already has a FULL).
         let again =
@@ -646,6 +737,98 @@ mod tests {
             again.is_none() || again.unwrap().was_noop,
             "second startup migration is a no-op"
         );
+    }
+
+    // tuxlink-ej7a: the startup heal restores an inbox the 0.52.1 migration moved
+    // under a per-FULL subdir back to the flat path the read side reads.
+    #[test]
+    fn heal_restores_misplaced_per_full_inbox_to_flat() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink_backend::MailboxFolder;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mbox_dir = dir.path().join("native-mbox");
+        let store_path = dir.path().join("identities.json");
+
+        // Simulate a 0.52.1-damaged install: a store with one FULL (N7CPZ) and an
+        // inbox that lives ONLY under the per-FULL root (the flat inbox is gone).
+        let mut store = crate::identity::IdentityStore::load(&store_path).unwrap();
+        store
+            .add_full(crate::identity::FullIdentity {
+                callsign: crate::identity::Callsign::parse("N7CPZ").unwrap(),
+                label: None,
+                has_cms_account: true,
+                cms_registered: false,
+            })
+            .unwrap();
+        store.save().unwrap();
+
+        let per_full = Mailbox::new(crate::native_mailbox::per_full_root(&mbox_dir, "N7CPZ"));
+        let id = per_full
+            .store(
+                MailboxFolder::Inbox,
+                &crate::winlink::compose::compose_message("W1AW", &["N7CPZ"], &[], "Hi", "b", 1_716_200_000)
+                    .to_bytes(),
+            )
+            .unwrap();
+        // Precondition: the production (flat) read path sees NOTHING — the bug.
+        assert!(
+            Mailbox::new(&mbox_dir).list(MailboxFolder::Inbox).unwrap().is_empty(),
+            "precondition: the displaced inbox is invisible to the flat read path"
+        );
+
+        // Heal moves it back.
+        let healed = super::heal_misplaced_inbox(&mbox_dir, &store_path).unwrap();
+        assert!(healed, "heal reports it moved an inbox");
+
+        let metas = Mailbox::new(&mbox_dir).list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(metas.len(), 1, "inbox is restored to the flat read path");
+        assert_eq!(metas[0].id, id);
+        assert!(!mbox_dir.join("N7CPZ").exists(), "emptied per-FULL root is cleaned up");
+
+        // Idempotent: a second heal is a no-op.
+        assert!(
+            !super::heal_misplaced_inbox(&mbox_dir, &store_path).unwrap(),
+            "second heal is a no-op once the flat inbox exists"
+        );
+    }
+
+    // tuxlink-ej7a: heal must NOT clobber an existing flat inbox.
+    #[test]
+    fn heal_is_noop_when_flat_inbox_already_present() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink_backend::MailboxFolder;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mbox_dir = dir.path().join("native-mbox");
+        let store_path = dir.path().join("identities.json");
+
+        let mut store = crate::identity::IdentityStore::load(&store_path).unwrap();
+        store
+            .add_full(crate::identity::FullIdentity {
+                callsign: crate::identity::Callsign::parse("N7CPZ").unwrap(),
+                label: None,
+                has_cms_account: false,
+                cms_registered: false,
+            })
+            .unwrap();
+        store.save().unwrap();
+
+        // A healthy flat inbox already holds a message.
+        let flat = Mailbox::new(&mbox_dir);
+        let flat_id = flat
+            .store(
+                MailboxFolder::Inbox,
+                &crate::winlink::compose::compose_message("W1AW", &["N7CPZ"], &[], "Flat", "b", 1_716_200_001)
+                    .to_bytes(),
+            )
+            .unwrap();
+
+        let healed = super::heal_misplaced_inbox(&mbox_dir, &store_path).unwrap();
+        assert!(!healed, "nothing to heal when the flat inbox is present");
+        let metas = flat.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(metas.len(), 1);
+        assert_eq!(metas[0].id, flat_id, "existing flat inbox untouched");
     }
 
     // ========================================================================
