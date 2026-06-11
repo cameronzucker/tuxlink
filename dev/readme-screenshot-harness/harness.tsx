@@ -28,6 +28,24 @@ type TauriInternals = {
 const params = new URLSearchParams(location.search);
 const view = params.get('view') ?? 'shell';
 
+// Surface render errors visibly (the snapshot can't read the console).
+class HarnessBoundary extends React.Component<{ children: React.ReactNode }, { err: string | null }> {
+  state = { err: null as string | null };
+  static getDerivedStateFromError(e: unknown) {
+    return { err: e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e) };
+  }
+  render() {
+    if (this.state.err) {
+      return React.createElement(
+        'pre',
+        { style: { color: '#f88', padding: 16, fontSize: 14, whiteSpace: 'pre-wrap' } },
+        `RENDER ERROR: ${this.state.err}`,
+      );
+    }
+    return this.props.children as React.ReactElement;
+  }
+}
+
 const CATALOG: CatalogEntry[] = [
   { category: 'WX_US_WA', filename: 'WA_FCST', description: 'Washington - state forecast (NWS)', size_bytes: 4200 },
   { category: 'WX_US_WA', filename: 'WA_ZONE', description: 'Washington - zone forecasts', size_bytes: 6100 },
@@ -111,6 +129,52 @@ const CONTACTS = {
   ],
 };
 
+// Privacy-safe inbox: fictional callsigns, realistic EmComm traffic. Shape
+// mirrors MessageMeta (src/mailbox/types.ts).
+const MESSAGES = [
+  { id: 'M1', folder: 'inbox', from: 'WX4MTL@winlink.org', to: ['W4PHS@winlink.org'], subject: 'ICS-213: Shelter status — Shelby County EOC', date: '2026-06-10T14:32:00Z', unread: true, bodySize: 1840, hasAttachments: false, formTag: 'ICS-213', preview: 'Bartlett HS shelter at 62 of 120 cots. Generator fuel ~18h. Requesting water resupply...' },
+  { id: 'M2', folder: 'inbox', from: 'K4ARC@winlink.org', to: ['W4PHS@winlink.org'], subject: 'ARES net check-in roster — 0600Z', date: '2026-06-10T13:05:00Z', unread: true, bodySize: 920, hasAttachments: false, preview: '14 stations checked in. Net control K4ARC. Next net 1800Z on the county VARA gateway.' },
+  { id: 'M3', folder: 'inbox', from: 'SERVICE', to: ['W4PHS@winlink.org'], subject: 'INQUIRY - https://tgftp.nws.noaa.gov/data/raw/fp/fpus65.kpsr.sft.psr.txt', date: '2026-06-10T12:18:00Z', unread: false, bodySize: 2228, hasAttachments: false, preview: 'Tabular State Forecast — Southwest Arizona. National Weather Service Phoenix AZ...' },
+  { id: 'M4', folder: 'inbox', from: 'N4SAR@winlink.org', to: ['W4PHS@winlink.org'], subject: 'Welfare traffic — Hutchins family OK', date: '2026-06-10T11:47:00Z', unread: false, bodySize: 640, hasAttachments: false, preview: 'Please relay to requesting party: all four accounted for, no injuries, sheltering in place.' },
+  { id: 'M5', folder: 'inbox', from: 'KK4OBN@winlink.org', to: ['W4PHS@winlink.org'], subject: 'ICS-213RR: Resource request — 6 cots, 200 MRE', date: '2026-06-10T10:22:00Z', unread: false, bodySize: 1510, hasAttachments: true, formTag: 'ICS-213RR', preview: 'Priority: routine. Deliver to Bartlett HS staging by 1600 local. Authorizing official...' },
+  { id: 'M6', folder: 'inbox', from: 'W4EM@winlink.org', to: ['W4PHS@winlink.org'], subject: 'County EOC SITREP 06 — power restoration', date: '2026-06-10T09:10:00Z', unread: false, bodySize: 2040, hasAttachments: false, preview: 'MLGW reports 71% restored. Two shelters consolidating. Amateur traffic steady on 80m + VARA.' },
+  { id: 'M7', folder: 'inbox', from: 'N0CALL@winlink.org', to: ['W4PHS@winlink.org'], subject: 'Test message — gateway reachability', date: '2026-06-09T22:40:00Z', unread: false, bodySize: 210, hasAttachments: false, preview: 'Confirming the post office is reachable over VARA HF. 73.' },
+];
+
+// Full reading-pane content for the opened message (ParsedMessage shape).
+const MESSAGE_BODY = {
+  id: 'M1',
+  folder: 'inbox',
+  subject: 'ICS-213: Shelter status — Shelby County EOC',
+  from: 'WX4MTL@winlink.org',
+  to: ['W4PHS@winlink.org'],
+  date: '2026-06-10T14:32:00Z',
+  isForm: false,
+  hasAttachments: false,
+  attachments: [],
+  body: [
+    'ICS-213 GENERAL MESSAGE',
+    '',
+    'TO:        Shelby County EOC / Logistics',
+    'FROM:      WX4MTL — James, EC Shelby County',
+    'DATE/TIME: 2026-06-10 14:32 UTC',
+    'SUBJECT:   Shelter status — Bartlett HS',
+    '',
+    'MESSAGE:',
+    'Bartlett HS shelter at 62 of 120 cots occupied. Generator fuel',
+    'approximately 18 hours remaining. Requesting water resupply (20',
+    'cases) and 6 additional cots by 1600 local. No injuries reported.',
+    'Net control relaying this traffic via VARA HF to the county post',
+    'office; acknowledge receipt on the 1800Z net.',
+    '',
+    'SIGNED: WX4MTL / MEMPHIS-ARES',
+  ].join('\n'),
+};
+
+const VARA_CONFIG = { host: '127.0.0.1', cmdPort: 8300, dataPort: 8301, bandwidthHz: 2300 };
+const VARA_STATUS_OPEN = { state: 'open', lastError: null, boundHost: '127.0.0.1', boundCmdPort: 8300 };
+const PLATFORM_INFO = { arch: 'aarch64', os: 'linux', varaSupported: true };
+
 let callbackId = 1;
 const callbacks = new Map<number, (...args: unknown[]) => unknown>();
 
@@ -128,15 +192,25 @@ function installTauriShim() {
       if (cmd === 'config_read') return CONFIG;
       if (cmd === 'backend_status') return null;
       if (cmd === 'position_status') return { gps_ready: true, broadcast_grid: 'EM75', ui_grid: 'EM75xx' };
-      if (cmd === 'mailbox_list') return [];
-      if (cmd === 'message_read') return null;
+      if (cmd === 'mailbox_list') {
+        const folder = (args as { folder?: string } | undefined)?.folder;
+        return folder === 'inbox' ? MESSAGES : [];
+      }
+      if (cmd === 'message_read') return MESSAGE_BODY;
       if (cmd === 'message_set_read_state') return null;
+      // Active VARA HF radio dock (for the hero — shows the modem dock connected).
+      if (cmd === 'config_get_vara') return VARA_CONFIG;
+      if (cmd === 'vara_status') return VARA_STATUS_OPEN;
+      if (cmd === 'vara_open_session') return VARA_STATUS_OPEN;
+      if (cmd === 'platform_info') return PLATFORM_INFO;
       if (cmd === 'session_log_snapshot') {
+        // LogLineDto[] (src/session/logProjection.ts): timestampIso/level/source/message.
         return [
-          { seq: 1, ts: '14:32:14', line: 'Connecting to Winlink CMS via telnet...' },
-          { seq: 2, ts: '14:32:15', line: 'Connected to CMS gateway 1235-2.cms.winlink.org' },
-          { seq: 3, ts: '14:32:18', line: 'Receiving message 4 of 4 from WX4MTL@winlink.org' },
-          { seq: 4, ts: '14:32:19', line: 'Session complete - 4 received - 1 sent - 7s' },
+          { timestampIso: '2026-06-10T14:32:14Z', level: 'info', source: 'backend', message: '*** Connecting to W4XYZ via VARA HF (2300 Hz)' },
+          { timestampIso: '2026-06-10T14:32:18Z', level: 'info', source: 'transport', message: 'VARA modem bound 127.0.0.1:8300 — listening for link' },
+          { timestampIso: '2026-06-10T14:32:24Z', level: 'info', source: 'transport', message: 'Link established with W4XYZ — SNR 14 dB, 1200 bps' },
+          { timestampIso: '2026-06-10T14:32:31Z', level: 'info', source: 'backend', message: 'Receiving message 2 of 3 from WX4MTL@winlink.org' },
+          { timestampIso: '2026-06-10T14:32:48Z', level: 'info', source: 'backend', message: '*** Session complete — 3 received, 1 sent, 41s' },
         ];
       }
       if (cmd === 'modem_get_status') return MODEM_STOPPED;
@@ -201,12 +275,38 @@ async function main() {
 
   const { AppShell } = await import('../../src/shell/AppShell');
   root.render(
-    <QueryClientProvider client={queryClient}>
-      <Suspense fallback={<div data-testid="readme-harness-loading" />}>
-        <AppShell />
-      </Suspense>
-    </QueryClientProvider>,
+    <HarnessBoundary>
+      <QueryClientProvider client={queryClient}>
+        <Suspense fallback={<div data-testid="readme-harness-loading" />}>
+          <AppShell />
+        </Suspense>
+      </QueryClientProvider>
+    </HarnessBoundary>,
   );
+
+  // For the hero: open the VARA HF radio modem dock by driving the sidebar
+  // (expand the Winlink/CMS accordion, then select the VARA HF protocol). The
+  // accordion auto-expands once selectedConnection is set, but the proto row
+  // must exist first, so expand explicitly.
+  if (params.get('dock') === 'vara') {
+    window.setTimeout(() => {
+      document.querySelector<HTMLElement>('[data-testid="sess-cms"]')?.click();
+      window.setTimeout(() => {
+        // Selecting VARA HF sets the active connection (persists in the ribbon).
+        document.querySelector<HTMLElement>('[data-testid="proto-cms-vara-hf"]')?.click();
+        // Pin the radio panel (Ctrl+Shift+M) so the dock stays open even with a
+        // message selected, then open a message so the reading pane has content.
+        window.setTimeout(() => {
+          window.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true, bubbles: true }),
+          );
+          window.setTimeout(() => {
+            document.querySelector<HTMLElement>('[data-testid="message-row-M1"]')?.click();
+          }, 500);
+        }, 500);
+      }, 600);
+    }, 1500);
+  }
 }
 
 void main().catch((err) => {

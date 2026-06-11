@@ -344,6 +344,9 @@
   font-size: 11.5px;
   font-weight: 600;
   padding: 4px 10px;
+  /* Keep each segment on one line — "Download all" must not wrap into a tall,
+     touch-proportioned chip at narrow ribbon widths (tuxlink-7ygy). */
+  white-space: nowrap;
   cursor: pointer;
   background: transparent;
   color: var(--text-dim);
