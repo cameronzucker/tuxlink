@@ -96,7 +96,7 @@ fn test_deserialize_minimal_cms_config() {
     assert!(config.wizard_completed);
     assert!(config.connect.connect_to_cms);
     assert_eq!(config.connect.transport, CmsTransport::CmsSsl);
-    assert_eq!(config.identity.callsign.as_deref(), Some("W4PHS"));
+    assert_eq!(config.identity.active_full.as_deref(), Some("W4PHS"));
     assert!(config.identity.identifier.is_none());
     assert_eq!(config.identity.grid.as_deref(), Some("EM75xx"));
     assert_eq!(config.privacy.gps_state, GpsState::BroadcastAtPrecision);
@@ -117,7 +117,7 @@ fn test_deserialize_offline_config() {
     }"#;
     let config: Config = serde_json::from_str(json).expect("offline config must deserialize");
     assert!(!config.connect.connect_to_cms);
-    assert!(config.identity.callsign.is_none());
+    assert!(config.identity.active_full.is_none());
     assert_eq!(config.identity.identifier.as_deref(), Some("EOC-1"));
     assert!(config.pat_mbo_address.is_none());
 }
@@ -271,7 +271,7 @@ fn test_empty_string_identity_field_normalizes_to_none() {
         "pat_mbo_address": ""
     }"#;
     let config: Config = serde_json::from_str(json).expect("must deserialize");
-    assert!(config.identity.callsign.is_none(), "empty callsign should normalize to None");
+    assert!(config.identity.active_full.is_none(), "empty callsign should normalize to None");
     assert_eq!(config.identity.identifier.as_deref(), Some("EOC-1"));
     assert!(config.identity.grid.is_none(), "empty grid should normalize to None");
     assert!(config.pat_mbo_address.is_none(), "empty pat_mbo_address should normalize to None");
@@ -341,7 +341,7 @@ fn test_validate_invalid_identity_propagates_field() {
     // Note: deserialize_optional_nonempty_string accepts the non-empty whitespace-containing input;
     // we have to build the Config bypassing the deserializer to construct this case directly.
     let mut config = make_config(true, Some("W4PHS"), None);
-    config.identity.callsign = Some("W4 PHS".into());
+    config.identity.active_full = Some("W4 PHS".into());
     let err = config.validate().unwrap_err();
     match err {
         ConfigValidationError::InvalidIdentity { field, rule } => {
@@ -474,7 +474,7 @@ fn test_read_config_happy_path() {
         }"#).unwrap();
         let config = read_config().expect("happy path must succeed");
         assert!(config.wizard_completed);
-        assert_eq!(config.identity.callsign.as_deref(), Some("W4PHS"));
+        assert_eq!(config.identity.active_full.as_deref(), Some("W4PHS"));
     });
 }
 
@@ -539,7 +539,7 @@ fn test_write_atomic_first_run_creates_file() {
         let path = xdg.join("tuxlink").join("config.json");
         assert!(path.exists(), "config file must exist after write");
         let roundtrip = read_config().expect("written file must read back");
-        assert_eq!(roundtrip.identity.callsign.as_deref(), Some("W4PHS"));
+        assert_eq!(roundtrip.identity.active_full.as_deref(), Some("W4PHS"));
     });
 }
 
@@ -705,7 +705,7 @@ fn config_skips_pat_mbo_address_on_write() {
             host: tuxlink_lib::config::default_cms_host(),
         },
         identity: tuxlink_lib::config::IdentityConfig {
-            callsign: Some("W4PHS".into()),
+            active_full: Some("W4PHS".into()),
             identifier: None,
             grid: None,
         },

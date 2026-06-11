@@ -693,7 +693,7 @@ fn init_config_from_persisted_config() -> InitConfig {
         Some(c) => {
             let call = c
                 .identity
-                .callsign
+                .active_full
                 .clone()
                 .or_else(|| c.identity.identifier.clone())
                 .unwrap_or_default();
@@ -828,7 +828,7 @@ fn validate_arq_bandwidth_hz(bw: u32) -> Option<u32> {
 pub fn check_identity_present(cfg: &Config) -> Result<(), String> {
     let has_call = cfg
         .identity
-        .callsign
+        .active_full
         .as_deref()
         .is_some_and(|s| !s.trim().is_empty());
     let has_ident = cfg
@@ -1807,7 +1807,7 @@ mod tests {
                 host: crate::config::default_cms_host(),
             },
             identity: crate::config::IdentityConfig {
-                callsign: Some("   ".into()),
+                active_full: Some("   ".into()),
                 identifier: Some("".into()),
                 grid: None,
             },

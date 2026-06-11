@@ -170,12 +170,13 @@ pub enum CmsTransport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityConfig {
-    /// Required when `connect_to_cms = true` (CMS path requires callsign).
-    /// Must be absent (`None`) when `connect_to_cms = false` (offline path forbids callsign;
-    /// use `identifier` instead). Enforced by `Config::validate`. Loose validator per
-    /// `validate_identity()`: nonempty + no whitespace + ≤32 + ASCII-printable.
-    #[serde(deserialize_with = "deserialize_optional_nonempty_string", default)]
-    pub callsign: Option<String>,
+    /// PHASE 2 TRANSITIONAL MIRROR (deleted in Phase 3, tuxlink-0063). The active
+    /// FULL callsign — a projection of `IdentityStore::last_selected()`'s FULL,
+    /// written here so the legacy `cfg.identity.<callsign>` readers compile
+    /// unchanged until Phase 3 threads `SessionIdentity` through them. The
+    /// IdentityStore (separate file) is the source of truth; this is a cache.
+    #[serde(rename = "callsign", deserialize_with = "deserialize_optional_nonempty_string", default)]
+    pub active_full: Option<String>,
     /// Free-form station identifier for offline-mode operators (optional).
     /// Allowed on the offline path (`connect_to_cms = false`); not validated as required
     /// in v0.0.1. Same loose-validator rules as `callsign`.
@@ -439,13 +440,13 @@ impl Config {
     /// Callers (wizard's `wizard_persist_cms`, `read_config`) invoke after deserialization.
     /// NOT auto-called by `write_config_atomic` — caller responsibility per spec §3.3.
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
-        if self.connect.connect_to_cms && self.identity.callsign.is_none() {
+        if self.connect.connect_to_cms && self.identity.active_full.is_none() {
             return Err(ConfigValidationError::CmsPathMissingCallsign);
         }
-        if !self.connect.connect_to_cms && self.identity.callsign.is_some() {
+        if !self.connect.connect_to_cms && self.identity.active_full.is_some() {
             return Err(ConfigValidationError::OfflinePathHasCallsign);
         }
-        if let Some(ref c) = self.identity.callsign {
+        if let Some(ref c) = self.identity.active_full {
             if let Some(rule) = validate_identity_describe(c) {
                 return Err(ConfigValidationError::InvalidIdentity { field: "callsign", rule });
             }
@@ -1037,6 +1038,17 @@ mod tests {
             "pat_mbo_address": null
         })
         .to_string()
+    }
+
+    #[test]
+    fn identity_config_v2_carries_active_full_mirror_and_round_trips() {
+        let mut cfg: Config = serde_json::from_str(&sample_config_json_without_packet()).unwrap();
+        cfg.identity.active_full = Some("W1ABC".into());
+        cfg.identity.grid = Some("CN87ux".into());
+        let s = serde_json::to_string(&cfg).unwrap();
+        let back: Config = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.identity.active_full.as_deref(), Some("W1ABC"));
+        assert_eq!(back.identity.grid.as_deref(), Some("CN87ux"));
     }
 
     #[test]

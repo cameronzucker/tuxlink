@@ -305,7 +305,7 @@ mod tests {
                 host: crate::config::default_cms_host(),
             },
             identity: IdentityConfig {
-                callsign: Some("W4PHS".into()),
+                active_full: Some("W4PHS".into()),
                 identifier: None,
                 grid: Some("EM10ab".into()),
             },
@@ -392,7 +392,7 @@ mod tests {
         // Offline config forbids a callsign (Config::validate), but
         // bootstrap_decision does not re-validate — it only reads the two
         // gating flags. Clear callsign anyway to keep the fixture coherent.
-        cfg.identity.callsign = None;
+        cfg.identity.active_full = None;
         let action = bootstrap_decision(Ok(cfg));
         assert!(matches!(action, BootstrapAction::NotConnected));
     }

@@ -25,7 +25,7 @@ pub fn native_test_config() -> Config {
             host: crate::config::default_cms_host(),
         },
         identity: IdentityConfig {
-            callsign: Some("N7CPZ".to_string()),
+            active_full: Some("N7CPZ".to_string()),
             identifier: None,
             grid: Some("DM33".to_string()),
         },

@@ -164,7 +164,7 @@ fn operator_callsign() -> String {
     match crate::config::read_config() {
         Ok(cfg) => cfg
             .identity
-            .callsign
+            .active_full
             .or(cfg.identity.identifier)
             .unwrap_or_default(),
         Err(_) => String::new(),
