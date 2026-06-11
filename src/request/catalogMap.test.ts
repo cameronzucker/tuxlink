@@ -5,6 +5,7 @@ import {
   bestStateForecast,
   gatewayListFilenames,
 } from './catalogMap';
+import zonesGeo from './nws-zones.geo.json';
 import zoneMap from './nws-zone-to-catalog.json';
 import unmappedJson from './nws-zone-unmapped.json';
 
@@ -128,6 +129,20 @@ describe('gatewayListFilenames', () => {
     ];
 
     expect(gatewayListFilenames(entries)).toEqual([]);
+  });
+});
+
+describe('NWS zone mapping referential integrity', () => {
+  it('every mapped NWS zone id exists in the bundled geometry', () => {
+    const geoIds = new Set(
+      (zonesGeo as { features: { properties: { id: string } }[] }).features.map(
+        (f) => f.properties.id,
+      ),
+    );
+    const orphan = Object.keys(
+      (zoneMap as { map: Record<string, string> }).map,
+    ).filter((id) => !geoIds.has(id));
+    expect(orphan, `Mapped zone ids absent from geometry:\n${orphan.join('\n')}`).toEqual([]);
   });
 });
 

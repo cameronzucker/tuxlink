@@ -17,11 +17,18 @@
 //     src/request/nws-zone-unmapped.json    — multi-zone regional entries
 //     dev/scratch/request-geo/unresolved.txt — abbreviated entries without exact match
 //
+// Task 4 (--prune-geometry): filter nws-zones.geo.json to mapped zones only.
+//   Reads the COMMITTED nws-zones.geo.json + nws-zone-to-catalog.json (no network).
+//   Rewrites nws-zones.geo.json with only features whose properties.id is a key in
+//   the map. Safe to run after Tasks 2+3 without risk of clobbering mapping JSONs.
+//   Idempotent: re-running on an already-pruned file is a no-op (same IDs filtered).
+//
 // Usage:
-//   pnpm tsx scripts/build-request-geo.ts --fetch-only   # Task 1 zone-list fetch
-//   pnpm tsx scripts/build-request-geo.ts                # Tasks 2+3 full pipeline
-//   pnpm tsx scripts/build-request-geo.ts --match-only   # Task 3 match only (skip geometry)
-//   pnpm tsx scripts/build-request-geo.ts --force        # re-fetch everything
+//   pnpm tsx scripts/build-request-geo.ts --fetch-only      # Task 1 zone-list fetch
+//   pnpm tsx scripts/build-request-geo.ts                   # Tasks 2+3 full pipeline
+//   pnpm tsx scripts/build-request-geo.ts --match-only      # Task 3 match only (skip geometry)
+//   pnpm tsx scripts/build-request-geo.ts --force           # re-fetch everything
+//   pnpm tsx scripts/build-request-geo.ts --prune-geometry  # Task 4 prune to mapped zones
 
 import { readFileSync, mkdirSync, writeFileSync, existsSync, appendFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -48,6 +55,7 @@ const FETCH_ONLY = process.argv.includes('--fetch-only');
 const SIMPLIFY_ONLY = process.argv.includes('--simplify-only');
 const MATCH_ONLY = process.argv.includes('--match-only');
 const FORCE = process.argv.includes('--force');
+const PRUNE_GEOMETRY = process.argv.includes('--prune-geometry');
 
 // Simplification tolerance in degrees (Douglas–Peucker).
 // 0.005 → ~4.7 MB, 0.01 → ~2.9 MB, 0.02 → ~1.8 MB (< 2 MB target; chosen).
@@ -1003,7 +1011,90 @@ async function fetchGeometryAndEmit(): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Task 4 — Prune nws-zones.geo.json to mapped zones only
+//
+// Reads the COMMITTED nws-zones.geo.json and nws-zone-to-catalog.json, filters
+// the FeatureCollection to only features whose properties.id is a KEY in the
+// map, then rewrites nws-zones.geo.json in-place. The two mapping JSONs
+// (nws-zone-to-catalog.json, nws-zone-unmapped.json) are NEVER touched here.
+//
+// Idempotent: the same set of mapped IDs is filtered on every run, so
+// re-running on an already-pruned file produces the identical output.
+// ---------------------------------------------------------------------------
+
+function pruneGeometry(): void {
+  console.log('\n=== Task 4: prune nws-zones.geo.json to mapped zones ===');
+
+  if (!existsSync(OUTPUT_PATH)) {
+    console.error(`ERROR: ${OUTPUT_PATH} not found — run the full pipeline first.`);
+    process.exit(1);
+  }
+  if (!existsSync(ZONE_MAP_PATH)) {
+    console.error(`ERROR: ${ZONE_MAP_PATH} not found — run Tasks 2+3 first.`);
+    process.exit(1);
+  }
+
+  // Load the zone map (keys are the mapped NWS zone IDs)
+  const mapJson = JSON.parse(readFileSync(ZONE_MAP_PATH, 'utf8')) as {
+    _source: unknown;
+    map: Record<string, string>;
+  };
+  const mappedIds = new Set(Object.keys(mapJson.map));
+  console.log(`Mapped zone IDs: ${mappedIds.size}`);
+
+  // Load the current geometry bundle
+  const geoRaw = readFileSync(OUTPUT_PATH, 'utf8');
+  const beforeBytes = Buffer.byteLength(geoRaw);
+  const geoJson = JSON.parse(geoRaw) as {
+    type: string;
+    features: Array<{ properties: { id: string } }>;
+  };
+  const before = geoJson.features.length;
+  console.log(`Features before prune: ${before}  (~${Math.round(beforeBytes / 1024)} KB)`);
+
+  // Filter to only mapped zones
+  const pruned = geoJson.features.filter((f) => mappedIds.has(f.properties.id));
+  console.log(`Features after prune:  ${pruned.length}`);
+
+  // Verify WAZ315 survives (it is mapped → should always be in the output)
+  const waz315 = pruned.find((f) => f.properties.id === 'WAZ315');
+  if (waz315) {
+    console.log(`WAZ315 (City of Seattle): present in pruned output ✓`);
+  } else {
+    console.warn(`WARNING: WAZ315 absent from pruned output — it may not be mapped`);
+  }
+
+  // Verify all mapped IDs are satisfied (referential-integrity gate)
+  const prunedIds = new Set(pruned.map((f) => f.properties.id));
+  const orphans = [...mappedIds].filter((id) => !prunedIds.has(id));
+  if (orphans.length > 0) {
+    console.warn(`WARNING: ${orphans.length} mapped zone(s) have no geometry in the bundle:`);
+    for (const id of orphans) console.warn(`  ${id}`);
+  } else {
+    console.log(`Referential integrity: all ${mappedIds.size} mapped ids present in pruned output ✓`);
+  }
+
+  // Rewrite nws-zones.geo.json
+  const output = { type: 'FeatureCollection', features: pruned };
+  const outputStr = JSON.stringify(output);
+  writeFileSync(OUTPUT_PATH, outputStr);
+
+  const afterKb = Math.round(Buffer.byteLength(outputStr) / 1024);
+  console.log(`\nEmitted: ${OUTPUT_PATH}`);
+  console.log(`Size: ~${afterKb} KB`);
+
+  if (afterKb > 1024) {
+    console.warn(`WARNING: pruned output is ${afterKb} KB (> 1 MB) — unexpected for ${pruned.length} zones`);
+  }
+}
+
 async function main(): Promise<void> {
+  if (PRUNE_GEOMETRY) {
+    pruneGeometry();
+    return;
+  }
+
   if (FETCH_ONLY) {
     await fetchZoneList();
     return;
