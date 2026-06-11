@@ -1981,6 +1981,30 @@ pub async fn forms_import_cancel(
     Ok(())
 }
 
+/// Commit a previewed import (tuxlink-z0le/fwob, spec §11.4): consume the
+/// staging token single-shot, re-classify under the shared forms lock, and
+/// atomically promote the validated set (+ approved overwrites) into the
+/// custom-forms dir with `.prev` backups. Re-commit → `TokenExpired`.
+#[tauri::command]
+pub async fn forms_import_commit(
+    staging_token: String,
+    approved_overwrite_ids: Vec<String>,
+    app: AppHandle,
+    reg: State<'_, std::sync::Arc<crate::forms::import::ImportStagingRegistry>>,
+) -> Result<crate::forms::import::ImportResult, crate::forms::import::ImportError> {
+    let custom_root = crate::forms::wle_templates::custom_root_for_app(&app);
+    let bundle_root = crate::forms::wle_templates::bundle_root_for_app(&app)
+        .map_err(|e| crate::forms::import::ImportError::Io { reason: e.to_string() })?;
+    crate::forms::import::commit(
+        &staging_token,
+        &approved_overwrite_ids,
+        &custom_root,
+        &bundle_root,
+        reg.inner().clone(),
+    )
+    .await
+}
+
 /// Open a new webview form session: spawn the loopback http_server bound
 /// to a fresh ephemeral port, register it in `FormSessionRegistry` under a
 /// freshly-minted token, and start a forwarder task that drains parsed

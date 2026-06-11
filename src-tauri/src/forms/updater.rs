@@ -54,7 +54,9 @@ use thiserror::Error;
 /// finish (or fail) before touching the runtime root. Acceptable
 /// trade-off: refresh is operator-triggered, so the second caller
 /// just sees a brief delay rather than a corrupted snapshot.
-static INSTALL_LOCK: Lazy<tokio::sync::Mutex<()>> =
+// pub(crate): `forms::import::commit` shares this mutex so an import and a
+// concurrent standard-forms refresh can't race the forms data dir (tuxlink-z0le).
+pub(crate) static INSTALL_LOCK: Lazy<tokio::sync::Mutex<()>> =
     Lazy::new(|| tokio::sync::Mutex::new(()));
 
 /// JSON shape returned by `https://api.getpat.io/v1/forms/standard-templates/latest`.

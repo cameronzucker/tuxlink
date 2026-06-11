@@ -875,6 +875,9 @@ pub(crate) fn stem_set(root: &Path) -> HashSet<String> {
 
 struct StagedEntry {
     staged: Staged,
+    /// The plan the operator saw at preview — retained so `commit` can detect a
+    /// classification TOCTOU (e.g. an `Added` that became an `Update`).
+    plan_entries: Vec<ImportEntry>,
     created_at: std::time::SystemTime,
 }
 
@@ -892,8 +895,8 @@ impl Default for ImportStagingRegistry {
 }
 
 impl ImportStagingRegistry {
-    /// Register a staged tree; returns its opaque 16-hex token.
-    pub fn insert(&self, staged: Staged) -> String {
+    /// Register a staged tree + its preview plan; returns the opaque 16-hex token.
+    pub fn insert(&self, staged: Staged, plan_entries: Vec<ImportEntry>) -> String {
         let mut g = self.inner.lock().unwrap();
         let mut tok = mint_import_token();
         while g.contains_key(&tok) {
@@ -903,16 +906,21 @@ impl ImportStagingRegistry {
             tok.clone(),
             StagedEntry {
                 staged,
+                plan_entries,
                 created_at: std::time::SystemTime::now(),
             },
         );
         tok
     }
 
-    /// Single-shot consume — remove + return the staged tree (or `None` if the
-    /// token is unknown/already used).
-    pub fn take(&self, token: &str) -> Option<Staged> {
-        self.inner.lock().unwrap().remove(token).map(|e| e.staged)
+    /// Single-shot consume — remove + return the staged tree + its plan (or
+    /// `None` if the token is unknown/already used).
+    pub fn take(&self, token: &str) -> Option<(Staged, Vec<ImportEntry>)> {
+        self.inner
+            .lock()
+            .unwrap()
+            .remove(token)
+            .map(|e| (e.staged, e.plan_entries))
     }
 
     /// Drop a staged tree (cancel). Removal → `Staged`'s `TempDir` drop `rm -rf`s it.
@@ -931,7 +939,12 @@ impl ImportStagingRegistry {
     }
 
     #[cfg(test)]
-    pub fn insert_with_age(&self, staged: Staged, secs_ago: u64) -> String {
+    pub fn insert_with_age(
+        &self,
+        staged: Staged,
+        plan_entries: Vec<ImportEntry>,
+        secs_ago: u64,
+    ) -> String {
         let mut g = self.inner.lock().unwrap();
         let mut tok = mint_import_token();
         while g.contains_key(&tok) {
@@ -939,7 +952,14 @@ impl ImportStagingRegistry {
         }
         let created_at =
             std::time::SystemTime::now() - std::time::Duration::from_secs(secs_ago);
-        g.insert(tok.clone(), StagedEntry { staged, created_at });
+        g.insert(
+            tok.clone(),
+            StagedEntry {
+                staged,
+                plan_entries,
+                created_at,
+            },
+        );
         tok
     }
 }
@@ -972,12 +992,217 @@ pub(crate) fn preview_sources(
     let bundled = stem_set(bundle_root);
     let entries = classify(cands, &existing_custom, &bundled);
     let summary = summarize(&entries);
-    let staging_token = reg.insert(staged);
+    let staging_token = reg.insert(staged, entries.clone());
     Ok(ImportPlan {
         staging_token,
         entries,
         summary,
     })
+}
+
+// ============================================================================
+// Commit (§11.4) — single-shot, re-classify under the shared forms lock,
+// atomic write with `.prev` backup + rollback. `commit_core` is the pure sync
+// engine; `commit` is the async token-consuming + locking wrapper.
+// ============================================================================
+
+/// Unix-epoch seconds, for `.prev-<ts>` backup names.
+fn epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// True if any existing component of `root/rel` is a symlink (defends a
+/// pre-seeded symlink in the operator's own custom dir; §11.5).
+fn has_symlink_component(root: &Path, rel: &str) -> bool {
+    let mut cur = root.to_path_buf();
+    for comp in rel.split('/') {
+        cur = cur.join(comp);
+        match std::fs::symlink_metadata(&cur) {
+            Ok(md) if md.file_type().is_symlink() => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Pure commit engine. Re-detects + re-classifies the staged tree against the
+/// now-live catalog (TOCTOU guard vs the operator's `plan_entries`), writes the
+/// approved set with `.prev` backups, rolls back on any mid-batch failure.
+pub(crate) fn commit_core(
+    staged: &Staged,
+    plan_entries: &[ImportEntry],
+    approved: &[String],
+    custom_root: &Path,
+    bundle_root: &Path,
+) -> Result<ImportResult, ImportError> {
+    let cands = detect_candidates(&staged.dir).map_err(|e| ImportError::Io {
+        reason: format!("detect: {e}"),
+    })?;
+    let fresh = classify(cands, &stem_set(custom_root), &stem_set(bundle_root));
+
+    // Authoring id → fresh kind (for the TOCTOU comparison).
+    let fresh_kind: std::collections::HashMap<&str, &ImportKind> = fresh
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                ImportKind::Added | ImportKind::Update | ImportKind::OverridesStandard
+            )
+        })
+        .map(|e| (e.id.as_str(), &e.kind))
+        .collect();
+
+    // TOCTOU #1: a plan `Added` that is now an `Update` would be silently
+    // skipped (the operator never confirmed it) — surface as a conflict.
+    for e in plan_entries {
+        if e.kind == ImportKind::Added {
+            if let Some(ImportKind::Update) = fresh_kind.get(e.id.as_str()).copied() {
+                return Err(ImportError::CommitConflict {
+                    reason: "catalog changed, re-preview".into(),
+                });
+            }
+        }
+    }
+
+    let plan_update_ids: HashSet<&str> = plan_entries
+        .iter()
+        .filter(|e| e.kind == ImportKind::Update)
+        .map(|e| e.id.as_str())
+        .collect();
+    let approved_set: HashSet<&str> = approved.iter().map(|s| s.as_str()).collect();
+
+    // TOCTOU #2: an approved Update that no longer classifies as Update (e.g.
+    // the existing custom form was deleted) — re-preview required.
+    for id in approved_set.intersection(&plan_update_ids) {
+        match fresh_kind.get(id).copied() {
+            Some(ImportKind::Update) => {}
+            _ => {
+                return Err(ImportError::CommitConflict {
+                    reason: "catalog changed, re-preview".into(),
+                })
+            }
+        }
+    }
+
+    // Overwrites are bound to the plan: only ids that were Update at preview AND
+    // are approved get applied.
+    let apply_update: HashSet<&str> =
+        approved_set.intersection(&plan_update_ids).copied().collect();
+
+    let ts = epoch_secs();
+    let mut installed: Vec<String> = Vec::new();
+    let mut skipped_updates: Vec<String> = Vec::new();
+    let mut realized: Vec<ImportEntry> = Vec::new();
+    // (dest, Option<prev-backup>) for rollback.
+    let mut writes: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
+
+    // Closure-free rollback helper.
+    macro_rules! rollback_and_err {
+        ($err:expr) => {{
+            for (dest, prev) in writes.iter().rev() {
+                let _ = std::fs::remove_file(dest);
+                if let Some(prev) = prev {
+                    let _ = std::fs::rename(prev, dest);
+                }
+            }
+            return Err($err);
+        }};
+    }
+
+    for e in &fresh {
+        let is_authoring = matches!(
+            e.kind,
+            ImportKind::Added | ImportKind::Update | ImportKind::OverridesStandard
+        );
+        let do_write = match e.kind {
+            ImportKind::Added | ImportKind::OverridesStandard | ImportKind::Companion => true,
+            ImportKind::Update => {
+                if apply_update.contains(e.id.as_str()) {
+                    true
+                } else {
+                    skipped_updates.push(e.id.clone());
+                    false
+                }
+            }
+            ImportKind::Skip | ImportKind::Reject => false,
+        };
+        if !do_write {
+            realized.push(e.clone());
+            continue;
+        }
+        // Defense in depth — the relative path was validated at stage time, but
+        // re-validate before joining onto the real custom_root.
+        if !is_safe_rel_path(&e.rel_path) {
+            rollback_and_err!(ImportError::Io {
+                reason: format!("unsafe path at commit: {}", e.rel_path),
+            });
+        }
+        if has_symlink_component(custom_root, &e.rel_path) {
+            rollback_and_err!(ImportError::Io {
+                reason: format!("symlink in dest path: {}", e.rel_path),
+            });
+        }
+        let src = staged.dir.join(&e.rel_path);
+        let dest = custom_root.join(&e.rel_path);
+        if let Some(parent) = dest.parent() {
+            if let Err(err) = std::fs::create_dir_all(parent) {
+                rollback_and_err!(ImportError::Io {
+                    reason: format!("mkdir {parent:?}: {err}"),
+                });
+            }
+        }
+        // Back up an existing file before overwriting (data-loss guard).
+        let prev = if dest.exists() {
+            let p = PathBuf::from(format!("{}.prev-{ts}", dest.to_string_lossy()));
+            if let Err(err) = std::fs::rename(&dest, &p) {
+                rollback_and_err!(ImportError::Io {
+                    reason: format!("backup {dest:?}: {err}"),
+                });
+            }
+            Some(p)
+        } else {
+            None
+        };
+        if let Err(err) = std::fs::copy(&src, &dest) {
+            // Undo this file's backup before the general rollback.
+            let _ = std::fs::remove_file(&dest);
+            if let Some(ref p) = prev {
+                let _ = std::fs::rename(p, &dest);
+            }
+            rollback_and_err!(ImportError::Io {
+                reason: format!("write {dest:?}: {err}"),
+            });
+        }
+        writes.push((dest, prev));
+        if is_authoring {
+            installed.push(e.id.clone());
+        }
+        realized.push(e.clone());
+    }
+
+    Ok(ImportResult {
+        installed,
+        skipped_updates,
+        entries: realized,
+    })
+}
+
+/// Async commit: consume the token single-shot, hold the shared forms-data-dir
+/// lock across the (brief) promote, delegate to [`commit_core`]. The staged dir
+/// is `rm -rf`'d when `staged` drops at the end.
+pub(crate) async fn commit(
+    token: &str,
+    approved: &[String],
+    custom_root: &Path,
+    bundle_root: &Path,
+    reg: std::sync::Arc<ImportStagingRegistry>,
+) -> Result<ImportResult, ImportError> {
+    let (staged, plan_entries) = reg.take(token).ok_or(ImportError::TokenExpired)?;
+    let _guard = crate::forms::updater::INSTALL_LOCK.lock().await;
+    commit_core(&staged, &plan_entries, approved, custom_root, bundle_root)
 }
 
 #[cfg(test)]
@@ -1390,7 +1615,7 @@ mod tests {
     #[test]
     fn registry_mint_resolve_consume_is_single_shot() {
         let reg = ImportStagingRegistry::default();
-        let token = reg.insert(make_staged_fixture());
+        let token = reg.insert(make_staged_fixture(), vec![]);
         assert_eq!(token.len(), 16);
         assert!(reg.take(&token).is_some(), "first take resolves");
         assert!(reg.take(&token).is_none(), "second take → gone (single-shot)");
@@ -1401,7 +1626,7 @@ mod tests {
         let reg = ImportStagingRegistry::default();
         let staged = make_staged_fixture();
         let path = staged.dir.clone();
-        let token = reg.insert(staged);
+        let token = reg.insert(staged, vec![]);
         assert!(path.exists());
         reg.cancel(&token);
         assert!(reg.take(&token).is_none());
@@ -1411,7 +1636,7 @@ mod tests {
     #[test]
     fn registry_reaps_entries_older_than_ttl() {
         let reg = ImportStagingRegistry::default();
-        let token = reg.insert_with_age(make_staged_fixture(), 7200);
+        let token = reg.insert_with_age(make_staged_fixture(), vec![], 7200);
         reg.reap(3600);
         assert!(reg.take(&token).is_none(), "stale staging reaped");
     }
@@ -1448,5 +1673,155 @@ mod tests {
             0,
             "preview must not write custom_root"
         );
+    }
+
+    // ---- Task 7: commit ----
+
+    /// Build (staged, plan) for a source tree classified against a custom_root.
+    fn stage_and_plan(
+        src: &std::path::Path,
+        custom_root: &std::path::Path,
+        bundle_root: &std::path::Path,
+    ) -> (Staged, Vec<ImportEntry>) {
+        let staged = stage_sources(&[src.to_string_lossy().into_owned()]).unwrap();
+        let cands = detect_candidates(&staged.dir).unwrap();
+        let plan = classify(cands, &stem_set(custom_root), &stem_set(bundle_root));
+        (staged, plan)
+    }
+
+    #[test]
+    fn commit_core_writes_added_and_skips_unconfirmed_update() {
+        let work = tempfile::tempdir().unwrap();
+        let custom_root = work.path().join("custom");
+        let bundle_root = work.path().join("bundle");
+        std::fs::create_dir_all(&custom_root).unwrap();
+        std::fs::create_dir_all(&bundle_root).unwrap();
+        write_bytes(&custom_root.join("Existing Initial.html"), b"OLD CONTENT");
+        let src = work.path().join("src");
+        write_bytes(&src.join("New Initial.html"), FORM_HTML);
+        write_bytes(&src.join("Existing Initial.html"), FORM_HTML);
+        let (staged, plan) = stage_and_plan(&src, &custom_root, &bundle_root);
+
+        let res = commit_core(&staged, &plan, &[], &custom_root, &bundle_root).unwrap();
+        assert!(res.installed.contains(&"New Initial".to_string()));
+        assert!(res.skipped_updates.contains(&"Existing Initial".to_string()));
+        assert!(custom_root.join("New Initial.html").exists());
+        // unconfirmed Update left untouched (still OLD).
+        assert_eq!(
+            std::fs::read(custom_root.join("Existing Initial.html")).unwrap(),
+            b"OLD CONTENT"
+        );
+    }
+
+    #[test]
+    fn commit_core_applies_approved_update_with_prev_backup() {
+        let work = tempfile::tempdir().unwrap();
+        let custom_root = work.path().join("custom");
+        let bundle_root = work.path().join("bundle");
+        std::fs::create_dir_all(&custom_root).unwrap();
+        std::fs::create_dir_all(&bundle_root).unwrap();
+        write_bytes(&custom_root.join("Existing Initial.html"), b"OLD CONTENT");
+        let src = work.path().join("src");
+        write_bytes(&src.join("Existing Initial.html"), FORM_HTML);
+        let (staged, plan) = stage_and_plan(&src, &custom_root, &bundle_root);
+
+        let res = commit_core(
+            &staged,
+            &plan,
+            &["Existing Initial".to_string()],
+            &custom_root,
+            &bundle_root,
+        )
+        .unwrap();
+        assert!(res.installed.contains(&"Existing Initial".to_string()));
+        // overwrite applied (now the staged FORM_HTML)…
+        assert_eq!(
+            std::fs::read(custom_root.join("Existing Initial.html")).unwrap(),
+            FORM_HTML
+        );
+        // …and a .prev-* backup retains the old content (data-loss guard).
+        let prev = std::fs::read_dir(&custom_root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains("Existing Initial.html.prev-")
+            })
+            .expect("a .prev backup was created");
+        assert_eq!(std::fs::read(prev.path()).unwrap(), b"OLD CONTENT");
+    }
+
+    #[test]
+    fn commit_core_aborts_with_conflict_if_added_became_update() {
+        let work = tempfile::tempdir().unwrap();
+        let custom_root = work.path().join("custom");
+        let bundle_root = work.path().join("bundle");
+        std::fs::create_dir_all(&custom_root).unwrap();
+        std::fs::create_dir_all(&bundle_root).unwrap();
+        let src = work.path().join("src");
+        write_bytes(&src.join("X Initial.html"), FORM_HTML);
+        // plan classified against EMPTY custom → X = Added.
+        let (staged, plan) = stage_and_plan(&src, &custom_root, &bundle_root);
+        // Behind its back, someone adds X into custom_root.
+        write_bytes(&custom_root.join("X Initial.html"), b"sneaked in");
+
+        let err = commit_core(&staged, &plan, &[], &custom_root, &bundle_root).unwrap_err();
+        assert!(matches!(err, ImportError::CommitConflict { .. }));
+    }
+
+    #[test]
+    fn commit_core_ignores_approved_ids_not_in_plan() {
+        let work = tempfile::tempdir().unwrap();
+        let custom_root = work.path().join("custom");
+        let bundle_root = work.path().join("bundle");
+        std::fs::create_dir_all(&custom_root).unwrap();
+        std::fs::create_dir_all(&bundle_root).unwrap();
+        let src = work.path().join("src");
+        write_bytes(&src.join("A Initial.html"), FORM_HTML);
+        let (staged, plan) = stage_and_plan(&src, &custom_root, &bundle_root);
+
+        let res = commit_core(
+            &staged,
+            &plan,
+            &["Not In Plan".to_string()],
+            &custom_root,
+            &bundle_root,
+        )
+        .unwrap();
+        assert_eq!(res.installed, vec!["A Initial".to_string()]);
+        assert!(!custom_root.join("Not In Plan.html").exists());
+    }
+
+    fn setup_committable() -> (
+        std::sync::Arc<ImportStagingRegistry>,
+        String,
+        PathBuf,
+        PathBuf,
+        tempfile::TempDir,
+    ) {
+        let work = tempfile::tempdir().unwrap();
+        let custom_root = work.path().join("custom");
+        let bundle_root = work.path().join("bundle");
+        std::fs::create_dir_all(&custom_root).unwrap();
+        std::fs::create_dir_all(&bundle_root).unwrap();
+        let src = work.path().join("src");
+        write_bytes(&src.join("T Initial.html"), FORM_HTML);
+        let (staged, plan) = stage_and_plan(&src, &custom_root, &bundle_root);
+        let reg = std::sync::Arc::new(ImportStagingRegistry::default());
+        let token = reg.insert(staged, plan);
+        (reg, token, custom_root, bundle_root, work)
+    }
+
+    #[tokio::test]
+    async fn commit_consumes_token_recommit_is_token_expired() {
+        let (reg, token, custom_root, bundle_root, _work) = setup_committable();
+        assert!(commit(&token, &[], &custom_root, &bundle_root, reg.clone())
+            .await
+            .is_ok());
+        let err = commit(&token, &[], &custom_root, &bundle_root, reg)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::TokenExpired));
     }
 }
