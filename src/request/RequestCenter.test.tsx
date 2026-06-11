@@ -182,12 +182,15 @@ describe('<RequestCenter>', () => {
 // Task C2 — request-first sections + cards.
 //
 // A richer catalog fixture so the geo + catalogMap resolvers have real entries
-// to bind to. CN87 → lat≈47.5, lon≈-123.0 → state WA, sea-area WX_EASTPAC.
+// to bind to. CN87 → lat≈47.5, lon≈-123.0 → zone WAZ321 "Southern Hood Canal"
+// → WA_ZON_HOCS, radar US.RAD.PSND, sea-area WX_EASTPAC.
 // ===========================================================================
 
 const C2_ENTRIES: CatalogEntry[] = [
-  // WA state forecast (non-tabular preferred by bestStateForecast).
-  entry('WX_US_WA', 'WA_FOR_WA', 'State Forecast for Washington', 4096),
+  // NWS zone forecast for WAZ321 (Southern Hood Canal) — what CN87 resolves to.
+  entry('WX_US_WA', 'WA_ZON_HOCS', 'Southern Hood Canal Zone Forecast', 2500),
+  // Radar snapshot for Puget Sound & SJDF — what CN87 resolves to.
+  entry('WX_US_RAD', 'US.RAD.PSND', 'SNAPSHOT CURRENT RADAR U.S. PUGET SOUND & SJDF', 20799),
   // The four NATIONAL filenames in their categories.
   entry('PROPAGATION', 'PROP_3DAY', '3-Day Propagation Forecast', 800),
   entry('PROPAGATION', 'PROP_WWV', 'Daily WWV Solar Flux summary', 621),
@@ -220,28 +223,28 @@ describe('<RequestCenter> — C2 sections & cards', () => {
     vi.clearAllMocks();
   });
 
-  it('Weather: "State forecast" card adds the WA state-forecast cms item', async () => {
+  it('Location hero: zone-forecast card adds the zone cms item (WAZ321 → WA_ZON_HOCS for CN87)', async () => {
     mockC2('CN87');
     render(<RequestCenter onClose={() => {}} />);
-    const card = await screen.findByTestId('request-card-wx-state-forecast');
+    const card = await screen.findByTestId('request-card-loc-zone-forecast');
     expect(card).toBeInTheDocument();
-    // Verify the visible label copy.
-    expect(within(card).getByText('State forecast')).toBeInTheDocument();
+    // The label is the zone name, not a generic "State forecast" string.
+    expect(within(card).getByText('Southern Hood Canal')).toBeInTheDocument();
 
-    clickCardAdd('wx-state-forecast');
+    clickCardAdd('loc-zone-forecast');
 
-    const item = await screen.findByTestId('basket-item-cms:WA_FOR_WA');
-    expect(item).toHaveTextContent('State forecast');
+    const item = await screen.findByTestId('basket-item-cms:WA_ZON_HOCS');
+    expect(item).toHaveTextContent('Southern Hood Canal');
   });
 
-  it('Weather: "Marine forecast" card navigates the browse view to WX_EASTPAC without touching the basket', async () => {
+  it('Location hero: marine-forecast card navigates the browse view to WX_EASTPAC without touching the basket', async () => {
     mockC2('CN87');
     render(<RequestCenter onClose={() => {}} />);
-    const card = await screen.findByTestId('request-card-wx-marine-forecast');
+    const card = await screen.findByTestId('request-card-loc-marine');
     expect(card).toBeInTheDocument();
     expect(within(card).getByText('Marine forecast')).toBeInTheDocument();
 
-    clickCardAdd('wx-marine-forecast');
+    clickCardAdd('loc-marine');
 
     const browse = await screen.findByTestId('request-browse');
     expect(browse).toHaveAttribute('data-category', 'WX_EASTPAC');
@@ -288,15 +291,16 @@ describe('<RequestCenter> — C2 sections & cards', () => {
     expect(screen.queryByText(/hazardous/i)).not.toBeInTheDocument();
   });
 
-  it('grid=null: geo cards (State / Marine forecast) are absent; national + nearby cards still render', async () => {
+  it('grid=null: geo cards (zone/radar/marine) are absent; national + nearby cards still render', async () => {
     mockC2(null);
     render(<RequestCenter onClose={() => {}} />);
     // National + nearby render regardless of location.
     expect(await screen.findByTestId('request-card-prop-forecast')).toBeInTheDocument();
     expect(screen.getByTestId('request-card-nearby-winlink-info')).toBeInTheDocument();
     // Geo-derived cards omitted when there is no grid.
-    expect(screen.queryByTestId('request-card-wx-state-forecast')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('request-card-wx-marine-forecast')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('request-card-loc-zone-forecast')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('request-card-loc-radar')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('request-card-loc-marine')).not.toBeInTheDocument();
   });
 });
 
@@ -358,7 +362,7 @@ describe('<RequestCenter> — D1 catalog browse reveal', () => {
     mockC2('CN87');
     render(<RequestCenter onClose={() => {}} />);
     // Marine-forecast card deep-links to WX_EASTPAC.
-    const card = await screen.findByTestId('request-card-wx-marine-forecast');
+    const card = await screen.findByTestId('request-card-loc-marine');
     fireEvent.click(within(card).getByRole('button', { name: /open/i }));
     const browse = await screen.findByTestId('request-browse');
     expect(browse).toHaveAttribute('data-category', 'WX_EASTPAC');
@@ -391,7 +395,8 @@ describe('<RequestCenter> — D2 global search', () => {
     expect(results).toBeInTheDocument();
     // Matches span multiple categories.
     expect(within(results).getByTestId('catalog-browse-item-PROP_3DAY')).toBeInTheDocument();
-    expect(within(results).getByTestId('catalog-browse-item-WA_FOR_WA')).toBeInTheDocument();
+    // WA_ZON_HOCS description contains "Forecast" — proves cross-category hits.
+    expect(within(results).getByTestId('catalog-browse-item-WA_ZON_HOCS')).toBeInTheDocument();
     // Home sections no longer rendered (search overrides the view).
     expect(document.querySelector('.request-sections')).toBeNull();
   });

@@ -20,8 +20,8 @@
 // it ends up with zero cards — the national + nearby sections always have cards.
 
 import type { CatalogEntry } from '../catalog/types';
-import { gridToLatLon, latLonToUsState, latLonToSeaArea } from './geo';
-import { NATIONAL, bestStateForecast } from './catalogMap';
+import { gridToLatLon, gridToNwsZone, gridToRadarRegion, latLonToSeaArea } from './geo';
+import { NATIONAL, zoneForecastEntry, radarEntry } from './catalogMap';
 
 export type CardAction =
   | { kind: 'addCms'; filename: string }
@@ -33,6 +33,10 @@ export interface RequestCard {
   /// Human-facing card title; also the basket-item label for addCms cards.
   label: string;
   description?: string;
+  /** Short contextual annotation (e.g. zone id · filename). */
+  meta?: string;
+  /** When true, render as the primary / hero card in the location section. */
+  primary?: boolean;
   action: CardAction;
 }
 
@@ -58,35 +62,50 @@ export function buildSections(
 ): RequestSection[] {
   const sections: RequestSection[] = [];
 
-  // --- Weather (geo-derived) -------------------------------------------------
-  const weatherCards: RequestCard[] = [];
+  // --- Location (geo-derived: zone forecast + radar + marine) ----------------
+  const locationCards: RequestCard[] = [];
   const latLon = grid ? gridToLatLon(grid) : null;
   if (latLon) {
-    const state = latLonToUsState(latLon.lat, latLon.lon);
-    if (state) {
-      const forecast = bestStateForecast(entries, state);
-      if (forecast) {
-        weatherCards.push({
-          id: 'wx-state-forecast',
-          label: 'State forecast',
-          description: forecast.description,
-          action: { kind: 'addCms', filename: forecast.filename },
+    const zone = gridToNwsZone(latLon.lat, latLon.lon);
+    if (zone) {
+      const entry = zoneForecastEntry(entries, zone.id);
+      if (entry) {
+        locationCards.push({
+          id: 'loc-zone-forecast',
+          label: zone.name,
+          description: 'Your NWS public forecast zone — the local text forecast for your grid. Returns text.',
+          meta: `${zone.id} · ${entry.filename}`,
+          primary: true,
+          action: { kind: 'addCms', filename: entry.filename },
         });
       }
     }
-
+    const radar = gridToRadarRegion(latLon.lat, latLon.lon);
+    if (radar) {
+      const entry = radarEntry(entries, radar.filename);
+      if (entry) {
+        locationCards.push({
+          id: 'loc-radar',
+          label: 'Regional radar',
+          description: 'Current precipitation radar snapshot for your area. Returns an image.',
+          meta: `${radar.name} · ${radar.filename}`,
+          action: { kind: 'addCms', filename: entry.filename },
+        });
+      }
+    }
     const seaArea = latLonToSeaArea(latLon.lat, latLon.lon);
     if (seaArea) {
-      weatherCards.push({
-        id: 'wx-marine-forecast',
+      locationCards.push({
+        id: 'loc-marine',
         label: 'Marine forecast',
-        description: 'Coastal & offshore marine forecasts for your sea area.',
+        description: 'Wind, wave and sea-state forecasts for your offshore sea area. Returns text.',
+        meta: seaArea,
         action: { kind: 'openBrowse', category: seaArea },
       });
     }
   }
-  if (weatherCards.length > 0) {
-    sections.push({ id: 'weather', title: 'Weather', kind: 'location', cards: weatherCards });
+  if (locationCards.length > 0) {
+    sections.push({ id: 'weather', title: 'For your location', kind: 'location', cards: locationCards });
   }
 
   // --- Propagation & space (national, always shown, one-click) ---------------

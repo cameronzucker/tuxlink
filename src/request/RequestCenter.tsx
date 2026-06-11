@@ -27,8 +27,9 @@ import './RequestCenter.css';
 // Card id → glyph for the feat cards (hero) and chips (national grids).
 // Unmapped ids fall back to `info`.
 const CARD_ICONS: Record<string, IconName> = {
-  'wx-state-forecast': 'weather',
-  'wx-marine-forecast': 'wave',
+  'loc-zone-forecast': 'weather',
+  'loc-radar': 'weather',
+  'loc-marine': 'wave',
   'prop-forecast': 'prop',
   'prop-solar': 'sun',
   'prop-aurora': 'aurora',
