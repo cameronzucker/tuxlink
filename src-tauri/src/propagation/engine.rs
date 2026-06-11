@@ -129,7 +129,7 @@ pub fn run_voacapl_with_timeout(
 /// Create a per-call scratch itshfbc root inside `parent`.
 ///
 /// Layout:
-/// ```
+/// ```text
 /// <tempdir>/
 ///   run/           ← writable; voacapl writes voacapx.out here
 ///   coeffs  → <itshfbc_root>/coeffs       (symlink, if src exists)
