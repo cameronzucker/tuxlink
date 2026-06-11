@@ -5,6 +5,7 @@
 // on any deviation; this view also falls back to raw if the invoke itself fails.
 
 import { useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { parseReply } from './useCatalog';
 import type {
   ReplyView,
@@ -111,6 +112,63 @@ function ForecastBody({ forecast }: { forecast: Forecast }) {
   return null; // 'none' → header + raw only
 }
 
+/** A received `PUB_*` "Update Via Radio" reply self-identifies with a
+ *  `WINLINK <MODE> CHANNEL LISTING` header. Cheap client-side gate for whether to
+ *  offer the ingest action; the Rust command does the authoritative parse. */
+function isChannelListing(text: string): boolean {
+  return /WINLINK\b[\s\S]*\bCHANNEL LISTING/i.test(text);
+}
+
+/** Ingest action for a radio-delivered station-listing reply (tuxlink-xrbw):
+ *  parses the listing into the offline cache so Find-a-Station shows the gateways
+ *  with no internet. Operator-triggered + transparent (no silent magic). */
+function IngestStationsAction({ body }: { body: string }) {
+  const [state, setState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'busy' }
+    | { kind: 'done'; mode: string; count: number }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' });
+
+  async function add() {
+    setState({ kind: 'busy' });
+    try {
+      const out = await invoke<{ mode: string; count: number }>('catalog_ingest_listing_reply', {
+        body,
+      });
+      setState({ kind: 'done', mode: out.mode, count: out.count });
+    } catch (e) {
+      setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  if (state.kind === 'done') {
+    return (
+      <p className="catalog-reply__ingest-done" data-testid="ingest-done">
+        Added {state.count} {state.mode} gateway{state.count === 1 ? '' : 's'} to Find a Station.
+      </p>
+    );
+  }
+  return (
+    <div className="catalog-reply__ingest">
+      <button
+        type="button"
+        className="catalog-reply__ingest-btn"
+        data-testid="ingest-stations"
+        disabled={state.kind === 'busy'}
+        onClick={add}
+      >
+        {state.kind === 'busy' ? 'Adding…' : 'Add to Find a Station'}
+      </button>
+      {state.kind === 'error' && (
+        <span className="catalog-reply__ingest-err" role="alert" data-testid="ingest-error">
+          {state.message}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function CatalogReplyView({ subject, body }: { subject: string; body: string }) {
   const [view, setView] = useState<ReplyView | null>(null);
   const [showRaw, setShowRaw] = useState(false);
@@ -131,7 +189,16 @@ export function CatalogReplyView({ subject, body }: { subject: string; body: str
   }, [subject, body]);
 
   if (!view) return <pre className="catalog-reply__raw">{body}</pre>;
-  if (view.kind === 'raw') return <pre className="catalog-reply__raw">{view.text}</pre>;
+  if (view.kind === 'raw') {
+    // A radio-delivered station-listing reply parses as raw here; offer to ingest
+    // it into Find-a-Station (tuxlink-xrbw). Ordinary raw replies are unaffected.
+    return (
+      <>
+        {isChannelListing(view.text) && <IngestStationsAction body={view.text} />}
+        <pre className="catalog-reply__raw">{view.text}</pre>
+      </>
+    );
+  }
 
   const structured = view.forecast.kind !== 'none';
 

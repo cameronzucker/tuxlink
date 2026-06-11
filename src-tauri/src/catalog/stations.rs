@@ -152,6 +152,41 @@ pub fn parse_listing(body: &str, mode: ListingMode) -> StationListing {
     }
 }
 
+/// Detect the mode of a received station-listing reply from its self-identifying
+/// header line (`WINLINK <MODE> CHANNEL LISTING`). This is how a radio-delivered
+/// `PUB_*` "Update Via Radio" reply (tuxlink-xrbw) is recognized and routed to the
+/// right `parse_listing` mode without subject-line or request-ID correlation.
+///
+/// Returns `None` when the body is not a recognizable channel listing (an NWS
+/// weather reply, ordinary mail, an error page) — the caller then leaves it as a
+/// plain message. VARA FM is excluded (no confirmed listing endpoint; the only
+/// VARA listing tuxlink ingests is VARA HF).
+pub fn detect_listing_mode(body: &str) -> Option<ListingMode> {
+    let body = body.strip_prefix('\u{FEFF}').unwrap_or(body);
+    let title = body
+        .lines()
+        .map(str::trim)
+        .find(|l| l.contains("CHANNEL LISTING"))?
+        .to_uppercase();
+    // Order matters: "ROBUST PACKET" must be tested before "PACKET", and the
+    // VARA-FM exclusion before the bare VARA match.
+    if title.contains("ROBUST PACKET") {
+        Some(ListingMode::RobustPacket)
+    } else if title.contains("VARA FM") {
+        None
+    } else if title.contains("VARA") {
+        Some(ListingMode::VaraHf)
+    } else if title.contains("ARDOP") {
+        Some(ListingMode::ArdopHf)
+    } else if title.contains("PACTOR") {
+        Some(ListingMode::Pactor)
+    } else if title.contains("PACKET") {
+        Some(ListingMode::Packet)
+    } else {
+        None
+    }
+}
+
 fn parse_station_blocks(body: &str) -> Vec<Gateway> {
     let mut out = Vec::new();
     let mut current: Option<Gateway> = None;
@@ -431,5 +466,50 @@ mod tests {
         let listing = parse_listing(&body, ListingMode::ArdopHf);
         assert!(listing.parsed_ok);
         assert!(listing.title.as_deref().unwrap().starts_with("WINLINK"));
+    }
+
+    // ---- detect_listing_mode (tuxlink-xrbw) ----------------------------------
+
+    fn header(mode_words: &str) -> String {
+        format!("WINLINK {mode_words} CHANNEL LISTING - (x)\r\nbody\r\n")
+    }
+
+    #[test]
+    fn detect_mode_from_each_header() {
+        assert_eq!(detect_listing_mode(&header("VARA")), Some(ListingMode::VaraHf));
+        assert_eq!(detect_listing_mode(&header("ARDOP")), Some(ListingMode::ArdopHf));
+        assert_eq!(detect_listing_mode(&header("PACTOR")), Some(ListingMode::Pactor));
+        assert_eq!(detect_listing_mode(&header("PACKET")), Some(ListingMode::Packet));
+    }
+
+    #[test]
+    fn detect_robust_packet_before_packet() {
+        // "ROBUST PACKET" contains "PACKET" — order must not misclassify it.
+        assert_eq!(
+            detect_listing_mode(&header("ROBUST PACKET")),
+            Some(ListingMode::RobustPacket)
+        );
+    }
+
+    #[test]
+    fn detect_mode_from_a_real_listing_body() {
+        // one_station() carries a "WINLINK ARDOP CHANNEL LISTING" header.
+        assert_eq!(detect_listing_mode(&one_station("Bob/AI4Y")), Some(ListingMode::ArdopHf));
+        // BOM-prefixed bodies still detect.
+        let bom = format!("\u{FEFF}{}", one_station("Bob/AI4Y"));
+        assert_eq!(detect_listing_mode(&bom), Some(ListingMode::ArdopHf));
+    }
+
+    #[test]
+    fn detect_mode_none_for_non_listings() {
+        assert_eq!(detect_listing_mode(""), None);
+        assert_eq!(detect_listing_mode("Just an ordinary email body.\r\nNothing here."), None);
+        // An NWS area-weather reply is not a channel listing.
+        assert_eq!(
+            detect_listing_mode("FPUS55 KFGZ 032234\r\nZone Forecast Product for Northern Arizona"),
+            None
+        );
+        // VARA FM is intentionally excluded (no confirmed listing endpoint).
+        assert_eq!(detect_listing_mode(&header("VARA FM")), None);
     }
 }

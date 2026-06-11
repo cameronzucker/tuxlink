@@ -74,7 +74,7 @@ pub async fn catalog_send_inquiry(
 // ============================================================================
 
 use crate::catalog::reply::{parse_reply, ReplyView};
-use crate::catalog::stations::{parse_listing, ListingMode, StationListing};
+use crate::catalog::stations::{detect_listing_mode, parse_listing, ListingMode, StationListing};
 use crate::catalog::stations_cache::{CacheKey, StationsCache};
 use std::sync::Arc;
 
@@ -185,6 +185,54 @@ pub fn catalog_set_service_codes(codes: String) -> Result<(), UiError> {
 #[tauri::command]
 pub fn catalog_parse_reply(subject: String, body: String) -> Result<ReplyView, UiError> {
     Ok(parse_reply(&subject, &body))
+}
+
+/// Outcome of ingesting a radio-delivered station-listing reply (tuxlink-xrbw).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IngestOutcome {
+    /// Human-facing mode label, e.g. "VARA HF".
+    pub mode: String,
+    /// Number of gateways added to the offline cache.
+    pub count: usize,
+}
+
+/// Ingest a received `WINLINK <MODE> CHANNEL LISTING` reply — the body of a
+/// `PUB_*` "Update Via Radio" catalog reply — into the offline station cache so
+/// Find-a-Station shows the gateways with no internet (tuxlink-xrbw, the
+/// radio-refresh parity loop). The mode is read from the listing's own header;
+/// the parsed listing is stored under the key the finder looks up
+/// (`{mode, current service codes, 168 h}`) so the next finder fetch serves it
+/// fresh-from-cache without a network round-trip.
+///
+/// Returns `Unavailable` if the body is not a recognizable channel listing (an
+/// NWS reply, ordinary mail) or parsed to zero gateways — the caller leaves such
+/// a message as plain display.
+#[tauri::command]
+pub fn catalog_ingest_listing_reply(
+    body: String,
+    cache: State<'_, Arc<StationsCache>>,
+) -> Result<IngestOutcome, UiError> {
+    let mode = detect_listing_mode(&body).ok_or_else(|| UiError::Unavailable {
+        reason: "message is not a Winlink channel listing".to_string(),
+    })?;
+    let listing = parse_listing(&body, mode);
+    if !listing.parsed_ok || listing.gateways.is_empty() {
+        return Err(UiError::Unavailable {
+            reason: "channel listing contained no readable gateways".to_string(),
+        });
+    }
+    let count = listing.gateways.len();
+    let key = CacheKey {
+        mode,
+        service_codes: crate::winlink::credentials::service_codes_read(),
+        history_hours: 168,
+    };
+    cache.insert(key, listing);
+    Ok(IngestOutcome {
+        mode: mode.label().to_string(),
+        count,
+    })
 }
 
 #[cfg(test)]
