@@ -42,6 +42,21 @@ Anything outside this set (state forecast, the operator's other in-state zones,
 marine-point products, satellite, weather fax) is reachable through Browse, not
 the hero.
 
+> **Shipped-coverage reality (added 2026-06-10 during implementation).** DoD #1's
+> "exact NWS public forecast zone" primary card resolves **only where the bundled
+> Winlink catalog carries per-public-zone forecasts** — verified to be **8 states:
+> WA, OR, ME, NJ, VT, NH, DE, AK**. For the other 41 catalog states, the finest
+> product the catalog offers is the multi-zone NWS-office-area ZFP (e.g. "Zone
+> Forecast for California from Eureka"), which spans many public zones; mapping one
+> to a single zone would violate DoD #1, so the zone card correctly **omits** there
+> (the regional/office ZFPs stay in Browse, recorded unmapped-by-design). This is an
+> **upstream catalog limitation, not unfinished work** — DoD #5's completeness gate
+> proves every catalog zone-forecast filename is accounted for. Radar (all 161
+> regions, nationwide) and marine (all coasts) resolve regardless, so every US
+> operator's hero shows at least radar; the section degrades card-by-card and is
+> never empty within the US. Broadening zone coverage requires the catalog to gain
+> per-zone products (upstream), not more mapping work here.
+
 ## Scope
 
 **In:** `src/request/geo.ts` (zone + radar resolvers), `src/request/sections.ts`
