@@ -50,6 +50,15 @@ impl SsnForecast {
     }
 }
 
+/// The bundled SSN table shipped with the binary.
+///
+/// Contains a single verified anchor point (2026-06 = 100.0) captured during
+/// the 2026-06-10 voacapl grounding run — NOT a fabricated forecast trend.
+/// The fallback chain in `ssn_for` means any date resolves to this one real
+/// value (stale-but-real beats invented). The operator extends this table with
+/// authoritative SWPC monthly smoothed-SSN values before relying on
+/// out-of-month predictions; a writable on-disk cache that accepts operator
+/// updates is deferred to spec §12.
 pub const BUNDLED_SSN_FORECAST: &str =
     include_str!("../../resources/propagation/ssn-forecast.json");
 

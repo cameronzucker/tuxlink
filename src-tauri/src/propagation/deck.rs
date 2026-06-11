@@ -97,6 +97,10 @@ pub fn build_deck(inputs: &PredictionInputs) -> Result<String, PropagationError>
             inputs.tx_grid, inputs.rx_grid
         ),
         // CIRCUIT: TX-lat F5.2, TX-lon/RX-lat/RX-lon each F9.2; hemisphere carries sign.
+        // v1: short-path only ('S'). Long-path ('L') prediction for DX/antipodal paths
+        // is deferred (adrev F15) — correct for the regional/NVIS emcomm use case, but a
+        // DX station beyond ~half-circumference may read as unreachable. A future task
+        // adds path-direction selection.
         format!(
             "CIRCUIT   {:5.2}{}{:9.2}{}{:9.2}{}{:9.2}{}  S {:5}",
             tla, tlah, tlo, tloh, rla, rlah, rlo, rloh, 0

@@ -423,57 +423,78 @@ pub fn run() {
             );
 
             // tuxlink-ipjt Task 6: offline HF path-prediction state.
-            // Registers PropagationState ONLY when all resources resolve.
-            // Failures are soft (eprintln + no state registered = prediction
-            // unavailable, app still launches — F17/F10).
+            // PropagationState is ALWAYS managed (exactly once) so the Tauri
+            // extractor never fails before the command body runs.
+            //   - Ready(...) when all engine assets resolve.
+            //   - Unavailable("<reason>") on any soft-disable path.
+            // Failures are soft (eprintln + Unavailable — never abort launch — F17/F10).
+            // F10: no /tmp fallback; missing app_cache_dir → Unavailable.
             // F2: voacapl binary is a Tauri externalBin sidecar placed ADJACENT
             // to the main exe (not under Resource). The packaged-.deb path must
             // be confirmed by the Task 7 gated test / operator smoke.
             {
-                use crate::propagation::{commands::PropagationState, engine::EnginePaths, ssn};
-                match (app.path().app_cache_dir(), std::env::current_exe()) {
+                use crate::propagation::commands::{PropagationState, ReadyPropagation};
+                use crate::propagation::{engine::EnginePaths, ssn};
+
+                let prop_state = match (app.path().app_cache_dir(), std::env::current_exe()) {
                     (Ok(cache), Ok(exe)) => {
-                        if let Some(bindir) = exe.parent() {
-                            if let Err(e) = std::fs::create_dir_all(&cache) {
-                                eprintln!("propagation: prediction disabled (could not create cache dir: {e})");
-                            } else {
-                                match (
-                                    app.path().resolve(
-                                        "resources/itshfbc",
-                                        tauri::path::BaseDirectory::Resource,
-                                    ),
-                                    ssn::SsnForecast::from_json(ssn::BUNDLED_SSN_FORECAST),
-                                ) {
-                                    (Ok(itshfbc), Ok(forecast)) => {
-                                        app.manage(PropagationState {
-                                            paths: EnginePaths {
-                                                binary: bindir.join("voacapl"),
-                                                itshfbc_root: itshfbc,
-                                            },
-                                            scratch_parent: cache,
-                                            clock: std::sync::Arc::new(
-                                                crate::catalog::stations_cache::SystemClock,
-                                            ),
-                                            forecast,
-                                        });
+                        match exe.parent() {
+                            None => {
+                                let reason = "current_exe has no parent dir".to_string();
+                                eprintln!("propagation: prediction disabled ({reason})");
+                                PropagationState::Unavailable(reason)
+                            }
+                            Some(bindir) => {
+                                if let Err(e) = std::fs::create_dir_all(&cache) {
+                                    let reason = format!("could not create cache dir: {e}");
+                                    eprintln!("propagation: prediction disabled ({reason})");
+                                    PropagationState::Unavailable(reason)
+                                } else {
+                                    match (
+                                        app.path().resolve(
+                                            "resources/itshfbc",
+                                            tauri::path::BaseDirectory::Resource,
+                                        ),
+                                        ssn::SsnForecast::from_json(ssn::BUNDLED_SSN_FORECAST),
+                                    ) {
+                                        (Ok(itshfbc), Ok(forecast)) => {
+                                            PropagationState::Ready(ReadyPropagation {
+                                                paths: EnginePaths {
+                                                    binary: bindir.join("voacapl"),
+                                                    itshfbc_root: itshfbc,
+                                                },
+                                                scratch_parent: cache,
+                                                clock: std::sync::Arc::new(
+                                                    crate::catalog::stations_cache::SystemClock,
+                                                ),
+                                                forecast,
+                                            })
+                                        }
+                                        (it, fc) => {
+                                            let reason = format!(
+                                                "resource resolution failed (itshfbc={:?}, forecast_ok={})",
+                                                it.err(),
+                                                fc.is_ok()
+                                            );
+                                            eprintln!("propagation: prediction disabled ({reason})");
+                                            PropagationState::Unavailable(reason)
+                                        }
                                     }
-                                    (it, fc) => eprintln!(
-                                        "propagation: prediction disabled (itshfbc={:?}, forecast_ok={})",
-                                        it.err(),
-                                        fc.is_ok()
-                                    ),
                                 }
                             }
-                        } else {
-                            eprintln!("propagation: prediction disabled (current_exe has no parent dir)");
                         }
                     }
-                    (cache, exe) => eprintln!(
-                        "propagation: prediction disabled (cache_dir={:?}, current_exe={:?})",
-                        cache.err(),
-                        exe.err()
-                    ),
-                }
+                    (cache, exe) => {
+                        let reason = format!(
+                            "app_cache_dir unavailable ({:?}) or current_exe failed ({:?})",
+                            cache.err(),
+                            exe.err()
+                        );
+                        eprintln!("propagation: prediction disabled ({reason})");
+                        PropagationState::Unavailable(reason)
+                    }
+                };
+                app.manage(prop_state);
             }
 
             Ok(())

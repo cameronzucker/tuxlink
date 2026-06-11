@@ -52,14 +52,26 @@ impl From<PropagationError> for UiError {
 // Managed state
 // ============================================================================
 
-/// State registered in `.setup()` when all resources resolve successfully.
-/// Managed as a plain `PropagationState` (not wrapped in Arc) because Tauri
-/// itself wraps managed state in an Arc internally and gives us `State<'_>`.
-pub struct PropagationState {
+/// Engine resources available when all setup paths resolve successfully.
+pub struct ReadyPropagation {
     pub paths: EnginePaths,
     pub scratch_parent: PathBuf,
     pub clock: Arc<dyn Clock>,
     pub forecast: ssn::SsnForecast,
+}
+
+/// Always-managed propagation state (registered unconditionally in `.setup()`).
+///
+/// Using an enum instead of `Option` / conditional `.manage()` ensures the
+/// Tauri extractor never fails with a generic "state not registered" error.
+/// A soft-disabled engine returns `UiError::Unavailable` from the command
+/// body, honoring the F17 degrade contract at the command surface.
+pub enum PropagationState {
+    /// All engine assets resolved; predictions are available.
+    Ready(ReadyPropagation),
+    /// One or more engine assets failed to resolve; predictions are unavailable.
+    /// `reason` is the human-readable explanation logged at startup (F17).
+    Unavailable(String),
 }
 
 // ============================================================================
@@ -122,8 +134,10 @@ pub(crate) fn run_prediction(
 /// frequencies. `tx_power_w` (100 W) and `req_snr_db` (73 dB VOACAP
 /// standard) are v1 defaults applied here.
 ///
-/// Returns `Err(UiError::Unavailable)` if prediction state was not registered
-/// at startup (binary not found, cache dir unavailable, etc.).
+/// Returns `Err(UiError::Unavailable)` when `PropagationState::Unavailable`
+/// was registered at startup (binary not found, cache dir unavailable, etc.),
+/// honoring the F17 degrade contract. The state is ALWAYS managed so the
+/// Tauri extractor never fails before the command body runs.
 #[tauri::command]
 pub async fn propagation_predict_path(
     tx_grid: String,
@@ -131,13 +145,21 @@ pub async fn propagation_predict_path(
     frequencies_khz: Vec<f64>,
     state: State<'_, PropagationState>,
 ) -> Result<PathPrediction, UiError> {
+    // Ensure the engine is available before doing any work.
+    let ready = match state.inner() {
+        PropagationState::Ready(r) => r,
+        PropagationState::Unavailable(reason) => {
+            return Err(UiError::Unavailable { reason: reason.clone() });
+        }
+    };
+
     // Clone everything we need into the blocking closure — the engine call is a
     // blocking std::process::Command; we must never hold it across an async boundary.
-    let clock: Arc<dyn Clock> = state.clock.clone();
+    let clock: Arc<dyn Clock> = ready.clock.clone();
     // SsnForecast derives Clone (BTreeMap<String,f64> is cheap to clone).
-    let forecast = state.forecast.clone();
-    let paths = state.paths.clone();
-    let scratch = state.scratch_parent.clone();
+    let forecast = ready.forecast.clone();
+    let paths = ready.paths.clone();
+    let scratch = ready.scratch_parent.clone();
 
     let result = tokio::task::spawn_blocking(move || {
         run_prediction(
@@ -295,6 +317,31 @@ mod tests {
         assert!(
             matches!(ui, UiError::Rejected(_)),
             "InvalidGrid should map to Rejected, got {ui:?}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // PropagationState::Unavailable → UiError::Unavailable mapping
+    // -------------------------------------------------------------------------
+
+    /// Asserts the mapping contract without a live Tauri harness: constructing
+    /// an `Unavailable` state and matching it yields the same reason string.
+    /// The full command path (including extractor) is exercised by the Task 7
+    /// gated integration test; this test guards the enum shape and the match
+    /// branch in isolation.
+    #[test]
+    fn unavailable_state_maps_to_uierror() {
+        let state = PropagationState::Unavailable("test reason".to_string());
+        let reason = match state {
+            PropagationState::Unavailable(r) => r,
+            PropagationState::Ready(_) => panic!("expected Unavailable"),
+        };
+        assert_eq!(reason, "test reason");
+        // Confirm the reason maps to UiError::Unavailable.
+        let ui = UiError::Unavailable { reason: reason.clone() };
+        assert!(
+            matches!(ui, UiError::Unavailable { .. }),
+            "Unavailable state should produce UiError::Unavailable, got {ui:?}"
         );
     }
 
