@@ -112,45 +112,29 @@ tested in a GitHub Actions runner**. Treat it as a starting point; the exact
 
 ---
 
-## arm64 CI strategy — **OPERATOR DECISION — not yet wired**
+## arm64 CI strategy — **WIRED (Option A — native arm64 runner)**
 
-The `release.yml` already uses a matrix with `ubuntu-latest` (amd64) and
-`ubuntu-24.04-arm` (arm64). voacapl builds from Fortran source and produces an
-arch-specific binary, so a separate build is needed per target triple.
+Decided and implemented (tuxlink-hhxs, 2026-06-11). The `release.yml` matrix runs
+`ubuntu-latest` (amd64) and `ubuntu-24.04-arm` (arm64); the "Build + stage
+voacapl" step builds voacapl from Fortran source **natively on each runner**, so
+each matrix row produces its own arch-correct `voacapl-<triple>`. A single step
+serves both rows unchanged.
 
-Two options; neither is wired yet:
+**Why Option A over cross-compile (Option B):** the native arm64 runner already
+exists in the matrix, voacapl builds in well under a minute, and cross-Fortran
+toolchains are less well-tested. Option B (cross-compile from amd64 with
+`gfortran-aarch64-linux-gnu` + cross-configured autoconf) offered no benefit and
+risked patching voacapl's `configure`. Rejected.
 
-### Option A — Native arm64 runner (recommended path)
-
-The `ubuntu-24.04-arm` runner in the existing matrix can build voacapl natively.
-The amd64 snippet above should work unchanged on arm64 because the build is
-from source.
-
-**Risk:** `gfortran` availability on `ubuntu-24.04-arm` has not been confirmed.
-Run `apt-cache show gfortran` in a one-off workflow to verify before committing.
-
-**Tradeoff:** simplest approach; doubles the voacapl build time in CI (one per
-matrix row). voacapl builds in well under a minute on the dev Pi, so this is
-unlikely to be a bottleneck.
-
-### Option B — Cross-compile from amd64
-
-Build the arm64 binary on the amd64 runner using a cross-Fortran toolchain
-(`gfortran-aarch64-linux-gnu`) and cross-configured autoconf.
-
-**Risk:** voacapl's `configure` script may not support cross-compilation without
-patching. Cross-Fortran toolchains on Ubuntu are less well-tested than native
-builds.
-
-**Tradeoff:** more complex; no clear benefit over Option A given arm64 runners
-exist in the matrix already.
-
-### Recommendation
-
-Start with Option A (native arm64 runner). Confirm `gfortran` availability in
-a one-off probe workflow, then paste the amd64 snippet into both matrix rows.
-Validate by checking that `src-tauri/binaries/voacapl-aarch64-unknown-linux-gnu`
-is present and executable after the step, before the Tauri bundle.
+**Residual risk being validated by the PR build:** `gfortran` availability on
+`ubuntu-24.04-arm` and `makeitshfbc`'s default output dir on a CI runner were
+unconfirmed when this was written. The `release.yml` build job runs on PRs that
+touch `.github/workflows/release.yml` / `src-tauri/**`, so the PR that wired this
+exercises both matrix rows end-to-end; the "Verify voacapl + itshfbc bundled
+where the app resolves them" step asserts the `.deb` places `voacapl` adjacent to
+the main binary and `resources/itshfbc/database/version.w32` under the Resource
+dir. If the arm64 row fails on `gfortran`, add it to the "Install system
+dependencies" apt list (it is in the standard Ubuntu arm64 repos).
 
 ---
 
