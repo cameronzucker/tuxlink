@@ -28,7 +28,7 @@ export type TileScheme = 'Xyz' | 'Tms';
  * - `lan-cached`  — LAN source validated but offline; serving from cache.
  * - `partial`     — reachable but only some zoom levels present.
  * - `unreachable` — configured but the host is not answering.
- * - `incompatible`— reachable but CRS/scheme/zoom mismatch — cannot serve.
+ * - `incompatible`— reachable but the server didn't return standard image tiles / scheme or zoom mismatch.
  */
 export type StatusKind =
   | 'bundled'

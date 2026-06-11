@@ -7,7 +7,7 @@ import { render, screen, fireEvent, waitFor, act, within } from '@testing-librar
 import { fireMapEvent, resetMapMock } from '../map/testMapMock';
 vi.mock('react-leaflet', async () => (await import('../map/testMapMock')).createReactLeafletMock());
 vi.mock('leaflet', async () => (await import('../map/testMapMock')).createLeafletMock());
-vi.mock('../map/assets/world-equirect-2048.png', () => ({ default: '/world-equirect-2048.png' }));
+vi.mock('../map/assets/world-mercator-2048.png', () => ({ default: '/world-mercator-2048.png' }));
 vi.mock('leaflet/dist/leaflet.css', () => ({}));
 vi.mock('leaflet/dist/images/marker-icon.png', () => ({ default: '/marker-icon.png' }));
 vi.mock('leaflet/dist/images/marker-icon-2x.png', () => ({ default: '/marker-icon-2x.png' }));
