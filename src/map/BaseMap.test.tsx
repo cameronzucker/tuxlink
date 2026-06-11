@@ -2,25 +2,25 @@
  * BaseMap shape test — SHAPE ONLY (C1).
  *
  * jsdom cannot render Leaflet, so this asserts only that BaseMap wires the
- * EPSG4326 CRS, world bounds, and bundled ImageOverlay, and bridges clicks to
- * onMapClick. Real projection arithmetic is proven in projection.test.ts; real
- * render / pan correctness is verified via grim on WebKitGTK — do NOT assert
- * projection through this mock.
+ * EPSG:3857 CRS, Mercator bounds, and bundled ImageOverlay, and bridges clicks
+ * and zoom events to onMapClick/onZoomChange. Real projection arithmetic is
+ * proven in projection.test.ts; real render / pan correctness is verified via
+ * grim on WebKitGTK — do NOT assert projection through this mock.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { fireMapEvent, resetMapMock } from './testMapMock';
+import { fireMapEvent, fireZoomEvent, setMockZoom, resetMapMock } from './testMapMock';
 
 vi.mock('react-leaflet', async () => (await import('./testMapMock')).createReactLeafletMock());
 vi.mock('leaflet', async () => (await import('./testMapMock')).createLeafletMock());
-vi.mock('./assets/world-equirect-2048.png', () => ({ default: '/world-equirect-2048.png' }));
+vi.mock('./assets/world-mercator-2048.png', () => ({ default: '/world-mercator-2048.png' }));
 vi.mock('leaflet/dist/leaflet.css', () => ({}));
 vi.mock('leaflet/dist/images/marker-icon.png', () => ({ default: '/marker-icon.png' }));
 vi.mock('leaflet/dist/images/marker-icon-2x.png', () => ({ default: '/marker-icon-2x.png' }));
 vi.mock('leaflet/dist/images/marker-shadow.png', () => ({ default: '/marker-shadow.png' }));
 
 import { BaseMap } from './BaseMap';
-import { WORLD_BOUNDS } from './projection';
+import { MERCATOR_BOUNDS } from './projection';
 import type { TileSource, TileSourceStatus } from './tileSource';
 
 const SOURCE: TileSource = {
@@ -41,28 +41,28 @@ describe('<BaseMap> (shape only)', () => {
     resetMapMock();
   });
 
-  it('renders the MapContainer with EPSG4326 CRS and world maxBounds', () => {
+  it('renders the MapContainer with EPSG:3857 CRS and Mercator maxBounds', () => {
     render(<BaseMap />);
     const container = screen.getByTestId('leaflet-map');
     expect(container).toBeInTheDocument();
-    expect(container.dataset.crs).toContain('4326');
-    expect(container.dataset.maxbounds).toBe(JSON.stringify(WORLD_BOUNDS));
+    expect(container.dataset.crs).toContain('3857');
+    expect(container.dataset.maxbounds).toBe(JSON.stringify(MERCATOR_BOUNDS));
   });
 
-  it('caps zoom at 2 (raster-native) and disables map-copy wrapping (offline single-world)', () => {
+  it('caps zoom at 3 (raster-native under EPSG:3857) and disables map-copy wrapping (offline single-world)', () => {
     render(<BaseMap />);
     const container = screen.getByTestId('leaflet-map');
-    expect(container.dataset.maxzoom).toBe('2');
+    expect(container.dataset.maxzoom).toBe('3');
     expect(container.dataset.worldcopyjump).toBe('false');
     // native box-zoom disabled (conflicts with GridMapPicker drag-to-select)
     expect(container.dataset.boxzoom).toBe('false');
   });
 
-  it('renders the bundled ImageOverlay across the full world rectangle', () => {
+  it('renders the bundled Mercator ImageOverlay across the Mercator world rectangle', () => {
     render(<BaseMap />);
     const overlay = screen.getByTestId('image-overlay');
-    expect(overlay.dataset.bounds).toBe(JSON.stringify(WORLD_BOUNDS));
-    expect(overlay.dataset.url).toBe('/world-equirect-2048.png');
+    expect(overlay.dataset.bounds).toBe(JSON.stringify(MERCATOR_BOUNDS));
+    expect(overlay.dataset.url).toBe('/world-mercator-2048.png');
   });
 
   it('bridges a map click to onMapClick with a clamped LatLon', () => {
@@ -81,10 +81,10 @@ describe('<BaseMap> (shape only)', () => {
 
   // ── C11 widening (Phase 7.3): optional validated LAN tile layer ──────────
 
-  it('renders no TileLayer and keeps maxZoom 2 when no tileSource is given', () => {
+  it('renders no TileLayer and keeps maxZoom 3 when no tileSource is given', () => {
     render(<BaseMap />);
     expect(screen.queryByTestId('leaflet-tilelayer')).toBeNull();
-    expect(screen.getByTestId('leaflet-map').dataset.maxzoom).toBe('2');
+    expect(screen.getByTestId('leaflet-map').dataset.maxzoom).toBe('3');
   });
 
   it('renders the TileLayer above the ImageOverlay and raises maxZoom when status is lan-live', () => {
@@ -130,16 +130,16 @@ describe('<BaseMap> (shape only)', () => {
     expect(screen.getByTestId('leaflet-map').dataset.maxzoom).toBe('16');
   });
 
-  it('renders no TileLayer and keeps maxZoom 2 when status is incompatible', () => {
+  it('renders no TileLayer and keeps maxZoom 3 when status is incompatible', () => {
     render(<BaseMap tileSource={{ source: SOURCE, status: status('incompatible') }} />);
     expect(screen.queryByTestId('leaflet-tilelayer')).toBeNull();
-    expect(screen.getByTestId('leaflet-map').dataset.maxzoom).toBe('2');
+    expect(screen.getByTestId('leaflet-map').dataset.maxzoom).toBe('3');
   });
 
-  it('renders no TileLayer and keeps maxZoom 2 when status is unreachable', () => {
+  it('renders no TileLayer and keeps maxZoom 3 when status is unreachable', () => {
     render(<BaseMap tileSource={{ source: SOURCE, status: status('unreachable') }} />);
     expect(screen.queryByTestId('leaflet-tilelayer')).toBeNull();
-    expect(screen.getByTestId('leaflet-map').dataset.maxzoom).toBe('2');
+    expect(screen.getByTestId('leaflet-map').dataset.maxzoom).toBe('3');
   });
 
   it('renders children inside the map', () => {
@@ -149,5 +149,23 @@ describe('<BaseMap> (shape only)', () => {
       </BaseMap>,
     );
     expect(screen.getByTestId('child-layer')).toBeInTheDocument();
+  });
+
+  // ── onZoomChange bridge (Task 5: 6-char grid gate) ──────────────────────
+  it('calls onZoomChange with the current zoom when a zoomend fires', () => {
+    const onZoomChange = vi.fn();
+    render(<BaseMap onZoomChange={onZoomChange} />);
+    // fakeMap.getZoom() returns 1 (default mock zoom)
+    fireZoomEvent();
+    expect(onZoomChange).toHaveBeenCalledWith(1);
+  });
+
+  it('reports the updated zoom value after setMockZoom', () => {
+    const onZoomChange = vi.fn();
+    render(<BaseMap onZoomChange={onZoomChange} />);
+    // Use the mock's zoom seam to simulate zooming to 5
+    setMockZoom(5);
+    fireZoomEvent();
+    expect(onZoomChange).toHaveBeenCalledWith(5);
   });
 });
