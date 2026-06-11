@@ -5,6 +5,34 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-06-11 — NWS weather glyphs for the SFT tabular forecast (tuxlink-n6tp)
+
+Replaced the raw NWS condition codes (`Vryhot`, `Ptcldy`, `Mosunny`, …) in the
+Tabular State Forecast grid (`CatalogReplyView`) with custom inline-SVG weather
+icons, so the report reads at-a-glance like a modern weather app. Brainstormed +
+operator-approved (mock: `dev/scratch/2026-06-10-nws-weather-glyphs-mock.html`);
+presentation-only/reversible → straight TDD-against-spec, no cross-provider adrev.
+
+**Shipped (all in `src/catalog/`):**
+- `weatherGlyph.ts` — `resolveGlyph(code)` maps a normalized NWS SFT code →
+  `{kind, label, accent}`, returning `null` for unmapped codes so the grid falls
+  back to raw text (never blanks). Vocabulary grounded against the NWS SFT
+  abbreviation set (incl. `Dust`/`Haze`/`Smoke`/`Frost`); `Sunny`/`Hot`/`Vryhot`
+  collapse to one sun shape differing only by accent.
+- `WeatherGlyph.tsx` + `.css` — themed inline-SVG icon set encoding the sky-cover
+  gradient (sun shrinks / cloud grows from Sunny→Cloudy, fixing the
+  mostly-sunny↔partly-cloudy ambiguity the operator flagged). Colours via CSS
+  classes + SVG inheritance (render-stable under WebKitGTK); `role="img"` +
+  `aria-label`/`<title>` = decoded plain-English label.
+- `CatalogReplyView` `Cell` swapped to `<WeatherGlyph>`; legacy `condClass`
+  folded into `conditionTextClass` (the fallback path).
+
+Scope: SFT grid only (ZFP zone product is narrative prose, no codes). Gates:
+typecheck clean, full vitest 2355 passing (10 new). Browser-smoke + design-review
+of rendered icons deferred post-merge per `browser_smoke_before_ship`.
+
+---
+
 ## 2026-06-11 — U3 Find-a-Station map UI shipped (tuxlink-gife)
 
 Built the propagation-aware **Find a Station** map UI — the user-facing unit of

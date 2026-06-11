@@ -14,15 +14,8 @@ import type {
   ForecastZone,
   ForecastCell,
 } from './stationTypes';
+import { WeatherGlyph } from './WeatherGlyph';
 import './CatalogReplyView.css';
-
-/// Heat accent for a condition word (NWS abbreviations: Vryhot/Hot/Sunny/Ptcldy…).
-function condClass(condition: string): string {
-  const c = condition.toLowerCase();
-  if (c.startsWith('vry')) return 'cond vryhot';
-  if (c.startsWith('hot')) return 'cond hot';
-  return 'cond';
-}
 
 /// Title-case an UPPERCASE NWS period label ("REST OF TONIGHT" → "Rest of Tonight").
 function titleCasePeriod(label: string): string {
@@ -45,7 +38,7 @@ function Cell({ cell }: { cell: ForecastCell }) {
   const wet = cell.popDay !== '00' && cell.popDay !== '' && cell.popDay !== 'MM';
   return (
     <td className="fcst-cell">
-      <span className={condClass(cell.condition)}>{cell.condition}</span>
+      <WeatherGlyph code={cell.condition} />
       <span className="temp">
         <span className="lo">{cell.low}</span>
         <span className="sep">/</span>

@@ -52,7 +52,11 @@ describe('CatalogReplyView (tuxlink-qyjr)', () => {
     expect(screen.getByText('Jun 10')).toBeTruthy();
     // A cell with the high temp + condition.
     expect(screen.getByText('106')).toBeTruthy();
-    expect(screen.getAllByText('Vryhot').length).toBeGreaterThan(0);
+    // Condition renders as a weather glyph decoded to plain English (tuxlink-n6tp):
+    // the raw code is gone; the accessible label carries "Very hot" / "Sunny".
+    expect(screen.queryByText('Vryhot')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Very hot' })).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Sunny' })).toBeTruthy();
     // Precip surfaced as a percentage (20% on the wet day).
     expect(screen.getByText('20%')).toBeTruthy();
 
