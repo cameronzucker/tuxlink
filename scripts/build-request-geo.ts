@@ -11,12 +11,19 @@
 //   Step 1: Douglas–Peucker simplification at tolerance 0.005° → 4-decimal coords.
 //   Step 2: Emit src/request/nws-zones.geo.json as a pruned FeatureCollection.
 //
+// Task 3 (default pipeline, after Task 2): auto-match NWS zones to Winlink catalog.
+//   Emits:
+//     src/request/nws-zone-to-catalog.json  — map of NWS zone ID → catalog filename
+//     src/request/nws-zone-unmapped.json    — multi-zone regional entries
+//     dev/scratch/request-geo/unresolved.txt — abbreviated entries without exact match
+//
 // Usage:
 //   pnpm tsx scripts/build-request-geo.ts --fetch-only   # Task 1 zone-list fetch
-//   pnpm tsx scripts/build-request-geo.ts                # Task 2 full pipeline
+//   pnpm tsx scripts/build-request-geo.ts                # Tasks 2+3 full pipeline
+//   pnpm tsx scripts/build-request-geo.ts --match-only   # Task 3 match only (skip geometry)
 //   pnpm tsx scripts/build-request-geo.ts --force        # re-fetch everything
 
-import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, existsSync, appendFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,6 +35,9 @@ const CATALOG_PATH = resolve(
   'src-tauri/resources/catalog/winlink-queries.txt',
 );
 const OUTPUT_PATH = resolve(REPO_ROOT, 'src/request/nws-zones.geo.json');
+const ZONE_MAP_PATH = resolve(REPO_ROOT, 'src/request/nws-zone-to-catalog.json');
+const ZONE_UNMAPPED_PATH = resolve(REPO_ROOT, 'src/request/nws-zone-unmapped.json');
+const UNRESOLVED_PATH = resolve(REPO_ROOT, 'dev/scratch/request-geo/unresolved.txt');
 
 const UA = 'tuxlink-dev (cameronzucker@gmail.com)';
 
@@ -36,6 +46,7 @@ const UA = 'tuxlink-dev (cameronzucker@gmail.com)';
 // ---------------------------------------------------------------------------
 const FETCH_ONLY = process.argv.includes('--fetch-only');
 const SIMPLIFY_ONLY = process.argv.includes('--simplify-only');
+const MATCH_ONLY = process.argv.includes('--match-only');
 const FORCE = process.argv.includes('--force');
 
 // Simplification tolerance in degrees (Douglas–Peucker).
@@ -383,6 +394,366 @@ interface OutputFeature {
 }
 
 // ---------------------------------------------------------------------------
+// Task 3 — Auto-match NWS zones ↔ Winlink catalog zone-forecast entries
+// ---------------------------------------------------------------------------
+
+/**
+ * USPS two-letter code → lower-cased full state name.
+ * Used to generate the state-stripped normalisation variant.
+ * Source: src/request/usStateName.ts (kept in sync manually).
+ */
+const USPS_TO_LOWER_NAME: Record<string, string> = {
+  AL: 'alabama', AK: 'alaska', AZ: 'arizona', AR: 'arkansas',
+  CA: 'california', CO: 'colorado', CT: 'connecticut', DE: 'delaware',
+  FL: 'florida', GA: 'georgia', HI: 'hawaii', ID: 'idaho',
+  IL: 'illinois', IN: 'indiana', IA: 'iowa', KS: 'kansas',
+  KY: 'kentucky', LA: 'louisiana', ME: 'maine', MD: 'maryland',
+  MA: 'massachusetts', MI: 'michigan', MN: 'minnesota', MS: 'mississippi',
+  MO: 'missouri', MT: 'montana', NE: 'nebraska', NV: 'nevada',
+  NH: 'new hampshire', NJ: 'new jersey', NM: 'new mexico', NY: 'new york',
+  NC: 'north carolina', ND: 'north dakota', OH: 'ohio', OK: 'oklahoma',
+  OR: 'oregon', PA: 'pennsylvania', RI: 'rhode island', SC: 'south carolina',
+  SD: 'south dakota', TN: 'tennessee', TX: 'texas', UT: 'utah',
+  VT: 'vermont', VA: 'virginia', WA: 'washington', WV: 'west virginia',
+  WI: 'wisconsin', WY: 'wyoming', DC: 'district of columbia',
+  PR: 'puerto rico', VI: 'us virgin islands', GU: 'guam',
+  AS: 'american samoa', MP: 'northern mariana islands',
+};
+
+/**
+ * Normalise a zone name or catalog description for comparison.
+ * Strips " Zone Forecast" and any trailing junk, removes punctuation,
+ * collapses whitespace, lower-cases.
+ */
+function normalise(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/\s+zone forecast\b.*$/, '')
+    .replace(/[^a-z0-9 ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Produce the state-stripped variant of an already-normalised key: strip a
+ * trailing " <full state name>" (e.g. " washington") if present.
+ * Returns the stripped string if the state name was found at the end,
+ * or the original string if not.
+ */
+function stripStateSuffix(norm: string, stateCode: string): string {
+  const stateLower = USPS_TO_LOWER_NAME[stateCode.toUpperCase()];
+  if (!stateLower) return norm;
+  const suffix = ' ' + stateLower;
+  if (norm.endsWith(suffix)) {
+    return norm.slice(0, norm.length - suffix.length).trim();
+  }
+  return norm;
+}
+
+/**
+ * Jaccard token-overlap score between two normalised strings.
+ * Used to rank top-3 candidate NWS zones for unresolved catalog entries.
+ */
+function tokenOverlap(a: string, b: string): number {
+  const sa = new Set(a.split(' ').filter(Boolean));
+  const sb = new Set(b.split(' ').filter(Boolean));
+  if (sa.size === 0 || sb.size === 0) return 0;
+  let intersection = 0;
+  for (const t of sa) {
+    if (sb.has(t)) intersection++;
+  }
+  return intersection / (sa.size + sb.size - intersection);
+}
+
+/**
+ * Build and emit:
+ *   src/request/nws-zone-to-catalog.json
+ *   src/request/nws-zone-unmapped.json
+ *   dev/scratch/request-geo/unresolved.txt  (appended, not replaced)
+ */
+async function buildZoneCatalogMap(): Promise<void> {
+  console.log('\n=== Task 3: auto-match NWS zones ↔ catalog ===');
+
+  // ------------------------------------------------------------------
+  // Step 1 — Build catalog zone-forecast index per state
+  // ------------------------------------------------------------------
+  interface CatalogEntry {
+    filename: string;
+    rawDescription: string;
+    normPlain: string;
+    normStateStripped: string;
+  }
+
+  const rawCatalog = readFileSync(CATALOG_PATH, 'utf8');
+  const catalogText = rawCatalog.startsWith('﻿') ? rawCatalog.slice(1) : rawCatalog;
+
+  // Map: stateCode → list of catalog entries for that state
+  const catalogByState = new Map<string, CatalogEntry[]>();
+
+  for (const line of catalogText.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split('|');
+    if (parts.length < 3) continue;
+    const [category, filename, description] = parts;
+    const match = /^WX_US_([A-Z]{2})$/.exec(category);
+    if (!match) continue;
+    if (!/zone forecast/i.test(description)) continue;
+
+    const st = match[1];
+    const normPlain = normalise(description);
+    const normStateStripped = stripStateSuffix(normPlain, st);
+
+    const entry: CatalogEntry = { filename, rawDescription: description, normPlain, normStateStripped };
+    if (!catalogByState.has(st)) catalogByState.set(st, []);
+    catalogByState.get(st)!.push(entry);
+  }
+
+  // ------------------------------------------------------------------
+  // Step 2 — Build NWS zone index per state from raw cache
+  // ------------------------------------------------------------------
+  interface NwsZone {
+    id: string;
+    name: string;
+    normName: string;
+  }
+
+  const nwsByState = new Map<string, NwsZone[]>();
+  const maxEffectiveDates: string[] = [];
+
+  for (const st of catalogByState.keys()) {
+    const cachePath = resolve(RAW_CACHE_DIR, `${st}.json`);
+    if (!existsSync(cachePath)) {
+      console.warn(`  [${st}] raw cache missing — skipping state in match pass`);
+      continue;
+    }
+    const raw = JSON.parse(readFileSync(cachePath, 'utf8')) as {
+      features: Array<{ properties: { id: string; name: string; effectiveDate?: string } }>;
+    };
+    const zones: NwsZone[] = raw.features.map((f) => ({
+      id: f.properties.id,
+      name: f.properties.name,
+      normName: normalise(f.properties.name),
+    }));
+    nwsByState.set(st, zones);
+
+    for (const f of raw.features) {
+      const ed = f.properties.effectiveDate ?? '';
+      if (ed) maxEffectiveDates.push(ed);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Step 3 — Match per state
+  // ------------------------------------------------------------------
+  const mapEntries = new Map<string, string>(); // NWS ID → catalog filename
+  const unmappedEntries = new Map<string, string>(); // catalog filename → 'multi-zone regional'
+  const unresolvedLines: string[] = [];
+  let collisionCount = 0;
+  const collisionLog: string[] = [];
+
+  for (const [st, catalogEntries] of catalogByState) {
+    const nwsZones = nwsByState.get(st) ?? [];
+
+    // Build NWS lookup by normalised name for this state
+    const nwsByNorm = new Map<string, NwsZone[]>();
+    for (const zone of nwsZones) {
+      const n = zone.normName;
+      if (!nwsByNorm.has(n)) nwsByNorm.set(n, []);
+      nwsByNorm.get(n)!.push(zone);
+    }
+
+    // Also build NWS lookup by state-stripped norm (some NWS names include state)
+    const nwsByNormStateStripped = new Map<string, NwsZone[]>();
+    for (const zone of nwsZones) {
+      const stripped = stripStateSuffix(zone.normName, st);
+      if (!nwsByNormStateStripped.has(stripped)) nwsByNormStateStripped.set(stripped, []);
+      nwsByNormStateStripped.get(stripped)!.push(zone);
+    }
+
+    for (const entry of catalogEntries) {
+      const { filename, rawDescription, normPlain, normStateStripped } = entry;
+
+      // Regional: starts with "zone forecast for" (case-insensitive, already lowercased)
+      if (normPlain.startsWith('zone forecast for')) {
+        unmappedEntries.set(filename, 'multi-zone regional');
+        continue;
+      }
+
+      // Try exact match on plain variant
+      let matchedZones = nwsByNorm.get(normPlain);
+
+      // Try exact match on state-stripped catalog key vs plain NWS names
+      if (!matchedZones && normStateStripped !== normPlain) {
+        matchedZones = nwsByNorm.get(normStateStripped);
+      }
+
+      // Try exact match on plain catalog key vs state-stripped NWS names
+      if (!matchedZones) {
+        matchedZones = nwsByNormStateStripped.get(normPlain);
+      }
+
+      // Try exact match on state-stripped catalog key vs state-stripped NWS names
+      if (!matchedZones && normStateStripped !== normPlain) {
+        matchedZones = nwsByNormStateStripped.get(normStateStripped);
+      }
+
+      if (matchedZones && matchedZones.length > 0) {
+        // Exact match found (one or more zones with this norm)
+        if (matchedZones.length > 1) {
+          // Multiple NWS zones with the same normalised name — pick the one
+          // with shortest zone id (deterministic: lexicographic first)
+          matchedZones.sort((a, b) => a.id.localeCompare(b.id));
+          const collision = `COLLISION (NWS multi-zone): ${filename} matches zones ${matchedZones.map((z) => z.id).join(', ')} → using ${matchedZones[0].id}`;
+          collisionLog.push(`[${st}] ${collision}`);
+          collisionCount++;
+          console.log(`  ${collision}`);
+        }
+
+        const zoneId = matchedZones[0].id;
+
+        // Check if this NWS zone is already claimed by another catalog entry
+        if (mapEntries.has(zoneId)) {
+          // Multiple catalog entries map to the same NWS zone — collision on catalog side
+          const existing = mapEntries.get(zoneId)!;
+          // Pick deterministically: catalog entry whose RAW description is closest length to NWS zone name
+          const existingEntry = catalogEntries.find((e) => e.filename === existing);
+          const nwsName = matchedZones[0].name;
+          const existingDelta = existingEntry
+            ? Math.abs(existingEntry.rawDescription.length - nwsName.length)
+            : Infinity;
+          const newDelta = Math.abs(rawDescription.length - nwsName.length);
+
+          const collision = `COLLISION (catalog multi-match): NWS ${zoneId} claimed by ${existing} (delta=${existingDelta}) and ${filename} (delta=${newDelta}) → using ${newDelta < existingDelta ? filename : existing}`;
+          collisionLog.push(`[${st}] ${collision}`);
+          collisionCount++;
+          console.log(`  ${collision}`);
+
+          if (newDelta < existingDelta) {
+            mapEntries.set(zoneId, filename);
+          }
+          // If equal or existing wins, keep existing (first-encountered wins ties)
+        } else {
+          mapEntries.set(zoneId, filename);
+        }
+      } else {
+        // No exact match — compute top-3 candidates by token overlap
+        const scored = nwsZones
+          .map((z) => ({ zone: z, score: tokenOverlap(normPlain, z.normName) }))
+          .sort((a, b) => b.score - a.score || a.zone.id.localeCompare(b.zone.id))
+          .slice(0, 3);
+
+        const candidateStr = scored
+          .map((s) => `${s.zone.name}(${s.zone.id},${s.score.toFixed(2)})`)
+          .join('; ');
+
+        unresolvedLines.push(
+          `${st} ${filename} | ${rawDescription} | candidates: ${candidateStr}`,
+        );
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Step 4 — Emit outputs
+  // ------------------------------------------------------------------
+
+  // Determine dataset metadata
+  const maxEffDate = maxEffectiveDates.length > 0
+    ? maxEffectiveDates.reduce((a, b) => (a > b ? a : b))
+    : '';
+
+  // Count total NWS zones from raw cache
+  let totalNwsZones = 0;
+  for (const zones of nwsByState.values()) {
+    totalNwsZones += zones.length;
+  }
+
+  // Build sorted map
+  const sortedMapKeys = [...mapEntries.keys()].sort();
+  const sortedMap: Record<string, string> = {};
+  for (const k of sortedMapKeys) {
+    sortedMap[k] = mapEntries.get(k)!;
+  }
+
+  // Build sorted unmapped
+  const sortedUnmappedKeys = [...unmappedEntries.keys()].sort();
+  const sortedUnmapped: Record<string, string> = {};
+  for (const k of sortedUnmappedKeys) {
+    sortedUnmapped[k] = unmappedEntries.get(k)!;
+  }
+
+  // Emit nws-zone-to-catalog.json
+  const zoneMapOutput = {
+    _source: {
+      dataset: 'api.weather.gov/zones?type=public',
+      fetched: '2026-06-10',
+      zoneCount: totalNwsZones,
+      datasetEffectiveDate: maxEffDate,
+    },
+    map: sortedMap,
+  };
+  writeFileSync(ZONE_MAP_PATH, JSON.stringify(zoneMapOutput, null, 2));
+  console.log(`\nEmitted: ${ZONE_MAP_PATH} (${sortedMapKeys.length} entries)`);
+
+  // Emit nws-zone-unmapped.json
+  const unmappedOutput = { unmapped: sortedUnmapped };
+  writeFileSync(ZONE_UNMAPPED_PATH, JSON.stringify(unmappedOutput, null, 2));
+  console.log(`Emitted: ${ZONE_UNMAPPED_PATH} (${sortedUnmappedKeys.length} entries)`);
+
+  // Append to unresolved.txt (create if not exists; overwrite to avoid stale data)
+  mkdirSync(resolve(REPO_ROOT, 'dev/scratch/request-geo'), { recursive: true });
+  writeFileSync(UNRESOLVED_PATH, unresolvedLines.join('\n') + (unresolvedLines.length > 0 ? '\n' : ''));
+  console.log(`Emitted: ${UNRESOLVED_PATH} (${unresolvedLines.length} lines)`);
+
+  // Summary
+  console.log(
+    `\nmapped=${sortedMapKeys.length} unmapped=${sortedUnmappedKeys.length} unresolved=${unresolvedLines.length} collisions=${collisionCount}`,
+  );
+
+  if (collisionLog.length > 0) {
+    console.log('\nCollisions:');
+    for (const c of collisionLog) console.log(`  ${c}`);
+  }
+
+  // ------------------------------------------------------------------
+  // Spot-checks (WA)
+  // ------------------------------------------------------------------
+  console.log('\n=== WA spot-checks ===');
+  const bluf = [...mapEntries.entries()].find(([, v]) => v === 'WA_ZON_BLUF');
+  console.log(
+    bluf
+      ? `  WA_ZON_BLUF → mapped from NWS ${bluf[0]} ✓`
+      : `  WA_ZON_BLUF → NOT in map (check unresolved)`,
+  );
+
+  const seaEntry = [...mapEntries.entries()].find(([, v]) => v === 'WA_ZON_SEA');
+  console.log(
+    seaEntry
+      ? `  WA_ZON_SEA → mapped from NWS ${seaEntry[0]} (expected WAZ315)`
+      : `  WA_ZON_SEA → NOT in map (in unresolved — expected if city-of-seattle-washington normalisation missed)`,
+  );
+
+  const forEast = unmappedEntries.get('WA_FOR_EAST');
+  console.log(
+    forEast
+      ? `  WA_FOR_EAST → unmapped (${forEast}) ✓`
+      : `  WA_FOR_EAST → NOT in unmapped (bug: should be multi-zone regional)`,
+  );
+
+  const cakcfInMap = [...mapEntries.values()].includes('WA_ZON_CAKCF');
+  const cakcfInUnresolved = unresolvedLines.some((l) => l.includes('WA_ZON_CAKCF'));
+  if (cakcfInMap) {
+    console.log(`  WA_ZON_CAKCF → in map (unexpected — abbreviated name should not auto-match)`);
+  } else if (cakcfInUnresolved) {
+    console.log(`  WA_ZON_CAKCF → in unresolved ✓`);
+  } else {
+    console.log(`  WA_ZON_CAKCF → NOT found in map or unresolved (unexpected)`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -649,7 +1020,11 @@ async function main(): Promise<void> {
     await fetchZoneList();
   }
 
-  await fetchGeometryAndEmit();
+  if (!MATCH_ONLY) {
+    await fetchGeometryAndEmit();
+  }
+
+  await buildZoneCatalogMap();
 }
 
 main().catch((err: unknown) => {
