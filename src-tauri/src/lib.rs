@@ -9,6 +9,7 @@ pub mod consent_gate;
 pub mod favorites;
 pub mod forms;
 pub mod grib;
+pub mod identity;
 pub mod help_window;
 pub mod logging;
 pub mod logging_window;
