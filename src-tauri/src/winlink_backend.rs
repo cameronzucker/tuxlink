@@ -765,6 +765,9 @@ pub enum BackendError {
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
     },
+
+    #[error("no active identity — authenticate before transmitting")]
+    NoActiveIdentity,
 }
 
 // ============================================================================
@@ -1081,6 +1084,11 @@ pub struct NativeBackend {
     /// tests inject a permissive list (e.g. `allow_all=TRUE`) to bypass the
     /// architectural default of "reject all until operator curates."
     packet_allowlist_override: Option<crate::winlink::listener::AllowedStations>,
+    /// The active default SessionIdentity for NEW connect/compose/listen
+    /// operations. In-memory only — NEVER serialized, never written to disk.
+    /// Re-established each launch by an authenticated switch (Phase 6). `None`
+    /// until the operator authenticates one this session.
+    active_identity: RwLock<Option<crate::identity::SessionIdentity>>,
 }
 
 /// Clears the single-flight + abort state when a `connect` ends, however it ends
@@ -1138,6 +1146,7 @@ impl NativeBackend {
             connect_in_progress: Arc::new(AtomicBool::new(false)),
             position: None,
             packet_allowlist_override: None,
+            active_identity: RwLock::new(None),
         }
     }
 
@@ -1196,6 +1205,24 @@ impl NativeBackend {
     pub fn with_mailbox_change(mut self, sink: MailboxChangeSink) -> Self {
         self.mailbox_change = sink;
         self
+    }
+
+    /// Set the active default identity for new operations. In-memory only.
+    pub fn set_active_identity(&self, s: crate::identity::SessionIdentity) {
+        match self.active_identity.write() {
+            Ok(mut slot) => *slot = Some(s),
+            Err(poisoned) => *poisoned.into_inner() = Some(s),
+        }
+    }
+
+    /// Clone the active SessionIdentity for a single operation.
+    /// `Err(NoActiveIdentity)` if the operator hasn't authenticated one yet.
+    pub fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
+        let guard = self
+            .active_identity
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.clone().ok_or(BackendError::NoActiveIdentity)
     }
 
     /// Clone the live config (tuxlink-ka7 / tuxlink-p5u). The connect + send paths
@@ -4760,5 +4787,23 @@ mod native_read_state_tests {
         assert_eq!(&buf[..n], b"FF\r", "must block through transient Ok(0), not EOF early");
         let n2 = std::io::Read::read(&mut s, &mut buf).unwrap();
         assert_eq!(n2, 0, "Ok(0) while the link is closed must surface as a real EOF");
+    }
+
+    #[test]
+    fn active_identity_slot_starts_empty_and_round_trips() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        let backend = NativeBackend::new(offline_config(), tempfile::tempdir().unwrap().path());
+        // Empty at construction -> NoActiveIdentity.
+        assert!(matches!(backend.active_identity(), Err(BackendError::NoActiveIdentity)));
+        let handle: IdentityHandle = IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap());
+        backend.set_active_identity(SessionIdentity::full(handle));
+        let active = backend.active_identity().expect("active set");
+        assert_eq!(active.mycall().as_str(), "N7CPZ");
+    }
+
+    #[test]
+    fn session_identity_is_clone() {
+        fn assert_clone<T: Clone>() {}
+        assert_clone::<crate::identity::SessionIdentity>();
     }
 }

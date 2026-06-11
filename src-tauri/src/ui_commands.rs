@@ -97,6 +97,9 @@ impl From<BackendError> for UiError {
             BackendError::Io(err) => UiError::Internal {
                 detail: err.to_string(),
             },
+            BackendError::NoActiveIdentity => UiError::NotConfigured(
+                "no active identity — authenticate before transmitting".into(),
+            ),
             BackendError::Internal { msg, source } => UiError::Internal {
                 detail: stringify_with_source(&msg, source.as_deref()),
             },
