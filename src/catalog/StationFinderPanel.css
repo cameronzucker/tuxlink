@@ -522,3 +522,61 @@
     min-width: 0;
   }
 }
+
+/* Service-codes control (tuxlink-6j14) — a thin row under the band bar where
+   the operator sets which sysop-tagged gateway set the catalog fetches. Most
+   stations leave it at PUBLIC; MARS/SHARES members paste their member code. */
+.station-finder__svc {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border, #243a52);
+  font-size: 12px;
+}
+.station-finder__svc-lab {
+  color: var(--faint, #6f8aa3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+.station-finder__svc-input {
+  flex: 1 1 180px;
+  min-width: 140px;
+  padding: 4px 8px;
+  background: var(--panel, #0f1c28);
+  color: var(--text, #e8f1fa);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 4px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.station-finder__svc-preset,
+.station-finder__svc-apply {
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--dim, #9fb6cc);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.station-finder__svc-apply:not(:disabled):hover,
+.station-finder__svc-preset:hover {
+  color: var(--text, #e8f1fa);
+  border-color: var(--accent, #4aa3df);
+}
+.station-finder__svc-apply:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.station-finder__svc-err {
+  color: var(--reach-bad, #e0606a);
+}
+.station-finder__svc-hint {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--faint, #6f8aa3);
+  font-size: 11px;
+}

@@ -13,6 +13,7 @@ import { aggregateStations, type Station } from './stationModel';
 import { useReachabilityMap, stationKey } from './useReachabilityMap';
 import { useStationPrediction } from './useStationPrediction';
 import { StationFinderControls, type FilterMode } from './StationFinderControls';
+import { ServiceCodesField } from './ServiceCodesField';
 import { StationFinderMap } from './StationFinderMap';
 import { StationRail } from './StationRail';
 import type { Band } from './bandPlan';
@@ -136,6 +137,8 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
           onRefresh={() => stations.fetch(FILTER_MODES as ListingMode[])}
           refreshing={stations.loading}
         />
+
+        <ServiceCodesField onApplied={() => stations.fetch(FILTER_MODES as ListingMode[])} />
 
         <div className="station-finder__body">
           <StationFinderMap

@@ -67,7 +67,9 @@ impl ListingMode {
         }
     }
 
-    /// Build the absolute listing URL. v1 is PUBLIC-only; callers pass `"PUBLIC"`.
+    /// Build the absolute listing URL. `service_codes` is the operator-configured
+    /// filter (default `"PUBLIC"`; space-separated for multiple) — a sysop-assigned
+    /// directory tag, not a credential. See `winlink::credentials::service_codes_read`.
     pub fn listing_url(self, service_codes: &str, history_hours: u32) -> String {
         let base = format!(
             "{LISTINGS_BASE}/{}?serviceCodes={service_codes}",
