@@ -105,10 +105,15 @@ fn authenticate_inner(
                     detail: e.to_string(),
                 }
             })?;
+            // Parent is a callsign: compare case-insensitively to match the
+            // keyring auth contract (authenticate is case-insensitive on the
+            // callsign), so authenticating "w1abc" doesn't spuriously fail to
+            // find a tactical stored under "W1ABC". The label itself is a
+            // free-form tactical string — exact match.
             let known = store
                 .tactical()
                 .iter()
-                .any(|t| t.label == label && t.parent.as_str() == full.as_str());
+                .any(|t| t.label == label && t.parent.as_str().eq_ignore_ascii_case(full.as_str()));
             if !known {
                 return Err(UiError::NotFound(format!(
                     "tactical '{label}' is not a known label under {}",
@@ -446,6 +451,34 @@ mod tests {
         let active = backend.active_identity().unwrap();
         assert_eq!(active.address_as(), &Address::Tactical("EOC-3".to_string()));
         assert_eq!(active.mycall().as_str(), "W1ABC");
+    }
+
+    // adversarial-review pin: a tactical belonging to a DIFFERENT parent FULL must
+    // NOT be activatable by authenticating the wrong parent — the membership check
+    // requires BOTH label and parent to match. Guards the tactical-bypass angle.
+    #[test]
+    fn authenticate_tactical_under_wrong_parent_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("identities.json");
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+        add_full_inner(&svc, &store_path, "W1ABC", None, false, "pw").unwrap();
+        add_full_inner(&svc, &store_path, "W2XYZ", None, false, "pw2").unwrap();
+        // EOC-9 belongs to W2XYZ, NOT W1ABC.
+        add_tactical_inner(&store_path, "EOC-9", "W2XYZ").unwrap();
+        let backend = fresh_backend();
+
+        // Authenticate W1ABC (valid credential) but ask for W2XYZ's tactical.
+        let err =
+            authenticate_inner(&svc, &store_path, &backend, "W1ABC", "pw", Some("EOC-9"))
+                .unwrap_err();
+        assert!(
+            matches!(err, crate::ui_commands::UiError::NotFound(_)),
+            "a tactical under a different parent must be rejected; got {err:?}"
+        );
+        assert!(
+            matches!(backend.active_identity(), Err(BackendError::NoActiveIdentity)),
+            "gate must stay closed when the tactical-parent check fails"
+        );
     }
 
     #[test]
