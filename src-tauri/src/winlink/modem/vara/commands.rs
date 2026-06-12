@@ -1062,13 +1062,30 @@ pub async fn vara_open_session(
     transport_kind: TransportKind,
 ) -> Result<VaraStatus, String> {
     let ui_cfg = config_get_vara();
-    // Pull the operator's callsign from persisted identity. Pre-wizard /
-    // missing-callsign yields None; the inner skips the MYCALL setter in
-    // that case (VARA will continue to log "not connected to App" warnings,
-    // but the right fix for that is wizard completion, not a backend bandaid).
-    let callsign = config::read_config()
-        .ok()
-        .and_then(|c| c.identity.active_full);
+    // tuxlink-0063 (Phase 3, Task 3.9): the open-time MYCALL is the on-air
+    // station ID the VARA modem is told at session open. Under the handle
+    // model it comes from the authenticated active SessionIdentity, NEVER from
+    // persisted config. Opening a transmit-capable VARA session requires an
+    // authenticated identity — resolve it fail-closed here (a NoActiveIdentity
+    // surfaces as an error and leaves the transport unopened), the same
+    // posture as the rest of Phase 3.
+    //
+    // The old code TOLERATED a missing callsign (None → skip the MYCALL
+    // setter, let VARA warn). That tolerance is gone: transmit is gated on
+    // authentication until the Phase 6/7 identity-switch UI lands.
+    //
+    // This open-time MYCALL is now redundant with the per-CONNECT MYCALL set
+    // by `run_vara_b2f_with_transport` (Task 3.7), which is the authoritative
+    // on-air station ID on dial. It is set here too — consistently from the
+    // session — so VARA recognizes the App handshake at open time and stops
+    // logging "not connected to App".
+    let session_id = app
+        .state::<crate::app_backend::BackendState>()
+        .current()
+        .ok_or_else(|| "VARA open: backend offline — cannot resolve active identity".to_string())?
+        .active_identity()
+        .map_err(|e| e.to_string())?;
+    let callsign = session_id.mycall().as_str().to_uppercase();
     let host_label = format!("{}:{}", ui_cfg.host, ui_cfg.cmd_port);
     emit_vara_log(
         &app,
@@ -1086,21 +1103,16 @@ pub async fn vara_open_session(
     match vara_open_session_inner(
         &session,
         &ui_cfg,
-        callsign.as_deref(),
+        Some(callsign.as_str()),
         intent,
         transport_kind,
     ) {
         Ok(_status) => {
-            let with_mycall = if callsign.is_some() {
-                " (MYCALL sent)"
-            } else {
-                " (no callsign — wizard incomplete; VARA will warn 'not connected to App')"
-            };
             emit_vara_log(
                 &app,
                 &log,
                 LogLevel::Info,
-                format!("VARA: transport open at {host_label}{with_mycall}"),
+                format!("VARA: transport open at {host_label} (MYCALL {callsign} sent)"),
             );
         }
         Err(e) => {

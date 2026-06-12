@@ -3927,10 +3927,19 @@ pub(crate) async fn ardop_listen_inner(
         let ardop_ui = cfg.modem_ardop.clone().unwrap_or_default();
         let session_arc: std::sync::Arc<crate::modem_status::ModemSession> =
             (*session).clone();
+        // tuxlink-0063 (Phase 3, Task 3.9): the modem-init MYCALL (on-air
+        // station ID) comes from the active SessionIdentity resolved above at
+        // arm time. `session_id` is moved into the listener consumer task
+        // below; SessionIdentity is Clone, so clone it for the modem-spawn
+        // closure and keep the original for the consumer task.
+        let session_id_for_spawn = session_id.clone();
+        let cfg_for_spawn = cfg.clone();
         // Spawn the modem on a blocking thread (bind-wait + init can be slow).
         let res = tokio::task::spawn_blocking(move || {
             crate::modem_commands::start_modem_listen_only(
                 &session_arc,
+                &session_id_for_spawn,
+                &cfg_for_spawn,
                 &ardop_ui,
                 |cfg, _target| {
                     crate::winlink::modem::ardop::transport::ArdopTransport::with_managed_modem(cfg)

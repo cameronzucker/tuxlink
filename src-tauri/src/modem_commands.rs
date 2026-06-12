@@ -129,6 +129,8 @@ pub fn modem_ardop_disconnect(session: State<'_, Arc<ModemSession>>) -> Result<(
 /// tuxlink-added safeguards"; bd tuxlink-0ye6 / tuxlink-8gq3).
 pub fn modem_ardop_connect_gated_with_factory<F>(
     session: &Arc<ModemSession>,
+    session_id: &crate::identity::SessionIdentity,
+    cfg: &Config,
     target: &str,
     ardop_ui: &ArdopUiConfig,
     make_transport: F,
@@ -154,7 +156,14 @@ where
     }
     let _guard = ConnectGuard(session);
 
-    modem_ardop_connect_post_consume_with_factory(session, target, ardop_ui, make_transport)
+    modem_ardop_connect_post_consume_with_factory(
+        session,
+        session_id,
+        cfg,
+        target,
+        ardop_ui,
+        make_transport,
+    )
 }
 
 /// Inner helper that runs AFTER the busy guard has been acquired. Caller
@@ -167,6 +176,8 @@ where
 /// discipline contract is updated.
 pub fn modem_ardop_connect_post_consume_with_factory<F>(
     session: &Arc<ModemSession>,
+    session_id: &crate::identity::SessionIdentity,
+    cfg: &Config,
     target: &str,
     ardop_ui: &ArdopUiConfig,
     make_transport: F,
@@ -181,7 +192,7 @@ where
     // See `build_ardop_extra_args` — extracted for unit testing.
     let extra_args = build_ardop_extra_args(ardop_ui);
 
-    let cfg = ArdopConfig {
+    let ardop_cfg = ArdopConfig {
         binary: PathBuf::from(&ardop_ui.binary),
         extra_args,
         cmd_port: ardop_ui.cmd_port,
@@ -199,7 +210,7 @@ where
     session.set_status(snap);
 
     // ─── Spawn ───────────────────────────────────────────────────────────
-    let mut transport = match make_transport(cfg, target) {
+    let mut transport = match make_transport(ardop_cfg, target) {
         Ok(t) => t,
         Err(e) => {
             let mut s = ModemStatus::stopped();
@@ -211,7 +222,7 @@ where
     };
 
     // ─── Init the TNC ────────────────────────────────────────────────────
-    let init_cfg = init_config_from_persisted_config();
+    let init_cfg = init_config_from_session(session_id, cfg);
     if let Err(e) = transport.init(&init_cfg) {
         let msg = format!("init failed: {e}");
         let mut s = ModemStatus::stopped();
@@ -297,6 +308,8 @@ where
 /// gate + B2F + mailbox-persist loop.
 pub fn start_modem_listen_only<F>(
     session: &Arc<ModemSession>,
+    session_id: &crate::identity::SessionIdentity,
+    cfg: &Config,
     ardop_ui: &ArdopUiConfig,
     make_transport: F,
 ) -> Result<(), String>
@@ -304,7 +317,7 @@ where
     F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
 {
     let extra_args = build_ardop_extra_args(ardop_ui);
-    let cfg = ArdopConfig {
+    let ardop_cfg = ArdopConfig {
         binary: PathBuf::from(&ardop_ui.binary),
         extra_args,
         cmd_port: ardop_ui.cmd_port,
@@ -318,7 +331,7 @@ where
     snap.last_error = None;
     session.set_status(snap);
 
-    let mut transport = match make_transport(cfg, "") {
+    let mut transport = match make_transport(ardop_cfg, "") {
         Ok(t) => t,
         Err(e) => {
             let mut s = ModemStatus::stopped();
@@ -330,7 +343,7 @@ where
     };
 
     // Init with initial_listen = true so the modem comes up listening.
-    let mut init_cfg = init_config_from_persisted_config();
+    let mut init_cfg = init_config_from_session(session_id, cfg);
     init_cfg.initial_listen = true;
     if let Err(e) = transport.init(&init_cfg) {
         let msg = format!("init failed: {e}");
@@ -398,6 +411,8 @@ where
 /// [`ardop_close_session_inner`]) finds the writer installed.
 pub fn spawn_and_init_ardop_inner<F>(
     session: &Arc<ModemSession>,
+    session_id: &crate::identity::SessionIdentity,
+    cfg: &Config,
     ardop_ui: &ArdopUiConfig,
     make_transport: F,
 ) -> Result<(), String>
@@ -405,7 +420,7 @@ where
     F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
 {
     let extra_args = build_ardop_extra_args(ardop_ui);
-    let cfg = ArdopConfig {
+    let ardop_cfg = ArdopConfig {
         binary: PathBuf::from(&ardop_ui.binary),
         extra_args,
         cmd_port: ardop_ui.cmd_port,
@@ -419,7 +434,7 @@ where
     snap.last_error = None;
     session.set_status(snap);
 
-    let mut transport = match make_transport(cfg, "") {
+    let mut transport = match make_transport(ardop_cfg, "") {
         Ok(t) => t,
         Err(e) => {
             let mut s = ModemStatus::stopped();
@@ -435,7 +450,7 @@ where
     // the modem off-air during the open phase is the load-bearing safety
     // invariant — see the spec §2 "No tuxlink-added safeguards" note +
     // the per-intent decision matrix in `SessionIntent::auto_arms_listener`.
-    let mut init_cfg = init_config_from_persisted_config();
+    let mut init_cfg = init_config_from_session(session_id, cfg);
     init_cfg.initial_listen = false;
     if let Err(e) = transport.init(&init_cfg) {
         let msg = format!("init failed: {e}");
@@ -481,6 +496,8 @@ where
 /// `vara_open_session_inner` → outer-command-chains-auto-arm pattern.
 pub fn ardop_open_session_inner<F>(
     session: &Arc<ModemSession>,
+    session_id: &crate::identity::SessionIdentity,
+    cfg: &Config,
     ardop_ui: &ArdopUiConfig,
     intent: SessionIntent,
     transport_kind: crate::winlink::listener::transport::TransportKind,
@@ -502,7 +519,7 @@ where
         ));
     }
 
-    spawn_and_init_ardop_inner(session, ardop_ui, make_transport)?;
+    spawn_and_init_ardop_inner(session, session_id, cfg, ardop_ui, make_transport)?;
 
     // Record the operator-typed (intent, transport_kind) AFTER the
     // spawn + init succeeds — a failed open leaves the active-mode
@@ -546,6 +563,17 @@ pub async fn ardop_open_session(
     let cfg = config::read_config().map_err(|e| format!("read config: {e}"))?;
     check_identity_present(&cfg)?;
 
+    // tuxlink-0063 (Phase 3, Task 3.9): resolve the authenticated active
+    // SessionIdentity for the modem-init MYCALL (on-air station ID). Resolved
+    // fail-closed before any modem I/O — a NoActiveIdentity leaves the radio
+    // untouched.
+    let session_id = app
+        .state::<crate::app_backend::BackendState>()
+        .current()
+        .ok_or_else(|| "ARDOP open: backend offline — cannot resolve active identity".to_string())?
+        .active_identity()
+        .map_err(|e| e.to_string())?;
+
     let ardop_ui = config_get_ardop();
     if ardop_ui.capture_device.is_empty() || ardop_ui.playback_device.is_empty() {
         return Err(
@@ -557,9 +585,13 @@ pub async fn ardop_open_session(
     // same pattern as the listener arm path).
     let session_arc: Arc<ModemSession> = session.inner().clone();
     let ardop_ui_clone = ardop_ui.clone();
+    let cfg_clone = cfg.clone();
+    let session_id_clone = session_id.clone();
     let res = tokio::task::spawn_blocking(move || {
         ardop_open_session_inner(
             &session_arc,
+            &session_id_clone,
+            &cfg_clone,
             &ardop_ui_clone,
             intent,
             transport_kind,
@@ -675,38 +707,44 @@ pub async fn ardop_close_session(
 }
 
 /// Build the [`InitConfig`] passed to `ModemTransport::init` from the
-/// operator's persisted identity config. Pulls `mycall` from
-/// `identity.callsign` (CMS path) or `identity.identifier` (offline path),
-/// `gridsquare` from `identity.grid` (defaulting to `"AA00"` when no grid
+/// authenticated active [`SessionIdentity`] (tuxlink-0063 Phase 3, Task 3.9).
+///
+/// **`mycall` is the on-air station ID** — the Part 97 call the ardopcf TNC
+/// announces. Under the handle model it comes from `session_id.mycall()` (the
+/// authenticated full callsign), NEVER from persisted config. There is no
+/// config-call/identifier fallback and no empty-string default: opening a
+/// transmit-capable modem requires an authenticated identity, resolved
+/// fail-closed by the caller before this function runs.
+///
+/// `gridsquare` and `arq_bandwidth_hz` are NOT identity — they remain config:
+/// `gridsquare` from `cfg.identity.grid` (defaulting to `"AA00"` when no grid
 /// is set — the ARDOP TNC requires a non-empty value but the broadcast
 /// precision gate happens upstream in the position layer), and the ARQ
-/// bandwidth from `modem_ardop.bandwidth_hz` (tuxlink-j0ij).
+/// bandwidth from `cfg.modem_ardop.bandwidth_hz` (tuxlink-j0ij).
+///
+/// The function no longer reads config itself — the caller (which already
+/// holds or reads a `Config`) passes `&Config` in. This keeps the modem-init
+/// MYCALL on the same single-resolution path as the rest of Phase 3.
 ///
 /// **Bandwidth validation:** the Settings panel constrains the dropdown to
 /// {200, 500, 1000, 2000}, but the persisted JSON could be hand-edited
 /// off-app, so this function defends in depth: any other value is logged
 /// to stderr and dropped to None (let ardopcf use its default) rather than
 /// passed through and rejected by ardopcf at init time.
-fn init_config_from_persisted_config() -> InitConfig {
-    let cfg = config::read_config().ok();
-    let (mycall, grid, arq_bandwidth_hz) = match &cfg {
-        Some(c) => {
-            let call = c
-                .identity
-                .active_full
-                .clone()
-                .or_else(|| c.identity.identifier.clone())
-                .unwrap_or_default();
-            let grid = c.identity.grid.clone().unwrap_or_default();
-            let bw = c
-                .modem_ardop
-                .as_ref()
-                .and_then(|a| a.bandwidth_hz)
-                .and_then(validate_arq_bandwidth_hz);
-            (call, grid, bw)
-        }
-        None => (String::new(), String::new(), None),
-    };
+fn init_config_from_session(
+    session_id: &crate::identity::SessionIdentity,
+    cfg: &Config,
+) -> InitConfig {
+    // The station call is the authenticated full callsign — no
+    // identifier/empty fallback (tuxlink-0063 Phase 3, Task 3.9).
+    let mycall = session_id.mycall().as_str().to_uppercase();
+
+    let grid = cfg.identity.grid.clone().unwrap_or_default();
+    let arq_bandwidth_hz = cfg
+        .modem_ardop
+        .as_ref()
+        .and_then(|a| a.bandwidth_hz)
+        .and_then(validate_arq_bandwidth_hz);
 
     // ARDOP requires a non-empty grid; "AA00" is the canonical placeholder
     // (also wl2k-go's fallback). Operators who care about grid accuracy
@@ -854,6 +892,7 @@ pub fn check_identity_present(cfg: &Config) -> Result<(), String> {
 /// these; an unconfigured deployment must complete the wizard first.
 #[tauri::command]
 pub fn modem_ardop_connect(
+    app: AppHandle,
     session: State<'_, Arc<ModemSession>>,
     target: String,
 ) -> Result<(), String> {
@@ -862,6 +901,17 @@ pub fn modem_ardop_connect(
     // attempt to set up a radio transport.
     let cfg = config::read_config().map_err(|e| format!("read config: {e}"))?;
     check_identity_present(&cfg)?;
+
+    // tuxlink-0063 (Phase 3, Task 3.9): resolve the authenticated active
+    // SessionIdentity here — the modem-init MYCALL (on-air station ID) comes
+    // from the session, never config. Fail-closed before any modem I/O so a
+    // NoActiveIdentity leaves the radio untouched.
+    let session_id = app
+        .state::<crate::app_backend::BackendState>()
+        .current()
+        .ok_or_else(|| "ARDOP connect: backend offline — cannot resolve active identity".to_string())?
+        .active_identity()
+        .map_err(|e| e.to_string())?;
 
     // Identity verified. Now safe to do audio-device I/O.
     let ardop_ui = config_get_ardop();
@@ -874,6 +924,8 @@ pub fn modem_ardop_connect(
     // Delegate to the gated factory variant (busy guard inside).
     modem_ardop_connect_gated_with_factory(
         &session,
+        &session_id,
+        &cfg,
         &target,
         &ardop_ui,
         |cfg, _target| {
@@ -1357,7 +1409,14 @@ mod tests {
                 sentinel_rx.recv().ok();
                 Err("test stub never connects".into())
             };
-            modem_ardop_connect_gated_with_factory(&session_clone, "K7TEST", &cfg, factory)
+            modem_ardop_connect_gated_with_factory(
+                &session_clone,
+                &test_session_id("N7CPZ"),
+                &test_config(),
+                "K7TEST",
+                &cfg,
+                factory,
+            )
         });
 
         // Wait until the worker is inside the factory (busy guard set). No
@@ -1370,8 +1429,15 @@ mod tests {
             |_: ArdopConfig, _: &str| -> Result<Box<dyn ModemTransport>, String> {
                 panic!("factory must not run when a connect is already in progress");
             };
-        let err = modem_ardop_connect_gated_with_factory(&session, "K7TEST", &cfg2, factory_2)
-            .expect_err("second concurrent call must reject");
+        let err = modem_ardop_connect_gated_with_factory(
+            &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
+            "K7TEST",
+            &cfg2,
+            factory_2,
+        )
+        .expect_err("second concurrent call must reject");
         assert!(err.contains("connect already in progress"), "got: {err}");
 
         // Release the first worker so the test can exit.
@@ -1386,6 +1452,8 @@ mod tests {
         let session = Arc::new(ModemSession::new());
         let result = modem_ardop_connect_gated_with_factory(
             &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
             "W7RMS-10",
             &test_ardop_ui_config(),
             |_cfg, _target| Ok(stub_transport()),
@@ -1425,6 +1493,8 @@ mod tests {
         // First call succeeds.
         let r1 = modem_ardop_connect_gated_with_factory(
             &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
             "W7RMS-10",
             &test_ardop_ui_config(),
             |_cfg, _target| Ok(stub_transport()),
@@ -1439,6 +1509,8 @@ mod tests {
         let factory_ran = std::sync::atomic::AtomicBool::new(false);
         let r2 = modem_ardop_connect_gated_with_factory(
             &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
             "W7RMS-10",
             &test_ardop_ui_config(),
             |_cfg, _target| {
@@ -1464,6 +1536,8 @@ mod tests {
         // No mint_consent_token call — the function must work without one.
         let result = modem_ardop_connect_gated_with_factory(
             &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
             "W7RMS-10",
             &test_ardop_ui_config(),
             |_cfg, _t| Ok(stub_transport()),
@@ -1693,6 +1767,8 @@ mod tests {
         let connect_thread = std::thread::spawn(move || {
             modem_ardop_connect_gated_with_factory(
                 &session_for_connect,
+                &test_session_id("N7CPZ"),
+                &test_config(),
                 "W7RMS-10",
                 &test_ardop_ui_config(),
                 move |_cfg, _target| {
@@ -1860,12 +1936,22 @@ mod tests {
         assert_eq!(validate_arq_bandwidth_hz(u32::MAX), None);
     }
 
-    /// `init_config_from_persisted_config` must plumb a valid persisted
-    /// `bandwidth_hz` through to the resulting `InitConfig.arq_bandwidth_hz`.
-    /// Uses TUXLINK_CONFIG_DIR isolation (same pattern as
-    /// round_trip_persists_through_config).
+    /// Mint a FULL session identity for the given callsign — the correct
+    /// seam for init-config tests (tuxlink-0063 Phase 3, Task 3.9).
+    fn test_session_id(call: &str) -> crate::identity::SessionIdentity {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse(call).expect("valid test callsign"),
+        ))
+    }
+
+    /// `init_config_from_session` must plumb a valid persisted `bandwidth_hz`
+    /// through to the resulting `InitConfig.arq_bandwidth_hz`, and the
+    /// `gridsquare` from config — but the `mycall` MUST come from the session
+    /// identity, NOT the config identifier. Uses TUXLINK_CONFIG_DIR isolation
+    /// (same pattern as round_trip_persists_through_config).
     #[test]
-    fn init_config_from_persisted_config_passes_through_valid_bandwidth() {
+    fn init_config_from_session_passes_through_valid_bandwidth() {
         let _env_guard = env_lock();
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
@@ -1892,9 +1978,12 @@ mod tests {
         std::fs::write(tmp.path().join("config.json"), seed)
             .expect("seed config.json into tempdir");
 
-        let init_cfg = init_config_from_persisted_config();
+        let cfg = config::read_config().expect("read seeded config");
+        let session_id = test_session_id("N7CPZ");
+        let init_cfg = init_config_from_session(&session_id, &cfg);
         assert_eq!(init_cfg.arq_bandwidth_hz, Some(500));
-        assert_eq!(init_cfg.mycall, "W1TEST");
+        // mycall is the SESSION call, NOT the config identifier "W1TEST".
+        assert_eq!(init_cfg.mycall, "N7CPZ");
         assert_eq!(init_cfg.gridsquare, "CN87");
 
         // Restore env (best-effort).
@@ -1907,11 +1996,55 @@ mod tests {
         }
     }
 
+    /// Focused proof: the config call/identifier is OVERRIDDEN by the session
+    /// call. Config carries W7AUX (as identifier); the session carries N7CPZ;
+    /// the modem-init MYCALL must be N7CPZ (tuxlink-0063 Phase 3, Task 3.9 —
+    /// the load-bearing on-air station-ID assertion).
+    #[test]
+    fn init_config_mycall_is_session_call() {
+        let _env_guard = env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: env_lock serializes env-mutating tests.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": "W7AUX", "identifier": "W7AUX", "grid": "DN17" }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let cfg = config::read_config().expect("read seeded config");
+        let session_id = test_session_id("N7CPZ");
+        let init_cfg = init_config_from_session(&session_id, &cfg);
+        assert_eq!(
+            init_cfg.mycall, "N7CPZ",
+            "modem-init MYCALL must be the SESSION call, never the config call/identifier W7AUX"
+        );
+        // grid still comes from config.
+        assert_eq!(init_cfg.gridsquare, "DN17");
+
+        // SAFETY: symmetric.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
     /// A hand-edited (or stale) `bandwidth_hz` outside the valid set drops
     /// to None — ardopcf's default takes over. Defense-in-depth against the
     /// Settings dropdown being bypassed.
     #[test]
-    fn init_config_from_persisted_config_drops_invalid_bandwidth() {
+    fn init_config_from_session_drops_invalid_bandwidth() {
         let _env_guard = env_lock();
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
@@ -1938,7 +2071,9 @@ mod tests {
         std::fs::write(tmp.path().join("config.json"), seed)
             .expect("seed config.json into tempdir");
 
-        let init_cfg = init_config_from_persisted_config();
+        let cfg = config::read_config().expect("read seeded config");
+        let session_id = test_session_id("N7CPZ");
+        let init_cfg = init_config_from_session(&session_id, &cfg);
         assert_eq!(
             init_cfg.arq_bandwidth_hz, None,
             "invalid bandwidth_hz=750 must drop to None (defense in depth — tuxlink-j0ij)"
@@ -2131,7 +2266,7 @@ mod tests {
     /// `InitConfig.arq_bandwidth_hz` must be None — ardopcf's default takes
     /// over. This is the migration path: pre-j0ij configs still init.
     #[test]
-    fn init_config_from_persisted_config_yields_none_bandwidth_when_modem_ardop_absent() {
+    fn init_config_from_session_yields_none_bandwidth_when_modem_ardop_absent() {
         let _env_guard = env_lock();
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
@@ -2151,7 +2286,9 @@ mod tests {
         std::fs::write(tmp.path().join("config.json"), seed)
             .expect("seed config.json into tempdir");
 
-        let init_cfg = init_config_from_persisted_config();
+        let cfg = config::read_config().expect("read seeded config");
+        let session_id = test_session_id("N7CPZ");
+        let init_cfg = init_config_from_session(&session_id, &cfg);
         assert_eq!(
             init_cfg.arq_bandwidth_hz, None,
             "no modem_ardop section → no ARQBW override (migration path)"
@@ -2231,6 +2368,41 @@ mod tests {
 
     use crate::winlink::listener::transport::TransportKind as ListenerTransportKind;
 
+    /// Minimal in-memory `Config` for the open-session inner tests — grid +
+    /// bandwidth come from here; the MYCALL comes from the session identity
+    /// (Task 3.9). No config-file I/O, no TUXLINK_CONFIG_DIR isolation needed.
+    #[allow(deprecated)] // pat_mbo_address: deprecated field still in the struct
+    fn test_config() -> Config {
+        Config {
+            schema_version: crate::config::CONFIG_SCHEMA_VERSION,
+            wizard_completed: true,
+            connect: crate::config::ConnectConfig {
+                connect_to_cms: false,
+                transport: crate::config::CmsTransport::Telnet,
+                host: crate::config::default_cms_host(),
+            },
+            identity: crate::config::IdentityConfig {
+                active_full: None,
+                identifier: Some("W1TEST".into()),
+                grid: None,
+            },
+            privacy: crate::config::PrivacyConfig {
+                gps_state: crate::config::GpsState::Off,
+                position_precision: crate::config::PositionPrecision::FourCharGrid,
+                position_source: crate::config::PositionSource::Gps,
+            },
+            pat_mbo_address: None,
+            packet: crate::config::PacketConfig::default(),
+            modem_ardop: None,
+            modem_vara: None,
+            telnet_listen: crate::config::TelnetListenUiConfig::default(),
+            network_po_favorites: Vec::new(),
+            review_inbound_before_download: false,
+            map_tile_source: None,
+            aredn_master_node_host: None,
+        }
+    }
+
     #[test]
     fn ardop_open_session_inner_populates_active_intent_and_transport_kind() {
         // Codex Round 2 P2 + Task 3.5: both intent + transport_kind flow
@@ -2241,6 +2413,8 @@ mod tests {
 
         ardop_open_session_inner(
             &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
             &test_ardop_ui_config(),
             SessionIntent::P2p,
             ListenerTransportKind::Ardop,
@@ -2275,6 +2449,8 @@ mod tests {
 
         ardop_open_session_inner(
             &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
             &test_ardop_ui_config(),
             SessionIntent::Cms,
             ListenerTransportKind::Ardop,
@@ -2298,6 +2474,8 @@ mod tests {
 
         let res = ardop_open_session_inner(
             &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
             &test_ardop_ui_config(),
             SessionIntent::P2p,
             ListenerTransportKind::Ardop,
@@ -2324,6 +2502,8 @@ mod tests {
         let session = Arc::new(ModemSession::new());
         ardop_open_session_inner(
             &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
             &test_ardop_ui_config(),
             SessionIntent::P2p,
             ListenerTransportKind::Ardop,
@@ -2334,6 +2514,8 @@ mod tests {
         let factory_ran = std::sync::atomic::AtomicBool::new(false);
         let err = ardop_open_session_inner(
             &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
             &test_ardop_ui_config(),
             SessionIntent::P2p,
             ListenerTransportKind::Ardop,
@@ -2361,6 +2543,8 @@ mod tests {
         let session = Arc::new(ModemSession::new());
         ardop_open_session_inner(
             &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
             &test_ardop_ui_config(),
             intent,
             ListenerTransportKind::Ardop,
