@@ -6,6 +6,7 @@
 pub mod datalink;
 pub mod devices;
 pub mod direwolf_conf;
+pub mod direwolf_probe;
 pub mod frame;
 pub mod kiss;
 pub mod link;
@@ -29,6 +30,13 @@ pub use devices::{
 // Managed-Dire-Wolf config generation (Slice B, Phase 2): pure direwolf.conf
 // string generation from a resolved audio device + PTT choice + KISS port.
 pub use direwolf_conf::{generate_direwolf_conf, DwParams};
+
+// Managed-Dire-Wolf pre-spawn probes (Slice B, Phase 3): presence + version,
+// conf-validation gate (over an injected runner), and ALSA device-busy probe.
+pub use direwolf_probe::{
+    device_busy_from_status, device_busy_message, direwolf_presence, meets_min_version,
+    validate_conf, CommandRunner, ConfError, DwPresence, SystemCommandRunner,
+};
 
 #[cfg(test)]
 mod module_smoke {
