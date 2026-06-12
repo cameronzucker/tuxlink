@@ -3580,6 +3580,152 @@ pub async fn packet_config_set(
     Ok(())
 }
 
+// ============================================================================
+// APRS tactical chat (tuxlink-2f2n, Phase 1a)
+// ============================================================================
+
+/// Flat, frontend-facing projection of `config::AprsConfig` (the `[aprs]`
+/// section). camelCase on the wire to match the TS model: `sourceSsid` is the
+/// APRS-side SSID appended to the operator's base call; `tocall` is the APRS
+/// destination address (e.g. `APZTUX`); `path` is the comma-separated digipeater
+/// path (validated via `parse_path` on set).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AprsConfigDto {
+    pub source_ssid: u8,
+    pub tocall: String,
+    pub path: String,
+}
+
+impl From<&config::AprsConfig> for AprsConfigDto {
+    fn from(c: &config::AprsConfig) -> Self {
+        Self {
+            source_ssid: c.source_ssid,
+            tocall: c.tocall.clone(),
+            path: c.path.clone(),
+        }
+    }
+}
+
+impl AprsConfigDto {
+    pub fn into_aprs_config(self) -> config::AprsConfig {
+        config::AprsConfig {
+            source_ssid: self.source_ssid,
+            tocall: self.tocall,
+            path: self.path,
+        }
+    }
+}
+
+/// Read the `[aprs]` config section as a flat DTO. Reads `config.rs` directly
+/// (no BackendState), like `packet_config_get`.
+#[tauri::command]
+pub async fn aprs_config_get() -> Result<AprsConfigDto, UiError> {
+    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(AprsConfigDto::from(&cfg.aprs))
+}
+
+/// Apply the `[aprs]` section from a DTO: validate the digipeater path, read the
+/// current config, swap in the new aprs section, and write atomically. Mirrors
+/// `packet_config_set`'s read → swap → write → backend-refresh path. The JS arg
+/// key MUST be `dto` (frontend invokes `invoke('aprs_config_set', { dto })`).
+#[tauri::command]
+pub async fn aprs_config_set(
+    state: State<'_, BackendState>,
+    dto: AprsConfigDto,
+) -> Result<(), UiError> {
+    // Validate the path BEFORE mutating config, so a bad path is rejected without
+    // a half-applied write. `parse_path` returns Err(String) on >2 hops / bad token.
+    crate::winlink::aprs::identity::parse_path(&dto.path)
+        .map_err(|detail| UiError::Internal { detail })?;
+    let mut cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.aprs = dto.into_aprs_config();
+    cfg.validate().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    // Refresh the LIVE backend so a later read of config (callsign/params) stays
+    // consistent — same refresh path packet_config_set uses (tuxlink-p5u).
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg);
+    }
+    Ok(())
+}
+
+/// Open the UV-Pro Bluetooth KISS link and start the APRS engine listening +
+/// ready to send. Resolves the on-air base call from the ACTIVE SessionIdentity
+/// (the authenticated Part 97 principal), mirroring `packet_listen` — NOT from a
+/// static config field. Phase 1a requires the Bluetooth KISS transport.
+#[tauri::command]
+pub async fn aprs_listen_start(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
+) -> Result<(), UiError> {
+    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mac = match &cfg.packet.link {
+        Some(crate::winlink::ax25::link::KissLinkConfig::Bluetooth { mac }) => mac.clone(),
+        _ => {
+            return Err(UiError::Internal {
+                detail: "APRS Phase 1a requires the UV-Pro Bluetooth KISS link; configure it in packet settings first".to_string(),
+            })
+        }
+    };
+    // Active base call — REAL inline mechanism, mirroring packet_listen
+    // (ui_commands.rs ~3940-3968): resolve the active SessionIdentity off the
+    // live backend, then uppercase its base callsign. `active_identity()` returns
+    // Result<SessionIdentity, BackendError>; `?` maps via From<BackendError> for
+    // UiError (fail-closed NoActiveIdentity -> NotConfigured before any hardware).
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
+    let session_id = backend.active_identity()?;
+    let base = session_id.mycall().as_str().to_uppercase();
+    let identity = crate::winlink::aprs::identity::AprsIdentity {
+        source: crate::winlink::ax25::frame::Address {
+            call: base,
+            ssid: cfg.aprs.source_ssid,
+        },
+        tocall: crate::winlink::ax25::frame::Address {
+            call: cfg.aprs.tocall.clone(),
+            ssid: 0,
+        },
+        path: crate::winlink::aprs::identity::parse_path(&cfg.aprs.path)
+            .map_err(|detail| UiError::Internal { detail })?,
+    };
+    aprs.start(app, mac, identity)
+        .map_err(|detail| UiError::Internal { detail })
+}
+
+/// Stop the APRS engine and close the link.
+#[tauri::command]
+pub async fn aprs_listen_stop(
+    aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
+) -> Result<(), UiError> {
+    aprs.stop();
+    Ok(())
+}
+
+/// Queue an APRS text message to `call`. Returns the minted msgid so the frontend
+/// can render + reconcile the outgoing bubble against later ack/timeout events.
+#[tauri::command]
+pub async fn aprs_send(
+    aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
+    call: String,
+    text: String,
+) -> Result<String, UiError> {
+    aprs.send(call, text)
+        .map_err(|detail| UiError::Internal { detail })
+}
+
+/// Abort all in-flight APRS transmissions (RADIO-1 working-abort path).
+#[tauri::command]
+pub async fn aprs_abort(
+    aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
+) -> Result<(), UiError> {
+    aprs.abort();
+    Ok(())
+}
+
 /// A discovered serial/RFCOMM device + its transport kind, so the UI can show
 /// USB and Bluetooth devices SEPARATELY (and tell the operator what each is)
 /// rather than dumping one undifferentiated `/dev` list into both pickers.
@@ -7554,6 +7700,20 @@ mod tests {
     use super::*;
     use crate::winlink::message::RECEIVED_SESSION_POST_OFFICE;
     use crate::winlink_backend::MessageId;
+
+    #[test]
+    fn aprs_config_dto_round_trips() {
+        let cfg = crate::config::AprsConfig {
+            source_ssid: 5,
+            tocall: "APZTUX".into(),
+            path: "WIDE2-1".into(),
+        };
+        let dto = AprsConfigDto::from(&cfg);
+        assert_eq!(dto.source_ssid, 5);
+        assert_eq!(dto.tocall, "APZTUX");
+        let back = dto.into_aprs_config();
+        assert_eq!(back, cfg);
+    }
 
     #[test]
     fn user_folder_dto_carries_parent_slug_and_omits_when_top_level() {
