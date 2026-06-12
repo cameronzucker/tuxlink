@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { StationFinderControls } from './StationFinderControls';
+import type { Band } from './bandPlan';
 
 const baseProps = {
-  band: '40m' as const,
-  onBandChange: vi.fn(),
+  enabledBands: new Set<Band>(['40m']),
+  onToggleBand: vi.fn(),
   enabledModes: new Set<'vara-hf' | 'ardop-hf' | 'packet'>(['vara-hf', 'ardop-hf', 'packet']),
   onToggleMode: vi.fn(),
   utcHour: 21,
@@ -30,13 +31,24 @@ describe('StationFinderControls', () => {
       expect(screen.getByRole('button', { name: new RegExp(`^${label}$`) })).toBeTruthy();
     }
     expect(screen.getByRole('button', { name: /^40 m$/ }).getAttribute('aria-pressed')).toBe('true');
+    // Multi-select: VHF/UHF is now a selectable filter band (off by default here).
+    expect(screen.getByRole('button', { name: /VHF\/UHF/ }).getAttribute('aria-pressed')).toBe('false');
   });
 
-  it('fires onBandChange when another band is clicked', () => {
-    const onBandChange = vi.fn();
-    render(<StationFinderControls {...baseProps} onBandChange={onBandChange} />);
-    fireEvent.click(screen.getByRole('button', { name: /20 m/ }));
-    expect(onBandChange).toHaveBeenCalledWith('20m');
+  it('toggles a band (multi-select) without disturbing others', () => {
+    const onToggleBand = vi.fn();
+    // 40m + 20m both selected → both pressed.
+    render(
+      <StationFinderControls
+        {...baseProps}
+        enabledBands={new Set<Band>(['40m', '20m'])}
+        onToggleBand={onToggleBand}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^40 m$/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: /^20 m$/ }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: /^15 m$/ }));
+    expect(onToggleBand).toHaveBeenCalledWith('15m');
   });
 
   it('shows SSN provenance and degrades SFI/K when absent', () => {
