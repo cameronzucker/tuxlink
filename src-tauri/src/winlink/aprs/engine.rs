@@ -216,12 +216,27 @@ impl AprsEngine {
         let frame = build_ui_frame(&self.identity, &info);
         let bytes = match frame.encode() {
             Ok(b) => kiss_data_frame(&b),
-            Err(_) => return,
+            Err(_) => {
+                // Couldn't build the frame — emit a terminal state so the in-flight
+                // capacity slot reserved upstream in AprsState::send is released, not leaked.
+                self.sink.emit_state(StateChange {
+                    msgid: msgid.to_string(),
+                    state: DeliveryState::TimedOut,
+                });
+                return;
+            }
         };
         if self.tx.enqueue(msgid.to_string(), bytes, now_ms).is_ok() {
             self.sink.emit_state(StateChange {
                 msgid: msgid.to_string(),
                 state: DeliveryState::Sent,
+            });
+        } else {
+            // CapacityFull at the queue (defense-in-depth backstop; AprsState gates first).
+            // Release the slot rather than leak it.
+            self.sink.emit_state(StateChange {
+                msgid: msgid.to_string(),
+                state: DeliveryState::TimedOut,
             });
         }
     }
@@ -434,6 +449,10 @@ fn run(
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    // On teardown (stop / link close / error), drain any pending retransmits to terminal
+    // states so their in-flight capacity slots are released. Without this, a Stop-with-pending
+    // (the routine listening toggle) permanently leaks slots and eventually wedges `send`.
+    engine.abort();
     listening.store(false, Ordering::SeqCst);
     engine.set_listening(false);
 }
@@ -606,6 +625,25 @@ mod tests {
             .unwrap()
             .iter()
             .any(|s| s.msgid == "07" && s.state == DeliveryState::Acked));
+    }
+
+    #[test]
+    fn abort_emits_a_terminal_for_each_pending_to_release_in_flight() {
+        // The driver calls engine.abort() on teardown; every pending message must hit a
+        // terminal state so its in-flight capacity slot is released (no stop()-leak).
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.enqueue_send("KK6XYZ", "a", "01", 0);
+        engine.enqueue_send("KK6XYZ", "b", "02", 0);
+        engine.abort();
+        let states = sink.states.lock().unwrap();
+        let timed_out: Vec<&str> = states
+            .iter()
+            .filter(|s| s.state == DeliveryState::TimedOut)
+            .map(|s| s.msgid.as_str())
+            .collect();
+        assert!(timed_out.contains(&"01"));
+        assert!(timed_out.contains(&"02"));
     }
 
     fn strip_kiss(b: &[u8]) -> Vec<u8> {
