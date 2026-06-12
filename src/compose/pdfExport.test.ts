@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { defaultPdfName, exportFormPdf } from './pdfExport';
+import { defaultPdfName, exportFormPdf, printForm } from './pdfExport';
 
 const saveMock = vi.fn();
 const invokeMock = vi.fn();
@@ -72,5 +72,34 @@ describe('exportFormPdf', () => {
     await expect(exportFormPdf('viewer-form-abc', 'Form')).rejects.toThrow(
       /print failed/,
     );
+  });
+});
+
+describe('printForm', () => {
+  it('invokes forms_print with the webview label and returns true when printed', async () => {
+    invokeMock.mockResolvedValue(true);
+
+    const result = await printForm('viewer-form-abc123');
+
+    expect(invokeMock).toHaveBeenCalledWith('forms_print', {
+      webviewLabel: 'viewer-form-abc123',
+    });
+    // No Save dialog in the print path — it goes straight to the system dialog.
+    expect(saveMock).not.toHaveBeenCalled();
+    expect(result).toBe(true);
+  });
+
+  it('returns false when the operator cancels the print dialog', async () => {
+    invokeMock.mockResolvedValue(false);
+
+    const result = await printForm('compose-form-xyz');
+
+    expect(result).toBe(false);
+  });
+
+  it('propagates a backend print failure to the caller', async () => {
+    invokeMock.mockRejectedValue(new Error('print failed: dialog channel closed'));
+
+    await expect(printForm('viewer-form-abc')).rejects.toThrow(/print failed/);
   });
 });

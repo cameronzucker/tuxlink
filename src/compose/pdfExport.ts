@@ -40,3 +40,13 @@ export async function exportFormPdf(
   if (path === null || path === undefined) return null;
   return invoke<string>('forms_export_pdf', { webviewLabel, outPath: path });
 }
+
+/**
+ * Print the form rendered in `webviewLabel` directly via the system print
+ * dialog — no save-to-disk step (tuxlink-954o / G8b). Resolves `true` if the
+ * operator printed, `false` if they cancelled the dialog. Throws if the backend
+ * print operation fails (caller surfaces the message).
+ */
+export async function printForm(webviewLabel: string): Promise<boolean> {
+  return invoke<boolean>('forms_print', { webviewLabel });
+}

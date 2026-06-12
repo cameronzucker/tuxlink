@@ -144,6 +144,52 @@ pub fn export_webview_pdf<R: tauri::Runtime>(
     }
 }
 
+/// Open the system print dialog for the form rendered in `label`'s child
+/// webview and print on confirm — no intermediate file (tuxlink-954o / G8b).
+///
+/// Reuses the same `WebKitPrintOperation` machinery as [`export_webview_pdf`],
+/// but `run_dialog` shows GTK's printer picker (physical printers + a
+/// "Print to File" option) and prints synchronously when the operator
+/// confirms. Saves the export-to-disk-then-open-then-print detour for a
+/// hardcopy. Returns `true` if the operator printed, `false` if they
+/// cancelled the dialog.
+#[cfg(target_os = "linux")]
+pub fn print_webview<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    label: &str,
+) -> Result<bool, PdfExportError> {
+    use std::sync::mpsc;
+    use tauri::Manager;
+
+    let webview = app
+        .get_webview(label)
+        .ok_or_else(|| PdfExportError::WebviewNotFound(label.to_string()))?;
+
+    let (tx, rx) = mpsc::channel::<bool>();
+    webview
+        .with_webview(move |platform| {
+            use webkit2gtk::{PrintOperation, PrintOperationExt, PrintOperationResponse};
+
+            let wv = platform.inner(); // webkit2gtk::WebView
+            let op = PrintOperation::new(&wv);
+            // run_dialog runs a nested GTK loop until the operator confirms or
+            // cancels, printing internally on confirm. No parent window is
+            // passed: gtk3's `Widget::toplevel` is deprecated and would trip
+            // `-D warnings`; the dialog is unparented but fully functional.
+            let printed = matches!(
+                op.run_dialog(None::<&gtk::Window>),
+                PrintOperationResponse::Print
+            );
+            let _ = tx.send(printed);
+        })
+        .map_err(|e| PdfExportError::PrintFailed(e.to_string()))?;
+
+    // No deadline: the operator may deliberate in the dialog. The closure
+    // always sends once the dialog closes, so this resolves then.
+    rx.recv()
+        .map_err(|_| PdfExportError::PrintFailed("print dialog channel closed".into()))
+}
+
 /// Non-Linux fallback so the crate compiles on any dev host. tuxlink ships
 /// Linux-only; this path is never taken in a real build.
 #[cfg(not(target_os = "linux"))]
@@ -152,6 +198,15 @@ pub fn export_webview_pdf<R: tauri::Runtime>(
     _label: &str,
     _out_path: &Path,
 ) -> Result<PathBuf, PdfExportError> {
+    Err(PdfExportError::UnsupportedPlatform)
+}
+
+/// Non-Linux fallback for [`print_webview`].
+#[cfg(not(target_os = "linux"))]
+pub fn print_webview<R: tauri::Runtime>(
+    _app: &tauri::AppHandle<R>,
+    _label: &str,
+) -> Result<bool, PdfExportError> {
     Err(PdfExportError::UnsupportedPlatform)
 }
 

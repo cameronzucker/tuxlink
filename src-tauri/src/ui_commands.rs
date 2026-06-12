@@ -2213,6 +2213,29 @@ pub async fn forms_export_pdf(
         })
 }
 
+/// Print a rendered form directly via the system print dialog (tuxlink-954o /
+/// G8b). Counterpart to [`forms_export_pdf`]: instead of saving a file, it
+/// opens GTK's printer picker on the form's live child webview and prints on
+/// confirm — no save-to-disk step for a hardcopy. `webview_label` is the
+/// form's child-webview label (`compose-form-<token>` / `viewer-form-<token>`).
+/// Returns `true` if the operator printed, `false` if they cancelled.
+#[tauri::command]
+pub async fn forms_print(
+    webview_label: String,
+    app: AppHandle,
+) -> Result<bool, UiError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::forms::pdf_export::print_webview(&app, &webview_label)
+    })
+    .await
+    .map_err(|e| UiError::Internal {
+        detail: format!("print task join failed: {e}"),
+    })?
+    .map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })
+}
+
 /// Result of [`open_webview_viewer`] (P1 Task 11). Symmetric to
 /// [`OpenFormResult`] except the React side never subscribes to a
 /// `form-submitted` event for viewer sessions — there is no submit path.

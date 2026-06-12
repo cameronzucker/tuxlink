@@ -36,7 +36,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Webview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
-import { exportFormPdf } from '../compose/pdfExport';
+import { exportFormPdf, printForm } from '../compose/pdfExport';
 import './WebviewFormViewer.css';
 
 interface OpenViewerResult {
@@ -91,6 +91,9 @@ export function WebviewFormViewer({
   // Transient export feedback ("Exporting…", "Saved to …", or an error).
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  // Direct-print in flight (separate from `exporting` for independent button
+  // labels; both buttons disable while either op holds the webview).
+  const [printing, setPrinting] = useState(false);
   // Placeholder div the child Webview is pixel-positioned over. The webview
   // paints above this div at runtime.
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -253,6 +256,20 @@ export function WebviewFormViewer({
     }
   };
 
+  const handlePrint = async () => {
+    if (!exportLabel || printing) return;
+    setPrinting(true);
+    setExportMsg('Opening print dialog…');
+    try {
+      const printed = await printForm(exportLabel);
+      setExportMsg(printed ? 'Sent to printer' : null);
+    } catch (e) {
+      setExportMsg(`Print failed: ${String(e)}`);
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   return (
     <div className="webview-form-viewer" data-testid="webview-form-viewer">
       {status === 'opening' && !error && (
@@ -288,10 +305,20 @@ export function WebviewFormViewer({
           className="webview-form-viewer__btn"
           data-testid="webview-form-viewer-export-pdf"
           onClick={handleExportPdf}
-          disabled={status !== 'open' || exporting}
+          disabled={status !== 'open' || exporting || printing}
           title="Save this form as a PDF — a faithful copy for a served agency or non-ham recipient"
         >
           {exporting ? 'Exporting…' : 'Export PDF'}
+        </button>
+        <button
+          type="button"
+          className="webview-form-viewer__btn"
+          data-testid="webview-form-viewer-print"
+          onClick={handlePrint}
+          disabled={status !== 'open' || exporting || printing}
+          title="Print this form directly on a connected printer — no save-to-disk step"
+        >
+          {printing ? 'Printing…' : 'Print…'}
         </button>
         {exportMsg && (
           <span className="webview-form-viewer__export-msg" role="status">
