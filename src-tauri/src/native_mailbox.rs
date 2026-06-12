@@ -1362,12 +1362,18 @@ mod tests {
     fn list_surfaces_the_identity_tag_onto_meta() {
         let dir = tempdir().unwrap();
         let mbox = Mailbox::new(dir.path());
+        // Distinct timestamps → distinct MIDs (the MID derives from
+        // sender/recipient/time, NOT subject/body, so `raw()` alone would
+        // collide both messages onto one MID in the shared Outbox).
         let tagged = mbox
             .for_identity("W1ABC")
-            .store(MailboxFolder::Outbox, &raw("Tagged", "x"))
+            .store(MailboxFolder::Outbox, &raw_at("Tagged", "x", 1_716_200_000))
             .unwrap();
         // A bare store (no identity) leaves the Outbox message untagged.
-        let untagged = mbox.store(MailboxFolder::Outbox, &raw("Untagged", "y")).unwrap();
+        let untagged = mbox
+            .store(MailboxFolder::Outbox, &raw_at("Untagged", "y", 1_716_300_000))
+            .unwrap();
+        assert_ne!(tagged, untagged, "test needs two distinct MIDs");
 
         let metas = mbox.list(MailboxFolder::Outbox).unwrap();
         let tag_of = |id: &MessageId| {
