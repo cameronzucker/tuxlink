@@ -143,17 +143,34 @@ function pointInPolygonWithHoles(
 /**
  * Standard ray-casting (even–odd rule) point-in-ring test.
  * `ring` is an array of [lon, lat] vertices.
+ *
+ * Antimeridian-safe: a ring whose longitude span exceeds 180° actually wraps
+ * across ±180° (Alaska's Aleutian arm, Pacific island offices). Naive longitude
+ * comparison miscounts ray crossings at the seam, silently mis-resolving points
+ * near the dateline. When a wrap is detected, all ring longitudes AND the test
+ * point are shifted into a continuous 0–360 frame before ray-casting. Rings that
+ * do not wrap (the entire CONUS) are unaffected (tuxlink-z1b7 DoD #11).
  */
 function pointInRing(lon: number, lat: number, ring: number[][]): boolean {
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+  for (const v of ring) {
+    if (v[0] < minLon) minLon = v[0];
+    if (v[0] > maxLon) maxLon = v[0];
+  }
+  const wraps = maxLon - minLon > 180;
+  const fx = (x: number): number => (wraps && x < 0 ? x + 360 : x);
+  const px = wraps && lon < 0 ? lon + 360 : lon;
+
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const xi = ring[i][0];
+    const xi = fx(ring[i][0]);
     const yi = ring[i][1];
-    const xj = ring[j][0];
+    const xj = fx(ring[j][0]);
     const yj = ring[j][1];
     const intersects =
       yi > lat !== yj > lat &&
-      lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+      px < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
     if (intersects) inside = !inside;
   }
   return inside;

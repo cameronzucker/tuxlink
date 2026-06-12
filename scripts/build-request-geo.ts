@@ -102,9 +102,12 @@ function catalogStates(): string[] {
     // Only WX_US_ categories with exactly two uppercase letters
     const match = /^WX_US_([A-Z]{2})$/.exec(category);
     if (!match) continue;
-    if (/zone forecast/i.test(description)) {
-      states.add(match[1]);
-    }
+    // v2 (tuxlink-z1b7): include ALL catalog states, not only those carrying a
+    // per-NWS-zone product. Coarse-region states (AZ, TX, CA, …) must be fetched
+    // too so the per-zone resolver can cover the whole country, not just the 8
+    // states whose products happen to be per-zone. `description` is unused now.
+    void description;
+    states.add(match[1]);
   }
 
   const sorted = [...states].sort();
