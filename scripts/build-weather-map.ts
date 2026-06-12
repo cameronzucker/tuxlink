@@ -69,6 +69,32 @@ function loadCatalog(): Map<string, Product[]> {
 
 // ---- office city tokens ----------------------------------------------------
 const STATE_NAMES = /\b(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming)\b/g;
+const USPS_NAME: Record<string, string> = {
+  AL: 'alabama', AK: 'alaska', AZ: 'arizona', AR: 'arkansas', CA: 'california', CO: 'colorado',
+  CT: 'connecticut', DE: 'delaware', FL: 'florida', GA: 'georgia', HI: 'hawaii', ID: 'idaho',
+  IL: 'illinois', IN: 'indiana', IA: 'iowa', KS: 'kansas', KY: 'kentucky', LA: 'louisiana',
+  ME: 'maine', MD: 'maryland', MA: 'massachusetts', MI: 'michigan', MN: 'minnesota', MS: 'mississippi',
+  MO: 'missouri', MT: 'montana', NE: 'nebraska', NV: 'nevada', NH: 'new hampshire', NJ: 'new jersey',
+  NM: 'new mexico', NY: 'new york', NC: 'north carolina', ND: 'north dakota', OH: 'ohio', OK: 'oklahoma',
+  OR: 'oregon', PA: 'pennsylvania', RI: 'rhode island', SC: 'south carolina', SD: 'south dakota',
+  TN: 'tennessee', TX: 'texas', UT: 'utah', VT: 'vermont', VA: 'virginia', WA: 'washington',
+  WV: 'west virginia', WI: 'wisconsin', WY: 'wyoming', DC: 'district of columbia',
+};
+/** True when a product description denotes the WHOLE state (no sub-region) — i.e.
+ *  after stripping product-type words only the state name remains. Used as the
+ *  last-resort fallback so a grid in an office with no specific product still gets
+ *  the (accurate) statewide forecast rather than nothing. */
+function isStatewide(desc: string, st: string): boolean {
+  const name = USPS_NAME[st];
+  if (!name) return false;
+  const d = desc
+    .toLowerCase()
+    .replace(/[^a-z ]/g, ' ')
+    .replace(/\b(tabular|zone|zones|state|forecast|forecasts|product|for|the|nws)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return d === name;
+}
 /** Extract lower-cased city keywords from an office name like
  *  "NWS Flagstaff, AZ" / "Fort Worth/Dallas, TX" / "Miami - South Florida". */
 function cityTokens(officeName: string): string[] {
@@ -170,48 +196,72 @@ function productTarget(desc: string): [number, number] | null {
   return [tx ?? 0.5, ty ?? 0.5];
 }
 
-// Per state: office(cwa) -> office-wide product. City match first, then direction.
-const cwaProduct = new Map<string, string>(); // `${state}:${cwa}` -> filename
 const typeRank: Record<Product['type'], number> = { ZON: 3, TAB: 2, FOR: 1, OTHER: 0 };
+
+// (a) Global office-city → product, across ALL state buckets. Cross-state offices
+// (St-Louis LSX forecasting IL zones, Lake Charles LCH forecasting both TX & LA)
+// name their city in a product filed under ONE state; a zone in a NEIGHBOR state
+// served by that office must still resolve to it. City names are specific, so a
+// global match is high-confidence — it beats per-state direction below.
+const allProducts: Product[] = [...catalog.values()].flat();
+const cwaCity = new Map<string, string>(); // cwa -> filename
+const allCwas = new Set(allZones.map((z) => z.cwa).filter(Boolean));
+for (const cwa of allCwas) {
+  const toks = cityTokens(offices[cwa]?.name ?? '');
+  if (!toks.length) continue;
+  let best: Product | null = null;
+  for (const p of allProducts) {
+    if (!toks.some((t) => p.desc.toLowerCase().includes(t))) continue;
+    if (!best || typeRank[p.type] > typeRank[best.type]) best = p;
+  }
+  if (best) cwaCity.set(cwa, best.filename);
+}
+
+// (b) Per-state direction → product, used only when no city match exists. The
+// office's position within its own state is aligned to a directional product.
+const cwaDir = new Map<string, string>(); // `${state}:${cwa}` -> filename
 for (const [st, prods] of catalog) {
   if (NO_LAND_FORECAST.includes(st)) continue;
   const cwasInState = new Set(allZones.filter((z) => z.state === st).map((z) => z.cwa).filter(Boolean));
   for (const cwa of cwasInState) {
-    const toks = cityTokens(offices[cwa]?.name ?? '');
+    if (cwaCity.has(cwa)) continue; // city wins
+    const frac = cwaFrac(st, cwa);
+    if (!frac) continue;
     let best: Product | null = null;
-    // Pass 1 — office city named in the description.
+    let bestDist = Infinity;
     for (const p of prods) {
-      if (!toks.some((t) => p.desc.toLowerCase().includes(t))) continue;
-      if (!best || typeRank[p.type] > typeRank[best.type]) best = p;
+      const tgt = productTarget(p.desc);
+      if (!tgt) continue;
+      const dist = (frac[0] - tgt[0]) ** 2 + (frac[1] - tgt[1]) ** 2 - typeRank[p.type] * 1e-3;
+      if (dist < bestDist) { bestDist = dist; best = p; }
     }
-    // Pass 2 — pick the directional product whose denoted position best aligns
-    // with the office's actual position within the state (continuous, no cliffs).
-    if (!best) {
-      const frac = cwaFrac(st, cwa);
-      if (frac) {
-        let bestDist = Infinity;
-        for (const p of prods) {
-          const tgt = productTarget(p.desc);
-          if (!tgt) continue;
-          const dist = (frac[0] - tgt[0]) ** 2 + (frac[1] - tgt[1]) ** 2;
-          // tie-break toward the more local product type (ZON>TAB>FOR)
-          const score = dist - typeRank[p.type] * 1e-3;
-          if (score < bestDist) { bestDist = score; best = p; }
-        }
-      }
-    }
-    if (best) cwaProduct.set(`${st}:${cwa}`, best.filename);
+    if (best) cwaDir.set(`${st}:${cwa}`, best.filename);
   }
 }
 
-// Per zone: exact-name(existing) -> cwa product -> unmapped.
+// (c) Statewide fallback — a product covering the whole state (no sub-region),
+// used only when neither office-city nor direction matched. A statewide forecast
+// accurately covers the operator (HI, VA, …), so it beats leaving them with no
+// primary card.
+const stateWide = new Map<string, string>(); // state -> filename
+for (const [st, prods] of catalog) {
+  if (NO_LAND_FORECAST.includes(st)) continue;
+  let best: Product | null = null;
+  for (const p of prods) {
+    if (!isStatewide(p.desc, st)) continue;
+    if (!best || typeRank[p.type] > typeRank[best.type]) best = p;
+  }
+  if (best) stateWide.set(st, best.filename);
+}
+
+// Per zone: exact-name(existing) → office-city → direction → statewide → unmapped.
 const map: Record<string, string> = {};
 const unmapped: Record<string, string> = {};
 for (const z of allZones) {
   if (existingMap[z.id]) { map[z.id] = existingMap[z.id]; continue; }     // preserve 8-state exact
   if (NO_LAND_FORECAST.includes(z.state)) { unmapped[z.id] = 'no land forecast'; continue; }
-  const viaCwa = cwaProduct.get(`${z.state}:${z.cwa}`);
-  if (viaCwa) { map[z.id] = viaCwa; continue; }
+  const via = cwaCity.get(z.cwa) ?? cwaDir.get(`${z.state}:${z.cwa}`) ?? stateWide.get(z.state);
+  if (via) { map[z.id] = via; continue; }
   unmapped[z.id] = `no office product (cwa=${z.cwa || 'none'})`;
 }
 
