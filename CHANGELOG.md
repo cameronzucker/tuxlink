@@ -30,6 +30,24 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.56.0](https://github.com/cameronzucker/tuxlink/compare/v0.55.0...v0.56.0) (2026-06-12)
+
+
+### Features
+
+* **mailbox:** default-identity namespace + robust legacy migration ([4e5c913](https://github.com/cameronzucker/tuxlink/commit/4e5c913546114e2e888be9688ecc552c8e26c7e0))
+* **mailbox:** drain shared Outbox by active session identity ([0061f64](https://github.com/cameronzucker/tuxlink/commit/0061f64508eec4f68b4bac2d2f9bd98eede74468))
+* **mailbox:** per-FULL received-mail namespace + tagging + legacy migration ([2be71da](https://github.com/cameronzucker/tuxlink/commit/2be71da8f86e71277492b949be35c5a69cdcc043))
+* **mailbox:** wire production reads to per-FULL namespace; retire ej7a heal ([fccc57f](https://github.com/cameronzucker/tuxlink/commit/fccc57f0c3da0ff1af754af9f7ed871c6e9adb57))
+* **search:** identity_tag column (schema v3→v4) for per-identity mail ([0f7cc33](https://github.com/cameronzucker/tuxlink/commit/0f7cc33df96951e8e359e3bf7edecdc27c7b59cb))
+
+
+### Bug Fixes
+
+* **mailbox:** drop dead resolve_dir wrapper (clippy -D dead_code) ([4ba3ea9](https://github.com/cameronzucker/tuxlink/commit/4ba3ea9c6d639afaec8debfa71b8b309d78aa9ba))
+* **test:** update search_integration rebuild_index call for the FULL arg ([d64158a](https://github.com/cameronzucker/tuxlink/commit/d64158a2cb3505180c94aff74d369fbf07785b03))
+* **test:** use the public winlink_backend::MessageId path ([dbd8896](https://github.com/cameronzucker/tuxlink/commit/dbd8896822186acd57d42114584787f4297815e2))
+
 ## [0.55.0](https://github.com/cameronzucker/tuxlink/compare/v0.54.0...v0.55.0) (2026-06-12)
 
 
