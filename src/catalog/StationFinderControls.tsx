@@ -14,8 +14,11 @@ const FILTER_MODES: { mode: FilterMode; label: string }[] = [
 ];
 
 export interface StationFinderControlsProps {
-  band: Band;
-  onBandChange: (band: Band) => void;
+  /** Selected bands — a multi-select FILTER: a station shows only if it has a
+   *  channel on one of these bands (∩ enabledModes). Includes 'vhf-uhf' when the
+   *  operator opts in to line-of-sight packet (never propagation-ranked). */
+  enabledBands: Set<Band>;
+  onToggleBand: (band: Band) => void;
   enabledModes: Set<FilterMode>;
   onToggleMode: (mode: FilterMode) => void;
   utcHour: number;
@@ -91,24 +94,26 @@ export function StationFinderControls(props: StationFinderControlsProps) {
       </div>
 
       <div className="station-finder__bandbar">
-        <span className="station-finder__lab">Reachability on</span>
+        <span className="station-finder__lab">Bands</span>
         {HF_BANDS.map((b) => (
           <button
             key={b}
             type="button"
-            className={`station-finder__bandtab${props.band === b ? ' on' : ''}`}
-            aria-pressed={props.band === b}
-            onClick={() => props.onBandChange(b)}
+            className={`station-finder__bandtab${props.enabledBands.has(b) ? ' on' : ' off'}`}
+            aria-pressed={props.enabledBands.has(b)}
+            onClick={() => props.onToggleBand(b)}
           >
             {bandLabel(b)}
           </button>
         ))}
+        {/* VHF/UHF is a selectable filter (line-of-sight packet) but is never
+            propagation-ranked — no terrain model (design §10). */}
         <button
           type="button"
-          className="station-finder__bandtab"
-          disabled
-          aria-disabled
-          title="No propagation model for VHF/UHF"
+          className={`station-finder__bandtab${props.enabledBands.has('vhf-uhf') ? ' on' : ' off'}`}
+          aria-pressed={props.enabledBands.has('vhf-uhf')}
+          title="Line-of-sight packet — shown when selected, never propagation-ranked"
+          onClick={() => props.onToggleBand('vhf-uhf')}
         >
           VHF/UHF
         </button>

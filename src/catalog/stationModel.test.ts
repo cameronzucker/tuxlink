@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { baseCallsign, aggregateStations, type Station } from './stationModel';
+import { baseCallsign, aggregateStations, stationMatchesBandMode, type Station } from './stationModel';
+import { HF_BANDS, type Band } from './bandPlan';
 import type { Gateway, StationListing } from './stationTypes';
 
 function gw(partial: Partial<Gateway> & { callsign: string }): Gateway {
@@ -65,6 +66,49 @@ describe('aggregateStations — N0DAJ multi-mode/SSID (spec §3)', () => {
     const s = aggregateStations(listings)[0];
     expect(s.channels.find((c) => c.mode === 'vara-hf' && c.frequencyKhz === 7103)?.band).toBe('40m');
     expect(s.channels.find((c) => c.mode === 'packet' && c.frequencyKhz === 145710)?.band).toBe('vhf-uhf');
+  });
+});
+
+describe('stationMatchesBandMode — band+mode FILTER (tuxlink-hlas)', () => {
+  // A real N0DAJ-shaped station: 40m VARA/ARDOP HF + 145 MHz / 441 MHz packet.
+  const station: Station = aggregateStations([
+    { mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+      gateways: [gw({ callsign: 'N0DAJ', grid: 'DM34oa', frequenciesKhz: [7103, 14103] })] },
+    { mode: 'packet', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+      gateways: [gw({ callsign: 'N0DAJ-10', grid: 'DM34oa', frequenciesKhz: [145710] })] },
+  ])[0];
+
+  // A pure-VHF packet station whose only channel is 145 MHz — the kind that was
+  // wrongly surfacing under the default 40m selection.
+  const vhfOnly: Station = aggregateStations([
+    { mode: 'packet', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+      gateways: [gw({ callsign: 'W7VHF-1', grid: 'DM43aa', frequenciesKhz: [145010] })] },
+  ])[0];
+
+  const HF_DEFAULT = new Set<Band>(HF_BANDS);
+
+  it('matches when a channel is on a selected band AND an enabled mode', () => {
+    expect(stationMatchesBandMode(station, new Set<Band>(['40m']), new Set(['vara-hf']))).toBe(true);
+  });
+
+  it('does NOT surface a 145 MHz packet station under the default HF band set (THE bug)', () => {
+    // band === 'vhf-uhf' is not in the HF default → the station has no matching channel.
+    expect(stationMatchesBandMode(vhfOnly, HF_DEFAULT, new Set(['packet']))).toBe(false);
+  });
+
+  it('DOES surface that same 145 MHz packet station once VHF/UHF is selected', () => {
+    expect(stationMatchesBandMode(vhfOnly, new Set<Band>(['vhf-uhf']), new Set(['packet']))).toBe(true);
+  });
+
+  it('does NOT match when the band is selected but the station has no channel in an enabled mode', () => {
+    // 40m is selected, but the only 40m channel is VARA — filtering to packet alone misses it.
+    expect(stationMatchesBandMode(station, new Set<Band>(['40m']), new Set(['packet']))).toBe(false);
+  });
+
+  it('matches the multi-mode station across either of its bands (multi-select)', () => {
+    // VHF/UHF picks up the 145 MHz packet channel; 40m would pick up VARA.
+    expect(stationMatchesBandMode(station, new Set<Band>(['vhf-uhf']), new Set(['packet']))).toBe(true);
+    expect(stationMatchesBandMode(station, new Set<Band>(['20m']), new Set(['vara-hf']))).toBe(true);
   });
 });
 

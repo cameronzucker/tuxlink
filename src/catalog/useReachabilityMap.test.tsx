@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 import { invoke } from '@tauri-apps/api/core';
 import { useReachabilityMap, stationKey } from './useReachabilityMap';
 import type { Station } from './stationModel';
+import type { Band } from './bandPlan';
 
 function station(call: string, grid: string, khz: number[]): Station {
   return { baseCallsign: call, grid, sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1,
@@ -31,7 +32,7 @@ describe('useReachabilityMap', () => {
       return { bearingDeg: 0, distanceKm: 1, ssn: 118, year: 2026, month: 6,
         channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(rel), snrByHour: Array(24).fill(5), mufdayByHour: Array(24).fill(0.5) }] } as unknown as never;
     });
-    const { result } = renderHook(() => useReachabilityMap('DM43bp', stations, '40m', 21), { wrapper: wrap() });
+    const { result } = renderHook(() => useReachabilityMap('DM43bp', stations, new Set<Band>(['40m']), 21), { wrapper: wrap() });
     await waitFor(() => expect(result.current.available).toBe(true));
     expect(result.current.tiers.get(stationKey(stations[0]))).toBe('good');
     expect(result.current.tiers.get(stationKey(stations[1]))).toBe('skip');
@@ -42,7 +43,7 @@ describe('useReachabilityMap', () => {
       if (cmd === 'propagation_predict_path') throw { kind: 'Unavailable', reason: 'no voacapl' };
       return undefined as unknown as never;
     });
-    const { result } = renderHook(() => useReachabilityMap('DM43bp', stations, '40m', 21), { wrapper: wrap() });
+    const { result } = renderHook(() => useReachabilityMap('DM43bp', stations, new Set<Band>(['40m']), 21), { wrapper: wrap() });
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.available).toBe(false);
     expect(result.current.tiers.size).toBe(0);
@@ -53,7 +54,7 @@ describe('useReachabilityMap', () => {
       if (cmd === 'propagation_predict_path') throw { kind: 'Unavailable' };
       return undefined as unknown as never;
     });
-    const { result } = renderHook(() => useReachabilityMap('DM43bp', stations, '40m', 21), { wrapper: wrap() });
+    const { result } = renderHook(() => useReachabilityMap('DM43bp', stations, new Set<Band>(['40m']), 21), { wrapper: wrap() });
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.distances.get(stationKey(stations[0]))).toBeGreaterThan(0);
   });
@@ -78,7 +79,7 @@ describe('useReachabilityMap', () => {
       return { bearingDeg: 0, distanceKm: 1, ssn: 118, year: 2026, month: 6,
         channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(5), mufdayByHour: Array(24).fill(0.5) }] } as unknown as never;
     });
-    const { result } = renderHook(() => useReachabilityMap('DM43bp', many, '40m', 21), { wrapper: wrap() });
+    const { result } = renderHook(() => useReachabilityMap('DM43bp', many, new Set<Band>(['40m']), 21), { wrapper: wrap() });
     await waitFor(() => expect(result.current.available).toBe(true));
     expect(maxInFlight).toBeGreaterThan(1);
     // All stations got a tier.

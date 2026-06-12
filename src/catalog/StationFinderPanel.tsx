@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useStations } from './useStations';
-import { aggregateStations, type Station } from './stationModel';
+import { aggregateStations, stationMatchesBandMode, type Station } from './stationModel';
 import { useReachabilityMap, stationKey } from './useReachabilityMap';
 import { useStationPrediction } from './useStationPrediction';
 import { distanceFromGrids, kmToMi } from './distance';
@@ -17,7 +17,7 @@ import { StationFinderControls, type FilterMode } from './StationFinderControls'
 import { ServiceCodesField } from './ServiceCodesField';
 import { StationFinderMap } from './StationFinderMap';
 import { StationRail } from './StationRail';
-import type { Band } from './bandPlan';
+import { HF_BANDS, type Band } from './bandPlan';
 import type { ListingMode } from './stationTypes';
 import type { RadioMode } from '../favorites/types';
 import './StationFinderPanel.css';
@@ -47,7 +47,10 @@ function ssnAge(year: number, month: number): number {
 
 export function StationFinderPanel({ onClose, activePrefillMode }: StationFinderPanelProps) {
   const [grid, setGrid] = useState('');
-  const [band, setBand] = useState<Band>('40m');
+  // Band picker is a multi-select FILTER (tuxlink-hlas). Default: all HF bands
+  // on (show the operator's full HF options), VHF/UHF off (line-of-sight packet
+  // is opt-in). A station shows only if it has a channel on a selected band.
+  const [enabledBands, setEnabledBands] = useState<Set<Band>>(() => new Set(HF_BANDS));
   const [enabledModes, setEnabledModes] = useState<Set<FilterMode>>(new Set(FILTER_MODES));
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [utcHour] = useState(currentUtcHour);
@@ -78,12 +81,13 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
   }, [onClose]);
 
   const allStations = useMemo(() => aggregateStations(stations.listings), [stations.listings]);
-  const modeVisible = useMemo(
-    () =>
-      allStations.filter((s) =>
-        s.modes.some((m) => (FILTER_MODES as ListingMode[]).includes(m) && enabledModes.has(m as FilterMode)),
-      ),
-    [allStations, enabledModes],
+  // Band + mode FILTER (tuxlink-hlas), evaluated at the CHANNEL level: a station
+  // shows only if it has a channel whose band is selected AND whose mode is
+  // enabled. This is why 145 MHz packet (band='vhf-uhf') disappears when only HF
+  // bands are selected — that channel matches no selected band.
+  const bandModeVisible = useMemo(
+    () => allStations.filter((s) => stationMatchesBandMode(s, enabledBands, enabledModes)),
+    [allStations, enabledBands, enabledModes],
   );
 
   // Callsign search + radius filter (design §7). Radius needs a home grid;
@@ -91,7 +95,7 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
   // the selector + prompt the operator to set their location).
   const visible = useMemo(() => {
     const q = search.trim().toUpperCase();
-    return modeVisible.filter((s) => {
+    return bandModeVisible.filter((s) => {
       if (q && !s.baseCallsign.includes(q)) return false;
       if (radiusMi != null && grid) {
         const km = distanceFromGrids(grid, s.grid);
@@ -99,9 +103,9 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
       }
       return true;
     });
-  }, [modeVisible, search, radiusMi, grid]);
+  }, [bandModeVisible, search, radiusMi, grid]);
 
-  const reach = useReachabilityMap(grid, visible, band, utcHour);
+  const reach = useReachabilityMap(grid, visible, enabledBands, utcHour);
   const selected: Station | null = useMemo(
     () => visible.find((s) => stationKey(s) === selectedKey) ?? null,
     [visible, selectedKey],
@@ -125,6 +129,14 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
       return next;
     });
 
+  const toggleBand = (b: Band) =>
+    setEnabledBands((prev) => {
+      const next = new Set(prev);
+      if (next.has(b)) next.delete(b);
+      else next.add(b);
+      return next;
+    });
+
   return (
     <div
       className="station-finder-overlay"
@@ -142,8 +154,8 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
         </header>
 
         <StationFinderControls
-          band={band}
-          onBandChange={setBand}
+          enabledBands={enabledBands}
+          onToggleBand={toggleBand}
           enabledModes={enabledModes}
           onToggleMode={toggleMode}
           utcHour={utcHour}

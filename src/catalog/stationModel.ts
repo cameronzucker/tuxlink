@@ -77,3 +77,20 @@ export function aggregateStations(listings: StationListing[]): Station[] {
 
   return [...byKey.values()];
 }
+
+/**
+ * Band + mode FILTER predicate (tuxlink-hlas), evaluated at the CHANNEL level.
+ * A station is visible iff it has at least one channel whose band is selected
+ * AND whose mode is enabled. This is why a 145 MHz packet station
+ * (band === 'vhf-uhf') disappears when only HF bands are selected: that channel
+ * matches no selected band, and the station has no other matching channel.
+ */
+export function stationMatchesBandMode(
+  station: Station,
+  bands: ReadonlySet<Band>,
+  modes: ReadonlySet<string>,
+): boolean {
+  return station.channels.some(
+    (c) => c.band != null && bands.has(c.band) && modes.has(c.mode),
+  );
+}
