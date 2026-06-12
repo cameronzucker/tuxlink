@@ -239,19 +239,58 @@ impl ManagedDireWolf {
     /// (RADIO-1) before calling this — the same contract [`ManagedModem::spawn`]
     /// carries.
     pub fn spawn(cfg: ManagedDireWolfCfg) -> Result<Self, DwLifecycleError> {
-        Self::spawn_with(cfg, "direwolf", BIND_WAIT_TIMEOUT)
+        Self::spawn_with(cfg, BIND_WAIT_TIMEOUT)
     }
 
-    /// Inner spawn that takes the `direwolf` program name and bind-wait timeout as
-    /// parameters so tests can substitute a stub binary and a short timeout.
-    /// Production [`spawn`] calls this with `"direwolf"` and [`BIND_WAIT_TIMEOUT`].
+    /// Production spawn with a caller-chosen bind-wait timeout. Builds the REAL
+    /// `direwolf -t 0 -c <conf>` argument vector inside a command-builder closure
+    /// and hands it to the SHARED [`spawn_inner`] — so the real arg vector and the
+    /// [`map_spawn_error`] wiring are exercised by the exact same lifecycle code
+    /// the stub tests drive (they substitute only the program + args via their own
+    /// closure). Production [`spawn`] calls this with [`BIND_WAIT_TIMEOUT`].
+    fn spawn_with(cfg: ManagedDireWolfCfg, bind_wait: Duration) -> Result<Self, DwLifecycleError> {
+        Self::spawn_inner(
+            cfg,
+            // The REAL run: `direwolf -t 0 -c <conf>` (`-t 0` disables color, `-c`
+            // is the generated conf). The owned (program, args) is built here and
+            // executed by the shared inner.
+            |conf_path| {
+                (
+                    "direwolf".to_string(),
+                    vec![
+                        "-t".to_string(),
+                        "0".to_string(),
+                        "-c".to_string(),
+                        conf_path.to_string(),
+                    ],
+                )
+            },
+            bind_wait,
+        )
+    }
+
+    /// The SINGLE shared spawn sequence. Both production [`spawn_with`] and the
+    /// test stub entrypoint route through this one body, substituting only the
+    /// `(program, args)` the `build_cmd` closure returns — so there is no
+    /// duplicated lifecycle body that can drift, and the production arg vector +
+    /// [`map_spawn_error`] wiring are exercised by the stub tests.
     ///
-    /// The `program` substitution is the seam the lifecycle tests use: a stub that
-    /// binds the KISS port (or refuses to) stands in for the real Dire Wolf,
-    /// exactly the way `process.rs`'s tests use `/bin/sh` stubs for `ManagedModem`.
-    fn spawn_with(
+    /// `build_cmd` receives the conf temp-file path and returns an OWNED
+    /// `(String, Vec<String>)`; the `&[&str]` [`ManagedModem::spawn`] needs is
+    /// borrowed from that owned `Vec` inside this function, so there are no
+    /// dangling references.
+    ///
+    /// Steps (RADIO-1 + ADR-0015 ordering matters):
+    /// 1. Generate the conf and write it to a temp file.
+    /// 2. Pre-spawn device-busy probe — return [`DwLifecycleError::DeviceBusy`]
+    ///    WITHOUT spawning if the card is held.
+    /// 3. `build_cmd(&conf_path)` → `(program, args)`; spawn via
+    ///    [`ManagedModem::spawn`], mapping failures through [`map_spawn_error`].
+    /// 4. Bind-wait the KISS port; on timeout stop the child (no leak) and return
+    ///    [`DwLifecycleError::BindTimeout`].
+    fn spawn_inner(
         cfg: ManagedDireWolfCfg,
-        program: &str,
+        build_cmd: impl FnOnce(&str) -> (String, Vec<String>),
         bind_wait: Duration,
     ) -> Result<Self, DwLifecycleError> {
         // Step 1: generate + write the conf to a temp file.
@@ -270,15 +309,18 @@ impl ManagedDireWolf {
             return Err(DwLifecycleError::DeviceBusy(named_msg));
         }
 
-        // Step 3: spawn the REAL run: `direwolf -t 0 -c <conf>`.
+        // Step 3: build the command vector and spawn. The closure returns owned
+        // String/Vec<String>; borrow `&[&str]` from the owned Vec right here so no
+        // reference dangles past the spawn call.
+        let (program, args) = build_cmd(&conf_path);
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         tracing::info!(
             target: "tuxlink::winlink::ax25::managed_direwolf",
-            program,
+            program = %program,
             kiss_port = cfg.kiss_port,
             "managed direwolf spawning",
         );
-        let mut modem = ManagedModem::spawn(program, &["-t", "0", "-c", &conf_path])
-            .map_err(map_spawn_error)?;
+        let mut modem = ManagedModem::spawn(&program, &arg_refs).map_err(map_spawn_error)?;
 
         // Step 4: bind-wait the single KISS port. On timeout, stop the child so we
         // do not leak it, then return BindTimeout.
@@ -339,6 +381,14 @@ impl ManagedDireWolf {
     /// [`DwLifecycleError::DeviceNotReleased`] so a retry `shutdown()` re-checks
     /// rather than silently no-op'ing. Once release SUCCEEDS, the modem stays
     /// consumed (its `NamedTempFile` conf is dropped alongside, cleaning the conf).
+    ///
+    /// # Phase-6 wiring contract — call `shutdown()`, don't rely on `Drop`
+    ///
+    /// The explicit `shutdown()` (with [`SHUTDOWN_GRACE`], 5s) is the RADIO-1 clean
+    /// de-key path. The `Drop` net gives only `ManagedModem`'s ~200ms `DROP_GRACE`,
+    /// which is too short to guarantee Dire Wolf runs its clean SIGINT de-key — so
+    /// P6 MUST call `shutdown()` explicitly on disconnect/abort and treat `Drop`
+    /// purely as the orphan-leak backstop, never as the de-key path.
     ///
     /// # RADIO-1 — clean de-key vs. SIGKILL residual PTT (KNOWN LIMITATION)
     ///
@@ -540,8 +590,14 @@ mod tests {
     /// concurrent test threads do not fight over the same listener.
     const TEST_KISS_PORT_CLEAN: u16 = 58921;
     const TEST_KISS_PORT_SIGKILL: u16 = 58922;
-    const TEST_KISS_PORT_NOBIND: u16 = 58923;
     const TEST_KISS_PORT_BUSY: u16 = 58924;
+    /// The KISS port spawn waits on in the bind-timeout test — nothing ever binds
+    /// it, so bind-wait times out.
+    const TEST_KISS_PORT_TIMEOUT: u16 = 58925;
+    /// A SEPARATE port the bind-timeout stub binds + holds. It is NOT the KISS port
+    /// spawn waits on, so its release is observable: it frees only if the child the
+    /// stop-on-timeout path reaped actually died (a leaked child would still hold it).
+    const TEST_SENTINEL_PORT: u16 = 58926;
 
     /// Build a test config pointing at a card index that is (almost certainly) not
     /// present on the CI runner, so the pre-spawn `probe_device_busy` reads "not
@@ -597,10 +653,22 @@ mod tests {
         )
     }
 
-    /// A python3 stub that does NOT bind any port — just ignores SIGINT-irrelevant
-    /// and sleeps. Used for the bind-timeout test: bind-wait must time out, and the
-    /// spawn path must stop this child rather than leak it.
-    const STUB_NO_BIND: &str = "import time\nwhile True: time.sleep(0.05)\n";
+    /// A python3 stub that binds a SENTINEL port (NOT the KISS port spawn waits on)
+    /// and then sleeps. Used for the bind-timeout no-leak test: spawn waits on a
+    /// DIFFERENT, never-bound KISS port → bind-wait times out → the stop-on-timeout
+    /// path kills this child → the sentinel port becomes bindable. A leaked child
+    /// would keep holding the sentinel port, so observing the sentinel freed proves
+    /// the child was actually reaped.
+    fn stub_binds_sentinel(sentinel_port: u16) -> String {
+        format!(
+            "import socket,time\n\
+             s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)\n\
+             s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n\
+             s.bind(('127.0.0.1',{sentinel_port}))\n\
+             s.listen(1)\n\
+             while True: time.sleep(0.05)\n"
+        )
+    }
 
     /// Spawn `ManagedDireWolf` against a python3 stub program. Mirrors process.rs's
     /// `sh()` helper. Uses a short bind-wait so the timeout test is fast.
@@ -609,11 +677,10 @@ mod tests {
         script: &str,
         bind_wait: Duration,
     ) -> Result<ManagedDireWolf, DwLifecycleError> {
-        // python3 -c <script>: the `program` seam carries "python3" and the script
-        // is its first arg. ManagedModem::spawn takes (program, args), so we route
-        // the script through spawn_with's program by wrapping: spawn_with hard-codes
-        // the direwolf args (`-t 0 -c <conf>`), so for tests we instead call the
-        // lower ManagedModem path through a dedicated test entrypoint.
+        // Routes through `spawn_stub_for_test`, which drives the SAME `spawn_inner`
+        // production `spawn_with` uses — substituting only the command-builder
+        // closure (`python3 -c <script>` for `direwolf -t 0 -c <conf>`), so the
+        // real conf-write / probe / bind-wait / stop paths are exercised.
         ManagedDireWolf::spawn_stub_for_test(cfg, script, bind_wait)
     }
 
@@ -674,36 +741,44 @@ mod tests {
         assert!(!dw.is_running(), "stub must be gone after SIGKILL");
     }
 
-    // ── Test 3: bind-wait timeout (no leaked child) ───────────────────────────
+    // ── Test 3: bind-wait timeout PROVES no leaked child (sentinel port) ──────
 
-    /// Stub does NOT bind the port → spawn returns BindTimeout. The just-spawned
-    /// child must have been stopped (no leak): we assert the returned error is
-    /// BindTimeout for the right port. (The child is stopped inside spawn before
-    /// the error is returned; there is no handle to inspect post-failure, which is
-    /// itself the point — no leaked handle escapes.)
+    /// The stub binds a SENTINEL port but NOT the KISS port spawn waits on, so
+    /// bind-wait times out and spawn's stop-on-timeout path must kill the child.
+    /// We then assert the SENTINEL port is bindable again: that is only true if the
+    /// child holding it was actually reaped. A leaked child would keep its LISTEN
+    /// socket on the sentinel, so the assert would fail — this is the real no-leak
+    /// proof (the prior version bound nothing, so "port free after" was satisfied
+    /// whether or not the child died, making it near-tautological).
     #[test]
-    fn spawn_bind_timeout_when_port_never_bound() {
+    fn spawn_bind_timeout_reaps_child_proven_via_sentinel() {
         if !python3_present() {
             eprintln!("python3 absent — skipping managed_direwolf bind-timeout test");
             return;
         }
-        let cfg = test_cfg(TEST_KISS_PORT_NOBIND);
-        // Short bind-wait so the test is fast.
-        let err = spawn_stub(cfg, STUB_NO_BIND, Duration::from_millis(400))
-            .expect_err("spawn must time out when the stub never binds the port");
+        // The child binds the sentinel port; spawn waits on the (different) KISS
+        // port that nothing ever binds.
+        let cfg = test_cfg(TEST_KISS_PORT_TIMEOUT);
+        let script = stub_binds_sentinel(TEST_SENTINEL_PORT);
+        // Short bind-wait so the timeout fires fast.
+        let err = spawn_stub(cfg, &script, Duration::from_millis(400))
+            .expect_err("spawn must time out when the stub never binds the KISS port");
         match err {
             DwLifecycleError::BindTimeout { port, .. } => {
-                assert_eq!(port, TEST_KISS_PORT_NOBIND, "timeout must name the KISS port");
+                assert_eq!(
+                    port, TEST_KISS_PORT_TIMEOUT,
+                    "timeout must name the KISS port spawn waited on"
+                );
             }
             other => panic!("expected BindTimeout, got {other:?}"),
         }
-        // The port must be free again now — proving the spawned child was stopped
-        // (a leaked child would still hold nothing here since it never bound, but a
-        // leaked child would keep running; we cannot see its pid, so the contract
-        // is encoded by spawn() calling stop() on the timeout path).
+
+        // The SENTINEL port — which the child HELD — must be bindable now. This is
+        // only possible if the child was reaped on the timeout path; a leaked child
+        // would still hold its LISTEN socket on the sentinel and EADDRINUSE us here.
         assert!(
-            std::net::TcpListener::bind(format!("127.0.0.1:{TEST_KISS_PORT_NOBIND}")).is_ok(),
-            "KISS port must be bindable after a bind-timeout (child stopped)"
+            std::net::TcpListener::bind(format!("127.0.0.1:{TEST_SENTINEL_PORT}")).is_ok(),
+            "sentinel port must be free after bind-timeout — proves the child was reaped (no leak)"
         );
     }
 
@@ -763,6 +838,38 @@ mod tests {
         let other = CardId("plughw:CARD=Device,DEV=0".to_string());
         assert_eq!(arbitrate(&requested, Some(&other)), Arbitration::Proceed);
     }
+
+    // ── Test 6: map_spawn_error (pure, no spawn) ──────────────────────────────
+
+    /// Direct unit test of the spawn-error mapping that drives Phase 6's
+    /// operator-facing fallbacks — notably the `NotFound → DireWolfNotInstalled`
+    /// branch that lets P6 offer "install Dire Wolf." Constructs `ProcessError`
+    /// values directly; no process is spawned.
+    #[test]
+    fn map_spawn_error_classifies_named_variants() {
+        // Binary absent ⇒ the install-affordance variant.
+        let not_found =
+            ProcessError::Spawn(std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert!(
+            matches!(map_spawn_error(not_found), DwLifecycleError::DireWolfNotInstalled),
+            "NotFound spawn must map to DireWolfNotInstalled (P6 install path)"
+        );
+
+        // Any other spawn io-error ⇒ generic Spawn.
+        let perm = ProcessError::Spawn(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(
+            matches!(map_spawn_error(perm), DwLifecycleError::Spawn(_)),
+            "PermissionDenied spawn must map to the generic Spawn variant"
+        );
+
+        // A Stop-flavored ProcessError likewise folds into Spawn (it is a spawn-path
+        // failure surfaced by ManagedModem, not an absent binary).
+        let stop = ProcessError::Stop("boom".to_string());
+        assert!(
+            matches!(map_spawn_error(stop), DwLifecycleError::Spawn(_)),
+            "ProcessError::Stop must map to the generic Spawn variant"
+        );
+    }
 }
 
 // ─── Test-only entrypoints ─────────────────────────────────────────────────────
@@ -779,42 +886,25 @@ impl ManagedDireWolf {
     /// binary, with a caller-chosen bind-wait. The stub stands in for Dire Wolf:
     /// it binds (or refuses to bind) the KISS port exactly as Dire Wolf would.
     ///
-    /// Unlike production `spawn_with` (which hard-codes `direwolf -t 0 -c <conf>`),
-    /// this routes `python3 -c <script>` through `ManagedModem::spawn` directly so
-    /// the test controls the child's behavior, while STILL exercising the real
-    /// conf-write, bind-wait, and stop/release paths.
+    /// Routes through the SAME [`spawn_inner`] production [`spawn_with`] uses,
+    /// substituting only the command-builder closure (`python3 -c <script>`
+    /// instead of `direwolf -t 0 -c <conf>`). The stub tests therefore drive the
+    /// real conf-write, device-busy probe, bind-wait, and stop/release paths — the
+    /// only thing they swap is the program + args, so the production lifecycle body
+    /// cannot drift out from under the tests.
     fn spawn_stub_for_test(
         cfg: ManagedDireWolfCfg,
         script: &str,
         bind_wait: Duration,
     ) -> Result<Self, DwLifecycleError> {
-        // Real conf write (exercises write_conf_tempfile + cleanup-on-drop).
-        let conf_text = generate_direwolf_conf(&cfg.to_dw_params());
-        let conf_file = write_conf_tempfile(&conf_text)
-            .map_err(|e| DwLifecycleError::ConfWrite(e.to_string()))?;
-
-        // Real pre-spawn busy probe (card_index=9999 ⇒ Ok(()) on the runner).
-        if let Err(named_msg) = probe_device_busy(&cfg.adevice, cfg.card_index) {
-            return Err(DwLifecycleError::DeviceBusy(named_msg));
-        }
-
-        // Spawn the stub: python3 -c <script>.
-        let mut modem = ManagedModem::spawn("python3", &["-c", script]).map_err(map_spawn_error)?;
-
-        // Real bind-wait. On timeout, stop the child (no leak) and surface the error.
-        if let Err(err) = wait_for_kiss_port(cfg.kiss_port, bind_wait) {
-            let _ = modem.stop(SHUTDOWN_GRACE);
-            return Err(err);
-        }
-
-        Ok(ManagedDireWolf {
-            modem: Some(modem),
-            _conf: Some(conf_file),
-            host: "127.0.0.1",
-            port: cfg.kiss_port,
-            adevice: cfg.adevice,
-            card_index: cfg.card_index,
-        })
+        // Capture the script into an owned String so the FnOnce closure can move it
+        // and return the owned (program, args) spawn_inner expects.
+        let script = script.to_string();
+        Self::spawn_inner(
+            cfg,
+            move |_conf_path| ("python3".to_string(), vec!["-c".to_string(), script]),
+            bind_wait,
+        )
     }
 
     /// `shutdown` with a caller-chosen `stop` grace so the SIGKILL-escalation test
@@ -843,6 +933,14 @@ impl ManagedDireWolf {
     /// read so the device-busy short-circuit test does not need a real held card.
     /// When `probe_result` is `Err`, spawn returns [`DwLifecycleError::DeviceBusy`]
     /// WITHOUT spawning anything — exactly the production short-circuit.
+    ///
+    /// This entrypoint deliberately does NOT route through [`spawn_inner`]: the
+    /// production inner reads the real `/proc` probe (correctly, with card 9999 ⇒
+    /// `Ok(())` on the runner), so it cannot exercise the *busy* branch without a
+    /// real held card. This stub injects the busy result and asserts the
+    /// short-circuit fires BEFORE any spawn. It contains no duplicated lifecycle
+    /// body (conf-write + short-circuit only); a free injected probe intentionally
+    /// errors rather than falling through to a real spawn.
     fn spawn_with_busy_probe_for_test(
         cfg: ManagedDireWolfCfg,
         probe_result: Result<(), String>,

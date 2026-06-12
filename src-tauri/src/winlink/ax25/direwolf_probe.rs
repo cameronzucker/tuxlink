@@ -342,7 +342,6 @@ pub fn device_busy_message(device: &str) -> String {
 /// `card_index` maps the stable `plughw:CARD=<id>` name to the live `card<N>`
 /// index — resolving that mapping is the caller's job (it has the snapshot); this
 /// shim takes the already-resolved index so it stays a pure-ish file reader.
-#[allow(dead_code)]
 pub fn probe_device_busy(plughw_name: &str, card_index: u32) -> Result<(), String> {
     use std::fs;
 
