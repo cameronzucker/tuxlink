@@ -13,7 +13,7 @@
 // clicks do NOT close it. ESC and the Close button are the only close paths.
 
 import { useEffect, useMemo, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { useStatusData } from '../shell/useStatus';
 import { useCatalog } from '../catalog/useCatalog';
 import { useRequestBasket, dispatchBasket, type DispatchResult } from './basket';
 import { buildSections, type CardAction } from './sections';
@@ -72,10 +72,14 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
   // full basket UI (remove, per-rail footer, Send) is Task E1.
   const basket = useRequestBasket();
 
-  // Full-precision home grid for the location chip. null until config_read
-  // resolves with a grid; stays null on no-grid or read failure → neutral chip
-  // (adrev #9 — never "Near null"/"Near undefined").
-  const [grid, setGrid] = useState<string | null>(null);
+  // Location grid sourced from the LIVE position subsystem — useStatusData()
+  // returns position_status.ui_grid ?? config grid (tuxlink-va1i), the SAME
+  // source the dashboard ribbon uses. The prior one-shot config_read().grid read
+  // the STATIC identity.grid, which is null under the default GPS config
+  // (position_source=Gps, no pinned grid) — so the hero showed "Location not set"
+  // + no location cards even with a live GPS fix (tuxlink-fnzr). Reactive: the
+  // grid populates as the GPS fix arrives. null → neutral chip (never "Near null").
+  const { grid } = useStatusData();
   const [search, setSearch] = useState('');
 
   // Send state machine (Task E1). `done` carries the DispatchResult so the
@@ -120,22 +124,6 @@ export function RequestCenter({ onClose, initialView = 'home' }: RequestCenterPr
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
-
-  useEffect(() => {
-    // `mounted` guard matches the codebase house pattern (useCatalog, AppShell):
-    // don't setState if config_read resolves after the overlay unmounts.
-    let mounted = true;
-    invoke<{ grid: string | null }>('config_read')
-      .then((c) => {
-        if (mounted && c?.grid) setGrid(c.grid);
-      })
-      .catch(() => {
-        // Leave grid null → neutral chip. Never surface a read error as a location.
-      });
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   const locationLabel = grid ? `Near ${grid}` : 'Location not set';
 
