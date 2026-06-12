@@ -5,6 +5,49 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-06-12 — Reply-form threading (Forms-push G10, tuxlink-hhfx)
+
+WLE `ReplyTemplate:` request/response threading on the ICS-213 General Message
+family (8 forms: ICS213, ARC 213, HICS 213, IMS 213, DCS 213, SHARES, ARC
+6409-B). Before: `replyActions.replyWithForm` covered only 2 native forms with a
+hardcoded sender↔recipient swap that produced a NEW blank 213 and lost the
+thread; `parse_form_xml` extracted `reply_template` but nothing consumed it.
+
+Now: replying to a form that advertises a `ReplyTemplate:` opens its
+`<X>_SendReply.html` authoring page **pre-bound** with the original field values
+(name-aligned) + editable, so the operator fills only the Reply section and the
+original 213 is preserved in the thread. Built on the o4p9 `.txt` engine.
+
+- **`forms::txt_template::resolve_sendreply`** — from the form folder + the `.0`
+  filename, parse the `.0` and locate its authoring HTML via the `.0`'s own
+  `Form:` directive (stem-drift-proof: `HICS213_SendReply.0` →
+  `HICS 213_SendReply.html`), with case-insensitive fallback.
+- **`http_server::FormSession::open_form_prebound`** — the union of `open`
+  (editable + live submit channel) and `open_viewer` (server-side value
+  binding): an editable Form-kind session pre-bound with field values.
+- **`open_webview_reply` command** — derives the SendReply from the ORIGINAL
+  form's own bundled `.txt` `ReplyTemplate:` (local truth, not the inbound XML's
+  possibly-synthetic claim), pre-binds the original values + `MsgOriginalBody`,
+  spawns the submit forwarder. Returns the resolved `reply_template`.
+- **`send_webview_form`** gained `reply_template` + `subject_hint` optional
+  params: a reply renders To:/Subject:/Msg: from the SendReply `.0` (whose Msg
+  reproduces the original + the reply), display_form = the SendReply viewer, and
+  the subject falls back to the operator's "Re: …" (SendReply `.0`s carry no
+  `Subject:` directive). Backward-compatible — first-time sends pass neither.
+- **Frontend** — `replyActions` `formReply` mode + `hasFormReplyTemplate`;
+  Compose `webview-reply` FormMode (pre-bound `WebviewFormHost`, restore +
+  autosave via shared `persistedFormDraft`); `WebviewFormHost` reply mode routes
+  to `open_webview_reply` and threads the `reply_template` to submit; MessageView
+  routes ReplyTemplate forms to the SendReply path (precedence over the legacy
+  swap; works for non-native forms too).
+
+Self-adrev (Codex unavailable — not a gate); +15 frontend tests, +backend unit
+tests for resolve_sendreply / open_form_prebound / reply render. Operator smoke
+pending: receive an ICS-213, reply, verify the SendReply opens pre-bound and the
+sent reply carries the original + reply with a `Re:` subject to the sender.
+
+---
+
 ## 2026-06-12 — Runtime .txt message-template engine (Forms-push G12-A, tuxlink-o4p9)
 
 The G12 audit found the dominant forms gap: the ~131 generic-path catalog/org

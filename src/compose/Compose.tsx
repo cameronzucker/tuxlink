@@ -35,7 +35,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { clearDraft, expandGroupsAndDedup, findUnknownGroupTokens, loadDraft, saveDraft, splitAddrs } from './useDraft';
+import { clearDraft, expandGroupsAndDedup, findUnknownGroupTokens, loadDraft, saveDraft, splitAddrs, type DraftData } from './useDraft';
 import { ComposeTitleBar } from './ComposeTitleBar';
 import { ResizeHandles } from '../shell/chrome/ResizeHandles';
 import { formatCallsign } from '../shell/useStatus';
@@ -80,7 +80,19 @@ type FormMode =
   // the in-flight form state inside the embedded webview, so this branch
   // carries no `values` — the form submits via the loopback POST and
   // round-trips a ParsedBody back through `handleWebviewSubmit`.
-  | { kind: 'webview-form'; formId: string };
+  | { kind: 'webview-form'; formId: string }
+  // tuxlink-hhfx / G10: a SendReply reply session. Like webview-form (the
+  // SendReply HTML renders + submits inside the embedded webview), but the
+  // backend pre-binds the original form's `values` (+ `msgOriginalBody`) into
+  // the page so the operator sees the message they're replying to. `formId` is
+  // the ORIGINAL form id; the backend resolves the SendReply from it and hands
+  // back the reply_template the submit threads to `send_webview_form`.
+  | {
+      kind: 'webview-reply';
+      formId: string;
+      values: Record<string, string>;
+      msgOriginalBody: string;
+    };
 
 type CloseAction = 'close' | 'switch-to-form' | null;
 
@@ -128,10 +140,10 @@ export type ClosePromptShape = {
   buttons: readonly ('save' | 'discard' | 'cancel')[];
 };
 export function closePromptShape(
-  formModeKind: 'plain' | 'pick' | 'form' | 'webview-form',
+  formModeKind: 'plain' | 'pick' | 'form' | 'webview-form' | 'webview-reply',
   action: 'close' | 'switch-to-form' | null,
 ): ClosePromptShape {
-  if (formModeKind === 'webview-form') {
+  if (formModeKind === 'webview-form' || formModeKind === 'webview-reply') {
     return {
       primary: "Form contents can't be saved as a draft. Submit it now, or discard.",
       sub:
@@ -161,9 +173,38 @@ export function closePromptShape(
  * same picker mode.
  */
 export function isSaveDraftAvailable(
-  formModeKind: 'plain' | 'pick' | 'form' | 'webview-form',
+  formModeKind: 'plain' | 'pick' | 'form' | 'webview-form' | 'webview-reply',
 ): boolean {
-  return formModeKind !== 'webview-form';
+  // webview-reply, like webview-form, keeps its in-flight field values inside
+  // the embedded webview where Compose can't reach them — manual Save Draft
+  // would silently drop the operator's typed reply (tuxlink-hhfx / G10).
+  return formModeKind !== 'webview-form' && formModeKind !== 'webview-reply';
+}
+
+/// The form-related draft fields to persist for a given form mode (tuxlink-hhfx
+/// / G10 made this shared so the three persistence sites — autosave, manual
+/// save, close handler — stay in lock-step). Native `form` persists its live
+/// values; `webview-form` persists only the formId (its values live in the
+/// webview); `webview-reply` persists the original values + the reply markers
+/// so a restored draft re-opens the SendReply page pre-bound.
+export function persistedFormDraft(
+  formMode: FormMode,
+): Pick<DraftData, 'formId' | 'formFields' | 'formReply' | 'msgOriginalBody'> {
+  switch (formMode.kind) {
+    case 'form':
+      return { formId: formMode.formId, formFields: formMode.values };
+    case 'webview-form':
+      return { formId: formMode.formId };
+    case 'webview-reply':
+      return {
+        formId: formMode.formId,
+        formFields: formMode.values,
+        formReply: true,
+        msgOriginalBody: formMode.msgOriginalBody,
+      };
+    default:
+      return {};
+  }
 }
 
 interface ClosePromptState {
@@ -236,7 +277,10 @@ export function Compose({ draftId }: ComposeProps) {
     // false-positive dirty signal (the alternative — silently closing
     // a form with unsaved field data — is the failure we are guarding
     // against). Important #4 from the P1 Task 10 code review.
-    if (formMode.kind === 'webview-form') {
+    // webview-reply (tuxlink-hhfx / G10) shares webview-form's blind-spot: the
+    // operator's reply lives inside the embedded SendReply webview, so treat an
+    // open reply session as dirty too.
+    if (formMode.kind === 'webview-form' || formMode.kind === 'webview-reply') {
       return true;
     }
     return (
@@ -270,21 +314,32 @@ export function Compose({ draftId }: ComposeProps) {
         requestAck: draft.requestAck,
       };
       if (draft.formId) {
-        // Restore to whichever form mode matches: native form (with values)
-        // if the React registry has a Form for this id; webview-form
-        // otherwise. This mirrors CatalogBrowser's pick routing so a
-        // restored draft picks up the same UI path. Important #3 from
-        // the P1 Task 10 code review: previously, webview-form drafts saved
-        // with formId: undefined and silently restored as plain-text.
-        const entry = lookupForm(draft.formId);
-        if (entry?.Form) {
+        if (draft.formReply) {
+          // tuxlink-hhfx / G10: a SendReply reply draft re-opens the original
+          // form's SendReply page pre-bound with the saved original values.
           setFormMode({
-            kind: 'form',
+            kind: 'webview-reply',
             formId: draft.formId,
             values: draft.formFields ?? {},
+            msgOriginalBody: draft.msgOriginalBody ?? '',
           });
         } else {
-          setFormMode({ kind: 'webview-form', formId: draft.formId });
+          // Restore to whichever form mode matches: native form (with values)
+          // if the React registry has a Form for this id; webview-form
+          // otherwise. This mirrors CatalogBrowser's pick routing so a
+          // restored draft picks up the same UI path. Important #3 from
+          // the P1 Task 10 code review: previously, webview-form drafts saved
+          // with formId: undefined and silently restored as plain-text.
+          const entry = lookupForm(draft.formId);
+          if (entry?.Form) {
+            setFormMode({
+              kind: 'form',
+              formId: draft.formId,
+              values: draft.formFields ?? {},
+            });
+          } else {
+            setFormMode({ kind: 'webview-form', formId: draft.formId });
+          }
         }
       }
     }
@@ -335,11 +390,7 @@ export function Compose({ draftId }: ComposeProps) {
       // formFields is only populated in native form mode — the webview's
       // in-flight state lives in the embedded webview, not in Compose's
       // React state, so we cannot snapshot it from this side.
-      const persistedFormId =
-        formMode.kind === 'form' || formMode.kind === 'webview-form'
-          ? formMode.formId
-          : undefined;
-      const formFields = formMode.kind === 'form' ? formMode.values : undefined;
+      const pf = persistedFormDraft(formMode);
 
       // tuxlink-n3hw: re-stamp savedAt ONLY on a genuine edit. savedAt drives
       // the Drafts-list sort (draftMailbox.draftToMessageMeta → `date`), so an
@@ -357,16 +408,17 @@ export function Compose({ draftId }: ComposeProps) {
         existing.subject === subject &&
         existing.body === body &&
         existing.requestAck === requestAck &&
-        existing.formId === persistedFormId &&
-        JSON.stringify(existing.formFields ?? null) === JSON.stringify(formFields ?? null)
+        existing.formId === pf.formId &&
+        JSON.stringify(existing.formFields ?? null) === JSON.stringify(pf.formFields ?? null) &&
+        (existing.formReply ?? false) === (pf.formReply ?? false) &&
+        (existing.msgOriginalBody ?? undefined) === pf.msgOriginalBody
       ) {
         return;
       }
 
       saveDraft({
         draftId, to, cc, subject, body, requestAck,
-        formId: persistedFormId,
-        formFields,
+        ...pf,
       });
     }, 2000);
     return () => clearInterval(interval);
@@ -403,16 +455,11 @@ export function Compose({ draftId }: ComposeProps) {
   // ============================================================================
 
   const handleSaveDraft = useCallback(() => {
-    // Persist formId in BOTH native form and webview-form modes
-    // (Important #3 from the P1 Task 10 code review).
-    const persistedFormId =
-      formMode.kind === 'form' || formMode.kind === 'webview-form'
-        ? formMode.formId
-        : undefined;
+    // Persist the form-mode draft fields (native form values, or webview
+    // formId / reply context). Shared with autosave + close (tuxlink-hhfx).
     saveDraft({
       draftId, to, cc, subject, body, requestAck,
-      formId: persistedFormId,
-      formFields: formMode.kind === 'form' ? formMode.values : undefined,
+      ...persistedFormDraft(formMode),
     });
     savedSnapshotRef.current = { to, cc, subject, body, requestAck };
     setSendState('idle');
@@ -611,6 +658,57 @@ export function Compose({ draftId }: ComposeProps) {
   }, [sendState, buildRecipients, draftId, callsign, grid]);
 
   // ============================================================================
+  // Webview-reply submit (tuxlink-hhfx / G10)
+  // ============================================================================
+  //
+  // Identical to handleWebviewSubmit (collapse ParsedBody → fieldValues, expand
+  // groups, send via send_webview_form), with two reply-specific extras:
+  //   - `replyTemplate` (the SendReply `.0`, handed back by open_webview_reply)
+  //     so the backend renders To:/Subject:/Msg: from the SendReply, not the
+  //     original form's .txt.
+  //   - `subjectHint` (the compose "Re: <original>" subject) so the reply gets a
+  //     meaningful subject — SendReply `.0`s carry no Subject: directive.
+  const handleWebviewReplySubmit = useCallback(
+    async (formId: string, payload: ParsedBody, replyTemplate: string | undefined) => {
+      if (sendState === 'sending') return;
+      setSendState('sending');
+      setErrorMsg(null);
+      const fieldValues = parsedBodyToFieldValues(payload);
+      const { to: toAddrs, cc: ccAddrs, unknownGroups } = await buildRecipients();
+      if (unknownGroups.length > 0) {
+        setSendState('error');
+        setErrorMsg('A distribution group in your recipients no longer exists. Remove the group and re-add its members before sending.');
+        return;
+      }
+      try {
+        await invoke<string>('send_webview_form', {
+          formId,
+          fieldValues,
+          to: toAddrs,
+          cc: ccAddrs,
+          sendersCallsign: callsign,
+          gridSquare: grid,
+          replyTemplate,
+          subjectHint: subject,
+        });
+        sentRef.current = true;
+        setSendState('success');
+        clearDraft(draftId);
+        savedSnapshotRef.current = { to: '', cc: '', subject: '', body: '', requestAck: false };
+      } catch (err: unknown) {
+        setSendState('error');
+        if (err && typeof err === 'object' && 'detail' in err) {
+          const detail = (err as { detail: unknown }).detail;
+          setErrorMsg(typeof detail === 'string' ? detail : JSON.stringify(detail));
+        } else {
+          setErrorMsg(String(err));
+        }
+      }
+    },
+    [sendState, buildRecipients, draftId, callsign, grid, subject],
+  );
+
+  // ============================================================================
   // Form picker (T6.1)
   // ============================================================================
 
@@ -694,16 +792,10 @@ export function Compose({ draftId }: ComposeProps) {
   };
 
   const handleSaveAndProceed = useCallback(() => {
-    // Persist formId in BOTH native form and webview-form modes
-    // (Important #3 from the P1 Task 10 code review).
-    const persistedFormId =
-      formMode.kind === 'form' || formMode.kind === 'webview-form'
-        ? formMode.formId
-        : undefined;
+    // Persist the form-mode draft fields (shared with autosave + manual save).
     saveDraft({
       draftId, to, cc, subject, body, requestAck,
-      formId: persistedFormId,
-      formFields: formMode.kind === 'form' ? formMode.values : undefined,
+      ...persistedFormDraft(formMode),
     });
     const action = closePrompt.action;
     setClosePrompt({ open: false, action: null });
@@ -952,6 +1044,19 @@ export function Compose({ draftId }: ComposeProps) {
           <WebviewFormHost
             formId={formMode.formId}
             onSubmit={(payload) => handleWebviewSubmit(formMode.formId, payload)}
+            onCancel={() => setFormMode({ kind: 'plain' })}
+          />
+        )}
+        {formMode.kind === 'webview-reply' && (
+          <WebviewFormHost
+            formId={formMode.formId}
+            replyPrefill={{
+              fieldValues: formMode.values,
+              msgOriginalBody: formMode.msgOriginalBody,
+            }}
+            onSubmit={(payload, meta) =>
+              handleWebviewReplySubmit(formMode.formId, payload, meta?.replyTemplate)
+            }
             onCancel={() => setFormMode({ kind: 'plain' })}
           />
         )}

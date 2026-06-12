@@ -606,6 +606,43 @@ describe('<MessageViewLoaded> reply action bar', () => {
     expect(openReplyWindow).toHaveBeenCalledWith(m, 'replyWithForm');
   });
 
+  // ── tuxlink-hhfx / G10 — SendReply routing ─────────────────────────────
+  // A form that advertises a WLE ReplyTemplate routes Reply-with-form to the
+  // `formReply` (SendReply) path — the faithful request/response thread —
+  // taking precedence over the legacy same-form swap, and not requiring a
+  // native React registry entry (the backend resolves the SendReply locally).
+  const withReplyTemplate = (formId: string): FormPayload => ({
+    formId,
+    formParameters: { ...FORM_PARAMETERS, replyTemplate: 'ICS213_SendReply.0' },
+    fields: [['fm_name', 'Original sender'], ['subjectline', 'Status update']],
+  });
+
+  it('routes Reply-with-form to formReply for a form advertising a ReplyTemplate', () => {
+    const m = parsed({
+      isForm: true,
+      formId: 'ICS213_Initial',
+      formPayload: withReplyTemplate('ICS213_Initial'),
+    });
+    render(<MessageViewLoaded message={m} />);
+    fireEvent.click(screen.getByTestId('reply-with-form-btn'));
+    expect(openReplyWindow).toHaveBeenCalledWith(m, 'formReply');
+  });
+
+  it('shows Reply-with-form for a ReplyTemplate form with no native registry entry', () => {
+    // HICS-class: not a native React form (lookupForm → null), but the
+    // SendReply button still shows because the backend resolves it from the
+    // local bundle.
+    const m = parsed({
+      isForm: true,
+      formId: 'HICS213_Initial',
+      formPayload: withReplyTemplate('HICS213_Initial'),
+    });
+    render(<MessageViewLoaded message={m} />);
+    expect(screen.getByTestId('reply-with-form-btn')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('reply-with-form-btn'));
+    expect(openReplyWindow).toHaveBeenCalledWith(m, 'formReply');
+  });
+
   // Codex r2 P2 #1: forms registered via Phase 9 (Bulletin/Position/ICS-309/
   // Damage Assessment) lookup successfully but don't have per-form reply
   // mappings in buildReplyDraft — hiding the button avoids the half-populated
