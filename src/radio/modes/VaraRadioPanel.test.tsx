@@ -267,6 +267,25 @@ describe('<VaraRadioPanel>', () => {
     });
   });
 
+  // tuxlink-8c9f: the dial-target field must name what the operator types per
+  // intent — a PEER callsign in P2P, an RMS gateway otherwise — so P2P mode
+  // doesn't mislabel the field "RMS gateway call sign".
+  it('labels the dial target "peer station call sign" in P2P mode', async () => {
+    renderPanel(
+      <VaraRadioPanel mode={{ kind: 'vara-hf', intent: 'p2p' }} onClose={() => {}} />,
+    );
+    await switchToManualTab();
+    const input = await screen.findByTestId('vara-target-input');
+    expect(input.getAttribute('placeholder')).toBe('peer station call sign');
+  });
+
+  it('labels the dial target "RMS gateway call sign" for cms intent', async () => {
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await switchToManualTab();
+    const input = await screen.findByTestId('vara-target-input');
+    expect(input.getAttribute('placeholder')).toBe('RMS gateway call sign');
+  });
+
   it('surfaces start-failure error inline', async () => {
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
