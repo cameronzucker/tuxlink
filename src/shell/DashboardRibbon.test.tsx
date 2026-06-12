@@ -21,6 +21,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DashboardRibbon } from './DashboardRibbon';
 import type { StatusBarData, StatusTone } from './useStatus';
 import type { PacketUiState } from '../packet/packetStatus';
+import type { ActiveIdentityDto, IdentityListDto } from './identityTypes';
 
 // Task 14 (tuxlink-c79g): the optimistic-update tests below exercise the
 // invoke('config_set_grid') and invoke('position_set_source') write paths and
@@ -373,5 +374,74 @@ describe('DashboardRibbon — On connect review/download-all control (tuxlink-pm
     render(<DashboardRibbon data={makeData()} reviewInbound={false} onReviewInboundChange={onChange} />);
     fireEvent.click(screen.getByTestId('review-inbound-review'));
     expect(onChange).toHaveBeenCalledWith(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 10 (tuxlink-noa0): the IdentitySwitcher mounts in the callsign slot when
+// onSwitchIdentity (+ identities/activeIdentity) are supplied. When they are
+// NOT, the ribbon keeps the legacy bare callsign-row markup (back-compat) —
+// covered by every prop-free test above (which still pass unchanged).
+// ---------------------------------------------------------------------------
+
+describe('DashboardRibbon — IdentitySwitcher integration (Task 10, tuxlink-noa0)', () => {
+  const ACTIVE: ActiveIdentityDto = {
+    mycall: 'W7XYZ',
+    address_as: 'W7XYZ',
+    is_tactical: false,
+  };
+  const IDENTITIES: IdentityListDto = {
+    full: [
+      { callsign: 'W7XYZ', label: null, has_cms_account: true, cms_registered: true, needs_auth: false },
+      { callsign: 'W1ABC', label: 'Club', has_cms_account: true, cms_registered: true, needs_auth: true },
+    ],
+    tactical: [{ label: 'EOC-3', parent: 'W1ABC', cms_badge: 'registered' }],
+    last_selected: 'W7XYZ',
+  };
+
+  it('renders the IdentitySwitcher trigger when onSwitchIdentity is provided', () => {
+    render(
+      <DashboardRibbon
+        data={makeData({ callsign: 'W7XYZ' })}
+        identities={IDENTITIES}
+        activeIdentity={ACTIVE}
+        onSwitchIdentity={vi.fn()}
+        ssid={0}
+        onSsidChange={vi.fn()}
+      />,
+    );
+    // The switcher owns the ribbon-callsign container + the SSID select.
+    expect(screen.getByTestId('ribbon-callsign')).toBeInTheDocument();
+    expect(screen.getByTestId('identity-switcher-trigger')).toBeInTheDocument();
+    expect(screen.getByTestId('ribbon-ssid-select')).toBeInTheDocument();
+    // Closed: dropdown absent.
+    expect(screen.queryByTestId('identity-switcher-list')).not.toBeInTheDocument();
+    // No duplicate testids — exactly one ribbon-callsign in the document.
+    expect(screen.getAllByTestId('ribbon-callsign')).toHaveLength(1);
+  });
+
+  it('opens the identity list when the trigger is clicked', () => {
+    render(
+      <DashboardRibbon
+        data={makeData({ callsign: 'W7XYZ' })}
+        identities={IDENTITIES}
+        activeIdentity={ACTIVE}
+        onSwitchIdentity={vi.fn()}
+        ssid={0}
+        onSsidChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('identity-switcher-trigger'));
+    expect(screen.getByTestId('identity-switcher-list')).toBeInTheDocument();
+    expect(screen.getByTestId('identity-row-full-W7XYZ')).toBeInTheDocument();
+    expect(screen.getByTestId('identity-row-full-W1ABC')).toBeInTheDocument();
+  });
+
+  it('falls back to the legacy callsign markup when onSwitchIdentity is omitted', () => {
+    // No switcher props → the bare callsign-row path renders exactly as before.
+    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={3} onSsidChange={vi.fn()} />);
+    expect(screen.queryByTestId('identity-switcher-trigger')).toBeNull();
+    expect(screen.getByTestId('ribbon-callsign-text')).toHaveTextContent(/^N7CPZ$/);
+    expect(screen.getByTestId('ribbon-ssid-select')).toBeInTheDocument();
   });
 });

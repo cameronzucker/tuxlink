@@ -38,6 +38,7 @@ import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
 import type { ConnectionKey } from '../mailbox/FolderSidebar';
 import { DashboardRibbon } from './DashboardRibbon';
+import { useIdentityList, useActiveIdentity, useIdentitySwitch } from './useIdentities';
 import { StatusBar } from './StatusBar';
 import { useStatusData, type StatusTone } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
@@ -500,6 +501,15 @@ export function AppShell() {
   // config and emits writes; the shared listener here picks those up). Operator
   // smoke 2026-05-31 caught that the prior code hardcoded SSID=0 in the ribbon.
   const packetConfig = usePacketConfig();
+
+  // Phase 7 (tuxlink-noa0): identity list + active session + switch mutation for
+  // the dashboard's inline IdentitySwitcher. The list/active queries feed the
+  // closed chip + dropdown; the mutation authenticates (= switches) and
+  // invalidates both queries on success (see useIdentitySwitch). QueryClientProvider
+  // is the same ancestor useMailbox / useStatusData already rely on.
+  const identityList = useIdentityList();
+  const activeIdentity = useActiveIdentity();
+  const identitySwitch = useIdentitySwitch();
 
   // tuxlink-bsiy: inbound pending-message selection ("Review Pending Messages").
   // Subscribes to the b2f-event channel for `inbound_proposals_offered`; when a
@@ -1075,6 +1085,9 @@ export function AppShell() {
           onSsidChange={packetConfig.config ? packetConfig.setSsid : undefined}
           reviewInbound={reviewInbound}
           onReviewInboundChange={onReviewInboundChange}
+          identities={identityList.data ?? null}
+          activeIdentity={activeIdentity.data ?? null}
+          onSwitchIdentity={(args) => identitySwitch.mutateAsync(args)}
         />
       </div>
 
