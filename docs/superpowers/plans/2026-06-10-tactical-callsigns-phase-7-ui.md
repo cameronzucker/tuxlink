@@ -12,6 +12,22 @@
 **Master plan + canonical interface contract:** [`docs/superpowers/plans/2026-06-10-tactical-callsigns-master-plan.md`](2026-06-10-tactical-callsigns-master-plan.md). The Rust type names (`IdentityStore`, `FullIdentity`, `TacticalIdentity`, `TacticalCmsState`, `IdentityHandle`, `SessionIdentity`, `IdentityService`, `IdentityError`, `Address`, `Callsign`) and the command names in this plan are reproduced **verbatim** from that contract — do not rename.
 **bd issue:** tuxlink-noa0 (Phase 7). Depends on Phases 3/4/5/6 (all merged before this starts).
 
+## ⚠️ IMPLEMENTATION DEVIATION (moraine-swallow-bayou, 2026-06-12) — read before Session 1
+
+This plan's **Session 1 (Tasks 1–5) was written before Phases 2 + 6 landed their command surface, and that surface already exists** — building the planned `src-tauri/src/ui_commands_identity.rs` from scratch would duplicate it. Reconciliation against the real `origin/main`:
+
+- **All six commands already exist** in `src-tauri/src/identity/commands.rs` (NOT a new `ui_commands_identity.rs`): `identity_list` / `identity_add_full` / `identity_add_tactical` / `identity_remove` (Phase 2 / tuxlink-7iy2) + `identity_authenticate` / `identity_lock` / `identity_active` (Phase 6 / tuxlink-5ekg), all registered in `lib.rs` and managed via the existing `BackendState` (the active-identity slot lives on `NativeBackend` per the Phase-3/6 deviation — there is **no** `AppIdentityState`; do NOT add one, do NOT double-`.manage`).
+- **The plan's `identity_switch` IS the merged `identity_authenticate`** (`callsign, credential, tactical_label?` — authenticate + set active + persist `last_selected`). Do NOT add a second switch command; the frontend calls `identity_authenticate`.
+- **`identity_add_full` / `identity_add_tactical` / `identity_remove`** already exist and already keep secrets keyring-only. No rebuild.
+
+**So Session 1 collapses to two DTO-enrichment tasks** (the existing DTOs are thinner than this plan's; no frontend consumes them yet, so reshaping is wire-safe):
+- **S1a — enrich `identity_active`:** today it returns a bare `Option<Address>`. The closed chip needs to distinguish the Part-97 station ID from the presented address, so return `Option<ActiveIdentityDto { mycall, address_as, is_tactical }>` (`mycall` = `SessionIdentity::mycall()`, always the FULL callsign; `address_as` = the presented FULL/tactical; `is_tactical` = `matches!(address_as, Address::Tactical(_))`).
+- **S1b — enrich `identity_list`:** today `needs_auth` is hardcoded `true` (Phase-2 placeholder) and the DTO has no `last_selected`. Thread the backend active session into `list_inner` so `needs_auth == false` for the currently-authenticated FULL, and add `last_selected: Option<String>` (the store's persisted hint, display-only).
+
+**DTO-shape reconciliation for the React side:** the existing `IdentityListDto` is **flat** (`full: Vec<FullIdentityDto>` + `tactical: Vec<TacticalIdentityDto>` with `parent` pointers), not nested. Keep it flat — the React switcher derives nesting by matching `tactical.parent === full.callsign` (cheaper than reshaping the Rust DTO + its Phase-2 tests). The existing tactical CMS field is `cms_badge: "unknown"|"registered"|"not_registered"` (a string), NOT the planned `cms: TacticalCmsBadge { kind }` tagged enum — the TS mirror (Task 6) matches the **string** form. Session 2's TS types below are adjusted to the real wire shape.
+
+Everything from the `## SESSION 2` marker onward (Tasks 6–12, the React UI) stands as written, except the TS DTO mirror tracks the real wire shapes above.
+
 **Project rules in force for this plan:**
 - Frontend tests: `npx vitest run <file>` (scoped — never a bare `npx vitest run` full sweep) + `npx tsc --noEmit`. **REAP vitest workers after every run**: `pkill -f vitest` (zombies leak ~8.5 GB; verify `pgrep -f vitest` is empty).
 - Rust tests: `cargo test --manifest-path src-tauri/Cargo.toml <name>`.
