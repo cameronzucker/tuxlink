@@ -22,11 +22,31 @@ function requiredZIndex(css: string, selector: RegExp) {
 }
 
 describe('MenuBar', () => {
-  it('renders all seven top menus', () => {
+  // tuxlink-lqw2: the Session + Mailbox top menus were removed in the pre-Alpha
+  // declutter (connect on the ribbon; folder nav in the FolderSidebar).
+  it('renders the five top menus', () => {
     render(<MenuBar onAction={vi.fn()} />);
-    for (const label of ['File', 'Message', 'Session', 'Mailbox', 'View', 'Tools', 'Help']) {
+    for (const label of ['File', 'Message', 'View', 'Tools', 'Help']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
+  });
+
+  it('no longer offers the Session or Mailbox top menus', () => {
+    render(<MenuBar onAction={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Session' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Mailbox' })).not.toBeInTheDocument();
+  });
+
+  // tuxlink-lqw2: Verify CMS Connection relocated into Tools and is now an
+  // enabled action (wired to the inline probe overlay), not a "soon" stub.
+  it('Tools → Verify CMS Connection is enabled and fires menu:tools:verify_cms', () => {
+    const onAction = vi.fn();
+    render(<MenuBar onAction={onAction} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
+    const verify = screen.getByRole('button', { name: /Verify CMS Connection/ });
+    expect(verify).not.toBeDisabled();
+    fireEvent.click(verify);
+    expect(onAction).toHaveBeenCalledWith('menu:tools:verify_cms');
   });
 
   it('opens a dropdown on click and fires onAction for a leaf', () => {
@@ -72,25 +92,6 @@ describe('MenuBar', () => {
     render(<MenuBar onAction={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
     expect(screen.queryByRole('button', { name: /Preferences/ })).not.toBeInTheDocument();
-  });
-
-  // tuxlink-dpf: the not-yet-wired dispatchMenuAction targets used to render
-  // as ordinary enabled buttons that silently no-op'd on click. They now
-  // match the Tools/Templates convention (disabled + "soon" badge).
-  // Print was on this list until tuxlink-j0m3 wired the handler.
-  it.each([
-    { menu: 'Session', item: 'Disconnect' },
-    { menu: 'Session', item: 'Session Log' },
-    { menu: 'Session', item: 'Verify CMS Connection' },
-    { menu: 'Session', item: 'Show transport' },
-  ])('$menu → $item renders disabled with no action firing', ({ menu, item }) => {
-    const onAction = vi.fn();
-    render(<MenuBar onAction={onAction} />);
-    fireEvent.click(screen.getByRole('button', { name: menu }));
-    const button = screen.getByRole('button', { name: new RegExp(item) });
-    expect(button).toBeDisabled();
-    fireEvent.click(button);
-    expect(onAction).not.toHaveBeenCalled();
   });
 
   // tuxlink-d9ry: Print lives in File, still firing the existing message-print

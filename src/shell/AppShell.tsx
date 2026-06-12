@@ -63,6 +63,11 @@ const AboutDialog = lazy(() =>
 const UninstallCleanupDialog = lazy(() =>
   import('./UninstallCleanupDialog').then((m) => ({ default: m.UninstallCleanupDialog })),
 );
+// tuxlink-lqw2: Tools → Verify CMS Connection. Inline overlay that runs the
+// connect-only verify_cms_connection probe (shared with the wizard's Step 3).
+const VerifyCmsDialog = lazy(() =>
+  import('./VerifyCmsDialog').then((m) => ({ default: m.VerifyCmsDialog })),
+);
 // tuxlink-gife: propagation-aware Find a Station overlay (sibling panel, not a
 // main-content view). Supersedes the location-aware Catalog Builder (a2gd).
 const StationFinderPanel = lazy(() =>
@@ -296,6 +301,8 @@ export function AppShell() {
   const [aboutOpen, setAboutOpen] = useState(false);
   // Inline uninstall cleanup dialog (tuxlink-uodl), opened from Help.
   const [uninstallCleanupOpen, setUninstallCleanupOpen] = useState(false);
+  // tuxlink-lqw2: inline Verify CMS Connection overlay, opened from Tools.
+  const [verifyCmsOpen, setVerifyCmsOpen] = useState(false);
   // tuxlink-a2gd: inline Catalog Builder ("Find a Gateway"), opened from Message → Find a Gateway.
   const [catalogBuilderOpen, setCatalogBuilderOpen] = useState(false);
   // tuxlink-eymu: Request Center overlay. Carries the initial inner view;
@@ -825,7 +832,6 @@ export function AppShell() {
 
   const handlers: MenuHandlers = useMemo(() => ({
     openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
-    connect: onConnect,
     // Operator decision 2026-05-21 (option b): Reply/Reply All/Forward open a
     // reply window from the current selection — making good on the reading-pane
     // button label "Reply (Ctrl+R)". Reuses openReplyWindow (seeds a prefilled
@@ -843,12 +849,6 @@ export function AppShell() {
     print: () => { if (openMessage) window.print(); },
     toggleStatusBar: () => setShowStatusBar((s) => !s),
     toggleRadioPanel: () => setPinRadioPanel((s) => !s),
-    // tuxlink-u4ky: don't clear selectedConnection on folder switch.
-    // selectedConnection drives the right-hand radio panel mount; the post-P2
-    // design (see comment below on onSelectConnection) says it's independent
-    // of folder navigation, but this pre-P2-era line was clobbering the
-    // running connection's panel any time the operator switched folders.
-    selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => setSettingsOpen(true),
     openMapTileSettings: () => setMapTileSettingsOpen(true),
@@ -872,6 +872,8 @@ export function AppShell() {
       });
     },
     openUninstallCleanup: () => setUninstallCleanupOpen(true),
+    // tuxlink-lqw2: Tools → Verify CMS Connection opens the inline probe overlay.
+    verifyCms: () => setVerifyCmsOpen(true),
     reportIssue: () => {
       // tuxlink-qjgx Task 8: Report Issue flow — auto-export + pre-filled
       // GitHub URL. The controller handles Save As → export → browser open
@@ -881,7 +883,7 @@ export function AppShell() {
     openCatalogBuilder: () => setCatalogBuilderOpen(true),
     openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
     quit: () => { void invoke('app_quit'); },
-  }), [onConnect, openMessage, archiveOpen, reportIssueController]);
+  }), [openMessage, archiveOpen, reportIssueController]);
 
   const editDraft = useCallback((draftId: string) => {
     void invoke('compose_window_open', { draftId });
@@ -1328,6 +1330,12 @@ export function AppShell() {
       {uninstallCleanupOpen && (
         <Suspense fallback={null}>
           <UninstallCleanupDialog open={true} onClose={() => setUninstallCleanupOpen(false)} />
+        </Suspense>
+      )}
+
+      {verifyCmsOpen && (
+        <Suspense fallback={null}>
+          <VerifyCmsDialog open={true} onClose={() => setVerifyCmsOpen(false)} />
         </Suspense>
       )}
 

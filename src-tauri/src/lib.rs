@@ -671,6 +671,9 @@ pub fn run() {
             crate::identity::commands::identity_add_full,    // tuxlink-7iy2
             crate::identity::commands::identity_add_tactical,// tuxlink-7iy2
             crate::identity::commands::identity_remove,      // tuxlink-7iy2
+            crate::identity::commands::identity_authenticate, // tuxlink-5ekg (Phase 6 re-auth)
+            crate::identity::commands::identity_lock,         // tuxlink-5ekg
+            crate::identity::commands::identity_active,       // tuxlink-5ekg
             crate::ui_commands::packet_connect,       // tuxlink-7fr (packet dial)
             crate::ui_commands::packet_listen,        // tuxlink-7fr (arm Listen — answer inbound)
             crate::ui_commands::packet_set_listen,    // tuxlink-7fr (sticky listen)
