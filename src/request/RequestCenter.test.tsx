@@ -28,6 +28,20 @@ vi.mock('../map/GridMapPicker', () => ({
   ),
 }));
 
+// RequestCenter sources its grid from the live position subsystem (useStatusData
+// → position_status.ui_grid ?? config grid, tuxlink-fnzr), not a one-shot
+// config_read. Mock useStatusData so these unit tests control the grid without a
+// QueryClient (its real useQuery would otherwise crash the no-provider unit
+// mount). `statusMock.grid` is driven by the mock* helpers; a top-level
+// beforeEach resets it so a null-grid test can't leak into the next.
+const statusMock = vi.hoisted(() => ({ grid: 'CN87' as string | null }));
+vi.mock('../shell/useStatus', () => ({
+  useStatusData: () => ({ grid: statusMock.grid }),
+}));
+beforeEach(() => {
+  statusMock.grid = 'CN87';
+});
+
 function entry(category: string, filename: string, description = '', size_bytes = 0): CatalogEntry {
   return { category, filename, description, size_bytes };
 }
@@ -37,8 +51,9 @@ const FIXTURE_ENTRIES: CatalogEntry[] = [
   entry('PROPAGATION', 'PROP_WWV', 'Daily WWV Solar Flux summary', 621),
 ];
 
-// Default mock: catalog loads, config_read returns a grid.
+// Default mock: catalog loads; grid comes from the mocked useStatusData.
 function mockHappy(grid: string | null = 'CN87') {
+  statusMock.grid = grid;
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     if (cmd === 'catalog_list') return FIXTURE_ENTRIES;
     if (cmd === 'config_read') return { grid };
@@ -164,10 +179,10 @@ describe('<RequestCenter>', () => {
     expect(chip.textContent).not.toMatch(/null|undefined/);
   });
 
-  it('shows a neutral location state (no crash) when config_read rejects', async () => {
+  it('shows a neutral location state (no crash) when no grid is available', async () => {
+    statusMock.grid = null; // position subsystem has no fix and no config grid
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'catalog_list') return FIXTURE_ENTRIES;
-      if (cmd === 'config_read') throw new Error('config unreadable');
       return null;
     });
     render(<RequestCenter onClose={() => {}} />);
@@ -205,6 +220,7 @@ const C2_ENTRIES: CatalogEntry[] = [
 ];
 
 function mockC2(grid: string | null = 'CN87') {
+  statusMock.grid = grid;
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     if (cmd === 'catalog_list') return C2_ENTRIES;
     if (cmd === 'config_read') return { grid };
@@ -850,6 +866,7 @@ const T11_ENTRIES: CatalogEntry[] = [
 ];
 
 function mockT11(grid: string | null = 'CN87uo') {
+  statusMock.grid = grid;
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     if (cmd === 'catalog_list') return T11_ENTRIES;
     if (cmd === 'config_read') return { grid };

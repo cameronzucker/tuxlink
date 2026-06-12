@@ -158,12 +158,16 @@ interface RouteOpts {
   config?: () => Promise<unknown>;
   catalogSend?: () => Promise<unknown>;
   gribSend?: () => Promise<unknown>;
+  /** position_status — drives RequestCenter's grid via useStatusData (ui_grid),
+   *  the live GPS-aware source (tuxlink-fnzr). Default: no fix, no grid. */
+  position?: () => Promise<unknown>;
 }
 function routeRequest(opts: RouteOpts = {}) {
   const catalog = opts.catalog ?? (async () => CATALOG_FIXTURE);
   const config = opts.config ?? (async () => ({ grid: 'CN87' }));
   const catalogSend = opts.catalogSend ?? (async () => 'MID-DEFAULT');
   const gribSend = opts.gribSend ?? (async () => 'GRIB-MID');
+  const position = opts.position ?? (async () => ({ gps_ready: false, broadcast_grid: '', ui_grid: '' }));
 
   vi.mocked(invoke).mockImplementation((cmd: string): Promise<unknown> => {
     switch (cmd) {
@@ -191,7 +195,7 @@ function routeRequest(opts: RouteOpts = {}) {
           lastError: null,
         });
       case 'position_status':
-        return Promise.resolve({ gps_ready: false, broadcast_grid: '', ui_grid: '' });
+        return position();
       case 'tauri_search_list_saved':
         return Promise.resolve([]);
       case 'tauri_search_list_recent':
@@ -259,7 +263,7 @@ describe('<RequestCenter> — App-level production mount path (E3 / tuxlink-eymu
     await waitFor(() => expect(chip).toHaveTextContent('Near CN87'));
 
     // The home sections rendered through the production catalog_list path.
-    expect(within(dialog).getByTestId('request-section-propagation')).toBeInTheDocument();
+    expect(await within(dialog).findByTestId('request-section-propagation')).toBeInTheDocument();
   });
 
   // (2) Add a national card → Send all invokes the right command with the right
@@ -383,9 +387,12 @@ describe('<RequestCenter> — App-level production mount path (E3 / tuxlink-eymu
   // buildSections → all three location cards rendered, NO hand-injected section
   // props — the exact path that runs when the operator opens Request Center with
   // a saved grid).
-  it('renders the resolved location hero from config + catalog (production path)', async () => {
+  it('renders the resolved location hero from the live GPS grid + catalog (production path)', async () => {
+    // Grid comes from the position subsystem's ui_grid (live GPS fix), not a
+    // pinned config grid — the default config (source=Gps, identity.grid=null).
     routeRequest({
-      config: async () => ({ grid: 'CN87uo' }),
+      config: async () => ({ grid: null }),
+      position: async () => ({ gps_ready: true, broadcast_grid: 'CN87', ui_grid: 'CN87uo' }),
       catalog: async () => CATALOG_FIXTURE_WITH_LOCATION,
     });
     renderShell();
@@ -397,5 +404,21 @@ describe('<RequestCenter> — App-level production mount path (E3 / tuxlink-eymu
     expect(within(dialog).getByTestId('request-card-loc-radar')).toBeInTheDocument();
     // Marine card (WX_EASTPAC sea area)
     expect(within(dialog).getByTestId('request-card-loc-marine')).toBeInTheDocument();
+  });
+
+  // (8) tuxlink-fnzr regression: under the DEFAULT config (position_source=Gps,
+  // identity.grid=null) the hero must resolve from the live GPS fix (ui_grid),
+  // NOT show "Location not set". This is the exact bug — the hero read the static
+  // config_read().grid (null under GPS) instead of the live position subsystem.
+  it('resolves the location chip from the live GPS fix when no config grid is pinned (tuxlink-fnzr)', async () => {
+    routeRequest({
+      config: async () => ({ grid: null }), // GPS source, no pinned grid
+      position: async () => ({ gps_ready: true, broadcast_grid: 'CN87', ui_grid: 'CN87uo' }),
+    });
+    renderShell();
+    const dialog = await openRequestCenter();
+    const chip = within(dialog).getByTestId('request-center-location');
+    await waitFor(() => expect(chip).toHaveTextContent('Near CN87uo'));
+    expect(chip).not.toHaveTextContent('Location not set');
   });
 });
