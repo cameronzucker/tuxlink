@@ -103,7 +103,7 @@ pub fn compose(spec: &QuerySpec) -> (String, Vec<SqlParam>) {
         "SELECT m.mid, m.folder, m.subject, m.from_addr, m.to_addrs, m.cc_addrs, \
                 m.date_sent, m.date_received, m.unread, m.form_type, \
                 m.has_attachments, m.attachment_count, m.transport_used, \
-                m.direction, m.message_size, m.routing_path \
+                m.direction, m.message_size, m.routing_path, m.identity_tag \
          FROM {from_clause}{where_sql} {order} LIMIT {} OFFSET {}",
         spec.page.page_size, spec.page.offset,
     );

@@ -33,6 +33,10 @@ pub struct IndexRow {
     pub direction: Direction,
     pub message_size: u32,
     pub routing_path: Option<String>,
+    /// The FULL callsign this message is tagged with (tuxlink-2ns7): the
+    /// authoring identity for Sent/Outbox, the delivery namespace for received
+    /// mail. `None` for untagged (legacy / pre-Phase-4) messages.
+    pub identity_tag: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +64,7 @@ pub fn extract(
     direction: Direction,
     unread: bool,
     transport_used: Option<String>,
+    identity_tag: Option<String>,
 ) -> IndexRow {
     let mid = msg.header("Mid").unwrap_or_default().to_string();
     let subject = msg.header("Subject").unwrap_or_default().to_string();
@@ -118,6 +123,7 @@ pub fn extract(
         direction,
         message_size,
         routing_path,
+        identity_tag,
     }
 }
 
@@ -208,6 +214,7 @@ mod tests {
             Direction::Received,
             /*unread=*/ true,
             /*transport_used=*/ Some("telnet".into()),
+            /*identity_tag=*/ None,
         );
         assert_eq!(row.subject, "Hello");
         assert_eq!(row.from_addr.as_deref(), Some("N7CPZ"));
@@ -241,7 +248,7 @@ mod tests {
         )
         .to_bytes();
         let msg = parse(&raw);
-        let row = extract(&msg, MailboxFolder::Inbox, Direction::Received, true, None);
+        let row = extract(&msg, MailboxFolder::Inbox, Direction::Received, true, None, None);
         assert_eq!(row.form_type.as_deref(), Some("ICS-213"));
         assert!(row.form_field_values.contains("Net Control"));
         assert!(row.form_field_values.contains("KX5DD"));
@@ -261,8 +268,8 @@ mod tests {
         )
         .to_bytes();
         let msg = parse(&raw);
-        let recv = extract(&msg, MailboxFolder::Inbox, Direction::Received, true, None);
-        let sent = extract(&msg, MailboxFolder::Sent, Direction::Sent, false, None);
+        let recv = extract(&msg, MailboxFolder::Inbox, Direction::Received, true, None, None);
+        let sent = extract(&msg, MailboxFolder::Sent, Direction::Sent, false, None, None);
         assert!(recv.date_received.is_some());
         assert!(sent.date_sent.is_some());
     }

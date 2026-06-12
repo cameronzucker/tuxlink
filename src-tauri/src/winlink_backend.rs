@@ -273,6 +273,7 @@ pub fn build_outbound_proposals(
     mailbox: &Mailbox,
     intent: SessionIntent,
     selected: Option<&std::collections::HashSet<String>>,
+    active_full: Option<&str>,
 ) -> Result<Vec<session::OutboundMessage>, BackendError> {
     // Safety gate (narrowed — tuxlink-6c9y §5.5): P2p/RadioOnly still fail-closed
     // (6c9y does not address their leakage; tuxlink-u5hl re-scopes them). Cms/
@@ -291,6 +292,21 @@ pub fn build_outbound_proposals(
         if let Some(sel) = selected {
             if !sel.contains(&meta.id.0) {
                 continue;
+            }
+        }
+        // Identity drain gate (tuxlink-2ns7): a session drains only its own
+        // queued mail. The shared Outbox holds every identity's drafts; a
+        // session connected as `active_full` ships only the messages tagged
+        // with that FULL. An untagged (legacy / pre-Phase-4) message has no
+        // `<mid>.identity` sidecar and drains for ANY active identity, so the
+        // migration never strands a pre-existing draft. `active_full == None`
+        // disables the filter entirely (back-compat for callers not yet
+        // identity-aware).
+        if let Some(active) = active_full {
+            if let Some(tag) = mailbox.read_identity_tag(MailboxFolder::Outbox, &meta.id) {
+                if tag != active {
+                    continue;
+                }
             }
         }
         // Codex review 2026-06-03 [P2 #6] (tuxlink-61yg): per-message read
@@ -357,7 +373,7 @@ mod build_outbound_proposals_tests {
     fn empty_outbox_returns_empty_vec() {
         let dir = tempdir().unwrap();
         let mailbox = Mailbox::new(dir.path());
-        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None).unwrap();
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, None).unwrap();
         assert!(out.is_empty(), "empty outbox should produce no proposals; got {out:?}");
     }
 
@@ -394,7 +410,7 @@ mod build_outbound_proposals_tests {
         mailbox.store(MailboxFolder::Outbox, &m1.to_bytes()).unwrap();
         mailbox.store(MailboxFolder::Outbox, &m2.to_bytes()).unwrap();
 
-        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None).unwrap();
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, None).unwrap();
         assert_eq!(
             out.len(),
             2,
@@ -430,7 +446,7 @@ mod build_outbound_proposals_tests {
             .store(MailboxFolder::Outbox, &third_party.to_bytes())
             .unwrap();
 
-        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None).unwrap();
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, None).unwrap();
         assert_eq!(
             out.len(),
             1,
@@ -469,7 +485,7 @@ mod build_outbound_proposals_tests {
     #[test]
     fn safety_gate_fires_for_p2p_intent() {
         let (_dir, mailbox) = outbox_with_one_draft();
-        let err = build_outbound_proposals(&mailbox, SessionIntent::P2p, None)
+        let err = build_outbound_proposals(&mailbox, SessionIntent::P2p, None, None)
             .expect_err("safety gate must reject P2p drain — see tuxlink-u5hl");
         assert!(
             matches!(err, BackendError::MessageRejected(_)),
@@ -489,7 +505,7 @@ mod build_outbound_proposals_tests {
     #[test]
     fn safety_gate_fires_for_radio_only_intent() {
         let (_dir, mailbox) = outbox_with_one_draft();
-        let err = build_outbound_proposals(&mailbox, SessionIntent::RadioOnly, None)
+        let err = build_outbound_proposals(&mailbox, SessionIntent::RadioOnly, None, None)
             .expect_err("safety gate must reject RadioOnly drain — see tuxlink-u5hl");
         assert!(
             matches!(err, BackendError::MessageRejected(_)),
@@ -541,7 +557,7 @@ mod build_outbound_proposals_tests {
         // Select exactly 2 of the 3 real MIDs.
         let selected: HashSet<String> = [mids[0].clone(), mids[2].clone()].into_iter().collect();
         let out =
-            build_outbound_proposals(&mailbox, SessionIntent::PostOffice, Some(&selected)).unwrap();
+            build_outbound_proposals(&mailbox, SessionIntent::PostOffice, Some(&selected), None).unwrap();
         let returned: HashSet<String> = out.iter().map(|o| o.proposal.mid.clone()).collect();
         assert_eq!(
             returned, selected,
@@ -567,7 +583,7 @@ mod build_outbound_proposals_tests {
 
         // Mesh is NOT gated (its routing flag is the normal C pool, tuxlink-6c9y).
         let out =
-            build_outbound_proposals(&mailbox, SessionIntent::Mesh, Some(&selected)).unwrap();
+            build_outbound_proposals(&mailbox, SessionIntent::Mesh, Some(&selected), None).unwrap();
         assert_eq!(out.len(), 1, "Mesh drain must ship the selected draft, not gate; got {out:?}");
     }
 
@@ -590,7 +606,7 @@ mod build_outbound_proposals_tests {
         let selected: HashSet<String> =
             [mid, "GHOST-MID-NOT-IN-OUTBOX".to_string()].into_iter().collect();
         let out =
-            build_outbound_proposals(&mailbox, SessionIntent::PostOffice, Some(&selected)).unwrap();
+            build_outbound_proposals(&mailbox, SessionIntent::PostOffice, Some(&selected), None).unwrap();
         assert_eq!(
             out.len(),
             1,
@@ -607,7 +623,7 @@ mod build_outbound_proposals_tests {
             mailbox.store(MailboxFolder::Outbox, &m.to_bytes()).unwrap();
         }
         // `None` selection = drain everything (status-quo CMS behavior).
-        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None).unwrap();
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, None).unwrap();
         assert_eq!(out.len(), 2, "None selection must drain all Outbox drafts; got {out:?}");
     }
 
@@ -617,9 +633,48 @@ mod build_outbound_proposals_tests {
         // The safety gate is non-CMS-only; this test pins that CMS is NOT
         // accidentally regressed.
         let (_dir, mailbox) = outbox_with_one_draft();
-        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None)
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, None)
             .expect("CMS drain must NOT be gated");
         assert_eq!(out.len(), 1, "CMS drain must yield all outbox messages");
+    }
+
+    // tuxlink-2ns7 Task 5: the shared Outbox is drained by the ACTIVE session
+    // identity. A session connected as W1ABC ships only W1ABC's queued mail.
+    #[test]
+    fn drain_returns_only_active_identity_outbox() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+
+        // Queue one message as W1ABC and one as W7XYZ into the SHARED outbox.
+        let alpha = compose_message("W1ABC", &["W1AW"], &[], "Alpha out", "a", 1_716_200_000);
+        let xray = compose_message("W7XYZ", &["W1AW"], &[], "Xray out", "x", 1_716_200_600);
+        mailbox.for_identity("W1ABC").store(MailboxFolder::Outbox, &alpha.to_bytes()).unwrap();
+        mailbox.for_identity("W7XYZ").store(MailboxFolder::Outbox, &xray.to_bytes()).unwrap();
+
+        // Active session = W1ABC: only Alpha's message is proposed.
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, Some("W1ABC")).unwrap();
+        assert_eq!(out.len(), 1, "only the active identity's queued mail drains; got {out:?}");
+        assert_eq!(out[0].title, "Alpha out");
+
+        // Active session = W7XYZ: only Xray's.
+        let out2 = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, Some("W7XYZ")).unwrap();
+        assert_eq!(out2.len(), 1);
+        assert_eq!(out2[0].title, "Xray out");
+    }
+
+    // tuxlink-2ns7 Task 5: an untagged legacy Outbox message (no .identity
+    // sidecar) drains for ANY active identity — back-compat / migration safety:
+    // a pre-Phase-4 queued draft has no tag and must not be stranded.
+    #[test]
+    fn untagged_outbox_message_drains_for_any_identity() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        // Store directly via the un-namespaced Mailbox (no .identity sidecar written).
+        let legacy = compose_message("W1ABC", &["W1AW"], &[], "Legacy", "x", 1_716_200_000);
+        mailbox.store(MailboxFolder::Outbox, &legacy.to_bytes()).unwrap();
+
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, Some("W7XYZ")).unwrap();
+        assert_eq!(out.len(), 1, "an untagged legacy draft is not stranded by identity filtering");
     }
 }
 
@@ -1199,6 +1254,22 @@ impl NativeBackend {
         let mbox = Arc::try_unwrap(self.mailbox)
             .unwrap_or_else(|_| panic!("with_index called after Arc<Mailbox> was shared — call before install"))
             .with_index(index);
+        self.mailbox = Arc::new(mbox);
+        self
+    }
+
+    /// Set the mailbox's default received-mail identity to the operator's sole
+    /// FULL (tuxlink-2ns7). After this, a bare `store`/`list`/`read`/`mark_read`
+    /// on the backend's mailbox resolves Inbox/Archive + user folders under
+    /// `mailbox/<FULL>/` (Sent/Outbox stay shared) — matching where
+    /// [`Mailbox::migrate_legacy_layout`] re-homes legacy mail. Builder-style;
+    /// must be called before the `mailbox` Arc is shared (i.e. before install),
+    /// like [`Self::with_index`]. Panics if the Arc is already shared — a
+    /// programmer error in the boot path.
+    pub fn with_default_identity(mut self, full: &crate::identity::Callsign) -> Self {
+        let mbox = Arc::try_unwrap(self.mailbox)
+            .unwrap_or_else(|_| panic!("with_default_identity called after Arc<Mailbox> was shared — call before install"))
+            .with_default_identity(full);
         self.mailbox = Arc::new(mbox);
         self
     }
@@ -2342,7 +2413,12 @@ fn native_connect(
     // dial drains the whole Outbox (intent=Cms, selected=None) — via the shared
     // helper, which gains skip-not-abort on per-message read failures
     // (tuxlink-6c9y consolidates this third drain loop into the helper).
-    let outbound = build_outbound_proposals(mailbox, SessionIntent::Cms, None)?;
+    let outbound = build_outbound_proposals(
+        mailbox,
+        SessionIntent::Cms,
+        None,
+        Some(session_id.mycall().as_str()),
+    )?;
     let outbound_log = outbound_log_items(&outbound);
 
     // P1.3 (Codex post-impl review): defer read_password until after all config
@@ -2727,7 +2803,7 @@ pub fn run_ardop_b2f_exchange(
     // successful empty send. NOT symmetric with `run_ardop_b2f_answer`, which
     // still degrades every error by design.
     let outbound = dial_outbound_or_propagate(
-        build_outbound_proposals(mailbox, intent, None),
+        build_outbound_proposals(mailbox, intent, None, Some(session_id.mycall().as_str())),
         "run_ardop_b2f_exchange",
     )?;
     let outbound_log = outbound_log_items(&outbound);
@@ -2804,7 +2880,7 @@ pub fn run_ardop_b2f_answer(
     // the inbound session — the peer is already on the link and inbound
     // mail filing still works without us shipping outbound. Symmetric with
     // the telnet_listen answerer (`progress("Outbox read failed …")`).
-    let outbound = build_outbound_proposals(mailbox, SessionIntent::P2p, None).unwrap_or_else(|e| {
+    let outbound = build_outbound_proposals(mailbox, SessionIntent::P2p, None, Some(session_id.mycall().as_str())).unwrap_or_else(|e| {
         eprintln!(
             "run_ardop_b2f_answer: outbound drain skipped ({e}); inbound continues with empty outbound"
         );
@@ -2890,7 +2966,7 @@ pub fn run_vara_b2f_answer(
     // the inbound session — symmetric with `run_ardop_b2f_answer` above and
     // the telnet_listen answerer. The peer is already on the link; inbound
     // mail filing still works without us shipping outbound.
-    let outbound = build_outbound_proposals(mailbox, SessionIntent::P2p, None).unwrap_or_else(|e| {
+    let outbound = build_outbound_proposals(mailbox, SessionIntent::P2p, None, Some(session_id.mycall().as_str())).unwrap_or_else(|e| {
         eprintln!(
             "run_vara_b2f_answer: outbound drain skipped ({e}); inbound continues with empty outbound"
         );
@@ -3046,7 +3122,7 @@ pub fn run_vara_b2f_exchange(
     // masquerade as a successful empty send. NOT symmetric with
     // `run_vara_b2f_answer`, which still degrades every error by design.
     let outbound = dial_outbound_or_propagate(
-        build_outbound_proposals(mailbox, intent, None),
+        build_outbound_proposals(mailbox, intent, None, Some(session_id.mycall().as_str())),
         "run_vara_b2f_exchange",
     )?;
     let outbound_log = outbound_log_items(&outbound);

@@ -1703,20 +1703,34 @@ mod tests {
     // keyring, and a second run is a clean no-op.
     #[test]
     fn migrate_single_callsign_config_promotes_one_full_and_keeps_inbox_intact() {
-        use crate::native_mailbox::Mailbox;
-        use crate::winlink_backend::MailboxFolder;
-
         fn sample_raw_message(subject: &str) -> Vec<u8> {
             crate::winlink::compose::compose_message("N7CPZ", &["W1AW"], &[], subject, "body", 1_716_200_000).to_bytes()
+        }
+        fn mid_of(raw: &[u8]) -> crate::winlink_backend::MessageId {
+            crate::winlink_backend::MessageId(
+                crate::winlink::message::Message::from_bytes(raw)
+                    .unwrap()
+                    .header("Mid")
+                    .unwrap()
+                    .to_string(),
+            )
         }
 
         let mbox_root = tempfile::TempDir::new().unwrap();
         let store_path = mbox_root.path().join("identities.json");
 
-        // Seed a legacy flat mailbox: one inbox message + one sent message.
-        let mbox = Mailbox::new(mbox_root.path());
-        let inbox_id = mbox.store(MailboxFolder::Inbox, &sample_raw_message("INBOX-1")).unwrap();
-        let sent_id  = mbox.store(MailboxFolder::Sent,  &sample_raw_message("SENT-1")).unwrap();
+        // Seed a TRUE legacy flat mailbox by writing the raw b2f directly at the
+        // flat <root>/inbox + <root>/sent paths a pre-v2 install actually had.
+        // (Post-Phase-4, Mailbox::new().store() namespaces under mailbox/<ns>/, so
+        // it can no longer seed the flat layout this v1->v2 migration operates on.)
+        let inbox_raw = sample_raw_message("INBOX-1");
+        let sent_raw = sample_raw_message("SENT-1");
+        let inbox_id = mid_of(&inbox_raw);
+        let sent_id = mid_of(&sent_raw);
+        std::fs::create_dir_all(mbox_root.path().join("inbox")).unwrap();
+        std::fs::write(mbox_root.path().join("inbox").join(format!("{}.b2f", inbox_id.0)), &inbox_raw).unwrap();
+        std::fs::create_dir_all(mbox_root.path().join("sent")).unwrap();
+        std::fs::write(mbox_root.path().join("sent").join(format!("{}.b2f", sent_id.0)), &sent_raw).unwrap();
 
         let v1 = LegacyConfigV1 { callsign: Some("W1ABC".into()), identifier: None, grid: Some("CN87".into()) };
         let svc = crate::identity::IdentityService::with_memory_keyring();
@@ -1731,18 +1745,17 @@ mod tests {
         assert_eq!(store.full()[0].callsign.as_str(), "W1ABC");
         assert!(matches!(store.last_selected(), Some(crate::identity::Address::Full(c)) if c.as_str() == "W1ABC"));
 
-        // (b) REGRESSION (tuxlink-ej7a): the inbox stays FLAT and is visible to the
-        // PRODUCTION read path — a flat-root `Mailbox`, exactly how the app reads it.
-        // The pre-fix migration moved it under `<root>/W1ABC/inbox`, which the flat
-        // `folder_dir(Inbox)` never reads, so the inbox showed empty after upgrade.
-        let production_mbox = Mailbox::new(mbox_root.path());
-        let metas = production_mbox.list(MailboxFolder::Inbox).unwrap();
-        assert_eq!(metas.len(), 1, "the inbox message is still visible to the production read path");
-        assert_eq!(metas[0].id, inbox_id);
+        // (b) The v1->v2 config migration does NOT relocate the inbox (tuxlink-ej7a):
+        // it leaves the flat <root>/inbox in place. Phase 4's migrate_legacy_layout
+        // is the SEPARATE step that moves flat -> mailbox/<FULL>/inbox (covered by
+        // native_mailbox::migrate_legacy_flat_layout_to_per_full); this test pins the
+        // intermediate state — the message stays at the flat path, untouched.
         assert!(mbox_root.path().join("inbox").join(format!("{}.b2f", inbox_id.0)).exists(),
-                "the message stays in the flat inbox the app reads");
+                "the v1->v2 migration leaves the inbox message at the flat path");
         assert!(!mbox_root.path().join("W1ABC").exists(),
                 "the v1->v2 migration must NOT create a per-FULL inbox dir (that is Phase 4)");
+        assert!(!mbox_root.path().join("mailbox").exists(),
+                "the v1->v2 migration must NOT create the Phase-4 mailbox/ tree");
         assert!(!report.inbox_moved, "migration report records no inbox relocation");
 
         // (c) the sent message is tagged with the FULL identity, in place (shared store).

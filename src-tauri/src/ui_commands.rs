@@ -38,6 +38,19 @@ use crate::winlink_backend::{
     MessageMeta, OutboundMessage, TransportConfig,
 };
 
+/// Resolve the operator's sole FULL identity (tuxlink-2ns7). Phase 4 has exactly
+/// one FULL (Phase 2 promoted the single config callsign). The inbound-mail /
+/// exchange mailbox sites use this to set the mailbox's default received-mail
+/// namespace so a bare `store`/`list` resolves Inbox/Archive under
+/// `mailbox/<FULL>/` — matching the production read side + the startup
+/// `migrate_legacy_layout`. `None` (no identity yet, fresh install) leaves the
+/// mailbox un-defaulted (resolves the `_default` namespace).
+fn sole_full_identity() -> Option<crate::identity::Callsign> {
+    crate::identity::IdentityStore::load(&crate::config::identity_store_path())
+        .ok()
+        .and_then(|s| s.full().first().map(|f| f.callsign.clone()))
+}
+
 // ============================================================================
 // Error projection (spec §3.1)
 // ============================================================================
@@ -4112,7 +4125,12 @@ pub(crate) async fn ardop_listen_inner(
     // Build the mailbox for inbound-mail persistence.
     let mailbox = match app.path().app_data_dir() {
         Ok(dir) => {
+            // tuxlink-2ns7: default to the sole FULL so received mail lands under
+            // `mailbox/<FULL>/inbox` (the production read namespace).
             let mut mb = crate::native_mailbox::Mailbox::new(dir.join("native-mbox"));
+            if let Some(full) = sole_full_identity() {
+                mb = mb.with_default_identity(&full);
+            }
             if let Some(svc) = app.try_state::<crate::search::commands::SearchService>() {
                 mb = mb.with_index(svc.index.clone());
             }
@@ -4857,7 +4875,11 @@ pub(crate) async fn arm_vara_listener_inner(
     // Build the mailbox for inbound-mail persistence (same shape as ARDOP).
     let mailbox = match app.path().app_data_dir() {
         Ok(dir) => {
+            // tuxlink-2ns7: default to the sole FULL (per-FULL received-mail namespace).
             let mut mb = crate::native_mailbox::Mailbox::new(dir.join("native-mbox"));
+            if let Some(full) = sole_full_identity() {
+                mb = mb.with_default_identity(&full);
+            }
             if let Some(svc) = app.try_state::<crate::search::commands::SearchService>() {
                 mb = mb.with_index(svc.index.clone());
             }
@@ -5994,7 +6016,11 @@ pub async fn telnet_p2p_connect(
             });
         }
     };
+    // tuxlink-2ns7: default to the sole FULL (per-FULL received-mail namespace).
     let mut mailbox = crate::native_mailbox::Mailbox::new(mbox_dir);
+    if let Some(full) = sole_full_identity() {
+        mailbox = mailbox.with_default_identity(&full);
+    }
     if let Some(svc) = app.try_state::<crate::search::commands::SearchService>() {
         mailbox = mailbox.with_index(svc.index.clone());
     }
@@ -6014,6 +6040,7 @@ pub async fn telnet_p2p_connect(
         &mailbox,
         SessionIntent::P2p,
         None,
+        Some(session_id.mycall().as_str()),
     ) {
         Ok(v) => v,
         Err(crate::winlink_backend::BackendError::MessageRejected(reason)) => {
@@ -6485,7 +6512,7 @@ where
     // its leakage guard (`Some`; advisory set ∩ live Outbox, vanished MID
     // skipped). tuxlink-b6ad.
     let outbound =
-        crate::winlink_backend::build_outbound_proposals(mailbox, intent, po_drain_selection(local, selected))
+        crate::winlink_backend::build_outbound_proposals(mailbox, intent, po_drain_selection(local, selected), Some(mycall.as_str()))
             .map_err(|e| UiError::Internal { detail: format!("outbox drain: {e}") })?;
 
     let result = crate::winlink::telnet::connect_and_exchange(
@@ -6598,7 +6625,11 @@ pub async fn telnet_post_office_connect(
             });
         }
     };
+    // tuxlink-2ns7: default to the sole FULL (per-FULL received-mail namespace).
     let mut mailbox = crate::native_mailbox::Mailbox::new(mbox_dir);
+    if let Some(full) = sole_full_identity() {
+        mailbox = mailbox.with_default_identity(&full);
+    }
     if let Some(svc) = app.try_state::<crate::search::commands::SearchService>() {
         mailbox = mailbox.with_index(svc.index.clone());
     }
@@ -7138,7 +7169,11 @@ pub async fn telnet_listen(
     // `native_packet_exchange` that closes the original tuxlink-k3ru gap.
     let mailbox = match app.path().app_data_dir() {
         Ok(dir) => {
+            // tuxlink-2ns7: default to the sole FULL (per-FULL received-mail namespace).
             let mut mb = crate::native_mailbox::Mailbox::new(dir.join("native-mbox"));
+            if let Some(full) = sole_full_identity() {
+                mb = mb.with_default_identity(&full);
+            }
             if let Some(svc) = app.try_state::<crate::search::commands::SearchService>() {
                 mb = mb.with_index(svc.index.clone());
             }

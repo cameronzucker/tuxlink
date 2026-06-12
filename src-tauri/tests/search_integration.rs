@@ -78,6 +78,6 @@ fn rebuild_picks_up_pre_existing_mailbox() {
         saved: Mutex::new(SavedStore::open(dir.path().join("saved.json")).unwrap()),
         now_unix: || 1_716_200_000,
     };
-    let stats = svc.rebuild_index(dir.path().to_path_buf()).unwrap();
+    let stats = svc.rebuild_index(dir.path().to_path_buf(), None).unwrap();
     assert_eq!(stats.messages_indexed, 1);
 }
