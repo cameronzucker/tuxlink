@@ -371,7 +371,22 @@ pub fn run(app_handle: AppHandle) {
 /// rejects until registered with Winlink (it directs unknown clients to
 /// `cms-z.winlink.org`). The backend is installed and the mailbox/compose UI
 /// works regardless; a CMS connect against production needs that registration.
-fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
+/// True when a freshly-persisted config should trigger an IN-SESSION backend
+/// install (tuxlink-aw6g). The native backend is otherwise only installed at
+/// startup (`run`), and only when the on-disk config already has
+/// `wizard_completed && connect_to_cms`. On a fresh install / reinstall,
+/// bootstrap runs BEFORE the first-launch wizard (config NotFound →
+/// `NotConnected` → no backend), so completing the wizard left the backend
+/// offline until the NEXT app restart — `cms_connect` returned "backend
+/// offline" and CMS telnet "didn't even start." `wizard_persist_cms` calls this
+/// to decide whether to bring the backend online immediately. Guarded on
+/// `backend_present` so re-running the wizard against an already-installed
+/// backend does not double-spawn. Pure; unit-tested.
+pub(crate) fn should_install_after_persist(backend_present: bool, cfg: &Config) -> bool {
+    !backend_present && cfg.wizard_completed && cfg.connect.connect_to_cms
+}
+
+pub(crate) fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
     let mbox_dir = match app_handle.path().app_data_dir() {
         Ok(dir) => dir.join("native-mbox"),
         Err(e) => {
@@ -898,5 +913,33 @@ mod tests {
         let cursor = drain_step(&buf, cursor, |l| next.push(l.seq));
         assert_eq!(next, vec![3, 4], "only lines newer than the cursor are emitted");
         assert_eq!(cursor, 4);
+    }
+
+    // tuxlink-aw6g: the in-session post-wizard backend-install decision. This is
+    // the regression guard for "CMS telnet dead until restart after a fresh
+    // install" — the wizard must bring the backend online when (and only when)
+    // it isn't already present and the config is CMS-mode.
+    #[test]
+    fn install_after_persist_true_when_cms_and_no_backend() {
+        assert!(should_install_after_persist(false, &cms_config()));
+    }
+
+    #[test]
+    fn install_after_persist_false_when_backend_already_present() {
+        assert!(!should_install_after_persist(true, &cms_config()));
+    }
+
+    #[test]
+    fn install_after_persist_false_for_offline_config() {
+        let mut cfg = cms_config();
+        cfg.connect.connect_to_cms = false;
+        assert!(!should_install_after_persist(false, &cfg));
+    }
+
+    #[test]
+    fn install_after_persist_false_when_wizard_incomplete() {
+        let mut cfg = cms_config();
+        cfg.wizard_completed = false;
+        assert!(!should_install_after_persist(false, &cfg));
     }
 }

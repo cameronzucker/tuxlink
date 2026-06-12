@@ -266,14 +266,41 @@ pub async fn persist_cms_impl(
 ///   (footgun-elimination per Codex R5 P2 + spec §3.7).
 #[tauri::command]
 pub async fn wizard_persist_cms(
+    app: tauri::AppHandle,
     state: tauri::State<'_, WizardMutex>,
+    backend: tauri::State<'_, crate::app_backend::BackendState>,
     raw_callsign: String,
     password: String,
     grid: String,
     mbo_address: String,
 ) -> Result<(), WizardError> {
     let _guard = state.0.try_lock().map_err(|_| WizardError::Busy)?;
-    persist_cms_impl(raw_callsign, password, grid, mbo_address).await
+    persist_cms_impl(raw_callsign, password, grid, mbo_address).await?;
+
+    // tuxlink-aw6g: bring the native backend online in THIS session so CMS
+    // telnet works immediately after the first-launch wizard, with no app
+    // restart. On a fresh install bootstrap runs BEFORE the wizard (no config →
+    // `NotConnected` → no backend); without this the operator hit "backend
+    // offline" until the next launch and CMS telnet "didn't even start."
+    // Reuses bootstrap's proven Spawn path; guarded against a double-spawn when
+    // the backend is already installed.
+    match crate::config::read_config() {
+        Ok(cfg)
+            if crate::bootstrap::should_install_after_persist(
+                backend.current().is_some(),
+                &cfg,
+            ) =>
+        {
+            crate::bootstrap::install_native(&app, backend.inner(), cfg);
+        }
+        Ok(_) => {}
+        Err(e) => tracing::error!(
+            target: "tuxlink::wizard",
+            error = %e,
+            "post-wizard backend install skipped: config read failed after persist",
+        ),
+    }
+    Ok(())
 }
 
 /// Core logic for the offline identity path.
