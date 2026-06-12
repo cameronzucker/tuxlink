@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // hf-channel-sim — Watterson-class HF ionospheric channel simulator.
-// Copyright (C) 2026 tuxmodem contributors.
+// Copyright (C) 2026 sonde contributors.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3 as

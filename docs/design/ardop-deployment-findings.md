@@ -21,9 +21,9 @@
    single arbiter of the one-sound-card conflict (spin Dire Wolf down / ARDOP up;
    SIGINT clean-stop; confirm the device released before the swap).
 3. **ARDOP transport = generic "external TCP modem" client** — NOT ARDOP-special-cased.
-   ardopcf / Dire Wolf / VARA / (future) tuxmodem are all instances of one transport
+   ardopcf / Dire Wolf / VARA / (future) sonde are all instances of one transport
    abstraction (drive a modem over its TCP host protocol + manage its process).
-4. **Rig control = its own crate from the start** (`tux-rig`: trait
+4. **Rig control = its own crate from the start** (`sonde-rig`: trait
    `Ptt/SetFreq/SetMode/ReadStatus` + Hamlib as the first backend) — NOT baked into
    client internals; consumed by ARDOP-full and the future first-party modem.
 
@@ -238,13 +238,13 @@ If the clean-sheet modem ships as a **separate open-source TCP-daemon** (usable 
 non-tuxlink clients — Pat/ARIM/etc., like ardopcf/VARA), it **revises the rig-control
 home above**:
 
-- To anyone, tuxmodem becomes **just another external TCP modem** — same shape as
+- To anyone, sonde becomes **just another external TCP modem** — same shape as
   ardopcf/Dire Wolf/VARA. tuxlink-the-client collapses to ONE abstraction: "drive a
   modem over its TCP host protocol + manage its process." ARDOP is the proving ground
   for exactly that pattern. *Unifying, not complicating.*
 - **Rig control relocates INTO the modem** (a standalone modem must do its own PTT),
   but the client still needs freq-setting for modems that punt CAT (ardopcf). Resolve
-  by factoring rig control as a **shared crate** (`tux-rig`: trait + Hamlib backend)
+  by factoring rig control as a **shared crate** (`sonde-rig`: trait + Hamlib backend)
   consumed by both the modem daemon and the client — "build once" survives the split.
 - The modem's **TCP host protocol becomes a public, versioned API**. Fork: adopt/echo
   an existing host protocol (Pat/ARIM work unmodified — adoption lever) vs. clean-new

@@ -53,7 +53,7 @@ wider-band ARQ protocols).
    interactive operator-driven uses (Winlink mail exchange, for
    example), block latency of a few seconds is acceptable. For real-time
    keyboard chat (JS8-style), tighter latency matters. **Open question:**
-   what's tuxmodem's latency budget? [open]
+   what's sonde's latency budget? [open]
 5. **HF burst-error pattern.** HF errors are often bursty (deep fades
    lasting tens to hundreds of ms). FEC families differ in burst-error
    resilience — Reed-Solomon over GF(256) handles bursts naturally;

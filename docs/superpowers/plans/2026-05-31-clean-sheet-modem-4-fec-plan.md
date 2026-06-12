@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the forward-error-correction layer for tuxmodem's two-family PHY ladder (overview §5.A.1) — a short-block LDPC codec implemented as a discrete crate (`tuxmodem-fec`) inside the tuxmodem workspace, with two code families: a per-OFDM-symbol short-block LDPC for the bit-adaptive OFDM family and a single very-strong rate-1/4 LDPC for the wide-band low-density noise-floor mode. The FEC is the load-bearing margin for the noise-floor mode (per overview §5.A.1) and the rate-matched complement to bit-loading in the OFDM main family. Validate against the channel simulator (#1) per ITU-R F.520 "good/moderate/poor/flutter."
+**Goal:** Build the forward-error-correction layer for sonde's two-family PHY ladder (overview §5.A.1) — a short-block LDPC codec implemented as a discrete crate (`sonde-fec`) inside the sonde workspace, with two code families: a per-OFDM-symbol short-block LDPC for the bit-adaptive OFDM family and a single very-strong rate-1/4 LDPC for the wide-band low-density noise-floor mode. The FEC is the load-bearing margin for the noise-floor mode (per overview §5.A.1) and the rate-matched complement to bit-loading in the OFDM main family. Validate against the channel simulator (#1) per ITU-R F.520 "good/moderate/poor/flutter."
 
 **Architecture (settled positions taken in this plan):**
 
-1. **FEC is a peer subsystem, NOT folded into #3.** See §A below for the justification. Concretely: `tuxmodem-fec` is its own Rust crate inside the tuxmodem workspace; PHY (#3) depends on it. The crates ship together; the *separation* is at the API boundary, not the release boundary.
+1. **FEC is a peer subsystem, NOT folded into #3.** See §A below for the justification. Concretely: `sonde-fec` is its own Rust crate inside the sonde workspace; PHY (#3) depends on it. The crates ship together; the *separation* is at the API boundary, not the release boundary.
 2. **Code family: LDPC only (short-block).** No turbo (decoder complexity + patent posture), no polar in v0.5+ (list-decoder complexity for the floor mode is questionable on a Pi 5 at the rate-1/4 strength needed; revisit in v0.6+). Reed-Solomon outer + convolutional inner — the classical concatenated stack — is explicitly rejected: modern short-block LDPC ships near-Shannon performance in a single layer at rates 1/4 through 5/6 at the block sizes HF voice-bandwidth modems can afford. Justification in §A.
 3. **Two LDPC code instances, sharing one decoder:** a **rate-1/4 (n=2048, k=512)** "floor" code for the noise-floor robustness mode, and a **rate-adaptive (n=648 or 1296) WiFi-style family covering 1/2, 2/3, 3/4, 5/6** for the OFDM main-family per-OFDM-symbol payload. Both use sum-product-algorithm (SPA) belief-propagation decoding over a Tanner graph; the difference is the parity-check matrix and number of decoder iterations.
 4. **Soft-decision input only.** The PHY (#3) MUST emit per-bit log-likelihood ratios (LLRs); the FEC API does NOT accept hard bits. This is non-negotiable for LDPC — hard-decision LDPC throws away 2–3 dB of coding gain and there is no reason to support it.
@@ -16,8 +16,8 @@
 
 **Tech Stack:**
 
-- **Rust 2021 edition**, edition pinned to match the rest of the tuxmodem workspace.
-- **Crate name:** `tuxmodem-fec`, AGPLv3-only (per overview §5.A.4).
+- **Rust 2021 edition**, edition pinned to match the rest of the sonde workspace.
+- **Crate name:** `sonde-fec`, AGPLv3-only (per overview §5.A.4).
 - **Dependencies (verified AGPLv3-compatible):**
   - `bitvec` (MIT/Apache-2.0) — efficient bit-level slice manipulation for LDPC encode/decode.
   - `nalgebra` (BSD-3-Clause / Apache-2.0 / MIT, multi-licensed; pick Apache-2.0) — sparse matrix operations for the parity-check matrix.
@@ -48,7 +48,7 @@ The overview §1 footnote ("FEC could fold into #3 or stay separate depending on
 5. **Rust workspace convention.** Distinct concerns → distinct crates is the idiomatic posture. Reversing — folding FEC and PHY into one crate — is the unusual move that needs justification, not the default.
 6. **HARQ optionality preserved.** Type-II/III HARQ (v0.6+) needs the FEC decoder to be addressable independently of the PHY frame timing. A folded design pre-commits to a single integration shape; a peer design keeps the seam open.
 
-**Concretely:** `tuxmodem-fec` is its own crate. PHY (`tuxmodem-phy`) depends on it. They ship together in the `tuxmodem` workspace; the *separation* is the API boundary inside the workspace, not a release-time boundary. This is the same model `bitvec` + `nalgebra` use — separate crates, co-released.
+**Concretely:** `sonde-fec` is its own crate. PHY (`sonde-phy`) depends on it. They ship together in the `sonde` workspace; the *separation* is the API boundary inside the workspace, not a release-time boundary. This is the same model `bitvec` + `nalgebra` use — separate crates, co-released.
 
 **Coordination with #3 (per §F):** if #3's PHY plan takes the folded position, surface the disagreement at the parent agent's two-plan reconciliation step; do not silently resolve. The reconciliation should weigh the six arguments above against whatever the folded position offers.
 
@@ -56,10 +56,10 @@ The overview §1 footnote ("FEC could fold into #3 or stay separate depending on
 
 ## §B. File structure
 
-The `tuxmodem-fec` crate sits at `crates/tuxmodem-fec/` inside the tuxmodem workspace. Files within the crate:
+The `sonde-fec` crate sits at `crates/sonde-fec/` inside the sonde workspace. Files within the crate:
 
 ```
-crates/tuxmodem-fec/
+crates/sonde-fec/
 ├── Cargo.toml                          # AGPL-3.0-only, edition 2021, deps as above
 ├── README.md                           # Purpose, citations (Gallager 1963, MacKay-Neal 1996, Richardson-Urbanke 2001), license
 ├── LICENSE                             # AGPL-3.0 full text
@@ -232,7 +232,7 @@ The channel simulator is a dev-dep; FEC's integration tests use it to produce BE
 // In tests/itu_f520_*.rs (integration tests):
 
 use hf_channel_sim::{Watterson, ItuF520Condition};
-use tuxmodem_fec::{LdpcEncoder, LdpcDecoder, CodeFamily, Llr};
+use sonde_fec::{LdpcEncoder, LdpcDecoder, CodeFamily, Llr};
 
 // 1. Encode N random info-blocks at the chosen rate.
 // 2. BPSK-modulate the codeword (sign-bit only; this is the simplest channel-coupling).
@@ -258,7 +258,7 @@ This FEC subsystem is gated on three measurable criteria, not one:
 
 **Non-criteria explicitly:**
 
-- We do NOT gate on "must strictly beat VARA's FEC." Per overview §0, that bar is risky to gate the program on. The bar is "close enough that operators find tuxmodem a reasonable choice."
+- We do NOT gate on "must strictly beat VARA's FEC." Per overview §0, that bar is risky to gate the program on. The bar is "close enough that operators find sonde a reasonable choice."
 - We do NOT gate on "decode is fastest possible on all hardware." Per overview §5.A.6, compute target is best-effort; Pi 5 is primary.
 
 ---
@@ -273,7 +273,7 @@ These extend FEC spec §8 with implementation-specific items.
 4. **Interleaver-depth mismatch with HF burst length.** Block interleaver works only if depth >> burst length. HF burst lengths range from 10 ms (mild flutter) to 500 ms (deep fades). At 48 kHz sample rate, 500 ms = 24,000 samples. Block sizes (n=648 or n=2048) are smaller than this in symbol-time terms; interleaver-across-multiple-blocks is OUT of scope for v0.5+ (would couple FEC to the MAC layer's block-grouping). v0.5+ accepts that deep-fade bursts can wipe out a whole block; ARQ retransmits. This is a documented limitation, not a bug.
 5. **HARQ scope creep.** Type-II/III HARQ is tempting once rate-compatible codes are in. We DO build the puncturing infrastructure (`puncture.rs`) but we DO NOT wire it to ARQ in v0.5+. The hook exists for v0.6+.
 6. **VARA-shaped temptation around code parameters.** "How did VARA pick its LDPC parameters?" → STOP. Pick from Gallager 1963 + MacKay-Neal 1996 + WiFi 802.11n standard (open) for the WiFi-family code parameters. The WiFi 802.11n LDPC parameters are public-standard, not VARA-derived; using them is clean-sheet.
-7. **GPL-only library temptation.** `gr-fec` from GNU Radio implements LDPC and is GPL-only. Tempting to wrap. Don't — AGPLv3 + GPLv3 is one-way compatible but adding a runtime GPL dep cascades, and our license posture is AGPLv3-only for tuxmodem. Implement LDPC from the foundational papers.
+7. **GPL-only library temptation.** `gr-fec` from GNU Radio implements LDPC and is GPL-only. Tempting to wrap. Don't — AGPLv3 + GPLv3 is one-way compatible but adding a runtime GPL dep cascades, and our license posture is AGPLv3-only for sonde. Implement LDPC from the foundational papers.
 8. **Hardware-fast-decoder rabbit hole.** Production LDPC decoders use SIMD, GPU, or FPGA. v0.5+ stays scalar-float SPA on CPU. Profile under representative workloads first; optimize only the demonstrated bottlenecks.
 
 ---
@@ -307,17 +307,17 @@ This plan was written in parallel with six sibling subsystem plans (#1 channel s
 ## Phase 0: Crate scaffold + workspace integration
 
 **Files:**
-- Create: `crates/tuxmodem-fec/Cargo.toml`
-- Create: `crates/tuxmodem-fec/LICENSE` (full AGPL-3.0-only text)
-- Create: `crates/tuxmodem-fec/README.md`
-- Create: `crates/tuxmodem-fec/src/lib.rs`
-- Modify: workspace-root `Cargo.toml` (add `crates/tuxmodem-fec` to `members`)
+- Create: `crates/sonde-fec/Cargo.toml`
+- Create: `crates/sonde-fec/LICENSE` (full AGPL-3.0-only text)
+- Create: `crates/sonde-fec/README.md`
+- Create: `crates/sonde-fec/src/lib.rs`
+- Modify: workspace-root `Cargo.toml` (add `crates/sonde-fec` to `members`)
 
 ### Task 0.1: Write the workspace-root Cargo.toml diff
 
-- [ ] **Step 1: Read the workspace-root `Cargo.toml`** at the tuxmodem workspace root (path to be confirmed at execution time; typically `tuxmodem/Cargo.toml` or `crates-tuxmodem/Cargo.toml` per the workspace's actual layout). Identify the `[workspace] members = [ ... ]` array.
+- [ ] **Step 1: Read the workspace-root `Cargo.toml`** at the sonde workspace root (path to be confirmed at execution time; typically `sonde/Cargo.toml` or `crates-sonde/Cargo.toml` per the workspace's actual layout). Identify the `[workspace] members = [ ... ]` array.
 
-- [ ] **Step 2: Add `"crates/tuxmodem-fec"` to the members list, alphabetized.**
+- [ ] **Step 2: Add `"crates/sonde-fec"` to the members list, alphabetized.**
 
 Diff:
 
@@ -325,8 +325,8 @@ Diff:
 [workspace]
 members = [
     "crates/hf-channel-sim",
-    "crates/tuxmodem-fec",        # ADD THIS LINE
-    "crates/tuxmodem-phy",
+    "crates/sonde-fec",        # ADD THIS LINE
+    "crates/sonde-phy",
     # ... other crates as they exist
 ]
 ```
@@ -335,7 +335,7 @@ members = [
 
 ```bash
 git add Cargo.toml
-git commit -m "feat(fec): register tuxmodem-fec crate in workspace
+git commit -m "feat(fec): register sonde-fec crate in workspace
 
 Agent: opossum-pine-spruce
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -343,17 +343,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 0.2: Create the Cargo.toml for the FEC crate
 
-**File:** `crates/tuxmodem-fec/Cargo.toml`
+**File:** `crates/sonde-fec/Cargo.toml`
 
 - [ ] **Step 1: Write the file.**
 
 ```toml
 [package]
-name = "tuxmodem-fec"
+name = "sonde-fec"
 version = "0.0.1"
 edition = "2021"
 license = "AGPL-3.0-only"
-description = "LDPC forward error correction for tuxmodem (clean-sheet HF modem). Two code families: a rate-1/4 short-block code for the wide-band low-density noise-floor PHY mode, and a rate-adaptive WiFi-style family (rates 1/2..5/6) for the bit-adaptive OFDM main family."
+description = "LDPC forward error correction for sonde (clean-sheet HF modem). Two code families: a rate-1/4 short-block code for the wide-band low-density noise-floor PHY mode, and a rate-adaptive WiFi-style family (rates 1/2..5/6) for the bit-adaptive OFDM main family."
 repository = "https://github.com/cameronzucker/tuxlink"
 keywords = ["ldpc", "fec", "hf", "modem", "ham-radio"]
 categories = ["algorithms", "encoding"]
@@ -379,19 +379,19 @@ name = "decode"
 harness = false
 ```
 
-- [ ] **Step 2: Run `cargo check -p tuxmodem-fec`.**
+- [ ] **Step 2: Run `cargo check -p sonde-fec`.**
 
 Expected: PASS (empty crate, no source yet — `cargo check` succeeds against the empty `lib.rs` from the next task).
 
 ### Task 0.3: Create the LICENSE file (AGPL-3.0-only full text)
 
-- [ ] **Step 1: Write `crates/tuxmodem-fec/LICENSE` with the full AGPL-3.0-only text.** Copy from `https://www.gnu.org/licenses/agpl-3.0.txt` verbatim (or from a sibling crate's LICENSE file if one already exists in the workspace). Cargo doesn't enforce this, but AGPL §13 + §15 require the license text to ship with the source.
+- [ ] **Step 1: Write `crates/sonde-fec/LICENSE` with the full AGPL-3.0-only text.** Copy from `https://www.gnu.org/licenses/agpl-3.0.txt` verbatim (or from a sibling crate's LICENSE file if one already exists in the workspace). Cargo doesn't enforce this, but AGPL §13 + §15 require the license text to ship with the source.
 
 - [ ] **Step 2: Commit Phase 0 scaffolding (Cargo.toml + LICENSE).**
 
 ```bash
-git add crates/tuxmodem-fec/
-git commit -m "feat(fec): scaffold tuxmodem-fec crate (Cargo.toml + AGPLv3 LICENSE)
+git add crates/sonde-fec/
+git commit -m "feat(fec): scaffold sonde-fec crate (Cargo.toml + AGPLv3 LICENSE)
 
 Agent: opossum-pine-spruce
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -399,12 +399,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 0.4: Create the README + minimal lib.rs
 
-- [ ] **Step 1: Write `crates/tuxmodem-fec/README.md`.**
+- [ ] **Step 1: Write `crates/sonde-fec/README.md`.**
 
 ```markdown
-# tuxmodem-fec
+# sonde-fec
 
-LDPC forward error correction for tuxmodem (the clean-sheet HF modem in
+LDPC forward error correction for sonde (the clean-sheet HF modem in
 the tuxlink project).
 
 ## Code families
@@ -417,13 +417,13 @@ This crate implements two LDPC code families, sharing one sum-product-algorithm
   maximum coding gain.
 - **OFDM-family rate-compatible codes (n=648, n=1296; rates 1/2, 2/3, 3/4, 5/6).**
   Used by the bit-adaptive OFDM main family. The WiFi 802.11n LDPC family is
-  the open-standard reference; tuxmodem's parameters are independently derived
+  the open-standard reference; sonde's parameters are independently derived
   per the program's clean-sheet posture (ADR 0014). See `docs/code-construction.md`.
 
 ## API
 
 ```rust
-use tuxmodem_fec::{FecEncoder, FecDecoder, CodeFamily, Llr, BlockN, CodeRate};
+use sonde_fec::{FecEncoder, FecDecoder, CodeFamily, Llr, BlockN, CodeRate};
 use bitvec::prelude::*;
 
 let encoder = LdpcEncoder::new();
@@ -465,10 +465,10 @@ NO VARA internals, leaked source, decompilation, or RE write-ups are
 consulted. STOP rule per ADR 0014.
 ```
 
-- [ ] **Step 2: Write `crates/tuxmodem-fec/src/lib.rs` minimal stub.**
+- [ ] **Step 2: Write `crates/sonde-fec/src/lib.rs` minimal stub.**
 
 ```rust
-//! tuxmodem-fec: LDPC forward error correction for the clean-sheet HF modem.
+//! sonde-fec: LDPC forward error correction for the clean-sheet HF modem.
 //!
 //! See `README.md` for an overview. See `docs/architecture.md` for design
 //! rationale. See ADR 0014 for the clean-sheet posture this crate is
@@ -495,15 +495,15 @@ mod stats;
 mod llr;
 ```
 
-- [ ] **Step 3: Verify `cargo check -p tuxmodem-fec` fails because submodules don't exist yet.**
+- [ ] **Step 3: Verify `cargo check -p sonde-fec` fails because submodules don't exist yet.**
 
 Expected: FAIL with errors about missing modules `api`, `crc`, etc. That's the next phase's work.
 
 - [ ] **Step 4: Skip the failing cargo check for now — the submodule stubs will land progressively in Phases 1–6. Commit the scaffolding.**
 
 ```bash
-git add crates/tuxmodem-fec/
-git commit -m "feat(fec): scaffold tuxmodem-fec lib.rs + README
+git add crates/sonde-fec/
+git commit -m "feat(fec): scaffold sonde-fec lib.rs + README
 
 Agent: opossum-pine-spruce
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -514,15 +514,15 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Phase 1: CRC-32 wrapper + tests
 
 **Files:**
-- Create: `crates/tuxmodem-fec/src/crc.rs`
-- Create: `crates/tuxmodem-fec/tests/crc_roundtrip.rs`
+- Create: `crates/sonde-fec/src/crc.rs`
+- Create: `crates/sonde-fec/tests/crc_roundtrip.rs`
 
 CRC-32 is the outer integrity check FEC reports to ARQ. CRC-32-IEEE-802.3
 polynomial (0x04C11DB7) is the de-facto standard.
 
 ### Task 1.1: Write the failing CRC roundtrip test
 
-**File:** `crates/tuxmodem-fec/tests/crc_roundtrip.rs`
+**File:** `crates/sonde-fec/tests/crc_roundtrip.rs`
 
 - [ ] **Step 1: Write the test.**
 
@@ -530,7 +530,7 @@ polynomial (0x04C11DB7) is the de-facto standard.
 //! Property: append_crc32() followed by verify_crc32() round-trips losslessly.
 
 use bitvec::prelude::*;
-use tuxmodem_fec::crc::{append_crc32, verify_crc32};
+use sonde_fec::crc::{append_crc32, verify_crc32};
 
 #[test]
 fn crc_roundtrip_zero_bits() {
@@ -561,19 +561,19 @@ fn crc_detects_single_bit_flip() {
 }
 ```
 
-Note: this test imports `tuxmodem_fec::crc::{append_crc32, verify_crc32}`. To make this importable, expose the `crc` module as `pub mod crc` in `lib.rs` (the public API for tests is intentionally narrow but the CRC functions are needed by the encoder + downstream layers, so they're crate-level public).
+Note: this test imports `sonde_fec::crc::{append_crc32, verify_crc32}`. To make this importable, expose the `crc` module as `pub mod crc` in `lib.rs` (the public API for tests is intentionally narrow but the CRC functions are needed by the encoder + downstream layers, so they're crate-level public).
 
 - [ ] **Step 2: Adjust `lib.rs` to make the `crc` module public.**
 
 Change `mod crc;` → `pub mod crc;` in `lib.rs`.
 
-- [ ] **Step 3: Run `cargo test -p tuxmodem-fec --test crc_roundtrip` to verify it fails.**
+- [ ] **Step 3: Run `cargo test -p sonde-fec --test crc_roundtrip` to verify it fails.**
 
 Expected: FAIL with "unresolved module `crc`" or "function `append_crc32` not found."
 
 ### Task 1.2: Implement the CRC wrapper
 
-**File:** `crates/tuxmodem-fec/src/crc.rs`
+**File:** `crates/sonde-fec/src/crc.rs`
 
 - [ ] **Step 1: Write `crc.rs`.**
 
@@ -657,13 +657,13 @@ fn bits_to_u32_msbfirst(bits: &BitSlice<u8>) -> u32 {
 
 - [ ] **Step 2: Run the tests.**
 
-Run: `cargo test -p tuxmodem-fec --test crc_roundtrip`
+Run: `cargo test -p sonde-fec --test crc_roundtrip`
 Expected: All three tests PASS.
 
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/crc.rs crates/tuxmodem-fec/src/lib.rs crates/tuxmodem-fec/tests/crc_roundtrip.rs
+git add crates/sonde-fec/src/crc.rs crates/sonde-fec/src/lib.rs crates/sonde-fec/tests/crc_roundtrip.rs
 git commit -m "feat(fec): CRC-32 append + verify over bit slices
 
 Agent: opossum-pine-spruce
@@ -675,14 +675,14 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Phase 2: Bit interleaver
 
 **Files:**
-- Create: `crates/tuxmodem-fec/src/interleaver.rs`
-- Create: `crates/tuxmodem-fec/tests/interleaver_roundtrip.rs`
+- Create: `crates/sonde-fec/src/interleaver.rs`
+- Create: `crates/sonde-fec/tests/interleaver_roundtrip.rs`
 
 Block interleaver: write input bits row-by-row into an R×C matrix; read column-by-column. De-interleaver is the inverse. Decorrelates burst errors before the LDPC decoder.
 
 ### Task 2.1: Write the failing interleaver tests
 
-**File:** `crates/tuxmodem-fec/tests/interleaver_roundtrip.rs`
+**File:** `crates/sonde-fec/tests/interleaver_roundtrip.rs`
 
 - [ ] **Step 1: Write the test.**
 
@@ -692,7 +692,7 @@ Block interleaver: write input bits row-by-row into an R×C matrix; read column-
 
 use bitvec::prelude::*;
 use proptest::prelude::*;
-use tuxmodem_fec::interleaver::{interleave, deinterleave};
+use sonde_fec::interleaver::{interleave, deinterleave};
 
 proptest! {
     #[test]
@@ -742,7 +742,7 @@ Expected: FAIL — `interleave` / `deinterleave` not defined.
 
 ### Task 2.2: Implement the interleaver
 
-**File:** `crates/tuxmodem-fec/src/interleaver.rs`
+**File:** `crates/sonde-fec/src/interleaver.rs`
 
 - [ ] **Step 1: Write `interleaver.rs`.**
 
@@ -812,13 +812,13 @@ pub fn deinterleave(input: &BitSlice<u8>, rows: usize) -> BitVec<u8> {
 
 - [ ] **Step 2: Run the tests.**
 
-Run: `cargo test -p tuxmodem-fec --test interleaver_roundtrip`
+Run: `cargo test -p sonde-fec --test interleaver_roundtrip`
 Expected: Both tests PASS.
 
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/interleaver.rs crates/tuxmodem-fec/src/lib.rs crates/tuxmodem-fec/tests/interleaver_roundtrip.rs
+git add crates/sonde-fec/src/interleaver.rs crates/sonde-fec/src/lib.rs crates/sonde-fec/tests/interleaver_roundtrip.rs
 git commit -m "feat(fec): block bit interleaver with burst-decorrelation test
 
 Agent: opossum-pine-spruce
@@ -830,22 +830,22 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Phase 3: Parity-check matrix construction
 
 **Files:**
-- Create: `crates/tuxmodem-fec/src/codes/mod.rs`
-- Create: `crates/tuxmodem-fec/src/codes/parity_matrix.rs`
-- Create: `crates/tuxmodem-fec/src/codes/floor_rate14.rs`
-- Create: `crates/tuxmodem-fec/src/codes/ofdm_wifi_family.rs`
-- Create: `crates/tuxmodem-fec/src/api.rs` (the enum types this phase needs)
+- Create: `crates/sonde-fec/src/codes/mod.rs`
+- Create: `crates/sonde-fec/src/codes/parity_matrix.rs`
+- Create: `crates/sonde-fec/src/codes/floor_rate14.rs`
+- Create: `crates/sonde-fec/src/codes/ofdm_wifi_family.rs`
+- Create: `crates/sonde-fec/src/api.rs` (the enum types this phase needs)
 
 The parity-check matrix H of an LDPC code is the source of both the encoder (via systematic-form transformation) and the decoder (via Tanner-graph BP). H is sparse — `nalgebra`'s sparse format wins on memory.
 
 ### Task 3.1: Write the public-type-enum stubs in api.rs
 
-**File:** `crates/tuxmodem-fec/src/api.rs`
+**File:** `crates/sonde-fec/src/api.rs`
 
 - [ ] **Step 1: Write the enums + types. (Trait stubs come in Phase 6.)**
 
 ```rust
-//! Public API for tuxmodem-fec.
+//! Public API for sonde-fec.
 
 use bitvec::prelude::*;
 
@@ -922,12 +922,12 @@ impl std::error::Error for FecError {}
 // FecEncoder and FecDecoder trait declarations are added in Phase 6.
 ```
 
-- [ ] **Step 2: Run `cargo check -p tuxmodem-fec`.** Expected: still failing on missing `codes`, `encode`, `decode`, `stats`, `llr`, `puncture` modules. That's fine; this phase only adds `api.rs`.
+- [ ] **Step 2: Run `cargo check -p sonde-fec`.** Expected: still failing on missing `codes`, `encode`, `decode`, `stats`, `llr`, `puncture` modules. That's fine; this phase only adds `api.rs`.
 
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/api.rs
+git add crates/sonde-fec/src/api.rs
 git commit -m "feat(fec): public type enums (CodeFamily, BlockN, CodeRate, Llr, ...)
 
 Agent: opossum-pine-spruce
@@ -936,7 +936,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 3.2: Implement the sparse parity-matrix type
 
-**File:** `crates/tuxmodem-fec/src/codes/parity_matrix.rs`
+**File:** `crates/sonde-fec/src/codes/parity_matrix.rs`
 
 - [ ] **Step 1: Write the parity-check matrix type.**
 
@@ -995,13 +995,13 @@ mod tests {
 
 - [ ] **Step 2: Run the unit test.**
 
-Run: `cargo test -p tuxmodem-fec --lib codes::parity_matrix`
+Run: `cargo test -p sonde-fec --lib codes::parity_matrix`
 Expected: PASS.
 
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/codes/parity_matrix.rs
+git add crates/sonde-fec/src/codes/parity_matrix.rs
 git commit -m "feat(fec): sparse parity-check matrix type for LDPC codes
 
 Agent: opossum-pine-spruce
@@ -1010,7 +1010,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 3.3: Implement the floor rate-1/4 code construction
 
-**File:** `crates/tuxmodem-fec/src/codes/floor_rate14.rs`
+**File:** `crates/sonde-fec/src/codes/floor_rate14.rs`
 
 Use the **MacKay-Neal 3-4 regular construction** (regular column weight 3, regular row weight 4) for an (n=2048, k=512) code. Construction is from MacKay's 1996 paper (open) — random sparse H with constraints: every column has exactly 3 ones, every row has exactly 4 ones (since (n-k)/n × col_weight = row_weight, that's (1536/2048)*4 = 3 — checks out). Generated deterministically with a fixed seed for reproducibility.
 
@@ -1147,7 +1147,7 @@ pub mod ofdm_wifi_family;
 //!
 //! n ∈ {648, 1296}; rate ∈ {1/2, 2/3, 3/4, 5/6}. The construction follows
 //! the IEEE 802.11n-2009 LDPC design pattern (quasi-cyclic block-diagonal H
-//! with shifted identity sub-matrices), with tuxmodem-specific shift values
+//! with shifted identity sub-matrices), with sonde-specific shift values
 //! independently derived per the clean-sheet posture (ADR 0014).
 //!
 //! [STUB: filled in by Task 3.4]
@@ -1162,13 +1162,13 @@ pub fn build(_block_n: BlockN, _rate: CodeRate) -> ParityCheckMatrix {
 
 - [ ] **Step 4: Run the floor-code tests.**
 
-Run: `cargo test -p tuxmodem-fec --lib codes::floor_rate14`
+Run: `cargo test -p sonde-fec --lib codes::floor_rate14`
 Expected: All four tests PASS.
 
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/codes/
+git add crates/sonde-fec/src/codes/
 git commit -m "feat(fec): floor rate-1/4 LDPC code (n=2048, k=512, regular 3,4)
 
 Agent: opossum-pine-spruce
@@ -1190,7 +1190,7 @@ The WiFi 802.11n LDPC family uses a quasi-cyclic (QC) construction: H is a block
 //!
 //! Shift values are generated deterministically from a fixed PRNG seed per
 //! (block_n, rate) tuple. This is the construction PATTERN of IEEE 802.11n
-//! (public standard); the specific shift values are tuxmodem-derived per
+//! (public standard); the specific shift values are sonde-derived per
 //! ADR 0014's clean-sheet provenance posture.
 
 use rand::SeedableRng;
@@ -1327,13 +1327,13 @@ mod tests {
 
 - [ ] **Step 2: Run the WiFi-family tests.**
 
-Run: `cargo test -p tuxmodem-fec --lib codes::ofdm_wifi_family`
+Run: `cargo test -p sonde-fec --lib codes::ofdm_wifi_family`
 Expected: All four tests PASS.
 
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/codes/ofdm_wifi_family.rs
+git add crates/sonde-fec/src/codes/ofdm_wifi_family.rs
 git commit -m "feat(fec): WiFi-pattern rate-compatible LDPC family (n=648/1296, rates 1/2..5/6)
 
 Agent: opossum-pine-spruce
@@ -1342,7 +1342,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 3.5: Wire up the codes/mod.rs dispatch
 
-**File:** `crates/tuxmodem-fec/src/codes/mod.rs`
+**File:** `crates/sonde-fec/src/codes/mod.rs`
 
 - [ ] **Step 1: Update `codes/mod.rs` to provide the dispatch function.**
 
@@ -1380,7 +1380,7 @@ pub mod interleaver;
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/codes/mod.rs crates/tuxmodem-fec/src/lib.rs
+git add crates/sonde-fec/src/codes/mod.rs crates/sonde-fec/src/lib.rs
 git commit -m "feat(fec): codes::build() dispatch over CodeFamily enum
 
 Agent: opossum-pine-spruce
@@ -1392,7 +1392,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Phase 4: LDPC systematic encoder
 
 **Files:**
-- Create: `crates/tuxmodem-fec/src/encode.rs`
+- Create: `crates/sonde-fec/src/encode.rs`
 
 LDPC systematic encoding: given H and k information bits, produce n codeword bits where the first k bits equal the input (systematic form). Done via Gaussian elimination on H to derive the generator-equivalent encoding, then back-substitution for the parity bits.
 
@@ -1400,7 +1400,7 @@ LDPC systematic encoding: given H and k information bits, produce n codeword bit
 
 - [ ] **Step 1: Add a unit test block at the end of `encode.rs` after the implementation.** First we sketch the test in a stub file, then implement.
 
-**File:** `crates/tuxmodem-fec/src/encode.rs` (initial stub)
+**File:** `crates/sonde-fec/src/encode.rs` (initial stub)
 
 ```rust
 //! LDPC systematic encoder.
@@ -1567,7 +1567,7 @@ mod tests {
 
 - [ ] **Step 3: Run the encoder unit tests.**
 
-Run: `cargo test -p tuxmodem-fec --lib encode`
+Run: `cargo test -p sonde-fec --lib encode`
 Expected: PASS all three tests.
 
 Note: If the floor_rate14 code's H matrix happens to be rank-deficient (small probability with the random construction), the `Encoder::new` `panic` triggers. If this surfaces, the fix is in `codes/floor_rate14.rs`: change the SEED constant by ±1 until a rank-full matrix is found. This is acceptable v0.5+ behavior; a more robust column-swap fallback is a v0.6+ improvement.
@@ -1575,7 +1575,7 @@ Note: If the floor_rate14 code's H matrix happens to be rank-deficient (small pr
 - [ ] **Step 4: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/encode.rs crates/tuxmodem-fec/src/lib.rs
+git add crates/sonde-fec/src/encode.rs crates/sonde-fec/src/lib.rs
 git commit -m "feat(fec): LDPC systematic encoder via Gaussian-eliminated H
 
 Agent: opossum-pine-spruce
@@ -1587,8 +1587,8 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Phase 5: SPA belief-propagation decoder
 
 **Files:**
-- Create: `crates/tuxmodem-fec/src/decode.rs`
-- Create: `crates/tuxmodem-fec/src/llr.rs`
+- Create: `crates/sonde-fec/src/decode.rs`
+- Create: `crates/sonde-fec/src/llr.rs`
 
 The Sum-Product Algorithm (SPA) belief-propagation decoder is the canonical
 near-optimal LDPC decoder. It iterates messages between variable nodes
@@ -1602,7 +1602,7 @@ iteration.
 
 ### Task 5.1: Write the LLR helper module
 
-**File:** `crates/tuxmodem-fec/src/llr.rs`
+**File:** `crates/sonde-fec/src/llr.rs`
 
 - [ ] **Step 1: Write the LLR utilities.**
 
@@ -1669,13 +1669,13 @@ mod tests {
 
 - [ ] **Step 3: Run the LLR unit tests.**
 
-Run: `cargo test -p tuxmodem-fec --lib llr`
+Run: `cargo test -p sonde-fec --lib llr`
 Expected: All four tests PASS.
 
 - [ ] **Step 4: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/llr.rs crates/tuxmodem-fec/src/lib.rs
+git add crates/sonde-fec/src/llr.rs crates/sonde-fec/src/lib.rs
 git commit -m "feat(fec): LLR helpers (hard_decide, boxplus)
 
 Agent: opossum-pine-spruce
@@ -1684,7 +1684,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 5.2: Implement the SPA decoder — happy path
 
-**File:** `crates/tuxmodem-fec/src/decode.rs`
+**File:** `crates/sonde-fec/src/decode.rs`
 
 - [ ] **Step 1: Write `decode.rs`.**
 
@@ -1862,13 +1862,13 @@ pub struct DecodeOutcome {
 
 - [ ] **Step 3: Run cargo check to verify compilation.**
 
-Run: `cargo check -p tuxmodem-fec`
+Run: `cargo check -p sonde-fec`
 Expected: PASS (with possible warnings on unused `k` field; ignore for now).
 
 - [ ] **Step 4: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/decode.rs crates/tuxmodem-fec/src/lib.rs
+git add crates/sonde-fec/src/decode.rs crates/sonde-fec/src/lib.rs
 git commit -m "feat(fec): SPA belief-propagation LDPC decoder (LLR-form)
 
 Agent: opossum-pine-spruce
@@ -1941,13 +1941,13 @@ mod tests {
 
 - [ ] **Step 2: Run the tests.**
 
-Run: `cargo test -p tuxmodem-fec --lib decode`
+Run: `cargo test -p sonde-fec --lib decode`
 Expected: Both PASS.
 
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/decode.rs
+git add crates/sonde-fec/src/decode.rs
 git commit -m "test(fec): SPA decoder zero-noise + single-flip recovery tests
 
 Agent: opossum-pine-spruce
@@ -1959,10 +1959,10 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Phase 6: Public API (FecEncoder / FecDecoder traits) + roundtrip
 
 **Files:**
-- Modify: `crates/tuxmodem-fec/src/api.rs` (add traits + impls)
-- Create: `crates/tuxmodem-fec/src/stats.rs`
-- Create: `crates/tuxmodem-fec/src/puncture.rs` (stub for v0.6+ HARQ hook)
-- Create: `crates/tuxmodem-fec/tests/api_contract.rs`
+- Modify: `crates/sonde-fec/src/api.rs` (add traits + impls)
+- Create: `crates/sonde-fec/src/stats.rs`
+- Create: `crates/sonde-fec/src/puncture.rs` (stub for v0.6+ HARQ hook)
+- Create: `crates/sonde-fec/tests/api_contract.rs`
 
 This phase composes the encoder + interleaver + CRC + LDPC + decoder into the
 public `FecEncoder` / `FecDecoder` traits and concrete implementations. The
@@ -1971,7 +1971,7 @@ applied AFTER LDPC encoding. Reverse on decode.
 
 ### Task 6.1: Implement `stats.rs` and `puncture.rs` stubs
 
-**File:** `crates/tuxmodem-fec/src/stats.rs`
+**File:** `crates/sonde-fec/src/stats.rs`
 
 - [ ] **Step 1: Write `stats.rs`.**
 
@@ -2007,7 +2007,7 @@ impl From<&BlockDecodeStats> for ResidualErrorStats {
 }
 ```
 
-**File:** `crates/tuxmodem-fec/src/puncture.rs`
+**File:** `crates/sonde-fec/src/puncture.rs`
 
 - [ ] **Step 2: Write `puncture.rs` v0.5+ stub.**
 
@@ -2035,14 +2035,14 @@ pub mod stats;
 pub mod puncture;
 ```
 
-- [ ] **Step 4: Run `cargo check -p tuxmodem-fec`.**
+- [ ] **Step 4: Run `cargo check -p sonde-fec`.**
 
 Expected: PASS.
 
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/stats.rs crates/tuxmodem-fec/src/puncture.rs crates/tuxmodem-fec/src/lib.rs
+git add crates/sonde-fec/src/stats.rs crates/sonde-fec/src/puncture.rs crates/sonde-fec/src/lib.rs
 git commit -m "feat(fec): stats type + v0.6+ puncture hook stub
 
 Agent: opossum-pine-spruce
@@ -2051,7 +2051,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 6.2: Add the trait declarations to api.rs and the concrete impls
 
-- [ ] **Step 1: Append to `crates/tuxmodem-fec/src/api.rs`.**
+- [ ] **Step 1: Append to `crates/sonde-fec/src/api.rs`.**
 
 ```rust
 // ---- Trait declarations and concrete impls. ----
@@ -2266,14 +2266,14 @@ pub use api::{
 };
 ```
 
-- [ ] **Step 3: Run `cargo check -p tuxmodem-fec`.**
+- [ ] **Step 3: Run `cargo check -p sonde-fec`.**
 
 Expected: PASS.
 
 - [ ] **Step 4: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/src/api.rs crates/tuxmodem-fec/src/lib.rs
+git add crates/sonde-fec/src/api.rs crates/sonde-fec/src/lib.rs
 git commit -m "feat(fec): FecEncoder + FecDecoder traits and LDPC concrete impls
 
 Agent: opossum-pine-spruce
@@ -2282,7 +2282,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 6.3: API-contract roundtrip integration test
 
-**File:** `crates/tuxmodem-fec/tests/api_contract.rs`
+**File:** `crates/sonde-fec/tests/api_contract.rs`
 
 - [ ] **Step 1: Write the test.**
 
@@ -2291,7 +2291,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 //! Zero channel noise: must always round-trip exactly.
 
 use bitvec::prelude::*;
-use tuxmodem_fec::{
+use sonde_fec::{
     BlockN, CodeFamily, CodeRate, FecDecoder, FecEncoder, LdpcDecoder, LdpcEncoder, Llr,
 };
 
@@ -2350,7 +2350,7 @@ fn wrong_length_input_errors() {
     let too_short: BitVec<u8> = BitVec::repeat(false, payload_k - 1);
     let err = enc.encode(family, too_short.as_bitslice()).unwrap_err();
     match err {
-        tuxmodem_fec::FecError::InvalidInputLength { expected, got } => {
+        sonde_fec::FecError::InvalidInputLength { expected, got } => {
             assert_eq!(expected, payload_k);
             assert_eq!(got, payload_k - 1);
         }
@@ -2400,13 +2400,13 @@ fn crc_fail_when_payload_is_corrupted_under_decode() {
 
 - [ ] **Step 2: Run the API-contract tests.**
 
-Run: `cargo test -p tuxmodem-fec --test api_contract`
+Run: `cargo test -p sonde-fec --test api_contract`
 Expected: All four tests PASS.
 
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/tests/api_contract.rs
+git add crates/sonde-fec/tests/api_contract.rs
 git commit -m "test(fec): FecEncoder/FecDecoder end-to-end roundtrip + error contract
 
 Agent: opossum-pine-spruce
@@ -2418,12 +2418,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Phase 7: Channel-simulator-coupled BER-vs-SNR tests
 
 **Files:**
-- Create: `crates/tuxmodem-fec/tests/awgn_bers.rs`
-- Create: `crates/tuxmodem-fec/tests/itu_f520_good.rs`
-- Create: `crates/tuxmodem-fec/tests/itu_f520_moderate.rs`
-- Create: `crates/tuxmodem-fec/tests/itu_f520_poor.rs`
-- Create: `crates/tuxmodem-fec/tests/itu_f520_flutter.rs`
-- Create: `crates/tuxmodem-fec/examples/ber_curve.rs`
+- Create: `crates/sonde-fec/tests/awgn_bers.rs`
+- Create: `crates/sonde-fec/tests/itu_f520_good.rs`
+- Create: `crates/sonde-fec/tests/itu_f520_moderate.rs`
+- Create: `crates/sonde-fec/tests/itu_f520_poor.rs`
+- Create: `crates/sonde-fec/tests/itu_f520_flutter.rs`
+- Create: `crates/sonde-fec/examples/ber_curve.rs`
 
 This phase couples the FEC to the channel simulator (#1) and validates against
 the multi-axis success criteria in §D.
@@ -2445,7 +2445,7 @@ caller-side adapter and updates accordingly.
 
 ### Task 7.1: AWGN baseline BER curve test
 
-**File:** `crates/tuxmodem-fec/tests/awgn_bers.rs`
+**File:** `crates/sonde-fec/tests/awgn_bers.rs`
 
 This is the "sanity baseline" — modern LDPC at rate 1/2 should deliver near-Shannon performance under AWGN. We expect BER ~10⁻⁵ at Eb/N0 around 2 dB for a well-constructed rate-1/2 LDPC.
 
@@ -2459,7 +2459,7 @@ This is the "sanity baseline" — modern LDPC at rate 1/2 should deliver near-Sh
 use bitvec::prelude::*;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use tuxmodem_fec::{
+use sonde_fec::{
     BlockN, CodeFamily, CodeRate, FecDecoder, FecEncoder, LdpcDecoder, LdpcEncoder, Llr,
 };
 
@@ -2529,13 +2529,13 @@ fn awgn_ber_curve_n648_r12() {
 
 - [ ] **Step 2: Run with `--ignored` to verify.**
 
-Run: `cargo test --release -p tuxmodem-fec --test awgn_bers -- --ignored`
+Run: `cargo test --release -p sonde-fec --test awgn_bers -- --ignored`
 Expected: PASS; eprintln shows decreasing BER as Eb/N0 increases.
 
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/tests/awgn_bers.rs
+git add crates/sonde-fec/tests/awgn_bers.rs
 git commit -m "test(fec): AWGN baseline BER-vs-SNR sanity test (ignored by default)
 
 Agent: opossum-pine-spruce
@@ -2548,7 +2548,7 @@ For each ITU-R F.520 condition (good, moderate, poor, flutter), create a test
 that runs a BER curve via the channel simulator. The criterion for "pass" is
 per §D's multi-axis success criteria.
 
-**File:** `crates/tuxmodem-fec/tests/itu_f520_moderate.rs` (the gated one)
+**File:** `crates/sonde-fec/tests/itu_f520_moderate.rs` (the gated one)
 
 - [ ] **Step 1: Write the moderate-channel test.**
 
@@ -2561,7 +2561,7 @@ per §D's multi-axis success criteria.
 use bitvec::prelude::*;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use tuxmodem_fec::{
+use sonde_fec::{
     BlockN, CodeFamily, CodeRate, FecDecoder, FecEncoder, LdpcDecoder, LdpcEncoder, Llr,
 };
 
@@ -2614,7 +2614,7 @@ fn itu_f520_poor_floor_mode_gate() {
 - [ ] **Step 3: Commit the placeholder tests.**
 
 ```bash
-git add crates/tuxmodem-fec/tests/itu_f520_*.rs
+git add crates/sonde-fec/tests/itu_f520_*.rs
 git commit -m "test(fec): ITU-R F.520 channel BER gates (placeholder until #1 lands)
 
 Tests are #[ignore]d; they panic with explanatory messages until the
@@ -2627,7 +2627,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 7.3: BER-curve example CLI
 
-**File:** `crates/tuxmodem-fec/examples/ber_curve.rs`
+**File:** `crates/sonde-fec/examples/ber_curve.rs`
 
 A simple CLI that produces a BER-vs-SNR curve for one (code family, channel condition) pair. Useful for ad-hoc tuning.
 
@@ -2643,7 +2643,7 @@ A simple CLI that produces a BER-vs-SNR curve for one (code family, channel cond
 use bitvec::prelude::*;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use tuxmodem_fec::{
+use sonde_fec::{
     BlockN, CodeFamily, CodeRate, FecDecoder, FecEncoder, LdpcDecoder, LdpcEncoder, Llr,
 };
 
@@ -2729,13 +2729,13 @@ fn main() {
 
 - [ ] **Step 2: Build to confirm it compiles.**
 
-Run: `cargo build --release --example ber_curve -p tuxmodem-fec`
+Run: `cargo build --release --example ber_curve -p sonde-fec`
 Expected: PASS.
 
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/examples/ber_curve.rs
+git add crates/sonde-fec/examples/ber_curve.rs
 git commit -m "feat(fec): ber_curve CLI example for ad-hoc tuning
 
 Agent: opossum-pine-spruce
@@ -2747,22 +2747,22 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Phase 8: Benchmarks, decoder tuning, design docs, polish
 
 **Files:**
-- Create: `crates/tuxmodem-fec/benches/encode.rs`
-- Create: `crates/tuxmodem-fec/benches/decode.rs`
-- Create: `crates/tuxmodem-fec/docs/architecture.md`
-- Create: `crates/tuxmodem-fec/docs/code-construction.md`
-- Create: `crates/tuxmodem-fec/docs/decoder-tuning.md`
+- Create: `crates/sonde-fec/benches/encode.rs`
+- Create: `crates/sonde-fec/benches/decode.rs`
+- Create: `crates/sonde-fec/docs/architecture.md`
+- Create: `crates/sonde-fec/docs/code-construction.md`
+- Create: `crates/sonde-fec/docs/decoder-tuning.md`
 
 ### Task 8.1: Criterion benchmarks
 
-**File:** `crates/tuxmodem-fec/benches/encode.rs`
+**File:** `crates/sonde-fec/benches/encode.rs`
 
 - [ ] **Step 1: Write the encode benchmark.**
 
 ```rust
 use bitvec::prelude::*;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use tuxmodem_fec::{
+use sonde_fec::{
     BlockN, CodeFamily, CodeRate, FecEncoder, LdpcEncoder,
 };
 
@@ -2796,7 +2796,7 @@ criterion_group!(benches, bench_encode);
 criterion_main!(benches);
 ```
 
-**File:** `crates/tuxmodem-fec/benches/decode.rs`
+**File:** `crates/sonde-fec/benches/decode.rs`
 
 - [ ] **Step 2: Write the decode benchmark — GATE this against §D.3 (rate-1/2 n=648 ≤ 50 ms per block on Pi 5).**
 
@@ -2806,7 +2806,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::time::Duration;
-use tuxmodem_fec::{
+use sonde_fec::{
     BlockN, CodeFamily, CodeRate, FecDecoder, FecEncoder, LdpcDecoder, LdpcEncoder, Llr,
 };
 
@@ -2861,18 +2861,18 @@ criterion_main!(benches);
 
 - [ ] **Step 3: Run encode bench to confirm it works.**
 
-Run: `cargo bench --bench encode -p tuxmodem-fec`
+Run: `cargo bench --bench encode -p sonde-fec`
 Expected: PASS (numbers will vary by host).
 
 - [ ] **Step 4: Run decode bench at the §D.3 gate point.**
 
-Run: `cargo bench --bench decode -p tuxmodem-fec`
+Run: `cargo bench --bench decode -p sonde-fec`
 Expected: For `decode-ofdm-n648-r12-snr5dB` (the §D.3 gate at moderate SNR), median time must be ≤ 50 ms on Pi 5. If above, document in `decoder-tuning.md` and either tune (reduce max_iters or switch to min-sum approximation) or escalate to the next session.
 
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add crates/tuxmodem-fec/benches/
+git add crates/sonde-fec/benches/
 git commit -m "bench(fec): criterion benchmarks for encode + decode (gates §D.3)
 
 Agent: opossum-pine-spruce
@@ -2881,16 +2881,16 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 8.2: Write the architecture + code-construction + decoder-tuning docs
 
-**File:** `crates/tuxmodem-fec/docs/architecture.md`
+**File:** `crates/sonde-fec/docs/architecture.md`
 
 - [ ] **Step 1: Write architecture.md.**
 
 ```markdown
-# tuxmodem-fec — internal architecture
+# sonde-fec — internal architecture
 
 ## Why LDPC
 
-Modern short-block LDPC is the best fit for tuxmodem's two-family PHY:
+Modern short-block LDPC is the best fit for sonde's two-family PHY:
 
 - **Near-Shannon performance at rates 1/2 through 5/6** with iterative
   belief-propagation decoding. Closes ~70% of the gap to capacity at the
@@ -2966,7 +2966,7 @@ the FEC layer (not PHY) because depth ties to FEC block size.
   profiling shows it's needed.
 ```
 
-**File:** `crates/tuxmodem-fec/docs/code-construction.md`
+**File:** `crates/sonde-fec/docs/code-construction.md`
 
 - [ ] **Step 2: Write code-construction.md.**
 
@@ -2992,10 +2992,10 @@ posture in ADR 0014.
 
 Construction is in `src/codes/ofdm_wifi_family.rs`. The 802.11n pattern
 itself is a public standard (IEEE 802.11n-2009); using the pattern is
-clean-sheet. The specific shift values are tuxmodem-derived.
+clean-sheet. The specific shift values are sonde-derived.
 ```
 
-**File:** `crates/tuxmodem-fec/docs/decoder-tuning.md`
+**File:** `crates/sonde-fec/docs/decoder-tuning.md`
 
 - [ ] **Step 3: Write decoder-tuning.md.**
 
@@ -3038,7 +3038,7 @@ the dominant runtime win at high SNR (1-2 iterations to converge).
 - [ ] **Step 4: Commit all docs.**
 
 ```bash
-git add crates/tuxmodem-fec/docs/
+git add crates/sonde-fec/docs/
 git commit -m "docs(fec): architecture, code construction, decoder tuning
 
 Agent: opossum-pine-spruce
@@ -3049,23 +3049,23 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Run clippy across the crate.**
 
-Run: `cargo clippy -p tuxmodem-fec --all-targets -- -D warnings`
+Run: `cargo clippy -p sonde-fec --all-targets -- -D warnings`
 Expected: PASS (or surface specific warnings to fix one-by-one).
 
 - [ ] **Step 2: Run rustfmt.**
 
-Run: `cargo fmt -p tuxmodem-fec`
+Run: `cargo fmt -p sonde-fec`
 Expected: No output (format is clean) or formatting applied.
 
 - [ ] **Step 3: Run the full test suite (excluding ignored).**
 
-Run: `cargo test -p tuxmodem-fec`
+Run: `cargo test -p sonde-fec`
 Expected: All non-ignored tests PASS.
 
 - [ ] **Step 4: Final commit.**
 
 ```bash
-git add -A crates/tuxmodem-fec/
+git add -A crates/sonde-fec/
 git commit -m "chore(fec): clippy + rustfmt pass; ship-ready v0.5+ FEC crate
 
 Agent: opossum-pine-spruce

@@ -1,0 +1,25 @@
+[package]
+name = "sonde-rig-cm108"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "CM108/CM119/CM119A USB-HID PTT primitive for amateur-radio digital-mode adapters (e.g. Masters Communications DRA-100). Asserts/releases the PTT GPIO via the standard 5-byte HID feature report Direwolf documented. Phase 1 of the sonde hardware bring-up (tuxlink-u1js); eventually rolls into the unified sonde-rig crate per ADR 0015."
+keywords = ["cm108", "cm119", "ptt", "ham-radio", "hidraw"]
+categories = ["hardware-support", "command-line-utilities"]
+
+[dependencies]
+thiserror.workspace = true
+# `libc` is needed by the CLI binary's SIGINT/SIGTERM handlers.
+# It pulls in nothing else; keeping it as a dependency (not just
+# dev-dependency) because the binary's `[[bin]]` lives in this crate.
+libc = "0.2"
+
+[dev-dependencies]
+# (none yet — std + thiserror is the full surface for Phase 1)
+
+[[bin]]
+name = "sonde-rig-cm108"
+path = "src/bin/sonde-rig-cm108.rs"

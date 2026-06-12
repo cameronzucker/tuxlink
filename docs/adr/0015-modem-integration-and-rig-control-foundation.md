@@ -4,6 +4,11 @@ Date: 2026-05-27
 Status: Accepted
 Deciders: Cameron Zucker (operator), marten-finch-gorge (agent)
 
+> _Superseded in part by [ADR 0019](0019-sonde-rebrand-and-extraction.md): the
+> `tuxmodem`/`tux-rig` crates were renamed to `sonde`/`sonde-rig` and the
+> workspace is being extracted to its own repository. The integration and
+> rig-control architecture decisions below still stand; only the names change._
+
 ## Context
 
 Tuxlink is gaining an ARDOP HF transport, and a clean-sheet first-party HF modem

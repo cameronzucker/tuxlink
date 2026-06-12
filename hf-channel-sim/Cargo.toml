@@ -9,7 +9,7 @@ documentation = "https://docs.rs/hf-channel-sim"
 readme = "README.md"
 keywords = ["hf", "radio", "watterson", "channel", "modem"]
 categories = ["science", "simulation", "command-line-utilities"]
-authors = ["tuxmodem contributors"]
+authors = ["sonde contributors"]
 rust-version = "1.75"
 exclude = ["tests/fixtures/*.f32", ".github/"]
 

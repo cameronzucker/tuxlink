@@ -2,22 +2,22 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a pure-Rust, deterministic, clean-sheet link/MAC layer for tuxmodem — frame codec, payload-size-aware routing decision, Part 97 station-ID enforcement, and link state machine — as a standalone `tuxmodem-link` crate in a new `crates/tuxmodem-link/` workspace member, fully unit-tested with no PHY, no RF, no network.
+**Goal:** Build a pure-Rust, deterministic, clean-sheet link/MAC layer for sonde — frame codec, payload-size-aware routing decision, Part 97 station-ID enforcement, and link state machine — as a standalone `sonde-link` crate in a new `crates/sonde-link/` workspace member, fully unit-tested with no PHY, no RF, no network.
 
-**Architecture:** New AGPLv3-only `tuxmodem-link` crate decomposed into focused modules. Frame format is **type-length-value (TLV) over a fixed-prefix variable-length wire** (clean-sheet derivation; not AX.25, not ARDOP, not VARA — see §"Provenance & ADR 0014 discipline" below). Routing is a pure function `decide_route(payload_len, channel_quality, policy) → RouteDecision` callable by the PHY scheduler. The link state machine is connection-oriented (over OFDM-family modes with ARQ) with a connectionless fast-path (broadcast / beacon / robustness-floor short payloads, no ARQ). Station ID is an **explicit per-frame field**, mandatory at the codec layer — Part 97 enforcement at the lowest possible point. The crate exposes pure synchronous primitives (encode / decode / state-transition / route-decide) callable from any concurrency model; concurrency is the consumer's choice (matches ADR 0015's `ModemTransport` sync-and-threads posture).
+**Architecture:** New AGPLv3-only `sonde-link` crate decomposed into focused modules. Frame format is **type-length-value (TLV) over a fixed-prefix variable-length wire** (clean-sheet derivation; not AX.25, not ARDOP, not VARA — see §"Provenance & ADR 0014 discipline" below). Routing is a pure function `decide_route(payload_len, channel_quality, policy) → RouteDecision` callable by the PHY scheduler. The link state machine is connection-oriented (over OFDM-family modes with ARQ) with a connectionless fast-path (broadcast / beacon / robustness-floor short payloads, no ARQ). Station ID is an **explicit per-frame field**, mandatory at the codec layer — Part 97 enforcement at the lowest possible point. The crate exposes pure synchronous primitives (encode / decode / state-transition / route-decide) callable from any concurrency model; concurrency is the consumer's choice (matches ADR 0015's `ModemTransport` sync-and-threads posture).
 
-**Tech Stack:** Pure Rust, edition 2021. Workspace member at `crates/tuxmodem-link/`. Zero RF, no Tauri, no `tokio`. Dependencies kept minimal: `crc` (MIT-or-Apache) for CRC; `serde` + `serde_repr` (MIT-or-Apache) ONLY for test fixtures, NOT for wire encoding (wire encoding is hand-rolled byte-level for clean-sheet provenance + binary control). `proptest` (MIT-or-Apache) for codec round-trip property tests. All transitive licenses verified AGPL-compatible per overview §5.A.4.
+**Tech Stack:** Pure Rust, edition 2021. Workspace member at `crates/sonde-link/`. Zero RF, no Tauri, no `tokio`. Dependencies kept minimal: `crc` (MIT-or-Apache) for CRC; `serde` + `serde_repr` (MIT-or-Apache) ONLY for test fixtures, NOT for wire encoding (wire encoding is hand-rolled byte-level for clean-sheet provenance + binary control). `proptest` (MIT-or-Apache) for codec round-trip property tests. All transitive licenses verified AGPL-compatible per overview §5.A.4.
 
-**Run tests with:** `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml` (absolute manifest path per the worktree path-pinning memory entry).
+**Run tests with:** `cargo test --manifest-path crates/sonde-link/Cargo.toml` (absolute manifest path per the worktree path-pinning memory entry).
 
 **Cross-subsystem APIs this plan freezes (so #3 PHY, #6 ARQ, #7 link-adapt, #8 host-protocol can build against them):**
 
-- **To/from #3 PHY (`PhyFrame` interface):** `tuxmodem_link::wire::encode_frame() -> Vec<u8>` and `decode_frame(&[u8]) -> Result<Frame, DecodeError>` operating on the **bit-level frame payload** that PHY delivers/consumes. PHY owns symbol-level sync; link/MAC owns byte-level structure. The PHY → MAC handoff is `(Vec<u8> payload_bits, PhyMeta { mode, snr_estimate, family })`.
+- **To/from #3 PHY (`PhyFrame` interface):** `sonde_link::wire::encode_frame() -> Vec<u8>` and `decode_frame(&[u8]) -> Result<Frame, DecodeError>` operating on the **bit-level frame payload** that PHY delivers/consumes. PHY owns symbol-level sync; link/MAC owns byte-level structure. The PHY → MAC handoff is `(Vec<u8> payload_bits, PhyMeta { mode, snr_estimate, family })`.
 - **To/from #6 ARQ:** `Frame` carries an `arq: ArqMeta` field with `seq: u16`, `ack: u16`, `nack_mask: u64` (selective-NACK bitmap, 64 frames wide), `kind: FrameKind` (DATA, ACK, NACK, SABM, UA, DISC, BEACON). The 16-bit seq space (60k frames) is the project-life commitment — preempts the AX.25 v2.0 → v2.2 retrofit failure mode called out in spec §8.
 - **To/from #7 link adaptation:** `decide_route(payload_len_bytes, ChannelQuality, RoutingPolicy) -> RouteDecision { family: PhyFamily, mode_hint: Option<ModeId>, arq_enabled: bool, max_retries: u8 }`. Link-adapt provides `ChannelQuality`; link/MAC provides `payload_len`; this function is the seam.
 - **To/from #8 host protocol:** `LinkSession` exposes `submit(payload: &[u8], urgency: Urgency) -> SubmitHandle`; `poll_events() -> Vec<LinkEvent>`. Host protocol vocabulary translates host commands into these calls. `LinkSession` owns the state machine, ARQ queue handoff, and route decisions.
 
-**ADR 0015 alignment:** The link/MAC subsystem is one process-internal layer inside the tuxmodem daemon. It does NOT cross the `ModemTransport` TCP seam — that seam is between the host (tuxlink) and the daemon at the host-protocol layer (#8). Link/MAC's "session" concept is the on-air ARQ connection, NOT the host's TCP session. ADR 0015's sync-and-threads posture is honored: `LinkSession` is `Send`, holds no async runtime, and is suitable for direct use by ardopcf-style threaded transports.
+**ADR 0015 alignment:** The link/MAC subsystem is one process-internal layer inside the sonde daemon. It does NOT cross the `ModemTransport` TCP seam — that seam is between the host (tuxlink) and the daemon at the host-protocol layer (#8). Link/MAC's "session" concept is the on-air ARQ connection, NOT the host's TCP session. ADR 0015's sync-and-threads posture is honored: `LinkSession` is `Send`, holds no async runtime, and is suitable for direct use by ardopcf-style threaded transports.
 
 **Provenance & ADR 0014 discipline:** Every architectural choice in this plan derives from generic frame-format design principles (Bertsekas/Gallager §2.3 frame structure + sequence numbering, foundation doc §4) plus Part 97 station-ID requirements. The TLV body shape is a clean-room derivation from textbook PDU layering, not from any HF-modem prior art. The 16-bit sequence space + 64-frame selective-NACK bitmap are sized from Bertsekas/Gallager's window-vs-RTT analysis. The connection-state machine (SABM/UA/DISC names) is a generic windowed-ARQ idiom from textbook coverage; we use it as a **conceptual primitive** with our own state-name semantics rather than as a copied protocol. **No examination of VARA, ARDOP, AX.25 v2.2 SREJ, or FT8/JS8 internals occurs during implementation.** If a contributor feels the urge to "just check how AX.25 does the SSID encoding," STOP per ADR 0014 §2 — TLV opaque addressing makes the question moot.
 
@@ -26,7 +26,7 @@
 ## File structure (locked at start)
 
 ```
-crates/tuxmodem-link/
+crates/sonde-link/
 ├── Cargo.toml                           # AGPLv3-only manifest, workspace member
 ├── LICENSE                              # AGPL-3.0-only verbatim
 ├── README.md                            # crate-level provenance + foundations cite
@@ -44,7 +44,7 @@ crates/tuxmodem-link/
     ├── route.rs                         # decide_route() pure function + RoutingPolicy
     ├── session.rs                       # LinkSession (state machine) + LinkEvent
     └── state_machine.rs                 # connection states + transitions
-crates/tuxmodem-link/tests/
+crates/sonde-link/tests/
     ├── wire_roundtrip.rs                # property-based codec round-trip
     ├── station_id_compliance.rs         # Part 97 enforcement tests
     ├── routing_decision_table.rs        # exhaustive (size,quality) → decision table
@@ -74,20 +74,20 @@ The fixed-prefix-then-TLV shape is a textbook PDU layout (Bertsekas/Gallager §2
 
 ## Phase 1 — Crate scaffolding and license posture
 
-### Task 1: Create the `tuxmodem-link` workspace crate
+### Task 1: Create the `sonde-link` workspace crate
 
 **Files:**
-- Create: `crates/tuxmodem-link/Cargo.toml`
-- Create: `crates/tuxmodem-link/LICENSE`
-- Create: `crates/tuxmodem-link/README.md`
-- Create: `crates/tuxmodem-link/src/lib.rs`
-- Modify: top-level `Cargo.toml` to add `crates/tuxmodem-link` as a workspace member (if a `[workspace]` table exists; otherwise the crate stands alone and that's fine).
+- Create: `crates/sonde-link/Cargo.toml`
+- Create: `crates/sonde-link/LICENSE`
+- Create: `crates/sonde-link/README.md`
+- Create: `crates/sonde-link/src/lib.rs`
+- Modify: top-level `Cargo.toml` to add `crates/sonde-link` as a workspace member (if a `[workspace]` table exists; otherwise the crate stands alone and that's fine).
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/tuxmodem-link/src/lib.rs`:
+Create `crates/sonde-link/src/lib.rs`:
 ```rust
-//! tuxmodem-link — link/MAC layer for the tuxmodem clean-sheet HF modem.
+//! sonde-link — link/MAC layer for the sonde clean-sheet HF modem.
 //!
 //! SPDX-License-Identifier: AGPL-3.0-only
 //!
@@ -110,19 +110,19 @@ mod crate_smoke {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml`
 Expected: FAIL — manifest does not exist yet.
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Create `crates/tuxmodem-link/Cargo.toml`:
+Create `crates/sonde-link/Cargo.toml`:
 ```toml
 [package]
-name = "tuxmodem-link"
+name = "sonde-link"
 version = "0.0.1"
 edition = "2021"
 license = "AGPL-3.0-only"
-description = "Link/MAC layer for the tuxmodem clean-sheet HF modem"
+description = "Link/MAC layer for the sonde clean-sheet HF modem"
 repository = "https://github.com/cameronzucker/tuxlink"
 readme = "README.md"
 
@@ -133,13 +133,13 @@ crc = "3"
 proptest = "1"
 ```
 
-Create `crates/tuxmodem-link/LICENSE` containing the verbatim AGPL-3.0-only license text from https://www.gnu.org/licenses/agpl-3.0.txt (copy the text, do not link).
+Create `crates/sonde-link/LICENSE` containing the verbatim AGPL-3.0-only license text from https://www.gnu.org/licenses/agpl-3.0.txt (copy the text, do not link).
 
-Create `crates/tuxmodem-link/README.md`:
+Create `crates/sonde-link/README.md`:
 ```markdown
-# tuxmodem-link
+# sonde-link
 
-Link/MAC layer for the **tuxmodem** clean-sheet HF modem.
+Link/MAC layer for the **sonde** clean-sheet HF modem.
 
 License: **AGPL-3.0-only**.
 
@@ -156,19 +156,19 @@ crate. Sources cited:
 - `docs/research/modem-foundations.md` for the full bibliography.
 ```
 
-Add `crates/tuxmodem-link` to the workspace table in the top-level `Cargo.toml` if one exists. If the top-level is a single-package manifest (no `[workspace]`), leave the top-level alone — `tuxmodem-link` builds as a standalone crate via its own manifest.
+Add `crates/sonde-link` to the workspace table in the top-level `Cargo.toml` if one exists. If the top-level is a single-package manifest (no `[workspace]`), leave the top-level alone — `sonde-link` builds as a standalone crate via its own manifest.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml`
 Expected: PASS (`crate_smoke::crate_is_wired`).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/
+git add crates/sonde-link/
 # also `git add Cargo.toml` if the workspace member edit changed the root manifest
-git commit -m "feat(tuxmodem-link): scaffold AGPLv3 link/MAC crate (modem #5)
+git commit -m "feat(sonde-link): scaffold AGPLv3 link/MAC crate (modem #5)
 
 Clean-sheet per ADR 0014. Cite Bertsekas/Gallager + Lin/Costello +
 Part 97.119 as the design sources. No HF-modem prior art examined.
@@ -186,17 +186,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 The canonical address type is **opaque** (a `[u8; 16]` with constructors) — clean-sheet, not callsign+SSID-shaped (i.e. NOT AX.25). Part 97 compliance is achieved via a **station-ID payload** carried separately, not by jamming a callsign into the address field. This decouples link-layer addressing (which may eventually need to reach non-amateur peers in non-CMS networks per spec §3.6) from regulatory ID (which is per-transmission, not per-peer).
 
 **Files:**
-- Create: `crates/tuxmodem-link/src/address.rs`
-- Modify: `crates/tuxmodem-link/src/lib.rs`
+- Create: `crates/sonde-link/src/address.rs`
+- Modify: `crates/sonde-link/src/lib.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/lib.rs`:
+Append to `crates/sonde-link/src/lib.rs`:
 ```rust
 pub mod address;
 ```
 
-Create `crates/tuxmodem-link/src/address.rs`:
+Create `crates/sonde-link/src/address.rs`:
 ```rust
 //! Opaque link-layer addressing.
 
@@ -251,7 +251,7 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml address::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml address::`
 Expected: FAIL — module unwired or tests not implemented.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -260,14 +260,14 @@ The code in Step 1 is already the implementation. Verify the `pub mod address;` 
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml address::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml address::`
 Expected: PASS (3 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/address.rs crates/tuxmodem-link/src/lib.rs
-git commit -m "feat(tuxmodem-link): opaque 16-byte Address + Part 97-decoupled constructor
+git add crates/sonde-link/src/address.rs crates/sonde-link/src/lib.rs
+git commit -m "feat(sonde-link): opaque 16-byte Address + Part 97-decoupled constructor
 
 Address is opaque; Part 97 station ID is carried in a separate frame
 TLV (next task). Decouples link-layer addressing from regulatory ID.
@@ -283,17 +283,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 Part 97.119 requires the licensed station to identify "at the end of each communication, and at least every 10 minutes during a communication." This crate's job: (a) carry the callsign in a `StationId` TLV that the codec rejects frames without, (b) expose a `StationIdScheduler` that the link state machine consults to enforce the 10-minute rule.
 
 **Files:**
-- Create: `crates/tuxmodem-link/src/station_id.rs`
-- Modify: `crates/tuxmodem-link/src/lib.rs`
+- Create: `crates/sonde-link/src/station_id.rs`
+- Modify: `crates/sonde-link/src/lib.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/lib.rs`:
+Append to `crates/sonde-link/src/lib.rs`:
 ```rust
 pub mod station_id;
 ```
 
-Create `crates/tuxmodem-link/src/station_id.rs`:
+Create `crates/sonde-link/src/station_id.rs`:
 ```rust
 //! Part 97.119 station-ID logic.
 //!
@@ -435,7 +435,7 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml station_id::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml station_id::`
 Expected: FAIL — module unwired.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -444,14 +444,14 @@ The code in Step 1 already is the implementation. Verify `pub mod station_id;` i
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml station_id::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml station_id::`
 Expected: PASS (6 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/station_id.rs crates/tuxmodem-link/src/lib.rs
-git commit -m "feat(tuxmodem-link): Part 97.119 station-ID scheduler
+git add crates/sonde-link/src/station_id.rs crates/sonde-link/src/lib.rs
+git commit -m "feat(sonde-link): Part 97.119 station-ID scheduler
 
 9-minute interval (1-minute jitter buffer under the 10-minute rule).
 Scheduler demands ID on first TX and at every interval boundary.
@@ -473,24 +473,24 @@ The fixed-prefix header uses a 1/2/4-byte varint for the length field so a 20-by
 - byte 0 high bit = 1, byte 1 high bit = 1 → 30-bit length 16384..(2^30 - 1), 4 bytes total (high bit of bytes 2,3 are reserved 0)
 
 **Files:**
-- Create: `crates/tuxmodem-link/src/wire/varint.rs`
-- Create: `crates/tuxmodem-link/src/wire/mod.rs`
-- Modify: `crates/tuxmodem-link/src/lib.rs`
+- Create: `crates/sonde-link/src/wire/varint.rs`
+- Create: `crates/sonde-link/src/wire/mod.rs`
+- Modify: `crates/sonde-link/src/lib.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/lib.rs`:
+Append to `crates/sonde-link/src/lib.rs`:
 ```rust
 pub mod wire;
 ```
 
-Create `crates/tuxmodem-link/src/wire/mod.rs`:
+Create `crates/sonde-link/src/wire/mod.rs`:
 ```rust
 //! Wire-format codec (clean-sheet TLV-over-fixed-prefix).
 pub mod varint;
 ```
 
-Create `crates/tuxmodem-link/src/wire/varint.rs`:
+Create `crates/sonde-link/src/wire/varint.rs`:
 ```rust
 //! 1/2/4-byte varint length encoding. Clean-sheet: the high-bit-
 //! continuation primitive is a generic information-theoretic device,
@@ -610,7 +610,7 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml wire::varint::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml wire::varint::`
 Expected: FAIL — module not wired.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -619,14 +619,14 @@ The code in Step 1 already is the implementation. Verify `pub mod wire;` in `lib
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml wire::varint::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml wire::varint::`
 Expected: PASS (5 tests, including the `proptest` property).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/wire/ crates/tuxmodem-link/src/lib.rs
-git commit -m "feat(tuxmodem-link): varint length encoding (1/2/4-byte)
+git add crates/sonde-link/src/wire/ crates/sonde-link/src/lib.rs
+git commit -m "feat(sonde-link): varint length encoding (1/2/4-byte)
 
 High-bit-continuation primitive sized for 20-byte beacons through
 16 KiB data frames. Property-tested for round-trip across u30 range.
@@ -640,17 +640,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 5: CRC wrappers (CRC-16-CCITT for header, CRC-32-IEEE for body)
 
 **Files:**
-- Create: `crates/tuxmodem-link/src/wire/crc.rs`
-- Modify: `crates/tuxmodem-link/src/wire/mod.rs`
+- Create: `crates/sonde-link/src/wire/crc.rs`
+- Modify: `crates/sonde-link/src/wire/mod.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/wire/mod.rs`:
+Append to `crates/sonde-link/src/wire/mod.rs`:
 ```rust
 pub mod crc;
 ```
 
-Create `crates/tuxmodem-link/src/wire/crc.rs`:
+Create `crates/sonde-link/src/wire/crc.rs`:
 ```rust
 //! CRC wrappers around the `crc` crate (MIT-or-Apache).
 //!
@@ -710,7 +710,7 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml wire::crc::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml wire::crc::`
 Expected: FAIL — module not wired.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -719,14 +719,14 @@ The code in Step 1 already is the implementation. Verify `pub mod crc;` is in `w
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml wire::crc::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml wire::crc::`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/wire/crc.rs crates/tuxmodem-link/src/wire/mod.rs
-git commit -m "feat(tuxmodem-link): CRC-16-CCITT header + CRC-32-IEEE body wrappers
+git add crates/sonde-link/src/wire/crc.rs crates/sonde-link/src/wire/mod.rs
+git commit -m "feat(sonde-link): CRC-16-CCITT header + CRC-32-IEEE body wrappers
 
 Canonical test vectors from the CRC catalogue verify polynomial+init
 parameters match the standard.
@@ -740,17 +740,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 6: TLV record codec
 
 **Files:**
-- Create: `crates/tuxmodem-link/src/wire/tlv.rs`
-- Modify: `crates/tuxmodem-link/src/wire/mod.rs`
+- Create: `crates/sonde-link/src/wire/tlv.rs`
+- Modify: `crates/sonde-link/src/wire/mod.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/wire/mod.rs`:
+Append to `crates/sonde-link/src/wire/mod.rs`:
 ```rust
 pub mod tlv;
 ```
 
-Create `crates/tuxmodem-link/src/wire/tlv.rs`:
+Create `crates/sonde-link/src/wire/tlv.rs`:
 ```rust
 //! TLV (type-length-value) record codec.
 //!
@@ -872,7 +872,7 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml wire::tlv::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml wire::tlv::`
 Expected: FAIL — module not wired.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -881,14 +881,14 @@ The code in Step 1 already is the implementation. Verify `pub mod tlv;` is in `w
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml wire::tlv::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml wire::tlv::`
 Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/wire/tlv.rs crates/tuxmodem-link/src/wire/mod.rs
-git commit -m "feat(tuxmodem-link): TLV record codec with reserved type assignments
+git add crates/sonde-link/src/wire/tlv.rs crates/sonde-link/src/wire/mod.rs
+git commit -m "feat(sonde-link): TLV record codec with reserved type assignments
 
 8-bit type space; varint length; opaque value. Reserved types
 0x01..0x08 enumerated for Phase 4 frame composition.
@@ -904,17 +904,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 7: `FrameKind`, `ArqMeta`, `Frame` model types
 
 **Files:**
-- Create: `crates/tuxmodem-link/src/frame.rs`
-- Modify: `crates/tuxmodem-link/src/lib.rs`
+- Create: `crates/sonde-link/src/frame.rs`
+- Modify: `crates/sonde-link/src/lib.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/lib.rs`:
+Append to `crates/sonde-link/src/lib.rs`:
 ```rust
 pub mod frame;
 ```
 
-Create `crates/tuxmodem-link/src/frame.rs`:
+Create `crates/sonde-link/src/frame.rs`:
 ```rust
 //! Frame model — composition of kind, addressing, ARQ metadata, and
 //! payload that the codec encodes/decodes.
@@ -1039,7 +1039,7 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml frame::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml frame::`
 Expected: FAIL — module not wired.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -1048,14 +1048,14 @@ The code in Step 1 already is the implementation. Verify `pub mod frame;` is in 
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml frame::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml frame::`
 Expected: PASS (3 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/frame.rs crates/tuxmodem-link/src/lib.rs
-git commit -m "feat(tuxmodem-link): Frame, FrameKind, ArqMeta, RouteHint model
+git add crates/sonde-link/src/frame.rs crates/sonde-link/src/lib.rs
+git commit -m "feat(sonde-link): Frame, FrameKind, ArqMeta, RouteHint model
 
 16-bit sequence space and 64-bit selective-NACK bitmap. RouteHint
 exposes the size-aware routing decision to the PHY scheduler.
@@ -1069,17 +1069,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 8: Fixed-prefix header codec
 
 **Files:**
-- Create: `crates/tuxmodem-link/src/wire/header.rs`
-- Modify: `crates/tuxmodem-link/src/wire/mod.rs`
+- Create: `crates/sonde-link/src/wire/header.rs`
+- Modify: `crates/sonde-link/src/wire/mod.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/wire/mod.rs`:
+Append to `crates/sonde-link/src/wire/mod.rs`:
 ```rust
 pub mod header;
 ```
 
-Create `crates/tuxmodem-link/src/wire/header.rs`:
+Create `crates/sonde-link/src/wire/header.rs`:
 ```rust
 //! Fixed-prefix header: MAGIC (2) + VERSION (1) + LENGTH (varint) +
 //! KIND (1) + HDR-CRC (2 BE).
@@ -1221,7 +1221,7 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml wire::header::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml wire::header::`
 Expected: FAIL — module not wired.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -1230,14 +1230,14 @@ The code in Step 1 already is the implementation. Verify `pub mod header;` is in
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml wire::header::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml wire::header::`
 Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/wire/header.rs crates/tuxmodem-link/src/wire/mod.rs
-git commit -m "feat(tuxmodem-link): fixed-prefix header with CRC-16 integrity
+git add crates/sonde-link/src/wire/header.rs crates/sonde-link/src/wire/mod.rs
+git commit -m "feat(sonde-link): fixed-prefix header with CRC-16 integrity
 
 MAGIC 'TM' + version + varint length + kind + header CRC enables
 early discard of corrupted frames before body parsing.
@@ -1251,11 +1251,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 9: Composite frame encode (with Part 97 enforcement)
 
 **Files:**
-- Modify: `crates/tuxmodem-link/src/wire/mod.rs`
+- Modify: `crates/sonde-link/src/wire/mod.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/wire/mod.rs`:
+Append to `crates/sonde-link/src/wire/mod.rs`:
 ```rust
 use crate::frame::{ArqMeta, Frame, FrameKind, RouteHint};
 use crate::address::Address;
@@ -1391,7 +1391,7 @@ mod encode_tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml wire::encode_tests::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml wire::encode_tests::`
 Expected: FAIL — module not implemented.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -1400,14 +1400,14 @@ The code in Step 1 already is the implementation.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml wire::encode_tests::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml wire::encode_tests::`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/wire/mod.rs
-git commit -m "feat(tuxmodem-link): composite frame encode with Part 97 enforcement
+git add crates/sonde-link/src/wire/mod.rs
+git commit -m "feat(sonde-link): composite frame encode with Part 97 enforcement
 
 BEACON and STATION_ID_ONLY kinds reject encoding without a station ID.
 Other kinds may carry the ID at the scheduler's discretion.
@@ -1421,12 +1421,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 10: Composite frame decode + round-trip property
 
 **Files:**
-- Modify: `crates/tuxmodem-link/src/wire/mod.rs`
-- Create: `crates/tuxmodem-link/tests/wire_roundtrip.rs`
+- Modify: `crates/sonde-link/src/wire/mod.rs`
+- Create: `crates/sonde-link/tests/wire_roundtrip.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/wire/mod.rs`:
+Append to `crates/sonde-link/src/wire/mod.rs`:
 ```rust
 #[derive(Debug, PartialEq, Eq)]
 pub enum DecodeError {
@@ -1548,15 +1548,15 @@ pub fn decode_frame(bytes: &[u8]) -> Result<Frame, DecodeError> {
 }
 ```
 
-Create `crates/tuxmodem-link/tests/wire_roundtrip.rs`:
+Create `crates/sonde-link/tests/wire_roundtrip.rs`:
 ```rust
 //! Integration-level round-trip property tests over the full frame
 //! codec.
 
-use tuxmodem_link::address::Address;
-use tuxmodem_link::frame::{ArqMeta, Frame, FrameKind, RouteHint};
-use tuxmodem_link::station_id::StationId;
-use tuxmodem_link::wire::{decode_frame, encode_frame};
+use sonde_link::address::Address;
+use sonde_link::frame::{ArqMeta, Frame, FrameKind, RouteHint};
+use sonde_link::station_id::StationId;
+use sonde_link::wire::{decode_frame, encode_frame};
 
 use proptest::prelude::*;
 
@@ -1629,7 +1629,7 @@ fn body_corruption_caught_by_crc() {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml --test wire_roundtrip`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml --test wire_roundtrip`
 Expected: FAIL — `decode_frame` not yet defined publicly, or fails compilation.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -1638,14 +1638,14 @@ The decode code in Step 1 is the implementation.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml`
 Expected: PASS — all crate-level unit tests + the new integration test, including the proptest property.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/wire/mod.rs crates/tuxmodem-link/tests/wire_roundtrip.rs
-git commit -m "feat(tuxmodem-link): frame decode + round-trip property tests
+git add crates/sonde-link/src/wire/mod.rs crates/sonde-link/tests/wire_roundtrip.rs
+git commit -m "feat(sonde-link): frame decode + round-trip property tests
 
 Forward-compat: unknown TLV types are skipped (not errored). Required
 TLVs (src, dst) cause MissingTlv; BEACON/STATION_ID_ONLY require
@@ -1664,17 +1664,17 @@ This is the central architectural deliverable for #5 per spec §1.A. The routing
 ### Task 11: `RoutingPolicy` and `ChannelQuality` types
 
 **Files:**
-- Create: `crates/tuxmodem-link/src/route.rs`
-- Modify: `crates/tuxmodem-link/src/lib.rs`
+- Create: `crates/sonde-link/src/route.rs`
+- Modify: `crates/sonde-link/src/lib.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/lib.rs`:
+Append to `crates/sonde-link/src/lib.rs`:
 ```rust
 pub mod route;
 ```
 
-Create `crates/tuxmodem-link/src/route.rs`:
+Create `crates/sonde-link/src/route.rs`:
 ```rust
 //! Payload-size-aware routing decision (per modem-overview §5.A.2).
 //!
@@ -1869,7 +1869,7 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml route::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml route::`
 Expected: FAIL — module not wired.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -1878,14 +1878,14 @@ The code in Step 1 already is the implementation. Verify `pub mod route;` in `li
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml route::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml route::`
 Expected: PASS (6 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/route.rs crates/tuxmodem-link/src/lib.rs
-git commit -m "feat(tuxmodem-link): payload-size-aware routing decision
+git add crates/sonde-link/src/route.rs crates/sonde-link/src/lib.rs
+git commit -m "feat(sonde-link): payload-size-aware routing decision
 
 Pure function decide_route(len, channel_quality, urgency, policy) →
 RouteDecision. Long payloads stay in OFDM+ARQ; short+critical+degraded
@@ -1900,19 +1900,19 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 12: Exhaustive routing decision-table integration test
 
 **Files:**
-- Create: `crates/tuxmodem-link/tests/routing_decision_table.rs`
+- Create: `crates/sonde-link/tests/routing_decision_table.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/tuxmodem-link/tests/routing_decision_table.rs`:
+Create `crates/sonde-link/tests/routing_decision_table.rs`:
 ```rust
 //! Exhaustive table of (payload_len, channel_quality, urgency) → expected
 //! RouteDecision. Acts as a regression fence on the routing policy:
 //! any change to `decide_route` that alters one of these mappings is
 //! a deliberate policy change requiring a contemporaneous spec update.
 
-use tuxmodem_link::frame::RouteHint;
-use tuxmodem_link::route::{
+use sonde_link::frame::RouteHint;
+use sonde_link::route::{
     decide_route, ChannelQuality, PhyFamily, RoutingPolicy, Urgency,
 };
 
@@ -2013,7 +2013,7 @@ fn boundary_payload_size_at_threshold_is_short() {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml --test routing_decision_table`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml --test routing_decision_table`
 Expected: FAIL until the test file is in place; once present, expect PASS because Task 11 already implements `decide_route`.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -2022,14 +2022,14 @@ No new implementation; this task fences existing behavior.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml --test routing_decision_table`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml --test routing_decision_table`
 Expected: PASS (2 tests, 7 case assertions).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/tests/routing_decision_table.rs
-git commit -m "test(tuxmodem-link): exhaustive routing decision-table corners
+git add crates/sonde-link/tests/routing_decision_table.rs
+git commit -m "test(sonde-link): exhaustive routing decision-table corners
 
 Regression fence on decide_route policy. Any future change here must
 update both this table and the spec narrative in lock-step.
@@ -2045,19 +2045,19 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 13: State machine module with transition table
 
 **Files:**
-- Create: `crates/tuxmodem-link/src/state_machine.rs`
-- Modify: `crates/tuxmodem-link/src/lib.rs`
+- Create: `crates/sonde-link/src/state_machine.rs`
+- Modify: `crates/sonde-link/src/lib.rs`
 
 The state machine is a generic connection-oriented windowed-ARQ idiom from textbook material (Bertsekas/Gallager §2.7 "Sliding-window protocols"). State names are textbook-generic; transitions are explicit.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/lib.rs`:
+Append to `crates/sonde-link/src/lib.rs`:
 ```rust
 pub mod state_machine;
 ```
 
-Create `crates/tuxmodem-link/src/state_machine.rs`:
+Create `crates/sonde-link/src/state_machine.rs`:
 ```rust
 //! Connection state machine for the link layer.
 //!
@@ -2138,7 +2138,7 @@ pub fn step(state: LinkState, event: Event) -> (LinkState, Vec<Action>) {
     match (state, event) {
         // Idle ─ host opens → send SABM, go ConnectingOut, start retry timer.
         (Idle, HostOpen) => (ConnectingOut, vec![Action::SendFrame(Sabm), Action::StartTimer]),
-        // Idle ─ peer SABM → respond UA, go Open (note: tuxmodem auto-accepts
+        // Idle ─ peer SABM → respond UA, go Open (note: sonde auto-accepts
         // incoming connections at the link layer; access-control is a host-
         // protocol concern).
         (Idle, PeerFrame(Sabm)) => (Open, vec![
@@ -2276,7 +2276,7 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml state_machine::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml state_machine::`
 Expected: FAIL — module not wired.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -2285,14 +2285,14 @@ The code in Step 1 already is the implementation.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml state_machine::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml state_machine::`
 Expected: PASS (8 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/state_machine.rs crates/tuxmodem-link/src/lib.rs
-git commit -m "feat(tuxmodem-link): connection state machine (Idle/Connecting*/Open/Disconnecting)
+git add crates/sonde-link/src/state_machine.rs crates/sonde-link/src/lib.rs
+git commit -m "feat(sonde-link): connection state machine (Idle/Connecting*/Open/Disconnecting)
 
 Pure (LinkState, Event) → (LinkState, Vec<Action>) step function.
 Textbook windowed-ARQ form per Bertsekas/Gallager §2.7. SABM/UA/DISC
@@ -2308,17 +2308,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 14: Exhaustive state-machine transition coverage test
 
 **Files:**
-- Create: `crates/tuxmodem-link/tests/state_machine_transitions.rs`
+- Create: `crates/sonde-link/tests/state_machine_transitions.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/tuxmodem-link/tests/state_machine_transitions.rs`:
+Create `crates/sonde-link/tests/state_machine_transitions.rs`:
 ```rust
 //! Every (state, event) input is hit at least once. Acts as a
 //! coverage fence: a future state addition must extend this test.
 
-use tuxmodem_link::frame::FrameKind;
-use tuxmodem_link::state_machine::{step, Event, LinkState};
+use sonde_link::frame::FrameKind;
+use sonde_link::state_machine::{step, Event, LinkState};
 
 #[test]
 fn every_state_handles_every_event_without_panic() {
@@ -2367,7 +2367,7 @@ fn idle_to_open_full_round_trip() {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml --test state_machine_transitions`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml --test state_machine_transitions`
 Expected: FAIL — test file does not exist yet; once present, PASS.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -2376,14 +2376,14 @@ No new implementation needed.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml --test state_machine_transitions`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml --test state_machine_transitions`
 Expected: PASS (2 tests, 60 transitions exercised).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/tests/state_machine_transitions.rs
-git commit -m "test(tuxmodem-link): state-machine totality + full round-trip coverage
+git add crates/sonde-link/tests/state_machine_transitions.rs
+git commit -m "test(sonde-link): state-machine totality + full round-trip coverage
 
 Covers every (state, event) cell. Future state additions must extend.
 
@@ -2396,19 +2396,19 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 15: `LinkSession` façade — ties codec + state machine + routing + station-ID together
 
 **Files:**
-- Create: `crates/tuxmodem-link/src/session.rs`
-- Modify: `crates/tuxmodem-link/src/lib.rs`
+- Create: `crates/sonde-link/src/session.rs`
+- Modify: `crates/sonde-link/src/lib.rs`
 
 `LinkSession` is the API surface subsystem #8 (host protocol) consumes. It owns: a state machine instance, a station-ID scheduler, the local station ID, the local + peer addresses, the current channel-quality observation, the outgoing-frame submission queue. It does NOT own ARQ retransmission queues or PHY handoff — those are subsystem #6 + #3 concerns, addressable through events.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-link/src/lib.rs`:
+Append to `crates/sonde-link/src/lib.rs`:
 ```rust
 pub mod session;
 ```
 
-Create `crates/tuxmodem-link/src/session.rs`:
+Create `crates/sonde-link/src/session.rs`:
 ```rust
 //! `LinkSession` — façade tying the codec, state machine, routing, and
 //! station-ID enforcement into a single API for the host protocol
@@ -2663,7 +2663,7 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml session::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml session::`
 Expected: FAIL — module not wired.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -2672,14 +2672,14 @@ The code in Step 1 already is the implementation.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml session::`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml session::`
 Expected: PASS (6 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/src/session.rs crates/tuxmodem-link/src/lib.rs
-git commit -m "feat(tuxmodem-link): LinkSession facade for host-protocol consumption
+git add crates/sonde-link/src/session.rs crates/sonde-link/src/lib.rs
+git commit -m "feat(sonde-link): LinkSession facade for host-protocol consumption
 
 Ties codec + state machine + routing + station-ID scheduler. submit()
 exposes the size-aware routing decision and Part 97 ID attachment in
@@ -2697,11 +2697,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 16: Part 97 compliance integration test (encode-and-walk-the-wire)
 
 **Files:**
-- Create: `crates/tuxmodem-link/tests/station_id_compliance.rs`
+- Create: `crates/sonde-link/tests/station_id_compliance.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/tuxmodem-link/tests/station_id_compliance.rs`:
+Create `crates/sonde-link/tests/station_id_compliance.rs`:
 ```rust
 //! Part 97.119 station-ID compliance fence.
 //!
@@ -2711,10 +2711,10 @@ Create `crates/tuxmodem-link/tests/station_id_compliance.rs`:
 
 use std::time::{Duration, Instant};
 
-use tuxmodem_link::address::Address;
-use tuxmodem_link::frame::{ArqMeta, Frame, FrameKind, RouteHint};
-use tuxmodem_link::station_id::{StationId, StationIdScheduler, PART_97_ID_INTERVAL};
-use tuxmodem_link::wire::{decode_frame, encode_frame};
+use sonde_link::address::Address;
+use sonde_link::frame::{ArqMeta, Frame, FrameKind, RouteHint};
+use sonde_link::station_id::{StationId, StationIdScheduler, PART_97_ID_INTERVAL};
+use sonde_link::wire::{decode_frame, encode_frame};
 
 #[test]
 fn beacon_frame_carries_station_id_on_wire() {
@@ -2794,7 +2794,7 @@ fn scheduler_simulated_session_never_exceeds_ten_minutes() {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml --test station_id_compliance`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml --test station_id_compliance`
 Expected: FAIL (file doesn't exist); once present, PASS using already-implemented code.
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -2803,14 +2803,14 @@ No new implementation needed.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml --test station_id_compliance`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml --test station_id_compliance`
 Expected: PASS (3 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/tests/station_id_compliance.rs
-git commit -m "test(tuxmodem-link): Part 97.119 compliance fence over 30-minute sim
+git add crates/sonde-link/tests/station_id_compliance.rs
+git commit -m "test(sonde-link): Part 97.119 compliance fence over 30-minute sim
 
 Asserts (a) BEACON and STATION_ID_ONLY frames carry the ID on the
 wire, (b) a 30-minute simulated session never exceeds the 10-minute
@@ -2827,7 +2827,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 Subsystems #3, #6, #7, and #8 build against #5's public API. This task adds a `docs/` page in the crate enumerating the public types and the assumptions each sibling subsystem may make.
 
 **Files:**
-- Create: `crates/tuxmodem-link/docs/cross-subsystem-api.md`
+- Create: `crates/sonde-link/docs/cross-subsystem-api.md`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2835,14 +2835,14 @@ Tests aren't applicable to a docs-only task — but we still gate with a `cargo 
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo doc --manifest-path crates/tuxmodem-link/Cargo.toml --no-deps`
+Run: `cargo doc --manifest-path crates/sonde-link/Cargo.toml --no-deps`
 Expected: PASS (no broken doctests / intra-doc-link errors).
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Create `crates/tuxmodem-link/docs/cross-subsystem-api.md`:
+Create `crates/sonde-link/docs/cross-subsystem-api.md`:
 ```markdown
-# Cross-subsystem API contract — tuxmodem-link (#5 Link/MAC)
+# Cross-subsystem API contract — sonde-link (#5 Link/MAC)
 
 This is the API surface other modem subsystems build against. Locked
 by `2026-05-31-clean-sheet-modem-5-link-mac-plan.md` (Phase 7,
@@ -2854,8 +2854,8 @@ PHY (#3) hands bit-level frame payloads to MAC and consumes encoded
 frames from MAC. The handoff is byte-level only; MAC owns no
 sample/symbol concepts.
 
-- `tuxmodem_link::wire::encode_frame(&Frame) -> Result<Vec<u8>, EncodeError>`
-- `tuxmodem_link::wire::decode_frame(&[u8]) -> Result<Frame, DecodeError>`
+- `sonde_link::wire::encode_frame(&Frame) -> Result<Vec<u8>, EncodeError>`
+- `sonde_link::wire::decode_frame(&[u8]) -> Result<Frame, DecodeError>`
 
 PHY metadata for received frames (mode, family, SNR estimate) is the
 PHY scheduler's concern; MAC's decode does not consume it. PHY MAY
@@ -2870,8 +2870,8 @@ ARQ (#6) consumes `ArqMeta` from incoming frames and populates
 windows up to 32767 in-flight frames; the 64-bit NACK mask covers
 the 64 frames following `ack`.
 
-- `tuxmodem_link::frame::ArqMeta { seq, ack, nack_mask }`
-- `tuxmodem_link::frame::FrameKind::{Ack, Nack, Data}`
+- `sonde_link::frame::ArqMeta { seq, ack, nack_mask }`
+- `sonde_link::frame::FrameKind::{Ack, Nack, Data}`
 
 ARQ is mode-conditional per overview §5.A.2: `RouteDecision.arq_enabled`
 is the authoritative gate.
@@ -2883,10 +2883,10 @@ feeds to `decide_route`. MAC produces the `RouteDecision`; #7 may
 ALSO take the decision as an input when picking the mode within the
 chosen family.
 
-- `tuxmodem_link::route::ChannelQuality { snr_db, fer }`
-- `tuxmodem_link::route::Urgency::{Normal, CriticalShort}`
-- `tuxmodem_link::route::decide_route(payload_len, q, urgency, policy) -> RouteDecision`
-- `tuxmodem_link::route::RoutingPolicy` (tunable thresholds)
+- `sonde_link::route::ChannelQuality { snr_db, fer }`
+- `sonde_link::route::Urgency::{Normal, CriticalShort}`
+- `sonde_link::route::decide_route(payload_len, q, urgency, policy) -> RouteDecision`
+- `sonde_link::route::RoutingPolicy` (tunable thresholds)
 
 The default policy thresholds (-3 dB SNR floor, 0.30 FER, 256-byte
 short cutoff) are starting points pending #1 channel-sim measurement;
@@ -2935,14 +2935,14 @@ informed the design.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo doc --manifest-path crates/tuxmodem-link/Cargo.toml --no-deps`
+Run: `cargo doc --manifest-path crates/sonde-link/Cargo.toml --no-deps`
 Expected: PASS (no doc warnings escalated to errors).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-link/docs/cross-subsystem-api.md
-git commit -m "docs(tuxmodem-link): cross-subsystem API contract for #3/#6/#7/#8 consumers
+git add crates/sonde-link/docs/cross-subsystem-api.md
+git commit -m "docs(sonde-link): cross-subsystem API contract for #3/#6/#7/#8 consumers
 
 Enumerates the public surface other modem subsystems build against.
 Lock-stepped with the Phase 7 plan section; future API changes update
@@ -2963,31 +2963,31 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Run the full test suite**
 
-Run: `cargo test --manifest-path crates/tuxmodem-link/Cargo.toml`
+Run: `cargo test --manifest-path crates/sonde-link/Cargo.toml`
 Expected: PASS — every unit test + every integration test (`wire_roundtrip`,
 `routing_decision_table`, `state_machine_transitions`, `station_id_compliance`)
 passes. Total ~50 tests.
 
 - [ ] **Step 2: Run clippy at the deny level the project uses**
 
-Run: `cargo clippy --manifest-path crates/tuxmodem-link/Cargo.toml --all-targets -- -D warnings`
+Run: `cargo clippy --manifest-path crates/sonde-link/Cargo.toml --all-targets -- -D warnings`
 Expected: PASS (no warnings escalated to errors). Fix any lints inline before committing.
 
 - [ ] **Step 3: Run rustfmt check**
 
-Run: `cargo fmt --manifest-path crates/tuxmodem-link/Cargo.toml -- --check`
+Run: `cargo fmt --manifest-path crates/sonde-link/Cargo.toml -- --check`
 Expected: PASS. If it fails, run without `--check` to apply, then re-run with `--check`.
 
 - [ ] **Step 4: Verify doc build**
 
-Run: `cargo doc --manifest-path crates/tuxmodem-link/Cargo.toml --no-deps`
+Run: `cargo doc --manifest-path crates/sonde-link/Cargo.toml --no-deps`
 Expected: PASS.
 
 - [ ] **Step 5: Commit any format/clippy fixes**
 
 ```bash
-git add crates/tuxmodem-link/
-git commit -m "chore(tuxmodem-link): clippy + rustfmt cleanup pass
+git add crates/sonde-link/
+git commit -m "chore(sonde-link): clippy + rustfmt cleanup pass
 
 Agent: opossum-pine-spruce
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -3021,7 +3021,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Deferred (with rationale captured in plan body):**
 
-- Digipeater/relay path (§4.Q7) — addable later without breaking changes because addressing is opaque + TLV body is forward-compatible. Not in scope for the v0.5+ tuxmodem MVP per spec §3.6.
+- Digipeater/relay path (§4.Q7) — addable later without breaking changes because addressing is opaque + TLV body is forward-compatible. Not in scope for the v0.5+ sonde MVP per spec §3.6.
 - Hybrid ARQ (Type II / III HARQ) — subsystem #6's question, not #5's. #5 carries an `ArqMeta` field rich enough to support HARQ when #6 adopts it.
 - Specific bit-loading commands and host-protocol command vocabulary — subsystem #8's concern; #5 exposes `LinkSession` as the surface to map to.
 

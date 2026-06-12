@@ -19,7 +19,7 @@ ALSA single-device-friendly defaults all compound to make the configuration
 unreliable in practice. (Empirical project knowledge from prior testing; the
 constraint is the reason ADR 0015 was written the way it was.)
 
-Bench testing two radios as B2F (or future-tuxmodem) peers therefore requires
+Bench testing two radios as B2F (or future-sonde) peers therefore requires
 **one host per radio**. The radios couple via incidental near-field RF leakage
 between dummy loads positioned close to each other on the bench — not via a
 network bridge between hosts, and not via a calibrated RF measurement chain
@@ -342,7 +342,7 @@ overview ([2026-05-31-clean-sheet-modem-overview.md](../superpowers/specs/2026-0
   posture; own-radio + own-channel characterization is explicitly in-scope.
 - `docs/adr/0015-modem-integration-and-rig-control-foundation.md` — Single-
   sound-card-per-host constraint (hardware-fact framing); generic `ModemTransport`
-  abstraction; `tux-rig` crate.
+  abstraction; `sonde-rig` crate.
 - `docs/hardware/modem-test-rig.md` — Companion test-rig doc for the VHF/UHF FM
   modem path via the CDM-1550LS+; this HF doc reuses its CM-family HID PTT
   pattern and audio-level-calibration discipline.

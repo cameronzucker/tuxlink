@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the host protocol crate for tuxmodem — the framed, schema-versioned, AI-native control + data plane that sits between any client (tuxlink-in-process today; standalone TCP daemon tomorrow) and the modem core. Ship as `tuxmodem-host-proto`: a pure-Rust AGPLv3 crate containing the wire codec, the protocol state machine, a server-side dispatcher trait that subsystem #5/#6/#7 will implement, a synchronous in-memory transport adapter for `ModemTransport` integration (subsystem #9), and a TCP listener for the standalone daemon path (subsystem #10).
+**Goal:** Build the host protocol crate for sonde — the framed, schema-versioned, AI-native control + data plane that sits between any client (tuxlink-in-process today; standalone TCP daemon tomorrow) and the modem core. Ship as `sonde-host-proto`: a pure-Rust AGPLv3 crate containing the wire codec, the protocol state machine, a server-side dispatcher trait that subsystem #5/#6/#7 will implement, a synchronous in-memory transport adapter for `ModemTransport` integration (subsystem #9), and a TCP listener for the standalone daemon path (subsystem #10).
 
 **Architecture (locked in this plan):**
 
 - **Transport: TCP, listening on `127.0.0.1` by default.** Two-port model (cmd + data sockets), matching the abstraction the existing `ModemTransport` trait in `src-tauri/src/winlink/modem/mod.rs` already speaks for ardopcf. Optional `bind_addr` override for off-host control; off-host requires an explicit `--listen <addr>` flag and a `require_auth=true` config.
 - **Wire framing: length-prefixed binary frames** carrying a single CBOR object. `[u32 BE length][CBOR payload]`. CBOR (RFC 8949) chosen over JSON for: deterministic encoding, binary-safe payloads (the data socket carries ARQ-corrected bytes), smaller on-wire size, and first-class support for schema generation via `serde` + `ciborium`. A `--text` debug shim emits the same logical messages as line-delimited JSON for human inspection (subsystem #8's AI-native debuggability affordance).
-- **Schema language: serde-typed Rust structs in a `proto` module, generating both the CBOR codec and an exported JSON-Schema sidecar** (`schemas/tuxmodem-host-proto-v1.schema.json`) written at build time via `schemars`. The JSON-Schema sidecar is what an AI agent (or human) loads to understand the protocol without reading Rust source.
+- **Schema language: serde-typed Rust structs in a `proto` module, generating both the CBOR codec and an exported JSON-Schema sidecar** (`schemas/sonde-host-proto-v1.schema.json`) written at build time via `schemars`. The JSON-Schema sidecar is what an AI agent (or human) loads to understand the protocol without reading Rust source.
 - **Message model: request/response + event-stream, multiplexed over the cmd socket; raw bytes over the data socket.** Every cmd-socket message carries `{kind: "req" | "resp" | "event", id: u64 | null, body: <variant>}`. Requests have monotonic `id`; responses cite their request `id`; events carry `id: null`. The model accommodates both the synchronous "set audio gain → confirm" calls (forcing function §3.5 of the spec) and the asynchronous "connection lifecycle" event-streams.
 - **Versioning: semver in the protocol object + capability bits.** The first message exchanged on cmd-socket connect is `Hello { proto_version: "1.0.0", capabilities: ["ofdm-family-v1", "robustness-floor-v1", "link-adapt-2d-v1", ...] }` in both directions; mismatch terminates the connection with a structured `Goodbye { reason }`. Capability strings are the canonical "missing feature is discoverable" mechanism (spec §3.4).
 - **State exposure: the link/MAC state, ARQ connection state, and link-adaptation state are exposed as snapshot-on-request + delta events.** `GetStatus` → full snapshot. `Subscribe { topics: [...] }` → server pushes deltas. Topics: `mac.state`, `arq.connection`, `arq.metrics`, `linkadapt.mode`, `linkadapt.metrics`, `phy.bitloading` (the bit-loading curve from §5.A.1 of the overview).
@@ -23,7 +23,7 @@
 
 **Tech Stack:** Rust 2021. `serde` + `ciborium` (CBOR codec, both MIT-or-Apache-2.0 — AGPL-compatible). `schemars` (JSON-Schema generation, MIT-or-Apache-2.0). `serde_json` (only for the `--text` debug shim and JSON-Schema sidecar). `std::net::TcpListener` / `TcpStream` / `std::thread` / `std::sync::mpsc` / `std::sync::Arc<Mutex<...>>` for state. `thiserror` for error types. `tracing` for structured logs (already in tuxlink). No Tokio. No `async-trait`.
 
-**Workspace placement:** This plan creates a NEW top-level Rust workspace member under `crates/tuxmodem-host-proto/` at the repo root. Subsystem #9 (`ModemTransport` impl) and subsystem #10 (standalone daemon binary) will both depend on this crate. The tuxlink Tauri crate (`src-tauri/`) gains it as a workspace member dependency once subsystem #9 ships.
+**Workspace placement:** This plan creates a NEW top-level Rust workspace member under `crates/sonde-host-proto/` at the repo root. Subsystem #9 (`ModemTransport` impl) and subsystem #10 (standalone daemon binary) will both depend on this crate. The tuxlink Tauri crate (`src-tauri/`) gains it as a workspace member dependency once subsystem #9 ships.
 
 **Out of scope for this plan:**
 - The actual modem core (subsystems #3/#4/#5/#6/#7). This plan ships a `DispatcherStub` that returns canned responses; production dispatcher implementations land in #5/#6/#7 plans.
@@ -43,12 +43,12 @@
 | In | #5 link/MAC | `Dispatcher::mac_*` methods (open_connection, close_connection, send_frame, get_state). MAC's connection-state machine is the source of truth; #8 reflects it. |
 | In | #6 ARQ | `Dispatcher::arq_*` methods (subscribe-to-metrics, get-window-state, drain-rx-bytes, push-tx-bytes). ARQ-corrected stream is the data-socket payload. |
 | In | #7 link adapt | `Dispatcher::linkadapt_*` methods (get-current-mode, set-mode-override, get-bit-loading-curve, observe-channel-quality). |
-| Out | #9 tuxlink integration | `InProcessTransport` adapter — implements the future tuxmodem `ModemTransport` against an in-process `Dispatcher` (no TCP). Subsystem #9 wires this into `src-tauri/src/winlink/modem/`. |
+| Out | #9 tuxlink integration | `InProcessTransport` adapter — implements the future sonde `ModemTransport` against an in-process `Dispatcher` (no TCP). Subsystem #9 wires this into `src-tauri/src/winlink/modem/`. |
 | Out | #10 standalone daemon | `TcpServer` listener — exposes the same `Dispatcher` over the two-socket TCP wire. Subsystem #10 wraps this in a binary with CLI flags + packaging. |
 
-**ADR 0015 fit:** The protocol IS what `ModemTransport` (the existing trait at `src-tauri/src/winlink/modem/mod.rs`) speaks. For tuxmodem-in-tuxlink: a `TuxmodemTransport` (in subsystem #9) wraps `InProcessTransport` and presents the existing `ModemTransport` surface — same `init` / `connect_arq` / `disconnect` / `data_stream` / `drain_status_events` / `try_clone_abort_writer` shape, but the underlying messages are CBOR over an in-memory channel pair, not ASCII over TCP. For tuxmodem-as-daemon: the same `TuxmodemTransport` connects over real TCP to the daemon's `TcpServer`. The shape of `ModemTransport` is preserved; the wire is replaced.
+**ADR 0015 fit:** The protocol IS what `ModemTransport` (the existing trait at `src-tauri/src/winlink/modem/mod.rs`) speaks. For sonde-in-tuxlink: a `SondeTransport` (in subsystem #9) wraps `InProcessTransport` and presents the existing `ModemTransport` surface — same `init` / `connect_arq` / `disconnect` / `data_stream` / `drain_status_events` / `try_clone_abort_writer` shape, but the underlying messages are CBOR over an in-memory channel pair, not ASCII over TCP. For sonde-as-daemon: the same `SondeTransport` connects over real TCP to the daemon's `TcpServer`. The shape of `ModemTransport` is preserved; the wire is replaced.
 
-**Run tests with:** `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml`.
+**Run tests with:** `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml`.
 
 ---
 
@@ -57,11 +57,11 @@
 ### Task 0.1: Create the crate skeleton
 
 **Files:**
-- Create: `Cargo.toml` (root — add a `[workspace]` table if one does not exist; if it exists, add `crates/tuxmodem-host-proto` to `members`)
-- Create: `crates/tuxmodem-host-proto/Cargo.toml`
-- Create: `crates/tuxmodem-host-proto/src/lib.rs`
-- Create: `crates/tuxmodem-host-proto/LICENSE` (the AGPLv3 text — copy the standard GNU AGPLv3 license file)
-- Create: `crates/tuxmodem-host-proto/README.md`
+- Create: `Cargo.toml` (root — add a `[workspace]` table if one does not exist; if it exists, add `crates/sonde-host-proto` to `members`)
+- Create: `crates/sonde-host-proto/Cargo.toml`
+- Create: `crates/sonde-host-proto/src/lib.rs`
+- Create: `crates/sonde-host-proto/LICENSE` (the AGPLv3 text — copy the standard GNU AGPLv3 license file)
+- Create: `crates/sonde-host-proto/README.md`
 
 - [ ] **Step 1: Inspect the root `Cargo.toml`**
 
@@ -77,7 +77,7 @@ If (a) — no root `Cargo.toml` exists — create one:
 
 ```toml
 [workspace]
-members = ["crates/tuxmodem-host-proto"]
+members = ["crates/sonde-host-proto"]
 resolver = "2"
 
 [workspace.package]
@@ -85,17 +85,17 @@ edition = "2021"
 license = "AGPL-3.0-only"
 ```
 
-If (b) — root `Cargo.toml` exists — add `"crates/tuxmodem-host-proto"` to the `members` array. Do NOT touch any other workspace member. Do NOT add `src-tauri/` to `members` in this task; subsystem #9 will integrate.
+If (b) — root `Cargo.toml` exists — add `"crates/sonde-host-proto"` to the `members` array. Do NOT touch any other workspace member. Do NOT add `src-tauri/` to `members` in this task; subsystem #9 will integrate.
 
-- [ ] **Step 3: Create `crates/tuxmodem-host-proto/Cargo.toml`**
+- [ ] **Step 3: Create `crates/sonde-host-proto/Cargo.toml`**
 
 ```toml
 [package]
-name = "tuxmodem-host-proto"
+name = "sonde-host-proto"
 version = "0.0.1"
 edition = "2021"
 license = "AGPL-3.0-only"
-description = "Host protocol (cmd + data sockets, CBOR + JSON-Schema) for the tuxmodem HF modem"
+description = "Host protocol (cmd + data sockets, CBOR + JSON-Schema) for the sonde HF modem"
 repository = "https://github.com/cameronzucker/tuxlink"
 
 [dependencies]
@@ -111,10 +111,10 @@ tracing-subscriber = "0.3"
 tempfile = "3.10"
 ```
 
-- [ ] **Step 4: Create `crates/tuxmodem-host-proto/src/lib.rs`**
+- [ ] **Step 4: Create `crates/sonde-host-proto/src/lib.rs`**
 
 ```rust
-//! tuxmodem-host-proto — host protocol crate for tuxmodem.
+//! sonde-host-proto — host protocol crate for sonde.
 //!
 //! AGPLv3-only per overview §5.A.4. Sync + threads; no Tokio. CBOR wire framing
 //! with a JSON-Schema sidecar; request/response + event-stream multiplexed over
@@ -134,19 +134,19 @@ mod smoke {
 }
 ```
 
-- [ ] **Step 5: Create `crates/tuxmodem-host-proto/LICENSE`**
+- [ ] **Step 5: Create `crates/sonde-host-proto/LICENSE`**
 
-Copy the standard GNU AGPLv3 license text (https://www.gnu.org/licenses/agpl-3.0.txt). Use `curl -sSL https://www.gnu.org/licenses/agpl-3.0.txt > crates/tuxmodem-host-proto/LICENSE` if a network fetch is permitted; otherwise reproduce the standard text by hand. The LICENSE file is a verbatim copy of the GNU AGPLv3 — do not modify it.
+Copy the standard GNU AGPLv3 license text (https://www.gnu.org/licenses/agpl-3.0.txt). Use `curl -sSL https://www.gnu.org/licenses/agpl-3.0.txt > crates/sonde-host-proto/LICENSE` if a network fetch is permitted; otherwise reproduce the standard text by hand. The LICENSE file is a verbatim copy of the GNU AGPLv3 — do not modify it.
 
-- [ ] **Step 6: Create `crates/tuxmodem-host-proto/README.md`**
+- [ ] **Step 6: Create `crates/sonde-host-proto/README.md`**
 
 ```markdown
-# tuxmodem-host-proto
+# sonde-host-proto
 
-Host protocol crate for the tuxmodem HF modem.
+Host protocol crate for the sonde HF modem.
 
 - Wire: length-prefixed CBOR frames; two TCP sockets (cmd + data) or in-process channel adapter.
-- Schema: serde-typed Rust + JSON-Schema sidecar at `schemas/tuxmodem-host-proto-v1.schema.json`.
+- Schema: serde-typed Rust + JSON-Schema sidecar at `schemas/sonde-host-proto-v1.schema.json`.
 - Messages: `req` / `resp` / `event` with `u64` id correlation.
 - Versioning: semver + capability bits exchanged in `Hello`.
 
@@ -158,14 +158,14 @@ Spec: `docs/superpowers/specs/2026-05-31-clean-sheet-modem-8-host-protocol.md`.
 
 - [ ] **Step 7: Verify the crate compiles**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml`
 Expected: PASS (`smoke::crate_compiles`).
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add Cargo.toml crates/tuxmodem-host-proto/
-git commit -m "feat(modem-host): scaffold tuxmodem-host-proto crate (AGPLv3)
+git add Cargo.toml crates/sonde-host-proto/
+git commit -m "feat(modem-host): scaffold sonde-host-proto crate (AGPLv3)
 
 Workspace scaffold for subsystem #8 of the clean-sheet HF modem.
 Empty crate; codec + state machine land in Phase 1+.
@@ -181,12 +181,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 1.1: Define the `Frame` byte-level codec
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/src/codec.rs`
-- Modify: `crates/tuxmodem-host-proto/src/lib.rs` (declare `pub mod codec;`)
+- Create: `crates/sonde-host-proto/src/codec.rs`
+- Modify: `crates/sonde-host-proto/src/lib.rs` (declare `pub mod codec;`)
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-host-proto/src/codec.rs`:
+In `crates/sonde-host-proto/src/codec.rs`:
 
 ```rust
 //! Length-prefixed CBOR frame codec.
@@ -282,7 +282,7 @@ mod tests {
 }
 ```
 
-In `crates/tuxmodem-host-proto/src/lib.rs`, add at the top (below the doc comment):
+In `crates/sonde-host-proto/src/lib.rs`, add at the top (below the doc comment):
 
 ```rust
 pub mod codec;
@@ -290,20 +290,20 @@ pub mod codec;
 
 - [ ] **Step 2: Run the failing test**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml codec::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml codec::`
 Expected: FAIL — `thiserror` is in deps but the test refers to `read_exact` semantics that must compile first. Compile errors are acceptable as "fail" for this TDD step.
 
 - [ ] **Step 3: Confirm the implementation passes**
 
 The implementation written in Step 1 IS the minimal code. Re-run:
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml codec::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml codec::`
 Expected: PASS (4 tests).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/src/codec.rs crates/tuxmodem-host-proto/src/lib.rs
+git add crates/sonde-host-proto/src/codec.rs crates/sonde-host-proto/src/lib.rs
 git commit -m "feat(modem-host): length-prefixed CBOR frame codec
 
 Add the byte-level wire codec. u32 BE length prefix + CBOR payload.
@@ -320,13 +320,13 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 2.1: Define the top-level `Message` envelope
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/src/proto/mod.rs`
-- Create: `crates/tuxmodem-host-proto/src/proto/envelope.rs`
-- Modify: `crates/tuxmodem-host-proto/src/lib.rs` (declare `pub mod proto;`)
+- Create: `crates/sonde-host-proto/src/proto/mod.rs`
+- Create: `crates/sonde-host-proto/src/proto/envelope.rs`
+- Modify: `crates/sonde-host-proto/src/lib.rs` (declare `pub mod proto;`)
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-host-proto/src/proto/envelope.rs`:
+In `crates/sonde-host-proto/src/proto/envelope.rs`:
 
 ```rust
 //! Top-level `Message` envelope.
@@ -405,15 +405,15 @@ mod tests {
 }
 ```
 
-Create `crates/tuxmodem-host-proto/src/proto/mod.rs`:
+Create `crates/sonde-host-proto/src/proto/mod.rs`:
 
 ```rust
 //! Protocol message schema, version 1.
 //!
 //! Types are `serde`-derived for CBOR (wire) and `schemars`-derived for the
 //! JSON-Schema sidecar. The schema sidecar at
-//! `schemas/tuxmodem-host-proto-v1.schema.json` is regenerated by
-//! `cargo run -p tuxmodem-host-proto --bin gen-schema` (Phase 6) and committed
+//! `schemas/sonde-host-proto-v1.schema.json` is regenerated by
+//! `cargo run -p sonde-host-proto --bin gen-schema` (Phase 6) and committed
 //! to the repo.
 
 pub mod body;
@@ -423,7 +423,7 @@ pub use envelope::Message;
 pub use body::Body;
 ```
 
-Add to `crates/tuxmodem-host-proto/src/lib.rs`:
+Add to `crates/sonde-host-proto/src/lib.rs`:
 
 ```rust
 pub mod proto;
@@ -431,12 +431,12 @@ pub mod proto;
 
 - [ ] **Step 2: Run to confirm compile failure**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml proto::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml proto::`
 Expected: FAIL — `Body` does not exist yet. This is the TDD failure point.
 
 - [ ] **Step 3: Write a stub `Body` so the envelope test compiles (full Body enum follows in 2.2)**
 
-Create `crates/tuxmodem-host-proto/src/proto/body.rs`:
+Create `crates/sonde-host-proto/src/proto/body.rs`:
 
 ```rust
 //! Per-message body variants. Each variant corresponds to one logical request,
@@ -489,14 +489,14 @@ pub enum Auth {
 
 - [ ] **Step 4: Run the test**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml proto::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml proto::`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/src/proto/
-git add crates/tuxmodem-host-proto/src/lib.rs
+git add crates/sonde-host-proto/src/proto/
+git add crates/sonde-host-proto/src/lib.rs
 git commit -m "feat(modem-host): top-level Message envelope with CBOR roundtrip
 
 Req/Resp/Event variants with u64 id correlation. Body stub holds Hello +
@@ -509,11 +509,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 2.2: Expand `Body` to the full variant set
 
 **Files:**
-- Modify: `crates/tuxmodem-host-proto/src/proto/body.rs`
+- Modify: `crates/sonde-host-proto/src/proto/body.rs`
 
 - [ ] **Step 1: Write the failing test (one test per variant family)**
 
-Append to `crates/tuxmodem-host-proto/src/proto/body.rs`:
+Append to `crates/sonde-host-proto/src/proto/body.rs`:
 
 ```rust
 #[cfg(test)]
@@ -549,7 +549,7 @@ mod variant_tests {
             id: 1,
             body: Body::DescribeOk {
                 proto_version: "1.0.0".into(),
-                schema_uri: "tuxmodem-host-proto-v1.schema.json".into(),
+                schema_uri: "sonde-host-proto-v1.schema.json".into(),
                 capabilities: vec!["ofdm-family-v1".into()],
             },
         });
@@ -653,12 +653,12 @@ mod variant_tests {
 
 - [ ] **Step 2: Run the failing test**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml proto::body::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml proto::body::`
 Expected: FAIL — all variants beyond `Hello`, `ArqMetricsUpdate`, and `Auth::Token` are unknown. Compile error.
 
 - [ ] **Step 3: Implement the full `Body` enum**
 
-REPLACE the `Body` enum in `crates/tuxmodem-host-proto/src/proto/body.rs` with this full version (keep `Auth` from 2.1 below it unchanged):
+REPLACE the `Body` enum in `crates/sonde-host-proto/src/proto/body.rs` with this full version (keep `Auth` from 2.1 below it unchanged):
 
 ```rust
 /// Per-message body variants — the full v1 protocol surface.
@@ -851,13 +851,13 @@ pub enum Body {
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml proto::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml proto::`
 Expected: PASS (all variant tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/src/proto/body.rs
+git add crates/sonde-host-proto/src/proto/body.rs
 git commit -m "feat(modem-host): full Body variant set for v1 protocol
 
 Lifecycle (Hello/Goodbye/Ack/Error), Describe, MAC/ARQ/linkadapt operations
@@ -870,12 +870,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 2.3: Stable error code enumeration
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/src/proto/errors.rs`
-- Modify: `crates/tuxmodem-host-proto/src/proto/mod.rs` (export the new module)
+- Create: `crates/sonde-host-proto/src/proto/errors.rs`
+- Modify: `crates/sonde-host-proto/src/proto/mod.rs` (export the new module)
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-host-proto/src/proto/errors.rs`:
+In `crates/sonde-host-proto/src/proto/errors.rs`:
 
 ```rust
 //! Canonical error-code enumeration. The `Error { code, message }` body's
@@ -939,7 +939,7 @@ mod tests {
 }
 ```
 
-Add to `crates/tuxmodem-host-proto/src/proto/mod.rs`:
+Add to `crates/sonde-host-proto/src/proto/mod.rs`:
 
 ```rust
 pub mod errors;
@@ -947,13 +947,13 @@ pub mod errors;
 
 - [ ] **Step 2: Run the tests**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml proto::errors::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml proto::errors::`
 Expected: PASS (3 tests).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/src/proto/errors.rs crates/tuxmodem-host-proto/src/proto/mod.rs
+git add crates/sonde-host-proto/src/proto/errors.rs crates/sonde-host-proto/src/proto/mod.rs
 git commit -m "feat(modem-host): canonical error-code list
 
 ALL_ERROR_CODES is the source of truth for Error body 'code' strings.
@@ -970,12 +970,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 3.1: Define the `Dispatcher` trait
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/src/dispatcher.rs`
-- Modify: `crates/tuxmodem-host-proto/src/lib.rs` (declare `pub mod dispatcher;`)
+- Create: `crates/sonde-host-proto/src/dispatcher.rs`
+- Modify: `crates/sonde-host-proto/src/lib.rs` (declare `pub mod dispatcher;`)
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-host-proto/src/dispatcher.rs`:
+In `crates/sonde-host-proto/src/dispatcher.rs`:
 
 ```rust
 //! `Dispatcher` — the seam between this crate and the modem core (subsystems
@@ -1037,7 +1037,7 @@ mod tests {
             match req {
                 Body::Describe => Body::DescribeOk {
                     proto_version: "1.0.0".into(),
-                    schema_uri: "tuxmodem-host-proto-v1.schema.json".into(),
+                    schema_uri: "sonde-host-proto-v1.schema.json".into(),
                     capabilities: vec![],
                 },
                 Body::GetStatus => Body::StatusSnapshot {
@@ -1092,7 +1092,7 @@ mod tests {
 }
 ```
 
-Add to `crates/tuxmodem-host-proto/src/lib.rs`:
+Add to `crates/sonde-host-proto/src/lib.rs`:
 
 ```rust
 pub mod dispatcher;
@@ -1100,18 +1100,18 @@ pub mod dispatcher;
 
 - [ ] **Step 2: Run the failing test**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml dispatcher::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml dispatcher::`
 Expected: FAIL on first compile, then PASS after the implementation in Step 1 lands. (One-pass — the implementation IS the test fixture.)
 
 - [ ] **Step 3: Re-run**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml dispatcher::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml dispatcher::`
 Expected: PASS (2 tests).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/src/dispatcher.rs crates/tuxmodem-host-proto/src/lib.rs
+git add crates/sonde-host-proto/src/dispatcher.rs crates/sonde-host-proto/src/lib.rs
 git commit -m "feat(modem-host): Dispatcher / EventSink / DataChannel traits
 
 The seam between the host protocol and the modem core. Subsystems
@@ -1124,12 +1124,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 3.2: Scripted `StubDispatcher` for integration tests
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/src/stub.rs`
-- Modify: `crates/tuxmodem-host-proto/src/lib.rs` (declare `pub mod stub;`)
+- Create: `crates/sonde-host-proto/src/stub.rs`
+- Modify: `crates/sonde-host-proto/src/lib.rs` (declare `pub mod stub;`)
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-host-proto/src/stub.rs`:
+In `crates/sonde-host-proto/src/stub.rs`:
 
 ```rust
 //! `StubDispatcher` — a programmable `Dispatcher` for tests. Each `Req` is
@@ -1183,7 +1183,7 @@ impl Dispatcher for StubDispatcher {
         match &req {
             Body::Describe => return Body::DescribeOk {
                 proto_version: "1.0.0".into(),
-                schema_uri: "tuxmodem-host-proto-v1.schema.json".into(),
+                schema_uri: "sonde-host-proto-v1.schema.json".into(),
                 capabilities: vec!["ofdm-family-v1".into(), "robustness-floor-v1".into()],
             },
             Body::GetStatus => return Body::StatusSnapshot {
@@ -1318,7 +1318,7 @@ mod tests {
 }
 ```
 
-Add to `crates/tuxmodem-host-proto/src/lib.rs`:
+Add to `crates/sonde-host-proto/src/lib.rs`:
 
 ```rust
 pub mod stub;
@@ -1326,13 +1326,13 @@ pub mod stub;
 
 - [ ] **Step 2: Run the failing test**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml stub::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml stub::`
 Expected: PASS (4 tests) after the implementation in Step 1 lands.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/src/stub.rs crates/tuxmodem-host-proto/src/lib.rs
+git add crates/sonde-host-proto/src/stub.rs crates/sonde-host-proto/src/lib.rs
 git commit -m "feat(modem-host): StubDispatcher for protocol-level tests
 
 Scripted-response dispatcher used by Phase 4/5 integration tests.
@@ -1349,20 +1349,20 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 4.1: `InProcessTransport` channel adapter
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/src/transport/mod.rs`
-- Create: `crates/tuxmodem-host-proto/src/transport/in_process.rs`
-- Modify: `crates/tuxmodem-host-proto/src/lib.rs` (declare `pub mod transport;`)
+- Create: `crates/sonde-host-proto/src/transport/mod.rs`
+- Create: `crates/sonde-host-proto/src/transport/in_process.rs`
+- Modify: `crates/sonde-host-proto/src/lib.rs` (declare `pub mod transport;`)
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-host-proto/src/transport/in_process.rs`:
+In `crates/sonde-host-proto/src/transport/in_process.rs`:
 
 ```rust
 //! `InProcessTransport` — a synchronous, in-memory transport that runs the
 //! protocol server in a background thread and exposes paired client-side
 //! channels.
 //!
-//! Used by subsystem #9 (tuxlink integration) to drive tuxmodem without
+//! Used by subsystem #9 (tuxlink integration) to drive sonde without
 //! going through TCP. The server-side wire is exactly the same logical
 //! protocol as the TCP path, but the bytes flow through `std::sync::mpsc`
 //! channels instead of socket I/O. This guarantees the in-process and
@@ -1481,7 +1481,7 @@ mod tests {
 }
 ```
 
-Create `crates/tuxmodem-host-proto/src/transport/mod.rs`:
+Create `crates/sonde-host-proto/src/transport/mod.rs`:
 
 ```rust
 //! Transport adapters. Two flavors:
@@ -1498,7 +1498,7 @@ pub mod tcp;
 
 (The `tcp` submodule lands in Phase 5; declare it now so the structure is consistent.)
 
-Add to `crates/tuxmodem-host-proto/src/lib.rs`:
+Add to `crates/sonde-host-proto/src/lib.rs`:
 
 ```rust
 pub mod transport;
@@ -1506,7 +1506,7 @@ pub mod transport;
 
 - [ ] **Step 2: Create a placeholder `tcp` module so the crate compiles**
 
-Create `crates/tuxmodem-host-proto/src/transport/tcp.rs`:
+Create `crates/sonde-host-proto/src/transport/tcp.rs`:
 
 ```rust
 //! TCP transport — lands in Phase 5.
@@ -1514,21 +1514,21 @@ Create `crates/tuxmodem-host-proto/src/transport/tcp.rs`:
 
 - [ ] **Step 3: Run the failing test**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml transport::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml transport::`
 Expected: FAIL on first compile (depending on which step ran first); PASS once Step 1's code is in place.
 
 - [ ] **Step 4: Re-run after Step 1+2 land**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml transport::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml transport::`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/src/transport/ crates/tuxmodem-host-proto/src/lib.rs
+git add crates/sonde-host-proto/src/transport/ crates/sonde-host-proto/src/lib.rs
 git commit -m "feat(modem-host): InProcessTransport channel adapter
 
-Subsystem #9's seam: tuxlink runs tuxmodem in-process via std::sync::mpsc
+Subsystem #9's seam: tuxlink runs sonde in-process via std::sync::mpsc
 channels, same protocol shape as the TCP wire. Symmetry by construction.
 
 Agent: opossum-pine-spruce
@@ -1542,11 +1542,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 5.1: TCP listener + per-connection worker threads (cmd socket only)
 
 **Files:**
-- Modify: `crates/tuxmodem-host-proto/src/transport/tcp.rs`
+- Modify: `crates/sonde-host-proto/src/transport/tcp.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-REPLACE the contents of `crates/tuxmodem-host-proto/src/transport/tcp.rs` with:
+REPLACE the contents of `crates/sonde-host-proto/src/transport/tcp.rs` with:
 
 ```rust
 //! TCP transport — the over-the-wire path for the standalone daemon
@@ -1957,13 +1957,13 @@ mod tests {
 
 - [ ] **Step 2: Run the tests**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml transport::tcp::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml transport::tcp::`
 Expected: PASS (4 tests).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/src/transport/tcp.rs
+git add crates/sonde-host-proto/src/transport/tcp.rs
 git commit -m "feat(modem-host): TCP cmd-socket listener + Hello/auth handshake
 
 Subsystem #10's seam: standalone daemon exposes the protocol over TCP.
@@ -1977,11 +1977,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 5.2: TCP data-socket bridge
 
 **Files:**
-- Modify: `crates/tuxmodem-host-proto/src/transport/tcp.rs`
+- Modify: `crates/sonde-host-proto/src/transport/tcp.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the existing `tests` mod in `crates/tuxmodem-host-proto/src/transport/tcp.rs`:
+Append to the existing `tests` mod in `crates/sonde-host-proto/src/transport/tcp.rs`:
 
 ```rust
     /// A scripted `DataChannel` that records everything pushed in and
@@ -2116,13 +2116,13 @@ fn serve_data_connection<D: Dispatcher + 'static>(
 
 - [ ] **Step 3: Run the tests**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml transport::tcp::data_socket`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml transport::tcp::data_socket`
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/src/transport/tcp.rs
+git add crates/sonde-host-proto/src/transport/tcp.rs
 git commit -m "feat(modem-host): TCP data-socket bridge with attach + RX pump
 
 Data-socket attaches to a connection id and pumps ARQ-corrected RX bytes
@@ -2139,38 +2139,38 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 6.1: Build a `gen-schema` binary
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/src/bin/gen-schema.rs`
-- Modify: `crates/tuxmodem-host-proto/Cargo.toml` (add `[[bin]] name = "gen-schema"`)
-- Create: `crates/tuxmodem-host-proto/schemas/.gitkeep`
+- Create: `crates/sonde-host-proto/src/bin/gen-schema.rs`
+- Modify: `crates/sonde-host-proto/Cargo.toml` (add `[[bin]] name = "gen-schema"`)
+- Create: `crates/sonde-host-proto/schemas/.gitkeep`
 
 - [ ] **Step 1: Write the binary**
 
-Create `crates/tuxmodem-host-proto/src/bin/gen-schema.rs`:
+Create `crates/sonde-host-proto/src/bin/gen-schema.rs`:
 
 ```rust
 //! `gen-schema` — regenerate the JSON-Schema sidecar from the serde+schemars-
 //! derived types. Run as:
 //!
 //! ```sh
-//! cargo run -p tuxmodem-host-proto --bin gen-schema
+//! cargo run -p sonde-host-proto --bin gen-schema
 //! ```
 //!
-//! Writes `crates/tuxmodem-host-proto/schemas/tuxmodem-host-proto-v1.schema.json`.
+//! Writes `crates/sonde-host-proto/schemas/sonde-host-proto-v1.schema.json`.
 
 use schemars::schema_for;
-use tuxmodem_host_proto::proto::Message;
+use sonde_host_proto::proto::Message;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let schema = schema_for!(Message);
     let json = serde_json::to_string_pretty(&schema)?;
-    let out_path = "crates/tuxmodem-host-proto/schemas/tuxmodem-host-proto-v1.schema.json";
+    let out_path = "crates/sonde-host-proto/schemas/sonde-host-proto-v1.schema.json";
     std::fs::write(out_path, json)?;
     println!("wrote {}", out_path);
     Ok(())
 }
 ```
 
-Add to `crates/tuxmodem-host-proto/Cargo.toml` (under `[dependencies]`, append a new section):
+Add to `crates/sonde-host-proto/Cargo.toml` (under `[dependencies]`, append a new section):
 
 ```toml
 [[bin]]
@@ -2178,24 +2178,24 @@ name = "gen-schema"
 path = "src/bin/gen-schema.rs"
 ```
 
-Create `crates/tuxmodem-host-proto/schemas/.gitkeep` (empty file) so the directory tracks under git.
+Create `crates/sonde-host-proto/schemas/.gitkeep` (empty file) so the directory tracks under git.
 
 - [ ] **Step 2: Generate the schema**
 
-Run: `cargo run --manifest-path crates/tuxmodem-host-proto/Cargo.toml --bin gen-schema`
-Expected: `wrote crates/tuxmodem-host-proto/schemas/tuxmodem-host-proto-v1.schema.json`.
+Run: `cargo run --manifest-path crates/sonde-host-proto/Cargo.toml --bin gen-schema`
+Expected: `wrote crates/sonde-host-proto/schemas/sonde-host-proto-v1.schema.json`.
 
 - [ ] **Step 3: Sanity-check the schema**
 
-Run: `head -30 crates/tuxmodem-host-proto/schemas/tuxmodem-host-proto-v1.schema.json`
+Run: `head -30 crates/sonde-host-proto/schemas/sonde-host-proto-v1.schema.json`
 Expected: a valid JSON-Schema document with `$schema`, `title`, `oneOf` for the `Message` variants.
 
 - [ ] **Step 4: Commit the schema + binary**
 
 ```bash
-git add crates/tuxmodem-host-proto/Cargo.toml \
-        crates/tuxmodem-host-proto/src/bin/gen-schema.rs \
-        crates/tuxmodem-host-proto/schemas/
+git add crates/sonde-host-proto/Cargo.toml \
+        crates/sonde-host-proto/src/bin/gen-schema.rs \
+        crates/sonde-host-proto/schemas/
 git commit -m "feat(modem-host): JSON-Schema sidecar generator
 
 gen-schema binary regenerates the JSON-Schema sidecar from serde+schemars-
@@ -2209,11 +2209,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 6.2: Schema-freshness test (CI gate)
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/tests/schema_freshness.rs`
+- Create: `crates/sonde-host-proto/tests/schema_freshness.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/tuxmodem-host-proto/tests/schema_freshness.rs`:
+Create `crates/sonde-host-proto/tests/schema_freshness.rs`:
 
 ```rust
 //! Asserts that the on-disk schema sidecar matches what `schema_for!(Message)`
@@ -2221,7 +2221,7 @@ Create `crates/tuxmodem-host-proto/tests/schema_freshness.rs`:
 //! the sidecar, this test fails and CI catches the drift.
 
 use schemars::schema_for;
-use tuxmodem_host_proto::proto::Message;
+use sonde_host_proto::proto::Message;
 
 #[test]
 fn schema_sidecar_is_up_to_date() {
@@ -2229,8 +2229,8 @@ fn schema_sidecar_is_up_to_date() {
     let current_json = serde_json::to_string_pretty(&current).unwrap();
 
     let on_disk = std::fs::read_to_string(
-        "schemas/tuxmodem-host-proto-v1.schema.json",
-    ).expect("schemas/tuxmodem-host-proto-v1.schema.json should exist; run `cargo run --bin gen-schema` to create it");
+        "schemas/sonde-host-proto-v1.schema.json",
+    ).expect("schemas/sonde-host-proto-v1.schema.json should exist; run `cargo run --bin gen-schema` to create it");
 
     assert_eq!(
         current_json.trim(),
@@ -2242,13 +2242,13 @@ fn schema_sidecar_is_up_to_date() {
 
 - [ ] **Step 2: Run the test**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml --test schema_freshness`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml --test schema_freshness`
 Expected: PASS (the sidecar generated in Task 6.1 matches).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/tests/schema_freshness.rs
+git add crates/sonde-host-proto/tests/schema_freshness.rs
 git commit -m "test(modem-host): schema-sidecar freshness gate
 
 Asserts on-disk JSON-Schema matches what schema_for!(Message) produces.
@@ -2265,12 +2265,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 7.1: `--text` JSON shim for human/agent inspection
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/src/debug.rs`
-- Modify: `crates/tuxmodem-host-proto/src/lib.rs` (declare `pub mod debug;`)
+- Create: `crates/sonde-host-proto/src/debug.rs`
+- Modify: `crates/sonde-host-proto/src/lib.rs` (declare `pub mod debug;`)
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-host-proto/src/debug.rs`:
+In `crates/sonde-host-proto/src/debug.rs`:
 
 ```rust
 //! Debug surfaces. Two affordances for AI-collaborative inspection:
@@ -2329,7 +2329,7 @@ mod tests {
 }
 ```
 
-Add to `crates/tuxmodem-host-proto/src/lib.rs`:
+Add to `crates/sonde-host-proto/src/lib.rs`:
 
 ```rust
 pub mod debug;
@@ -2337,13 +2337,13 @@ pub mod debug;
 
 - [ ] **Step 2: Run the tests**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml debug::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml debug::`
 Expected: PASS (2 tests).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/src/debug.rs crates/tuxmodem-host-proto/src/lib.rs
+git add crates/sonde-host-proto/src/debug.rs crates/sonde-host-proto/src/lib.rs
 git commit -m "feat(modem-host): JSON-Line debug shim
 
 to_json_line / from_json_line for --trace-jsonl and for fixture authoring.
@@ -2356,12 +2356,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 7.2: `Tracer` middleware — wrap any `Dispatcher` to emit JSONL trace
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/src/tracer.rs`
-- Modify: `crates/tuxmodem-host-proto/src/lib.rs` (declare `pub mod tracer;`)
+- Create: `crates/sonde-host-proto/src/tracer.rs`
+- Modify: `crates/sonde-host-proto/src/lib.rs` (declare `pub mod tracer;`)
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-host-proto/src/tracer.rs`:
+In `crates/sonde-host-proto/src/tracer.rs`:
 
 ```rust
 //! `Tracer` — wraps any `Dispatcher` to write every `(req, resp)` pair as a
@@ -2473,7 +2473,7 @@ mod tests {
 }
 ```
 
-Add to `crates/tuxmodem-host-proto/src/lib.rs`:
+Add to `crates/sonde-host-proto/src/lib.rs`:
 
 ```rust
 pub mod tracer;
@@ -2481,13 +2481,13 @@ pub mod tracer;
 
 - [ ] **Step 2: Run the tests**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml tracer::`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml tracer::`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/src/tracer.rs crates/tuxmodem-host-proto/src/lib.rs
+git add crates/sonde-host-proto/src/tracer.rs crates/sonde-host-proto/src/lib.rs
 git commit -m "feat(modem-host): Tracer middleware writes JSONL conversation traces
 
 Wrap any Dispatcher; every (in, out) pair becomes one JSONL line each. Used
@@ -2505,11 +2505,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 8.1: Cross-transport conformance test
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/tests/cross_transport.rs`
+- Create: `crates/sonde-host-proto/tests/cross_transport.rs`
 
 - [ ] **Step 1: Write the test**
 
-Create `crates/tuxmodem-host-proto/tests/cross_transport.rs`:
+Create `crates/sonde-host-proto/tests/cross_transport.rs`:
 
 ```rust
 //! Cross-transport conformance: the same `Dispatcher`-driven scenario must
@@ -2520,10 +2520,10 @@ Create `crates/tuxmodem-host-proto/tests/cross_transport.rs`:
 use std::sync::Arc;
 use std::time::Duration;
 
-use tuxmodem_host_proto::codec::{read_frame, write_frame};
-use tuxmodem_host_proto::proto::{Body, Message};
-use tuxmodem_host_proto::stub::StubDispatcher;
-use tuxmodem_host_proto::transport::{in_process, tcp};
+use sonde_host_proto::codec::{read_frame, write_frame};
+use sonde_host_proto::proto::{Body, Message};
+use sonde_host_proto::stub::StubDispatcher;
+use sonde_host_proto::transport::{in_process, tcp};
 
 fn open_conn_req(id: u64) -> Message {
     Message::Req {
@@ -2607,13 +2607,13 @@ fn in_process_and_tcp_emit_same_open_connection_response() {
 
 - [ ] **Step 2: Run the test**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml --test cross_transport`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml --test cross_transport`
 Expected: PASS — both transports emit `Body::OpenConnectionOk { connection_id: 7, ... }`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/tests/cross_transport.rs
+git add crates/sonde-host-proto/tests/cross_transport.rs
 git commit -m "test(modem-host): in-process and TCP emit equivalent message sequences
 
 Conformance gate that #9 (in-process) and #10 (TCP) cannot drift. Same
@@ -2626,12 +2626,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 8.2: Documentation — capability matrix + topic reference
 
 **Files:**
-- Create: `crates/tuxmodem-host-proto/docs/CAPABILITIES.md`
-- Create: `crates/tuxmodem-host-proto/docs/TOPICS.md`
+- Create: `crates/sonde-host-proto/docs/CAPABILITIES.md`
+- Create: `crates/sonde-host-proto/docs/TOPICS.md`
 
 - [ ] **Step 1: Write `CAPABILITIES.md`**
 
-Create `crates/tuxmodem-host-proto/docs/CAPABILITIES.md`:
+Create `crates/sonde-host-proto/docs/CAPABILITIES.md`:
 
 ```markdown
 # Capability matrix — v1
@@ -2659,7 +2659,7 @@ the old set.
 
 - [ ] **Step 2: Write `TOPICS.md`**
 
-Create `crates/tuxmodem-host-proto/docs/TOPICS.md`:
+Create `crates/sonde-host-proto/docs/TOPICS.md`:
 
 ```markdown
 # Subscription topics — v1
@@ -2687,7 +2687,7 @@ Unsubscribing from a topic the client never subscribed to is idempotent.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/tuxmodem-host-proto/docs/
+git add crates/sonde-host-proto/docs/
 git commit -m "docs(modem-host): capability matrix + subscription topic reference
 
 Capability advertisement + topic catalogue. Both feed the AI-native posture:
@@ -2718,7 +2718,7 @@ If `dev/implementation-log.md` does not exist, create it with this content. If i
 
 Per the v0.5+ modem plans-sprint:
 
-- Created `crates/tuxmodem-host-proto/` (AGPLv3-only) carrying the wire codec
+- Created `crates/sonde-host-proto/` (AGPLv3-only) carrying the wire codec
   (length-prefixed CBOR), serde-typed `Body` variant set, `Dispatcher` +
   `EventSink` + `DataChannel` traits, an in-process channel transport (the
   subsystem #9 seam), a TCP server transport (the subsystem #10 seam), a
@@ -2727,8 +2727,8 @@ Per the v0.5+ modem plans-sprint:
 - The protocol locks: length-prefixed CBOR framing, req/resp/event envelope
   with u64 id correlation, semver + capability bits in `Hello`,
   loopback-default bind with auth gate for non-loopback (full TLS deferred).
-- ADR 0015's `ModemTransport` shape is preserved; tuxmodem-in-tuxlink wires
-  in via `InProcessTransport`, tuxmodem-as-daemon via `TcpServer`.
+- ADR 0015's `ModemTransport` shape is preserved; sonde-in-tuxlink wires
+  in via `InProcessTransport`, sonde-as-daemon via `TcpServer`.
 
 Plan: `docs/superpowers/plans/2026-05-31-clean-sheet-modem-8-host-protocol-plan.md`.
 Spec: `docs/superpowers/specs/2026-05-31-clean-sheet-modem-8-host-protocol.md`.
@@ -2748,22 +2748,22 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Run the full test suite for the crate**
 
-Run: `cargo test --manifest-path crates/tuxmodem-host-proto/Cargo.toml`
+Run: `cargo test --manifest-path crates/sonde-host-proto/Cargo.toml`
 Expected: PASS — all unit tests + the schema-freshness test + the cross-transport conformance test.
 
 - [ ] **Step 2: Verify clippy is clean**
 
-Run: `cargo clippy --manifest-path crates/tuxmodem-host-proto/Cargo.toml --all-targets -- -D warnings`
+Run: `cargo clippy --manifest-path crates/sonde-host-proto/Cargo.toml --all-targets -- -D warnings`
 Expected: PASS (no warnings).
 
 - [ ] **Step 3: Verify the schema sidecar is checked in**
 
-Run: `git ls-files crates/tuxmodem-host-proto/schemas/`
-Expected: `crates/tuxmodem-host-proto/schemas/.gitkeep` + `crates/tuxmodem-host-proto/schemas/tuxmodem-host-proto-v1.schema.json`.
+Run: `git ls-files crates/sonde-host-proto/schemas/`
+Expected: `crates/sonde-host-proto/schemas/.gitkeep` + `crates/sonde-host-proto/schemas/sonde-host-proto-v1.schema.json`.
 
 - [ ] **Step 4: Confirm the LICENSE file is the AGPLv3 verbatim text**
 
-Run: `head -5 crates/tuxmodem-host-proto/LICENSE`
+Run: `head -5 crates/sonde-host-proto/LICENSE`
 Expected: starts with `GNU AFFERO GENERAL PUBLIC LICENSE` and `Version 3, 19 November 2007`.
 
 - [ ] **Step 5: Push (the executing session handles this — handoff complete)**
@@ -2779,7 +2779,7 @@ The session that executes this plan ends with `git push` per CLAUDE.md §"Sessio
 | Subsystem #5 (link/MAC) | This plan (`Dispatcher::handle`) | MAC state strings (`disconnected`, `connecting`, `connected`, `closing`, `aborting`); `OpenConnection` / `CloseConnection` body variants. |
 | Subsystem #6 (ARQ) | This plan (`Dispatcher::handle` + `DataChannel`) | `ArqMetricsUpdate` events; `ArqConnectionChange` events; ARQ-corrected RX/TX bytes via `DataChannel::push_tx` / `drain_rx`. |
 | Subsystem #7 (link adaptation) | This plan (`Dispatcher::handle`) | `LinkAdaptModeChange` events; `LinkAdaptMetricsUpdate` events; `PhyBitLoadingUpdate` events; `SetLinkAdaptOverride` requests. |
-| This plan (`InProcessTransport`) | Subsystem #9 (tuxlink integration) | `in_process::spawn(dispatcher)` returns an `InProcessClient { tx, rx }`. Subsystem #9 wraps that pair in a `TuxmodemTransport` implementing the existing `ModemTransport` trait at `src-tauri/src/winlink/modem/mod.rs`. |
+| This plan (`InProcessTransport`) | Subsystem #9 (tuxlink integration) | `in_process::spawn(dispatcher)` returns an `InProcessClient { tx, rx }`. Subsystem #9 wraps that pair in a `SondeTransport` implementing the existing `ModemTransport` trait at `src-tauri/src/winlink/modem/mod.rs`. |
 | This plan (`TcpServer`) | Subsystem #10 (standalone daemon) | `tcp::start(cfg, dispatcher)` returns a `TcpServer`. Subsystem #10 wraps that in a binary with CLI flags (`--listen <addr>`, `--token <token>`, `--trace-jsonl <path>`) and packaging. |
 
 ## Self-review (writing-plans skill checklist)

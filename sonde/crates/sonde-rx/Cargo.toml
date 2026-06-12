@@ -1,0 +1,24 @@
+[package]
+name = "sonde-rx"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "sonde-rx — the receive complement to sonde-tx. Captures audio from a CPAL input device (or reads a WAV file), demodulates one OFDM symbol via sonde-phy's WidebandLowDensityFloor::receive, prints the decoded payload + optional BER vs an expected reference. Phase 4 of the sonde hardware bring-up (tuxlink-xvrb). Library + CLI."
+keywords = ["ham-radio", "modem", "ofdm", "receive", "demodulator"]
+categories = ["hardware-support", "command-line-utilities"]
+
+[dependencies]
+thiserror.workspace = true
+sonde-phy = { workspace = true, features = ["audio-device"] }
+libc = "0.2"
+
+[dev-dependencies]
+# No extras — encode-then-decode roundtrip in lib tests uses sonde-phy's
+# WidebandLowDensityFloor::transmit (already a runtime dep via sonde-phy).
+
+[[bin]]
+name = "sonde-rx"
+path = "src/bin/sonde-rx.rs"

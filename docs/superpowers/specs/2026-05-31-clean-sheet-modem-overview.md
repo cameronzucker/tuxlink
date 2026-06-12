@@ -33,10 +33,10 @@ clients (Pat / ARIM / etc.).
 
 **Success-criterion shape (settled 2026-05-31):**
 
-The success criterion is **multi-axis**, not single-metric. Tuxmodem is not
+The success criterion is **multi-axis**, not single-metric. Sonde is not
 trying to be the technically-best HF modem on raw performance alone — that bar
 is "VARA + 5 years of operational tuning" and an architectural-only assault on
-it is unlikely to win cleanly. Instead, tuxmodem aims to be a **compelling
+it is unlikely to win cleanly. Instead, sonde aims to be a **compelling
 alternative** along axes the closed-source incumbent cannot match. Specifically:
 
 - **Performance: competitive with VARA, not strictly exceeding.** The modem
@@ -48,7 +48,7 @@ alternative** along axes the closed-source incumbent cannot match. Specifically:
   measurements show, say, 80% of VARA's throughput at the same SNR floor,
   that's a usable result given the differentiation below.
 - **Differentiation: open source + well-documented + AI-native for
-  improvement.** This is where tuxmodem competes:
+  improvement.** This is where sonde competes:
   - **Open source (AGPLv3-only):** legally accessible, forkable, auditable.
     VARA can't be.
   - **Well-documented:** architectural docs, subsystem specs, foundations
@@ -64,7 +64,7 @@ alternative** along axes the closed-source incumbent cannot match. Specifically:
     project ethos (Tuxlink is Cameron's learning sandbox for transferable
     AI-assisted development techniques), this is a first-class success
     criterion.
-- **Decode threshold — beat ARDOP at the noise-floor case.** Tuxmodem's
+- **Decode threshold — beat ARDOP at the noise-floor case.** Sonde's
   wide-band noise-floor mode (§5.A.1) targets stronger SNR-floor performance
   than ARDOP's narrowest mode at the same per-Hz noise floor. Specific dB
   number is to be measured against ITU-R F.520 in the channel simulator;
@@ -78,7 +78,7 @@ alternative** along axes the closed-source incumbent cannot match. Specifically:
   bench rig (`docs/hardware/bench-rig-two-host-topology.md`).
 - **Independent-creation defense preserved per ADR 0014** throughout the
   project lifecycle.
-- **License posture: AGPLv3-only** for tuxmodem (the modem itself + the
+- **License posture: AGPLv3-only** for sonde (the modem itself + the
   channel-simulator crate). Tuxlink-the-client license is a separate
   workstream not settled here.
 - **Compute target: best-effort** — anything that runs Rust + ALSA cleanly.
@@ -378,7 +378,7 @@ addressable from the API).
 
 The `ModemTransport` plugin per ADR 0015: managed spawn of the modem process,
 supervised lifecycle (SIGINT-clean-stop, confirm-audio-device-released-before-
-swap), generic abstraction so the same code path drives tuxmodem and existing
+swap), generic abstraction so the same code path drives sonde and existing
 external modems (ardopcf, Dire Wolf, future others).
 
 **Forcing functions:**
@@ -386,7 +386,7 @@ external modems (ardopcf, Dire Wolf, future others).
 - Existing `ModemTransport` trait (already defined for ardopcf integration).
 - Consent-gate alignment with RADIO-1.
 
-**What it produces:** new `ModemTransport` implementation for tuxmodem,
+**What it produces:** new `ModemTransport` implementation for sonde,
 integration tests against the ARDOP-pattern test suite.
 
 **Inputs:** #8.
@@ -394,7 +394,7 @@ integration tests against the ARDOP-pattern test suite.
 
 ### §2.10 Standalone daemon packaging
 
-Spin off tuxmodem as a standalone open-source TCP modem usable by clients
+Spin off sonde as a standalone open-source TCP modem usable by clients
 other than tuxlink (Pat / ARIM / etc.). Inverts who owns rig control (the
 client owns rig control, the daemon owns the modem). Per ADR 0015's preserved
 optionality.
@@ -466,7 +466,7 @@ in five rules every subsystem spec must follow:
    what the operator already knows from licensed operation of VARA (≈2300 Hz
    bandwidth, OFDM-based) is background — informs the design space framing
    but is NOT cited as design input. Specific parameters from operator's
-   observations are NOT inherited into tuxmodem.
+   observations are NOT inherited into sonde.
 
 4. **Own-equipment characterization is in-scope.** Per ADR 0014 §4, the
    RF measurement rig characterizes the operator's own radios + the HF
@@ -506,7 +506,7 @@ in five rules every subsystem spec must follow:
      context without expensive exploration.
    - **The contribution / improvement cadence is faster than legacy
      modems precisely because the substrate is AI-friendly.** This is
-     where tuxmodem can credibly out-evolve closed-source alternatives
+     where sonde can credibly out-evolve closed-source alternatives
      over time even if it lands slightly behind on per-test-case
      performance at v0.5+.
 
@@ -539,7 +539,7 @@ architecturally-distinct families:
 
   - **Default: wide-band low-density-constellation OFDM.** When the limiting
     condition is per-Hz noise floor with bandwidth available (typical
-    tuxmodem case — own-frequency point-to-point or point-to-gateway, no
+    sonde case — own-frequency point-to-point or point-to-gateway, no
     crowding), use BPSK per sub-carrier across the full available passband
     with very strong FEC (rate-1/4 LDPC short-block or similar). Aggregate
     throughput scales with sub-carrier count because each sub-carrier
@@ -552,7 +552,7 @@ architecturally-distinct families:
     hard wall; below the per-constellation threshold, no FEC recovers
     data; the win comes from going *wider*, not denser).
   - **Situational: narrow-FSK** (FT8-class 8-FSK conceptual primitive).
-    Reserved for the rare-for-tuxmodem case where the assigned frequency
+    Reserved for the rare-for-sonde case where the assigned frequency
     is genuinely bandwidth-constrained (crowded emcomm net during a major
     event, narrow available spectrum slice). Borrows the conceptual
     primitive of FT8/JS8 weak-signal design (foundation doc §6.1, per
@@ -584,7 +584,7 @@ payload size + observed channel conditions:
   message classes, etc.) route to the robustness-modes-family floor when
   channel conditions degrade past the OFDM family's usable envelope. The
   default robustness mode is wide-band low-density OFDM (not narrow-FSK)
-  for typical own-frequency tuxmodem operation; the narrow-FSK mode is
+  for typical own-frequency sonde operation; the narrow-FSK mode is
   reserved for crowded-band situations.
 - **Long messages** stay in the bit-adaptive OFDM family with ARQ;
   link-adaptation selects which OFDM mode within the family.
@@ -599,18 +599,18 @@ per-mode attribute.
 
 #### §5.A.3 — TCP host protocol via existing `ModemTransport` abstraction
 
-Settled by ADR 0015 prior to this brainstorm. Tuxmodem plugs into the same
+Settled by ADR 0015 prior to this brainstorm. Sonde plugs into the same
 abstraction ardopcf already uses and (eventually) VARA-over-network will use:
 TCP-reachable, two-port (cmd + data), process-supervised. The protocol
-*vocabulary* (what specific commands tuxmodem exposes for bit-loading
+*vocabulary* (what specific commands sonde exposes for bit-loading
 control, robustness-modes-family mode selection, payload-size-aware routing) becomes a
 subsystem #8 implementation detail.
 
 #### §5.A.4 — AGPLv3-only license posture
 
-Tuxmodem (the modem itself) and its channel-simulator crate ship under
+Sonde (the modem itself) and its channel-simulator crate ship under
 **AGPLv3-only**. AGPLv3 was chosen over GPLv3 to close the network-service
-loophole: anyone running a modified tuxmodem as a TCP-accessible service
+loophole: anyone running a modified sonde as a TCP-accessible service
 must offer source to its users. Section 13 of AGPL is load-bearing for a
 TCP-server modem daemon.
 
@@ -629,13 +629,13 @@ not in this brainstorm.
 #### §5.A.5 — Channel simulator as standalone AGPLv3 public crate
 
 Subsystem #1 is published as a standalone public Rust crate from day one
-(not in-tree-then-extracted). AGPLv3 license matches tuxmodem. Standalone
+(not in-tree-then-extracted). AGPLv3 license matches sonde. Standalone
 publication:
 
 - Makes the citation chain visible (the simulator's own repo carries the
   foundational-paper citations directly; dated commits document the
-  clean-sheet provenance independently of tuxmodem).
-- Creates a public research contribution beyond tuxmodem itself — a
+  clean-sheet provenance independently of sonde).
+- Creates a public research contribution beyond sonde itself — a
   pure-Rust Watterson-class HF channel simulator is genuinely useful to the
   broader SDR / HF / academic community.
 - Gives the program a credibility artifact independent of the modem's
@@ -691,13 +691,13 @@ They settle during subsystem implementation rather than at brainstorm time:
   simulator runs.
 - **Robustness-family mode count + parameters** — at minimum the default
   wide-band low-density mode + one situational narrow-FSK mode. Settle in
-  subsystem #3 (PHY) informed by which limiting-conditions tuxmodem
+  subsystem #3 (PHY) informed by which limiting-conditions sonde
   actually targets in practice.
 - **OFDM mode count + bandwidths in the ladder** — how many discrete modes
   in the OFDM family, and what bandwidths each occupies. Settle in
   subsystem #3 informed by audio-passband measurements on the bench-rig
   radios.
-- **Host-protocol command vocabulary** — what specific commands tuxmodem
+- **Host-protocol command vocabulary** — what specific commands sonde
   exposes for bit-loading control, robustness-modes-family mode selection, payload-size
   routing. Settle in subsystem #8 once subsystem #5 / #6 freeze.
 - **Channel-simulator cross-validation reference** — ITS, GNU Radio OOT,
