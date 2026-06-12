@@ -187,19 +187,39 @@ toolchain only (no Go).
 
 ### Uninstall and data cleanup
 
-Removing the package keeps operator data by default: messages, contacts,
-settings, station catalogs, logs, and OS-keyring credentials remain in the
-current user's profile so a reinstall resumes cleanly. Open **Help → Uninstall
-Cleanup…** in the app, or use the terminal, to preview or remove that data
-deliberately:
+Uninstalling Tuxlink has two parts. Removing the package keeps operator data by
+default: messages, contacts, settings, station catalogs, logs, and OS-keyring
+credentials remain in the current user's profile so a reinstall resumes cleanly.
+A full uninstall removes both.
+
+**Part 1 — remove your data.** This is per-user and cannot be done by the package
+manager (it runs as root and cannot infer which user homes or keyrings to scrub).
+Open **Help → Uninstall Cleanup…** in the app, or run it from the terminal as the
+user whose data is being removed:
 
 ```bash
-tuxlink cleanup --dry-run
-tuxlink cleanup
+tuxlink cleanup --dry-run        # preview; removes nothing
+tuxlink cleanup --transient      # cache, logs, webview state; keep mailbox + settings
+tuxlink cleanup --all            # config, mailbox, contacts, stations, logs, known keyring entries
 ```
 
-The cleanup flow offers keep-data, transient/cache/log cleanup, and full
-operator-data cleanup choices.
+Run Part 1 before uninstalling, or reinstall and run it afterward if the package
+is already gone. Secret Service credentials cannot be enumerated service-wide;
+full cleanup removes the accounts it can discover, and the dialog lists the
+keyring services (`tuxlink`, legacy `tuxlink-pat`) to check manually.
+
+**Part 2 — remove the application.**
+
+```bash
+sudo apt remove tuxlink          # Debian / Ubuntu (.deb)
+sudo dnf remove tuxlink          # Fedora / RHEL (.rpm)
+# AppImage / manual: delete the .AppImage, then scripts/uninstall-desktop-entry.sh
+```
+
+Verify it is gone: `dpkg -l | grep -i tuxlink` (Debian) or `rpm -q tuxlink`
+(Fedora) returns nothing. Package installs put the launcher and icons under
+`/usr/share`, removed by the package manager; the per-user launcher entries the
+cleanup tool lists apply only to AppImage / manual installs.
 
 ## Interface
 
