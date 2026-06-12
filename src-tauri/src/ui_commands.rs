@@ -113,6 +113,14 @@ impl From<BackendError> for UiError {
             BackendError::NoActiveIdentity => UiError::NotConfigured(
                 "no active identity — authenticate before transmitting".into(),
             ),
+            // Phase 5 (tuxlink-tseu): a tactical session was refused CMS entry
+            // because its address is not verified CMS-registered. Surfaced as
+            // "unavailable" — CMS is simply not open to this identity (P2P/RF are).
+            BackendError::TacticalNotCmsRegistered { label, reason } => UiError::Unavailable {
+                reason: format!(
+                    "tactical address '{label}' is not verified CMS-registered ({reason}); CMS is unavailable for this identity"
+                ),
+            },
             BackendError::Internal { msg, source } => UiError::Internal {
                 detail: stringify_with_source(&msg, source.as_deref()),
             },

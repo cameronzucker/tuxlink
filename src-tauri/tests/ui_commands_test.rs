@@ -98,6 +98,18 @@ fn test_ui_error_maps_all_backend_error_variants() {
         UiError::Internal { detail } => assert!(detail.contains("disk gone")),
         other => panic!("expected Internal for Io, got {other:?}"),
     }
+    // Phase 5 (tuxlink-tseu): TacticalNotCmsRegistered → Unavailable, carrying
+    // the tactical label + reason so the UI can explain why CMS is closed.
+    match UiError::from(BackendError::TacticalNotCmsRegistered {
+        label: "EOC-3".into(),
+        reason: "Uncached".into(),
+    }) {
+        UiError::Unavailable { reason } => {
+            assert!(reason.contains("EOC-3"), "reason should name the tactical: {reason}");
+            assert!(reason.contains("CMS is unavailable"), "reason should explain CMS closure: {reason}");
+        }
+        other => panic!("expected Unavailable for TacticalNotCmsRegistered, got {other:?}"),
+    }
     // TransportFailed → Transport, folding the source chain into reason.
     match UiError::from(BackendError::TransportFailed {
         reason: "timeout".into(),
