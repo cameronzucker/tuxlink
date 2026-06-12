@@ -1,10 +1,10 @@
-// Step2OfflineIdentity.test.tsx — Phase 4 Task 4.1
+// Step2OfflineIdentity.test.tsx — Phase 4 Task 4.1 (+ tuxlink-9xy1)
 // Spec: docs/superpowers/specs/2026-05-18-onboarding-wizard-cluster-design.md §3.3 (Step 2-offline) + §5.4
-// Plan: Phase 4
 //
 // Tests: blank-submit allowed, identifier accepts tactical strings,
-//        grid accepts 4-char, SUBMIT_OFFLINE_SUCCESS routes to complete,
-//        Busy returned silently (no error shown), inFlight disables submit.
+//        SUBMIT_OFFLINE_SUCCESS routes to the Location step (tuxlink-9xy1 moved grid
+//        out of this step into StepLocation), Busy returned silently, inFlight
+//        disables submit.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
@@ -28,7 +28,6 @@ function StepProbe() {
       <div data-testid="probe-step">{state.step}</div>
       <div data-testid="probe-inflight">{String(state.inFlight)}</div>
       <div data-testid="probe-identifier">{state.identifier}</div>
-      <div data-testid="probe-grid">{state.grid}</div>
     </>
   );
 }
@@ -46,16 +45,17 @@ describe('<Step2OfflineIdentity>', () => {
     expect(screen.getByRole('heading')).toBeInTheDocument();
   });
 
-  it('renders identifier field (optional), grid field (optional), and a continue button', () => {
+  it('renders the identifier field + a continue button (grid moved to the Location step)', () => {
     render(<WizardProvider><Step2OfflineIdentity /></WizardProvider>);
     expect(screen.getByLabelText(/station identifier/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/grid locator/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /continue offline/i })).toBeInTheDocument();
+    // Grid is no longer collected here — tuxlink-9xy1 moved it to StepLocation.
+    expect(screen.queryByLabelText(/grid locator/i)).not.toBeInTheDocument();
   });
 
-  it('renders the "all fields optional" footer copy', () => {
+  it('renders the "optional" footer copy', () => {
     render(<WizardProvider><Step2OfflineIdentity /></WizardProvider>);
-    expect(screen.getByText(/all fields optional/i)).toBeInTheDocument();
+    expect(screen.getByText(/optional\./i)).toBeInTheDocument();
   });
 
   // ── Field behaviour ─────────────────────────────────────────────────────
@@ -68,60 +68,36 @@ describe('<Step2OfflineIdentity>', () => {
     expect(screen.getByTestId('probe-identifier')).toHaveTextContent('EOC-1');
   });
 
-  it('grid field accepts a 4-char Maidenhead locator', () => {
-    render(<WizardProvider><StepProbe /></WizardProvider>);
-    const field = screen.getByLabelText(/grid locator/i);
-    fireEvent.change(field, { target: { value: 'EM75' } });
-    expect((field as HTMLInputElement).value).toBe('EM75');
-    expect(screen.getByTestId('probe-grid')).toHaveTextContent('EM75');
-  });
-
-  it('grid field shows a validation error for invalid grid (non-empty)', () => {
-    render(<WizardProvider><Step2OfflineIdentity /></WizardProvider>);
-    const field = screen.getByLabelText(/grid locator/i);
-    fireEvent.change(field, { target: { value: 'ZZZZ' } });
-    fireEvent.blur(field);
-    expect(screen.getByRole('alert')).toBeInTheDocument();
-  });
-
-  it('grid field does NOT show a validation error when empty', () => {
-    render(<WizardProvider><Step2OfflineIdentity /></WizardProvider>);
-    const field = screen.getByLabelText(/grid locator/i);
-    fireEvent.blur(field);  // blur with empty — no error
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  });
-
   // ── Submit behaviour ────────────────────────────────────────────────────
 
-  it('allows blank submit (all fields optional) — routes to complete', async () => {
+  it('allows blank submit (identifier optional) — routes to the Location step', async () => {
     (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     render(<WizardProvider><StepProbe /></WizardProvider>);
     fireEvent.click(screen.getByRole('button', { name: /continue offline/i }));
     await waitFor(() => {
-      expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+      expect(screen.getByTestId('probe-step')).toHaveTextContent('location');
     });
   });
 
-  it('submits with identifier and grid, passes them to invoke', async () => {
+  it('submits with the identifier and passes it to invoke (grid set later in Location)', async () => {
     (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     render(<WizardProvider><StepProbe /></WizardProvider>);
     fireEvent.change(screen.getByLabelText(/station identifier/i), { target: { value: 'ARES-NET' } });
-    fireEvent.change(screen.getByLabelText(/grid locator/i), { target: { value: 'EM75' } });
     fireEvent.click(screen.getByRole('button', { name: /continue offline/i }));
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('wizard_persist_offline', expect.objectContaining({
         identifier: 'ARES-NET',
-        grid: 'EM75',
+        grid: '',
       }));
     });
   });
 
-  it('routes to complete on successful submit', async () => {
+  it('routes to the Location step on successful submit', async () => {
     (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     render(<WizardProvider><StepProbe /></WizardProvider>);
     fireEvent.click(screen.getByRole('button', { name: /continue offline/i }));
     await waitFor(() => {
-      expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+      expect(screen.getByTestId('probe-step')).toHaveTextContent('location');
     });
   });
 
@@ -153,9 +129,9 @@ describe('<Step2OfflineIdentity>', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument();
     });
-    // Step must NOT have advanced to 'complete'
+    // Step must NOT have advanced past offline_identity
     expect(screen.getByTestId('probe-step')).toHaveTextContent(initialStep!);
-    expect(screen.getByTestId('probe-step')).not.toHaveTextContent('complete');
+    expect(screen.getByTestId('probe-step')).not.toHaveTextContent('location');
   });
 
   it('Busy error shows no user-visible message (silent per spec §3.5)', async () => {
@@ -169,13 +145,5 @@ describe('<Step2OfflineIdentity>', () => {
       const nonEmpty = alerts.filter(a => a.textContent && a.textContent.trim() !== '');
       expect(nonEmpty).toHaveLength(0);
     });
-  });
-
-  it('invalid grid blocks submit — button disabled', () => {
-    render(<WizardProvider><Step2OfflineIdentity /></WizardProvider>);
-    const field = screen.getByLabelText(/grid locator/i);
-    fireEvent.change(field, { target: { value: 'NOTGRID' } });
-    const btn = screen.getByRole('button', { name: /continue offline/i });
-    expect(btn).toBeDisabled();
   });
 });

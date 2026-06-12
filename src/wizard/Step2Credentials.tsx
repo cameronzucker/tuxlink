@@ -14,7 +14,7 @@ import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import { useWizard } from './wizardContext';
-import { validateCallsign, validatePassword, validateGrid } from './validators';
+import { validateCallsign, validatePassword } from './validators';
 import type { WizardError } from './types';
 
 // Winlink account registration URL — opened in system browser, never in webview (spec §3.7).
@@ -105,11 +105,12 @@ export function Step2Credentials() {
   const { state, dispatch } = useWizard();
 
   // Local form state — not hoisted to wizard reducer (password security).
-  // The reducer's state.callsign / state.grid / state.mboAddress are the
-  // persisted fields; the password field is local-only until submit.
+  // The reducer's state.callsign / state.mboAddress are the persisted fields; the
+  // password field is local-only until submit. Grid is no longer collected here —
+  // it moved to the dedicated Location step (tuxlink-9xy1), which owns GPS source
+  // detection + manual grid entry for the whole wizard.
   const [callsign, setCallsignLocal] = useState(state.callsign);
   const [password, setPassword] = useState(state.password);
-  const [grid, setGrid] = useState(state.grid);
   const [mboAddress, setMboAddress] = useState(state.mboAddress);
 
   // Tracks the last auto-filled MBO value so we know when it's still auto-filled.
@@ -147,11 +148,6 @@ export function Step2Credentials() {
     setSubmitError(null);
   }, [dispatch]);
 
-  const handleGridChange = useCallback((value: string) => {
-    setGrid(value);
-    dispatch({ type: 'SET_CREDENTIALS_FIELD', field: 'grid', value });
-  }, [dispatch]);
-
   const handleMboChange = useCallback((value: string) => {
     setMboAddress(value);
     // If the operator is typing something other than the auto-filled value,
@@ -163,8 +159,7 @@ export function Step2Credentials() {
 
   const callsignError = validateCallsign(callsign);
   const passwordError = validatePassword(password);
-  const gridError = validateGrid(grid);
-  const canSubmit = !callsignError && !passwordError && !gridError && !state.inFlight;
+  const canSubmit = !callsignError && !passwordError && !state.inFlight;
 
   // ── Submit handler ────────────────────────────────────────────────────
 
@@ -176,7 +171,9 @@ export function Step2Credentials() {
       await invoke('wizard_persist_cms', {
         rawCallsign: callsign,
         password,
-        grid,
+        // Grid is set later in the Location step (via config_set_grid); the wizard
+        // no longer collects it here (tuxlink-9xy1). Pass empty to satisfy the command.
+        grid: '',
         mboAddress,
       });
       // Clear local password immediately after successful invoke.
@@ -261,21 +258,7 @@ export function Step2Credentials() {
           </div>
         </div>
 
-        {/* Grid (optional) */}
-        <div className="wizard-field">
-          <label htmlFor="w-grid">Grid locator (optional)</label>
-          <input
-            id="w-grid"
-            type="text"
-            placeholder="e.g. EM75"
-            value={grid}
-            onChange={e => handleGridChange(e.target.value)}
-            disabled={state.inFlight}
-          />
-          {gridError && grid && (
-            <span role="alert" className="wizard-field-error">{gridError}</span>
-          )}
-        </div>
+        {/* Grid moved to the dedicated Location step (tuxlink-9xy1). */}
 
         {/* MBO address (optional, auto-fills from callsign) */}
         <div className="wizard-field">
