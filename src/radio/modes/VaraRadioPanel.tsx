@@ -250,16 +250,16 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     setBusy(true);
     setActionError(null);
     try {
-      // tuxlink-0ye6 Task 3.2: `vara_start_session` → `vara_open_session(intent, transportKind)`.
-      // intent is hardcoded 'cms' transitionally — Phase 5's RadioSessionPanel
-      // will derive the intent from the operator-typed RadioPanelMode props.
-      // transportKind is the panel's mode.kind ('vara-hf' vs 'vara-fm') so
-      // the backend can record the operator-meaningful discriminator on
-      // session state (the wire transport is identical between the two —
+      // tuxlink-o0c8: thread the sidebar-selected intent (cms / p2p / radio-only)
+      // from mode.intent — mirroring ARDOP (tuxlink-nnws). Previously hardcoded
+      // 'cms', which silently mis-routed p2p / radio-only VARA selections as
+      // gateway sessions. transportKind is the panel's mode.kind ('vara-hf' vs
+      // 'vara-fm') so the backend records the operator-meaningful discriminator
+      // on session state (the wire transport is identical between the two —
       // Codex Round 3 P1 #3: lets the frontend detect sidebar-nav drift
       // mid-session).
       const next = await invoke<VaraStatusDto>('vara_open_session', {
-        intent: 'cms',
+        intent: mode.intent,
         transportKind: mode.kind,
       });
       setStatus(next);
@@ -326,12 +326,13 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     setExchanging(true);
     setActionError(null);
     try {
-      // intent 'cms' transitionally (Phase 5's RadioSessionPanel derives it from
-      // the mode props); transportKind is the panel's mode.kind so the backend
-      // records the operator-meaningful HF/FM discriminator on session state.
+      // tuxlink-o0c8: route the exchange under the sidebar-selected intent
+      // (mode.intent), mirroring ARDOP (tuxlink-nnws). transportKind is the
+      // panel's mode.kind so the backend records the operator-meaningful HF/FM
+      // discriminator on session state.
       await invoke('modem_vara_b2f_exchange', {
         target: call,
-        intent: 'cms',
+        intent: mode.intent,
         transportKind: mode.kind,
       });
       void recordAttempt(dial, 'reached', tsLocal());
