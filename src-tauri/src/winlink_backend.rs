@@ -1258,6 +1258,22 @@ impl NativeBackend {
         self
     }
 
+    /// Set the mailbox's default received-mail identity to the operator's sole
+    /// FULL (tuxlink-2ns7). After this, a bare `store`/`list`/`read`/`mark_read`
+    /// on the backend's mailbox resolves Inbox/Archive + user folders under
+    /// `mailbox/<FULL>/` (Sent/Outbox stay shared) — matching where
+    /// [`Mailbox::migrate_legacy_layout`] re-homes legacy mail. Builder-style;
+    /// must be called before the `mailbox` Arc is shared (i.e. before install),
+    /// like [`Self::with_index`]. Panics if the Arc is already shared — a
+    /// programmer error in the boot path.
+    pub fn with_default_identity(mut self, full: &crate::identity::Callsign) -> Self {
+        let mbox = Arc::try_unwrap(self.mailbox)
+            .unwrap_or_else(|_| panic!("with_default_identity called after Arc<Mailbox> was shared — call before install"))
+            .with_default_identity(full);
+        self.mailbox = Arc::new(mbox);
+        self
+    }
+
     /// Attach a raw-wire log sink (tuxlink-nki). Builder-style so existing
     /// constructors and tests are unaffected; no-op by default.
     pub fn with_wire_log(mut self, wire: WireSink) -> Self {

@@ -131,7 +131,20 @@ impl SearchService {
     /// (dropping the old Connection, opening a fresh one against the recreated
     /// file), then walk and upsert into the new index — all under one lock, so
     /// any concurrent reader waits rather than seeing a half-empty index.
-    pub fn rebuild_index(&self, mailbox_root: PathBuf) -> Result<RebuildStats, CommandError> {
+    ///
+    /// `default_full` selects the per-FULL received-mail namespace to index
+    /// (tuxlink-2ns7): `Some(full)` resolves Inbox/Archive under
+    /// `mailbox/<FULL>/` while Sent/Outbox stay shared — correct for the
+    /// single-FULL Phase-4 era. `None` (tests / a pre-identity install) falls
+    /// back to the `_default` namespace.
+    ///
+    /// NOTE: a multi-FULL rebuild (walking ALL `mailbox/<CALLSIGN>/` namespaces)
+    /// is a Phase-6 follow-up; Phase 4 has exactly one FULL identity.
+    pub fn rebuild_index(
+        &self,
+        mailbox_root: PathBuf,
+        default_full: Option<&crate::identity::Callsign>,
+    ) -> Result<RebuildStats, CommandError> {
         use crate::native_mailbox::Mailbox;
         use crate::winlink_backend::MailboxFolder;
 
@@ -153,8 +166,13 @@ impl SearchService {
         let mut locked = self.index.lock().unwrap();
         *locked = Index::open(db).map_err(CommandError::from)?;
 
-        // Re-walk every folder.
-        let mbox = Mailbox::new(&mailbox_root);
+        // Re-walk every folder. With a default FULL, Inbox/Archive resolve under
+        // `mailbox/<FULL>/` (Sent/Outbox stay shared) so the per-FULL inbox is
+        // indexed.
+        let mbox = match default_full {
+            Some(full) => Mailbox::new(&mailbox_root).with_default_identity(full),
+            None => Mailbox::new(&mailbox_root),
+        };
         let mut count = 0u32;
         for folder in [
             MailboxFolder::Inbox,
@@ -297,7 +315,13 @@ pub fn tauri_search_rebuild_index(
         .path()
         .app_data_dir()
         .map_err(|e| CommandError::Internal(format!("no app_data_dir: {e}")))?;
-    svc.rebuild_index(data_dir.join("native-mbox"))
+    // tuxlink-2ns7: resolve the sole FULL identity so the rebuild indexes the
+    // per-FULL inbox (`mailbox/<FULL>/`). `None` (no identity yet) falls back to
+    // the `_default` namespace.
+    let full = crate::identity::IdentityStore::load(&crate::config::identity_store_path())
+        .ok()
+        .and_then(|s| s.full().first().map(|f| f.callsign.clone()));
+    svc.rebuild_index(data_dir.join("native-mbox"), full.as_ref())
 }
 
 fn hit_to_dto(h: crate::search::index::QueryHit) -> MessageMetaDto {
@@ -491,7 +515,7 @@ mod rebuild_tests {
 
         let svc = build_service_for_rebuild(dir.path());
         let stats = svc
-            .rebuild_index(dir.path().to_path_buf())
+            .rebuild_index(dir.path().to_path_buf(), None)
             .unwrap();
         assert_eq!(stats.messages_indexed, 3);
         assert_eq!(svc.index.lock().unwrap().count().unwrap(), 3);
