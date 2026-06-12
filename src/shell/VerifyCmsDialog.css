@@ -1,0 +1,195 @@
+/* VerifyCmsDialog — inline Verify CMS Connection overlay (tuxlink-lqw2).
+ * Shares the AboutDialog backdrop/panel chrome conventions (variables, sizing,
+ * close button) so the two read as the same dialog family. */
+
+.tux-vcms-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.tux-vcms-panel {
+  width: min(460px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  font-family: var(--sans);
+  color: var(--text);
+}
+
+.tux-vcms-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tux-vcms-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tux-vcms-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.tux-vcms-close:hover {
+  color: var(--text);
+}
+
+.tux-vcms-body {
+  padding: 18px;
+}
+
+.tux-vcms-intro {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.tux-vcms-status {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Probing — neutral surface + spinner. */
+.tux-vcms-probing {
+  align-items: center;
+  color: var(--text);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+}
+
+.tux-vcms-spinner {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tux-vcms-spin 0.8s linear infinite;
+}
+
+@keyframes tux-vcms-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tux-vcms-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+/* Success — accent-soft surface, mirrors the About status note tone. */
+.tux-vcms-ok {
+  color: var(--text);
+  background: var(--ok-soft, var(--accent-soft));
+  border: 1px solid var(--ok, var(--accent));
+}
+
+.tux-vcms-ok-icon {
+  font-size: 18px;
+  line-height: 1.2;
+  color: var(--ok, var(--accent));
+}
+
+/* Error — warning, not a red wall (matches the wizard's "failure is
+ * information" framing). */
+.tux-vcms-error {
+  color: var(--text);
+  background: var(--warn-soft, var(--accent-soft));
+  border: 1px solid var(--warn, var(--border-strong));
+}
+
+.tux-vcms-error-icon {
+  font-size: 18px;
+  line-height: 1.2;
+  color: var(--warn, var(--text));
+}
+
+.tux-vcms-result-head {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.tux-vcms-result-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.tux-vcms-error-detail {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.tux-vcms-causes-heading {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.tux-vcms-causes {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.tux-vcms-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.tux-vcms-button {
+  padding: 7px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tux-vcms-button:hover {
+  border-color: var(--accent);
+}
+
+.tux-vcms-button-primary {
+  color: var(--tux-accent-fg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.tux-vcms-button-primary:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}

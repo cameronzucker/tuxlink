@@ -6,9 +6,8 @@ import { MENU_ACTION_IDS, ACCELERATORS } from './menuModel';
 const EXPECTED_IDS = [
   'menu:message:print', 'menu:file:quit',
   'menu:message:new', 'menu:message:reply', 'menu:message:reply_all', 'menu:message:forward', 'menu:message:archive', 'menu:message:request_center', 'menu:message:grib_request',
-  'menu:session:connect', 'menu:session:disconnect', 'menu:session:log',
-  'menu:session:verify_cms', 'menu:session:show_transport',
-  'menu:mailbox:inbox', 'menu:mailbox:sent', 'menu:mailbox:outbox', 'menu:mailbox:archive',
+  // tuxlink-lqw2: the Session + Mailbox top menus were removed in the pre-Alpha
+  // declutter; the surviving Verify CMS Connection moved into Tools (below).
   'menu:view:status_bar', 'menu:view:radio_panel',
   'menu:view:scheme:default',
   'menu:view:scheme:github-dark',
@@ -20,8 +19,8 @@ const EXPECTED_IDS = [
   'menu:view:scheme:grayscale',
   'menu:view:scheme:custom',
   'menu:view:customize_theme',
-  'menu:tools:find_gateway', 'menu:tools:templates', 'menu:tools:rig_control',
-  'menu:tools:settings_connection', 'menu:tools:settings_privacy', 'menu:tools:settings_map_tiles',
+  'menu:tools:find_gateway', 'menu:tools:verify_cms', 'menu:tools:templates',
+  'menu:tools:settings_privacy', 'menu:tools:settings_map_tiles',
   'menu:help:about', 'menu:help:docs', 'menu:help:logging', 'menu:help:report_issue', 'menu:help:uninstall_cleanup',
 ];
 
@@ -36,8 +35,10 @@ describe('menu model', () => {
     }
   });
 
-  it('binds F5 and Ctrl+Shift+O to connect', () => {
-    const connectAccels = ACCELERATORS.filter((a) => a.id === 'menu:session:connect');
-    expect(connectAccels.map((a) => a.combo).sort()).toEqual(['Ctrl+Shift+O', 'F5']);
+  // tuxlink-lqw2: the Connect menu item + its F5 / Ctrl+Shift+O accelerators
+  // were removed in the pre-Alpha declutter (connect lives on the ribbon).
+  it('no longer binds any accelerator to connect', () => {
+    expect(ACCELERATORS.some((a) => a.id === 'menu:session:connect')).toBe(false);
+    expect(ACCELERATORS.some((a) => a.combo === 'F5')).toBe(false);
   });
 });

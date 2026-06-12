@@ -1,11 +1,9 @@
 import type { MenuActionId } from './menuModel';
-import type { MailboxFolder } from '../../mailbox/types';
 import { isColorScheme, type ColorScheme } from '../colorScheme';
 
 /** Effects the dispatcher can invoke. Supplied by AppShell (closes over state). */
 export interface MenuHandlers {
   openCompose: () => void;
-  connect: () => void;
   reply: () => void;
   replyAll: () => void;
   forward: () => void;
@@ -22,8 +20,11 @@ export interface MenuHandlers {
   // strip is gone; the log moves into the radio panel as a per-mode section.
   toggleStatusBar: () => void;
   toggleRadioPanel: () => void;
-  selectFolder: (folder: MailboxFolder) => void;
   setScheme: (id: ColorScheme) => void;
+  /** Run the connect-only CMS reachability+auth probe (verify_cms_connection)
+   *  and show the inline result overlay (tuxlink-lqw2). Internet telnet, no
+   *  transmission. */
+  verifyCms: () => void;
   /** Open the inline Settings panel (GPS state + position precision), tuxlink-39b. */
   openSettings: () => void;
   /** Open the inline LAN map-tile source settings overlay (tuxlink-a1cc / dyop, design §8.7). */
@@ -54,13 +55,13 @@ export interface MenuHandlers {
  * Route a menu:* action id (from an HTML menu click OR a keyboard accelerator)
  * to the matching handler. In-process, main-window only — there is no app-global
  * event broadcast (which is what caused tuxlink-msr + the F7 recursion guard).
- * Unhandled ids (stub actions: tools/help/raw_log/etc.) are intentionally no-ops.
+ * Unhandled ids (the disabled "soon" stubs, e.g. menu:tools:templates) are
+ * intentionally no-ops.
  */
 export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
   switch (id) {
     case 'menu:message:new': h.openCompose(); return;
     case 'menu:file:quit': h.quit(); return;
-    case 'menu:session:connect': h.connect(); return;
     case 'menu:message:reply': h.reply(); return;
     case 'menu:message:reply_all': h.replyAll(); return;
     case 'menu:message:forward': h.forward(); return;
@@ -71,6 +72,9 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:message:request_center': h.openRequestCenter(); return;
     // tuxlink-6jpf: "Find a Gateway" relocated from Message → Tools.
     case 'menu:tools:find_gateway': h.openCatalogBuilder(); return;
+    // tuxlink-lqw2: Verify CMS Connection — runs the connect-only probe and
+    // shows the inline result overlay. Relocated from the (removed) Session menu.
+    case 'menu:tools:verify_cms': h.verifyCms(); return;
     case 'menu:message:grib_request': h.openRequestCenter('grib'); return;
     case 'menu:view:status_bar': h.toggleStatusBar(); return;
     case 'menu:view:radio_panel': h.toggleRadioPanel(); return;
@@ -99,17 +103,11 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
       h.reportIssue(); return;
     case 'menu:help:uninstall_cleanup':
       h.openUninstallCleanup(); return;
-    case 'menu:mailbox:inbox':
-    case 'menu:mailbox:sent':
-    case 'menu:mailbox:outbox':
-    case 'menu:mailbox:archive':
-      h.selectFolder(id.slice('menu:mailbox:'.length) as MailboxFolder);
-      return;
   }
   if (id.startsWith('menu:view:scheme:')) {
     const scheme = id.slice('menu:view:scheme:'.length);
     if (isColorScheme(scheme)) h.setScheme(scheme);
     return;
   }
-  // Stub / not-yet-wired actions (tools, help, disconnect, raw_log, …): no-op.
+  // Disabled "soon" stubs (e.g. menu:tools:templates) reach here: no-op.
 }
