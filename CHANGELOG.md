@@ -30,6 +30,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.53.1](https://github.com/cameronzucker/tuxlink/compare/v0.53.0...v0.53.1) (2026-06-12)
+
+
+### Bug Fixes
+
+* **radio:** VARA dial-target field labels the intent (peer vs RMS gateway) ([651d475](https://github.com/cameronzucker/tuxlink/commit/651d4754ceec8f86cae4d1d24d153b5989842101))
+
 ## [0.53.0](https://github.com/cameronzucker/tuxlink/compare/v0.52.2...v0.53.0) (2026-06-12)
 
 
