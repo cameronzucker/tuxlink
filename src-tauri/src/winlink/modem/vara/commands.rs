@@ -1062,13 +1062,30 @@ pub async fn vara_open_session(
     transport_kind: TransportKind,
 ) -> Result<VaraStatus, String> {
     let ui_cfg = config_get_vara();
-    // Pull the operator's callsign from persisted identity. Pre-wizard /
-    // missing-callsign yields None; the inner skips the MYCALL setter in
-    // that case (VARA will continue to log "not connected to App" warnings,
-    // but the right fix for that is wizard completion, not a backend bandaid).
-    let callsign = config::read_config()
-        .ok()
-        .and_then(|c| c.identity.active_full);
+    // tuxlink-0063 (Phase 3, Task 3.9): the open-time MYCALL is the on-air
+    // station ID the VARA modem is told at session open. Under the handle
+    // model it comes from the authenticated active SessionIdentity, NEVER from
+    // persisted config. Opening a transmit-capable VARA session requires an
+    // authenticated identity — resolve it fail-closed here (a NoActiveIdentity
+    // surfaces as an error and leaves the transport unopened), the same
+    // posture as the rest of Phase 3.
+    //
+    // The old code TOLERATED a missing callsign (None → skip the MYCALL
+    // setter, let VARA warn). That tolerance is gone: transmit is gated on
+    // authentication until the Phase 6/7 identity-switch UI lands.
+    //
+    // This open-time MYCALL is now redundant with the per-CONNECT MYCALL set
+    // by `run_vara_b2f_with_transport` (Task 3.7), which is the authoritative
+    // on-air station ID on dial. It is set here too — consistently from the
+    // session — so VARA recognizes the App handshake at open time and stops
+    // logging "not connected to App".
+    let session_id = app
+        .state::<crate::app_backend::BackendState>()
+        .current()
+        .ok_or_else(|| "VARA open: backend offline — cannot resolve active identity".to_string())?
+        .active_identity()
+        .map_err(|e| e.to_string())?;
+    let callsign = session_id.mycall().as_str().to_uppercase();
     let host_label = format!("{}:{}", ui_cfg.host, ui_cfg.cmd_port);
     emit_vara_log(
         &app,
@@ -1086,21 +1103,16 @@ pub async fn vara_open_session(
     match vara_open_session_inner(
         &session,
         &ui_cfg,
-        callsign.as_deref(),
+        Some(callsign.as_str()),
         intent,
         transport_kind,
     ) {
         Ok(_status) => {
-            let with_mycall = if callsign.is_some() {
-                " (MYCALL sent)"
-            } else {
-                " (no callsign — wizard incomplete; VARA will warn 'not connected to App')"
-            };
             emit_vara_log(
                 &app,
                 &log,
                 LogLevel::Info,
-                format!("VARA: transport open at {host_label}{with_mycall}"),
+                format!("VARA: transport open at {host_label} (MYCALL {callsign} sent)"),
             );
         }
         Err(e) => {
@@ -1148,9 +1160,12 @@ pub async fn vara_open_session(
 
 /// Inner helper for [`vara_open_session`] with factored-out config + callsign
 /// args so tests can drive it without touching the persisted config file or a
-/// Tauri runtime. `callsign` is `Some` when the wizard has set an operator
-/// callsign; when `Some`, MYCALL is sent on the cmd socket after TCP open
-/// (before BW) so VARA's host protocol recognizes the App handshake.
+/// Tauri runtime. When `callsign` is `Some`, MYCALL is sent on the cmd socket
+/// after TCP open (before BW) so VARA's host protocol recognizes the App
+/// handshake. **Production always passes `Some`** — since tuxlink-0063 Phase 3
+/// the outer [`vara_open_session`] resolves the active `SessionIdentity` and
+/// fails closed on `NoActiveIdentity`, so the `None` arm (skip MYCALL setter)
+/// is exercised only by tests that drive session-state mechanics without a call.
 ///
 /// Records `intent` + `transport_kind` on `VaraSessionInner` after the open
 /// succeeds; cleared in [`vara_stop_session_inner`] (reached via
@@ -1709,19 +1724,18 @@ fn run_vara_b2f_with_transport(
 
     let cfg = config::read_config().map_err(|e| format!("read config failed: {e}"))?;
 
-    // Pre-flight identity check: VARA's CONNECT requires MYCALL, which
-    // was set in `vara_open_session`'s open flow. If the callsign is
-    // missing now, the CONNECT will fail at the modem; surface a clear
-    // error before transmitting.
-    let mycall = cfg
-        .identity
-        .active_full
-        .clone()
-        .ok_or_else(|| {
-            "callsign not configured — complete the setup wizard before dialing".to_string()
-        })?
-        .trim()
-        .to_uppercase();
+    // tuxlink-0063 (Phase 3, Task 3.7): the on-air station ID comes from the
+    // authenticated active SessionIdentity, not from `config.identity.active_full`.
+    // Both the VARA CONNECT cmd-port MYCALL (on-air station ID) and the B2F
+    // exchange callsign must come from the session — neither may use config.
+    let session_id = app
+        .state::<crate::app_backend::BackendState>()
+        .current()
+        .ok_or_else(|| "VARA B2F: backend offline — cannot resolve active identity".to_string())?
+        .active_identity()
+        .map_err(|e| e.to_string())?;
+
+    let mycall = session_id.mycall().as_str().to_uppercase();
 
     // Position arbiter is registered in lib.rs::run() — pull a live
     // ref so the on-air locator honors live GPS / privacy state,
@@ -1769,6 +1783,7 @@ fn run_vara_b2f_with_transport(
         target,
         intent,
         &cfg,
+        &session_id,
         &mailbox,
         Some(&arbiter),
         Some(&progress),

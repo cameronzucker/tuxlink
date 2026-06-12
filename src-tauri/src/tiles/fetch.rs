@@ -235,30 +235,77 @@ where
 
 /// Build the upstream tile URL from the stored source + validated coordinate.
 ///
-/// The integer `z`/`x`/`y` segments are appended via `Url` path-segment APIs,
-/// never string interpolation of webview-influenced input (§8.4). The source
-/// URL's existing path is treated as a base directory: a trailing-slash
-/// difference is normalized so `…/tiles` and `…/tiles/` both yield
-/// `…/tiles/{z}/{x}/{y}.png`.
+/// Two source-URL forms are supported (tuxlink-9rek):
+///
+/// 1. **Template form** (the standard XYZ convention; what the Settings UI's
+///    placeholder + help text document and what every Leaflet/MapLibre user
+///    expects): the URL contains `{z}`/`{x}`/`{y}` placeholders, e.g.
+///    `http://host/tiles/styles/positron/{z}/{x}/{y}.png`. The placeholders are
+///    replaced with the coordinate's already-validated, bounded integers. The
+///    `.png`/format suffix comes from the template, so non-png sources work.
+///
+/// 2. **Base-directory form** (back-compat): the URL has no placeholders, e.g.
+///    `http://host/tiles`. The integer `z`/`x`/`y.png` segments are appended via
+///    the `Url` path-segment API; `…/tiles` and `…/tiles/` both yield
+///    `…/tiles/{z}/{x}/{y}.png`.
+///
+/// §8.4 SSRF posture is preserved in BOTH forms: `z`/`x`/`y` are bounded
+/// integers from [`TileCoord`] (no arbitrary webview strings), and the template
+/// substitution is guarded so the placeholders cannot alter the URL's authority
+/// (scheme/host/port) — they live in the path only. The resolved-IP allow/deny
+/// gate runs unchanged downstream on the (unaltered) host.
 fn build_tile_url(source: &TileSource, coord: &TileCoord) -> Result<Url, FetchError> {
-    // Shape-validate the source URL (scheme, no creds, host present).
-    let mut url = validate_source_url(&source.url).map_err(FetchError::BadUrl)?;
+    // Shape-validate the source URL (scheme, no creds, host present). For a
+    // template this validates the authority BEFORE substitution.
+    let base = validate_source_url(&source.url).map_err(FetchError::BadUrl)?;
 
     let tms = matches!(source.scheme, TileScheme::Tms);
     let y = coord.upstream_y(tms);
 
-    {
-        let mut segs = url
-            .path_segments_mut()
-            .map_err(|()| FetchError::BadUrl("source URL cannot be a base".into()))?;
-        // Drop a trailing empty segment (from a trailing slash) so we don't get
-        // an empty path component before the z/x/y triple.
-        segs.pop_if_empty();
-        segs.push(&coord.z.to_string());
-        segs.push(&coord.x.to_string());
-        segs.push(&format!("{y}.png"));
+    let raw = &source.url;
+    let is_template = raw.contains("{z}") || raw.contains("{x}") || raw.contains("{y}");
+
+    if is_template {
+        // Substitute the bounded integers into the operator's stored template.
+        let substituted = raw
+            .replace("{z}", &coord.z.to_string())
+            .replace("{x}", &coord.x.to_string())
+            .replace("{y}", &y.to_string());
+        let url = Url::parse(&substituted)
+            .map_err(|e| FetchError::BadUrl(format!("templated tile URL did not parse: {e}")))?;
+        // Defense in depth: a placeholder in the authority (e.g. `http://{z}.x/`)
+        // would let coordinates redirect egress to an attacker-chosen host. The
+        // contract is path-only placeholders, so the authority MUST be byte-for-
+        // byte unchanged by substitution; otherwise reject. This is airtight
+        // because the substitution alphabet is `[0-9]` only (z/x/y are bounded
+        // u32 from TileCoord): a digit can never reconstruct a brace-free host
+        // that matches `base`, so any authority-touching placeholder is
+        // structurally guaranteed to fail this comparison (or to fail the
+        // earlier `validate_source_url` port/creds checks).
+        if url.scheme() != base.scheme()
+            || url.host_str() != base.host_str()
+            || url.port_or_known_default() != base.port_or_known_default()
+        {
+            return Err(FetchError::BadUrl(
+                "tile template placeholders must appear only in the URL path, not the host".into(),
+            ));
+        }
+        Ok(url)
+    } else {
+        let mut url = base;
+        {
+            let mut segs = url
+                .path_segments_mut()
+                .map_err(|()| FetchError::BadUrl("source URL cannot be a base".into()))?;
+            // Drop a trailing empty segment (from a trailing slash) so we don't
+            // get an empty path component before the z/x/y triple.
+            segs.pop_if_empty();
+            segs.push(&coord.z.to_string());
+            segs.push(&coord.x.to_string());
+            segs.push(&format!("{y}.png"));
+        }
+        Ok(url)
     }
-    Ok(url)
 }
 
 /// Production resolver: resolve `host:port` to a list of `SocketAddr` via the
@@ -508,6 +555,58 @@ mod tests {
         addrs: Vec<SocketAddr>,
     ) -> impl Fn(String, u16) -> std::future::Ready<std::io::Result<Vec<SocketAddr>>> + Clone {
         move |_host, _port| std::future::ready(Ok(addrs.clone()))
+    }
+
+    // ---- tuxlink-9rek: build_tile_url template vs base-directory forms ----
+
+    #[test]
+    fn template_form_substitutes_zxy() {
+        // The standard XYZ convention the Settings UI documents: placeholders
+        // are replaced with the coordinate's bounded integers (z=3, x=5, y=2).
+        let src = source("http://10.0.0.5:8090/tiles/styles/positron/{z}/{x}/{y}.png");
+        let url = build_tile_url(&src, &coord()).unwrap();
+        assert_eq!(url.as_str(), "http://10.0.0.5:8090/tiles/styles/positron/3/5/2.png");
+    }
+
+    #[test]
+    fn template_form_keeps_template_extension() {
+        // The format suffix comes from the template, so non-png sources work.
+        let src = source("http://10.0.0.5:8090/data/{z}/{x}/{y}.pbf");
+        let url = build_tile_url(&src, &coord()).unwrap();
+        assert_eq!(url.as_str(), "http://10.0.0.5:8090/data/3/5/2.pbf");
+    }
+
+    #[test]
+    fn base_form_appends_zxy_png() {
+        // Back-compat: no placeholders → base directory + appended z/x/y.png.
+        let src = source("http://10.0.0.5:8090/tiles");
+        let url = build_tile_url(&src, &coord()).unwrap();
+        assert_eq!(url.as_str(), "http://10.0.0.5:8090/tiles/3/5/2.png");
+    }
+
+    #[test]
+    fn base_form_trailing_slash_normalized() {
+        let src = source("http://10.0.0.5:8090/tiles/");
+        let url = build_tile_url(&src, &coord()).unwrap();
+        assert_eq!(url.as_str(), "http://10.0.0.5:8090/tiles/3/5/2.png");
+    }
+
+    #[test]
+    fn template_form_tms_flips_y() {
+        let mut src = source("http://10.0.0.5:8090/{z}/{x}/{y}.png");
+        src.scheme = TileScheme::Tms;
+        let expected_y = coord().upstream_y(true);
+        let url = build_tile_url(&src, &coord()).unwrap();
+        assert_eq!(url.as_str(), format!("http://10.0.0.5:8090/3/5/{expected_y}.png"));
+    }
+
+    #[test]
+    fn template_placeholder_in_host_is_rejected() {
+        // SSRF guard: a placeholder in the authority must not redirect egress to
+        // a coordinate-chosen host. Rejected either at parse or by the guard.
+        let src = source("http://{z}.evil.example/{x}/{y}.png");
+        let err = build_tile_url(&src, &coord()).unwrap_err();
+        assert!(matches!(err, FetchError::BadUrl(_)), "got {err:?}");
     }
 
     // ---- Task 3.1 ----

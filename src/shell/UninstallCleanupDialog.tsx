@@ -44,10 +44,10 @@ interface CleanupModeOption {
 const CLEANUP_MODES: CleanupModeOption[] = [
   {
     id: 'keep',
-    title: 'Keep user data',
-    description: 'Normal package uninstall behavior. Messages, settings, logs, cache, and credentials remain in this Linux user profile.',
+    title: 'Keep all data',
+    description: 'Remove no data — messages, settings, logs, cache, and credentials stay in this user profile. Choose this when you only want to remove the application itself (Part 2 below); a later reinstall resumes cleanly.',
     dryRunCommand: 'tuxlink cleanup --keep --dry-run',
-    runCommand: 'sudo apt remove tuxlink',
+    runCommand: 'tuxlink cleanup --keep',
   },
   {
     id: 'transient',
@@ -117,7 +117,25 @@ export function UninstallCleanupDialog({ open, onClose }: UninstallCleanupDialog
   }, [open, mode, previewRefresh]);
 
   const option = CLEANUP_MODES.find((item) => item.id === mode) ?? CLEANUP_MODES[1];
-  const summary = useMemo(() => summarizeReport(report), [report]);
+  // tuxlink-aip4: `--all` enumerates user-local launcher/icon paths
+  // (~/.local/share/applications, ~/.local/share/icons) that only exist for
+  // AppImage / manual installs (install-desktop-entry.sh). On a package (.deb/
+  // .rpm) install those live in /usr/share and are removed by the package
+  // manager, so here they're all "missing" — a wall of noise. Partition them
+  // out of the main list and the headline counts; surface them in a collapsed
+  // section so AppImage operators still see them.
+  const dataPaths = useMemo(
+    () => (report ? report.paths.filter((p) => !isLauncherLeftover(p.path)) : []),
+    [report],
+  );
+  const launcherPaths = useMemo(
+    () => (report ? report.paths.filter((p) => isLauncherLeftover(p.path)) : []),
+    [report],
+  );
+  const summary = useMemo(
+    () => summarizeOutcomes([...dataPaths, ...(report?.keyring ?? [])].map((i) => i.outcome)),
+    [dataPaths, report],
+  );
   const canExecute =
     mode === 'transient'
       ? transientConfirmed
@@ -184,13 +202,16 @@ export function UninstallCleanupDialog({ open, onClose }: UninstallCleanupDialog
 
         <div className="tux-cleanup-body">
           <p className="tux-cleanup-note" role="note">
-            Package removal such as <code>sudo apt remove tuxlink</code> keeps user data.
-            Run cleanup from this user account before uninstalling, or reinstall Tuxlink
-            and run cleanup afterward if the package is already gone.
+            Uninstalling Tuxlink has two parts. <strong>Part 1 (here)</strong> removes your
+            data for this Linux user. <strong>Part 2</strong> removes the application itself
+            with your package manager (shown below). Removing the package alone keeps your
+            data; this dialog removes data but leaves the program installed. Run Part 1 as
+            this user before uninstalling, or reinstall and run it afterward if the package
+            is already gone.
           </p>
 
           <fieldset className="tux-cleanup-options">
-            <legend>Cleanup mode</legend>
+            <legend>Part 1 — how much data to remove</legend>
             {CLEANUP_MODES.map((item) => (
               <label
                 key={item.id}
@@ -213,11 +234,11 @@ export function UninstallCleanupDialog({ open, onClose }: UninstallCleanupDialog
 
           <div className="tux-cleanup-command-grid">
             <div>
-              <span>Preview command</span>
+              <span>Preview (terminal)</span>
               <code>{option.dryRunCommand}</code>
             </div>
             <div>
-              <span>Uninstall command</span>
+              <span>Remove data (terminal)</span>
               <code>{option.runCommand}</code>
             </div>
           </div>
@@ -264,13 +285,37 @@ export function UninstallCleanupDialog({ open, onClose }: UninstallCleanupDialog
                 </span>
               </div>
 
-              {report.paths.length === 0 && report.keyring.length === 0 ? (
+              {dataPaths.length === 0 && report.keyring.length === 0 ? (
                 <p className="tux-cleanup-muted">No Tuxlink data is selected for removal.</p>
               ) : (
                 <>
-                  {renderPaths(report.paths)}
+                  {renderPaths(dataPaths)}
                   {renderKeyring(report.keyring)}
                 </>
+              )}
+
+              {launcherPaths.length > 0 && (
+                <details className="tux-cleanup-details" data-testid="uninstall-cleanup-launcher">
+                  <summary>
+                    Launcher entries ({launcherPaths.length}) — AppImage / manual installs only
+                  </summary>
+                  <p className="tux-cleanup-muted">
+                    These user-local menu and icon files only exist if Tuxlink was installed
+                    from an AppImage or the manual <code>install-desktop-entry.sh</code> script.
+                    Package (.deb / .rpm) installs put them in <code>/usr/share</code>, where the
+                    package manager removes them — so they show as missing here.
+                  </p>
+                  <ul>
+                    {launcherPaths.map((item) => (
+                      <li key={item.path}>
+                        <span className={`tux-cleanup-outcome ${outcomeKind(item.outcome)}`}>
+                          {outcomeLabel(item.outcome)}
+                        </span>
+                        <code>{item.path}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               )}
 
               {report.warnings.length > 0 && (
@@ -291,6 +336,32 @@ export function UninstallCleanupDialog({ open, onClose }: UninstallCleanupDialog
               )}
             </div>
           )}
+
+          <div className="tux-cleanup-part2" data-testid="uninstall-cleanup-part2">
+            <h3>Part 2 — remove the application</h3>
+            <p className="tux-cleanup-muted">
+              Data cleanup above does not remove the Tuxlink program itself. Remove it with
+              the method it was installed with:
+            </p>
+            <ul className="tux-cleanup-part2-list">
+              <li>
+                <span>Debian / Ubuntu (.deb)</span>
+                <code>sudo apt remove tuxlink</code>
+              </li>
+              <li>
+                <span>Fedora / RHEL (.rpm)</span>
+                <code>sudo dnf remove tuxlink</code>
+              </li>
+              <li>
+                <span>AppImage / manual</span>
+                <code>delete the .AppImage, then run scripts/uninstall-desktop-entry.sh</code>
+              </li>
+            </ul>
+            <p className="tux-cleanup-muted">
+              Confirm it is gone: <code>dpkg -l | grep -i tuxlink</code> (Debian) or{' '}
+              <code>rpm -q tuxlink</code> (Fedora) returns nothing.
+            </p>
+          </div>
 
           {mode === 'transient' && (
             <label className="tux-cleanup-confirm">
@@ -374,13 +445,17 @@ function renderKeyring(keyring: KeyringRemoval[]) {
   );
 }
 
-function summarizeReport(report: CleanupReport | null) {
+/// tuxlink-aip4: user-local launcher/icon leftovers (AppImage / manual-install
+/// only). Package installs put these under /usr/share, where the package manager
+/// removes them — so on a .deb/.rpm host they all report "missing" and only add
+/// noise. Matched by path so they can be split out of the main list + counts.
+function isLauncherLeftover(path: string): boolean {
+  return /\/\.local\/share\/(applications|icons)\//.test(path);
+}
+
+function summarizeOutcomes(outcomes: RemovalOutcome[]) {
   const summary = { wouldRemove: 0, removed: 0, missing: 0, errors: 0 };
-  if (!report) return summary;
-  for (const outcome of [
-    ...report.paths.map((item) => item.outcome),
-    ...report.keyring.map((item) => item.outcome),
-  ]) {
+  for (const outcome of outcomes) {
     const kind = outcomeKind(outcome);
     if (kind === 'would-remove') summary.wouldRemove += 1;
     if (kind === 'removed') summary.removed += 1;

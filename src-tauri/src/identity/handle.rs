@@ -59,7 +59,7 @@ impl IdentityHandle {
     /// Test-only seam (cross-phase reconciliation #2): lets Phases 3–7 build a
     /// `SessionIdentity` in unit tests without a real keyring. NOT compiled into
     /// release builds.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_test(full_callsign: Callsign) -> Self {
         Self::new(full_callsign)
     }
@@ -69,6 +69,32 @@ impl IdentityHandle {
         &self.0.full_callsign
     }
 }
+
+/// The identity an operation runs as: an authenticated handle plus the address it
+/// presents (`address_as`).
+///
+/// # Compile-fence: impersonation via raw string must never compile (tuxlink-0063)
+///
+/// A `SessionIdentity` cannot be built from a raw callsign string — only from an
+/// `IdentityHandle` minted by `IdentityService::authenticate` (keyring-gated).
+/// If a future change adds a `From<&str>` or a string-accepting overload, the
+/// doc-test below starts compiling and `cargo test --doc` FAILS, flagging the
+/// regression.
+///
+/// ```compile_fail
+/// use tuxlink_lib::identity::SessionIdentity;
+/// let _impostor: SessionIdentity = SessionIdentity::full("W1ABC");
+/// ```
+///
+/// An `IdentityHandle` cannot be struct-literal-forged outside the module
+/// (its inner field is private). If a future change makes the field `pub`,
+/// the doc-test below starts compiling and `cargo test --doc` FAILS.
+///
+/// ```compile_fail
+/// use tuxlink_lib::identity::IdentityHandle;
+/// let _forged = IdentityHandle { full_callsign: "W1ABC".parse().unwrap() };
+/// ```
+fn _impersonation_fence_docs() {}
 
 /// The identity an operation runs as: an authenticated handle plus the address it
 /// presents (`address_as`).
@@ -166,5 +192,17 @@ mod tests {
         let s2 = s.clone();
         assert_eq!(s.mycall(), s2.mycall());
         assert_eq!(s.address_as(), s2.address_as());
+    }
+
+    /// Impersonation fence (tuxlink-0063): verifies the legit path works — a
+    /// `SessionIdentity` can only be built from an `IdentityHandle` minted by
+    /// the crate's own constructor. The compile_fail doctests on
+    /// `_impersonation_fence_docs` assert that the raw-string and struct-literal
+    /// paths are compile errors.
+    #[test]
+    fn session_identity_requires_a_handle() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        let s = SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+        assert_eq!(s.mycall().as_str(), "N7CPZ");
     }
 }

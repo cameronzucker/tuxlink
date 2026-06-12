@@ -112,4 +112,43 @@ describe('UninstallCleanupDialog', () => {
       expect(mockInvoke).toHaveBeenCalledWith('uninstall_cleanup_execute', { mode: 'full' });
     });
   });
+
+  // tuxlink-aip4: AppImage-only launcher leftovers are split out of the main
+  // list + headline counts so package-install operators don't see a "missing" wall.
+  it('partitions AppImage-only launcher leftovers out of the headline counts', async () => {
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === 'uninstall_cleanup_preview') {
+        return Promise.resolve({
+          mode: 'full',
+          dry_run: true,
+          paths: [
+            { path: '/home/op/.local/share/com.tuxlink.app', outcome: 'WouldRemove' },
+            { path: '/home/op/.local/share/applications/com.tuxlink.app.desktop', outcome: 'Missing' },
+            { path: '/home/op/.local/share/icons/hicolor/64x64/apps/com.tuxlink.app.png', outcome: 'Missing' },
+          ],
+          keyring: [],
+          warnings: [],
+        });
+      }
+      return Promise.reject(new Error('unexpected'));
+    });
+    render(<UninstallCleanupDialog open={true} onClose={vi.fn()} />);
+    const report = await screen.findByTestId('uninstall-cleanup-report');
+
+    // The two launcher paths live in their own collapsed section...
+    expect(screen.getByTestId('uninstall-cleanup-launcher')).toBeInTheDocument();
+    // ...and are NOT counted as "missing" in the headline (only the data path counts).
+    const summary = report.querySelector('.tux-cleanup-summary');
+    expect(summary?.textContent).toMatch(/0\s*missing/i);
+    expect(summary?.textContent).toMatch(/1\s*would remove/i);
+  });
+
+  it('directs the whole uninstall: Part 2 surfaces package-removal + verify', async () => {
+    render(<UninstallCleanupDialog open={true} onClose={vi.fn()} />);
+    const part2 = await screen.findByTestId('uninstall-cleanup-part2');
+    expect(part2).toHaveTextContent('sudo apt remove tuxlink');
+    expect(part2).toHaveTextContent('sudo dnf remove tuxlink');
+    expect(part2).toHaveTextContent(/uninstall-desktop-entry\.sh/);
+    expect(part2).toHaveTextContent(/dpkg -l/i);
+  });
 });

@@ -24,6 +24,11 @@ async fn test_native_backend_send_then_list_and_read() {
     let cfg = native_test_config();
     let tmp = tempfile::tempdir().expect("tmpdir");
     let backend = NativeBackend::new(cfg, tmp.path());
+    backend.set_active_identity(tuxlink_lib::identity::SessionIdentity::full(
+        tuxlink_lib::identity::IdentityHandle::for_test(
+            tuxlink_lib::identity::Callsign::parse("N7CPZ").unwrap(),
+        ),
+    ));
 
     // Fresh mailbox: status Disconnected, inbox empty.
     match backend.status() {
@@ -156,6 +161,11 @@ async fn native_backend_send_message_returns_message_id_not_option() {
     let cfg = native_test_config();
     let tmp = tempfile::tempdir().expect("tmpdir");
     let backend = NativeBackend::new(cfg, tmp.path());
+    backend.set_active_identity(tuxlink_lib::identity::SessionIdentity::full(
+        tuxlink_lib::identity::IdentityHandle::for_test(
+            tuxlink_lib::identity::Callsign::parse("N7CPZ").unwrap(),
+        ),
+    ));
 
     // The type annotation here is the compile-time assertion:
     // Result<MessageId, BackendError> must be assignable from send_message's return.
@@ -195,6 +205,11 @@ async fn native_backend_send_message_stores_attachments_in_outbox() {
     let cfg = native_test_config(); // already sets callsign = Some("N7CPZ")
 
     let backend = NativeBackend::new(cfg, tmp.path());
+    backend.set_active_identity(tuxlink_lib::identity::SessionIdentity::full(
+        tuxlink_lib::identity::IdentityHandle::for_test(
+            tuxlink_lib::identity::Callsign::parse("N7CPZ").unwrap(),
+        ),
+    ));
 
     let msg = OutboundMessage {
         to: vec!["W1AW".to_string()],
@@ -329,6 +344,11 @@ async fn two_native_backends_exchange_with_attachment() {
     let receiver_tmp = tempfile::tempdir().expect("receiver tmpdir");
 
     let sender = NativeBackend::new(native_test_config(), sender_tmp.path());
+    sender.set_active_identity(tuxlink_lib::identity::SessionIdentity::full(
+        tuxlink_lib::identity::IdentityHandle::for_test(
+            tuxlink_lib::identity::Callsign::parse("N7CPZ").unwrap(),
+        ),
+    ));
     let id = sender
         .send_message(BackendOutbound {
             to: vec!["W7AUX@winlink.org".to_string()],

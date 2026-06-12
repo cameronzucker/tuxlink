@@ -765,6 +765,9 @@ pub enum BackendError {
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
     },
+
+    #[error("no active identity — authenticate before transmitting")]
+    NoActiveIdentity,
 }
 
 // ============================================================================
@@ -1005,6 +1008,17 @@ pub trait WinlinkBackend: Send + Sync {
     fn status(&self) -> BackendStatus;
 
     fn stream_log(&self) -> BoxStream<'static, LogLine>;
+
+    /// The authenticated identity active for this backend (Phase 3,
+    /// bd-tuxlink-0063). The on-air station callsign for every transmit/listen
+    /// path comes from here — `mycall()` — not from a wire DTO or
+    /// `cfg.identity.active_full`. `Err(BackendError::NoActiveIdentity)` when no
+    /// identity has been authenticated. `NativeBackend` overrides this with its
+    /// inherent slot accessor; the default errors so non-native backends fail
+    /// closed (no transmit identity ⇒ no transmit).
+    fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
+        Err(BackendError::NoActiveIdentity)
+    }
 }
 
 // ============================================================================
@@ -1081,6 +1095,11 @@ pub struct NativeBackend {
     /// tests inject a permissive list (e.g. `allow_all=TRUE`) to bypass the
     /// architectural default of "reject all until operator curates."
     packet_allowlist_override: Option<crate::winlink::listener::AllowedStations>,
+    /// The active default SessionIdentity for NEW connect/compose/listen
+    /// operations. In-memory only — NEVER serialized, never written to disk.
+    /// Re-established each launch by an authenticated switch (Phase 6). `None`
+    /// until the operator authenticates one this session.
+    active_identity: RwLock<Option<crate::identity::SessionIdentity>>,
 }
 
 /// Clears the single-flight + abort state when a `connect` ends, however it ends
@@ -1138,6 +1157,7 @@ impl NativeBackend {
             connect_in_progress: Arc::new(AtomicBool::new(false)),
             position: None,
             packet_allowlist_override: None,
+            active_identity: RwLock::new(None),
         }
     }
 
@@ -1198,6 +1218,24 @@ impl NativeBackend {
         self
     }
 
+    /// Set the active default identity for new operations. In-memory only.
+    pub fn set_active_identity(&self, s: crate::identity::SessionIdentity) {
+        match self.active_identity.write() {
+            Ok(mut slot) => *slot = Some(s),
+            Err(poisoned) => *poisoned.into_inner() = Some(s),
+        }
+    }
+
+    /// Clone the active SessionIdentity for a single operation.
+    /// `Err(NoActiveIdentity)` if the operator hasn't authenticated one yet.
+    pub fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
+        let guard = self
+            .active_identity
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.clone().ok_or(BackendError::NoActiveIdentity)
+    }
+
     /// Clone the live config (tuxlink-ka7 / tuxlink-p5u). The connect + send paths
     /// read through here so a [`WinlinkBackend::set_config`] refresh applies on the
     /// next operation without an app restart. Recovers a poisoned lock's inner value
@@ -1222,6 +1260,15 @@ impl NativeBackend {
 
 #[async_trait]
 impl WinlinkBackend for NativeBackend {
+    /// Phase 3 (bd-tuxlink-0063): expose the inherent active-identity slot on
+    /// the trait so the Tauri command layer (which holds an
+    /// `Arc<dyn WinlinkBackend>`) can read the authenticated station call.
+    /// Delegates to the inherent accessor; named explicitly to avoid resolving
+    /// back into this trait method.
+    fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
+        NativeBackend::active_identity(self)
+    }
+
     async fn list_messages(&self, folder: MailboxFolder) -> Result<Vec<MessageMeta>, BackendError> {
         self.mailbox.list(folder)
     }
@@ -1324,17 +1371,14 @@ impl WinlinkBackend for NativeBackend {
         &self,
         msg: OutboundMessage,
     ) -> Result<MessageId, BackendError> {
-        let callsign = self
-            .live_config()
-            .identity
-            .active_full
-            .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
+        let session_id = self.active_identity()?;
+        let from = address_string(session_id.address_as());
         // The trait carries an RFC 3339 date; fall back to now if unparseable.
         let unix_secs = parse_rfc3339_secs(&msg.date).unwrap_or_else(now_unix_secs);
         let to: Vec<&str> = msg.to.iter().map(String::as_str).collect();
         let cc: Vec<&str> = msg.cc.iter().map(String::as_str).collect();
         let message = compose::compose_message_with_files(
-            &callsign,
+            from,
             &to,
             &cc,
             &msg.subject,
@@ -1409,9 +1453,15 @@ impl WinlinkBackend for NativeBackend {
         let aborting = self.aborting.clone();
         let position = self.position.clone();
         let mailbox_change = self.mailbox_change.clone();
+        // tuxlink-0063 (Phase 3): resolve the active identity BEFORE the blocking
+        // task and thread it in. `?` surfaces `NoActiveIdentity` to the operator
+        // if no identity has been authenticated — the dial cannot proceed without
+        // a Part 97 station principal to ID as on air.
+        let session_id = self.active_identity()?;
         let outcome = tokio::task::spawn_blocking(move || {
             native_connect(
                 &config,
+                &session_id,
                 &mailbox,
                 mode,
                 &*progress,
@@ -1522,13 +1572,12 @@ impl WinlinkBackend for NativeBackend {
             transport: "CmsAuthTest".to_string(),
         });
 
-        let callsign = config
-            .identity
-            .active_full
-            .clone()
-            .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
-            .trim()
-            .to_uppercase();
+        // tuxlink-0063 (Phase 3): the on-air station ID is the session's full
+        // callsign — the Part 97 principal — not `config.identity.active_full`.
+        // Resolve before spawn_blocking so `?` surfaces NoActiveIdentity to the
+        // caller immediately (mirrors native_connect / NativeBackend::connect).
+        let session_id = self.active_identity()?;
+        let callsign = session_id.mycall().as_str().to_uppercase();
         let locator = crate::position::effective_broadcast_locator(&config, self.position.as_deref());
         let password = crate::winlink::credentials::read_password(&callsign)
             .ok()
@@ -1682,11 +1731,14 @@ impl NativeBackend {
             *slot = None;
         }
 
-        let base = self
-            .live_config()
-            .identity
-            .active_full
-            .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
+        // tuxlink-0063 (Phase 3, Task 3.8): derive the base call from the active
+        // SessionIdentity — the authenticated Part 97 principal — NOT from
+        // config.identity.active_full. The SSID stays config-driven; only the
+        // base call moves to the session. Fail-closed: NoActiveIdentity returns
+        // before any KISS/TNC state is touched; ConnectGuard is already constructed
+        // so the single-flight flag is correctly cleared on this early return.
+        let session_id = self.active_identity()?;
+        let base = session_id.mycall().as_str().to_uppercase();
         // Decide the armed-state status before `role` is moved into resolve
         // (tuxlink-orj): Listen → Listening (armed), DialTo → Connecting (dial).
         let initial_status = initial_packet_status(&role, ssid);
@@ -2254,6 +2306,7 @@ type InboundDecider =
 #[allow(clippy::too_many_arguments)]
 fn native_connect(
     config: &Config,
+    session_id: &crate::identity::SessionIdentity,
     mailbox: &Mailbox,
     mode: CmsTransport,
     progress: &dyn Fn(&str),
@@ -2264,13 +2317,12 @@ fn native_connect(
     position: Option<&crate::position::PositionArbiter>,
     selection: Option<CmsSelectionContext>,
 ) -> Result<(), BackendError> {
-    let callsign = config
-        .identity
-        .active_full
-        .clone()
-        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
-        .trim()
-        .to_uppercase();
+    // tuxlink-0063 (Phase 3): the on-air station ID is the session's full
+    // callsign — the Part 97 principal — not `config.identity.active_full`.
+    // Threading `&SessionIdentity` makes on-air impersonation a compile error:
+    // the dial path can no longer read a callsign out of config. The password
+    // lookup keyed on this callsign follows the session too, which is correct.
+    let callsign = session_id.mycall().as_str().to_uppercase();
     // tuxlink-686 / Codex P1-A: resolve the on-air locator via the single shared
     // helper that honors BOTH precision (tuxlink-882) AND the gps_state privacy
     // control. GPS grids go on air only when gps_state == BroadcastAtPrecision;
@@ -2626,24 +2678,23 @@ fn dial_outbound_or_propagate(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // config + session_id together are one logical "session context"
 pub fn run_ardop_b2f_exchange(
     transport: &mut dyn crate::winlink::modem::ModemTransport,
     target: &str,
     intent: SessionIntent,
     config: &Config,
+    session_id: &crate::identity::SessionIdentity,
     mailbox: &Mailbox,
     position: Option<&crate::position::PositionArbiter>,
     progress: Option<&dyn Fn(&str)>,
 ) -> Result<(), BackendError> {
     use crate::winlink::modem::ardop::b2f;
 
-    let callsign = config
-        .identity
-        .active_full
-        .clone()
-        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
-        .trim()
-        .to_uppercase();
+    // tuxlink-0063 (Phase 3, Task 3.6): the on-air station ID is the session's
+    // full callsign — the Part 97 principal — not `config.identity.active_full`.
+    // Threading `&SessionIdentity` makes on-air impersonation a compile error.
+    let callsign = session_id.mycall().as_str().to_uppercase();
     let locator = crate::position::effective_broadcast_locator(config, position);
     // The ARDOP B2F path can dial either a CMS gateway (intent=Cms) or a peer
     // station (intent=P2p — added in tuxlink-9ls2). Only the gateway path may
@@ -2732,22 +2783,20 @@ pub fn run_ardop_b2f_exchange(
 /// inbound session out to the peer. After the exchange completes, persists
 /// `result.received` to Inbox + moves `result.sent` MIDs from Outbox to
 /// Sent. Same Inbox-FIRST ordering as the dialer path's Codex P1.4 fix.
+#[allow(clippy::too_many_arguments)] // config + session_id together are one logical "session context"
 pub fn run_ardop_b2f_answer(
     transport: &mut dyn crate::winlink::modem::ModemTransport,
     peer_callsign: &str,
     config: &Config,
+    session_id: &crate::identity::SessionIdentity,
     mailbox: &Mailbox,
     position: Option<&crate::position::PositionArbiter>,
     progress: Option<&dyn Fn(&str)>,
 ) -> Result<(), BackendError> {
     use crate::winlink::modem::ardop::b2f;
-    let callsign = config
-        .identity
-        .active_full
-        .clone()
-        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
-        .trim()
-        .to_uppercase();
+    // tuxlink-0063 (Phase 3, Task 3.6): the on-air station ID is the session's
+    // full callsign captured AT LISTENER-ARM TIME — not config.identity.active_full.
+    let callsign = session_id.mycall().as_str().to_uppercase();
     let locator = crate::position::effective_broadcast_locator(config, position);
 
     // Intent-filtered drain (tuxlink-u5hl). Listener answerer: catch the
@@ -2818,23 +2867,22 @@ pub fn run_ardop_b2f_answer(
 /// inbound session out to the peer. After the exchange completes,
 /// persists `result.received` to Inbox + moves `result.sent` MIDs from
 /// Outbox to Sent. Same Inbox-FIRST ordering as the ARDOP path.
+#[allow(clippy::too_many_arguments)] // config + session_id together are one logical "session context"
 pub fn run_vara_b2f_answer(
     transport: &mut crate::winlink::modem::vara::VaraTransport,
     peer_callsign: &str,
     config: &Config,
+    session_id: &crate::identity::SessionIdentity,
     mailbox: &Mailbox,
     position: Option<&crate::position::PositionArbiter>,
     progress: Option<&dyn Fn(&str)>,
 ) -> Result<(), BackendError> {
     use std::io::BufReader;
 
-    let callsign = config
-        .identity
-        .active_full
-        .clone()
-        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
-        .trim()
-        .to_uppercase();
+    // tuxlink-0063 (Phase 3, Task 3.7): the on-air station ID is the session's
+    // full callsign captured AT LISTENER-ARM TIME — not config.identity.active_full.
+    // Threading `&SessionIdentity` makes on-air impersonation a compile error.
+    let callsign = session_id.mycall().as_str().to_uppercase();
     let locator = crate::position::effective_broadcast_locator(config, position);
 
     // Intent-filtered drain (tuxlink-u5hl). Listener answerer: catch the
@@ -2954,24 +3002,23 @@ pub fn run_vara_b2f_answer(
 /// function only drives the data-socket exchange — it does NOT initiate
 /// transmission on its own. Aborting an in-flight exchange is the
 /// session-layer `abort_in_flight` path (Task 4.1), not this function.
+#[allow(clippy::too_many_arguments)] // config + session_id together are one logical "session context"
 pub fn run_vara_b2f_exchange(
     transport: &mut crate::winlink::modem::vara::VaraTransport,
     target: &str,
     intent: SessionIntent,
     config: &Config,
+    session_id: &crate::identity::SessionIdentity,
     mailbox: &Mailbox,
     position: Option<&crate::position::PositionArbiter>,
     progress: Option<&dyn Fn(&str)>,
 ) -> Result<(), BackendError> {
     use std::io::BufReader;
 
-    let callsign = config
-        .identity
-        .active_full
-        .clone()
-        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
-        .trim()
-        .to_uppercase();
+    // tuxlink-0063 (Phase 3, Task 3.7): the on-air station ID is the session's
+    // full callsign — the Part 97 principal — not `config.identity.active_full`.
+    // Threading `&SessionIdentity` makes on-air impersonation a compile error.
+    let callsign = session_id.mycall().as_str().to_uppercase();
     let locator = crate::position::effective_broadcast_locator(config, position);
 
     // CMS gateway may issue a `;PQ` challenge — fetch the operator's CMS
@@ -3088,6 +3135,15 @@ fn parse_rfc3339_secs(s: &str) -> Option<u64> {
         .map(|dt| dt.timestamp().max(0) as u64)
 }
 
+/// The `&str` a Winlink `From:` header uses for a session: the full callsign for
+/// a FULL identity, or the tactical label for a tactical one.
+fn address_string(a: &crate::identity::Address) -> &str {
+    match a {
+        crate::identity::Address::Full(c) => c.as_str(),
+        crate::identity::Address::Tactical(s) => s.as_str(),
+    }
+}
+
 /// Format the current wall-clock instant as an RFC 3339 / ISO-8601 UTC string
 /// (`YYYY-MM-DDTHH:MM:SSZ`). Minimal epoch-based formatter. Mirrors the manual
 /// formatter in `ui_commands.rs` (`format_unix_ts`) and `wizard.rs`; precision
@@ -3148,13 +3204,19 @@ mod mailbox_change_tests {
 
     #[tokio::test]
     async fn send_message_notifies_mailbox_change() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
         let dir = tempdir().unwrap();
         let notified = Arc::new(AtomicUsize::new(0));
         let notified_for_sink = notified.clone();
+        // native_test_config() has active_full = "N7CPZ"; set a matching active
+        // identity so send_message no longer errors on NoActiveIdentity.
         let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path())
             .with_mailbox_change(Arc::new(move || {
                 notified_for_sink.fetch_add(1, Ordering::SeqCst);
             }));
+        backend.set_active_identity(SessionIdentity::full(
+            IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()),
+        ));
 
         backend
             .send_message(OutboundMessage {
@@ -3371,6 +3433,55 @@ mod mailbox_change_tests {
         assert_eq!(
             body.raw_rfc5322, original_bytes,
             "Cms stored bytes must be byte-identical to original"
+        );
+    }
+
+    // =========================================================================
+    // Task 3.3 (tuxlink-0063): send_message writes From: from the active
+    // SessionIdentity.address_as(), NOT from config.identity.active_full.
+    //
+    // Config callsign: W7AUX. Active session authenticates N7CPZ (FULL).
+    // After send_message, the stored Outbox message must contain "From: N7CPZ"
+    // and must NOT contain "From: W7AUX".
+    // =========================================================================
+    #[tokio::test]
+    async fn send_message_from_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        let dir = tempdir().unwrap();
+
+        // Build a backend whose config callsign is W7AUX but whose active session
+        // authenticates as N7CPZ.
+        let mut cfg = crate::test_helpers::native_test_config();
+        cfg.identity.active_full = Some("W7AUX".to_string());
+        let backend = NativeBackend::new(cfg, dir.path());
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+        backend.set_active_identity(session_id);
+
+        let id = backend
+            .send_message(OutboundMessage {
+                to: vec!["W1AW".to_string()],
+                cc: vec![],
+                subject: "From-header test".to_string(),
+                body: "body".to_string(),
+                date: "2026-06-11T00:00:00Z".to_string(),
+                attachments: vec![],
+            })
+            .await
+            .expect("message queues");
+
+        // Read the raw bytes from the Outbox and inspect the From header.
+        let mailbox = &backend.mailbox;
+        let body = mailbox.read(MailboxFolder::Outbox, &id).expect("read stored message");
+        let raw = String::from_utf8_lossy(&body.raw_rfc5322);
+
+        assert!(
+            raw.contains("From: N7CPZ"),
+            "From header must be the session callsign N7CPZ; got:\n{raw}"
+        );
+        assert!(
+            !raw.contains("From: W7AUX"),
+            "From header must NOT be the config callsign W7AUX; got:\n{raw}"
         );
     }
 }
@@ -4111,8 +4222,17 @@ mod native_read_state_tests {
             attempt_id,
             registry: registry.clone(),
         };
+        // tuxlink-0063 (Phase 3): native_connect now takes the session. The on-air
+        // callsign comes from this session (N7CPZ), matching the prior config-derived
+        // callsign so the exchange behavior is unchanged.
+        let session_id = crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        );
         let result = native_connect(
             &cfg,
+            &session_id,
             &client_mailbox,
             CmsTransport::Telnet,
             &|_| {},
@@ -4151,6 +4271,184 @@ mod native_read_state_tests {
         // -------------------------------------------------------------------
         let inbox = client_mailbox.list(MailboxFolder::Inbox).expect("list inbox");
         assert_eq!(inbox.len(), 1, "the selected message must be in the Inbox; got {inbox:?}");
+    }
+
+    // =========================================================================
+    // Task 3.1 (tuxlink-0063): native_connect derives the on-air station ID
+    // (the telnet-login callsign → ExchangeConfig.mycall) from the SessionIdentity
+    // it is handed, NOT from `config.identity.active_full`. The config carries
+    // W7AUX; the active session authenticates N7CPZ; the callsign the client sends
+    // at the `Callsign :` prompt MUST be N7CPZ.
+    //
+    // The fake server captures the first non-prompt line the client writes after
+    // the `Callsign :` prompt (the login callsign) and then closes the socket. The
+    // client's exchange therefore errors after login — irrelevant here: the only
+    // load-bearing assertion is which callsign went on the wire. `#[serial]`
+    // because it sets the process-global TUXLINK_CMS_PORT to point native_connect
+    // at the ephemeral loopback listener.
+    // =========================================================================
+    #[test]
+    #[serial_test::serial]
+    fn native_connect_mycall_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::Mutex as StdMutex;
+
+        // The fake server records the login callsign the client sends.
+        let captured: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let listen_port = listener.local_addr().expect("listener addr").port();
+
+        let server = {
+            let captured = captured.clone();
+            std::thread::spawn(move || {
+                let (sock, _) = listener.accept().expect("accept");
+                let mut writer = sock.try_clone().expect("clone for write");
+                // Prompt for the callsign, read the client's reply, capture it, close.
+                writer.write_all(b"Callsign :\r").expect("write callsign prompt");
+                let mut reader = BufReader::new(sock);
+                let mut line = Vec::new();
+                reader.read_until(b'\r', &mut line).expect("read callsign reply");
+                let call = String::from_utf8_lossy(&line).trim_end_matches('\r').to_string();
+                *captured.lock().unwrap() = Some(call);
+                // Drop the socket: the client's login/exchange then errors out.
+            })
+        };
+
+        // Config callsign is W7AUX; the active session authenticates N7CPZ.
+        let client_dir = tempdir().unwrap();
+        let client_mailbox = Mailbox::new(client_dir.path());
+        let mut cfg = config_with_call("W7AUX");
+        cfg.connect.host = "127.0.0.1".to_string();
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+
+        // RAII guard clears TUXLINK_CMS_PORT on drop, even on panic.
+        struct CmsPortGuard;
+        impl Drop for CmsPortGuard {
+            fn drop(&mut self) {
+                std::env::remove_var("TUXLINK_CMS_PORT");
+            }
+        }
+        std::env::set_var("TUXLINK_CMS_PORT", listen_port.to_string());
+        let _cms_port_guard = CmsPortGuard;
+
+        let abort_handle: Mutex<Option<TcpStream>> = Mutex::new(None);
+        let aborting = Arc::new(AtomicBool::new(false));
+        // The connect is expected to error (server closes after login); we only
+        // care about which callsign the client put on the wire.
+        let _ = native_connect(
+            &cfg,
+            &session_id,
+            &client_mailbox,
+            CmsTransport::Telnet,
+            &|_| {},
+            &|_| {},
+            &|| {},
+            &abort_handle,
+            aborting,
+            None,
+            None,
+        );
+
+        server.join().expect("server thread panicked");
+        let observed = captured.lock().unwrap().clone();
+        assert_eq!(
+            observed.as_deref(),
+            Some("N7CPZ"),
+            "the on-air login callsign must be the session mycall (N7CPZ), not the config callsign (W7AUX)"
+        );
+    }
+
+    // =========================================================================
+    // Task 3.2 (tuxlink-0063): cms_connect_test derives the on-air station ID
+    // (the telnet-login callsign → ExchangeConfig.mycall) from the
+    // SessionIdentity stored in the backend, NOT from
+    // `config.identity.active_full`. The config carries W7AUX; the active
+    // session authenticates N7CPZ; the callsign the client sends at the
+    // `Callsign :` prompt MUST be N7CPZ.
+    //
+    // The fake server captures the first non-prompt line after the
+    // `Callsign :` prompt then closes the socket (mirrors Task 3.1's
+    // native_connect_mycall_comes_from_session_not_config). The exchange
+    // errors after login — irrelevant: the only load-bearing assertion is
+    // which callsign went on the wire. `#[serial]` because it sets the
+    // process-global TUXLINK_CMS_PORT.
+    // =========================================================================
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn cms_connect_test_mycall_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        use crate::winlink::b2f_events::{AttemptId, B2fEvent, B2fEventSink};
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::Mutex as StdMutex;
+
+        // A no-op event sink: the test only cares about the wire callsign, not events.
+        struct NoopSink;
+        impl B2fEventSink for NoopSink {
+            fn push(&self, _: B2fEvent) {}
+        }
+
+        // The fake server records the login callsign the client sends.
+        let captured: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let listen_port = listener.local_addr().expect("listener addr").port();
+
+        let server = {
+            let captured = captured.clone();
+            std::thread::spawn(move || {
+                let (sock, _) = listener.accept().expect("accept");
+                let mut writer = sock.try_clone().expect("clone for write");
+                // Prompt for the callsign, read the client's reply, capture it, close.
+                writer.write_all(b"Callsign :\r").expect("write callsign prompt");
+                let mut reader = BufReader::new(sock);
+                let mut line = Vec::new();
+                reader.read_until(b'\r', &mut line).expect("read callsign reply");
+                let call = String::from_utf8_lossy(&line).trim_end_matches('\r').to_string();
+                *captured.lock().unwrap() = Some(call);
+                // Drop the socket: the client's login/exchange then errors out.
+            })
+        };
+
+        // Config callsign is W7AUX; the active session authenticates N7CPZ.
+        let mut cfg = config_with_call("W7AUX");
+        cfg.connect.host = "127.0.0.1".to_string();
+        let dir = tempfile::tempdir().unwrap();
+        let backend = NativeBackend::new(cfg.clone(), dir.path());
+        // Refresh the backend's live config to pick up the host override.
+        backend.set_config(cfg);
+        // Set the active session identity to N7CPZ (different from config callsign).
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+        backend.set_active_identity(session_id);
+
+        // RAII guard clears TUXLINK_CMS_PORT on drop, even on panic.
+        struct CmsPortGuard;
+        impl Drop for CmsPortGuard {
+            fn drop(&mut self) {
+                std::env::remove_var("TUXLINK_CMS_PORT");
+            }
+        }
+        std::env::set_var("TUXLINK_CMS_PORT", listen_port.to_string());
+        let _cms_port_guard = CmsPortGuard;
+
+        let events: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
+            std::sync::Arc::new(NoopSink);
+        let attempt_id = AttemptId::fresh();
+
+        // The call is expected to error (server closes after login); we only
+        // care about which callsign the client put on the wire.
+        let _ = backend.cms_connect_test(events, attempt_id).await;
+
+        server.join().expect("server thread panicked");
+        let observed = captured.lock().unwrap().clone();
+        assert_eq!(
+            observed.as_deref(),
+            Some("N7CPZ"),
+            "cms_connect_test must use the session mycall (N7CPZ), not the config callsign (W7AUX)"
+        );
     }
 
     // =========================================================================
@@ -4196,6 +4494,126 @@ mod native_read_state_tests {
         )
         .unwrap_err();
         assert!(matches!(err, BackendError::NotConfigured(_)));
+    }
+
+    // =========================================================================
+    // Task 3.8 (tuxlink-0063): packet base call is the session call, not config
+    // =========================================================================
+
+    /// Guard test (documents the contract): resolve_packet_endpoint fed with the
+    /// session mycall yields base_mycall == that callsign and the SSID'd link
+    /// address. This test passes immediately (resolve_packet_endpoint already
+    /// takes &str); its purpose is to document that the base now comes from the
+    /// session, not config, and to catch any future regression that changes the
+    /// source of the &str passed to resolve_packet_endpoint.
+    #[test]
+    fn packet_base_call_is_session_call() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+        let resolved = resolve_packet_endpoint(
+            session_id.mycall().as_str(),
+            7,
+            PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.base_mycall, "N7CPZ",
+            "base_mycall must equal the session callsign"
+        );
+        assert_eq!(
+            resolved.link_mycall,
+            Address { call: "N7CPZ".into(), ssid: 7 },
+            "link address must carry the session call + SSID"
+        );
+    }
+
+    /// Behavior test (the real one): proves packet_connect_inner derives its base
+    /// call from the SESSION identity, not config.identity.active_full. The config
+    /// carries W7AUX; the active session authenticates N7CPZ. Both peers need an
+    /// active identity for packet_connect_inner to succeed; the dialer's identity
+    /// is N7CPZ and the answerer's is W7AUX. The observable is the From: header
+    /// in the message the answerer receives: it must say N7CPZ (the session call),
+    /// not W7AUX (the config call).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn packet_connect_inner_base_call_is_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+
+        let wire = spawn_kiss_wire();
+
+        let dialer_dir = tempdir().unwrap();
+        let answerer_dir = tempdir().unwrap();
+
+        // Seed one outbound message from the dialer so the B2F exchange has
+        // something to transfer (proves the exchange completes, not just the
+        // handshake).
+        let seed = Mailbox::new(dialer_dir.path());
+        let raw = compose_message(
+            "N7CPZ",
+            &["W7AUX"],
+            &[],
+            "Session-call test",
+            "base call from session",
+            1_716_200_000,
+        )
+        .to_bytes();
+        seed.store(MailboxFolder::Outbox, &raw).unwrap();
+
+        // Dialer: config says W7AUX but the active session authenticates N7CPZ.
+        // This is the split that the test exercises: session beats config.
+        let mut dialer_cfg = config_with_call("W7AUX");
+        dialer_cfg.connect.host = "127.0.0.1".to_string();
+        let dialer = NativeBackend::new(dialer_cfg, dialer_dir.path());
+        dialer.set_active_identity(SessionIdentity::full(
+            IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()),
+        ));
+
+        // Answerer: config and session both say W7AUX (no identity split here).
+        let answerer = NativeBackend::new(config_with_call("W7AUX"), answerer_dir.path())
+            .with_packet_allowlist(
+                crate::winlink::listener::AllowedStations::new().with_allow_all(true),
+            );
+        answerer.set_active_identity(SessionIdentity::full(
+            IdentityHandle::for_test(Callsign::parse("W7AUX").unwrap()),
+        ));
+
+        let listen = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::Listen,
+        };
+        let dial = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::DialTo { call: "W7AUX-7".into(), path: vec![] },
+        };
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            tokio::join!(answerer.connect(listen, None), dialer.connect(dial, None))
+        })
+        .await;
+
+        let (ans_res, dial_res) =
+            outcome.expect("packet identity test timed out (connect/handshake deadlock?)");
+        ans_res.expect("answerer connect+exchange failed");
+        dial_res.expect("dialer connect+exchange failed");
+
+        // The message in the answerer's inbox must have From: N7CPZ — the session
+        // callsign — NOT W7AUX (the dialer's config callsign).
+        let inbox = Mailbox::new(answerer_dir.path()).list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(inbox.len(), 1, "answerer inbox must hold exactly one message; got {inbox:?}");
+        assert_eq!(
+            inbox[0].from.trim().to_uppercase(),
+            "N7CPZ",
+            "packet base call must be the SESSION call (N7CPZ), not the config call (W7AUX)"
+        );
     }
 
     // =========================================================================
@@ -4510,6 +4928,13 @@ mod native_read_state_tests {
         drop(listener); // nothing listening → connection refused
 
         let backend = NativeBackend::new(offline_config_with_callsign(), tempdir().unwrap().path());
+        // Task 3.8: packet_connect_inner now gates on active_identity(); set one so
+        // the test reaches the KISS connection-refused path it was designed to cover.
+        backend.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        ));
         let err = backend
             .connect(TransportConfig::Packet {
                 link: KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() },
@@ -4524,26 +4949,38 @@ mod native_read_state_tests {
         );
     }
 
-    // tuxlink-ka7 / tuxlink-p5u: a config change via `set_config` must reach the
-    // LIVE backend so the NEXT connect honors it WITHOUT an app restart. Regression
-    // guard for the "selector host/transport (and packet params) only apply after
-    // restart" bug — the backend cached `config` at construction and the connect
-    // path read that stale snapshot. Proven via the shared callsign gate (BOTH
-    // native_connect and packet_connect_inner reject a missing callsign FIRST):
-    // start with NO callsign, refresh to one WITH a callsign, then connect — a
-    // stale snapshot fails NotConfigured(callsign); a live snapshot gets PAST that
-    // gate and fails at link-open (TransportFailed). No RF, no real CMS (RADIO-1):
-    // a closed loopback port refuses the connect fast.
+    // tuxlink-ka7 / tuxlink-p5u regression guard (reduced scope after Task 3.8).
+    //
+    // Original coverage: proved that `set_config` refreshed the live config so the
+    // NEXT packet connect honored the updated params without an app restart (the
+    // stale-snapshot bug). Task 3.8 moved the packet path's base-call source from
+    // `live_config().identity.active_full` to `active_identity()` (SessionIdentity),
+    // and the `set_config(config_with_call(...))` call in this test became inert —
+    // the updated identity.active_full no longer reaches the packet path, so the
+    // stale-snapshot observable was lost.
+    //
+    // The live-config-refresh property for packet AX.25 params (`config.packet.params`,
+    // read by `native_packet_connect`) cannot be exercised through a connection-refused
+    // test because those params are only used AFTER the KISS link opens successfully.
+    // Restoring that coverage requires a real (or faked) open KISS link to reach
+    // `native_packet_connect`; a dedicated test for that is needed (tuxlink-0063 Phase 3
+    // follow-up). For now this test is renamed to its actual reduced scope: proving
+    // that `packet_connect_inner` requires an active SessionIdentity and reaches
+    // link-open (TransportFailed) when one is set.
     #[tokio::test]
-    async fn set_config_refreshes_the_live_config_used_by_connect() {
+    async fn connect_requires_active_identity_before_packet_link_open() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         drop(listener); // nothing listening → connection refused
 
-        // Construct with NO callsign (the stale snapshot the bug would freeze in).
         let backend = NativeBackend::new(offline_config(), tempdir().unwrap().path());
-        // Operator picks a callsign in the UI → config_set_* persists + refreshes.
-        backend.set_config(config_with_call("N7CPZ"));
+        // An active SessionIdentity is required; packet_connect_inner gates on it
+        // before touching any KISS/TNC state.
+        backend.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        ));
 
         let err = backend
             .connect(TransportConfig::Packet {
@@ -4555,13 +4992,12 @@ mod native_read_state_tests {
             .unwrap_err();
 
         assert!(
-            !matches!(&err, BackendError::NotConfigured(field) if field.contains("callsign")),
-            "connect must read the LIVE config (callsign set via set_config), not the \
-             construction-time snapshot; got {err:?}"
+            !matches!(&err, BackendError::NoActiveIdentity),
+            "connect must pass the identity gate (session was set); got {err:?}"
         );
         assert!(
             matches!(err, BackendError::TransportFailed { .. }),
-            "with a live callsign, connect should reach link-open and fail \
+            "with a live session, connect should reach link-open and fail \
              TransportFailed; got {err:?}"
         );
     }
@@ -4671,6 +5107,13 @@ mod native_read_state_tests {
         seed.store(MailboxFolder::Outbox, &raw).unwrap();
 
         let dialer = NativeBackend::new(config_with_call("N7CPZ"), dialer_dir.path());
+        // Task 3.8: packet_connect_inner now derives the base call from the active
+        // SessionIdentity; both peers need one set or they return NoActiveIdentity.
+        dialer.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        ));
         // The answerer's listener gate (tuxlink-inde) defaults to "reject all"
         // — fresh tuxlink with no operator-curated allowlist rejects every
         // inbound peer. For this happy-path E2E test we inject an
@@ -4679,6 +5122,11 @@ mod native_read_state_tests {
             .with_packet_allowlist(
                 crate::winlink::listener::AllowedStations::new().with_allow_all(true),
             );
+        answerer.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("W7AUX").unwrap(),
+            ),
+        ));
 
         let listen = TransportConfig::Packet {
             link: KissLinkConfig::Tcp { host: wire.ip().to_string(), port: wire.port() },
@@ -4760,5 +5208,514 @@ mod native_read_state_tests {
         assert_eq!(&buf[..n], b"FF\r", "must block through transient Ok(0), not EOF early");
         let n2 = std::io::Read::read(&mut s, &mut buf).unwrap();
         assert_eq!(n2, 0, "Ok(0) while the link is closed must surface as a real EOF");
+    }
+
+    #[test]
+    fn active_identity_slot_starts_empty_and_round_trips() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        let backend = NativeBackend::new(offline_config(), tempfile::tempdir().unwrap().path());
+        // Empty at construction -> NoActiveIdentity.
+        assert!(matches!(backend.active_identity(), Err(BackendError::NoActiveIdentity)));
+        let handle: IdentityHandle = IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap());
+        backend.set_active_identity(SessionIdentity::full(handle));
+        let active = backend.active_identity().expect("active set");
+        assert_eq!(active.mycall().as_str(), "N7CPZ");
+    }
+
+    #[test]
+    fn session_identity_is_clone() {
+        fn assert_clone<T: Clone>() {}
+        assert_clone::<crate::identity::SessionIdentity>();
+    }
+
+    // =========================================================================
+    // Task 3.6 (tuxlink-0063): run_ardop_b2f_exchange derives the on-air
+    // station ID (ExchangeConfig.mycall → the ;FW: callsign sent on the data
+    // stream) from the SessionIdentity it is handed, NOT from
+    // `config.identity.active_full`.
+    //
+    // Config callsign: W7AUX. Active session: N7CPZ.
+    // The ;FW: line in the client's handshake MUST carry N7CPZ, not W7AUX.
+    //
+    // A minimal ScriptedDuplex implements ModemTransport + ReadWrite so the
+    // B2F engine can run end-to-end in memory (no TCP, no ardopcf).
+    // =========================================================================
+    #[test]
+    fn ardop_b2f_exchange_mycall_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::modem::ardop::session::{ConnectInfo, InitConfig, SessionError};
+        use crate::winlink::modem::{ModemTransport, ReadWrite};
+        use std::io::{Cursor, Read, Write};
+        use std::time::Duration;
+
+        // ── scripted duplex: reads return a minimal CMS handshake; writes are
+        //    captured so we can inspect the callsign the B2F engine announced.
+        struct ScriptedDuplex {
+            reader: Cursor<Vec<u8>>,
+            captured: Vec<u8>,
+        }
+        impl Read for ScriptedDuplex {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.reader.read(buf)
+            }
+        }
+        impl Write for ScriptedDuplex {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.captured.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+
+        struct ScriptedTransport {
+            duplex: ScriptedDuplex,
+        }
+        impl ModemTransport for ScriptedTransport {
+            fn init(&mut self, _: &InitConfig) -> Result<(), SessionError> { Ok(()) }
+            fn connect_arq(&mut self, _: &str, _: u32, _: Option<Duration>)
+                -> Result<ConnectInfo, SessionError>
+            {
+                Ok(ConnectInfo { peer_call: "W7RMS-10".into(), bandwidth_hz: 500 })
+            }
+            fn disconnect(&mut self, _: Duration) -> Result<(), SessionError> { Ok(()) }
+            fn data_stream(&mut self) -> std::io::Result<&mut dyn ReadWrite> {
+                Ok(&mut self.duplex)
+            }
+        }
+
+        // Scripted "CMS" server: empty handshake + no messages.
+        let mut script = Vec::new();
+        script.extend_from_slice(b"[WL2K-5.0-B2FHM$]\rCMS>\r");
+        script.extend_from_slice(b"FF\r"); // remote has nothing
+
+        let mut transport = ScriptedTransport {
+            duplex: ScriptedDuplex {
+                reader: Cursor::new(script),
+                captured: Vec::new(),
+            },
+        };
+
+        // Config callsign W7AUX; active session authenticates N7CPZ.
+        let mut cfg = offline_config();
+        cfg.identity.active_full = Some("W7AUX".into());
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+
+        // Call run_ardop_b2f_exchange — after the Task 3.6 signature change,
+        // session_id is the parameter immediately after config (5th positional).
+        let _ = run_ardop_b2f_exchange(
+            &mut transport,
+            "W7RMS-10",
+            crate::winlink::session::SessionIntent::Cms,
+            &cfg,
+            &session_id,
+            &mailbox,
+            None,
+            None,
+        );
+
+        // The B2F slave's opening handshake sends ";FW: <mycall>\r".
+        // It MUST be N7CPZ (from the session), NOT W7AUX (from the config).
+        let written = String::from_utf8_lossy(&transport.duplex.captured);
+        assert!(
+            written.contains(";FW: N7CPZ"),
+            "run_ardop_b2f_exchange must use the session mycall N7CPZ in ;FW:; got:\n{written}"
+        );
+        assert!(
+            !written.contains(";FW: W7AUX"),
+            "run_ardop_b2f_exchange must NOT use the config callsign W7AUX in ;FW:; got:\n{written}"
+        );
+    }
+
+    // =========================================================================
+    // Task 3.6 (tuxlink-0063): run_ardop_b2f_answer derives the on-air station
+    // ID from the SessionIdentity, NOT from `config.identity.active_full`.
+    //
+    // The answerer is the B2F MASTER (ISS): it speaks FIRST, sending the master
+    // handshake which carries `;FW: {mycall}`. That handshake is written to the
+    // captured byte stream BEFORE any data from the scripted peer is consumed, so
+    // the assertion is straightforward.
+    //
+    // Config callsign: W7AUX. Active session: N7CPZ.
+    // The `;FW:` line in the master handshake MUST carry N7CPZ, not W7AUX.
+    // =========================================================================
+    #[test]
+    fn run_ardop_b2f_answer_mycall_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::modem::ardop::session::{ConnectInfo, InitConfig, SessionError};
+        use crate::winlink::modem::{ModemTransport, ReadWrite};
+        use std::io::{Cursor, Read, Write};
+        use std::time::Duration;
+
+        // ── scripted duplex: reads return a minimal slave (peer/dialer) handshake
+        //    followed by FF (no messages); writes are captured to inspect the
+        //    callsign the answerer (master) announced.
+        struct ScriptedDuplex {
+            reader: Cursor<Vec<u8>>,
+            captured: Vec<u8>,
+        }
+        impl Read for ScriptedDuplex {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.reader.read(buf)
+            }
+        }
+        impl Write for ScriptedDuplex {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.captured.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+
+        struct ScriptedTransport {
+            duplex: ScriptedDuplex,
+        }
+        impl ModemTransport for ScriptedTransport {
+            fn init(&mut self, _: &InitConfig) -> Result<(), SessionError> { Ok(()) }
+            fn connect_arq(&mut self, _: &str, _: u32, _: Option<Duration>)
+                -> Result<ConnectInfo, SessionError>
+            {
+                Ok(ConnectInfo { peer_call: "W7AUX".into(), bandwidth_hz: 500 })
+            }
+            fn disconnect(&mut self, _: Duration) -> Result<(), SessionError> { Ok(()) }
+            fn data_stream(&mut self) -> std::io::Result<&mut dyn ReadWrite> {
+                Ok(&mut self.duplex)
+            }
+        }
+
+        // Scripted peer (slave/dialer): its handshake reply + empty turn.
+        // The peer is "W7AUX"; the answerer (us) is N7CPZ.
+        // Slave handshake: forwarding line + SID + DE line (no `>` prompt).
+        let mut script = Vec::new();
+        script.extend_from_slice(b";FW: W7AUX\r[RMS-1.0-B2FHM$]\r; N7CPZ DE W7AUX (CN87)\r");
+        // Slave takes first message turn with nothing to send.
+        script.extend_from_slice(b"FF\r");
+
+        let mut transport = ScriptedTransport {
+            duplex: ScriptedDuplex {
+                reader: Cursor::new(script),
+                captured: Vec::new(),
+            },
+        };
+
+        // Config callsign W7AUX; active session authenticates N7CPZ.
+        let mut cfg = offline_config();
+        cfg.identity.active_full = Some("W7AUX".into());
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+
+        // Call run_ardop_b2f_answer — session_id is the parameter immediately
+        // after config (4th positional), immediately after peer_callsign.
+        let _ = run_ardop_b2f_answer(
+            &mut transport,
+            "W7AUX",
+            &cfg,
+            &session_id,
+            &mailbox,
+            None,
+            None,
+        );
+
+        // The B2F master's opening handshake sends ";FW: <mycall>\r" as the
+        // FIRST bytes on the wire (before reading anything from the peer).
+        // It MUST be N7CPZ (from the session), NOT W7AUX (from the config).
+        let written = String::from_utf8_lossy(&transport.duplex.captured);
+        assert!(
+            written.contains(";FW: N7CPZ"),
+            "run_ardop_b2f_answer must use the session mycall N7CPZ in ;FW:; got:\n{written}"
+        );
+        assert!(
+            !written.contains(";FW: W7AUX"),
+            "run_ardop_b2f_answer must NOT use the config callsign W7AUX in ;FW:; got:\n{written}"
+        );
+    }
+
+    // =========================================================================
+    // Task 3.7 (tuxlink-0063): run_vara_b2f_exchange derives the on-air station
+    // ID (ExchangeConfig.mycall → the ;FW: callsign sent on the data stream)
+    // from the SessionIdentity it is handed, NOT from `config.identity.active_full`.
+    //
+    // Config callsign: W7AUX. Active session: N7CPZ.
+    // The ;FW: line in the client's B2F handshake MUST carry N7CPZ, not W7AUX.
+    //
+    // VARA uses real TcpStreams (try_clone() requires OS handles), so we spin a
+    // real loopback listener pair. The server thread on the data port plays the
+    // CMS slave role: it sends a minimal B2F master handshake and awaits the
+    // client's ;FW: line. The cmd port acceptor just holds the connection.
+    // Both captured bytes (written by the client) and the session assert are
+    // confirmed.
+    // =========================================================================
+    #[test]
+    fn run_vara_b2f_exchange_mycall_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::modem::vara::transport::{VaraConfig, VaraTransport};
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+        use std::time::Duration;
+
+        // ── Bind loopback listeners for cmd + data ports.
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+
+        // ── Capture bytes the client writes to the data socket.
+        let captured: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+
+        // ── cmd acceptor: just holds the connection alive for the transport.
+        let cmd_handle = thread::spawn(move || {
+            let (_sock, _) = cmd_l.accept().unwrap();
+            thread::sleep(Duration::from_millis(500));
+        });
+
+        // ── data acceptor: acts as B2F slave (IRS/responder).
+        //    Sends a minimal WL2K-5.0 header so the client handshake proceeds;
+        //    then records everything the client writes before closing.
+        let data_handle = {
+            let captured = captured.clone();
+            thread::spawn(move || {
+                let (sock, _) = data_l.accept().unwrap();
+                // Per-read timeout is short, but we DRAIN ACROSS TIMEOUTS up to a
+                // generous total deadline. Under full-suite CPU contention the
+                // client's handshake (the ;FW: line we assert on) can arrive well
+                // after connect; a break-on-first-timeout drain races and flakes
+                // (observed in the tuxlink-0063 Phase 3 full-suite run). We stop as
+                // soon as a complete ;FW: line is captured, on real EOF, or at the
+                // deadline backstop.
+                sock.set_read_timeout(Some(Duration::from_millis(200))).ok();
+                let mut writer = sock.try_clone().unwrap();
+                // Send the WL2K-5.0 server greeting so B2F exchange starts.
+                writer.write_all(b"[WL2K-5.0-B2FHM$]\rCMS>\r").unwrap();
+                writer.write_all(b"FF\r").unwrap();
+
+                // Drain client output into captured.
+                let mut reader = BufReader::new(sock);
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                loop {
+                    let mut line = Vec::new();
+                    match reader.read_until(b'\r', &mut line) {
+                        Ok(0) => break, // client closed the socket
+                        Ok(_) => {
+                            let got_fw = line.windows(4).any(|w| w == b";FW:");
+                            captured.lock().unwrap().extend_from_slice(&line);
+                            // The complete ;FW: line is captured — that is all the
+                            // assertion needs; stop deterministically.
+                            if got_fw {
+                                break;
+                            }
+                        }
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            if std::time::Instant::now() >= deadline {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            })
+        };
+
+        // ── Connect a VaraTransport to our scripted listeners.
+        let cfg_vara = VaraConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            connect_timeout: Duration::from_secs(2),
+            read_timeout: Some(Duration::from_millis(1000)),
+        };
+        let mut transport = VaraTransport::connect(cfg_vara).expect("loopback connect");
+
+        // ── Config callsign W7AUX; active session authenticates N7CPZ.
+        let mut cfg = offline_config();
+        cfg.identity.active_full = Some("W7AUX".into());
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+
+        // ── Call run_vara_b2f_exchange — the Task 3.7 signature change adds
+        //    session_id immediately after config (5th positional arg).
+        let _ = run_vara_b2f_exchange(
+            &mut transport,
+            "W7RMS-10",
+            crate::winlink::session::SessionIntent::Cms,
+            &cfg,
+            &session_id,
+            &mailbox,
+            None,
+            None,
+        );
+
+        cmd_handle.join().ok();
+        data_handle.join().ok();
+
+        // ── Assert: ;FW: must carry N7CPZ (session call), not W7AUX (config call).
+        let binding = captured.lock().unwrap();
+        let written = String::from_utf8_lossy(&binding);
+        assert!(
+            written.contains(";FW: N7CPZ"),
+            "run_vara_b2f_exchange must use the session mycall N7CPZ in ;FW:; got:\n{written}"
+        );
+        assert!(
+            !written.contains(";FW: W7AUX"),
+            "run_vara_b2f_exchange must NOT use the config callsign W7AUX in ;FW:; got:\n{written}"
+        );
+    }
+
+    // =========================================================================
+    // Task 3.7 (tuxlink-0063): run_vara_b2f_answer derives the on-air station
+    // ID from the SessionIdentity, NOT from `config.identity.active_full`.
+    //
+    // The answerer is the B2F MASTER (ISS): it speaks FIRST, sending the master
+    // handshake which carries `;FW: {mycall}`. That handshake is written to the
+    // data socket BEFORE any data from the scripted peer is consumed, so the
+    // assertion is straightforward.
+    //
+    // Config callsign: W7AUX. Active session: N7CPZ.
+    // The `;FW:` line in the master handshake MUST carry N7CPZ, not W7AUX.
+    // =========================================================================
+    #[test]
+    fn run_vara_b2f_answer_mycall_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::modem::vara::transport::{VaraConfig, VaraTransport};
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+        use std::time::Duration;
+
+        // ── Bind loopback listeners for cmd + data ports.
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+
+        // ── Capture bytes the answerer (master/ISS) writes to the data socket.
+        let captured: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+
+        // ── cmd acceptor: holds the connection for the transport lifetime.
+        let cmd_handle = thread::spawn(move || {
+            let (_sock, _) = cmd_l.accept().unwrap();
+            thread::sleep(Duration::from_millis(500));
+        });
+
+        // ── data acceptor: acts as B2F slave (IRS/dialer) in the exchange.
+        //    Waits for the master's ;FW: greeting, replies with minimal slave
+        //    handshake, then sends FF (nothing to send). All bytes written BY
+        //    the client (the answerer/master) are captured for assertion.
+        let data_handle = {
+            let captured = captured.clone();
+            thread::spawn(move || {
+                let (sock, _) = data_l.accept().unwrap();
+                // Drain across read timeouts up to a generous deadline — under
+                // full-suite CPU contention the master's preamble lines can arrive
+                // slower than a single short read window, so breaking on the first
+                // timeout would race (same latent flake the exchange test hit).
+                sock.set_read_timeout(Some(Duration::from_millis(200))).ok();
+                let mut writer = sock.try_clone().unwrap();
+
+                // Capture everything the master writes, and reply with the
+                // slave handshake once the preamble is in so the master can proceed.
+                let mut reader = BufReader::new(sock);
+                let mut line_count = 0usize;
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                loop {
+                    let mut line = Vec::new();
+                    match reader.read_until(b'\r', &mut line) {
+                        Ok(0) => break, // client closed the socket
+                        Ok(_) => {
+                            captured.lock().unwrap().extend_from_slice(&line);
+                            line_count += 1;
+                            // After the master's 3-line preamble (;FW:, SID, DE line)
+                            // send the slave greeting so the exchange can conclude.
+                            if line_count == 3 {
+                                // Slave: ;FW: peer + SID + DE greeting + first FF turn.
+                                let _ = writer.write_all(
+                                    b";FW: W7AUX\r[RMS-1.0-B2FHM$]\r; N7CPZ DE W7AUX\rFF\r",
+                                );
+                                let _ = writer.flush();
+                                // The master's ;FW: (line 1) is captured and the slave
+                                // reply is sent; give the master a beat to consume it,
+                                // then stop deterministically.
+                                thread::sleep(Duration::from_millis(100));
+                                break;
+                            }
+                        }
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            if std::time::Instant::now() >= deadline {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            })
+        };
+
+        // ── Connect a VaraTransport to our scripted listeners.
+        let cfg_vara = VaraConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            connect_timeout: Duration::from_secs(2),
+            read_timeout: Some(Duration::from_millis(1000)),
+        };
+        let mut transport = VaraTransport::connect(cfg_vara).expect("loopback connect");
+
+        // ── Config callsign W7AUX; active session authenticates N7CPZ.
+        let mut cfg = offline_config();
+        cfg.identity.active_full = Some("W7AUX".into());
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+
+        // ── Call run_vara_b2f_answer — session_id is the parameter immediately
+        //    after config (4th positional), immediately before mailbox.
+        let _ = run_vara_b2f_answer(
+            &mut transport,
+            "W7AUX",
+            &cfg,
+            &session_id,
+            &mailbox,
+            None,
+            None,
+        );
+
+        cmd_handle.join().ok();
+        data_handle.join().ok();
+
+        // ── The B2F master's opening handshake sends ";FW: <mycall>\r" as the
+        //    FIRST bytes on the wire. It MUST be N7CPZ (session), not W7AUX (config).
+        let binding = captured.lock().unwrap();
+        let written = String::from_utf8_lossy(&binding);
+        assert!(
+            written.contains(";FW: N7CPZ"),
+            "run_vara_b2f_answer must use the session mycall N7CPZ in ;FW:; got:\n{written}"
+        );
+        assert!(
+            !written.contains(";FW: W7AUX"),
+            "run_vara_b2f_answer must NOT use the config callsign W7AUX in ;FW:; got:\n{written}"
+        );
     }
 }
