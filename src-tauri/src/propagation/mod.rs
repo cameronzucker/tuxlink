@@ -2,10 +2,12 @@
 //! no network, no transmit, no writes outside a per-call scratch dir.
 //! Plan: docs/superpowers/plans/2026-06-10-u1-voacapl-prediction.md
 
+pub mod antenna;
 pub mod commands;
 pub mod deck;
 pub mod engine;
 pub mod parse;
+pub mod prefs;
 pub mod ssn;
 
 use serde::{Deserialize, Serialize};
