@@ -429,3 +429,42 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* tuxlink-aip4: Part 2 — remove-the-application guidance (deb/rpm/AppImage + verify). */
+.tux-cleanup-part2 {
+  margin: 16px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-sunken, rgba(0, 0, 0, 0.12));
+}
+
+.tux-cleanup-part2 h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.tux-cleanup-part2-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.tux-cleanup-part2-list li {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.tux-cleanup-part2-list span {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.tux-cleanup-part2-list code,
+.tux-cleanup-part2 code {
+  font-family: var(--mono);
+}
