@@ -8224,6 +8224,7 @@ hw:CARD=Device,DEV=0
             review_inbound_before_download: false,
             map_tile_source: None,
             aredn_master_node_host: None,
+            aprs: crate::config::AprsConfig::default(),
         }
     }
 
@@ -8451,6 +8452,7 @@ hw:CARD=Device,DEV=0
             review_inbound_before_download: false,
             map_tile_source: None,
             aredn_master_node_host: None,
+            aprs: crate::config::AprsConfig::default(),
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -9557,6 +9559,7 @@ hw:CARD=Device,DEV=0
             review_inbound_before_download: false,
             map_tile_source: None,
             aredn_master_node_host: None,
+            aprs: crate::config::AprsConfig::default(),
         }
     }
 

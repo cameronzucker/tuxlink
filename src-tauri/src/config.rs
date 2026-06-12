@@ -250,6 +250,14 @@ pub struct Config {
     /// keeps a no-override config byte-identical to its pre-1w7t shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aredn_master_node_host: Option<String>,
+    /// APRS station identity settings (tuxlink-2f2n). The APRS identity is
+    /// SEPARATE from the Winlink identity: an operator transmits APRS as
+    /// `<callsign>-<source_ssid>` to `tocall` via `path`. Additive section —
+    /// `#[serde(default)]` migrates configs that predate this field (absent →
+    /// `AprsConfig::default()`); the field is now KNOWN, satisfying
+    /// `deny_unknown_fields`.
+    #[serde(default)]
+    pub aprs: AprsConfig,
 }
 
 /// A saved Network Post Office relay server entry.
@@ -889,6 +897,40 @@ impl Default for TelnetListenUiConfig {
             bind_addr: "127.0.0.1".into(),
             ttl_secs: 3600,
         }
+    }
+}
+
+// ============================================================================
+// APRS station identity config (tuxlink-2f2n)
+// ============================================================================
+
+/// APRS station identity settings, persisted under `aprs` in config.json.
+///
+/// The APRS identity is SEPARATE from the Winlink identity: an operator
+/// transmits APRS as `<base-callsign>-<source_ssid>` (the base callsign comes
+/// from the selected FULL identity; `source_ssid` is the APRS-specific SSID,
+/// independent of the packet/Winlink SSID) addressed to `tocall` via `path`.
+///
+/// - `source_ssid`: APRS SSID (0–15). Default 0.
+/// - `tocall`: the destination/"to" call identifying the sending software.
+///   Default `APZTUX` (an experimental `APZ…` tocall reserved for tuxlink).
+/// - `path`: the digipeater alias list. Default `WIDE1-1,WIDE2-1` (the common
+///   2-hop wide path); parsed via [`crate::winlink::aprs::identity::parse_path`]
+///   (0..=2 hops, AX.25 limit).
+///
+/// `deny_unknown_fields` is intentionally absent (consistent with the other
+/// additive UI-config sections): the section is forward-compat relaxed.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct AprsConfig {
+    pub source_ssid: u8,
+    pub tocall: String,
+    pub path: String,
+}
+
+impl Default for AprsConfig {
+    fn default() -> Self {
+        Self { source_ssid: 0, tocall: "APZTUX".into(), path: "WIDE1-1,WIDE2-1".into() }
     }
 }
 
@@ -1770,5 +1812,23 @@ mod tests {
         let again = IdentityMigration::plan(&v1)
             .execute(&svc, mbox_root.path(), &store_path, true, Some("cms-pw")).unwrap();
         assert!(again.was_noop, "re-running the migration must be a no-op");
+    }
+
+    // --- tuxlink-2f2n: AprsConfig defaults + persistence tests ---
+
+    #[test]
+    fn aprs_config_defaults() {
+        let c = AprsConfig::default();
+        assert_eq!(c.source_ssid, 0);
+        assert_eq!(c.tocall, "APZTUX");
+        assert_eq!(c.path, "WIDE1-1,WIDE2-1");
+    }
+
+    #[test]
+    fn aprs_config_round_trips_through_json() {
+        let c = AprsConfig { source_ssid: 7, tocall: "APZTUX".into(), path: "WIDE2-1".into() };
+        let s = serde_json::to_string(&c).unwrap();
+        let back: AprsConfig = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, c);
     }
 }

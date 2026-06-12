@@ -125,6 +125,7 @@ mod tests {
             review_inbound_before_download: false,
             map_tile_source: None,
             aredn_master_node_host: None,
+            aprs: crate::config::AprsConfig::default(),
         }
     }
 

@@ -3731,6 +3731,7 @@ mod native_read_state_tests {
             review_inbound_before_download: false,
             map_tile_source: None,
             aredn_master_node_host: None,
+            aprs: crate::config::AprsConfig::default(),
         }
     }
 
@@ -5270,6 +5271,7 @@ mod native_read_state_tests {
             review_inbound_before_download: false,
             map_tile_source: None,
             aredn_master_node_host: None,
+            aprs: crate::config::AprsConfig::default(),
         }
     }
 
