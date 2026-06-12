@@ -4265,6 +4265,51 @@ mod native_read_state_tests {
         }
     }
 
+    // Phase 5 (tuxlink-tseu) Task 5: the CMS gate is structurally unreachable for
+    // non-CMS transports. A tactical session whose CMS registration is Unknown
+    // (which WOULD be refused on the CMS path) attempts a PACKET (RF/P2P) connect;
+    // it must proceed to the KISS link open and fail TransportFailed (closed
+    // loopback port), NEVER BackendError::TacticalNotCmsRegistered. Pins the spec's
+    // "P2P / RF unrestricted" invariant.
+    #[tokio::test]
+    async fn tactical_packet_p2p_is_never_cms_gated() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener); // nothing listening → connection refused
+
+        let backend = NativeBackend::new(offline_config_with_callsign(), tempdir().unwrap().path());
+        // Active = tactical EOC-3 under N7CPZ; CMS state defaults to Unknown (no
+        // store seeded) — a CMS connect would fail-close, but packet/RF is never gated.
+        backend.set_active_identity(
+            crate::identity::SessionIdentity::tactical(
+                crate::identity::IdentityHandle::for_test(
+                    crate::identity::Callsign::parse("N7CPZ").unwrap(),
+                ),
+                "EOC-3".into(),
+            )
+            .unwrap(),
+        );
+        let err = backend
+            .connect(
+                TransportConfig::Packet {
+                    link: KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() },
+                    ssid: 7,
+                    role: PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
+                },
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            !matches!(err, BackendError::TacticalNotCmsRegistered { .. }),
+            "packet/RF must never be CMS-gated; got {err:?}"
+        );
+        assert!(
+            matches!(err, BackendError::TransportFailed { .. }),
+            "tactical packet connect should reach link-open and fail TransportFailed; got {err:?}"
+        );
+    }
+
     // =========================================================================
     // Task 4b (tuxlink-bsiy): selecting-connect integration over a 127.0.0.1
     // loopback. Proves the FULL wiring: native_connect, given a CmsSelectionContext
