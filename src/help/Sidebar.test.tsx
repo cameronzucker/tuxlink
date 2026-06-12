@@ -23,13 +23,15 @@ describe('Sidebar (grouped-list mode)', () => {
     ).map((el) => el.textContent);
     expect(headers).toEqual([
       'Quickstart',
+      // Migration sits second (tuxlink-5ceg) — frequently-asked "coming from
+      // Winlink Express?" belongs near the top of the reading order.
+      'Migration',
       'Winlink fundamentals',
       'Radio integration',
       'Digital modes',
       'Using tuxlink',
       'Operating practices',
       'Reference',
-      'Migration',
     ]);
   });
 

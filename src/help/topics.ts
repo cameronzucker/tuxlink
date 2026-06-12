@@ -39,6 +39,14 @@ export const SECTIONS: readonly HelpSection[] = [
     topicSlugs: ['01-what-is-tuxlink', '02-first-launch-wizard', '03-sending-your-first'],
   },
   {
+    // Migration sits SECOND (operator request, tuxlink-5ceg): arriving from
+    // Winlink Express / Pat is the most frequently-asked first question, so it
+    // belongs near the top of the reading order, not buried at the bottom.
+    id: 'migration',
+    displayName: 'Migration',
+    topicSlugs: ['32-from-express-or-pat'],
+  },
+  {
     id: 'winlink-fundamentals',
     displayName: 'Winlink fundamentals',
     topicSlugs: [
@@ -103,11 +111,6 @@ export const SECTIONS: readonly HelpSection[] = [
       '30-glossary',
       '31-credits',
     ],
-  },
-  {
-    id: 'migration',
-    displayName: 'Migration',
-    topicSlugs: ['32-from-express-or-pat'],
   },
 ];
 
