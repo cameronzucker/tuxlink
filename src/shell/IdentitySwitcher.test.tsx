@@ -355,3 +355,66 @@ test('unlock_success_closes the dropdown', async () => {
   await waitFor(() => expect(screen.queryByTestId('identity-switcher-list')).not.toBeInTheDocument());
   expect(screen.queryByTestId('identity-unlock-input')).not.toBeInTheDocument();
 });
+
+// ---------------------------------------------------------------------------
+// Adversarial-review fixes (moraine-swallow-bayou): case-insensitive active
+// match (MINOR 1) + duplicate-tactical-label disambiguation (IMPORTANT 3)
+// ---------------------------------------------------------------------------
+
+test('active match is case-insensitive: a lowercase active call unlocks its stored FULL row', () => {
+  // Backend auth + needs_auth fold ASCII case, so an active "w7xyz" must be
+  // recognized as the stored "W7XYZ" — clicking it is a no-op (closes), and it
+  // is aria-selected, not treated as a different, lockable identity.
+  render(
+    <IdentitySwitcher
+      active={{ mycall: 'w7xyz', address_as: 'w7xyz', is_tactical: false }}
+      list={LIST}
+      onSwitch={vi.fn()}
+    />,
+  );
+  openDropdown();
+  const row = screen.getByTestId('identity-row-full-W7XYZ');
+  expect(row).toHaveAttribute('aria-selected', 'true');
+  fireEvent.click(row);
+  // No-op close (the already-active identity), NOT an unlock prompt.
+  expect(screen.queryByTestId('identity-switcher-list')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('identity-unlock-input')).not.toBeInTheDocument();
+});
+
+test('a tactical label shared across two parents is disambiguated by parent', () => {
+  // Tactical labels are NOT globally unique (spec): two FULLs may each register
+  // "NET-CTRL". Selecting one must reveal exactly ONE inline unlock (its own),
+  // and only the matching-parent row is aria-selected when active.
+  const DUP: IdentityListDto = {
+    full: [
+      { callsign: 'W1ABC', label: null, has_cms_account: true, cms_registered: true, needs_auth: true },
+      { callsign: 'K9DEF', label: null, has_cms_account: true, cms_registered: true, needs_auth: true },
+    ],
+    tactical: [
+      { label: 'NET-CTRL', parent: 'W1ABC', cms_badge: 'registered' },
+      { label: 'NET-CTRL', parent: 'K9DEF', cms_badge: 'registered' },
+    ],
+    last_selected: null,
+  };
+  const { rerender } = render(<IdentitySwitcher active={null} list={DUP} onSwitch={vi.fn()} />);
+  openDropdown();
+  // Two same-label tactical rows are rendered (one per parent).
+  const rows = screen.getAllByTestId('identity-row-tactical-NET-CTRL');
+  expect(rows).toHaveLength(2);
+  // Clicking the first (W1ABC's) reveals exactly ONE unlock form, not both.
+  fireEvent.click(rows[0]);
+  expect(screen.getAllByTestId('identity-unlock-input')).toHaveLength(1);
+  expect(screen.getByText('Unlock NET-CTRL')).toBeInTheDocument();
+
+  // When K9DEF's NET-CTRL is the active identity, only its row is aria-selected.
+  rerender(
+    <IdentitySwitcher
+      active={{ mycall: 'K9DEF', address_as: 'NET-CTRL', is_tactical: true }}
+      list={DUP}
+      onSwitch={vi.fn()}
+    />,
+  );
+  const after = screen.getAllByTestId('identity-row-tactical-NET-CTRL');
+  const selected = after.filter((r) => r.getAttribute('aria-selected') === 'true');
+  expect(selected).toHaveLength(1);
+});

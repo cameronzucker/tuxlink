@@ -166,14 +166,16 @@ export function useListenerState(options: UseListenerStateOptions): UseListenerS
     if (busy) return;
     setBusy(true);
     setError(null);
+    // Capture the active identity BEFORE the arm await (Phase-6 bound-identity
+    // invariant, frontend half): the listener answers as whoever was active
+    // when arm was issued. Reading it after the await would race a concurrent
+    // active-identity switch that resolves mid-arm and mislabel the badge.
+    const labelAtArm = activeIdentityLabel ?? null;
     try {
       await invoke(commands.listen);
       setArmed(true);
       setArmedAt(Date.now());
-      // Snapshot the active identity AT ARM TIME (Phase-6 bound-identity
-      // invariant, frontend half): the listener answers as whoever was active
-      // when armed; later active-identity switches must not move the badge.
-      setBoundIdentityLabel(activeIdentityLabel ?? null);
+      setBoundIdentityLabel(labelAtArm);
     } catch (e) {
       setError(String(e));
       setArmed(false);

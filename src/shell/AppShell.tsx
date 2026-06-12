@@ -515,6 +515,23 @@ export function AppShell() {
   const identityList = useIdentityList();
   const activeIdentity = useActiveIdentity();
   const identitySwitch = useIdentitySwitch();
+  // Stable handler (the memo'd DashboardRibbon must not re-render on every 2s
+  // status poll) that also RESETS the mutation after it settles, so the typed
+  // credential held in the mutation's `variables` does not linger in the
+  // MutationCache (default gcTime 5m) past the switch. The switcher reads the
+  // error from the thrown rejection it catches, so the reset loses no UI state.
+  const switchMutateAsync = identitySwitch.mutateAsync;
+  const switchReset = identitySwitch.reset;
+  const onSwitchIdentity = useCallback(
+    async (args: { callsign: string; credential: string; tacticalLabel: string | null }) => {
+      try {
+        await switchMutateAsync(args);
+      } finally {
+        switchReset();
+      }
+    },
+    [switchMutateAsync, switchReset],
+  );
   // Task 11 (tuxlink-noa0): toolbar identity-filter options derived from the
   // same identity list (no second backend call). "All identities" + one entry
   // per FULL callsign + one per tactical label.
@@ -1099,7 +1116,7 @@ export function AppShell() {
           onReviewInboundChange={onReviewInboundChange}
           identities={identityList.data ?? null}
           activeIdentity={activeIdentity.data ?? null}
-          onSwitchIdentity={(args) => identitySwitch.mutateAsync(args)}
+          onSwitchIdentity={onSwitchIdentity}
         />
       </div>
 

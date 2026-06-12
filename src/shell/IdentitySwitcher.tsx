@@ -130,9 +130,27 @@ export function IdentitySwitcher({ active, list, ssid, onSsidChange, onSwitch }:
     return () => document.removeEventListener('mousedown', onDocMouseDown);
   }, [open]);
 
-  // Is this row the currently-active identity? Re-selecting it is a no-op.
-  function isActiveAddress(addressAs: string): boolean {
-    return active != null && active.address_as === addressAs;
+  // Case-insensitive callsign/label compare, mirroring the backend auth contract
+  // (`authenticate` + the needs_auth projection both fold ASCII case), so an
+  // active "w1abc" is recognized against a stored "W1ABC" (MINOR 1).
+  const eqCI = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
+  // Is this FULL row the currently-active identity? (Only when the active
+  // session presents AS a FULL, not as a tactical riding under it.)
+  function isActiveFull(callsign: string): boolean {
+    return active != null && !active.is_tactical && eqCI(active.address_as, callsign);
+  }
+
+  // Is this tactical row the active identity? A tactical label is NOT globally
+  // unique (the same label may exist under two FULLs), so disambiguate by BOTH
+  // the label AND the parent FULL (= the active session's mycall) — IMPORTANT 3.
+  function isActiveTactical(t: TacticalIdentityDto): boolean {
+    return (
+      active != null &&
+      active.is_tactical &&
+      eqCI(active.address_as, t.label) &&
+      eqCI(active.mycall, t.parent)
+    );
   }
 
   function revealUnlock(target: UnlockTarget) {
@@ -148,7 +166,7 @@ export function IdentitySwitcher({ active, list, ssid, onSsidChange, onSwitch }:
   }
 
   function handleFullRowClick(full: FullIdentityDto) {
-    if (isActiveAddress(full.callsign)) {
+    if (isActiveFull(full.callsign)) {
       closeDropdown();
       return;
     }
@@ -156,7 +174,7 @@ export function IdentitySwitcher({ active, list, ssid, onSsidChange, onSwitch }:
   }
 
   function handleTacticalRowClick(t: TacticalIdentityDto) {
-    if (isActiveAddress(t.label)) {
+    if (isActiveTactical(t)) {
       closeDropdown();
       return;
     }
@@ -200,8 +218,12 @@ export function IdentitySwitcher({ active, list, ssid, onSsidChange, onSwitch }:
   function fullIsUnlocking(callsign: string): boolean {
     return unlockTarget?.kind === 'full' && unlockTarget.callsign === callsign;
   }
-  function tacticalIsUnlocking(label: string): boolean {
-    return unlockTarget?.kind === 'tactical' && unlockTarget.label === label;
+  function tacticalIsUnlocking(parent: string, label: string): boolean {
+    return (
+      unlockTarget?.kind === 'tactical' &&
+      unlockTarget.label === label &&
+      unlockTarget.parent === parent
+    );
   }
 
   function renderUnlockForm() {
@@ -302,14 +324,14 @@ export function IdentitySwitcher({ active, list, ssid, onSsidChange, onSwitch }:
           ) : (
             list.full.map((full) => {
               const tacticals = list.tactical.filter((t) => t.parent === full.callsign);
-              const fullCurrent = list.last_selected === full.callsign;
+              const fullCurrent = list.last_selected != null && eqCI(list.last_selected, full.callsign);
               const fullLocked = full.needs_auth;
               return (
                 <div key={`full-${full.callsign}`} className="identity-group">
                   <button
                     type="button"
                     role="option"
-                    aria-selected={isActiveAddress(full.callsign)}
+                    aria-selected={isActiveFull(full.callsign)}
                     aria-current={fullCurrent ? 'true' : undefined}
                     aria-label={fullLocked ? `${full.callsign} (locked)` : full.callsign}
                     className="identity-row identity-row--full"
@@ -329,13 +351,13 @@ export function IdentitySwitcher({ active, list, ssid, onSsidChange, onSwitch }:
                   {fullIsUnlocking(full.callsign) && renderUnlockForm()}
 
                   {tacticals.map((t) => {
-                    const tCurrent = list.last_selected === t.label;
+                    const tCurrent = list.last_selected != null && eqCI(list.last_selected, t.label);
                     return (
-                      <div key={`tactical-${t.label}`} className="identity-group">
+                      <div key={`tactical-${t.parent}-${t.label}`} className="identity-group">
                         <button
                           type="button"
                           role="option"
-                          aria-selected={isActiveAddress(t.label)}
+                          aria-selected={isActiveTactical(t)}
                           aria-current={tCurrent ? 'true' : undefined}
                           aria-label={t.label}
                           className="identity-row identity-row--tactical"
@@ -345,7 +367,7 @@ export function IdentitySwitcher({ active, list, ssid, onSsidChange, onSwitch }:
                           <span className="identity-row-label">{t.label}</span>
                           {tacticalCmsBadge(t.cms_badge)}
                         </button>
-                        {tacticalIsUnlocking(t.label) && renderUnlockForm()}
+                        {tacticalIsUnlocking(t.parent, t.label) && renderUnlockForm()}
                       </div>
                     );
                   })}
