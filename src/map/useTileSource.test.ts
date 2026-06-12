@@ -14,7 +14,7 @@
  * PositionPickerOverlay.test.tsx.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -140,5 +140,22 @@ describe('useTileSource', () => {
       expect(invokeMock).toHaveBeenCalledWith('tile_source_status'),
     );
     expect(result.current).toBeNull();
+  });
+
+  it('re-reads on a tile-source-changed event without a remount (tuxlink-9rek)', async () => {
+    // Start with no configured source → null.
+    setupInvoke(null, makeLanLiveStatus());
+    const { result } = renderHook(() => useTileSource());
+    await waitFor(() => expect(result.current).toBeNull());
+
+    // Operator activates a source in Settings; the same-window event fires and
+    // the hook re-reads config + status without the component remounting.
+    setupInvoke(SOURCE, makeLanLiveStatus());
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('tuxlink:tile-source-changed'));
+    });
+    await waitFor(() =>
+      expect(result.current).toEqual({ source: SOURCE, status: makeLanLiveStatus() }),
+    );
   });
 });

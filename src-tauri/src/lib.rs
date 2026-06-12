@@ -304,11 +304,25 @@ pub fn run() {
                     // NO I/O (the cache layer creates the tree lazily on first
                     // write). Managed as `Arc<TileGatekeeper>` so the handler can
                     // clone it out of managed state per request. The active source
-                    // starts `None` until the Phase-8 configure command sets it,
-                    // so an unconfigured serve returns 404 (NoSource), never panics.
-                    app.manage(std::sync::Arc::new(
+                    // starts `None`; tuxlink-9rek seeds it from the persisted
+                    // config below so a configured LAN tile source survives a
+                    // restart. An unconfigured serve returns 404 (NoSource).
+                    let tile_gatekeeper = std::sync::Arc::new(
                         crate::tiles::TileGatekeeper::new(data_dir.join("tile-cache")),
-                    ));
+                    );
+                    // tuxlink-9rek: rehydrate the active source from config at
+                    // boot (mirrors the StationsCache disk-seed below). Without
+                    // this the gatekeeper starts empty, `tile_source_status`
+                    // reports `Bundled`, `useTileSource` returns null, and the
+                    // map silently falls back to the bundled raster (maxZoom 3)
+                    // even though `config.map_tile_source` is set — the persist
+                    // half shipped without the load half.
+                    if let Ok(cfg) = crate::config::read_config() {
+                        if let Some(src) = cfg.map_tile_source {
+                            tile_gatekeeper.set_source(Some(src));
+                        }
+                    }
+                    app.manage(tile_gatekeeper);
 
                     // tuxlink-dx57 U2: persistent station-list cache. Seeds from
                     // disk on launch so a cold offline start shows last-known-good
