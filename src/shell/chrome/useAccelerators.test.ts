@@ -19,11 +19,13 @@ describe('matchAccelerator', () => {
       .toBe('menu:message:reply_all');
   });
 
-  it('matches F5 with no modifier and Ctrl+Shift+O → connect', () => {
+  // tuxlink-lqw2: the F5 / Ctrl+Shift+O connect accelerators were removed with
+  // the Connect menu item (connect is reached from the dashboard ribbon).
+  it('no longer matches F5 or Ctrl+Shift+O (connect removed)', () => {
     expect(matchAccelerator({ key: 'F5', ctrlKey: false, metaKey: false, shiftKey: false }))
-      .toBe('menu:session:connect');
+      .toBeNull();
     expect(matchAccelerator({ key: 'o', ctrlKey: true, metaKey: false, shiftKey: true }))
-      .toBe('menu:session:connect');
+      .toBeNull();
   });
 
   it('returns null for unbound combos', () => {
