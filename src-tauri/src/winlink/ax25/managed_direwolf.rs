@@ -423,11 +423,8 @@ impl ManagedDireWolf {
         let stop_result = modem.stop(SHUTDOWN_GRACE);
 
         // Step 2: confirm the audio device released (poll the card's ALSA status).
-        let released = confirm_card_released(
-            &self.adevice,
-            self.card_index,
-            RELEASE_CONFIRM_DEADLINE,
-        );
+        let released =
+            confirm_card_released(&self.adevice, self.card_index, RELEASE_CONFIRM_DEADLINE);
 
         if !released {
             // Restore the modem so a retry shutdown() re-checks the invariant
@@ -447,6 +444,70 @@ impl ManagedDireWolf {
         stop_result.map_err(|e| DwLifecycleError::Stop(e.to_string()))?;
         Ok(())
     }
+}
+
+// ─── RADIO-1 session guard (Phase 6 wiring) ─────────────────────────────────
+
+/// RAII guard that owns a live [`ManagedDireWolf`] for the duration of a connect
+/// session and runs the EXPLICIT 5s [`ManagedDireWolf::shutdown`] (the clean
+/// de-key path) on EVERY exit of the scope holding it — normal return, a `?`
+/// early-return, OR a panic unwinding the stack.
+///
+/// # Why an explicit guard rather than `ManagedDireWolf`'s own `Drop`
+///
+/// `ManagedDireWolf`'s `Drop` net delegates to `ManagedModem`'s ~200ms
+/// `DROP_GRACE`, which is too short to guarantee Dire Wolf runs its clean SIGINT
+/// de-key — it is the orphan-leak backstop, NOT the de-key path (see
+/// [`ManagedDireWolf::shutdown`]'s "call `shutdown()`, don't rely on `Drop`"
+/// contract). This guard's `Drop` calls the full `shutdown()` with
+/// [`SHUTDOWN_GRACE`] (5s) so the RADIO-1 clean-de-key path runs on every unwind.
+///
+/// # RADIO-1
+///
+/// Holding this guard in the connect fn's top scope is what makes the clean
+/// shutdown fire on the `?`-error and panic paths, not just the happy path: Rust
+/// runs `Drop` for in-scope values during unwinding. `Drop` never panics (a panic
+/// in `Drop` during an unwind aborts the process); on shutdown error it logs and
+/// swallows. A second `shutdown()` (e.g. if the caller also called it explicitly)
+/// is a no-op — `shutdown()` `take()`s the modem on success.
+pub struct ManagedDireWolfGuard(pub ManagedDireWolf);
+
+impl Drop for ManagedDireWolfGuard {
+    fn drop(&mut self) {
+        if let Err(e) = self.0.shutdown() {
+            // Never panic in Drop (a panic while unwinding aborts the process).
+            // Log the clean-shutdown failure; the held ManagedModem's own Drop is
+            // the residual orphan-leak backstop if shutdown could not complete.
+            tracing::warn!(
+                target: "tuxlink::winlink::ax25::managed_direwolf",
+                error = %e,
+                "managed direwolf shutdown on session end failed; relying on Drop backstop",
+            );
+        }
+    }
+}
+
+/// Pick a FREE localhost TCP port for the KISS listener: bind `127.0.0.1:0`, read
+/// the OS-assigned ephemeral port, drop the listener (releasing the port), and
+/// return the number. The SAME value is used for both the generated conf's
+/// `KISSPORT` and tuxlink's loopback Tcp dial (they are one value via
+/// [`ManagedDireWolfCfg::kiss_port`]).
+///
+/// # TOCTOU
+///
+/// There is a tiny window between dropping this listener and Dire Wolf binding the
+/// port in which another local process could claim it. This is ACCEPTABLE on
+/// localhost: if it happens, Dire Wolf's bind fails and tuxlink's bind-wait
+/// ([`wait_for_kiss_port`]) times out into a clean [`DwLifecycleError::BindTimeout`]
+/// — a legible error the operator can retry, not a silent wrong-port dial. There
+/// is no portable "bind and hand the bound socket to the child" path for Dire
+/// Wolf (it opens its own listener from the conf's `KISSPORT`), so request-a-free-
+/// port-then-release is the pragmatic choice the ardopcf path also relies on.
+pub fn pick_free_kiss_port() -> std::io::Result<u16> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    Ok(port)
 }
 
 // ─── Free helpers ───────────────────────────────────────────────────────────
@@ -798,14 +859,14 @@ mod tests {
         // and must NOT spawn (the script is a bind-the-port stub that, if spawned,
         // would make the port unbindable — we assert the port stays free).
         let busy_msg = device_busy_message(&cfg.adevice);
-        let err = ManagedDireWolf::spawn_with_busy_probe_for_test(
-            cfg,
-            Err(busy_msg.clone()),
-        )
-        .expect_err("spawn must return DeviceBusy when the probe reports busy");
+        let err = ManagedDireWolf::spawn_with_busy_probe_for_test(cfg, Err(busy_msg.clone()))
+            .expect_err("spawn must return DeviceBusy when the probe reports busy");
         match err {
             DwLifecycleError::DeviceBusy(msg) => {
-                assert_eq!(msg, busy_msg, "DeviceBusy must carry the named busy message");
+                assert_eq!(
+                    msg, busy_msg,
+                    "DeviceBusy must carry the named busy message"
+                );
                 assert!(msg.contains("plughw:CARD=Test,DEV=0"));
             }
             other => panic!("expected DeviceBusy, got {other:?}"),
@@ -840,6 +901,71 @@ mod tests {
         assert_eq!(arbitrate(&requested, Some(&other)), Arbitration::Proceed);
     }
 
+    // ── Test 7: pick_free_kiss_port returns a bindable-then-free port ─────────
+
+    /// The port picker returns a non-zero port that is FREE right after the call
+    /// (we can bind it ourselves), proving the picker released its probe listener.
+    /// Also a light sanity check that two calls usually differ (ephemeral churn) —
+    /// but we only assert bindability, since the OS may legitimately reuse a port.
+    #[test]
+    fn pick_free_kiss_port_returns_a_bindable_port() {
+        let port = pick_free_kiss_port().expect("picking a free port must succeed");
+        assert_ne!(
+            port, 0,
+            "picker must return a concrete assigned port, not 0"
+        );
+        // The picker dropped its listener, so the port must be bindable now. (The
+        // tiny TOCTOU window documented on the fn is acceptable; in a quiet test
+        // process nothing else races for this exact ephemeral port.)
+        let rebind = std::net::TcpListener::bind(format!("127.0.0.1:{port}"));
+        assert!(
+            rebind.is_ok(),
+            "picked port {port} must be free (picker released its probe listener)"
+        );
+    }
+
+    /// `ManagedDireWolfGuard::drop` runs the explicit 5s `shutdown()` (clean
+    /// de-key) — proven by spawning a stub Dire Wolf, wrapping it in a guard,
+    /// dropping the guard, and asserting the child's KISS port frees (the process
+    /// is gone). This exercises the RADIO-1 "shutdown on every exit path" property
+    /// via Drop, the same mechanism `?`/panic unwinding triggers.
+    #[test]
+    fn guard_drop_shuts_down_managed_direwolf() {
+        if !python3_present() {
+            eprintln!("python3 absent — skipping managed_direwolf guard-drop test");
+            return;
+        }
+        const PORT: u16 = 58927;
+        let cfg = test_cfg(PORT);
+        let script = stub_binds_and_handles_sigint(PORT);
+        let dw = spawn_stub(cfg, &script, Duration::from_secs(3))
+            .expect("spawn against a binding stub must succeed");
+        // The stub holds the KISS port while alive.
+        assert!(
+            std::net::TcpListener::bind(format!("127.0.0.1:{PORT}")).is_err(),
+            "stub must hold the KISS port while the guard is alive"
+        );
+        {
+            let _guard = ManagedDireWolfGuard(dw);
+            // Guard drops at the end of this block → explicit shutdown() runs.
+        }
+        // After the guard dropped, the child is shut down and the port is free.
+        // Poll briefly: shutdown's SIGINT + the stub's exit are near-instant, but
+        // the OS may take a tick to release the LISTEN socket.
+        let mut freed = false;
+        for _ in 0..50 {
+            if std::net::TcpListener::bind(format!("127.0.0.1:{PORT}")).is_ok() {
+                freed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            freed,
+            "guard Drop must shut down the managed direwolf — KISS port must free"
+        );
+    }
+
     // ── Test 6: map_spawn_error (pure, no spawn) ──────────────────────────────
 
     /// Direct unit test of the spawn-error mapping that drives Phase 6's
@@ -849,10 +975,12 @@ mod tests {
     #[test]
     fn map_spawn_error_classifies_named_variants() {
         // Binary absent ⇒ the install-affordance variant.
-        let not_found =
-            ProcessError::Spawn(std::io::Error::from(std::io::ErrorKind::NotFound));
+        let not_found = ProcessError::Spawn(std::io::Error::from(std::io::ErrorKind::NotFound));
         assert!(
-            matches!(map_spawn_error(not_found), DwLifecycleError::DireWolfNotInstalled),
+            matches!(
+                map_spawn_error(not_found),
+                DwLifecycleError::DireWolfNotInstalled
+            ),
             "NotFound spawn must map to DireWolfNotInstalled (P6 install path)"
         );
 
@@ -881,6 +1009,10 @@ mod tests {
 // spawn/bind/stop machinery `spawn` uses, substituting only the parts a real-radio
 // test must not exercise (the `direwolf` binary, the live /proc probe).
 
+// These are `#[cfg(test)]` helper *methods on the type* (they cannot live inside
+// `mod tests`), so they are grouped just after the test module rather than being
+// production items hidden after tests — the case `items_after_test_module` guards.
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 impl ManagedDireWolf {
     /// Spawn against a `python3 -c <script>` stub instead of the real `direwolf`

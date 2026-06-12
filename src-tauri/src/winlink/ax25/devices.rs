@@ -184,6 +184,14 @@ pub struct AudioDevice {
     /// without re-reading the snapshot). `None` for onboard cards (which
     /// `enumerate_audio_devices` excludes anyway).
     pub usb_parent: Option<String>,
+    /// The LIVE boot-order `card<N>` index backing this device. Carried so
+    /// [`resolve_managed_device`] can hand the live index to the lifecycle layer
+    /// (`ManagedDireWolfCfg::card_index`, which the device-busy / release probes
+    /// read `/proc/asound/card<N>/...` with) WITHOUT re-walking the snapshot. The
+    /// stable id deliberately excludes this index; it is present here only as the
+    /// live handle, resolved fresh at connect time, never persisted.
+    #[serde(skip)]
+    pub card_index: u32,
 }
 
 /// A candidate PTT keying method for a chosen audio device. Persisted in config
@@ -287,6 +295,7 @@ pub fn enumerate_audio_devices(snapshot: &SysSnapshot) -> Vec<AudioDevice> {
             alsa_plughw: plughw_name(card),
             stable_id: derive_stable_id(card),
             usb_parent: card.usb_parent.clone(),
+            card_index: card.card_index,
         })
         .collect()
 }
@@ -306,9 +315,8 @@ pub fn discover_ptt(card: &AudioDevice, snapshot: &SysSnapshot) -> Vec<PttChoice
         return Vec::new();
     };
 
-    let same_parent = |node_parent: &Option<String>| -> bool {
-        node_parent.as_deref() == Some(card_parent)
-    };
+    let same_parent =
+        |node_parent: &Option<String>| -> bool { node_parent.as_deref() == Some(card_parent) };
 
     let mut choices: Vec<PttChoice> = Vec::new();
 
@@ -335,6 +343,46 @@ pub fn discover_ptt(card: &AudioDevice, snapshot: &SysSnapshot) -> Vec<PttChoice
 }
 
 // ============================================================================
+// Managed-device resolution — stable id → live plughw + card index (PURE)
+// ============================================================================
+
+/// The live handles the lifecycle layer needs to bring up a managed Dire Wolf
+/// against a previously-persisted [`StableAudioId`]: the ALSA `plughw:` name for
+/// `ADEVICE` and the boot-order `card<N>` index the device-busy / release probes
+/// read `/proc/asound/card<N>/...` with. Both are resolved FRESH at connect time
+/// — the stable id is what persists; this is its live projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedManagedDevice {
+    /// The live ALSA `plughw:CARD=<id>,DEV=0` name for `ADEVICE`.
+    pub alsa_plughw: String,
+    /// The live boot-order `card<N>` index backing `alsa_plughw`.
+    pub card_index: u32,
+}
+
+/// Resolve a persisted [`StableAudioId`] against a LIVE [`SysSnapshot`] to its
+/// current `plughw:` name + `card<N>` index. Returns `None` when no enumerated
+/// device carries that stable id — the device-unplugged case the caller surfaces
+/// as a clear "configured sound card not found" error rather than spawning Dire
+/// Wolf against the wrong card.
+///
+/// Pure over `snapshot` — the impure live read is the caller's
+/// [`read_sys_snapshot`]. The match is on the STABLE id (index-independent), so a
+/// re-plug that swaps `card 1`/`card 2` still resolves to the same physical card,
+/// now reporting whichever live index it landed on.
+pub fn resolve_managed_device(
+    stable_id: &StableAudioId,
+    snapshot: &SysSnapshot,
+) -> Option<ResolvedManagedDevice> {
+    enumerate_audio_devices(snapshot)
+        .into_iter()
+        .find(|d| d.stable_id == *stable_id)
+        .map(|d| ResolvedManagedDevice {
+            alsa_plughw: d.alsa_plughw,
+            card_index: d.card_index,
+        })
+}
+
+// ============================================================================
 // Impure shim — reads the real system into a SysSnapshot. UNTESTED by design.
 // ============================================================================
 
@@ -342,19 +390,285 @@ pub fn discover_ptt(card: &AudioDevice, snapshot: &SysSnapshot) -> Vec<PttChoice
 /// sysfs USB topology into a [`SysSnapshot`] for the pure logic above. This is
 /// the only part of the module that touches the filesystem; it is deliberately
 /// thin and is NOT unit-tested (mirrors the `arecord -L` shell-out shim in
-/// `ui_commands.rs`, which is also impure-and-untested). Wired in a later phase
-/// — present here as the documented boundary, returning an empty snapshot until
-/// the real readers land.
+/// `ui_commands.rs`, which is also impure-and-untested). Every PARSE step it
+/// delegates to a pure, fixture-tested helper below ([`parse_proc_asound_cards`],
+/// [`card_index_from_symlink_target`], [`hex4_from_sysfs`], [`is_cm108_usb`]); the
+/// shim itself only does the I/O the tests cannot.
 ///
 /// Soft-failure posture matches `ardop_list_audio_devices`: a missing path or a
 /// read error yields an empty/partial snapshot (the picker shows "no devices —
-/// plug one in and refresh"), never an `Err`.
+/// plug one in and refresh"), never an `Err` and never a panic. Each sub-read is
+/// independently best-effort: an unreadable `/dev/snd/by-id` still yields cards
+/// (just without by-id basenames), an unreadable sysfs node just leaves that
+/// card's USB identity `None`.
+///
+/// OPERATOR-SMOKE-VALIDATED: the filesystem layout this walks (`/proc/asound`,
+/// `/dev/snd/by-id` symlink shapes, sysfs USB attribute placement) cannot be
+/// exercised in a unit test without a real ALSA/USB stack, so the reader's
+/// correctness against a live DigiRig + DRA-100 is confirmed by the operator's
+/// on-air smoke, not by CI. The pure parse helpers below ARE fixture-tested.
 #[allow(dead_code)]
 pub fn read_sys_snapshot() -> SysSnapshot {
-    // Phase 1 ships the pure resolver + fixtures only; the real sysfs/by-id
-    // readers are a later phase. Returning an empty snapshot keeps the public
-    // boundary stable without claiming capability that isn't wired yet.
-    SysSnapshot::default()
+    use std::fs;
+
+    // 1. Cards from /proc/asound/cards (index, id, longname). Pure-parsed.
+    let mut cards: Vec<SnapshotCard> = match fs::read_to_string("/proc/asound/cards") {
+        Ok(text) => parse_proc_asound_cards(&text)
+            .into_iter()
+            .map(|(card_index, card_id, card_name)| SnapshotCard {
+                card_index,
+                card_id,
+                card_name,
+                by_id_basename: None,
+                usb: None,
+                usb_parent: None,
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+
+    // 2. /dev/snd/by-id symlink basenames → card index (resolve symlink target,
+    //    extract card<N> via the pure helper). Best-effort.
+    if let Ok(entries) = fs::read_dir("/dev/snd/by-id") {
+        for entry in entries.flatten() {
+            let basename = entry.file_name().to_string_lossy().into_owned();
+            // The symlink target points at e.g. ../controlC1 / ../pcmC1D0c.
+            let Ok(target) = fs::read_link(entry.path()) else {
+                continue;
+            };
+            let target_str = target.to_string_lossy();
+            if let Some(idx) = card_index_from_symlink_target(&target_str) {
+                if let Some(card) = cards.iter_mut().find(|c| c.card_index == idx) {
+                    // First control-node symlink wins (don't overwrite with a later pcm one).
+                    if card.by_id_basename.is_none() {
+                        card.by_id_basename = Some(basename);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. sysfs USB topology per card: idVendor/idProduct/serial + USB parent.
+    //    /sys/class/sound/card<N>/device is the symlink into the USB tree; the
+    //    USB device dir holds idVendor/idProduct/serial, and its PARENT dir is
+    //    the hub-port the card hangs off (what PTT discovery matches on).
+    for card in cards.iter_mut() {
+        let sys_device = format!("/sys/class/sound/card{}/device", card.card_index);
+        // Canonicalize the symlink into the real /sys/devices/.../usbX/... path.
+        let Ok(usb_dev_dir) = fs::canonicalize(&sys_device) else {
+            continue; // onboard cards have no USB device dir → stays None.
+        };
+        let vid = hex4_from_sysfs(&usb_dev_dir.join("idVendor"));
+        let pid = hex4_from_sysfs(&usb_dev_dir.join("idProduct"));
+        if let (Some(vid), Some(pid)) = (vid, pid) {
+            let serial = fs::read_to_string(usb_dev_dir.join("serial"))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            card.usb = Some(UsbIdentity { vid, pid, serial });
+            // The USB PARENT (the hub-port path) is what hidraw/tty nodes compare
+            // against — the card's own device dir is one level deeper than the
+            // shared parent the PTT line also hangs off.
+            card.usb_parent = usb_dev_dir
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned());
+        }
+    }
+
+    // 4. /dev/hidraw* nodes + CM108 classification, with USB parent.
+    let mut hidraws: Vec<HidrawNode> = Vec::new();
+    if let Ok(entries) = fs::read_dir("/sys/class/hidraw") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned(); // e.g. "hidraw3"
+            let dev_path = format!("/dev/{name}");
+            // /sys/class/hidraw/hidrawN/device → the HID interface; canonicalize to
+            // find the owning USB device + its parent + its vid/pid.
+            let hid_device = entry.path().join("device");
+            let (usb_parent, is_cm108) = match fs::canonicalize(&hid_device) {
+                Ok(hid_dev_dir) => {
+                    // Walk up to the USB device dir that carries idVendor/idProduct.
+                    let usb_dev_dir = nearest_usb_device_dir(&hid_dev_dir);
+                    let parent = usb_dev_dir
+                        .as_ref()
+                        .and_then(|d| d.parent())
+                        .map(|p| p.to_string_lossy().into_owned());
+                    let cm108 = usb_dev_dir
+                        .as_ref()
+                        .map(|d| {
+                            let vid = hex4_from_sysfs(&d.join("idVendor"));
+                            let pid = hex4_from_sysfs(&d.join("idProduct"));
+                            is_cm108_usb(vid.as_deref(), pid.as_deref())
+                        })
+                        .unwrap_or(false);
+                    (parent, cm108)
+                }
+                Err(_) => (None, false),
+            };
+            hidraws.push(HidrawNode {
+                path: dev_path,
+                usb_parent,
+                is_cm108,
+            });
+        }
+    }
+
+    // 5. /dev/ttyUSB* + /dev/ttyACM* serial nodes with their USB parent.
+    let mut ttys: Vec<TtyNode> = Vec::new();
+    if let Ok(entries) = fs::read_dir("/sys/class/tty") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !(name.starts_with("ttyUSB") || name.starts_with("ttyACM")) {
+                continue;
+            }
+            let dev_path = format!("/dev/{name}");
+            let tty_device = entry.path().join("device");
+            let usb_parent = match fs::canonicalize(&tty_device) {
+                Ok(tty_dev_dir) => nearest_usb_device_dir(&tty_dev_dir)
+                    .as_ref()
+                    .and_then(|d| d.parent())
+                    .map(|p| p.to_string_lossy().into_owned()),
+                Err(_) => None,
+            };
+            ttys.push(TtyNode {
+                path: dev_path,
+                usb_parent,
+            });
+        }
+    }
+
+    SysSnapshot {
+        cards,
+        hidraws,
+        ttys,
+    }
+}
+
+/// IMPURE helper: walk a canonicalized sysfs path UP until a directory that holds
+/// both `idVendor` and `idProduct` (a USB *device* node, not an interface node).
+/// Returns that directory, or `None` if none is found before the filesystem root.
+/// Kept thin (just `.parent()` + existence checks); the CM108/vid-pid decision it
+/// feeds is the pure [`is_cm108_usb`].
+#[allow(dead_code)]
+fn nearest_usb_device_dir(start: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut cur = Some(start.to_path_buf());
+    while let Some(dir) = cur {
+        if dir.join("idVendor").exists() && dir.join("idProduct").exists() {
+            return Some(dir);
+        }
+        cur = dir.parent().map(|p| p.to_path_buf());
+    }
+    None
+}
+
+/// IMPURE helper: read a sysfs `idVendor`/`idProduct` file and return the
+/// lower-cased 4-hex token (no `0x`), or `None` if the file is absent/unreadable
+/// or does not parse as 4-hex. The 4-hex normalization itself is the pure
+/// [`normalize_hex4`].
+#[allow(dead_code)]
+fn hex4_from_sysfs(path: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| normalize_hex4(s.trim()))
+}
+
+// ============================================================================
+// Pure parse helpers — fixture-tested; the impure reader delegates every parse.
+// ============================================================================
+
+/// Parse `/proc/asound/cards` text into `(card_index, card_id, card_longname)`
+/// triples. Pure.
+///
+/// The file's stanza shape (two lines per card):
+/// ```text
+///  0 [vc4hdmi        ]: vc4-hdmi - vc4-hdmi
+///                       vc4-hdmi
+///  1 [Device         ]: USB-Audio - C-Media USB Audio Device
+///                       C-Media USB Audio Device at usb-...
+/// ```
+/// The first line carries `<index> [<id>]: <driver> - <longname>`; the longname
+/// after ` - ` is the human label. The continuation line is ignored.
+fn parse_proc_asound_cards(text: &str) -> Vec<(u32, String, String)> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        // A card header line starts (after leading spaces) with the index digits,
+        // then ` [id  ]: driver - longname`. Continuation lines have no `[`.
+        let Some(lb) = line.find('[') else {
+            continue;
+        };
+        let Some(rb) = line.find(']') else {
+            continue;
+        };
+        if rb < lb {
+            continue;
+        }
+        let index_part = line[..lb].trim();
+        let Ok(card_index) = index_part.parse::<u32>() else {
+            continue; // not a header line (continuation / blank)
+        };
+        let card_id = line[lb + 1..rb].trim().to_string();
+        // After "]:" comes "<driver> - <longname>". Take the part after the first
+        // " - "; fall back to the whole remainder if there is no " - ".
+        let after = match line[rb + 1..].split_once(':') {
+            Some((_, rest)) => rest,
+            None => &line[rb + 1..],
+        };
+        let card_name = match after.split_once(" - ") {
+            Some((_, longname)) => longname.trim().to_string(),
+            None => after.trim().to_string(),
+        };
+        out.push((card_index, card_id, card_name));
+    }
+    out
+}
+
+/// Extract the `card<N>` index a `/dev/snd/by-id` symlink TARGET points at. Pure.
+///
+/// Targets look like `../controlC1`, `../pcmC1D0c`, `../pcmC1D0p`. The card index
+/// is the run of digits immediately after the `C` in `controlC<N>` / `pcmC<N>D…`.
+/// Returns `None` for a target that matches no known node shape.
+fn card_index_from_symlink_target(target: &str) -> Option<u32> {
+    // Take the basename (last path component) to avoid matching digits in the
+    // `../` prefix or any directory names.
+    let base = target.rsplit('/').next().unwrap_or(target);
+    let rest = if let Some(r) = base.strip_prefix("controlC") {
+        r
+    } else if let Some(r) = base.strip_prefix("pcmC") {
+        r
+    } else {
+        return None;
+    };
+    // Leading digits are the card index (pcmC1D0c → "1D0c" → 1).
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse::<u32>().ok()
+}
+
+/// Normalize a sysfs vid/pid token to a lower-cased bare 4-hex string. Pure.
+/// Accepts an optional `0x` prefix and any case; rejects anything that is not
+/// exactly four hex digits once normalized.
+fn normalize_hex4(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    let s = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+    if s.len() == 4 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(s.to_ascii_lowercase())
+    } else {
+        None
+    }
+}
+
+/// Decide whether a USB vid/pid pair is a CM108-family HID PTT keyer. Pure.
+///
+/// The C-Media CM108/CM119/CM119A family (VID `0x0d8c`) is the canonical
+/// hamlib/Dire Wolf `PTT CM108` GPIO keyer used by the DRA-100 and many DIY
+/// interfaces. A `None` vid (unreadable sysfs) is NOT a CM108 (conservative: an
+/// unknown HID is not offered as a PTT line).
+fn is_cm108_usb(vid: Option<&str>, _pid: Option<&str>) -> bool {
+    // C-Media VID. The whole 0d8c family exposes the CM108-style HID GPIO line
+    // Dire Wolf keys via `PTT CM108`; we do not narrow by PID because the family
+    // spans several PIDs and Dire Wolf's own CM108 support is VID-family-wide.
+    matches!(vid, Some("0d8c"))
 }
 
 // ============================================================================
@@ -462,19 +776,13 @@ mod tests {
 
         // Arrangement 1: DigiRig=card1, DRA-100=card2.
         let snap1 = SysSnapshot {
-            cards: vec![
-                digirig_card(1, parent_a),
-                dra100_card(2, parent_b),
-            ],
+            cards: vec![digirig_card(1, parent_a), dra100_card(2, parent_b)],
             ..Default::default()
         };
         // Arrangement 2: the SAME two physical cards, indices swapped, and even
         // listed in the other order — id resolution must be invariant to both.
         let snap2 = SysSnapshot {
-            cards: vec![
-                dra100_card(1, parent_b),
-                digirig_card(2, parent_a),
-            ],
+            cards: vec![dra100_card(1, parent_b), digirig_card(2, parent_a)],
             ..Default::default()
         };
 
@@ -492,10 +800,8 @@ mod tests {
         assert_ne!(ids1[0], ids1[1]);
 
         // The SET of resolved ids is identical across the index swap.
-        let set1: std::collections::HashSet<&str> =
-            ids1.iter().map(|i| i.value.as_str()).collect();
-        let set2: std::collections::HashSet<&str> =
-            ids2.iter().map(|i| i.value.as_str()).collect();
+        let set1: std::collections::HashSet<&str> = ids1.iter().map(|i| i.value.as_str()).collect();
+        let set2: std::collections::HashSet<&str> = ids2.iter().map(|i| i.value.as_str()).collect();
         assert_eq!(set1, set2);
         assert!(set1.contains("usb-C-Media_DigiRig_Audio-00"));
         assert!(set1.contains("usb-C-Media_DRA-100_CM119A-01"));
@@ -528,19 +834,14 @@ mod tests {
     #[test]
     fn onboard_hdmi_excluded_usb_card_kept() {
         let snap = SysSnapshot {
-            cards: vec![
-                onboard_hdmi_card(0),
-                digirig_card(1, "/sys/.../usb1/1-1.1"),
-            ],
+            cards: vec![onboard_hdmi_card(0), digirig_card(1, "/sys/.../usb1/1-1.1")],
             ..Default::default()
         };
         let devices = enumerate_audio_devices(&snap);
         // Onboard excluded — only the USB card remains.
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].alsa_plughw, "plughw:CARD=Device,DEV=0");
-        assert!(!devices
-            .iter()
-            .any(|d| d.alsa_plughw.contains("vc4hdmi")));
+        assert!(!devices.iter().any(|d| d.alsa_plughw.contains("vc4hdmi")));
     }
 
     // ---- Task 1.2: PTT discovery --------------------------------------------
@@ -630,7 +931,6 @@ mod tests {
                 path: "/dev/ttyUSB2".into(),
                 usb_parent: Some(parent.into()),
             }],
-            ..Default::default()
         };
         let card = enumerate_audio_devices(&snap).remove(0);
         let ptt = discover_ptt(&card, &snap);
@@ -666,6 +966,100 @@ mod tests {
         let card = enumerate_audio_devices(&snap).remove(0);
         let ptt = discover_ptt(&card, &snap);
         assert!(ptt.is_empty());
+    }
+
+    // ---- P6.A: resolve_managed_device (pure) --------------------------------
+
+    /// A persisted stable id that IS present in the live snapshot resolves to the
+    /// right plughw + the LIVE card index — even when the live index differs from
+    /// whatever it was when first persisted (re-plug swapped the boot order).
+    #[test]
+    fn resolve_managed_device_present_resolves_plughw_and_live_index() {
+        // DigiRig persisted when it was card 1; now it enumerates as card 2.
+        let persisted = derive_stable_id(&digirig_card(1, "/sys/p/a"));
+        let snap = SysSnapshot {
+            cards: vec![dra100_card(1, "/sys/p/b"), digirig_card(2, "/sys/p/a")],
+            ..Default::default()
+        };
+        let resolved = resolve_managed_device(&persisted, &snap)
+            .expect("persisted DigiRig id must resolve against the live snapshot");
+        assert_eq!(resolved.alsa_plughw, "plughw:CARD=Device,DEV=0");
+        // The LIVE index (2), not the persist-time index (1).
+        assert_eq!(resolved.card_index, 2);
+    }
+
+    /// A persisted stable id that is NOT present (device unplugged) resolves to
+    /// `None` — the caller surfaces "configured sound card not found", never
+    /// spawns Dire Wolf against the wrong card.
+    #[test]
+    fn resolve_managed_device_absent_is_none() {
+        let persisted = derive_stable_id(&digirig_card(1, "/sys/p/a"));
+        // Snapshot has only the DRA-100 — the DigiRig is unplugged.
+        let snap = SysSnapshot {
+            cards: vec![dra100_card(1, "/sys/p/b")],
+            ..Default::default()
+        };
+        assert!(resolve_managed_device(&persisted, &snap).is_none());
+    }
+
+    // ---- P6.A: pure parse helpers (fixtures) --------------------------------
+
+    /// `/proc/asound/cards` text parses to (index, id, longname) triples; the
+    /// onboard + a USB card are both recognized, continuation lines ignored.
+    #[test]
+    fn parse_proc_asound_cards_extracts_index_id_longname() {
+        let text = "\
+ 0 [vc4hdmi        ]: vc4-hdmi - vc4-hdmi
+                      vc4-hdmi
+ 1 [Device         ]: USB-Audio - C-Media USB Audio Device
+                      C-Media USB Audio Device at usb-0000:01:00.0-1.2
+";
+        let cards = parse_proc_asound_cards(text);
+        assert_eq!(cards.len(), 2);
+        assert_eq!(cards[0], (0, "vc4hdmi".to_string(), "vc4-hdmi".to_string()));
+        assert_eq!(
+            cards[1],
+            (
+                1,
+                "Device".to_string(),
+                "C-Media USB Audio Device".to_string()
+            )
+        );
+    }
+
+    /// A by-id symlink TARGET (control or pcm node) yields the card index after
+    /// the `C`; an unknown shape yields `None`.
+    #[test]
+    fn card_index_from_symlink_target_handles_control_and_pcm() {
+        assert_eq!(card_index_from_symlink_target("../controlC1"), Some(1));
+        assert_eq!(card_index_from_symlink_target("../pcmC2D0c"), Some(2));
+        assert_eq!(card_index_from_symlink_target("../pcmC10D0p"), Some(10));
+        // Bare basename (no ../) still works.
+        assert_eq!(card_index_from_symlink_target("controlC3"), Some(3));
+        // Unknown node shape → None.
+        assert_eq!(card_index_from_symlink_target("../timer"), None);
+        assert_eq!(card_index_from_symlink_target("../seq"), None);
+    }
+
+    /// vid/pid normalization: strips `0x`, lower-cases, rejects non-4-hex.
+    #[test]
+    fn normalize_hex4_strips_prefix_and_validates() {
+        assert_eq!(normalize_hex4("0x0D8C"), Some("0d8c".to_string()));
+        assert_eq!(normalize_hex4("0d8c"), Some("0d8c".to_string()));
+        assert_eq!(normalize_hex4("  0D8C\n"), Some("0d8c".to_string()));
+        assert_eq!(normalize_hex4("0d8"), None); // too short
+        assert_eq!(normalize_hex4("0d8cc"), None); // too long
+        assert_eq!(normalize_hex4("zzzz"), None); // not hex
+    }
+
+    /// CM108 classification keys off the C-Media VID family; other vids and an
+    /// unreadable (None) vid are not CM108.
+    #[test]
+    fn is_cm108_usb_matches_cmedia_family() {
+        assert!(is_cm108_usb(Some("0d8c"), Some("0012")));
+        assert!(is_cm108_usb(Some("0d8c"), None));
+        assert!(!is_cm108_usb(Some("10c4"), Some("ea60"))); // CP2102 (DigiRig serial), not a HID PTT
+        assert!(!is_cm108_usb(None, None)); // unreadable → conservative not-a-PTT
     }
 
     /// The stable-id hash fallback is deterministic and content-derived (guards

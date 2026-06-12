@@ -25,7 +25,8 @@ pub use link::connect_link_with_abort;
 // Managed-Dire-Wolf device discovery (Slice B, Phase 1): stable audio-device
 // identity + same-USB-parent PTT resolution.
 pub use devices::{
-    discover_ptt, enumerate_audio_devices, AudioDevice, PttChoice, StableAudioId, SysSnapshot,
+    discover_ptt, enumerate_audio_devices, read_sys_snapshot, resolve_managed_device, AudioDevice,
+    PttChoice, ResolvedManagedDevice, StableAudioId, SysSnapshot,
 };
 
 // Managed-Dire-Wolf config generation (Slice B, Phase 2): pure direwolf.conf
@@ -43,7 +44,8 @@ pub use direwolf_probe::{
 // clean-shutdown a Dire Wolf KISS soundmodem (wrapping `ManagedModem`), plus the
 // pure sound-card arbitration decision.
 pub use managed_direwolf::{
-    arbitrate, Arbitration, CardId, DwLifecycleError, ManagedDireWolf, ManagedDireWolfCfg,
+    arbitrate, pick_free_kiss_port, Arbitration, CardId, DwLifecycleError, ManagedDireWolf,
+    ManagedDireWolfCfg, ManagedDireWolfGuard,
 };
 
 #[cfg(test)]
