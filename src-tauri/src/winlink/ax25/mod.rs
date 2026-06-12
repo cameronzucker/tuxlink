@@ -5,6 +5,7 @@
 
 pub mod datalink;
 pub mod devices;
+pub mod direwolf_conf;
 pub mod frame;
 pub mod kiss;
 pub mod link;
@@ -24,6 +25,10 @@ pub use link::connect_link_with_abort;
 pub use devices::{
     discover_ptt, enumerate_audio_devices, AudioDevice, PttChoice, StableAudioId, SysSnapshot,
 };
+
+// Managed-Dire-Wolf config generation (Slice B, Phase 2): pure direwolf.conf
+// string generation from a resolved audio device + PTT choice + KISS port.
+pub use direwolf_conf::{generate_direwolf_conf, DwParams};
 
 #[cfg(test)]
 mod module_smoke {
