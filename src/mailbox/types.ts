@@ -33,6 +33,14 @@ export interface MessageMeta {
   /// Optional folder badge for cross-folder search rendering (spec §7.2).
   /// Absent → no badge.
   folder?: MailboxFolder;
+  /// Owning identity (FULL callsign or tactical label) for the mailbox identity
+  /// filter (Task 11, tuxlink-noa0). OPTIONAL: Phase 4 (PR #627) namespaces
+  /// stored mail by the active FULL at the filesystem layer but does NOT yet
+  /// emit an identity field on the list-row wire DTO (`MessageMetaDto` in
+  /// `ui_commands.rs` lacks it). This is a TS-only display field today; the
+  /// matching Rust wire tag is a follow-up. Absent → the row matches only the
+  /// "All identities" filter selection (see `messageMatchesIdentity`).
+  identity?: string;
 }
 
 /// Reading-pane parsed view (Task 13 produces this from raw RFC5322 at the

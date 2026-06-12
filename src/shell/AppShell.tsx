@@ -22,6 +22,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
 import type { HighlightRange } from '../mailbox/MessageList';
+import { deriveIdentityFilterOptions } from '../mailbox/identityFilter';
 import { selectionToFolderItems, dropId, dropIds } from '../mailbox/bulkSelection';
 import { type SortState, loadSortState, saveSortState } from '../mailbox/messageSort';
 import { useMailbox, useMailboxChangeEvents } from '../mailbox/useMailbox';
@@ -325,6 +326,10 @@ export function AppShell() {
     saveSortState(next);
   }, []);
 
+  // Mailbox identity filter (Task 11, tuxlink-noa0). `null` = "All identities".
+  // Options derived from the identity list (declared below as `identityList`).
+  const [identityFilter, setIdentityFilter] = useState<string | null>(null);
+
   // tuxlink-etxt Task 11: multi-row selection state. Cleared whenever the
   // active folder changes so stale ids from a previous folder can't bleed
   // through to a bulk command against a different folder's messages.
@@ -510,6 +515,13 @@ export function AppShell() {
   const identityList = useIdentityList();
   const activeIdentity = useActiveIdentity();
   const identitySwitch = useIdentitySwitch();
+  // Task 11 (tuxlink-noa0): toolbar identity-filter options derived from the
+  // same identity list (no second backend call). "All identities" + one entry
+  // per FULL callsign + one per tactical label.
+  const identityFilterOptions = useMemo(
+    () => deriveIdentityFilterOptions(identityList.data ?? null),
+    [identityList.data],
+  );
 
   // tuxlink-bsiy: inbound pending-message selection ("Review Pending Messages").
   // Subscribes to the b2f-event channel for `inbound_proposals_offered`; when a
@@ -1138,6 +1150,9 @@ export function AppShell() {
           onBulkMove={bulkMoveToFolder}
           onBulkArchive={bulkArchive}
           onSetReadState={setMessageReadState}
+          identityFilter={identityFilter}
+          onIdentityFilterChange={setIdentityFilter}
+          identityFilterOptions={identityFilterOptions}
         />
         {(() => {
           // tuxlink-djnl: shared render fragment for the reading pane. When

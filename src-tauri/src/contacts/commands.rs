@@ -294,6 +294,7 @@ mod tests {
             unread: false,
             body_size: 0,
             has_attachments: false,
+            identity: None,
         }
     }
 

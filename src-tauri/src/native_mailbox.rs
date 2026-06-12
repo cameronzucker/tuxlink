@@ -211,6 +211,7 @@ impl Mailbox {
                 meta.unread =
                     matches!(folder, MailboxFolder::Inbox | MailboxFolder::Archive)
                         && !path.with_extension("read").exists();
+                meta.identity = read_identity_sidecar(&path);
                 metas.push(meta);
             }
         }
@@ -1011,6 +1012,7 @@ impl Mailbox {
             if let Ok(msg) = Message::from_bytes(&raw) {
                 let mut meta = meta_from_message(&msg);
                 meta.unread = surface_unread && !path.with_extension("read").exists();
+                meta.identity = read_identity_sidecar(&path);
                 metas.push(meta);
             }
         }
@@ -1201,7 +1203,22 @@ fn meta_from_message(msg: &Message) -> MessageMeta {
         unread: false,
         body_size,
         has_attachments: false, // attachment parsing is a later step
+        // Placeholder; populated in the listing loops from the `<mid>.identity`
+        // sidecar, which they can resolve from the `.b2f` path (Phase 7).
+        identity: None,
     }
+}
+
+/// Read a message's Phase-4 `<mid>.identity` sidecar given its `.b2f` path.
+/// Returns the trimmed tag, or `None` when absent/empty (untagged → the
+/// mailbox identity filter treats it as "All identities" only). Used by the
+/// listing loops (Phase 7, tuxlink-noa0) to surface the identity onto the
+/// list-row DTO without a per-message folder/namespace lookup.
+fn read_identity_sidecar(b2f_path: &Path) -> Option<String> {
+    fs::read_to_string(b2f_path.with_extension("identity"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Parse an RFC 3339 timestamp into seconds since the epoch, for use as a
@@ -1314,6 +1331,33 @@ mod tests {
             Some("W1ABC"),
             "the identity tag travels with the message into Sent"
         );
+    }
+
+    // Phase 7 (tuxlink-noa0): the stored `<mid>.identity` sidecar must surface
+    // onto the list-row MessageMeta so the mailbox identity filter has data to
+    // act on. Untagged messages list with `identity == None` (match "All" only).
+    #[test]
+    fn list_surfaces_the_identity_tag_onto_meta() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let tagged = mbox
+            .for_identity("W1ABC")
+            .store(MailboxFolder::Outbox, &raw("Tagged", "x"))
+            .unwrap();
+        // A bare store (no identity) leaves the Outbox message untagged.
+        let untagged = mbox.store(MailboxFolder::Outbox, &raw("Untagged", "y")).unwrap();
+
+        let metas = mbox.list(MailboxFolder::Outbox).unwrap();
+        let tag_of = |id: &MessageId| {
+            metas
+                .iter()
+                .find(|m| &m.id == id)
+                .unwrap()
+                .identity
+                .clone()
+        };
+        assert_eq!(tag_of(&tagged).as_deref(), Some("W1ABC"));
+        assert_eq!(tag_of(&untagged), None);
     }
 
     #[test]
