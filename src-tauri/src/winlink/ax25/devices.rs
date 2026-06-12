@@ -32,16 +32,25 @@
 //!    string + serial — the most specific and most stable handle.
 //! 2. `vid:pid:serial` when a serial is present (distinguishes two same-VID:PID
 //!    cards that report distinct serials).
-//! 3. A stable hash of the ALSA card `id` string — last resort when neither a
-//!    by-id symlink nor a USB serial is available.
+//! 3. A stable hash of the ALSA card `id` string **plus the USB device-node
+//!    path** — last resort when neither a by-id symlink nor a USB serial is
+//!    available. The card-id alone collides two same-`card_id` C-Media cards
+//!    (both `"Device"`); folding in the device-node path (`.../2-1` vs
+//!    `.../2-2`) keeps them distinct. This key is PORT-stable (survives reboots
+//!    for a fixed physical port), not identity-stable (re-plugging into a
+//!    different port changes it) — acceptable as the last resort.
 //!
 //! ## PTT discovery
 //!
 //! [`discover_ptt`] returns ranked [`PttChoice`] candidates for a chosen card.
-//! A CM108 HID line on the **same USB parent** as the card sorts first (the
+//! A CM108 HID line on the **same USB device node** as the card sorts first (the
 //! DRA-100 keys via a CM108 HID GPIO line); a serial RTS line (the DigiRig
-//! CP2102 `/dev/ttyUSB*`) is the alternative. "Same USB parent" is decided
-//! purely by comparing the `usb_parent` sysfs path each node records.
+//! CP2102 `/dev/ttyUSB*`) is the alternative. "Same device node" is decided
+//! purely by comparing the `usb_parent` sysfs path each node records — which is
+//! the USB *device* node (e.g. `.../2-1`), NOT its parent hub. The DigiRig and
+//! DRA-100 are composite USB devices whose audio and PTT functions are sibling
+//! *interfaces* of one device node, so the device node is the correct join key:
+//! the two interfaces share it, while two distinct dongles on one hub do not.
 //!
 //! This module only **resolves** the hidraw path / tty to hand to Dire Wolf's
 //! `PTT CM108 <hidraw>` / `PTT /dev/ttyUSBx RTS` directives; it does not key the
@@ -120,9 +129,14 @@ pub struct SnapshotCard {
     pub by_id_basename: Option<String>,
     /// The card's USB identity, or `None` for a non-USB (onboard) card.
     pub usb: Option<UsbIdentity>,
-    /// The sysfs USB **parent** path this card hangs off, e.g.
-    /// `"/sys/devices/platform/...-1.2"`. `None` for onboard cards. PTT
-    /// discovery matches hidraw/tty nodes to a card by comparing this string.
+    /// The sysfs USB **device-node** path this card resolves to, e.g.
+    /// `"/sys/devices/platform/.../usb2/2-1"` — the device node, NOT its parent
+    /// hub. `None` for onboard cards. PTT discovery matches hidraw/tty nodes to a
+    /// card by string-equality on this path: a composite dongle's audio + PTT
+    /// functions are sibling INTERFACES of one device node, so both sides share
+    /// the identical device-node string; two distinct dongles (even on one hub)
+    /// keep distinct device-node strings and never cross-match. (The field name
+    /// is historical; the value is the device node, not a hub-parent.)
     pub usb_parent: Option<String>,
 }
 
@@ -132,8 +146,10 @@ pub struct SnapshotCard {
 pub struct HidrawNode {
     /// The device path, e.g. `"/dev/hidraw3"`.
     pub path: String,
-    /// The sysfs USB parent this hidraw hangs off; compared against
-    /// [`SnapshotCard::usb_parent`].
+    /// The sysfs USB **device-node** path this hidraw resolves to (the device
+    /// node, NOT its parent hub); compared by string-equality against
+    /// [`SnapshotCard::usb_parent`]. Equal to the card's value when the HID is a
+    /// sibling interface of the same composite dongle.
     pub usb_parent: Option<String>,
     /// True when this hidraw belongs to a CM108-family interface (a candidate
     /// PTT keyer). A non-CM108 HID on the same parent is not a PTT candidate.
@@ -146,8 +162,10 @@ pub struct HidrawNode {
 pub struct TtyNode {
     /// The device path, e.g. `"/dev/ttyUSB0"`.
     pub path: String,
-    /// The sysfs USB parent this tty hangs off; compared against
-    /// [`SnapshotCard::usb_parent`].
+    /// The sysfs USB **device-node** path this tty resolves to (the device node,
+    /// NOT its parent hub); compared by string-equality against
+    /// [`SnapshotCard::usb_parent`]. Equal to the card's value when the serial
+    /// line is a sibling interface of the same composite dongle.
     pub usb_parent: Option<String>,
 }
 
@@ -180,9 +198,10 @@ pub struct AudioDevice {
     pub alsa_plughw: String,
     /// The boot-order-independent identity persisted in config.
     pub stable_id: StableAudioId,
-    /// The sysfs USB parent (carried so [`discover_ptt`] can match PTT nodes
-    /// without re-reading the snapshot). `None` for onboard cards (which
-    /// `enumerate_audio_devices` excludes anyway).
+    /// The sysfs USB device-node path (carried so [`discover_ptt`] can match PTT
+    /// nodes without re-reading the snapshot). This is the USB *device* node, not
+    /// its parent hub. `None` for onboard cards (which `enumerate_audio_devices`
+    /// excludes anyway).
     pub usb_parent: Option<String>,
     /// The LIVE boot-order `card<N>` index backing this device. Carried so
     /// [`resolve_managed_device`] can hand the live index to the lifecycle layer
@@ -248,13 +267,29 @@ fn derive_stable_id(card: &SnapshotCard) -> StableAudioId {
             }
         }
     }
-    // 3. Stable hash of the card id string — last resort. Uses a fixed FNV-1a
-    //    so the value is deterministic across runs and machines (the default
-    //    `DefaultHasher` is NOT guaranteed stable across Rust versions, which
-    //    would silently churn a persisted id).
+    // 3. Stable hash of the card id string PLUS the USB device-node path — last
+    //    resort. Hashing `card_id` ALONE collides two same-`card_id` cards (two
+    //    C-Media cards both report `card_id="Device"`), so the resolver's
+    //    `.find()` would pick whichever enumerated first → operator asks for the
+    //    DRA-100, gets the DigiRig. Folding in the USB device-node path
+    //    (`.../2-1` vs `.../2-2`) discriminates two physically-distinct cards
+    //    that share a `card_id`. The device-node path is PORT-stable (stable
+    //    across reboots for a given physical port) — NOT identity-stable:
+    //    re-plugging the same card into a DIFFERENT port changes it. That is an
+    //    acceptable last resort, reached only when neither a by-id symlink nor a
+    //    USB serial is available. The boot-order `card_index` is deliberately NOT
+    //    used — it is exactly the unstable handle the stable id exists to avoid.
+    //    Uses a fixed FNV-1a so the value is deterministic across runs and
+    //    machines (the default `DefaultHasher` is NOT guaranteed stable across
+    //    Rust versions, which would silently churn a persisted id).
+    let mut hasher_input = card.card_id.clone();
+    if let Some(parent) = &card.usb_parent {
+        hasher_input.push('\0');
+        hasher_input.push_str(parent);
+    }
     StableAudioId {
         kind: StableIdKind::CardIdHash,
-        value: format!("cardid:{:016x}", fnv1a_64(card.card_id.as_bytes())),
+        value: format!("cardid:{:016x}", fnv1a_64(hasher_input.as_bytes())),
     }
 }
 
@@ -301,13 +336,16 @@ pub fn enumerate_audio_devices(snapshot: &SysSnapshot) -> Vec<AudioDevice> {
 }
 
 /// Discover ranked PTT candidates for a chosen `card`. A [`PttChoice::Cm108Hid`]
-/// on the SAME USB parent as the card sorts first (the DRA-100 case); a
-/// [`PttChoice::SerialRts`] on the same parent (the DigiRig CP2102 case) follows.
-/// When an adapter exposes both on one parent, the HID wins the top slot.
+/// on the SAME USB device node as the card sorts first (the DRA-100 case); a
+/// [`PttChoice::SerialRts`] on the same device node (the DigiRig CP2102 case)
+/// follows. When an adapter exposes both on one device node, the HID wins the
+/// top slot.
 ///
-/// "Same USB parent" requires the card to have a known `usb_parent` and the
-/// node to record the identical path; nodes with no parent, or a different
-/// parent, are not candidates. Pure over `snapshot`.
+/// "Same USB device node" requires the card to have a known `usb_parent` (its
+/// device-node path) and the node to record the identical path; nodes with no
+/// device node, or a different one, are not candidates. Because the join key is
+/// the device node and not the parent hub, two distinct dongles on one hub never
+/// cross-match. Pure over `snapshot`.
 pub fn discover_ptt(card: &AudioDevice, snapshot: &SysSnapshot) -> Vec<PttChoice> {
     let Some(card_parent) = card.usb_parent.as_deref() else {
         // A card with no known USB parent (e.g. an onboard card that somehow
@@ -448,15 +486,27 @@ pub fn read_sys_snapshot() -> SysSnapshot {
         }
     }
 
-    // 3. sysfs USB topology per card: idVendor/idProduct/serial + USB parent.
-    //    /sys/class/sound/card<N>/device is the symlink into the USB tree; the
-    //    USB device dir holds idVendor/idProduct/serial, and its PARENT dir is
-    //    the hub-port the card hangs off (what PTT discovery matches on).
+    // 3. sysfs USB topology per card: idVendor/idProduct/serial + USB device node.
+    //    /sys/class/sound/card<N>/device is the symlink into the USB tree, but for
+    //    a USB sound card `snd-usb-audio` binds at the USB *interface*, so the
+    //    symlink canonicalizes to the INTERFACE node (e.g. `.../2-1/2-1:1.0`),
+    //    which has NO idVendor/idProduct/serial — those live on the USB *device*
+    //    node one level up (`.../2-1`). Climb to the device node via
+    //    `nearest_usb_device_dir` (the same helper the hidraw/tty walks use) BEFORE
+    //    reading vid/pid/serial, and use that device-node path as the PTT join key:
+    //    a composite dongle's audio and PTT functions are sibling interfaces of the
+    //    SAME device node, so the device node is the string both sides must share.
     for card in cards.iter_mut() {
         let sys_device = format!("/sys/class/sound/card{}/device", card.card_index);
-        // Canonicalize the symlink into the real /sys/devices/.../usbX/... path.
-        let Ok(usb_dev_dir) = fs::canonicalize(&sys_device) else {
+        // Canonicalize the symlink into the real /sys/devices/.../usbX/... path
+        // (the interface node for a USB sound card).
+        let Ok(iface_dir) = fs::canonicalize(&sys_device) else {
             continue; // onboard cards have no USB device dir → stays None.
+        };
+        // Climb from the interface node to the owning USB device node, which is
+        // where idVendor/idProduct/serial actually live.
+        let Some(usb_dev_dir) = nearest_usb_device_dir(&iface_dir) else {
+            continue; // not under a USB device node → not a USB card → stays None.
         };
         let vid = hex4_from_sysfs(&usb_dev_dir.join("idVendor"));
         let pid = hex4_from_sysfs(&usb_dev_dir.join("idProduct"));
@@ -466,12 +516,13 @@ pub fn read_sys_snapshot() -> SysSnapshot {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
             card.usb = Some(UsbIdentity { vid, pid, serial });
-            // The USB PARENT (the hub-port path) is what hidraw/tty nodes compare
-            // against — the card's own device dir is one level deeper than the
-            // shared parent the PTT line also hangs off.
-            card.usb_parent = usb_dev_dir
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned());
+            // The USB DEVICE NODE itself is the PTT join key — NOT its `.parent()`
+            // (which is the shared hub, and would cross-match any card to any PTT
+            // line on that hub). A composite dongle's audio + PTT interfaces are
+            // siblings of this one device node, so card-side and PTT-side land on
+            // the identical string; two distinct dongles (even on one hub) keep
+            // distinct device-node strings and never cross-match.
+            card.usb_parent = Some(usb_dev_dir.to_string_lossy().into_owned());
         }
     }
 
@@ -488,10 +539,13 @@ pub fn read_sys_snapshot() -> SysSnapshot {
                 Ok(hid_dev_dir) => {
                     // Walk up to the USB device dir that carries idVendor/idProduct.
                     let usb_dev_dir = nearest_usb_device_dir(&hid_dev_dir);
+                    // The join key is the USB DEVICE NODE itself (NOT its parent
+                    // hub): a composite dongle's PTT HID is a sibling interface of
+                    // the SAME device node the audio card resolved to, so this
+                    // string equals the card's `usb_parent` for one physical dongle.
                     let parent = usb_dev_dir
                         .as_ref()
-                        .and_then(|d| d.parent())
-                        .map(|p| p.to_string_lossy().into_owned());
+                        .map(|d| d.to_string_lossy().into_owned());
                     let cm108 = usb_dev_dir
                         .as_ref()
                         .map(|d| {
@@ -523,10 +577,13 @@ pub fn read_sys_snapshot() -> SysSnapshot {
             let dev_path = format!("/dev/{name}");
             let tty_device = entry.path().join("device");
             let usb_parent = match fs::canonicalize(&tty_device) {
+                // The join key is the USB DEVICE NODE itself (NOT its parent hub):
+                // the DigiRig's CP2102 serial PTT is a sibling interface of the same
+                // device node its audio card resolved to, so this string equals the
+                // card's `usb_parent` for that one dongle.
                 Ok(tty_dev_dir) => nearest_usb_device_dir(&tty_dev_dir)
                     .as_ref()
-                    .and_then(|d| d.parent())
-                    .map(|p| p.to_string_lossy().into_owned()),
+                    .map(|d| d.to_string_lossy().into_owned()),
                 Err(_) => None,
             };
             ttys.push(TtyNode {
@@ -679,6 +736,29 @@ mod tests {
     /// C-Media VID shared by both DigiRig and the DRA-100's CM119A — so the
     /// fixtures actually exercise disambiguation that VID alone cannot do.
     const CMEDIA_VID: &str = "0d8c";
+
+    // ---- realistic sysfs topology constants ---------------------------------
+    //
+    // These model the REAL depth structure confirmed against this Pi's `/sys`:
+    // a USB sound card's `/sys/class/sound/cardN/device` canonicalizes to the
+    // INTERFACE node (`.../2-1/2-1:1.0`), one level deeper than the USB DEVICE
+    // node (`.../2-1`) that carries idVendor/idProduct and is the PTT join key.
+    // A composite dongle (DigiRig: CM108 audio + CP2102 serial; DRA-100: CM119A
+    // audio + CM108 HID) is ONE device node with multiple sibling interfaces, so
+    // card-side and PTT-side resolve to the SAME device-node string. Two dongles
+    // on ONE hub (`usb2`) get DISTINCT device nodes (`2-1` vs `2-2`) but share
+    // the hub — so a `.parent()`-to-hub join key (the OLD bug) would cross-match
+    // them, while the device-node key keeps them distinct.
+
+    /// The shared hub both dongles hang off in the two-dongles-on-one-hub case.
+    const HUB: &str = "/sys/devices/platform/.../xhci-hcd.0/usb2";
+
+    /// One composite dongle's USB **device node** under `HUB` at the given port
+    /// suffix (e.g. `"2-1"`). This is the PTT join key both the audio card and
+    /// its PTT line resolve to.
+    fn device_node(port: &str) -> String {
+        format!("{HUB}/{port}")
+    }
 
     // ---- fixture builders ---------------------------------------------------
 
@@ -964,6 +1044,163 @@ mod tests {
         let card = enumerate_audio_devices(&snap).remove(0);
         let ptt = discover_ptt(&card, &snap);
         assert!(ptt.is_empty());
+    }
+
+    // ---- Composite-dongle device-node join key (the CRITICAL-2 regression) ---
+    //
+    // These model the real interface-vs-device-node depth and prove the join key
+    // is the USB DEVICE NODE, not its parent hub. Under the OLD `.parent()`-to-hub
+    // logic both DigiRig and DRA-100 on one hub would key on `HUB` itself, so
+    // EVERY card would match EVERY PTT line on the hub — the exact two-dongle
+    // smoke-setup cross-match. With the device-node key each card matches ONLY its
+    // own dongle's PTT line.
+
+    /// A DigiRig composite dongle: CM108 audio card + CP2102 serial PTT, BOTH
+    /// resolving to the same device node `2-1` (sibling interfaces). The card's
+    /// `usb_parent` and the tty's `usb_parent` are the IDENTICAL device-node
+    /// string — what the impure reader now produces by climbing to the device
+    /// node and NOT taking `.parent()`.
+    #[test]
+    fn digirig_composite_dongle_card_and_serial_share_device_node() {
+        let node = device_node("2-1");
+        let snap = SysSnapshot {
+            cards: vec![digirig_card(1, &node)],
+            ttys: vec![TtyNode {
+                path: "/dev/ttyUSB0".into(),
+                usb_parent: Some(node.clone()),
+            }],
+            ..Default::default()
+        };
+        let card = enumerate_audio_devices(&snap).remove(0);
+        // The card's join key is the device node, not the hub.
+        assert_eq!(card.usb_parent.as_deref(), Some(node.as_str()));
+        assert_ne!(card.usb_parent.as_deref(), Some(HUB));
+        let ptt = discover_ptt(&card, &snap);
+        assert_eq!(
+            ptt,
+            vec![PttChoice::SerialRts {
+                tty: "/dev/ttyUSB0".into()
+            }]
+        );
+    }
+
+    /// THE CRITICAL-2 REGRESSION: a DigiRig AND a DRA-100 on ONE hub. Each card
+    /// must match ONLY its own dongle's PTT line. Under the old `.parent()`-to-hub
+    /// key both cards keyed on `HUB` and would cross-match BOTH PTT lines; this
+    /// asserts the device-node key isolates them.
+    #[test]
+    fn two_composite_dongles_one_hub_no_cross_match() {
+        let digirig_node = device_node("2-1"); // CM108 audio + CP2102 serial PTT
+        let dra_node = device_node("2-2"); // CM119A audio + CM108 HID PTT
+
+        let snap = SysSnapshot {
+            cards: vec![
+                digirig_card(1, &digirig_node),
+                dra100_card(2, &dra_node),
+            ],
+            // DRA-100's CM108 HID PTT — sibling interface of the DRA device node.
+            hidraws: vec![HidrawNode {
+                path: "/dev/hidraw3".into(),
+                usb_parent: Some(dra_node.clone()),
+                is_cm108: true,
+            }],
+            // DigiRig's CP2102 serial PTT — sibling interface of the DigiRig node.
+            ttys: vec![TtyNode {
+                path: "/dev/ttyUSB0".into(),
+                usb_parent: Some(digirig_node.clone()),
+            }],
+        };
+
+        let devices = enumerate_audio_devices(&snap);
+        let digirig = devices
+            .iter()
+            .find(|d| d.alsa_plughw == "plughw:CARD=Device,DEV=0")
+            .expect("DigiRig present");
+        let dra = devices
+            .iter()
+            .find(|d| d.alsa_plughw == "plughw:CARD=DRA,DEV=0")
+            .expect("DRA-100 present");
+
+        // The two cards have DISTINCT device-node join keys (sibling ports on the
+        // SAME hub) — the old hub key would have made these equal.
+        assert_ne!(digirig.usb_parent, dra.usb_parent);
+
+        // DigiRig matches ONLY its serial PTT, NOT the DRA-100's HID.
+        let digirig_ptt = discover_ptt(digirig, &snap);
+        assert_eq!(
+            digirig_ptt,
+            vec![PttChoice::SerialRts {
+                tty: "/dev/ttyUSB0".into()
+            }]
+        );
+
+        // DRA-100 matches ONLY its CM108 HID, NOT the DigiRig's serial.
+        let dra_ptt = discover_ptt(dra, &snap);
+        assert_eq!(
+            dra_ptt,
+            vec![PttChoice::Cm108Hid {
+                hidraw_path: "/dev/hidraw3".into()
+            }]
+        );
+    }
+
+    /// The hardened CardIdHash fallback (the IMPORTANT-3 regression): two cards
+    /// that share `card_id="Device"` AND have no by-id basename and no USB serial
+    /// — the worst case from this Pi (`/dev/snd/by-id` absent, DRA reports no
+    /// serial, both C-Media cards report `card_id="Device"`). Folding the USB
+    /// device-node path into the hash keeps their stable ids DISTINCT, so
+    /// `resolve_managed_device` cannot silently pick the wrong card.
+    #[test]
+    fn cardid_hash_disambiguates_same_card_id_via_device_node() {
+        let mk = |port: &str| SnapshotCard {
+            card_index: 0,
+            card_id: "Device".into(), // both share the ALSA card id
+            card_name: "C-Media USB Audio Device".into(),
+            by_id_basename: None, // /dev/snd/by-id absent on this Pi
+            usb: Some(UsbIdentity {
+                vid: CMEDIA_VID.into(),
+                pid: "0012".into(),
+                serial: None, // no USB serial reported
+            }),
+            usb_parent: Some(device_node(port)),
+        };
+        let a = mk("2-1");
+        let b = mk("2-2");
+
+        let id_a = derive_stable_id(&a);
+        let id_b = derive_stable_id(&b);
+
+        // Both fall through to the hardened hash (no by-id, no serial).
+        assert_eq!(id_a.kind, StableIdKind::CardIdHash);
+        assert_eq!(id_b.kind, StableIdKind::CardIdHash);
+        // ...but they are DISTINCT because the device-node path differs. Under the
+        // old card_id-only hash these were IDENTICAL → CardIdHash collision.
+        assert_ne!(id_a.value, id_b.value);
+
+        // And the discriminator is the device node, not the boot card_index:
+        // same physical card on the same port yields the SAME id regardless of
+        // which boot-order index it landed on.
+        let b_reindexed = SnapshotCard {
+            card_index: 7,
+            ..b.clone()
+        };
+        assert_eq!(derive_stable_id(&b_reindexed).value, id_b.value);
+
+        // resolve_managed_device now picks the RIGHT card of the two. Give the
+        // two cards distinct LIVE boot indices so we can prove it resolved to b,
+        // not a, despite the shared card_id/plughw (the old collision picked
+        // whichever enumerated first).
+        let a_live = SnapshotCard { card_index: 4, ..a.clone() };
+        let b_live = SnapshotCard { card_index: 9, ..b.clone() };
+        let snap = SysSnapshot {
+            cards: vec![a_live, b_live],
+            ..Default::default()
+        };
+        let resolved =
+            resolve_managed_device(&id_b, &snap).expect("id_b must resolve to card b");
+        // Resolved to b's live index (9), not a's (4) — no collision, right card.
+        assert_eq!(resolved.card_index, 9);
+        assert_eq!(resolved.alsa_plughw, "plughw:CARD=Device,DEV=0");
     }
 
     // ---- P6.A: resolve_managed_device (pure) --------------------------------
