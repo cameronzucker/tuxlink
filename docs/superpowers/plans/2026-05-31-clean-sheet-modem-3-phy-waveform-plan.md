@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the v0.5+ clean-sheet HF PHY layer as a standalone AGPLv3 Rust crate (`tuxmodem-phy`) that renders link-layer byte frames to audio-band samples and decodes them back, spanning two architecturally-distinct mode families (bit-adaptive OFDM main throughput + robustness floor: default wide-band low-density OFDM, situational narrow-FSK) with shared sync/audio infrastructure, validated end-to-end against subsystem #1's channel simulator under ITU-R F.520 conditions.
+**Goal:** Build the v0.5+ clean-sheet HF PHY layer as a standalone AGPLv3 Rust crate (`sonde-phy`) that renders link-layer byte frames to audio-band samples and decodes them back, spanning two architecturally-distinct mode families (bit-adaptive OFDM main throughput + robustness floor: default wide-band low-density OFDM, situational narrow-FSK) with shared sync/audio infrastructure, validated end-to-end against subsystem #1's channel simulator under ITU-R F.520 conditions.
 
-**Architecture:** Pure-Rust `tuxmodem-phy` crate in a new Cargo workspace `tuxmodem/` (sibling to `src-tauri/`, separate AGPLv3 license from tuxlink-the-client). Module layout: `audio_io`, `sync`, `frame_detect`, `ofdm_main` (bit-adaptive family), `robustness_floor` (with `wideband_lowdensity` + `narrow_fsk` sub-modules), `subcarrier_snr`, and a `phy_api` facade exposing `PhyTransport` to subsystem #5. FEC stays a **separate crate** (`tuxmodem-fec`) with a `FecCodec` trait — PHY consumes by composition over a **soft-LLR bus** so per-family FEC strategies plug in without recompiling DSP cores. Per-sub-carrier SNR estimation is a load-bearing surface exposed to subsystem #7. Cross-validation harness drives the channel simulator (#1) in software-only loops; bench-rig (#2/#9) RF cross-validation is operator-run.
+**Architecture:** Pure-Rust `sonde-phy` crate in a new Cargo workspace `sonde/` (sibling to `src-tauri/`, separate AGPLv3 license from tuxlink-the-client). Module layout: `audio_io`, `sync`, `frame_detect`, `ofdm_main` (bit-adaptive family), `robustness_floor` (with `wideband_lowdensity` + `narrow_fsk` sub-modules), `subcarrier_snr`, and a `phy_api` facade exposing `PhyTransport` to subsystem #5. FEC stays a **separate crate** (`sonde-fec`) with a `FecCodec` trait — PHY consumes by composition over a **soft-LLR bus** so per-family FEC strategies plug in without recompiling DSP cores. Per-sub-carrier SNR estimation is a load-bearing surface exposed to subsystem #7. Cross-validation harness drives the channel simulator (#1) in software-only loops; bench-rig (#2/#9) RF cross-validation is operator-run.
 
-**Tech Stack:** Rust 2021 stable; `rustfft` (MIT/Apache-2.0, AGPL-compatible) for FFT; `num-complex` for complex samples; `cpal` (Apache-2.0) for audio device I/O (linked behind a feature flag — most tests use buffer-level I/O); `hf-channel-sim` crate from subsystem #1 as a dev-dependency for validation; `tuxmodem-fec` crate from subsystem #4 as a runtime dependency; `proptest` for randomized property tests; `criterion` for DSP benchmarks. AGPLv3-only at the crate level. No GPL-only runtime dependencies (overview §5.A.4). No GNU Radio linkage.
+**Tech Stack:** Rust 2021 stable; `rustfft` (MIT/Apache-2.0, AGPL-compatible) for FFT; `num-complex` for complex samples; `cpal` (Apache-2.0) for audio device I/O (linked behind a feature flag — most tests use buffer-level I/O); `hf-channel-sim` crate from subsystem #1 as a dev-dependency for validation; `sonde-fec` crate from subsystem #4 as a runtime dependency; `proptest` for randomized property tests; `criterion` for DSP benchmarks. AGPLv3-only at the crate level. No GPL-only runtime dependencies (overview §5.A.4). No GNU Radio linkage.
 
 ---
 
@@ -23,26 +23,26 @@ Every executing agent reads, in order, before touching code:
 
 **Key cross-subsystem APIs this plan assumes (and freezes for parent-level coordination):**
 
-- **Assumed from #1 (channel simulator):** trait `hf_channel_sim::Channel` with method `fn impair(&mut self, samples: &[Complex<f32>]) -> Vec<Complex<f32>>`; constructor `Channel::watterson(condition: ChannelCondition, sample_rate_hz: u32, seed: u64)`; enum `ChannelCondition::{Good, Moderate, Poor, Flutter}`; companion `fn per_subcarrier_snr_db(samples_in: &[Complex<f32>], samples_out: &[Complex<f32>], bin_centers_hz: &[f32], fft_size: usize) -> Vec<f32>` for ground-truth per-bin SNR labels in characterization sweeps. If #1's spec converges on a different exact signature, Phase 0 reconciles via a thin adapter in `tuxmodem-phy/tests/sim_adapter.rs`.
+- **Assumed from #1 (channel simulator):** trait `hf_channel_sim::Channel` with method `fn impair(&mut self, samples: &[Complex<f32>]) -> Vec<Complex<f32>>`; constructor `Channel::watterson(condition: ChannelCondition, sample_rate_hz: u32, seed: u64)`; enum `ChannelCondition::{Good, Moderate, Poor, Flutter}`; companion `fn per_subcarrier_snr_db(samples_in: &[Complex<f32>], samples_out: &[Complex<f32>], bin_centers_hz: &[f32], fft_size: usize) -> Vec<f32>` for ground-truth per-bin SNR labels in characterization sweeps. If #1's spec converges on a different exact signature, Phase 0 reconciles via a thin adapter in `sonde-phy/tests/sim_adapter.rs`.
 - **Provided to #5 (link/MAC):** `pub trait PhyTransport { fn send_frame(&mut self, payload: &[u8], hint: ModeHint) -> Result<TxToken, PhyError>; fn poll_rx(&mut self) -> Option<RxFrame>; fn channel_quality(&self) -> ChannelQualityReport; }` plus `RxFrame { payload: Vec<u8>, mode: ResolvedMode, per_subcarrier_snr_db: Option<Vec<f32>>, frame_snr_db: f32, decode_ok: bool }`. `ModeHint` carries the (mode-family, mode-within-family) suggestion from link-adaptation; PHY MAY override per channel measurement.
 - **Provided to #7 (link adaptation):** the `ChannelQualityReport` snapshot (per-sub-carrier SNR vector, aggregate SNR, recent frame error history, current bit-loading bitmap). Read-only.
 - **Consumed from #4 (FEC):** `pub trait FecCodec { fn encode(&self, info_bits: &[u8]) -> Vec<u8>; fn decode_soft(&self, llr: &[f32]) -> Result<Vec<u8>, FecError>; fn rate(&self) -> CodeRate; fn block_info_bits(&self) -> usize; fn block_coded_bits(&self) -> usize; }`. The PHY does NOT know the FEC family — it composes a `Box<dyn FecCodec>` chosen per PHY mode.
 
-**Position on the FEC-folded-vs-separate question (PHY spec §3.Q5 / §4-FEC §4.Q5):** **Separate crate, soft-LLR bus contract.** Rationale: (a) Two PHY families with architecturally different FEC needs (LDPC short-block for wide-band low-density floor; rate-compatible LDPC or polar for OFDM bit-loading) — separate crate lets each plug a different `Box<dyn FecCodec>` without DSP recompiles; (b) Soft-LLR-in / decoded-bytes-out is the de-facto contract for modern coded modulation regardless of family; (c) preserves independent iteration — subsystem #4 sweeps code families against the channel sim without touching PHY DSP; (d) keeps the agent-scopeable boundary clean (overview §4 rule 6). The integration glue lives in `tuxmodem-phy/src/coded_modulation.rs` and is thin.
+**Position on the FEC-folded-vs-separate question (PHY spec §3.Q5 / §4-FEC §4.Q5):** **Separate crate, soft-LLR bus contract.** Rationale: (a) Two PHY families with architecturally different FEC needs (LDPC short-block for wide-band low-density floor; rate-compatible LDPC or polar for OFDM bit-loading) — separate crate lets each plug a different `Box<dyn FecCodec>` without DSP recompiles; (b) Soft-LLR-in / decoded-bytes-out is the de-facto contract for modern coded modulation regardless of family; (c) preserves independent iteration — subsystem #4 sweeps code families against the channel sim without touching PHY DSP; (d) keeps the agent-scopeable boundary clean (overview §4 rule 6). The integration glue lives in `sonde-phy/src/coded_modulation.rs` and is thin.
 
 ---
 
 ## §1. File structure
 
-The PHY work creates a new Cargo workspace `tuxmodem/` at the tuxlink repo root, sibling to `src-tauri/`. **Important:** `src-tauri/` is the tuxlink Tauri app and stays untouched by this plan. The `tuxmodem/` workspace is the home for #3, #4, and later modem-stack subsystems; #1's `hf-channel-sim` crate is published separately and consumed as a workspace dependency.
+The PHY work creates a new Cargo workspace `sonde/` at the tuxlink repo root, sibling to `src-tauri/`. **Important:** `src-tauri/` is the tuxlink Tauri app and stays untouched by this plan. The `sonde/` workspace is the home for #3, #4, and later modem-stack subsystems; #1's `hf-channel-sim` crate is published separately and consumed as a workspace dependency.
 
 ```
-tuxmodem/
+sonde/
 ├── Cargo.toml                          # workspace root; AGPLv3 only
 ├── LICENSE                             # AGPLv3 verbatim
 ├── README.md                           # crate intent + pointers back to specs
 └── crates/
-    └── tuxmodem-phy/
+    └── sonde-phy/
         ├── Cargo.toml                  # AGPLv3, MSRV 1.75
         ├── src/
         │   ├── lib.rs                  # public re-exports + crate-level docs
@@ -125,20 +125,20 @@ Eleven phases. Each phase produces a self-contained slice of working software wi
 
 ### Phase 0 — Workspace scaffold
 
-#### Task 0.1: Create the `tuxmodem/` workspace root
+#### Task 0.1: Create the `sonde/` workspace root
 
 **Files:**
-- Create: `tuxmodem/Cargo.toml`
-- Create: `tuxmodem/LICENSE`
-- Create: `tuxmodem/README.md`
-- Create: `tuxmodem/.gitignore`
+- Create: `sonde/Cargo.toml`
+- Create: `sonde/LICENSE`
+- Create: `sonde/README.md`
+- Create: `sonde/.gitignore`
 
-- [ ] **Step 1: Write `tuxmodem/Cargo.toml`**
+- [ ] **Step 1: Write `sonde/Cargo.toml`**
 
 ```toml
 [workspace]
 resolver = "2"
-members = ["crates/tuxmodem-phy"]
+members = ["crates/sonde-phy"]
 
 [workspace.package]
 edition = "2021"
@@ -154,21 +154,21 @@ thiserror = "1"
 # Subsystem #1: replace path with crates.io once #1 publishes
 hf-channel-sim = { version = "0.1", optional = true }
 # Subsystem #4: replace path with crates.io once #4 publishes
-tuxmodem-fec = { version = "0.1", optional = true }
+sonde-fec = { version = "0.1", optional = true }
 proptest = "1"
 criterion = "0.5"
 hound = "3"           # .wav read/write for audio_loopback_check + bench-rig captures
 cpal = "0.15"         # feature-gated; default-off
 ```
 
-- [ ] **Step 2: Write `tuxmodem/LICENSE`**
+- [ ] **Step 2: Write `sonde/LICENSE`**
 
-Place the verbatim AGPL-3.0 license text (per `https://www.gnu.org/licenses/agpl-3.0.txt`). The executing agent fetches this with `curl -fsSL https://www.gnu.org/licenses/agpl-3.0.txt -o tuxmodem/LICENSE` and verifies the first line reads `GNU AFFERO GENERAL PUBLIC LICENSE`.
+Place the verbatim AGPL-3.0 license text (per `https://www.gnu.org/licenses/agpl-3.0.txt`). The executing agent fetches this with `curl -fsSL https://www.gnu.org/licenses/agpl-3.0.txt -o sonde/LICENSE` and verifies the first line reads `GNU AFFERO GENERAL PUBLIC LICENSE`.
 
-- [ ] **Step 3: Write `tuxmodem/README.md`**
+- [ ] **Step 3: Write `sonde/README.md`**
 
 ```markdown
-# tuxmodem
+# sonde
 
 Clean-sheet HF data modem; AGPLv3-only.
 
@@ -179,7 +179,7 @@ tuxlink repo. Subsystem-level intent is documented at:
 - `docs/superpowers/specs/2026-05-31-clean-sheet-modem-3-phy-waveform.md`
 - `docs/superpowers/specs/2026-05-31-clean-sheet-modem-4-fec.md`
 
-This workspace currently houses `crates/tuxmodem-phy/` (subsystem #3).
+This workspace currently houses `crates/sonde-phy/` (subsystem #3).
 FEC (#4) ships as a sibling crate. Channel simulator (#1) is an external
 AGPLv3 crate consumed as a dependency.
 
@@ -189,7 +189,7 @@ primitives drawn from open foundations documented in
 `docs/research/modem-foundations.md`.
 ```
 
-- [ ] **Step 4: Write `tuxmodem/.gitignore`**
+- [ ] **Step 4: Write `sonde/.gitignore`**
 
 ```
 target/
@@ -200,30 +200,30 @@ Cargo.lock
 
 - [ ] **Step 5: Verify workspace skeleton parses**
 
-Run: `cargo metadata --manifest-path tuxmodem/Cargo.toml --format-version 1 --no-deps`
+Run: `cargo metadata --manifest-path sonde/Cargo.toml --format-version 1 --no-deps`
 Expected: JSON output naming the workspace, zero member crates resolved yet (empty members list at this point — fixed in 0.2). If `cargo metadata` errors on missing members, that is expected; proceed.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tuxmodem/Cargo.toml tuxmodem/LICENSE tuxmodem/README.md tuxmodem/.gitignore
-git commit -m "feat(tuxmodem): scaffold AGPLv3 workspace for clean-sheet modem"
+git add sonde/Cargo.toml sonde/LICENSE sonde/README.md sonde/.gitignore
+git commit -m "feat(sonde): scaffold AGPLv3 workspace for clean-sheet modem"
 ```
 
-#### Task 0.2: Create the `tuxmodem-phy` crate skeleton
+#### Task 0.2: Create the `sonde-phy` crate skeleton
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/Cargo.toml`
-- Create: `tuxmodem/crates/tuxmodem-phy/src/lib.rs`
-- Create: `tuxmodem/crates/tuxmodem-phy/src/error.rs`
+- Create: `sonde/crates/sonde-phy/Cargo.toml`
+- Create: `sonde/crates/sonde-phy/src/lib.rs`
+- Create: `sonde/crates/sonde-phy/src/error.rs`
 
-- [ ] **Step 1: Write `crates/tuxmodem-phy/Cargo.toml`**
+- [ ] **Step 1: Write `crates/sonde-phy/Cargo.toml`**
 
 ```toml
 [package]
-name = "tuxmodem-phy"
+name = "sonde-phy"
 version = "0.1.0"
-description = "Clean-sheet HF PHY waveform layer for tuxmodem (AGPL-3.0-only)"
+description = "Clean-sheet HF PHY waveform layer for sonde (AGPL-3.0-only)"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -241,7 +241,7 @@ hound.workspace = true
 # Activated once #1 and #4 publish; until then, sibling subagents' plans
 # may stub these with path-deps in coordination.
 # hf-channel-sim.workspace = true
-# tuxmodem-fec.workspace = true
+# sonde-fec.workspace = true
 
 [features]
 default = []
@@ -255,7 +255,7 @@ optional = true
 - [ ] **Step 2: Write `src/lib.rs`**
 
 ```rust
-//! tuxmodem-phy — clean-sheet HF PHY waveform layer.
+//! sonde-phy — clean-sheet HF PHY waveform layer.
 //!
 //! Subordinate to `docs/superpowers/specs/2026-05-31-clean-sheet-modem-3-phy-waveform.md`
 //! in the tuxlink repo. No examination of VARA / ARDOP / FLDigi / Trimode /
@@ -301,23 +301,23 @@ pub enum PhyError {
 
 - [ ] **Step 4: Build the empty crate**
 
-Run: `cd tuxmodem && cargo build -p tuxmodem-phy`
-Expected: PASS with `Compiling tuxmodem-phy v0.1.0` and no warnings.
+Run: `cd sonde && cargo build -p sonde-phy`
+Expected: PASS with `Compiling sonde-phy v0.1.0` and no warnings.
 
 - [ ] **Step 5: Run the empty test harness**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy`
+Run: `cd sonde && cargo test -p sonde-phy`
 Expected: PASS, 0 tests run.
 
 - [ ] **Step 6: Update the workspace root manifest to include the new member**
 
-Edit `tuxmodem/Cargo.toml` so the `members = []` line resolves; it should already be `members = ["crates/tuxmodem-phy"]` from Task 0.1. Re-run `cargo metadata --manifest-path tuxmodem/Cargo.toml --format-version 1` and confirm the crate is listed.
+Edit `sonde/Cargo.toml` so the `members = []` line resolves; it should already be `members = ["crates/sonde-phy"]` from Task 0.1. Re-run `cargo metadata --manifest-path sonde/Cargo.toml --format-version 1` and confirm the crate is listed.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/
-git commit -m "feat(tuxmodem-phy): crate skeleton + error taxonomy"
+git add sonde/crates/sonde-phy/
+git commit -m "feat(sonde-phy): crate skeleton + error taxonomy"
 ```
 
 ### Phase 1 — PHY API surface + mode table
@@ -325,14 +325,14 @@ git commit -m "feat(tuxmodem-phy): crate skeleton + error taxonomy"
 #### Task 1.1: Define `ModeFamily`, `ResolvedMode`, `ModeDescriptor`, `ModeHint`
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/src/modes.rs`
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/lib.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/mode_router.rs` (first test only — fuller test in Phase 10)
+- Create: `sonde/crates/sonde-phy/src/modes.rs`
+- Modify: `sonde/crates/sonde-phy/src/lib.rs`
+- Test: `sonde/crates/sonde-phy/tests/mode_router.rs` (first test only — fuller test in Phase 10)
 
 - [ ] **Step 1: Write the failing test** in `tests/mode_router.rs`
 
 ```rust
-use tuxmodem_phy::modes::{ModeFamily, ModeHint, ModeTable, ResolvedMode};
+use sonde_phy::modes::{ModeFamily, ModeHint, ModeTable, ResolvedMode};
 
 #[test]
 fn default_mode_table_has_two_families() {
@@ -363,8 +363,8 @@ fn narrow_fsk_only_resolves_when_hinted_crowded_band() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test mode_router`
-Expected: FAIL with `error[E0432]: unresolved import tuxmodem_phy::modes`.
+Run: `cd sonde && cargo test -p sonde-phy --test mode_router`
+Expected: FAIL with `error[E0432]: unresolved import sonde_phy::modes`.
 
 - [ ] **Step 3: Implement `modes.rs`**
 
@@ -437,7 +437,7 @@ impl Default for ModeTable {
             modes: vec![
                 // OFDM main family — placeholders; bandwidth-per-mode
                 // pins in Phase 7. Three modes is a starting point per
-                // PHY spec §3.Q1 ("ARDOP uses 4; tuxmodem may use fewer
+                // PHY spec §3.Q1 ("ARDOP uses 4; sonde may use fewer
                 // or more"); empirical channel-sim sweep settles count.
                 ModeDescriptor { short_name: "ofdm-narrow", family: ModeFamily::OfdmMain },
                 ModeDescriptor { short_name: "ofdm-mid",    family: ModeFamily::OfdmMain },
@@ -492,33 +492,33 @@ pub mod modes;
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test mode_router`
+Run: `cd sonde && cargo test -p sonde-phy --test mode_router`
 Expected: PASS, 3 tests.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/modes.rs tuxmodem/crates/tuxmodem-phy/src/lib.rs tuxmodem/crates/tuxmodem-phy/tests/mode_router.rs
-git commit -m "feat(tuxmodem-phy): mode table + ModeHint/ResolvedMode/ModeFamily skeleton"
+git add sonde/crates/sonde-phy/src/modes.rs sonde/crates/sonde-phy/src/lib.rs sonde/crates/sonde-phy/tests/mode_router.rs
+git commit -m "feat(sonde-phy): mode table + ModeHint/ResolvedMode/ModeFamily skeleton"
 ```
 
 #### Task 1.2: Define `PhyTransport`, `RxFrame`, `TxToken`, `ChannelQualityReport`
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/src/phy_api.rs`
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/lib.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/api_contract.rs`
+- Create: `sonde/crates/sonde-phy/src/phy_api.rs`
+- Modify: `sonde/crates/sonde-phy/src/lib.rs`
+- Test: `sonde/crates/sonde-phy/tests/api_contract.rs`
 
 - [ ] **Step 1: Write the failing test** in `tests/api_contract.rs`
 
 ```rust
-use tuxmodem_phy::modes::ModeHint;
-use tuxmodem_phy::phy_api::{ChannelQualityReport, NullPhy, PhyTransport};
+use sonde_phy::modes::ModeHint;
+use sonde_phy::phy_api::{ChannelQualityReport, NullPhy, PhyTransport};
 
 #[test]
 fn null_phy_round_trips_a_payload_through_loopback() {
     let mut phy = NullPhy::new();
-    let payload = b"hello tuxmodem";
+    let payload = b"hello sonde";
     let _token = phy.send_frame(payload, ModeHint::MainAuto).expect("tx");
     let rx = phy.poll_rx().expect("rx should be available immediately on null phy");
     assert_eq!(rx.payload(), payload);
@@ -536,8 +536,8 @@ fn channel_quality_report_is_readable_without_tx() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test api_contract`
-Expected: FAIL with `unresolved import tuxmodem_phy::phy_api`.
+Run: `cd sonde && cargo test -p sonde-phy --test api_contract`
+Expected: FAIL with `unresolved import sonde_phy::phy_api`.
 
 - [ ] **Step 3: Implement `phy_api.rs`**
 
@@ -702,14 +702,14 @@ pub mod phy_api;
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test api_contract`
+Run: `cd sonde && cargo test -p sonde-phy --test api_contract`
 Expected: PASS, 2 tests.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/phy_api.rs tuxmodem/crates/tuxmodem-phy/src/lib.rs tuxmodem/crates/tuxmodem-phy/tests/api_contract.rs
-git commit -m "feat(tuxmodem-phy): PhyTransport API + NullPhy contract baseline"
+git add sonde/crates/sonde-phy/src/phy_api.rs sonde/crates/sonde-phy/src/lib.rs sonde/crates/sonde-phy/tests/api_contract.rs
+git commit -m "feat(sonde-phy): PhyTransport API + NullPhy contract baseline"
 ```
 
 ### Phase 2 — Audio I/O buffer plumbing
@@ -717,14 +717,14 @@ git commit -m "feat(tuxmodem-phy): PhyTransport API + NullPhy contract baseline"
 #### Task 2.1: `audio_io.rs` — sample-rate constant, AudioBuffer, .wav helper
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/src/audio_io.rs`
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/lib.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/audio_io.rs`
+- Create: `sonde/crates/sonde-phy/src/audio_io.rs`
+- Modify: `sonde/crates/sonde-phy/src/lib.rs`
+- Test: `sonde/crates/sonde-phy/tests/audio_io.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::audio_io::{AudioBuffer, SAMPLE_RATE_HZ};
+use sonde_phy::audio_io::{AudioBuffer, SAMPLE_RATE_HZ};
 
 #[test]
 fn sample_rate_is_pinned_at_48khz() {
@@ -734,7 +734,7 @@ fn sample_rate_is_pinned_at_48khz() {
 #[test]
 fn audio_buffer_round_trips_to_wav_and_back(tmp_dir_for_test: ()) {
     let _ = tmp_dir_for_test;
-    let tmp = std::env::temp_dir().join("tuxmodem-phy-test-audio.wav");
+    let tmp = std::env::temp_dir().join("sonde-phy-test-audio.wav");
     let original: Vec<f32> = (0..480)
         .map(|i| (i as f32 * 0.01).sin())
         .collect();
@@ -755,8 +755,8 @@ fn tmp_dir_for_test() {}
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test audio_io`
-Expected: FAIL with `unresolved import tuxmodem_phy::audio_io`.
+Run: `cd sonde && cargo test -p sonde-phy --test audio_io`
+Expected: FAIL with `unresolved import sonde_phy::audio_io`.
 
 - [ ] **Step 3: Implement `audio_io.rs`**
 
@@ -834,7 +834,7 @@ pub mod audio_io;
 
 - [ ] **Step 5: Add `hound` to `[dev-dependencies]`**
 
-In `tuxmodem/crates/tuxmodem-phy/Cargo.toml`, ensure `hound.workspace = true` is in `[dependencies]` (not just dev) because `audio_io` is library code that depends on it:
+In `sonde/crates/sonde-phy/Cargo.toml`, ensure `hound.workspace = true` is in `[dependencies]` (not just dev) because `audio_io` is library code that depends on it:
 
 ```toml
 [dependencies]
@@ -848,14 +848,14 @@ Move `hound.workspace = true` out of `[dev-dependencies]` if it was placed there
 
 - [ ] **Step 6: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test audio_io`
+Run: `cd sonde && cargo test -p sonde-phy --test audio_io`
 Expected: PASS, 2 tests.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/audio_io.rs tuxmodem/crates/tuxmodem-phy/src/lib.rs tuxmodem/crates/tuxmodem-phy/Cargo.toml tuxmodem/crates/tuxmodem-phy/tests/audio_io.rs
-git commit -m "feat(tuxmodem-phy): 48kHz f32 audio buffer + wav round-trip helper"
+git add sonde/crates/sonde-phy/src/audio_io.rs sonde/crates/sonde-phy/src/lib.rs sonde/crates/sonde-phy/Cargo.toml sonde/crates/sonde-phy/tests/audio_io.rs
+git commit -m "feat(sonde-phy): 48kHz f32 audio buffer + wav round-trip helper"
 ```
 
 ### Phase 3 — Constellations + LLR
@@ -863,15 +863,15 @@ git commit -m "feat(tuxmodem-phy): 48kHz f32 audio buffer + wav round-trip helpe
 #### Task 3.1: BPSK + QPSK map and demap with hard-decision
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/src/constellations.rs`
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/lib.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/constellations_bpsk_qpsk.rs`
+- Create: `sonde/crates/sonde-phy/src/constellations.rs`
+- Modify: `sonde/crates/sonde-phy/src/lib.rs`
+- Test: `sonde/crates/sonde-phy/tests/constellations_bpsk_qpsk.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
 use num_complex::Complex;
-use tuxmodem_phy::constellations::{Constellation, Mapper};
+use sonde_phy::constellations::{Constellation, Mapper};
 
 #[test]
 fn bpsk_maps_bits_to_unit_circle_and_back() {
@@ -899,8 +899,8 @@ fn qpsk_maps_bit_pairs_to_quadrants() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test constellations_bpsk_qpsk`
-Expected: FAIL with `unresolved import tuxmodem_phy::constellations`.
+Run: `cd sonde && cargo test -p sonde-phy --test constellations_bpsk_qpsk`
+Expected: FAIL with `unresolved import sonde_phy::constellations`.
 
 - [ ] **Step 3: Implement `constellations.rs` (BPSK + QPSK stubs first)**
 
@@ -990,27 +990,27 @@ pub mod constellations;
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test constellations_bpsk_qpsk`
+Run: `cd sonde && cargo test -p sonde-phy --test constellations_bpsk_qpsk`
 Expected: PASS, 2 tests.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/constellations.rs tuxmodem/crates/tuxmodem-phy/src/lib.rs tuxmodem/crates/tuxmodem-phy/tests/constellations_bpsk_qpsk.rs
-git commit -m "feat(tuxmodem-phy): BPSK + QPSK constellation map/demap"
+git add sonde/crates/sonde-phy/src/constellations.rs sonde/crates/sonde-phy/src/lib.rs sonde/crates/sonde-phy/tests/constellations_bpsk_qpsk.rs
+git commit -m "feat(sonde-phy): BPSK + QPSK constellation map/demap"
 ```
 
 #### Task 3.2: 16-QAM + 64-QAM Gray-coded mapping
 
 **Files:**
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/constellations.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/constellations_qam.rs`
+- Modify: `sonde/crates/sonde-phy/src/constellations.rs`
+- Test: `sonde/crates/sonde-phy/tests/constellations_qam.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
 use num_complex::Complex;
-use tuxmodem_phy::constellations::{Constellation, Mapper};
+use sonde_phy::constellations::{Constellation, Mapper};
 
 #[test]
 fn qam16_round_trip_clean() {
@@ -1046,7 +1046,7 @@ fn qam_constellations_are_unit_average_energy() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test constellations_qam`
+Run: `cd sonde && cargo test -p sonde-phy --test constellations_qam`
 Expected: FAIL with panic `16/64-QAM mapping pending Task 3.2`.
 
 - [ ] **Step 3: Implement 16-QAM + 64-QAM in `constellations.rs`**
@@ -1124,27 +1124,27 @@ And the demap branches:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test constellations_qam`
+Run: `cd sonde && cargo test -p sonde-phy --test constellations_qam`
 Expected: PASS, 3 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/constellations.rs tuxmodem/crates/tuxmodem-phy/tests/constellations_qam.rs
-git commit -m "feat(tuxmodem-phy): 16-QAM + 64-QAM Gray-coded mapping"
+git add sonde/crates/sonde-phy/src/constellations.rs sonde/crates/sonde-phy/tests/constellations_qam.rs
+git commit -m "feat(sonde-phy): 16-QAM + 64-QAM Gray-coded mapping"
 ```
 
 #### Task 3.3: Soft-LLR computation for each constellation
 
 **Files:**
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/constellations.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/constellations_llr.rs`
+- Modify: `sonde/crates/sonde-phy/src/constellations.rs`
+- Test: `sonde/crates/sonde-phy/tests/constellations_llr.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
 use num_complex::Complex;
-use tuxmodem_phy::constellations::{Constellation, Mapper};
+use sonde_phy::constellations::{Constellation, Mapper};
 
 #[test]
 fn bpsk_llr_sign_matches_hard_decision() {
@@ -1182,7 +1182,7 @@ fn llr_length_matches_bits_per_symbol() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test constellations_llr`
+Run: `cd sonde && cargo test -p sonde-phy --test constellations_llr`
 Expected: FAIL with `no method named compute_llr`.
 
 - [ ] **Step 3: Implement `compute_llr` in `constellations.rs`**
@@ -1237,14 +1237,14 @@ impl Mapper {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test constellations_llr`
+Run: `cd sonde && cargo test -p sonde-phy --test constellations_llr`
 Expected: PASS, 3 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/constellations.rs tuxmodem/crates/tuxmodem-phy/tests/constellations_llr.rs
-git commit -m "feat(tuxmodem-phy): max-log LLR computation per constellation"
+git add sonde/crates/sonde-phy/src/constellations.rs sonde/crates/sonde-phy/tests/constellations_llr.rs
+git commit -m "feat(sonde-phy): max-log LLR computation per constellation"
 ```
 
 ### Phase 4 — Synchronization infrastructure
@@ -1252,16 +1252,16 @@ git commit -m "feat(tuxmodem-phy): max-log LLR computation per constellation"
 #### Task 4.1: Preamble sequence + correlation detector
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/src/sync/mod.rs`
-- Create: `tuxmodem/crates/tuxmodem-phy/src/sync/preamble.rs`
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/lib.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/sync_preamble.rs`
+- Create: `sonde/crates/sonde-phy/src/sync/mod.rs`
+- Create: `sonde/crates/sonde-phy/src/sync/preamble.rs`
+- Modify: `sonde/crates/sonde-phy/src/lib.rs`
+- Test: `sonde/crates/sonde-phy/tests/sync_preamble.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::sync::preamble::{PreambleDetector, PreambleGenerator};
-use tuxmodem_phy::audio_io::SAMPLE_RATE_HZ;
+use sonde_phy::sync::preamble::{PreambleDetector, PreambleGenerator};
+use sonde_phy::audio_io::SAMPLE_RATE_HZ;
 
 #[test]
 fn preamble_self_correlation_peaks_at_known_offset() {
@@ -1295,12 +1295,12 @@ fn preamble_is_not_falsely_detected_in_noise() {
 }
 ```
 
-(Add `rand = "0.8"` to `[dev-dependencies]` in `crates/tuxmodem-phy/Cargo.toml`.)
+(Add `rand = "0.8"` to `[dev-dependencies]` in `crates/sonde-phy/Cargo.toml`.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test sync_preamble`
-Expected: FAIL with `unresolved import tuxmodem_phy::sync`.
+Run: `cd sonde && cargo test -p sonde-phy --test sync_preamble`
+Expected: FAIL with `unresolved import sonde_phy::sync`.
 
 - [ ] **Step 3: Implement `sync/mod.rs`**
 
@@ -1449,27 +1449,27 @@ pub mod sync;
 
 - [ ] **Step 7: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test sync_preamble`
+Run: `cd sonde && cargo test -p sonde-phy --test sync_preamble`
 Expected: PASS, 2 tests.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/sync/ tuxmodem/crates/tuxmodem-phy/src/lib.rs tuxmodem/crates/tuxmodem-phy/tests/sync_preamble.rs tuxmodem/crates/tuxmodem-phy/Cargo.toml
-git commit -m "feat(tuxmodem-phy): Zadoff-Chu preamble + correlation detector"
+git add sonde/crates/sonde-phy/src/sync/ sonde/crates/sonde-phy/src/lib.rs sonde/crates/sonde-phy/tests/sync_preamble.rs sonde/crates/sonde-phy/Cargo.toml
+git commit -m "feat(sonde-phy): Zadoff-Chu preamble + correlation detector"
 ```
 
 #### Task 4.2: Carrier frequency offset estimator
 
 **Files:**
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/sync/carrier_offset.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/sync_cfo.rs`
+- Modify: `sonde/crates/sonde-phy/src/sync/carrier_offset.rs`
+- Test: `sonde/crates/sonde-phy/tests/sync_cfo.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
 use num_complex::Complex;
-use tuxmodem_phy::sync::carrier_offset::CfoEstimator;
+use sonde_phy::sync::carrier_offset::CfoEstimator;
 
 #[test]
 fn cfo_estimator_recovers_known_offset() {
@@ -1489,7 +1489,7 @@ fn cfo_estimator_recovers_known_offset() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test sync_cfo`
+Run: `cd sonde && cargo test -p sonde-phy --test sync_cfo`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `sync/carrier_offset.rs`**
@@ -1519,26 +1519,26 @@ impl CfoEstimator {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test sync_cfo`
+Run: `cd sonde && cargo test -p sonde-phy --test sync_cfo`
 Expected: PASS, 1 test.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/sync/carrier_offset.rs tuxmodem/crates/tuxmodem-phy/tests/sync_cfo.rs
-git commit -m "feat(tuxmodem-phy): Schmidl-Cox CFO estimator"
+git add sonde/crates/sonde-phy/src/sync/carrier_offset.rs sonde/crates/sonde-phy/tests/sync_cfo.rs
+git commit -m "feat(sonde-phy): Schmidl-Cox CFO estimator"
 ```
 
 #### Task 4.3: Symbol timing recovery
 
 **Files:**
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/sync/symbol_timing.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/sync_symbol_timing.rs`
+- Modify: `sonde/crates/sonde-phy/src/sync/symbol_timing.rs`
+- Test: `sonde/crates/sonde-phy/tests/sync_symbol_timing.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::sync::symbol_timing::SymbolTimingRecovery;
+use sonde_phy::sync::symbol_timing::SymbolTimingRecovery;
 
 #[test]
 fn timing_recovery_locks_under_offset() {
@@ -1565,7 +1565,7 @@ fn timing_recovery_locks_under_offset() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test sync_symbol_timing`
+Run: `cd sonde && cargo test -p sonde-phy --test sync_symbol_timing`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `sync/symbol_timing.rs`**
@@ -1613,26 +1613,26 @@ impl SymbolTimingRecovery {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test sync_symbol_timing`
+Run: `cd sonde && cargo test -p sonde-phy --test sync_symbol_timing`
 Expected: PASS, 1 test. If FAIL because of scale-factor calibration, document expected → measured in test output and tune the `0.5` constant; commit with the calibration note.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/sync/symbol_timing.rs tuxmodem/crates/tuxmodem-phy/tests/sync_symbol_timing.rs
-git commit -m "feat(tuxmodem-phy): Gardner symbol-timing recovery"
+git add sonde/crates/sonde-phy/src/sync/symbol_timing.rs sonde/crates/sonde-phy/tests/sync_symbol_timing.rs
+git commit -m "feat(sonde-phy): Gardner symbol-timing recovery"
 ```
 
 #### Task 4.4: Frame-sync correlator + state machine
 
 **Files:**
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/sync/frame_sync.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/sync_frame_sync.rs`
+- Modify: `sonde/crates/sonde-phy/src/sync/frame_sync.rs`
+- Test: `sonde/crates/sonde-phy/tests/sync_frame_sync.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::sync::frame_sync::{FrameSync, FrameSyncState};
+use sonde_phy::sync::frame_sync::{FrameSync, FrameSyncState};
 
 #[test]
 fn frame_sync_state_machine_advances_on_preamble() {
@@ -1656,7 +1656,7 @@ fn frame_sync_returns_to_search_on_decode_failure() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test sync_frame_sync`
+Run: `cd sonde && cargo test -p sonde-phy --test sync_frame_sync`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `sync/frame_sync.rs`**
@@ -1702,14 +1702,14 @@ impl Default for FrameSync { fn default() -> Self { Self::new() } }
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test sync_frame_sync`
+Run: `cd sonde && cargo test -p sonde-phy --test sync_frame_sync`
 Expected: PASS, 2 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/sync/frame_sync.rs tuxmodem/crates/tuxmodem-phy/tests/sync_frame_sync.rs
-git commit -m "feat(tuxmodem-phy): frame-sync state machine"
+git add sonde/crates/sonde-phy/src/sync/frame_sync.rs sonde/crates/sonde-phy/tests/sync_frame_sync.rs
+git commit -m "feat(sonde-phy): frame-sync state machine"
 ```
 
 ### Phase 5 — Per-sub-carrier SNR estimator
@@ -1717,15 +1717,15 @@ git commit -m "feat(tuxmodem-phy): frame-sync state machine"
 #### Task 5.1: Pilot-aided per-bin SNR estimator
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/src/subcarrier_snr.rs`
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/lib.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/subcarrier_snr.rs`
+- Create: `sonde/crates/sonde-phy/src/subcarrier_snr.rs`
+- Modify: `sonde/crates/sonde-phy/src/lib.rs`
+- Test: `sonde/crates/sonde-phy/tests/subcarrier_snr.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
 use num_complex::Complex;
-use tuxmodem_phy::subcarrier_snr::SubcarrierSnrEstimator;
+use sonde_phy::subcarrier_snr::SubcarrierSnrEstimator;
 
 #[test]
 fn pilot_aided_estimator_returns_per_bin_snr_vector() {
@@ -1752,7 +1752,7 @@ fn pilot_aided_estimator_returns_per_bin_snr_vector() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test subcarrier_snr`
+Run: `cd sonde && cargo test -p sonde-phy --test subcarrier_snr`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `subcarrier_snr.rs`**
@@ -1804,14 +1804,14 @@ pub mod subcarrier_snr;
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test subcarrier_snr`
+Run: `cd sonde && cargo test -p sonde-phy --test subcarrier_snr`
 Expected: PASS, 1 test.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/subcarrier_snr.rs tuxmodem/crates/tuxmodem-phy/src/lib.rs tuxmodem/crates/tuxmodem-phy/tests/subcarrier_snr.rs
-git commit -m "feat(tuxmodem-phy): pilot-aided per-subcarrier SNR estimator"
+git add sonde/crates/sonde-phy/src/subcarrier_snr.rs sonde/crates/sonde-phy/src/lib.rs sonde/crates/sonde-phy/tests/subcarrier_snr.rs
+git commit -m "feat(sonde-phy): pilot-aided per-subcarrier SNR estimator"
 ```
 
 ### Phase 6 — OFDM main family — single starting mode
@@ -1819,15 +1819,15 @@ git commit -m "feat(tuxmodem-phy): pilot-aided per-subcarrier SNR estimator"
 #### Task 6.1: `ofdm_params.rs` — mode descriptor table for the OFDM family
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/src/ofdm_main/mod.rs`
-- Create: `tuxmodem/crates/tuxmodem-phy/src/ofdm_main/ofdm_params.rs`
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/lib.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/ofdm_params.rs`
+- Create: `sonde/crates/sonde-phy/src/ofdm_main/mod.rs`
+- Create: `sonde/crates/sonde-phy/src/ofdm_main/ofdm_params.rs`
+- Modify: `sonde/crates/sonde-phy/src/lib.rs`
+- Test: `sonde/crates/sonde-phy/tests/ofdm_params.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::ofdm_main::ofdm_params::{OfdmParams, OfdmModeName};
+use sonde_phy::ofdm_main::ofdm_params::{OfdmParams, OfdmModeName};
 
 #[test]
 fn ofdm_mid_mode_params_round_trip() {
@@ -1855,7 +1855,7 @@ fn all_three_ofdm_modes_have_descriptors() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test ofdm_params`
+Run: `cd sonde && cargo test -p sonde-phy --test ofdm_params`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `ofdm_main/mod.rs`**
@@ -1876,7 +1876,7 @@ pub mod equalizer;
 //! Per-mode OFDM parameter table.
 //!
 //! Three starting modes per overview §5.A.1 ladder ("ARDOP uses 4;
-//! tuxmodem may use fewer or more"). Phase 11 sweeps may add or
+//! sonde may use fewer or more"). Phase 11 sweeps may add or
 //! remove modes informed by channel-sim characterization. Parameters
 //! are derived from primitives — sub-carrier orthogonality, CP-as-
 //! delay-spread-budget — not from any prior-art HF modem.
@@ -1973,27 +1973,27 @@ pub mod ofdm_main;
 
 - [ ] **Step 7: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test ofdm_params`
+Run: `cd sonde && cargo test -p sonde-phy --test ofdm_params`
 Expected: PASS, 2 tests.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/ofdm_main/ tuxmodem/crates/tuxmodem-phy/src/lib.rs tuxmodem/crates/tuxmodem-phy/tests/ofdm_params.rs
-git commit -m "feat(tuxmodem-phy): OFDM mode parameter table (Narrow/Mid/Wide)"
+git add sonde/crates/sonde-phy/src/ofdm_main/ sonde/crates/sonde-phy/src/lib.rs sonde/crates/sonde-phy/tests/ofdm_params.rs
+git commit -m "feat(sonde-phy): OFDM mode parameter table (Narrow/Mid/Wide)"
 ```
 
 #### Task 6.2: OFDM transmitter — bits to time-domain samples
 
 **Files:**
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/ofdm_main/transmitter.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/ofdm_tx.rs`
+- Modify: `sonde/crates/sonde-phy/src/ofdm_main/transmitter.rs`
+- Test: `sonde/crates/sonde-phy/tests/ofdm_tx.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::ofdm_main::ofdm_params::{OfdmParams, OfdmModeName};
-use tuxmodem_phy::ofdm_main::transmitter::OfdmTransmitter;
+use sonde_phy::ofdm_main::ofdm_params::{OfdmParams, OfdmModeName};
+use sonde_phy::ofdm_main::transmitter::OfdmTransmitter;
 
 #[test]
 fn ofdm_tx_emits_expected_sample_count() {
@@ -2011,7 +2011,7 @@ fn ofdm_tx_emits_expected_sample_count() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test ofdm_tx`
+Run: `cd sonde && cargo test -p sonde-phy --test ofdm_tx`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `ofdm_main/transmitter.rs`**
@@ -2096,29 +2096,29 @@ impl<'a> OfdmTransmitter<'a> {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test ofdm_tx`
+Run: `cd sonde && cargo test -p sonde-phy --test ofdm_tx`
 Expected: PASS, 1 test.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/ofdm_main/transmitter.rs tuxmodem/crates/tuxmodem-phy/tests/ofdm_tx.rs
-git commit -m "feat(tuxmodem-phy): OFDM transmitter (one-symbol modulate)"
+git add sonde/crates/sonde-phy/src/ofdm_main/transmitter.rs sonde/crates/sonde-phy/tests/ofdm_tx.rs
+git commit -m "feat(sonde-phy): OFDM transmitter (one-symbol modulate)"
 ```
 
 #### Task 6.3: OFDM equalizer + receiver — time-domain samples to LLR
 
 **Files:**
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/ofdm_main/equalizer.rs`
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/ofdm_main/receiver.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/ofdm_rx_clean.rs`
+- Modify: `sonde/crates/sonde-phy/src/ofdm_main/equalizer.rs`
+- Modify: `sonde/crates/sonde-phy/src/ofdm_main/receiver.rs`
+- Test: `sonde/crates/sonde-phy/tests/ofdm_rx_clean.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::ofdm_main::ofdm_params::{OfdmParams, OfdmModeName};
-use tuxmodem_phy::ofdm_main::transmitter::OfdmTransmitter;
-use tuxmodem_phy::ofdm_main::receiver::OfdmReceiver;
+use sonde_phy::ofdm_main::ofdm_params::{OfdmParams, OfdmModeName};
+use sonde_phy::ofdm_main::transmitter::OfdmTransmitter;
+use sonde_phy::ofdm_main::receiver::OfdmReceiver;
 
 #[test]
 fn ofdm_round_trip_clean_channel_zero_ber() {
@@ -2149,7 +2149,7 @@ fn ofdm_round_trip_clean_channel_zero_ber() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test ofdm_rx_clean`
+Run: `cd sonde && cargo test -p sonde-phy --test ofdm_rx_clean`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `ofdm_main/equalizer.rs`**
@@ -2269,14 +2269,14 @@ impl<'a> OfdmReceiver<'a> {
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test ofdm_rx_clean`
+Run: `cd sonde && cargo test -p sonde-phy --test ofdm_rx_clean`
 Expected: PASS, 1 test.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/ofdm_main/equalizer.rs tuxmodem/crates/tuxmodem-phy/src/ofdm_main/receiver.rs tuxmodem/crates/tuxmodem-phy/tests/ofdm_rx_clean.rs
-git commit -m "feat(tuxmodem-phy): OFDM equalizer + receiver (clean-channel round-trip)"
+git add sonde/crates/sonde-phy/src/ofdm_main/equalizer.rs sonde/crates/sonde-phy/src/ofdm_main/receiver.rs sonde/crates/sonde-phy/tests/ofdm_rx_clean.rs
+git commit -m "feat(sonde-phy): OFDM equalizer + receiver (clean-channel round-trip)"
 ```
 
 ### Phase 7 — Bit-loading + multi-mode ladder
@@ -2284,13 +2284,13 @@ git commit -m "feat(tuxmodem-phy): OFDM equalizer + receiver (clean-channel roun
 #### Task 7.1: Water-filling bit-loader
 
 **Files:**
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/ofdm_main/bit_loader.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/bit_loading_convergence.rs`
+- Modify: `sonde/crates/sonde-phy/src/ofdm_main/bit_loader.rs`
+- Test: `sonde/crates/sonde-phy/tests/bit_loading_convergence.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::ofdm_main::bit_loader::WaterfillingBitLoader;
+use sonde_phy::ofdm_main::bit_loader::WaterfillingBitLoader;
 
 #[test]
 fn high_snr_subcarriers_get_more_bits_than_low_snr() {
@@ -2323,7 +2323,7 @@ fn allocation_caps_at_max_bits_per_subcarrier() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test bit_loading_convergence`
+Run: `cd sonde && cargo test -p sonde-phy --test bit_loading_convergence`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `ofdm_main/bit_loader.rs`**
@@ -2375,14 +2375,14 @@ impl Default for WaterfillingBitLoader { fn default() -> Self { Self::new() } }
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test bit_loading_convergence`
+Run: `cd sonde && cargo test -p sonde-phy --test bit_loading_convergence`
 Expected: PASS, 3 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/ofdm_main/bit_loader.rs tuxmodem/crates/tuxmodem-phy/tests/bit_loading_convergence.rs
-git commit -m "feat(tuxmodem-phy): water-filling per-subcarrier bit-loader"
+git add sonde/crates/sonde-phy/src/ofdm_main/bit_loader.rs sonde/crates/sonde-phy/tests/bit_loading_convergence.rs
+git commit -m "feat(sonde-phy): water-filling per-subcarrier bit-loader"
 ```
 
 ### Phase 8 — Robustness floor (default: wide-band low-density OFDM)
@@ -2390,15 +2390,15 @@ git commit -m "feat(tuxmodem-phy): water-filling per-subcarrier bit-loader"
 #### Task 8.1: Wide-band low-density-constellation OFDM floor mode
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/src/robustness_floor/mod.rs`
-- Create: `tuxmodem/crates/tuxmodem-phy/src/robustness_floor/wideband_lowdensity.rs`
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/lib.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/floor_wideband.rs`
+- Create: `sonde/crates/sonde-phy/src/robustness_floor/mod.rs`
+- Create: `sonde/crates/sonde-phy/src/robustness_floor/wideband_lowdensity.rs`
+- Modify: `sonde/crates/sonde-phy/src/lib.rs`
+- Test: `sonde/crates/sonde-phy/tests/floor_wideband.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::robustness_floor::wideband_lowdensity::WidebandLowDensityFloor;
+use sonde_phy::robustness_floor::wideband_lowdensity::WidebandLowDensityFloor;
 
 #[test]
 fn floor_uses_bpsk_on_every_subcarrier() {
@@ -2435,7 +2435,7 @@ fn floor_clean_channel_round_trip() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test floor_wideband`
+Run: `cd sonde && cargo test -p sonde-phy --test floor_wideband`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `robustness_floor/mod.rs`**
@@ -2563,14 +2563,14 @@ pub mod robustness_floor;
 
 - [ ] **Step 7: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test floor_wideband`
+Run: `cd sonde && cargo test -p sonde-phy --test floor_wideband`
 Expected: PASS, 3 tests.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/robustness_floor/ tuxmodem/crates/tuxmodem-phy/src/lib.rs tuxmodem/crates/tuxmodem-phy/tests/floor_wideband.rs
-git commit -m "feat(tuxmodem-phy): wide-band low-density OFDM floor (default robustness mode)"
+git add sonde/crates/sonde-phy/src/robustness_floor/ sonde/crates/sonde-phy/src/lib.rs sonde/crates/sonde-phy/tests/floor_wideband.rs
+git commit -m "feat(sonde-phy): wide-band low-density OFDM floor (default robustness mode)"
 ```
 
 ### Phase 9 — Robustness floor (situational: narrow-FSK)
@@ -2578,13 +2578,13 @@ git commit -m "feat(tuxmodem-phy): wide-band low-density OFDM floor (default rob
 #### Task 9.1: Narrow-FSK noncoherent demod
 
 **Files:**
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/robustness_floor/narrow_fsk.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/floor_narrow_fsk.rs`
+- Modify: `sonde/crates/sonde-phy/src/robustness_floor/narrow_fsk.rs`
+- Test: `sonde/crates/sonde-phy/tests/floor_narrow_fsk.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::robustness_floor::narrow_fsk::NarrowFskFloor;
+use sonde_phy::robustness_floor::narrow_fsk::NarrowFskFloor;
 
 #[test]
 fn narrow_fsk_round_trip_clean_channel() {
@@ -2605,7 +2605,7 @@ fn narrow_fsk_bandwidth_fits_crowded_band_slot() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test floor_narrow_fsk`
+Run: `cd sonde && cargo test -p sonde-phy --test floor_narrow_fsk`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `robustness_floor/narrow_fsk.rs`**
@@ -2722,14 +2722,14 @@ impl Default for NarrowFskFloor { fn default() -> Self { Self::new() } }
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test floor_narrow_fsk`
+Run: `cd sonde && cargo test -p sonde-phy --test floor_narrow_fsk`
 Expected: PASS, 2 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/robustness_floor/narrow_fsk.rs tuxmodem/crates/tuxmodem-phy/tests/floor_narrow_fsk.rs
-git commit -m "feat(tuxmodem-phy): narrow-FSK situational floor mode"
+git add sonde/crates/sonde-phy/src/robustness_floor/narrow_fsk.rs sonde/crates/sonde-phy/tests/floor_narrow_fsk.rs
+git commit -m "feat(sonde-phy): narrow-FSK situational floor mode"
 ```
 
 ### Phase 10 — End-to-end PHY+FEC integration, mode router, FT-818 proxy
@@ -2737,14 +2737,14 @@ git commit -m "feat(tuxmodem-phy): narrow-FSK situational floor mode"
 #### Task 10.1: `coded_modulation.rs` — FecCodec trait + identity-FEC stub
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/src/coded_modulation.rs`
-- Modify: `tuxmodem/crates/tuxmodem-phy/src/lib.rs`
-- Test: `tuxmodem/crates/tuxmodem-phy/tests/coded_modulation.rs`
+- Create: `sonde/crates/sonde-phy/src/coded_modulation.rs`
+- Modify: `sonde/crates/sonde-phy/src/lib.rs`
+- Test: `sonde/crates/sonde-phy/tests/coded_modulation.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::coded_modulation::{CodeRate, FecCodec, IdentityFec};
+use sonde_phy::coded_modulation::{CodeRate, FecCodec, IdentityFec};
 
 #[test]
 fn identity_fec_round_trips_bits_unchanged() {
@@ -2769,7 +2769,7 @@ fn code_rate_one_indicates_no_redundancy() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test coded_modulation`
+Run: `cd sonde && cargo test -p sonde-phy --test coded_modulation`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `coded_modulation.rs`**
@@ -2777,7 +2777,7 @@ Expected: FAIL.
 ```rust
 //! Coded-modulation contracts.
 //!
-//! The FEC layer is a separate crate (`tuxmodem-fec`, subsystem #4).
+//! The FEC layer is a separate crate (`sonde-fec`, subsystem #4).
 //! PHY composes a `Box<dyn FecCodec>` per mode. Phase 10 lands the
 //! trait + an identity stub; the real FEC plugs in once #4's
 //! sibling plan lands. The soft-LLR-in / decoded-bytes-out contract
@@ -2822,25 +2822,25 @@ pub mod coded_modulation;
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test coded_modulation`
+Run: `cd sonde && cargo test -p sonde-phy --test coded_modulation`
 Expected: PASS, 2 tests.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/coded_modulation.rs tuxmodem/crates/tuxmodem-phy/src/lib.rs tuxmodem/crates/tuxmodem-phy/tests/coded_modulation.rs
-git commit -m "feat(tuxmodem-phy): FecCodec trait + IdentityFec stub (soft-LLR bus contract)"
+git add sonde/crates/sonde-phy/src/coded_modulation.rs sonde/crates/sonde-phy/src/lib.rs sonde/crates/sonde-phy/tests/coded_modulation.rs
+git commit -m "feat(sonde-phy): FecCodec trait + IdentityFec stub (soft-LLR bus contract)"
 ```
 
 #### Task 10.2: Mode router integration test
 
 **Files:**
-- Modify: `tuxmodem/crates/tuxmodem-phy/tests/mode_router.rs` (extend Phase 1's test file)
+- Modify: `sonde/crates/sonde-phy/tests/mode_router.rs` (extend Phase 1's test file)
 
 - [ ] **Step 1: Append the failing test**
 
 ```rust
-use tuxmodem_phy::modes::{ModeTable, ModeHint, ModeFamily};
+use sonde_phy::modes::{ModeTable, ModeHint, ModeFamily};
 
 #[test]
 fn weak_channel_snr_downgrades_main_auto_to_floor() {
@@ -2862,7 +2862,7 @@ fn strong_channel_snr_promotes_main_auto_to_widest_ofdm() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test mode_router`
+Run: `cd sonde && cargo test -p sonde-phy --test mode_router`
 Expected: FAIL on the new tests.
 
 - [ ] **Step 3: Extend `ModeTable::resolve` to honour the SNR hint**
@@ -2893,28 +2893,28 @@ Edit `src/modes.rs`:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test mode_router`
+Run: `cd sonde && cargo test -p sonde-phy --test mode_router`
 Expected: PASS, 5 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/src/modes.rs tuxmodem/crates/tuxmodem-phy/tests/mode_router.rs
-git commit -m "feat(tuxmodem-phy): SNR-aware ModeHint::MainAuto resolution"
+git add sonde/crates/sonde-phy/src/modes.rs sonde/crates/sonde-phy/tests/mode_router.rs
+git commit -m "feat(sonde-phy): SNR-aware ModeHint::MainAuto resolution"
 ```
 
 #### Task 10.3: FT-818 stock-SSB passband proxy test
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/tests/ft818_passband_proxy.rs`
+- Create: `sonde/crates/sonde-phy/tests/ft818_passband_proxy.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use tuxmodem_phy::audio_io::SAMPLE_RATE_HZ;
-use tuxmodem_phy::ofdm_main::ofdm_params::{OfdmParams, OfdmModeName};
-use tuxmodem_phy::ofdm_main::transmitter::OfdmTransmitter;
-use tuxmodem_phy::ofdm_main::receiver::OfdmReceiver;
+use sonde_phy::audio_io::SAMPLE_RATE_HZ;
+use sonde_phy::ofdm_main::ofdm_params::{OfdmParams, OfdmModeName};
+use sonde_phy::ofdm_main::transmitter::OfdmTransmitter;
+use sonde_phy::ofdm_main::receiver::OfdmReceiver;
 
 /// Synthesize a 300-2700 Hz audio-band brick-wall filter and apply it
 /// to OFDM TX samples; the RX side must still decode the "Wide" mode
@@ -2971,14 +2971,14 @@ fn bit_error_rate(a: &[u8], b: &[u8]) -> f32 {
 
 - [ ] **Step 2: Run test to verify it fails or passes**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test ft818_passband_proxy`
+Run: `cd sonde && cargo test -p sonde-phy --test ft818_passband_proxy`
 Expected: PASS if the OFDM-Wide sub-carrier set already sits inside 300-2700 Hz. If FAIL with BER too high, that surfaces a passband-fit defect — narrow the Wide mode's `bandwidth_hz` constant in `ofdm_params.rs` and re-run until PASS. Document the empirically-pinned final bandwidth in the commit message.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/tests/ft818_passband_proxy.rs
-git commit -m "test(tuxmodem-phy): FT-818 SSB passband proxy gate for OFDM-Wide"
+git add sonde/crates/sonde-phy/tests/ft818_passband_proxy.rs
+git commit -m "test(sonde-phy): FT-818 SSB passband proxy gate for OFDM-Wide"
 ```
 
 ### Phase 11 — Channel-sim sweeps + characterization + ARDOP-floor gate
@@ -2986,7 +2986,7 @@ git commit -m "test(tuxmodem-phy): FT-818 SSB passband proxy gate for OFDM-Wide"
 #### Task 11.1: Channel-sim adapter
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/tests/sim_adapter.rs`
+- Create: `sonde/crates/sonde-phy/tests/sim_adapter.rs`
 
 - [ ] **Step 1: Adapter scaffold**
 
@@ -3017,14 +3017,14 @@ git commit -m "test(tuxmodem-phy): FT-818 SSB passband proxy gate for OFDM-Wide"
 - [ ] **Step 2: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/tests/sim_adapter.rs
-git commit -m "test(tuxmodem-phy): channel-sim adapter scaffold"
+git add sonde/crates/sonde-phy/tests/sim_adapter.rs
+git commit -m "test(sonde-phy): channel-sim adapter scaffold"
 ```
 
 #### Task 11.2: BER vs. SNR characterization example
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/examples/ber_vs_snr_sweep.rs`
+- Create: `sonde/crates/sonde-phy/examples/ber_vs_snr_sweep.rs`
 
 - [ ] **Step 1: Write the example**
 
@@ -3038,14 +3038,14 @@ git commit -m "test(tuxmodem-phy): channel-sim adapter scaffold"
 //! example runs against AWGN-only (a placeholder). When #1 lands,
 //! swap `awgn_channel` for `hf_channel_sim::Channel::watterson(...)`.
 
-use tuxmodem_phy::audio_io::SAMPLE_RATE_HZ;
-use tuxmodem_phy::ofdm_main::ofdm_params::{OfdmParams, OfdmModeName};
-use tuxmodem_phy::ofdm_main::transmitter::OfdmTransmitter;
-use tuxmodem_phy::ofdm_main::receiver::OfdmReceiver;
-use tuxmodem_phy::robustness_floor::wideband_lowdensity::WidebandLowDensityFloor;
+use sonde_phy::audio_io::SAMPLE_RATE_HZ;
+use sonde_phy::ofdm_main::ofdm_params::{OfdmParams, OfdmModeName};
+use sonde_phy::ofdm_main::transmitter::OfdmTransmitter;
+use sonde_phy::ofdm_main::receiver::OfdmReceiver;
+use sonde_phy::robustness_floor::wideband_lowdensity::WidebandLowDensityFloor;
 
 fn main() {
-    println!("# tuxmodem-phy BER vs SNR sweep");
+    println!("# sonde-phy BER vs SNR sweep");
     println!("# sample_rate_hz = {}", SAMPLE_RATE_HZ);
     println!("mode,snr_db,ber");
 
@@ -3133,33 +3133,33 @@ fn sweep_floor(floor: &WidebandLowDensityFloor, snr_db: f32) -> f32 {
 
 - [ ] **Step 2: Build + run the example**
 
-Run: `cd tuxmodem && cargo run --release --example ber_vs_snr_sweep -p tuxmodem-phy`
+Run: `cd sonde && cargo run --release --example ber_vs_snr_sweep -p sonde-phy`
 Expected: stdout containing a CSV-ish BER table per mode + SNR step. Capture the output (the agent appends it to the commit message body for the historical record).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/examples/ber_vs_snr_sweep.rs
-git commit -m "feat(tuxmodem-phy): BER vs SNR sweep example (AWGN until #1 lands)"
+git add sonde/crates/sonde-phy/examples/ber_vs_snr_sweep.rs
+git commit -m "feat(sonde-phy): BER vs SNR sweep example (AWGN until #1 lands)"
 ```
 
 #### Task 11.3: Wide-band low-density floor "beats ARDOP narrowest" gate test
 
 **Files:**
-- Create: `tuxmodem/crates/tuxmodem-phy/tests/wideband_floor_vs_ardop_target.rs`
+- Create: `sonde/crates/sonde-phy/tests/wideband_floor_vs_ardop_target.rs`
 
 - [ ] **Step 1: Write the test**
 
 ```rust
 //! Acceptance gate per overview §0:
-//! "Decode threshold — beat ARDOP at the noise-floor case. Tuxmodem's
+//! "Decode threshold — beat ARDOP at the noise-floor case. Sonde's
 //! wide-band noise-floor mode targets stronger SNR-floor performance
 //! than ARDOP's narrowest mode at the same per-Hz noise floor."
 //!
 //! ARDOP's narrowest mode is publicly advertised as 200-Hz BPSK at
 //! ~0 dB SNR-floor (per `docs/research/modem-foundations.md` §6.2,
 //! noting that we cite the *advertised* spec — operator-observable —
-//! not internal performance figures). The tuxmodem wide-band
+//! not internal performance figures). The sonde wide-band
 //! low-density floor occupies ~2300 Hz so its aggregate-signal SNR
 //! advantage at the SAME per-Hz noise floor is ~10 log10(2300/200)
 //! ≈ 10.6 dB. We assert that at -8 dB per-Hz SNR the floor still
@@ -3170,7 +3170,7 @@ git commit -m "feat(tuxmodem-phy): BER vs SNR sweep example (AWGN until #1 lands
 //! Phase 11 follow-up will re-run under F.520 "moderate" + "poor"
 //! and gate against the operationally-relevant numbers.
 
-use tuxmodem_phy::robustness_floor::wideband_lowdensity::WidebandLowDensityFloor;
+use sonde_phy::robustness_floor::wideband_lowdensity::WidebandLowDensityFloor;
 
 #[test]
 #[ignore] // un-ignore once the FEC layer is wired in via #4
@@ -3206,43 +3206,43 @@ fn awgn(signal: &[f32], snr_db: f32, seed: u64) -> Vec<f32> {
 
 - [ ] **Step 2: Run with `--ignored` to confirm the gate compiles**
 
-Run: `cd tuxmodem && cargo test -p tuxmodem-phy --test wideband_floor_vs_ardop_target -- --ignored`
+Run: `cd sonde && cargo test -p sonde-phy --test wideband_floor_vs_ardop_target -- --ignored`
 Expected: the test EITHER passes (great — un-ignore in a follow-up commit once FEC lands) or fails with a documented BER number (acceptable; the test is `#[ignore]` until FEC is wired).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tuxmodem/crates/tuxmodem-phy/tests/wideband_floor_vs_ardop_target.rs
-git commit -m "test(tuxmodem-phy): ARDOP-narrowest competence gate (ignored until FEC)"
+git add sonde/crates/sonde-phy/tests/wideband_floor_vs_ardop_target.rs
+git commit -m "test(sonde-phy): ARDOP-narrowest competence gate (ignored until FEC)"
 ```
 
 #### Task 11.4: Workspace-wide build + clippy + final commit
 
 - [ ] **Step 1: Run full test suite**
 
-Run: `cd tuxmodem && cargo test --workspace`
+Run: `cd sonde && cargo test --workspace`
 Expected: ALL PASS except `wideband_floor_vs_ardop_target` (which is `#[ignore]`).
 
 - [ ] **Step 2: Run clippy**
 
-Run: `cd tuxmodem && cargo clippy --workspace --all-targets -- -D warnings`
-Expected: PASS with no warnings. Fix any lint issues with the minimum-touch change set; commit fixes as `chore(tuxmodem-phy): clippy fix-ups`.
+Run: `cd sonde && cargo clippy --workspace --all-targets -- -D warnings`
+Expected: PASS with no warnings. Fix any lint issues with the minimum-touch change set; commit fixes as `chore(sonde-phy): clippy fix-ups`.
 
 - [ ] **Step 3: Build release**
 
-Run: `cd tuxmodem && cargo build --workspace --release`
+Run: `cd sonde && cargo build --workspace --release`
 Expected: PASS.
 
 - [ ] **Step 4: Commit any clippy fixes + ship marker**
 
 ```bash
-git add tuxmodem/
-git commit -m "chore(tuxmodem-phy): green workspace build + clippy clean"
+git add sonde/
+git commit -m "chore(sonde-phy): green workspace build + clippy clean"
 ```
 
 - [ ] **Step 5: Final status check**
 
-Run: `cd tuxmodem && cargo test --workspace 2>&1 | tail -20`
+Run: `cd sonde && cargo test --workspace 2>&1 | tail -20`
 Expected: summary "test result: ok" for every test binary except the one ignored gate.
 
 ---
@@ -3265,8 +3265,8 @@ Overview multi-axis success criteria: documented in this plan's `README.md` refe
 ADR 0014 bright line: every task that writes DSP code cites only foundation-doc primitives (Cimini OFDM, DSL bit-loading, FT8 conceptual primitive for narrow-FSK only). No examination of VARA, ARDOP, FLDigi, Trimode internals.
 
 **Cross-subsystem boundaries are frozen at:**
-- `tuxmodem-phy::phy_api::{PhyTransport, RxFrame, TxToken, ChannelQualityReport, ModeHint}` — provides #5/#7 their consumption surface.
-- `tuxmodem-phy::coded_modulation::FecCodec` — consumed from #4.
+- `sonde-phy::phy_api::{PhyTransport, RxFrame, TxToken, ChannelQualityReport, ModeHint}` — provides #5/#7 their consumption surface.
+- `sonde-phy::coded_modulation::FecCodec` — consumed from #4.
 - `tests/sim_adapter.rs` — single integration point for #1.
 
 **Deferred to later phases / not in this plan's scope:**

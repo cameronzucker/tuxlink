@@ -63,12 +63,12 @@ input, addressed correctly, sequence-numbered).
 4. **CRC for frame integrity.** Standard. Polynomial choice matters but
    is well-studied (CRC-16-CCITT, CRC-32, etc.).
 5. **Connection-oriented vs. connectionless framing.** AX.25 supports
-   both; ARDOP is connection-oriented. tuxmodem will likely support both,
+   both; ARDOP is connection-oriented. sonde will likely support both,
    with connection-oriented (ARQ-protected) being the common case and
    connectionless (bare frames, no ARQ) for broadcast / beaconing.
 6. **Addressing scheme.** Source + destination callsign minimum;
    AX.25-style "digipeater path" support is more complex but enables
-   relayed delivery (relevant for tuxmodem's potential MAC role in
+   relayed delivery (relevant for sonde's potential MAC role in
    non-CMS networks).
 7. **No examination of VARA's MAC** (ADR 0014). Less of a temptation
    here than for PHY/FEC, but the rule stands.
@@ -79,7 +79,7 @@ input, addressed correctly, sequence-numbered).
 |---|---|---|
 | §5.Q1 | Frame layout — header / payload / trailer composition? | First architectural choice. |
 | §5.Q2 | Station identification — explicit field per frame, or interval-based? | Affects header overhead + Part 97 compliance verification. |
-| §5.Q3 | Addressing scheme — callsign-only, callsign+SSID (AX.25 style), or arbitrary opaque addresses? | tuxmodem may need to interop with non-amateur uses long-term; opaque addresses give more flexibility. |
+| §5.Q3 | Addressing scheme — callsign-only, callsign+SSID (AX.25 style), or arbitrary opaque addresses? | sonde may need to interop with non-amateur uses long-term; opaque addresses give more flexibility. |
 | §5.Q4 | Fixed vs. variable frame size? | Tradeoff per §3.3. |
 | §5.Q5 | CRC polynomial and length? | CRC-16-CCITT is the AX.25 default; CRC-32 is stronger. |
 | §5.Q6 | Connection-oriented vs. connectionless framing — both supported? | Probably yes; details in subsystem-canonical spec. |

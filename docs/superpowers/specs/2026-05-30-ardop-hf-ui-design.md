@@ -14,7 +14,7 @@ disconnect — entirely from the UI, with no CLI fallback for routine use.
 ## Non-goals
 
 - **Rig control (CAT)** — ardopcf's `-p RTS PTT` MVP only; Hamlib comes via a
-  separate `tux-rig` crate per ADR 0015. The UI surfaces a PTT serial port
+  separate `sonde-rig` crate per ADR 0015. The UI surfaces a PTT serial port
   setting only.
 - **VARA HF / Dire Wolf / first-party-modem UI** — the dock is designed to
   generalize across `ModemTransport` implementations, but only ARDOP is wired
@@ -37,7 +37,7 @@ and CHANGELOG v0.2.0:
    modem down before spinning the other up. This is invisible to the UI
    except as a transitional state in the dock.
 3. **Generic `ModemTransport` abstraction** — ARDOP is the first concrete; the
-   dock UX should be transport-agnostic (Dire Wolf, VARA, tuxmodem will plug
+   dock UX should be transport-agnostic (Dire Wolf, VARA, sonde will plug
    in with the same surface). Concretely: the dock's state grid, meters, and
    mono status block are driven by a `ModemStatusFeed` shape, not by ARDOP
    specifics.

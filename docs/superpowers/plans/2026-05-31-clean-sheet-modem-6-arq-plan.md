@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a mode-conditional ARQ subsystem for tuxmodem that runs selective-repeat sliding-window ARQ above the bit-adaptive OFDM PHY family AND retransmit-the-whole-message (no frame-level ARQ) semantics in the robustness-modes-family floor, with the mode boundary driven by an explicit per-connection `ArqProfile` set by subsystem #7 (link adaptation). The subsystem ships as a pure-software Rust crate (`tuxmodem-arq`) testable in isolation against mocked MAC, FEC, and link-adaptation peers; no on-air work, no RF, plan-only execution.
+**Goal:** Build a mode-conditional ARQ subsystem for sonde that runs selective-repeat sliding-window ARQ above the bit-adaptive OFDM PHY family AND retransmit-the-whole-message (no frame-level ARQ) semantics in the robustness-modes-family floor, with the mode boundary driven by an explicit per-connection `ArqProfile` set by subsystem #7 (link adaptation). The subsystem ships as a pure-software Rust crate (`sonde-arq`) testable in isolation against mocked MAC, FEC, and link-adaptation peers; no on-air work, no RF, plan-only execution.
 
-**Architecture:** A new in-tree-then-extracted Rust crate `crates/tuxmodem-arq/` under tuxmodem's workspace (the workspace itself is built incrementally per the program's DSP-first sequencing; this plan creates the workspace if it doesn't already exist). The crate exposes one top-level `ArqEndpoint` type that owns per-connection state and operates in either of two `ArqMode` variants — `Windowed` (selective-repeat sliding-window for the OFDM family) or `MessageRetransmit` (FT8-pattern whole-message resend with no per-frame ACK/NACK, for floor modes). Mode is set at connection setup from `LinkAdaptationHint` and may be switched mid-connection via an explicit `ArqEndpoint::set_mode(new_mode)` call that drains in-flight state cleanly. ARQ is mocked-MAC- and mocked-FEC-driven for tests: the crate consumes a `MacPeer` trait (frame send/receive, sequence numbering surfaced from #5) and a `FecResidualSignal` trait (provides per-decode-attempt outcome class — INTACT / CORRECTED / RESIDUAL-ERROR / UNDECODABLE — from #4) and emits a `LinkAdaptationStats` stream (FER, retransmit count, in-flight depth, RTT estimate) consumed by #7 and presents an in-order byte stream to #8 via a `HostStream: Read + Write` adapter. **Long HF RTT is the central design constraint** — windows are wide (default 64 frames for Windowed mode), timeouts are RTT-tracked with explicit slow-floor, NACKs are rate-limited via reverse-channel piggybacking, and the `MessageRetransmit` floor mode dispenses with per-frame ARQ entirely so it doesn't pay the RTT cost on a regime where it can't be afforded.
+**Architecture:** A new in-tree-then-extracted Rust crate `crates/sonde-arq/` under sonde's workspace (the workspace itself is built incrementally per the program's DSP-first sequencing; this plan creates the workspace if it doesn't already exist). The crate exposes one top-level `ArqEndpoint` type that owns per-connection state and operates in either of two `ArqMode` variants — `Windowed` (selective-repeat sliding-window for the OFDM family) or `MessageRetransmit` (FT8-pattern whole-message resend with no per-frame ACK/NACK, for floor modes). Mode is set at connection setup from `LinkAdaptationHint` and may be switched mid-connection via an explicit `ArqEndpoint::set_mode(new_mode)` call that drains in-flight state cleanly. ARQ is mocked-MAC- and mocked-FEC-driven for tests: the crate consumes a `MacPeer` trait (frame send/receive, sequence numbering surfaced from #5) and a `FecResidualSignal` trait (provides per-decode-attempt outcome class — INTACT / CORRECTED / RESIDUAL-ERROR / UNDECODABLE — from #4) and emits a `LinkAdaptationStats` stream (FER, retransmit count, in-flight depth, RTT estimate) consumed by #7 and presents an in-order byte stream to #8 via a `HostStream: Read + Write` adapter. **Long HF RTT is the central design constraint** — windows are wide (default 64 frames for Windowed mode), timeouts are RTT-tracked with explicit slow-floor, NACKs are rate-limited via reverse-channel piggybacking, and the `MessageRetransmit` floor mode dispenses with per-frame ARQ entirely so it doesn't pay the RTT cost on a regime where it can't be afforded.
 
-**Tech Stack:** Rust 2021 edition, no_std-compatible core with `std`-feature gate (the crate must run in tuxmodem-the-daemon and eventually in a no_std embedded target). Pure-Rust deps only (AGPLv3-compatible per overview §5.A.4): `bitvec = "1"` for sequence-window bitmaps, `rand = "0.8"` + `rand_pcg = "0.3"` for deterministic test scenario generation, `tokio = { version = "1", features = ["sync", "time", "macros"] }` behind a `std` feature gate for the async runtime tests, `tracing = "0.1"` for structured logging. No GPL-only deps. No deps that pull in any HF-modem prior art. Tests use `proptest = "1"` for state-machine property tests + `criterion = "0.5"` for window-throughput benchmarks. The channel-simulator crate (subsystem #1) is consumed as a dev-dependency for end-to-end "PHY-to-PHY through impaired channel" tests in Phase 6.
+**Tech Stack:** Rust 2021 edition, no_std-compatible core with `std`-feature gate (the crate must run in sonde-the-daemon and eventually in a no_std embedded target). Pure-Rust deps only (AGPLv3-compatible per overview §5.A.4): `bitvec = "1"` for sequence-window bitmaps, `rand = "0.8"` + `rand_pcg = "0.3"` for deterministic test scenario generation, `tokio = { version = "1", features = ["sync", "time", "macros"] }` behind a `std` feature gate for the async runtime tests, `tracing = "0.1"` for structured logging. No GPL-only deps. No deps that pull in any HF-modem prior art. Tests use `proptest = "1"` for state-machine property tests + `criterion = "0.5"` for window-throughput benchmarks. The channel-simulator crate (subsystem #1) is consumed as a dev-dependency for end-to-end "PHY-to-PHY through impaired channel" tests in Phase 6.
 
 **Authority for behaviour:** Spec at `docs/superpowers/specs/2026-05-31-clean-sheet-modem-6-arq.md` and overview §5.A.2 / §5.A.3. Foundation citations §4.1 (Lin/Costello *Error Control Coding* — selective-repeat + HARQ taxonomy; Bertsekas/Gallager *Data Networks* — throughput-vs-window analysis) and §6.1 (K1JT FT4/FT8 paper — *conceptual primitive* of whole-message resend, NOT specific timing/parameters). No examination of VARA, ARDOP frame-level ARQ implementations, AX.25 LAPB internals, Winlink B2F resync, or any OS-specific TCP ARQ implementation per ADR 0014. Each behavioural decision below cites the open primitive it derives from; if you find yourself wanting to check "how X does it," STOP.
 
@@ -23,7 +23,7 @@
 
 These APIs are settled by this plan. Subsystems #4 / #5 / #7 / #8 plans must match this surface; if a sibling subagent has chosen incompatible names, the names get reconciled at the integration phase (Phase 7), but the *shape* (what information flows in which direction, at what cadence) is fixed here.
 
-**Run tests with:** `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml` (absolute manifest path per the worktree path-pinning convention from `feedback_pin_paths_in_worktree_sessions`).
+**Run tests with:** `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml` (absolute manifest path per the worktree path-pinning convention from `feedback_pin_paths_in_worktree_sessions`).
 
 ---
 
@@ -31,24 +31,24 @@ These APIs are settled by this plan. Subsystems #4 / #5 / #7 / #8 plans must mat
 
 | File | Responsibility |
 |---|---|
-| `crates/tuxmodem-arq/Cargo.toml` | Crate manifest; AGPLv3-only license declaration; dep pins |
-| `crates/tuxmodem-arq/src/lib.rs` | Crate root; re-exports public types; feature-gates `std` vs no_std |
-| `crates/tuxmodem-arq/src/seq.rs` | `SeqNum` with mod-2^N wraparound, distance-aware comparison; `SeqWindow` ring buffer |
-| `crates/tuxmodem-arq/src/frame.rs` | `MacFrame`, `AckRange`, `MacFlags`, `MacBackpressure`, `FecOutcome` — the upstream interface types |
-| `crates/tuxmodem-arq/src/profile.rs` | `ArqMode { Windowed, MessageRetransmit }`, `ArqProfile`, `LinkAdaptationHint` — config + mode switching |
-| `crates/tuxmodem-arq/src/rtt.rs` | Smoothed RTT estimator (Jacobson/Karels-style — primitive only; reinvented from textbook formulae) with HF slow-floor |
-| `crates/tuxmodem-arq/src/windowed.rs` | Selective-repeat sliding-window ARQ state machine for `ArqMode::Windowed` (OFDM-family modes) |
-| `crates/tuxmodem-arq/src/message_retransmit.rs` | FT8-pattern whole-message resend state machine for `ArqMode::MessageRetransmit` (floor modes) |
-| `crates/tuxmodem-arq/src/endpoint.rs` | `ArqEndpoint` — owns connection state, dispatches to the active mode's state machine, exposes mode-switching |
-| `crates/tuxmodem-arq/src/stats.rs` | `LinkAdaptationStats` publisher + `ThroughputMetrics` aggregator |
-| `crates/tuxmodem-arq/src/host_stream.rs` | `HostStream: Read + Write` adapter presenting the ARQ-corrected byte stream to subsystem #8 |
-| `crates/tuxmodem-arq/src/peers.rs` | `MacPeer` + `FecResidualSignal` traits (consumer-side mock helpers under `cfg(test)` + the trait defs) |
-| `crates/tuxmodem-arq/tests/mock_peer.rs` | In-memory MAC peer + scripted FEC outcomes for integration tests |
-| `crates/tuxmodem-arq/tests/windowed_property.rs` | Proptest property tests for Windowed mode (no-loss, lossy, burst-error, reorder, wrap) |
-| `crates/tuxmodem-arq/tests/message_retransmit_property.rs` | Proptest property tests for MessageRetransmit mode |
-| `crates/tuxmodem-arq/tests/mode_switch.rs` | Mode-switching scenarios (Windowed → MessageRetransmit and back, with in-flight frames) |
-| `crates/tuxmodem-arq/tests/channel_sim_e2e.rs` | End-to-end ARQ-over-channel-sim integration test (dev-dep on subsystem #1) |
-| `crates/tuxmodem-arq/benches/throughput.rs` | Criterion benchmark — throughput vs. RTT × loss-rate × window-size for both modes |
+| `crates/sonde-arq/Cargo.toml` | Crate manifest; AGPLv3-only license declaration; dep pins |
+| `crates/sonde-arq/src/lib.rs` | Crate root; re-exports public types; feature-gates `std` vs no_std |
+| `crates/sonde-arq/src/seq.rs` | `SeqNum` with mod-2^N wraparound, distance-aware comparison; `SeqWindow` ring buffer |
+| `crates/sonde-arq/src/frame.rs` | `MacFrame`, `AckRange`, `MacFlags`, `MacBackpressure`, `FecOutcome` — the upstream interface types |
+| `crates/sonde-arq/src/profile.rs` | `ArqMode { Windowed, MessageRetransmit }`, `ArqProfile`, `LinkAdaptationHint` — config + mode switching |
+| `crates/sonde-arq/src/rtt.rs` | Smoothed RTT estimator (Jacobson/Karels-style — primitive only; reinvented from textbook formulae) with HF slow-floor |
+| `crates/sonde-arq/src/windowed.rs` | Selective-repeat sliding-window ARQ state machine for `ArqMode::Windowed` (OFDM-family modes) |
+| `crates/sonde-arq/src/message_retransmit.rs` | FT8-pattern whole-message resend state machine for `ArqMode::MessageRetransmit` (floor modes) |
+| `crates/sonde-arq/src/endpoint.rs` | `ArqEndpoint` — owns connection state, dispatches to the active mode's state machine, exposes mode-switching |
+| `crates/sonde-arq/src/stats.rs` | `LinkAdaptationStats` publisher + `ThroughputMetrics` aggregator |
+| `crates/sonde-arq/src/host_stream.rs` | `HostStream: Read + Write` adapter presenting the ARQ-corrected byte stream to subsystem #8 |
+| `crates/sonde-arq/src/peers.rs` | `MacPeer` + `FecResidualSignal` traits (consumer-side mock helpers under `cfg(test)` + the trait defs) |
+| `crates/sonde-arq/tests/mock_peer.rs` | In-memory MAC peer + scripted FEC outcomes for integration tests |
+| `crates/sonde-arq/tests/windowed_property.rs` | Proptest property tests for Windowed mode (no-loss, lossy, burst-error, reorder, wrap) |
+| `crates/sonde-arq/tests/message_retransmit_property.rs` | Proptest property tests for MessageRetransmit mode |
+| `crates/sonde-arq/tests/mode_switch.rs` | Mode-switching scenarios (Windowed → MessageRetransmit and back, with in-flight frames) |
+| `crates/sonde-arq/tests/channel_sim_e2e.rs` | End-to-end ARQ-over-channel-sim integration test (dev-dep on subsystem #1) |
+| `crates/sonde-arq/benches/throughput.rs` | Criterion benchmark — throughput vs. RTT × loss-rate × window-size for both modes |
 
 `endpoint.rs` is the only file that knits the two state machines together; it gets the cross-provider Codex round at the end of Phase 5 (per the project's adversarial-review discipline).
 
@@ -59,7 +59,7 @@ These APIs are settled by this plan. Subsystems #4 / #5 / #7 / #8 plans must mat
 These are the choices this plan freezes for subsystem #6. Decisions explicitly deferred to per-mode tuning or to integration phase are listed in the next subsection.
 
 1. **ARQ flavor above-floor (§6.Q1):** **selective-repeat sliding-window** ARQ for `ArqMode::Windowed`. Go-back-N is ruled out because HF burst errors at the deep-fade scale would waste an entire window per burst; hybrid (Stutter-ARQ / cumulative-ACK fallback) is ruled out for v0.5+ because the implementation complexity isn't earned by the throughput delta in the regime where MessageRetransmit takes over anyway. Primitive: Lin/Costello §22 (foundation §4.1), Bertsekas/Gallager §2.4 throughput-vs-window analysis. NOT derived from any specific HF-protocol implementation.
-2. **Floor-mode ARQ (§6.Q1 floor variant):** **no frame-level ARQ.** `ArqMode::MessageRetransmit` operates the FT8-conceptual pattern — the SENDER repeats the whole message N times (configurable, default 3), the RECEIVER tries to decode each repetition independently, success at any repetition completes the transfer, no NACK exists. Primitive: K1JT FT4/FT8 paper (foundation §6.1) describes this as a generic "no-ARQ weak-signal" pattern; tuxmodem reinvents the pattern conceptually without inheriting FT8's timing, frame layout, or scheduling.
+2. **Floor-mode ARQ (§6.Q1 floor variant):** **no frame-level ARQ.** `ArqMode::MessageRetransmit` operates the FT8-conceptual pattern — the SENDER repeats the whole message N times (configurable, default 3), the RECEIVER tries to decode each repetition independently, success at any repetition completes the transfer, no NACK exists. Primitive: K1JT FT4/FT8 paper (foundation §6.1) describes this as a generic "no-ARQ weak-signal" pattern; sonde reinvents the pattern conceptually without inheriting FT8's timing, frame layout, or scheduling.
 3. **Window size (§6.Q2):** **negotiated within a fixed envelope.** Default 64; min 8; max 256. The 8-bit sequence space chosen in Phase 1 supports up to 127 in-flight (mod-256 half-window). 64 is calibrated for 4-second HF RTT × 16-Hz frame rate (OFDM-family typical) keeping the pipe full. Negotiation happens at connection setup via the host protocol; mid-connection adjustment happens via `LinkAdaptationHint::recommended_window`. Window adjustment never shrinks below in-flight depth.
 4. **ACK style (§6.Q3):** **piggybacked ACK on next data frame in the reverse direction PLUS standalone ACK frame when reverse channel is idle.** The `MacFrame::ack_piggyback: Option<AckRange>` field carries an `AckRange { acked_through: SeqNum, sack_bitmap: BitVec }` — the cumulative-ACK-plus-SACK-bitmap shape, primitive from TCP RFC theory. Standalone ACK is sent when `time_since_last_reverse_frame > T_ACK_DELAY` (default 1 second for HF) AND there's outstanding unacked-by-peer state. This bounds ACK latency without flooding the reverse channel.
 5. **NACK supported (§6.Q4):** **YES, but only as SACK gaps in the AckRange, never as a standalone NACK frame.** Explicit standalone NACKs are ruled out — they cost reverse bandwidth and the SACK bitmap already conveys the same information. This avoids the "NACK storm" failure mode called out in the spec §8.
@@ -108,35 +108,35 @@ The plan has **7 phases**, each producing testable software that can be reviewed
 | 6 | LinkAdaptationStats publisher + HostStream byte-stream adapter |
 | 7 | Channel-sim end-to-end integration + criterion benchmarks + cross-provider Codex adrev |
 
-Each phase ends with a commit, a quality-gate run (`cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml` + `cargo clippy --all-targets`), and a phase-boundary checkpoint per the executing-plans discipline.
+Each phase ends with a commit, a quality-gate run (`cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml` + `cargo clippy --all-targets`), and a phase-boundary checkpoint per the executing-plans discipline.
 
 ---
 
 ### Phase 1 — Crate scaffolding + sequence primitives + RTT estimator
 
 **Files:**
-- Create: `crates/tuxmodem-arq/Cargo.toml`
-- Create: `crates/tuxmodem-arq/src/lib.rs`
-- Create: `crates/tuxmodem-arq/src/seq.rs`
-- Create: `crates/tuxmodem-arq/src/rtt.rs`
+- Create: `crates/sonde-arq/Cargo.toml`
+- Create: `crates/sonde-arq/src/lib.rs`
+- Create: `crates/sonde-arq/src/seq.rs`
+- Create: `crates/sonde-arq/src/rtt.rs`
 
 #### Task 1.1: Workspace + crate scaffolding
 
-- [ ] **Step 1: Verify tuxmodem workspace exists at repo root**
+- [ ] **Step 1: Verify sonde workspace exists at repo root**
 
 Run: `ls crates/ 2>&1 || echo "no workspace yet"`
-If "no workspace yet": create `crates/` directory and add a workspace `Cargo.toml` at the repo root referencing it. If the workspace already exists (because sibling subagents may have scaffolded one), add `tuxmodem-arq` to the existing `[workspace.members]` list. **Coordination note:** subsystems #1, #3, #4, #5, #7, #8 plans run in parallel and may also scaffold the workspace; the integration-phase reconciliation handles any duplicate workspace setup. For this plan, assume the workspace doesn't exist and create it; the merge step will dedupe.
+If "no workspace yet": create `crates/` directory and add a workspace `Cargo.toml` at the repo root referencing it. If the workspace already exists (because sibling subagents may have scaffolded one), add `sonde-arq` to the existing `[workspace.members]` list. **Coordination note:** subsystems #1, #3, #4, #5, #7, #8 plans run in parallel and may also scaffold the workspace; the integration-phase reconciliation handles any duplicate workspace setup. For this plan, assume the workspace doesn't exist and create it; the merge step will dedupe.
 
-- [ ] **Step 2: Write `crates/tuxmodem-arq/Cargo.toml`**
+- [ ] **Step 2: Write `crates/sonde-arq/Cargo.toml`**
 
 ```toml
 [package]
-name = "tuxmodem-arq"
+name = "sonde-arq"
 version = "0.0.1"
 edition = "2021"
 license = "AGPL-3.0-only"
-description = "Mode-conditional ARQ subsystem for the tuxmodem clean-sheet HF data modem. Selective-repeat sliding-window above the OFDM family; FT8-pattern whole-message retransmit at the robustness floor."
-repository = "https://github.com/cameronzucker/tuxmodem"
+description = "Mode-conditional ARQ subsystem for the sonde clean-sheet HF data modem. Selective-repeat sliding-window above the OFDM family; FT8-pattern whole-message retransmit at the robustness floor."
+repository = "https://github.com/cameronzucker/sonde"
 publish = false
 
 [features]
@@ -159,10 +159,10 @@ name = "throughput"
 harness = false
 ```
 
-- [ ] **Step 3: Write `crates/tuxmodem-arq/src/lib.rs`**
+- [ ] **Step 3: Write `crates/sonde-arq/src/lib.rs`**
 
 ```rust
-//! tuxmodem-arq — mode-conditional ARQ subsystem for the tuxmodem clean-sheet HF modem.
+//! sonde-arq — mode-conditional ARQ subsystem for the sonde clean-sheet HF modem.
 //!
 //! Per subsystem #6 spec (docs/superpowers/specs/2026-05-31-clean-sheet-modem-6-arq.md)
 //! and overview §5.A.2: ARQ is mode-conditional. Above the robustness-modes-family floor,
@@ -206,24 +206,24 @@ pub use stats::{LinkAdaptationStats, ThroughputMetrics};
 
 - [ ] **Step 4: Cargo workspace registration**
 
-In the repo-root `Cargo.toml` `[workspace]` section, add `"crates/tuxmodem-arq"` to `members`. If no workspace exists yet, create one:
+In the repo-root `Cargo.toml` `[workspace]` section, add `"crates/sonde-arq"` to `members`. If no workspace exists yet, create one:
 
 ```toml
 [workspace]
 resolver = "2"
-members = ["crates/tuxmodem-arq"]
+members = ["crates/sonde-arq"]
 ```
 
 - [ ] **Step 5: Verify it builds**
 
-Run: `cargo build -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml`
+Run: `cargo build -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml`
 Expected: PASS (warnings allowed — empty modules will warn about unused `pub`).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Cargo.toml crates/tuxmodem-arq/
-git commit -m "feat(arq): scaffold tuxmodem-arq crate (subsystem #6)
+git add Cargo.toml crates/sonde-arq/
+git commit -m "feat(arq): scaffold sonde-arq crate (subsystem #6)
 
 Crate scaffolding for the mode-conditional ARQ subsystem per overview §5.A.2.
 AGPLv3-only license, pure-Rust deps, std-feature-gated for future no_std.
@@ -238,11 +238,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 1.2: SeqNum mod-2^8 wraparound type + distance comparison
 
 **Files:**
-- Modify: `crates/tuxmodem-arq/src/seq.rs`
+- Modify: `crates/sonde-arq/src/seq.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/src/seq.rs`:
+In `crates/sonde-arq/src/seq.rs`:
 
 ```rust
 //! Sequence number primitives. ARQ uses 8-bit sequence numbers (256 distinct values,
@@ -313,7 +313,7 @@ mod tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml seq::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml seq::`
 Expected: this *passes* on first compile because the struct + impl are written in Step 1. To make Step 2 a genuine RED step, write only the `#[cfg(test)] mod tests` block first (no struct, no impl), run, observe `error[E0433]: failed to resolve: SeqNum`, then add the struct + impl.
 Expected (with type omitted): FAIL — cannot find type `SeqNum`.
 
@@ -323,13 +323,13 @@ Add the `SeqNum` struct + `impl` shown in Step 1.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml seq::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml seq::`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/seq.rs
+git add crates/sonde-arq/src/seq.rs
 git commit -m "feat(arq): SeqNum mod-2^8 with distance-aware comparison
 
 8-bit sequence numbers with wrap-aware distance per Bertsekas/Gallager §2.4
@@ -343,11 +343,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 1.3: SeqWindow ring buffer for in-flight / received-but-out-of-order tracking
 
 **Files:**
-- Modify: `crates/tuxmodem-arq/src/seq.rs`
+- Modify: `crates/sonde-arq/src/seq.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-arq/src/seq.rs` (replacing the `pub struct SeqWindow;` stub):
+Append to `crates/sonde-arq/src/seq.rs` (replacing the `pub struct SeqWindow;` stub):
 
 ```rust
 use alloc::vec::Vec;
@@ -457,7 +457,7 @@ mod window_tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml seq::window_tests`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml seq::window_tests`
 Expected: FAIL on first run if you wrote tests-only first; otherwise PASS. Follow the TDD discipline — write tests, see FAIL, then add the impl.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -466,13 +466,13 @@ The `SeqWindow` impl shown in Step 1.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml seq::window_tests`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml seq::window_tests`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/seq.rs
+git add crates/sonde-arq/src/seq.rs
 git commit -m "feat(arq): SeqWindow ring buffer with slide + gap-bitmap (SACK substrate)
 
 Sliding window of seq numbers tracked via bitvec; slide_consecutive advances past
@@ -486,11 +486,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 1.4: Smoothed RTT estimator with HF slow-floor
 
 **Files:**
-- Modify: `crates/tuxmodem-arq/src/rtt.rs`
+- Modify: `crates/sonde-arq/src/rtt.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/src/rtt.rs`:
+In `crates/sonde-arq/src/rtt.rs`:
 
 ```rust
 //! Smoothed RTT estimator with an HF-specific slow-floor on the retransmit timeout.
@@ -605,7 +605,7 @@ mod tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml rtt::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml rtt::`
 Expected: FAIL if you wrote tests-only first (canonical TDD ordering).
 
 - [ ] **Step 3: Write minimal implementation**
@@ -614,13 +614,13 @@ The `RttEstimator` impl shown in Step 1.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml rtt::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml rtt::`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/rtt.rs
+git add crates/sonde-arq/src/rtt.rs
 git commit -m "feat(arq): RTT estimator with HF slow-floor (Jacobson/Karels + 6s floor)
 
 Smoothed RTT + RTTVAR per Bertsekas/Gallager §2.7 textbook formulae. The 6-second
@@ -640,11 +640,11 @@ This phase defines the cross-subsystem types that #4 (FEC) and #5 (MAC) emit and
 #### Task 2.1: `MacFrame`, `MacFlags`, `AckRange`, `MacBackpressure`
 
 **Files:**
-- Create: `crates/tuxmodem-arq/src/frame.rs`
+- Create: `crates/sonde-arq/src/frame.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/src/frame.rs`:
+In `crates/sonde-arq/src/frame.rs`:
 
 ```rust
 //! Cross-subsystem frame types. These are the contract surface ARQ presents to
@@ -742,7 +742,7 @@ Add `bitflags = "2"` to `Cargo.toml` `[dependencies]`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml frame::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml frame::`
 Expected: FAIL initially if `bitflags` isn't added yet — `unresolved import bitflags`.
 
 - [ ] **Step 3: Add the `bitflags = "2"` dependency in `Cargo.toml`**
@@ -753,13 +753,13 @@ bitflags = "2"
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml frame::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml frame::`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/frame.rs crates/tuxmodem-arq/Cargo.toml
+git add crates/sonde-arq/src/frame.rs crates/sonde-arq/Cargo.toml
 git commit -m "feat(arq): MacFrame/FecOutcome cross-subsystem interface types
 
 The contract surface ARQ presents to #5 (MAC) and #4 (FEC). MacFrame carries
@@ -773,11 +773,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 2.2: `ArqMode`, `ArqProfile`, `LinkAdaptationHint`
 
 **Files:**
-- Create: `crates/tuxmodem-arq/src/profile.rs`
+- Create: `crates/sonde-arq/src/profile.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/src/profile.rs`:
+In `crates/sonde-arq/src/profile.rs`:
 
 ```rust
 //! ARQ mode + profile types — the configuration surface ARQ consumes from
@@ -872,7 +872,7 @@ mod tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml profile::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml profile::`
 Expected: FAIL with `cannot find type` if you wrote tests-only first.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -881,13 +881,13 @@ The types as shown above.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml profile::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml profile::`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/profile.rs
+git add crates/sonde-arq/src/profile.rs
 git commit -m "feat(arq): ArqMode/ArqProfile/LinkAdaptationHint config types
 
 ArqMode names the two-variant mode-conditional design (overview §5.A.2).
@@ -901,15 +901,15 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 2.3: `MacPeer` + `FecResidualSignal` traits
 
 **Files:**
-- Create: `crates/tuxmodem-arq/src/peers.rs`
+- Create: `crates/sonde-arq/src/peers.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/src/peers.rs`:
+In `crates/sonde-arq/src/peers.rs`:
 
 ```rust
 //! Peer traits — the seams between ARQ and subsystems #4 (FEC) and #5 (MAC).
-//! ARQ does not concretize either peer; the tuxmodem daemon wires them up at
+//! ARQ does not concretize either peer; the sonde daemon wires them up at
 //! runtime, and tests substitute mock implementations.
 
 use crate::frame::{FecOutcome, MacBackpressure, MacFrame};
@@ -986,7 +986,7 @@ Also add `Default` derive to `MacFlags` in `frame.rs` (just `Default` on the bit
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml peers::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml peers::`
 Expected: FAIL until both the traits and the `Default` for `MacFlags` exist.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1002,17 +1002,17 @@ bitflags::bitflags! {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml peers::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml peers::`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/peers.rs crates/tuxmodem-arq/src/frame.rs
+git add crates/sonde-arq/src/peers.rs crates/sonde-arq/src/frame.rs
 git commit -m "feat(arq): MacPeer + FecResidualSignal peer traits
 
 The seams between ARQ and subsystems #4/#5. Stateless traits — concrete impls
-live in the tuxmodem daemon at integration time. Tests substitute mocks.
+live in the sonde daemon at integration time. Tests substitute mocks.
 
 Agent: opossum-pine-spruce
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -1027,11 +1027,11 @@ This phase implements the OFDM-family selective-repeat ARQ. The state machine ha
 #### Task 3.1: TX-side state machine — frame assignment + retransmit timers
 
 **Files:**
-- Create: `crates/tuxmodem-arq/src/windowed.rs`
+- Create: `crates/sonde-arq/src/windowed.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/src/windowed.rs`:
+In `crates/sonde-arq/src/windowed.rs`:
 
 ```rust
 //! Selective-repeat sliding-window ARQ for `ArqMode::Windowed`. Applies above the
@@ -1239,7 +1239,7 @@ mod tx_tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml windowed::tx_tests`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml windowed::tx_tests`
 Expected: FAIL until impl is in place.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1248,13 +1248,13 @@ The `WindowedTx` impl shown.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml windowed::tx_tests`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml windowed::tx_tests`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/windowed.rs
+git add crates/sonde-arq/src/windowed.rs
 git commit -m "feat(arq): WindowedTx — selective-repeat TX state machine
 
 TX-side selective-repeat: window-capped enqueue, RTT-tracked retransmit on RTO,
@@ -1268,11 +1268,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 3.2: RX-side state machine — buffer + slide + SACK rendering
 
 **Files:**
-- Modify: `crates/tuxmodem-arq/src/windowed.rs`
+- Modify: `crates/sonde-arq/src/windowed.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/tuxmodem-arq/src/windowed.rs`:
+Append to `crates/sonde-arq/src/windowed.rs`:
 
 ```rust
 #[derive(Debug)]
@@ -1418,7 +1418,7 @@ mod rx_tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml windowed::rx_tests`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml windowed::rx_tests`
 Expected: FAIL initially.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1427,13 +1427,13 @@ The `WindowedRx` impl shown.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml windowed::rx_tests`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml windowed::rx_tests`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/windowed.rs
+git add crates/sonde-arq/src/windowed.rs
 git commit -m "feat(arq): WindowedRx — selective-repeat RX state machine + SACK rendering
 
 RX-side: buffer out-of-order frames in window, drain contiguous-from-lower runs to
@@ -1447,11 +1447,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 3.3: Windowed-mode proptest property tests
 
 **Files:**
-- Create: `crates/tuxmodem-arq/tests/windowed_property.rs`
+- Create: `crates/sonde-arq/tests/windowed_property.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/tests/windowed_property.rs`:
+In `crates/sonde-arq/tests/windowed_property.rs`:
 
 ```rust
 //! Property-based tests for Windowed ARQ.
@@ -1467,10 +1467,10 @@ In `crates/tuxmodem-arq/tests/windowed_property.rs`:
 //!  4. **Window invariant.** in_flight_count() <= window_cap at all times.
 
 use proptest::prelude::*;
-use tuxmodem_arq::frame::{FecOutcome, MacFrame, MacFlags};
-use tuxmodem_arq::profile::ArqProfile;
-use tuxmodem_arq::seq::SeqNum;
-use tuxmodem_arq::windowed::{TxStep, WindowedRx, WindowedTx};
+use sonde_arq::frame::{FecOutcome, MacFrame, MacFlags};
+use sonde_arq::profile::ArqProfile;
+use sonde_arq::seq::SeqNum;
+use sonde_arq::windowed::{TxStep, WindowedRx, WindowedTx};
 use std::time::{Duration, Instant};
 
 fn mkprofile(window: u16) -> ArqProfile {
@@ -1546,7 +1546,7 @@ proptest! {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml --test windowed_property`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml --test windowed_property`
 Expected: PASS if Phase 3.1+3.2 are correct — but proptest may surface edge cases. If a property fails with a shrunken counterexample, fix the windowed.rs impl, don't relax the property.
 
 - [ ] **Step 3: Iterate until green**
@@ -1558,13 +1558,13 @@ If any proptest finds a counterexample, the failure mode is in `windowed.rs`, no
 
 - [ ] **Step 4: Run final test**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml --test windowed_property`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml --test windowed_property`
 Expected: PASS (proptest runs 256+ cases per property by default).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/tests/windowed_property.rs
+git add crates/sonde-arq/tests/windowed_property.rs
 git commit -m "test(arq): Windowed-mode proptest properties — no-dup, window invariant
 
 Property tests for eventual-delivery, no-duplicate-delivery, and window-cap
@@ -1582,11 +1582,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 4.1: Connection FSM — Closed → Opening → Open → Closing → Closed + Reset
 
 **Files:**
-- Create: `crates/tuxmodem-arq/src/connection.rs` (and add `pub mod connection;` to `lib.rs`)
+- Create: `crates/sonde-arq/src/connection.rs` (and add `pub mod connection;` to `lib.rs`)
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/src/connection.rs`:
+In `crates/sonde-arq/src/connection.rs`:
 
 ```rust
 //! Connection lifecycle FSM — 5 states + Reset.
@@ -1685,7 +1685,7 @@ mod tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml connection::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml connection::`
 Expected: FAIL until impl exists.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1694,13 +1694,13 @@ The impl shown.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml connection::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml connection::`
 Expected: PASS (3 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/connection.rs crates/tuxmodem-arq/src/lib.rs
+git add crates/sonde-arq/src/connection.rs crates/sonde-arq/src/lib.rs
 git commit -m "feat(arq): 5-state Connection FSM (Closed/Opening/Open/Closing + Reset)
 
 Clean-sheet connection lifecycle per §6.Q7 — reinvented from request/ack/close
@@ -1714,11 +1714,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 4.2: MessageRetransmit state machine — whole-message repeat semantics
 
 **Files:**
-- Create: `crates/tuxmodem-arq/src/message_retransmit.rs`
+- Create: `crates/sonde-arq/src/message_retransmit.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/src/message_retransmit.rs`:
+In `crates/sonde-arq/src/message_retransmit.rs`:
 
 ```rust
 //! MessageRetransmit-mode ARQ — the FT8-conceptual pattern of whole-message resend
@@ -1883,7 +1883,7 @@ Add `pub mod message_retransmit;` to `lib.rs`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml message_retransmit::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml message_retransmit::`
 Expected: FAIL until impl exists.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1892,13 +1892,13 @@ The impls shown.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml message_retransmit::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml message_retransmit::`
 Expected: PASS (3 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/message_retransmit.rs crates/tuxmodem-arq/src/lib.rs
+git add crates/sonde-arq/src/message_retransmit.rs crates/sonde-arq/src/lib.rs
 git commit -m "feat(arq): MessageRetransmit mode — FT8-pattern whole-message resend
 
 Floor-mode ARQ: sender repeats N times, receiver dedups by seq. Early-ack
@@ -1912,11 +1912,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 4.3: MessageRetransmit proptest property tests
 
 **Files:**
-- Create: `crates/tuxmodem-arq/tests/message_retransmit_property.rs`
+- Create: `crates/sonde-arq/tests/message_retransmit_property.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/tests/message_retransmit_property.rs`:
+In `crates/sonde-arq/tests/message_retransmit_property.rs`:
 
 ```rust
 //! Property tests for MessageRetransmit mode.
@@ -1930,9 +1930,9 @@ In `crates/tuxmodem-arq/tests/message_retransmit_property.rs`:
 //!     unless ack_completed_message short-circuits.
 
 use proptest::prelude::*;
-use tuxmodem_arq::frame::FecOutcome;
-use tuxmodem_arq::message_retransmit::{MessageRetransmitRx, MessageRetransmitTx};
-use tuxmodem_arq::profile::ArqProfile;
+use sonde_arq::frame::FecOutcome;
+use sonde_arq::message_retransmit::{MessageRetransmitRx, MessageRetransmitTx};
+use sonde_arq::profile::ArqProfile;
 
 proptest! {
     #[test]
@@ -1988,13 +1988,13 @@ If a property fails, fix `message_retransmit.rs`.
 
 - [ ] **Step 4: Run final**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml --test message_retransmit_property`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml --test message_retransmit_property`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/tests/message_retransmit_property.rs
+git add crates/sonde-arq/tests/message_retransmit_property.rs
 git commit -m "test(arq): MessageRetransmit proptest properties — delivery, no-dup, airtime
 
 Property tests for at-least-one-of-N-repeats delivery, no-dup-from-multiple-
@@ -2013,11 +2013,11 @@ This is the highest-risk file in the crate. Mode-switching with in-flight drain 
 #### Task 5.1: `ArqEndpoint` skeleton — owns peers + active mode
 
 **Files:**
-- Create: `crates/tuxmodem-arq/src/endpoint.rs`
+- Create: `crates/sonde-arq/src/endpoint.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/src/endpoint.rs`:
+In `crates/sonde-arq/src/endpoint.rs`:
 
 ```rust
 //! `ArqEndpoint` — the top-level type that owns a connection's ARQ state.
@@ -2202,7 +2202,7 @@ mod tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml endpoint::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml endpoint::`
 Expected: FAIL until impl + lib.rs `pub mod endpoint;` exist.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -2211,13 +2211,13 @@ Add `pub mod endpoint;` to `lib.rs` and write the `ArqEndpoint` impl shown.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml endpoint::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml endpoint::`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/endpoint.rs crates/tuxmodem-arq/src/lib.rs
+git add crates/sonde-arq/src/endpoint.rs crates/sonde-arq/src/lib.rs
 git commit -m "feat(arq): ArqEndpoint skeleton with Windowed/MessageRetransmit dispatch
 
 Top-level endpoint owning the active mode's TX+RX, the connection FSM, and the
@@ -2230,8 +2230,8 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 5.2: Bridge fresh-enqueue-to-MAC + ACK piggyback rendering on tick
 
 **Files:**
-- Modify: `crates/tuxmodem-arq/src/endpoint.rs`
-- Modify: `crates/tuxmodem-arq/src/windowed.rs` (add an `outbox` accumulator)
+- Modify: `crates/sonde-arq/src/endpoint.rs`
+- Modify: `crates/sonde-arq/src/windowed.rs` (add an `outbox` accumulator)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2253,7 +2253,7 @@ Append to `endpoint.rs` tests:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml endpoint::tests::enqueue_then_tick`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml endpoint::tests::enqueue_then_tick`
 Expected: FAIL — the current `tick()` only dispatches retransmits, not fresh enqueues. The Phase 3 `WindowedTx::enqueue` returns the frame for the caller; the endpoint must capture it.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -2293,13 +2293,13 @@ Then in `endpoint.rs`'s `tick()`, before the existing retransmit handling, drain
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml endpoint::tests`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml endpoint::tests`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/endpoint.rs crates/tuxmodem-arq/src/windowed.rs
+git add crates/sonde-arq/src/endpoint.rs crates/sonde-arq/src/windowed.rs
 git commit -m "feat(arq): bridge fresh-enqueue-to-MAC dispatch in ArqEndpoint::tick
 
 WindowedTx gains a fresh_outbox queue; endpoint tick drains it on each cycle so
@@ -2313,12 +2313,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 5.3: Mode-switching with drain semantics
 
 **Files:**
-- Modify: `crates/tuxmodem-arq/src/endpoint.rs`
-- Create: `crates/tuxmodem-arq/tests/mode_switch.rs`
+- Modify: `crates/sonde-arq/src/endpoint.rs`
+- Create: `crates/sonde-arq/tests/mode_switch.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/tests/mode_switch.rs`:
+In `crates/sonde-arq/tests/mode_switch.rs`:
 
 ```rust
 //! Mode-switch scenarios — Windowed ↔ MessageRetransmit with in-flight state.
@@ -2329,10 +2329,10 @@ In `crates/tuxmodem-arq/tests/mode_switch.rs`:
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tuxmodem_arq::frame::{FecOutcome, MacBackpressure, MacFrame};
-use tuxmodem_arq::peers::{FecResidualSignal, MacPeer};
-use tuxmodem_arq::profile::{ArqMode, ArqProfile};
-use tuxmodem_arq::{ArqEndpoint, ConnectionState};
+use sonde_arq::frame::{FecOutcome, MacBackpressure, MacFrame};
+use sonde_arq::peers::{FecResidualSignal, MacPeer};
+use sonde_arq::profile::{ArqMode, ArqProfile};
+use sonde_arq::{ArqEndpoint, ConnectionState};
 
 struct LoopbackMac { sent: Arc<Mutex<Vec<MacFrame>>> }
 impl MacPeer for LoopbackMac {
@@ -2384,7 +2384,7 @@ fn switch_with_in_flight_frames_waits_for_drain_or_times_out() {
     // set_mode returns, the new mode is active OR the connection is Reset."
     assert!(ep.mode() == ArqMode::MessageRetransmit
             || ep.state() == ConnectionState::Reset {
-                reason: tuxmodem_arq::connection::ResetReason::ModeSwitchDrainTimeout
+                reason: sonde_arq::connection::ResetReason::ModeSwitchDrainTimeout
             }
             || matches!(ep.state(), ConnectionState::Reset { .. }));
     let _ = result;
@@ -2393,7 +2393,7 @@ fn switch_with_in_flight_frames_waits_for_drain_or_times_out() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml --test mode_switch`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml --test mode_switch`
 Expected: FAIL — `set_mode` does not exist yet.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -2442,13 +2442,13 @@ impl ArqEndpoint {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml --test mode_switch`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml --test mode_switch`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/endpoint.rs crates/tuxmodem-arq/tests/mode_switch.rs
+git add crates/sonde-arq/src/endpoint.rs crates/sonde-arq/tests/mode_switch.rs
 git commit -m "feat(arq): mode-switching with drain semantics
 
 ArqEndpoint::set_mode + apply_hint. Drains in-flight Windowed frames by ticking
@@ -2464,8 +2464,8 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 1: Run the full suite + clippy**
 
 ```bash
-cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml
-cargo clippy -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml --all-targets -- -D warnings
+cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml
+cargo clippy -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml --all-targets -- -D warnings
 ```
 
 Expected: ALL PASS.
@@ -2476,16 +2476,16 @@ Per CLAUDE.md "extended capabilities" and `feedback_no_carveout_on_cross_provide
 
 ```bash
 cat > /tmp/codex-arq-prompt.txt <<'EOF'
-You are doing adversarial code review of the tuxmodem-arq crate, focused on
-the mode-switching seam in crates/tuxmodem-arq/src/endpoint.rs and the
-selective-repeat ARQ in crates/tuxmodem-arq/src/windowed.rs.
+You are doing adversarial code review of the sonde-arq crate, focused on
+the mode-switching seam in crates/sonde-arq/src/endpoint.rs and the
+selective-repeat ARQ in crates/sonde-arq/src/windowed.rs.
 
-Run `git diff origin/main..HEAD -- crates/tuxmodem-arq/` to see the changes.
+Run `git diff origin/main..HEAD -- crates/sonde-arq/` to see the changes.
 Read:
-- crates/tuxmodem-arq/src/endpoint.rs
-- crates/tuxmodem-arq/src/windowed.rs
-- crates/tuxmodem-arq/src/message_retransmit.rs
-- crates/tuxmodem-arq/src/connection.rs
+- crates/sonde-arq/src/endpoint.rs
+- crates/sonde-arq/src/windowed.rs
+- crates/sonde-arq/src/message_retransmit.rs
+- crates/sonde-arq/src/connection.rs
 - docs/superpowers/specs/2026-05-31-clean-sheet-modem-6-arq.md
 - docs/superpowers/plans/2026-05-31-clean-sheet-modem-6-arq-plan.md (this plan)
 
@@ -2535,7 +2535,7 @@ Findings + dispositions go into the phase 5 wrap-up commit message body.
 - [ ] **Step 4: Commit any fix + the disposition record**
 
 ```bash
-git add crates/tuxmodem-arq/  # any source fixes
+git add crates/sonde-arq/  # any source fixes
 git commit -m "fix(arq): address Codex Phase 5 adrev findings
 
 <one-line per finding with disposition>
@@ -2567,11 +2567,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 6.1: `LinkAdaptationStats` aggregator + publisher
 
 **Files:**
-- Create: `crates/tuxmodem-arq/src/stats.rs`
+- Create: `crates/sonde-arq/src/stats.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/src/stats.rs`:
+In `crates/sonde-arq/src/stats.rs`:
 
 ```rust
 //! Stats published from ARQ up to subsystem #7 (link adaptation) at
@@ -2708,7 +2708,7 @@ Add `pub mod stats;` to `lib.rs`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml stats::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml stats::`
 Expected: FAIL until impl.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -2717,13 +2717,13 @@ The impls shown.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml stats::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml stats::`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/stats.rs crates/tuxmodem-arq/src/lib.rs
+git add crates/sonde-arq/src/stats.rs crates/sonde-arq/src/lib.rs
 git commit -m "feat(arq): LinkAdaptationStats + ThroughputMetrics aggregator
 
 Rolling-window stats published to subsystem #7 at link_adapt_publish_interval
@@ -2737,11 +2737,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 6.2: `HostStream` Read + Write adapter
 
 **Files:**
-- Create: `crates/tuxmodem-arq/src/host_stream.rs`
+- Create: `crates/sonde-arq/src/host_stream.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/tuxmodem-arq/src/host_stream.rs`:
+In `crates/sonde-arq/src/host_stream.rs`:
 
 ```rust
 //! HostStream — presents the ARQ-corrected byte stream to subsystem #8 via std::io::Read
@@ -2825,7 +2825,7 @@ Add `pub mod host_stream;` to `lib.rs`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml host_stream::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml host_stream::`
 Expected: FAIL until impl.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -2834,13 +2834,13 @@ The impl shown.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml host_stream::`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml host_stream::`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/host_stream.rs crates/tuxmodem-arq/src/lib.rs
+git add crates/sonde-arq/src/host_stream.rs crates/sonde-arq/src/lib.rs
 git commit -m "feat(arq): HostStream Read+Write adapter for subsystem #8
 
 In-memory inbound/outbound byte buffers fronting the ARQ endpoint, presented to
@@ -2854,7 +2854,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 6.3: Wire stats + host stream into `ArqEndpoint`
 
 **Files:**
-- Modify: `crates/tuxmodem-arq/src/endpoint.rs`
+- Modify: `crates/sonde-arq/src/endpoint.rs`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2880,7 +2880,7 @@ Append to `endpoint.rs` tests:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml endpoint::tests::endpoint_publishes_stats_snapshot`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml endpoint::tests::endpoint_publishes_stats_snapshot`
 Expected: FAIL — `publish_stats` doesn't exist.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -2919,13 +2919,13 @@ In `tick()`, record sent/retransmit/loss samples at the appropriate branches.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml endpoint::tests`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml endpoint::tests`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/src/endpoint.rs
+git add crates/sonde-arq/src/endpoint.rs
 git commit -m "feat(arq): wire StatsAccumulator into ArqEndpoint::publish_stats
 
 Endpoint records every Sent/Retransmitted/Lost/Acked sample into its internal
@@ -2942,7 +2942,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 7.1: Channel-simulator dev-dependency wiring
 
 **Files:**
-- Modify: `crates/tuxmodem-arq/Cargo.toml`
+- Modify: `crates/sonde-arq/Cargo.toml`
 
 - [ ] **Step 1: Check channel-sim crate path**
 
@@ -2959,13 +2959,13 @@ Otherwise add the real dep:
 
 ```toml
 [dev-dependencies]
-tuxmodem-channel-sim = { path = "../tuxmodem-channel-sim" }
+sonde-channel-sim = { path = "../sonde-channel-sim" }
 ```
 
 - [ ] **Step 2: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/Cargo.toml
+git add crates/sonde-arq/Cargo.toml
 git commit -m "build(arq): wire channel-sim dev-dep for end-to-end integration tests
 
 Subsystem #1 crate consumed as dev-dep; if sibling subagent's #1 plan has not
@@ -2978,13 +2978,13 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 7.2: End-to-end ARQ-over-channel-sim test
 
 **Files:**
-- Create: `crates/tuxmodem-arq/tests/channel_sim_e2e.rs`
+- Create: `crates/sonde-arq/tests/channel_sim_e2e.rs`
 
 - [ ] **Step 1: Write the test**
 
 This test does NOT exercise PHY/FEC concretely (those subsystems aren't built yet); it uses a synthetic "channel sim → frame-drop probability" reduction. When subsystem #3 (PHY) and #4 (FEC) ship, this test gets upgraded into a real PHY→channel→FEC→ARQ pipeline.
 
-In `crates/tuxmodem-arq/tests/channel_sim_e2e.rs`:
+In `crates/sonde-arq/tests/channel_sim_e2e.rs`:
 
 ```rust
 //! End-to-end test: ARQ over a synthetic "frame-drop probability driven by channel
@@ -2996,10 +2996,10 @@ In `crates/tuxmodem-arq/tests/channel_sim_e2e.rs`:
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tuxmodem_arq::frame::{FecOutcome, MacBackpressure, MacFrame};
-use tuxmodem_arq::peers::{FecResidualSignal, MacPeer};
-use tuxmodem_arq::profile::{ArqMode, ArqProfile};
-use tuxmodem_arq::ArqEndpoint;
+use sonde_arq::frame::{FecOutcome, MacBackpressure, MacFrame};
+use sonde_arq::peers::{FecResidualSignal, MacPeer};
+use sonde_arq::profile::{ArqMode, ArqProfile};
+use sonde_arq::ArqEndpoint;
 
 /// "F.520 moderate" reduction: 5% per-frame loss.
 const F520_MODERATE_LOSS: f64 = 0.05;
@@ -3110,13 +3110,13 @@ fn message_retransmit_succeeds_at_least_one_of_n() {
 
 - [ ] **Step 2: Run test**
 
-Run: `cargo test -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml --test channel_sim_e2e`
+Run: `cargo test -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml --test channel_sim_e2e`
 Expected: PASS (2 tests). If either flakes under different seeds, the test seeds are the things to adjust — the loss-rate analysis is robust.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/tests/channel_sim_e2e.rs
+git add crates/sonde-arq/tests/channel_sim_e2e.rs
 git commit -m "test(arq): end-to-end ARQ-over-synthetic-channel-sim (F.520 reduction)
 
 E2E coverage for Windowed-mode delivery under F.520 moderate (5% loss) and
@@ -3130,11 +3130,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 #### Task 7.3: Criterion benchmark — throughput vs. RTT × loss × window
 
 **Files:**
-- Create: `crates/tuxmodem-arq/benches/throughput.rs`
+- Create: `crates/sonde-arq/benches/throughput.rs`
 
 - [ ] **Step 1: Write the benchmark**
 
-In `crates/tuxmodem-arq/benches/throughput.rs`:
+In `crates/sonde-arq/benches/throughput.rs`:
 
 ```rust
 //! Criterion benchmark for ARQ throughput across the RTT × loss × window parameter
@@ -3144,10 +3144,10 @@ In `crates/tuxmodem-arq/benches/throughput.rs`:
 use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tuxmodem_arq::frame::{FecOutcome, MacBackpressure, MacFrame};
-use tuxmodem_arq::peers::{FecResidualSignal, MacPeer};
-use tuxmodem_arq::profile::{ArqMode, ArqProfile};
-use tuxmodem_arq::ArqEndpoint;
+use sonde_arq::frame::{FecOutcome, MacBackpressure, MacFrame};
+use sonde_arq::peers::{FecResidualSignal, MacPeer};
+use sonde_arq::profile::{ArqMode, ArqProfile};
+use sonde_arq::ArqEndpoint;
 
 struct PerfectMac { inbox: Arc<Mutex<Vec<MacFrame>>>, outbox: Arc<Mutex<Vec<MacFrame>>> }
 impl MacPeer for PerfectMac {
@@ -3203,13 +3203,13 @@ criterion_main!(benches);
 
 - [ ] **Step 2: Run the benchmark**
 
-Run: `cargo bench -p tuxmodem-arq --manifest-path crates/tuxmodem-arq/Cargo.toml`
+Run: `cargo bench -p sonde-arq --manifest-path crates/sonde-arq/Cargo.toml`
 Expected: produces Criterion's HTML reports under `target/criterion/`. The numbers are baseline — improvements over time are the metric.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/tuxmodem-arq/benches/throughput.rs
+git add crates/sonde-arq/benches/throughput.rs
 git commit -m "bench(arq): criterion benchmark for window × loss throughput grid
 
 Baseline numbers for ARQ throughput across window sizes (8/32/64/128) and
@@ -3225,9 +3225,9 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ```bash
 cat > /tmp/codex-arq-final.txt <<'EOF'
-You are doing adversarial code review of the full tuxmodem-arq crate from
-the merge-base with main. Run `git diff origin/main..HEAD -- crates/tuxmodem-arq/`
-to see the full diff. Read every file under crates/tuxmodem-arq/src/.
+You are doing adversarial code review of the full sonde-arq crate from
+the merge-base with main. Run `git diff origin/main..HEAD -- crates/sonde-arq/`
+to see the full diff. Read every file under crates/sonde-arq/src/.
 
 Attack angles:
 1. Independent-creation defense (ADR 0014). Does any file inadvertently
@@ -3248,7 +3248,7 @@ Attack angles:
 5. AGPLv3 compliance. The crate declares AGPL-3.0-only; do any dependencies
    pull in GPL-only or proprietary code at compile time?
 6. License compatibility downstream. tuxlink-the-client and the standalone
-   daemon (subsystem #10) will both link tuxmodem-arq — does the AGPL clause
+   daemon (subsystem #10) will both link sonde-arq — does the AGPL clause
    create any unexpected restriction on those consumers?
 7. Mode-conditional ARQ as architectural pivot — does the boundary between
    Windowed and MessageRetransmit work cleanly when a connection mid-message
@@ -3273,7 +3273,7 @@ For each critical/high finding: fix in a follow-up commit + new TDD test. Defer 
 git commit -m "feat(arq): subsystem #6 ARQ complete — Phase 7 close
 
 Final Codex adrev complete. Cross-subsystem APIs settled per plan §"cross-
-subsystem APIs locked down." Ready for integration into the tuxmodem daemon
+subsystem APIs locked down." Ready for integration into the sonde daemon
 once subsystems #3-#5/#7-#8 plans complete.
 
 Plan: docs/superpowers/plans/2026-05-31-clean-sheet-modem-6-arq-plan.md

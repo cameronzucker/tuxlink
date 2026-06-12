@@ -107,9 +107,9 @@ interface, one modem at a time). The first-party modem may eventually ship as a
    SIGINT-clean-stop / confirm-audio-device-released-before-swap.
 2. **The transport to any soundcard modem is a generic "external TCP modem"
    client**, NOT modem-special-cased. ardopcf / Dire Wolf / VARA / (future)
-   first-party tuxmodem are all instances of one `ModemTransport` abstraction
+   first-party sonde are all instances of one `ModemTransport` abstraction
    (drive a modem over its TCP host protocol + manage its process).
-3. **Rig control is its own crate** (`tux-rig`: trait
+3. **Rig control is its own crate** (`sonde-rig`: trait
    `Ptt/SetFreq/SetMode/ReadStatus` + Hamlib as the first backend) — NOT baked
    into client internals. Consumed by ARDOP-full and the future first-party
    modem; structured so a future standalone modem daemon and the client can both
@@ -117,10 +117,10 @@ interface, one modem at a time). The first-party modem may eventually ship as a
 
 ## Consequences
 
-- The ARDOP MVP can ship without `tux-rig` (modem keys PTT via RTS) — see
+- The ARDOP MVP can ship without `sonde-rig` (modem keys PTT via RTS) — see
   `docs/superpowers/plans/2026-05-27-ardop-mvp-transport.md`.
 - The full single-pane (tuxlink owns CAT freq + PTT) depends on tuxlink-5jb
-  (rig-control plane research → `tux-rig` crate).
+  (rig-control plane research → `sonde-rig` crate).
 - `rigctld` becomes the third managed external process tuxlink supervises
   (alongside ardopcf and Dire Wolf), reusing the same spawn/SIGINT machinery.
 - Modem spin-off vs. monolith remains an open packaging decision; (2) and (3)
@@ -1134,7 +1134,7 @@ pub use crate::winlink::modem::ardop::session::{InitConfig, ConnectInfo, Session
 
 /// Drive an external soundcard modem over its TCP host protocol + manage its process.
 /// First implementor: ArdopTransport (ardopcf). Future: DireWolfTransport (KISS-over-TCP),
-/// VaraTransport (if pursued), TuxModemTransport (the v0.5+ first-party clean-sheet modem).
+/// VaraTransport (if pursued), SondeTransport (the v0.5+ first-party clean-sheet modem).
 #[async_trait]
 pub trait ModemTransport: Send {
     async fn init(&mut self, cfg: &InitConfig) -> Result<(), SessionError>;
@@ -1732,7 +1732,7 @@ Closes tuxlink-6aj's MVP scope. Adds the radio-free plumbing for ARDOP HF suppor
 
 - **ADR 0015** records the locked architecture (managed-spawn modem ownership; generic external-TCP-modem transport; rig control as its own crate).
 - **`winlink::modem::ardop`** — host-protocol codec (cmd-socket `\r`-lines + data-socket length+type framing), session state machine (init/connect/disconnect), bidirectional data I/O.
-- **`winlink::modem::ModemTransport`** trait — the abstraction ardopcf/Dire Wolf/(future) VARA/tuxmodem all instantiate.
+- **`winlink::modem::ModemTransport`** trait — the abstraction ardopcf/Dire Wolf/(future) VARA/sonde all instantiate.
 - **`winlink::modem::process::ManagedModem`** — SIGINT-clean-stop + SIGKILL-escalation + audio-device-release confirmation; the swap-invariant arbiter from ADR 0015.
 - **`src-tauri/examples/ardop_connect.rs`** — on-site bring-up CLI for the operator.
 

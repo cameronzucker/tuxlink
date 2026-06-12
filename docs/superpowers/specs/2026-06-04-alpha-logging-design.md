@@ -175,8 +175,8 @@ Backend (src-tauri/src/):
 Helper bins (src-tauri/src/bin/):
 - `native_cms_probe.rs` and `vara_tcp_probe.rs` — explicitly OUT OF SCOPE for v0 logging integration. They will continue to write to stderr; their bug reports are excluded from the export until a follow-up. Documented in §12.
 
-tuxmodem workspace:
-- `tuxmodem/` — OUT OF SCOPE for v0. The tuxmodem CLI tools are separate processes outside the Tauri app subscriber. A future PR adds a compatible JSONL emitter for tuxmodem if alpha-tester bug reports surface modem-CLI demand.
+sonde workspace:
+- `sonde/` — OUT OF SCOPE for v0. The sonde CLI tools are separate processes outside the Tauri app subscriber. A future PR adds a compatible JSONL emitter for sonde if alpha-tester bug reports surface modem-CLI demand.
 
 Frontend (src/):
 - `shell/chrome/menuModel.ts` — add `menu:help:logging`, keep `menu:help:report_issue` id (behavior changes).
@@ -1376,7 +1376,7 @@ These each become bd-issue follow-ups during `superpowers:writing-plans` decompo
 
 ## 13. Risk acknowledgment
 
-- **Big-bang PR shape is heavy.** Mitigation: comprehensive acceptance criteria above, runnable smoke script, redaction unit + integration tests, env probes covered explicitly as alpha-gate requirements. Per Codex §6 Finding 3: active worktrees touching VARA / ARDOP / forms / packet / tuxmodem / docs / UI areas create real merge-conflict risk. Coordination plan: pause new branches in those areas during the PR's review-and-merge window OR rebase the logging PR onto main after each significant integration. Per operator framing this session: "ships as a working feature or it doesn't."
+- **Big-bang PR shape is heavy.** Mitigation: comprehensive acceptance criteria above, runnable smoke script, redaction unit + integration tests, env probes covered explicitly as alpha-gate requirements. Per Codex §6 Finding 3: active worktrees touching VARA / ARDOP / forms / packet / sonde / docs / UI areas create real merge-conflict risk. Coordination plan: pause new branches in those areas during the PR's review-and-merge window OR rebase the logging PR onto main after each significant integration. Per operator framing this session: "ships as a working feature or it doesn't."
 - **Synthetic-corpus-trained dictionary may compress real logs worse than ideal.** Mitigation: zstd dictionary mode falls back to dictionary-free compression on unmatched patterns — floor is "dict is wasted weight," not "dict actively hurts." v1 retraining from real corpus is a single asset swap. Compression-ratio telemetry in `manifest.json` (added per §7.5) makes the v1 retrain trigger decision data-driven.
 - **Codex adversarial round is mandatory** (one already completed against this spec; build-phase round still required). Redaction logic + dictionary training corpus + env-probe allowlists each warrant independent scrutiny. Per memory `[[no-carveout-on-cross-provider-adrev]]` this is correctness-critical territory, not plumbing.
 - **Existing `SessionLogState` ring buffer remains load-bearing** for the radio-panel session-log strip. It must stay explicit-session-log-only; diagnostic fanout must not append there. Mitigation: boundary tests assert no production `ui_consumer`/`session_log=true` bridge exists, fanout does not advance the operator cursor, and export includes the retained operator transcript as `operator_session_log.jsonl`.
@@ -1501,7 +1501,7 @@ This spec underwent a Codex adversarial review in this session; the full transcr
 | §6 Finding 3 | Merge-conflict risk with concurrent VARA/ARDOP work | §13 risk + coordination plan added |
 | §7 Finding 1 | Matrix omits orchestration modules | §4.1 orchestration cluster added |
 | §7 Finding 2 | Message-body callsite policy undefined | §4.4.1 added (never log full body) |
-| §7 Finding 3 | Cross-process surfaces (helper bins, tuxmodem) unscoped | §2.4 + §12 explicit OUT OF SCOPE |
+| §7 Finding 3 | Cross-process surfaces (helper bins, sonde) unscoped | §2.4 + §12 explicit OUT OF SCOPE |
 | §8 Finding 1 | Seq race between UI/disk allocators | §2.2 diagnostic/operator cursor split + §2.5 explicit session-log boundary |
 | §8 Finding 2 | Retention sweep can delete active file | §6.3 active-file protection rule |
 | §8 Finding 3 | Export-during-write race | §6.5 flush barrier + partial-line tolerance |
@@ -1530,7 +1530,7 @@ This spec underwent a Codex adversarial review in this session; the full transcr
 
 **Findings NOT adopted (with reasoning):**
 
-None outright rejected. A few findings had minor scope adjustments (e.g., Codex's "expand emission cluster" suggestions were partially adopted — added the orchestration cluster but kept `wizard`/`bootstrap`/`config` at info-default since they're one-shot lifecycle events without ongoing emission demand). Where Codex's exact recommendation would have over-scoped first-slice work (e.g., spawning a separate tuxmodem-logging subsystem), the spec defers via §12 with an explicit out-of-scope rationale.
+None outright rejected. A few findings had minor scope adjustments (e.g., Codex's "expand emission cluster" suggestions were partially adopted — added the orchestration cluster but kept `wizard`/`bootstrap`/`config` at info-default since they're one-shot lifecycle events without ongoing emission demand). Where Codex's exact recommendation would have over-scoped first-slice work (e.g., spawning a separate sonde-logging subsystem), the spec defers via §12 with an explicit out-of-scope rationale.
 
 ---
 

@@ -17,11 +17,11 @@
 ## §1. Role
 
 The host protocol subsystem defines the **API between the modem and the
-client.** When tuxmodem is embedded in tuxlink, the host protocol is the
+client.** When sonde is embedded in tuxlink, the host protocol is the
 seam between tuxlink's transport layer (`ModemTransport` per ADR 0015) and
-tuxmodem's internal state. When tuxmodem ships as a standalone TCP daemon
+sonde's internal state. When sonde ships as a standalone TCP daemon
 (per subsystem #10), the host protocol is the *only* interface other
-software (Pat, ARIM, etc.) has to tuxmodem.
+software (Pat, ARIM, etc.) has to sonde.
 
 Per ADR 0015's deferred question: the on-air protocol (subsystems #3-#7)
 is bound by ADR 0014's clean-sheet rule, but **the host-side control API
@@ -34,7 +34,7 @@ transmitted waveform.
   the air; #8 defines what the client and modem say to each other on
   the host side.
 - **Not the rig control plane.** PTT, frequency, mode-set, audio gain
-  are handled by the `tux-rig` crate per ADR 0015. Host protocol may
+  are handled by the `sonde-rig` crate per ADR 0015. Host protocol may
   expose rig-status queries (informational) but doesn't own rig
   control.
 - **Not the client-application protocol.** B2F (Winlink), HTML Forms,
@@ -54,7 +54,7 @@ transmitted waveform.
    _supported_Protocols_TNCs_20171109.pdf` — open-access) is the
    established Linux-amateur-radio convention. Direwolf's KISS interface
    is another reference. Either of those could be adopted (subsystem
-   gets interop with existing client tools for free) or tuxmodem could
+   gets interop with existing client tools for free) or sonde could
    define a novel protocol (more flexible, no existing client support).
 4. **Versioning + capability negotiation.** Required from day one.
    Client and modem must be able to agree on which protocol version is
@@ -63,7 +63,7 @@ transmitted waveform.
    gain → confirm); some are asynchronous (initiate connection → events
    stream during the connection lifecycle). Protocol must handle both
    cleanly.
-6. **Security posture.** A network-listening tuxmodem TCP port could be
+6. **Security posture.** A network-listening sonde TCP port could be
    reached from off-host. Either bind to localhost only (default), or
    support authentication (TLS, token-based). Default-localhost-only is
    safer; authentication is required if remote-control is a use case.
@@ -82,7 +82,7 @@ transmitted waveform.
 | §8.Q5 | Sync vs. async command model? | Both required; question is the protocol-level distinction. |
 | §8.Q6 | Authentication / authorization model — localhost-only default, token-based, TLS? | Security posture. |
 | §8.Q7 | Two-port (cmd + data, ardopcf-style) or single-port multiplexed? | Tradeoff: two ports is conceptually clean but more setup; single multiplexed is more compact. |
-| §8.Q8 | Stable API commitment — when does the protocol freeze? | Before the standalone-daemon spin-off ships. After tuxmodem-in-tuxlink is operationally validated. |
+| §8.Q8 | Stable API commitment — when does the protocol freeze? | Before the standalone-daemon spin-off ships. After sonde-in-tuxlink is operationally validated. |
 
 ## §5. Citations from foundation doc
 
@@ -115,7 +115,7 @@ or authentication model designated.
 - **Interop trap.** Adopting ARDOP host interface for "free interop"
   with Pat/ARIM means inheriting ARDOP's design choices (and bugs).
   Could be net positive (most adoption friction is the on-air protocol,
-  not the host interface) or net negative (locks tuxmodem out of
+  not the host interface) or net negative (locks sonde out of
   novel host-side features).
 - **Network exposure.** TCP listening modems can be reached from
   off-host. Default to localhost-only; require explicit opt-in for
@@ -123,7 +123,7 @@ or authentication model designated.
   daemon README.
 - **Capability-negotiation drift.** Without explicit versioning + cap
   bits, downstream clients (Pat, ARIM) hard-code assumptions and
-  silently break when tuxmodem evolves. Versioning is required from
+  silently break when sonde evolves. Versioning is required from
   day one.
 
 Agent: mink-swallow-kite
