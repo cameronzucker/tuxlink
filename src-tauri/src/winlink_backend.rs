@@ -5486,8 +5486,14 @@ mod native_read_state_tests {
             let captured = captured.clone();
             thread::spawn(move || {
                 let (sock, _) = data_l.accept().unwrap();
-                // Short read timeout so reads don't block forever.
-                sock.set_read_timeout(Some(Duration::from_millis(300))).ok();
+                // Per-read timeout is short, but we DRAIN ACROSS TIMEOUTS up to a
+                // generous total deadline. Under full-suite CPU contention the
+                // client's handshake (the ;FW: line we assert on) can arrive well
+                // after connect; a break-on-first-timeout drain races and flakes
+                // (observed in the tuxlink-0063 Phase 3 full-suite run). We stop as
+                // soon as a complete ;FW: line is captured, on real EOF, or at the
+                // deadline backstop.
+                sock.set_read_timeout(Some(Duration::from_millis(200))).ok();
                 let mut writer = sock.try_clone().unwrap();
                 // Send the WL2K-5.0 server greeting so B2F exchange starts.
                 writer.write_all(b"[WL2K-5.0-B2FHM$]\rCMS>\r").unwrap();
@@ -5495,13 +5501,29 @@ mod native_read_state_tests {
 
                 // Drain client output into captured.
                 let mut reader = BufReader::new(sock);
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
                 loop {
                     let mut line = Vec::new();
                     match reader.read_until(b'\r', &mut line) {
-                        Ok(0) | Err(_) => break,
+                        Ok(0) => break, // client closed the socket
                         Ok(_) => {
+                            let got_fw = line.windows(4).any(|w| w == b";FW:");
                             captured.lock().unwrap().extend_from_slice(&line);
+                            // The complete ;FW: line is captured — that is all the
+                            // assertion needs; stop deterministically.
+                            if got_fw {
+                                break;
+                            }
                         }
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            if std::time::Instant::now() >= deadline {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
                     }
                 }
             })
@@ -5513,7 +5535,7 @@ mod native_read_state_tests {
             cmd_port,
             data_port,
             connect_timeout: Duration::from_secs(2),
-            read_timeout: Some(Duration::from_millis(200)),
+            read_timeout: Some(Duration::from_millis(1000)),
         };
         let mut transport = VaraTransport::connect(cfg_vara).expect("loopback connect");
 
@@ -5601,17 +5623,22 @@ mod native_read_state_tests {
             let captured = captured.clone();
             thread::spawn(move || {
                 let (sock, _) = data_l.accept().unwrap();
-                sock.set_read_timeout(Some(Duration::from_millis(300))).ok();
+                // Drain across read timeouts up to a generous deadline — under
+                // full-suite CPU contention the master's preamble lines can arrive
+                // slower than a single short read window, so breaking on the first
+                // timeout would race (same latent flake the exchange test hit).
+                sock.set_read_timeout(Some(Duration::from_millis(200))).ok();
                 let mut writer = sock.try_clone().unwrap();
 
                 // Capture everything the master writes, and reply with the
-                // slave handshake after each line so the master can proceed.
+                // slave handshake once the preamble is in so the master can proceed.
                 let mut reader = BufReader::new(sock);
                 let mut line_count = 0usize;
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
                 loop {
                     let mut line = Vec::new();
                     match reader.read_until(b'\r', &mut line) {
-                        Ok(0) | Err(_) => break,
+                        Ok(0) => break, // client closed the socket
                         Ok(_) => {
                             captured.lock().unwrap().extend_from_slice(&line);
                             line_count += 1;
@@ -5622,8 +5649,23 @@ mod native_read_state_tests {
                                 let _ = writer.write_all(
                                     b";FW: W7AUX\r[RMS-1.0-B2FHM$]\r; N7CPZ DE W7AUX\rFF\r",
                                 );
+                                let _ = writer.flush();
+                                // The master's ;FW: (line 1) is captured and the slave
+                                // reply is sent; give the master a beat to consume it,
+                                // then stop deterministically.
+                                thread::sleep(Duration::from_millis(100));
+                                break;
                             }
                         }
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            if std::time::Instant::now() >= deadline {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
                     }
                 }
             })
@@ -5635,7 +5677,7 @@ mod native_read_state_tests {
             cmd_port,
             data_port,
             connect_timeout: Duration::from_secs(2),
-            read_timeout: Some(Duration::from_millis(200)),
+            read_timeout: Some(Duration::from_millis(1000)),
         };
         let mut transport = VaraTransport::connect(cfg_vara).expect("loopback connect");
 
