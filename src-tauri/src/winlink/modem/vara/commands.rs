@@ -1160,9 +1160,12 @@ pub async fn vara_open_session(
 
 /// Inner helper for [`vara_open_session`] with factored-out config + callsign
 /// args so tests can drive it without touching the persisted config file or a
-/// Tauri runtime. `callsign` is `Some` when the wizard has set an operator
-/// callsign; when `Some`, MYCALL is sent on the cmd socket after TCP open
-/// (before BW) so VARA's host protocol recognizes the App handshake.
+/// Tauri runtime. When `callsign` is `Some`, MYCALL is sent on the cmd socket
+/// after TCP open (before BW) so VARA's host protocol recognizes the App
+/// handshake. **Production always passes `Some`** — since tuxlink-0063 Phase 3
+/// the outer [`vara_open_session`] resolves the active `SessionIdentity` and
+/// fails closed on `NoActiveIdentity`, so the `None` arm (skip MYCALL setter)
+/// is exercised only by tests that drive session-state mechanics without a call.
 ///
 /// Records `intent` + `transport_kind` on `VaraSessionInner` after the open
 /// succeeds; cleared in [`vara_stop_session_inner`] (reached via
