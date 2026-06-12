@@ -7,6 +7,11 @@ import { asUiError } from '../mailbox/types';
 
 export type ListingMode = 'vara-hf' | 'packet' | 'ardop-hf' | 'pactor' | 'robust-packet';
 
+/// The gateway's self-reported "Antenna being used" code, parsed from the listing
+/// (legend: B = Beam, D = Dipole, V = Vertical). Mirrors the Rust `GatewayAntenna`
+/// serde lowercase shape. Drives the far-end antenna model in the HF predictor.
+export type GatewayAntenna = 'beam' | 'dipole' | 'vertical';
+
 export const LISTING_MODES: { mode: ListingMode; label: string }[] = [
   { mode: 'vara-hf', label: 'VARA HF' },
   { mode: 'packet', label: 'Packet' },
@@ -25,6 +30,9 @@ export interface Gateway {
   lastUpdate: string | null;
   email: string | null;
   homepage: string | null;
+  /// Self-reported antenna code (B/D/V), if the listing carried one. Drives the
+  /// far-end antenna model in the HF predictor; null → isotrope (never a whip).
+  antenna: GatewayAntenna | null;
 }
 
 export interface StationListing {

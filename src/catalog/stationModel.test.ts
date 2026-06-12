@@ -9,6 +9,7 @@ function gw(partial: Partial<Gateway> & { callsign: string }): Gateway {
     sysopName: partial.sysopName ?? null, grid: partial.grid === undefined ? 'DM34oa' : partial.grid,
     location: partial.location ?? null, frequenciesKhz: partial.frequenciesKhz ?? [],
     lastUpdate: partial.lastUpdate ?? null, email: null, homepage: null,
+    antenna: partial.antenna ?? null,
   };
 }
 
@@ -66,6 +67,34 @@ describe('aggregateStations — N0DAJ multi-mode/SSID (spec §3)', () => {
     const s = aggregateStations(listings)[0];
     expect(s.channels.find((c) => c.mode === 'vara-hf' && c.frequencyKhz === 7103)?.band).toBe('40m');
     expect(s.channels.find((c) => c.mode === 'packet' && c.frequencyKhz === 145710)?.band).toBe('vhf-uhf');
+  });
+});
+
+describe('aggregateStations — gateway antenna carry-through (tuxlink-s0r1 #3d)', () => {
+  it('carries a gateway antenna code onto the station', () => {
+    const s = aggregateStations([
+      { mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({ callsign: 'N0DAJ', grid: 'DM34oa', antenna: 'vertical', frequenciesKhz: [7103] })] },
+    ])[0];
+    expect(s.gatewayAntenna).toBe('vertical');
+  });
+
+  it('defaults gatewayAntenna to null when no listing carries a code', () => {
+    const s = aggregateStations([
+      { mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({ callsign: 'N0DAJ', grid: 'DM34oa', frequenciesKhz: [7103] })] },
+    ])[0];
+    expect(s.gatewayAntenna).toBeNull();
+  });
+
+  it('fills gatewayAntenna from a later listing when the first had none', () => {
+    const s = aggregateStations([
+      { mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({ callsign: 'N0DAJ', grid: 'DM34oa', frequenciesKhz: [7103] })] },
+      { mode: 'ardop-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({ callsign: 'N0DAJ', grid: 'DM34oa', antenna: 'dipole', frequenciesKhz: [7103] })] },
+    ])[0];
+    expect(s.gatewayAntenna).toBe('dipole');
   });
 });
 

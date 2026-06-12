@@ -10,6 +10,7 @@
 // to fall back to distance-only ranking rather than surfacing an error.
 
 import { invoke } from '@tauri-apps/api/core';
+import type { GatewayAntenna } from './stationTypes';
 
 export interface ChannelReliability {
   /** Exact input dial in kHz (carried by index, not re-derived). */
@@ -45,16 +46,20 @@ export async function predictPath(
   txGrid: string,
   rxGrid: string,
   frequenciesKhz: number[],
+  gatewayAntenna?: GatewayAntenna | null,
 ): Promise<PathPrediction> {
   // Tauri v2 maps these camelCase keys to the Rust snake_case params
-  // (tx_grid / rx_grid / frequencies_khz). Explicit `await` (not `return
-  // invoke(...)`) so a rejection's handler attaches synchronously — bare
-  // thenable-adoption leaves a one-microtask gap that trips test-runner
+  // (tx_grid / rx_grid / frequencies_khz / gateway_antenna). Explicit `await`
+  // (not `return invoke(...)`) so a rejection's handler attaches synchronously —
+  // bare thenable-adoption leaves a one-microtask gap that trips test-runner
   // unhandled-rejection guards even when the caller catches it.
+  // `gatewayAntenna` is the station's parsed B/D/V code (null/undefined → the
+  // backend models an isotropic far end, never a whip).
   return await invoke<PathPrediction>('propagation_predict_path', {
     txGrid,
     rxGrid,
     frequenciesKhz: frequenciesKhz.slice(0, MAX_FREQUENCIES),
+    gatewayAntenna: gatewayAntenna ?? null,
   });
 }
 

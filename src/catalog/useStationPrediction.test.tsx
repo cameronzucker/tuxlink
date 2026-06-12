@@ -10,7 +10,7 @@ import type { Station } from './stationModel';
 
 const station: Station = {
   baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: 'Doug', location: 'Wickenburg, AZ',
-  modes: ['vara-hf'], fetchedAtMs: 1,
+  modes: ['vara-hf'], fetchedAtMs: 1, gatewayAntenna: null,
   channels: [
     { mode: 'vara-hf', frequencyKhz: 3590, band: '80m' },
     { mode: 'vara-hf', frequencyKhz: 7103, band: '40m' },

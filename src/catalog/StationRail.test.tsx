@@ -7,7 +7,7 @@ import type { PathPrediction } from './propagationApi';
 
 const station: Station = {
   baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: 'Doug Jarmuth', location: 'Wickenburg, AZ',
-  modes: ['vara-hf', 'ardop-hf', 'packet'], fetchedAtMs: 1,
+  modes: ['vara-hf', 'ardop-hf', 'packet'], fetchedAtMs: 1, gatewayAntenna: null,
   channels: [
     { mode: 'vara-hf', frequencyKhz: 3590, band: '80m' },
     { mode: 'vara-hf', frequencyKhz: 7103, band: '40m' },

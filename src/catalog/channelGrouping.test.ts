@@ -10,7 +10,7 @@ const channels: Channel[] = [
   { mode: 'packet', frequencyKhz: 145710, ssid: 'N0DAJ-10', band: 'vhf-uhf' },
 ];
 const station: Station = { baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: null, location: null,
-  modes: ['vara-hf', 'ardop-hf', 'packet'], channels, fetchedAtMs: 1 };
+  modes: ['vara-hf', 'ardop-hf', 'packet'], channels, fetchedAtMs: 1, gatewayAntenna: null };
 
 describe('groupChannelsByMode', () => {
   it('groups channels under their mode, ascending by frequency', () => {

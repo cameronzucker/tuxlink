@@ -25,9 +25,9 @@ import type { Station } from './stationModel';
 // component mounts the right number of markers without crashing.
 
 const stations: Station[] = [
-  { baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
-  { baseCallsign: 'K0ABC', grid: 'EN34', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
-  { baseCallsign: 'NOGRID', grid: '', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
+  { baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, gatewayAntenna: null, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
+  { baseCallsign: 'K0ABC', grid: 'EN34', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, gatewayAntenna: null, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
+  { baseCallsign: 'NOGRID', grid: '', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, gatewayAntenna: null, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
 ];
 
 const LAN_SOURCE: TileSource = {

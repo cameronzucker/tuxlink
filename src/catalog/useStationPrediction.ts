@@ -35,6 +35,7 @@ export function useStationPrediction(
   const grid = operatorGrid.trim();
   const stationCall = station?.baseCallsign ?? null;
   const stationGrid = station?.grid ?? null;
+  const stationAntenna = station?.gatewayAntenna ?? null;
   const dialsKey = station ? hfDials(station).join(',') : '';
 
   const [state, setState] = useState<StationPredictionResult>({ prediction: null, status: 'idle' });
@@ -64,7 +65,7 @@ export function useStationPrediction(
     // unhandled-rejection flag the test runner would otherwise report, mirroring
     // the repo's useModemStatus pattern.
     let next: StationPredictionResult = { prediction: null, status: 'error' };
-    predictPath(grid, station.grid, dials)
+    predictPath(grid, station.grid, dials, station.gatewayAntenna)
       .then((prediction) => {
         next = { prediction, status: 'ok' };
       })
@@ -81,7 +82,7 @@ export function useStationPrediction(
     // is represented by call+grid+dialsKey); `station` itself is intentionally
     // not a dep to avoid redundant re-predicts on unrelated re-renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grid, stationCall, stationGrid, dialsKey]);
+  }, [grid, stationCall, stationGrid, stationAntenna, dialsKey]);
 
   return state;
 }
