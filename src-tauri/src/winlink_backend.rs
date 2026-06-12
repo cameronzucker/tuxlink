@@ -1092,6 +1092,14 @@ pub trait WinlinkBackend: Send + Sync {
     fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
         Err(BackendError::NoActiveIdentity)
     }
+
+    /// Set the active default identity (after a successful authenticate). Default
+    /// no-op; `NativeBackend` stores it in its in-memory slot (Phase 6, tuxlink-5ekg).
+    fn set_active_identity(&self, _identity: crate::identity::SessionIdentity) {}
+
+    /// Clear the active identity (lock / logout). Default no-op; `NativeBackend`
+    /// empties its slot so subsequent FULL-identity ops require re-auth.
+    fn clear_active_identity(&self) {}
 }
 
 // ============================================================================
@@ -1361,6 +1369,15 @@ impl NativeBackend {
         }
     }
 
+    /// Clear the active default identity (lock / shutdown). Subsequent transmit /
+    /// listen-arm / Outbox-drain require a re-auth.
+    pub fn clear_active_identity(&self) {
+        match self.active_identity.write() {
+            Ok(mut slot) => *slot = None,
+            Err(poisoned) => *poisoned.into_inner() = None,
+        }
+    }
+
     /// Clone the active SessionIdentity for a single operation.
     /// `Err(NoActiveIdentity)` if the operator hasn't authenticated one yet.
     pub fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
@@ -1457,6 +1474,14 @@ impl WinlinkBackend for NativeBackend {
     /// back into this trait method.
     fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
         NativeBackend::active_identity(self)
+    }
+
+    fn set_active_identity(&self, identity: crate::identity::SessionIdentity) {
+        NativeBackend::set_active_identity(self, identity)
+    }
+
+    fn clear_active_identity(&self) {
+        NativeBackend::clear_active_identity(self)
     }
 
     async fn list_messages(&self, folder: MailboxFolder) -> Result<Vec<MessageMeta>, BackendError> {
@@ -5575,6 +5600,37 @@ mod native_read_state_tests {
         backend.set_active_identity(SessionIdentity::full(handle));
         let active = backend.active_identity().expect("active set");
         assert_eq!(active.mycall().as_str(), "N7CPZ");
+    }
+
+    #[test]
+    fn captured_identity_is_immune_to_later_active_switch() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        let backend = NativeBackend::new(offline_config(), tempfile::tempdir().unwrap().path());
+        backend.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("W1AAA").unwrap(),
+        )));
+        // Simulate a listener capturing the active identity at arm time (Clone).
+        let captured = backend.active_identity().expect("active set").clone();
+        // Operator switches the active identity (default for NEW ops).
+        backend.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("W2BBB").unwrap(),
+        )));
+        assert_eq!(
+            backend.active_identity().unwrap().mycall().as_str(),
+            "W2BBB",
+            "active switched"
+        );
+        assert_eq!(
+            captured.mycall().as_str(),
+            "W1AAA",
+            "a captured identity is immune to active switches"
+        );
+        // And clear() restores the re-auth requirement.
+        backend.clear_active_identity();
+        assert!(matches!(
+            backend.active_identity(),
+            Err(BackendError::NoActiveIdentity)
+        ));
     }
 
     #[test]
