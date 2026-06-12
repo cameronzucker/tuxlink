@@ -3888,6 +3888,21 @@ pub(crate) async fn ardop_listen_inner(
             ),
         });
     }
+    // tuxlink-0063 (Phase 3, Task 3.6 — RF-correctness fix): capture the active
+    // session identity AT ARM TIME so the answerer answers as the identity that
+    // was active when the operator armed the listener — not a live-read that
+    // could change if the operator switches identity during the armed window.
+    // Resolved BEFORE any modem interaction (modem start OR LISTEN TRUE flip) so
+    // that a NoActiveIdentity error leaves the RADIO completely untouched
+    // (fail-closed before any on-air-capable state). tuxlink-0063 Phase 3.
+    let session_id = app
+        .state::<BackendState>()
+        .current()
+        .ok_or_else(|| UiError::Internal {
+            detail: "ARDOP listener arm: backend offline — cannot resolve active identity".into(),
+        })?
+        .active_identity()?;
+
     if !already_running_idle {
         let cfg = config::read_config()
             .map_err(|e| UiError::Internal { detail: e.to_string() })?;
@@ -3931,22 +3946,6 @@ pub(crate) async fn ardop_listen_inner(
         }
         Err(_) => None,
     };
-
-    // tuxlink-0063 (Phase 3, Task 3.6): capture the active session identity AT
-    // ARM TIME so the answerer answers as the identity that was active when the
-    // operator armed the listener — not a live-read that could change if the
-    // operator switches identity during the armed window.
-    // Resolved BEFORE installing the ArdopListenHandle so that if identity
-    // resolution fails the `?` early-return leaves listen_state unset (no
-    // phantom "armed" state with no consumer task). Mirrors the telnet_listen
-    // arm ordering.
-    let session_id = app
-        .state::<BackendState>()
-        .current()
-        .ok_or_else(|| UiError::Internal {
-            detail: "ARDOP listener arm: backend offline — cannot resolve active identity".into(),
-        })?
-        .active_identity()?;
 
     // Spawn the consumer task that owns the transport for the armed window.
     let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -4658,6 +4657,21 @@ pub(crate) async fn arm_vara_listener_inner(
     arms.append_to_log(&log_path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
 
+    // tuxlink-0063 (Phase 3, Task 3.7 — RF-correctness fix): capture the active
+    // session identity AT ARM TIME so the answerer answers as the identity that
+    // was active when the operator armed the listener — not a live-read that
+    // could change if the operator switches identity during the armed window.
+    // Resolved BEFORE send_listen_on() so that a NoActiveIdentity error leaves
+    // the RADIO completely untouched (fail-closed before any on-air-capable
+    // state). tuxlink-0063 Phase 3.
+    let session_id = app
+        .state::<BackendState>()
+        .current()
+        .ok_or_else(|| UiError::Internal {
+            detail: "VARA listener arm: backend offline — cannot resolve active identity".into(),
+        })?
+        .active_identity()?;
+
     // Flip LISTEN ON via the session's brief-lock helper. If this fails,
     // the arm fails cleanly without a consumer task to clean up.
     vara_session
@@ -4677,22 +4691,6 @@ pub(crate) async fn arm_vara_listener_inner(
         }
         Err(_) => None,
     };
-
-    // tuxlink-0063 (Phase 3, Task 3.7): capture the active session identity AT
-    // ARM TIME so the answerer answers as the identity that was active when the
-    // operator armed the listener — not a live-read that could change if the
-    // operator switches identity during the armed window.
-    // Resolved BEFORE installing the VaraListenHandle so that if identity
-    // resolution fails the `?` early-return leaves listen_state unset (no
-    // phantom "armed" state with no consumer task). Mirrors the
-    // ardop_listen_inner arm ordering (d711857b).
-    let session_id = app
-        .state::<BackendState>()
-        .current()
-        .ok_or_else(|| UiError::Internal {
-            detail: "VARA listener arm: backend offline — cannot resolve active identity".into(),
-        })?
-        .active_identity()?;
 
     // Spawn the consumer task that owns the transport for the armed window.
     let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
