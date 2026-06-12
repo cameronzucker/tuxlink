@@ -2,6 +2,13 @@
 
 Date: 2026-06-12
 Status: Accepted
+
+> _Update 2026-06-12: both phases are complete. Phase A (in-place rename) merged as
+> PR #639; Phase B extracted the workspace to its own repository, whose CI compiles,
+> lints (`clippy --all-targets -D warnings`), and tests the renamed workspace green —
+> the first full build this code has had. `sonde/` and the vendored `hf-channel-sim/`
+> are removed from tuxlink in the follow-up that carries this note._
+
 Deciders: Cameron Zucker (operator), pine-arroyo-delta (agent)
 
 ## Context

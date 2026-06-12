@@ -264,26 +264,22 @@ Where each path stands:
 - **Hamlib rig control** and USB rig autodetect.
 - **Native HF modem.** VARA is x86 Windows software that runs under WINE on x86
   Linux but not on ARM. Tuxlink targets a clean-room native HF modem (Sonde,
-  the `sonde/` workspace) rather than bundling VARA; VARA-TCP wire compatibility
-  serves operators who bring their own VARA install.
+  developed as a separate project) rather than bundling VARA; VARA-TCP wire
+  compatibility serves operators who bring their own VARA install.
 
 ## Architecture
 
-Tuxlink is a Rust workspace with two roots. The desktop application lives in
-`src-tauri/` (Tauri 2.x with a React 18 + TypeScript frontend in `src/`
-rendered by WebKitGTK 4.1). The Winlink engine, the CMS connection, the B2F
-exchange, the mailbox, and the AX.25 packet path are native Rust in
-`src-tauri/`; no external modem or sidecar process intervenes for CMS. The
-desktop app ships as a single crate in the `v0.x` series, per
+Tuxlink's desktop application lives in `src-tauri/` (Tauri 2.x with a React 18 +
+TypeScript frontend in `src/` rendered by WebKitGTK 4.1). The Winlink engine, the
+CMS connection, the B2F exchange, the mailbox, and the AX.25 packet path are
+native Rust in `src-tauri/`; no external modem or sidecar process intervenes for
+CMS. The desktop app ships as a single crate in the `v0.x` series, per
 [ADR 0002](docs/adr/0002-tauri-react-single-crate.md).
 
-The `sonde/` workspace is Sonde, the clean-room HF modem target (six crates:
-`sonde-phy`, `sonde-fec`, `sonde-tx`, `sonde-rx`, `sonde-rig-rts`,
-`sonde-rig-cm108`). Working code paths include OFDM encode / decode under the
-wide-band low-density floor mode, Zadoff-Chu preamble frame sync, multi-symbol
-length-prefix framing, CPAL audio I/O, serial-RTS PTT for Digirig-class
-adapters, a SIGKILL-safe PTT watchdog, and operator-runnable CLIs. The modem is
-not yet wired into the desktop app's Winlink session lifecycle.
+**Sonde**, the clean-room native HF modem, is developed as a separate clean-room
+project in its own repository (per [ADR 0019](docs/adr/0019-sonde-rebrand-and-extraction.md)).
+Tuxlink will consume it as an external modem backend; it is not yet wired into
+the desktop app's Winlink session lifecycle.
 
 [CLAUDE.md](CLAUDE.md) documents the agent workflow, commit discipline, ethos,
 and safety rails this project operates under.
