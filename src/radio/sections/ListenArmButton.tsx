@@ -20,6 +20,15 @@ export interface ListenArmButtonProps {
   minutesRemaining: number | null;
   /** Optional armed-state label. Defaults to "ARMED". */
   armedLabel?: string;
+  /** The identity the armed listener answers as — its OWN identity bound at
+   *  arm time (the active identity's presented label captured when the arm
+   *  call resolved). Rendered as a small monospace pill beside the status
+   *  ONLY when the listener is armed AND this is a non-empty string. The
+   *  Phase-6 backend invariant keeps an armed listener bound to its arm-time
+   *  identity even if the operator later switches the active identity; this
+   *  prop carries that bound identity so the badge never drifts to the
+   *  globally-active one. Null/undefined → no badge. */
+  boundIdentity?: string | null;
   /** TRUE while an in-flight arm/disarm call is settling — drives BOTH the
    *  disabled attribute AND the transient "Arming…" / "Disarming…" label. */
   busy?: boolean;
@@ -41,6 +50,7 @@ export function ListenArmButton({
   armed,
   minutesRemaining,
   armedLabel = 'ARMED',
+  boundIdentity,
   busy = false,
   disabled = false,
   helpText,
@@ -84,6 +94,15 @@ export function ListenArmButton({
               : armedLabel
             : 'disarmed'}
         </span>
+        {armed && boundIdentity ? (
+          <span
+            className="listener-identity-badge"
+            data-testid="listener-identity-badge"
+            title="Identity this listener answers as (bound at arm time)"
+          >
+            {boundIdentity}
+          </span>
+        ) : null}
       </div>
       {helpText && (
         <p className="radio-panel-help" data-testid={`${testIdPrefix}-help`}>

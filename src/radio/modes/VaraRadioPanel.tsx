@@ -28,6 +28,7 @@ import type { RadioPanelMode } from '../types';
 import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
 import { ListenArmButton } from '../sections/ListenArmButton';
 import { useListenerState } from '../sections/useListenerState';
+import { useActiveIdentity } from '../../shell/useIdentities';
 import { FavoritesTabs } from '../../favorites/FavoritesTabs';
 import { useFavorites } from '../../favorites/useFavorites';
 import { listenGatewayPrefill } from '../../favorites/prefillEvent';
@@ -128,7 +129,9 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   // the clean-sheet decision), allowlist is the only application-layer
   // gate. The TTL defaults to the hook's 1h (no get-config Tauri command
   // for VARA listener yet — operator-tunable TTL is a follow-up).
+  const activeIdentity = useActiveIdentity();
   const varaListener = useListenerState({
+    activeIdentityLabel: activeIdentity.data?.address_as ?? null,
     commands: {
       listen: 'vara_listen',
       setListen: 'vara_set_listen',
@@ -562,6 +565,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         <ListenArmButton
           armed={varaListener.armed}
           minutesRemaining={varaListener.minutesRemaining}
+          boundIdentity={varaListener.boundIdentityLabel}
           // Separate concerns (tuxlink-tccc): `busy` is in-flight-call (drives
           // the transient "Arming…" / "Disarming…" label), `disabled` is the
           // precondition gate (transport must be Open). Folding both into

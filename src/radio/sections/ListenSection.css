@@ -93,6 +93,23 @@
   border-color: var(--border, #1f2832);
 }
 
+/* Per-listener identity badge (Task 12) — the identity an armed listener
+   answers as, bound at arm time. Small monospace pill sitting beside the
+   armed status pill. Neutral surface tone (vs the green armed pill) so the
+   two read as distinct facts: "armed" + "answering as X". */
+.listener-identity-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+  background: var(--surface-2, #131a22);
+  color: var(--text, #cbd5e1);
+  border: 1px solid var(--border, #1f2832);
+  white-space: nowrap;
+}
+
 /* Allow-any-peer toggle row — checkbox + label inline. */
 .listen-allow-all-row {
   display: flex;
