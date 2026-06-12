@@ -403,6 +403,10 @@ pub struct MessageMetaDto {
     pub unread: bool,
     pub body_size: u64,
     pub has_attachments: bool,
+    /// The identity this message belongs to (Phase 7, tuxlink-noa0), or `None`
+    /// when untagged. Drives the mailbox identity filter; serialized as
+    /// `identity` (single word — unchanged by camelCase).
+    pub identity: Option<String>,
 }
 
 impl From<MessageMeta> for MessageMetaDto {
@@ -416,6 +420,7 @@ impl From<MessageMeta> for MessageMetaDto {
             unread: m.unread,
             body_size: m.body_size,
             has_attachments: m.has_attachments,
+            identity: m.identity,
         }
     }
 }
@@ -7910,6 +7915,7 @@ hw:CARD=Device,DEV=0
             unread: true,
             body_size: 7,
             has_attachments: true,
+            identity: None,
         });
         let v = serde_json::to_value(dto).unwrap();
         assert_eq!(v["bodySize"], 7);

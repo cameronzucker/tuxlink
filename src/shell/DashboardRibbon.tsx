@@ -16,6 +16,8 @@ import { formatGridClock } from './gridClock';
 import { DEV_FIXTURE, DEV_POSITION, DEV_CONNECTION_DASH } from '../mailbox/devFixture';
 import { formatPacketConnection, type PacketUiState } from '../packet/packetStatus';
 import { effectiveCall as renderEffectiveCall, ssidOptions } from '../packet/packetConfig';
+import { IdentitySwitcher } from './IdentitySwitcher';
+import type { ActiveIdentityDto, IdentityListDto } from './identityTypes';
 
 /**
  * Self-contained clock cell (tuxlink-sndh). Lives in its own subtree so the
@@ -90,13 +92,25 @@ export interface DashboardRibbonProps {
    *  When omitted, the "On connect" control is not rendered — keeps prop-free
    *  consumers/tests unchanged. */
   onReviewInboundChange?: (enabled: boolean) => void;
+  /** Phase 7 (tuxlink-noa0): the full identity list for the inline switcher
+   *  dropdown, or null while loading. Only consulted when `onSwitchIdentity`
+   *  is also provided (the switcher branch). */
+  identities?: IdentityListDto | null;
+  /** The active identity session for the closed-chip label, or null pre-auth.
+   *  Only consulted in the switcher branch. */
+  activeIdentity?: ActiveIdentityDto | null;
+  /** Authenticate + switch identity (the switch action). When provided, the
+   *  callsign slot renders the IdentitySwitcher in place of the bare callsign
+   *  row; when omitted, the legacy bare markup renders (back-compat — keeps
+   *  prop-free consumers/tests unchanged). */
+  onSwitchIdentity?: (args: { callsign: string; credential: string; tacticalLabel: string | null }) => Promise<void>;
 }
 
 // tuxlink-djnl: React.memo so 2s status-poll renders (now reference-stable
 // via useStatusData's useMemo) and other shell-level renders skip the ribbon
 // when its props haven't changed. The 1s clock tick already lives inside the
 // scoped ClockCell subtree, so a memo'd ribbon stays still while time advances.
-export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, ssid, onSsidChange, reviewInbound, onReviewInboundChange }: DashboardRibbonProps) {
+export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, ssid, onSsidChange, reviewInbound, onReviewInboundChange, identities, activeIdentity, onSwitchIdentity }: DashboardRibbonProps) {
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Task 14 (tuxlink-c79g, spec §4.3 + Codex P1 #4): after a grid commit or a
   // source flip resolves, invalidate the config_read query so the source chip
@@ -131,6 +145,24 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
     <div className="dashboard" data-testid="dashboard-ribbon" role="banner">
       <div className="dash-item">
         <div className="dash-label">Callsign</div>
+        {/* Phase 7 (tuxlink-noa0): when the identity-switch handler is wired
+            (production AppShell path), render the IdentitySwitcher AS the
+            callsign cell. It already renders the `.dash-callsign-row` +
+            `data-testid="ribbon-callsign"` container AND the `ribbon-ssid-select`,
+            so it must NOT be wrapped in another `ribbon-callsign` (that would
+            duplicate the testid). The SAME `ssid` / `onSsidChange` the ribbon
+            already threads pass straight through. When the handler is omitted
+            (prop-free consumers / unit tests), the legacy bare markup below
+            renders byte-for-byte as before. */}
+        {onSwitchIdentity ? (
+          <IdentitySwitcher
+            active={activeIdentity ?? null}
+            list={identities ?? null}
+            ssid={ssid}
+            onSsidChange={onSsidChange}
+            onSwitch={onSwitchIdentity}
+          />
+        ) : (
         <div className="dash-value callsign dash-callsign-row" data-testid="ribbon-callsign">
           {/* Operator smoke 2026-05-31 (round 4 — tuxlink-i63g): the round-3
               "one select with full `<base>-<N>` option labels" approach was
@@ -171,6 +203,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
             <span className="dash-callsign-text">{displayCall}</span>
           )}
         </div>
+        )}
       </div>
       <div className="dash-divider" />
 

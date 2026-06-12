@@ -56,6 +56,13 @@ export interface UseListenerStateOptions {
   commands: ListenerCommandSet;
   /** TTL in seconds (drives the countdown indicator). Default 3600. */
   ttlSecs?: number;
+  /** The presented label of the currently-active identity (the FULL callsign
+   *  or tactical label — `ActiveIdentityDto.address_as`). Snapshotted into
+   *  `boundIdentityLabel` the moment `arm()` resolves, mirroring the Phase-6
+   *  backend invariant: the listener answers as the identity that was active
+   *  when it was armed. Subsequent changes to this value do NOT mutate an
+   *  already-captured `boundIdentityLabel`. Pass null/undefined pre-auth. */
+  activeIdentityLabel?: string | null;
 }
 
 export interface UseListenerStateReturn {
@@ -67,6 +74,11 @@ export interface UseListenerStateReturn {
   /** Approximate minutes remaining until TTL expiry. null when not
    *  armed or before the first arm completes. */
   minutesRemaining: number | null;
+  /** The identity the listener answers as — the active identity's presented
+   *  label snapshotted at the moment `arm()` resolved. null when disarmed or
+   *  before the first arm. Held stable across later active-identity switches
+   *  (the Phase-6 bound-identity invariant, rendered frontend-side). */
+  boundIdentityLabel: string | null;
   /** Allowlist as last fetched. Mutates immediately on local edits +
    *  re-fetched after each backend mutation to stay in sync. */
   allowed: AllowedStations;
@@ -104,9 +116,10 @@ function normalize(raw: AllowedStationsWire | null | undefined): AllowedStations
 }
 
 export function useListenerState(options: UseListenerStateOptions): UseListenerStateReturn {
-  const { commands, ttlSecs = 3600 } = options;
+  const { commands, ttlSecs = 3600, activeIdentityLabel = null } = options;
   const [armed, setArmed] = useState(false);
   const [armedAt, setArmedAt] = useState<number | null>(null);
+  const [boundIdentityLabel, setBoundIdentityLabel] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const [allowed, setAllowed] = useState<AllowedStations>({
     allowAll: true,
@@ -153,18 +166,25 @@ export function useListenerState(options: UseListenerStateOptions): UseListenerS
     if (busy) return;
     setBusy(true);
     setError(null);
+    // Capture the active identity BEFORE the arm await (Phase-6 bound-identity
+    // invariant, frontend half): the listener answers as whoever was active
+    // when arm was issued. Reading it after the await would race a concurrent
+    // active-identity switch that resolves mid-arm and mislabel the badge.
+    const labelAtArm = activeIdentityLabel ?? null;
     try {
       await invoke(commands.listen);
       setArmed(true);
       setArmedAt(Date.now());
+      setBoundIdentityLabel(labelAtArm);
     } catch (e) {
       setError(String(e));
       setArmed(false);
       setArmedAt(null);
+      setBoundIdentityLabel(null);
     } finally {
       setBusy(false);
     }
-  }, [busy, commands.listen]);
+  }, [busy, commands.listen, activeIdentityLabel]);
 
   const disarm = useCallback(async () => {
     if (busy) return;
@@ -174,6 +194,7 @@ export function useListenerState(options: UseListenerStateOptions): UseListenerS
       await invoke(commands.setListen, { enabled: false });
       setArmed(false);
       setArmedAt(null);
+      setBoundIdentityLabel(null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -261,6 +282,7 @@ export function useListenerState(options: UseListenerStateOptions): UseListenerS
   return {
     armed,
     minutesRemaining,
+    boundIdentityLabel,
     allowed,
     busy,
     error,

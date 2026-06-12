@@ -39,6 +39,7 @@ import type { ArdopFrameType } from '../charts/FrameRibbon';
 import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
 import { ListenArmButton } from '../sections/ListenArmButton';
 import { useListenerState } from '../sections/useListenerState';
+import { useActiveIdentity } from '../../shell/useIdentities';
 import { FavoritesTabs } from '../../favorites/FavoritesTabs';
 import { useFavorites } from '../../favorites/useFavorites';
 import { listenGatewayPrefill } from '../../favorites/prefillEvent';
@@ -338,7 +339,9 @@ export function ArdopRadioPanel({
   // station-password layer (per ardop-p2p.md divergence 2) so the
   // panel does NOT render the password expander. The set-allow-all
   // arg-key is `allow_all` (snake_case to match the backend handler).
+  const activeIdentity = useActiveIdentity();
   const ardopListener = useListenerState({
+    activeIdentityLabel: activeIdentity.data?.address_as ?? null,
     commands: {
       listen: 'ardop_listen',
       setListen: 'ardop_set_listen',
@@ -1023,6 +1026,7 @@ Up     ${fmtUptime(status.uptimeSec)}`}
         <ListenArmButton
           armed={ardopListener.armed}
           minutesRemaining={ardopListener.minutesRemaining}
+          boundIdentity={ardopListener.boundIdentityLabel}
           busy={ardopListener.busy}
           helpText="Accepts inbound ARDOP P2P sessions until disarmed or the TTL expires. The modem must be running before arming the listener."
           onArm={ardopListener.arm}

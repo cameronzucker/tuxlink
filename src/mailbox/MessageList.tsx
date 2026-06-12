@@ -21,6 +21,7 @@ import { MessageContextMenu } from './MessageContextMenu';
 import { DEFAULT_SORT_STATE, type SortState, sortMessages } from './messageSort';
 import { MessageListSortControl } from './MessageListSortControl';
 import { MessageBulkBar } from './MessageBulkBar';
+import { messageMatchesIdentity, type IdentityFilterOption } from './identityFilter';
 
 /// Empty-folder copy (spec §5.2).
 export const EMPTY_FOLDER_COPY =
@@ -327,6 +328,20 @@ export interface MessageListProps {
   /// Single-message read/unread toggle — context-menu and U-key (tuxlink-etxt
   /// Tasks 12 + 13). Optional so existing callers compile without change.
   onSetReadState?: (id: string, folder: MailboxFolderRef, read: boolean) => void;
+  /// Active identity filter (Task 11, tuxlink-noa0). `null` = "All identities"
+  /// (show every row); a concrete value (FULL callsign or tactical label) shows
+  /// only rows whose `message.identity` matches it (untagged rows match only
+  /// "All"). Optional: when `identityFilterOptions` is absent the toolbar select
+  /// is not rendered and no filtering is applied (back-compat for prop-free
+  /// callers/tests).
+  identityFilter?: string | null;
+  /// Called when the operator picks a new identity from the toolbar select.
+  /// Receives `null` for "All identities" or the chosen identity string.
+  onIdentityFilterChange?: (value: string | null) => void;
+  /// Options for the toolbar identity select (derived from the identity list by
+  /// AppShell). When present, the select renders in the rows-pane header and the
+  /// message list is filtered by `identityFilter`. Absent → no select, no filter.
+  identityFilterOptions?: IdentityFilterOption[];
 }
 
 /// Stable empty-selection default so the no-selection caller (pre-Task-11) does
@@ -354,13 +369,30 @@ export function MessageList({
   onBulkMove,
   onBulkArchive,
   onSetReadState,
+  identityFilter = null,
+  onIdentityFilterChange,
+  identityFilterOptions,
 }: MessageListProps) {
+  // The identity select is shown (and filtering applied) only when the parent
+  // supplies the options — back-compat for prop-free callers/tests.
+  const identityFilterEnabled = Boolean(identityFilterOptions);
+
+  // Identity filter runs BEFORE sort so the rendered order is unaffected. When
+  // disabled (no options) or set to All (null), every message passes through.
+  const filteredMessages = React.useMemo(
+    () =>
+      identityFilterEnabled
+        ? messages.filter((m) => messageMatchesIdentity(m, identityFilter))
+        : messages,
+    [messages, identityFilter, identityFilterEnabled],
+  );
+
   // Sort client-side so changing modes doesn't require a backend re-fetch.
-  // Memo keyed on (messages, sortState, folder) — folder affects sender-* in
-  // sent/outbox where the key is the recipient, not the sender.
+  // Memo keyed on (filteredMessages, sortState, folder) — folder affects
+  // sender-* in sent/outbox where the key is the recipient, not the sender.
   const sortedMessages = React.useMemo(
-    () => sortMessages(messages, sortState, folder),
-    [messages, sortState, folder],
+    () => sortMessages(filteredMessages, sortState, folder),
+    [filteredMessages, sortState, folder],
   );
 
   // Multi-select anchor + row click handler (tuxlink-etxt Task 8).
@@ -460,7 +492,7 @@ export function MessageList({
 
   return (
     <div className="rows-pane" data-testid="rows-pane">
-      {(onSortStateChange || selectedIds.size > 0) && (
+      {(onSortStateChange || identityFilterEnabled || selectedIds.size > 0) && (
         <div className="rows-pane-header" data-testid="rows-pane-header">
           {selectedIds.size > 0 ? (
             <MessageBulkBar
@@ -474,7 +506,26 @@ export function MessageList({
               onClear={() => onSelectionChange(new Set())}
             />
           ) : (
-            onSortStateChange && <MessageListSortControl value={sortState} onChange={onSortStateChange} />
+            <>
+              {identityFilterEnabled && (
+                <select
+                  className="identity-filter"
+                  data-testid="mailbox-identity-filter"
+                  aria-label="Filter by identity"
+                  // null ↔ "" sentinel: <option value> coerces null to "" in the
+                  // DOM, so map both directions explicitly.
+                  value={identityFilter ?? ''}
+                  onChange={(e) => onIdentityFilterChange?.(e.target.value === '' ? null : e.target.value)}
+                >
+                  {identityFilterOptions!.map((opt) => (
+                    <option key={opt.value ?? '__all__'} value={opt.value ?? ''}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {onSortStateChange && <MessageListSortControl value={sortState} onChange={onSortStateChange} />}
+            </>
           )}
         </div>
       )}
