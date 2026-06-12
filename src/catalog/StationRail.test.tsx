@@ -7,7 +7,7 @@ import type { PathPrediction } from './propagationApi';
 
 const station: Station = {
   baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: 'Doug Jarmuth', location: 'Wickenburg, AZ',
-  modes: ['vara-hf', 'ardop-hf', 'packet'], fetchedAtMs: 1,
+  modes: ['vara-hf', 'ardop-hf', 'packet'], fetchedAtMs: 1, gatewayAntenna: null,
   channels: [
     { mode: 'vara-hf', frequencyKhz: 3590, band: '80m' },
     { mode: 'vara-hf', frequencyKhz: 7103, band: '40m' },
@@ -76,8 +76,20 @@ describe('StationRail', () => {
     window.removeEventListener(GATEWAY_PREFILL_EVENT, handler as EventListener);
   });
 
-  it('disables Use → for channels whose mode is not the active modem', () => {
+  it('enables Use → for any dialable channel (arm-on-demand), not just the open modem', () => {
+    // tuxlink-s0r1: Use → now opens the matching modem on demand, so a channel
+    // whose mode is not the currently-open modem is still usable, not greyed.
     render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} activePrefillMode="vara-hf" />);
-    expect(screen.getByTestId('use-ardop-hf-7103').hasAttribute('disabled')).toBe(true);
+    expect(screen.getByTestId('use-ardop-hf-7103').hasAttribute('disabled')).toBe(false);
+  });
+
+  it('Use → calls onUse with the dial (arm-on-demand path) when provided', () => {
+    const onUse = vi.fn();
+    // No active modem at all — the old behavior would grey every button.
+    render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} onUse={onUse} />);
+    const ardop = screen.getByTestId('use-ardop-hf-7103');
+    expect(ardop.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(ardop);
+    expect(onUse).toHaveBeenCalledWith({ mode: 'ardop-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' });
   });
 });

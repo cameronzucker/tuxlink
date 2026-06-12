@@ -115,6 +115,8 @@ import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
 import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
+import { emitGatewayPrefill } from '../favorites/prefillEvent';
+import type { FavoriteDial } from '../favorites/types';
 import { StubPanel } from '../connections/StubPanel';
 import { useInboundSelection } from '../connections/useInboundSelection';
 import { SearchBar } from '../search/SearchBar';
@@ -923,6 +925,22 @@ export function AppShell() {
     setActiveConnection(conn);
   }, []);
 
+  // Find-a-Station "Use →" (tuxlink-s0r1): arm the matching modem on demand so
+  // the operator doesn't have to open it first. Opening a panel is UI, not TX —
+  // RADIO-1 is honored by the panel's own Connect button. The prefill is retained
+  // (prefillEvent) so the just-opened panel consumes it once it mounts + subscribes.
+  // We close the finder so the operator lands on the armed, prefilled modem.
+  const handleStationUse = useCallback(
+    (dial: FavoriteDial) => {
+      // RadioMode and ProtocolId share the same string set; a station channel is
+      // never 'telnet'. CMS = connect to the dialed RMS gateway over that protocol.
+      onSelectConnection({ sessionType: 'cms', protocol: dial.mode as ConnectionKey['protocol'] });
+      emitGatewayPrefill(dial);
+      setCatalogBuilderOpen(false);
+    },
+    [onSelectConnection],
+  );
+
   // tuxlink-268k (Codex P3): stabilize the two inline FolderSidebar
   // callbacks so the React.memo wrap actually skips re-renders. Before
   // these existed inline at the call site, the shallow-compare always
@@ -1317,6 +1335,7 @@ export function AppShell() {
         <Suspense fallback={null}>
           <StationFinderPanel
             activePrefillMode={catalogPrefillMode}
+            onUse={handleStationUse}
             onClose={() => setCatalogBuilderOpen(false)}
           />
         </Suspense>

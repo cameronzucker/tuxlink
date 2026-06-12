@@ -156,6 +156,7 @@ mod tests {
                 last_update: Some("Sat, 06 Jun 2026 08:47:00 GMT".to_string()),
                 email: Some("test@example.com".to_string()),
                 homepage: None,
+                antenna: None,
             }],
             raw: "raw body text".to_string(),
             parsed_ok: true,

@@ -2,10 +2,12 @@
 //! no network, no transmit, no writes outside a per-call scratch dir.
 //! Plan: docs/superpowers/plans/2026-06-10-u1-voacapl-prediction.md
 
+pub mod antenna;
 pub mod commands;
 pub mod deck;
 pub mod engine;
 pub mod parse;
+pub mod prefs;
 pub mod ssn;
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +39,17 @@ pub struct PredictionInputs {
     /// is a documented empirical tunable, NOT a fabricated number. This is what REL
     /// is computed against.
     pub req_snr_db: f64,
+    /// TX antenna pattern file under `itshfbc/antennas/default/`, e.g.
+    /// `"const17.voa"` or `"ccir.000"`. Maps from the operator's selected antenna
+    /// preset. The bracketed `[default/<file>]` field on the ANTENNA card is a
+    /// fixed 21-char Fortran width; `build_deck` pads it.
+    pub tx_antenna_voa: String,
+    /// RX (far/gateway-end) antenna pattern file under
+    /// `itshfbc/antennas/default/`. Maps from the gateway's parsed "Antenna being
+    /// used" code (B/D/V), with an isotropic (`ccir.000`) fallback when the gateway
+    /// reports none. NEVER force `swwhip.voa` for an unknown gateway — the whip's
+    /// zenith null is what made short NVIS paths predict ~0% reliability.
+    pub rx_antenna_voa: String,
 }
 
 /// Per-frequency reliability over the 24 UTC hours.

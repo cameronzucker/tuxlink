@@ -11,6 +11,7 @@ import type { Band } from './bandPlan';
 
 function station(call: string, grid: string, khz: number[]): Station {
   return { baseCallsign: call, grid, sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1,
+    gatewayAntenna: null,
     channels: khz.map((f) => ({ mode: 'vara-hf' as const, frequencyKhz: f, band: f < 8000 ? '40m' as const : '20m' as const })) };
 }
 

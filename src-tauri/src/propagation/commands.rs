@@ -25,11 +25,12 @@ use std::sync::Arc;
 use chrono::{Datelike, TimeZone, Utc};
 use tauri::State;
 
+use crate::catalog::stations::GatewayAntenna;
 use crate::catalog::stations_cache::Clock;
 use crate::ui_commands::UiError;
 
 use super::engine::EnginePaths;
-use super::{deck, engine, parse, ssn, PathPrediction, PredictionInputs, PropagationError};
+use super::{antenna, deck, engine, parse, prefs, ssn, PathPrediction, PredictionInputs, PropagationError};
 
 // ============================================================================
 // Error projection
@@ -94,6 +95,7 @@ pub(crate) fn utc_year_month(clock: &dyn Clock) -> (i32, u8) {
 
 /// Pure assembly + run, factored out of the `#[tauri::command]` so the
 /// input-validation paths that don't touch the engine are unit-testable.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_prediction(
     clock: &dyn Clock,
     forecast: &ssn::SsnForecast,
@@ -102,6 +104,10 @@ pub(crate) fn run_prediction(
     tx_grid: String,
     rx_grid: String,
     frequencies_khz: Vec<f64>,
+    tx_antenna_voa: String,
+    rx_antenna_voa: String,
+    req_snr_db: f64,
+    tx_power_w: f64,
 ) -> Result<PathPrediction, PropagationError> {
     let (year, month) = utc_year_month(clock);
     let ssn_val = forecast.ssn_for(year, month);
@@ -112,8 +118,13 @@ pub(crate) fn run_prediction(
         year,
         month,
         ssn: ssn_val,
-        tx_power_w: 100.0,
-        req_snr_db: 73.0,
+        // Operator preferences (antenna preset + SNR + power) and the gateway's
+        // parsed antenna drive these — resolved by the command wrapper. The prior
+        // fixed RX whip (`swwhip.voa`) + 73 dB voice SNR are gone.
+        tx_power_w,
+        req_snr_db,
+        tx_antenna_voa,
+        rx_antenna_voa,
     };
     // Filter + validate frequencies first (fast path before any disk I/O or
     // engine invocation — bad inputs are rejected here).
@@ -143,6 +154,7 @@ pub async fn propagation_predict_path(
     tx_grid: String,
     rx_grid: String,
     frequencies_khz: Vec<f64>,
+    gateway_antenna: Option<GatewayAntenna>,
     state: State<'_, PropagationState>,
 ) -> Result<PathPrediction, UiError> {
     // Ensure the engine is available before doing any work.
@@ -152,6 +164,20 @@ pub async fn propagation_predict_path(
             return Err(UiError::Unavailable { reason: reason.clone() });
         }
     };
+
+    // Resolve the antenna model + SNR + power for this prediction:
+    //  - TX (own station) ← operator's saved antenna preset.
+    //  - RX (far/gateway end) ← the station's parsed antenna code, isotrope fallback
+    //    (NEVER a forced whip — the whip's zenith null is what killed NVIS paths).
+    //  - REQ.SNR + power ← saved prefs (defaults: 22 dB-Hz data SNR, 100 W).
+    let prefs = match crate::config::config_path().parent() {
+        Some(dir) => prefs::load(&prefs::prefs_path(dir)),
+        None => prefs::PropagationPrefs::default(),
+    };
+    let tx_antenna_voa = prefs.antenna_preset.voa_file().to_string();
+    let rx_antenna_voa = antenna::gateway_voa_file(gateway_antenna).to_string();
+    let req_snr_db = prefs.req_snr_db;
+    let tx_power_w = prefs.tx_power_w;
 
     // Clone everything we need into the blocking closure — the engine call is a
     // blocking std::process::Command; we must never hold it across an async boundary.
@@ -170,6 +196,10 @@ pub async fn propagation_predict_path(
             tx_grid,
             rx_grid,
             frequencies_khz,
+            tx_antenna_voa,
+            rx_antenna_voa,
+            req_snr_db,
+            tx_power_w,
         )
     })
     .await
@@ -178,6 +208,57 @@ pub async fn propagation_predict_path(
     })??;
 
     Ok(result)
+}
+
+// ============================================================================
+// Propagation preferences (antenna preset + REQ.SNR + TX power)
+// ============================================================================
+
+/// Read the operator's propagation preferences. Defaults when no prefs file
+/// exists (fresh install). Not a backend call — reads the prefs file directly,
+/// like `config_read`; failures degrade to defaults rather than erroring.
+#[tauri::command]
+pub async fn propagation_prefs_read() -> Result<prefs::PropagationPrefs, UiError> {
+    let prefs = match crate::config::config_path().parent() {
+        Some(dir) => prefs::load(&prefs::prefs_path(dir)),
+        None => prefs::PropagationPrefs::default(),
+    };
+    Ok(prefs)
+}
+
+/// Persist the operator's propagation preferences.
+///
+/// Validates before writing: `req_snr_db` must be finite and within `[0, 100)`
+/// (the VOACAP SYSTEM card's 4-char Fortran field overflows at 100), and
+/// `tx_power_w` must be finite and `> 0`.
+#[tauri::command]
+pub async fn propagation_prefs_write(
+    antenna_preset: antenna::AntennaPreset,
+    req_snr_db: f64,
+    tx_power_w: f64,
+) -> Result<(), UiError> {
+    if !req_snr_db.is_finite() || !(0.0..100.0).contains(&req_snr_db) {
+        return Err(UiError::Rejected(format!(
+            "req_snr_db {req_snr_db} out of range — must be 0..100 dB-Hz"
+        )));
+    }
+    if !tx_power_w.is_finite() || tx_power_w <= 0.0 {
+        return Err(UiError::Rejected(format!(
+            "tx_power_w {tx_power_w} invalid — must be > 0 W"
+        )));
+    }
+    let new_prefs = prefs::PropagationPrefs {
+        antenna_preset,
+        req_snr_db,
+        tx_power_w,
+    };
+    let config_path = crate::config::config_path();
+    let dir = config_path.parent().ok_or_else(|| UiError::Internal {
+        detail: "config path has no parent directory".to_string(),
+    })?;
+    prefs::save(&prefs::prefs_path(dir), &new_prefs)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
 }
 
 // ============================================================================
@@ -306,6 +387,10 @@ mod tests {
             "EN52".into(),    // valid tx
             "ZZ".into(),      // invalid rx grid → InvalidGrid
             vec![7103.0],
+            "ccir.000".into(),
+            "ccir.000".into(),
+            22.0,
+            100.0,
         );
         let err = result.expect_err("invalid rx_grid should produce an error");
         assert!(
@@ -360,6 +445,10 @@ mod tests {
             "EN52".into(),
             "FN20".into(),
             vec![], // empty → NoFrequencies
+            "ccir.000".into(),
+            "ccir.000".into(),
+            22.0,
+            100.0,
         );
         let err = result.expect_err("empty frequencies should produce an error");
         assert!(

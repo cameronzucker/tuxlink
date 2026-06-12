@@ -16,8 +16,18 @@ describe('predictPath', () => {
     const got = await predictPath('DM43bp', 'DM34oa', [7103, 14103]);
     expect(invoke).toHaveBeenCalledWith('propagation_predict_path', {
       txGrid: 'DM43bp', rxGrid: 'DM34oa', frequenciesKhz: [7103, 14103],
+      // No gateway antenna passed → null (backend models an isotropic far end).
+      gatewayAntenna: null,
     });
     expect(got).toEqual(resp);
+  });
+
+  it('forwards the gateway antenna code when provided', async () => {
+    vi.mocked(invoke).mockResolvedValue({ channels: [] } as unknown as never);
+    await predictPath('DM43bp', 'DM34oa', [7103], 'vertical');
+    expect(invoke).toHaveBeenCalledWith('propagation_predict_path', {
+      txGrid: 'DM43bp', rxGrid: 'DM34oa', frequenciesKhz: [7103], gatewayAntenna: 'vertical',
+    });
   });
 
   it('caps at 11 frequencies (backend rejects more)', async () => {

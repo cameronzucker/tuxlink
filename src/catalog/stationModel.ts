@@ -6,7 +6,7 @@
 // share the base call.
 
 import { bandForKhz, type Band } from './bandPlan';
-import type { ListingMode, StationListing } from './stationTypes';
+import type { GatewayAntenna, ListingMode, StationListing } from './stationTypes';
 
 export interface Channel {
   mode: ListingMode;
@@ -28,6 +28,9 @@ export interface Station {
   channels: Channel[];
   /** Most-recent fetch stamp across contributing listings (freshness caption). */
   fetchedAtMs: number | null;
+  /** Gateway's self-reported antenna (B/D/V), if any listing carried one. Passed
+   *  to the HF predictor as the far-end antenna; null → isotrope (never a whip). */
+  gatewayAntenna: GatewayAntenna | null;
 }
 
 /** Strip a trailing -NN SSID and upper-case. */
@@ -57,12 +60,14 @@ export function aggregateStations(listings: StationListing[]): Station[] {
         station = {
           baseCallsign: base, grid, sysopName: g.sysopName, location: g.location,
           modes: [], channels: [], fetchedAtMs: listing.fetchedAtMs,
+          gatewayAntenna: g.antenna,
         };
         byKey.set(key, station);
       }
       // Fill in identity metadata from whichever listing first carries it.
       if (!station.sysopName && g.sysopName) station.sysopName = g.sysopName;
       if (!station.location && g.location) station.location = g.location;
+      if (!station.gatewayAntenna && g.antenna) station.gatewayAntenna = g.antenna;
       if (listing.fetchedAtMs && (!station.fetchedAtMs || listing.fetchedAtMs > station.fetchedAtMs)) {
         station.fetchedAtMs = listing.fetchedAtMs;
       }

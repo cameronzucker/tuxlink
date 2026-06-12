@@ -17,15 +17,24 @@ import { StationFinderControls, type FilterMode } from './StationFinderControls'
 import { ServiceCodesField } from './ServiceCodesField';
 import { StationFinderMap } from './StationFinderMap';
 import { StationRail } from './StationRail';
+import { AntennaControl } from './AntennaControl';
+import {
+  readPropagationPrefs,
+  writePropagationPrefs,
+  DEFAULT_PROPAGATION_PREFS,
+  type PropagationPrefs,
+} from './propagationPrefs';
 import { HF_BANDS, type Band } from './bandPlan';
 import type { ListingMode } from './stationTypes';
-import type { RadioMode } from '../favorites/types';
+import type { RadioMode, FavoriteDial } from '../favorites/types';
 import './StationFinderPanel.css';
 
 export interface StationFinderPanelProps {
   onClose: () => void;
   /** The open modem that can consume a channel prefill (Use →). */
   activePrefillMode?: RadioMode;
+  /** Arm-on-demand handler for "Use →" (AppShell opens the modem + prefills). */
+  onUse?: (dial: FavoriteDial) => void;
 }
 
 const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet'];
@@ -45,7 +54,7 @@ function ssnAge(year: number, month: number): number {
   return Math.max(0, months) * 30;
 }
 
-export function StationFinderPanel({ onClose, activePrefillMode }: StationFinderPanelProps) {
+export function StationFinderPanel({ onClose, activePrefillMode, onUse }: StationFinderPanelProps) {
   const [grid, setGrid] = useState('');
   // Band picker is a multi-select FILTER (tuxlink-hlas). Default: all HF bands
   // on (show the operator's full HF options), VHF/UHF off (line-of-sight packet
@@ -56,6 +65,12 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
   const [utcHour] = useState(currentUtcHour);
   const [radiusMi, setRadiusMi] = useState<number | null>(500);
   const [search, setSearch] = useState('');
+  // Operator propagation prefs (own antenna / SNR / power). Loaded once on open;
+  // `predictReload` is bumped AFTER a save persists so the forecast re-runs with
+  // the new TX model (the backend reads these prefs fresh each prediction).
+  const [prefs, setPrefs] = useState<PropagationPrefs | null>(null);
+  const [prefsError, setPrefsError] = useState<string | null>(null);
+  const [predictReload, setPredictReload] = useState(0);
   const stations = useStations();
 
   useEffect(() => {
@@ -110,7 +125,7 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
     () => visible.find((s) => stationKey(s) === selectedKey) ?? null,
     [visible, selectedKey],
   );
-  const pred = useStationPrediction(grid, selected);
+  const pred = useStationPrediction(grid, selected, predictReload);
 
   const ssnAgeDays = pred.prediction ? ssnAge(pred.prediction.year, pred.prediction.month) : null;
   // Freshest station-list fetch stamp across loaded listings (U2 freshness).
@@ -120,6 +135,33 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
       .filter((t): t is number => t != null);
     return stamps.length ? Math.max(...stamps) : null;
   }, [stations.listings]);
+
+  // Load the operator's propagation prefs once on mount (defaults if the read
+  // fails — a fresh install has no prefs file and the backend returns defaults).
+  useEffect(() => {
+    let mounted = true;
+    readPropagationPrefs()
+      .then((p) => mounted && setPrefs(p))
+      .catch(() => {
+        if (!mounted) return;
+        setPrefs(DEFAULT_PROPAGATION_PREFS);
+        setPrefsError('Could not load antenna settings; showing defaults.');
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Persist a prefs change, then bump the reload key so the forecast re-runs with
+  // the new TX model — only AFTER the write resolves (the backend reads the prefs
+  // file fresh each prediction, so re-running before the write would read stale).
+  const handlePrefsChange = (next: PropagationPrefs) => {
+    setPrefs(next);
+    setPrefsError(null);
+    writePropagationPrefs(next)
+      .then(() => setPredictReload((v) => v + 1))
+      .catch(() => setPrefsError('Could not save antenna settings.'));
+  };
 
   const toggleMode = (m: FilterMode) =>
     setEnabledModes((prev) => {
@@ -175,6 +217,10 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
 
         <ServiceCodesField onApplied={() => stations.fetch(FILTER_MODES as ListingMode[])} />
 
+        {prefs && (
+          <AntennaControl prefs={prefs} onChange={handlePrefsChange} error={prefsError} />
+        )}
+
         <div className="station-finder__body">
           <StationFinderMap
             stations={visible}
@@ -190,6 +236,7 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
             operatorGrid={grid}
             utcHour={utcHour}
             activePrefillMode={activePrefillMode}
+            onUse={onUse}
           />
         </div>
       </div>

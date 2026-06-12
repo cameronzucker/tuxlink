@@ -41,15 +41,18 @@ const PIN_SIZE: Record<string, number> = {
 export function stationPinIcon(tier: ReachTier | undefined, selected: boolean, label: string): L.DivIcon {
   const t = tier ?? 'untiered';
   const sz = PIN_SIZE[t];
-  // The visible dot is a styled <span> in the icon HTML; classes are global CSS
-  // (StationFinderPanel.css) since Leaflet injects this outside the React tree.
+  // The visible dot is a <span> sized to fill this divIcon's wrapper, whose
+  // width/height Leaflet sets from `iconSize` via the CSSOM. The dot's pixel
+  // size therefore comes from `iconSize` (below) + the `width:100%/height:100%`
+  // CSS rule — NOT an inline style="" attribute, which Tauri's packaged CSP
+  // strips in WebKitGTK and which produced the oblong "black blob" pins
+  // (tuxlink-s0r1). Classes are global CSS (StationFinderPanel.css) since
+  // Leaflet injects this outside the React tree.
   const sel = selected ? ' is-selected' : '';
   const safeLabel = label.replace(/"/g, '');
   return L.divIcon({
     className: 'station-finder__divpin',
-    html:
-      `<span class="station-finder__pindot station-finder__pindot--${t}${sel}" ` +
-      `style="width:${sz}px;height:${sz}px" title="${safeLabel}"></span>`,
+    html: `<span class="station-finder__pindot station-finder__pindot--${t}${sel}" title="${safeLabel}"></span>`,
     iconSize: [sz, sz],
     iconAnchor: [sz / 2, sz / 2],
   });

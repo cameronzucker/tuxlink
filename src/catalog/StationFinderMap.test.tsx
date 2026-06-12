@@ -25,9 +25,9 @@ import type { Station } from './stationModel';
 // component mounts the right number of markers without crashing.
 
 const stations: Station[] = [
-  { baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
-  { baseCallsign: 'K0ABC', grid: 'EN34', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
-  { baseCallsign: 'NOGRID', grid: '', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
+  { baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, gatewayAntenna: null, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
+  { baseCallsign: 'K0ABC', grid: 'EN34', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, gatewayAntenna: null, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
+  { baseCallsign: 'NOGRID', grid: '', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, gatewayAntenna: null, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
 ];
 
 const LAN_SOURCE: TileSource = {
@@ -65,6 +65,16 @@ describe('stationPinIcon (reachability colour/size logic)', () => {
   it('marks the selected pin', () => {
     const sel = stationPinIcon('good', true, 'X') as unknown as { html: string };
     expect(sel.html).toMatch(/is-selected/);
+  });
+
+  it('sizes the pin via iconSize (CSSOM), never an inline style attribute', () => {
+    // Regression guard for tuxlink-s0r1: an inline `style="width:..."` on the
+    // divIcon span is stripped by Tauri's packaged CSP in WebKitGTK, collapsing
+    // the dot into an oblong "black blob". Size must come from iconSize (which
+    // Leaflet applies to the wrapper via the CSSOM) + a width/height CSS rule.
+    const good = stationPinIcon('good', false, 'N0DAJ') as unknown as { html: string; iconSize: [number, number] };
+    expect(good.html).not.toMatch(/style\s*=/);
+    expect(good.iconSize).toEqual([20, 20]);
   });
 });
 

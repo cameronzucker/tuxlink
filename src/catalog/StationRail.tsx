@@ -15,7 +15,7 @@ import { gridToLatLon } from '../forms/position/maidenhead';
 import type { Station, Channel } from './stationModel';
 import type { PathPrediction } from './propagationApi';
 import type { PredictionStatus } from './useStationPrediction';
-import type { RadioMode } from '../favorites/types';
+import type { RadioMode, FavoriteDial } from '../favorites/types';
 
 export interface StationRailProps {
   station: Station | null;
@@ -25,6 +25,13 @@ export interface StationRailProps {
   utcHour: number;
   /** The open modem that can consume a prefill, or undefined if none. */
   activePrefillMode?: RadioMode;
+  /**
+   * Handle "Use →" for a channel. AppShell arms (opens) the matching modem panel
+   * on demand and then prefills it, so the operator does not have to open the
+   * modem first (tuxlink-s0r1). When omitted, falls back to emitting the prefill
+   * for an already-open panel.
+   */
+  onUse?: (dial: FavoriteDial) => void;
 }
 
 const mhz = (khz: number): string => (khz / 1000).toFixed(3);
@@ -63,7 +70,12 @@ export function StationRail(props: StationRailProps) {
 
   const onUse = (channel: Channel) => {
     const dial = channelToDial(station, channel);
-    if (dial) emitGatewayPrefill(dial);
+    if (!dial) return;
+    // Arm-on-demand (tuxlink-s0r1): AppShell opens the matching modem panel then
+    // prefills it. Fall back to a bare emit for an already-open panel in contexts
+    // that don't supply the handler (e.g. tests/standalone harness).
+    if (props.onUse) props.onUse(dial);
+    else emitGatewayPrefill(dial);
   };
 
   return (
@@ -141,6 +153,8 @@ export function StationRail(props: StationRailProps) {
             {group.channels.map((ch) => {
               const rel = prediction ? channelReliability(ch, prediction, utcHour) : null;
               const dialable = channelToDial(station, ch) != null;
+              // The matching modem is already open — purely informational now that
+              // Use → arms on demand (tuxlink-s0r1); kept for the "armed" affordance.
               const active = activePrefillMode != null && ch.mode === activePrefillMode;
               return (
                 <div
@@ -166,13 +180,13 @@ export function StationRail(props: StationRailProps) {
                     type="button"
                     data-testid={`use-${ch.mode}-${ch.frequencyKhz}`}
                     className="station-finder__use"
-                    disabled={!dialable || !active}
+                    disabled={!dialable}
                     title={
                       !dialable
-                        ? 'No modem for this mode'
-                        : !active
-                          ? `Open the ${MODE_LABEL[ch.mode]} modem to use this channel`
-                          : undefined
+                        ? 'No tuxlink modem for this mode'
+                        : active
+                          ? `Prefill the open ${MODE_LABEL[ch.mode]} modem`
+                          : `Open the ${MODE_LABEL[ch.mode]} modem and prefill this channel`
                     }
                     onClick={() => onUse(ch)}
                   >

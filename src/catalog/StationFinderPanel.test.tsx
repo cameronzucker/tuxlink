@@ -32,6 +32,9 @@ beforeEach(() => {
   // cmd-gated so the runner's stray no-arg cleanup call stays inert.
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     if (cmd === 'config_read') return { grid: 'DM43bp' } as unknown as never;
+    if (cmd === 'propagation_prefs_read')
+      return { antenna_preset: 'efhw-sloper', req_snr_db: 22, tx_power_w: 100 } as unknown as never;
+    if (cmd === 'propagation_prefs_write') return undefined as unknown as never;
     if (cmd === 'catalog_fetch_stations')
       return [{ mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1_700_000_000_000, gateways: [N0DAJ] }] as unknown as never;
     if (cmd === 'propagation_predict_path')

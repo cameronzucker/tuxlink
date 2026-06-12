@@ -713,6 +713,9 @@ pub fn run() {
             crate::catalog::commands::catalog_ingest_listing_reply,
             // tuxlink-ipjt Task 6: offline HF path prediction (voacapl sidecar).
             crate::propagation::commands::propagation_predict_path,
+            // tuxlink-s0r1: operator antenna preset + REQ.SNR + power prefs.
+            crate::propagation::commands::propagation_prefs_read,
+            crate::propagation::commands::propagation_prefs_write,
             // tuxlink-vrpk: GRIB request via Saildocs (3rd-party SMTP).
             crate::grib::commands::grib_send_request,
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)

@@ -109,6 +109,10 @@ fn live_dm43_to_dm34_full_pipeline() {
         ssn: 100.0,
         tx_power_w: 100.0,
         req_snr_db: 73.0,
+        // Legacy stock antennas — this live test exercises the voacapl engine
+        // path, not the antenna-preset selection; keep the captured deck inputs.
+        tx_antenna_voa: "const17.voa".to_string(),
+        rx_antenna_voa: "swwhip.voa".to_string(),
     };
 
     // Build the deck.
