@@ -18,10 +18,12 @@
 // operator grid is null OR the favorite grid is absent/malformed.
 
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { invoke } from '@tauri-apps/api/core';
 import type { Favorite, FavoriteDial } from './types';
 import { distanceBetweenGrids } from '../forms/position/distance';
 import { ConnectionRecord } from './ConnectionRecord';
-import type { ConnectionAttempt } from './types';
+import type { ConnectionAttempt, TodHint } from './types';
 
 export interface FavoriteRowProps {
   favorite: Favorite;
@@ -65,6 +67,16 @@ export function FavoriteRow({
 }: FavoriteRowProps) {
   const isTelnet = favorite.mode === 'telnet';
   const editable = Boolean(onUpsert || onDelete);
+
+  // The gated ToD hint, lifted out of ConnectionRecord (tuxlink-je5d) so the
+  // shared record component stays props-driven. Tauri auto-camelCases the Rust
+  // `unit_id: String` arg → `unitId` here; snake_case keys silently fail to
+  // bind and the command no-ops at runtime (see PacketRadioPanel.tsx:79).
+  const hintQuery = useQuery({
+    queryKey: ['favorite_tod_hint', favorite.id],
+    queryFn: () => invoke<TodHint | null>('favorite_tod_hint', { unitId: favorite.id }),
+  });
+  const hint = hintQuery.data ?? null;
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -150,7 +162,7 @@ export function FavoriteRow({
           </div>
         )}
 
-        <ConnectionRecord unitId={favorite.id} attempts={attempts} />
+        <ConnectionRecord attempts={attempts} hint={hint} />
       </div>
 
       <div className="favorite-row-acts">
