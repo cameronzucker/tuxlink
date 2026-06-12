@@ -523,22 +523,23 @@ mod tests {
         // aggregates both attempt streams and runs tod_hint over the union.
         let dir = tempdir().unwrap();
         let mut store = FavoritesStore::open(dir.path().join("stations.json"));
-        let mut n = 0u32;
-        let mut ids = move || {
-            n += 1;
-            format!("u{n}")
-        };
-        for (mode, freq, ts) in [
+        for (i, (mode, freq, ts)) in [
             ("ardop-hf", "14105.0", "2026-06-07T23:00:00-07:00"),
             ("ardop-hf", "14105.0", "2026-06-07T22:00:00-07:00"),
             ("vara-hf", "7102.0", "2026-06-07T21:00:00-07:00"),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // record_attempt's new_id is FnOnce (called only when a new favorite is
+            // created); a fresh per-call closure avoids sharing one across the loop.
+            let id = format!("u{}", i + 1);
             store
                 .record_attempt(
                     dial(mode, "W7CPZ", freq),
                     "reached".to_string(),
                     ts.to_string(),
-                    &mut ids,
+                    move || id,
                     "2026-06-08T06:00:00+00:00".to_string(),
                 )
                 .unwrap();
