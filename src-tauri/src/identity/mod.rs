@@ -13,6 +13,7 @@
 //! never a raw `Config` callsign.
 
 pub mod address;
+pub mod cms_verify;
 pub mod commands;
 pub mod handle;
 pub mod keyring_keys;
@@ -20,6 +21,7 @@ pub mod service;
 pub mod store;
 
 pub use address::{Address, Callsign};
+pub use cms_verify::{cms_gate_decision, CmsGateDecision, RefuseReason, TacticalRegistrationVerifier, VerifyError};
 pub use handle::{IdentityHandle, SessionIdentity};
 pub use service::IdentityService;
 pub use store::{FullIdentity, IdentityStore, TacticalCmsState, TacticalIdentity};
