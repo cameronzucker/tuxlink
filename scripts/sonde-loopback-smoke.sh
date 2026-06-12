@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 #
-# tuxmodem-loopback-smoke.sh — agent-runnable end-to-end loopback validation
-# for the tuxmodem program (tuxlink-l5rf, follow-up to tuxlink-9ggl umbrella).
+# sonde-loopback-smoke.sh — agent-runnable end-to-end loopback validation
+# for the sonde program (tuxlink-l5rf, follow-up to tuxlink-9ggl umbrella).
 #
 # For each of the three frame modes (raw / sync / multi-sync), encodes a
-# payload via tuxmodem-tx --write-wav, decodes via tuxmodem-rx --decode-wav
+# payload via sonde-tx --write-wav, decodes via sonde-rx --decode-wav
 # --expected, and verifies CLEAN MATCH. No radio, no PTT, no Part 97 risk
 # — purely WAV-mediated I/O on the local filesystem.
 #
 # Exit code 0 = all cases passed; 1 = one or more failures.
 #
 # Usage:
-#   bash scripts/tuxmodem-loopback-smoke.sh
+#   bash scripts/sonde-loopback-smoke.sh
 #
 # Per [RADIO-1] this script does NOT exercise the on-air TX/RX path. For
-# that, see the docs in tuxmodem/crates/tuxmodem-tx (PR #366 onward).
+# that, see the docs in sonde/crates/sonde-tx (PR #366 onward).
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TX_MANIFEST="${REPO_ROOT}/tuxmodem/crates/tuxmodem-tx/Cargo.toml"
-RX_MANIFEST="${REPO_ROOT}/tuxmodem/crates/tuxmodem-rx/Cargo.toml"
+TX_MANIFEST="${REPO_ROOT}/sonde/crates/sonde-tx/Cargo.toml"
+RX_MANIFEST="${REPO_ROOT}/sonde/crates/sonde-rx/Cargo.toml"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "${WORK_DIR}"' EXIT
@@ -41,22 +41,22 @@ run_case() {
   echo
   echo "[case ${TOTAL}] ${label}: --frame-mode ${frame_mode}, payload ${#payload} byte(s)"
 
-  if ! cargo run --quiet --manifest-path "${TX_MANIFEST}" --bin tuxmodem-tx -- \
+  if ! cargo run --quiet --manifest-path "${TX_MANIFEST}" --bin sonde-tx -- \
         --write-wav "${wav_path}" \
         --payload "${payload}" \
         --mode wide-floor \
         --frame-mode "${frame_mode}" >/dev/null; then
-    echo "  FAIL: tuxmodem-tx exited non-zero"
+    echo "  FAIL: sonde-tx exited non-zero"
     FAIL=$((FAIL + 1))
     return
   fi
 
   local rx_output
-  if ! rx_output="$(cargo run --quiet --manifest-path "${RX_MANIFEST}" --bin tuxmodem-rx -- \
+  if ! rx_output="$(cargo run --quiet --manifest-path "${RX_MANIFEST}" --bin sonde-rx -- \
         --decode-wav "${wav_path}" \
         --expected "${payload}" \
         --frame-mode "${frame_mode}" 2>&1)"; then
-    echo "  FAIL: tuxmodem-rx exited non-zero"
+    echo "  FAIL: sonde-rx exited non-zero"
     echo "  ${rx_output}"
     FAIL=$((FAIL + 1))
     return
@@ -66,7 +66,7 @@ run_case() {
     echo "  PASS"
     PASS=$((PASS + 1))
   else
-    echo "  FAIL: no CLEAN MATCH in tuxmodem-rx output"
+    echo "  FAIL: no CLEAN MATCH in sonde-rx output"
     echo "${rx_output}" | sed 's/^/    /'
     FAIL=$((FAIL + 1))
   fi
@@ -93,7 +93,7 @@ sys.stdout.buffer.write(bytes(out))
 # bare receive() trim heuristic strips trailing zeros). Use short ASCII
 # strings for raw + sync; use base64-encoded random bytes for multi-sync.
 
-echo "tuxmodem loopback smoke (tuxlink-l5rf)"
+echo "sonde loopback smoke (tuxlink-l5rf)"
 echo "======================================"
 
 run_case "raw-5b" "raw" "TEST!"

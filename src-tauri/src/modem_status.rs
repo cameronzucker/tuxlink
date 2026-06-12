@@ -354,7 +354,7 @@ struct ModemSessionInner {
     ///
     /// Trait-object hand-off: ownership of the live transport lives in
     /// `Option<Box<dyn ModemTransport>>` rather than a generic type so that
-    /// future modems (Dire Wolf, tuxmodem, etc.) can swap in without
+    /// future modems (Dire Wolf, sonde, etc.) can swap in without
     /// reshaping the session struct.
     transport: Option<Box<dyn crate::winlink::modem::ModemTransport>>,
     /// Cooperative cmd-socket writer (the transport's side-channel abort

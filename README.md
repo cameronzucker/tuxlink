@@ -263,8 +263,8 @@ Where each path stands:
   pending.
 - **Hamlib rig control** and USB rig autodetect.
 - **Native HF modem.** VARA is x86 Windows software that runs under WINE on x86
-  Linux but not on ARM. Tuxlink targets a clean-room native HF modem (the
-  `tuxmodem/` workspace) rather than bundling VARA; VARA-TCP wire compatibility
+  Linux but not on ARM. Tuxlink targets a clean-room native HF modem (Sonde,
+  the `sonde/` workspace) rather than bundling VARA; VARA-TCP wire compatibility
   serves operators who bring their own VARA install.
 
 ## Architecture
@@ -277,9 +277,9 @@ exchange, the mailbox, and the AX.25 packet path are native Rust in
 desktop app ships as a single crate in the `v0.x` series, per
 [ADR 0002](docs/adr/0002-tauri-react-single-crate.md).
 
-The `tuxmodem/` workspace is the clean-room HF modem target (six crates:
-`tuxmodem-phy`, `tuxmodem-fec`, `tuxmodem-tx`, `tuxmodem-rx`, `tux-rig-rts`,
-`tux-rig-cm108`). Working code paths include OFDM encode / decode under the
+The `sonde/` workspace is Sonde, the clean-room HF modem target (six crates:
+`sonde-phy`, `sonde-fec`, `sonde-tx`, `sonde-rx`, `sonde-rig-rts`,
+`sonde-rig-cm108`). Working code paths include OFDM encode / decode under the
 wide-band low-density floor mode, Zadoff-Chu preamble frame sync, multi-symbol
 length-prefix framing, CPAL audio I/O, serial-RTS PTT for Digirig-class
 adapters, a SIGKILL-safe PTT watchdog, and operator-runnable CLIs. The modem is

@@ -2854,7 +2854,7 @@ pub(crate) fn file_exchange_result(
 /// into Inbox, moves sent ones from Outbox to Sent.
 ///
 /// The transport surface is `Box<dyn ModemTransport>` so any future modem
-/// (Dire Wolf, tuxmodem) that implements the same trait flows through this
+/// (Dire Wolf, sonde) that implements the same trait flows through this
 /// path unchanged.
 ///
 /// # RADIO-1

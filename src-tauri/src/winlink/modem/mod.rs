@@ -36,7 +36,7 @@ impl<T: std::io::Read + std::io::Write + Send> ReadWrite for T {}
 /// Drive an external soundcard modem over its TCP host protocol.
 ///
 /// Implemented by [`ardop::transport::ArdopTransport`] (ardopcf) today; the
-/// same abstraction that future Dire Wolf / VARA / first-party tuxmodem
+/// same abstraction that future Dire Wolf / VARA / first-party sonde
 /// transports will instantiate (ADR 0015 decision #3). Synchronous — no
 /// async_trait, no Tokio.
 ///
