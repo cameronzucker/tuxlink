@@ -1851,6 +1851,32 @@ pub async fn send_webview_form(
     let display_form = forms::wle_templates::resolve_viewer_for(&template.path)
         .unwrap_or_else(|| format!("{form_id}_Viewer.html"));
     let now = chrono::Utc::now();
+
+    // o4p9 (G12-A): resolve the governing .txt template and render the message
+    // To/Subject/Msg from it below. The .txt's `<var fieldname>` placeholders +
+    // host tags are substituted with the operator's submitted field values —
+    // this is how catalog/org forms get their prescribed recipient (often a
+    // fixed tactical/agency address like DYFI → USGS), templated subject, and
+    // human-readable body instead of the generic fallbacks. A form with no
+    // governing .txt (operator-custom HTML) keeps the fallback behavior.
+    let txt = forms::txt_template::resolve_governing_txt(&template.path);
+    let host_tags = {
+        let mut h = std::collections::HashMap::new();
+        h.insert("MsgSender".to_string(), senders_callsign.clone());
+        h.insert("Callsign".to_string(), senders_callsign.clone());
+        h.insert("GridSquare".to_string(), grid_square.clone());
+        h.insert(
+            "ProgramVersion".to_string(),
+            format!("Tuxlink/{}", env!("CARGO_PKG_VERSION")),
+        );
+        h.insert("DateTime".to_string(), now.format("%Y-%m-%d %H:%M:%SZ").to_string());
+        h.insert("Date".to_string(), now.format("%Y-%m-%d").to_string());
+        h.insert("Time".to_string(), now.format("%H:%M:%SZ").to_string());
+        h.insert("MsgTo".to_string(), to.join("; "));
+        h.insert("MsgCc".to_string(), cc.join("; "));
+        h
+    };
+
     let params = forms::types::FormParameters {
         xml_file_version: "1.0".to_string(),
         rms_express_version: format!("Tuxlink/{}", env!("CARGO_PKG_VERSION")),
@@ -1864,28 +1890,61 @@ pub async fn send_webview_form(
     // 3. Serialize the XML attachment.
     let xml_bytes = forms::serialize::serialize_catalog_form_xml(&form_id, &params, &field_values);
 
-    // 4. Compose the plain-text body. Receivers see the structured XML via the
-    //    WLE viewer; the body text is the fallback for non-WLE-aware clients.
-    //    KISS: sorted "key: value" dump with a leading form_id header.
-    let mut keys: Vec<&String> = field_values.keys().collect();
-    keys.sort();
-    let mut body = format!("form_id: {form_id}\n\n");
-    for k in keys {
-        let v = field_values.get(k).map(String::as_str).unwrap_or("");
-        body.push_str(k);
-        body.push_str(": ");
-        body.push_str(v);
-        body.push('\n');
-    }
+    // 4. Compose the plain-text body: the .txt `Msg:` projection (rendered with
+    //    the submitted field values + host tags) when the form has one, else the
+    //    KISS key:value dump fallback (non-.txt / operator-custom forms). WLE
+    //    receivers render the structured XML via the viewer regardless; the body
+    //    text is the fallback for non-WLE clients — but the .txt projection is
+    //    the faithful human-readable message the form designer intended.
+    let body = txt
+        .as_ref()
+        .and_then(|t| t.msg.as_deref())
+        .map(|m| forms::txt_template::render_template(m, &field_values, &host_tags))
+        .filter(|b| !b.trim().is_empty())
+        .unwrap_or_else(|| {
+            let mut keys: Vec<&String> = field_values.keys().collect();
+            keys.sort();
+            let mut body = format!("form_id: {form_id}\n\n");
+            for k in keys {
+                let v = field_values.get(k).map(String::as_str).unwrap_or("");
+                body.push_str(k);
+                body.push_str(": ");
+                body.push_str(v);
+                body.push('\n');
+            }
+            body
+        });
 
-    // 5. Subject. Prefer an explicit subject field if the form provided one
-    //    (common in WLE catalog forms — a "subject" or "msg_subject" input);
-    //    else fall back to "Form: <id>".
-    let subject = field_values
-        .get("subject")
-        .or_else(|| field_values.get("msg_subject"))
-        .cloned()
+    // 5. Subject: the .txt `Subject:` rendered, else an explicit subject field
+    //    (WLE catalog forms often have a "subject"/"msg_subject" input), else
+    //    "Form: <id>". The .txt subject is routing-significant for some forms
+    //    (RRI/ICS-213 sorting), so it wins when present.
+    let subject = txt
+        .as_ref()
+        .and_then(|t| t.subject.as_deref())
+        .map(|s| forms::txt_template::render_template(s, &field_values, &host_tags))
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| field_values.get("subject").cloned())
+        .or_else(|| field_values.get("msg_subject").cloned())
         .unwrap_or_else(|| format!("Form: {form_id}"));
+
+    // 6. Recipients: union the .txt `To:`/`Cc:` (rendered) with the
+    //    operator-entered recipients. The form's prescribed addresses lead
+    //    (fixed agency address, or an in-form `<var address>` the operator
+    //    filled); operator additions are appended, case-insensitively deduped.
+    //    An empty/absent .txt `To:` leaves the operator recipients unchanged.
+    let final_to = merge_txt_recipients(
+        txt.as_ref().and_then(|t| t.to.as_deref()),
+        &field_values,
+        &host_tags,
+        &to,
+    );
+    let final_cc = merge_txt_recipients(
+        txt.as_ref().and_then(|t| t.cc.as_deref()),
+        &field_values,
+        &host_tags,
+        &cc,
+    );
 
     let attachment = crate::winlink_backend::OutboundAttachment {
         filename: format!("RMS_Express_Form_{form_id}.xml"),
@@ -1893,8 +1952,8 @@ pub async fn send_webview_form(
     };
 
     let msg = OutboundMessage {
-        to,
-        cc,
+        to: final_to,
+        cc: final_cc,
         subject,
         body,
         date: now.to_rfc3339(),
@@ -1906,6 +1965,38 @@ pub async fn send_webview_form(
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
     let mid = backend.send_message(msg).await?;
     Ok(mid.0)
+}
+
+/// Union a `.txt` `To:`/`Cc:` line (rendered against field values + host tags)
+/// with the operator-entered recipients (tuxlink-o4p9 / G12-A). The form's
+/// prescribed addresses come first, then any operator additions not already
+/// present (case-insensitive dedup). An empty/absent template line yields the
+/// operator recipients unchanged. Splits the rendered line on `;` and `,` (WLE
+/// address separators).
+fn merge_txt_recipients(
+    txt_line: Option<&str>,
+    field_values: &std::collections::HashMap<String, String>,
+    host_tags: &std::collections::HashMap<String, String>,
+    operator: &[String],
+) -> Vec<String> {
+    fn push_unique(out: &mut Vec<String>, addr: &str) {
+        let a = addr.trim();
+        if !a.is_empty() && !out.iter().any(|m| m.eq_ignore_ascii_case(a)) {
+            out.push(a.to_string());
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    if let Some(line) = txt_line {
+        let rendered =
+            crate::forms::txt_template::render_template(line, field_values, host_tags);
+        for addr in rendered.split([';', ',']) {
+            push_unique(&mut out, addr);
+        }
+    }
+    for addr in operator {
+        push_unique(&mut out, addr);
+    }
+    out
 }
 
 // ============================================================================
@@ -10523,6 +10614,54 @@ hw:CARD=Device,DEV=0
             "the guard's Drop must reset in_progress even on an unwinding panic"
         );
     }
+
+    // tuxlink-o4p9 / G12-A: send_webview_form recipient union — the form's .txt
+    // To: leads, operator additions append, case-insensitive dedup.
+    #[test]
+    fn merge_txt_recipients_unions_form_and_operator() {
+        use std::collections::HashMap;
+        // Fixed-address .txt To: (DYFI → USGS); operator added a personal CC-as-to.
+        let to = merge_txt_recipients(
+            Some("dyfi_reports_automated@usgs.gov"),
+            &HashMap::new(),
+            &HashMap::new(),
+            &["W7ABC".to_string()],
+        );
+        assert_eq!(to, vec!["dyfi_reports_automated@usgs.gov", "W7ABC"]);
+    }
+
+    #[test]
+    fn merge_txt_recipients_renders_var_addressed_to() {
+        use std::collections::HashMap;
+        // Quick Message: `To: <var address>` — the recipient is an in-form field.
+        let mut fv = HashMap::new();
+        fv.insert("address".to_string(), "NET-CONTROL; W1AW".to_string());
+        let to = merge_txt_recipients(Some("<var address>"), &fv, &HashMap::new(), &[]);
+        assert_eq!(to, vec!["NET-CONTROL", "W1AW"]);
+    }
+
+    #[test]
+    fn merge_txt_recipients_dedupes_case_insensitively() {
+        use std::collections::HashMap;
+        let to = merge_txt_recipients(
+            Some("ops@ares.org"),
+            &HashMap::new(),
+            &HashMap::new(),
+            &["OPS@ares.org".to_string(), "extra@x.com".to_string()],
+        );
+        assert_eq!(to, vec!["ops@ares.org", "extra@x.com"]);
+    }
+
+    #[test]
+    fn merge_txt_recipients_empty_txt_keeps_operator() {
+        use std::collections::HashMap;
+        // Blank .txt To: (SendReply style) or absent → operator recipients alone.
+        let from_blank = merge_txt_recipients(Some(""), &HashMap::new(), &HashMap::new(), &["a@b.c".to_string()]);
+        assert_eq!(from_blank, vec!["a@b.c"]);
+        let from_none = merge_txt_recipients(None, &HashMap::new(), &HashMap::new(), &["a@b.c".to_string()]);
+        assert_eq!(from_none, vec!["a@b.c"]);
+    }
+
     // tuxlink-l80q: message_move_bulk moves every listed message to a single
     // destination, honoring each item's own source folder so a cross-folder
     // selection (inbox + sent) lands correctly in one command call. Mirrors the

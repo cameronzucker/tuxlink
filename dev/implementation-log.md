@@ -5,6 +5,50 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-06-12 — Runtime .txt message-template engine (Forms-push G12-A, tuxlink-o4p9)
+
+The G12 audit found the dominant forms gap: the ~131 generic-path catalog/org
+forms sent via `send_webview_form` ignored their governing `.txt` template
+entirely — generic `Form: <id>` subject, a key:value dump body, and the
+operator-typed recipient — discarding the form designer's prescribed `To:`
+(often a fixed agency address like DYFI → USGS, silently breaking the
+receive-side data pipeline), the templated `Subject:` (routing-significant for
+RRI/ICS-213), and the `Msg:` body projection. tuxlink parsed only the `Form:`
+directive (for import detection).
+
+New `forms::txt_template`: parses the full WLE `.txt` grammar
+(`Form:`/`Display:`/`To:`/`Cc:`/`Subject:`/`ReplyTemplate:`/`Def:`/`Msg:`, the
+last being a body block to EOF), a cp1252 decoder (the bundle is Windows-1252;
+the importer's `from_utf8_lossy` corrupts smart quotes), a renderer that
+substitutes `<var fieldname>` from submitted values AND `<HostTag>`
+(`MsgSender`/`ProgramVersion`/`Callsign`/`GridSquare`/`DateTime`/… — this
+subsumes most of G12-B/pj7p) with XML-1.0 sanitization, and a resolver that
+finds a form's governing `.txt` by its `Form:` directive (NOT a shared stem —
+`ICS213_Initial.html` ↔ `ICS213 General Message.txt`).
+
+Wired into `send_webview_form`: render the `.txt` To/Subject/Msg with the
+submitted field values; subject + body use the rendered template when present
+(generic fallbacks otherwise); recipients **union** the rendered `To:` (form's
+prescribed address first) with operator-entered recipients (case-insensitive
+dedup, never drops data). A form with no governing `.txt` keeps the prior
+behavior. The XML attachment is unchanged, so WLE-receiver interop is untouched
+— a correct subject is more compatible, not less.
+
+Recipient-handling decision (documented, operator-testable per the no-Codex /
+self-adrev posture): union rather than override or pre-send-review, because it
+never silently drops the operator's recipient and honors the form's destination.
+A pre-send recipient-review step is a noted future option if the at-submit
+recipient change proves surprising.
+
+Discipline: interop-sensitive but well-specified by the audit; built with
+rigorous self-adversarial review (Codex unavailable, not a gate). The self-adrev
+test design caught a real bug (inline-`Msg:` leading-space). Gates: clippy
+`--all-targets -D warnings` clean; txt_template 33/0; merge_txt_recipients 4/0.
+The end-to-end send is an operator smoke (send a fixed-To form like DYFI, or a
+`<var address>` form, and confirm recipient/subject/body).
+
+---
+
 ## 2026-06-12 — Direct print of a rendered form (Forms-push G8b, tuxlink-954o)
 
 Fast-follow to G8 (tuxlink-cumx). The issue title was always "PDF/print"; G8
