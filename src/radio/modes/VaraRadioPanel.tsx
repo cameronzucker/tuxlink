@@ -496,7 +496,13 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
                 type="text"
                 className="radio-panel-input"
                 data-testid="vara-target-input"
-                placeholder="RMS gateway call sign"
+                // tuxlink-8c9f: the dial target is a PEER station's callsign for
+                // P2P (mirrors WLE's "remote callsign" in Vara P2P), and an RMS
+                // gateway for cms / radio-only (both connect to an RMS — radio-only
+                // is gateway-routed, just over the radio-only network).
+                placeholder={
+                  mode.intent === 'p2p' ? 'peer station call sign' : 'RMS gateway call sign'
+                }
                 value={target}
                 spellCheck={false}
                 autoCapitalize="characters"
