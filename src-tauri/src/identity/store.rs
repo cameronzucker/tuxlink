@@ -122,6 +122,23 @@ impl IdentityStore {
         Ok(())
     }
 
+    /// Update the cached CMS-registration state of a tactical identity (Phase 5).
+    /// Errors with `UnknownIdentity` if no tactical matches `label` under `parent`.
+    pub fn set_tactical_cms(
+        &mut self,
+        label: &str,
+        parent: &Callsign,
+        state: TacticalCmsState,
+    ) -> Result<(), IdentityError> {
+        let t = self
+            .tactical
+            .iter_mut()
+            .find(|t| t.label == label && t.parent.as_str() == parent.as_str())
+            .ok_or(IdentityError::UnknownIdentity)?;
+        t.cms = state;
+        Ok(())
+    }
+
     /// Remove a FULL or tactical identity by address. Removing a FULL that still
     /// has tactical children errors with `RemoveHasTacticals`. Removing something
     /// that does not exist errors with `UnknownIdentity`.
@@ -294,5 +311,28 @@ mod tests {
         store.set_last_selected(Address::Tactical("EOC-3".into()));
         store.set_last_selected(Address::Full(call("W1ABC")));
         assert_eq!(store.last_selected(), Some(&Address::Full(call("W1ABC"))));
+    }
+
+    #[test]
+    fn set_tactical_cms_updates_matching_tactical() {
+        let mut store = IdentityStore::default();
+        store.add_full(FullIdentity { callsign: Callsign::parse("W1ABC").unwrap(), label: None,
+            has_cms_account: true, cms_registered: true }).unwrap();
+        store.add_tactical(TacticalIdentity { label: "EOC-3".into(),
+            parent: Callsign::parse("W1ABC").unwrap(), cms: TacticalCmsState::Unknown }).unwrap();
+        store.set_tactical_cms("EOC-3", &Callsign::parse("W1ABC").unwrap(),
+            TacticalCmsState::Registered { checked_unix: 99 }).unwrap();
+        let t = store.tactical().iter().find(|t| t.label == "EOC-3").unwrap();
+        assert_eq!(t.cms, TacticalCmsState::Registered { checked_unix: 99 });
+    }
+
+    #[test]
+    fn set_tactical_cms_errors_on_unknown_tactical() {
+        let mut store = IdentityStore::default();
+        store.add_full(FullIdentity { callsign: Callsign::parse("W1ABC").unwrap(), label: None,
+            has_cms_account: true, cms_registered: true }).unwrap();
+        let err = store.set_tactical_cms("NOPE", &Callsign::parse("W1ABC").unwrap(),
+            TacticalCmsState::Unknown).unwrap_err();
+        assert!(matches!(err, IdentityError::UnknownIdentity));
     }
 }
