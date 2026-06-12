@@ -193,6 +193,7 @@ pub enum DwLifecycleError {
 /// is dropped without an explicit [`ManagedDireWolf::shutdown`], `ManagedModem`'s
 /// own `Drop` still SIGINT→SIGKILLs the child so it cannot be orphaned. The temp
 /// conf's `NamedTempFile` is removed on drop too.
+#[derive(Debug)]
 pub struct ManagedDireWolf {
     /// The supervised child. `Option` so `shutdown` can `take()` it and, on the
     /// release-failure retry path, restore it (mirrors ardopcf's `managed`).
