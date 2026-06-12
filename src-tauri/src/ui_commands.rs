@@ -1810,7 +1810,7 @@ pub async fn send_form(
 #[allow(clippy::too_many_arguments)]
 pub async fn send_webview_form(
     form_id: String,
-    field_values: std::collections::HashMap<String, String>,
+    mut field_values: std::collections::HashMap<String, String>,
     to: Vec<String>,
     cc: Vec<String>,
     senders_callsign: String,
@@ -1830,6 +1830,10 @@ pub async fn send_webview_form(
     subject_hint: Option<String>,
     app: AppHandle,
     state: State<'_, BackendState>,
+    // tuxlink-2tom / G12-C: the persisted per-form serial counter store. When the
+    // governing template carries `SeqInc:`, the next serial is allocated from here
+    // and stamped into `SeqNum` (and thus `<var SeqNum>`) before rendering.
+    seq_store: State<'_, std::sync::Arc<std::sync::Mutex<crate::forms::sequence::SeqCounterStore>>>,
 ) -> Result<String, UiError> {
     use crate::forms;
 
@@ -1907,6 +1911,23 @@ pub async fn send_webview_form(
             viewer_fallback(),
         ),
     };
+
+    // tuxlink-2tom / G12-C: SeqInc forms auto-number each send. Allocate the next
+    // serial from the persisted counter and stamp it into `SeqNum`, so `<var SeqNum>`
+    // in Subject/Msg and the serialized XML both carry it. Allocation persists
+    // BEFORE the network send below, so a failed send leaves a serial GAP rather
+    // than risking a duplicate from a concurrent retry. The lock is released here —
+    // never held across the await.
+    if txt.as_ref().map(|t| t.seq_inc).unwrap_or(false) {
+        let next = {
+            let mut store = seq_store
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            store.allocate(&form_id)
+        };
+        field_values.insert("SeqNum".to_string(), next.to_string());
+    }
+
     let host_tags = {
         let mut h = std::collections::HashMap::new();
         h.insert("MsgSender".to_string(), senders_callsign.clone());
@@ -2056,6 +2077,52 @@ fn merge_txt_recipients(
         push_unique(&mut out, addr);
     }
     out
+}
+
+/// One form's serial-counter state (tuxlink-2tom / G12-C). `next_serial` is the
+/// number this form's next `SeqInc` send will stamp into `SeqNum`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeqCounterStatus {
+    pub form_id: String,
+    pub next_serial: u64,
+}
+
+/// List every form that has a serial counter, as `{formId, nextSerial}`
+/// (tuxlink-2tom / G12-C). Powers the Settings "Form sequence numbers" section.
+/// Forms that have never been sent have no counter and are absent (their next
+/// serial is implicitly 1).
+#[tauri::command]
+pub async fn forms_sequence_status(
+    seq_store: State<'_, std::sync::Arc<std::sync::Mutex<crate::forms::sequence::SeqCounterStore>>>,
+) -> Result<Vec<SeqCounterStatus>, String> {
+    let store = seq_store
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(store
+        .status()
+        .into_iter()
+        .map(|(form_id, next_serial)| SeqCounterStatus {
+            form_id,
+            next_serial,
+        })
+        .collect())
+}
+
+/// Set a form's NEXT serial number (tuxlink-2tom / G12-C) — the reset affordance
+/// (e.g. restart radiogram numbering at 1 for a new event/year). `next` is
+/// clamped to `>= 1`. Persists immediately.
+#[tauri::command]
+pub async fn forms_sequence_reset(
+    form_id: String,
+    next: u64,
+    seq_store: State<'_, std::sync::Arc<std::sync::Mutex<crate::forms::sequence::SeqCounterStore>>>,
+) -> Result<(), String> {
+    let mut store = seq_store
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    store.set_next(&form_id, next);
+    Ok(())
 }
 
 // ============================================================================
@@ -10255,6 +10322,51 @@ hw:CARD=Device,DEV=0
             sr.template.display_html.as_deref(),
             Some("ICS213_SendReply_Viewer.html")
         );
+    }
+
+    // ── tuxlink-2tom / G12-C — SeqInc serial stamping ──────────────────────
+    //
+    // Replicates the send-path SeqInc decision (the command itself needs State):
+    // on a SeqInc template, allocate the next serial and stamp it into `SeqNum`,
+    // so `<var SeqNum>` in Subject + Msg both carry the (incrementing) number.
+    #[test]
+    fn seqinc_stamps_incrementing_serial_into_subject_and_body() {
+        use crate::forms::sequence::SeqCounterStore;
+        use crate::forms::txt_template::{parse_txt_template, render_template};
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SeqCounterStore::open(dir.path().join("c.json"));
+        // Real bundle shape (IARU Message Form): SeqNum in both Subject and Msg.
+        let t = parse_txt_template(
+            "Form: X.html\r\nSubject:Msg# <var SeqNum>\r\nSeqInc:\r\nMsg:\r\nSerial <var SeqNum>\r\n",
+        );
+        assert!(t.seq_inc);
+        let ht = std::collections::HashMap::new();
+
+        // First send: allocate → SeqNum=1.
+        let mut fv = std::collections::HashMap::new();
+        if t.seq_inc {
+            fv.insert("SeqNum".to_string(), store.allocate("X").to_string());
+        }
+        assert_eq!(render_template(t.subject.as_deref().unwrap(), &fv, &ht), "Msg# 1");
+        assert_eq!(render_template(t.msg.as_deref().unwrap(), &fv, &ht), "Serial 1");
+
+        // Second send: the counter advances → SeqNum=2.
+        fv.insert("SeqNum".to_string(), store.allocate("X").to_string());
+        assert_eq!(render_template(t.subject.as_deref().unwrap(), &fv, &ht), "Msg# 2");
+    }
+
+    /// A non-SeqInc form does not allocate or stamp a serial (the gate holds).
+    #[test]
+    fn non_seqinc_form_does_not_stamp_serial() {
+        use crate::forms::txt_template::parse_txt_template;
+        let t = parse_txt_template("Form: X.html\r\nSubject:Hello\r\nMsg:\r\nbody\r\n");
+        assert!(!t.seq_inc);
+        let mut fv = std::collections::HashMap::<String, String>::new();
+        if t.seq_inc {
+            fv.insert("SeqNum".to_string(), "1".to_string());
+        }
+        assert!(!fv.contains_key("SeqNum"));
     }
 
     // ========================================================================

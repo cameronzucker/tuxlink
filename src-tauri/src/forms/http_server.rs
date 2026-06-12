@@ -438,7 +438,13 @@ fn substitute_template(raw: &str, port: u16, _folder: &str) -> String {
     let with_subs = raw
         .replace("{FormServer}", "127.0.0.1")
         .replace("{FormPort}", &port.to_string())
-        .replace("{FormFolder}", "/folder");
+        .replace("{FormFolder}", "/folder")
+        // tuxlink-2tom / G12-C: `{SeqNum}` is the WLE serial-number placeholder
+        // (e.g. `<input value="{SeqNum}" name="SeqNum">`). tuxlink assigns the
+        // serial authoritatively at SEND time from the persisted counter, so the
+        // field opens blank here — leaving the literal `{SeqNum}` on screen would
+        // be a defect. Forms without the placeholder are unaffected (no-op).
+        .replace("{SeqNum}", "");
     inject_skin_link(&with_subs)
 }
 
@@ -1940,6 +1946,19 @@ mod tests {
         let body = to_bytes(resp.into_body(), 64_000).await.unwrap();
         let s = String::from_utf8_lossy(&body);
         assert!(s.contains("viewer content here"));
+    }
+
+    #[test]
+    fn substitute_template_blanks_seqnum_placeholder() {
+        // tuxlink-2tom: the WLE `{SeqNum}` serial placeholder opens blank (the
+        // serial is assigned at send), never rendered literally.
+        let out = substitute_template(
+            "<input value=\"{SeqNum}\" name=\"SeqNum\" id=\"Number\">",
+            34567,
+            "",
+        );
+        assert!(!out.contains("{SeqNum}"), "literal {{SeqNum}} must not survive: {out}");
+        assert!(out.contains("value=\"\""), "the serial input opens blank: {out}");
     }
 
     #[test]
