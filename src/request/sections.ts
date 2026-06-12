@@ -20,8 +20,9 @@
 // it ends up with zero cards — the national + nearby sections always have cards.
 
 import type { CatalogEntry } from '../catalog/types';
-import { gridToLatLon, gridToNwsZone, gridToRadarRegion, latLonToSeaArea } from './geo';
+import { gridToLatLon, gridToNwsZone, gridToRadarRegion, latLonToSeaArea, latLonToUsState } from './geo';
 import { NATIONAL, zoneForecastEntry, radarEntry } from './catalogMap';
+import { usStateName } from './usStateName';
 
 export type CardAction =
   | { kind: 'addCms'; filename: string }
@@ -102,6 +103,26 @@ export function buildSections(
         meta: seaArea,
         action: { kind: 'openBrowse', category: seaArea },
       });
+    }
+    // Always-on "Browse all <ST> weather" — the alternatives safety net. The
+    // catalog carries coarse regional products for most states (the auto-resolved
+    // zone card above can't cover every region, and ~7% of grids resolve to no
+    // mapped product); this card guarantees the operator can always reach their
+    // state's full weather set. State comes from the resolved zone, else the
+    // state polygon (so it works even when no zone/product resolves).
+    const state = zone?.state ?? latLonToUsState(latLon.lat, latLon.lon);
+    if (state) {
+      const category = `WX_US_${state}`;
+      const count = entries.filter((e) => e.category === category).length;
+      if (count > 0) {
+        locationCards.push({
+          id: 'loc-browse-all',
+          label: `All ${usStateName(state) ?? state} forecasts`,
+          description: 'Browse every weather product the catalog carries for your state.',
+          meta: `${count} product${count === 1 ? '' : 's'}`,
+          action: { kind: 'openBrowse', category },
+        });
+      }
     }
   }
   if (locationCards.length > 0) {

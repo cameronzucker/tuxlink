@@ -236,7 +236,7 @@ if (!WRITE) { console.log('\n(dry-run; pass --write to emit JSON)'); process.exi
 // ---- emit (Douglas–Peucker simplify; only MAPPED zones need geometry) ------
 // Unmapped grids resolve their state via the existing us-states.geo.json for the
 // browse-all card, so we drop unmapped-zone polygons entirely (size win).
-const TOLERANCE = 0.02; // ~2 km; ample given operator grids are 4-6 char (>=5 km)
+const TOLERANCE = 0.04; // ~4 km; ample vs 4-6 char grids (>=5 km); keeps multi-office splits distinct
 function perpDist(p: number[], a: number[], b: number[]): number {
   const dx = b[0] - a[0], dy = b[1] - a[1];
   if (dx === 0 && dy === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
