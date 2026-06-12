@@ -381,7 +381,7 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
               {!loading && !error && !hasCustom && searchResults === null && (
                 <div className="catalog-browser__custom-cta" data-testid="catalog-custom-cta">
                   <p className="catalog-browser__custom-cta-text">
-                    No custom forms yet — bring in your group&rsquo;s forms.
+                    No custom forms yet — bring in your organization&rsquo;s forms.
                   </p>
                   <button
                     type="button"
@@ -389,7 +389,7 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
                     data-testid="catalog-empty-custom-cta"
                     onClick={() => setImportOpen(true)}
                   >
-                    Import group forms…
+                    Import custom forms…
                   </button>
                 </div>
               )}
@@ -423,15 +423,21 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
         <div className="catalog-browser__actions">
           {refreshStep.kind === 'idle' && !importOpen && (
             <>
-              <button
-                type="button"
-                className="catalog-browser__btn catalog-browser__btn--secondary"
-                onClick={() => setImportOpen(true)}
-                data-testid="catalog-browser-import"
-                title="Install a third-party or organization's custom Winlink forms"
-              >
-                Import group forms…
-              </button>
+              {/* Single import affordance: the prominent empty-state CTA already
+                  covers the no-custom-forms case, so the persistent action only
+                  shows once the operator has forms or is searching — never two
+                  import buttons at once (tuxlink-bl8p). */}
+              {(hasCustom || searchResults !== null) && (
+                <button
+                  type="button"
+                  className="catalog-browser__btn catalog-browser__btn--secondary"
+                  onClick={() => setImportOpen(true)}
+                  data-testid="catalog-browser-import"
+                  title="Install a third-party or organization's custom Winlink forms"
+                >
+                  Import custom forms…
+                </button>
+              )}
               <button
                 type="button"
                 className="catalog-browser__btn catalog-browser__btn--secondary"
@@ -443,7 +449,7 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
               </button>
               <button
                 type="button"
-                className="catalog-browser__btn catalog-browser__btn--ghost"
+                className="catalog-browser__btn catalog-browser__btn--secondary"
                 onClick={() => void revealFolder()}
                 data-testid="catalog-browser-open-folder"
                 title="Open the custom-forms folder in your file manager"

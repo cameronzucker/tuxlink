@@ -58,12 +58,32 @@ describe('buildFolderTree custom-first', () => {
 
 describe('CatalogBrowser import wiring', () => {
   it('footer offers Import + Update standard forms with distinct labels', async () => {
+    // CATALOG includes a Custom form → hasCustom is true → the persistent
+    // actions-bar Import button shows (tuxlink-bl8p collapses it to one
+    // affordance; it's hidden only in the empty/no-custom state, covered below).
     render(<CatalogBrowser onPick={vi.fn()} onCancel={vi.fn()} />);
     await screen.findByTestId('catalog-browser-import');
-    expect(screen.getByTestId('catalog-browser-import').textContent).toContain('Import group forms');
+    expect(screen.getByTestId('catalog-browser-import').textContent).toContain('Import custom forms');
     expect(screen.getByTestId('catalog-browser-refresh').textContent).toContain(
       'Update standard forms',
     );
+  });
+
+  // tuxlink-bl8p (4): single import affordance — when there are no custom forms
+  // and no active search, only the prominent empty-state CTA shows; the
+  // persistent actions-bar Import button is hidden so the operator never sees
+  // two "Import…" buttons at once.
+  it('hides the footer Import in the empty state (only the CTA shows)', async () => {
+    fn(invoke).mockImplementation((cmd: string) =>
+      cmd === 'forms_list_catalog'
+        ? Promise.resolve([
+            { id: 'ICS213_Initial', label: 'ICS213_Initial', folder: 'ICS Forms', source: 'Bundled', path: '' },
+          ])
+        : Promise.resolve(undefined),
+    );
+    render(<CatalogBrowser onPick={vi.fn()} onCancel={vi.fn()} />);
+    expect(await screen.findByTestId('catalog-empty-custom-cta')).toBeTruthy();
+    expect(screen.queryByTestId('catalog-browser-import')).toBeNull();
   });
 
   it('opens the import sheet from the footer button', async () => {

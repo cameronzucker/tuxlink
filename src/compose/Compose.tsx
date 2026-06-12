@@ -816,20 +816,6 @@ export function Compose({ draftId }: ComposeProps) {
           </span>
         </div>
 
-        {/* Send as — disabled (deferred) */}
-        <div className="compose-field-row">
-          <label htmlFor="compose-send-as" className="compose-label">Send as</label>
-          <input
-            id="compose-send-as"
-            className="compose-input compose-input--disabled"
-            type="text"
-            value="Winlink Message"
-            readOnly
-            disabled
-            title="Message type selection not yet wired"
-          />
-        </div>
-
         {/* To — chips + contacts autocomplete (Task A6). The `to` STATE stays a
             semicolon string with `group:<id>` sentinels so draft autosave is
             unchanged; group expansion happens only at send (buildRecipients). */}
