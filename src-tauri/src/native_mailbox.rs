@@ -33,11 +33,39 @@ pub struct Mailbox {
     /// strand an orphaned child (Codex finding #3). The lock is held only for
     /// the brief registry critical section.
     registry_lock: Arc<Mutex<()>>,
+    /// Default received-mail namespace for the un-namespaced (`None`) path
+    /// (tuxlink-2ns7). Production constructs the mailbox with the operator's
+    /// sole FULL identity via [`Mailbox::with_default_identity`], so a bare
+    /// `list`/`store`/`read` resolves Inbox/Archive + user folders under
+    /// `mailbox/<FULL>/` — the SAME subtree [`Mailbox::migrate_legacy_layout`]
+    /// re-homes legacy mail into, so the move and the read never split (the
+    /// invariant tuxlink-ej7a's heal was a stopgap for). `None` (tests / a
+    /// pre-identity install) falls back to the literal `_default` segment.
+    /// Sent/Outbox ignore this — they are always shared at the root.
+    default_ns: Option<IdentityNamespace>,
 }
 
 impl Mailbox {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into(), index: None, registry_lock: Arc::new(Mutex::new(())) }
+        Self {
+            root: root.into(),
+            index: None,
+            registry_lock: Arc::new(Mutex::new(())),
+            default_ns: None,
+        }
+    }
+
+    /// Set the default received-mail namespace to a FULL identity (tuxlink-2ns7).
+    /// Production wires this from the operator's sole FULL (`config.identity`)
+    /// so bare `list`/`store`/`read` resolve Inbox/Archive + user folders under
+    /// `mailbox/<FULL>/` — matching where [`Mailbox::migrate_legacy_layout`]
+    /// re-homes legacy mail. Uses the NORMALIZED `Callsign::as_str()` so the
+    /// read namespace and the migration target dir-name agree (tuxlink-21w3).
+    /// A `Callsign` always parses as a valid namespace segment, so the `.ok()`
+    /// fallback to `None` (→ `_default`) is unreachable in practice.
+    pub fn with_default_identity(mut self, full: &crate::identity::Callsign) -> Self {
+        self.default_ns = IdentityNamespace::parse(full.as_str()).ok();
+        self
     }
 
     /// Acquire the registry critical-section lock, recovering from a poisoned
@@ -86,8 +114,13 @@ impl Mailbox {
 
         // The identity tag for this message: for received mail it is the
         // namespace callsign (the FULL whose inbox it was delivered into); for
-        // Sent/Outbox it is the FULL the message was authored under.
-        let identity_tag: Option<String> = ns.map(|n| n.as_str().to_string());
+        // Sent/Outbox it is the FULL the message was authored under. Resolve
+        // through the effective namespace (explicit arg, else the mailbox's
+        // default identity) so a production bare `store` on an
+        // identity-defaulted mailbox still tags Sent/Outbox correctly
+        // (tuxlink-2ns7).
+        let identity_tag: Option<String> =
+            ns.or(self.default_ns.as_ref()).map(|n| n.as_str().to_string());
 
         // tuxlink-2ns7: Sent/Outbox stay in the SHARED store, so a message's
         // owning identity must be persisted on-disk as a `<mid>.identity`
@@ -386,8 +419,12 @@ impl Mailbox {
     /// side would not find the moved mail (tuxlink-21w3: per-FULL dir case must
     /// match the normalized stored Callsign).
     ///
-    /// Idempotent: a second run is a no-op (it short-circuits once the per-FULL
-    /// `inbox` exists).
+    /// Idempotent at the granularity of each sub-step: every move runs only when
+    /// its source dir exists AND its destination does not, and each Sent/Outbox
+    /// sidecar is written only when absent. This lets the migration run safely on
+    /// EVERY launch regardless of partial prior state — there is no wholesale
+    /// short-circuit, so a half-completed prior run (or a fresh old-scheme dir
+    /// left by the now-removed `heal_misplaced_inbox`) is finished on the next run.
     ///
     /// The search index (`search.db`) is intentionally untouched. The v3→v4
     /// schema bump already forces the operator's existing
@@ -404,40 +441,58 @@ impl Mailbox {
         let ns = IdentityNamespace::parse(default_full.as_str())?;
         let per_full = self.received_root(Some(&ns));
 
-        // Idempotency guard: if the per-FULL inbox already exists, the migration
-        // has already run (or the install was born per-FULL). Nothing to do.
-        if per_full.join("inbox").exists() {
-            return Ok(());
-        }
-
         fs::create_dir_all(&per_full)?;
 
-        // 1. Re-home the legacy flat received-mail folders (inbox + archive). Move
-        //    the WHOLE legacy dir (its `.b2f` + `.read` sidecars) into the
-        //    per-FULL root via `fs::rename` — simplest correct approach. The
-        //    idempotency guard above ensures the destination does not already
-        //    exist for `inbox`; for `archive` we only move when the source exists.
+        // 1. Re-home the received-mail folders (inbox + archive). Two legacy
+        //    sources are possible per folder, in precedence order:
+        //      (a) the FLAT scheme `<root>/<name>` (pre-Phase-4 default), and
+        //      (b) the OLD per-FULL scheme `<root>/<CALLSIGN>/<name>` that the
+        //          now-removed `bootstrap::heal_misplaced_inbox` used to bounce
+        //          mail back to flat from. Removing that heal means this migration
+        //          must absorb its job and forward-migrate the old-scheme dir.
+        //    For each folder we move only when the NEW destination does NOT
+        //    already exist (per-step idempotency). When BOTH a flat and an
+        //    old-scheme source exist (shouldn't happen — the heal guaranteed a
+        //    single inbox), prefer the flat one and leave the old-scheme dir
+        //    untouched so no data is clobbered.
+        let old_scheme_root = per_full_root(&self.root, default_full.as_str());
         for name in ["inbox", "archive"] {
-            let legacy = self.root.join(name);
-            if legacy.is_dir() {
-                fs::rename(&legacy, per_full.join(name))?;
+            let dst = per_full.join(name);
+            if dst.exists() {
+                // Already migrated (or born per-FULL) for this folder — skip.
+                continue;
+            }
+            let flat = self.root.join(name);
+            let old_scheme = old_scheme_root.join(name);
+            if flat.is_dir() {
+                fs::rename(&flat, &dst)?;
+                // If an old-scheme dir also exists we deliberately do NOT clobber
+                // it: the flat one wins and the old-scheme dir is left in place.
+                // (tracing not imported in this module; left as a code comment.)
+            } else if old_scheme.is_dir() {
+                fs::rename(&old_scheme, &dst)?;
             }
         }
 
         // 2. Re-home legacy top-level user folders. The legacy registry lives at
         //    the FLAT root's `.folders.json`; move each recorded slug dir under
         //    the per-FULL root, then move the registry file itself so the
-        //    per-FULL `list_user_folders_ns` finds it.
+        //    per-FULL `list_user_folders_ns` finds it. Each move is individually
+        //    idempotent: it runs only when the source dir exists AND the
+        //    destination does not, so a re-run never clobbers an already-migrated
+        //    folder.
         let legacy_registry = user_folders::load_registry(&self.root);
         for folder in &legacy_registry.folders {
             let legacy_slug_dir = user_folders::folder_dir(&self.root, &folder.slug);
-            if legacy_slug_dir.is_dir() {
-                fs::rename(&legacy_slug_dir, user_folders::folder_dir(&per_full, &folder.slug))?;
+            let dst_slug_dir = user_folders::folder_dir(&per_full, &folder.slug);
+            if legacy_slug_dir.is_dir() && !dst_slug_dir.exists() {
+                fs::rename(&legacy_slug_dir, &dst_slug_dir)?;
             }
         }
         let legacy_registry_path = self.root.join(".folders.json");
-        if legacy_registry_path.is_file() {
-            fs::rename(&legacy_registry_path, per_full.join(".folders.json"))?;
+        let dst_registry_path = per_full.join(".folders.json");
+        if legacy_registry_path.is_file() && !dst_registry_path.exists() {
+            fs::rename(&legacy_registry_path, &dst_registry_path)?;
         }
 
         // 3. Tag the shared Sent/Outbox messages. These STAY at `<root>/sent` and
@@ -473,7 +528,12 @@ impl Mailbox {
     /// per-FULL layout. Sent/Outbox never use this root — they stay shared at
     /// `<root>/sent` and `<root>/outbox` (see `folder_dir_ns`).
     fn received_root(&self, ns: Option<&IdentityNamespace>) -> PathBuf {
-        let seg = ns.map(|n| n.as_str()).unwrap_or("_default");
+        // The explicit `ns` arg wins (per-FULL callers like `for_identity` and
+        // `migrate_legacy_layout`); otherwise fall back to the mailbox's
+        // construction-time default identity (production's sole FULL), then to
+        // the literal `_default` (tests / a pre-identity install) (tuxlink-2ns7).
+        let eff = ns.or(self.default_ns.as_ref());
+        let seg = eff.map(|n| n.as_str()).unwrap_or("_default");
         self.root.join("mailbox").join(seg)
     }
 
@@ -1786,6 +1846,68 @@ mod index_hook_tests {
             Some("N7CPZ"),
         );
         assert!(dir.path().join("sent").exists(), "Sent stays at the shared root");
+    }
+
+    // tuxlink-2ns7 Phase 4 wiring: the migration runs on EVERY launch, so a
+    // second run must be a no-op (idempotent at each sub-step). Seed a flat
+    // layout, migrate once, then migrate again and assert the inbox count is
+    // unchanged and the second run is Ok.
+    #[test]
+    fn migrate_legacy_layout_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        // Seed a flat inbox with one message.
+        let raw_msg = raw("In A", "x");
+        let mid = crate::winlink::message::Message::from_bytes(&raw_msg)
+            .unwrap()
+            .header("Mid")
+            .unwrap()
+            .to_string();
+        let d = dir.path().join("inbox");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(format!("{mid}.b2f")), &raw_msg).unwrap();
+
+        let full = crate::identity::Callsign::parse("N7CPZ").unwrap();
+        mbox.migrate_legacy_layout(&full).unwrap();
+        let after_first = mbox.for_identity("N7CPZ").list(MailboxFolder::Inbox).unwrap().len();
+        assert_eq!(after_first, 1);
+
+        // Second run: no-op, still Ok, count unchanged.
+        mbox.migrate_legacy_layout(&full).unwrap();
+        let after_second = mbox.for_identity("N7CPZ").list(MailboxFolder::Inbox).unwrap().len();
+        assert_eq!(after_second, 1, "a second migration run must not change the inbox count");
+    }
+
+    // tuxlink-2ns7 Phase 4 wiring: the migration absorbs the now-removed
+    // `heal_misplaced_inbox`'s job — it forward-migrates the OLD per-FULL scheme
+    // `<root>/<CALLSIGN>/inbox` (via `per_full_root`) into the new
+    // `mailbox/<CALLSIGN>/inbox` location.
+    #[test]
+    fn migrate_legacy_layout_rescues_old_scheme() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        // Seed a message under the OLD per-FULL scheme: <root>/<CALLSIGN>/inbox.
+        let raw_msg = raw("Old scheme", "x");
+        let mid = crate::winlink::message::Message::from_bytes(&raw_msg)
+            .unwrap()
+            .header("Mid")
+            .unwrap()
+            .to_string();
+        let old_inbox = per_full_root(dir.path(), "N7CPZ").join("inbox");
+        std::fs::create_dir_all(&old_inbox).unwrap();
+        std::fs::write(old_inbox.join(format!("{mid}.b2f")), &raw_msg).unwrap();
+
+        let full = crate::identity::Callsign::parse("N7CPZ").unwrap();
+        mbox.migrate_legacy_layout(&full).unwrap();
+
+        // It lands in the NEW location and is listable via the scoped view.
+        assert!(
+            dir.path().join("mailbox/N7CPZ/inbox").join(format!("{mid}.b2f")).exists(),
+            "old-scheme message must land under mailbox/<CALLSIGN>/inbox"
+        );
+        let inbox = mbox.for_identity("N7CPZ").list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].id.0, mid);
     }
 
     #[test]
