@@ -5991,6 +5991,7 @@ pub async fn telnet_p2p_connect(
         &mailbox,
         SessionIntent::P2p,
         None,
+        Some(session_id.mycall().as_str()),
     ) {
         Ok(v) => v,
         Err(crate::winlink_backend::BackendError::MessageRejected(reason)) => {
@@ -6462,7 +6463,7 @@ where
     // its leakage guard (`Some`; advisory set ∩ live Outbox, vanished MID
     // skipped). tuxlink-b6ad.
     let outbound =
-        crate::winlink_backend::build_outbound_proposals(mailbox, intent, po_drain_selection(local, selected))
+        crate::winlink_backend::build_outbound_proposals(mailbox, intent, po_drain_selection(local, selected), Some(mycall.as_str()))
             .map_err(|e| UiError::Internal { detail: format!("outbox drain: {e}") })?;
 
     let result = crate::winlink::telnet::connect_and_exchange(
