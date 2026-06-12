@@ -3523,13 +3523,18 @@ pub async fn packet_listen(
     let cfg =
         config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
     let transport = packet_listen_transport_from_config(&cfg)?;
-    // Effective call = <callsign>-<ssid> (the SSID'd link address we answer on).
-    let effective = cfg
-        .identity
-        .active_full
-        .as_deref()
-        .map(|c| format!("{}-{}", c.trim().to_uppercase(), cfg.packet.ssid))
-        .unwrap_or_else(|| format!("(no callsign)-{}", cfg.packet.ssid));
+    // tuxlink-0063 (Phase 3, Task 3.8): effective call derives from the active
+    // SessionIdentity — the authenticated Part 97 principal — NOT from
+    // config.identity.active_full. Fail-closed: NoActiveIdentity errors here
+    // before any hardware interaction; packet_connect_inner also gates on
+    // active_identity() before opening the KISS link.
+    let session_id = backend.active_identity()?;
+    // Effective call = <base>-<ssid> (the SSID'd link address we answer on).
+    let effective = format!(
+        "{}-{}",
+        session_id.mycall().as_str().to_uppercase(),
+        cfg.packet.ssid
+    );
     emit_session_line(
         &app,
         &log,

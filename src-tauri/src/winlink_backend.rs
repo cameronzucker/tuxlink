@@ -1731,11 +1731,14 @@ impl NativeBackend {
             *slot = None;
         }
 
-        let base = self
-            .live_config()
-            .identity
-            .active_full
-            .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
+        // tuxlink-0063 (Phase 3, Task 3.8): derive the base call from the active
+        // SessionIdentity — the authenticated Part 97 principal — NOT from
+        // config.identity.active_full. The SSID stays config-driven; only the
+        // base call moves to the session. Fail-closed: NoActiveIdentity returns
+        // before any KISS/TNC state is touched; ConnectGuard is already constructed
+        // so the single-flight flag is correctly cleared on this early return.
+        let session_id = self.active_identity()?;
+        let base = session_id.mycall().as_str().to_string();
         // Decide the armed-state status before `role` is moved into resolve
         // (tuxlink-orj): Listen → Listening (armed), DialTo → Connecting (dial).
         let initial_status = initial_packet_status(&role, ssid);
@@ -4494,6 +4497,126 @@ mod native_read_state_tests {
     }
 
     // =========================================================================
+    // Task 3.8 (tuxlink-0063): packet base call is the session call, not config
+    // =========================================================================
+
+    /// Guard test (documents the contract): resolve_packet_endpoint fed with the
+    /// session mycall yields base_mycall == that callsign and the SSID'd link
+    /// address. This test passes immediately (resolve_packet_endpoint already
+    /// takes &str); its purpose is to document that the base now comes from the
+    /// session, not config, and to catch any future regression that changes the
+    /// source of the &str passed to resolve_packet_endpoint.
+    #[test]
+    fn packet_base_call_is_session_call() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+        let resolved = resolve_packet_endpoint(
+            session_id.mycall().as_str(),
+            7,
+            PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.base_mycall, "N7CPZ",
+            "base_mycall must equal the session callsign"
+        );
+        assert_eq!(
+            resolved.link_mycall,
+            Address { call: "N7CPZ".into(), ssid: 7 },
+            "link address must carry the session call + SSID"
+        );
+    }
+
+    /// Behavior test (the real one): proves packet_connect_inner derives its base
+    /// call from the SESSION identity, not config.identity.active_full. The config
+    /// carries W7AUX; the active session authenticates N7CPZ. Both peers need an
+    /// active identity for packet_connect_inner to succeed; the dialer's identity
+    /// is N7CPZ and the answerer's is W7AUX. The observable is the From: header
+    /// in the message the answerer receives: it must say N7CPZ (the session call),
+    /// not W7AUX (the config call).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn packet_connect_inner_base_call_is_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+
+        let wire = spawn_kiss_wire();
+
+        let dialer_dir = tempdir().unwrap();
+        let answerer_dir = tempdir().unwrap();
+
+        // Seed one outbound message from the dialer so the B2F exchange has
+        // something to transfer (proves the exchange completes, not just the
+        // handshake).
+        let seed = Mailbox::new(dialer_dir.path());
+        let raw = compose_message(
+            "N7CPZ",
+            &["W7AUX"],
+            &[],
+            "Session-call test",
+            "base call from session",
+            1_716_200_000,
+        )
+        .to_bytes();
+        seed.store(MailboxFolder::Outbox, &raw).unwrap();
+
+        // Dialer: config says W7AUX but the active session authenticates N7CPZ.
+        // This is the split that the test exercises: session beats config.
+        let mut dialer_cfg = config_with_call("W7AUX");
+        dialer_cfg.connect.host = "127.0.0.1".to_string();
+        let dialer = NativeBackend::new(dialer_cfg, dialer_dir.path());
+        dialer.set_active_identity(SessionIdentity::full(
+            IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()),
+        ));
+
+        // Answerer: config and session both say W7AUX (no identity split here).
+        let answerer = NativeBackend::new(config_with_call("W7AUX"), answerer_dir.path())
+            .with_packet_allowlist(
+                crate::winlink::listener::AllowedStations::new().with_allow_all(true),
+            );
+        answerer.set_active_identity(SessionIdentity::full(
+            IdentityHandle::for_test(Callsign::parse("W7AUX").unwrap()),
+        ));
+
+        let listen = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::Listen,
+        };
+        let dial = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::DialTo { call: "W7AUX-7".into(), path: vec![] },
+        };
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            tokio::join!(answerer.connect(listen, None), dialer.connect(dial, None))
+        })
+        .await;
+
+        let (ans_res, dial_res) =
+            outcome.expect("packet identity test timed out (connect/handshake deadlock?)");
+        ans_res.expect("answerer connect+exchange failed");
+        dial_res.expect("dialer connect+exchange failed");
+
+        // The message in the answerer's inbox must have From: N7CPZ — the session
+        // callsign — NOT W7AUX (the dialer's config callsign).
+        let inbox = Mailbox::new(answerer_dir.path()).list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(inbox.len(), 1, "answerer inbox must hold exactly one message; got {inbox:?}");
+        assert_eq!(
+            inbox[0].from.trim().to_uppercase(),
+            "N7CPZ",
+            "packet base call must be the SESSION call (N7CPZ), not the config call (W7AUX)"
+        );
+    }
+
+    // =========================================================================
     // Task 5: native_packet_exchange tests
     // FakeAx25Stream: reads from inbound Cursor, writes into a shared Vec.
     // =========================================================================
@@ -4805,6 +4928,13 @@ mod native_read_state_tests {
         drop(listener); // nothing listening → connection refused
 
         let backend = NativeBackend::new(offline_config_with_callsign(), tempdir().unwrap().path());
+        // Task 3.8: packet_connect_inner now gates on active_identity(); set one so
+        // the test reaches the KISS connection-refused path it was designed to cover.
+        backend.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        ));
         let err = backend
             .connect(TransportConfig::Packet {
                 link: KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() },
@@ -4823,12 +4953,12 @@ mod native_read_state_tests {
     // LIVE backend so the NEXT connect honors it WITHOUT an app restart. Regression
     // guard for the "selector host/transport (and packet params) only apply after
     // restart" bug — the backend cached `config` at construction and the connect
-    // path read that stale snapshot. Proven via the shared callsign gate (BOTH
-    // native_connect and packet_connect_inner reject a missing callsign FIRST):
-    // start with NO callsign, refresh to one WITH a callsign, then connect — a
-    // stale snapshot fails NotConfigured(callsign); a live snapshot gets PAST that
-    // gate and fails at link-open (TransportFailed). No RF, no real CMS (RADIO-1):
-    // a closed loopback port refuses the connect fast.
+    // path read that stale snapshot. The packet path now (Task 3.8) also gates on
+    // active_identity(); a session identity must be set for the connect to reach
+    // link-open. The config live-read is still exercised: the KISS link params
+    // (host/port) come from live_config() and a stale host would produce a
+    // different failure. No RF, no real CMS (RADIO-1): a closed loopback port
+    // refuses the connect fast.
     #[tokio::test]
     async fn set_config_refreshes_the_live_config_used_by_connect() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -4839,6 +4969,13 @@ mod native_read_state_tests {
         let backend = NativeBackend::new(offline_config(), tempdir().unwrap().path());
         // Operator picks a callsign in the UI → config_set_* persists + refreshes.
         backend.set_config(config_with_call("N7CPZ"));
+        // Task 3.8: packet_connect_inner gates on active_identity(); set one so the
+        // connect reaches link-open and triggers the TransportFailed the test covers.
+        backend.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        ));
 
         let err = backend
             .connect(TransportConfig::Packet {
@@ -4850,13 +4987,12 @@ mod native_read_state_tests {
             .unwrap_err();
 
         assert!(
-            !matches!(&err, BackendError::NotConfigured(field) if field.contains("callsign")),
-            "connect must read the LIVE config (callsign set via set_config), not the \
-             construction-time snapshot; got {err:?}"
+            !matches!(&err, BackendError::NoActiveIdentity),
+            "connect must pass the identity gate (session was set); got {err:?}"
         );
         assert!(
             matches!(err, BackendError::TransportFailed { .. }),
-            "with a live callsign, connect should reach link-open and fail \
+            "with a live session, connect should reach link-open and fail \
              TransportFailed; got {err:?}"
         );
     }
@@ -4966,6 +5102,13 @@ mod native_read_state_tests {
         seed.store(MailboxFolder::Outbox, &raw).unwrap();
 
         let dialer = NativeBackend::new(config_with_call("N7CPZ"), dialer_dir.path());
+        // Task 3.8: packet_connect_inner now derives the base call from the active
+        // SessionIdentity; both peers need one set or they return NoActiveIdentity.
+        dialer.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        ));
         // The answerer's listener gate (tuxlink-inde) defaults to "reject all"
         // — fresh tuxlink with no operator-curated allowlist rejects every
         // inbound peer. For this happy-path E2E test we inject an
@@ -4974,6 +5117,11 @@ mod native_read_state_tests {
             .with_packet_allowlist(
                 crate::winlink::listener::AllowedStations::new().with_allow_all(true),
             );
+        answerer.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("W7AUX").unwrap(),
+            ),
+        ));
 
         let listen = TransportConfig::Packet {
             link: KissLinkConfig::Tcp { host: wire.ip().to_string(), port: wire.port() },
