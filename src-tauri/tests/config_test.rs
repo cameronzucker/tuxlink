@@ -723,6 +723,7 @@ fn config_skips_pat_mbo_address_on_write() {
         review_inbound_before_download: false,
         map_tile_source: None,
         aredn_master_node_host: None,
+        aprs: tuxlink_lib::config::AprsConfig::default(),
     };
     let json = serde_json::to_string(&cfg).unwrap();
     assert!(

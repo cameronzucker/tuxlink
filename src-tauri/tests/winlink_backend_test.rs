@@ -106,6 +106,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         review_inbound_before_download: false,
         map_tile_source: None,
         aredn_master_node_host: None,
+        aprs: tuxlink_lib::config::AprsConfig::default(),
     }
 }
 
