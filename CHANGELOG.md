@@ -30,6 +30,21 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.54.0](https://github.com/cameronzucker/tuxlink/compare/v0.53.1...v0.54.0) (2026-06-12)
+
+
+### Features
+
+* **request:** lift weather coverage 93%-&gt;98.3% (global city + statewide fallback) ([656fcd3](https://github.com/cameronzucker/tuxlink/commit/656fcd371e9a99946e29e8a0ff52c00d59a6eb1a))
+* **request:** nationwide weather-map matcher + antimeridian-safe PIP (WIP) ([9dec4e5](https://github.com/cameronzucker/tuxlink/commit/9dec4e5724e297ccf497f265d7670dc63855832e))
+* **request:** nationwide zone-&gt;product map + geometry (93% coverage) ([4dd9b0d](https://github.com/cameronzucker/tuxlink/commit/4dd9b0d35fd6a1ed391b73caf67c2f1b7e655811))
+* **request:** wire always-on browse-all card + resolution guard tests ([c12d811](https://github.com/cameronzucker/tuxlink/commit/c12d811aa795da397529d227129410559bcba097))
+
+
+### Bug Fixes
+
+* **wizard:** install the native backend in-session on CMS wizard completion ([ae44127](https://github.com/cameronzucker/tuxlink/commit/ae4412768c33fc48399fff2e1d6998ffa8f0b34a))
+
 ## [0.53.1](https://github.com/cameronzucker/tuxlink/compare/v0.53.0...v0.53.1) (2026-06-12)
 
 
