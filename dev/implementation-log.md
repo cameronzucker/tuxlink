@@ -5,6 +5,35 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-06-12 — Direct print of a rendered form (Forms-push G8b, tuxlink-954o)
+
+Fast-follow to G8 (tuxlink-cumx). The issue title was always "PDF/print"; G8
+shipped the PDF half. Operator: getting a hardcopy meant Export-PDF → open the
+file → print — an annoying save-to-disk detour. Add a direct Print affordance.
+
+Reuses the exact G8 machinery: the form's live child `WebKitWebView` +
+`WebKitPrintOperation`, but calls `run_dialog(None)` instead of
+`set_print_settings(file)` + `print()`. `run_dialog` shows GTK's system print
+dialog (printer picker + page setup, with "Print to File" as one option) and
+prints synchronously on confirm — no intermediate file. Returns
+`PrintOperationResponse::{Print,Cancel}` (mapped to a `bool` printed/cancelled).
+`forms::pdf_export::print_webview` + a `forms_print` Tauri command +
+`printForm()` helper + a "Print…" button beside "Export PDF" in BOTH chromes
+(both buttons disable while either op holds the webview).
+
+Notes: no parent window passed to `run_dialog` — gtk3's `Widget::toplevel` is
+deprecated and would trip `-D warnings`; the dialog is unparented but
+functional. No completion deadline (the operator may deliberate in the dialog);
+the closure always sends once it closes.
+
+Discipline: contained, interop-neutral → straight TDD (no BRF/Codex). Gates:
+clippy `--all-targets -D warnings` clean, backend pdf_export 5/0, frontend 30/0
+(3 new `printForm` tests + both modified components). Like G8, the GTK dialog
+needs a display, so it's an operator smoke (open a form → Print… → confirm it
+reaches a printer), not a CI test.
+
+---
+
 ## 2026-06-12 — On-demand faithful PDF export of a rendered form (Forms-push G8, tuxlink-cumx)
 
 Operator chose faithful render over a structured data sheet (compared two real

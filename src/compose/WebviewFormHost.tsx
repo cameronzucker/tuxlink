@@ -62,7 +62,7 @@ import { Webview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { exportFormPdf } from './pdfExport';
+import { exportFormPdf, printForm } from './pdfExport';
 import './WebviewFormHost.css';
 
 /** Mirror of the Rust `forms::multipart::ParsedBody` payload. The keys are
@@ -106,6 +106,9 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
   // or an error). Cleared when a new export starts.
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  // Direct-print in flight (separate from `exporting` so the buttons carry
+  // independent labels; both are disabled while either op holds the webview).
+  const [printing, setPrinting] = useState(false);
   // Placeholder div in the compose body. The child Webview is pixel-
   // positioned to overlay this rect. The ref is read inside the useEffect
   // below (which runs AFTER the first paint, so getBoundingClientRect()
@@ -308,6 +311,21 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
     }
   };
 
+  const handlePrint = async () => {
+    if (!exportLabel || printing) return;
+    setPrinting(true);
+    setExportMsg('Opening print dialog…');
+    try {
+      const printed = await printForm(exportLabel);
+      // `false` = the operator cancelled the print dialog; leave no message.
+      setExportMsg(printed ? 'Sent to printer' : null);
+    } catch (e) {
+      setExportMsg(`Print failed: ${String(e)}`);
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   return (
     <div className="webview-form-host" data-testid="webview-form-host">
       {status === 'opening' && !error && (
@@ -342,10 +360,20 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
           className="webview-form-host__btn"
           data-testid="webview-form-host-export-pdf"
           onClick={handleExportPdf}
-          disabled={status !== 'open' || exporting}
+          disabled={status !== 'open' || exporting || printing}
           title="Save this form as a PDF — a faithful copy for a served agency or non-ham recipient"
         >
           {exporting ? 'Exporting…' : 'Export PDF'}
+        </button>
+        <button
+          type="button"
+          className="webview-form-host__btn"
+          data-testid="webview-form-host-print"
+          onClick={handlePrint}
+          disabled={status !== 'open' || exporting || printing}
+          title="Print this form directly on a connected printer — no save-to-disk step"
+        >
+          {printing ? 'Printing…' : 'Print…'}
         </button>
         {exportMsg && (
           <span className="webview-form-host__export-msg" role="status">

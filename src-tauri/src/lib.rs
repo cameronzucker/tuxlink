@@ -602,6 +602,8 @@ pub fn run() {
             crate::ui_commands::close_webview_form_server,
             // tuxlink-cumx / G8: on-demand faithful PDF export of a rendered form.
             crate::ui_commands::forms_export_pdf,
+            // tuxlink-954o / G8b: direct print of a rendered form (system dialog).
+            crate::ui_commands::forms_print,
             // tuxlink-z0le/fwob: in-app form import (G5+G6) — preview→commit,
             // cancel, custom-folder reveal, and per-form uninstall.
             crate::ui_commands::forms_import_preview,
