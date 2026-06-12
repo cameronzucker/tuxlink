@@ -16,6 +16,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GpsState, PositionPrecision } from './useStatus';
 import { LocationSettings } from '../location/LocationSettings';
+import { AprsSettings } from '../aprs/AprsSettings';
 import './SettingsPanel.css';
 
 const GPS_STATE_OPTIONS: { value: GpsState; label: string; help: string }[] = [
@@ -183,6 +184,13 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
               </span>
             </label>
           ))}
+        </fieldset>
+
+        {/* tuxlink-2f2n Task 14: APRS station identity (source SSID / path /
+            tocall), persisted via aprs_config_set. */}
+        <fieldset className="tux-settings-group">
+          <legend>APRS tactical chat</legend>
+          <AprsSettings />
         </fieldset>
       </div>
     </div>

@@ -150,6 +150,13 @@ const TelnetRadioPanel = lazy(loadTelnetRadioPanel);
 const TelnetP2pRadioPanel = lazy(loadTelnetP2pRadioPanel);
 const TelnetPostOfficeRadioPanel = lazy(loadTelnetPostOfficeRadioPanel);
 const PacketRadioPanel = lazy(loadPacketRadioPanel);
+// tuxlink-2f2n Task 14: APRS tactical-chat inline surface, reached via the
+// sidebar's APRS Chat pseudo-folder (mirrors the Contacts pseudo-folder mount).
+// Inline only — NO new window. Lazy because it's off the cold-start path: it
+// only paints when the operator selects the APRS Chat row.
+const loadAprsChatPanel = () =>
+  import('../aprs/AprsChatPanel').then((m) => ({ default: m.AprsChatPanel }));
+const AprsChatPanel = lazy(loadAprsChatPanel);
 const ArdopRadioPanel = lazy(loadArdopRadioPanel);
 const VaraRadioPanel = lazy(loadVaraRadioPanel);
 const SearchDropdown = lazy(() =>
@@ -1102,6 +1109,14 @@ export function AppShell() {
             left (two list columns). */}
         {selectedFolder === 'contacts' ? (
           <ContactsPanel />
+        ) : selectedFolder === 'aprs' ? (
+          // tuxlink-2f2n Task 14: APRS tactical chat. Like Contacts, the 'aprs'
+          // pseudo-folder replaces BOTH the MessageList column AND the reading
+          // pane with the inline AprsChatPanel (no new window). Lazy-loaded; the
+          // Suspense fallback is null (the chunk is small).
+          <Suspense fallback={null}>
+            <AprsChatPanel />
+          </Suspense>
         ) : (
           <>
         <MessageList

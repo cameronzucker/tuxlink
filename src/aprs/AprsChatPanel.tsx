@@ -15,11 +15,15 @@
 // bubble ONLY on a successful backend ack of queueing; a rejected send is
 // caught here and surfaced as an inline notice with NO bubble.
 //
-// Start/Stop listening is NOT owned here — Task 14 adds it. This panel shows a
-// read-only listening indicator.
+// Start/Stop listening (Task 14): the toggle below arms/disarms the backend
+// listener via aprs_listen_start / aprs_listen_stop and reflects the hook's
+// `listening` state. A failed start (e.g. the Bluetooth/serial link is not
+// configured) is caught and surfaced through the same inline error notice the
+// composer uses — no fabricated "listening" state.
 
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useAprsChat } from './useAprsChat';
 import type { ChatMessage, DeliveryState, Thread } from './aprsTypes';
 import './AprsChatPanel.css';
@@ -66,6 +70,7 @@ export function AprsChatPanel() {
   const [selected, setSelected] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [toggling, setToggling] = useState(false);
 
   const callsigns = Object.keys(threads);
   const hasThreads = callsigns.length > 0;
@@ -80,6 +85,30 @@ export function AprsChatPanel() {
     setSelected(call);
     setCallsign(call);
     setSendError(null);
+  };
+
+  // Start/Stop listening toggle (Task 14). The backend is the source of truth:
+  // `listening` flips when the backend emits aprs-listening:change, NOT
+  // optimistically here. A failed start surfaces through the inline notice (the
+  // listener could not arm — e.g. the radio link is not configured) and leaves
+  // the indicator in its honest "not listening" state.
+  const onToggleListening = async () => {
+    if (toggling) return;
+    setSendError(null);
+    setToggling(true);
+    try {
+      await invoke(listening ? 'aprs_listen_stop' : 'aprs_listen_start');
+    } catch (err) {
+      setSendError(
+        err instanceof Error
+          ? err.message
+          : listening
+            ? 'Could not stop listening.'
+            : 'Could not start listening — check the radio link.',
+      );
+    } finally {
+      setToggling(false);
+    }
   };
 
   const onSubmit = async (e: FormEvent) => {
@@ -116,6 +145,16 @@ export function AprsChatPanel() {
           <span className="aprs-listening-dot" />
           {listening ? 'Listening' : 'Not listening — radio disconnected'}
         </span>
+        <button
+          type="button"
+          className="aprs-listen-toggle"
+          data-testid="aprs-listen-toggle"
+          aria-pressed={listening}
+          disabled={toggling}
+          onClick={onToggleListening}
+        >
+          {listening ? 'Stop listening' : 'Start listening'}
+        </button>
       </header>
 
       <div className="aprs-chat-body">

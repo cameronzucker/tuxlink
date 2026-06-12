@@ -16,4 +16,11 @@ describe('AprsChatPanel', () => {
     render(<AprsChatPanel />);
     expect(screen.getByText(/no conversations yet/i)).toBeInTheDocument();
   });
+
+  it('renders a Start/Stop listening toggle (Task 14)', () => {
+    render(<AprsChatPanel />);
+    expect(
+      screen.getByRole('button', { name: /start|stop|listen/i }),
+    ).toBeInTheDocument();
+  });
 });

@@ -70,6 +70,28 @@
   background: var(--error, #f87171);
 }
 
+/* Start/Stop listening toggle (Task 14). Sits at the trailing edge of the
+   header; the listening indicator's margin-left:auto pushes both right. */
+.aprs-listen-toggle {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--modem-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--modem-accent) 35%, transparent);
+  color: var(--modem-accent);
+}
+.aprs-listen-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--modem-accent) 18%, transparent);
+  border-color: var(--modem-accent);
+}
+.aprs-listen-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .aprs-chat-body {
   flex: 1;
   display: flex;
