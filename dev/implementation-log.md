@@ -5,6 +5,35 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-06-12 — Form-value XML-1.0 sanitization (Forms-push G9, tuxlink-nitb)
+
+G9 was filed as "native required/typed field validation." Grounding against the
+real bundle reframed it: every authoring form submits via a native `<form>`
+button (119/137; 0 use JS `.submit()`) with no `novalidate`, so WebKitGTK
+already enforces `required` (used 1429×) and the few HTML5 types — a generic
+tuxlink-side validator would duplicate the webview and catch nothing extra on
+real forms. The genuinely non-redundant defect is the one the webview does NOT
+cover: **output sanitization**. Operator approved narrowing G9 to that.
+
+`push_element` (the chokepoint for both `serialize_form_xml` and
+`serialize_catalog_form_xml`) escaped only `<>&`, passing XML-1.0-illegal
+characters (C0 controls — NUL / vertical-tab / form-feed, the kind a copy-paste
+from a PDF injects) straight into the attachment. Result: non-well-formed XML
+that a strict receiver (WLE's .NET `XmlReader`, downstream aggregators) rejects
+or mis-parses — corruption on our send. (tuxlink's own quick_xml parser is
+lenient and preserves the illegal char, which masked it.)
+
+Fix: an `is_xml10_legal` filter mapping every field value onto the XML 1.0
+`Char` set (drops the illegal controls, keeps tab/CR/LF and all real text),
+applied in `push_element` and to substituted values in `render_body_template`.
+Legitimate content (`/`, quotes, accents, whitespace) passes through unchanged.
+TDD: 4 failing round-trip + well-formedness tests first (reproduced the defect:
+illegal chars `[12,11]`, `[0,31]` in output), then the fix. Gates: clippy
+`--all-targets -D warnings` clean, full `cargo test` 1759/0. Backend-only;
+straight TDD (contained correctness fix, no BRF/Codex ceremony).
+
+---
+
 ## 2026-06-11 — In-app form import (Forms-push G5+G6+G11, tuxlink-z0le/fwob/48uc)
 
 Shipped the in-app form-import flow so a stuck onboarding member can bring an

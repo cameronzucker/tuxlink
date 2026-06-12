@@ -43,13 +43,37 @@ pub fn serialize_form_xml(
     out
 }
 
-/// Write a single XML element with value. Lowercases the name; XML-escapes the
-/// value (`<` `>` `&` only, matching WLE — `"` and `'` left as-is).
+/// True if `c` is in the XML 1.0 legal `Char` production:
+/// `#x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]`.
+///
+/// Field values can carry characters that are illegal in XML 1.0 — most often
+/// C0 control characters (NUL, vertical-tab, form-feed, …) injected by a
+/// copy-paste from a PDF or another app. Emitting them verbatim produces a
+/// non-well-formed attachment that a strict receiver (WLE's .NET `XmlReader`,
+/// downstream aggregators) rejects or mis-parses — corruption on our send.
+/// Values are mapped onto this set before serialization (tuxlink-nitb).
+/// Surrogates are unreachable for a Rust `char`; `#xFFFE`/`#xFFFF` are dropped.
+fn is_xml10_legal(c: char) -> bool {
+    let u = c as u32;
+    u == 0x9
+        || u == 0xA
+        || u == 0xD
+        || (0x20..=0xD7FF).contains(&u)
+        || (0xE000..=0xFFFD).contains(&u)
+        || (0x10000..=0x10FFFF).contains(&u)
+}
+
+/// Write a single XML element with value. Lowercases the name; drops
+/// XML-1.0-illegal characters (tuxlink-nitb) then XML-escapes `<` `>` `&`
+/// (matching WLE — `"` and `'` left as-is).
 fn push_element(out: &mut Vec<u8>, name: &str, value: &str) {
     out.push(b'<');
     out.extend_from_slice(name.to_ascii_lowercase().as_bytes());
     out.push(b'>');
     for ch in value.chars() {
+        if !is_xml10_legal(ch) {
+            continue; // drop illegal control char to keep output well-formed
+        }
         match ch {
             '<' => out.extend_from_slice(b"&lt;"),
             '>' => out.extend_from_slice(b"&gt;"),
@@ -125,7 +149,10 @@ pub fn render_body_template(template: &str, field_values: &HashMap<String, Strin
                 let var_section = &template[i + 5..i + end];  // skip "<var "
                 let field_id = var_section.trim().to_ascii_lowercase();
                 let value = field_values.get(&field_id).cloned().unwrap_or_default();
-                out.push_str(&value);
+                // Drop XML-1.0-illegal control chars from substituted values so
+                // the human-readable body projection can't carry corruption
+                // either (tuxlink-nitb). The template text itself is trusted.
+                out.extend(value.chars().filter(|&c| is_xml10_legal(c)));
                 // skip ahead past the closing '>'
                 for _ in 0..end {
                     chars.next();
@@ -199,6 +226,118 @@ mod tests {
         let xml = serialize_form_xml(&TEST_FORM, &params, &values);
         let xml_str = String::from_utf8_lossy(&xml);
         assert!(xml_str.contains("&lt;script&gt;&amp;\"'"));
+    }
+
+    // ---- tuxlink-nitb: output sanitization (XML 1.0 well-formedness) ----
+
+    /// XML 1.0 legal Char production: #x9 | #xA | #xD | [#x20-#xD7FF] |
+    /// [#xE000-#xFFFD] | [#x10000-#x10FFFF]. Used by the tests to assert the
+    /// serialized bytes carry no character a conformant parser would reject.
+    fn is_xml10_legal(c: char) -> bool {
+        let u = c as u32;
+        u == 0x9
+            || u == 0xA
+            || u == 0xD
+            || (0x20..=0xD7FF).contains(&u)
+            || (0xE000..=0xFFFD).contains(&u)
+            || (0x10000..=0x10FFFF).contains(&u)
+    }
+
+    fn illegal_chars(bytes: &[u8]) -> Vec<u32> {
+        String::from_utf8_lossy(bytes)
+            .chars()
+            .map(|c| c as u32)
+            .filter(|&u| !is_xml10_legal(char::from_u32(u).unwrap_or('\u{FFFD}')))
+            .collect()
+    }
+
+    #[test]
+    fn serialize_form_xml_strips_illegal_xml10_control_chars() {
+        let params = FormParameters::default();
+        let mut values = HashMap::new();
+        // Form-feed (0x0C) + vertical-tab (0x0B) — realistic copy-paste-from-PDF
+        // artifacts that are ILLEGAL in XML 1.0 and make a strict receiver
+        // (e.g. .NET XmlReader / quick_xml) reject or mis-handle the attachment.
+        values.insert("alpha".into(), "Line1\u{000C}Line2\u{000B}end".into());
+        let xml = serialize_form_xml(&TEST_FORM, &params, &values);
+        assert!(
+            illegal_chars(&xml).is_empty(),
+            "serialized XML must contain only XML-1.0-legal chars; found {:?}",
+            illegal_chars(&xml)
+        );
+    }
+
+    #[test]
+    fn serialize_catalog_form_xml_strips_illegal_xml10_control_chars() {
+        let params = FormParameters::default();
+        let mut values = HashMap::new();
+        values.insert("note".into(), "bad\u{0000}null\u{001F}us".into());
+        let xml = serialize_catalog_form_xml("Some_Initial", &params, &values);
+        assert!(
+            illegal_chars(&xml).is_empty(),
+            "catalog serializer must strip illegal chars; found {:?}",
+            illegal_chars(&xml)
+        );
+    }
+
+    #[test]
+    fn serialized_form_round_trips_through_parser_with_control_char() {
+        use crate::forms::parse::parse_form_xml;
+        let params = FormParameters {
+            xml_file_version: "1.0".into(),
+            rms_express_version: "Tuxlink-0.0.1".into(),
+            submission_datetime: "2026-06-12 00:00:00".into(),
+            senders_callsign: "W7ABC".into(),
+            grid_square: "CN87".into(),
+            display_form: "Test_Initial_Viewer.html".into(),
+            reply_template: "Test_SendReply.0".into(),
+        };
+        let mut values = HashMap::new();
+        values.insert("alpha".into(), "Patient\u{000C}Smith".into());
+        values.insert("beta".into(), "ok".into());
+        let bytes = serialize_form_xml(&TEST_FORM, &params, &values);
+        let parsed = parse_form_xml(&bytes)
+            .expect("a form tuxlink serialized must round-trip through the receiver's parser");
+        let alpha = parsed
+            .fields
+            .iter()
+            .find(|(k, _)| k == "alpha")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        assert!(
+            alpha.contains("Patient") && alpha.contains("Smith"),
+            "field text must survive sanitization; got {alpha:?}"
+        );
+        assert!(
+            !alpha.chars().any(|c| !is_xml10_legal(c)),
+            "no illegal char may survive into the parsed value; got {alpha:?}"
+        );
+    }
+
+    #[test]
+    fn sanitization_preserves_legitimate_content() {
+        let params = FormParameters::default();
+        let mut values = HashMap::new();
+        // Slash (legal in XML content), quotes, accented text, and the three
+        // legal whitespace controls must all pass through untouched.
+        values.insert("alpha".into(), "N/A \"quoted\" café\tTab\r\nNewLine".into());
+        let xml = serialize_form_xml(&TEST_FORM, &params, &values);
+        let s = String::from_utf8_lossy(&xml);
+        assert!(s.contains("N/A \"quoted\" café"), "slash/quotes/accents preserved");
+        assert!(s.contains('\t') && s.contains('\n'), "legal whitespace preserved");
+        assert!(illegal_chars(&xml).is_empty());
+    }
+
+    #[test]
+    fn render_body_template_strips_illegal_control_chars() {
+        let mut values = HashMap::new();
+        values.insert("alpha".into(), "before\u{000C}after".into());
+        let body = render_body_template("Msg: <var alpha>", &values);
+        assert!(body.contains("before") && body.contains("after"), "text preserved");
+        assert!(
+            !body.chars().any(|c| !is_xml10_legal(c)),
+            "body projection must not carry illegal control chars; got {body:?}"
+        );
     }
 
     #[test]
