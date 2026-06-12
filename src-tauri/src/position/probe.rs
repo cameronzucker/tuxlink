@@ -206,7 +206,7 @@ pub async fn gps_probe_gpsd() -> GpsdProbe {
 pub async fn gps_probe_serial_devices() -> SerialProbe {
     tokio::task::spawn_blocking(probe_serial_blocking)
         .await
-        .unwrap_or_else(|_| SerialProbe { devices: Vec::new() })
+        .unwrap_or(SerialProbe { devices: Vec::new() })
 }
 
 /// Whether the current user can open serial devices (dialout membership).
@@ -214,7 +214,7 @@ pub async fn gps_probe_serial_devices() -> SerialProbe {
 pub async fn gps_probe_dialout() -> DialoutProbe {
     tokio::task::spawn_blocking(probe_dialout_blocking)
         .await
-        .unwrap_or_else(|_| DialoutProbe { member: false, group_exists: false })
+        .unwrap_or(DialoutProbe { member: false, group_exists: false })
 }
 
 /// Whether ModemManager is active (and may be grabbing the GPS serial port).
@@ -222,7 +222,7 @@ pub async fn gps_probe_dialout() -> DialoutProbe {
 pub async fn gps_probe_modemmanager() -> ModemManagerProbe {
     tokio::task::spawn_blocking(probe_modemmanager_blocking)
         .await
-        .unwrap_or_else(|_| ModemManagerProbe { active: false })
+        .unwrap_or(ModemManagerProbe { active: false })
 }
 
 #[cfg(test)]
