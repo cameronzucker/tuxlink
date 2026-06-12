@@ -19,12 +19,13 @@
 //! re-connects). The agent never transmits; the operator runs the on-air smoke.
 
 pub mod bits;
+pub mod commands;
 pub mod gaia;
 pub mod message;
 pub mod model;
 pub mod rf_ch;
+pub mod session;
 pub mod settings;
-// `session` + `commands` land in the next commit (the driver + Tauri surface).
 
 /// Errors surfaced to the command layer / frontend. The `kind` (variant name) is
 /// what the UI switches on; the payload carries operator-facing detail.

@@ -222,7 +222,7 @@ pub fn decode_frame(bytes: &[u8]) -> Frame {
             let reply_status = body[0];
             let status = if reply_status == 0 {
                 let mut br = BitReader::new(&body[1..]);
-                let ext = body.len() - 1 >= 4; // StatusExt is 4 bytes, Status is 2
+                let ext = body.len() > 4; // StatusExt is 4 bytes, Status is 2 (+1 reply_status)
                 Some(decode_status(&mut br, ext))
             } else {
                 None
@@ -241,7 +241,7 @@ pub fn decode_frame(bytes: &[u8]) -> Frame {
                 },
                 x if x == EventType::HtStatusChanged as u8 => {
                     let mut br = BitReader::new(&body[1..]);
-                    let ext = body.len() - 1 >= 4;
+                    let ext = body.len() > 4; // event_type(1) + StatusExt(4) vs Status(2)
                     Frame::Event(Event::StatusChanged { status: decode_status(&mut br, ext) })
                 }
                 _ => Frame::Event(Event::OtherIgnored { event_type }),

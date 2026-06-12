@@ -1,7 +1,7 @@
 //! `RfCh` channel codec for the Benshi protocol (tuxlink-nx95).
 //!
-//! A channel memory carries the TX/RX frequency + modulation + bandwidth + tone
-//! + a 10-char name, packed into exactly 200 bits (25 bytes). Setting a frequency
+//! A channel memory carries the TX/RX frequency, modulation, bandwidth, tone,
+//! and a 10-char name, packed into exactly 200 bits (25 bytes). Setting a frequency
 //! or mode is a read-modify-write of one of these: decode the current channel,
 //! mutate the field, re-encode. The encoder MUST reproduce every untouched field
 //! (sub-audio, power flags, reserved padding, name) bit-for-bit or the radio
