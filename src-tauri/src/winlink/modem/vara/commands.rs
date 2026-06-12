@@ -1709,19 +1709,18 @@ fn run_vara_b2f_with_transport(
 
     let cfg = config::read_config().map_err(|e| format!("read config failed: {e}"))?;
 
-    // Pre-flight identity check: VARA's CONNECT requires MYCALL, which
-    // was set in `vara_open_session`'s open flow. If the callsign is
-    // missing now, the CONNECT will fail at the modem; surface a clear
-    // error before transmitting.
-    let mycall = cfg
-        .identity
-        .active_full
-        .clone()
-        .ok_or_else(|| {
-            "callsign not configured — complete the setup wizard before dialing".to_string()
-        })?
-        .trim()
-        .to_uppercase();
+    // tuxlink-0063 (Phase 3, Task 3.7): the on-air station ID comes from the
+    // authenticated active SessionIdentity, not from `config.identity.active_full`.
+    // Both the VARA CONNECT cmd-port MYCALL (on-air station ID) and the B2F
+    // exchange callsign must come from the session — neither may use config.
+    let session_id = app
+        .state::<crate::app_backend::BackendState>()
+        .current()
+        .ok_or_else(|| "VARA B2F: backend offline — cannot resolve active identity".to_string())?
+        .active_identity()
+        .map_err(|e| e.to_string())?;
+
+    let mycall = session_id.mycall().as_str().to_uppercase();
 
     // Position arbiter is registered in lib.rs::run() — pull a live
     // ref so the on-air locator honors live GPS / privacy state,
@@ -1769,6 +1768,7 @@ fn run_vara_b2f_with_transport(
         target,
         intent,
         &cfg,
+        &session_id,
         &mailbox,
         Some(&arbiter),
         Some(&progress),

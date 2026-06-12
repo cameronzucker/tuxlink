@@ -4678,6 +4678,22 @@ pub(crate) async fn arm_vara_listener_inner(
         Err(_) => None,
     };
 
+    // tuxlink-0063 (Phase 3, Task 3.7): capture the active session identity AT
+    // ARM TIME so the answerer answers as the identity that was active when the
+    // operator armed the listener — not a live-read that could change if the
+    // operator switches identity during the armed window.
+    // Resolved BEFORE installing the VaraListenHandle so that if identity
+    // resolution fails the `?` early-return leaves listen_state unset (no
+    // phantom "armed" state with no consumer task). Mirrors the
+    // ardop_listen_inner arm ordering (d711857b).
+    let session_id = app
+        .state::<BackendState>()
+        .current()
+        .ok_or_else(|| UiError::Internal {
+            detail: "VARA listener arm: backend offline — cannot resolve active identity".into(),
+        })?
+        .active_identity()?;
+
     // Spawn the consumer task that owns the transport for the armed window.
     let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
@@ -4701,6 +4717,7 @@ pub(crate) async fn arm_vara_listener_inner(
             allowed,
             arms_for_task,
             arbiter,
+            session_id,
             shutdown,
             app_clone,
             log_clone,
@@ -4793,6 +4810,11 @@ fn vara_listener_consumer_task(
     allowed: crate::winlink::listener::AllowedStations,
     arms: crate::winlink::listener::ListenerArmsRecord,
     arbiter: std::sync::Arc<crate::position::PositionArbiter>,
+    // tuxlink-0063 Phase 3 Task 3.7: session_id is captured AT LISTENER-ARM TIME
+    // so the answerer uses the identity that was active when the operator armed the
+    // listener — not a live-read that could change if the operator switches identity
+    // during the armed window. SessionIdentity is Clone.
+    session_id: crate::identity::SessionIdentity,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     app: AppHandle,
     log: std::sync::Arc<SessionLogState>,
@@ -4890,6 +4912,7 @@ fn vara_listener_consumer_task(
                         &mut transport,
                         &peer_call,
                         &cfg,
+                        &session_id,
                         mb,
                         Some(arbiter.as_ref()),
                         Some(&progress),
@@ -4906,6 +4929,7 @@ fn vara_listener_consumer_task(
                                     &mut transport,
                                     &peer_call,
                                     &cfg,
+                                    &session_id,
                                     &tmp_mb,
                                     Some(arbiter.as_ref()),
                                     Some(&progress),
