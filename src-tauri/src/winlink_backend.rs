@@ -2780,6 +2780,7 @@ pub fn run_ardop_b2f_exchange(
 /// inbound session out to the peer. After the exchange completes, persists
 /// `result.received` to Inbox + moves `result.sent` MIDs from Outbox to
 /// Sent. Same Inbox-FIRST ordering as the dialer path's Codex P1.4 fix.
+#[allow(clippy::too_many_arguments)] // config + session_id together are one logical "session context"
 pub fn run_ardop_b2f_answer(
     transport: &mut dyn crate::winlink::modem::ModemTransport,
     peer_callsign: &str,
@@ -5154,7 +5155,7 @@ mod native_read_state_tests {
         let mailbox = Mailbox::new(dir.path());
 
         // Call run_ardop_b2f_exchange — after the Task 3.6 signature change,
-        // session_id is the second argument (after config, before mailbox).
+        // session_id is the parameter immediately after config (5th positional).
         let _ = run_ardop_b2f_exchange(
             &mut transport,
             "W7RMS-10",
@@ -5176,6 +5177,113 @@ mod native_read_state_tests {
         assert!(
             !written.contains(";FW: W7AUX"),
             "run_ardop_b2f_exchange must NOT use the config callsign W7AUX in ;FW:; got:\n{written}"
+        );
+    }
+
+    // =========================================================================
+    // Task 3.6 (tuxlink-0063): run_ardop_b2f_answer derives the on-air station
+    // ID from the SessionIdentity, NOT from `config.identity.active_full`.
+    //
+    // The answerer is the B2F MASTER (ISS): it speaks FIRST, sending the master
+    // handshake which carries `;FW: {mycall}`. That handshake is written to the
+    // captured byte stream BEFORE any data from the scripted peer is consumed, so
+    // the assertion is straightforward.
+    //
+    // Config callsign: W7AUX. Active session: N7CPZ.
+    // The `;FW:` line in the master handshake MUST carry N7CPZ, not W7AUX.
+    // =========================================================================
+    #[test]
+    fn run_ardop_b2f_answer_mycall_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::modem::ardop::session::{ConnectInfo, InitConfig, SessionError};
+        use crate::winlink::modem::{ModemTransport, ReadWrite};
+        use std::io::{Cursor, Read, Write};
+        use std::time::Duration;
+
+        // ── scripted duplex: reads return a minimal slave (peer/dialer) handshake
+        //    followed by FF (no messages); writes are captured to inspect the
+        //    callsign the answerer (master) announced.
+        struct ScriptedDuplex {
+            reader: Cursor<Vec<u8>>,
+            captured: Vec<u8>,
+        }
+        impl Read for ScriptedDuplex {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.reader.read(buf)
+            }
+        }
+        impl Write for ScriptedDuplex {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.captured.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+
+        struct ScriptedTransport {
+            duplex: ScriptedDuplex,
+        }
+        impl ModemTransport for ScriptedTransport {
+            fn init(&mut self, _: &InitConfig) -> Result<(), SessionError> { Ok(()) }
+            fn connect_arq(&mut self, _: &str, _: u32, _: Option<Duration>)
+                -> Result<ConnectInfo, SessionError>
+            {
+                Ok(ConnectInfo { peer_call: "W7AUX".into(), bandwidth_hz: 500 })
+            }
+            fn disconnect(&mut self, _: Duration) -> Result<(), SessionError> { Ok(()) }
+            fn data_stream(&mut self) -> std::io::Result<&mut dyn ReadWrite> {
+                Ok(&mut self.duplex)
+            }
+        }
+
+        // Scripted peer (slave/dialer): its handshake reply + empty turn.
+        // The peer is "W7AUX"; the answerer (us) is N7CPZ.
+        // Slave handshake: forwarding line + SID + DE line (no `>` prompt).
+        let mut script = Vec::new();
+        script.extend_from_slice(b";FW: W7AUX\r[RMS-1.0-B2FHM$]\r; N7CPZ DE W7AUX (CN87)\r");
+        // Slave takes first message turn with nothing to send.
+        script.extend_from_slice(b"FF\r");
+
+        let mut transport = ScriptedTransport {
+            duplex: ScriptedDuplex {
+                reader: Cursor::new(script),
+                captured: Vec::new(),
+            },
+        };
+
+        // Config callsign W7AUX; active session authenticates N7CPZ.
+        let mut cfg = offline_config();
+        cfg.identity.active_full = Some("W7AUX".into());
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+
+        // Call run_ardop_b2f_answer — session_id is the parameter immediately
+        // after config (4th positional), immediately after peer_callsign.
+        let _ = run_ardop_b2f_answer(
+            &mut transport,
+            "W7AUX",
+            &cfg,
+            &session_id,
+            &mailbox,
+            None,
+            None,
+        );
+
+        // The B2F master's opening handshake sends ";FW: <mycall>\r" as the
+        // FIRST bytes on the wire (before reading anything from the peer).
+        // It MUST be N7CPZ (from the session), NOT W7AUX (from the config).
+        let written = String::from_utf8_lossy(&transport.duplex.captured);
+        assert!(
+            written.contains(";FW: N7CPZ"),
+            "run_ardop_b2f_answer must use the session mycall N7CPZ in ;FW:; got:\n{written}"
+        );
+        assert!(
+            !written.contains(";FW: W7AUX"),
+            "run_ardop_b2f_answer must NOT use the config callsign W7AUX in ;FW:; got:\n{written}"
         );
     }
 }

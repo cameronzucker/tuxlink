@@ -3932,16 +3932,14 @@ pub(crate) async fn ardop_listen_inner(
         Err(_) => None,
     };
 
-    // Spawn the consumer task that owns the transport for the armed window.
-    let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    {
-        let mut guard = listen_state.inner.lock().unwrap();
-        *guard = Some(ArdopListenHandle { shutdown: shutdown.clone() });
-    }
     // tuxlink-0063 (Phase 3, Task 3.6): capture the active session identity AT
     // ARM TIME so the answerer answers as the identity that was active when the
     // operator armed the listener — not a live-read that could change if the
     // operator switches identity during the armed window.
+    // Resolved BEFORE installing the ArdopListenHandle so that if identity
+    // resolution fails the `?` early-return leaves listen_state unset (no
+    // phantom "armed" state with no consumer task). Mirrors the telnet_listen
+    // arm ordering.
     let session_id = app
         .state::<BackendState>()
         .current()
@@ -3949,6 +3947,13 @@ pub(crate) async fn ardop_listen_inner(
             detail: "ARDOP listener arm: backend offline — cannot resolve active identity".into(),
         })?
         .active_identity()?;
+
+    // Spawn the consumer task that owns the transport for the armed window.
+    let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut guard = listen_state.inner.lock().unwrap();
+        *guard = Some(ArdopListenHandle { shutdown: shutdown.clone() });
+    }
 
     let arbiter: std::sync::Arc<crate::position::PositionArbiter> =
         (*app.state::<std::sync::Arc<crate::position::PositionArbiter>>()).clone();
