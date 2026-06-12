@@ -2179,6 +2179,40 @@ pub async fn close_webview_form_server(
     registry.close(&token).await
 }
 
+/// Export a rendered form to PDF on demand (tuxlink-cumx / G8).
+///
+/// `webview_label` is the child-webview label the React host created for the
+/// open form (`compose-form-<token>` for authoring, `viewer-form-<token>` for
+/// a received form). `out_path` is the operator's chosen destination from the
+/// native Save dialog. The form's live WebKitGTK view is printed to PDF via
+/// `WebKitPrintOperation` — the same engine that painted it, so the file is a
+/// faithful copy of what's on screen (no second rendering engine / licensed
+/// dep). On success returns the final path (with `.pdf` ensured) for the React
+/// layer to reveal.
+///
+/// Runs the (briefly blocking) GTK print on a blocking thread so it doesn't
+/// stall an async runtime worker while the main loop renders + writes the file.
+#[tauri::command]
+pub async fn forms_export_pdf(
+    webview_label: String,
+    out_path: String,
+    app: AppHandle,
+) -> Result<String, UiError> {
+    let path = std::path::PathBuf::from(out_path);
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        crate::forms::pdf_export::export_webview_pdf(&app, &webview_label, &path)
+    })
+    .await
+    .map_err(|e| UiError::Internal {
+        detail: format!("pdf export task join failed: {e}"),
+    })?;
+    joined
+        .map(|p| p.display().to_string())
+        .map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })
+}
+
 /// Result of [`open_webview_viewer`] (P1 Task 11). Symmetric to
 /// [`OpenFormResult`] except the React side never subscribes to a
 /// `form-submitted` event for viewer sessions — there is no submit path.

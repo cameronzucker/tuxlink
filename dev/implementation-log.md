@@ -5,6 +5,42 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-06-12 — On-demand faithful PDF export of a rendered form (Forms-push G8, tuxlink-cumx)
+
+Operator chose faithful render over a structured data sheet (compared two real
+PDFs generated from the bundled ICS-213). The audience is a served agency /
+non-ham who opens the PDF to read what was sent, so the output must look like
+the form, not a summary.
+
+Implementation reuses the live form webview: a form renders in a child
+`WebKitWebView` (`compose-form-<token>` authoring / `viewer-form-<token>`
+received), and `forms::pdf_export::export_webview_pdf` drives that exact view
+through `WebKitPrintOperation` with `GtkPrintSettings` targeting a `file://`
+URI + `output-file-format=pdf`. Same engine that painted the form → faithful
+output, and zero new rendering dep (drops WLE's wkhtmltopdf/NReco licensed
+native dep, per the forms synthesis). A new `forms_export_pdf` Tauri command
+(spawn_blocking + a channel awaiting the async `finished`/`failed` signal)
+exposes it; a shared `pdfExport.ts` helper (native Save dialog → command) wires
+an "Export PDF" button into BOTH the authoring host and the received-form
+viewer chrome.
+
+Grounding before writing the FFI surfaced three otherwise-silent traps:
+`Manager::get_webview` is gated behind Tauri's `unstable` feature (added — the
+app already commits to multi-webview at the JS layer); `webkit2gtk` re-exports
+`glib` but not `gtk` (so `gtk` is a direct dep, `glib` reached via webkit2gtk);
+and `gtk`/`webkit2gtk` must pin the exact versions wry resolves (`=0.18.2` /
+`=2.0.2`) or `PlatformWebview::inner()`'s `WebView` type won't unify. The
+`PrintOperation` is held alive past the closure via an `Rc` holder that the
+terminal signal releases — a dropped op would cancel the async print.
+
+Discipline: interop-neutral, contained → straight TDD (no BRF/Codex). Gates:
+clippy `--all-targets -D warnings` clean, backend pdf_export tests 5/0, frontend
+27/0 (helper + both modified components). The GTK print itself needs a display,
+so faithful-output fidelity is an operator smoke (open a form → Export PDF →
+open the file), flagged on the PR — not a CI test.
+
+---
+
 ## 2026-06-12 — Form-value XML-1.0 sanitization (Forms-push G9, tuxlink-nitb)
 
 G9 was filed as "native required/typed field validation." Grounding against the

@@ -7,6 +7,7 @@ pub mod http_server;
 pub mod import; // tuxlink-z0le/fwob — in-app form import (G5+G6)
 pub mod multipart;
 pub mod parse;
+pub mod pdf_export; // tuxlink-cumx / G8 — on-demand faithful PDF export of a rendered form
 pub mod serialize;
 pub mod skin;
 pub mod templates;

@@ -36,6 +36,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Webview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
+import { exportFormPdf } from '../compose/pdfExport';
 import './WebviewFormViewer.css';
 
 interface OpenViewerResult {
@@ -84,6 +85,12 @@ export function WebviewFormViewer({
   // Open status surface to the operator while the loopback bind + viewer
   // template read complete. Mirrors WebviewFormHost's state surface.
   const [status, setStatus] = useState<'opening' | 'open' | 'error'>('opening');
+  // Child-webview label, lifted out of the effect so the Export-PDF affordance
+  // can target it. Set when the viewer opens; null while opening/torn down.
+  const [exportLabel, setExportLabel] = useState<string | null>(null);
+  // Transient export feedback ("Exporting…", "Saved to …", or an error).
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   // Placeholder div the child Webview is pixel-positioned over. The webview
   // paints above this div at runtime.
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -172,6 +179,7 @@ export function WebviewFormViewer({
           resizeObserver.observe(document.body);
         }
 
+        setExportLabel(label);
         setStatus('open');
       } catch (e) {
         if (!cancelled) {
@@ -189,6 +197,7 @@ export function WebviewFormViewer({
 
     return () => {
       cancelled = true;
+      setExportLabel(null);
       resizeObserver?.disconnect();
       webviewRef.current = null;
       if (activeToken) {
@@ -230,6 +239,20 @@ export function WebviewFormViewer({
     }
   }, [suppressed]);
 
+  const handleExportPdf = async () => {
+    if (!exportLabel || exporting) return;
+    setExporting(true);
+    setExportMsg('Exporting…');
+    try {
+      const path = await exportFormPdf(exportLabel, formId);
+      setExportMsg(path ? `Saved PDF to ${path}` : null);
+    } catch (e) {
+      setExportMsg(`Export failed: ${String(e)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="webview-form-viewer" data-testid="webview-form-viewer">
       {status === 'opening' && !error && (
@@ -260,6 +283,21 @@ export function WebviewFormViewer({
         >
           Close
         </button>
+        <button
+          type="button"
+          className="webview-form-viewer__btn"
+          data-testid="webview-form-viewer-export-pdf"
+          onClick={handleExportPdf}
+          disabled={status !== 'open' || exporting}
+          title="Save this form as a PDF — a faithful copy for a served agency or non-ham recipient"
+        >
+          {exporting ? 'Exporting…' : 'Export PDF'}
+        </button>
+        {exportMsg && (
+          <span className="webview-form-viewer__export-msg" role="status">
+            {exportMsg}
+          </span>
+        )}
       </div>
     </div>
   );

@@ -62,6 +62,7 @@ import { Webview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { exportFormPdf } from './pdfExport';
 import './WebviewFormHost.css';
 
 /** Mirror of the Rust `forms::multipart::ParsedBody` payload. The keys are
@@ -98,6 +99,13 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
   // bundle template read complete. Becomes 'open' on success or 'error'
   // on failure; 'opening' is the initial state.
   const [status, setStatus] = useState<'opening' | 'open' | 'error'>('opening');
+  // The child-webview label, lifted out of the effect so the Export-PDF
+  // affordance can target it. Set once the webview opens; null while opening.
+  const [exportLabel, setExportLabel] = useState<string | null>(null);
+  // Transient export feedback shown in the chrome ("Exporting…", "Saved to …",
+  // or an error). Cleared when a new export starts.
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   // Placeholder div in the compose body. The child Webview is pixel-
   // positioned to overlay this rect. The ref is read inside the useEffect
   // below (which runs AFTER the first paint, so getBoundingClientRect()
@@ -251,6 +259,7 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
           }
         };
 
+        setExportLabel(label);
         setStatus('open');
       } catch (e) {
         if (!cancelled) {
@@ -262,6 +271,7 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
 
     return () => {
       cancelled = true;
+      setExportLabel(null);
       unlisten?.();
       resizeObserver?.disconnect();
       rafCancelRef.current?.();
@@ -282,6 +292,21 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
     // (P1 Task 10 critical-fix) where recipient edits made AFTER opening
     // the form weren't reflected at submit time.
   }, [formId]);
+
+  const handleExportPdf = async () => {
+    if (!exportLabel || exporting) return;
+    setExporting(true);
+    setExportMsg('Exporting…');
+    try {
+      const path = await exportFormPdf(exportLabel, formId);
+      // `null` = the operator dismissed the Save dialog; leave no message.
+      setExportMsg(path ? `Saved PDF to ${path}` : null);
+    } catch (e) {
+      setExportMsg(`Export failed: ${String(e)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="webview-form-host" data-testid="webview-form-host">
@@ -312,6 +337,21 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
         >
           Cancel
         </button>
+        <button
+          type="button"
+          className="webview-form-host__btn"
+          data-testid="webview-form-host-export-pdf"
+          onClick={handleExportPdf}
+          disabled={status !== 'open' || exporting}
+          title="Save this form as a PDF — a faithful copy for a served agency or non-ham recipient"
+        >
+          {exporting ? 'Exporting…' : 'Export PDF'}
+        </button>
+        {exportMsg && (
+          <span className="webview-form-host__export-msg" role="status">
+            {exportMsg}
+          </span>
+        )}
         <button
           type="button"
           className="webview-form-host__btn webview-form-host__btn--fallback"
