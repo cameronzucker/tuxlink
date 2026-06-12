@@ -6,6 +6,43 @@
 
 ---
 
+## ⚠️ AUTHORITATIVE: corrections from the design adversarial review (2026-06-12) + Phase 1a scope
+
+Two independent adversarial passes (self-adrev, substituting Codex), grounded against the real `src-tauri/src/winlink/ax25/` code, corrected several load-bearing claims below. **This section supersedes the older inline text where they conflict.** The product thesis, the kill-the-sync insight, the layered architecture, and the out-of-scope calls all survived; the *reuse map*, the *delivery states*, and the *scope/timeline* did not.
+
+### The real architecture: a persistent, promiscuous APRS RX listener (net-new, the biggest piece)
+The existing AX.25 stack is **connection-oriented** (connect→exchange→teardown): `answer()` waits for a SABM and *ignores* UI frames (`datalink.rs:486-532`); `recv_frame` drops any frame whose dest ≠ my own call (`datalink.rs:206-208,238-240`); `connect_link` returns a `Box<dyn ByteLink>` consumed immediately. **APRS needs the opposite:** a long-lived task that holds a KISS link open continuously, decodes *every* UI frame on the channel **promiscuously** (no dest-call filter, no handshake), and routes to the chat core. This listener — spawn it, keep it alive across the app session, survive transport reconnects (the BT host handoff) — is **net-new architecture, not a reuse of `answer()`/`connect()`**. It is the single largest chunk of the build.
+
+### Corrected reuse map
+- **Reusable as-is:** `kiss.rs` (KISS decoder — accepts data frames from any port, de-escapes correctly), and the `Address`/`Path` codecs in `frame.rs` (handle APRS callsigns, SSIDs, `WIDEn-N` paths). **These are the only "unchanged" reuses.**
+- **Net-new (NOT reuse):** a `Control::Ui` variant — the `Control` enum has none, and `Control::decode` returns `Err(UnknownControl(0x03))` today (`frame.rs:151-174`); `has_info()` is true only for `Control::I` (`frame.rs:177`); the code literally comments *"P1 has no UI yet."* So UI-frame encode/decode + carrying PID(`0xF0`)+info on a UI frame is net-new codec work. Plus the promiscuous-RX listener (above), plus dedupe, plus the APRS identity/path plumbing (below).
+- The two-layer "capability profile" structure is an **aspirational new abstraction**, not a mirror of the existing `KissLinkConfig` enum (which has no profile concept). Build it; don't describe it as already-there.
+
+### Delivery states: THREE, not four — drop `heard-locally`
+KISS tells you only that bytes left the host. "Heard-locally" is **not honestly observable** on the KISS floor (knowable only via own-frame self-digipeat correlation: zero evidence on a direct simplex contact — the core tactical case — confounded by TX-deafness, and needs net-new correlation logic). Shipping it would violate this spec's own RF-honesty premise. **Phase 1 ships `sent → ACKed → timed-out`.** (`heard-locally` revisits at Phase 2 only if the native Benshi protocol exposes a real TX-confirm — open question.) An explicit **"listening / not listening (radio disconnected)"** indicator is required, since the persistent listener dies on the BT host-handoff and inbound during that window is lost by design.
+
+### Scope reality: this is ~2–3 focused sessions; today's honest slice is Phase 1a
+Full Phase 1 (multi-transport picker + threads + channel monitor + filtering + honest states + inbound demux) is **not a one-day build** — it's dominated by the net-new always-on RX listener + the React messaging surface. **Phase 1a (today's slice — "just get the thing working," operator):**
+- Send and receive text APRS messages to/from a callsign, over **one transport: the UV-Pro Bluetooth KISS** (the on-air-proven path).
+- States: `sent → ACKed → timed-out`.
+- A single default digipeater path `WIDE1-1,WIDE2-1` (operator-configurable later).
+- **Dedupe** (mandatory — see below).
+- A basic surface that shows the conversation working. Threads + channel-monitor + filtering is the **1b** target (operator's call: **view = threads + a channel monitor, with operator-controlled receive filtering; per-SSID / category filters (e.g. suppress Wx) are roadmap, NOT 1a**).
+
+**Phase 1b:** multi-transport (managed Dire Wolf + any TNC), the channel-monitor view + per-SSID/category filtering, thread polish, the listening-state indicator. **Phase 2:** native Benshi profile + on-screen control. **Phase 3:** position/beacon. **Separate:** Winlink-over-APRS gateway.
+
+### Build-biters the original spec was silent on (resolve IN THE PLAN, before code)
+1. **Digipeater path** — every TX needs one. Default `WIDE1-1,WIDE2-1`, operator-configurable in settings (not per-message). Verify the UI-frame C-bit/SSID-h-bit handling against an APRS reference rather than inheriting `Path::encode`'s connected-mode command-frame default (`frame.rs:224` sets dest C-bit true).
+2. **Duplicate-frame suppression** — digipeating + sender retransmits mean you hear the same frame multiple times → triplicates in the thread → reads as "broken." Dedupe key = (src `CALL-SSID`, msg seq, short time window); dedupe ACKs too (idempotent). **Mandatory, net-new, in Phase 1a.**
+3. **APRS station identity** — separate from the Winlink B2F identity (`ResolvedPacket` is Winlink-shaped, wired to CMS connect). Net-new: source `CALL-SSID` (tuxlink's TX SSID, default + configurable), a **tocall** (mint our own experimental `APZ…`, do not borrow `APRS`), and the TX path. Thread/ACK-match on **full `CALL-SSID`**, not bare call.
+4. **APRS message format — pin it to a reference** (aprslib / direwolf / aprx), do NOT hand-wave (AI-amateur-radio-reliability rule): addressee = **exactly 9 chars, left-justified space-padded**, then `:`; message text (~67 char cap — this is what makes "bounded airtime" real); optional `{` + msgID **1–5 chars** (not 2); `:ADDRESSEE :ackNNNNN` ACK echoing the *sender's* msgID; `rej` exists; the modern reply-ack `{NN}aa` form exists.
+5. **RADIO-1 — design the bound, don't assert it.** Pin an **exact retry schedule** (count + decaying intervals); a **single serialized TX queue** (real APRS clients serialize TX through one queue — table-stakes, NOT a tuxlink-added safeguard); a **cap on concurrent in-flight/retrying messages** (else N messages × N retries × congested channel = unbounded aggregate airtime); and a **single global abort that flushes ALL pending retransmit timers** before the next TX. State the worst-case airtime arithmetic explicitly. The existing `AbortableByteLink` write-gate covers a connect-loop write, NOT a free-standing retransmit timer — net-new abort plumbing.
+
+### Pre-build checklist
+- Confirm the UV-Pro KISS path passes raw AX.25 UI frames other APRS stations can decode (almost certainly yes — that's what KISS is), so the operator's on-air smoke isn't gated on an unverified assumption.
+
+---
+
 ## The thesis: power consolidation, not chat sync
 
 Tuxlink is already an email-shaped Winlink workspace. Adding tactical VHF chat next to store-and-forward is the Gmail-plus-Chat move: once you own the messaging surface, the live layer is a natural neighbor.
