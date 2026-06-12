@@ -176,3 +176,18 @@ In-app. No separate distribution channel — it ships in the tuxlink Tauri app l
 ## Build sequencing (this is for the plan, not the spec to decide finally)
 
 Today's target is **Phase 1 (Layer 1 + chat UX)** via build-robust-features → writing-plans → execute, the same pipeline that shipped managed Dire Wolf. Phase 2 (native Benshi control) is a separate build gated on the HT-Commander-source grounding of open question #1. Position/beacon (Phase 3) and Winlink-over-APRS (separate) are later/separate bd issues.
+
+---
+
+## Phase 1a — BUILT (2026-06-12, sequoia-heron-jay)
+
+Phase 1a is built end-to-end on `bd-tuxlink-2f2n/aprs-tactical-chat` (draft PR #642), per [`docs/plans/2026-06-12-aprs-tactical-chat-phase1a-plan.md`](../plans/2026-06-12-aprs-tactical-chat-phase1a-plan.md), via 14-task subagent-driven development. **tocall = `APZTUX`** (confirmed unallocated experimental `APZ` range). The build was preceded by a 2-round adversarial plan review (5 blockers fixed pre-build) and followed by a final adversarial code review (one in-flight-capacity leak found + fixed).
+
+**What shipped:** the `winlink/aprs/` Rust module (`Control::Ui` codec, message format pinned to direwolf/aprslib, a promiscuous persistent RX listener, a two-window dedupe — long display window + short auto-ACK throttle for lost-ACK recovery without an ACK storm, a bounded-retransmit TX queue, `AprsState` on a `spawn_blocking` driver), six Tauri commands, and an inline React chat panel + settings + Start/Stop listening toggle. Delivery states `sent → acked → timedOut → rejected` (honest; no fake "delivered"). Single-Bluetooth-host arbitration is operator-managed (one of APRS-chat / packet-Winlink at a time); named error if the link is busy.
+
+**Carried-forward notes for later phases (from the final review):**
+- **AX.25 UI-frame C-bit:** the build reuses `Path::encode`'s connected-mode default (dest C=1, src C=0), which happens to match the de-facto APRS convention Direwolf/aprx emit and which all APRS decoders ignore on receive — so it is on-air-correct for the smoke. **P2 should add an explicit APRS-intent comment/test** so a future `Path::encode` refactor doesn't silently flip it (the original design flagged "verify against an APRS reference rather than inheriting the default").
+- **Dedupe msgid reuse:** the 300 s display-dedupe window suppresses re-display of any same-`(src,msgid)` frame. A remote peer whose msgid counter *wraps* within 300 s would have a genuinely-new message swallowed. Acceptable for 1a (monotonic msgids, 5-char base-36 space); a **1b** robustness note.
+- **Phase 1b backlog filed:** multi-transport (`tuxlink-a20f`), channel-monitor + per-SSID/category filtering (`tuxlink-wiww`), listening-state/host-handoff polish (`tuxlink-2p8z`), REJ-UX + reply-ack emit (`tuxlink-f9is`).
+
+**Remaining before merge:** operator on-air smoke (UV-Pro, real APRS frequency — RADIO-1 operator-only; the agent never transmits), then mark PR #642 ready.
