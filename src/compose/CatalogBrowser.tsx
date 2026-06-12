@@ -21,6 +21,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { normalizeCatalogId } from '../forms';
+import { ImportSheet } from './ImportSheet';
+import { openFormsFolder, formsCustomDelete, type ImportResult } from './importApi';
 import './CatalogBrowser.css';
 
 /** Mirror of the Rust `forms::wle_templates::Template` struct (no serde
@@ -92,9 +94,10 @@ const CUSTOM_FOLDER_LABEL = 'Custom';
 /** Tree-build: bucket templates by their `folder` field, with the
  *  synthetic "Custom" folder collecting every template whose `folder`
  *  is empty (operator's custom-forms root). Returned in display
- *  order: alphabetical, with Custom always last. Templates inside
- *  each folder are sorted by label for determinism. */
-function buildFolderTree(catalog: Template[]): FolderBucket[] {
+ *  order: custom categories FIRST (tuxlink-z0le §7 — for an org member,
+ *  their imported forms are the point), then bundled alphabetically.
+ *  Templates inside each folder are sorted by label for determinism. */
+export function buildFolderTree(catalog: Template[]): FolderBucket[] {
   const buckets = new Map<string, FolderBucket>();
   for (const t of catalog) {
     // Empty folder strings live under the synthetic Custom folder.
@@ -116,10 +119,10 @@ function buildFolderTree(catalog: Template[]): FolderBucket[] {
     bucket.templates.sort((a, b) => a.label.localeCompare(b.label));
   }
   const ordered = Array.from(buckets.values());
-  // Alphabetical, with Custom pinned to the end.
+  // Custom categories first, then bundled — alphabetical within each group.
   ordered.sort((a, b) => {
-    if (a.isCustom && !b.isCustom) return 1;
-    if (!a.isCustom && b.isCustom) return -1;
+    if (a.isCustom && !b.isCustom) return -1;
+    if (!a.isCustom && b.isCustom) return 1;
     return a.name.localeCompare(b.name);
   });
   return ordered;
@@ -142,6 +145,12 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [refreshStep, setRefreshStep] = useState<RefreshStep>({ kind: 'idle' });
+  // Import sub-flow (tuxlink-z0le). Mutually exclusive with the refresh
+  // sub-flow; both visually replace the search + results area.
+  const [importOpen, setImportOpen] = useState(false);
+  const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set());
+  const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   // Ref + auto-focus for the search input. Important #7 from the P1 Task 10
   // code review: without an initial-focus target, assistive-tech users land
   // in an aria-modal="true" dialog with no announced focus position. Search
@@ -163,6 +172,11 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
         e.preventDefault();
         if (refreshStep.kind !== 'idle' && refreshStep.kind !== 'refreshing') {
           setRefreshStep({ kind: 'idle' });
+        } else if (importOpen) {
+          // Close the import sub-flow; ImportSheet's unmount fires
+          // importCancel for any live staging token. Commit safety is at
+          // the backend (single-shot token; cancel-on-consumed is a no-op).
+          setImportOpen(false);
         } else if (refreshStep.kind === 'idle') {
           onCancel();
         }
@@ -174,7 +188,7 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [onCancel, refreshStep.kind]);
+  }, [onCancel, refreshStep.kind, importOpen]);
 
   // Catalog fetch — extracted into a callable so the post-refresh path
   // can re-run it. Returns a Promise so the refresh flow can chain.
@@ -279,6 +293,43 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
     setRefreshStep({ kind: 'idle' });
   }, []);
 
+  // Import sub-flow handlers (tuxlink-z0le).
+  const handleImportDone = useCallback(
+    async (result: ImportResult) => {
+      setImportOpen(false);
+      setHighlightedIds(new Set(result.installed));
+      await fetchCatalog();
+    },
+    [fetchCatalog],
+  );
+
+  const revealFolder = useCallback(async () => {
+    setNotice(null);
+    try {
+      await openFormsFolder();
+    } catch (e: unknown) {
+      setNotice(typeof e === 'string' ? e : 'Could not open the forms folder.');
+    }
+  }, []);
+
+  const confirmRemove = useCallback(
+    async (id: string) => {
+      setPendingRemoveId(null);
+      try {
+        await formsCustomDelete([id]);
+        await fetchCatalog();
+      } catch (e: unknown) {
+        setNotice(typeof e === 'string' ? e : 'Could not remove the form.');
+      }
+    },
+    [fetchCatalog],
+  );
+
+  const hasCustom = useMemo(
+    () => catalog.some((t) => t.source === 'Custom' || t.folder === ''),
+    [catalog],
+  );
+
   return (
     <div
       className="catalog-browser"
@@ -297,6 +348,8 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
             onDismiss={dismissRefresh}
             data-testid="catalog-refresh-pane"
           />
+        ) : importOpen ? (
+          <ImportSheet onDone={handleImportDone} onCancel={() => setImportOpen(false)} />
         ) : (
           <>
             <input
@@ -325,12 +378,32 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
                   onPick={onPick}
                 />
               )}
+              {!loading && !error && !hasCustom && searchResults === null && (
+                <div className="catalog-browser__custom-cta" data-testid="catalog-custom-cta">
+                  <p className="catalog-browser__custom-cta-text">
+                    No custom forms yet — bring in your group&rsquo;s forms.
+                  </p>
+                  <button
+                    type="button"
+                    className="catalog-browser__btn catalog-browser__btn--primary"
+                    data-testid="catalog-empty-custom-cta"
+                    onClick={() => setImportOpen(true)}
+                  >
+                    Import group forms…
+                  </button>
+                </div>
+              )}
               {!loading && !error && searchResults === null && (
                 <FolderTree
                   folders={folders}
                   expanded={expandedFolders}
                   onToggle={toggleFolder}
                   onPick={onPick}
+                  highlightedIds={highlightedIds}
+                  pendingRemoveId={pendingRemoveId}
+                  onRequestRemove={setPendingRemoveId}
+                  onConfirmRemove={confirmRemove}
+                  onCancelRemove={() => setPendingRemoveId(null)}
                 />
               )}
               {!loading && !error && catalog.length === 0 && (
@@ -342,17 +415,42 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
           </>
         )}
 
+        {notice && (
+          <div className="catalog-browser__notice" role="status" data-testid="catalog-browser-notice">
+            {notice}
+          </div>
+        )}
         <div className="catalog-browser__actions">
-          {refreshStep.kind === 'idle' && (
-            <button
-              type="button"
-              className="catalog-browser__btn catalog-browser__btn--secondary"
-              onClick={kickOffCheck}
-              data-testid="catalog-browser-refresh"
-              title="Pull the latest WLE Standard Forms snapshot from winlink.org via getpat.io"
-            >
-              Refresh forms…
-            </button>
+          {refreshStep.kind === 'idle' && !importOpen && (
+            <>
+              <button
+                type="button"
+                className="catalog-browser__btn catalog-browser__btn--secondary"
+                onClick={() => setImportOpen(true)}
+                data-testid="catalog-browser-import"
+                title="Install a third-party or organization's custom Winlink forms"
+              >
+                Import group forms…
+              </button>
+              <button
+                type="button"
+                className="catalog-browser__btn catalog-browser__btn--secondary"
+                onClick={kickOffCheck}
+                data-testid="catalog-browser-refresh"
+                title="Pull the latest WLE Standard Forms snapshot from winlink.org via getpat.io"
+              >
+                Update standard forms…
+              </button>
+              <button
+                type="button"
+                className="catalog-browser__btn catalog-browser__btn--ghost"
+                onClick={() => void revealFolder()}
+                data-testid="catalog-browser-open-folder"
+                title="Open the custom-forms folder in your file manager"
+              >
+                Open forms folder
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -525,9 +623,24 @@ interface FolderTreeProps {
   expanded: Set<string>;
   onToggle: (name: string) => void;
   onPick: (formId: string) => void;
+  highlightedIds: Set<string>;
+  pendingRemoveId: string | null;
+  onRequestRemove: (id: string) => void;
+  onConfirmRemove: (id: string) => void;
+  onCancelRemove: () => void;
 }
 
-function FolderTree({ folders, expanded, onToggle, onPick }: FolderTreeProps) {
+function FolderTree({
+  folders,
+  expanded,
+  onToggle,
+  onPick,
+  highlightedIds,
+  pendingRemoveId,
+  onRequestRemove,
+  onConfirmRemove,
+  onCancelRemove,
+}: FolderTreeProps) {
   // Important #5 from the P1 Task 10 code review: the WAI-ARIA tree
   // pattern requires full keyboard nav (Up/Down/Right/Left/Home/End/
   // typeahead), and implementing that for a 250-entry, expand/collapse
@@ -566,7 +679,13 @@ function FolderTree({ folders, expanded, onToggle, onPick }: FolderTreeProps) {
             {isOpen && (
               <ul className="catalog-browser__templates">
                 {folder.templates.map((t) => (
-                  <li key={t.id} className="catalog-browser__template-row">
+                  <li
+                    key={t.id}
+                    className={
+                      'catalog-browser__template-row' +
+                      (highlightedIds.has(t.id) ? ' catalog-browser__template-row--new' : '')
+                    }
+                  >
                     <button
                       type="button"
                       className="catalog-browser__template-btn"
@@ -574,7 +693,43 @@ function FolderTree({ folders, expanded, onToggle, onPick }: FolderTreeProps) {
                       data-testid={`catalog-template-${t.id}`}
                     >
                       {t.label}
+                      {folder.isCustom && (
+                        <span className="catalog-browser__custom-badge" aria-label="custom form">
+                          custom
+                        </span>
+                      )}
                     </button>
+                    {folder.isCustom &&
+                      (pendingRemoveId === t.id ? (
+                        <span className="catalog-browser__remove-confirm">
+                          Remove?
+                          <button
+                            type="button"
+                            className="catalog-browser__remove-yes"
+                            data-testid={`catalog-remove-confirm-${t.id}`}
+                            onClick={() => onConfirmRemove(t.id)}
+                          >
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            className="catalog-browser__remove-no"
+                            onClick={onCancelRemove}
+                          >
+                            No
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="catalog-browser__remove"
+                          data-testid={`catalog-remove-${t.id}`}
+                          onClick={() => onRequestRemove(t.id)}
+                          title="Remove this custom form"
+                        >
+                          Remove
+                        </button>
+                      ))}
                   </li>
                 ))}
               </ul>

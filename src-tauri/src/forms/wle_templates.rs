@@ -82,7 +82,16 @@ fn walk_html(root: &Path, source: TemplateSource) -> Vec<Template> {
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
-        .filter(|e| e.path().extension().map(|x| x == "html").unwrap_or(false))
+        // tuxlink-z0le §11.1: accept .html AND .htm (case-insensitive) so the
+        // catalog enumerates exactly what the importer detects — a form that
+        // imports but never appears is the worst outcome.
+        .filter(|e| {
+            e.path()
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|x| x.eq_ignore_ascii_case("html") || x.eq_ignore_ascii_case("htm"))
+                .unwrap_or(false)
+        })
         .filter_map(|e| {
             let path = e.path().to_path_buf();
             let id = path.file_stem().and_then(|s| s.to_str())?.to_string();
@@ -406,6 +415,22 @@ mod tests {
         let mut sorted = ids.clone();
         sorted.sort();
         assert_eq!(ids, sorted, "catalog order must be sorted-by-id");
+    }
+
+    /// tuxlink-z0le §11.1: enumeration must accept `.htm` and uppercase
+    /// extensions, matching what the importer detects (else a form imports but
+    /// never appears in the catalog).
+    #[test]
+    fn walk_html_accepts_htm_and_uppercase_extension() {
+        let td = TempDir::new().unwrap();
+        let root = td.path().join("Standard_Forms").join("Cat");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("A Initial.HTM"), "<html>x</html>").unwrap();
+        std::fs::write(root.join("B Initial.html"), "<html>x</html>").unwrap();
+        let got = walk_html(&td.path().join("Standard_Forms"), TemplateSource::Custom);
+        let ids: std::collections::HashSet<_> = got.iter().map(|t| t.id.as_str()).collect();
+        assert!(ids.contains("A Initial"), ".HTM (uppercase) must enumerate");
+        assert!(ids.contains("B Initial"));
     }
 
     /// 2026-06-04 Codex adrev P2.1: Viewer + SendReply templates must NOT

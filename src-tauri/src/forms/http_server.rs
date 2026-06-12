@@ -895,25 +895,35 @@ async fn folder_handler(
         Ok(_) => {}
         Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
     }
+    // tuxlink-z0le §11.5: refuse to serve scriptable text types from /folder/*.
+    // Imported (untrusted) forms can ship assets here; HTML/SVG are script +
+    // exfil sinks, so adjacent assets are restricted to css/js/images. Combined
+    // with the CSP+nosniff below, this closes the residual network-exfil channel
+    // the empty forms-webview capability leaves open.
+    let ext = canonical
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(ext.as_str(), "html" | "htm" | "svg") {
+        return (StatusCode::FORBIDDEN, "asset type not allowed").into_response();
+    }
     match std::fs::read(&canonical) {
         Ok(bytes) => {
             let mut headers = HeaderMap::new();
-            let ext = canonical
-                .extension()
-                .and_then(|x| x.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
             let ct = match ext.as_str() {
-                "html" | "htm" => "text/html; charset=utf-8",
                 "css" => "text/css; charset=utf-8",
                 "js" => "application/javascript",
                 "png" => "image/png",
                 "jpg" | "jpeg" => "image/jpeg",
                 "gif" => "image/gif",
-                "svg" => "image/svg+xml",
                 _ => "application/octet-stream",
             };
             headers.insert(header::CONTENT_TYPE, ct.parse().unwrap());
+            // Lock origin to its own assets + stop content-type sniffing from
+            // re-interpreting a served file as HTML/script.
+            headers.insert(header::CONTENT_SECURITY_POLICY, FORM_CSP.parse().unwrap());
+            headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
             (headers, bytes).into_response()
         }
         Err(_) => (StatusCode::NOT_FOUND, "not found").into_response(),
@@ -1335,6 +1345,72 @@ mod tests {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
         assert_eq!(ct, "image/png");
+    }
+
+    /// tuxlink-z0le §11.5: /folder/* must refuse scriptable text types
+    /// (HTML/HTM/SVG) — exfil + script sinks that imported untrusted forms
+    /// could otherwise ship as adjacent "assets".
+    #[tokio::test]
+    async fn folder_route_refuses_html_htm_svg() {
+        let td = TempDir::new().unwrap();
+        let folder = td.path().to_path_buf();
+        std::fs::write(folder.join("page.html"), b"<form>x</form>").unwrap();
+        std::fs::write(folder.join("page.htm"), b"<form>x</form>").unwrap();
+        std::fs::write(folder.join("icon.svg"), b"<svg/>").unwrap();
+        std::mem::forget(td);
+        let (tx, _rx) = mpsc::channel(1);
+        let state = Arc::new(SessionState {
+            kind: SessionKind::Form,
+            form_html: String::new(),
+            template_folder_path: folder,
+            submit_tx: tx,
+            port: TEST_PORT,
+        });
+        for uri in ["/folder/page.html", "/folder/page.htm", "/folder/icon.svg"] {
+            let resp = build_router(state.clone())
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{uri} must be refused");
+        }
+    }
+
+    /// tuxlink-z0le §11.5: served /folder/* assets carry the form CSP +
+    /// X-Content-Type-Options: nosniff.
+    #[tokio::test]
+    async fn folder_route_sets_csp_and_nosniff_on_assets() {
+        let td = TempDir::new().unwrap();
+        let folder = td.path().to_path_buf();
+        std::fs::write(folder.join("style.css"), b"body{}").unwrap();
+        std::mem::forget(td);
+        let (tx, _rx) = mpsc::channel(1);
+        let state = Arc::new(SessionState {
+            kind: SessionKind::Form,
+            form_html: String::new(),
+            template_folder_path: folder,
+            submit_tx: tx,
+            port: TEST_PORT,
+        });
+        let resp = build_router(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/folder/style.css")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(
+            resp.headers().get(header::CONTENT_SECURITY_POLICY).is_some(),
+            "CSP present on served asset"
+        );
+        assert_eq!(
+            resp.headers()
+                .get("X-Content-Type-Options")
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff")
+        );
     }
 
     /// bd tuxlink-4g2n regression: a file whose metadata.len() exceeds

@@ -1,0 +1,135 @@
+/* Inline form-import sheet (tuxlink-z0le). Dark theme; constrained width. */
+
+.import-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  max-width: 640px;
+}
+
+.import-sheet__title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.import-sheet__hint {
+  margin: 0;
+  color: var(--text-muted, #9aa4b2);
+  font-size: 0.9rem;
+}
+
+.import-sheet__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.import-sheet__choice {
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border, #2b3340);
+  border-radius: 6px;
+  background: var(--surface-2, #1b212b);
+  color: inherit;
+  cursor: pointer;
+}
+
+.import-sheet__choice--primary {
+  border-color: var(--accent, #4c8bf5);
+  font-weight: 600;
+}
+
+.import-sheet__report {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.import-sheet__row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.4rem 0.5rem;
+  border-radius: 5px;
+  background: var(--surface-2, #1b212b);
+}
+
+.import-sheet__row[data-kind='reject'] {
+  opacity: 0.65;
+}
+
+.import-sheet__row-kind {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #9aa4b2);
+}
+
+.import-sheet__row-id {
+  font-weight: 600;
+}
+
+.import-sheet__row-folder {
+  font-size: 0.8rem;
+  color: var(--text-muted, #9aa4b2);
+}
+
+.import-sheet__warn {
+  grid-column: 1 / -1;
+  font-size: 0.82rem;
+  color: var(--warn, #e0a64a);
+}
+
+.import-sheet__reason {
+  grid-column: 1 / -1;
+  font-size: 0.82rem;
+  color: var(--text-muted, #9aa4b2);
+}
+
+.import-sheet__confirm {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.import-sheet__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.import-sheet__commit {
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  border: none;
+  background: var(--accent, #4c8bf5);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.import-sheet__ghost {
+  background: none;
+  border: none;
+  color: var(--text-muted, #9aa4b2);
+  cursor: pointer;
+}
+
+.import-sheet__error {
+  color: var(--danger, #e0574a);
+}
+
+.import-sheet__companions,
+.import-sheet__updates-note {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted, #9aa4b2);
+}

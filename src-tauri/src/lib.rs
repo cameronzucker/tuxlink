@@ -174,6 +174,10 @@ pub fn run() {
         // 5) and cms_abort read the SAME managed Arc, so an operator answer/abort
         // reaches the decider parked in the blocking exchange thread (Codex #1).
         .manage(crate::winlink::inbound_selection::SelectionRegistry::default())
+        // tuxlink-z0le: in-app form-import staging registry (token → staged dir).
+        .manage(std::sync::Arc::new(
+            crate::forms::import::ImportStagingRegistry::default(),
+        ))
         // tuxlink-0gsy (spec §8.2): managed theme-state singleton — the help
         // window calls theme_get_scheme to bootstrap and listens for
         // color_scheme_changed events emitted by theme_broadcast_scheme.
@@ -252,6 +256,10 @@ pub fn run() {
         .manage(crate::identity::IdentityService::new())
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
+
+            // tuxlink-z0le: reap orphaned form-import staging dirs left by a
+            // crashed prior run (best-effort, before any import can run).
+            crate::forms::import::sweep_stale_staging();
 
             // alpha-logging (tuxlink-qjgx Task 6): initialize the tracing pipeline.
             // Pull the already-managed SessionLogState Arc, then init the full
@@ -578,6 +586,13 @@ pub fn run() {
             crate::ui_commands::forms_list_catalog,
             crate::ui_commands::open_webview_form,
             crate::ui_commands::close_webview_form_server,
+            // tuxlink-z0le/fwob: in-app form import (G5+G6) — preview→commit,
+            // cancel, custom-folder reveal, and per-form uninstall.
+            crate::ui_commands::forms_import_preview,
+            crate::ui_commands::forms_import_commit,
+            crate::ui_commands::forms_import_cancel,
+            crate::ui_commands::open_forms_folder,
+            crate::ui_commands::forms_custom_delete,
             // HTML Forms Phase 3 (tuxlink-xipa): runtime-updateable WLE
             // Standard Forms snapshot — operator-triggered refresh via
             // CatalogBrowser "Refresh forms…" affordance. Check is read-only;

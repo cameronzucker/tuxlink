@@ -5,6 +5,50 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-06-11 — In-app form import (Forms-push G5+G6+G11, tuxlink-z0le/fwob/48uc)
+
+Shipped the in-app form-import flow so a stuck onboarding member can bring an
+organization's custom Winlink forms (single `.html`, a folder, or a `.zip`)
+into the custom-forms dir with a validate-before-write report, then see them in
+the catalog — the originating gap (import was a manual file-drop into a hidden
+XDG path with no UI). Built via build-robust-features: brainstorm + office-hours
+(evidenced-floor scope: interop + import for the one evidenced user; aggregation
+deferred) → spec + 4 Claude adversarial rounds → 16-task TDD plan → execution.
+
+**Design correction the adversarial review forced:** the obvious HTML
+`is-a-form` heuristic rejects 100% of the real bundle (Windows-1252; some
+authoring forms carry zero `<form>`; literal `{FormServer}` placeholders).
+Detection flipped to the `.txt` `Form:` directive as the import unit.
+
+**Backend** (`src-tauri/src/forms/import.rs`, new): two-phase `preview`→`commit`
+over a 0700 `tempfile` staging dir; `.txt`-directive detection + orphan-HTML
+fallback + companion resolution; strict per-path-component validation + symlink
+rejection + entry-count/per-file/total/ratio caps (the updater extractor lacked
+the count + ratio guards); folder-aware classification (cross-folder stem dupes
+→ Skip, never collapsed — the `(folder,id)` engine fix stays tuxlink-8v3l);
+opaque-token `ImportStagingRegistry` (single-shot consume → `TokenExpired`,
+TTL reap, boot sweep); `commit` shares `updater::INSTALL_LOCK`, re-classifies
+under the lock (two TOCTOU guards → `CommitConflict`), writes with `.prev`
+backup + rollback. Plus `open_forms_folder` (backend `xdg-open` — the frontend
+`shell:allow-open` is URL-scoped), `forms_custom_delete` uninstall, and the
+`/folder/*` CSP exfil-hole closure (403 html/htm/svg + CSP/nosniff on assets).
+`walk_html` now enumerates `.htm` so detection == surfacing.
+
+**Frontend**: `importApi.ts` bindings; `ImportSheet.tsx` (ZIP-first picker →
+report → confirm-overwrite → commit, amber override + actionable no-viewer
+warnings, cancel-on-unmount); `CatalogBrowser` wiring (custom-categories-first
+sort, Import/Update-standard/Open-folder footer, empty-custom CTA, per-form
+Remove, Escape state machine, post-commit refresh+highlight). `dialog:allow-open`
+granted on the main window (was missing). G11 help: the HTML-forms topic now
+documents the import flow (searchable).
+
+Gates: clippy `--all-targets -D warnings` clean; full `cargo test` 0 failures;
+`tsc --noEmit` clean; full vitest 2397/2397. **NOT merge-ready** until the
+deferred cross-provider Codex adversarial round (tuxlink-yqo4, Codex quota
+returns Jun 13) runs on the diff — the 4 Claude rounds are not a substitute.
+
+---
+
 ## 2026-06-11 — Align Network Post Office send-flow with CMS (tuxlink-b6ad)
 
 Network Post Office was the only send/receive mode with a per-message Outbox

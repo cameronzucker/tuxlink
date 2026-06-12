@@ -1947,6 +1947,96 @@ pub async fn forms_list_catalog(
     crate::forms::wle_templates::list(&bundle, custom_opt).map_err(|e| e.to_string())
 }
 
+/// Preview an import (tuxlink-z0le/fwob, spec §11.4): stage + validate +
+/// classify the sources WITHOUT writing to the custom-forms dir, returning a
+/// plan + an opaque staging token. The synchronous fs work runs under
+/// `spawn_blocking` so it never stalls the async runtime.
+#[tauri::command]
+pub async fn forms_import_preview(
+    sources: Vec<String>,
+    app: AppHandle,
+    reg: State<'_, std::sync::Arc<crate::forms::import::ImportStagingRegistry>>,
+) -> Result<crate::forms::import::ImportPlan, crate::forms::import::ImportError> {
+    let custom_root = crate::forms::wle_templates::custom_root_for_app(&app);
+    let bundle_root = crate::forms::wle_templates::bundle_root_for_app(&app)
+        .map_err(|e| crate::forms::import::ImportError::Io { reason: e.to_string() })?;
+    let reg = reg.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        crate::forms::import::preview_sources(&sources, &custom_root, &bundle_root, &reg)
+    })
+    .await
+    .map_err(|e| crate::forms::import::ImportError::Io {
+        reason: format!("join: {e}"),
+    })?
+}
+
+/// Cancel an in-flight import preview, dropping its staging dir. Idempotent —
+/// an unknown/expired token is a no-op (fired on ImportSheet unmount/Escape).
+#[tauri::command]
+pub async fn forms_import_cancel(
+    staging_token: String,
+    reg: State<'_, std::sync::Arc<crate::forms::import::ImportStagingRegistry>>,
+) -> Result<(), ()> {
+    reg.cancel(&staging_token);
+    Ok(())
+}
+
+/// Commit a previewed import (tuxlink-z0le/fwob, spec §11.4): consume the
+/// staging token single-shot, re-classify under the shared forms lock, and
+/// atomically promote the validated set (+ approved overwrites) into the
+/// custom-forms dir with `.prev` backups. Re-commit → `TokenExpired`.
+#[tauri::command]
+pub async fn forms_import_commit(
+    staging_token: String,
+    approved_overwrite_ids: Vec<String>,
+    app: AppHandle,
+    reg: State<'_, std::sync::Arc<crate::forms::import::ImportStagingRegistry>>,
+) -> Result<crate::forms::import::ImportResult, crate::forms::import::ImportError> {
+    let custom_root = crate::forms::wle_templates::custom_root_for_app(&app);
+    let bundle_root = crate::forms::wle_templates::bundle_root_for_app(&app)
+        .map_err(|e| crate::forms::import::ImportError::Io { reason: e.to_string() })?;
+    crate::forms::import::commit(
+        &staging_token,
+        &approved_overwrite_ids,
+        &custom_root,
+        &bundle_root,
+        reg.inner().clone(),
+    )
+    .await
+}
+
+/// Reveal the custom-forms folder in the OS file manager (the power-user
+/// escape hatch). Resolves the dir strictly via the platform data dir (refuses
+/// if unavailable — never a CWD-relative fallback; §11.4), creates it if
+/// absent, then launches `xdg-open` via the shell plugin (backend-initiated,
+/// so it bypasses the URL-scoped frontend `shell:allow-open`). Returns a typed
+/// message when no file-manager handler is registered (labwc/Wayland).
+#[tauri::command]
+pub async fn open_forms_folder(app: AppHandle) -> Result<(), String> {
+    let dir = app
+        .path()
+        .data_dir()
+        .map_err(|_| "platform data dir unavailable".to_string())?
+        .join("tuxlink/forms/custom");
+    crate::forms::import::ensure_custom_dir(&dir).map_err(|e| format!("create folder: {e}"))?;
+    use tauri_plugin_shell::ShellExt;
+    app.shell()
+        .command("xdg-open")
+        .arg(dir.to_string_lossy().to_string())
+        .spawn()
+        .map_err(|e| format!("No file manager is registered to open folders ({e})."))?;
+    Ok(())
+}
+
+/// Remove custom forms (+ companions) from the custom-forms dir (tuxlink-z0le
+/// §11.3). Confirm-gated in the UI. Only ever touches custom_root; a bundled id
+/// is a no-op.
+#[tauri::command]
+pub async fn forms_custom_delete(ids: Vec<String>, app: AppHandle) -> Result<Vec<String>, String> {
+    let custom_root = crate::forms::wle_templates::custom_root_for_app(&app);
+    crate::forms::import::delete_custom_forms(&ids, &custom_root)
+}
+
 /// Open a new webview form session: spawn the loopback http_server bound
 /// to a fresh ephemeral port, register it in `FormSessionRegistry` under a
 /// freshly-minted token, and start a forwarder task that drains parsed
