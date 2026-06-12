@@ -31,6 +31,11 @@ export function hfDials(station: Station): number[] {
 export function useStationPrediction(
   operatorGrid: string,
   station: Station | null,
+  // Bumped by the caller after the operator's propagation prefs (own antenna /
+  // SNR / power) are persisted, to re-run the forecast with the new TX model.
+  // The backend reads those prefs fresh each call, so a changed key is the
+  // signal to re-predict; the write must land BEFORE the bump (no stale read).
+  reloadKey: number = 0,
 ): StationPredictionResult {
   const grid = operatorGrid.trim();
   const stationCall = station?.baseCallsign ?? null;
@@ -82,7 +87,7 @@ export function useStationPrediction(
     // is represented by call+grid+dialsKey); `station` itself is intentionally
     // not a dep to avoid redundant re-predicts on unrelated re-renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grid, stationCall, stationGrid, stationAntenna, dialsKey]);
+  }, [grid, stationCall, stationGrid, stationAntenna, dialsKey, reloadKey]);
 
   return state;
 }

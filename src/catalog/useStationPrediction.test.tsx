@@ -65,4 +65,23 @@ describe('useStationPrediction', () => {
     expect(result.current.status).toBe('idle');
     expect(invoke).not.toHaveBeenCalled();
   });
+
+  it('re-predicts when the reload key changes (operator antenna/SNR/power was saved)', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) =>
+      cmd === 'propagation_predict_path'
+        ? ({ bearingDeg: 1, distanceKm: 1, ssn: 1, year: 2026, month: 6, channels: [] } as unknown as never)
+        : (undefined as unknown as never),
+    );
+    const { result, rerender } = renderHook(({ k }: { k: number }) => useStationPrediction('DM43bp', station, k), {
+      wrapper: wrap(),
+      initialProps: { k: 0 },
+    });
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+    const firstCalls = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'propagation_predict_path').length;
+    rerender({ k: 1 });
+    await waitFor(() => {
+      const calls = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'propagation_predict_path').length;
+      expect(calls).toBeGreaterThan(firstCalls);
+    });
+  });
 });

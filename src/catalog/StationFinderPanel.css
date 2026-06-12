@@ -605,3 +605,58 @@
   color: var(--faint, #6f8aa3);
   font-size: 11px;
 }
+
+/* ── Operator antenna + prediction tuning row (tuxlink-s0r1 #3c) ─────────── */
+.station-finder__antenna {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border, #243a52);
+  font-size: 12px;
+}
+.station-finder__antenna-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.station-finder__antenna-field--wide {
+  flex: 1 1 240px;
+  min-width: 200px;
+}
+.station-finder__antenna-lab {
+  color: var(--faint, #6f8aa3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.station-finder__antenna-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  background: var(--panel, #0f1c28);
+  color: var(--text, #e8f1fa);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.station-finder__antenna-num {
+  width: 56px;
+  padding: 4px 6px;
+  background: var(--panel, #0f1c28);
+  color: var(--text, #e8f1fa);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 4px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.station-finder__antenna-unit {
+  color: var(--faint, #6f8aa3);
+  font-size: 11px;
+}
+.station-finder__antenna-err {
+  flex-basis: 100%;
+  color: var(--reach-bad, #e0606a);
+}
