@@ -16,7 +16,6 @@
 import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useWizard } from './wizardContext';
-import { validateGrid } from './validators';
 import type { WizardError } from './types';
 
 function errorMessage(err: WizardError): string | null {
@@ -52,9 +51,9 @@ export function Step2OfflineIdentity() {
   const { state, dispatch } = useWizard();
 
   // Local form state — synced to reducer via SET_OFFLINE_FIELD.
+  // Grid moved to the dedicated Location step (tuxlink-9xy1) — this step now only
+  // collects the optional station identifier.
   const [identifier, setIdentifierLocal] = useState(state.identifier);
-  const [grid, setGridLocal] = useState(state.grid);
-  const [gridError, setGridError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<WizardError | null>(null);
 
   // ── Field handlers ─────────────────────────────────────────────────────
@@ -65,22 +64,10 @@ export function Step2OfflineIdentity() {
     setSubmitError(null);
   }, [dispatch]);
 
-  const handleGridChange = useCallback((value: string) => {
-    setGridLocal(value);
-    dispatch({ type: 'SET_OFFLINE_FIELD', field: 'grid', value });
-    // Clear on change; re-validate on blur.
-    setGridError(null);
-    setSubmitError(null);
-  }, [dispatch]);
-
-  const handleGridBlur = useCallback(() => {
-    setGridError(validateGrid(grid));
-  }, [grid]);
-
   // ── Submit gate ─────────────────────────────────────────────────────────
-  // Both fields are optional; the only block is a non-empty but invalid grid.
-  const currentGridError = validateGrid(grid);
-  const canSubmit = !currentGridError && !state.inFlight;
+  // Identifier is optional and free-form; nothing here blocks submit except an
+  // in-flight request. (Grid + its validation moved to the Location step.)
+  const canSubmit = !state.inFlight;
 
   // ── Submit handler ─────────────────────────────────────────────────────
 
@@ -91,7 +78,9 @@ export function Step2OfflineIdentity() {
     try {
       await invoke('wizard_persist_offline', {
         identifier,
-        grid,
+        // Grid is set later in the Location step (via config_set_grid); pass empty
+        // to satisfy the command signature (tuxlink-9xy1).
+        grid: '',
       });
       dispatch({ type: 'SUBMIT_OFFLINE_SUCCESS' });
     } catch (err) {
@@ -115,7 +104,7 @@ export function Step2OfflineIdentity() {
       <h1>Offline station identity</h1>
       <p>
         Identify this station for radio-network sessions.
-        Both fields are optional — you can configure identity later via{' '}
+        It's optional — you can configure identity later via{' '}
         <strong>Tools → Settings</strong>.
       </p>
 
@@ -137,30 +126,7 @@ export function Step2OfflineIdentity() {
           </span>
         </div>
 
-        {/* Grid (optional, 4-char broadcast precision per Principle 7) */}
-        <div className="wizard-field">
-          <label htmlFor="w-grid">Grid locator (optional)</label>
-          <input
-            id="w-grid"
-            type="text"
-            placeholder="e.g. EM75"
-            value={grid}
-            onChange={e => handleGridChange(e.target.value)}
-            onBlur={handleGridBlur}
-            disabled={state.inFlight}
-            aria-describedby={gridError ? 'grid-error' : 'grid-hint'}
-          />
-          {gridError && grid ? (
-            <span id="grid-error" role="alert" className="wizard-field-error">
-              {gridError}
-            </span>
-          ) : (
-            <span id="grid-hint" className="wizard-field-hint">
-              4-character Maidenhead locator (e.g. EM75). Tuxlink broadcasts at
-              4-char precision by default (configurable in Settings).
-            </span>
-          )}
-        </div>
+        {/* Grid moved to the dedicated Location step (tuxlink-9xy1). */}
 
         {/* Error banner (Busy is silent — no banner rendered) */}
         {errorText && (
@@ -171,8 +137,8 @@ export function Step2OfflineIdentity() {
 
         {/* Footer copy per spec §5.4 */}
         <p className="wizard-footer-copy">
-          All fields optional. Tuxlink works fully offline — you can configure
-          identity later via <strong>Tools → Settings</strong>.
+          Optional. Tuxlink works fully offline — you can configure identity later
+          via <strong>Tools → Settings</strong>. You'll set your location next.
         </p>
 
         {/* Single submit button */}

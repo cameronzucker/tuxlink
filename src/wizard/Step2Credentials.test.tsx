@@ -47,12 +47,13 @@ beforeEach(() => {
 // ──────────────────────────────────────────────────────────────────────────
 
 describe('<Step2Credentials>', () => {
-  it('renders callsign, password, grid, and MBO fields', () => {
+  it('renders callsign, password, and MBO fields (grid moved to the Location step)', () => {
     renderStep2();
     expect(screen.getByLabelText(/callsign/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/cms password/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/grid/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/mbo address/i)).toBeInTheDocument();
+    // Grid is no longer collected here — tuxlink-9xy1 moved it to StepLocation.
+    expect(screen.queryByLabelText(/grid/i)).not.toBeInTheDocument();
   });
 
   it('renders Continue and Save-and-skip buttons', () => {
@@ -150,9 +151,9 @@ describe('<Step2Credentials>', () => {
     });
   });
 
-  // ── Submit — Save-and-skip (→ complete) ────────────────────────────────
+  // ── Submit — Save-and-skip (→ location, then complete) ─────────────────
 
-  it('Save-and-skip calls invoke and transitions to complete', async () => {
+  it('Save-and-skip calls invoke and transitions to the Location step (tuxlink-9xy1)', async () => {
     (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     renderStep2();
 
@@ -161,7 +162,8 @@ describe('<Step2Credentials>', () => {
     fireEvent.click(screen.getByRole('button', { name: /save.*skip/i }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+      // skip-verify now lands on the Location step (not straight to complete).
+      expect(screen.getByTestId('probe-step')).toHaveTextContent('location');
     });
   });
 

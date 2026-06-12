@@ -36,15 +36,18 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
       return { ...state, inFlight: true };
 
     case 'SUBMIT_CREDENTIALS_SUCCESS':
+      // skip-verify lands on the Location step (not straight to complete); the
+      // verify path still goes cms_verify → … → location → complete (tuxlink-9xy1).
       return {
         ...state,
         password: '',
-        step: action.skipCmsVerify ? 'complete' : 'cms_verify',
+        step: action.skipCmsVerify ? 'location' : 'cms_verify',
         inFlight: false,
       };
 
     case 'SUBMIT_OFFLINE_SUCCESS':
-      return { ...state, step: 'complete', inFlight: false };
+      // Offline path: identity persisted → Location step → complete (tuxlink-9xy1).
+      return { ...state, step: 'location', inFlight: false };
 
     case 'SUBMIT_FAILURE':
       return { ...state, inFlight: false };
@@ -85,7 +88,10 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
       };
 
     case 'SKIP_CMS_VERIFY':
-      return { ...state, step: 'complete', skipSignaled: true };
+      // Every cms_verify exit (skip / ok-auto-advance / error→inbox) funnels here.
+      // Lands on the Location step before complete (tuxlink-9xy1). skipSignaled stays
+      // true so any late log line / result from the abandoned probe is still ignored.
+      return { ...state, step: 'location', skipSignaled: true };
 
     case 'RETURN_TO_CREDENTIALS':
       return {
@@ -96,6 +102,11 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
         cmsVerifyError: null,
         cmsVerifyLog: [],
       };
+
+    case 'ADVANCE_FROM_LOCATION':
+      // Location → complete. The Location step has already persisted grid/source
+      // via config_set_grid / position_set_source; this only advances the step.
+      return { ...state, step: 'complete' };
 
     default:
       return state;
