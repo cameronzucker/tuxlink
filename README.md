@@ -32,6 +32,13 @@ external CMS sidecar.
 > [Maturity](#maturity-what-is-and-is-not-proven) section covers which paths
 > are validated and which are operator-verified.
 
+> [!TIP]
+> **Coming from Winlink Express or Pat?** Start with
+> [Moving from other Winlink clients](docs/user-guide/32-from-express-or-pat.md):
+> settings mapping, conceptual differences, current parity gaps, and a
+> recommended migration sequence (including how to carry mailbox history across
+> by copying the `native-mbox/` directory).
+
 <p align="center">
   <img src="docs/readme/images/tuxlink-mailbox.png" width="860"
        alt="Running Tuxlink mailbox showing the dashboard ribbon, folder sidebar, message list, reading pane, and status bar">
