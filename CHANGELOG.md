@@ -30,6 +30,18 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.55.0](https://github.com/cameronzucker/tuxlink/compare/v0.54.0...v0.55.0) (2026-06-12)
+
+
+### Features
+
+* **uninstall:** direct the whole uninstall (data + package + verify), cut Missing noise ([4572b7f](https://github.com/cameronzucker/tuxlink/commit/4572b7fc3a3d874e84c42993a76fd239a8840f71))
+
+
+### Bug Fixes
+
+* **tiles:** hydrate via await so the mount-time config_read can't crash a parent test ([ae48f42](https://github.com/cameronzucker/tuxlink/commit/ae48f423b5c0a0d97a1e1cb6774c5efbd4c91118))
+
 ## [0.54.0](https://github.com/cameronzucker/tuxlink/compare/v0.53.1...v0.54.0) (2026-06-12)
 
 
