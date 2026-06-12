@@ -1738,7 +1738,7 @@ impl NativeBackend {
         // before any KISS/TNC state is touched; ConnectGuard is already constructed
         // so the single-flight flag is correctly cleared on this early return.
         let session_id = self.active_identity()?;
-        let base = session_id.mycall().as_str().to_string();
+        let base = session_id.mycall().as_str().to_uppercase();
         // Decide the armed-state status before `role` is moved into resolve
         // (tuxlink-orj): Listen → Listening (armed), DialTo → Connecting (dial).
         let initial_status = initial_packet_status(&role, ssid);
@@ -4949,28 +4949,33 @@ mod native_read_state_tests {
         );
     }
 
-    // tuxlink-ka7 / tuxlink-p5u: a config change via `set_config` must reach the
-    // LIVE backend so the NEXT connect honors it WITHOUT an app restart. Regression
-    // guard for the "selector host/transport (and packet params) only apply after
-    // restart" bug — the backend cached `config` at construction and the connect
-    // path read that stale snapshot. The packet path now (Task 3.8) also gates on
-    // active_identity(); a session identity must be set for the connect to reach
-    // link-open. The config live-read is still exercised: the KISS link params
-    // (host/port) come from live_config() and a stale host would produce a
-    // different failure. No RF, no real CMS (RADIO-1): a closed loopback port
-    // refuses the connect fast.
+    // tuxlink-ka7 / tuxlink-p5u regression guard (reduced scope after Task 3.8).
+    //
+    // Original coverage: proved that `set_config` refreshed the live config so the
+    // NEXT packet connect honored the updated params without an app restart (the
+    // stale-snapshot bug). Task 3.8 moved the packet path's base-call source from
+    // `live_config().identity.active_full` to `active_identity()` (SessionIdentity),
+    // and the `set_config(config_with_call(...))` call in this test became inert —
+    // the updated identity.active_full no longer reaches the packet path, so the
+    // stale-snapshot observable was lost.
+    //
+    // The live-config-refresh property for packet AX.25 params (`config.packet.params`,
+    // read by `native_packet_connect`) cannot be exercised through a connection-refused
+    // test because those params are only used AFTER the KISS link opens successfully.
+    // Restoring that coverage requires a real (or faked) open KISS link to reach
+    // `native_packet_connect`; a dedicated test for that is needed (tuxlink-0063 Phase 3
+    // follow-up). For now this test is renamed to its actual reduced scope: proving
+    // that `packet_connect_inner` requires an active SessionIdentity and reaches
+    // link-open (TransportFailed) when one is set.
     #[tokio::test]
-    async fn set_config_refreshes_the_live_config_used_by_connect() {
+    async fn connect_requires_active_identity_before_packet_link_open() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         drop(listener); // nothing listening → connection refused
 
-        // Construct with NO callsign (the stale snapshot the bug would freeze in).
         let backend = NativeBackend::new(offline_config(), tempdir().unwrap().path());
-        // Operator picks a callsign in the UI → config_set_* persists + refreshes.
-        backend.set_config(config_with_call("N7CPZ"));
-        // Task 3.8: packet_connect_inner gates on active_identity(); set one so the
-        // connect reaches link-open and triggers the TransportFailed the test covers.
+        // An active SessionIdentity is required; packet_connect_inner gates on it
+        // before touching any KISS/TNC state.
         backend.set_active_identity(crate::identity::SessionIdentity::full(
             crate::identity::IdentityHandle::for_test(
                 crate::identity::Callsign::parse("N7CPZ").unwrap(),

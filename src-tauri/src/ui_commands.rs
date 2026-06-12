@@ -3528,8 +3528,21 @@ pub async fn packet_listen(
     // config.identity.active_full. Fail-closed: NoActiveIdentity errors here
     // before any hardware interaction; packet_connect_inner also gates on
     // active_identity() before opening the KISS link.
+    //
+    // TOCTOU note: `effective` below is a best-effort log/audit label only.
+    // `packet_connect_inner` resolves `active_identity()` INDEPENDENTLY a second
+    // time for the actual on-air call. If the active identity were switched between
+    // these two resolutions, the log could show a different call than what goes on
+    // air. This window is currently benign — nothing switches the active identity
+    // mid-flight (Phase 6/7 UI does not exist yet). When Phase 6 introduces live
+    // identity-switching, the correct fix is to resolve `active_identity()` ONCE
+    // here and thread the resolved `SessionIdentity` through `backend.connect()`
+    // so both the log label and the on-air call use the same snapshot (tuxlink-0063
+    // Phase 3 / Phase 6 handoff).
     let session_id = backend.active_identity()?;
     // Effective call = <base>-<ssid> (the SSID'd link address we answer on).
+    // See TOCTOU note above: this is the log label; packet_connect_inner's own
+    // active_identity() resolution is the authoritative on-air call.
     let effective = format!(
         "{}-{}",
         session_id.mycall().as_str().to_uppercase(),
