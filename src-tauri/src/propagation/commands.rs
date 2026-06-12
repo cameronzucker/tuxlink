@@ -114,6 +114,13 @@ pub(crate) fn run_prediction(
         ssn: ssn_val,
         tx_power_w: 100.0,
         req_snr_db: 73.0,
+        // Pure-refactor stage: the ANTENNA cards are now sourced from these fields
+        // instead of hardcoded literals, but the values still match the legacy deck
+        // (const17 TX / swwhip RX) so behavior is unchanged. The follow-up commit
+        // sources these from the operator's antenna preset + the gateway's parsed
+        // antenna, and drops req_snr_db to the data-mode value.
+        tx_antenna_voa: "const17.voa".to_string(),
+        rx_antenna_voa: "swwhip.voa".to_string(),
     };
     // Filter + validate frequencies first (fast path before any disk I/O or
     // engine invocation — bad inputs are rejected here).
