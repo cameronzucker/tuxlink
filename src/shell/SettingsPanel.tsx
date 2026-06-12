@@ -15,6 +15,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GpsState, PositionPrecision } from './useStatus';
+import { LocationSettings } from '../location/LocationSettings';
 import './SettingsPanel.css';
 
 const GPS_STATE_OPTIONS: { value: GpsState; label: string; help: string }[] = [
@@ -140,6 +141,11 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
             {error}
           </div>
         )}
+
+        <fieldset className="tux-settings-group">
+          <legend>Location &amp; GPS source</legend>
+          <LocationSettings />
+        </fieldset>
 
         <fieldset className="tux-settings-group">
           <legend>GPS state</legend>

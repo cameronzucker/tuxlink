@@ -16,7 +16,7 @@
 //   - BEGIN_CMS_VERIFY while probing is a no-op (dedup guard)
 //   - Successful invoke dispatches CMS_VERIFY_RESULT(ok=true)
 //   - Failing invoke dispatches CMS_VERIFY_RESULT(ok=false, errorMessage)
-//   - Skip dispatches SKIP_CMS_VERIFY → step = complete
+//   - Skip dispatches SKIP_CMS_VERIFY → step = location (tuxlink-9xy1; was complete)
 //   - RETURN_TO_CREDENTIALS from error clears password + navigates back
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -107,11 +107,11 @@ describe('<Step3TestSend>', () => {
     expect(screen.getByTestId('skip-btn')).toBeInTheDocument();
   });
 
-  it('idle: [Skip] dispatches SKIP_CMS_VERIFY → step = complete', async () => {
+  it('idle: [Skip] dispatches SKIP_CMS_VERIFY → step = location (tuxlink-9xy1)', async () => {
     renderInState();
     fireEvent.click(screen.getByTestId('skip-btn'));
     await waitFor(() => {
-      expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+      expect(screen.getByTestId('probe-step')).toHaveTextContent('location');
     });
   });
 
@@ -132,11 +132,11 @@ describe('<Step3TestSend>', () => {
     expect(screen.getByTestId('session-log')).toBeInTheDocument();
   });
 
-  it('probing: [Skip and go to inbox] sets skipSignaled + transitions to complete', async () => {
+  it('probing: [Skip and go to inbox] sets skipSignaled + transitions to location', async () => {
     renderInState({ cmsVerifySubstate: 'probing' });
     fireEvent.click(screen.getByTestId('skip-and-go-btn'));
     await waitFor(() => {
-      expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+      expect(screen.getByTestId('probe-step')).toHaveTextContent('location');
       expect(screen.getByTestId('probe-skip-signaled')).toHaveTextContent('true');
     });
   });
@@ -185,18 +185,18 @@ describe('<Step3TestSend>', () => {
     expect(screen.queryByTestId('send-test-btn')).not.toBeInTheDocument();
   });
 
-  it('ok: auto-advances to complete after 3s', async () => {
+  it('ok: auto-advances to the location step after 3s', async () => {
     vi.useFakeTimers();
     try {
       renderInState({ cmsVerifySubstate: 'ok' });
 
-      expect(screen.getByTestId('probe-step')).not.toHaveTextContent('complete');
+      expect(screen.getByTestId('probe-step')).not.toHaveTextContent('location');
 
       await act(async () => {
         vi.advanceTimersByTime(3001);
       });
 
-      expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+      expect(screen.getByTestId('probe-step')).toHaveTextContent('location');
     } finally {
       vi.useRealTimers();
     }
@@ -207,7 +207,7 @@ describe('<Step3TestSend>', () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId('go-to-inbox-now-btn'));
     });
-    expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+    expect(screen.getByTestId('probe-step')).toHaveTextContent('location');
   });
 
   // ── error substate — directly mounted ──────────────────────────────────
@@ -249,12 +249,12 @@ describe('<Step3TestSend>', () => {
     expect(screen.getByTestId('probe-step')).toHaveTextContent('credentials');
   });
 
-  it('error: [Go to inbox] dispatches SKIP_CMS_VERIFY → step = complete', async () => {
+  it('error: [Go to inbox] dispatches SKIP_CMS_VERIFY → step = location', async () => {
     renderInState({ cmsVerifySubstate: 'error', cmsVerifyError: 'err' });
     await act(async () => {
       fireEvent.click(screen.getByTestId('go-to-inbox-btn'));
     });
-    expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+    expect(screen.getByTestId('probe-step')).toHaveTextContent('location');
   });
 
   it('error: [Open Settings] button is rendered but disabled (placeholder for now)', () => {
@@ -423,13 +423,13 @@ describe('<Step3TestSend>', () => {
         fireEvent.click(screen.getByTestId('skip-and-go-btn'));
       });
 
-      expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+      expect(screen.getByTestId('probe-step')).toHaveTextContent('location');
 
       await act(async () => {
         vi.advanceTimersByTime(180_000);
       });
 
-      expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+      expect(screen.getByTestId('probe-step')).toHaveTextContent('location');
     });
   });
 });

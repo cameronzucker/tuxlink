@@ -18,6 +18,11 @@ export type WizardStep =
   | 'credentials'
   | 'offline_identity'
   | 'cms_verify'
+  // Location / GPS-source setup (tuxlink-9xy1). Every identity path threads through
+  // here before `complete`, so GPS setup assistance is part of first-run onboarding —
+  // the wizard-chrome counterpart to Settings → Location. Grid + source persist via
+  // config_set_grid / position_set_source (the same commands the Settings panel uses).
+  | 'location'
   | 'complete';
 
 export interface WizardState {
@@ -56,4 +61,9 @@ export type WizardAction =
   // ok=true: connection verified; ok=false: error with message.
   | { type: 'CMS_VERIFY_RESULT'; ok: boolean; errorMessage?: string }
   | { type: 'SKIP_CMS_VERIFY' }
-  | { type: 'RETURN_TO_CREDENTIALS' };
+  | { type: 'RETURN_TO_CREDENTIALS' }
+  // ADVANCE_FROM_LOCATION: the Location step's "Continue" — grid + source are
+  // already persisted (via config_set_grid / position_set_source) by the time this
+  // fires, so it only advances `location → complete`. Location is non-blocking:
+  // Continue is always available (grid is optional everywhere in onboarding).
+  | { type: 'ADVANCE_FROM_LOCATION' };

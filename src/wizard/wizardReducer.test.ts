@@ -42,8 +42,23 @@ describe('wizardReducer', () => {
     expect(s1.password).toBe('');
     expect(s1.step).toBe('cms_verify');
     expect(s1.inFlight).toBe(false);
+    // skip-verify now lands on the Location step (not straight to complete) — tuxlink-9xy1.
     const s2 = wizardReducer({ ...base, inFlight: true }, { type: 'SUBMIT_CREDENTIALS_SUCCESS', skipCmsVerify: true });
-    expect(s2.step).toBe('complete');
+    expect(s2.step).toBe('location');
+  });
+
+  // tuxlink-9xy1: every identity path threads through the Location step before complete.
+  it('SUBMIT_OFFLINE_SUCCESS routes to the Location step (not straight to complete)', () => {
+    const base = { ...initialWizardState(), step: 'offline_identity' as const, inFlight: true };
+    const s = wizardReducer(base, { type: 'SUBMIT_OFFLINE_SUCCESS' });
+    expect(s.step).toBe('location');
+    expect(s.inFlight).toBe(false);
+  });
+
+  it('ADVANCE_FROM_LOCATION routes location → complete', () => {
+    const base = { ...initialWizardState(), step: 'location' as const };
+    const s = wizardReducer(base, { type: 'ADVANCE_FROM_LOCATION' });
+    expect(s.step).toBe('complete');
   });
 
   // INVARIANT: BEGIN_CMS_VERIFY while probing is a no-op (dedup correctness)
@@ -105,7 +120,9 @@ describe('wizardReducer', () => {
   it('CMS_VERIFY_RESULT after SKIP_CMS_VERIFY is silently ignored (skipSignaled gate)', () => {
     let s: WizardState = { ...initialWizardState(), step: 'cms_verify', cmsVerifySubstate: 'probing' };
     s = wizardReducer(s, { type: 'SKIP_CMS_VERIFY' });
-    expect(s.step).toBe('complete');
+    // SKIP now lands on the Location step (not complete) but still sets skipSignaled
+    // so a late result from the abandoned probe is ignored (tuxlink-9xy1).
+    expect(s.step).toBe('location');
     expect(s.skipSignaled).toBe(true);
     const s2 = wizardReducer(s, { type: 'CMS_VERIFY_RESULT', ok: true });
     expect(s2).toBe(s);

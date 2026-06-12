@@ -5,6 +5,7 @@ import { Step1Welcome } from './Step1Welcome';
 import { Step2Credentials } from './Step2Credentials';
 import { Step2OfflineIdentity } from './Step2OfflineIdentity';
 import { Step3TestSend } from './Step3TestSend';
+import { StepLocation } from './StepLocation';
 
 interface WizardInnerProps {
   /** Called once the wizard reaches `complete`, so App.tsx can swap
@@ -30,6 +31,8 @@ export function WizardInner({ onComplete }: WizardInnerProps) {
       {state.step === 'offline_identity' && <Step2OfflineIdentity />}
       {/* Task 5.4 (tuxlink-9phd): connect-only CMS verification (no transmission). */}
       {state.step === 'cms_verify' && <Step3TestSend />}
+      {/* tuxlink-9xy1: GPS / location setup — every identity path threads through here. */}
+      {state.step === 'location' && <StepLocation />}
       {/* Transient — App.tsx swaps to the shell via onComplete almost immediately. */}
       {state.step === 'complete' && (
         <p data-testid="wizard-complete-placeholder" className="wizard-complete-msg">

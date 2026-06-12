@@ -1,0 +1,152 @@
+/* GpsSourcePicker (tuxlink-9xy1 slice 1) — dark-theme cards shared by the
+   Settings → Location panel and the wizard Location step. */
+
+.gps-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gps-picker__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.gps-picker__title {
+  color: var(--faint, #6f8aa3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+.gps-picker__rescan {
+  padding: 3px 10px;
+  background: transparent;
+  color: var(--dim, #9fb6cc);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.gps-picker__rescan:not(:disabled):hover {
+  color: var(--text, #e8f1fa);
+  border-color: var(--accent, #4aa3df);
+}
+.gps-picker__rescan:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.gps-picker__error {
+  margin: 0;
+  color: var(--reach-bad, #e0606a);
+  font-size: 12px;
+}
+
+.gps-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--panel, #0f1c28);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 6px;
+}
+.gps-card.is-selected {
+  border-color: var(--accent, #4aa3df);
+  box-shadow: inset 0 0 0 1px var(--accent, #4aa3df);
+}
+.gps-card--triage {
+  border-color: var(--reach-warn, #d9a441);
+}
+.gps-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.gps-card__label {
+  color: var(--text, #e8f1fa);
+  font-size: 13px;
+  font-weight: 600;
+}
+.gps-card__label--warn {
+  color: var(--reach-warn, #d9a441);
+}
+.gps-card__detail {
+  color: var(--dim, #9fb6cc);
+  font-size: 12px;
+}
+.gps-card__detail--warn {
+  color: var(--reach-bad, #e0606a);
+}
+.gps-card__cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.gps-card__cmd code {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  background: #0a141d;
+  color: var(--text, #e8f1fa);
+  border: 1px solid var(--border, #243a52);
+  border-radius: 4px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.gps-card__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.gps-card__use,
+.gps-card__show,
+.gps-card__copy,
+.gps-card__fix {
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--dim, #9fb6cc);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.gps-card__use {
+  flex: 0 0 auto;
+  align-self: center;
+}
+.gps-card__use[aria-pressed='true'] {
+  color: var(--text, #e8f1fa);
+  border-color: var(--accent, #4aa3df);
+  background: rgba(74, 163, 223, 0.12);
+}
+.gps-card__use:hover,
+.gps-card__show:hover,
+.gps-card__copy:hover {
+  color: var(--text, #e8f1fa);
+  border-color: var(--accent, #4aa3df);
+}
+.gps-card__fix:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.gps-card__grid-input {
+  width: 160px;
+  padding: 5px 8px;
+  background: #0a141d;
+  color: var(--text, #e8f1fa);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 4px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 13px;
+  text-transform: uppercase;
+}
+.gps-card__grid-input[aria-invalid='true'] {
+  border-color: var(--reach-bad, #e0606a);
+}

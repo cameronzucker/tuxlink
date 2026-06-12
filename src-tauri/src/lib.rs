@@ -719,6 +719,11 @@ pub fn run() {
             // tuxlink-s0r1: operator antenna preset + REQ.SNR + power prefs.
             crate::propagation::commands::propagation_prefs_read,
             crate::propagation::commands::propagation_prefs_write,
+            // tuxlink-9xy1 slice 1: GPS source detection probes (unprivileged).
+            crate::position::probe::gps_probe_gpsd,
+            crate::position::probe::gps_probe_serial_devices,
+            crate::position::probe::gps_probe_dialout,
+            crate::position::probe::gps_probe_modemmanager,
             // tuxlink-vrpk: GRIB request via Saildocs (3rd-party SMTP).
             crate::grib::commands::grib_send_request,
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)
