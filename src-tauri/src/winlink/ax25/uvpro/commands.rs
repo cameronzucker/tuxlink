@@ -142,17 +142,29 @@ pub fn spawn_status_broadcaster<F>(session: Arc<UvproSession>, emit: F) -> std::
 where
     F: Fn(UvproStatus) + Send + 'static,
 {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(BROADCAST_INTERVAL);
-        if !session.is_connected() {
-            continue;
-        }
-        match session.poll_tick() {
-            Ok(snap) => emit(snap),
-            Err(_) => {
-                // The link is wedged/closed; tear down and announce once.
-                session.disconnect();
-                emit(session.status_snapshot());
+    // Battery has no push event, so refresh it every Nth tick (~30 s at a 2 s
+    // interval) — bounded per the spec, never every tick.
+    const BATTERY_EVERY_N_TICKS: u32 = 15;
+    std::thread::spawn(move || {
+        let mut tick: u32 = 0;
+        loop {
+            std::thread::sleep(BROADCAST_INTERVAL);
+            if !session.is_connected() {
+                continue;
+            }
+            tick = tick.wrapping_add(1);
+            let result = if tick.is_multiple_of(BATTERY_EVERY_N_TICKS) {
+                session.poll_battery()
+            } else {
+                session.poll_tick()
+            };
+            match result {
+                Ok(snap) => emit(snap),
+                Err(_) => {
+                    // The link is wedged/closed; tear down and announce once.
+                    session.disconnect();
+                    emit(session.status_snapshot());
+                }
             }
         }
     })

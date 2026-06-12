@@ -256,6 +256,10 @@ impl Driver {
             self.apply_current_channel_to_status();
         }
 
+        // Initial battery reading (best-effort — absence is non-fatal; the
+        // broadcaster refreshes it on a bounded cadence thereafter).
+        let _ = self.refresh_battery(timeout);
+
         // Subscribe to push notifications (fire-and-forget — no reply frame).
         self.send_no_reply(&encode_register_notification(EventType::HtStatusChanged))?;
 
@@ -472,10 +476,17 @@ impl UvproSession {
         Ok(self.status_snapshot())
     }
 
-    /// Poll status (+ optionally events) and update the snapshot — for the
+    /// Poll status (+ drain pending events) and update the snapshot — for the
     /// background broadcaster. Returns the fresh snapshot.
     pub fn poll_tick(&self) -> Result<UvproStatus, UvproError> {
         self.with_driver(|d| d.refresh_status(COMMAND_TIMEOUT))?;
+        Ok(self.status_snapshot())
+    }
+
+    /// Poll the battery percentage on the broadcaster's bounded cadence (battery
+    /// has no push event). Best-effort: returns the fresh snapshot.
+    pub fn poll_battery(&self) -> Result<UvproStatus, UvproError> {
+        self.with_driver(|d| d.refresh_battery(COMMAND_TIMEOUT))?;
         Ok(self.status_snapshot())
     }
 }
