@@ -4,6 +4,7 @@
 //! only [address-path][control][PID?][info?].
 
 pub mod datalink;
+pub mod devices;
 pub mod frame;
 pub mod kiss;
 pub mod link;
@@ -17,6 +18,12 @@ pub use params::Ax25Params;
 pub use datalink::{connect, answer, Ax25Stream};
 pub use link::connect_link;
 pub use link::connect_link_with_abort;
+
+// Managed-Dire-Wolf device discovery (Slice B, Phase 1): stable audio-device
+// identity + same-USB-parent PTT resolution.
+pub use devices::{
+    discover_ptt, enumerate_audio_devices, AudioDevice, PttChoice, StableAudioId, SysSnapshot,
+};
 
 #[cfg(test)]
 mod module_smoke {
