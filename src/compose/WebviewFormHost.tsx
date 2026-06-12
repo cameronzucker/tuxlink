@@ -80,20 +80,41 @@ interface OpenFormResult {
   token: string;
 }
 
+/** Result of `open_webview_reply` — `OpenFormResult` plus the SendReply
+ * `.0` filename the caller threads back to `send_webview_form` on submit. */
+interface OpenReplyResult extends OpenFormResult {
+  replyTemplate: string;
+}
+
+/** tuxlink-hhfx / G10: the data pre-bound into a SendReply reply session. */
+export interface WebviewReplyPrefill {
+  /** Original form field values to pre-bind into the SendReply page. */
+  fieldValues: Record<string, string>;
+  /** Original message body carried as the SendReply's `MsgOriginalBody`. */
+  msgOriginalBody: string;
+}
+
 export interface WebviewFormHostProps {
   /** WLE Standard Form id (e.g. `ICS213_Initial`). Must match an entry in
-   * `forms_list_catalog`'s output. */
+   * `forms_list_catalog`'s output. For a reply (`replyPrefill` set) this is the
+   * ORIGINAL form id; the backend resolves the SendReply from it. */
   formId: string;
+  /** tuxlink-hhfx / G10: when present, this host opens the original form's
+   * SendReply page (via `open_webview_reply`) pre-bound with these values +
+   * editable, instead of a blank catalog form. `onSubmit`'s `meta` then carries
+   * the resolved `replyTemplate` the caller threads to `send_webview_form`. */
+  replyPrefill?: WebviewReplyPrefill;
   /** Fired when the user submits the form via its native Submit button
-   * (the loopback POST path) — the canonical completion path. */
-  onSubmit: (payload: ParsedBody) => void;
+   * (the loopback POST path) — the canonical completion path. In reply mode
+   * `meta.replyTemplate` is the SendReply `.0` to pass to send_webview_form. */
+  onSubmit: (payload: ParsedBody, meta?: { replyTemplate?: string }) => void;
   /** Fired when the user clicks Cancel on the host chrome. Compose
    * decides whether to switch back to plain-text mode, re-open the
    * picker, or close the draft. */
   onCancel: () => void;
 }
 
-export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostProps) {
+export function WebviewFormHost({ formId, replyPrefill, onSubmit, onCancel }: WebviewFormHostProps) {
   const [error, setError] = useState<string | null>(null);
   // Surface the open status to the operator while the loopback bind +
   // bundle template read complete. Becomes 'open' on success or 'error'
@@ -128,6 +149,17 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
     onSubmitRef.current = onSubmit;
   });
 
+  // tuxlink-hhfx / G10: hold the reply prefill + the resolved reply_template in
+  // refs so the [formId]-deps open effect reads the mount-time value without
+  // re-running on every render (the prefill object identity changes each
+  // render). The reply_template comes back from open_webview_reply and is
+  // threaded to onSubmit so the submit handler can pass it to send_webview_form.
+  const replyPrefillRef = useRef(replyPrefill);
+  useEffect(() => {
+    replyPrefillRef.current = replyPrefill;
+  });
+  const replyTemplateRef = useRef<string | undefined>(undefined);
+
   // Cancel handle for any in-flight requestAnimationFrame reposition.
   // Populated inside the main effect; the cleanup invokes it so a pending
   // RAF callback doesn't fire after the component unmounts.
@@ -142,7 +174,22 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
 
     (async () => {
       try {
-        const res = await invoke<OpenFormResult>('open_webview_form', { formId });
+        // tuxlink-hhfx / G10: a reply opens the SendReply page pre-bound +
+        // editable via open_webview_reply (which also returns the reply_template
+        // to thread to send_webview_form). A normal form opens blank.
+        const prefill = replyPrefillRef.current;
+        let res: OpenFormResult;
+        if (prefill) {
+          const rr = await invoke<OpenReplyResult>('open_webview_reply', {
+            formId,
+            fieldValues: prefill.fieldValues,
+            msgOriginalBody: prefill.msgOriginalBody,
+          });
+          replyTemplateRef.current = rr.replyTemplate;
+          res = { url: rr.url, port: rr.port, token: rr.token };
+        } else {
+          res = await invoke<OpenFormResult>('open_webview_form', { formId });
+        }
         if (cancelled) {
           // The component unmounted before we could even register the
           // listener. Tear the session down so we don't leak a bound
@@ -167,7 +214,7 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
         // changes (recipient edits, subject changes) without re-listening.
         const ul = await listen<ParsedBody>(
           'form-submitted',
-          (e) => onSubmitRef.current(e.payload),
+          (e) => onSubmitRef.current(e.payload, { replyTemplate: replyTemplateRef.current }),
           { target: label },
         );
         if (cancelled) {

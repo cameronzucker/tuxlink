@@ -628,6 +628,7 @@ pub fn run() {
             // *_Viewer.html with the parsed FormPayload bound into its
             // {var X} placeholders + hidden inputs.
             crate::ui_commands::open_webview_viewer,
+            crate::ui_commands::open_webview_reply,     // tuxlink-hhfx / G10 (editable pre-bound reply session)
             crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
             crate::ui_commands::cms_abort,             // tuxlink-9z2 (abort in-flight connect)
             crate::ui_commands::cms_resolve_inbound_selection,    // tuxlink-bsiy (inbound message selection resolve)

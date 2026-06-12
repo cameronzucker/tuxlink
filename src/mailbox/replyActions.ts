@@ -17,7 +17,7 @@ import { saveDraft } from '../compose/useDraft';
 import type { ParsedMessage } from './types';
 import { sanitizeAttachmentName } from './sanitize';
 
-export type ReplyMode = 'reply' | 'replyAll' | 'forward' | 'replyWithForm';
+export type ReplyMode = 'reply' | 'replyAll' | 'forward' | 'replyWithForm' | 'formReply';
 
 export interface DraftPrefill {
   /// Semicolon-separated recipients (matches the compose To field input format
@@ -28,6 +28,27 @@ export interface DraftPrefill {
   /** When set, opens compose in form-mode pre-populated with these fields. */
   formId?: string;
   formFields?: Record<string, string>;
+  /** tuxlink-hhfx / G10: when true, this is a SendReply reply — Compose opens
+   * the original form's SendReply page (`<X>_SendReply.html`) pre-bound with
+   * `formFields` (the original values) + editable, instead of a blank form. */
+  formReply?: boolean;
+  /** The original message body, carried as the SendReply `MsgOriginalBody`. */
+  msgOriginalBody?: string;
+}
+
+/// True iff `message` is a received form that advertises a WLE `ReplyTemplate:`
+/// (tuxlink-hhfx / G10) — i.e. a request/response form (the 8 ICS-213 General
+/// Message variants) whose reply opens its `<X>_SendReply` page. MessageView
+/// gates the SendReply "Reply with form…" button on this. The backend resolves
+/// the actual SendReply from the local bundle, so this need only signal that
+/// the form is reply-shaped.
+export function hasFormReplyTemplate(message: ParsedMessage): boolean {
+  return (
+    message.isForm &&
+    !!message.formId &&
+    !!message.formPayload &&
+    !!message.formPayload.formParameters?.replyTemplate?.trim()
+  );
 }
 
 const RE_PREFIX = /^re:\s*/i;
@@ -147,6 +168,34 @@ export function buildReplyDraft(message: ParsedMessage, mode: ReplyMode): DraftP
     };
   }
 
+  if (mode === 'formReply') {
+    // tuxlink-hhfx / G10: a request/response reply on a ReplyTemplate form (the
+    // ICS-213 General Message family). Opens the original form's SendReply page
+    // pre-bound with the ORIGINAL field values (name-aligned: the SendReply
+    // reproduces the original via the same `<var fieldname>` names) so the
+    // operator fills only the Reply section, preserving the thread. Falls back
+    // to a plain reply if the message isn't a reply-shaped form.
+    if (!hasFormReplyTemplate(message)) {
+      return buildReplyDraft(message, 'reply');
+    }
+    const origFields: Record<string, string> = Object.fromEntries(message.formPayload!.fields);
+    return {
+      to: message.from,
+      subject: RE_PREFIX.test(message.subject) ? message.subject : `Re: ${message.subject}`,
+      body: '',
+      // The ORIGINAL form id — the backend resolves the SendReply from it.
+      formId: message.formId!,
+      formFields: origFields,
+      formReply: true,
+      // The readable original body isn't safely available frontend-side for a
+      // form (message.body may carry the raw payload, which the reader hides and
+      // must not re-transmit — see FORM_QUOTE_PLACEHOLDER). The SendReply
+      // reproduces the original via the structured `formFields` instead, so
+      // MsgOriginalBody is left empty; the field still round-trips for interop.
+      msgOriginalBody: '',
+    };
+  }
+
   if (mode === 'replyWithForm') {
     // Only valid for messages that already carry a form payload AND have a
     // per-form mapping below. Unsupported forms (Position, ICS-309,
@@ -250,6 +299,8 @@ export async function openReplyWindow(message: ParsedMessage, mode: ReplyMode): 
     requestAck: false,
     formId: prefill.formId,
     formFields: prefill.formFields,
+    formReply: prefill.formReply,
+    msgOriginalBody: prefill.msgOriginalBody,
   });
   await invoke('compose_window_open', { draftId });
 }

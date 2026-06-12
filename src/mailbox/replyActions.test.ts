@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(null) }));
 import { invoke } from '@tauri-apps/api/core';
 
-import { buildReplyDraft, openReplyWindow, hasReplyWithFormSupport } from './replyActions';
+import { buildReplyDraft, openReplyWindow, hasReplyWithFormSupport, hasFormReplyTemplate } from './replyActions';
 import { loadDraft } from '../compose/useDraft';
 import type { ParsedMessage } from './types';
 
@@ -380,5 +380,91 @@ describe('hasReplyWithFormSupport', () => {
     expect(hasReplyWithFormSupport(null)).toBe(false);
     expect(hasReplyWithFormSupport(undefined)).toBe(false);
     expect(hasReplyWithFormSupport('Made_Up_Form_v999')).toBe(false);
+  });
+});
+
+// ── tuxlink-hhfx / G10 — SendReply reply threading ────────────────────────
+describe("hasFormReplyTemplate + buildReplyDraft 'formReply' mode", () => {
+  const REPLY_PAYLOAD = {
+    formId: 'ICS213_Initial',
+    formParameters: {
+      xmlFileVersion: '1.0',
+      rmsExpressVersion: 'Tuxlink/0.5.0',
+      submissionDatetime: '20260612143000',
+      sendersCallsign: 'W7ABC',
+      gridSquare: 'CN87',
+      displayForm: 'ICS213_Initial_Viewer.html',
+      replyTemplate: 'ICS213_SendReply.0',
+    },
+    fields: [
+      ['inc_name', 'WALDO'],
+      ['To_Name', 'Net Control'],
+      ['fm_name', 'Field 3'],
+      ['Subjectline', 'Road status'],
+      ['Message', 'Roads clear north of mile 30'],
+    ] as [string, string][],
+  };
+
+  it('hasFormReplyTemplate is true for a form advertising a ReplyTemplate', () => {
+    const msg = parsed({ isForm: true, formId: 'ICS213_Initial', formPayload: REPLY_PAYLOAD });
+    expect(hasFormReplyTemplate(msg)).toBe(true);
+  });
+
+  it('hasFormReplyTemplate is false when replyTemplate is empty or not a form', () => {
+    const noRt = {
+      ...REPLY_PAYLOAD,
+      formParameters: { ...REPLY_PAYLOAD.formParameters, replyTemplate: '' },
+    };
+    expect(hasFormReplyTemplate(parsed({ isForm: true, formId: 'X', formPayload: noRt }))).toBe(false);
+    expect(hasFormReplyTemplate(parsed({ isForm: false }))).toBe(false);
+  });
+
+  it('carries the ORIGINAL form id + all original field values, pre-bound', () => {
+    const msg = parsed({ isForm: true, formId: 'ICS213_Initial', formPayload: REPLY_PAYLOAD });
+    const draft = buildReplyDraft(msg, 'formReply');
+    expect(draft.formId).toBe('ICS213_Initial');
+    expect(draft.formReply).toBe(true);
+    // Original values pre-bound (name-aligned, not swapped — the SendReply
+    // reproduces the original read-only).
+    expect(draft.formFields?.To_Name).toBe('Net Control');
+    expect(draft.formFields?.fm_name).toBe('Field 3');
+    expect(draft.formFields?.Message).toBe('Roads clear north of mile 30');
+  });
+
+  it('routes the reply back to the original sender with a Re: subject', () => {
+    const msg = parsed({
+      isForm: true,
+      from: 'KK4OBN@winlink.org',
+      subject: 'Road status',
+      formId: 'ICS213_Initial',
+      formPayload: REPLY_PAYLOAD,
+    });
+    const draft = buildReplyDraft(msg, 'formReply');
+    expect(draft.to).toBe('KK4OBN@winlink.org');
+    expect(draft.subject).toBe('Re: Road status');
+  });
+
+  it('falls back to a plain reply when the message is not a reply-shaped form', () => {
+    const draft = buildReplyDraft(parsed({ isForm: false }), 'formReply');
+    expect(draft.formId).toBeUndefined();
+    expect(draft.formReply).toBeUndefined();
+  });
+
+  it('persists formReply + the original values through openReplyWindow', async () => {
+    const msg = parsed({
+      isForm: true,
+      from: 'KK4OBN@winlink.org',
+      subject: 'Road status',
+      formId: 'ICS213_Initial',
+      formPayload: REPLY_PAYLOAD,
+    });
+    await openReplyWindow(msg, 'formReply');
+    const calls = vi.mocked(invoke).mock.calls;
+    const [, args] = calls[calls.length - 1];
+    const draftId = (args as { draftId: string }).draftId;
+    const draft = loadDraft(draftId);
+    expect(draft?.formReply).toBe(true);
+    expect(draft?.formId).toBe('ICS213_Initial');
+    expect(draft?.formFields?.Message).toBe('Roads clear north of mile 30');
   });
 });

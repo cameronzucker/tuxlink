@@ -64,6 +64,7 @@ import {
   closePromptShape,
   isSaveDraftAvailable,
   parsedBodyToFieldValues,
+  persistedFormDraft,
 } from './Compose';
 
 const DEFAULT_INVOKE = async (cmd: string) => {
@@ -587,5 +588,48 @@ describe('<Compose> send-path group expansion (Task A6)', () => {
     expect(draft?.to).toEqual(['W6ABC', 'W7DEF']);
     // W7DEF must be present — it was NOT in the stale cached hook state.
     expect(draft?.to).toContain('W7DEF');
+  });
+});
+
+// ── tuxlink-hhfx / G10 — persistedFormDraft (shared draft-field derivation) ──
+describe('persistedFormDraft', () => {
+  it('native form persists formId + live values', () => {
+    expect(persistedFormDraft({ kind: 'form', formId: 'ICS213_Initial', values: { a: '1' } })).toEqual({
+      formId: 'ICS213_Initial',
+      formFields: { a: '1' },
+    });
+  });
+
+  it('webview-form persists only the formId (values live in the webview)', () => {
+    expect(persistedFormDraft({ kind: 'webview-form', formId: 'USGS_DYFI' })).toEqual({
+      formId: 'USGS_DYFI',
+    });
+  });
+
+  it('webview-reply persists the original values + reply markers', () => {
+    expect(
+      persistedFormDraft({
+        kind: 'webview-reply',
+        formId: 'ICS213_Initial',
+        values: { Message: 'orig' },
+        msgOriginalBody: 'body',
+      }),
+    ).toEqual({
+      formId: 'ICS213_Initial',
+      formFields: { Message: 'orig' },
+      formReply: true,
+      msgOriginalBody: 'body',
+    });
+  });
+
+  it('plain / pick modes persist no form fields', () => {
+    expect(persistedFormDraft({ kind: 'plain' })).toEqual({});
+    expect(persistedFormDraft({ kind: 'pick' })).toEqual({});
+  });
+});
+
+describe('isSaveDraftAvailable — webview-reply', () => {
+  it('is unavailable for webview-reply (edits live in the embedded webview)', () => {
+    expect(isSaveDraftAvailable('webview-reply')).toBe(false);
   });
 });

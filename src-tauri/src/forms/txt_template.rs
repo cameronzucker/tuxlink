@@ -343,6 +343,74 @@ pub fn resolve_governing_txt(form_html_path: &std::path::Path) -> Option<TxtTemp
     None
 }
 
+/// A resolved SendReply (tuxlink-hhfx / G10): the authoring HTML to serve in an
+/// editable, pre-bound reply session, plus the parsed `.0` template that governs
+/// the reply *message* (its `To:`/`Subject:`/`Msg:` projection + display viewer).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendReply {
+    /// Absolute path to the SendReply authoring HTML (`<X>_SendReply.html`) — the
+    /// page the operator fills the Reply section on.
+    pub html_path: std::path::PathBuf,
+    /// The parsed `.0` template governing the reply message. `subject` is
+    /// typically absent (SendReply `.0`s carry no `Subject:` directive — the
+    /// reply subject comes from the operator's "Re: <original>" draft); `to` is
+    /// typically `Some("")` (reply goes back to the operator-supplied original
+    /// sender). `display_html` is the SendReply *viewer* a WLE recipient renders.
+    pub template: TxtTemplate,
+}
+
+/// Resolve a form's SendReply: given the form's folder and the `ReplyTemplate:`
+/// filename (e.g. `ICS213_SendReply.0`, taken from the form's governing `.txt`),
+/// parse the `.0` and locate its authoring HTML.
+///
+/// The `.0`↔`.html` link is the `.0`'s own `Form:` directive, NOT a shared stem:
+/// `HICS213_SendReply.0` declares `Form: HICS 213_SendReply.html,...` (note the
+/// space the `.0` stem lacks). Resolving by stem would miss it, so the `Form:`
+/// directive ([`parse_txt_template`]'s `input_html`) is the source of truth.
+///
+/// Returns `None` if the `.0` is missing/unreadable, declares no `Form:` input
+/// HTML, or that HTML is absent on disk — the caller falls back (plain reply /
+/// the legacy same-form `replyWithForm`).
+pub fn resolve_sendreply(
+    form_folder: &std::path::Path,
+    reply_template_name: &str,
+) -> Option<SendReply> {
+    let txt_path = resolve_sibling_case_insensitive(form_folder, reply_template_name)?;
+    let bytes = std::fs::read(&txt_path).ok()?;
+    let template = parse_txt_template(&decode_cp1252(&bytes));
+    let html_name = template.input_html.as_deref()?;
+    let html_path = resolve_sibling_case_insensitive(form_folder, html_name)?;
+    Some(SendReply {
+        html_path,
+        template,
+    })
+}
+
+/// Find `name` inside `folder`: exact match first, then a case-insensitive scan.
+/// WLE `ReplyTemplate:`/`Form:` directives usually match the on-disk name
+/// exactly, but tolerate case drift so a directive like `ics213_sendreply.0`
+/// still resolves on a case-sensitive filesystem.
+fn resolve_sibling_case_insensitive(
+    folder: &std::path::Path,
+    name: &str,
+) -> Option<std::path::PathBuf> {
+    let exact = folder.join(name);
+    if exact.exists() {
+        return Some(exact);
+    }
+    for entry in std::fs::read_dir(folder).ok()?.flatten() {
+        if entry
+            .file_name()
+            .to_str()
+            .map(|f| f.eq_ignore_ascii_case(name))
+            .unwrap_or(false)
+        {
+            return Some(entry.path());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,5 +752,65 @@ mod tests {
         )
         .unwrap();
         assert!(resolve_governing_txt(&dir.path().join("MyCustom.html")).is_none());
+    }
+
+    // ---- resolve_sendreply (G10) --------------------------------------
+
+    #[test]
+    fn resolves_sendreply_html_via_form_directive_despite_stem_drift() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        // Mirror the real HICS naming drift: the `.0` stem has NO space
+        // ("HICS213_SendReply.0") but its Form: directive points to a SPACE-
+        // bearing html ("HICS 213_SendReply.html"). Stem-matching would miss it.
+        let mut txt = std::fs::File::create(dir.path().join("HICS213_SendReply.0")).unwrap();
+        txt.write_all(
+            b"Form: HICS 213_SendReply.html,HICS 213_SendReply_Viewer.html\r\n\
+              Def: MsgOriginalBody=<var MsgOriginalBody>\r\nTo: \r\nMsg:\r\nReply: <var Reply>\r\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("HICS 213_SendReply.html"), b"<html></html>").unwrap();
+
+        let resolved = resolve_sendreply(dir.path(), "HICS213_SendReply.0")
+            .expect("SendReply resolved via the .0's Form: directive");
+        assert_eq!(resolved.html_path, dir.path().join("HICS 213_SendReply.html"));
+        assert_eq!(
+            resolved.template.display_html.as_deref(),
+            Some("HICS 213_SendReply_Viewer.html")
+        );
+        // SendReply's To: is a literal blank → Some("") (operator-recipient fallback).
+        assert_eq!(resolved.template.to.as_deref(), Some(""));
+        // No Subject: directive on a SendReply .0.
+        assert_eq!(resolved.template.subject, None);
+        assert_eq!(resolved.template.msg.as_deref(), Some("Reply: <var Reply>"));
+    }
+
+    #[test]
+    fn sendreply_none_when_html_missing() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        // The .0 exists and names an html that ISN'T on disk → None (fall back).
+        let mut txt = std::fs::File::create(dir.path().join("ICS213_SendReply.0")).unwrap();
+        txt.write_all(b"Form: ICS213_SendReply.html\r\nMsg:\r\nx\r\n").unwrap();
+        assert!(resolve_sendreply(dir.path(), "ICS213_SendReply.0").is_none());
+    }
+
+    #[test]
+    fn sendreply_none_when_dot0_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(resolve_sendreply(dir.path(), "Nonexistent_SendReply.0").is_none());
+    }
+
+    #[test]
+    fn resolves_sendreply_case_insensitively() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let mut txt = std::fs::File::create(dir.path().join("ICS213_SendReply.0")).unwrap();
+        txt.write_all(b"Form: ICS213_SendReply.html\r\nMsg:\r\nb\r\n").unwrap();
+        std::fs::write(dir.path().join("ICS213_SendReply.html"), b"<html></html>").unwrap();
+        // Caller passes a differently-cased name (directive drift).
+        let resolved =
+            resolve_sendreply(dir.path(), "ics213_sendreply.0").expect("case-insensitive resolve");
+        assert_eq!(resolved.html_path, dir.path().join("ICS213_SendReply.html"));
     }
 }

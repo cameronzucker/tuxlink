@@ -36,7 +36,7 @@ import type {
 import type { FormPayload } from '../forms/types';
 import { useMessage, type MessageSelection } from './useMessage';
 import { asUiError, isNotConfigured } from './types';
-import { openReplyWindow, hasReplyWithFormSupport, type ReplyMode } from './replyActions';
+import { openReplyWindow, hasReplyWithFormSupport, hasFormReplyTemplate, type ReplyMode } from './replyActions';
 import { sanitizeAttachmentName } from './sanitize';
 import { devFormMeta } from './devFixture';
 import { lookupForm, KeyValueView } from '../forms';
@@ -486,7 +486,23 @@ export function MessageViewLoaded({
             >
               Forward
             </button>
-            {message.isForm
+            {hasFormReplyTemplate(message) ? (
+              // tuxlink-hhfx / G10: a request/response form (the ICS-213
+              // General Message family) replies on its SendReply page, with the
+              // original message preserved and the thread intact. Takes
+              // precedence over the legacy same-form swap below (which is also
+              // true for ICS213_Initial) because it is the faithful WLE reply.
+              <button
+                type="button"
+                className="action-btn"
+                data-testid="reply-with-form-btn"
+                title="Reply on this form — opens its reply page with the original message filled in"
+                onClick={() => fireReply(message, 'formReply')}
+              >
+                Reply with form…
+              </button>
+            ) : (
+              message.isForm
               && message.formId
               && message.formPayload
               && lookupForm(message.formId)
@@ -500,7 +516,8 @@ export function MessageViewLoaded({
                 >
                   Reply with form…
                 </button>
-              )}
+              )
+            )}
           </>
         )}
         <button

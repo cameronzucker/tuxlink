@@ -315,6 +315,75 @@ impl FormSession {
         })
     }
 
+    /// Open an editable Form session **pre-bound** with field values
+    /// (tuxlink-hhfx / G10 reply threading). The union of [`FormSession::open`]
+    /// (editable + a live submit channel) and [`FormSession::open_viewer`]
+    /// (server-side value binding): the SendReply authoring HTML is served with
+    /// the original form's field values pre-filled (so the operator sees the
+    /// request they're replying to) AND the POST submit path is live (so the
+    /// operator's filled reply round-trips back to Compose like any authoring
+    /// form, producing a `ParsedBody` on the submit channel).
+    ///
+    /// `html_path` is the SendReply authoring HTML; `folder` is its
+    /// `{FormFolder}` for adjacent-asset serving; `field_values` are the
+    /// original form's values (plus `MsgOriginalBody`) to pre-bind. Binding uses
+    /// the same two passes as [`open_viewer`](FormSession::open_viewer)
+    /// (`{var X}` server-side substitution + a DOM-injection script for
+    /// `[name="X"]` inputs), so the SendReply's hidden round-trip inputs carry
+    /// the original data back through the POST untouched.
+    pub async fn open_form_prebound(
+        html_path: PathBuf,
+        folder: String,
+        field_values: &std::collections::HashMap<String, String>,
+    ) -> Result<Self, String> {
+        let raw = std::fs::read_to_string(&html_path)
+            .map_err(|e| format!("read reply template: {e}"))?;
+        let folder_path = html_path
+            .parent()
+            .ok_or_else(|| "reply template has no parent folder".to_string())?
+            .to_path_buf();
+
+        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .await
+            .map_err(|e| format!("bind 127.0.0.1:0: {e}"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|e| format!("local_addr: {e}"))?
+            .port();
+
+        // Form-mode placeholder substitution, then the two viewer-style binding
+        // passes so the pre-filled values appear in the served HTML and on POST.
+        let substituted = substitute_template(&raw, port, &folder);
+        let with_vars = substitute_var_placeholders(&substituted, field_values);
+        let form_html = inject_field_value_script(&with_vars, field_values);
+
+        let (submit_tx, submit_rx) = mpsc::channel(1);
+        let state = Arc::new(SessionState {
+            kind: SessionKind::Form,
+            form_html,
+            template_folder_path: folder_path,
+            submit_tx,
+            port,
+        });
+
+        tracing::info!(
+            target: "tuxlink::forms",
+            port,
+            kind = "form-prebound",
+            "form session opened",
+        );
+        let router = build_router(state);
+        let serve_handle: JoinHandle<()> = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        let abort = serve_handle.abort_handle();
+        Ok(Self {
+            port,
+            submit_rx: Some(submit_rx),
+            abort,
+        })
+    }
+
     /// The URL the child webview should navigate to. Form-fetch + submit
     /// share the same origin; submit lands at `/` per the WLE contract.
     pub fn url(&self) -> String {
@@ -1042,6 +1111,38 @@ impl FormSessionRegistry {
         }
         guard.insert(tok.clone(), session);
         Ok(OpenedViewerSession { token: tok, port })
+    }
+
+    /// Open an editable, pre-bound Form session (tuxlink-hhfx / G10) and register
+    /// it. Like [`open`](FormSessionRegistry::open), the POST route is live
+    /// (SessionKind::Form), so the caller MUST spawn a forwarder task draining
+    /// the returned `submit_rx` onto the `form-submitted` event scoped to the
+    /// child webview's label — unlike a viewer, this session round-trips a
+    /// submission.
+    pub async fn open_form_prebound(
+        &self,
+        html_path: PathBuf,
+        folder: String,
+        field_values: &std::collections::HashMap<String, String>,
+    ) -> Result<OpenedSession, String> {
+        let mut session =
+            FormSession::open_form_prebound(html_path, folder, field_values).await?;
+        let port = session.port;
+        let submit_rx = session.take_submit_rx().ok_or_else(|| {
+            "FormSession::take_submit_rx returned None on a fresh prebound session".to_string()
+        })?;
+        let token = mint_session_token();
+        let mut guard = self.sessions.lock().await;
+        let mut tok = token;
+        while guard.contains_key(&tok) {
+            tok = mint_session_token();
+        }
+        guard.insert(tok.clone(), session);
+        Ok(OpenedSession {
+            token: tok,
+            port,
+            submit_rx,
+        })
     }
 
     /// Tear down a registered session. Idempotent: closing an unknown
@@ -2188,5 +2289,87 @@ s = "{var Comments}";
             .unwrap();
         let after = client.get(&url).send().await;
         assert!(after.is_err(), "listener must be down after close()");
+    }
+
+    // ---- open_form_prebound (G10 reply threading) ---------------------
+
+    #[tokio::test]
+    async fn full_open_form_prebound_serves_bound_html_and_accepts_post() {
+        // The union of Form (POST live) + Viewer (values pre-bound): a SendReply
+        // authoring page served with the original field values filled in, whose
+        // submit still round-trips back through the submit channel.
+        let td = TempDir::new().unwrap();
+        let html_path = make_viewer_template_on_disk(
+            &td,
+            "ICS213_SendReply",
+            "<html><head></head><body>Orig subject: {var Subjectline}\
+             <input name=\"MsgOriginalBody\" type=\"hidden\" /></body></html>",
+        );
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("subjectline".to_string(), "Road status".to_string());
+        fv.insert("MsgOriginalBody".to_string(), "original body text".to_string());
+
+        let mut session =
+            FormSession::open_form_prebound(html_path, String::new(), &fv)
+                .await
+                .unwrap();
+        let url = session.url();
+
+        // GET / serves the bound HTML: {var Subjectline} substituted + the
+        // DOM-injection script present (to fill the hidden MsgOriginalBody input).
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.text().await.unwrap();
+        assert!(
+            body.contains("Orig subject: Road status"),
+            "{{var}} must be substituted in a prebound form; got: {body}"
+        );
+        assert!(
+            body.contains("DOMContentLoaded"),
+            "field-value injection script must be present so hidden inputs round-trip"
+        );
+
+        // POST / is LIVE (unlike a viewer): it dispatches onto the submit channel.
+        let client = reqwest::Client::new();
+        let post = client
+            .post(&url)
+            .header("Origin", &url[..url.len() - 1])
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body("Reply=Roger&MsgOriginalBody=original+body+text&Submit=Submit")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(post.status(), 200, "prebound form must accept POST (Form kind)");
+
+        let rx = session.take_submit_rx();
+        assert!(rx.is_some(), "prebound form exposes a live submit_rx");
+        let parsed = rx.unwrap().recv().await.unwrap();
+        assert_eq!(parsed.fields["Reply"][0], "Roger");
+        assert_eq!(parsed.fields["MsgOriginalBody"][0], "original body text");
+        session.close();
+    }
+
+    #[tokio::test]
+    async fn registry_open_form_prebound_returns_token_port_and_receiver() {
+        let td = TempDir::new().unwrap();
+        let html_path = make_viewer_template_on_disk(
+            &td,
+            "RegPrebound",
+            "<html><body>{var X}</body></html>",
+        );
+        let registry = FormSessionRegistry::new();
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("x".to_string(), "bound".to_string());
+        let opened = registry
+            .open_form_prebound(html_path, String::new(), &fv)
+            .await
+            .unwrap();
+        assert_eq!(opened.token.len(), 16);
+        assert!(opened.port != 0);
+        assert_eq!(registry.session_count().await, 1);
+        // The receiver is handed to the caller (forwarder task), not retained.
+        drop(opened.submit_rx);
+        registry.close(&opened.token).await.unwrap();
+        assert_eq!(registry.session_count().await, 0);
     }
 }

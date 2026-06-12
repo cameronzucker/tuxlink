@@ -1815,6 +1815,19 @@ pub async fn send_webview_form(
     cc: Vec<String>,
     senders_callsign: String,
     grid_square: String,
+    // tuxlink-hhfx / G10: when this submission is a reply via a SendReply form,
+    // `reply_template` is the SendReply `.0` filename (from `open_webview_reply`).
+    // The reply's To:/Subject:/Msg: then render from that `.0` (whose Msg
+    // reproduces the original + the operator's reply) and display_form points to
+    // the SendReply viewer — instead of the original form's `.txt`. `None` for a
+    // normal first-time form send.
+    reply_template: Option<String>,
+    // Operator-entered subject (the compose "Re: <original>" line). Used ONLY as
+    // a fallback when the governing template yields no Subject: and no subject
+    // field — SendReply `.0`s carry no Subject: directive, so this is how a reply
+    // gets a meaningful subject instead of "Form: <id>". `None`/blank for a
+    // normal send leaves existing behavior unchanged.
+    subject_hint: Option<String>,
     app: AppHandle,
     state: State<'_, BackendState>,
 ) -> Result<String, UiError> {
@@ -1856,18 +1869,44 @@ pub async fn send_webview_form(
     //      `reply_template` keeps the `<id>_SendReply.0` convention
     //      because tuxlink doesn't currently generate per-form
     //      reply templates; recipients fall back to the generic viewer.
-    let display_form = forms::wle_templates::resolve_viewer_for(&template.path)
-        .unwrap_or_else(|| format!("{form_id}_Viewer.html"));
     let now = chrono::Utc::now();
 
-    // o4p9 (G12-A): resolve the governing .txt template and render the message
-    // To/Subject/Msg from it below. The .txt's `<var fieldname>` placeholders +
-    // host tags are substituted with the operator's submitted field values —
-    // this is how catalog/org forms get their prescribed recipient (often a
-    // fixed tactical/agency address like DYFI → USGS), templated subject, and
-    // human-readable body instead of the generic fallbacks. A form with no
-    // governing .txt (operator-custom HTML) keeps the fallback behavior.
-    let txt = forms::txt_template::resolve_governing_txt(&template.path);
+    // Resolve the governing template + display viewer.
+    //
+    // o4p9 (G12-A): normally the governing template is the form's own `.txt`,
+    // resolved by the `Form:` directive. Its `<var fieldname>` + host-tag
+    // placeholders render the prescribed recipient (often a fixed agency address
+    // like DYFI → USGS), templated subject, and human-readable body — instead of
+    // the generic fallbacks. A form with no governing `.txt` keeps the fallback.
+    //
+    // tuxlink-hhfx (G10): when replying via a SendReply, the governing template
+    // is the SendReply `.0` (its Msg reproduces the original + the operator's
+    // reply) and the display viewer is the SendReply viewer. We resolve the `.0`
+    // in the original form's folder; if it can't be resolved (catalog drift),
+    // fall back to the original form's templates so the send still goes out.
+    let viewer_fallback = || {
+        forms::wle_templates::resolve_viewer_for(&template.path)
+            .unwrap_or_else(|| format!("{form_id}_Viewer.html"))
+    };
+    // A reply resolves the SendReply `.0` in the form's folder. If there's no
+    // reply_template, or it can't be resolved (catalog drift), both fall back to
+    // the original form's governing `.txt` so the send still goes out.
+    let sendreply = reply_template.as_deref().and_then(|rt| {
+        template
+            .path
+            .parent()
+            .and_then(|folder| forms::txt_template::resolve_sendreply(folder, rt))
+    });
+    let (txt, display_form) = match sendreply {
+        Some(sr) => {
+            let disp = sr.template.display_html.clone().unwrap_or_else(viewer_fallback);
+            (Some(sr.template), disp)
+        }
+        None => (
+            forms::txt_template::resolve_governing_txt(&template.path),
+            viewer_fallback(),
+        ),
+    };
     let host_tags = {
         let mut h = std::collections::HashMap::new();
         h.insert("MsgSender".to_string(), senders_callsign.clone());
@@ -1892,7 +1931,15 @@ pub async fn send_webview_form(
         senders_callsign,
         grid_square,
         display_form,
-        reply_template: format!("{form_id}_SendReply.0"),
+        // A first-time send advertises its SendReply (`<id>_SendReply.0`) so the
+        // recipient can thread a reply. A reply message itself advertises no
+        // further reply template — SendReply `.0`s declare none, and we don't
+        // model reply-to-a-reply chains.
+        reply_template: if reply_template.is_some() {
+            String::new()
+        } else {
+            format!("{form_id}_SendReply.0")
+        },
     };
 
     // 3. Serialize the XML attachment.
@@ -1934,6 +1981,10 @@ pub async fn send_webview_form(
         .filter(|s| !s.trim().is_empty())
         .or_else(|| field_values.get("subject").cloned())
         .or_else(|| field_values.get("msg_subject").cloned())
+        // G10: a reply's SendReply `.0` carries no Subject: directive, so fall
+        // back to the operator's compose subject ("Re: <original>") before the
+        // last-resort "Form: <id>". Blank hint is ignored.
+        .or_else(|| subject_hint.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
         .unwrap_or_else(|| format!("Form: {form_id}"));
 
     // 6. Recipients: union the .txt `To:`/`Cc:` (rendered) with the
@@ -2475,6 +2526,116 @@ pub async fn open_webview_viewer(
     let url = format!("http://127.0.0.1:{port}/");
 
     Ok(OpenViewerResult { url, port, token })
+}
+
+/// Result of [`open_webview_reply`] (tuxlink-hhfx / G10). Like [`OpenFormResult`]
+/// (an editable session with a live submit channel), plus the resolved
+/// `reply_template` the frontend threads back to [`send_webview_form`] so the
+/// reply's To:/Subject:/Msg: render from the SendReply `.0`.
+// `token` is an ephemeral WebView session label — not an auth credential.
+#[allow(unknown_lints, credential_audit_skip)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenReplyResult {
+    pub url: String,
+    pub port: u16,
+    pub token: String,
+    /// The SendReply governing-template filename (e.g. `ICS213_SendReply.0`),
+    /// resolved from the original form's own bundled `.txt`. The frontend passes
+    /// it to `send_webview_form` on submit.
+    pub reply_template: String,
+}
+
+/// Open an editable, **pre-bound** reply session for a received form that
+/// declares a WLE `ReplyTemplate:` (tuxlink-hhfx / G10). Resolves the original
+/// form's SendReply authoring HTML (`<X>_SendReply.html`), serves it editable
+/// with the original field values pre-filled (name-aligned) + the original
+/// message body as `MsgOriginalBody`, and wires the submit path so the operator
+/// fills the Reply section and submits — round-tripping through the same
+/// `form-submitted` → `send_webview_form` path as any webview form.
+///
+/// `form_id` is the ORIGINAL received form (e.g. `ICS213_Initial`). The
+/// SendReply to open is derived from that form's OWN bundled `.txt`
+/// `ReplyTemplate:` directive — the local source of truth — NOT from whatever
+/// `reply_template` the inbound XML claimed (a tuxlink sender writes a synthetic
+/// `<id>_SendReply.0` that wouldn't resolve). `field_values` are the original
+/// form's submitted values; `msg_original_body` is the received message body.
+///
+/// Errors:
+/// - `unknown form: <id>` — form_id not in the catalog (operator lacks the form).
+/// - `form has no reply template: <id>` — the form isn't a ReplyTemplate form.
+/// - `reply template not found: <name>` — the `.0` or its SendReply HTML is
+///   absent on disk (catalog drift). The frontend falls back to a plain reply.
+#[tauri::command]
+pub async fn open_webview_reply(
+    form_id: String,
+    field_values: std::collections::HashMap<String, String>,
+    msg_original_body: String,
+    app: AppHandle,
+    registry: State<'_, std::sync::Arc<crate::forms::http_server::FormSessionRegistry>>,
+) -> Result<OpenReplyResult, String> {
+    use crate::forms;
+
+    // 1. Resolve the live catalog → the original form's template (folder + path).
+    let bundle =
+        forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let custom = forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() {
+        Some(custom.as_path())
+    } else {
+        None
+    };
+    let cat = forms::wle_templates::list(&bundle, custom_opt).map_err(|e| e.to_string())?;
+    let template = cat
+        .iter()
+        .find(|t| t.id == form_id)
+        .ok_or_else(|| format!("unknown form: {form_id}"))?;
+
+    // 2. The form's OWN bundled .txt names the SendReply (.0). Local truth —
+    //    independent of whatever reply_template the inbound XML claimed.
+    let reply_template_name = forms::txt_template::resolve_governing_txt(&template.path)
+        .and_then(|t| t.reply_template)
+        .ok_or_else(|| format!("form has no reply template: {form_id}"))?;
+
+    // 3. Resolve the SendReply authoring HTML via the .0's Form: directive.
+    let form_folder = template
+        .path
+        .parent()
+        .ok_or_else(|| "template has no parent folder".to_string())?;
+    let sendreply = forms::txt_template::resolve_sendreply(form_folder, &reply_template_name)
+        .ok_or_else(|| format!("reply template not found: {reply_template_name}"))?;
+
+    // 4. Pre-bind: the original field values (name-aligned — the SendReply
+    //    reproduces the original via the same `<var fieldname>` names) plus the
+    //    original message body as `MsgOriginalBody`.
+    let mut prebind = field_values;
+    prebind.insert("MsgOriginalBody".to_string(), msg_original_body);
+
+    let opened = registry
+        .open_form_prebound(sendreply.html_path, template.folder.clone(), &prebind)
+        .await?;
+    let port = opened.port;
+    let token = opened.token.clone();
+    let url = format!("http://127.0.0.1:{port}/");
+
+    // 5. Forwarder task — identical to `open_webview_form` (Form-kind session,
+    //    live submit channel). Drains parsed submissions onto the child
+    //    webview's label so Compose's reply-submit handler receives them.
+    let app_for_forwarder = app.clone();
+    let label = format!("compose-form-{token}");
+    let mut submit_rx = opened.submit_rx;
+    tokio::spawn(async move {
+        while let Some(parsed) = submit_rx.recv().await {
+            let _ = app_for_forwarder.emit_to(label.as_str(), "form-submitted", parsed);
+        }
+    });
+
+    Ok(OpenReplyResult {
+        url,
+        port,
+        token,
+        reply_template: reply_template_name,
+    })
 }
 
 /// Run one CMS connection: send everything queued in the outbox and download any
@@ -9969,6 +10130,131 @@ hw:CARD=Device,DEV=0
         assert!(xml_str.contains("<display_form>ICS205_Viewer.html</display_form>"));
         assert!(xml_str.contains("<reply_template>ICS205_SendReply.0</reply_template>"));
         assert!(xml_str.contains("<incident_name>Test</incident_name>"));
+    }
+
+    // ── tuxlink-hhfx / G10 — reply-form threading send-path decisions ──────
+    //
+    // `send_webview_form`'s reply branch can't be invoked directly (AppHandle +
+    // State), so these replicate the new subject/reply_template decisions inline
+    // (matching the synthesis-test pattern above), plus one genuine end-to-end
+    // render of a SendReply `.0` Msg projection.
+
+    /// A reply via SendReply has no `Subject:` directive in its `.0` and usually
+    /// no `subject`/`msg_subject` field, so the operator's compose subject
+    /// (`subject_hint`, "Re: <original>") is used before the "Form: <id>" last
+    /// resort. A blank hint is ignored. Replicates the subject chain.
+    #[test]
+    fn send_webview_form_reply_subject_uses_hint_before_form_id() {
+        let form_id = "ICS213_Initial";
+        let field_values = std::collections::HashMap::<String, String>::new();
+        let subject_hint: Option<String> = Some("Re: Road status".to_string());
+        let subject = None::<String>
+            .or_else(|| field_values.get("subject").cloned())
+            .or_else(|| field_values.get("msg_subject").cloned())
+            .or_else(|| {
+                subject_hint
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| format!("Form: {form_id}"));
+        assert_eq!(subject, "Re: Road status");
+
+        // A blank hint is ignored → "Form: <id>".
+        let blank: Option<String> = Some("   ".to_string());
+        let subject2 = None::<String>
+            .or_else(|| {
+                blank
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| format!("Form: {form_id}"));
+        assert_eq!(subject2, "Form: ICS213_Initial");
+    }
+
+    /// A first-time send advertises `<id>_SendReply.0` so the recipient can
+    /// thread a reply; a reply message itself advertises an empty reply_template
+    /// (SendReply `.0`s declare none; no reply-to-a-reply chain). Replicates the
+    /// outbound `reply_template` branch.
+    #[test]
+    fn send_webview_form_reply_emits_empty_outbound_reply_template() {
+        let form_id = "ICS213_Initial";
+        let first_time: Option<String> = None;
+        let as_reply: Option<String> = Some("ICS213_SendReply.0".to_string());
+        let rt_first = if first_time.is_some() {
+            String::new()
+        } else {
+            format!("{form_id}_SendReply.0")
+        };
+        let rt_reply = if as_reply.is_some() {
+            String::new()
+        } else {
+            format!("{form_id}_SendReply.0")
+        };
+        assert_eq!(rt_first, "ICS213_Initial_SendReply.0");
+        assert_eq!(rt_reply, "");
+    }
+
+    /// End-to-end reply render: a real ICS213 SendReply `.0` governs the reply
+    /// message. `resolve_sendreply` parses it; `render_template` projects the
+    /// `Msg:` with the original field values (round-tripped through the
+    /// SendReply's hidden inputs) + the operator's reply fields + host tags. The
+    /// body must reproduce the original 213 AND carry the reply.
+    #[test]
+    fn reply_body_reproduces_original_and_carries_reply() {
+        use crate::forms::txt_template::{render_template, resolve_sendreply};
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join("ICS213_SendReply.0")).unwrap();
+        // A faithful subset of the bundled ICS213_SendReply.0.
+        f.write_all(
+            b"Form: ICS213_SendReply.html,ICS213_SendReply_Viewer.html\r\n\
+              Def: MsgOriginalBody=<var MsgOriginalBody>\r\nTo: \r\nMsg:\r\n\
+              GENERAL MESSAGE (ICS 213)\r\n\
+              2. To: <var To_Name>\r\n3. From: <var fm_name>\r\n\
+              4. Subject: <var Subjectline>\r\n7. Message:\r\n<var Message>\r\n\
+              9. Reply:\r\n<var Reply>\r\n10. Replied by: <var rply_by>\r\n\
+              Express Sending Station: <MsgSender>\r\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("ICS213_SendReply.html"), b"<html></html>").unwrap();
+
+        let sr = resolve_sendreply(dir.path(), "ICS213_SendReply.0").unwrap();
+        // The submitted field set: original fields (pre-bound + round-tripped via
+        // hidden inputs) + the operator's reply fields.
+        let mut fv = std::collections::HashMap::new();
+        for (k, v) in [
+            ("To_Name", "Jane / Net Control"),
+            ("fm_name", "Bob / Field 3"),
+            ("Subjectline", "Road status"),
+            ("Message", "Roads clear north of mile 30"),
+            ("Reply", "Acknowledged — relaying to ops"),
+            ("rply_by", "W7ABC"),
+        ] {
+            fv.insert(k.to_string(), v.to_string());
+        }
+        let mut ht = std::collections::HashMap::new();
+        ht.insert("MsgSender".to_string(), "W7ABC".to_string());
+
+        let body = render_template(sr.template.msg.as_deref().unwrap(), &fv, &ht);
+        // Original 213 reproduced.
+        assert!(body.contains("To: Jane / Net Control"), "body: {body}");
+        assert!(body.contains("From: Bob / Field 3"));
+        assert!(body.contains("Subject: Road status"));
+        assert!(body.contains("Roads clear north of mile 30"));
+        // The operator's reply carried.
+        assert!(body.contains("Acknowledged — relaying to ops"));
+        assert!(body.contains("Replied by: W7ABC"));
+        // Host tag substituted.
+        assert!(body.contains("Express Sending Station: W7ABC"));
+        // The SendReply viewer is what a WLE recipient renders.
+        assert_eq!(
+            sr.template.display_html.as_deref(),
+            Some("ICS213_SendReply_Viewer.html")
+        );
     }
 
     // ========================================================================

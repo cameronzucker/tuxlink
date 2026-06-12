@@ -39,10 +39,21 @@ export interface DraftData {
   subject: string;
   body: string;
   requestAck: boolean;
-  /** Form ID when this draft is a form-mode draft (T6.3). Optional. */
+  /** Form ID when this draft is a form-mode draft (T6.3). Optional.
+   * For a SendReply reply draft (tuxlink-hhfx / G10) this is the ORIGINAL
+   * form's id — the backend resolves the SendReply template from it. */
   formId?: string;
-  /** Form field values when this draft is a form-mode draft (T6.3). Optional. */
+  /** Form field values when this draft is a form-mode draft (T6.3). Optional.
+   * For a reply draft these are the ORIGINAL form's values, pre-bound into the
+   * SendReply page so the operator sees the message they're replying to. */
   formFields?: Record<string, string>;
+  /** True when this is a SendReply reply draft (tuxlink-hhfx / G10): Compose
+   * restores it into `webview-reply` mode (the SendReply page, pre-bound +
+   * editable) rather than a blank webview form. Optional/absent otherwise. */
+  formReply?: boolean;
+  /** The received message's body, carried as the SendReply's `MsgOriginalBody`
+   * (tuxlink-hhfx / G10). Optional; only set on reply drafts. */
+  msgOriginalBody?: string;
   savedAt: string; // ISO 8601 UTC
 }
 

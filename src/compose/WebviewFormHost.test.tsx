@@ -210,4 +210,61 @@ describe('<WebviewFormHost>', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/Form failed to open/i);
     });
   });
+
+  // ── tuxlink-hhfx / G10 — reply mode ────────────────────────────────────
+  describe('reply mode (replyPrefill)', () => {
+    const REPLY_RESULT = {
+      url: 'http://127.0.0.1:55555/',
+      port: 55555,
+      token: 'tok-rep',
+      replyTemplate: 'ICS213_SendReply.0',
+    };
+
+    it('opens via open_webview_reply (not open_webview_form) with the prefill', async () => {
+      mocks.invoke.mockImplementation(async (cmd: string) =>
+        cmd === 'open_webview_reply' ? REPLY_RESULT : undefined,
+      );
+      render(
+        <WebviewFormHost
+          formId="ICS213_Initial"
+          replyPrefill={{ fieldValues: { Message: 'orig' }, msgOriginalBody: 'body' }}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+      await waitFor(() => {
+        expect(mocks.invoke).toHaveBeenCalledWith('open_webview_reply', {
+          formId: 'ICS213_Initial',
+          fieldValues: { Message: 'orig' },
+          msgOriginalBody: 'body',
+        });
+      });
+      expect(mocks.invoke).not.toHaveBeenCalledWith('open_webview_form', expect.anything());
+    });
+
+    it('threads the resolved reply_template to onSubmit on submission', async () => {
+      mocks.invoke.mockImplementation(async (cmd: string) =>
+        cmd === 'open_webview_reply' ? REPLY_RESULT : undefined,
+      );
+      const onSubmit = vi.fn();
+      render(
+        <WebviewFormHost
+          formId="ICS213_Initial"
+          replyPrefill={{ fieldValues: {}, msgOriginalBody: '' }}
+          onSubmit={onSubmit}
+          onCancel={vi.fn()}
+        />,
+      );
+      await waitFor(() => expect(mocks.listen).toHaveBeenCalled());
+      // Fire the captured form-submitted listener as the loopback POST would.
+      const call = mocks.listen.mock.calls[0] as unknown as [
+        string,
+        (e: { payload: unknown }) => void,
+        unknown,
+      ];
+      const payload = { fields: { Reply: ['Roger'] }, submitter: 'Submit' };
+      call[1]({ payload });
+      expect(onSubmit).toHaveBeenCalledWith(payload, { replyTemplate: 'ICS213_SendReply.0' });
+    });
+  });
 });
