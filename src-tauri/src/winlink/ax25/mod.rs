@@ -10,6 +10,7 @@ pub mod direwolf_probe;
 pub mod frame;
 pub mod kiss;
 pub mod link;
+pub mod managed_direwolf;
 pub mod params;
 pub mod rfcomm;
 
@@ -36,6 +37,13 @@ pub use direwolf_conf::{generate_direwolf_conf, DwParams};
 pub use direwolf_probe::{
     device_busy_from_status, device_busy_message, direwolf_presence, meets_min_version,
     validate_conf, CommandRunner, ConfError, DwPresence, SystemCommandRunner,
+};
+
+// Managed-Dire-Wolf process lifecycle (Slice B, Phase 4): spawn/supervise/
+// clean-shutdown a Dire Wolf KISS soundmodem (wrapping `ManagedModem`), plus the
+// pure sound-card arbitration decision.
+pub use managed_direwolf::{
+    arbitrate, Arbitration, CardId, DwLifecycleError, ManagedDireWolf, ManagedDireWolfCfg,
 };
 
 #[cfg(test)]
