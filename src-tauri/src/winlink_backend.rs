@@ -1396,11 +1396,27 @@ impl NativeBackend {
             None => host_reachable("api.winlink.org:443").await,
         };
         let now = now_unix_secs();
+        let before = store
+            .tactical()
+            .iter()
+            .find(|t| t.label == label && t.parent.as_str() == parent.as_str())
+            .map(|t| t.cms.clone());
         let outcome =
             gate_cms_entry(&mut store, &label, &parent, &self.tactical_gate.verifier, online, now).await;
-        // Persist any refreshed cache. Ignore a save error: a failed write must
-        // NEVER upgrade a refusal to Allow (the decision was made on in-memory state).
-        let _ = store.save();
+        // Persist ONLY if a re-verification actually refreshed the cached state.
+        // The common case (cached, or offline with no verify) changes nothing, so a
+        // blanket save would needlessly rewrite the whole IdentityStore on every
+        // gated connect — widening the window to clobber a concurrent store writer
+        // for zero benefit. A failed save never upgrades a refusal to Allow: the
+        // decision was made on in-memory state.
+        let after = store
+            .tactical()
+            .iter()
+            .find(|t| t.label == label && t.parent.as_str() == parent.as_str())
+            .map(|t| t.cms.clone());
+        if after != before {
+            let _ = store.save();
+        }
         match outcome {
             GateOutcome::Allow => Ok(()),
             GateOutcome::Refuse(reason) => Err(BackendError::TacticalNotCmsRegistered {
@@ -1759,6 +1775,16 @@ impl WinlinkBackend for NativeBackend {
         // Resolve before spawn_blocking so `?` surfaces NoActiveIdentity to the
         // caller immediately (mirrors native_connect / NativeBackend::connect).
         let session_id = self.active_identity()?;
+        // Phase 5 (tuxlink-tseu): cms_connect_test is a CMS-Telnet entry point — it
+        // dials + authenticates against the CMS — so it is gated identically to
+        // NativeBackend::connect. A tactical session may not enter CMS modes unless
+        // verified CMS-registered (fail-closed); otherwise the password test would
+        // be an ungated CMS-Telnet sibling that defeats the gate. FULL sessions are
+        // never gated. On refusal: terminal status + return WITHOUT dialing.
+        if let Err(e) = self.enforce_tactical_cms_gate(&session_id).await {
+            self.set_status(BackendStatus::Error { reason: e.to_string() });
+            return Err(e);
+        }
         let callsign = session_id.mycall().as_str().to_uppercase();
         let locator = crate::position::effective_broadcast_locator(&config, self.position.as_deref());
         let password = crate::winlink::credentials::read_password(&callsign)
@@ -4734,6 +4760,50 @@ mod native_read_state_tests {
             Some("N7CPZ"),
             "cms_connect_test must use the session mycall (N7CPZ), not the config callsign (W7AUX)"
         );
+    }
+
+    // Phase 5 (tuxlink-tseu) — adversarial-review B1: cms_connect_test is a second
+    // CMS-Telnet entry point and MUST be gated like NativeBackend::connect. A
+    // tactical session with an unverified address is refused BEFORE any dial (no
+    // fake server needed — the gate returns before the socket opens).
+    #[tokio::test]
+    async fn cms_connect_test_refuses_unverified_tactical_without_dialing() {
+        use crate::identity::{Callsign, FullIdentity, IdentityHandle, IdentityStore, SessionIdentity,
+            TacticalCmsState, TacticalIdentity, TacticalRegistrationVerifier};
+        use crate::winlink::b2f_events::{AttemptId, B2fEvent, B2fEventSink};
+
+        struct NoopSink;
+        impl B2fEventSink for NoopSink {
+            fn push(&self, _: B2fEvent) {}
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("identities.json");
+        let mut store = IdentityStore::load(&store_path).unwrap();
+        store.add_full(FullIdentity { callsign: Callsign::parse("W1ABC").unwrap(), label: None,
+            has_cms_account: true, cms_registered: true }).unwrap();
+        store.add_tactical(TacticalIdentity { label: "EOC-3".into(),
+            parent: Callsign::parse("W1ABC").unwrap(), cms: TacticalCmsState::Unknown }).unwrap();
+        store.save().unwrap();
+
+        let backend = NativeBackend::new(offline_config_with_callsign(), tmp.path().join("mbox"))
+            .with_tactical_gate(
+                TacticalRegistrationVerifier::with_base_url("http://127.0.0.1:1/".into(), "K".into()),
+                store_path.clone(),
+                /*online=*/ false,
+            );
+        backend.set_active_identity(
+            SessionIdentity::tactical(IdentityHandle::for_test(Callsign::parse("W1ABC").unwrap()),
+                "EOC-3".into()).unwrap());
+
+        let events: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
+            std::sync::Arc::new(NoopSink);
+        let err = backend
+            .cms_connect_test(events, AttemptId::fresh())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BackendError::TacticalNotCmsRegistered { .. }),
+            "a tactical session must be refused by the CMS password test too; got {err:?}");
     }
 
     // =========================================================================
