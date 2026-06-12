@@ -24,9 +24,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
+
 use super::store::{Contact, ContactsError, ContactsFile, ContactsStore, Group};
 use super::suggest::{derive_suggestions, Suggestion};
 use crate::app_backend::BackendState;
+use crate::favorites::store::{ConnectionAttempt, FavoritesStore, TodHint};
 use crate::winlink_backend::{MailboxFolder, MessageMeta};
 
 /// App-level Tauri event emitted on every contacts mutation so other webview
@@ -278,6 +281,48 @@ pub async fn contacts_suggestions(
     Ok(derive_suggestions(&correspondents, &existing, &op))
 }
 
+/// A contact's Tuxlink-native connection record, aggregated by callsign across
+/// the favorites store. Carries the empirical attempt history plus the gated
+/// time-of-day hint over the COMBINED set — the same render data the favorites
+/// `ConnectionRecord` consumes, so contacts and favorites share one component.
+///
+/// snake_case wire shape — the codebase uses no `serde(rename_all)`, so the
+/// field names ARE the JSON keys (`attempts`, `hint`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ContactConnectionRecord {
+    /// Every recorded attempt across every favorite whose `gateway` matches the
+    /// callsign, in chronological (insertion) order. Empty when no favorite
+    /// matches — an honest "no connection attempts yet", never fabricated.
+    pub attempts: Vec<ConnectionAttempt>,
+    /// The gated time-of-day hint over the COMBINED attempts (≥3 attempts, ≥1
+    /// success, strict unique max — H2), or `None`.
+    pub hint: Option<TodHint>,
+}
+
+/// Surface a contact's connection record by callsign (read-only over the
+/// favorites store). Reuses the favorites join: a `Favorite` keys on `gateway`
+/// (the SSID-bearing station callsign), and a contact's record is the aggregate
+/// of `ConnectionAttempt`s across EVERY favorite whose `gateway == callsign`.
+///
+/// Delegates entirely to existing favorites primitives — `attempts_for_gateway`
+/// for the EXACT-match aggregation (`"W7CPZ"` does NOT match `"W7CPZ-10"`) and
+/// the existing `tod_hint` gate over the combined set (offset-local bucketing
+/// H1, over-claim guard H2). No new storage; nothing is mutated.
+///
+/// A callsign with no matching favorite yields `{ attempts: [], hint: None }` —
+/// the honest empty state for a correspondent only ever reached THROUGH the CMS
+/// (no direct session, hence no favorite). The card is omitted by the frontend.
+#[tauri::command]
+pub fn contacts_connection_record(
+    callsign: String,
+    favorites: tauri::State<Arc<Mutex<FavoritesStore>>>,
+) -> Result<ContactConnectionRecord, ContactsError> {
+    let store = favorites.lock().expect("favorites store mutex poisoned");
+    let attempts = store.attempts_for_gateway(&callsign);
+    let hint = crate::favorites::store::tod_hint(&attempts);
+    Ok(ContactConnectionRecord { attempts, hint })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,5 +484,79 @@ mod tests {
     #[test]
     fn tally_empty_input_is_empty() {
         assert!(tally_correspondents(&[]).is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // contacts_connection_record (tuxlink-je5d) — the by-callsign join.
+    //
+    // The `#[tauri::command]` wrapper only adds `State` extraction; we exercise
+    // the command BODY against a raw `FavoritesStore` so the assembly
+    // (attempts_for_gateway → tod_hint → ContactConnectionRecord) is tested
+    // without a Tauri harness, mirroring favorites' tod_hint delegation test.
+    // ------------------------------------------------------------------
+
+    /// Replicate the `contacts_connection_record` body against a raw store.
+    fn connection_record_via_command_logic(
+        store: &FavoritesStore,
+        callsign: &str,
+    ) -> ContactConnectionRecord {
+        let attempts = store.attempts_for_gateway(callsign);
+        let hint = crate::favorites::store::tod_hint(&attempts);
+        ContactConnectionRecord { attempts, hint }
+    }
+
+    fn dial(mode: &str, gateway: &str, freq: &str) -> crate::favorites::store::FavoriteDial {
+        crate::favorites::store::FavoriteDial {
+            mode: mode.to_string(),
+            gateway: gateway.to_string(),
+            freq: Some(freq.to_string()),
+            transport: None,
+            band: None,
+            grid: None,
+        }
+    }
+
+    #[test]
+    fn connection_record_aggregates_by_callsign_with_hint() {
+        // A callsign spanning two favorites (same gateway, different mode/freq)
+        // aggregates both attempt streams and runs tod_hint over the union.
+        let dir = tempdir().unwrap();
+        let mut store = FavoritesStore::open(dir.path().join("stations.json"));
+        let mut n = 0u32;
+        let mut ids = move || {
+            n += 1;
+            format!("u{n}")
+        };
+        for (mode, freq, ts) in [
+            ("ardop-hf", "14105.0", "2026-06-07T23:00:00-07:00"),
+            ("ardop-hf", "14105.0", "2026-06-07T22:00:00-07:00"),
+            ("vara-hf", "7102.0", "2026-06-07T21:00:00-07:00"),
+        ] {
+            store
+                .record_attempt(
+                    dial(mode, "W7CPZ", freq),
+                    "reached".to_string(),
+                    ts.to_string(),
+                    &mut ids,
+                    "2026-06-08T06:00:00+00:00".to_string(),
+                )
+                .unwrap();
+        }
+
+        let record = connection_record_via_command_logic(&store, "W7CPZ");
+        assert_eq!(record.attempts.len(), 3, "attempts from both favorites aggregate");
+        let hint = record.hint.expect("3 night successes → Some");
+        assert_eq!(hint.bucket, "night");
+        assert_eq!(hint.successes, 3);
+    }
+
+    #[test]
+    fn connection_record_empty_for_unmatched_callsign() {
+        // No matching favorite → honest empty state: empty attempts + None hint.
+        let dir = tempdir().unwrap();
+        let store = FavoritesStore::open(dir.path().join("stations.json"));
+        let record = connection_record_via_command_logic(&store, "W7CPZ");
+        assert!(record.attempts.is_empty(), "no favorite → empty attempts");
+        assert!(record.hint.is_none(), "no favorite → None hint (never fabricated)");
     }
 }

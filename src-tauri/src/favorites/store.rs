@@ -419,6 +419,33 @@ impl FavoritesStore {
             .collect()
     }
 
+    /// All attempts recorded against EVERY favorite whose `gateway` equals
+    /// `gateway`, aggregated across modes/freqs into one chronologically-appended
+    /// list. The gateway match is EXACT (SSID-bearing): `"W7CPZ"` does NOT match
+    /// `"W7CPZ-10"` — a base callsign and an SSID'd one are distinct stations.
+    ///
+    /// This is the join behind `contacts_connection_record`: a `Favorite` keys on
+    /// `gateway` (the station callsign), and `attempts_for(id)` returns one
+    /// favorite's attempts; a contact's record is the union of attempts across
+    /// every favorite that shares the callsign (a station dialed in two modes has
+    /// two favorites, hence two `unit_id`s, hence two attempt streams). No
+    /// matching favorite → an empty vec (honest empty state — never fabricated).
+    pub fn attempts_for_gateway(&self, gateway: &str) -> Vec<ConnectionAttempt> {
+        let unit_ids: std::collections::HashSet<&str> = self
+            .file
+            .favorites
+            .iter()
+            .filter(|f| f.gateway == gateway)
+            .map(|f| f.id.as_str())
+            .collect();
+        self.file
+            .log
+            .iter()
+            .filter(|a| unit_ids.contains(a.unit_id.as_str()))
+            .cloned()
+            .collect()
+    }
+
     /// Insert a favorite, or replace the existing one with the same `id`. The
     /// store takes the favorite as given (id/timestamp/merge semantics are the
     /// command layer's job, Task B2). Flushes on success.
@@ -1326,6 +1353,168 @@ mod tests {
             PER_UNIT_LOG_CAP,
             "per-unit log must be capped at {PER_UNIT_LOG_CAP} (M2)"
         );
+    }
+
+    // ---- attempts_for_gateway: the contacts-record join (tuxlink-je5d) -------
+
+    #[test]
+    fn attempts_for_gateway_single_favorite() {
+        // (a) One favorite with attempts → that favorite's attempts, aggregated
+        // by gateway.
+        let dir = tempdir().unwrap();
+        let mut store = FavoritesStore::open(dir.path().join("stations.json"));
+        let mut ids = id_seq();
+        store
+            .record_attempt(
+                dial("ardop-hf", "W7CPZ", Some("14105.0")),
+                "reached".to_string(),
+                "2026-06-07T23:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-08T06:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        store
+            .record_attempt(
+                dial("ardop-hf", "W7CPZ", Some("14105.0")),
+                "failed".to_string(),
+                "2026-06-07T22:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-08T05:00:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        let attempts = store.attempts_for_gateway("W7CPZ");
+        assert_eq!(attempts.len(), 2, "both attempts on the one favorite aggregate");
+        // The combined set runs the same tod_hint gate the command uses; here
+        // 1/2 reached in night, <3 attempts → no hint (over-claim guard, H2).
+        assert!(tod_hint(&attempts).is_none(), "<3 attempts → None (H2)");
+    }
+
+    #[test]
+    fn attempts_for_gateway_spans_two_favorites_same_gateway() {
+        // (b) The SAME gateway dialed in two distinct ways (different mode/freq)
+        // mints TWO favorites (two unit_ids); the record aggregates attempts from
+        // BOTH. Build a strict-unique-max night bucket with ≥3 attempts / ≥1
+        // success across the two units so a hint is produced over the union.
+        let dir = tempdir().unwrap();
+        let mut store = FavoritesStore::open(dir.path().join("stations.json"));
+        let mut ids = id_seq();
+
+        // Favorite 1: ardop-hf @ 14105.0 — two night successes.
+        store
+            .record_attempt(
+                dial("ardop-hf", "W7CPZ", Some("14105.0")),
+                "reached".to_string(),
+                "2026-06-07T23:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-08T06:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        store
+            .record_attempt(
+                dial("ardop-hf", "W7CPZ", Some("14105.0")),
+                "reached".to_string(),
+                "2026-06-07T22:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-08T05:00:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        // Favorite 2: vara-hf @ 7102.0 — a distinct favorite, SAME gateway. One
+        // more night success.
+        store
+            .record_attempt(
+                dial("vara-hf", "W7CPZ", Some("7102.0")),
+                "reached".to_string(),
+                "2026-06-07T21:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-08T04:00:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        // Two distinct favorites for the same gateway.
+        assert_eq!(
+            store.favorites().iter().filter(|f| f.gateway == "W7CPZ").count(),
+            2,
+            "different mode/freq on the same gateway → two favorites"
+        );
+
+        let attempts = store.attempts_for_gateway("W7CPZ");
+        assert_eq!(
+            attempts.len(),
+            3,
+            "attempts from BOTH favorites aggregate into one record"
+        );
+        let hint = tod_hint(&attempts).expect("3 night successes across two units → Some");
+        assert_eq!(hint.bucket, "night");
+        assert_eq!(hint.attempts, 3);
+        assert_eq!(hint.successes, 3);
+    }
+
+    #[test]
+    fn attempts_for_gateway_no_favorite_is_empty() {
+        // (c) A callsign with no matching favorite → empty attempts; the combined
+        // tod_hint over the empty set is None (honest empty state — not faked).
+        let dir = tempdir().unwrap();
+        let mut store = FavoritesStore::open(dir.path().join("stations.json"));
+        let mut ids = id_seq();
+        // Seed an UNRELATED favorite so the store isn't trivially empty.
+        store
+            .record_attempt(
+                dial("ardop-hf", "K0OTHER", Some("14105.0")),
+                "reached".to_string(),
+                "2026-06-07T23:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-08T06:00:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        let attempts = store.attempts_for_gateway("W7CPZ");
+        assert!(attempts.is_empty(), "no favorite for the callsign → empty attempts");
+        assert!(tod_hint(&attempts).is_none(), "empty attempts → None hint");
+    }
+
+    #[test]
+    fn attempts_for_gateway_match_is_exact_ssid_bearing() {
+        // (d) The gateway match is EXACT (SSID-bearing): a query for "W7CPZ" must
+        // NOT pick up attempts on the distinct station "W7CPZ-10".
+        let dir = tempdir().unwrap();
+        let mut store = FavoritesStore::open(dir.path().join("stations.json"));
+        let mut ids = id_seq();
+        // Base callsign favorite: one attempt.
+        store
+            .record_attempt(
+                dial("ardop-hf", "W7CPZ", Some("14105.0")),
+                "reached".to_string(),
+                "2026-06-07T23:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-08T06:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        // SSID'd favorite, a DIFFERENT station: two attempts.
+        store
+            .record_attempt(
+                dial("ardop-hf", "W7CPZ-10", Some("14105.0")),
+                "reached".to_string(),
+                "2026-06-07T22:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-08T05:00:00+00:00".to_string(),
+            )
+            .unwrap();
+        store
+            .record_attempt(
+                dial("ardop-hf", "W7CPZ-10", Some("14105.0")),
+                "failed".to_string(),
+                "2026-06-07T21:00:00-07:00".to_string(),
+                &mut ids,
+                "2026-06-08T04:00:00+00:00".to_string(),
+            )
+            .unwrap();
+
+        let base = store.attempts_for_gateway("W7CPZ");
+        assert_eq!(base.len(), 1, "\"W7CPZ\" must NOT match \"W7CPZ-10\" (exact, SSID-bearing)");
+        let ssid = store.attempts_for_gateway("W7CPZ-10");
+        assert_eq!(ssid.len(), 2, "the SSID'd station carries its own two attempts");
     }
 
     // ---- tod_bucket boundaries ----------------------------------------------
