@@ -979,10 +979,6 @@ impl Mailbox {
         Ok(())
     }
 
-    fn resolve_dir(&self, r: &FolderRef) -> PathBuf {
-        self.resolve_dir_ns(None, r)
-    }
-
     /// Namespace-aware folder-ref resolver (Phase 4, tuxlink-2ns7). System
     /// folders route through `folder_dir_ns` (Inbox/Archive per-FULL, Sent/
     /// Outbox shared); user folders resolve under the per-FULL `received_root`.
