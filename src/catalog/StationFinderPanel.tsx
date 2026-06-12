@@ -19,13 +19,15 @@ import { StationFinderMap } from './StationFinderMap';
 import { StationRail } from './StationRail';
 import { HF_BANDS, type Band } from './bandPlan';
 import type { ListingMode } from './stationTypes';
-import type { RadioMode } from '../favorites/types';
+import type { RadioMode, FavoriteDial } from '../favorites/types';
 import './StationFinderPanel.css';
 
 export interface StationFinderPanelProps {
   onClose: () => void;
   /** The open modem that can consume a channel prefill (Use →). */
   activePrefillMode?: RadioMode;
+  /** Arm-on-demand handler for "Use →" (AppShell opens the modem + prefills). */
+  onUse?: (dial: FavoriteDial) => void;
 }
 
 const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet'];
@@ -45,7 +47,7 @@ function ssnAge(year: number, month: number): number {
   return Math.max(0, months) * 30;
 }
 
-export function StationFinderPanel({ onClose, activePrefillMode }: StationFinderPanelProps) {
+export function StationFinderPanel({ onClose, activePrefillMode, onUse }: StationFinderPanelProps) {
   const [grid, setGrid] = useState('');
   // Band picker is a multi-select FILTER (tuxlink-hlas). Default: all HF bands
   // on (show the operator's full HF options), VHF/UHF off (line-of-sight packet
@@ -190,6 +192,7 @@ export function StationFinderPanel({ onClose, activePrefillMode }: StationFinder
             operatorGrid={grid}
             utcHour={utcHour}
             activePrefillMode={activePrefillMode}
+            onUse={onUse}
           />
         </div>
       </div>
