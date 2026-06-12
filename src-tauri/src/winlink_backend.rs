@@ -217,6 +217,19 @@ pub fn resolve_packet_endpoint(
     }
 }
 
+/// Best-effort reachability probe for the Phase 5 gate's `online` flag: a short
+/// TCP connect to the API host. `false` on any error/timeout (fail-closed — an
+/// unreachable API means offline, so an uncached tactical is refused, never allowed).
+async fn host_reachable(host_port: &str) -> bool {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tokio::net::TcpStream::connect(host_port),
+    )
+    .await
+    .map(|r| r.is_ok())
+    .unwrap_or(false)
+}
+
 /// Build the per-message proposals + compressed bodies for a B2F exchange
 /// from a Mailbox's Outbox folder. Skips messages whose bytes fail to parse
 /// or whose body cannot be turned into a proposal — mirroring the inline
@@ -823,6 +836,11 @@ pub enum BackendError {
 
     #[error("no active identity — authenticate before transmitting")]
     NoActiveIdentity,
+
+    /// A tactical session attempted a CMS mode but its address is not verified
+    /// CMS-registered (spec requirement 5). FULL identities and P2P/RF are unaffected.
+    #[error("tactical address '{label}' is not verified CMS-registered ({reason}); CMS is unavailable for this identity")]
+    TacticalNotCmsRegistered { label: String, reason: String },
 }
 
 // ============================================================================
@@ -1099,6 +1117,30 @@ pub type WireSink = Arc<dyn Fn(&str) + Send + Sync>;
 /// queries immediately instead of waiting for the 10s poll.
 pub type MailboxChangeSink = Arc<dyn Fn() + Send + Sync>;
 
+/// Phase 5 (tuxlink-tseu) tactical CMS-registration gate dependencies, bundled so
+/// `NativeBackend` gains a single field + builder. Production builds the default
+/// (empty access key => verifier fail-closes; real on-disk store path resolved at
+/// call time; live reachability probe). Tests inject a mockito-backed verifier, a
+/// temp store path, and a forced `online` flag for hermetic, network-free assertions.
+struct TacticalCmsGate {
+    verifier: crate::identity::TacticalRegistrationVerifier,
+    /// `None` => resolve `crate::config::identity_store_path()` at call time
+    /// (honors TUXLINK_CONFIG_DIR); `Some(path)` pins it (tests).
+    store_path: Option<std::path::PathBuf>,
+    /// `None` => probe `api.winlink.org` reachability at call time; `Some(b)` forces it (tests).
+    online_override: Option<bool>,
+}
+
+impl Default for TacticalCmsGate {
+    fn default() -> Self {
+        Self {
+            verifier: crate::identity::TacticalRegistrationVerifier::new(String::new()),
+            store_path: None,
+            online_override: None,
+        }
+    }
+}
+
 /// The native Winlink backend: speaks B2F directly (no Pat), stores messages in
 /// its own [`Mailbox`], and connects over plaintext or TLS telnet. `connect`
 /// runs the real CMS exchange on a blocking task; the actual on-air protocol is
@@ -1155,6 +1197,9 @@ pub struct NativeBackend {
     /// Re-established each launch by an authenticated switch (Phase 6). `None`
     /// until the operator authenticates one this session.
     active_identity: RwLock<Option<crate::identity::SessionIdentity>>,
+    /// Phase 5 tactical CMS-registration gate deps (tuxlink-tseu). Default in
+    /// production (fail-closed empty key); injected in tests.
+    tactical_gate: TacticalCmsGate,
 }
 
 /// Clears the single-flight + abort state when a `connect` ends, however it ends
@@ -1213,6 +1258,7 @@ impl NativeBackend {
             position: None,
             packet_allowlist_override: None,
             active_identity: RwLock::new(None),
+            tactical_gate: TacticalCmsGate::default(),
         }
     }
 
@@ -1242,6 +1288,24 @@ impl NativeBackend {
         allowed: crate::winlink::listener::AllowedStations,
     ) -> Self {
         self.packet_allowlist_override = Some(allowed);
+        self
+    }
+
+    /// Inject the Phase 5 tactical CMS gate deps for hermetic tests: a
+    /// mockito/dead-URL verifier, a temp store path, and a forced `online` flag.
+    /// No live network or global env mutation.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_tactical_gate(
+        mut self,
+        verifier: crate::identity::TacticalRegistrationVerifier,
+        store_path: std::path::PathBuf,
+        online: bool,
+    ) -> Self {
+        self.tactical_gate = TacticalCmsGate {
+            verifier,
+            store_path: Some(store_path),
+            online_override: Some(online),
+        };
         self
     }
 
@@ -1305,6 +1369,45 @@ impl NativeBackend {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.clone().ok_or(BackendError::NoActiveIdentity)
+    }
+
+    /// Phase 5 (tuxlink-tseu): refuse CMS entry for a tactical session whose
+    /// address is not verified CMS-registered (fail-closed). A FULL session is a
+    /// no-op (`Ok`). Reads + persists the 24h cache from the on-disk IdentityStore.
+    /// Never gates non-CMS transports — the caller only invokes this on the CMS path.
+    async fn enforce_tactical_cms_gate(
+        &self,
+        session_id: &crate::identity::SessionIdentity,
+    ) -> Result<(), BackendError> {
+        use crate::identity::{gate_cms_entry, Address, GateOutcome, IdentityStore};
+        let label = match session_id.address_as() {
+            Address::Tactical(l) => l.clone(),
+            Address::Full(_) => return Ok(()), // FULL identities are never CMS-gated
+        };
+        let parent = session_id.mycall().clone();
+        let store_path = self
+            .tactical_gate
+            .store_path
+            .clone()
+            .unwrap_or_else(crate::config::identity_store_path);
+        let mut store = IdentityStore::load(&store_path).unwrap_or_default();
+        let online = match self.tactical_gate.online_override {
+            Some(b) => b,
+            None => host_reachable("api.winlink.org:443").await,
+        };
+        let now = now_unix_secs();
+        let outcome =
+            gate_cms_entry(&mut store, &label, &parent, &self.tactical_gate.verifier, online, now).await;
+        // Persist any refreshed cache. Ignore a save error: a failed write must
+        // NEVER upgrade a refusal to Allow (the decision was made on in-memory state).
+        let _ = store.save();
+        match outcome {
+            GateOutcome::Allow => Ok(()),
+            GateOutcome::Refuse(reason) => Err(BackendError::TacticalNotCmsRegistered {
+                label,
+                reason: format!("{reason:?}"),
+            }),
+        }
     }
 
     /// Clone the live config (tuxlink-ka7 / tuxlink-p5u). The connect + send paths
@@ -1529,6 +1632,14 @@ impl WinlinkBackend for NativeBackend {
         // if no identity has been authenticated — the dial cannot proceed without
         // a Part 97 station principal to ID as on air.
         let session_id = self.active_identity()?;
+        // Phase 5 (tuxlink-tseu): a tactical session may only enter CMS modes when
+        // its tactical address is verified CMS-registered (fail-closed). FULL
+        // identities are never gated. On refusal, set a terminal status and return
+        // WITHOUT dialing. P2P/Packet never reaches here (early-returned above).
+        if let Err(e) = self.enforce_tactical_cms_gate(&session_id).await {
+            self.set_status(BackendStatus::Error { reason: e.to_string() });
+            return Err(e);
+        }
         let outcome = tokio::task::spawn_blocking(move || {
             native_connect(
                 &config,
@@ -4099,6 +4210,59 @@ mod native_read_state_tests {
             matches!(result, Err(BackendError::BackendUnavailable { .. })),
             "a concurrent connect should be rejected, got {result:?}"
         );
+    }
+
+    // Phase 5 (tuxlink-tseu): a tactical session whose address is not verified
+    // CMS-registered is refused at the CMS path BEFORE any dial; a FULL session is
+    // never CMS-gated (the gate is a no-op and the connect proceeds to the dial).
+    #[tokio::test]
+    async fn tactical_unverified_is_refused_cms_without_dialing_but_full_is_not_gated() {
+        use crate::identity::{Callsign, FullIdentity, IdentityHandle, IdentityStore, SessionIdentity,
+            TacticalCmsState, TacticalIdentity, TacticalRegistrationVerifier};
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("identities.json");
+        let mut store = IdentityStore::load(&store_path).unwrap();
+        store.add_full(FullIdentity { callsign: Callsign::parse("W1ABC").unwrap(), label: None,
+            has_cms_account: true, cms_registered: true }).unwrap();
+        store.add_tactical(TacticalIdentity { label: "EOC-3".into(),
+            parent: Callsign::parse("W1ABC").unwrap(), cms: TacticalCmsState::Unknown }).unwrap();
+        store.save().unwrap();
+
+        // Telnet + a loopback host => a closed plaintext port (8772) on the FULL
+        // half, so the FULL dial fails fast (connection refused) rather than
+        // hanging on the real CMS. The gate runs before the dial regardless.
+        let mut cfg = offline_config_with_callsign();
+        cfg.connect.host = "127.0.0.1".to_string();
+        let backend = NativeBackend::new(cfg, tmp.path().join("mbox"))
+            .with_tactical_gate(
+                // dead URL + a key: a tactical Unknown while offline never calls verify anyway.
+                TacticalRegistrationVerifier::with_base_url("http://127.0.0.1:1/".into(), "K".into()),
+                store_path.clone(),
+                /*online=*/ false,
+            );
+
+        // Active = tactical EOC-3 under W1ABC -> Unknown + offline -> Refuse, no dial.
+        backend.set_active_identity(
+            SessionIdentity::tactical(IdentityHandle::for_test(Callsign::parse("W1ABC").unwrap()),
+                "EOC-3".into()).unwrap());
+        let err = backend
+            .connect(TransportConfig::Cms { mode: CmsTransport::Telnet }, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BackendError::TacticalNotCmsRegistered { .. }), "got {err:?}");
+
+        // Active = FULL W1ABC -> gate is a no-op; the connect proceeds to the dial and
+        // fails with a TRANSPORT error (closed loopback port), NOT
+        // TacticalNotCmsRegistered.
+        backend.set_active_identity(
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("W1ABC").unwrap())));
+        let full_res = backend
+            .connect(TransportConfig::Cms { mode: CmsTransport::Telnet }, None)
+            .await;
+        if let Err(e) = full_res {
+            assert!(!matches!(e, BackendError::TacticalNotCmsRegistered { .. }),
+                "FULL identity must never be CMS-gated, got {e:?}");
+        }
     }
 
     // =========================================================================

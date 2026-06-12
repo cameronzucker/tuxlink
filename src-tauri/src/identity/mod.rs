@@ -21,7 +21,7 @@ pub mod service;
 pub mod store;
 
 pub use address::{Address, Callsign};
-pub use cms_verify::{cms_gate_decision, CmsGateDecision, RefuseReason, TacticalRegistrationVerifier, VerifyError};
+pub use cms_verify::{cms_gate_decision, gate_cms_entry, CmsGateDecision, GateOutcome, RefuseReason, TacticalRegistrationVerifier, VerifyError};
 pub use handle::{IdentityHandle, SessionIdentity};
 pub use service::IdentityService;
 pub use store::{FullIdentity, IdentityStore, TacticalCmsState, TacticalIdentity};

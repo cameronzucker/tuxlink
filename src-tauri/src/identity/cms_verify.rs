@@ -8,7 +8,7 @@
 //! address is NotRegistered, the gate FAIL-CLOSES — CMS is refused. P2P / RF are
 //! never gated by this module.
 
-use crate::identity::TacticalCmsState;
+use crate::identity::{Callsign, IdentityStore, TacticalCmsState};
 
 /// Cache freshness window (also the Winlink API's documented once-a-day rate limit).
 pub const CMS_VERIFY_TTL_SECS: u64 = 24 * 60 * 60;
@@ -191,6 +191,58 @@ impl TacticalRegistrationVerifier {
     }
 }
 
+/// Final CMS-entry verdict for a tactical session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateOutcome {
+    Allow,
+    Refuse(RefuseReason),
+}
+
+/// Resolve, (re)verify, and decide whether a tactical may enter a CMS mode.
+/// Reads the cached state from `store`; on a re-checkable state while `online`,
+/// performs ONE online verification, persists the result, and re-decides.
+/// Pure-refusing states (offline-stale, offline-uncached, NotRegistered) skip HTTP.
+pub async fn gate_cms_entry(
+    store: &mut IdentityStore,
+    tactical_label: &str,
+    parent: &Callsign,
+    verifier: &TacticalRegistrationVerifier,
+    online: bool,
+    now_unix: u64,
+) -> GateOutcome {
+    let cached = store
+        .tactical()
+        .iter()
+        .find(|t| t.label == tactical_label && t.parent.as_str() == parent.as_str())
+        .map(|t| t.cms.clone())
+        .unwrap_or(TacticalCmsState::Unknown);
+
+    match cms_gate_decision(&cached, now_unix, online) {
+        CmsGateDecision::Allow => GateOutcome::Allow,
+        CmsGateDecision::Refuse(r) => GateOutcome::Refuse(r),
+        CmsGateDecision::RefuseRecheck => {
+            // Online and cache can't authorize: verify once, persist, re-decide.
+            match verifier.verify(tactical_label).await {
+                Ok(state) => {
+                    // A failed store write must NOT upgrade to Allow — re-decide on
+                    // the freshly-fetched in-memory state regardless of persistence.
+                    let _ = store.set_tactical_cms(tactical_label, parent, state.clone());
+                    match cms_gate_decision(&state, now_unix, online) {
+                        CmsGateDecision::Allow => GateOutcome::Allow,
+                        CmsGateDecision::Refuse(r) => GateOutcome::Refuse(r),
+                        // A just-fetched state is fresh, so a second RefuseRecheck is
+                        // impossible; treat defensively as fail-closed.
+                        CmsGateDecision::RefuseRecheck => GateOutcome::Refuse(RefuseReason::Uncached),
+                    }
+                }
+                // Verify failed (no key / transport / decode): cache untouched,
+                // fail-closed as if uncached-offline.
+                Err(_) => GateOutcome::Refuse(RefuseReason::Uncached),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod gate_tests {
     use super::*;
@@ -294,5 +346,83 @@ mod verify_tests {
         let v = TacticalRegistrationVerifier::with_base_url("http://127.0.0.1:1/".into(), String::new());
         let err = v.verify("EOC-3").await.unwrap_err();
         assert!(matches!(err, VerifyError::KeyMissing), "got {err:?}");
+    }
+}
+
+#[cfg(test)]
+mod gate_entry_tests {
+    use super::*;
+    use crate::identity::{Callsign, FullIdentity, IdentityStore, TacticalCmsState, TacticalIdentity};
+
+    fn store_with_tactical(cms: TacticalCmsState) -> IdentityStore {
+        let mut s = IdentityStore::default();
+        s.add_full(FullIdentity { callsign: Callsign::parse("W1ABC").unwrap(), label: None,
+            has_cms_account: true, cms_registered: true }).unwrap();
+        s.add_tactical(TacticalIdentity { label: "EOC-3".into(),
+            parent: Callsign::parse("W1ABC").unwrap(), cms }).unwrap();
+        s
+    }
+
+    #[tokio::test]
+    async fn cached_registered_allows_offline_without_http() {
+        let mut store = store_with_tactical(TacticalCmsState::Registered { checked_unix: 1000 });
+        let parent = Callsign::parse("W1ABC").unwrap();
+        // Verifier pointed at a dead address; must NOT be called.
+        let v = TacticalRegistrationVerifier::with_base_url("http://127.0.0.1:1/".into(), "K".into());
+        let out = gate_cms_entry(&mut store, "EOC-3", &parent, &v, false, 1000 + 60).await;
+        assert_eq!(out, GateOutcome::Allow);
+    }
+
+    #[tokio::test]
+    async fn unknown_offline_refuses() {
+        let mut store = store_with_tactical(TacticalCmsState::Unknown);
+        let parent = Callsign::parse("W1ABC").unwrap();
+        let v = TacticalRegistrationVerifier::with_base_url("http://127.0.0.1:1/".into(), "K".into());
+        let out = gate_cms_entry(&mut store, "EOC-3", &parent, &v, false, 5_000).await;
+        assert_eq!(out, GateOutcome::Refuse(RefuseReason::Uncached));
+    }
+
+    #[tokio::test]
+    async fn unknown_online_verifies_persists_and_allows() {
+        let mut server = mockito::Server::new_async().await;
+        server.mock("POST", "/account/tactical/exists")
+            .with_status(200).with_body(r#"{"Tactical":true}"#)
+            .create_async().await;
+        let mut store = store_with_tactical(TacticalCmsState::Unknown);
+        let parent = Callsign::parse("W1ABC").unwrap();
+        let v = TacticalRegistrationVerifier::with_base_url(server.url(), "K".into())
+            .with_clock(Box::new(|| 7_000));
+        let out = gate_cms_entry(&mut store, "EOC-3", &parent, &v, true, 7_000).await;
+        assert_eq!(out, GateOutcome::Allow);
+        let t = store.tactical().iter().find(|t| t.label == "EOC-3").unwrap();
+        assert_eq!(t.cms, TacticalCmsState::Registered { checked_unix: 7_000 });
+    }
+
+    #[tokio::test]
+    async fn unknown_online_not_registered_refuses_and_persists() {
+        let mut server = mockito::Server::new_async().await;
+        server.mock("POST", "/account/tactical/exists")
+            .with_status(200).with_body(r#"{"Tactical":false}"#)
+            .create_async().await;
+        let mut store = store_with_tactical(TacticalCmsState::Unknown);
+        let parent = Callsign::parse("W1ABC").unwrap();
+        let v = TacticalRegistrationVerifier::with_base_url(server.url(), "K".into())
+            .with_clock(Box::new(|| 8_000));
+        let out = gate_cms_entry(&mut store, "EOC-3", &parent, &v, true, 8_000).await;
+        assert_eq!(out, GateOutcome::Refuse(RefuseReason::NotRegistered));
+    }
+
+    #[tokio::test]
+    async fn online_verify_error_keeps_cache_and_refuses() {
+        let mut server = mockito::Server::new_async().await;
+        server.mock("POST", "/account/tactical/exists")
+            .with_status(500).with_body("boom").create_async().await;
+        let mut store = store_with_tactical(TacticalCmsState::Unknown);
+        let parent = Callsign::parse("W1ABC").unwrap();
+        let v = TacticalRegistrationVerifier::with_base_url(server.url(), "K".into());
+        let out = gate_cms_entry(&mut store, "EOC-3", &parent, &v, true, 9_000).await;
+        assert_eq!(out, GateOutcome::Refuse(RefuseReason::Uncached));
+        let t = store.tactical().iter().find(|t| t.label == "EOC-3").unwrap();
+        assert_eq!(t.cms, TacticalCmsState::Unknown); // untouched
     }
 }
