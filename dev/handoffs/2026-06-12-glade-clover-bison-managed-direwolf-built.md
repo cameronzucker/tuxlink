@@ -25,16 +25,21 @@ A managed VHF-FM-packet path where tuxlink owns the Dire Wolf lifecycle (finishe
 
 ## CI
 
-- **P1–P6 + P9: GREEN** (run 27408536190 — `clippy --all-targets --locked -D warnings` clean + full vitest + both arches). Cleared 4 CI-only issues the cold-no-local-clippy posture surfaced: Debug-derive E0277, needless_update, items_after_test_module, question_mark.
-- **P7 CI: in-flight** at handoff (run for `d7b9c9bd`). The new Rust command is a thin wrapper verified sound (partial-move ordering checked); vitest green locally. **Next session: confirm P7 CI went green** (`gh pr checks 628`) before the Codex round.
+- **P1–P7 + P9: GREEN** (run 27409525920 + Release build — `clippy --all-targets --locked -D warnings` clean + full vitest incl. the P7 UI tests + the Rust device-list command, both arches). Cleared 4 CI-only issues the cold-no-local-clippy posture surfaced: Debug-derive E0277, needless_update, items_after_test_module, question_mark.
+- **Device-enum smoke-blocker fix (`563884ea`): CI re-verifying** at handoff. Confirm green (`gh pr checks 628`).
+
+## Self-adrev outcome (2026-06-12, OPERATOR DECISION: substituted Claude self-adrev for Codex — "we don't have time; anything really broken surfaces in smoke")
+
+Two parallel adversarial passes on the full diff. **Caught 2 CRITICAL real-hardware bugs, confirmed against this Pi's live `/sys`** — `read_sys_snapshot` read USB `idVendor` at the interface node (none there) → DigiRig/DRA-100 filtered out of the picker entirely; and the card-vs-PTT `usb_parent` join key was at the wrong tree depth → PTT never resolved / cross-matched on a shared hub. **FIXED in `563884ea`** (climb to the USB device node on all three walks; join key = device node, not hub; hardened the CardIdHash fallback since `/dev/snd/by-id` is absent here). New regression tests incl. two-dongles-one-hub. The RADIO-1 never-keyed-PTT invariant, abort path, conf syntax, config/DTO, and TS↔Rust wire shapes all reviewed CLEAN end-to-end. **The self-adrev is the review gate (operator's call); switch back to Codex only if it's back and there's time.** Raw findings are in the session transcript (not tee'd — the passes were Agent subagents, not the Codex CLI).
 
 ## Remaining before PR #628 → ready (in order)
 
-1. **Confirm P7 CI green** (above).
-2. **MANDATORY cross-provider Codex adversarial round** on the full diff — **quota-blocked until ~2026-06-13 1:49 PM**. Do NOT substitute Claude (`feedback_no_carveout_on_cross_provider_adrev`). Run per CLAUDE.md's stdin pattern on `git diff origin/main..HEAD`; tee to `dev/adversarial/`. Address findings, then mark PR ready.
-3. **Operator on-air smoke** — DRA-100 → CDM-1550LS+, VHF FM packet. The agent cannot transmit (RADIO-1); this is the operator's. The key thing to verify on air: **clean disconnect de-keys the transmitter** (the documented SIGKILL residual is the watch item).
-4. `tuxlink-dn5b` (P8 readiness chip) — optional polish, reframed from live-health to pre-connect readiness; not required for alpha.
-5. Minor: amend the design doc's `direwolf -t 0 -c` parse-gate line per the P3 grounding (one line).
+1. **Confirm the `563884ea` CI run is green** (`gh pr checks 628`).
+2. **Operator on-air smoke** — DRA-100 → CDM-1550LS+, VHF FM packet. The agent cannot transmit (RADIO-1); this is the operator's. Key checks: (a) the device picker now shows the cards (the `563884ea` fix), (b) **clean disconnect de-keys the transmitter** (documented SIGKILL residual is the watch item). Suggest `ls /dev/snd/by-id` on the reference Pi first — if empty (as on this Pi), the hardened CardIdHash fallback is what disambiguates the two cards.
+3. **`tuxlink-sr86` (P2) — bring the branch up to origin/main BEFORE merge** (34 commits behind; the `origin/main..HEAD` diff shows phantom reverts — review the feature against fork point `63315e63..HEAD`, not main). Merge-time blocker, NOT a smoke blocker.
+4. Residual self-adrev follow-ups (non-blocking): `tuxlink-331c` (I1, gate Connect on a configured managed link), `tuxlink-opl8` (M2, conf control-char guard), `tuxlink-kyh1` (M3, PTT display drift).
+5. `tuxlink-dn5b` (P8 readiness chip) — optional polish.
+6. Minor: amend the design doc's `direwolf -t 0 -c` parse-gate line per the P3 grounding (one line).
 
 ## Worktree
 
