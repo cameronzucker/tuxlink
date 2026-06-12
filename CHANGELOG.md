@@ -30,6 +30,30 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.53.0](https://github.com/cameronzucker/tuxlink/compare/v0.52.2...v0.53.0) (2026-06-12)
+
+
+### Features
+
+* **forms:** .txt-directive detection + companion resolution + orphan probe (tuxlink-z0le) ([87ec280](https://github.com/cameronzucker/tuxlink/commit/87ec2801407460e0e3981f669a40baf94ea76a33))
+* **forms:** enumerate .htm + register import commands/state/sweep in lib.rs (tuxlink-z0le) ([8387411](https://github.com/cameronzucker/tuxlink/commit/8387411ea20ae341dafaa5f27d829caf1eb4afc4))
+* **forms:** folder reveal, uninstall, + close /folder CSP exfil hole (tuxlink-z0le) ([bf43f63](https://github.com/cameronzucker/tuxlink/commit/bf43f63968fa8be87a36d7e4ca9c8680b76949dd))
+* **forms:** folder-aware import classification + summary (tuxlink-z0le) ([4cb63e9](https://github.com/cameronzucker/tuxlink/commit/4cb63e992d1f674f0c6dc1615d2d3369224b077b))
+* **forms:** hardened staging (0700, symlink/cap/traversal/unwrap) (tuxlink-z0le) ([424802d](https://github.com/cameronzucker/tuxlink/commit/424802dbb049a3430fc1ad4ad88eafdb700a0a70))
+* **forms:** import IPC bindings + TS types (tuxlink-z0le) ([d6fb475](https://github.com/cameronzucker/tuxlink/commit/d6fb475fb2c9b82c2318d805d1387057bb60543a))
+* **forms:** import module skeleton + serde-tagged types (tuxlink-z0le) ([57fce6c](https://github.com/cameronzucker/tuxlink/commit/57fce6c8987cf966fc5da4fbb297fbf658e74793))
+* **forms:** import staging registry + preview/cancel commands (tuxlink-z0le) ([39eab8e](https://github.com/cameronzucker/tuxlink/commit/39eab8e895ab019fb7e05f4daf17af3161371224))
+* **forms:** ImportSheet preview/confirm/commit UI + dialog:allow-open grant (tuxlink-z0le) ([7b4457d](https://github.com/cameronzucker/tuxlink/commit/7b4457d26b50537efeded3b966d2fb12c503b91f))
+* **forms:** single-shot import commit with .prev backup + re-classify (tuxlink-z0le) ([71e0611](https://github.com/cameronzucker/tuxlink/commit/71e061166f8de24e8e89739e34ba91ceb0de0567))
+* **forms:** strict path-safety + zip-bomb ratio guard for import (tuxlink-z0le) ([3ced2f8](https://github.com/cameronzucker/tuxlink/commit/3ced2f80eb1e27614a87f6015781d005aa118b3c))
+* **forms:** wire import into CatalogBrowser (entry points, custom-first, Remove, Escape) (tuxlink-z0le, tuxlink-fwob) ([b5156b0](https://github.com/cameronzucker/tuxlink/commit/b5156b0a4dbe785f5697cbb7dae39761c2092b43))
+
+
+### Bug Fixes
+
+* **finder:** make the band picker a multi-select band filter ([7f494b8](https://github.com/cameronzucker/tuxlink/commit/7f494b8579eb0a121c4db36ada718e35b1f3bda0))
+* **radio:** VARA panel routes the sidebar-selected intent, not hardcoded cms ([145eb9c](https://github.com/cameronzucker/tuxlink/commit/145eb9c2086a6071593cd679e435cafa1f0e0fea))
+
 ## [0.52.2](https://github.com/cameronzucker/tuxlink/compare/v0.52.1...v0.52.2) (2026-06-11)
 
 
