@@ -2675,24 +2675,23 @@ fn dial_outbound_or_propagate(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // config + session_id together are one logical "session context"
 pub fn run_ardop_b2f_exchange(
     transport: &mut dyn crate::winlink::modem::ModemTransport,
     target: &str,
     intent: SessionIntent,
     config: &Config,
+    session_id: &crate::identity::SessionIdentity,
     mailbox: &Mailbox,
     position: Option<&crate::position::PositionArbiter>,
     progress: Option<&dyn Fn(&str)>,
 ) -> Result<(), BackendError> {
     use crate::winlink::modem::ardop::b2f;
 
-    let callsign = config
-        .identity
-        .active_full
-        .clone()
-        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
-        .trim()
-        .to_uppercase();
+    // tuxlink-0063 (Phase 3, Task 3.6): the on-air station ID is the session's
+    // full callsign — the Part 97 principal — not `config.identity.active_full`.
+    // Threading `&SessionIdentity` makes on-air impersonation a compile error.
+    let callsign = session_id.mycall().as_str().to_uppercase();
     let locator = crate::position::effective_broadcast_locator(config, position);
     // The ARDOP B2F path can dial either a CMS gateway (intent=Cms) or a peer
     // station (intent=P2p — added in tuxlink-9ls2). Only the gateway path may
@@ -2785,18 +2784,15 @@ pub fn run_ardop_b2f_answer(
     transport: &mut dyn crate::winlink::modem::ModemTransport,
     peer_callsign: &str,
     config: &Config,
+    session_id: &crate::identity::SessionIdentity,
     mailbox: &Mailbox,
     position: Option<&crate::position::PositionArbiter>,
     progress: Option<&dyn Fn(&str)>,
 ) -> Result<(), BackendError> {
     use crate::winlink::modem::ardop::b2f;
-    let callsign = config
-        .identity
-        .active_full
-        .clone()
-        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
-        .trim()
-        .to_uppercase();
+    // tuxlink-0063 (Phase 3, Task 3.6): the on-air station ID is the session's
+    // full callsign captured AT LISTENER-ARM TIME — not config.identity.active_full.
+    let callsign = session_id.mycall().as_str().to_uppercase();
     let locator = crate::position::effective_broadcast_locator(config, position);
 
     // Intent-filtered drain (tuxlink-u5hl). Listener answerer: catch the
@@ -5078,5 +5074,108 @@ mod native_read_state_tests {
     fn session_identity_is_clone() {
         fn assert_clone<T: Clone>() {}
         assert_clone::<crate::identity::SessionIdentity>();
+    }
+
+    // =========================================================================
+    // Task 3.6 (tuxlink-0063): run_ardop_b2f_exchange derives the on-air
+    // station ID (ExchangeConfig.mycall → the ;FW: callsign sent on the data
+    // stream) from the SessionIdentity it is handed, NOT from
+    // `config.identity.active_full`.
+    //
+    // Config callsign: W7AUX. Active session: N7CPZ.
+    // The ;FW: line in the client's handshake MUST carry N7CPZ, not W7AUX.
+    //
+    // A minimal ScriptedDuplex implements ModemTransport + ReadWrite so the
+    // B2F engine can run end-to-end in memory (no TCP, no ardopcf).
+    // =========================================================================
+    #[test]
+    fn ardop_b2f_exchange_mycall_comes_from_session_not_config() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::modem::ardop::session::{ConnectInfo, InitConfig, SessionError};
+        use crate::winlink::modem::{ModemTransport, ReadWrite};
+        use std::io::{Cursor, Read, Write};
+        use std::time::Duration;
+
+        // ── scripted duplex: reads return a minimal CMS handshake; writes are
+        //    captured so we can inspect the callsign the B2F engine announced.
+        struct ScriptedDuplex {
+            reader: Cursor<Vec<u8>>,
+            captured: Vec<u8>,
+        }
+        impl Read for ScriptedDuplex {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.reader.read(buf)
+            }
+        }
+        impl Write for ScriptedDuplex {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.captured.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+
+        struct ScriptedTransport {
+            duplex: ScriptedDuplex,
+        }
+        impl ModemTransport for ScriptedTransport {
+            fn init(&mut self, _: &InitConfig) -> Result<(), SessionError> { Ok(()) }
+            fn connect_arq(&mut self, _: &str, _: u32, _: Option<Duration>)
+                -> Result<ConnectInfo, SessionError>
+            {
+                Ok(ConnectInfo { peer_call: "W7RMS-10".into(), bandwidth_hz: 500 })
+            }
+            fn disconnect(&mut self, _: Duration) -> Result<(), SessionError> { Ok(()) }
+            fn data_stream(&mut self) -> std::io::Result<&mut dyn ReadWrite> {
+                Ok(&mut self.duplex)
+            }
+        }
+
+        // Scripted "CMS" server: empty handshake + no messages.
+        let mut script = Vec::new();
+        script.extend_from_slice(b"[WL2K-5.0-B2FHM$]\rCMS>\r");
+        script.extend_from_slice(b"FF\r"); // remote has nothing
+
+        let mut transport = ScriptedTransport {
+            duplex: ScriptedDuplex {
+                reader: Cursor::new(script),
+                captured: Vec::new(),
+            },
+        };
+
+        // Config callsign W7AUX; active session authenticates N7CPZ.
+        let mut cfg = offline_config();
+        cfg.identity.active_full = Some("W7AUX".into());
+        let session_id =
+            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()));
+
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+
+        // Call run_ardop_b2f_exchange — after the Task 3.6 signature change,
+        // session_id is the second argument (after config, before mailbox).
+        let _ = run_ardop_b2f_exchange(
+            &mut transport,
+            "W7RMS-10",
+            crate::winlink::session::SessionIntent::Cms,
+            &cfg,
+            &session_id,
+            &mailbox,
+            None,
+            None,
+        );
+
+        // The B2F slave's opening handshake sends ";FW: <mycall>\r".
+        // It MUST be N7CPZ (from the session), NOT W7AUX (from the config).
+        let written = String::from_utf8_lossy(&transport.duplex.captured);
+        assert!(
+            written.contains(";FW: N7CPZ"),
+            "run_ardop_b2f_exchange must use the session mycall N7CPZ in ;FW:; got:\n{written}"
+        );
+        assert!(
+            !written.contains(";FW: W7AUX"),
+            "run_ardop_b2f_exchange must NOT use the config callsign W7AUX in ;FW:; got:\n{written}"
+        );
     }
 }

@@ -3938,6 +3938,18 @@ pub(crate) async fn ardop_listen_inner(
         let mut guard = listen_state.inner.lock().unwrap();
         *guard = Some(ArdopListenHandle { shutdown: shutdown.clone() });
     }
+    // tuxlink-0063 (Phase 3, Task 3.6): capture the active session identity AT
+    // ARM TIME so the answerer answers as the identity that was active when the
+    // operator armed the listener — not a live-read that could change if the
+    // operator switches identity during the armed window.
+    let session_id = app
+        .state::<BackendState>()
+        .current()
+        .ok_or_else(|| UiError::Internal {
+            detail: "ARDOP listener arm: backend offline — cannot resolve active identity".into(),
+        })?
+        .active_identity()?;
+
     let arbiter: std::sync::Arc<crate::position::PositionArbiter> =
         (*app.state::<std::sync::Arc<crate::position::PositionArbiter>>()).clone();
     let session_arc: std::sync::Arc<crate::modem_status::ModemSession> = (*session).clone();
@@ -3952,6 +3964,7 @@ pub(crate) async fn ardop_listen_inner(
             allowed,
             arms_for_task,
             arbiter,
+            session_id,
             shutdown,
             app_clone,
             log_clone,
@@ -4074,6 +4087,11 @@ fn ardop_listener_consumer_task(
     allowed: crate::winlink::listener::AllowedStations,
     arms: crate::winlink::listener::ListenerArmsRecord,
     arbiter: std::sync::Arc<crate::position::PositionArbiter>,
+    // tuxlink-0063 Phase 3 Task 3.6: session_id is captured AT LISTENER-ARM TIME
+    // so the answerer uses the identity that was active when the operator armed the
+    // listener — not a live-read that could change if the operator switches identity
+    // during the armed window. SessionIdentity is Clone.
+    session_id: crate::identity::SessionIdentity,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     app: AppHandle,
     log: std::sync::Arc<SessionLogState>,
@@ -4171,6 +4189,7 @@ fn ardop_listener_consumer_task(
                         transport.as_mut(),
                         &peer_call,
                         &cfg,
+                        &session_id,
                         mb,
                         Some(arbiter.as_ref()),
                         Some(&progress),
@@ -4194,6 +4213,7 @@ fn ardop_listener_consumer_task(
                                     transport.as_mut(),
                                     &peer_call,
                                     &cfg,
+                                    &session_id,
                                     &tmp_mb,
                                     Some(arbiter.as_ref()),
                                     Some(&progress),

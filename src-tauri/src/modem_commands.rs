@@ -1093,6 +1093,14 @@ fn run_b2f_with_transport(
 
     let cfg = config::read_config().map_err(|e| format!("read config failed: {e}"))?;
 
+    // tuxlink-0063 (Phase 3, Task 3.6): the on-air station ID comes from the
+    // authenticated active SessionIdentity, not from `config.identity.active_full`.
+    let backend = app
+        .state::<crate::app_backend::BackendState>()
+        .current()
+        .ok_or_else(|| "ARDOP B2F: backend offline — cannot resolve active identity".to_string())?;
+    let session_id = backend.active_identity().map_err(|e| e.to_string())?;
+
     // Position arbiter is registered in lib.rs::run() — pull a live ref so
     // the on-air locator honors live GPS / privacy state, matching the
     // telnet/packet paths' behavior. Mirrors `bootstrap::install_native`'s
@@ -1117,6 +1125,7 @@ fn run_b2f_with_transport(
         target,
         intent,
         &cfg,
+        &session_id,
         &mailbox,
         Some(&arbiter),
         Some(&progress),
