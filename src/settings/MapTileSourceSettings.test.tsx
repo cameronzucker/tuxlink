@@ -8,6 +8,12 @@ vi.mock('../map/tileSource', () => ({
   clearTileCache: vi.fn(),
 }));
 
+// Mock the Tauri bridge for the mount-time config_read hydration (tuxlink-9rek).
+const invokeMock = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...a: unknown[]) => invokeMock(...a),
+}));
+
 import {
   configureTileSource,
   testTileSource,
@@ -28,9 +34,12 @@ beforeEach(() => {
   testMock.mockReset();
   configureMock.mockReset();
   clearMock.mockReset();
+  invokeMock.mockReset();
   testMock.mockResolvedValue(LAN_LIVE);
   configureMock.mockResolvedValue(LAN_LIVE);
   clearMock.mockResolvedValue(undefined);
+  // Default: no persisted source → mount hydration is a no-op (keeps defaults).
+  invokeMock.mockResolvedValue({ map_tile_source: null });
 });
 
 // Fill in a LAN URL so default fields produce a valid camelCase source.
@@ -129,5 +138,42 @@ describe('MapTileSourceSettings', () => {
     // And the operator can still test the public host.
     fireEvent.click(screen.getByRole('button', { name: /Test source/i }));
     await waitFor(() => expect(testMock).toHaveBeenCalled());
+  });
+
+  it('hydrates the form from the persisted source on mount (tuxlink-9rek)', async () => {
+    invokeMock.mockResolvedValue({
+      map_tile_source: {
+        url: 'http://pandora.local/tiles/styles/positron/{z}/{x}/{y}.png',
+        scheme: 'Tms',
+        minZoom: 2,
+        maxZoom: 18,
+        cacheBudgetMb: 512,
+        attribution: '© Geographica',
+        label: 'Shack LAN',
+      },
+    });
+    render(<MapTileSourceSettings />);
+    await waitFor(() =>
+      expect((screen.getByLabelText(/Tile URL template/i) as HTMLInputElement).value).toBe(
+        'http://pandora.local/tiles/styles/positron/{z}/{x}/{y}.png',
+      ),
+    );
+    expect((screen.getByLabelText(/Maximum zoom/i) as HTMLInputElement).value).toBe('18');
+    expect((screen.getByLabelText(/Source label/i) as HTMLInputElement).value).toBe('Shack LAN');
+    expect(screen.getByRole('radio', { name: /TMS/i })).toBeChecked();
+  });
+
+  it('emits a tile-source-changed event after Use this source (tuxlink-9rek)', async () => {
+    const onChange = vi.fn();
+    window.addEventListener('tuxlink:tile-source-changed', onChange);
+    try {
+      render(<MapTileSourceSettings />);
+      fillLanUrl();
+      fireEvent.click(screen.getByRole('button', { name: /Use this source/i }));
+      await waitFor(() => expect(configureMock).toHaveBeenCalled());
+      await waitFor(() => expect(onChange).toHaveBeenCalled());
+    } finally {
+      window.removeEventListener('tuxlink:tile-source-changed', onChange);
+    }
   });
 });

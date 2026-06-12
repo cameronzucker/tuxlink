@@ -18,7 +18,8 @@
  * chosen LAN host is authoritative, and the TCP-layer access boundary, not
  * this form, is the security control.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import {
   configureTileSource,
   testTileSource,
@@ -27,6 +28,7 @@ import {
   type TileSource,
   type TileSourceStatus,
 } from '../map/tileSource';
+import { emitTileSourceChanged } from '../map/tileSourceEvent';
 
 /** Render a probe/configure status as plain, present-indicative operator copy. */
 function statusMessage(status: TileSourceStatus): string {
@@ -86,6 +88,31 @@ export function MapTileSourceSettings() {
   const [label, setLabel] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  // tuxlink-9rek: hydrate the form from the persisted source on mount so
+  // reopening Settings shows the saved source instead of blank defaults. Reads
+  // the same `config_read` → `map_tile_source` the map's useTileSource reads.
+  useEffect(() => {
+    let mounted = true;
+    invoke<{ map_tile_source?: TileSource | null }>('config_read')
+      .then((config) => {
+        const saved = config?.map_tile_source ?? null;
+        if (!mounted || !saved) return;
+        setUrl(saved.url);
+        setScheme(saved.scheme);
+        setMinZoom(String(saved.minZoom));
+        setMaxZoom(String(saved.maxZoom));
+        setCacheBudgetMb(String(saved.cacheBudgetMb));
+        setAttribution(saved.attribution ?? '');
+        setLabel(saved.label);
+      })
+      .catch(() => {
+        /* no persisted source / IPC error → keep blank defaults */
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const publicWarning = looksPublic(url);
 
   function buildSource(): TileSource {
@@ -115,6 +142,9 @@ export function MapTileSourceSettings() {
     try {
       const status = await configureTileSource(buildSource());
       setFeedback(statusMessage(status));
+      // tuxlink-9rek: tell any mounted map to re-read the (possibly newly
+      // activated) source so it applies without an app restart.
+      emitTileSourceChanged();
     } catch (e) {
       setFeedback(`Save failed: ${e}`);
     }

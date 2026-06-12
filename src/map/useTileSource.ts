@@ -21,6 +21,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getTileSourceStatus, type TileSource, type TileSourceStatus } from './tileSource';
+import { listenTileSourceChanged } from './tileSourceEvent';
 
 /** Status kinds that back a live tile layer + raised zoom cap. */
 const TILE_BACKED_KINDS: ReadonlySet<TileSourceStatus['kind']> = new Set([
@@ -72,8 +73,15 @@ export function useTileSource(): TileSourceDescriptor | null {
 
     load();
 
+    // tuxlink-9rek: re-read when the operator activates a source in Settings,
+    // so an already-mounted map picks it up without an app restart.
+    const unlisten = listenTileSourceChanged(() => {
+      load();
+    });
+
     return () => {
       mounted = false;
+      unlisten();
     };
   }, []);
 
