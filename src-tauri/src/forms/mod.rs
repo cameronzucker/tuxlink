@@ -11,6 +11,7 @@ pub mod pdf_export; // tuxlink-cumx / G8 — on-demand faithful PDF export of a 
 pub mod serialize;
 pub mod skin;
 pub mod templates;
+pub mod txt_template; // tuxlink-o4p9 / G12-A — WLE .txt form-template parser (To:/Subject:/Msg:)
 pub mod types;
 pub mod updater; // tuxlink-xipa Phase 3 — winlink.org Standard Forms refresh (backend layer; IPC + UI in follow-up PRs)
 pub mod validation;
