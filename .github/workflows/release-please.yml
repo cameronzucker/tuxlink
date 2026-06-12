@@ -12,7 +12,26 @@ jobs:
   release-please:
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v6
+
+      # Release freeze guard (tuxlink-561d): when `.github/RELEASE_FREEZE`
+      # exists, skip release-please entirely so merges to main during an
+      # in-flight fail-closed feature do not accumulate into an auto-tagged
+      # release. v0.55.0 shipped the Phase-3 transmit gate ahead of its
+      # enabling Phase 6 (tuxlink-yyii); the marker prevents a repeat. Remove
+      # the marker file to resume automated releases.
+      - name: Check release freeze
+        id: freeze
+        run: |
+          if [ -f .github/RELEASE_FREEZE ]; then
+            echo "frozen=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Release frozen::release-please skipped — $(head -1 .github/RELEASE_FREEZE). Remove .github/RELEASE_FREEZE to resume."
+          else
+            echo "frozen=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: googleapis/release-please-action@v5
+        if: steps.freeze.outputs.frozen != 'true'
         with:
           # PAT (not default GITHUB_TOKEN) so the tag-push that
           # release-please creates fires release.yml. GITHUB_TOKEN
