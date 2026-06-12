@@ -1706,8 +1706,8 @@ mod tests {
         fn sample_raw_message(subject: &str) -> Vec<u8> {
             crate::winlink::compose::compose_message("N7CPZ", &["W1AW"], &[], subject, "body", 1_716_200_000).to_bytes()
         }
-        fn mid_of(raw: &[u8]) -> crate::native_mailbox::MessageId {
-            crate::native_mailbox::MessageId::new(
+        fn mid_of(raw: &[u8]) -> crate::winlink_backend::MessageId {
+            crate::winlink_backend::MessageId(
                 crate::winlink::message::Message::from_bytes(raw)
                     .unwrap()
                     .header("Mid")
