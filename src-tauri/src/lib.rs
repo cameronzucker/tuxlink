@@ -254,6 +254,9 @@ pub fn run() {
         .manage(std::sync::Arc::new(crate::ui_commands::VaraListenState::default()))
         // Phase 2 (tuxlink-7iy2): identity CRUD command state (keyring-backed; no store path held).
         .manage(crate::identity::IdentityService::new())
+        // APRS tactical-chat engine lifecycle (tuxlink-2f2n, Task 10). Task 11's
+        // Tauri commands consume this via `State<'_, AprsState>`.
+        .manage(crate::winlink::aprs::engine::AprsState::default())
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
 

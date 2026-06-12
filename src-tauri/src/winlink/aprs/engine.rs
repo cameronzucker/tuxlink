@@ -22,6 +22,13 @@
 //! The async driver (Task 10) wraps this core; all timing is injected via
 //! `now_ms` so the engine is fully deterministic under test.
 
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::sync::Arc;
+
+use tauri::Emitter;
+
 use crate::winlink::ax25::frame::Frame;
 use crate::winlink::ax25::kiss::{kiss_data_frame, KissDecoder};
 
@@ -32,7 +39,8 @@ use super::message::{encode_ack, encode_message, parse_info, AprsPayload};
 use super::tx::TxQueue;
 
 /// A decoded, addressed-to-us inbound text message destined for the UI.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InboundMsg {
     pub sender: String,
     pub text: String,
@@ -40,7 +48,11 @@ pub struct InboundMsg {
 }
 
 /// Delivery lifecycle of one of OUR outgoing messages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Wire forms (camelCase) are exactly `"sent"`, `"acked"`, `"timedOut"`,
+/// `"rejected"` — the UI matches on these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum DeliveryState {
     Sent,
     Acked,
@@ -59,7 +71,8 @@ impl DeliveryState {
 }
 
 /// A delivery-state transition for one outgoing message, keyed by its msgid.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StateChange {
     pub msgid: String,
     pub state: DeliveryState,
@@ -251,6 +264,206 @@ fn text_hash(text: &str) -> String {
     format!("h{:x}", h.finish())
 }
 
+// ---------------------------------------------------------------------------
+// Async lifecycle (Task 10): managed `AprsState`, the blocking driver, and the
+// Tauri event sink.
+//
+// **The driver is a sync `fn run` on `spawn_blocking`, NOT a plain async task.**
+// `ByteLink::read` is blocking link I/O; running it directly on the async
+// executor starves the tokio runtime (the same rule the packet path follows —
+// see `winlink_backend.rs:868`). So `run` uses `std::sync::mpsc`,
+// `std::thread::sleep`, and a `std::time::Instant`-derived `now_ms`.
+// ---------------------------------------------------------------------------
+
+/// A command crossing the channel from a Tauri command into the blocking driver.
+pub enum TxCommand {
+    Send {
+        dest: String,
+        text: String,
+        msgid: String,
+    },
+    Abort,
+}
+
+/// Driver handle stored in `AprsState` while listening.
+struct AprsHandle {
+    cmd_tx: mpsc::Sender<TxCommand>,
+    abort: Arc<AtomicBool>,
+}
+
+/// Tauri-managed APRS engine lifecycle. `start` opens the link and spawns the
+/// blocking driver; `send`/`abort` forward commands; `stop` signals the driver
+/// to exit. In-flight capacity is gated synchronously in `send` before the
+/// command crosses the channel.
+#[derive(Default)]
+pub struct AprsState {
+    inner: std::sync::Mutex<Option<AprsHandle>>,
+    listening: Arc<AtomicBool>,
+    counter: AtomicU64,
+    in_flight: Arc<AtomicUsize>,
+}
+
+impl AprsState {
+    pub fn is_listening(&self) -> bool {
+        self.listening.load(Ordering::SeqCst)
+    }
+
+    /// Open the link, build the engine + sink, spawn the blocking driver, store the handle.
+    pub fn start(
+        &self,
+        app: tauri::AppHandle,
+        mac: String,
+        identity: AprsIdentity,
+    ) -> Result<(), String> {
+        let abort = Arc::new(AtomicBool::new(false));
+        let cfg = crate::winlink::ax25::link::KissLinkConfig::Bluetooth { mac };
+        let (link, _abort_sock) = crate::winlink::ax25::connect_link_with_abort(&cfg, abort.clone())
+            .map_err(|e| {
+                format!(
+                    "could not open the radio link ({e}). Is the packet session using it, or the radio off?"
+                )
+            })?;
+        let sink: Box<dyn EventSink> = Box::new(TauriEventSink {
+            app,
+            in_flight: self.in_flight.clone(),
+        });
+        let engine = AprsEngine::new(identity, sink);
+        let (cmd_tx, cmd_rx) = mpsc::channel::<TxCommand>();
+        let listening = self.listening.clone();
+        let abort_for_task = abort.clone();
+        tokio::task::spawn_blocking(move || run(link, engine, cmd_rx, listening, abort_for_task));
+        *self.inner.lock().unwrap() = Some(AprsHandle { cmd_tx, abort });
+        Ok(())
+    }
+
+    pub fn stop(&self) {
+        if let Some(h) = self.inner.lock().unwrap().take() {
+            h.abort.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Mint msgid, gate on capacity (synchronously, before the command crosses the channel),
+    /// increment in-flight, return the minted msgid.
+    pub fn send(&self, dest: String, text: String) -> Result<String, String> {
+        let guard = self.inner.lock().unwrap();
+        let handle = guard
+            .as_ref()
+            .ok_or_else(|| "not listening — start APRS first".to_string())?;
+        if self.in_flight.load(Ordering::SeqCst) >= crate::winlink::aprs::tx::CONCURRENT_CAP {
+            return Err("too many messages pending — wait for acks or timeouts".into());
+        }
+        let n = self.counter.fetch_add(1, Ordering::SeqCst);
+        let msgid = mint_msgid(n);
+        self.in_flight.fetch_add(1, Ordering::SeqCst);
+        handle
+            .cmd_tx
+            .send(TxCommand::Send {
+                dest,
+                text,
+                msgid: msgid.clone(),
+            })
+            .map_err(|_| "APRS driver stopped".to_string())?;
+        Ok(msgid)
+    }
+
+    pub fn abort(&self) {
+        if let Some(h) = self.inner.lock().unwrap().as_ref() {
+            let _ = h.cmd_tx.send(TxCommand::Abort);
+        }
+    }
+}
+
+/// 1-5 char alphanumeric msgid (base-36 of a monotonic counter, wraps within 5 chars).
+fn mint_msgid(n: u64) -> String {
+    const ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut n = n % 36u64.pow(5);
+    if n == 0 {
+        return "0".into();
+    }
+    let mut s = Vec::new();
+    while n > 0 {
+        s.push(ALPHABET[(n % 36) as usize]);
+        n /= 36;
+    }
+    s.reverse();
+    String::from_utf8(s).unwrap()
+}
+
+/// The blocking driver. Runs on `spawn_blocking`; owns the link + engine; polls
+/// the link, drains commands, drives the retransmit clock; exits on abort/EOF/error.
+fn run(
+    mut link: Box<dyn crate::winlink::ax25::link::ByteLink>,
+    mut engine: AprsEngine,
+    cmd_rx: mpsc::Receiver<TxCommand>,
+    listening: Arc<AtomicBool>,
+    abort: Arc<AtomicBool>,
+) {
+    let started = std::time::Instant::now();
+    let now_ms = || started.elapsed().as_millis() as u64;
+    listening.store(true, Ordering::SeqCst);
+    engine.set_listening(true);
+    let mut buf = [0u8; 1024];
+    loop {
+        if abort.load(Ordering::SeqCst) {
+            break;
+        }
+        match link.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                for frame in engine.handle_inbound_bytes(&buf[..n], now_ms()) {
+                    let _ = link.write_all(&frame);
+                }
+            }
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(_) => break,
+        }
+        while let Ok(cmd) = cmd_rx.try_recv() {
+            match cmd {
+                TxCommand::Send { dest, text, msgid } => {
+                    engine.enqueue_send(&dest, &text, &msgid, now_ms())
+                }
+                TxCommand::Abort => engine.abort(),
+            }
+        }
+        for frame in engine.tick(now_ms()) {
+            let _ = link.write_all(&frame);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    listening.store(false, Ordering::SeqCst);
+    engine.set_listening(false);
+}
+
+/// `EventSink` that forwards engine events to the UI via Tauri events, and
+/// releases an in-flight slot on each terminal delivery transition.
+pub struct TauriEventSink {
+    pub app: tauri::AppHandle,
+    pub in_flight: Arc<AtomicUsize>,
+}
+
+impl EventSink for TauriEventSink {
+    fn emit_message(&self, ev: InboundMsg) {
+        let _ = self.app.emit("aprs-message:new", &ev);
+    }
+    fn emit_state(&self, ev: StateChange) {
+        if ev.state.is_terminal() {
+            let _ = self
+                .in_flight
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                    Some(v.saturating_sub(1))
+                });
+        }
+        let _ = self.app.emit("aprs-message:state", &ev);
+    }
+    fn emit_listening(&self, on: bool) {
+        let _ = self.app.emit("aprs-listening:change", on);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,5 +611,11 @@ mod tests {
     fn strip_kiss(b: &[u8]) -> Vec<u8> {
         let mut d = crate::winlink::ax25::kiss::KissDecoder::new();
         d.push(b).into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn aprs_state_starts_not_listening() {
+        let st = AprsState::default();
+        assert!(!st.is_listening());
     }
 }
