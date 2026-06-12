@@ -1160,6 +1160,54 @@ mod tests {
         );
     }
 
+    // P5 back-compat: a packet section with NO `link` key at all (an older config,
+    // or one an operator never configured a link in) loads cleanly as `link: None` —
+    // adding the ManagedDireWolf variant must not change this. Pairs with the
+    // unknown-variant degradation test above (which covers a link the build can't read).
+    #[test]
+    fn packet_section_without_link_loads_as_none() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "BroadcastAtPrecision", "position_precision": "FourCharGrid" }},
+                "packet": {{ "ssid": 7 }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let config: Config = serde_json::from_str(&json)
+            .expect("a packet section with no link key must load, not error");
+        assert_eq!(config.packet.link, None, "absent link key loads as None");
+        assert_eq!(config.packet.ssid, 7, "the rest of the packet section is preserved");
+    }
+
+    // P5: a `packet.link` carrying a ManagedDireWolf written by THIS build round-trips
+    // through serialize → deserialize equal (the known-variant counterpart to the
+    // lenient-degradation test for unknown variants). Exercised at the PacketConfig
+    // level so it does not depend on a full-Config constructor.
+    #[test]
+    fn managed_direwolf_link_round_trips_through_packet_config() {
+        use crate::winlink::ax25::devices::{PttChoice, StableAudioId, StableIdKind};
+        let pc = PacketConfig {
+            ssid: 7,
+            link: Some(KissLinkConfig::ManagedDireWolf {
+                audio_device: StableAudioId {
+                    kind: StableIdKind::ByIdSymlink,
+                    value: "usb-C-Media_DigiRig_Audio-00".into(),
+                },
+                ptt: PttChoice::SerialRts { tty: "/dev/ttyUSB0".into() },
+            }),
+            params: Ax25ParamsConfig::default(),
+            listen_default: true,
+        };
+        let json = serde_json::to_string(&pc).expect("serialize packet config with managed link");
+        let back: PacketConfig =
+            serde_json::from_str(&json).expect("deserialize packet config with managed link");
+        assert_eq!(back.link, pc.link, "managed link round-trips equal through the lenient deser");
+    }
+
     // tuxlink-efo: a tuxlink-specific config-dir override so a per-worktree dev build
     // points at its OWN config and concurrent builds stop contaminating one shared
     // ~/.config/tuxlink/config.json. Takes precedence over XDG_CONFIG_HOME; the dir

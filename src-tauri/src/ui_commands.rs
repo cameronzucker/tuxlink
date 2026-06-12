@@ -3183,6 +3183,19 @@ pub struct PacketConfigDto {
     /// `#[serde(default)]` so a payload from an older frontend (no `btMac`) still loads.
     #[serde(default)]
     pub bt_mac: Option<String>,
+    /// Resolved audio device for `linkKind: "Managed"` (managed Dire Wolf, P5).
+    /// Structured (not a flat scalar) so the `StableAudioId` `kind`+`value` survive
+    /// the DTO round-trip — a single `audioDeviceId` string would drop the `kind`.
+    /// Serializes as a nested camelCase object. `#[serde(default)]` so an older
+    /// frontend payload (no `managedAudioDevice`) still deserializes (bt_mac precedent).
+    #[serde(default)]
+    pub managed_audio_device: Option<crate::winlink::ax25::devices::StableAudioId>,
+    /// Resolved PTT keying method for `linkKind: "Managed"` (managed Dire Wolf, P5).
+    /// Structured (the tagged `PttChoice` enum) so the variant + path survive the
+    /// round-trip. Nested camelCase object on the wire. `#[serde(default)]` for
+    /// older payloads (bt_mac precedent).
+    #[serde(default)]
+    pub managed_ptt: Option<crate::winlink::ax25::devices::PttChoice>,
     pub txdelay: u8,
     pub persistence: u8,
     pub slot_time: u8,
@@ -3205,7 +3218,20 @@ impl From<&config::PacketConfig> for PacketConfigDto {
             Some(KissLinkConfig::Bluetooth { mac }) => {
                 (Some("Bluetooth".into()), None, None, None, None, Some(mac.clone()))
             }
+            // The managed link carries no tcp_/serial_/bt_ scalar — its audio device
+            // + PTT ride the structured `managed_*` fields, set below the tuple.
+            Some(KissLinkConfig::ManagedDireWolf { .. }) => {
+                (Some("Managed".into()), None, None, None, None, None)
+            }
             None => (None, None, None, None, None, None),
+        };
+        // The managed audio device + PTT are structured types, not scalars, so they
+        // are carried outside the dense tuple above (keeps the tuple at 6 elements).
+        let (managed_audio_device, managed_ptt) = match &p.link {
+            Some(KissLinkConfig::ManagedDireWolf { audio_device, ptt }) => {
+                (Some(audio_device.clone()), Some(ptt.clone()))
+            }
+            _ => (None, None),
         };
         PacketConfigDto {
             ssid: p.ssid,
@@ -3216,6 +3242,8 @@ impl From<&config::PacketConfig> for PacketConfigDto {
             serial_device,
             serial_baud,
             bt_mac,
+            managed_audio_device,
+            managed_ptt,
             txdelay: p.params.txdelay,
             persistence: p.params.persistence,
             slot_time: p.params.slot_time,
@@ -3252,6 +3280,14 @@ impl PacketConfigDto {
             Some("Bluetooth") => Some(KissLinkConfig::Bluetooth {
                 mac: self.bt_mac.ok_or_else(|| UiError::Internal {
                     detail: "Bluetooth link needs bt_mac".into(),
+                })?,
+            }),
+            Some("Managed") => Some(KissLinkConfig::ManagedDireWolf {
+                audio_device: self.managed_audio_device.ok_or_else(|| UiError::Internal {
+                    detail: "Managed link needs managed_audio_device".into(),
+                })?,
+                ptt: self.managed_ptt.ok_or_else(|| UiError::Internal {
+                    detail: "Managed link needs managed_ptt".into(),
                 })?,
             }),
             None => None,
@@ -8947,6 +8983,102 @@ hw:CARD=Device,DEV=0
 
         let back = dto.into_packet_config().unwrap();
         assert_eq!(back, pc);
+    }
+
+    #[test]
+    fn packet_config_dto_round_trips_managed_direwolf_with_full_fidelity() {
+        // P5: the Managed link carries a StableAudioId (kind+value) + a tagged
+        // PttChoice (variant+path) through the flat DTO via the two structured
+        // managed_* fields. The round-trip must preserve EVERY sub-component — a
+        // lossy scalar flattening (e.g. only the audio value, dropping the kind)
+        // would fail this assert.
+        use crate::winlink::ax25::devices::{PttChoice, StableAudioId, StableIdKind};
+        use crate::winlink::ax25::KissLinkConfig;
+        let pc = config::PacketConfig {
+            ssid: 5,
+            link: Some(KissLinkConfig::ManagedDireWolf {
+                audio_device: StableAudioId {
+                    kind: StableIdKind::ByIdSymlink,
+                    value: "usb-C-Media_DigiRig_Audio-00".into(),
+                },
+                ptt: PttChoice::Cm108Hid {
+                    hidraw_path: "/dev/hidraw3".into(),
+                },
+            }),
+            params: config::Ax25ParamsConfig::default(),
+            listen_default: true,
+        };
+        let dto = PacketConfigDto::from(&pc);
+        assert_eq!(dto.link_kind.as_deref(), Some("Managed"));
+        // The tcp_/serial_/bt_ scalars are empty for a managed link.
+        assert_eq!(dto.tcp_host, None);
+        assert_eq!(dto.serial_device, None);
+        assert_eq!(dto.bt_mac, None);
+        // The structured fields carry the real types.
+        assert!(dto.managed_audio_device.is_some());
+        assert!(dto.managed_ptt.is_some());
+
+        let back = dto.into_packet_config().unwrap();
+        // Full-fidelity round-trip: the StableAudioId kind+value AND the PttChoice
+        // variant+path survive intact.
+        assert_eq!(back.link, pc.link);
+        assert_eq!(back, pc);
+    }
+
+    #[test]
+    fn packet_config_dto_managed_serial_bluetooth_still_round_trip() {
+        // Adding the Managed arm must not regress the existing variants' round-trips.
+        use crate::winlink::ax25::KissLinkConfig;
+        for link in [
+            KissLinkConfig::Tcp { host: "127.0.0.1".into(), port: 8001 },
+            KissLinkConfig::Serial { device: "/dev/ttyUSB0".into(), baud: 9600 },
+            KissLinkConfig::Bluetooth { mac: "38:D2:00:01:55:5C".into() },
+        ] {
+            let pc = config::PacketConfig {
+                ssid: 3,
+                link: Some(link),
+                params: config::Ax25ParamsConfig::default(),
+                listen_default: false,
+            };
+            let back = PacketConfigDto::from(&pc).into_packet_config().unwrap();
+            assert_eq!(back, pc, "existing link variant must round-trip through the DTO");
+        }
+    }
+
+    #[test]
+    fn packet_config_dto_managed_missing_audio_device_errors_not_panics() {
+        // A Managed DTO without managed_audio_device must return a named
+        // UiError::Internal, never panic.
+        use crate::winlink::ax25::devices::PttChoice;
+        let dto = PacketConfigDto {
+            ssid: 0,
+            listen_default: true,
+            link_kind: Some("Managed".into()),
+            tcp_host: None,
+            tcp_port: None,
+            serial_device: None,
+            serial_baud: None,
+            bt_mac: None,
+            managed_audio_device: None, // missing — the error case
+            managed_ptt: Some(PttChoice::Cm108Hid { hidraw_path: "/dev/hidraw3".into() }),
+            txdelay: 0,
+            persistence: 0,
+            slot_time: 0,
+            paclen: 0,
+            maxframe: 0,
+            t1_ms: 0,
+            n2_retries: 0,
+        };
+        let err = dto.into_packet_config().unwrap_err();
+        match err {
+            UiError::Internal { detail } => {
+                assert!(
+                    detail.contains("managed_audio_device"),
+                    "error must name the missing field, got: {detail}"
+                );
+            }
+            other => panic!("expected UiError::Internal, got {other:?}"),
+        }
     }
 
     #[test]
