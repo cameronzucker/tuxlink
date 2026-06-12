@@ -233,17 +233,68 @@ check('WAZ315', 'WA_ZON_SEA'); // City of Seattle (exact-name preserved)
 
 if (!WRITE) { console.log('\n(dry-run; pass --write to emit JSON)'); process.exit(0); }
 
-// ---- emit (geometry simplified by 4-decimal rounding) ----------------------
-function round(coords: unknown): unknown {
-  if (typeof coords === 'number') return Math.round(coords * 1e4) / 1e4;
-  if (Array.isArray(coords)) return coords.map(round);
-  return coords;
+// ---- emit (Douglas–Peucker simplify; only MAPPED zones need geometry) ------
+// Unmapped grids resolve their state via the existing us-states.geo.json for the
+// browse-all card, so we drop unmapped-zone polygons entirely (size win).
+const TOLERANCE = 0.02; // ~2 km; ample given operator grids are 4-6 char (>=5 km)
+function perpDist(p: number[], a: number[], b: number[]): number {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  if (dx === 0 && dy === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+  const t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy);
+  const cx = a[0] + t * dx, cy = a[1] + t * dy;
+  return Math.hypot(p[0] - cx, p[1] - cy);
 }
-const features = allZones.map((z) => ({
-  type: 'Feature',
-  properties: { id: z.id, name: z.name, state: z.state, cwa: z.cwa },
-  geometry: round(z.geometry),
-}));
+function rdp(pts: number[][], eps: number): number[][] {
+  if (pts.length < 3) return pts;
+  let dmax = 0, idx = 0;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const d = perpDist(pts[i], pts[0], pts[pts.length - 1]);
+    if (d > dmax) { dmax = d; idx = i; }
+  }
+  if (dmax > eps) {
+    const l = rdp(pts.slice(0, idx + 1), eps);
+    const r = rdp(pts.slice(idx), eps);
+    return l.slice(0, -1).concat(r);
+  }
+  return [pts[0], pts[pts.length - 1]];
+}
+const r4 = (n: number): number => Math.round(n * 1e4) / 1e4;
+function simplifyRing(ring: number[][]): number[][] {
+  let s = rdp(ring, TOLERANCE).map((p) => [r4(p[0]), r4(p[1])]);
+  if (s.length < 4) {
+    // DP collapsed this (small) ring below a valid polygon — keep a minimal
+    // first/middle/last triangle, NOT the full ring (reverting to full defeated
+    // the simplification and made higher tolerances produce BIGGER files).
+    const mid = ring[Math.floor(ring.length / 2)] ?? ring[0];
+    s = [ring[0], mid, ring[ring.length - 1]].map((p) => [r4(p[0]), r4(p[1])]);
+  }
+  if (s.length && (s[0][0] !== s[s.length - 1][0] || s[0][1] !== s[s.length - 1][1])) s.push(s[0]);
+  return s;
+}
+// Normalise Polygon / MultiPolygon / GeometryCollection to one simplified
+// MultiPolygon. (73 zones ship as GeometryCollection and were passing through
+// unsimplified, holding ~65% of all coordinates.)
+function collectPolys(g: unknown): number[][][] {
+  const geom = g as { type?: string; coordinates?: unknown; geometries?: unknown[] } | null;
+  if (!geom || !geom.type) return [];
+  if (geom.type === 'Polygon') return [geom.coordinates as number[][][]];
+  if (geom.type === 'MultiPolygon') return geom.coordinates as number[][][][];
+  if (geom.type === 'GeometryCollection') return (geom.geometries ?? []).flatMap(collectPolys);
+  return [];
+}
+function simplifyGeom(geom: unknown): unknown {
+  const polys = collectPolys(geom).map((poly) => poly.map(simplifyRing));
+  if (polys.length === 0) return null;
+  if (polys.length === 1) return { type: 'Polygon', coordinates: polys[0] };
+  return { type: 'MultiPolygon', coordinates: polys };
+}
+const features = allZones
+  .filter((z) => map[z.id] && z.geometry) // mapped zones only
+  .map((z) => ({
+    type: 'Feature',
+    properties: { id: z.id, name: z.name, state: z.state, cwa: z.cwa },
+    geometry: simplifyGeom(z.geometry),
+  }));
 writeFileSync(GEO_PATH, JSON.stringify({ type: 'FeatureCollection', features }));
 const sortKeys = (o: Record<string, string>) =>
   Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
