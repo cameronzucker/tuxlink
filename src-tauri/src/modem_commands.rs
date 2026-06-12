@@ -1153,6 +1153,13 @@ fn run_b2f_with_transport(
         .ok_or_else(|| "ARDOP B2F: backend offline — cannot resolve active identity".to_string())?;
     let session_id = backend.active_identity().map_err(|e| e.to_string())?;
 
+    // tuxlink-2ns7: file received mail into the active FULL's per-FULL inbox
+    // (`mailbox/<FULL>/inbox`) — the namespace the UI reads — not the bare
+    // `_default`. The exchange runs AS this session's FULL, so its inbound mail
+    // belongs to that FULL. Mirrors the `ui_commands` inbound sites; without
+    // this, on-air ARDOP receives land in `_default/inbox` and are invisible.
+    let mailbox = mailbox.with_default_identity(session_id.mycall());
+
     // Position arbiter is registered in lib.rs::run() — pull a live ref so
     // the on-air locator honors live GPS / privacy state, matching the
     // telnet/packet paths' behavior. Mirrors `bootstrap::install_native`'s

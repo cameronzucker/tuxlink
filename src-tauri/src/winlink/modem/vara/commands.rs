@@ -1737,6 +1737,15 @@ fn run_vara_b2f_with_transport(
 
     let mycall = session_id.mycall().as_str().to_uppercase();
 
+    // tuxlink-2ns7: file received mail into the active FULL's per-FULL inbox
+    // (`mailbox/<FULL>/inbox`) — the namespace the UI reads — not the bare
+    // `_default`. The exchange runs AS this session's FULL. Mirrors the
+    // `ui_commands` inbound sites; without this, on-air VARA receives land in
+    // `_default/inbox` and are invisible. (Uses the non-uppercased `Callsign`,
+    // matching the stored identity + migration target; `mycall` above is the
+    // on-air station ID, a separate concern.)
+    let mailbox = mailbox.with_default_identity(session_id.mycall());
+
     // Position arbiter is registered in lib.rs::run() — pull a live
     // ref so the on-air locator honors live GPS / privacy state,
     // matching the ARDOP path's behavior.
