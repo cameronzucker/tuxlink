@@ -710,7 +710,11 @@ describe('<PacketRadioPanel>', () => {
         'managed-effective-call',
       )) as HTMLInputElement;
       // baseCall N7CPZ + DEFAULT_CONFIG.ssid 7 → N7CPZ-7, read-only.
-      expect(call.value).toBe('N7CPZ-7');
+      // The input mounts with the ssid-0 default (config?.ssid ?? 0) and updates
+      // to ssid 7 once packet_config_get resolves, so wait for the settled value
+      // rather than reading synchronously — otherwise the assertion races the
+      // async config load (flaked on faster CI runners: N7CPZ-0 vs N7CPZ-7).
+      await waitFor(() => expect(call.value).toBe('N7CPZ-7'));
       expect(call).toHaveAttribute('readonly');
     });
 
