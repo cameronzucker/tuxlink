@@ -1,0 +1,41 @@
+[package]
+name = "sonde-phy"
+version = "0.1.0"
+description = "Clean-sheet HF PHY waveform layer for sonde (AGPL-3.0-only)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+num-complex.workspace = true
+rustfft.workspace = true
+thiserror.workspace = true
+hound.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+rand = "0.8"
+# Activated as #1 and #4 publish; until then sibling subagents' plans
+# may stub these with path-deps in coordination.
+# hf-channel-sim.workspace = true
+# sonde-fec.workspace = true
+
+[features]
+default = []
+audio-device = ["dep:cpal"]   # opt-in real-device I/O
+
+[dependencies.cpal]
+workspace = true
+optional = true
+
+# `sonde-audio-play` is a bench-tool binary that exists only when
+# the `audio-device` feature is on. Per Cargo, `required-features`
+# silently excludes the bin from the default build — `cargo build`
+# (no features) doesn't try to build it, and `cargo build --features
+# audio-device` does.
+[[bin]]
+name = "sonde-audio-play"
+path = "src/bin/sonde-audio-play.rs"
+required-features = ["audio-device"]
