@@ -56,8 +56,23 @@ impl Mailbox {
     }
 
     /// Store a raw Winlink message in a folder, keyed by its message id (taken
-    /// from the `Mid` header). Returns that id.
+    /// from the `Mid` header). Returns that id. Delegates to [`Mailbox::store_ns`]
+    /// with the un-namespaced (`_default`) namespace so existing callers route
+    /// through the per-FULL layout's default subtree.
     pub fn store(&self, folder: MailboxFolder, raw: &[u8]) -> Result<MessageId, BackendError> {
+        self.store_ns(None, folder, raw)
+    }
+
+    /// Namespace-aware store (Phase 4, tuxlink-2ns7). Received-mail folders
+    /// (Inbox/Archive) resolve under the per-FULL namespace root; Sent/Outbox
+    /// stay shared. The index `unread` seed + the `identity_tag` are threaded
+    /// per the namespace.
+    pub fn store_ns(
+        &self,
+        ns: Option<&IdentityNamespace>,
+        folder: MailboxFolder,
+        raw: &[u8],
+    ) -> Result<MessageId, BackendError> {
         let msg = Message::from_bytes(raw)
             .map_err(|_| BackendError::MessageRejected("stored bytes are not a message".into()))?;
         let mid = msg
@@ -65,9 +80,26 @@ impl Mailbox {
             .ok_or_else(|| BackendError::MessageRejected("message has no Mid".into()))?
             .to_string();
 
-        let dir = self.folder_dir(folder);
+        let dir = self.folder_dir_ns(ns, folder);
         fs::create_dir_all(&dir)?;
         fs::write(dir.join(format!("{mid}.b2f")), raw)?;
+
+        // The identity tag for this message: for received mail it is the
+        // namespace callsign (the FULL whose inbox it was delivered into); for
+        // Sent/Outbox it is the FULL the message was authored under.
+        let identity_tag: Option<String> = ns.map(|n| n.as_str().to_string());
+
+        // tuxlink-2ns7: Sent/Outbox stay in the SHARED store, so a message's
+        // owning identity must be persisted on-disk as a `<mid>.identity`
+        // sidecar (canonical, like `<mid>.read`). Received mail (Inbox/Archive)
+        // is already namespaced by directory, so it needs no sidecar. Only
+        // write the sidecar when a namespace is present (an un-namespaced
+        // store leaves the message untagged — drained for any identity).
+        if matches!(folder, MailboxFolder::Sent | MailboxFolder::Outbox) {
+            if let Some(tag) = identity_tag.as_deref() {
+                fs::write(dir.join(format!("{mid}.identity")), tag.as_bytes())?;
+            }
+        }
 
         // Best-effort index hook — filesystem write already succeeded above.
         // Index errors are logged but never propagated (spec §8).
@@ -86,6 +118,7 @@ impl Mailbox {
                 // true here and the predicates align.
                 /*unread=*/ matches!(folder, MailboxFolder::Inbox | MailboxFolder::Archive),
                 /*transport_used=*/ None,
+                /*identity_tag=*/ identity_tag.clone(),
             );
             match idx.lock() {
                 Ok(guard) => {
@@ -112,7 +145,20 @@ impl Mailbox {
     /// unusable. Messages whose date doesn't parse as RFC 3339 sort to the
     /// bottom of the list rather than anchoring to the 1970 epoch.
     pub fn list(&self, folder: MailboxFolder) -> Result<Vec<MessageMeta>, BackendError> {
-        let dir = self.folder_dir(folder);
+        self.list_ns(None, folder)
+    }
+
+    /// Namespace-aware list (Phase 4, tuxlink-2ns7). A copy of [`Mailbox::list`]'s
+    /// body that resolves the folder dir via `folder_dir_ns`. The unread
+    /// predicate is byte-for-byte identical to `list` — `matches!(folder,
+    /// Inbox | Archive) && !<mid>.read exists` — so namespacing never changes
+    /// what counts as unread (tuxlink-mzm4 invariant, now per-FULL).
+    pub fn list_ns(
+        &self,
+        ns: Option<&IdentityNamespace>,
+        folder: MailboxFolder,
+    ) -> Result<Vec<MessageMeta>, BackendError> {
+        let dir = self.folder_dir_ns(ns, folder);
         if !dir.exists() {
             return Ok(Vec::new());
         }
@@ -155,12 +201,36 @@ impl Mailbox {
         folder: MailboxFolder,
         id: &MessageId,
     ) -> Result<MessageBody, BackendError> {
-        let path = self.folder_dir(folder).join(format!("{}.b2f", id.0));
+        self.read_ns(None, folder, id)
+    }
+
+    /// Namespace-aware read (Phase 4, tuxlink-2ns7). Resolves the folder dir via
+    /// `folder_dir_ns` so received-mail reads hit the per-FULL subtree.
+    pub fn read_ns(
+        &self,
+        ns: Option<&IdentityNamespace>,
+        folder: MailboxFolder,
+        id: &MessageId,
+    ) -> Result<MessageBody, BackendError> {
+        let path = self.folder_dir_ns(ns, folder).join(format!("{}.b2f", id.0));
         let raw = fs::read(&path).map_err(|_| BackendError::NotFound(id.clone()))?;
         Ok(MessageBody {
             id: id.clone(),
             raw_rfc5322: raw,
         })
+    }
+
+    /// Read a message's `<mid>.identity` tag, if present (tuxlink-2ns7).
+    /// `None` = untagged (legacy / pre-Phase-4) — callers treat untagged as
+    /// "matches any active identity" so a legacy draft is never stranded by the
+    /// identity drain filter. Sent/Outbox resolve to the shared root; the tag
+    /// lives next to the `<mid>.b2f` there.
+    pub fn read_identity_tag(&self, folder: MailboxFolder, id: &MessageId) -> Option<String> {
+        let p = self.folder_dir(folder).join(format!("{}.identity", id.0));
+        std::fs::read_to_string(p)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
 
     /// Move a message from one folder to another (e.g. outbox → sent once it has
@@ -196,6 +266,16 @@ impl Mailbox {
             fs::write(dst_dir.join(format!("{}.read", id.0)), [])?;
         }
 
+        // Carry the identity tag (tuxlink-2ns7): the send-time Outbox→Sent move
+        // must keep the `<mid>.identity` sidecar so the sent copy still records
+        // which FULL authored it. Mirrors the `<mid>.read` carry above.
+        let src_id_marker = self.folder_dir(from).join(format!("{}.identity", id.0));
+        if src_id_marker.exists() {
+            let tag = fs::read(&src_id_marker)?;
+            fs::write(dst_dir.join(format!("{}.identity", id.0)), tag)?;
+            fs::remove_file(&src_id_marker)?;
+        }
+
         // Best-effort index hook — filesystem move already succeeded above.
         if let Some(idx) = self.index.as_ref() {
             match idx.lock() {
@@ -223,7 +303,21 @@ impl Mailbox {
         id: &MessageId,
         read: bool,
     ) -> Result<(), BackendError> {
-        let dir = self.resolve_dir(folder);
+        self.set_read_state_ns(None, folder, id, read)
+    }
+
+    /// Namespace-aware read-state setter (Phase 4, tuxlink-2ns7). Resolves the
+    /// sidecar dir via `resolve_dir_ns` so received-mail read-state lands in the
+    /// per-FULL subtree. Same tolerance + index-hook semantics as
+    /// [`Mailbox::set_read_state`].
+    pub fn set_read_state_ns(
+        &self,
+        ns: Option<&IdentityNamespace>,
+        folder: &FolderRef,
+        id: &MessageId,
+        read: bool,
+    ) -> Result<(), BackendError> {
+        let dir = self.resolve_dir_ns(ns, folder);
         if !dir.join(format!("{}.b2f", id.0)).exists() {
             return Ok(());
         }
@@ -257,14 +351,150 @@ impl Mailbox {
         self.set_read_state(&FolderRef::System(folder), id, true)
     }
 
+    /// Store a received message for `parent_full`, optionally addressed to a
+    /// tactical label riding under that FULL. Phase 4 (tuxlink-2ns7): tactical
+    /// mail lands in the parent FULL's inbox. `tuxlink-73nl` hooks per-tactical-
+    /// folder routing HERE — it will inspect `addressed_to_tactical` and choose a
+    /// user-folder destination instead of Inbox. Until then the label is recorded
+    /// only via the identity tag and the message goes to Inbox.
+    pub fn route_received(
+        &self,
+        parent_full: &str,
+        addressed_to_tactical: Option<&str>,
+        raw: &[u8],
+    ) -> Result<MessageId, BackendError> {
+        // tuxlink-73nl SEAM: branch on `addressed_to_tactical` to a per-tactical
+        // user folder. Phase 4 deliberately ignores it for the destination and
+        // always targets the parent FULL's Inbox.
+        let _ = addressed_to_tactical;
+        self.for_identity(parent_full).store(MailboxFolder::Inbox, raw)
+    }
+
+    /// One-time migration of a pre-Phase-4 *flat* mailbox to the per-FULL layout
+    /// (Phase 4, tuxlink-2ns7). The legacy install kept `inbox/`, `sent/`,
+    /// `outbox/`, `archive/`, `<user-slug>/`, and `.folders.json` directly at the
+    /// mailbox root. This re-homes the received-mail folders + user folders under
+    /// `mailbox/<DEFAULT_FULL>/`, tags the shared Sent/Outbox messages with a
+    /// `<mid>.identity` sidecar naming the default FULL, and leaves the search
+    /// index alone.
+    ///
+    /// `default_full` is the single migrated FULL identity (Phase 2's "existing
+    /// `identity.callsign` becomes the one FULL identity"). Its NORMALIZED string
+    /// (`Callsign::as_str`) is used for BOTH the namespace path segment AND the
+    /// Sent/Outbox sidecars, so the target directory name equals what
+    /// `for_identity(default_full.as_str())` resolves to — otherwise the read
+    /// side would not find the moved mail (tuxlink-21w3: per-FULL dir case must
+    /// match the normalized stored Callsign).
+    ///
+    /// Idempotent: a second run is a no-op (it short-circuits once the per-FULL
+    /// `inbox` exists).
+    ///
+    /// The search index (`search.db`) is intentionally untouched. The v3→v4
+    /// schema bump already forces the operator's existing
+    /// `tauri_search_rebuild_index` path to run, which re-extracts every message
+    /// from the new `mailbox/<CALLSIGN>/` paths + `.identity` sidecars — so no
+    /// bespoke index-migration code is needed here.
+    pub fn migrate_legacy_layout(
+        &self,
+        default_full: &crate::identity::Callsign,
+    ) -> Result<(), BackendError> {
+        // Use the NORMALIZED Callsign string for the namespace segment so the
+        // migrated dir name matches what `for_identity(default_full.as_str())`
+        // resolves to (tuxlink-21w3).
+        let ns = IdentityNamespace::parse(default_full.as_str())?;
+        let per_full = self.received_root(Some(&ns));
+
+        // Idempotency guard: if the per-FULL inbox already exists, the migration
+        // has already run (or the install was born per-FULL). Nothing to do.
+        if per_full.join("inbox").exists() {
+            return Ok(());
+        }
+
+        fs::create_dir_all(&per_full)?;
+
+        // 1. Re-home the legacy flat received-mail folders (inbox + archive). Move
+        //    the WHOLE legacy dir (its `.b2f` + `.read` sidecars) into the
+        //    per-FULL root via `fs::rename` — simplest correct approach. The
+        //    idempotency guard above ensures the destination does not already
+        //    exist for `inbox`; for `archive` we only move when the source exists.
+        for name in ["inbox", "archive"] {
+            let legacy = self.root.join(name);
+            if legacy.is_dir() {
+                fs::rename(&legacy, per_full.join(name))?;
+            }
+        }
+
+        // 2. Re-home legacy top-level user folders. The legacy registry lives at
+        //    the FLAT root's `.folders.json`; move each recorded slug dir under
+        //    the per-FULL root, then move the registry file itself so the
+        //    per-FULL `list_user_folders_ns` finds it.
+        let legacy_registry = user_folders::load_registry(&self.root);
+        for folder in &legacy_registry.folders {
+            let legacy_slug_dir = user_folders::folder_dir(&self.root, &folder.slug);
+            if legacy_slug_dir.is_dir() {
+                fs::rename(&legacy_slug_dir, user_folders::folder_dir(&per_full, &folder.slug))?;
+            }
+        }
+        let legacy_registry_path = self.root.join(".folders.json");
+        if legacy_registry_path.is_file() {
+            fs::rename(&legacy_registry_path, per_full.join(".folders.json"))?;
+        }
+
+        // 3. Tag the shared Sent/Outbox messages. These STAY at `<root>/sent` and
+        //    `<root>/outbox`; each `<mid>.b2f` that lacks a `<mid>.identity`
+        //    sidecar gets one naming the default FULL (the normalized string, to
+        //    match the read side's tag comparisons — tuxlink-21w3).
+        for name in ["sent", "outbox"] {
+            let dir = self.root.join(name);
+            if !dir.is_dir() {
+                continue;
+            }
+            for entry in fs::read_dir(&dir)? {
+                let path = entry?.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("b2f") {
+                    continue;
+                }
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let sidecar = dir.join(format!("{stem}.identity"));
+                if !sidecar.exists() {
+                    fs::write(&sidecar, default_full.as_str().as_bytes())?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Root for received-mail folders + user folders for a given namespace
+    /// (Phase 4, tuxlink-2ns7). `None` (the un-namespaced default) resolves to
+    /// `<root>/mailbox/_default` so even the default path is uniform with the
+    /// per-FULL layout. Sent/Outbox never use this root — they stay shared at
+    /// `<root>/sent` and `<root>/outbox` (see `folder_dir_ns`).
+    fn received_root(&self, ns: Option<&IdentityNamespace>) -> PathBuf {
+        let seg = ns.map(|n| n.as_str()).unwrap_or("_default");
+        self.root.join("mailbox").join(seg)
+    }
+
+    /// Namespace-aware folder directory resolver. The single load-bearing rule:
+    /// **Sent/Outbox use the shared root; Inbox/Archive use the per-FULL root.**
+    fn folder_dir_ns(&self, ns: Option<&IdentityNamespace>, folder: MailboxFolder) -> PathBuf {
+        match folder {
+            // Shared, never namespaced.
+            MailboxFolder::Sent => self.root.join("sent"),
+            MailboxFolder::Outbox => self.root.join("outbox"),
+            // Per-FULL received mail.
+            MailboxFolder::Inbox => self.received_root(ns).join("inbox"),
+            MailboxFolder::Archive => self.received_root(ns).join("archive"),
+        }
+    }
+
+    /// The default (un-namespaced) folder directory. Delegates to the `None`
+    /// namespace form so every existing caller routes through the `_default`
+    /// namespace (received mail under `mailbox/_default/`, Sent/Outbox shared).
     fn folder_dir(&self, folder: MailboxFolder) -> PathBuf {
-        let name = match folder {
-            MailboxFolder::Inbox => "inbox",
-            MailboxFolder::Sent => "sent",
-            MailboxFolder::Outbox => "outbox",
-            MailboxFolder::Archive => "archive",
-        };
-        self.root.join(name)
+        self.folder_dir_ns(None, folder)
     }
 
     // ========================================================================
@@ -282,7 +512,14 @@ impl Mailbox {
     /// creation time ascending (so first-created sticks to the top). Missing
     /// registry → empty list (first-launch path is normal).
     pub fn list_user_folders(&self) -> Vec<UserFolder> {
-        let mut reg = user_folders::load_registry(&self.root);
+        self.list_user_folders_ns(None)
+    }
+
+    /// Namespace-aware user-folder listing (Phase 4, tuxlink-2ns7). The registry
+    /// is per-FULL: it lives at `received_root(ns)/.folders.json`, so a folder
+    /// under `W1ABC` is independent of one under `W7XYZ`.
+    pub fn list_user_folders_ns(&self, ns: Option<&IdentityNamespace>) -> Vec<UserFolder> {
+        let mut reg = user_folders::load_registry(&self.received_root(ns));
         reg.folders.sort_by(|a, b| a.created_at.cmp(&b.created_at));
         reg.folders
     }
@@ -297,6 +534,20 @@ impl Mailbox {
         display_name: &str,
         parent_slug: Option<&str>,
     ) -> Result<UserFolder, BackendError> {
+        self.create_user_folder_ns(None, display_name, parent_slug)
+    }
+
+    /// Namespace-aware user-folder creation (Phase 4, tuxlink-2ns7). The
+    /// registry + on-disk dir live under the per-FULL `received_root(ns)`; the
+    /// validation, slug derivation, collision, and depth-cap logic are unchanged
+    /// — only the registry/dir root is per-FULL.
+    pub fn create_user_folder_ns(
+        &self,
+        ns: Option<&IdentityNamespace>,
+        display_name: &str,
+        parent_slug: Option<&str>,
+    ) -> Result<UserFolder, BackendError> {
+        let root = self.received_root(ns);
         let display = display_name.trim();
         user_folders::validate_display_name(display)
             .map_err(BackendError::MessageRejected)?;
@@ -304,7 +555,7 @@ impl Mailbox {
         user_folders::validate_slug(&slug).map_err(BackendError::MessageRejected)?;
 
         let _guard = self.lock_registry();
-        let mut reg = user_folders::load_registry(&self.root);
+        let mut reg = user_folders::load_registry(&root);
         for existing in &reg.folders {
             if existing.slug == slug {
                 return Err(BackendError::MessageRejected(format!(
@@ -329,11 +580,11 @@ impl Mailbox {
 
         // Create the directory FIRST — if the FS write fails we don't poison
         // the registry with a folder whose dir doesn't exist.
-        let dir = user_folders::folder_dir(&self.root, &slug);
+        let dir = user_folders::folder_dir(&root, &slug);
         fs::create_dir_all(&dir)?;
 
         reg.folders.push(folder.clone());
-        user_folders::save_registry(&self.root, &reg)?;
+        user_folders::save_registry(&root, &reg)?;
         Ok(folder)
     }
 
@@ -348,8 +599,12 @@ impl Mailbox {
         let display = new_display_name.trim();
         user_folders::validate_display_name(display)
             .map_err(BackendError::MessageRejected)?;
+        // Phase 4 (tuxlink-2ns7): the user-folder registry is per-FULL, living
+        // under `received_root`. The default (un-namespaced) path resolves to the
+        // `_default` namespace, matching `create_user_folder` / `list_user_folders`.
+        let root = self.received_root(None);
         let _guard = self.lock_registry();
-        let mut reg = user_folders::load_registry(&self.root);
+        let mut reg = user_folders::load_registry(&root);
         let folder = reg
             .folders
             .iter_mut()
@@ -359,7 +614,7 @@ impl Mailbox {
             ))?;
         folder.display_name = display.to_string();
         let renamed = folder.clone();
-        user_folders::save_registry(&self.root, &reg)?;
+        user_folders::save_registry(&root, &reg)?;
         Ok(renamed)
     }
 
@@ -386,8 +641,12 @@ impl Mailbox {
         slug: &str,
         on_messages: DeleteAction,
     ) -> Result<Vec<String>, BackendError> {
+        // Phase 4 (tuxlink-2ns7): per-FULL registry + user-folder dirs under
+        // `received_root`. The default path uses the `_default` namespace, which
+        // matches the system-folder dirs (`folder_dir` is also `_default`-namespaced).
+        let root = self.received_root(None);
         let _guard = self.lock_registry();
-        let mut reg = user_folders::load_registry(&self.root);
+        let mut reg = user_folders::load_registry(&root);
 
         // Affected folders: target + its direct children (depth-capped → leaves).
         let mut affected = user_folders::children_slugs(&reg, slug);
@@ -404,7 +663,7 @@ impl Mailbox {
             let dst_dir = self.folder_dir(sys);
             let mut seen = std::collections::HashSet::new();
             for s in &affected {
-                let dir = user_folders::folder_dir(&self.root, s);
+                let dir = user_folders::folder_dir(&root, s);
                 if !dir.exists() {
                     continue;
                 }
@@ -438,7 +697,7 @@ impl Mailbox {
 
         // COMMIT.
         for s in &affected {
-            let dir = user_folders::folder_dir(&self.root, s);
+            let dir = user_folders::folder_dir(&root, s);
             if !dir.exists() {
                 continue;
             }
@@ -477,7 +736,7 @@ impl Mailbox {
         let affected_set: std::collections::HashSet<&str> =
             affected.iter().map(|s| s.as_str()).collect();
         reg.folders.retain(|f| !affected_set.contains(f.slug.as_str()));
-        user_folders::save_registry(&self.root, &reg)?;
+        user_folders::save_registry(&root, &reg)?;
 
         Ok(removed)
     }
@@ -492,15 +751,18 @@ impl Mailbox {
         slug: &str,
         new_parent: Option<&str>,
     ) -> Result<UserFolder, BackendError> {
+        // Phase 4 (tuxlink-2ns7): per-FULL registry under `received_root`; the
+        // default path uses the `_default` namespace.
+        let root = self.received_root(None);
         let _guard = self.lock_registry();
-        let mut reg = user_folders::load_registry(&self.root);
+        let mut reg = user_folders::load_registry(&root);
         user_folders::validate_reparent(&reg, slug, new_parent)
             .map_err(BackendError::MessageRejected)?;
         // validate_reparent guarantees the folder exists.
         let folder = reg.folders.iter_mut().find(|f| f.slug == slug).unwrap();
         folder.parent_slug = new_parent.map(|s| s.to_string());
         let updated = folder.clone();
-        user_folders::save_registry(&self.root, &reg)?;
+        user_folders::save_registry(&root, &reg)?;
         Ok(updated)
     }
 
@@ -536,14 +798,28 @@ impl Mailbox {
     /// (newest first, id ascending as tiebreaker). User folders hold received
     /// mail; unread state is surfaced from the `<mid>.read` sidecar.
     pub fn list_user(&self, slug: &str) -> Result<Vec<MessageMeta>, BackendError> {
-        let dir = user_folders::folder_dir(&self.root, slug);
+        self.list_user_ns(None, slug)
+    }
+
+    /// Namespace-aware user-folder listing (Phase 4, tuxlink-2ns7). Resolves the
+    /// user-folder dir under the per-FULL `received_root(ns)`. Same sort order +
+    /// unread-surfacing as [`Mailbox::list_user`].
+    pub fn list_user_ns(
+        &self,
+        ns: Option<&IdentityNamespace>,
+        slug: &str,
+    ) -> Result<Vec<MessageMeta>, BackendError> {
+        let dir = user_folders::folder_dir(&self.received_root(ns), slug);
         Self::list_dir(&dir, /*surface_unread=*/ true)
     }
 
     /// Read a raw message from a user folder. Returns `NotFound` if the slug
     /// or mid is unknown.
     pub fn read_user(&self, slug: &str, id: &MessageId) -> Result<MessageBody, BackendError> {
-        let path = user_folders::folder_dir(&self.root, slug).join(format!("{}.b2f", id.0));
+        // Phase 4 (tuxlink-2ns7): user folders live under `received_root`; the
+        // default path resolves to the `_default` namespace.
+        let path =
+            user_folders::folder_dir(&self.received_root(None), slug).join(format!("{}.b2f", id.0));
         let raw = fs::read(&path).map_err(|_| BackendError::NotFound(id.clone()))?;
         Ok(MessageBody { id: id.clone(), raw_rfc5322: raw })
     }
@@ -561,14 +837,29 @@ impl Mailbox {
         to: FolderRef,
         id: &MessageId,
     ) -> Result<(), BackendError> {
+        self.move_between_ns(None, from, to, id)
+    }
+
+    /// Namespace-aware move (Phase 4, tuxlink-2ns7). Both source and destination
+    /// resolve through `resolve_dir_ns`, so a move within a per-FULL namespace
+    /// (e.g. Inbox → a per-FULL user folder) stays inside that FULL's subtree.
+    /// Same self-move guard, read-marker carry, and index-hook semantics as
+    /// [`Mailbox::move_between`].
+    pub fn move_between_ns(
+        &self,
+        ns: Option<&IdentityNamespace>,
+        from: FolderRef,
+        to: FolderRef,
+        id: &MessageId,
+    ) -> Result<(), BackendError> {
         // Self-move guard (tuxlink-l80q / Codex P2, data loss): for from == to,
         // src and dst are the same path — the write-then-remove sequence below
         // would delete the message. A self-move is semantically a no-op.
         if from == to {
             return Ok(());
         }
-        let src_dir = self.resolve_dir(&from);
-        let dst_dir = self.resolve_dir(&to);
+        let src_dir = self.resolve_dir_ns(ns, &from);
+        let dst_dir = self.resolve_dir_ns(ns, &to);
         let src = src_dir.join(format!("{}.b2f", id.0));
         let raw = match fs::read(&src) {
             Ok(raw) => raw,
@@ -597,6 +888,17 @@ impl Mailbox {
             fs::write(dst_dir.join(format!("{}.read", id.0)), [])?;
         }
 
+        // Carry the identity tag (tuxlink-2ns7): keep the `<mid>.identity`
+        // sidecar alongside the message so a move (e.g. Outbox→Sent at send
+        // time, or Inbox→user-folder) preserves which FULL owns it. Mirrors the
+        // `<mid>.read` carry above.
+        let src_id_marker = src_dir.join(format!("{}.identity", id.0));
+        if src_id_marker.exists() {
+            let tag = fs::read(&src_id_marker)?;
+            fs::write(dst_dir.join(format!("{}.identity", id.0)), tag)?;
+            fs::remove_file(&src_id_marker)?;
+        }
+
         // Best-effort search-index update. The destination folder string is
         // either the system-folder dir name (so `update_folder` matches the
         // existing index column convention) or the user-folder slug.
@@ -618,9 +920,16 @@ impl Mailbox {
     }
 
     fn resolve_dir(&self, r: &FolderRef) -> PathBuf {
+        self.resolve_dir_ns(None, r)
+    }
+
+    /// Namespace-aware folder-ref resolver (Phase 4, tuxlink-2ns7). System
+    /// folders route through `folder_dir_ns` (Inbox/Archive per-FULL, Sent/
+    /// Outbox shared); user folders resolve under the per-FULL `received_root`.
+    fn resolve_dir_ns(&self, ns: Option<&IdentityNamespace>, r: &FolderRef) -> PathBuf {
         match r {
-            FolderRef::System(f) => self.folder_dir(*f),
-            FolderRef::User(slug) => user_folders::folder_dir(&self.root, slug),
+            FolderRef::System(f) => self.folder_dir_ns(ns, *f),
+            FolderRef::User(slug) => user_folders::folder_dir(&self.received_root(ns), slug),
         }
     }
 
@@ -678,6 +987,107 @@ pub enum DeleteAction {
 pub enum FolderRef {
     System(MailboxFolder),
     User(String),
+}
+
+/// Selects which per-FULL subtree received-mail folders resolve into (Phase 4,
+/// tuxlink-2ns7). Sent + Outbox ignore this (always shared root paths). A
+/// validated single, safe path segment.
+#[derive(Debug, Clone)]
+pub struct IdentityNamespace(String);
+
+impl IdentityNamespace {
+    /// Build from a FULL callsign string. Rejects anything that is not a single
+    /// safe path segment (defense in depth over `Callsign::parse`): no path
+    /// separators, no `.`/`..`, nonempty.
+    pub fn parse(callsign: &str) -> Result<Self, BackendError> {
+        let c = callsign.trim();
+        if c.is_empty()
+            || c == "."
+            || c == ".."
+            || c.contains('/')
+            || c.contains('\\')
+            || c.contains('\0')
+        {
+            return Err(BackendError::MessageRejected(format!(
+                "invalid identity namespace segment: {callsign:?}"
+            )));
+        }
+        Ok(Self(c.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Mailbox {
+    /// A view of this mailbox scoped to a FULL callsign's received-mail subtree
+    /// (Phase 4, tuxlink-2ns7). Received-mail folders (Inbox/Archive) + user
+    /// folders resolve under `mailbox/<CALLSIGN>/`; Sent/Outbox stay shared. An
+    /// un-parseable callsign falls back to the literal `_default` namespace so
+    /// the view never fails to construct (the path-segment guard already rejects
+    /// the genuinely dangerous inputs).
+    pub fn for_identity(&self, full_callsign: &str) -> ScopedMailbox<'_> {
+        let ns = IdentityNamespace::parse(full_callsign)
+            .unwrap_or_else(|_| IdentityNamespace("_default".to_string()));
+        ScopedMailbox { inner: self, ns }
+    }
+}
+
+/// A namespace-scoped view of a [`Mailbox`] (Phase 4, tuxlink-2ns7). Carries a
+/// borrow of the underlying mailbox + the active received-mail namespace, and
+/// delegates each per-FULL operation to the mailbox's `*_ns` helpers.
+pub struct ScopedMailbox<'a> {
+    inner: &'a Mailbox,
+    ns: IdentityNamespace,
+}
+
+impl<'a> ScopedMailbox<'a> {
+    pub fn store(&self, folder: MailboxFolder, raw: &[u8]) -> Result<MessageId, BackendError> {
+        self.inner.store_ns(Some(&self.ns), folder, raw)
+    }
+
+    pub fn list(&self, folder: MailboxFolder) -> Result<Vec<MessageMeta>, BackendError> {
+        self.inner.list_ns(Some(&self.ns), folder)
+    }
+
+    pub fn read(&self, folder: MailboxFolder, id: &MessageId) -> Result<MessageBody, BackendError> {
+        self.inner.read_ns(Some(&self.ns), folder, id)
+    }
+
+    pub fn set_read_state(
+        &self,
+        folder: &FolderRef,
+        id: &MessageId,
+        read: bool,
+    ) -> Result<(), BackendError> {
+        self.inner.set_read_state_ns(Some(&self.ns), folder, id, read)
+    }
+
+    pub fn list_user(&self, slug: &str) -> Result<Vec<MessageMeta>, BackendError> {
+        self.inner.list_user_ns(Some(&self.ns), slug)
+    }
+
+    pub fn list_user_folders(&self) -> Vec<UserFolder> {
+        self.inner.list_user_folders_ns(Some(&self.ns))
+    }
+
+    pub fn create_user_folder(
+        &self,
+        display_name: &str,
+        parent_slug: Option<&str>,
+    ) -> Result<UserFolder, BackendError> {
+        self.inner.create_user_folder_ns(Some(&self.ns), display_name, parent_slug)
+    }
+
+    pub fn move_between(
+        &self,
+        from: FolderRef,
+        to: FolderRef,
+        id: &MessageId,
+    ) -> Result<(), BackendError> {
+        self.inner.move_between_ns(Some(&self.ns), from, to, id)
+    }
 }
 
 fn direction_for_folder(f: MailboxFolder) -> crate::search::extractor::Direction {
@@ -773,6 +1183,13 @@ mod tests {
         compose_message("N7CPZ", &["W1AW"], &[], subject, body, ts).to_bytes()
     }
 
+    /// The on-disk root the un-namespaced `Mailbox` methods resolve received-mail
+    /// folders + user folders into after the Phase-4 namespace refactor
+    /// (tuxlink-2ns7): `<root>/mailbox/_default`. Sent/Outbox stay at `<root>`.
+    fn default_root(p: &std::path::Path) -> std::path::PathBuf {
+        p.join("mailbox").join("_default")
+    }
+
     #[test]
     fn stores_then_lists_and_reads_a_message() {
         let dir = tempdir().unwrap();
@@ -821,6 +1238,26 @@ mod tests {
         assert_eq!(mbox.list(MailboxFolder::Sent).unwrap().len(), 1);
         // Moving a missing id is a no-op, not an error.
         mbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &id).unwrap();
+    }
+
+    // tuxlink-2ns7 Task 5: the send-time Outbox→Sent move must carry the
+    // <mid>.identity sidecar so the sent copy retains its authoring identity
+    // and no orphan tag is left in Outbox.
+    #[test]
+    fn send_time_move_outbox_to_sent_keeps_identity_tag() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let id = mbox.for_identity("W1ABC").store(MailboxFolder::Outbox, &raw("Out", "x")).unwrap();
+        assert_eq!(mbox.read_identity_tag(MailboxFolder::Outbox, &id).as_deref(), Some("W1ABC"));
+
+        mbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &id).unwrap();
+
+        assert!(mbox.read_identity_tag(MailboxFolder::Outbox, &id).is_none(), "no orphan tag in outbox");
+        assert_eq!(
+            mbox.read_identity_tag(MailboxFolder::Sent, &id).as_deref(),
+            Some("W1ABC"),
+            "the identity tag travels with the message into Sent"
+        );
     }
 
     #[test]
@@ -951,7 +1388,7 @@ mod tests {
         // Directly verify the sidecar was written to the user folder directory.
         // This is the most precise check of set_read_state's FolderRef::User arm:
         // it fails if that arm is broken, independent of list_user's surfacing.
-        let sidecar = crate::user_folders::folder_dir(dir.path(), &uf.slug)
+        let sidecar = crate::user_folders::folder_dir(&default_root(dir.path()), &uf.slug)
             .join(format!("{}.read", id.0));
         assert!(
             sidecar.exists(),
@@ -973,11 +1410,11 @@ mod tests {
 
         // The marker follows the message; no orphan is left in the source.
         assert!(
-            !dir.path().join("inbox").join(format!("{}.read", id.0)).exists(),
+            !default_root(dir.path()).join("inbox").join(format!("{}.read", id.0)).exists(),
             "source read-marker should not be orphaned"
         );
         assert!(
-            dir.path().join("archive").join(format!("{}.read", id.0)).exists(),
+            default_root(dir.path()).join("archive").join(format!("{}.read", id.0)).exists(),
             "read-marker should travel with the message"
         );
     }
@@ -1097,6 +1534,108 @@ mod tests {
             "an Outbox message moved to Archive must not surface as unread (Fix 4)"
         );
     }
+
+    // ========================================================================
+    // Phase 4 (tuxlink-2ns7): per-FULL received-mail namespace.
+    // ========================================================================
+
+    // Task 1: storing to W1ABC's inbox and W7XYZ's inbox keeps them separate.
+    #[test]
+    fn per_full_inbox_namespaces_are_independent() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+
+        // Store one message into each FULL's inbox via the namespace selector.
+        // NOTE (heron-beaver-gorge, plan↔source reconciliation): `generate_mid`
+        // keys on `(unix_secs, callsign)` only — NOT subject/body — so two
+        // fixtures composed with the same fixed timestamp by `raw()` collide on
+        // MID. The plan's `assert_ne!(a.0, x.0)` therefore needs distinct
+        // timestamps to hold; use `raw_at` with timestamps a minute apart.
+        let a = mbox
+            .for_identity("W1ABC")
+            .store(MailboxFolder::Inbox, &raw_at("For Alpha", "a", 1_716_200_000))
+            .unwrap();
+        let x = mbox
+            .for_identity("W7XYZ")
+            .store(MailboxFolder::Inbox, &raw_at("For Xray", "x", 1_716_200_060))
+            .unwrap();
+        assert_ne!(a.0, x.0, "fixtures must carry distinct MIDs");
+
+        // Each inbox sees only its own message.
+        let alpha = mbox.for_identity("W1ABC").list(MailboxFolder::Inbox).unwrap();
+        let xray = mbox.for_identity("W7XYZ").list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(alpha.len(), 1);
+        assert_eq!(alpha[0].subject, "For Alpha");
+        assert_eq!(xray.len(), 1);
+        assert_eq!(xray[0].subject, "For Xray");
+
+        // On-disk paths are namespaced under mailbox/<CALLSIGN>/inbox.
+        assert!(dir.path().join("mailbox/W1ABC/inbox").join(format!("{}.b2f", a.0)).exists());
+        assert!(dir.path().join("mailbox/W7XYZ/inbox").join(format!("{}.b2f", x.0)).exists());
+        // And NOT at the legacy flat path.
+        assert!(!dir.path().join("inbox").join(format!("{}.b2f", a.0)).exists());
+    }
+
+    // Task 2: unread accounting is per-FULL and matches list().
+    #[test]
+    fn unread_is_per_full_and_matches_list_predicate() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+
+        // W1ABC inbox: unread until marked; W7XYZ inbox untouched.
+        let id = mbox.for_identity("W1ABC").store(MailboxFolder::Inbox, &raw("Net", "x")).unwrap();
+        assert!(
+            mbox.for_identity("W1ABC").list(MailboxFolder::Inbox).unwrap()[0].unread,
+            "fresh per-FULL inbox message is unread"
+        );
+        // W7XYZ's inbox is empty — namespaces don't bleed.
+        assert!(mbox.for_identity("W7XYZ").list(MailboxFolder::Inbox).unwrap().is_empty());
+
+        // Marking read in W1ABC's namespace flips only W1ABC.
+        mbox.for_identity("W1ABC")
+            .set_read_state(&FolderRef::System(MailboxFolder::Inbox), &id, true)
+            .unwrap();
+        assert!(!mbox.for_identity("W1ABC").list(MailboxFolder::Inbox).unwrap()[0].unread);
+    }
+
+    // Task 3: user folders are per-FULL; "Skywarn" under W1ABC is independent of W7XYZ.
+    #[test]
+    fn user_folders_are_per_full() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+
+        let a = mbox.for_identity("W1ABC").create_user_folder("Skywarn", None).unwrap();
+        assert_eq!(a.slug, "skywarn");
+        // W7XYZ sees no folders — its registry is separate.
+        assert!(mbox.for_identity("W7XYZ").list_user_folders().is_empty());
+        // W1ABC sees exactly its one folder.
+        let listed = mbox.for_identity("W1ABC").list_user_folders();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].slug, "skywarn");
+
+        // The registries live in distinct per-FULL roots.
+        assert!(dir.path().join("mailbox/W1ABC/.folders.json").exists());
+        assert!(!dir.path().join("mailbox/W7XYZ/.folders.json").exists());
+    }
+
+    // Task 3: tactical mail lands in the parent FULL's inbox via the routing seam.
+    #[test]
+    fn tactical_mail_routes_into_parent_full_inbox() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+
+        // A message addressed to tactical label "AIDSTATION-1" whose parent FULL is
+        // W1ABC must land in W1ABC's inbox (tuxlink-73nl will later route it into a
+        // per-tactical folder; this phase only guarantees the parent-FULL landing).
+        let id = mbox
+            .route_received("W1ABC", Some("AIDSTATION-1"), &raw("Tactical traffic", "x"))
+            .unwrap();
+        let inbox = mbox.for_identity("W1ABC").list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].id, id);
+        // It is NOT in W7XYZ's inbox.
+        assert!(mbox.for_identity("W7XYZ").list(MailboxFolder::Inbox).unwrap().is_empty());
+    }
 }
 
 #[cfg(test)]
@@ -1111,6 +1650,13 @@ mod index_hook_tests {
         let mut mbox = Mailbox::new(dir.to_path_buf());
         mbox = mbox.with_index(idx.clone());
         (mbox, idx)
+    }
+
+    /// The on-disk root the un-namespaced `Mailbox` methods resolve received-mail
+    /// folders + user folders into after the Phase-4 namespace refactor
+    /// (tuxlink-2ns7): `<root>/mailbox/_default`. Sent/Outbox stay at `<root>`.
+    fn default_root(p: &std::path::Path) -> std::path::PathBuf {
+        p.join("mailbox").join("_default")
     }
 
     fn raw(subject: &str, body: &str) -> Vec<u8> {
@@ -1171,6 +1717,77 @@ mod index_hook_tests {
         assert_eq!(index_unread(&sent.0), 0, "Sent: not unread in index");
     }
 
+    // tuxlink-2ns7 Task 4: storing to Sent under a FULL writes the <mid>.identity
+    // sidecar next to the shared Sent b2f AND tags the search index.
+    #[test]
+    fn sent_store_tags_identity_sidecar_and_index() {
+        let dir = tempdir().unwrap();
+        let (mbox, idx) = build_mailbox_with_index(dir.path());
+        let id = mbox.for_identity("W1ABC").store(MailboxFolder::Sent, &raw("Sent", "x")).unwrap();
+
+        // On-disk identity sidecar next to the shared Sent b2f.
+        let sidecar = dir.path().join("sent").join(format!("{}.identity", id.0));
+        assert!(sidecar.exists(), "Sent message must carry a <mid>.identity sidecar");
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap().trim(), "W1ABC");
+
+        // Index tag.
+        let tag: Option<String> = idx
+            .lock().unwrap().conn
+            .query_row("SELECT identity_tag FROM messages_meta WHERE mid = ?1", [&id.0], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tag.as_deref(), Some("W1ABC"));
+    }
+
+    // tuxlink-2ns7 Task 6: a pre-Phase-4 flat mailbox migrates to the per-FULL
+    // layout — Inbox + Archive re-home under mailbox/<DEFAULT_FULL>/, the legacy
+    // flat dirs are gone, and the shared Sent/Outbox messages are tagged with the
+    // default FULL via a <mid>.identity sidecar.
+    #[test]
+    fn migrate_legacy_flat_layout_to_per_full() {
+        let dir = tempdir().unwrap();
+        // Seed a pre-Phase-4 flat layout directly on disk.
+        let mbox = Mailbox::new(dir.path());
+        // store() (un-namespaced) writes to mailbox/_default; for the migration
+        // test we want the TRUE legacy flat path, so write raw into <root>/inbox
+        // etc.
+        for (folder, subj) in [("inbox", "In A"), ("archive", "Arch A")] {
+            let raw = raw(subj, "x");
+            let mid = crate::winlink::message::Message::from_bytes(&raw)
+                .unwrap()
+                .header("Mid")
+                .unwrap()
+                .to_string();
+            let d = dir.path().join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join(format!("{mid}.b2f")), &raw).unwrap();
+        }
+        let sent_raw = raw("Sent A", "s");
+        let sent_mid = crate::winlink::message::Message::from_bytes(&sent_raw)
+            .unwrap()
+            .header("Mid")
+            .unwrap()
+            .to_string();
+        std::fs::create_dir_all(dir.path().join("sent")).unwrap();
+        std::fs::write(dir.path().join("sent").join(format!("{sent_mid}.b2f")), &sent_raw).unwrap();
+
+        // Migrate, naming the default FULL.
+        let full = crate::identity::Callsign::parse("N7CPZ").unwrap();
+        mbox.migrate_legacy_layout(&full).unwrap();
+
+        // Inbox + Archive now live under mailbox/N7CPZ/.
+        assert_eq!(mbox.for_identity("N7CPZ").list(MailboxFolder::Inbox).unwrap().len(), 1);
+        assert_eq!(mbox.for_identity("N7CPZ").list(MailboxFolder::Archive).unwrap().len(), 1);
+        // Legacy flat dirs are gone.
+        assert!(!dir.path().join("inbox").exists());
+        assert!(!dir.path().join("archive").exists());
+        // Sent stays shared but is now tagged with the default FULL.
+        assert_eq!(
+            mbox.read_identity_tag(MailboxFolder::Sent, &MessageId(sent_mid)).as_deref(),
+            Some("N7CPZ"),
+        );
+        assert!(dir.path().join("sent").exists(), "Sent stays at the shared root");
+    }
+
     #[test]
     fn move_to_updates_folder_in_index() {
         let dir = tempdir().unwrap();
@@ -1200,16 +1817,16 @@ mod index_hook_tests {
         let id = mbox.store(MailboxFolder::Inbox, &raw("hello", "body")).unwrap();
         mbox.mark_read(MailboxFolder::Inbox, &id).unwrap();
         // Sanity: marker exists in inbox before move.
-        assert!(dir.path().join("inbox").join(format!("{}.read", id.0)).exists());
+        assert!(default_root(dir.path()).join("inbox").join(format!("{}.read", id.0)).exists());
 
         mbox.move_to(MailboxFolder::Inbox, MailboxFolder::Archive, &id).unwrap();
 
         // The b2f file lives in archive/ and is gone from inbox/.
-        assert!(dir.path().join("archive").join(format!("{}.b2f", id.0)).exists());
-        assert!(!dir.path().join("inbox").join(format!("{}.b2f", id.0)).exists());
+        assert!(default_root(dir.path()).join("archive").join(format!("{}.b2f", id.0)).exists());
+        assert!(!default_root(dir.path()).join("inbox").join(format!("{}.b2f", id.0)).exists());
         // The read marker traveled with the message — no orphan in inbox/.
-        assert!(dir.path().join("archive").join(format!("{}.read", id.0)).exists());
-        assert!(!dir.path().join("inbox").join(format!("{}.read", id.0)).exists());
+        assert!(default_root(dir.path()).join("archive").join(format!("{}.read", id.0)).exists());
+        assert!(!default_root(dir.path()).join("inbox").join(format!("{}.read", id.0)).exists());
 
         // Search index reflects the new folder.
         let folder: String = idx
@@ -1262,18 +1879,18 @@ mod index_hook_tests {
         assert_eq!(list[0].slug, "ares-drills");
         assert_eq!(list[1].slug, "disaster-prep");
 
-        // The on-disk directories exist.
-        assert!(dir.path().join("ares-drills").is_dir());
-        assert!(dir.path().join("disaster-prep").is_dir());
+        // The on-disk directories exist (under the _default namespace root).
+        assert!(default_root(dir.path()).join("ares-drills").is_dir());
+        assert!(default_root(dir.path()).join("disaster-prep").is_dir());
         // The registry file exists.
-        assert!(dir.path().join(".folders.json").exists());
+        assert!(default_root(dir.path()).join(".folders.json").exists());
 
         // Delete with Delete cascade (no messages inside; safe).
         mbox.delete_user_folder("ares-drills", DeleteAction::Delete).unwrap();
         let after = mbox.list_user_folders();
         assert_eq!(after.len(), 1);
         assert_eq!(after[0].slug, "disaster-prep");
-        assert!(!dir.path().join("ares-drills").exists());
+        assert!(!default_root(dir.path()).join("ares-drills").exists());
     }
 
     #[test]
@@ -1306,8 +1923,8 @@ mod index_hook_tests {
             &id,
         )
         .unwrap();
-        assert!(dir.path().join("ares-drills").join(format!("{}.b2f", id.0)).exists());
-        assert!(!dir.path().join("inbox").join(format!("{}.b2f", id.0)).exists());
+        assert!(default_root(dir.path()).join("ares-drills").join(format!("{}.b2f", id.0)).exists());
+        assert!(!default_root(dir.path()).join("inbox").join(format!("{}.b2f", id.0)).exists());
 
         // User folder → Archive.
         mbox.move_between(
@@ -1316,8 +1933,8 @@ mod index_hook_tests {
             &id,
         )
         .unwrap();
-        assert!(dir.path().join("archive").join(format!("{}.b2f", id.0)).exists());
-        assert!(!dir.path().join("ares-drills").join(format!("{}.b2f", id.0)).exists());
+        assert!(default_root(dir.path()).join("archive").join(format!("{}.b2f", id.0)).exists());
+        assert!(!default_root(dir.path()).join("ares-drills").join(format!("{}.b2f", id.0)).exists());
     }
 
     #[test]
@@ -1338,8 +1955,8 @@ mod index_hook_tests {
         mbox.delete_user_folder("ares-drills", DeleteAction::MoveToInbox).unwrap();
 
         // Message is back in the inbox; user folder is gone.
-        assert!(dir.path().join("inbox").join(format!("{}.b2f", id.0)).exists());
-        assert!(!dir.path().join("ares-drills").exists());
+        assert!(default_root(dir.path()).join("inbox").join(format!("{}.b2f", id.0)).exists());
+        assert!(!default_root(dir.path()).join("ares-drills").exists());
         assert!(mbox.list_user_folders().is_empty());
     }
 
@@ -1357,8 +1974,8 @@ mod index_hook_tests {
         .unwrap();
 
         mbox.delete_user_folder("ares-drills", DeleteAction::Delete).unwrap();
-        assert!(!dir.path().join("ares-drills").exists());
-        assert!(!dir.path().join("inbox").join(format!("{}.b2f", id.0)).exists());
+        assert!(!default_root(dir.path()).join("ares-drills").exists());
+        assert!(!default_root(dir.path()).join("inbox").join(format!("{}.b2f", id.0)).exists());
         assert!(mbox.list_user_folders().is_empty());
     }
 
@@ -1377,7 +1994,7 @@ mod index_hook_tests {
         assert_eq!(renamed.display_name, "June Drills");
 
         // The on-disk directory still uses the original slug (no churn).
-        assert!(dir.path().join("ares-drills").is_dir());
+        assert!(default_root(dir.path()).join("ares-drills").is_dir());
 
         // Registry persists the new display name.
         let list = mbox.list_user_folders();
@@ -1436,8 +2053,12 @@ mod index_hook_tests {
 
     // ---- Nested folders (tuxlink-ka3z): re-parent + cascade delete ----
 
+    // Seeds a `.b2f` under the `_default` namespace root so it lines up with the
+    // Phase-4 namespaced `folder_dir` / user-folder paths (tuxlink-2ns7). `root`
+    // is the mailbox root (tempdir); the file lands at
+    // `<root>/mailbox/_default/<folder>/<name>`.
     fn seed_b2f(root: &std::path::Path, folder: &str, name: &str) {
-        let dir = root.join(folder);
+        let dir = default_root(root).join(folder);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(name), b"raw").unwrap();
     }
@@ -1452,11 +2073,11 @@ mod index_hook_tests {
 
         mbox.move_user_folder(&weather.slug, Some(&nets.slug)).unwrap();
 
-        let reg = user_folders::load_registry(dir.path());
+        let reg = user_folders::load_registry(&default_root(dir.path()));
         let moved = reg.folders.iter().find(|f| f.slug == weather.slug).unwrap();
         assert_eq!(moved.parent_slug.as_deref(), Some("nets"));
         // Metadata-only: the message file never left the weather dir.
-        assert!(dir.path().join(&weather.slug).join("M1.b2f").exists());
+        assert!(default_root(dir.path()).join(&weather.slug).join("M1.b2f").exists());
     }
 
     #[test]
@@ -1470,7 +2091,7 @@ mod index_hook_tests {
         assert!(mbox.move_user_folder(&weather.slug, Some(&ares.slug)).is_err());
         // promoting ares to top level is fine.
         mbox.move_user_folder(&ares.slug, None).unwrap();
-        let reg = user_folders::load_registry(dir.path());
+        let reg = user_folders::load_registry(&default_root(dir.path()));
         assert_eq!(reg.folders.iter().find(|f| f.slug == ares.slug).unwrap().parent_slug, None);
     }
 
@@ -1486,10 +2107,10 @@ mod index_hook_tests {
         let removed = mbox.delete_user_folder(&nets.slug, DeleteAction::MoveToInbox).unwrap();
 
         // Both folders gone from registry + disk; both messages in Inbox.
-        assert!(user_folders::load_registry(dir.path()).folders.is_empty());
-        assert!(dir.path().join("inbox").join("P1.b2f").exists());
-        assert!(dir.path().join("inbox").join("C1.b2f").exists());
-        assert!(!dir.path().join(&ares.slug).exists());
+        assert!(user_folders::load_registry(&default_root(dir.path())).folders.is_empty());
+        assert!(default_root(dir.path()).join("inbox").join("P1.b2f").exists());
+        assert!(default_root(dir.path()).join("inbox").join("C1.b2f").exists());
+        assert!(!default_root(dir.path()).join(&ares.slug).exists());
         // A5: returns parent + child so the UI can clear a stale selection.
         let mut got = removed;
         got.sort();
@@ -1505,9 +2126,9 @@ mod index_hook_tests {
         seed_b2f(dir.path(), &ares.slug, "C1.b2f");
 
         mbox.delete_user_folder(&nets.slug, DeleteAction::Delete).unwrap();
-        assert!(user_folders::load_registry(dir.path()).folders.is_empty());
-        assert!(!dir.path().join(&ares.slug).exists());
-        assert!(!dir.path().join(&nets.slug).exists());
+        assert!(user_folders::load_registry(&default_root(dir.path())).folders.is_empty());
+        assert!(!default_root(dir.path()).join(&ares.slug).exists());
+        assert!(!default_root(dir.path()).join(&nets.slug).exists());
     }
 
     #[test]
@@ -1522,9 +2143,9 @@ mod index_hook_tests {
         let err = mbox.delete_user_folder(&nets.slug, DeleteAction::MoveToInbox);
         assert!(err.is_err(), "must refuse rather than overwrite");
         // Nothing moved: both files still in place, folder still present.
-        assert!(dir.path().join("inbox").join("M1.b2f").exists());
-        assert!(dir.path().join(&nets.slug).join("M1.b2f").exists());
-        assert!(!user_folders::load_registry(dir.path()).folders.is_empty());
+        assert!(default_root(dir.path()).join("inbox").join("M1.b2f").exists());
+        assert!(default_root(dir.path()).join(&nets.slug).join("M1.b2f").exists());
+        assert!(!user_folders::load_registry(&default_root(dir.path())).folders.is_empty());
     }
 
     #[test]
@@ -1539,8 +2160,8 @@ mod index_hook_tests {
 
         assert!(mbox.delete_user_folder(&nets.slug, DeleteAction::MoveToInbox).is_err());
         // Refused before any move: both folders + files intact.
-        assert!(dir.path().join(&nets.slug).join("DUP.b2f").exists());
-        assert!(dir.path().join(&ares.slug).join("DUP.b2f").exists());
+        assert!(default_root(dir.path()).join(&nets.slug).join("DUP.b2f").exists());
+        assert!(default_root(dir.path()).join(&ares.slug).join("DUP.b2f").exists());
     }
 
     #[test]
