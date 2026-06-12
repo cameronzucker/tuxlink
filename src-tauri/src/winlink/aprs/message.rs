@@ -87,6 +87,32 @@ fn trim_msgid(tail: &str) -> String {
     core.chars().take(5).collect()
 }
 
+/// Build an APRS ACK addressed to the original sender, echoing their msgid.
+///
+/// The addressee is the station whose message we are acking (the original
+/// sender), space-padded to 9 via `pad_addressee`; the msgid is echoed
+/// verbatim. `ack` is literal lowercase, pinned to direwolf.
+pub fn encode_ack(original_sender: &str, msgid: &str) -> Vec<u8> {
+    encode_ack_rej(original_sender, "ack", msgid)
+}
+
+/// Build an APRS REJ addressed to the original sender, echoing their msgid.
+///
+/// Same shape as `encode_ack` with the `rej` keyword (literal lowercase).
+pub fn encode_rej(original_sender: &str, msgid: &str) -> Vec<u8> {
+    encode_ack_rej(original_sender, "rej", msgid)
+}
+
+fn encode_ack_rej(addressee: &str, kw: &str, msgid: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.push(b':');
+    out.extend_from_slice(&pad_addressee(addressee));
+    out.push(b':');
+    out.extend_from_slice(kw.as_bytes()); // literal lowercase
+    out.extend_from_slice(msgid.as_bytes());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,5 +188,16 @@ mod tests {
     fn parse_rejects_too_short() {
         assert!(parse_info(b":short").is_none());        // < 11 byte prefix
         assert!(parse_info(b"no colon dti").is_none());  // missing leading ':'
+    }
+
+    #[test]
+    fn encode_ack_addresses_original_sender_and_echoes_msgid() {
+        // We received msg 003 from KK6XYZ; our ack is addressed back to KK6XYZ.
+        assert_eq!(encode_ack("KK6XYZ", "003"), b":KK6XYZ   :ack003".to_vec());
+    }
+
+    #[test]
+    fn encode_rej_lowercase() {
+        assert_eq!(encode_rej("WU2Z", "47"), b":WU2Z     :rej47".to_vec());
     }
 }
