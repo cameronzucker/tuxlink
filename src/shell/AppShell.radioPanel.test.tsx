@@ -17,7 +17,7 @@
 // the existing AppShell test so the shell mounts cleanly under jsdom.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MessageMeta } from '../mailbox/types';
@@ -107,6 +107,9 @@ vi.mock('@tauri-apps/api/core', () => ({
     // ArdopRadioPanel Radio section device pickers — empty lists are valid.
     if (cmd === 'ardop_list_audio_devices') return { captures: [], playbacks: [] };
     if (cmd === 'packet_list_serial_devices') return [];
+    // P7: managed packet sound-card picker — empty list is valid (the panel
+    // defaults to BYO here since packet_config_get returns linkKind:'Tcp').
+    if (cmd === 'packet_list_audio_devices') return [];
     return undefined;
   }),
 }));
@@ -513,6 +516,103 @@ describe('<AppShell> radio panel', () => {
         expect(callsAfterClick).not.toContain('modem_ardop_b2f_exchange');
       },
     );
+  });
+
+  // ── P7: managed packet picker via the production AppShell stack ──────────
+  //
+  // tuxlink-yq3l P7.4 production-mount-path test (memory:
+  // test_production_mount_path_not_just_units). The unit tests in
+  // PacketRadioPanel.test.tsx wrap the panel in a bare QueryClient scaffold;
+  // this mounts the REAL AppShell tree (full provider stack + routing) and
+  // selects CMS Packet so the managed picker is exercised end-to-end through
+  // production. An UNCONFIGURED packet config makes the panel default to
+  // Managed; a single fake device is provided so the picker can persist.
+  // jsdom can't detect missing CSS (TEST-1) — this asserts BEHAVIOR (the
+  // managed section renders + a device-select persists), not visual layout.
+  describe('P7: managed packet picker via production AppShell stack', () => {
+    it('mounts the managed picker and persists a device selection through production', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      const FAKE_DEVICE = {
+        humanName: 'C-Media USB Audio Device (DRA-100)',
+        alsaPlughw: 'plughw:CARD=DRA,DEV=0',
+        stableId: { kind: 'byIdSymlink', value: 'usb-C-Media_DRA-100_CM119A-01' },
+        pttCandidates: [{ kind: 'cm108Hid', hidrawPath: '/dev/hidraw3' }],
+      };
+      invokeMock.mockImplementation(async (cmd: string) => {
+        // UNCONFIGURED packet config (linkKind:null) → panel defaults to Managed.
+        if (cmd === 'packet_config_get') {
+          return {
+            ssid: 7,
+            listenDefault: true,
+            linkKind: null,
+            tcpHost: null,
+            tcpPort: null,
+            serialDevice: null,
+            serialBaud: null,
+            txdelay: 30,
+            persistence: 63,
+            slotTime: 10,
+            paclen: 128,
+            maxframe: 4,
+            t1Ms: 3000,
+            n2Retries: 10,
+          };
+        }
+        if (cmd === 'packet_list_audio_devices') return [FAKE_DEVICE];
+        // Benign defaults for the rest of the shell.
+        if (cmd === 'config_read') return null;
+        if (cmd === 'backend_status') return null;
+        if (cmd === 'session_log_snapshot') return [];
+        if (cmd === 'message_read') return null;
+        if (cmd === 'position_status') return { gps_ready: false, broadcast_grid: '', ui_grid: '' };
+        if (cmd === 'tauri_search_list_saved') return [];
+        if (cmd === 'tauri_search_list_recent') return [];
+        if (cmd === 'favorites_read') return { schema_version: 1, favorites: [], log: [] };
+        if (cmd === 'favorites_recents') return [];
+        if (cmd === 'position_current_fix') return { grid: null };
+        if (cmd === 'favorite_tod_hint') return null;
+        if (cmd === 'packet_allowed_stations_get') return { allow_all: true, callsigns: [] };
+        if (cmd === 'packet_list_serial_devices') return [];
+        return undefined;
+      });
+
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderShell();
+      // Select CMS Packet — mounts PacketRadioPanel via real AppShell routing.
+      selectConnection('sess-cms', 'proto-cms-packet');
+      await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+
+      // Managed picker rendered through the production stack (unconfigured →
+      // Managed default), and the device dropdown populated.
+      expect(
+        await screen.findByTestId('managed-modem-section', undefined, { timeout: 10000 }),
+      ).toBeInTheDocument();
+      const select = (await screen.findByTestId(
+        'managed-device-select',
+      )) as HTMLSelectElement;
+
+      // Selecting the device persists linkKind:'Managed' + the stableId + the
+      // device's ranked-first PTT — end-to-end through the real provider stack.
+      fireEvent.change(select, {
+        target: { value: 'byIdSymlink:usb-C-Media_DRA-100_CM119A-01' },
+      });
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'packet_config_set',
+          expect.objectContaining({
+            dto: expect.objectContaining({
+              linkKind: 'Managed',
+              managedAudioDevice: {
+                kind: 'byIdSymlink',
+                value: 'usb-C-Media_DRA-100_CM119A-01',
+              },
+              managedPtt: { kind: 'cm108Hid', hidrawPath: '/dev/hidraw3' },
+            }),
+          }),
+        );
+      });
+    });
   });
 });
 

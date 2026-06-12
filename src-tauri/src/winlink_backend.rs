@@ -1092,6 +1092,14 @@ pub trait WinlinkBackend: Send + Sync {
     fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
         Err(BackendError::NoActiveIdentity)
     }
+
+    /// Set the active default identity (after a successful authenticate). Default
+    /// no-op; `NativeBackend` stores it in its in-memory slot (Phase 6, tuxlink-5ekg).
+    fn set_active_identity(&self, _identity: crate::identity::SessionIdentity) {}
+
+    /// Clear the active identity (lock / logout). Default no-op; `NativeBackend`
+    /// empties its slot so subsequent FULL-identity ops require re-auth.
+    fn clear_active_identity(&self) {}
 }
 
 // ============================================================================
@@ -1361,6 +1369,15 @@ impl NativeBackend {
         }
     }
 
+    /// Clear the active default identity (lock / shutdown). Subsequent transmit /
+    /// listen-arm / Outbox-drain require a re-auth.
+    pub fn clear_active_identity(&self) {
+        match self.active_identity.write() {
+            Ok(mut slot) => *slot = None,
+            Err(poisoned) => *poisoned.into_inner() = None,
+        }
+    }
+
     /// Clone the active SessionIdentity for a single operation.
     /// `Err(NoActiveIdentity)` if the operator hasn't authenticated one yet.
     pub fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
@@ -1457,6 +1474,14 @@ impl WinlinkBackend for NativeBackend {
     /// back into this trait method.
     fn active_identity(&self) -> Result<crate::identity::SessionIdentity, BackendError> {
         NativeBackend::active_identity(self)
+    }
+
+    fn set_active_identity(&self, identity: crate::identity::SessionIdentity) {
+        NativeBackend::set_active_identity(self, identity)
+    }
+
+    fn clear_active_identity(&self) {
+        NativeBackend::clear_active_identity(self)
     }
 
     async fn list_messages(&self, folder: MailboxFolder) -> Result<Vec<MessageMeta>, BackendError> {
@@ -2195,6 +2220,96 @@ fn native_packet_connect(
     let locator = cms_locator(config);
     let base = resolved.base_mycall.clone();
 
+    // ── P6: managed Dire Wolf interception (RADIO-1) ──────────────────────────
+    //
+    // If the operator's link is the ManagedDireWolf variant, tuxlink spawns +
+    // supervises its OWN Dire Wolf here, then REBINDS `link` to the loopback Tcp
+    // KISS port Dire Wolf serves — so the rest of this function (the dial/listen +
+    // exchange below) runs UNCHANGED against a normal Tcp link. Both dial and
+    // listen flow through this function, so wiring here covers both.
+    //
+    // `_managed_guard` holds the live ManagedDireWolf for the WHOLE fn scope. Its
+    // Drop runs the explicit 5s shutdown() (the RADIO-1 clean de-key) on EVERY
+    // exit path — normal return after the exchange, a `?` early-return below, OR a
+    // panic unwinding the stack — because Rust runs Drop for in-scope values on
+    // unwind. This is the mechanism that guarantees the transmitter is de-keyed
+    // and the process reaped however the session ends.
+    let mut link = link;
+    let _managed_guard;
+    // Take OWNED copies of the managed-variant fields up front so reassigning
+    // `link` below does not run afoul of a borrow held by the `if let` pattern.
+    // (Only the managed arm clones; the common Tcp/Serial/Bluetooth links match
+    // `None` here and fall straight through unchanged.)
+    let managed_fields = match &link {
+        KissLinkConfig::ManagedDireWolf { audio_device, ptt } => {
+            Some((audio_device.clone(), ptt.clone()))
+        }
+        _ => None,
+    };
+    if let Some((audio_device, ptt)) = managed_fields {
+        use crate::winlink::ax25::{
+            pick_free_kiss_port, read_sys_snapshot, resolve_managed_device, DwLifecycleError,
+            ManagedDireWolf, ManagedDireWolfCfg, ManagedDireWolfGuard,
+        };
+
+        progress("Starting managed Dire Wolf…");
+
+        // 1. Resolve the persisted stable id against the LIVE system to its current
+        //    plughw + card<N> index. None ⇒ the configured card is unplugged /
+        //    renamed — surface a clear error, never spawn against the wrong card.
+        let resolved_dev =
+            resolve_managed_device(&audio_device, &read_sys_snapshot()).ok_or_else(|| {
+                BackendError::TransportFailed {
+                    reason: format!(
+                        "configured sound card not found (id: {}). Plug it in, or pick a \
+                         different audio device in packet settings.",
+                        audio_device.value
+                    ),
+                    source: None,
+                }
+            })?;
+
+        // 2. Pick a free loopback KISS port for both the conf KISSPORT and our dial.
+        let kiss_port = pick_free_kiss_port().map_err(|e| BackendError::TransportFailed {
+            reason: format!("could not allocate a localhost KISS port for Dire Wolf: {e}"),
+            source: None,
+        })?;
+
+        // 3. Spawn + supervise Dire Wolf. Map the "not installed" case to an
+        //    install-affordance message; every other lifecycle error to a named
+        //    TransportFailed reason.
+        let managed = ManagedDireWolf::spawn(ManagedDireWolfCfg {
+            adevice: resolved_dev.alsa_plughw,
+            card_index: resolved_dev.card_index,
+            mycall: resolved.base_mycall.clone(),
+            ptt,
+            kiss_port,
+        })
+        .map_err(|e| match e {
+            DwLifecycleError::DireWolfNotInstalled => BackendError::TransportFailed {
+                reason: "Dire Wolf is not installed — install it, or switch to a \
+                         bring-your-own KISS endpoint (TCP/serial/Bluetooth) in packet settings."
+                    .to_string(),
+                source: None,
+            },
+            other => BackendError::TransportFailed {
+                reason: format!("managed Dire Wolf failed to start: {other}"),
+                source: None,
+            },
+        })?;
+
+        // 4. Rebind `link` to the loopback Tcp KISS endpoint Dire Wolf now serves;
+        //    the rest of this fn proceeds as a normal Tcp connect.
+        let (host, port) = managed.endpoint();
+        link = KissLinkConfig::Tcp {
+            host: host.to_string(),
+            port,
+        };
+
+        // 5. Hold the guard for the whole fn scope (RADIO-1 clean de-key on exit).
+        _managed_guard = ManagedDireWolfGuard(managed);
+    }
+
     progress("Opening KISS link…");
     // Open the KISS link with an abort handle (tuxlink-9z2 pattern, mirroring
     // native_connect's register_socket). The TCP arm yields a try_clone'd TcpStream
@@ -2854,7 +2969,7 @@ pub(crate) fn file_exchange_result(
 /// into Inbox, moves sent ones from Outbox to Sent.
 ///
 /// The transport surface is `Box<dyn ModemTransport>` so any future modem
-/// (Dire Wolf, tuxmodem) that implements the same trait flows through this
+/// (Dire Wolf, sonde) that implements the same trait flows through this
 /// path unchanged.
 ///
 /// # RADIO-1
@@ -5577,6 +5692,37 @@ mod native_read_state_tests {
         backend.set_active_identity(SessionIdentity::full(handle));
         let active = backend.active_identity().expect("active set");
         assert_eq!(active.mycall().as_str(), "N7CPZ");
+    }
+
+    #[test]
+    fn captured_identity_is_immune_to_later_active_switch() {
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+        let backend = NativeBackend::new(offline_config(), tempfile::tempdir().unwrap().path());
+        backend.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("W1AAA").unwrap(),
+        )));
+        // Simulate a listener capturing the active identity at arm time (Clone).
+        let captured = backend.active_identity().expect("active set").clone();
+        // Operator switches the active identity (default for NEW ops).
+        backend.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("W2BBB").unwrap(),
+        )));
+        assert_eq!(
+            backend.active_identity().unwrap().mycall().as_str(),
+            "W2BBB",
+            "active switched"
+        );
+        assert_eq!(
+            captured.mycall().as_str(),
+            "W1AAA",
+            "a captured identity is immune to active switches"
+        );
+        // And clear() restores the re-auth requirement.
+        backend.clear_active_identity();
+        assert!(matches!(
+            backend.active_identity(),
+            Err(BackendError::NoActiveIdentity)
+        ));
     }
 
     #[test]

@@ -364,6 +364,17 @@ pub fn run() {
                         ),
                     )));
 
+                    // forms sequence counters (tuxlink-2tom / G12-C): per-form
+                    // serial numbers for SeqInc forms. `SeqCounterStore::open` is
+                    // INFALLIBLE (degrade-to-empty on read error) like the stores
+                    // above, so it is unconditionally managed. Reuses the
+                    // already-resolved `data_dir`.
+                    app.manage(std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::forms::sequence::SeqCounterStore::open(
+                            data_dir.join("forms-sequence-counters.json"),
+                        ),
+                    )));
+
                     let search_root = data_dir.join("native-mbox");
                     // Ensure the directory exists before opening SQLite (Index::open
                     // calls Connection::open, which creates the .db file but expects
@@ -407,6 +418,15 @@ pub fn run() {
                             std::sync::Arc::new(crate::catalog::stations_cache::SystemClock),
                         ),
                     ));
+                    // tuxlink-2tom: `send_webview_form` requires the seq-counter
+                    // State to resolve, so manage a fallback here too (temp path —
+                    // degraded persistence) rather than break ALL webview form
+                    // sends when app_data_dir is unavailable.
+                    app.manage(std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::forms::sequence::SeqCounterStore::open(
+                            std::env::temp_dir().join("tuxlink-forms-sequence-counters.json"),
+                        ),
+                    )));
                 }
             }
 
@@ -632,6 +652,8 @@ pub fn run() {
             // {var X} placeholders + hidden inputs.
             crate::ui_commands::open_webview_viewer,
             crate::ui_commands::open_webview_reply,     // tuxlink-hhfx / G10 (editable pre-bound reply session)
+            crate::ui_commands::forms_sequence_status,  // tuxlink-2tom / G12-C (SeqInc serial counters)
+            crate::ui_commands::forms_sequence_reset,   // tuxlink-2tom / G12-C (reset a form's next serial)
             crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
             crate::ui_commands::cms_abort,             // tuxlink-9z2 (abort in-flight connect)
             crate::ui_commands::cms_resolve_inbound_selection,    // tuxlink-bsiy (inbound message selection resolve)
@@ -658,6 +680,9 @@ pub fn run() {
             crate::identity::commands::identity_add_full,    // tuxlink-7iy2
             crate::identity::commands::identity_add_tactical,// tuxlink-7iy2
             crate::identity::commands::identity_remove,      // tuxlink-7iy2
+            crate::identity::commands::identity_authenticate, // tuxlink-5ekg (Phase 6 re-auth)
+            crate::identity::commands::identity_lock,         // tuxlink-5ekg
+            crate::identity::commands::identity_active,       // tuxlink-5ekg
             crate::ui_commands::packet_connect,       // tuxlink-7fr (packet dial)
             crate::ui_commands::packet_listen,        // tuxlink-7fr (arm Listen — answer inbound)
             crate::ui_commands::packet_set_listen,    // tuxlink-7fr (sticky listen)
@@ -667,6 +692,7 @@ pub fn run() {
             crate::ui_commands::packet_allowed_stations_set_allow_all, // tuxlink-inde (allow_all toggle)
             crate::ui_commands::packet_list_serial_devices, // tuxlink-7fr (USB/BT device picker)
             crate::ui_commands::packet_list_bluetooth_devices, // tuxlink-mqu3 (BT-MAC picker restoration)
+            crate::ui_commands::packet_list_audio_devices, // tuxlink-yq3l P7.1 (managed sound-card + PTT picker)
             crate::ui_commands::ardop_list_audio_devices,   // tuxlink-y7x7 (ARDOP ALSA picker restoration)
             // tuxlink-dhbl: ARDOP P2P listener — allowed-stations + arms + listen toggle.
             crate::ui_commands::ardop_listen,

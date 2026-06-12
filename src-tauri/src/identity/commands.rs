@@ -67,6 +67,83 @@ pub(crate) fn add_full_inner(
     Ok(())
 }
 
+/// Authenticate a FULL credential and build the active session, persisting the
+/// non-authoritative `last_selected` hint. See [`identity_authenticate`] for the
+/// command-level contract.
+fn authenticate_inner(
+    svc: &IdentityService,
+    store_path: &std::path::Path,
+    backend: &dyn crate::winlink_backend::WinlinkBackend,
+    callsign: &str,
+    credential: &str,
+    tactical_label: Option<&str>,
+) -> Result<(), crate::ui_commands::UiError> {
+    use crate::identity::{Address, Callsign, IdentityError, SessionIdentity};
+    use crate::ui_commands::UiError;
+
+    let full = Callsign::parse(callsign).map_err(|e| UiError::AuthFailed {
+        reason: e.to_string(),
+    })?;
+
+    // Authenticate the FULL credential -> a fresh handle (keyring-gated).
+    let handle = svc.authenticate(&full, credential).map_err(|e| match e {
+        IdentityError::CredentialMismatch | IdentityError::NoSecretSet => UiError::AuthFailed {
+            reason: e.to_string(),
+        },
+        other => UiError::Internal {
+            detail: other.to_string(),
+        },
+    })?;
+
+    // Build the active session: FULL, or a tactical that must exist under this parent.
+    let (session, selected) = match tactical_label {
+        None => (SessionIdentity::full(handle), Address::Full(full.clone())),
+        Some(label) => {
+            // The tactical must be a known label under this FULL (no ad-hoc tacticals).
+            let store = crate::identity::IdentityStore::load(store_path).map_err(|e| {
+                UiError::Internal {
+                    detail: e.to_string(),
+                }
+            })?;
+            // Parent is a callsign: compare case-insensitively to match the
+            // keyring auth contract (authenticate is case-insensitive on the
+            // callsign), so authenticating "w1abc" doesn't spuriously fail to
+            // find a tactical stored under "W1ABC". The label itself is a
+            // free-form tactical string — exact match.
+            let known = store
+                .tactical()
+                .iter()
+                .any(|t| t.label == label && t.parent.as_str().eq_ignore_ascii_case(full.as_str()));
+            if !known {
+                return Err(UiError::NotFound(format!(
+                    "tactical '{label}' is not a known label under {}",
+                    full.as_str()
+                )));
+            }
+            let s = SessionIdentity::tactical(handle, label.to_string()).map_err(|e| {
+                UiError::AuthFailed {
+                    reason: e.to_string(),
+                }
+            })?;
+            (s, Address::Tactical(label.to_string()))
+        }
+    };
+
+    // Persist ONLY the non-authoritative last-selected hint (never the session).
+    let mut store =
+        crate::identity::IdentityStore::load(store_path).map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })?;
+    store.set_last_selected(selected);
+    store.save().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
+
+    // Set the active default identity on the backend (in-memory, never persisted).
+    backend.set_active_identity(session);
+    Ok(())
+}
+
 /// Add a tactical identity under an existing FULL parent. Errors `ParentNotFound`
 /// if the parent FULL is not in the store. No keyring interaction (a tactical has
 /// no own credential).
@@ -179,6 +256,57 @@ pub async fn identity_remove(
         .map_err(|e| crate::ui_commands::UiError::Internal { detail: e.to_string() })
 }
 
+/// Authenticate a FULL identity's credential and make it the active default
+/// session (spec §"Security model": Authenticated switching). When `tactical_label`
+/// is Some, the active session presents as that tactical (validated to exist under
+/// the authenticated parent FULL); the RF station ID is still the FULL callsign.
+/// Persists only the non-authoritative `last_selected` hint. Un-bricks transmit
+/// (tuxlink-yyii): the active slot starts empty every launch (never persisted).
+#[tauri::command]
+pub async fn identity_authenticate(
+    svc: tauri::State<'_, IdentityService>,
+    state: tauri::State<'_, crate::app_backend::BackendState>,
+    callsign: String,
+    credential: String,
+    tactical_label: Option<String>,
+) -> Result<(), crate::ui_commands::UiError> {
+    let backend = state.current().ok_or_else(|| {
+        crate::ui_commands::UiError::NotConfigured("no backend configured".into())
+    })?;
+    authenticate_inner(
+        &svc,
+        &crate::config::identity_store_path(),
+        backend.as_ref(),
+        &callsign,
+        &credential,
+        tactical_label.as_deref(),
+    )
+}
+
+/// Clear the active default identity (lock). Subsequent transmit / listen-arm /
+/// Outbox-drain require a re-auth. No-op if no backend is configured.
+#[tauri::command]
+pub async fn identity_lock(
+    state: tauri::State<'_, crate::app_backend::BackendState>,
+) -> Result<(), crate::ui_commands::UiError> {
+    if let Some(backend) = state.current() {
+        backend.clear_active_identity();
+    }
+    Ok(())
+}
+
+/// The active session's presented `Address` (FULL callsign or tactical label),
+/// or `None` if no identity is authenticated this launch.
+#[tauri::command]
+pub async fn identity_active(
+    state: tauri::State<'_, crate::app_backend::BackendState>,
+) -> Result<Option<Address>, crate::ui_commands::UiError> {
+    Ok(state
+        .current()
+        .and_then(|b| b.active_identity().ok())
+        .map(|s| s.address_as().clone()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +364,139 @@ mod tests {
         assert!(matches!(
             err,
             crate::identity::IdentityError::RemoveHasTacticals
+        ));
+    }
+
+    // --- Phase 6 (tuxlink-5ekg): authenticate → set-active-identity ---
+
+    use crate::winlink_backend::{BackendError, NativeBackend};
+
+    /// Build a real `NativeBackend` whose in-memory active-identity slot starts
+    /// empty (the on-disk `active_full` in the test Config does NOT seed the slot).
+    fn fresh_backend() -> NativeBackend {
+        let dir = tempfile::tempdir().unwrap();
+        NativeBackend::new(crate::test_helpers::native_test_config(), dir.path())
+    }
+
+    #[test]
+    fn authenticate_full_sets_active_and_unbricks_gate() {
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("identities.json");
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+        add_full_inner(&svc, &store_path, "W1ABC", None, false, "pw").unwrap();
+        let backend = fresh_backend();
+
+        // Gate starts closed.
+        assert!(matches!(
+            backend.active_identity(),
+            Err(BackendError::NoActiveIdentity)
+        ));
+
+        authenticate_inner(&svc, &store_path, &backend, "W1ABC", "pw", None)
+            .expect("authenticate FULL");
+
+        assert_eq!(
+            backend.active_identity().unwrap().mycall().as_str(),
+            "W1ABC"
+        );
+        let store = crate::identity::IdentityStore::load(&store_path).unwrap();
+        assert_eq!(
+            store.last_selected(),
+            Some(&Address::Full(Callsign::parse("W1ABC").unwrap()))
+        );
+    }
+
+    #[test]
+    fn authenticate_wrong_credential_is_authfailed_and_leaves_gate_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("identities.json");
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+        add_full_inner(&svc, &store_path, "W1ABC", None, false, "pw").unwrap();
+        let backend = fresh_backend();
+
+        let err =
+            authenticate_inner(&svc, &store_path, &backend, "W1ABC", "WRONG", None).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::ui_commands::UiError::AuthFailed { .. }
+        ));
+        assert!(matches!(
+            backend.active_identity(),
+            Err(BackendError::NoActiveIdentity)
+        ));
+    }
+
+    #[test]
+    fn authenticate_tactical_requires_known_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("identities.json");
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+        add_full_inner(&svc, &store_path, "W1ABC", None, false, "pw").unwrap();
+        let backend = fresh_backend();
+
+        // Unknown tactical label -> NotFound, gate stays closed.
+        let err =
+            authenticate_inner(&svc, &store_path, &backend, "W1ABC", "pw", Some("GHOST"))
+                .unwrap_err();
+        assert!(matches!(err, crate::ui_commands::UiError::NotFound(_)));
+        assert!(matches!(
+            backend.active_identity(),
+            Err(BackendError::NoActiveIdentity)
+        ));
+
+        // Seed a real tactical under W1ABC, then authenticate as it.
+        add_tactical_inner(&store_path, "EOC-3", "W1ABC").unwrap();
+        authenticate_inner(&svc, &store_path, &backend, "W1ABC", "pw", Some("EOC-3"))
+            .expect("authenticate tactical");
+        let active = backend.active_identity().unwrap();
+        assert_eq!(active.address_as(), &Address::Tactical("EOC-3".to_string()));
+        assert_eq!(active.mycall().as_str(), "W1ABC");
+    }
+
+    // adversarial-review pin: a tactical belonging to a DIFFERENT parent FULL must
+    // NOT be activatable by authenticating the wrong parent — the membership check
+    // requires BOTH label and parent to match. Guards the tactical-bypass angle.
+    #[test]
+    fn authenticate_tactical_under_wrong_parent_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("identities.json");
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+        add_full_inner(&svc, &store_path, "W1ABC", None, false, "pw").unwrap();
+        add_full_inner(&svc, &store_path, "W2XYZ", None, false, "pw2").unwrap();
+        // EOC-9 belongs to W2XYZ, NOT W1ABC.
+        add_tactical_inner(&store_path, "EOC-9", "W2XYZ").unwrap();
+        let backend = fresh_backend();
+
+        // Authenticate W1ABC (valid credential) but ask for W2XYZ's tactical.
+        let err =
+            authenticate_inner(&svc, &store_path, &backend, "W1ABC", "pw", Some("EOC-9"))
+                .unwrap_err();
+        assert!(
+            matches!(err, crate::ui_commands::UiError::NotFound(_)),
+            "a tactical under a different parent must be rejected; got {err:?}"
+        );
+        assert!(
+            matches!(backend.active_identity(), Err(BackendError::NoActiveIdentity)),
+            "gate must stay closed when the tactical-parent check fails"
+        );
+    }
+
+    #[test]
+    fn lock_clears_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("identities.json");
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+        add_full_inner(&svc, &store_path, "W1ABC", None, false, "pw").unwrap();
+        let backend = fresh_backend();
+        authenticate_inner(&svc, &store_path, &backend, "W1ABC", "pw", None)
+            .expect("authenticate FULL");
+        assert!(backend.active_identity().is_ok());
+
+        // identity_lock is a trivial wrapper over clear_active_identity.
+        backend.clear_active_identity();
+        assert!(matches!(
+            backend.active_identity(),
+            Err(BackendError::NoActiveIdentity)
         ));
     }
 }

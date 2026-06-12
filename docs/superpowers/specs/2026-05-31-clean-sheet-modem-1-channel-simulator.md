@@ -33,7 +33,7 @@ performance metric across design iterations.
   radios), not the radios themselves. Real-radio characterization happens in
   subsystem #2 (RF measurement rig) and the bench rig.
 - **Not the deployment runtime.** The simulator is a development + CI tool.
-  It does not ship with tuxlink at runtime; it lives in tuxmodem's test
+  It does not ship with tuxlink at runtime; it lives in sonde's test
   infrastructure (or as its own crate per the Q7 question in the overview).
 - **Not a perfect ionospheric model.** Watterson is the standard, and ITU-R
   F.520 "good/moderate/poor/flutter" parameter sets are the comparable test
@@ -88,7 +88,7 @@ performance metric across design iterations.
 |---|---|---|
 | §1.Q1 | Independent Rust implementation, or wrap an existing open implementation? | **RESOLVED — independent Rust implementation.** Per overview §5.A.5 (standalone crate, independent provenance for the citation chain). Wrap precluded by overview's clean-sheet posture. |
 | §1.Q2 | Sample-rate / sample-format API — fixed (e.g., 48 kHz f32 I/Q) or parameterized? | Open. Tradeoff: simpler API vs. flexibility for different PHY sample rates. Settle during implementation. |
-| §1.Q3 | Audio-band vs. baseband I/Q input? | Likely audio-band (tuxmodem's PHY operates after the radio's SSB demod). Confirm during subsystem #3 development. |
+| §1.Q3 | Audio-band vs. baseband I/Q input? | Likely audio-band (sonde's PHY operates after the radio's SSB demod). Confirm during subsystem #3 development. |
 | §1.Q4 | Channel-condition parameter representation — typed enum (Good/Moderate/Poor/Flutter) or numeric (multipath delay-spread + Doppler-spread)? | Open. Enum is safer + matches ITU-R F.520; numeric is more flexible. Probably both — typed enum as primary API + numeric escape hatch. |
 | §1.Q5 | Multi-channel (frequency-selective) Watterson extension supported? | Open. F.1487 allows up to 12 kHz; pure Watterson is 2-tap. Probably 2-tap initially; multi-channel extension is "free" if added later. |
 | §1.Q6 | Cross-validation reference — ITS, GNU Radio, both, or other? | Open. Listed in overview §5.C as a subsystem-level open question. Probably both for confidence; settle during implementation as part of the "done" gate. |

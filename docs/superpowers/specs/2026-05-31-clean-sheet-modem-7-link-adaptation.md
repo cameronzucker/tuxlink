@@ -8,7 +8,7 @@
 
 ## §1.A Two-dimensional adaptation policy (per overview §5.A.1 + §5.A.2)
 
-Link adaptation in tuxmodem is **substantially more complex** than the
+Link adaptation in sonde is **substantially more complex** than the
 conventional "measure SNR, pick a mode" policy because of the dual-family
 PHY architecture:
 

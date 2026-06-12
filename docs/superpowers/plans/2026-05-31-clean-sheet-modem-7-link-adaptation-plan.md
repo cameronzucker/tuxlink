@@ -1,12 +1,12 @@
-# Tuxmodem Subsystem #7 — Link Adaptation Implementation Plan
+# Sonde Subsystem #7 — Link Adaptation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the 2D link-adaptation subsystem that maps `(channel-quality, payload-size)` → `(mode-family, mode-within-family, ARQ-strategy)` for tuxmodem's dual-family PHY ladder, with hysteresis-controlled mode-flap suppression and AI-native re-tunability over channel-simulator sweeps.
+**Goal:** Build the 2D link-adaptation subsystem that maps `(channel-quality, payload-size)` → `(mode-family, mode-within-family, ARQ-strategy)` for sonde's dual-family PHY ladder, with hysteresis-controlled mode-flap suppression and AI-native re-tunability over channel-simulator sweeps.
 
-**Architecture:** Pure-Rust crate (`tuxmodem-linkadapt`) implementing a tabular + state-machine policy on top of three explicit inputs (channel-quality estimator, payload-size router, ARQ feedback) and three explicit outputs (PHY mode descriptor, MAC routing decision, ARQ strategy enum). Built **trait-first** against simulator stubs so it can be specced + tested before #3/#4/#6 reach v0.1. Empirical thresholds are extracted from channel-sim sweeps (#1), recorded as YAML configuration loaded at runtime, and tuned offline via a separate `tuxmodem-linkadapt-tune` binary that scripts deterministic 2D sweeps.
+**Architecture:** Pure-Rust crate (`sonde-linkadapt`) implementing a tabular + state-machine policy on top of three explicit inputs (channel-quality estimator, payload-size router, ARQ feedback) and three explicit outputs (PHY mode descriptor, MAC routing decision, ARQ strategy enum). Built **trait-first** against simulator stubs so it can be specced + tested before #3/#4/#6 reach v0.1. Empirical thresholds are extracted from channel-sim sweeps (#1), recorded as YAML configuration loaded at runtime, and tuned offline via a separate `sonde-linkadapt-tune` binary that scripts deterministic 2D sweeps.
 
-**Tech Stack:** Rust 2021 edition; `tuxmodem-linkadapt` crate (AGPLv3-only); `hf-channel-sim` (subsystem #1 crate) as a dev-dependency for trait stubs and integration tests; `serde` + `serde_yaml` for offline-tuned threshold tables; `criterion` for policy-evaluation benchmarks; `proptest` for hysteresis property tests; `tracing` for structured policy-decision telemetry.
+**Tech Stack:** Rust 2021 edition; `sonde-linkadapt` crate (AGPLv3-only); `hf-channel-sim` (subsystem #1 crate) as a dev-dependency for trait stubs and integration tests; `serde` + `serde_yaml` for offline-tuned threshold tables; `criterion` for policy-evaluation benchmarks; `proptest` for hysteresis property tests; `tracing` for structured policy-decision telemetry.
 
 **Sequencing constraint:** Empirical validation gates on #1, #3, #4, #6 reaching v0.1. This plan ships in **two waves** — Wave A (Phases 1–4) is architecturally complete and unit-testable against stubs, deliverable immediately. Wave B (Phases 5–7) lights up once the upstream subsystems reach v0.1; deliverable as a follow-up PR. Each phase ends with a `git commit` checkpoint.
 
@@ -16,12 +16,12 @@
 
 ## File Structure
 
-The subsystem ships as a standalone Rust crate inside the tuxmodem repository tree (location TBD when tuxmodem repo is initialized; this plan assumes `crates/tuxmodem-linkadapt/` relative to the tuxmodem repo root, which lands as a sibling to `crates/hf-channel-sim/` and `crates/tuxmodem-phy/`).
+The subsystem ships as a standalone Rust crate inside the sonde repository tree (location TBD when sonde repo is initialized; this plan assumes `crates/sonde-linkadapt/` relative to the sonde repo root, which lands as a sibling to `crates/hf-channel-sim/` and `crates/sonde-phy/`).
 
-**Crate layout** (`crates/tuxmodem-linkadapt/`):
+**Crate layout** (`crates/sonde-linkadapt/`):
 
 ```
-crates/tuxmodem-linkadapt/
+crates/sonde-linkadapt/
 ├── Cargo.toml                              # AGPLv3-only; deps minimal
 ├── README.md                               # Citation chain + clean-sheet provenance
 ├── LICENSE                                 # AGPLv3 verbatim
@@ -43,11 +43,11 @@ crates/tuxmodem-linkadapt/
 ├── benches/
 │   └── policy_eval.rs                      # criterion bench: per-decision latency
 ├── tune/                                   # Wave B — offline tuning harness
-│   ├── Cargo.toml                          # Separate binary crate `tuxmodem-linkadapt-tune`
+│   ├── Cargo.toml                          # Separate binary crate `sonde-linkadapt-tune`
 │   └── src/main.rs                         # CLI: runs 2D channel-sim sweeps, emits thresholds.yaml
 └── thresholds/
     ├── default.yaml                        # Conservative starting thresholds (hand-derived from theory)
-    └── tuned.yaml                          # Generated by `tuxmodem-linkadapt-tune` from sim sweeps
+    └── tuned.yaml                          # Generated by `sonde-linkadapt-tune` from sim sweeps
 ```
 
 **Why this decomposition:**
@@ -202,23 +202,23 @@ The plan **does not** pre-commit to RL or any specific ML technique. It commits 
 ### Phase 1 — Crate skeleton + cross-subsystem trait surface
 
 **Files:**
-- Create: `crates/tuxmodem-linkadapt/Cargo.toml`
-- Create: `crates/tuxmodem-linkadapt/LICENSE` (AGPLv3-only verbatim from https://www.gnu.org/licenses/agpl-3.0.txt)
-- Create: `crates/tuxmodem-linkadapt/README.md`
-- Create: `crates/tuxmodem-linkadapt/src/lib.rs`
-- Create: `crates/tuxmodem-linkadapt/src/inputs.rs`
-- Create: `crates/tuxmodem-linkadapt/src/outputs.rs`
+- Create: `crates/sonde-linkadapt/Cargo.toml`
+- Create: `crates/sonde-linkadapt/LICENSE` (AGPLv3-only verbatim from https://www.gnu.org/licenses/agpl-3.0.txt)
+- Create: `crates/sonde-linkadapt/README.md`
+- Create: `crates/sonde-linkadapt/src/lib.rs`
+- Create: `crates/sonde-linkadapt/src/inputs.rs`
+- Create: `crates/sonde-linkadapt/src/outputs.rs`
 
 - [ ] **Step 1: Write `Cargo.toml`**
 
 ```toml
 [package]
-name = "tuxmodem-linkadapt"
+name = "sonde-linkadapt"
 version = "0.1.0-alpha.0"
 edition = "2021"
 license = "AGPL-3.0-only"
-description = "2D link-adaptation policy for tuxmodem (channel-quality × payload-size → mode-family × mode × ARQ strategy)"
-repository = "https://github.com/<owner>/tuxmodem"
+description = "2D link-adaptation policy for sonde (channel-quality × payload-size → mode-family × mode × ARQ strategy)"
+repository = "https://github.com/<owner>/sonde"
 rust-version = "1.78"
 
 [features]
@@ -243,14 +243,14 @@ harness = false
 
 - [ ] **Step 2: Write `LICENSE`**
 
-Copy the AGPLv3-only license verbatim. (The implementing agent runs `curl -sL https://www.gnu.org/licenses/agpl-3.0.txt > crates/tuxmodem-linkadapt/LICENSE` and verifies via `head -3 crates/tuxmodem-linkadapt/LICENSE` that the file begins with `GNU AFFERO GENERAL PUBLIC LICENSE`.)
+Copy the AGPLv3-only license verbatim. (The implementing agent runs `curl -sL https://www.gnu.org/licenses/agpl-3.0.txt > crates/sonde-linkadapt/LICENSE` and verifies via `head -3 crates/sonde-linkadapt/LICENSE` that the file begins with `GNU AFFERO GENERAL PUBLIC LICENSE`.)
 
 - [ ] **Step 3: Write `README.md`** with the clean-sheet citation block
 
 ```markdown
-# tuxmodem-linkadapt
+# sonde-linkadapt
 
-2D link-adaptation policy for the tuxmodem HF data modem. Maps observed channel
+2D link-adaptation policy for the sonde HF data modem. Maps observed channel
 quality and outbound payload descriptors onto a PHY mode family, mode-within-family,
 and ARQ strategy.
 
@@ -281,7 +281,7 @@ AGPLv3-only. See `LICENSE`.
 - [ ] **Step 4: Write `src/lib.rs`**
 
 ```rust
-//! tuxmodem-linkadapt — 2D link-adaptation policy for tuxmodem.
+//! sonde-linkadapt — 2D link-adaptation policy for sonde.
 //!
 //! See README.md for the clean-sheet citation block. See
 //! `docs/superpowers/specs/2026-05-31-clean-sheet-modem-7-link-adaptation.md`
@@ -335,7 +335,7 @@ pub struct Policy;
 - [ ] **Step 8: Run `cargo check` and verify it passes**
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml check
+cargo --manifest-path crates/sonde-linkadapt/Cargo.toml check
 ```
 
 Expected: clean check, no warnings about missing modules.
@@ -343,7 +343,7 @@ Expected: clean check, no warnings about missing modules.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add crates/tuxmodem-linkadapt/
+git add crates/sonde-linkadapt/
 git commit -m "feat(linkadapt): crate skeleton + cross-subsystem trait surface
 
 Establishes the API contract that #3 (PHY), #5 (MAC), #6 (ARQ) implement
@@ -361,16 +361,16 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Phase 2 — Channel-quality fusion + stub implementations
 
 **Files:**
-- Modify: `crates/tuxmodem-linkadapt/src/quality.rs`
-- Modify: `crates/tuxmodem-linkadapt/src/stub.rs`
-- Create: `crates/tuxmodem-linkadapt/tests/quality_fusion.rs`
+- Modify: `crates/sonde-linkadapt/src/quality.rs`
+- Modify: `crates/sonde-linkadapt/src/stub.rs`
+- Create: `crates/sonde-linkadapt/tests/quality_fusion.rs`
 
 - [ ] **Step 1: Write the failing fusion test**
 
 ```rust
 // tests/quality_fusion.rs
-use tuxmodem_linkadapt::quality::ChannelQualityEstimator;
-use tuxmodem_linkadapt::stub::{StubPhyReporter, StubArqReporter};
+use sonde_linkadapt::quality::ChannelQualityEstimator;
+use sonde_linkadapt::stub::{StubPhyReporter, StubArqReporter};
 
 #[test]
 fn fused_quality_is_high_when_all_signals_are_clean() {
@@ -405,7 +405,7 @@ fn doppler_spread_discounts_quality() {
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test quality_fusion
+cargo --manifest-path crates/sonde-linkadapt/Cargo.toml test --test quality_fusion
 ```
 
 Expected: FAIL — `ChannelQualityEstimator` not yet defined.
@@ -576,7 +576,7 @@ impl PayloadRouter for StubPayloadRouter {
 - [ ] **Step 5: Run test to verify it passes**
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test quality_fusion
+cargo --manifest-path crates/sonde-linkadapt/Cargo.toml test --test quality_fusion
 ```
 
 Expected: 3 tests pass.
@@ -584,9 +584,9 @@ Expected: 3 tests pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/tuxmodem-linkadapt/src/quality.rs \
-        crates/tuxmodem-linkadapt/src/stub.rs \
-        crates/tuxmodem-linkadapt/tests/quality_fusion.rs
+git add crates/sonde-linkadapt/src/quality.rs \
+        crates/sonde-linkadapt/src/stub.rs \
+        crates/sonde-linkadapt/tests/quality_fusion.rs
 git commit -m "feat(linkadapt): channel-quality fusion + stub upstream reporters
 
 ChannelQualityEstimator fuses aggregate SNR + FER + throughput with
@@ -604,20 +604,20 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Phase 3 — 2D table-driven policy core (pure)
 
 **Files:**
-- Modify: `crates/tuxmodem-linkadapt/src/policy.rs`
-- Modify: `crates/tuxmodem-linkadapt/src/thresholds.rs`
-- Create: `crates/tuxmodem-linkadapt/thresholds/default.yaml`
-- Create: `crates/tuxmodem-linkadapt/tests/routing_2d_table.rs`
+- Modify: `crates/sonde-linkadapt/src/policy.rs`
+- Modify: `crates/sonde-linkadapt/src/thresholds.rs`
+- Create: `crates/sonde-linkadapt/thresholds/default.yaml`
+- Create: `crates/sonde-linkadapt/tests/routing_2d_table.rs`
 
 - [ ] **Step 1: Write the 2D-routing failing test**
 
 ```rust
 // tests/routing_2d_table.rs
-use tuxmodem_linkadapt::policy::{Policy, PolicyInputs};
-use tuxmodem_linkadapt::outputs::{ModeFamily, ArqStrategy};
-use tuxmodem_linkadapt::quality::ChannelQuality;
-use tuxmodem_linkadapt::inputs::{PayloadClass, PayloadDescriptor};
-use tuxmodem_linkadapt::thresholds::Thresholds;
+use sonde_linkadapt::policy::{Policy, PolicyInputs};
+use sonde_linkadapt::outputs::{ModeFamily, ArqStrategy};
+use sonde_linkadapt::quality::ChannelQuality;
+use sonde_linkadapt::inputs::{PayloadClass, PayloadDescriptor};
+use sonde_linkadapt::thresholds::Thresholds;
 
 fn default_thresholds() -> Thresholds {
     Thresholds::load_default().expect("default.yaml must parse")
@@ -698,7 +698,7 @@ fn beacon_class_is_best_effort_no_arq() {
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test routing_2d_table
+cargo --manifest-path crates/sonde-linkadapt/Cargo.toml test --test routing_2d_table
 ```
 
 Expected: FAIL — `Policy::new`, `PolicyInputs`, `Thresholds::load_default` not defined.
@@ -912,7 +912,7 @@ impl Policy {
 - [ ] **Step 6: Run tests to verify they pass**
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test routing_2d_table
+cargo --manifest-path crates/sonde-linkadapt/Cargo.toml test --test routing_2d_table
 ```
 
 Expected: 5 tests pass.
@@ -920,7 +920,7 @@ Expected: 5 tests pass.
 - [ ] **Step 7: Re-run all tests to verify no regression**
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test
+cargo --manifest-path crates/sonde-linkadapt/Cargo.toml test
 ```
 
 Expected: 8 tests pass (3 from Phase 2 + 5 from Phase 3).
@@ -928,10 +928,10 @@ Expected: 8 tests pass (3 from Phase 2 + 5 from Phase 3).
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/tuxmodem-linkadapt/src/policy.rs \
-        crates/tuxmodem-linkadapt/src/thresholds.rs \
-        crates/tuxmodem-linkadapt/thresholds/default.yaml \
-        crates/tuxmodem-linkadapt/tests/routing_2d_table.rs
+git add crates/sonde-linkadapt/src/policy.rs \
+        crates/sonde-linkadapt/src/thresholds.rs \
+        crates/sonde-linkadapt/thresholds/default.yaml \
+        crates/sonde-linkadapt/tests/routing_2d_table.rs
 git commit -m "feat(linkadapt): 2D table-driven policy core + YAML thresholds
 
 Pure decide() function maps (channel-quality, payload-class) onto
@@ -951,20 +951,20 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Phase 4 — Hysteresis layer + asymmetric per-direction state
 
 **Files:**
-- Modify: `crates/tuxmodem-linkadapt/src/hysteresis.rs`
-- Create: `crates/tuxmodem-linkadapt/tests/hysteresis_properties.rs`
+- Modify: `crates/sonde-linkadapt/src/hysteresis.rs`
+- Create: `crates/sonde-linkadapt/tests/hysteresis_properties.rs`
 
 - [ ] **Step 1: Write the failing hysteresis tests**
 
 ```rust
 // tests/hysteresis_properties.rs
 use proptest::prelude::*;
-use tuxmodem_linkadapt::hysteresis::HysteresisAdapter;
-use tuxmodem_linkadapt::policy::{Policy, PolicyInputs};
-use tuxmodem_linkadapt::outputs::ModeFamily;
-use tuxmodem_linkadapt::quality::ChannelQuality;
-use tuxmodem_linkadapt::inputs::{PayloadClass, PayloadDescriptor};
-use tuxmodem_linkadapt::thresholds::Thresholds;
+use sonde_linkadapt::hysteresis::HysteresisAdapter;
+use sonde_linkadapt::policy::{Policy, PolicyInputs};
+use sonde_linkadapt::outputs::ModeFamily;
+use sonde_linkadapt::quality::ChannelQuality;
+use sonde_linkadapt::inputs::{PayloadClass, PayloadDescriptor};
+use sonde_linkadapt::thresholds::Thresholds;
 
 fn bulk_payload() -> PayloadDescriptor {
     PayloadDescriptor { bytes_pending: 10_000, class: PayloadClass::BulkData, max_acceptable_latency_s: None }
@@ -1028,7 +1028,7 @@ proptest! {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test hysteresis_properties
+cargo --manifest-path crates/sonde-linkadapt/Cargo.toml test --test hysteresis_properties
 ```
 
 Expected: FAIL — `HysteresisAdapter` not defined.
@@ -1135,7 +1135,7 @@ enum Direction { Tx, Rx }
 - [ ] **Step 4: Run tests to verify pass**
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test hysteresis_properties
+cargo --manifest-path crates/sonde-linkadapt/Cargo.toml test --test hysteresis_properties
 ```
 
 Expected: tests pass. If proptest finds a counter-example to the monotonic property, that's a real policy bug — fix it before commit (likely in `policy.rs::select_mode`, ensure `.max()` over filtered thresholds).
@@ -1147,9 +1147,9 @@ Modify `HysteresisAdapter` so it stores a reference to the `Thresholds` (the `Po
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/tuxmodem-linkadapt/src/hysteresis.rs \
-        crates/tuxmodem-linkadapt/src/policy.rs \
-        crates/tuxmodem-linkadapt/tests/hysteresis_properties.rs
+git add crates/sonde-linkadapt/src/hysteresis.rs \
+        crates/sonde-linkadapt/src/policy.rs \
+        crates/sonde-linkadapt/tests/hysteresis_properties.rs
 git commit -m "feat(linkadapt): hysteresis + asymmetric per-direction adapter
 
 HysteresisAdapter wraps the pure policy with dwell-time + dual-threshold
@@ -1176,7 +1176,7 @@ After Phase 4, the link-adaptation subsystem is **architecturally complete and s
 - Hysteresis + asymmetric state are implemented + property-tested.
 - Thresholds live in YAML, are version-tagged, and feed the runtime via a parsed table.
 
-Downstream subsystems (#3 PHY, #5 MAC, #6 ARQ) can begin coding against `tuxmodem-linkadapt`'s trait surface. The crate publishes to crates.io as `tuxmodem-linkadapt 0.1.0-alpha.0` at the end of Phase 4.
+Downstream subsystems (#3 PHY, #5 MAC, #6 ARQ) can begin coding against `sonde-linkadapt`'s trait surface. The crate publishes to crates.io as `sonde-linkadapt 0.1.0-alpha.0` at the end of Phase 4.
 
 **What Wave A explicitly does NOT do:**
 - Does not consume real `hf-channel-sim` traces (sim crate doesn't exist yet).
@@ -1194,8 +1194,8 @@ Wave B picks all three up.
 **Gate:** `hf-channel-sim` (subsystem #1) reaches v0.1 and is published.
 
 **Files:**
-- Modify: `crates/tuxmodem-linkadapt/Cargo.toml` (add `hf-channel-sim` as dev-dep)
-- Create: `crates/tuxmodem-linkadapt/tests/sweep_integration.rs`
+- Modify: `crates/sonde-linkadapt/Cargo.toml` (add `hf-channel-sim` as dev-dep)
+- Create: `crates/sonde-linkadapt/tests/sweep_integration.rs`
 
 - [ ] **Step 1: Add hf-channel-sim as dev-dependency**
 
@@ -1210,7 +1210,7 @@ hf-channel-sim = "0.1"
 ```rust
 // tests/sweep_integration.rs
 use hf_channel_sim::{ChannelCondition, Simulator};
-use tuxmodem_linkadapt::{
+use sonde_linkadapt::{
     hysteresis::HysteresisAdapter,
     policy::Policy,
     quality::ChannelQualityEstimator,
@@ -1273,7 +1273,7 @@ fn adapter_climbs_to_highest_mode_under_f520_good() {
 - [ ] **Step 3: Run the sweep test**
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test sweep_integration
+cargo --manifest-path crates/sonde-linkadapt/Cargo.toml test --test sweep_integration
 ```
 
 Expected: 2 tests pass. If they fail with the default thresholds, that's the **expected signal** that Wave B Phase 6 needs to tune them.
@@ -1281,8 +1281,8 @@ Expected: 2 tests pass. If they fail with the default thresholds, that's the **e
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/tuxmodem-linkadapt/Cargo.toml \
-        crates/tuxmodem-linkadapt/tests/sweep_integration.rs
+git add crates/sonde-linkadapt/Cargo.toml \
+        crates/sonde-linkadapt/tests/sweep_integration.rs
 git commit -m "test(linkadapt): integration sweep against hf-channel-sim v0.1
 
 Wave B Phase 5: links the adapter into the real channel simulator. Two
@@ -1296,27 +1296,27 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Phase 6 — Offline tuning binary (`tuxmodem-linkadapt-tune`)
+### Phase 6 — Offline tuning binary (`sonde-linkadapt-tune`)
 
 **Gate:** Phase 5 lands; sim + adapter integrate cleanly.
 
 **Files:**
-- Create: `crates/tuxmodem-linkadapt/tune/Cargo.toml`
-- Create: `crates/tuxmodem-linkadapt/tune/src/main.rs`
-- Create: `crates/tuxmodem-linkadapt/thresholds/tuned.yaml` (generated artifact)
+- Create: `crates/sonde-linkadapt/tune/Cargo.toml`
+- Create: `crates/sonde-linkadapt/tune/src/main.rs`
+- Create: `crates/sonde-linkadapt/thresholds/tuned.yaml` (generated artifact)
 
 - [ ] **Step 1: Scaffold the binary crate**
 
 ```toml
 # tune/Cargo.toml
 [package]
-name = "tuxmodem-linkadapt-tune"
+name = "sonde-linkadapt-tune"
 version = "0.1.0-alpha.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 
 [dependencies]
-tuxmodem-linkadapt = { path = "..", features = ["stubs"] }
+sonde-linkadapt = { path = "..", features = ["stubs"] }
 hf-channel-sim = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
@@ -1338,7 +1338,7 @@ clap = { version = "4", features = ["derive"] }
 use clap::Parser;
 use hf_channel_sim::{ChannelCondition, Simulator};
 use std::path::PathBuf;
-use tuxmodem_linkadapt::{
+use sonde_linkadapt::{
     hysteresis::HysteresisAdapter,
     policy::Policy,
     quality::ChannelQualityEstimator,
@@ -1434,7 +1434,7 @@ fn evaluate(thresholds: &Thresholds, ticks_per_cell: u32) -> f32 {
     sum_throughput
 }
 
-fn simulated_bytes_per_tick(d: &tuxmodem_linkadapt::AdaptationDecision, arq: &StubArqReporter) -> u32 {
+fn simulated_bytes_per_tick(d: &sonde_linkadapt::AdaptationDecision, arq: &StubArqReporter) -> u32 {
     // Crude per-mode-id throughput model for the tuner's loss function.
     // Replace with sim-measured throughput once #3/#4 are wired in.
     let mode_byte_rate = match d.mode.mode_id {
@@ -1455,7 +1455,7 @@ fn simulated_bytes_per_tick(d: &tuxmodem_linkadapt::AdaptationDecision, arq: &St
 - [ ] **Step 3: Run the tuner end-to-end**
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/tune/Cargo.toml run --release -- --out crates/tuxmodem-linkadapt/thresholds/tuned.yaml
+cargo --manifest-path crates/sonde-linkadapt/tune/Cargo.toml run --release -- --out crates/sonde-linkadapt/thresholds/tuned.yaml
 ```
 
 Expected: writes `tuned.yaml` and prints best score. Inspect the file: it should differ from `default.yaml`.
@@ -1465,7 +1465,7 @@ Expected: writes `tuned.yaml` and prints best score. Inspect the file: it should
 Adjust `Thresholds::load_default` or add a `load_tuned` variant that loads `tuned.yaml`. Modify the sweep tests to use the tuned thresholds. Re-run:
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test sweep_integration
+cargo --manifest-path crates/sonde-linkadapt/Cargo.toml test --test sweep_integration
 ```
 
 Expected: tests pass with the tuned values.
@@ -1473,11 +1473,11 @@ Expected: tests pass with the tuned values.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/tuxmodem-linkadapt/tune/ \
-        crates/tuxmodem-linkadapt/thresholds/tuned.yaml
+git add crates/sonde-linkadapt/tune/ \
+        crates/sonde-linkadapt/thresholds/tuned.yaml
 git commit -m "feat(linkadapt-tune): offline grid-search tuner over sim sweeps
 
-tuxmodem-linkadapt-tune binary scans a small grid of candidate threshold
+sonde-linkadapt-tune binary scans a small grid of candidate threshold
 sets, evaluates each across the F.520 envelope × payload-size grid using
 hf-channel-sim, and emits the best-scoring set to thresholds/tuned.yaml.
 
@@ -1498,8 +1498,8 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 **Gate:** Subsystem #8 (host protocol) ships its v0.1 spec naming the command vocabulary.
 
 **Files:**
-- Create: `crates/tuxmodem-linkadapt/src/host_bridge.rs`
-- Create: `crates/tuxmodem-linkadapt/tests/operator_override.rs`
+- Create: `crates/sonde-linkadapt/src/host_bridge.rs`
+- Create: `crates/sonde-linkadapt/tests/operator_override.rs`
 
 - [ ] **Step 1: Sketch the host-protocol bridge**
 
@@ -1542,8 +1542,8 @@ impl OperatorOverride {
 
 ```rust
 // tests/operator_override.rs
-use tuxmodem_linkadapt::host_bridge::OperatorOverride;
-use tuxmodem_linkadapt::outputs::{AdaptationDecision, ArqStrategy, ModeFamily, ModeDescriptor, DecisionRationale};
+use sonde_linkadapt::host_bridge::OperatorOverride;
+use sonde_linkadapt::outputs::{AdaptationDecision, ArqStrategy, ModeFamily, ModeDescriptor, DecisionRationale};
 
 fn baseline() -> AdaptationDecision {
     AdaptationDecision {
@@ -1585,7 +1585,7 @@ fn release_on_reconnect_clears_overrides() {
 - [ ] **Step 3: Run tests to verify**
 
 ```bash
-cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test operator_override
+cargo --manifest-path crates/sonde-linkadapt/Cargo.toml test --test operator_override
 ```
 
 Expected: 3 tests pass.
@@ -1593,8 +1593,8 @@ Expected: 3 tests pass.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/tuxmodem-linkadapt/src/host_bridge.rs \
-        crates/tuxmodem-linkadapt/tests/operator_override.rs
+git add crates/sonde-linkadapt/src/host_bridge.rs \
+        crates/sonde-linkadapt/tests/operator_override.rs
 git commit -m "feat(linkadapt): operator-override host-bridge stub
 
 OperatorOverride applies sticky mode forcing to AdaptationDecisions and
@@ -1665,7 +1665,7 @@ These items appear in this plan because they touch link adaptation but are owned
 **Wave B (follow-up PR, gated on #1/#3/#4/#6 v0.1):**
 
 - [ ] Phase 5 sweep integration tests pass against `hf-channel-sim` v0.1 with either `default.yaml` or `tuned.yaml`.
-- [ ] `tuxmodem-linkadapt-tune` produces a `tuned.yaml` that scores higher than `default.yaml` on the grid.
+- [ ] `sonde-linkadapt-tune` produces a `tuned.yaml` that scores higher than `default.yaml` on the grid.
 - [ ] Phase 7 host-bridge tests pass.
 - [ ] Cross-subsystem handoff items (see table above) all have explicit dispositions — landed in upstream subsystems, deferred to v0.2, or escalated to umbrella.
 

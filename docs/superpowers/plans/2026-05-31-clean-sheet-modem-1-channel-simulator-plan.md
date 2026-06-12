@@ -4,7 +4,7 @@
 
 **Goal:** Ship a pure-Rust, AGPLv3-only, standalone-published Watterson-class HF ionospheric channel simulator crate (`hf-channel-sim`) that takes baseband audio-band samples + an ITU-R F.520 channel-condition parameter set and produces channel-impaired output samples, with deterministic seeded RNG, per-sub-carrier SNR estimation, structured machine-readable outputs, and cross-validation against an open implementation (ITS and/or GNU Radio OOT). The crate is the validation harness every downstream modem subsystem (#3 PHY, #4 FEC, #6 ARQ, #7 link adaptation) depends on.
 
-**Architecture:** A standalone Cargo workspace published independently on crates.io and hosted in its own public GitHub repo (not embedded in tuxlink/tuxmodem). The core is a 2-tap Watterson channel model — two independently-faded paths with magnetoionic Doppler spread, complex-Gaussian time-varying taps — implemented from first principles citing only the Watterson 1970 paper + ITU-R F.520 + F.1487. A "channel" is constructed from a typed condition (Good/Moderate/Poor/Flutter) or numeric `WattersonParams`, then `process_block(&[Complex<f32>]) -> Vec<Complex<f32>>` is the hot loop. Reproducibility is enforced by an explicit `seed: u64` parameter on every constructor — same seed + same input + same params = bit-identical output. A separate `analysis` module exposes per-sub-carrier SNR estimation over time-windows for bit-loading characterization (forcing function §3.6). A CLI binary (`hf-channel-sim-cli`) wraps the library for ad-hoc characterization runs that emit JSON for AI-agent consumption.
+**Architecture:** A standalone Cargo workspace published independently on crates.io and hosted in its own public GitHub repo (not embedded in tuxlink/sonde). The core is a 2-tap Watterson channel model — two independently-faded paths with magnetoionic Doppler spread, complex-Gaussian time-varying taps — implemented from first principles citing only the Watterson 1970 paper + ITU-R F.520 + F.1487. A "channel" is constructed from a typed condition (Good/Moderate/Poor/Flutter) or numeric `WattersonParams`, then `process_block(&[Complex<f32>]) -> Vec<Complex<f32>>` is the hot loop. Reproducibility is enforced by an explicit `seed: u64` parameter on every constructor — same seed + same input + same params = bit-identical output. A separate `analysis` module exposes per-sub-carrier SNR estimation over time-windows for bit-loading characterization (forcing function §3.6). A CLI binary (`hf-channel-sim-cli`) wraps the library for ad-hoc characterization runs that emit JSON for AI-agent consumption.
 
 **Tech Stack:**
 - **Language:** Rust 2021 edition, MSRV pinned to current stable −2.
@@ -44,7 +44,7 @@ Create `hf-channel-sim/src/lib.rs`:
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // hf-channel-sim — Watterson-class HF ionospheric channel simulator.
-// Copyright (C) 2026 tuxmodem contributors.
+// Copyright (C) 2026 sonde contributors.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3 as
@@ -2430,7 +2430,7 @@ Modify `hf-channel-sim/src/lib.rs` to add the lint:
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // hf-channel-sim — Watterson-class HF ionospheric channel simulator.
-// Copyright (C) 2026 tuxmodem contributors.
+// Copyright (C) 2026 sonde contributors.
 //
 // AGPLv3-only. See LICENSE.
 
@@ -2581,7 +2581,7 @@ documentation = "https://docs.rs/hf-channel-sim"
 readme = "README.md"
 keywords = ["hf", "radio", "watterson", "channel", "modem"]
 categories = ["science", "simulation", "command-line-utilities"]
-authors = ["tuxmodem contributors"]
+authors = ["sonde contributors"]
 rust-version = "1.75"
 exclude = ["tests/fixtures/*.f32", ".github/"]
 ```
@@ -2703,7 +2703,7 @@ Per spec §8, the following risks are watched during implementation:
 Per spec §4, these settle DURING implementation rather than in this plan:
 
 - **§1.Q2 Sample-rate / format:** This plan locks **f32** as the working precision (matches `rustfft` Float32 path; lighter on Pi 5). Sample rate is parameterized via constructor (default 8000 Hz for audio-band). f64 internal precision is an optimization deferred to v0.2 if accuracy issues surface.
-- **§1.Q3 Audio-band vs. baseband I/Q:** This plan operates on `Complex<f32>` regardless — the caller chooses the band. Audio-band is the expected primary case (tuxmodem PHY operates post-SSB-demod) but the channel math is identical for baseband.
+- **§1.Q3 Audio-band vs. baseband I/Q:** This plan operates on `Complex<f32>` regardless — the caller chooses the band. Audio-band is the expected primary case (sonde PHY operates post-SSB-demod) but the channel math is identical for baseband.
 - **§1.Q5 Multi-channel Watterson:** v0.1 is 2-tap only. Multi-tap extension is a future minor version.
 - **§1.Q6 Cross-validation reference choice:** Resolved to GNU Radio `fading_model` for v0.1. ITS is a future v0.2 addition.
 - **§1.Q7 Visualization:** None in v0.1. JSON output is the canonical agent-facing format; humans can pipe through `jq` or feed into Python/Jupyter for visualization.

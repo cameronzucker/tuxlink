@@ -120,9 +120,9 @@ export function ImportSheet({ onDone, onCancel }: ImportSheetProps) {
   if (step === 'choose') {
     return (
       <div className="import-sheet" data-testid="import-sheet">
-        <h3 className="import-sheet__title">Import group forms</h3>
+        <h3 className="import-sheet__title">Import custom forms</h3>
         <p className="import-sheet__hint">
-          Bring in your group&rsquo;s Winlink forms. Most groups distribute a ZIP.
+          Bring in your organization&rsquo;s custom Winlink forms. Most groups distribute a ZIP.
         </p>
         <div className="import-sheet__choices">
           <button type="button" className="import-sheet__choice import-sheet__choice--primary"

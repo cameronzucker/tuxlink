@@ -1810,7 +1810,7 @@ pub async fn send_form(
 #[allow(clippy::too_many_arguments)]
 pub async fn send_webview_form(
     form_id: String,
-    field_values: std::collections::HashMap<String, String>,
+    mut field_values: std::collections::HashMap<String, String>,
     to: Vec<String>,
     cc: Vec<String>,
     senders_callsign: String,
@@ -1830,6 +1830,10 @@ pub async fn send_webview_form(
     subject_hint: Option<String>,
     app: AppHandle,
     state: State<'_, BackendState>,
+    // tuxlink-2tom / G12-C: the persisted per-form serial counter store. When the
+    // governing template carries `SeqInc:`, the next serial is allocated from here
+    // and stamped into `SeqNum` (and thus `<var SeqNum>`) before rendering.
+    seq_store: State<'_, std::sync::Arc<std::sync::Mutex<crate::forms::sequence::SeqCounterStore>>>,
 ) -> Result<String, UiError> {
     use crate::forms;
 
@@ -1907,6 +1911,23 @@ pub async fn send_webview_form(
             viewer_fallback(),
         ),
     };
+
+    // tuxlink-2tom / G12-C: SeqInc forms auto-number each send. Allocate the next
+    // serial from the persisted counter and stamp it into `SeqNum`, so `<var SeqNum>`
+    // in Subject/Msg and the serialized XML both carry it. Allocation persists
+    // BEFORE the network send below, so a failed send leaves a serial GAP rather
+    // than risking a duplicate from a concurrent retry. The lock is released here —
+    // never held across the await.
+    if txt.as_ref().map(|t| t.seq_inc).unwrap_or(false) {
+        let next = {
+            let mut store = seq_store
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            store.allocate(&form_id)
+        };
+        field_values.insert("SeqNum".to_string(), next.to_string());
+    }
+
     let host_tags = {
         let mut h = std::collections::HashMap::new();
         h.insert("MsgSender".to_string(), senders_callsign.clone());
@@ -2056,6 +2077,52 @@ fn merge_txt_recipients(
         push_unique(&mut out, addr);
     }
     out
+}
+
+/// One form's serial-counter state (tuxlink-2tom / G12-C). `next_serial` is the
+/// number this form's next `SeqInc` send will stamp into `SeqNum`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeqCounterStatus {
+    pub form_id: String,
+    pub next_serial: u64,
+}
+
+/// List every form that has a serial counter, as `{formId, nextSerial}`
+/// (tuxlink-2tom / G12-C). Powers the Settings "Form sequence numbers" section.
+/// Forms that have never been sent have no counter and are absent (their next
+/// serial is implicitly 1).
+#[tauri::command]
+pub async fn forms_sequence_status(
+    seq_store: State<'_, std::sync::Arc<std::sync::Mutex<crate::forms::sequence::SeqCounterStore>>>,
+) -> Result<Vec<SeqCounterStatus>, String> {
+    let store = seq_store
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(store
+        .status()
+        .into_iter()
+        .map(|(form_id, next_serial)| SeqCounterStatus {
+            form_id,
+            next_serial,
+        })
+        .collect())
+}
+
+/// Set a form's NEXT serial number (tuxlink-2tom / G12-C) — the reset affordance
+/// (e.g. restart radiogram numbering at 1 for a new event/year). `next` is
+/// clamped to `>= 1`. Persists immediately.
+#[tauri::command]
+pub async fn forms_sequence_reset(
+    form_id: String,
+    next: u64,
+    seq_store: State<'_, std::sync::Arc<std::sync::Mutex<crate::forms::sequence::SeqCounterStore>>>,
+) -> Result<(), String> {
+    let mut store = seq_store
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    store.set_next(&form_id, next);
+    Ok(())
 }
 
 // ============================================================================
@@ -3456,6 +3523,19 @@ pub struct PacketConfigDto {
     /// `#[serde(default)]` so a payload from an older frontend (no `btMac`) still loads.
     #[serde(default)]
     pub bt_mac: Option<String>,
+    /// Resolved audio device for `linkKind: "Managed"` (managed Dire Wolf, P5).
+    /// Structured (not a flat scalar) so the `StableAudioId` `kind`+`value` survive
+    /// the DTO round-trip — a single `audioDeviceId` string would drop the `kind`.
+    /// Serializes as a nested camelCase object. `#[serde(default)]` so an older
+    /// frontend payload (no `managedAudioDevice`) still deserializes (bt_mac precedent).
+    #[serde(default)]
+    pub managed_audio_device: Option<crate::winlink::ax25::devices::StableAudioId>,
+    /// Resolved PTT keying method for `linkKind: "Managed"` (managed Dire Wolf, P5).
+    /// Structured (the tagged `PttChoice` enum) so the variant + path survive the
+    /// round-trip. Nested camelCase object on the wire. `#[serde(default)]` for
+    /// older payloads (bt_mac precedent).
+    #[serde(default)]
+    pub managed_ptt: Option<crate::winlink::ax25::devices::PttChoice>,
     pub txdelay: u8,
     pub persistence: u8,
     pub slot_time: u8,
@@ -3478,7 +3558,20 @@ impl From<&config::PacketConfig> for PacketConfigDto {
             Some(KissLinkConfig::Bluetooth { mac }) => {
                 (Some("Bluetooth".into()), None, None, None, None, Some(mac.clone()))
             }
+            // The managed link carries no tcp_/serial_/bt_ scalar — its audio device
+            // + PTT ride the structured `managed_*` fields, set below the tuple.
+            Some(KissLinkConfig::ManagedDireWolf { .. }) => {
+                (Some("Managed".into()), None, None, None, None, None)
+            }
             None => (None, None, None, None, None, None),
+        };
+        // The managed audio device + PTT are structured types, not scalars, so they
+        // are carried outside the dense tuple above (keeps the tuple at 6 elements).
+        let (managed_audio_device, managed_ptt) = match &p.link {
+            Some(KissLinkConfig::ManagedDireWolf { audio_device, ptt }) => {
+                (Some(audio_device.clone()), Some(ptt.clone()))
+            }
+            _ => (None, None),
         };
         PacketConfigDto {
             ssid: p.ssid,
@@ -3489,6 +3582,8 @@ impl From<&config::PacketConfig> for PacketConfigDto {
             serial_device,
             serial_baud,
             bt_mac,
+            managed_audio_device,
+            managed_ptt,
             txdelay: p.params.txdelay,
             persistence: p.params.persistence,
             slot_time: p.params.slot_time,
@@ -3525,6 +3620,14 @@ impl PacketConfigDto {
             Some("Bluetooth") => Some(KissLinkConfig::Bluetooth {
                 mac: self.bt_mac.ok_or_else(|| UiError::Internal {
                     detail: "Bluetooth link needs bt_mac".into(),
+                })?,
+            }),
+            Some("Managed") => Some(KissLinkConfig::ManagedDireWolf {
+                audio_device: self.managed_audio_device.ok_or_else(|| UiError::Internal {
+                    detail: "Managed link needs managed_audio_device".into(),
+                })?,
+                ptt: self.managed_ptt.ok_or_else(|| UiError::Internal {
+                    detail: "Managed link needs managed_ptt".into(),
                 })?,
             }),
             None => None,
@@ -3956,6 +4059,59 @@ pub async fn ardop_list_audio_devices() -> Result<AlsaDevicesDto, UiError> {
         captures: run("arecord"),
         playbacks: run("aplay"),
     })
+}
+
+// ============================================================================
+// P7.1 — packet_list_audio_devices (managed Dire Wolf sound-card + PTT picker)
+// ============================================================================
+// Surfaces the managed-modem audio devices the operator picks by friendly name,
+// each already resolved to its STABLE identity plus a ranked list of PTT
+// candidates. The pure resolution (enumerate_audio_devices / discover_ptt) lives
+// in `winlink::ax25::devices` and is fixture-tested there; this command is a thin
+// impure wrapper that reads the live system snapshot once and projects each
+// device into a serializable DTO. Soft-failure posture matches the ARDOP /
+// serial / Bluetooth pickers: nothing found → an empty list (the UI shows
+// "no sound card detected — plug one in and refresh"), never an error / panic.
+
+/// One managed-modem audio device for the packet picker: the friendly name the
+/// dropdown shows, the ALSA `plughw:` name, the persisted [`StableAudioId`], and
+/// the ranked [`PttChoice`] candidates for it (first = the default). camelCase on
+/// the wire to match the TS `ManagedAudioDeviceDto`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedAudioDeviceDto {
+    /// Human label, e.g. `"C-Media USB Audio Device (DigiRig)"`.
+    pub human_name: String,
+    /// The ALSA `plughw:CARD=<id>,DEV=0` name backing this device.
+    pub alsa_plughw: String,
+    /// Boot-order-independent identity persisted in config (`{ kind, value }`).
+    pub stable_id: crate::winlink::ax25::devices::StableAudioId,
+    /// Ranked PTT keying candidates for this device; the first is the default
+    /// (a CM108 HID on the same USB parent outranks a serial-RTS line). Empty
+    /// when no PTT line is discoverable for the device.
+    pub ptt_candidates: Vec<crate::winlink::ax25::devices::PttChoice>,
+}
+
+/// List the managed-modem audio devices (USB sound cards) the operator can pick
+/// for the packet path, each resolved to a stable id + ranked PTT candidates.
+/// Thin wrapper over the fixture-tested `enumerate_audio_devices` + `discover_ptt`
+/// (`winlink::ax25::devices`); the only impurity is the single
+/// `read_sys_snapshot()` read. Soft-failure: an empty system → an empty list, as
+/// with the ARDOP / serial / Bluetooth pickers — never an error / panic.
+#[tauri::command]
+pub async fn packet_list_audio_devices(
+) -> Result<Vec<ManagedAudioDeviceDto>, UiError> {
+    use crate::winlink::ax25::devices::{discover_ptt, enumerate_audio_devices, read_sys_snapshot};
+    let snapshot = read_sys_snapshot();
+    Ok(enumerate_audio_devices(&snapshot)
+        .into_iter()
+        .map(|device| ManagedAudioDeviceDto {
+            ptt_candidates: discover_ptt(&device, &snapshot),
+            human_name: device.human_name,
+            alsa_plughw: device.alsa_plughw,
+            stable_id: device.stable_id,
+        })
+        .collect())
 }
 
 // ============================================================================
@@ -9407,6 +9563,102 @@ hw:CARD=Device,DEV=0
     }
 
     #[test]
+    fn packet_config_dto_round_trips_managed_direwolf_with_full_fidelity() {
+        // P5: the Managed link carries a StableAudioId (kind+value) + a tagged
+        // PttChoice (variant+path) through the flat DTO via the two structured
+        // managed_* fields. The round-trip must preserve EVERY sub-component — a
+        // lossy scalar flattening (e.g. only the audio value, dropping the kind)
+        // would fail this assert.
+        use crate::winlink::ax25::devices::{PttChoice, StableAudioId, StableIdKind};
+        use crate::winlink::ax25::KissLinkConfig;
+        let pc = config::PacketConfig {
+            ssid: 5,
+            link: Some(KissLinkConfig::ManagedDireWolf {
+                audio_device: StableAudioId {
+                    kind: StableIdKind::ByIdSymlink,
+                    value: "usb-C-Media_DigiRig_Audio-00".into(),
+                },
+                ptt: PttChoice::Cm108Hid {
+                    hidraw_path: "/dev/hidraw3".into(),
+                },
+            }),
+            params: config::Ax25ParamsConfig::default(),
+            listen_default: true,
+        };
+        let dto = PacketConfigDto::from(&pc);
+        assert_eq!(dto.link_kind.as_deref(), Some("Managed"));
+        // The tcp_/serial_/bt_ scalars are empty for a managed link.
+        assert_eq!(dto.tcp_host, None);
+        assert_eq!(dto.serial_device, None);
+        assert_eq!(dto.bt_mac, None);
+        // The structured fields carry the real types.
+        assert!(dto.managed_audio_device.is_some());
+        assert!(dto.managed_ptt.is_some());
+
+        let back = dto.into_packet_config().unwrap();
+        // Full-fidelity round-trip: the StableAudioId kind+value AND the PttChoice
+        // variant+path survive intact.
+        assert_eq!(back.link, pc.link);
+        assert_eq!(back, pc);
+    }
+
+    #[test]
+    fn packet_config_dto_managed_serial_bluetooth_still_round_trip() {
+        // Adding the Managed arm must not regress the existing variants' round-trips.
+        use crate::winlink::ax25::KissLinkConfig;
+        for link in [
+            KissLinkConfig::Tcp { host: "127.0.0.1".into(), port: 8001 },
+            KissLinkConfig::Serial { device: "/dev/ttyUSB0".into(), baud: 9600 },
+            KissLinkConfig::Bluetooth { mac: "38:D2:00:01:55:5C".into() },
+        ] {
+            let pc = config::PacketConfig {
+                ssid: 3,
+                link: Some(link),
+                params: config::Ax25ParamsConfig::default(),
+                listen_default: false,
+            };
+            let back = PacketConfigDto::from(&pc).into_packet_config().unwrap();
+            assert_eq!(back, pc, "existing link variant must round-trip through the DTO");
+        }
+    }
+
+    #[test]
+    fn packet_config_dto_managed_missing_audio_device_errors_not_panics() {
+        // A Managed DTO without managed_audio_device must return a named
+        // UiError::Internal, never panic.
+        use crate::winlink::ax25::devices::PttChoice;
+        let dto = PacketConfigDto {
+            ssid: 0,
+            listen_default: true,
+            link_kind: Some("Managed".into()),
+            tcp_host: None,
+            tcp_port: None,
+            serial_device: None,
+            serial_baud: None,
+            bt_mac: None,
+            managed_audio_device: None, // missing — the error case
+            managed_ptt: Some(PttChoice::Cm108Hid { hidraw_path: "/dev/hidraw3".into() }),
+            txdelay: 0,
+            persistence: 0,
+            slot_time: 0,
+            paclen: 0,
+            maxframe: 0,
+            t1_ms: 0,
+            n2_retries: 0,
+        };
+        let err = dto.into_packet_config().unwrap_err();
+        match err {
+            UiError::Internal { detail } => {
+                assert!(
+                    detail.contains("managed_audio_device"),
+                    "error must name the missing field, got: {detail}"
+                );
+            }
+            other => panic!("expected UiError::Internal, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn packet_config_dto_with_no_link_maps_to_none() {
         let pc = config::PacketConfig::default();
         let dto = PacketConfigDto::from(&pc);
@@ -10418,6 +10670,51 @@ hw:CARD=Device,DEV=0
             sr.template.display_html.as_deref(),
             Some("ICS213_SendReply_Viewer.html")
         );
+    }
+
+    // ── tuxlink-2tom / G12-C — SeqInc serial stamping ──────────────────────
+    //
+    // Replicates the send-path SeqInc decision (the command itself needs State):
+    // on a SeqInc template, allocate the next serial and stamp it into `SeqNum`,
+    // so `<var SeqNum>` in Subject + Msg both carry the (incrementing) number.
+    #[test]
+    fn seqinc_stamps_incrementing_serial_into_subject_and_body() {
+        use crate::forms::sequence::SeqCounterStore;
+        use crate::forms::txt_template::{parse_txt_template, render_template};
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SeqCounterStore::open(dir.path().join("c.json"));
+        // Real bundle shape (IARU Message Form): SeqNum in both Subject and Msg.
+        let t = parse_txt_template(
+            "Form: X.html\r\nSubject:Msg# <var SeqNum>\r\nSeqInc:\r\nMsg:\r\nSerial <var SeqNum>\r\n",
+        );
+        assert!(t.seq_inc);
+        let ht = std::collections::HashMap::new();
+
+        // First send: allocate → SeqNum=1.
+        let mut fv = std::collections::HashMap::new();
+        if t.seq_inc {
+            fv.insert("SeqNum".to_string(), store.allocate("X").to_string());
+        }
+        assert_eq!(render_template(t.subject.as_deref().unwrap(), &fv, &ht), "Msg# 1");
+        assert_eq!(render_template(t.msg.as_deref().unwrap(), &fv, &ht), "Serial 1");
+
+        // Second send: the counter advances → SeqNum=2.
+        fv.insert("SeqNum".to_string(), store.allocate("X").to_string());
+        assert_eq!(render_template(t.subject.as_deref().unwrap(), &fv, &ht), "Msg# 2");
+    }
+
+    /// A non-SeqInc form does not allocate or stamp a serial (the gate holds).
+    #[test]
+    fn non_seqinc_form_does_not_stamp_serial() {
+        use crate::forms::txt_template::parse_txt_template;
+        let t = parse_txt_template("Form: X.html\r\nSubject:Hello\r\nMsg:\r\nbody\r\n");
+        assert!(!t.seq_inc);
+        let mut fv = std::collections::HashMap::<String, String>::new();
+        if t.seq_inc {
+            fv.insert("SeqNum".to_string(), "1".to_string());
+        }
+        assert!(!fv.contains_key("SeqNum"));
     }
 
     // ========================================================================

@@ -346,9 +346,11 @@ describe('<PacketRadioPanel>', () => {
       return defaultInvokeImpl(cmd, args);
     });
     renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
-    // Panel still renders the modem section using fallback defaults.
+    // A rejected config is the pre-wizard / unconfigured case → the panel
+    // defaults to the Managed connection path (the recommended accessibility
+    // route), so the managed section renders rather than the BYO modem link.
     await waitFor(() => {
-      expect(screen.getByTestId('modem-link-section')).toBeInTheDocument();
+      expect(screen.getByTestId('managed-modem-section')).toBeInTheDocument();
     });
   });
 
@@ -522,6 +524,211 @@ describe('<PacketRadioPanel>', () => {
         expect(args.tsLocal).toMatch(/[+-]\d{2}:\d{2}$/);
         expect(args.tsLocal.endsWith('Z')).toBe(false);
       });
+    });
+  });
+
+  // ── Managed modem (tuxlink-yq3l P7) ──────────────────────────────────────
+  //
+  // The managed connection path is the accessibility payoff: the operator picks
+  // a sound card + PTT from dropdowns (packet_list_audio_devices) and never
+  // authors a Dire Wolf .conf. Selecting a card + PTT persists
+  // linkKind:'Managed' + managedAudioDevice (the stableId) + managedPtt.
+  describe('Managed modem (P7)', () => {
+    // Two fake managed devices: a DigiRig (serial-RTS PTT) and a DRA-100
+    // (CM108-HID PTT) — the wire shapes mirror the Rust ManagedAudioDeviceDto +
+    // internally-tagged PttChoice.
+    const FAKE_DEVICES = [
+      {
+        humanName: 'C-Media USB Audio Device (DigiRig)',
+        alsaPlughw: 'plughw:CARD=Device,DEV=0',
+        stableId: { kind: 'byIdSymlink', value: 'usb-C-Media_DigiRig_Audio-00' },
+        pttCandidates: [{ kind: 'serialRts', tty: '/dev/ttyUSB0' }],
+      },
+      {
+        humanName: 'C-Media USB Audio Device (DRA-100)',
+        alsaPlughw: 'plughw:CARD=DRA,DEV=0',
+        stableId: { kind: 'byIdSymlink', value: 'usb-C-Media_DRA-100_CM119A-01' },
+        pttCandidates: [
+          { kind: 'cm108Hid', hidrawPath: '/dev/hidraw3' },
+          { kind: 'serialRts', tty: '/dev/ttyUSB1' },
+        ],
+      },
+    ];
+
+    // A config with no link yet (fresh/unconfigured) → the panel defaults to
+    // Managed. Reuses DEFAULT_CONFIG's params with linkKind nulled.
+    const UNCONFIGURED = { ...DEFAULT_CONFIG, linkKind: null };
+
+    const withDevices = (
+      configForGet: unknown,
+      extra?: (cmd: string, args?: unknown) => unknown,
+    ) => async (cmd: string, args?: unknown) => {
+      if (cmd === 'packet_config_get') return configForGet;
+      if (cmd === 'packet_list_audio_devices') return FAKE_DEVICES;
+      const e = extra?.(cmd, args);
+      if (e !== undefined) return e;
+      return defaultInvokeImpl(cmd, args);
+    };
+
+    it('defaults a fresh (unconfigured) panel to Managed', async () => {
+      const core = await import('@tauri-apps/api/core');
+      (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
+        withDevices(UNCONFIGURED),
+      );
+      renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+      // Managed section shows; BYO modem-link section does not.
+      expect(await screen.findByTestId('managed-modem-section')).toBeInTheDocument();
+      expect(screen.queryByTestId('modem-link-section')).not.toBeInTheDocument();
+      // The Managed toggle is the active one.
+      expect(screen.getByTestId('packet-conn-managed')).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+
+    it('does NOT clobber an existing Tcp config — shows BYO selected', async () => {
+      // DEFAULT_CONFIG has linkKind:'Tcp' → BYO must be the active mode.
+      renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+      expect(await screen.findByTestId('modem-link-section')).toBeInTheDocument();
+      expect(screen.queryByTestId('managed-modem-section')).not.toBeInTheDocument();
+      expect(screen.getByTestId('packet-conn-byo')).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+
+    it('selecting a device + its default PTT persists linkKind:Managed + stableId + managedPtt', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(withDevices(UNCONFIGURED));
+      renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+      // Wait for the device dropdown to populate from packet_list_audio_devices.
+      const select = (await screen.findByTestId(
+        'managed-device-select',
+      )) as HTMLSelectElement;
+      // Pick the DRA-100 (CM108 HID is its ranked-first PTT).
+      fireEvent.change(select, {
+        target: { value: 'byIdSymlink:usb-C-Media_DRA-100_CM119A-01' },
+      });
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'packet_config_set',
+          expect.objectContaining({
+            dto: expect.objectContaining({
+              linkKind: 'Managed',
+              managedAudioDevice: {
+                kind: 'byIdSymlink',
+                value: 'usb-C-Media_DRA-100_CM119A-01',
+              },
+              // The ranked-first candidate is the default on device-select.
+              managedPtt: { kind: 'cm108Hid', hidrawPath: '/dev/hidraw3' },
+            }),
+          }),
+        );
+      });
+    });
+
+    it('overriding the PTT persists the chosen managedPtt for the selected device', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      // Start with the DRA-100 already persisted (its default PTT is the HID).
+      const PRECONFIGURED = {
+        ...DEFAULT_CONFIG,
+        linkKind: 'Managed',
+        managedAudioDevice: { kind: 'byIdSymlink', value: 'usb-C-Media_DRA-100_CM119A-01' },
+        managedPtt: { kind: 'cm108Hid', hidrawPath: '/dev/hidraw3' },
+      };
+      invokeMock.mockImplementation(withDevices(PRECONFIGURED));
+      renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+      const pttSelect = (await screen.findByTestId(
+        'managed-ptt-select',
+      )) as HTMLSelectElement;
+      invokeMock.mockClear();
+      // Override to the serial-RTS alternative on the DRA-100.
+      fireEvent.change(pttSelect, { target: { value: 'serialRts:/dev/ttyUSB1' } });
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'packet_config_set',
+          expect.objectContaining({
+            dto: expect.objectContaining({
+              linkKind: 'Managed',
+              managedPtt: { kind: 'serialRts', tty: '/dev/ttyUSB1' },
+            }),
+          }),
+        );
+      });
+    });
+
+    it('renders the empty-list affordance + Refresh when no sound card is detected', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      // Managed mode (unconfigured) but packet_list_audio_devices returns [].
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'packet_config_get') return UNCONFIGURED;
+        if (cmd === 'packet_list_audio_devices') return [];
+        return defaultInvokeImpl(cmd, args);
+      });
+      renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+      expect(await screen.findByTestId('managed-no-devices')).toBeInTheDocument();
+      // The Refresh affordance is present (no dead-end).
+      expect(screen.getByTestId('managed-refresh')).toBeInTheDocument();
+      // No device dropdown when the list is empty.
+      expect(screen.queryByTestId('managed-device-select')).not.toBeInTheDocument();
+    });
+
+    it('Refresh re-calls packet_list_audio_devices and recovers from an empty first read', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      let firstCall = true;
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'packet_config_get') return UNCONFIGURED;
+        if (cmd === 'packet_list_audio_devices') {
+          // First read: empty (nothing plugged in). Subsequent: devices present.
+          if (firstCall) {
+            firstCall = false;
+            return [];
+          }
+          return FAKE_DEVICES;
+        }
+        return defaultInvokeImpl(cmd, args);
+      });
+      renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+      // First render: empty-list affordance.
+      const refresh = await screen.findByTestId('managed-refresh');
+      fireEvent.click(refresh);
+      // After Refresh the device dropdown appears.
+      expect(await screen.findByTestId('managed-device-select')).toBeInTheDocument();
+    });
+
+    it('shows the effective callsign read-only in the managed section', async () => {
+      const core = await import('@tauri-apps/api/core');
+      (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
+        withDevices(UNCONFIGURED),
+      );
+      renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+      const call = (await screen.findByTestId(
+        'managed-effective-call',
+      )) as HTMLInputElement;
+      // baseCall N7CPZ + DEFAULT_CONFIG.ssid 7 → N7CPZ-7, read-only.
+      // The input mounts with the ssid-0 default (config?.ssid ?? 0) and updates
+      // to ssid 7 once packet_config_get resolves, so wait for the settled value
+      // rather than reading synchronously — otherwise the assertion races the
+      // async config load (flaked on faster CI runners: N7CPZ-0 vs N7CPZ-7).
+      await waitFor(() => expect(call.value).toBe('N7CPZ-7'));
+      expect(call).toHaveAttribute('readonly');
+    });
+
+    it('toggling BYO → Managed shows the managed picker (operator can switch)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
+        // DEFAULT_CONFIG (Tcp) → starts on BYO; provide devices for the switch.
+        withDevices(DEFAULT_CONFIG),
+      );
+      renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+      expect(await screen.findByTestId('modem-link-section')).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('packet-conn-managed'));
+      expect(await screen.findByTestId('managed-modem-section')).toBeInTheDocument();
+      expect(screen.queryByTestId('modem-link-section')).not.toBeInTheDocument();
     });
   });
 });

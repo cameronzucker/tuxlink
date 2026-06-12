@@ -424,13 +424,8 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
   });
 
-  it('the Mailbox menu switches folders', () => {
-    renderShell();
-    clickMenu('Mailbox', /^Sent$/);
-    expect(screen.getByTestId('message-row-SENT1')).toBeInTheDocument();
-    expect(screen.queryByTestId('message-row-INBOX1')).not.toBeInTheDocument();
-  });
-
+  // tuxlink-lqw2: the Mailbox top menu was removed in the pre-Alpha declutter —
+  // folder navigation lives in the FolderSidebar (covered by FolderSidebar.test).
   it('Message → New Message opens a compose window', () => {
     renderShell();
     clickMenu('Message', /New Message/);

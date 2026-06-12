@@ -12,6 +12,25 @@
 **Master plan:** [`docs/superpowers/plans/2026-06-10-tactical-callsigns-master-plan.md`](2026-06-10-tactical-callsigns-master-plan.md) — canonical interface contract is the SOURCE OF TRUTH for type names.
 **bd issue:** tuxlink-5ekg. Depends on Phase 3 (tuxlink-0063). Sibling to Phase 4 (tuxlink-2ns7) + Phase 5 (tuxlink-tseu); all three depend only on Phase 3.
 
+---
+
+## ⚠️ IMPLEMENTATION DEVIATION (cypress-raven-sandbar, 2026-06-12) — read before the task list
+
+This plan was written **before Phase 3 (tuxlink-0063) landed its actual implementation, and Phase 3 over-delivered.** Verifying the real Phase-3 code against this plan's task list:
+
+- **Tasks 5, 6, 7 (ARDOP / VARA / packet listeners capture their own `SessionIdentity` at arm time) are ALREADY DONE by Phase 3.** `ardop_listener_consumer_task` / the VARA consumer take a `session_id: SessionIdentity` (owned `Clone`) captured at arm via `active_identity()?` — the in-code comments cite "tuxlink-0063 Phase 3 Task 3.6/3.7". `run_ardop_b2f_answer` / `run_vara_b2f_answer` already take `&SessionIdentity` (the `*_mycall_comes_from_session_not_config` tests prove it). The packet listen-arm already derives `base_mycall` from the captured identity. **No re-implementation needed** — re-doing them would churn working code.
+- **Tasks 1–4's `ActiveSession` holder is REDUNDANT.** Phase 3 already put the in-memory active-identity slot **on `NativeBackend`** (`active_identity: RwLock<Option<SessionIdentity>>`, inherent `set_active_identity`/`active_identity()`, slot starts `None`), and every consumer (connect / listen-arm / Outbox-drain) already reads `self.active_identity()` with the `NoActiveIdentity` fail-closed gate. The slot is in-memory/never-serialized (req 7 "no persisted authenticated session" ✓) and empty on launch (re-auth-on-launch ✓). Introducing a *separate* Tauri-managed `ActiveSession` would duplicate this and require re-plumbing every consumer — an anti-pattern (relitigating settled Phase-3 architecture). **Not built.**
+- **`SessionIdentity::snapshot_for_listener` is unnecessary:** `IdentityHandle` and `SessionIdentity` already `derive(Clone)` (the handle is `Arc`-wrapped; the compile-fence is against `Serialize`, not `Clone`). Listener capture is a plain `.clone()`. No new API, no Phase-1 follow-up.
+
+**What actually remained (the transmit brick, tuxlink-yyii):** nothing in production authenticated and **set** the active identity — `set_active_identity` lived only on `impl NativeBackend` (not the `WinlinkBackend` trait), and there was **no production authenticate command**. So `active_identity()` was permanently `NoActiveIdentity` ⇒ transmit bricked.
+
+**As-shipped Phase 6 scope (delivers spec §"Security model" reqs 7 & 8 via the minimal correct path):**
+1. `WinlinkBackend` trait gains `set_active_identity` / `clear_active_identity` (no-op defaults; `NativeBackend` delegates to its inherent slot methods) so commands holding `Arc<dyn WinlinkBackend>` can set/clear the active identity.
+2. New commands `identity_authenticate(callsign, credential, tactical_label?)`, `identity_lock()`, `identity_active()` — authenticate via `IdentityService::authenticate`, build the active `SessionIdentity` (FULL, or a tactical validated to exist under the parent), persist only the `last_selected` `Address` hint, and set it on the backend. Registered in `lib.rs`.
+3. Tests: authenticate un-bricks the gate + persists the hint; wrong credential ⇒ `AuthFailed` + gate stays closed; tactical requires a known label; lock clears; a captured identity is immune to a later active-identity switch (req 8 pin).
+
+The original Tasks 1–8 below are retained as historical record of the plan-time design; the shipped implementation is the deviation above.
+
 **Canonical types consumed verbatim (defined in Phase 1, threaded in Phase 3):**
 
 ```rust

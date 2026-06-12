@@ -49,22 +49,14 @@ export const MENU_TREE: TopMenu[] = [
     // GRIB view, preserving the dedicated entry point for the Saildocs flow.
     { id: 'menu:message:grib_request', label: 'GRIB File Request…' },
   ] },
-  { label: 'Session', items: [
-    { id: 'menu:session:connect', label: 'Connect', accel: 'F5' },
-    // Not-yet-wired: dispatchMenuAction routes these to its safe no-op default
-    // (tuxlink-dpf). Disabled + badged so they read as "coming", not broken.
-    { id: 'menu:session:disconnect', label: 'Disconnect', disabled: true },
-    { separator: true },
-    { id: 'menu:session:log', label: 'Session Log', disabled: true },
-    { id: 'menu:session:verify_cms', label: 'Verify CMS Connection', disabled: true },
-    { id: 'menu:session:show_transport', label: 'Show transport', disabled: true },
-  ] },
-  { label: 'Mailbox', items: [
-    { id: 'menu:mailbox:inbox', label: 'Inbox' },
-    { id: 'menu:mailbox:sent', label: 'Sent' },
-    { id: 'menu:mailbox:outbox', label: 'Outbox' },
-    { id: 'menu:mailbox:archive', label: 'Archive' },
-  ] },
+  // tuxlink-lqw2 (operator review 2026-06-12): the Session and Mailbox top
+  // menus were removed in the pre-Alpha declutter. Connect/Disconnect were
+  // obsolete (the dashboard ribbon + radio panels own connect/disconnect);
+  // Session Log moved into the radio panel; Show transport never had a backing
+  // implementation. The whole Mailbox menu duplicated the FolderSidebar
+  // (Inbox/Sent/Outbox/Archive). The one survivor — Verify CMS Connection — is
+  // now wired under Tools (below). The F5 / Ctrl+Shift+O connect accelerators
+  // were dropped with the menu item.
   { label: 'View', items: [
     // Session-log items removed in radio-panel-shell P1.6 — the bottom
     // session-log strip is gone; the log moves into the radio panel.
@@ -101,12 +93,18 @@ export const MENU_TREE: TopMenu[] = [
     // panels. The action id stays `find_gateway` (the menuModel contract test
     // keys on it) though the surface is now Find a Station.
     { id: 'menu:tools:find_gateway', label: 'Find a Station…' },
-    // Not-yet-wired: disabled + badged so they read as "coming", not broken.
+    // tuxlink-lqw2: Verify CMS Connection — connect-only NativeBackend probe
+    // (verify_cms_connection): confirms CMS reachability + auth over internet
+    // telnet, no transmission. Relocated here from the (removed) Session menu.
+    { id: 'menu:tools:verify_cms', label: 'Verify CMS Connection…' },
+    // Not-yet-wired: disabled + badged so it reads as "coming", not broken.
+    // Templates is owned by the in-flight forms epic (tuxlink-o4p9). Rig Control
+    // was removed in the tuxlink-lqw2 declutter (no backing implementation).
     { id: 'menu:tools:templates', label: 'Templates', disabled: true },
-    { id: 'menu:tools:rig_control', label: 'Rig Control', disabled: true },
     { separator: true },
     { label: 'Settings', submenu: [
-      { id: 'menu:tools:settings_connection', label: 'Connection', disabled: true },
+      // tuxlink-lqw2: the disabled "Connection" leaf was removed (no settings
+      // panel behind it). GPS & Privacy is the reachable Settings surface.
       // tuxlink-39b: one entry opens the GPS/privacy settings panel (gps_state +
       // position precision). The former granular leaves (GPS state / Position
       // precision / a duplicate GPS) all opened the same box — consolidated.
@@ -156,7 +154,9 @@ export interface Accelerator {
   suppressInTextInput?: boolean;
 }
 
-// Operator-locked set (2026-05-21). F5 and Ctrl+Shift+O both fire connect.
+// tuxlink-lqw2 (2026-06-12): the F5 / Ctrl+Shift+O connect accelerators were
+// removed with the Connect menu item — connect is reached from the dashboard
+// ribbon. Every remaining accelerator maps to a live menu action id.
 export const ACCELERATORS: Accelerator[] = [
   { combo: 'Ctrl+N', key: 'n', ctrl: true, shift: false, id: 'menu:message:new' },
   { combo: 'Ctrl+R', key: 'r', ctrl: true, shift: false, id: 'menu:message:reply' },
@@ -164,8 +164,6 @@ export const ACCELERATORS: Accelerator[] = [
   { combo: 'Ctrl+P', key: 'p', ctrl: true, shift: false, id: 'menu:message:print' },
   { combo: 'Ctrl+Q', key: 'q', ctrl: true, shift: false, id: 'menu:file:quit' },
   { combo: 'Ctrl+Shift+M', key: 'm', ctrl: true, shift: true, id: 'menu:view:radio_panel' },
-  { combo: 'F5', key: 'F5', ctrl: false, shift: false, id: 'menu:session:connect' },
-  { combo: 'Ctrl+Shift+O', key: 'o', ctrl: true, shift: true, id: 'menu:session:connect' },
   // tuxlink-ca5x: Archive shortcut — plain `A`, gated on text-input focus so
   // typing the letter 'a' in the search bar or compose body doesn't archive.
   { combo: 'A', key: 'a', ctrl: false, shift: false, id: 'menu:message:archive', suppressInTextInput: true },

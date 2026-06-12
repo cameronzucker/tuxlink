@@ -5,6 +5,38 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-06-12 — SeqInc message serial numbering (Forms-push G12-C, tuxlink-2tom)
+
+22 bundled `.txt` templates (radiogram / RRI / net-log serials) carry the
+`SeqInc:` directive + a `{SeqNum}` / `<var SeqNum>` placeholder for per-form
+message serial numbering. tuxlink parsed neither. This adds the stateful counter.
+
+- **Parser** (`forms::txt_template`): `TxtTemplate.seq_inc: bool`, parses `SeqInc:`.
+- **`forms::sequence::SeqCounterStore`** (new): persisted per-form `last_used`
+  serials at `<app_data>/forms-sequence-counters.json`. Infallible `open`
+  (degrade-to-empty), atomic write-tmp-then-rename — mirrors `ContactsStore` /
+  `FavoritesStore`. `allocate` (increment+persist+return), `peek`, `set_next`
+  (reset, clamped ≥1), `status`. Managed as `Arc<Mutex<…>>` in `setup()` (+ a
+  temp-path fallback in the `app_data_dir`-unavailable arm so `send_webview_form`
+  never regresses).
+- **Send path** (`send_webview_form`): on a `SeqInc` governing template, allocate
+  the next serial and stamp it into `SeqNum` before rendering — so `<var SeqNum>`
+  in Subject/Msg and the serialized XML all carry it. Allocation persists BEFORE
+  the network send (a failed send leaves a serial GAP, never a duplicate from a
+  concurrent retry). The serial is assigned authoritatively at send; `{SeqNum}`
+  is blanked at form-open (`substitute_template`) so the field never shows the
+  literal placeholder.
+- **Reset affordance**: `forms_sequence_status` + `forms_sequence_reset`
+  commands + a "Form sequence numbers" Settings section (`FormSequenceSettings`)
+  listing each counter's next serial with a per-form set-next control.
+
+Self-adrev (Codex unavailable — not a gate). Backend unit tests (parser, store
+allocate/peek/set_next/status/malformed, send-path stamping, `{SeqNum}` blank);
+frontend +4 tests. `tsc` clean. Operator smoke: send an IARU / radiogram form
+twice → confirm Msg# increments; reset via Settings → confirm next send uses it.
+
+---
+
 ## 2026-06-12 — Reply-form threading (Forms-push G10, tuxlink-hhfx)
 
 WLE `ReplyTemplate:` request/response threading on the ICS-213 General Message

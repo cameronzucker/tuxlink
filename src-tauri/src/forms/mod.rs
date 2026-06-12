@@ -8,6 +8,7 @@ pub mod import; // tuxlink-z0le/fwob — in-app form import (G5+G6)
 pub mod multipart;
 pub mod parse;
 pub mod pdf_export; // tuxlink-cumx / G8 — on-demand faithful PDF export of a rendered form
+pub mod sequence; // tuxlink-2tom / G12-C — persisted per-form serial counters (SeqInc)
 pub mod serialize;
 pub mod skin;
 pub mod templates;

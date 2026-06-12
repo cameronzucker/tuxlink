@@ -9,7 +9,7 @@
 
 ## §1. Role
 
-The PHY / waveform subsystem is **what tuxmodem sounds like on the air.** It
+The PHY / waveform subsystem is **what sonde sounds like on the air.** It
 takes link-layer frames (from subsystem #5) and renders them into audio-band
 samples for the radio's input. On the receive side, it takes audio-band
 samples from the radio's output and produces detected frames for the link
@@ -31,7 +31,7 @@ stitched into one ladder:
   parameterized by what's limiting the link:
   - **Default — wide-band low-density-constellation OFDM.** When the
     limiting condition is per-Hz noise floor with full bandwidth
-    available (typical tuxmodem case — own-frequency point-to-point or
+    available (typical sonde case — own-frequency point-to-point or
     point-to-gateway, no crowding), use BPSK per sub-carrier across the
     full available passband with very strong FEC (rate-1/4 LDPC
     short-block or similar). Aggregate throughput scales with sub-carrier
@@ -43,7 +43,7 @@ stitched into one ladder:
     aggregate throughput. Design goal: beat ARDOP's narrowest-mode SNR
     floor at the noise-floor case.
   - **Situational — narrow-FSK** (FT8/JS8 conceptual primitive, 8-FSK).
-    Reserved for the rare-for-tuxmodem case where the assigned frequency
+    Reserved for the rare-for-sonde case where the assigned frequency
     is genuinely bandwidth-constrained (crowded emcomm net, narrow
     available spectrum slice). Conceptual primitive borrowed from FT8/JS8
     weak-signal design (foundation doc §6.1) — primitive only, not
@@ -61,7 +61,7 @@ family.
 ## §2. What the subsystem is NOT
 
 - **Not the rig control.** PTT, frequency, mode-set, audio gain are
-  subsystem #9's concern (integration) via the `tux-rig` crate (ADR 0015).
+  subsystem #9's concern (integration) via the `sonde-rig` crate (ADR 0015).
 - **Not the modem-runtime architecture.** Whether PHY is a Rust module
   inside a single process or its own daemon is part of subsystem #10
   (packaging).
@@ -104,7 +104,7 @@ family.
 
 | # | Question | Status / notes |
 |---|---|---|
-| §3.Q1 | Number of OFDM modes within the family? | Open. ARDOP uses 4 (200/500/1000/2000 Hz). tuxmodem may use fewer (3?) or more (5+). Settle informed by audio-passband measurements on the bench-rig radios + bit-loading characterization at each width. |
+| §3.Q1 | Number of OFDM modes within the family? | Open. ARDOP uses 4 (200/500/1000/2000 Hz). sonde may use fewer (3?) or more (5+). Settle informed by audio-passband measurements on the bench-rig radios + bit-loading characterization at each width. |
 | §3.Q2 | Per-mode OFDM bandwidth choices? | Open. With bit-adaptive OFDM, exact mode bandwidths are less load-bearing than for fixed-constellation OFDM — the bit-loading adapts within the chosen bandwidth — but enumerated values still need pinning before subsystem #7 link-adaptation policy can step among them. |
 | §3.Q3 | Sub-carrier count + spacing per OFDM mode? | Open. ADSL pattern uses 4.3125 kHz sub-carrier spacing with 256 sub-carriers; HF audio-band scales would be very different (tens to low hundreds of Hz sub-carrier spacing). |
 | §3.Q4 | Robustness-modes-family specifics — default wide-band low-density OFDM parameters (sub-carrier count, FEC code rate) + situational narrow-FSK parameters (number of tones, symbol rate, block size) | Open. Default mode: BPSK per sub-carrier across ~2.3 kHz passband with rate-1/4 LDPC short-block is the starting point (yields ~575 bps net at -5 dB per-sub-carrier SNR — ~100x FT8 throughput at same SNR). Narrow-FSK situational mode borrows FT8 8-FSK 0.16 baud as conceptual reference point. Settle informed by channel-sim SNR-floor measurements. |

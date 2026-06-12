@@ -4,7 +4,6 @@ import { dispatchMenuAction, type MenuHandlers } from './dispatchMenuAction';
 function handlers(): MenuHandlers {
   return {
     openCompose: vi.fn(),
-    connect: vi.fn(),
     reply: vi.fn(),
     replyAll: vi.fn(),
     forward: vi.fn(),
@@ -12,7 +11,7 @@ function handlers(): MenuHandlers {
     print: vi.fn(),
     toggleStatusBar: vi.fn(),
     toggleRadioPanel: vi.fn(),
-    selectFolder: vi.fn(),
+    verifyCms: vi.fn(),
     setScheme: vi.fn(),
     openSettings: vi.fn(),
     openMapTileSettings: vi.fn(),
@@ -41,16 +40,18 @@ describe('dispatchMenuAction', () => {
     expect(h.openCatalogBuilder).toHaveBeenCalledOnce();
   });
 
+  // tuxlink-lqw2: Verify CMS Connection relocated from the (removed) Session
+  // menu into Tools, now wired to the inline probe overlay.
+  it('routes tools:verify_cms to verifyCms', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:tools:verify_cms', h);
+    expect(h.verifyCms).toHaveBeenCalledOnce();
+  });
+
   it('routes file:quit to quit', () => {
     const h = handlers();
     dispatchMenuAction('menu:file:quit', h);
     expect(h.quit).toHaveBeenCalledOnce();
-  });
-
-  it('routes session:connect to connect', () => {
-    const h = handlers();
-    dispatchMenuAction('menu:session:connect', h);
-    expect(h.connect).toHaveBeenCalledOnce();
   });
 
   it('routes view toggles', () => {
@@ -66,12 +67,6 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:view:radio_panel', h);
     expect(h.toggleRadioPanel).toHaveBeenCalledOnce();
-  });
-
-  it('routes mailbox folder selection with the folder name', () => {
-    const h = handlers();
-    dispatchMenuAction('menu:mailbox:sent', h);
-    expect(h.selectFolder).toHaveBeenCalledWith('sent');
   });
 
   it('routes scheme selection with the scheme id', () => {
@@ -112,18 +107,13 @@ describe('dispatchMenuAction', () => {
     expect(h.forward).toHaveBeenCalledOnce();
   });
 
-  // tuxlink-ca5x: Archive routes both through the Message menu (move open
-  // message to Archive) and the Mailbox menu (navigate to the Archive folder).
+  // tuxlink-ca5x: Archive (Message menu) moves the open message to Archive.
+  // tuxlink-lqw2: the Mailbox menu was removed (folder nav lives in the
+  // FolderSidebar), so the message:archive action is the only Archive route.
   it('routes message:archive to archive', () => {
     const h = handlers();
     dispatchMenuAction('menu:message:archive', h);
     expect(h.archive).toHaveBeenCalledOnce();
-  });
-
-  it('routes mailbox:archive to selectFolder with the archive id', () => {
-    const h = handlers();
-    dispatchMenuAction('menu:mailbox:archive', h);
-    expect(h.selectFolder).toHaveBeenCalledWith('archive');
   });
 
   // tuxlink-j0m3: Print fires the webview's native print dialog via the
@@ -137,8 +127,9 @@ describe('dispatchMenuAction', () => {
 
   it('is a safe no-op for stub/unhandled ids', () => {
     const h = handlers();
+    // The disabled "soon" stub and an entirely unknown id both no-op.
+    expect(() => dispatchMenuAction('menu:tools:templates', h)).not.toThrow();
     expect(() => dispatchMenuAction('menu:tools:preferences', h)).not.toThrow();
-    expect(() => dispatchMenuAction('menu:session:disconnect', h)).not.toThrow();
   });
 
   // tuxlink-35g0: the Help menu is now wired — About / Documentation /

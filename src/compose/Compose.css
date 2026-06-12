@@ -124,6 +124,16 @@
   border-color: var(--tux-border);
 }
 
+/* To/Cc use <RecipientInput> (root `.recipient-input`, width:100%) instead of
+   `.compose-input`. Without flex sizing it overflows the flex-wrap field row
+   and drops below its label (tuxlink-bl8p). Make it a proper flex child so the
+   chip field sits inline with the label like every other compose row. */
+.compose-field-row .recipient-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
 .compose-hint {
   font-size: 11px;
   color: var(--tux-fg-faint);
