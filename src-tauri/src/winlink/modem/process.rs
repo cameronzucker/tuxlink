@@ -56,6 +56,7 @@ pub enum ProcessError {
 /// within the grace period, SIGKILL is sent and `wait()` blocks until the
 /// kernel reaps it. Errors are silently discarded, consistent with Rust's
 /// `Drop` contract.
+#[derive(Debug)]
 pub struct ManagedModem {
     child: Option<Child>,
     exit_status: Option<ExitStatus>,

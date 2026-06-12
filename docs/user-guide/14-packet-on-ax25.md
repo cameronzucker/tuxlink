@@ -53,6 +53,17 @@ by default), and accepts KISS frames from clients (tuxlink, in this case).
 Dire Wolf handles the AFSK modulation, the radio's PTT, and the on-air
 timing.
 
+Managed packet mode runs Dire Wolf for the operator: pick a sound card, a
+PTT line, and a callsign in the packet panel, and tuxlink generates the
+configuration, launches Dire Wolf, and shuts it down on disconnect. The
+`.deb` package installs Dire Wolf as a `Recommends`, so a standard
+`apt install tuxlink` pulls it in automatically. If Dire Wolf is absent —
+a slimmed install, or a system whose repositories lack it — managed mode
+reports it by name; install it with `sudo apt install direwolf`, or switch
+to a bring-your-own KISS endpoint (TCP, serial, or Bluetooth) and supply
+an external TNC. The remainder of this section covers the manual
+configuration a bring-your-own endpoint uses.
+
 Configuration:
 
 ```

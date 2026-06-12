@@ -45,6 +45,14 @@ pub enum KissLinkConfig {
     /// radio's SPP service tears down (the "Broken pipe" on first write). The SPP
     /// channel rotates per registration, so it is read from SDP at connect time.
     Bluetooth { mac: String },
+    /// Managed Dire Wolf: tuxlink spawns + supervises Dire Wolf itself (generating
+    /// its conf from the resolved audio device + PTT) and dials the localhost KISS
+    /// port it serves. The accessibility default — the operator picks a sound card
+    /// + PTT, never authoring a .conf. (ADR 0015 #1; design doc Slice B.)
+    ManagedDireWolf {
+        audio_device: super::devices::StableAudioId,
+        ptt: super::devices::PttChoice,
+    },
 }
 
 /// A bidirectional, thread-movable byte stream — the KISS pipe the AX.25 state
@@ -112,6 +120,14 @@ pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> 
         }
         KissLinkConfig::Serial { .. } => connect_serial(cfg),
         KissLinkConfig::Bluetooth { mac } => connect_bluetooth(mac),
+        // The managed variant resolves to a localhost KISS port that tuxlink's own
+        // supervised Dire Wolf serves; spawning + dialing that is wired in the
+        // lifecycle/connect phase (P4/P6). The config schema (this phase, P5) carries
+        // the variant; opening it directly here is not yet supported.
+        KissLinkConfig::ManagedDireWolf { .. } => Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "ManagedDireWolf link is not yet connectable (lifecycle wiring is a later phase)",
+        )),
     }
 }
 
@@ -167,6 +183,53 @@ pub fn connect_link_with_abort(
         KissLinkConfig::Bluetooth { mac } => {
             let inner = connect_bluetooth(mac)?;
             Ok((Box::new(AbortableByteLink { inner, abort }), None))
+        }
+        // Like `connect_link`: the managed variant's spawn+dial is a later phase
+        // (P4/P6). This phase (P5) only adds it to the config schema/DTO.
+        KissLinkConfig::ManagedDireWolf { .. } => Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "ManagedDireWolf link is not yet connectable (lifecycle wiring is a later phase)",
+        )),
+    }
+}
+
+#[cfg(test)]
+mod kiss_link_config_serde_tests {
+    use super::*;
+    use crate::winlink::ax25::devices::{PttChoice, StableAudioId, StableIdKind};
+
+    /// The ManagedDireWolf variant (P5) serializes to JSON and deserializes back
+    /// EQUAL, carrying the full StableAudioId (kind + value) and the PttChoice
+    /// variant + path — no field is dropped by the serde representation.
+    #[test]
+    fn managed_direwolf_round_trips_through_json() {
+        let cfg = KissLinkConfig::ManagedDireWolf {
+            audio_device: StableAudioId {
+                kind: StableIdKind::ByIdSymlink,
+                value: "usb-C-Media_DigiRig_Audio-00".into(),
+            },
+            ptt: PttChoice::Cm108Hid {
+                hidraw_path: "/dev/hidraw3".into(),
+            },
+        };
+        let json = serde_json::to_string(&cfg).expect("serialize ManagedDireWolf");
+        let back: KissLinkConfig = serde_json::from_str(&json).expect("deserialize ManagedDireWolf");
+        assert_eq!(back, cfg, "ManagedDireWolf must round-trip equal through JSON");
+    }
+
+    /// Adding the fourth variant must not perturb the serde representation of the
+    /// existing three — each still round-trips unchanged (guards against an
+    /// accidental tagging/representation break on the enum).
+    #[test]
+    fn existing_variants_still_round_trip_unchanged() {
+        for cfg in [
+            KissLinkConfig::Tcp { host: "127.0.0.1".into(), port: 8001 },
+            KissLinkConfig::Serial { device: "/dev/ttyUSB0".into(), baud: 9600 },
+            KissLinkConfig::Bluetooth { mac: "38:D2:00:01:55:5C".into() },
+        ] {
+            let json = serde_json::to_string(&cfg).expect("serialize variant");
+            let back: KissLinkConfig = serde_json::from_str(&json).expect("deserialize variant");
+            assert_eq!(back, cfg, "existing variant must round-trip unchanged: {cfg:?}");
         }
     }
 }
@@ -239,7 +302,9 @@ fn connect_serial(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> {
     let (device, baud) = match cfg {
         KissLinkConfig::Serial { device, baud } => (device, *baud),
         // connect_link only routes the Serial variant here.
-        KissLinkConfig::Tcp { .. } | KissLinkConfig::Bluetooth { .. } => {
+        KissLinkConfig::Tcp { .. }
+        | KissLinkConfig::Bluetooth { .. }
+        | KissLinkConfig::ManagedDireWolf { .. } => {
             unreachable!("connect_serial called with a non-Serial config")
         }
     };

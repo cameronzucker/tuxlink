@@ -50,6 +50,9 @@
         "depends": [
           "libsecret-1-0"
         ],
+        "recommends": [
+          "direwolf (>= 1.6)"
+        ],
         "files": {
           "/usr/share/applications/tuxlink.desktop": "../scripts/tuxlink.desktop"
         }
@@ -61,6 +64,9 @@
           "libsecret",
           "webkit2gtk4.1",
           "libayatana-appindicator-gtk3"
+        ],
+        "recommends": [
+          "direwolf >= 1.6"
         ]
       },
       "appimage": {

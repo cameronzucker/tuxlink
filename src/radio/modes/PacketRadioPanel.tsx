@@ -31,10 +31,11 @@ import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
 import { ModemLinkSection, type ModemLinkFields } from '../sections/ModemLinkSection';
+import { ManagedModemSection } from '../sections/ManagedModemSection';
 import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
 import { useListenerState } from '../sections/useListenerState';
 import { effectiveCall, pathPreview, ssidOptions } from '../../packet/packetConfig';
-import type { PacketConfigDto } from '../../packet/packetTypes';
+import type { PacketConfigDto, StableAudioId, PttChoice } from '../../packet/packetTypes';
 import { FavoritesTabs } from '../../favorites/FavoritesTabs';
 import { useFavorites } from '../../favorites/useFavorites';
 import { listenGatewayPrefill } from '../../favorites/prefillEvent';
@@ -188,6 +189,45 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
     persistDto({ ...config, ...fields });
   };
 
+  // Connection mode: 'managed' (recommended accessibility path — pick a sound
+  // card + PTT, no .conf authoring) vs 'byo' (bring your own KISS endpoint —
+  // the Tcp/Serial/Bluetooth editor). Derived from the persisted linkKind so we
+  // don't clobber an operator who already configured a Tcp/Serial/Bluetooth
+  // link: those three select BYO; 'Managed' or unconfigured (null) selects
+  // Managed (the default for a fresh panel). Operator switches are sticky for
+  // the session via this state; the persisted linkKind only changes when they
+  // actually pick a device (Managed) or edit the modem link (BYO).
+  const isByoKind = (k: PacketConfigDto['linkKind']): boolean =>
+    k === 'Tcp' || k === 'Serial' || k === 'Bluetooth';
+  const [connectionMode, setConnectionMode] = useState<'managed' | 'byo'>('managed');
+  // Seed the connection mode from config once it loads (a fresh config with no
+  // link → Managed; an existing Tcp/Serial/Bluetooth link → BYO so we don't
+  // override the operator's prior choice). Keyed on the linkKind only.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (!config || seededRef.current) return;
+    seededRef.current = true;
+    setConnectionMode(isByoKind(config.linkKind) ? 'byo' : 'managed');
+  }, [config]);
+
+  // Persist a managed device + PTT choice: linkKind:'Managed' + the structured
+  // managedAudioDevice / managedPtt. Clears the BYO scalar fields so a stale
+  // Tcp host / serial device doesn't ride along on the Managed DTO.
+  const onManagedChange = (device: StableAudioId, ptt: PttChoice) => {
+    if (!config) return;
+    persistDto({
+      ...config,
+      linkKind: 'Managed',
+      tcpHost: null,
+      tcpPort: null,
+      serialDevice: null,
+      serialBaud: null,
+      btMac: null,
+      managedAudioDevice: device,
+      managedPtt: ptt,
+    });
+  };
+
   const onAddRelay = () => setRelays((r) => (r.length < 2 ? [...r, ''] : r));
   const onRelayChange = (i: number, v: string) =>
     setRelays((r) => r.map((x, idx) => (idx === i ? v : x)));
@@ -234,7 +274,11 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
       ? `${config.tcpHost ?? '127.0.0.1'}:${config.tcpPort ?? 8001}`
       : config.linkKind === 'Bluetooth'
       ? `BT ${config.btMac ?? '(no device)'}`
-      : `${config.serialDevice ?? '(no device)'}`
+      : config.linkKind === 'Managed'
+      ? `Managed ${config.managedAudioDevice?.value ?? '(no sound card)'}`
+      : config.linkKind === 'Serial'
+      ? `${config.serialDevice ?? '(no device)'}`
+      : undefined
     : undefined;
 
   return (
@@ -245,21 +289,64 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
       onClose={onClose}
       onFindGateway={onFindGateway}
     >
-      <ModemLinkSection
-        kind={
-          config?.linkKind === 'Bluetooth'
-            ? 'Bluetooth'
-            : config?.linkKind === 'Serial'
-            ? 'Serial'
-            : 'Tcp'
-        }
-        host={config?.tcpHost ?? undefined}
-        port={config?.tcpPort ?? undefined}
-        serialDevice={config?.serialDevice ?? undefined}
-        serialBaud={config?.serialBaud ?? undefined}
-        btMac={config?.btMac ?? undefined}
-        onChange={onLinkChange}
-      />
+      <section className="radio-panel-sec">
+        <h5>Connection</h5>
+        <div
+          className="radio-panel-segmented"
+          role="group"
+          aria-label="Connection type"
+          data-testid="packet-connection-mode"
+        >
+          <button
+            type="button"
+            className={connectionMode === 'managed' ? 'active' : ''}
+            aria-pressed={connectionMode === 'managed'}
+            data-testid="packet-conn-managed"
+            onClick={() => setConnectionMode('managed')}
+          >
+            Managed (recommended)
+          </button>
+          <button
+            type="button"
+            className={connectionMode === 'byo' ? 'active' : ''}
+            aria-pressed={connectionMode === 'byo'}
+            data-testid="packet-conn-byo"
+            onClick={() => setConnectionMode('byo')}
+          >
+            Bring your own KISS endpoint
+          </button>
+        </div>
+        <p className="radio-panel-mono" data-testid="packet-conn-hint">
+          {connectionMode === 'managed'
+            ? 'tuxlink runs the modem for you — pick a sound card and PTT line.'
+            : 'Connect tuxlink to a KISS TNC you run (TCP, USB, or Bluetooth).'}
+        </p>
+      </section>
+
+      {connectionMode === 'managed' ? (
+        <ManagedModemSection
+          audioDevice={config?.managedAudioDevice ?? null}
+          ptt={config?.managedPtt ?? null}
+          effectiveCall={effectiveCall(baseCall, ssid)}
+          onChange={onManagedChange}
+        />
+      ) : (
+        <ModemLinkSection
+          kind={
+            config?.linkKind === 'Bluetooth'
+              ? 'Bluetooth'
+              : config?.linkKind === 'Serial'
+              ? 'Serial'
+              : 'Tcp'
+          }
+          host={config?.tcpHost ?? undefined}
+          port={config?.tcpPort ?? undefined}
+          serialDevice={config?.serialDevice ?? undefined}
+          serialBaud={config?.serialBaud ?? undefined}
+          btMac={config?.btMac ?? undefined}
+          onChange={onLinkChange}
+        />
+      )}
 
       <section className="radio-panel-sec">
         <h5>My station</h5>

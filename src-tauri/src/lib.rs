@@ -683,6 +683,7 @@ pub fn run() {
             crate::ui_commands::packet_allowed_stations_set_allow_all, // tuxlink-inde (allow_all toggle)
             crate::ui_commands::packet_list_serial_devices, // tuxlink-7fr (USB/BT device picker)
             crate::ui_commands::packet_list_bluetooth_devices, // tuxlink-mqu3 (BT-MAC picker restoration)
+            crate::ui_commands::packet_list_audio_devices, // tuxlink-yq3l P7.1 (managed sound-card + PTT picker)
             crate::ui_commands::ardop_list_audio_devices,   // tuxlink-y7x7 (ARDOP ALSA picker restoration)
             // tuxlink-dhbl: ARDOP P2P listener — allowed-stations + arms + listen toggle.
             crate::ui_commands::ardop_listen,
