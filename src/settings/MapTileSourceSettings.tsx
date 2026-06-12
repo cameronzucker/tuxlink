@@ -93,8 +93,13 @@ export function MapTileSourceSettings() {
   // the same `config_read` → `map_tile_source` the map's useTileSource reads.
   useEffect(() => {
     let mounted = true;
-    invoke<{ map_tile_source?: TileSource | null }>('config_read')
-      .then((config) => {
+    // `await` (not `.then`) so a mock/non-promise invoke return is harmless:
+    // `await undefined` resolves to undefined and we keep defaults, rather than
+    // calling `.then` on undefined (which crashes when a parent test mounts this
+    // panel without stubbing the Tauri bridge — the full-suite mount path).
+    void (async () => {
+      try {
+        const config = await invoke<{ map_tile_source?: TileSource | null }>('config_read');
         const saved = config?.map_tile_source ?? null;
         if (!mounted || !saved) return;
         setUrl(saved.url);
@@ -104,10 +109,10 @@ export function MapTileSourceSettings() {
         setCacheBudgetMb(String(saved.cacheBudgetMb));
         setAttribution(saved.attribution ?? '');
         setLabel(saved.label);
-      })
-      .catch(() => {
+      } catch {
         /* no persisted source / IPC error → keep blank defaults */
-      });
+      }
+    })();
     return () => {
       mounted = false;
     };
