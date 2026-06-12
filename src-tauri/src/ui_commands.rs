@@ -3576,6 +3576,59 @@ pub async fn ardop_list_audio_devices() -> Result<AlsaDevicesDto, UiError> {
 }
 
 // ============================================================================
+// P7.1 — packet_list_audio_devices (managed Dire Wolf sound-card + PTT picker)
+// ============================================================================
+// Surfaces the managed-modem audio devices the operator picks by friendly name,
+// each already resolved to its STABLE identity plus a ranked list of PTT
+// candidates. The pure resolution (enumerate_audio_devices / discover_ptt) lives
+// in `winlink::ax25::devices` and is fixture-tested there; this command is a thin
+// impure wrapper that reads the live system snapshot once and projects each
+// device into a serializable DTO. Soft-failure posture matches the ARDOP /
+// serial / Bluetooth pickers: nothing found → an empty list (the UI shows
+// "no sound card detected — plug one in and refresh"), never an error / panic.
+
+/// One managed-modem audio device for the packet picker: the friendly name the
+/// dropdown shows, the ALSA `plughw:` name, the persisted [`StableAudioId`], and
+/// the ranked [`PttChoice`] candidates for it (first = the default). camelCase on
+/// the wire to match the TS `ManagedAudioDeviceDto`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedAudioDeviceDto {
+    /// Human label, e.g. `"C-Media USB Audio Device (DigiRig)"`.
+    pub human_name: String,
+    /// The ALSA `plughw:CARD=<id>,DEV=0` name backing this device.
+    pub alsa_plughw: String,
+    /// Boot-order-independent identity persisted in config (`{ kind, value }`).
+    pub stable_id: crate::winlink::ax25::devices::StableAudioId,
+    /// Ranked PTT keying candidates for this device; the first is the default
+    /// (a CM108 HID on the same USB parent outranks a serial-RTS line). Empty
+    /// when no PTT line is discoverable for the device.
+    pub ptt_candidates: Vec<crate::winlink::ax25::devices::PttChoice>,
+}
+
+/// List the managed-modem audio devices (USB sound cards) the operator can pick
+/// for the packet path, each resolved to a stable id + ranked PTT candidates.
+/// Thin wrapper over the fixture-tested `enumerate_audio_devices` + `discover_ptt`
+/// (`winlink::ax25::devices`); the only impurity is the single
+/// `read_sys_snapshot()` read. Soft-failure: an empty system → an empty list, as
+/// with the ARDOP / serial / Bluetooth pickers — never an error / panic.
+#[tauri::command]
+pub async fn packet_list_audio_devices(
+) -> Result<Vec<ManagedAudioDeviceDto>, UiError> {
+    use crate::winlink::ax25::devices::{discover_ptt, enumerate_audio_devices, read_sys_snapshot};
+    let snapshot = read_sys_snapshot();
+    Ok(enumerate_audio_devices(&snapshot)
+        .into_iter()
+        .map(|device| ManagedAudioDeviceDto {
+            ptt_candidates: discover_ptt(&device, &snapshot),
+            human_name: device.human_name,
+            alsa_plughw: device.alsa_plughw,
+            stable_id: device.stable_id,
+        })
+        .collect())
+}
+
+// ============================================================================
 // Task 8 (tuxlink-7fr) — packet_connect / packet_set_listen
 // ============================================================================
 // Pure builders (`packet_transport_from_config`, `apply_listen_default`) are

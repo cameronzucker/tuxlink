@@ -20,7 +20,48 @@
  *    rfcomm bind / no /dev/rfcommN. The SPP channel is resolved from SDP at
  *    connect time. (Replaces the old "BT = Serial + /dev/rfcomm0" affordance,
  *    whose serialport TTY open the radio tore down → "Broken pipe".) */
-export type PacketLinkKind = 'Tcp' | 'Serial' | 'Bluetooth';
+export type PacketLinkKind = 'Tcp' | 'Serial' | 'Bluetooth' | 'Managed';
+
+/** How a {@link StableAudioId} was derived — the camelCased projection of the
+ *  Rust `StableIdKind` enum (`#[serde(rename_all = "camelCase")]`):
+ *  `ByIdSymlink` → 'byIdSymlink', `UsbVidPidSerial` → 'usbVidPidSerial',
+ *  `CardIdHash` → 'cardIdHash'. (Verified against
+ *  src-tauri/src/winlink/ax25/devices.rs `StableIdKind`.) */
+export type StableIdKind = 'byIdSymlink' | 'usbVidPidSerial' | 'cardIdHash';
+
+/** Boot-order-independent identity for a managed-modem audio device. Mirrors the
+ *  Rust `StableAudioId` struct (`#[serde(rename_all = "camelCase")]`) → flat
+ *  `{ kind, value }`. `value` is the by-id basename, the `vid:pid:serial`
+ *  triple, or a `cardid:<hash>` fallback depending on `kind`. */
+export interface StableAudioId {
+  kind: StableIdKind;
+  value: string;
+}
+
+/** A PTT keying method for a managed-modem audio device. Mirrors the Rust
+ *  `PttChoice` enum, which is INTERNALLY TAGGED
+ *  (`#[serde(rename_all = "camelCase", tag = "kind")]`): the variant rides a
+ *  `kind` discriminator alongside the variant's fields, NOT a nested object.
+ *  `Cm108Hid { hidraw_path }` → `{ kind: 'cm108Hid', hidrawPath }`;
+ *  `SerialRts { tty }` → `{ kind: 'serialRts', tty }`. (Verified against
+ *  src-tauri/src/winlink/ax25/devices.rs `PttChoice`.) */
+export type PttChoice =
+  | { kind: 'cm108Hid'; hidrawPath: string }
+  | { kind: 'serialRts'; tty: string };
+
+/** One managed-modem audio device from `packet_list_audio_devices` (P7.1).
+ *  Mirrors the Rust `ManagedAudioDeviceDto` (`#[serde(rename_all = "camelCase")]`).
+ *  `pttCandidates` is ranked; the first entry is the default PTT choice. */
+export interface ManagedAudioDeviceDto {
+  /** Friendly name the picker shows, e.g. "C-Media USB Audio Device (DigiRig)". */
+  humanName: string;
+  /** ALSA `plughw:CARD=<id>,DEV=0` name backing this device. */
+  alsaPlughw: string;
+  /** Stable identity persisted in config when this device is chosen. */
+  stableId: StableAudioId;
+  /** Ranked PTT candidates; `[0]` is the default. Empty when none discoverable. */
+  pttCandidates: PttChoice[];
+}
 
 /** Flat, camelCase-on-wire P3 PacketConfigDto.
  *  Matches Rust #[serde(rename_all = "camelCase")] PacketConfigDto. */
@@ -29,7 +70,9 @@ export interface PacketConfigDto {
   ssid: number;
   /** Default-on listen flag (arm for incoming calls when idle). */
   listenDefault: boolean;
-  /** KISS link kind: "Tcp" | "Serial" | null when not yet configured. */
+  /** Link kind: "Tcp" | "Serial" | "Bluetooth" | "Managed" | null when not yet
+   *  configured. "Managed" is the managed-Dire-Wolf path (P5/P7) — its sound
+   *  card + PTT ride `managedAudioDevice` / `managedPtt` below. */
   linkKind: PacketLinkKind | null;
   /** TCP host (non-null when linkKind === "Tcp"). */
   tcpHost: string | null;
@@ -45,6 +88,13 @@ export interface PacketConfigDto {
    *  Optional on the wire: an older payload without `btMac` still parses
    *  (backend uses `#[serde(default)]`); the panel selector is a follow-up. */
   btMac?: string | null;
+  /** Resolved audio device for `linkKind === "Managed"` (managed Dire Wolf).
+   *  Structured so the StableAudioId `kind`+`value` survive the round-trip.
+   *  Optional on the wire (backend uses `#[serde(default)]`), like `btMac`. */
+  managedAudioDevice?: StableAudioId | null;
+  /** Resolved PTT keying method for `linkKind === "Managed"`. The internally-
+   *  tagged PttChoice. Optional on the wire (`#[serde(default)]`), like `btMac`. */
+  managedPtt?: PttChoice | null;
   /** AX.25 TXDELAY (units: 10 ms). */
   txdelay: number;
   /** AX.25 persistence parameter. */
