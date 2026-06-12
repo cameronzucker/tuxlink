@@ -210,6 +210,63 @@ describe('<VaraRadioPanel>', () => {
     });
   });
 
+  // tuxlink-o0c8: the panel must thread the sidebar-selected intent
+  // (cms / p2p / radio-only) — NOT hardcode 'cms' — into both backend calls, so
+  // p2p and radio-only VARA sessions route correctly. Mirrors ARDOP (tuxlink-nnws).
+  it('threads the selected intent (radio-only) into vara_open_session', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    invokeSpy.mockImplementation(makeInvoke({ vara_open_session: openStatus }));
+    renderPanel(
+      <VaraRadioPanel mode={{ kind: 'vara-hf', intent: 'radio-only' }} onClose={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('vara-start-btn')).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vara-start-btn'));
+    });
+
+    await waitFor(() => {
+      expect(invokeSpy).toHaveBeenCalledWith('vara_open_session', {
+        intent: 'radio-only',
+        transportKind: 'vara-hf',
+      });
+    });
+  });
+
+  it('threads the selected intent (p2p) into modem_vara_b2f_exchange', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    // Hydrate an open session so Send/Receive is reachable.
+    invokeSpy.mockImplementation(makeInvoke({ vara_status: openStatus }));
+    renderPanel(
+      <VaraRadioPanel mode={{ kind: 'vara-hf', intent: 'p2p' }} onClose={() => {}} />,
+    );
+    await switchToManualTab();
+    const input = await screen.findByTestId('vara-target-input');
+    fireEvent.change(input, { target: { value: 'W7RMS-10' } });
+    await waitFor(() => {
+      expect(screen.getByTestId('vara-send-receive-btn')).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vara-send-receive-btn'));
+    });
+
+    await waitFor(() => {
+      expect(invokeSpy).toHaveBeenCalledWith(
+        'modem_vara_b2f_exchange',
+        expect.objectContaining({
+          target: 'W7RMS-10',
+          intent: 'p2p',
+          transportKind: 'vara-hf',
+        }),
+      );
+    });
+  });
+
   it('surfaces start-failure error inline', async () => {
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
