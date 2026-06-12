@@ -30,6 +30,11 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MessageMeta } from '../mailbox/types';
 import type { CatalogEntry } from '../catalog/types';
+// Eager-import the resolver so its bundled NWS-zone geometry (a large JSON) is
+// transformed at COLLECT time, not lazily inside the timed findByRole when the
+// React.lazy RequestCenter chunk first loads — the on-demand transform otherwise
+// blows the dialog-open timeout (tuxlink-z1b7).
+import './geo';
 
 // ---------------------------------------------------------------------------
 // Tauri IPC mocks. AppShell mounts a lot of chrome (TitleBar, MenuBar, ribbon,

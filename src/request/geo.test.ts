@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { gridToLatLon, latLonToUsState, latLonToSeaArea, gridToNwsZone, gridToRadarRegion } from './geo';
+import zoneMap from './nws-zone-to-catalog.json';
 
 describe('gridToLatLon', () => {
   it('decodes a 4-char square to its center (CN87 ≈ Seattle area)', () => {
@@ -142,5 +143,31 @@ describe('latLonToSeaArea', () => {
 
   it('returns null for inland Chicago', () => {
     expect(latLonToSeaArea(41.9, -87.6)).toBeNull();
+  });
+});
+
+// Anti-blind-spot guard (tuxlink-z1b7 DoD #9): the prior design shipped wrong 3×
+// because it was validated only on Seattle/WA. This table exercises multiple state
+// SHAPES — coarse multi-office (AZ), fine per-zone (WA), coarse (MI), cross-state
+// (NV) — through the real resolution path (grid → gridToNwsZone → product map).
+// If any row regresses, the WA-only blind spot is recurring.
+describe('weather resolution by grid (structural-edge guard)', () => {
+  const MAP = (zoneMap as { map: Record<string, string> }).map;
+  const primary = (grid: string): string | null => {
+    const ll = gridToLatLon(grid);
+    if (!ll) return null;
+    const z = gridToNwsZone(ll.lat, ll.lon);
+    return z ? (MAP[z.id] ?? null) : null;
+  };
+  it.each([
+    ['DM33', 'AZ_TAB_PHOE', 'Phoenix 4-char (operator grid) — the reported bug'],
+    ['DM33xk', 'AZ_TAB_PHOE', 'Phoenix 6-char'],
+    ['DM45', 'AZ_ZON_NOFLA', 'Flagstaff / Northern AZ'],
+    ['DM42', 'AZ_ZON_SE', 'Tucson / Southeast AZ'],
+    ['CN87uo', 'WA_ZON_SEA', 'Seattle — 8-state per-zone precision preserved'],
+    ['EN82', 'MI_ZON_SE', 'Detroit MI — coarse state'],
+    ['DM09', 'NV_ZON_WESNE', 'Reno NV — cross-state shared region'],
+  ])('%s → %s (%s)', (grid, want) => {
+    expect(primary(grid)).toBe(want);
   });
 });

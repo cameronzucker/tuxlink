@@ -141,9 +141,9 @@ const CAT = [
   { category: 'PROPAGATION', filename: 'PROP_3DAY', description: '3-day', size_bytes: 1 },
 ];
 describe('buildSections location hero', () => {
-  it('coastal grid → zone (primary) + radar + marine, in order', () => {
+  it('coastal grid → zone (primary) + radar + marine + browse-all, in order', () => {
     const loc = buildSections(CAT, 'CN87uo').find((s) => s.kind === 'location')!;
-    expect(loc.cards.map((c) => c.id)).toEqual(['loc-zone-forecast', 'loc-radar', 'loc-marine']);
+    expect(loc.cards.map((c) => c.id)).toEqual(['loc-zone-forecast', 'loc-radar', 'loc-marine', 'loc-browse-all']);
     expect(loc.cards[0].primary).toBe(true);
     expect(loc.cards[0].label).toBe('City of Seattle');
     expect(loc.cards[0].action).toEqual({ kind: 'addCms', filename: 'WA_ZON_SEA' });
@@ -151,6 +151,9 @@ describe('buildSections location hero', () => {
     expect(loc.cards[0].meta).toContain('WA_ZON_SEA');
     expect(loc.cards[1].action).toEqual({ kind: 'addCms', filename: 'US.RAD.PSND' });
     expect(loc.cards[2].action).toEqual({ kind: 'openBrowse', category: 'WX_EASTPAC' });
+    // Always-on alternatives: "All Washington forecasts · N" → openBrowse WX_US_WA.
+    expect(loc.cards[3].action).toEqual({ kind: 'openBrowse', category: 'WX_US_WA' });
+    expect(loc.cards[3].label).toContain('Washington');
   });
   it('inland grid → no marine card', () => {
     const loc = buildSections(CAT, 'DM79').find((s) => s.kind === 'location');
