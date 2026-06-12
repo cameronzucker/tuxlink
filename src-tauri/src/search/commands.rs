@@ -176,12 +176,18 @@ impl SearchService {
                         }
                         _ => crate::search::extractor::Direction::Received,
                     };
+                    // tuxlink-2ns7: re-attach the identity tag on rebuild. The
+                    // <mid>.identity sidecar lives next to the b2f for Sent/Outbox
+                    // (shared root); read_identity_tag returns None for untagged
+                    // (legacy / received) mail, which the index stores as NULL.
+                    let identity_tag = mbox.read_identity_tag(folder, &meta.id);
                     let row = crate::search::extractor::extract(
                         &msg,
                         folder,
                         direction,
                         meta.unread,
                         None,
+                        identity_tag,
                     );
                     locked.upsert(&row).map_err(CommandError::from)?;
                     count += 1;
@@ -363,6 +369,7 @@ mod tests {
             unread: true, form_type: None, has_attachments: false, attachment_count: 0,
             transport_used: Some("telnet".into()), direction: Direction::Received,
             message_size: body.len() as u32, routing_path: None,
+            identity_tag: None,
         }
     }
 

@@ -16,7 +16,12 @@ use thiserror::Error;
 /// search. Existing v2 indices return SchemaDrift; the mod.rs build_service
 /// recovery path recreates fresh and the docs table is repopulated on first
 /// launch from the bundled docs/user-guide/*.md.
-pub const SCHEMA_VERSION: u32 = 3;
+///
+/// v3 → v4 (tuxlink-2ns7): add `identity_tag` to messages_meta. Records the
+/// FULL callsign a message was authored under (Sent/Outbox) or delivered into
+/// (received mail). Existing v3 indices return SchemaDrift; the rebuild path
+/// recreates fresh.
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Error, Debug)]
 pub enum IndexError {
@@ -91,6 +96,7 @@ impl Index {
                 direction        TEXT NOT NULL,
                 message_size     INTEGER NOT NULL,
                 routing_path     TEXT,
+                identity_tag     TEXT,
                 indexed_at       INTEGER NOT NULL
             );
 
@@ -99,6 +105,7 @@ impl Index {
             CREATE INDEX idx_meta_from      ON messages_meta(from_addr);
             CREATE INDEX idx_meta_form_type ON messages_meta(form_type);
             CREATE INDEX idx_meta_folder    ON messages_meta(folder);
+            CREATE INDEX idx_meta_identity  ON messages_meta(identity_tag);
 
             -- tuxlink-0gsy (spec §9.1): docs_fts holds bundled user-guide
             -- topics for help-window search. Populated by build_service on
@@ -141,12 +148,14 @@ impl Index {
                 mid, folder, subject, from_addr, to_addrs, cc_addrs,
                 date_sent, date_received, unread,
                 form_type, has_attachments, attachment_count,
-                transport_used, direction, message_size, routing_path, indexed_at
+                transport_used, direction, message_size, routing_path,
+                identity_tag, indexed_at
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6,
                 ?7, ?8, ?9,
                 ?10, ?11, ?12,
-                ?13, ?14, ?15, ?16, strftime('%s','now')
+                ?13, ?14, ?15, ?16,
+                ?17, strftime('%s','now')
              )
              ON CONFLICT(mid) DO UPDATE SET
                 folder = excluded.folder,
@@ -164,6 +173,7 @@ impl Index {
                 direction = excluded.direction,
                 message_size = excluded.message_size,
                 routing_path = excluded.routing_path,
+                identity_tag = excluded.identity_tag,
                 indexed_at = excluded.indexed_at",
             rusqlite::params![
                 row.mid, row.folder, row.subject,
@@ -178,6 +188,7 @@ impl Index {
                 row.direction.as_str(),
                 row.message_size,
                 row.routing_path,
+                row.identity_tag,
             ],
         )?;
         tx.commit()?;
@@ -331,6 +342,7 @@ pub struct QueryHit {
     pub direction: String,
     pub message_size: u32,
     pub routing_path: Option<String>,
+    pub identity_tag: Option<String>,
 }
 
 impl Index {
@@ -368,6 +380,7 @@ impl Index {
                     direction: row.get(13)?,
                     message_size: row.get::<_, i64>(14)? as u32,
                     routing_path: row.get(15)?,
+                    identity_tag: row.get(16)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -403,6 +416,7 @@ mod query_integration {
             direction: Direction::Received,
             message_size: body.len() as u32,
             routing_path: None,
+            identity_tag: None,
         }
     }
 
@@ -471,7 +485,22 @@ mod mutation_tests {
             form_type: None, has_attachments: false, attachment_count: 0,
             transport_used: Some("telnet".into()), direction: Direction::Received,
             message_size: body.len() as u32, routing_path: None,
+            identity_tag: None,
         }
+    }
+
+    #[test]
+    fn identity_tag_round_trips() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        let mut row = fixture_row("MID1", "outbox", "x", "y");
+        row.identity_tag = Some("W1ABC".into());
+        idx.upsert(&row).unwrap();
+        let tag: Option<String> = idx
+            .conn
+            .query_row("SELECT identity_tag FROM messages_meta WHERE mid = 'MID1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tag.as_deref(), Some("W1ABC"));
     }
 
     #[test]
@@ -618,6 +647,7 @@ mod log_query_tests {
             direction: Direction::Sent,
             message_size: 10,
             routing_path: None,
+            identity_tag: None,
         }
     }
 
@@ -642,6 +672,7 @@ mod log_query_tests {
             direction: Direction::Received,
             message_size: 10,
             routing_path: None,
+            identity_tag: None,
         }
     }
 
