@@ -84,6 +84,20 @@ impl ListingMode {
     }
 }
 
+/// The "Antenna being used" code a gateway self-reports in the listing
+/// (legend in every listing header: `B = Beam`, `D = Dipole`, `V = Vertical`).
+/// Used to model the FAR (gateway) end of an HF path prediction instead of a
+/// fixed whip — a vertical nulls the high angles NVIS needs, so assuming one for
+/// every gateway made short regional paths read as unreachable (tuxlink-s0r1).
+/// `None` (gateway didn't report) degrades to an isotropic far-end model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GatewayAntenna {
+    Beam,
+    Dipole,
+    Vertical,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Gateway {
@@ -96,6 +110,7 @@ pub struct Gateway {
     pub last_update: Option<String>, // raw "Sat, 06 Jun 2026 08:10:00 GMT"
     pub email: Option<String>,
     pub homepage: Option<String>,
+    pub antenna: Option<GatewayAntenna>, // self-reported B/D/V code, if any
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -279,6 +294,7 @@ fn parse_header_line(line: &str) -> Option<Gateway> {
         last_update,
         email: None,
         homepage: None,
+        antenna: None,
     })
 }
 
@@ -310,6 +326,12 @@ fn apply_subline(g: &mut Gateway, line: &str) {
                 g.location = Some(rest.to_string()).filter(|s| s != "-");
             }
         }
+        // "Antenna being used" codes (legend in every listing header). Models the
+        // gateway (far) end of an HF prediction (tuxlink-s0r1). Last one wins if a
+        // record somehow lists more than one.
+        "B" => g.antenna = Some(GatewayAntenna::Beam),
+        "D" => g.antenna = Some(GatewayAntenna::Dipole),
+        "V" => g.antenna = Some(GatewayAntenna::Vertical),
         "-" => {
             g.frequencies_khz = rest
                 .split_whitespace()
@@ -389,6 +411,39 @@ mod tests {
     fn unknown_sysop_name_dash_becomes_none() {
         let listing = parse_listing(&one_station("-/AI4Y"), ListingMode::ArdopHf);
         assert_eq!(listing.gateways[0].sysop_name, None);
+    }
+
+    #[test]
+    fn no_antenna_line_yields_none() {
+        // one_station() emits only E/A/- sublines — no "Antenna being used" code.
+        let listing = parse_listing(&one_station("Richard Creasey/AI4Y"), ListingMode::ArdopHf);
+        assert_eq!(listing.gateways[0].antenna, None);
+    }
+
+    #[test]
+    fn parses_gateway_antenna_code() {
+        // B/D/V "Antenna being used" codes (tuxlink-s0r1) — used to model the far end.
+        for (code, want) in [
+            ("B", GatewayAntenna::Beam),
+            ("D", GatewayAntenna::Dipole),
+            ("V", GatewayAntenna::Vertical),
+        ] {
+            let body = format!(
+                "WINLINK ARDOP CHANNEL LISTING - (June 8, 2026)\r\n\
+                 Channel, Sysop Name / Callsign, [Grid], (last update)\r\n\
+                 ----\r\n\
+                 AI4Y.WINLINK, Richard Creasey/AI4Y, [FM07CC: Wirtz, VA], (Sat, 06 Jun 2026 08:47:00 GMT)\r\n   \
+                 E  creas002@gmail.com\r\n   \
+                 {code}  (antenna note)\r\n   \
+                 -  7101.6\r\n\r\n"
+            );
+            let listing = parse_listing(&body, ListingMode::ArdopHf);
+            assert_eq!(
+                listing.gateways[0].antenna,
+                Some(want),
+                "code {code} should parse to {want:?}"
+            );
+        }
     }
 
     #[test]
