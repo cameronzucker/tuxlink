@@ -221,16 +221,79 @@ These dated plans/specs describe *unbuilt forward* subsystems (`sonde-arq`, `son
 
 ---
 
-## Phase B — Extract to its own repo (after Phase A merges)
+## Phase B — Extract to its own repo
 
-Runs from an up-to-date tuxlink checkout that contains the renamed `sonde/`. New bd issue (e.g. `… extract Sonde to own repo`), new worktree.
+> **MUST run from a session rooted OUTSIDE tuxlink** (e.g. cwd `/home/administrator/Code/sonde`).
+> Empirically confirmed 2026-06-12: tuxlink's session hooks block `git commit` by
+> command pattern + main-checkout lease **regardless of cwd**, so building the new
+> repo's commits from a tuxlink-rooted session is denied. This is the documented
+> sibling-repo rule — relaunch in the new repo, do not worktree/lease/end-run.
+> A fresh `git clone` of tuxlink does NOT inherit `core.hooksPath`, and a session
+> rooted in the new repo does not load tuxlink's `.claude` session hooks, so git
+> ops there are free.
 
-- [ ] **Op B1 — History-preserving split.** `git subtree split --prefix=sonde -b sonde-extract` (filter-repo/filter-branch are hook-banned; `subtree split` is allowed and preserves the `sonde/` subtree history). Verify the branch builds the workspace at its root.
-- [ ] **Op B2 — Resolve the `hf-channel-sim` path-dep.** `sonde/Cargo.toml` has `hf-channel-sim = { path = "../hf-channel-sim" }`, which breaks once `sonde/` is a repo root. Decide (operator): (a) move `hf-channel-sim` into the Sonde repo as a workspace member, or (b) publish `hf-channel-sim` to crates.io and switch to `version = "0.1"`. It is a dev-dependency used only by the modem ⇒ option (a) is the low-friction default.
-- [ ] **Op B3 — Create the GitHub repo** `cameronzucker/sonde` (AGPL-3.0-only; the workspace already carries its own LICENSE). **Confirm with operator before creating** (outward-facing). Push `sonde-extract` as `main`.
-- [ ] **Op B4 — Add CI to the new repo** — `cargo build --workspace` + `cargo test --workspace` + `cargo clippy --all-targets -D warnings`. This is the build/test gate that tuxlink CI never provided; it retroactively validates the Phase A rename by compiling the renamed workspace for the first time.
-- [ ] **Op B5 — Remove `sonde/` from tuxlink.** It was unwired (no root-workspace membership, no `src-tauri` dep), so removal is a clean delete + a pointer in the README/ADR 0019 to the new repo. Update the 3 `src-tauri` comments to reference the external repo if useful. Commit, PR, merge.
-- [ ] **Op B6 — Reserve crates.io names** (optional, when ready to publish): `sonde-phy`, `sonde-fec`, `sonde-rx`, `sonde-tx`, `sonde-rig-cm108`, `sonde-rig-rts` (all free as of 2026-06-12).
+> **History note (confirmed 2026-06-12):** `git subtree split --prefix=sonde` on the
+> post-rename branch yields only **1 commit** — the modem's development history all
+> lives under the old `tuxmodem/` path. To preserve it, split `--prefix=tuxmodem`
+> from a pre-rename ref (`origin/main`, since Phase A may not be merged yet) and apply
+> the rename in the new repo. The new repo's history then honestly shows
+> tuxmodem→sonde. (`git filter-repo`, which could rewrite names through all history,
+> is hook-banned.)
+
+**Locked decisions:** full history (Option B above); `hf-channel-sim` moves into the
+Sonde repo as a workspace member (it is a modem-only dev-dependency); new repo created
+**private** first (reversible default — make public when ready).
+
+Prereq: Phase A PR #639 merged (so `sonde/` is on `origin/main`) **and** its deferred
+Codex self-adrev has run. The split below reads `origin/main`, so it works whether or
+not #639 is merged, but Op B5 (removing `sonde/` from tuxlink) requires #639 merged.
+
+```bash
+# ---- Run from ~/Code in a Sonde-rooted (non-tuxlink) session ----
+TUX=/home/administrator/Code/tuxlink
+
+# B1 — full-history split of the modem (from a fresh clone so no tuxlink hooks bind)
+git clone "$TUX" /tmp/sonde-src && cd /tmp/sonde-src
+git checkout origin/main                                    # pre-rename: has tuxmodem/
+git subtree split --prefix=tuxmodem -b modem-hist           # SLOW (~minutes); modem history, root-level, OLD names
+git subtree split --prefix=hf-channel-sim -b hfsim-hist     # SLOW; hf-channel-sim history
+
+# B2 — seed the new repo from the modem split, graft hf-channel-sim under hf-channel-sim/
+mkdir -p /home/administrator/Code/sonde && cd /home/administrator/Code/sonde
+git init -b main
+git pull /tmp/sonde-src modem-hist                          # workspace at root (tuxmodem-* names)
+git subtree add --prefix=hf-channel-sim /tmp/sonde-src hfsim-hist
+
+# B3 — apply the rename AT ROOT (Phase A Op 1, minus the sonde/ prefix)
+git mv crates/tuxmodem-phy crates/sonde-phy && git mv crates/tuxmodem-fec crates/sonde-fec
+git mv crates/tuxmodem-rx crates/sonde-rx && git mv crates/tuxmodem-tx crates/sonde-tx
+git mv crates/tux-rig-cm108 crates/sonde-rig-cm108 && git mv crates/tux-rig-rts crates/sonde-rig-rts
+git mv crates/sonde-phy/src/bin/tuxmodem-audio-play.rs crates/sonde-phy/src/bin/sonde-audio-play.rs
+git mv crates/sonde-rx/src/bin/tuxmodem-rx.rs crates/sonde-rx/src/bin/sonde-rx.rs
+git mv crates/sonde-tx/src/bin/tuxmodem-tx.rs crates/sonde-tx/src/bin/sonde-tx.rs
+git mv crates/sonde-rig-cm108/src/bin/tux-rig-cm108.rs crates/sonde-rig-cm108/src/bin/sonde-rig-cm108.rs
+git mv crates/sonde-rig-rts/src/bin/tux-rig-rts.rs crates/sonde-rig-rts/src/bin/sonde-rig-rts.rs
+git mv crates/sonde-rig-rts/src/bin/tux-rig-watchdog.rs crates/sonde-rig-rts/src/bin/sonde-rig-watchdog.rs
+# token substitution (robust while-loop — NOT `grep -rlZ | xargs -0`, that mismatched newline/NUL in Phase A):
+grep -rl -e tuxmodem -e Tuxmodem -e TUXMODEM -e TuxModem -e tux-rig -e tux_rig . \
+  | while IFS= read -r f; do sed -i -e 's/tux-rig/sonde-rig/g; s/tux_rig/sonde_rig/g; s/TuxModem/Sonde/g; s/Tuxmodem/Sonde/g; s/TUXMODEM/SONDE/g; s/tuxmodem/sonde/g' "$f"; done
+# fix the path-dep now that hf-channel-sim is in-repo, and add it as a workspace member:
+sed -i 's#hf-channel-sim = { path = "../hf-channel-sim" }#hf-channel-sim = { path = "hf-channel-sim" }#' Cargo.toml
+#   add "hf-channel-sim" to [workspace] members in Cargo.toml (hand-edit).
+
+# B4 — structural gate + CI
+git grep -in -e tuxmodem -e tux-rig -e tux_rig                         # want: empty
+cargo metadata --no-deps --offline --format-version 1 >/dev/null && echo OK
+#   write .github/workflows/ci.yml: cargo build --workspace, cargo test --workspace, cargo clippy --all-targets -D warnings
+git add -A && git commit -m "refactor(sonde): rename to Sonde + vendor hf-channel-sim + CI"
+
+# B5 — create the repo (PRIVATE) and push; CI runs the FIRST real compile/test of the renamed workspace
+gh repo create cameronzucker/sonde --private --source=. --push --description "Sonde — clean-sheet HF data modem (AGPLv3)"
+gh run watch   # the real build/test gate
+```
+
+- [ ] **Op B6 — Remove `sonde/` from tuxlink** (separate tuxlink PR, after #639 merges): delete `sonde/`, leave a README/ADR-0019 pointer to `github.com/cameronzucker/sonde`. Unwired ⇒ clean delete; `hf-channel-sim/` also leaves (now vendored in Sonde). New bd issue + worktree.
+- [ ] **Op B7 — Reserve crates.io names** (optional, when publishing): `sonde-phy`, `sonde-fec`, `sonde-rx`, `sonde-tx`, `sonde-rig-cm108`, `sonde-rig-rts` (all free as of 2026-06-12).
 
 ---
 
