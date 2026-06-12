@@ -66,6 +66,16 @@ describe('stationPinIcon (reachability colour/size logic)', () => {
     const sel = stationPinIcon('good', true, 'X') as unknown as { html: string };
     expect(sel.html).toMatch(/is-selected/);
   });
+
+  it('sizes the pin via iconSize (CSSOM), never an inline style attribute', () => {
+    // Regression guard for tuxlink-s0r1: an inline `style="width:..."` on the
+    // divIcon span is stripped by Tauri's packaged CSP in WebKitGTK, collapsing
+    // the dot into an oblong "black blob". Size must come from iconSize (which
+    // Leaflet applies to the wrapper via the CSSOM) + a width/height CSS rule.
+    const good = stationPinIcon('good', false, 'N0DAJ') as unknown as { html: string; iconSize: [number, number] };
+    expect(good.html).not.toMatch(/style\s*=/);
+    expect(good.iconSize).toEqual([20, 20]);
+  });
 });
 
 describe('StationFinderMap', () => {
