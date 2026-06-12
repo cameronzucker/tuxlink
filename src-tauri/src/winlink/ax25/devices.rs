@@ -632,10 +632,8 @@ fn card_index_from_symlink_target(target: &str) -> Option<u32> {
     let base = target.rsplit('/').next().unwrap_or(target);
     let rest = if let Some(r) = base.strip_prefix("controlC") {
         r
-    } else if let Some(r) = base.strip_prefix("pcmC") {
-        r
     } else {
-        return None;
+        base.strip_prefix("pcmC")?
     };
     // Leading digits are the card index (pcmC1D0c → "1D0c" → 1).
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
