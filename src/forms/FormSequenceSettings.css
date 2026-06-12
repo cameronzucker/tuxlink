@@ -1,0 +1,63 @@
+/* FormSequenceSettings — SeqInc serial-counter reset section (tuxlink-2tom). */
+
+.form-seq-settings__error {
+  margin: 0 0 0.5rem;
+  color: var(--tux-danger, #e06c75);
+  font-size: 0.85rem;
+}
+
+.form-seq-settings__empty {
+  margin: 0;
+  color: var(--tux-text-muted, #9aa0aa);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.form-seq-settings__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.form-seq-settings__row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.form-seq-settings__id {
+  flex: 1 1 auto;
+  font-weight: 600;
+  min-width: 8rem;
+}
+
+.form-seq-settings__next {
+  color: var(--tux-text-muted, #9aa0aa);
+  font-size: 0.85rem;
+}
+
+.form-seq-settings__reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--tux-text-muted, #9aa0aa);
+}
+
+.form-seq-settings__input {
+  width: 5rem;
+  padding: 0.2rem 0.35rem;
+}
+
+.form-seq-settings__btn {
+  padding: 0.2rem 0.7rem;
+}
+
+.form-seq-settings__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

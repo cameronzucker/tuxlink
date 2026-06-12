@@ -49,6 +49,11 @@ pub struct TxtTemplate {
     pub reply_template: Option<String>,
     /// `Def: KEY=VALUE` default declarations, in document order.
     pub defs: Vec<(String, String)>,
+    /// `SeqInc:` directive present — the form auto-numbers each send via a
+    /// persisted per-form serial counter substituted into `{SeqNum}` /
+    /// `<var SeqNum>` (tuxlink-2tom / G12-C consumes this). 22 bundled templates
+    /// (radiogram / RRI / net-log serials) carry it.
+    pub seq_inc: bool,
     /// `Msg:` body template (LF-normalized, leading/trailing blank lines
     /// trimmed). `<var X>` + host tags preserved for the renderer.
     pub msg: Option<String>,
@@ -71,6 +76,7 @@ fn match_directive(line: &str) -> Option<(&'static str, &str)> {
         "subject" => "Subject",
         "replytemplate" => "ReplyTemplate",
         "def" => "Def",
+        "seqinc" => "SeqInc",
         _ => return None,
     };
     Some((canon, value))
@@ -153,6 +159,9 @@ pub fn parse_txt_template(raw: &str) -> TxtTemplate {
                     tpl.defs.push((value.trim().to_string(), String::new()));
                 }
             }
+            // `SeqInc:` (value is empty) — flag the form for per-send serial
+            // numbering; the value, if any, is ignored.
+            "SeqInc" => tpl.seq_inc = true,
             _ => {}
         }
     }
@@ -533,6 +542,25 @@ mod tests {
              ReplyTemplate:ICS213_SendReply.0\r\nMsg:\r\nx\r\n",
         );
         assert_eq!(t.reply_template.as_deref(), Some("ICS213_SendReply.0"));
+    }
+
+    #[test]
+    fn parses_seqinc_directive() {
+        // Real bundle shape: `SeqInc:` (empty value) sits between Subject and Msg.
+        let t = parse_txt_template(
+            "Form: IARU_Message_Form_Initial.html\r\n\
+             Subject:[<var Priority>] Msg# <var SeqNum>\r\nSeqInc:\r\nMsg:\r\nMessage # <var SeqNum>\r\n",
+        );
+        assert!(t.seq_inc, "SeqInc: directive must set seq_inc");
+        // A trailing tab on the directive line is tolerated (2 bundle files have it).
+        let t2 = parse_txt_template("Form: X.html\r\nSeqInc:\t\r\nMsg:\r\nb\r\n");
+        assert!(t2.seq_inc);
+    }
+
+    #[test]
+    fn seqinc_absent_is_false() {
+        let t = parse_txt_template("Form: X.html\r\nTo: a@b.c\r\nMsg:\r\nb\r\n");
+        assert!(!t.seq_inc);
     }
 
     #[test]

@@ -16,6 +16,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GpsState, PositionPrecision } from './useStatus';
 import { LocationSettings } from '../location/LocationSettings';
+import { FormSequenceSettings } from '../forms/FormSequenceSettings';
 import './SettingsPanel.css';
 
 const GPS_STATE_OPTIONS: { value: GpsState; label: string; help: string }[] = [
@@ -183,6 +184,11 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
               </span>
             </label>
           ))}
+        </fieldset>
+
+        <fieldset className="tux-settings-group">
+          <legend>Form sequence numbers</legend>
+          <FormSequenceSettings />
         </fieldset>
       </div>
     </div>
