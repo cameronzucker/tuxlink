@@ -431,9 +431,9 @@ mod tests {
         let d = &devices[0];
         assert_eq!(d.stable_id.kind, StableIdKind::ByIdSymlink);
         assert_eq!(d.stable_id.value, "usb-C-Media_DigiRig_Audio-00");
-        // The id must not be the boot-order card index.
-        assert!(!d.stable_id.value.contains("card"));
-        assert!(!d.stable_id.value.contains('1'));
+        // The id is the by-id basename, not the boot-order card index. (The
+        // index-independence property itself is proved by the swap test below;
+        // here we just confirm the kind/value resolve as expected.)
         assert_eq!(d.alsa_plughw, "plughw:CARD=Device,DEV=0");
     }
 
