@@ -91,6 +91,20 @@
   outline-offset: 1px;
 }
 
+.webview-form-viewer__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Transient PDF-export feedback ("Saved PDF to …" / error) — muted status
+ * text alongside the chrome buttons (tuxlink-cumx / G8). */
+.webview-form-viewer__export-msg {
+  font-size: 0.85em;
+  color: var(--muted, #9aa0aa);
+  align-self: center;
+  overflow-wrap: anywhere;
+}
+
 /* ============================================================
  * FZ-M1 compact mode (tuxlink-h7q7) — additive + scoped.
  *

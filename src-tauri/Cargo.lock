@@ -6185,6 +6185,7 @@ dependencies = [
  "dirs 5.0.1",
  "filetime",
  "futures",
+ "gtk",
  "hex",
  "keyring",
  "libc",
@@ -6235,6 +6236,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "walkdir",
+ "webkit2gtk",
  "zip",
  "zstd",
 ]

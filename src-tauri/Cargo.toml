@@ -14,7 +14,13 @@ default-run = "tuxlink"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# `unstable` exposes the multi-webview Rust API (`Manager::get_webview`) that
+# forms::pdf_export (tuxlink-cumx / G8) needs to reach a form's child WebKitGTK
+# view by label. The app already depends on multi-webview at the JS layer
+# (WebviewFormHost/Viewer construct child `Webview`s), so this only surfaces the
+# matching Rust accessor — no new runtime capability. Pinned via the lockfile to
+# 2.11.x; `unstable` is API-churn risk across Tauri minors, not a runtime flag.
+tauri = { version = "2", features = ["tray-icon", "unstable"] }
 tauri-plugin-shell = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"  # tuxlink-0fyj — native Save As dialog for MessageView attachment download
@@ -81,6 +87,17 @@ urlencoding = "2"          # Task 8.1 GitHub URL body encoding
 # with main's "1" / "1" and cover both alpha-logging + redaction use cases.
 once_cell = "1.20"
 regex = "1.10"
+
+# tuxlink-cumx / G8 — faithful PDF export drives the live form's WebKitGTK view
+# via WebKitPrintOperation. Both crates are already in the build (transitive via
+# wry); naming them here exposes `webkit2gtk::PrintOperation` + `gtk::PrintSettings`
+# to forms::pdf_export. Pinned to the versions wry resolves (2.0.2 / 0.18.2) so
+# Cargo unifies rather than pulling a second copy (a type-mismatch on the
+# WebView handle `PlatformWebview::inner()` returns). Linux-only: tuxlink ships
+# Linux exclusively and gtk/webkit are only present on that target.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "=2.0.2"
+gtk = "=0.18.2"
 
 [dev-dependencies]
 filetime = "0.2"           # retention sweep clock-grace test fixtures (unit + integration)
