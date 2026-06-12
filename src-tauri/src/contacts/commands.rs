@@ -328,6 +328,7 @@ mod tests {
     use super::*;
     use crate::contacts::store::GroupMember;
     use crate::winlink_backend::MessageId;
+    use tempfile::tempdir;
 
     fn meta(id: &str, from: &str, to: &[&str]) -> MessageMeta {
         MessageMeta {
