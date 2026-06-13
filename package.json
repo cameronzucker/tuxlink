@@ -25,7 +25,6 @@
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "dompurify": "^3.4.8",
-    "leaflet": "^1.9.4",
     "maplibre-gl": "^5",
     "marked": "^15.0.12",
     "marked-extended-tables": "^2.0.1",
@@ -34,7 +33,6 @@
     "pmtiles": "^4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-leaflet": "^5.0.0",
     "react-virtuoso": "^4.18.7",
     "tz-lookup": "^6.1.25"
   },
@@ -43,7 +41,6 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/dompurify": "^3.2.0",
-    "@types/leaflet": "^1.9.21",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@types/tz-lookup": "^6.1.2",
