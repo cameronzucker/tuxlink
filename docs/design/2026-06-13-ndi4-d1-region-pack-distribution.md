@@ -87,13 +87,23 @@ schema, or the Phase-4 R7 overview↔region compositing seam blanks. But the man
 URL rotates monthly so that on-demand extraction keeps working — so a pack extracted next month comes
 from a *different* build than the build the bundled overview was cut from.
 
-**Decision.** Pin the **schema**, not the exact build. The bundled overview and every pack are
-validated against the locked Protomaps **planetiler schema v4 / 13-`vector_layers` id set**
-(`boundaries, buildings, earth, landcover, landuse, natural, physical_line, physical_point, places,
-pois, roads, transit, water` — A10) by the already-built `src-tauri/src/basemap/validate.rs` at
-download time, before the atomic install. Protomaps planet builds are schema-stable within a schema
-version, so any build the manifest points at composites cleanly with the bundled overview as long as
-both are schema v4.
+**Decision.** Pin the **schema**, not the exact build. Every downloaded pack is validated against the
+locked Protomaps **planetiler schema v4 / 13-`vector_layers` id set** (`boundaries, buildings, earth,
+landcover, landuse, natural, physical_line, physical_point, places, pois, roads, transit, water` —
+A10) by the already-built `src-tauri/src/basemap/validate.rs` at download time, before the atomic
+install. Protomaps planet builds are schema-stable within a schema version, so any build the manifest
+points at composites cleanly with the bundled overview as long as both are schema v4.
+
+> **The bundled z0–6 overview is NOT run through `validate.rs`.** It is a trusted, provenanced,
+> checked-in build-time artifact, registered directly via `PmtilesRegistry::register_path` at startup
+> ([`lib.rs`](../../src-tauri/src/lib.rs)). This is deliberate: a z0–6 overview legitimately carries
+> only **9** of the 13 layers — `natural`, `physical_line`, `physical_point`, and `transit` are
+> high-zoom-only detail layers that do not populate at z0–6 (verified on the `20260608` extract). The
+> 13-id superset check is the correct gate for a z0–14 **pack** (where all 13 are present) but would
+> wrongly reject the overview. MapLibre renders a style layer whose source-layer is absent in a tile as
+> simply empty (no error), so the overview renders correctly with the four high-zoom layers missing.
+> **Phase-4 trap:** do not extend `validate.rs` over the bundled overview, and do not "fix" the 9-layer
+> overview to 13.
 
 **Failure mode is loud, not silent.** If Protomaps ever bumps the planetiler schema (v4→v5),
 `validate.rs` **rejects** a newly-extracted pack with a clear error rather than installing a pack that

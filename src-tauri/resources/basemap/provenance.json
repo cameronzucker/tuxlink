@@ -1,0 +1,14 @@
+{
+  "artifact": "tuxlink vector basemap bundle",
+  "built_at": "2026-06-13T15:31:05Z",
+  "planet_build": "20260608",
+  "planet_url_base": "https://build.protomaps.com",
+  "pmtiles_cli_version": "pmtiles 1.30.3, commit b50d7b1acd72c02bf428e78f0f5c9dab020b6174, built at 2026-05-28T15:20:42Z",
+  "bbox": "-180,-85,180,85",
+  "maxzoom": 6,
+  "basemaps_assets_ref": "main",
+  "fontstacks": ["Noto Sans Regular", "Noto Sans Medium", "Noto Sans Italic"],
+  "glyph_ranges": ["0-255", "256-511", "512-767", "768-1023"],
+  "sprite_flavors": ["light", "dark"],
+  "world_z0_6": { "sha256": "4092b55e121e9c650101421c101d4aa705e42ce37d0e04bca1473593914ac818", "bytes": 44615273 }
+}
