@@ -243,10 +243,13 @@ mod tests {
     }
 
     #[test]
-    fn tier_bbox_at_pole_is_degenerate_not_a_bad_arg() {
-        // Pathological centroid exactly at the lat limit: south and north both
-        // clamp to 85 → degenerate, rejected (never a zero-height sidecar arg).
-        assert_eq!(tier_bbox(0.0, 85.0, 7.5, 6.0), Err(BboxError::Degenerate));
+    fn tier_bbox_at_lat_limit_clamps_north_and_stays_valid() {
+        // Centroid exactly at the lat limit: north clamps to 85, south is 79, so
+        // the box is still valid + ordered (never a degenerate/zero-height arg).
+        let b = tier_bbox(0.0, 85.0, 7.5, 6.0).unwrap();
+        assert_eq!(b.north, 85.0);
+        assert_eq!(b.south, 79.0);
+        assert!(b.south < b.north && b.west < b.east);
     }
 
     #[test]

@@ -297,8 +297,9 @@ mod tests {
     // ── tier / continent range checks ──────────────────────────────────────────
 
     #[test]
-    fn rejects_nonfinite_tier_half_deg() {
-        let json = valid_json().replace("[7.5, 6.0]", "[7.5, 1e400]"); // 1e400 → Infinity
+    fn rejects_out_of_range_tier_half_deg() {
+        // 200° latitude half-width exceeds the 85° hemisphere clamp → BadTier.
+        let json = valid_json().replace("[7.5, 6.0]", "[7.5, 200.0]");
         assert!(matches!(
             RegionManifest::parse(&json),
             Err(ManifestError::BadTier(_))
