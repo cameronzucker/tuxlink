@@ -265,12 +265,38 @@ fn build_tile_url(source: &TileSource, coord: &TileCoord) -> Result<Url, FetchEr
     let raw = &source.url;
     let is_template = raw.contains("{z}") || raw.contains("{x}") || raw.contains("{y}");
 
+    // A URL that carries braces but NONE of the standard `{z}`/`{x}`/`{y}` tokens
+    // is a malformed placeholder attempt (e.g. uppercase `{Z}/{X}/{Y}`, `{zoom}`,
+    // a `{z]` typo that lost its only standard token). It is NOT a base-directory
+    // URL — appending z/x/y to it builds a guaranteed-404 path with url-encoded
+    // braces, which the 404→LanLive probe would then FALSELY validate (bd
+    // tuxlink-k61j B4). Reject up front so the operator sees the typo. (A real
+    // base-dir or template URL never contains a stray brace.)
+    if !is_template && (raw.contains('{') || raw.contains('}')) {
+        return Err(FetchError::BadUrl(format!(
+            "tile URL has a malformed placeholder (expected {{z}}/{{x}}/{{y}}): {raw}"
+        )));
+    }
+
     if is_template {
         // Substitute the bounded integers into the operator's stored template.
         let substituted = raw
             .replace("{z}", &coord.z.to_string())
             .replace("{x}", &coord.x.to_string())
             .replace("{y}", &y.to_string());
+        // A brace surviving substitution means a malformed/mistyped placeholder
+        // (e.g. `{z]`, `{Z}`, `{ z}`): the standard `{z}`/`{x}`/`{y}` tokens are
+        // gone, so anything left is a typo. Such a template can NEVER serve a real
+        // tile, and because the reachability probe maps a 404 → LanLive, it would
+        // otherwise FALSELY validate as "source active" on a URL that 404s every
+        // tile — the operator sees success and an empty map (bd tuxlink-k61j).
+        // Reject as BadUrl so the probe surfaces Incompatible and the typo is
+        // visible. (Tile URLs legitimately contain no other braces.)
+        if substituted.contains('{') || substituted.contains('}') {
+            return Err(FetchError::BadUrl(format!(
+                "tile template has a malformed placeholder (expected {{z}}/{{x}}/{{y}}): {raw}"
+            )));
+        }
         let url = Url::parse(&substituted)
             .map_err(|e| FetchError::BadUrl(format!("templated tile URL did not parse: {e}")))?;
         // Defense in depth: a placeholder in the authority (e.g. `http://{z}.x/`)
@@ -605,6 +631,28 @@ mod tests {
         // SSRF guard: a placeholder in the authority must not redirect egress to
         // a coordinate-chosen host. Rejected either at parse or by the guard.
         let src = source("http://{z}.evil.example/{x}/{y}.png");
+        let err = build_tile_url(&src, &coord()).unwrap_err();
+        assert!(matches!(err, FetchError::BadUrl(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn template_with_malformed_placeholder_is_rejected() {
+        // bd tuxlink-k61j: a typo'd placeholder (`{z]` instead of `{z}`) leaves a
+        // leftover brace after substitution. It must be BadUrl, NOT a 404 the
+        // probe maps to LanLive — otherwise the bind falsely reports "source
+        // active" on a URL that serves no tiles. This is the exact shape that
+        // shipped in an operator's persisted config and produced an empty map.
+        let src = source("http://10.0.0.5:8090/tiles/{z]/{x}/{y}.png");
+        let err = build_tile_url(&src, &coord()).unwrap_err();
+        assert!(matches!(err, FetchError::BadUrl(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn template_with_nonstandard_placeholder_is_rejected() {
+        // bd tuxlink-k61j B4: braces with NO standard {z}/{x}/{y} token (e.g.
+        // uppercase {Z}/{X}/{Y}, or {zoom}) must not fall through to the base-dir
+        // branch and build a 404-ing url-encoded-brace path — reject as BadUrl.
+        let src = source("http://10.0.0.5:8090/tiles/{Z}/{X}/{Y}.png");
         let err = build_tile_url(&src, &coord()).unwrap_err();
         assert!(matches!(err, FetchError::BadUrl(_)), "got {err:?}");
     }
