@@ -20,6 +20,8 @@
 //! tight GPU/WebKit budget on the Pi). The registry's `RwLock` is held only long
 //! enough to clone the `Arc` out; the hot read path is lock-free.
 
+pub mod packs;
+pub mod region_manifest;
 pub mod validate;
 
 use std::collections::HashMap;

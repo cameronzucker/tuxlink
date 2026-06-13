@@ -1,0 +1,36 @@
+{
+  "schema": "tuxlink-basemap-manifest/1",
+  "planet_build": "20260608",
+  "planet_url": "https://build.protomaps.com/20260608.pmtiles",
+  "pmtiles_schema": {
+    "planetiler_version": 4,
+    "vector_layers": [
+      "boundaries",
+      "buildings",
+      "earth",
+      "landcover",
+      "landuse",
+      "natural",
+      "physical_line",
+      "physical_point",
+      "places",
+      "pois",
+      "roads",
+      "transit",
+      "water"
+    ]
+  },
+  "tiers": [
+    { "id": "local", "label": "Local", "half_deg": [1.0, 0.75], "typical_bytes": 17000000 },
+    { "id": "regional", "label": "Regional", "half_deg": [3.0, 2.5], "typical_bytes": 203000000 },
+    { "id": "wide", "label": "Wide", "half_deg": [7.5, 6.0], "typical_bytes": 1000000000, "default": true }
+  ],
+  "continents": [
+    { "id": "af", "label": "Africa", "bbox": [-20.0, -38.0, 55.0, 38.0], "typical_bytes": 25000000000 },
+    { "id": "as", "label": "Asia", "bbox": [25.0, -12.0, 180.0, 82.0], "typical_bytes": 35000000000 },
+    { "id": "eu", "label": "Europe", "bbox": [-25.0, 34.0, 46.0, 72.0], "typical_bytes": 30000000000 },
+    { "id": "na", "label": "North America", "bbox": [-170.0, 5.0, -50.0, 84.0], "typical_bytes": 30000000000 },
+    { "id": "sa", "label": "South America", "bbox": [-93.0, -56.0, -32.0, 15.0], "typical_bytes": 18000000000 },
+    { "id": "oc", "label": "Oceania", "bbox": [110.0, -50.0, 180.0, 0.0], "typical_bytes": 15000000000 }
+  ]
+}
