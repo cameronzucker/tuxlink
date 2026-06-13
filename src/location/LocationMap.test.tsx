@@ -1,56 +1,62 @@
+/**
+ * LocationMap wiring tests (tuxlink-yy1m, MapLibre port). The global maplibre
+ * mock (src/test-setup.ts) backs `new maplibregl.Map`; we drive map events via
+ * `__emit`. Wiring only — real render/drag is grim-verified (map subsystem C1).
+ */
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
-
-// Mock the leaflet substrate so this is a wiring/shape test (per the map
-// subsystem's C1 convention — real drag/render is grim-verified). The Marker
-// stub exposes its position + draggable flag for assertions.
-vi.mock('../map/BaseMap', () => ({
-  BaseMap: ({ children }: { children?: React.ReactNode }) => <div data-testid="basemap">{children}</div>,
-}));
-vi.mock('../map/useTileSource', () => ({ useTileSource: () => null }));
-vi.mock('react-leaflet', () => ({
-  Marker: (p: { position: [number, number]; draggable?: boolean }) => (
-    <div
-      data-testid="marker"
-      data-draggable={p.draggable ? 'true' : 'false'}
-      data-pos={`${p.position[0]},${p.position[1]}`}
-    />
-  ),
-  Rectangle: () => <div data-testid="grid-square" />,
-}));
-
+import { render, act, screen } from '@testing-library/react';
+import { getLastMap, type MapLibreMock } from '../map/testMapLibreMock';
+import { latLonToGrid } from '../forms/position/maidenhead';
 import { LocationMap } from './LocationMap';
 
-describe('LocationMap', () => {
-  it('places a draggable marker at the live fix when a GPS source is selected', () => {
-    render(
-      <LocationMap grid="EM75km" fixLatLon={{ lat: 36.1, lon: -86.8 }} selectedSource="gpsd" onGridChange={vi.fn()} />,
-    );
-    const m = screen.getByTestId('marker');
-    expect(m).toHaveAttribute('data-draggable', 'true'); // flow 3: pin is draggable even with a fix
-    expect(m).toHaveAttribute('data-pos', '36.1,-86.8'); // at the precise fix
-  });
+function loadLast(): MapLibreMock {
+  const map = getLastMap()!;
+  act(() => map.__emit('load'));
+  return map;
+}
 
-  it('follows the manual grid (not the live fix) when source is manual', () => {
-    // A fix is present but the operator picked manual — the marker must not jump
-    // to the fix (flow 3: a hand-set pin is not overridden by an arriving fix).
-    render(
-      <LocationMap grid="EM75km" fixLatLon={{ lat: 36.1, lon: -86.8 }} selectedSource="manual" onGridChange={vi.fn()} />,
-    );
-    const m = screen.getByTestId('marker');
-    expect(m).toHaveAttribute('data-draggable', 'true');
-    expect(m.getAttribute('data-pos')).not.toBe('36.1,-86.8'); // grid center, not the fix
-  });
-
-  it('renders a draggable marker + grid square when there is no fix', () => {
+describe('LocationMap (MapLibre)', () => {
+  it('renders the map container and constructs a map', () => {
     render(<LocationMap grid="EM75km" fixLatLon={null} selectedSource="manual" onGridChange={vi.fn()} />);
-    expect(screen.getByTestId('marker')).toHaveAttribute('data-draggable', 'true');
-    expect(screen.getByTestId('grid-square')).toBeInTheDocument();
+    expect(screen.getByTestId('location-map')).toBeInTheDocument();
+    expect(getLastMap()).toBeTruthy();
   });
 
-  it('renders the map with no marker when grid is empty and there is no fix', () => {
-    render(<LocationMap grid="" fixLatLon={null} selectedSource="manual" onGridChange={vi.fn()} />);
-    expect(screen.getByTestId('location-map')).toBeInTheDocument();
-    expect(screen.queryByTestId('marker')).not.toBeInTheDocument();
+  it('clicking the map sets the grid for the clicked point', () => {
+    const onGridChange = vi.fn();
+    render(<LocationMap grid="" fixLatLon={null} selectedSource="manual" onGridChange={onGridChange} />);
+    const map = loadLast();
+    act(() => map.__emit('click', { lngLat: { lng: -86.8, lat: 36.1 } }));
+    expect(onGridChange).toHaveBeenCalledWith(latLonToGrid(36.1, -86.8));
+  });
+
+  it('dragging the marker sets the grid by hand (flow 3): disables pan on grab, commits on release', () => {
+    const onGridChange = vi.fn();
+    render(<LocationMap grid="EM75km" fixLatLon={null} selectedSource="manual" onGridChange={onGridChange} />);
+    const map = loadLast();
+    // Grab the marker layer, drag, release somewhere new.
+    act(() => map.__emit('mousedown:loc-pin-dot', { lngLat: { lng: -86.8, lat: 36.1 }, preventDefault: () => {} }));
+    expect(map.dragPan.disable).toHaveBeenCalled();
+    act(() => map.__emit('mousemove', { lngLat: { lng: -90.0, lat: 35.0 } }));
+    act(() => map.__emit('mouseup', { lngLat: { lng: -90.0, lat: 35.0 } }));
+    expect(map.dragPan.enable).toHaveBeenCalled();
+    expect(onGridChange).toHaveBeenCalledWith(latLonToGrid(35.0, -90.0));
+  });
+
+  it('a mousemove with no active drag does not change the grid', () => {
+    const onGridChange = vi.fn();
+    render(<LocationMap grid="EM75km" fixLatLon={null} selectedSource="manual" onGridChange={onGridChange} />);
+    const map = loadLast();
+    act(() => map.__emit('mousemove', { lngLat: { lng: -90, lat: 35 } }));
+    act(() => map.__emit('mouseup', { lngLat: { lng: -90, lat: 35 } }));
+    expect(onGridChange).not.toHaveBeenCalled();
+  });
+
+  it('registers the marker overlay source + layers once the style is loaded', () => {
+    render(<LocationMap grid="EM75km" fixLatLon={{ lat: 36.1, lon: -86.8 }} selectedSource="gpsd" onGridChange={vi.fn()} />);
+    const map = loadLast();
+    act(() => map.__emit('styledata'));
+    expect(map.getSource('location-pin')).toBeTruthy();
+    expect(map.getLayer('loc-pin-dot')).toBeTruthy();
   });
 });
