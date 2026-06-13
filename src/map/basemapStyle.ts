@@ -17,8 +17,9 @@
  *    the labels/icons but the geometry still renders.
  */
 import type { StyleSpecification } from 'maplibre-gl';
-import { layers, namedFlavor } from '@protomaps/basemaps';
+import { layers } from '@protomaps/basemaps';
 import { bakeDarkColors } from './darkStyle';
+import { tuxlinkFlavor } from './tuxlinkFlavor';
 
 /** Style `sources` key for the vector basemap; @protomaps/basemaps layers
  * reference this exact name. */
@@ -43,13 +44,15 @@ export type BasemapFlavor = 'light' | 'dark';
  * Build the MapLibre v8 style for the given flavor over the bundled PMTiles
  * world overview.
  *
- * `dark` bakes the inverted colors into the GL style: the layers are generated
- * from the light flavor, then every `*-color` is transformed (invert →
- * hue-rotate(180°) → brightness(1.33)) — see darkStyle. The sprite swaps to
- * Protomaps' authored dark sheet (icons are raster, not color-derivable; A7).
+ * Both modes are generated from tuxlink's high-contrast `tuxlinkFlavor` (the
+ * outdoor light palette). `dark` then bakes every `*-color` (invert →
+ * hue-rotate(180°) → brightness(1.33)) — see darkStyle — which reproduces
+ * meshmap's warm-roads-on-dark look because the source flavor is bold. The
+ * sprite swaps to Protomaps' authored dark sheet (icons are raster, not
+ * color-derivable; A7).
  */
 export function buildBasemapStyle(flavor: BasemapFlavor): StyleSpecification {
-  const lightLayers = layers(BASEMAP_SOURCE_ID, namedFlavor('light'), { lang: 'en' });
+  const lightLayers = layers(BASEMAP_SOURCE_ID, tuxlinkFlavor(), { lang: 'en' });
   return {
     version: 8,
     glyphs: GLYPHS_URL,
