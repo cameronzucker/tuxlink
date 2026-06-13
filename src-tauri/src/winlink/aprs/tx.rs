@@ -34,6 +34,10 @@ struct Pending {
     enqueued_ms: u64,
     sends_done: usize,
     last_sent_ms: u64,
+    /// `true` for a directed message (bounded retransmit + ACK/timeout lifecycle);
+    /// `false` for a fire-once broadcast (one send, then removed silently — a
+    /// blank-addressee broadcast has no addressee to ACK, so no retries/timeout).
+    retransmit: bool,
 }
 
 pub struct TxQueue {
@@ -59,17 +63,46 @@ impl TxQueue {
             enqueued_ms: now_ms,
             sends_done: 0,
             last_sent_ms: 0,
+            retransmit: true,
+        });
+        Ok(())
+    }
+
+    /// Enqueue a FIRE-ONCE frame (a no-recipient broadcast): transmitted exactly
+    /// once, never retransmitted, removed silently after that single send. No ACK
+    /// is expected (a blank-addressee broadcast has no addressee to ack), so there
+    /// is no timeout-failure. Worst-case airtime is one frame. Shares the
+    /// concurrency cap with retransmit sends.
+    pub fn enqueue_once(&mut self, msgid: String, bytes: Vec<u8>, now_ms: u64) -> Result<(), TxError> {
+        if self.pending.len() >= CONCURRENT_CAP {
+            return Err(TxError::CapacityFull);
+        }
+        self.pending.push(Pending {
+            msgid,
+            bytes,
+            enqueued_ms: now_ms,
+            sends_done: 0,
+            last_sent_ms: 0,
+            retransmit: false,
         });
         Ok(())
     }
 
     pub fn tick(&mut self, now_ms: u64) -> Vec<DueSend> {
-        let max_sends = 1 + SCHEDULE_MS.len();
         let mut due = Vec::new();
         let mut still_pending = Vec::new();
         for mut p in self.pending.drain(..) {
-            let elapsed = now_ms.saturating_sub(p.enqueued_ms);
-            let target_sends = 1 + SCHEDULE_MS.iter().filter(|&&off| elapsed >= off).count();
+            // Fire-once broadcast: exactly one send total, no schedule. Directed:
+            // initial + scheduled retries as elapsed time crosses each offset.
+            let (max_sends, target_sends) = if p.retransmit {
+                let elapsed = now_ms.saturating_sub(p.enqueued_ms);
+                (
+                    1 + SCHEDULE_MS.len(),
+                    1 + SCHEDULE_MS.iter().filter(|&&off| elapsed >= off).count(),
+                )
+            } else {
+                (1, 1)
+            };
             if p.sends_done < target_sends {
                 due.push(DueSend {
                     msgid: p.msgid.clone(),
@@ -78,6 +111,9 @@ impl TxQueue {
                 p.sends_done += 1;
                 p.last_sent_ms = now_ms;
                 still_pending.push(p);
+            } else if !p.retransmit {
+                // Fire-once and already sent: drop silently — success, no ACK
+                // expected, no timeout. (Not re-pushed; not timed out.)
             } else if p.sends_done >= max_sends
                 && now_ms.saturating_sub(p.last_sent_ms) >= FINAL_ACK_GRACE_MS
             {
@@ -192,5 +228,19 @@ mod tests {
         assert!(q.take_timed_out().is_empty());
         q.tick(210_000);
         assert!(q.take_timed_out().is_empty());
+    }
+
+    #[test]
+    fn enqueue_once_fires_exactly_once_never_retransmits_or_times_out() {
+        // A fire-once broadcast: one send, then removed silently. No retries, and
+        // critically NEVER a timeout-failure (a blank-addressee broadcast has no
+        // addressee to ack). Bounded airtime = one frame (RADIO-1).
+        let mut q = TxQueue::new();
+        q.enqueue_once("bc1".into(), b"frame".to_vec(), 0).unwrap();
+        assert_eq!(q.tick(0).len(), 1, "fires once");
+        assert!(q.tick(30_000).is_empty(), "no retransmit at the first retry offset");
+        assert!(q.tick(120_000).is_empty());
+        assert!(q.tick(200_000).is_empty());
+        assert!(q.take_timed_out().is_empty(), "fire-once is never a timeout-failure");
     }
 }
