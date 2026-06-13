@@ -93,4 +93,47 @@ describe('StationFinderPanel', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
   });
+
+  // tuxlink-q1tm regression: a GPS operator has NO manual grid
+  // (config.identity.grid = null, position_source = Gps); the live grid comes
+  // from the PositionArbiter via `position_current_fix`. Find a Station must use
+  // it, or the aiming/bearing header + HF prediction die and the panel falsely
+  // shows "set your location". This test is RED if the panel reads config_read
+  // alone (the pre-fix behavior).
+  it('resolves the operator grid from GPS (position_current_fix) when no manual grid is set', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'position_current_fix')
+        return { grid: 'DM43bp', source: 'Gps', fresh: true } as unknown as never;
+      if (cmd === 'config_read') return { grid: null } as unknown as never; // no manual grid
+      if (cmd === 'propagation_prefs_read')
+        return { antenna_preset: 'efhw-sloper', req_snr_db: 22, tx_power_w: 100 } as unknown as never;
+      if (cmd === 'catalog_fetch_stations')
+        return [{ mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1_700_000_000_000, gateways: [N0DAJ] }] as unknown as never;
+      if (cmd === 'propagation_predict_path')
+        return {
+          bearingDeg: 318, distanceKm: 77, ssn: 118, year: 2026, month: 6,
+          channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(12), mufdayByHour: Array(24).fill(0.9) }],
+        } as unknown as never;
+      return undefined as unknown as never;
+    });
+    renderPanel(<StationFinderPanel onClose={() => {}} />);
+    await screen.findByRole('dialog', { name: /find a station/i });
+    // The GPS grid resolved → the "set your location" degraded hint is absent.
+    await waitFor(() =>
+      expect(screen.queryByText(/set your location \(status bar\)/i)).toBeNull(),
+    );
+  });
+
+  it('shows the "set your location" hint only when neither GPS nor a manual grid is available', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'position_current_fix') return { grid: null } as unknown as never;
+      if (cmd === 'config_read') return { grid: null } as unknown as never;
+      if (cmd === 'propagation_prefs_read')
+        return { antenna_preset: 'efhw-sloper', req_snr_db: 22, tx_power_w: 100 } as unknown as never;
+      return undefined as unknown as never;
+    });
+    renderPanel(<StationFinderPanel onClose={() => {}} />);
+    await screen.findByRole('dialog');
+    expect(await screen.findByText(/set your location \(status bar\)/i)).toBeTruthy();
+  });
 });

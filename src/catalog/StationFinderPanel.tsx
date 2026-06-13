@@ -73,12 +73,39 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
   const [predictReload, setPredictReload] = useState(0);
   const stations = useStations();
 
+  // Resolve the operator's EFFECTIVE location the way the rest of the app does
+  // (CheckInForm / PositionFormV2): the PositionArbiter (`position_current_fix`)
+  // returns the live grid — GPS-derived when `position_source` is GPS (the
+  // default), or the manually-pinned grid otherwise. Fall back to the persisted
+  // manual `config.grid` only when the arbiter has no fix.
+  //
+  // tuxlink-q1tm regression: reading `config_read().grid` ALONE (the manual
+  // grid) left GPS operators — the default — with no location here, even though
+  // the status bar showed their position. That blanked the aiming/bearing hero
+  // AND silenced HF prediction (both gated on this grid).
   useEffect(() => {
-    invoke<{ grid: string | null }>('config_read')
-      .then((c) => {
-        if (c?.grid) setGrid(c.grid);
-      })
-      .catch(() => {});
+    let cancelled = false;
+    (async () => {
+      let resolved: string | null = null;
+      try {
+        const fix = await invoke<{ grid: string | null }>('position_current_fix');
+        resolved = fix?.grid ?? null;
+      } catch {
+        // PositionArbiter unavailable — fall through to the persisted grid.
+      }
+      if (!resolved) {
+        try {
+          const c = await invoke<{ grid: string | null }>('config_read');
+          resolved = c?.grid ?? null;
+        } catch {
+          // No persisted grid either — leave blank (the "set your location" path).
+        }
+      }
+      if (!cancelled && resolved) setGrid(resolved);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Offline-first: fetch the three prefillable modes on open (U2 seeds cache).
