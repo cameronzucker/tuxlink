@@ -30,6 +30,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.61.1](https://github.com/cameronzucker/tuxlink/compare/v0.61.0...v0.61.1) (2026-06-13)
+
+
+### Bug Fixes
+
+* **map:** drop maxBounds — unbricks the map on WebKitGTK (maplibre 5.24.0 crash) ([d6ea35c](https://github.com/cameronzucker/tuxlink/commit/d6ea35cab40a71c12d6024e681dccce1e0f5079c))
+
 ## [0.61.0](https://github.com/cameronzucker/tuxlink/compare/v0.60.0...v0.61.0) (2026-06-13)
 
 
