@@ -20,4 +20,4 @@
 pub mod codec;
 pub mod framing;
 // pub mod keying;    // Task 5 — c1 audio opcodes over GAIA (default-off)
-// pub mod transport; // Task 4 — AudioTransport TX/RX assembly + RADIO-1 abort
+pub mod transport;
