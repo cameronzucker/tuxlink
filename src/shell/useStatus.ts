@@ -86,6 +86,13 @@ export interface PositionStatusDto {
    *  source=Gps + fresh fix: ui_grid shows the live fix; broadcast_grid stays
    *  at the static config grid. */
   ui_grid: string;
+  /** Raw latitude of the live GPS fix — LOCAL DISPLAY ONLY (the precise setup-map
+   *  pin, tuxlink-yy1m); never broadcast. null for Manual source / no fix / GPS off.
+   *  Optional in TS so the many synthetic status DTOs in tests need not restate it;
+   *  the Rust side always serializes it (Option → null). */
+  fix_lat?: number | null;
+  /** Raw longitude of the live GPS fix; see fix_lat. */
+  fix_lon?: number | null;
 }
 
 /**

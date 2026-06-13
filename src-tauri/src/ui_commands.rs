@@ -6148,6 +6148,13 @@ pub struct PositionStatusDto {
     /// operator sees the live fix locally but the on-air locator stays at
     /// the static config grid. Serializes as `ui_grid` (snake_case).
     pub ui_grid: String,
+    /// Raw latitude of the live GPS fix, present only when `gps_ready` (i.e. a
+    /// fresh fix exists AND `gps_state != Off`). LOCAL DISPLAY ONLY — the precise
+    /// pin on the setup map (tuxlink-yy1m); never broadcast. `None` for Manual
+    /// source / no fix / GPS off.
+    pub fix_lat: Option<f64>,
+    /// Raw longitude of the live GPS fix; see `fix_lat`.
+    pub fix_lon: Option<f64>,
 }
 
 #[tauri::command]
@@ -6155,11 +6162,24 @@ pub async fn position_status(
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
 ) -> Result<PositionStatusDto, UiError> {
     let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let gps_ready =
+        arbiter.has_fresh_fix() && cfg.privacy.gps_state != crate::config::GpsState::Off;
+    // Surface the raw fix coords only when the fix is live AND GPS is on — so a
+    // Manual install or GPS-off install never leaks coords into the DTO.
+    let (fix_lat, fix_lon) = if gps_ready {
+        match arbiter.fresh_fix_latlon() {
+            Some((la, lo)) => (Some(la), Some(lo)),
+            None => (None, None),
+        }
+    } else {
+        (None, None)
+    };
     Ok(PositionStatusDto {
-        gps_ready: arbiter.has_fresh_fix()
-            && cfg.privacy.gps_state != crate::config::GpsState::Off,
+        gps_ready,
         broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
         ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
+        fix_lat,
+        fix_lon,
     })
 }
 
