@@ -185,12 +185,12 @@ fn allocate(sf: &[u8; 8]) -> [u8; 8] {
             bitcount += 2;
         }
     }
-    for sb in 0..8 {
+    for b in bits.iter_mut() {
         if bitcount >= BITPOOL {
             break;
         }
-        if bits[sb] < 16 {
-            bits[sb] += 1;
+        if *b < 16 {
+            *b += 1;
             bitcount += 1;
         }
     }
@@ -258,10 +258,10 @@ fn encode_frame(x: &mut [f64; 80], pcm: &[i16; SAMPLES_PER_FRAME]) -> Vec<u8> {
     for &v in &sf {
         bw.write(v as u32, 4);
     }
-    for b in 0..BLOCKS {
+    for block in &sub {
         for sb in 0..8 {
             if bits[sb] > 0 {
-                bw.write(quantize(sub[b][sb], sf[sb], bits[sb]), bits[sb] as usize);
+                bw.write(quantize(block[sb], sf[sb], bits[sb]), bits[sb] as usize);
             }
         }
     }
