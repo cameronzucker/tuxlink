@@ -72,10 +72,10 @@ fn is_heic(bytes: &[u8]) -> bool {
     if bytes.len() < 12 || &bytes[4..8] != b"ftyp" {
         return false;
     }
-    matches!(
-        &bytes[8..12],
-        b"heic" | b"heix" | b"hevc" | b"heim" | b"heis" | b"mif1" | b"msf1"
-    )
+    let brand = &bytes[8..12];
+    const HEIF_BRANDS: [&[u8; 4]; 7] =
+        [b"heic", b"heix", b"hevc", b"heim", b"heis", b"mif1", b"msf1"];
+    HEIF_BRANDS.iter().any(|b| brand == b.as_slice())
 }
 
 /// Decode `bytes` (any supported input incl. HEIC) → resize to `preset` →
@@ -149,11 +149,11 @@ fn decode_heic(bytes: &[u8]) -> Result<DynamicImage, TranscodeError> {
     let h = interleaved.height;
     let stride = interleaved.stride;
     let src = interleaved.data;
+    let row_bytes = (w as usize) * 3;
     // Copy row-by-row to drop the stride padding into a tight RGB buffer.
-    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
-    for y in 0..h as usize {
-        let row = &src[y * stride..y * stride + (w as usize) * 3];
-        rgb.extend_from_slice(row);
+    let mut rgb = Vec::with_capacity((w as usize) * (h as usize) * 3);
+    for row in src.chunks(stride).take(h as usize) {
+        rgb.extend_from_slice(&row[..row_bytes]);
     }
     let buf = image::RgbImage::from_raw(w, h, rgb)
         .ok_or_else(|| TranscodeError::Decode("heif: buffer size mismatch".into()))?;
