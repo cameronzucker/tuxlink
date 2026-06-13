@@ -30,6 +30,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.57.1](https://github.com/cameronzucker/tuxlink/compare/v0.57.0...v0.57.1) (2026-06-13)
+
+
+### Bug Fixes
+
+* **compose:** flush un-Entered recipient buffer on send (GH [#648](https://github.com/cameronzucker/tuxlink/issues/648)) ([7e33018](https://github.com/cameronzucker/tuxlink/commit/7e3301821313af77101a92ac4deb7bfb8fb6bd80))
+
 ## [0.57.0](https://github.com/cameronzucker/tuxlink/compare/v0.56.0...v0.57.0) (2026-06-13)
 
 
