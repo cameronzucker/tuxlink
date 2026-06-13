@@ -196,7 +196,7 @@ RADIO-1 at [docs/pitfalls/implementation-pitfalls.md](docs/pitfalls/implementati
 
 ## Commit and release discipline
 
-Conventional commit types (`feat:`, `fix:`, `docs:`, etc.). Breaking changes get `!` + `BREAKING CHANGE:` footer. Update `dev/implementation-log.md` (once created) after any significant work item. **Squash-merge is banned** ([ADR 0010](docs/adr/0010-no-squash-merge.md)); all PRs into integration branches merge as merge-commit (no-ff) via `gh pr merge <#> --merge --delete-branch`. **Polish before push:** clean up WIP commits via non-interactive `git rebase <base>` on local un-pushed commits; once pushed, commits are immutable.
+Conventional commit types (`feat:`, `fix:`, `docs:`, etc.). Breaking changes get `!` + `BREAKING CHANGE:` footer. Update `dev/implementation-log.md` (once created) after any significant work item. **Squash-merge is banned** ([ADR 0010](docs/adr/0010-no-squash-merge.md)); feature PRs into integration branches merge as merge-commit (no-ff) via `gh pr merge <#> --merge --delete-branch`. **Exception — never merge the `chore: release X.Y.Z` PR** (release-please, branch `release-please--branches--main`): merging it cuts a versioned release + artifact build, and it is batched to a daily cadence by `release-merge.yml`. Ship off-cadence with `gh workflow run release-merge.yml`; pause with `.github/RELEASE_FREEZE`. See [CLAUDE.md](CLAUDE.md#commit-and-release-discipline). **Polish before push:** clean up WIP commits via non-interactive `git rebase <base>` on local un-pushed commits; once pushed, commits are immutable.
 
 ## Remote, CI, release, and artifact evidence discipline
 
