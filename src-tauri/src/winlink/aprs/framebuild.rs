@@ -32,6 +32,27 @@ pub fn fmt_callsign(a: &Address) -> String {
     }
 }
 
+/// Format an AX.25 UI frame as a literal APRS TNC2 monitor string:
+/// `SRC>DEST[,DIGI1,DIGI2]:info-text`. Used by the dev raw-capture path
+/// (tuxlink-iehg) to record exactly what is on the wire — including frames NOT
+/// addressed to us — so the on-air message format (e.g. a no-recipient packet's
+/// blank addressee) can be ground-truthed against a real radio rather than
+/// assumed. Lossy-decodes the info field; non-UTF-8 bytes become U+FFFD.
+pub fn to_tnc2(frame: &Frame) -> String {
+    let mut s = format!(
+        "{}>{}",
+        fmt_callsign(&frame.path.src),
+        fmt_callsign(&frame.path.dest)
+    );
+    for digi in &frame.path.digis {
+        s.push(',');
+        s.push_str(&fmt_callsign(digi));
+    }
+    s.push(':');
+    s.push_str(&String::from_utf8_lossy(&frame.info));
+    s
+}
+
 /// Extract `(sender "CALL-SSID", info bytes)` from an inbound UI frame.
 /// Returns `None` for non-UI frames (connected-mode traffic — ignore it).
 pub fn extract_inbound(frame: &Frame) -> Option<(String, Vec<u8>)> {

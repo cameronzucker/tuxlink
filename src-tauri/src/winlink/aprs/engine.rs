@@ -33,10 +33,33 @@ use crate::winlink::ax25::frame::Frame;
 use crate::winlink::ax25::kiss::{kiss_data_frame, KissDecoder};
 
 use super::dedupe::{DedupeCache, DedupeKey};
-use super::framebuild::{build_ui_frame, extract_inbound, fmt_callsign};
+use super::framebuild::{build_ui_frame, extract_inbound, fmt_callsign, to_tnc2};
 use super::identity::AprsIdentity;
 use super::message::{encode_ack, encode_message, parse_info, AprsPayload};
 use super::tx::TxQueue;
+
+/// Dev-only raw-frame capture (tuxlink-iehg). When the env var
+/// `TUXLINK_APRS_RAW_CAPTURE` is set to a writable file path, append each
+/// received frame's literal TNC2 string to that file AND echo it to stderr
+/// (visible in the `tauri dev` console). Off by default — zero production noise.
+/// RX-side only: this path observes, it never transmits. The closure defers
+/// formatting so the disabled (no env var) path costs only one env lookup.
+fn raw_capture(line: impl FnOnce() -> String) {
+    let Ok(path) = std::env::var("TUXLINK_APRS_RAW_CAPTURE") else {
+        return;
+    };
+    let line = line();
+    eprintln!("APRS-RX-RAW {line}");
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+/// Compact space-separated hex for an undecodable frame's bytes.
+fn hex_bytes(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect::<Vec<_>>().join(" ")
+}
 
 /// A decoded, addressed-to-us inbound text message destined for the UI.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -143,8 +166,20 @@ impl AprsEngine {
     fn ingest_ax25(&mut self, body: &[u8], now_ms: u64) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
         let frame = match Frame::decode(body) {
-            Ok(f) => f,
-            Err(_) => return out,
+            Ok(f) => {
+                // tuxlink-iehg: capture the literal wire form of EVERY decoded
+                // frame BEFORE any addressed-to-us / payload filtering, so the
+                // on-air format of e.g. a no-recipient packet (blank addressee)
+                // is observable for ground-truthing. No-op unless opted in.
+                raw_capture(|| to_tnc2(&f));
+                f
+            }
+            Err(_) => {
+                // Undecodable frames are still interesting during capture — record
+                // their length + hex rather than discarding silently.
+                raw_capture(|| format!("[undecodable {} bytes] {}", body.len(), hex_bytes(body)));
+                return out;
+            }
         };
         let (sender, info) = match extract_inbound(&frame) {
             Some(x) => x,
