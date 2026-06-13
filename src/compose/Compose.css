@@ -215,6 +215,45 @@
   color: var(--tux-fg);
 }
 
+/* tuxlink-mg4s: picker + per-attachment rows with resize/airtime annotations. */
+.compose-attachments__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.compose-attachments__total {
+  font-size: 12px;
+  color: var(--tux-fg-faint);
+}
+.compose-attachments__list {
+  flex-direction: column;
+}
+.compose-attachments__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.compose-attachments__name {
+  font-weight: 500;
+}
+.compose-attachments__resized {
+  font-size: 11px;
+  color: var(--tux-fg-faint);
+}
+.compose-attachments__warn {
+  font-size: 11px;
+  color: var(--tux-warning, #b8860b);
+}
+.compose-attachments__error {
+  font-size: 12px;
+  color: var(--tux-danger, #c0392b);
+  margin-bottom: 6px;
+}
+.compose-attachments__remove {
+  margin-left: auto;
+}
+
 /* ============================================================
  * Options row
  * ============================================================ */

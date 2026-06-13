@@ -45,6 +45,9 @@ import { WebviewFormHost, type ParsedBody } from './WebviewFormHost';
 import { RecipientInput, type RecipientInputHandle } from '../contacts/RecipientInput';
 import type { ContactsFile } from '../contacts/types';
 import { useContacts } from '../contacts/useContacts';
+import { useAttachments } from './useAttachments';
+import { humanSize, airtimeEstimate } from './attachmentFormat';
+import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import './Compose.css';
 
 // ============================================================================
@@ -255,7 +258,7 @@ export function Compose({ draftId }: ComposeProps) {
   });
 
   // Attachment stub (multipart UI wiring deferred — see drop-zone comment below)
-  const [attachments, _setAttachments] = useState<string[]>([]);
+  const attach = useAttachments();
 
   // Track the "clean" snapshot so we can detect unsaved changes on close
   const savedSnapshotRef = useRef({ to: '', cc: '', subject: '', body: '', requestAck: false });
@@ -541,9 +544,10 @@ export function Compose({ draftId }: ComposeProps) {
       cc: ccAddrs,
       subject,
       body,
-      // P2.1 bridge: attachment-picker not yet built (HTML Forms PR #151); pass []
-      // to preserve current behavior while the IPC bridge is wired up.
-      attachments: [],
+      // tuxlink-mg4s: real attachments from the picker/drop zone (images
+      // resized/transcoded at attach time). The backend message_send maps
+      // these into the outbound B2F message.
+      attachments: attach.toDto(),
     };
 
     try {
@@ -567,7 +571,7 @@ export function Compose({ draftId }: ComposeProps) {
         setErrorMsg(String(err));
       }
     }
-  }, [sendState, buildRecipients, subject, body, draftId, formMode.kind]);
+  }, [sendState, buildRecipients, subject, body, draftId, formMode.kind, attach.toDto]);
 
   // ============================================================================
   // Form submit (T6.1)
@@ -848,19 +852,27 @@ export function Compose({ draftId }: ComposeProps) {
     e.dataTransfer.dropEffect = 'copy';
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    // Multipart attachment UI wiring is deferred. The drop zone accepts files
-    // and lists their names, but the send path does NOT include them (they
-    // are silently omitted with a visible warning in the UI rather than
-    // silently dropped without notice).
-    const names = Array.from(e.dataTransfer.files).map((f) => f.name);
-    if (names.length > 0) {
-      // We intentionally do not call _setAttachments here — this is the stub
-      // that shows we accepted the event without wiring send. A future
-      // implementation populates attachments state and sends multipart form
-      // data.
-      console.warn('Attachment UI stub: attach-send is not wired yet', names);
+    // Tauri's webview drag-drop exposes OS paths via the dropped File objects'
+    // `path` on desktop; route each through prepare_attachment (images are
+    // resized/transcoded, other files passed through). If a build delivers no
+    // path here, the "Attach files…" picker (handlePickFiles) is the reliable
+    // entry point.
+    const paths = Array.from(e.dataTransfer.files)
+      .map((f) => (f as File & { path?: string }).path)
+      .filter((p): p is string => !!p);
+    for (const p of paths) {
+      await attach.addPath(p, { preset: 'medium', format: 'jpeg' });
+    }
+  };
+
+  const handlePickFiles = async () => {
+    const selected = await openFileDialog({ multiple: true });
+    if (!selected) return;
+    const paths = Array.isArray(selected) ? selected : [selected];
+    for (const p of paths) {
+      await attach.addPath(p, { preset: 'medium', format: 'jpeg' });
     }
   };
 
@@ -1063,7 +1075,7 @@ export function Compose({ draftId }: ComposeProps) {
       </div>
 
       {/* ------------------------------------------------------------------ */}
-      {/* Attachments (stub — drop zone only, send not wired yet)            */}
+      {/* Attachments — picker + drop zone; images resized at attach time    */}
       {/* ------------------------------------------------------------------ */}
       <div
         className="compose-attachments"
@@ -1071,14 +1083,51 @@ export function Compose({ draftId }: ComposeProps) {
         onDrop={handleDrop}
         data-testid="compose-attachments-zone"
       >
-        {attachments.length === 0 ? (
+        <div className="compose-attachments__header">
+          <button
+            type="button"
+            className="compose-attachments__add"
+            onClick={handlePickFiles}
+            disabled={attach.busy}
+            data-testid="compose-attach-add"
+          >
+            Attach files…
+          </button>
+          {attach.totalBytes > 0 && (
+            <span className="compose-attachments__total">
+              {humanSize(attach.totalBytes)} · {airtimeEstimate(attach.totalBytes)}
+            </span>
+          )}
+        </div>
+        {attach.error && <div className="compose-attachments__error">{attach.error}</div>}
+        {attach.items.length === 0 ? (
           <span className="compose-attachments__hint">
-            Drop files here to attach (attachment send not yet wired)
+            Drop files here or use “Attach files…”.
           </span>
         ) : (
           <ul className="compose-attachments__list">
-            {attachments.map((name, i) => (
-              <li key={i} className="compose-attachments__item">{name}</li>
+            {attach.items.map((a, i) => (
+              <li key={`${a.filename}-${i}`} className="compose-attachments__item">
+                <span className="compose-attachments__name">{a.filename}</span>
+                {a.kind === 'image' && a.newLen < a.originalLen && (
+                  <span className="compose-attachments__resized">
+                    resized {humanSize(a.originalLen)} → {humanSize(a.newLen)}
+                  </span>
+                )}
+                {a.kind === 'file' && a.newLen > 256 * 1024 && (
+                  <span className="compose-attachments__warn">
+                    {humanSize(a.newLen)} · {airtimeEstimate(a.newLen)}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="compose-attachments__remove"
+                  onClick={() => attach.remove(i)}
+                  data-testid={`compose-attach-remove-${i}`}
+                >
+                  Remove
+                </button>
+              </li>
             ))}
           </ul>
         )}
