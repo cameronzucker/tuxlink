@@ -321,6 +321,10 @@ export function IdentitySwitcher({ active, list, ssid, onSsidChange, onSwitch }:
             <div className="identity-list-loading" data-testid="identity-list-loading">
               Loading identities…
             </div>
+          ) : list.full.length === 0 ? (
+            <div className="identity-list-empty" data-testid="identity-switcher-empty">
+              No identities configured. Add one in Settings → Identities.
+            </div>
           ) : (
             list.full.map((full) => {
               const tacticals = list.tactical.filter((t) => t.parent === full.callsign);

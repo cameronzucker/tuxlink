@@ -1,0 +1,190 @@
+/* IdentitiesSettings — FULL + tactical identity management section
+ * (bd-tuxlink-z6yi). Inline in the Settings chrome; dark idiom matching
+ * SettingsPanel.css. Inputs are width-constrained (no stretched full-width). */
+
+.tux-identities {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.tux-identities__error {
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  background: var(--accent-soft, rgba(224, 108, 117, 0.12));
+  border: 1px solid var(--border-strong, #4a3030);
+  color: var(--tux-danger, #e06c75);
+  font-size: 0.85rem;
+}
+
+.tux-identities__empty {
+  margin: 0;
+  color: var(--text-dim, #9aa0aa);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.tux-identities__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tux-identities__full {
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--surface-2, #1b1f29);
+  padding: 0.55rem 0.7rem;
+}
+
+.tux-identities__full-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.tux-identities__callsign {
+  font-weight: 600;
+  font-family: var(--mono, monospace);
+  color: var(--text, #e6e9ef);
+}
+
+.tux-identities__label {
+  color: var(--text-dim, #9aa0aa);
+  font-size: 0.85rem;
+}
+
+.tux-identities__badge {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-faint, #6b7280);
+  border: 1px solid var(--border-soft, #2a2f3a);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+}
+
+.tux-identities__tacticals {
+  list-style: none;
+  margin: 0.45rem 0 0;
+  padding: 0 0 0 0.9rem;
+  border-left: 2px solid var(--border-soft, #2a2f3a);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tux-identities__tactical {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.tux-identities__tactical-label {
+  font-family: var(--mono, monospace);
+  color: var(--text, #e6e9ef);
+  font-size: 0.88rem;
+}
+
+/* Push the remove control to the far right of each row. */
+.tux-identities__full-head > button,
+.tux-identities__full-head > .tux-identities__confirm,
+.tux-identities__tactical > button,
+.tux-identities__tactical > .tux-identities__confirm {
+  margin-left: auto;
+}
+
+.tux-identities__confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.tux-identities__confirm-text {
+  font-size: 0.8rem;
+  color: var(--text-dim, #9aa0aa);
+}
+
+.tux-identities__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  padding: 0.7rem;
+  background: var(--surface, #14171f);
+}
+
+.tux-identities__form-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim, #9aa0aa);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tux-identities__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--text-dim, #9aa0aa);
+}
+
+.tux-identities__input,
+.tux-identities__select {
+  /* Constrained width — no stretched full-width inputs. */
+  max-width: 18rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong, #3a4150);
+  background: var(--surface-2, #1b1f29);
+  color: var(--text, #e6e9ef);
+  font-size: 0.9rem;
+}
+
+.tux-identities__input:focus,
+.tux-identities__select:focus {
+  outline: none;
+  border-color: var(--accent, #61afef);
+}
+
+.tux-identities__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text, #e6e9ef);
+}
+
+.tux-identities__btn {
+  align-self: flex-start;
+  padding: 0.3rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong, #3a4150);
+  background: var(--surface-2, #1b1f29);
+  color: var(--text, #e6e9ef);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.tux-identities__btn:hover {
+  border-color: var(--accent, #61afef);
+}
+
+.tux-identities__btn--subtle {
+  background: transparent;
+  color: var(--text-dim, #9aa0aa);
+}
+
+.tux-identities__btn--danger {
+  border-color: var(--tux-danger, #e06c75);
+  color: var(--tux-danger, #e06c75);
+}

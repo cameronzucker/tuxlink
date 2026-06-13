@@ -2,6 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+// IdentitiesSettings owns a react-query useQuery (needs a QueryClientProvider)
+// and is fully covered by its own IdentitiesSettings.test.tsx. Stub it here so
+// the SettingsPanel shell test stays provider-free; we only assert the section
+// is wired in.
+vi.mock('./IdentitiesSettings', () => ({
+  IdentitiesSettings: () => <div data-testid="identities-settings" />,
+}));
 import { invoke } from '@tauri-apps/api/core';
 import { SettingsPanel } from './SettingsPanel';
 
@@ -77,6 +84,13 @@ describe('SettingsPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('renders the Identities section', async () => {
+    render(<SettingsPanel open onClose={vi.fn()} />);
+    await screen.findByTestId('settings-panel');
+    expect(screen.getByText('Identities')).toBeInTheDocument();
+    expect(screen.getByTestId('identities-settings')).toBeInTheDocument();
   });
 
   it('does NOT render the ARDOP HF fieldset (tuxlink-jmfm)', async () => {
