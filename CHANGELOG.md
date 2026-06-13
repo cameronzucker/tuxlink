@@ -30,6 +30,19 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.57.0](https://github.com/cameronzucker/tuxlink/compare/v0.56.0...v0.57.0) (2026-06-13)
+
+
+### Features
+
+* **contacts:** unified outline reshape — groups+members in one tree, callsign-first, connection record (tuxlink-je5d) ([dc06262](https://github.com/cameronzucker/tuxlink/commit/dc06262edeac32e092856ce0d23b483e936a4d1a))
+
+
+### Bug Fixes
+
+* **contacts:** import tempfile::tempdir in commands test module (tuxlink-je5d) ([e5277d7](https://github.com/cameronzucker/tuxlink/commit/e5277d776a469e8ffd8d319b1a95319b3ac27ad7))
+* **contacts:** per-call id closure in connection-record test (clippy) (tuxlink-je5d) ([4198d30](https://github.com/cameronzucker/tuxlink/commit/4198d30e6758b2356ba89508d0c2c19585439a92))
+
 ## [0.56.0](https://github.com/cameronzucker/tuxlink/compare/v0.55.0...v0.56.0) (2026-06-12)
 
 
