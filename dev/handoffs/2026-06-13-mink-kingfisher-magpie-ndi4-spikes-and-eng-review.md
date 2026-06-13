@@ -26,11 +26,26 @@
 - **Gitignored spike artifacts** in `dev/scratch/ndi4-spikes/` (throwaway, local-only): `harness.html`, `webkit_harness.py`, `vendor/` (maplibre-gl 4.7.1, pmtiles 4.3.0), `sample.pmtiles` (6.6 MB firenze, Protomaps schema), `SPIKE-FINDINGS.md`. Re-runnable: `WEBKIT_DISABLE_DMABUF_RENDERER=1 python3 dev/scratch/ndi4-spikes/webkit_harness.py`.
 - No other in-flight worktrees created/owned by this session. The old `bd-tuxlink-ndi4-vector-basemap-design` worktree was disposed.
 
-## NEXT SESSION — build-robust-features (the actual implementation)
+## UPDATE — build-robust-features adrev DONE (Codex unavailable → self-adrev exception)
 
-The architecture is LOCKED and outside-voice-validated. The plan doc is the spec input. Build the 6-phase MapLibre swap via **build-robust-features WITH the mandatory cross-provider Codex adversarial review** (no-carveout rule — `feedback_no_carveout_on_cross_provider_adrev`). Critical reminders:
+Continued into build-robust-features this session. Brainstorm/plan/eng-review were already done; the remaining gate was the cross-provider adversarial review. **Codex was unavailable** (operator authorized a one-time self-adrev exception to the no-carveout rule). Ran a **3-agent diverse-lens self-adrev** (Rust-serving / React-lifecycle / style-offline-distribution) — it found **2 locked-decision reversals + 4 P0 gaps**, all folded into the plan's new **SELF-ADREV HARDENING** section (`docs/superpowers/plans/2026-06-13-vector-basemap-maplibre-swap.md`, commit `d6422d51`):
 
-- **Read the plan FIRST** (`docs/superpowers/plans/2026-06-13-vector-basemap-maplibre-swap.md`) — esp. the REVISED phasing (phase 0 grep the real file list; phases 2+3 are ONE atomic phase; dark builder targets `@protomaps/basemaps` Flavor color slots; zoom literals remap to z0–14).
-- **Dark mode is BAKED GL style, not a CSS filter** (design AMENDMENT). Any WebKitGTK validation must set `WEBKIT_DISABLE_DMABUF_RENDERER=1` (the app does; standalone harnesses must too — `project_webkitgtk_css_filter_cost`).
-- **Preserve Codex quota** for the build adrev (don't burn it on side errands; `feedback_codex_quota_gotcha`).
-- Wire-walk gate before any "done" claim; CI (clippy --all-targets + full vitest) is the merge gate; smoke opportunistically post-merge.
+- **A1 FLIP L3:** serve PMTiles via **HTTP-206 `Range` on the existing `tile://` scheme** (wry 0.55.1 verified to forward Range + emit 206) + pmtiles `FetchSource` — off the serialized IPC pump, no custom JS Source. The R1 IPC-Source path is now the **proven fallback**, not primary.
+- **A2 strangler-fig phasing** (both renderers transient, per-consumer flip, leaflet removed last) — the eng-review "one atomic phase" was unbuildable on the CI-only loop.
+- **A6/L7 pin `maplibre-gl@5` + `@protomaps/basemaps@5` + `pmtiles@4`** — the spikes ran maplibre 4.7.1 (directional; re-validate the seam on v5 in phase 1).
+- **A8 offline glyphs** (Noto Sans `.pbf` from `protomaps/basemaps-assets`, local glyph-serving path ≠ `pmtiles_read_range`) — labels silently 404 otherwise. **A9 CSP** `worker-src 'self' blob:` — blank map on WebKitGTK otherwise. **A7** dark sprite + non-slot color pass. **A10** R3 = the real 13-id Protomaps v4 schema. Plus A3 lock-free `read_at`, A13 packaged-`.deb` marker-CSP grim spike, A14 imperative `createMapLibreMock` test double, A4/A5/A11/A12/A15–A18.
+
+**DEFERRED OPERATOR DECISIONS (do not self-decide):**
+- **D1 (phase 4) — catalog-pack hosting/provenance.** Protomaps ships only a ~120 GB planet, not region packs; tuxlink must build + host packs. Operator decides where/budget/cadence + pins ONE planet build hash for bundle+packs.
+- **D2 (phase 3) — baked-dark aesthetic re-approval.** Operator approved the CSS-filter look; the baked per-slot path differs at translucent overlaps/halos and is unproven with labels. Re-approve from a real labeled render before phase 4.
+
+## NEXT SESSION — phase 1 implementation (TDD, on the corrected approach)
+
+Read `docs/superpowers/plans/2026-06-13-vector-basemap-maplibre-swap.md` FIRST — esp. the **SELF-ADREV HARDENING** section (it supersedes parts of the earlier phasing). Phase 1:
+- Pin deps (L7/A6); amend CSP (A9); bundle world z0–6 PMTiles + glyphs + light/dark sprites (A8/A12 build script).
+- Rust: a **`tile://pmtiles/<archive>` 206-Range handler branch** in `lib.rs` (A1, NOT through `serve_tile`), lock-free `read_at` on a shared `Arc<File>` (A3); PMTiles-v3 + 13-id-v4-schema validation (A4/A10). TDD with Rust unit tests (CI-compiled — no cold cargo on the contended Pi, `feedback_no_cold_cargo_on_contended_pi`).
+- Build the `createMapLibreMock` test double (A14, global in `test-setup.ts`) before the React swap.
+- Render bundled z0–6 **light** via the 206 path; re-validate the seam on maplibre@5.
+- Run the **packaged-`.deb` marker-CSP grim spike** (A13) before committing to `maplibregl.Marker`.
+- WebKitGTK validation must set `WEBKIT_DISABLE_DMABUF_RENDERER=1`. Wire-walk before any "done". CI (clippy --all-targets + full vitest) is the merge gate; smoke post-merge.
+- Spike artifacts + the proven IpcSource pattern + `xformHex` reference: `dev/scratch/ndi4-spikes/` (gitignored).
