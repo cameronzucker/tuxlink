@@ -30,7 +30,7 @@ import {
 } from '../map/tileSource';
 import { emitTileSourceChanged } from '../map/tileSourceEvent';
 
-/** Render a probe/configure status as plain, present-indicative operator copy. */
+/** Render a probe (dry-run "Test") status as plain, present-indicative copy. */
 function statusMessage(status: TileSourceStatus): string {
   switch (status.kind) {
     case 'lan-live':
@@ -45,6 +45,26 @@ function statusMessage(status: TileSourceStatus): string {
       return 'no source configured';
     default:
       return 'source status unknown';
+  }
+}
+
+/**
+ * Render a bind ("Use this source") status. The success copy is DISTINCT from
+ * `statusMessage`'s "source validated": "Test" only probes, but "Use this
+ * source" activates + persists the source, so the operator must be able to tell
+ * a dry-run probe from an actual bind — they returned identical text before, so
+ * a source could be silently bound yet read as if nothing happened. On success
+ * it confirms the source is active and states the new zoom ceiling so the bind's
+ * effect on the map is legible. Failures reuse the shared explanation.
+ */
+function bindMessage(status: TileSourceStatus): string {
+  switch (status.kind) {
+    case 'lan-live':
+    case 'lan-cached':
+    case 'partial':
+      return `source active — map zoom reaches level ${status.zoom}`;
+    default:
+      return statusMessage(status);
   }
 }
 
@@ -146,7 +166,7 @@ export function MapTileSourceSettings() {
     setFeedback(null);
     try {
       const status = await configureTileSource(buildSource());
-      setFeedback(statusMessage(status));
+      setFeedback(bindMessage(status));
       // tuxlink-9rek: tell any mounted map to re-read the (possibly newly
       // activated) source so it applies without an app restart.
       emitTileSourceChanged();

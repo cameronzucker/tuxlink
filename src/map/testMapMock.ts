@@ -54,6 +54,11 @@ const fakeMap = {
   // (e.g. StationFinderMap recentering on the operator grid once config_read
   // resolves). Shape-only spy: asserts the call + args, NOT real projection (C1).
   setView: vi.fn(),
+  // Imperative max-zoom setter. react-leaflet's <MapContainer maxZoom> is read
+  // ONCE at mount (init-only, like center/zoom), so a tile source that arrives
+  // ASYNC after mount must raise the cap through this imperative call — not the
+  // prop. Shape-only spy: asserts the wiring fires with the right value (C1).
+  setMaxZoom: vi.fn(),
   mouseEventToLatLng(pt: { clientX: number; clientY: number }): LatLngLiteral {
     // identity-ish — proves wiring, NOT projection (C1).
     return { lat: pt.clientY, lng: pt.clientX };
@@ -85,6 +90,7 @@ export function resetMapMock(): void {
   fakeMap.dragging.disable.mockClear();
   fakeMap.dragging.enable.mockClear();
   fakeMap.setView.mockClear();
+  fakeMap.setMaxZoom.mockClear();
   mockZoom = 1;
 }
 
