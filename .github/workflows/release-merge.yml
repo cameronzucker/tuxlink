@@ -1,0 +1,70 @@
+name: release-merge
+
+# Batches releases to a daily cadence. release-please keeps ONE rolling
+# "chore: release X.Y.Z" PR updated with every merge to main; a release is only
+# cut when that PR merges. Merging it per-PR produced 5-11 releases/day (each a
+# full multi-arch Tauri artifact build + a version bump). This job merges that
+# PR on a schedule instead, collapsing a day's merges into one release / one
+# minor bump / one changelog section.
+#
+# Overrides:
+#   - Manual release NOW:  trigger this workflow (workflow_dispatch) — Actions
+#     tab "Run workflow", or `gh workflow run release-merge.yml`.
+#   - Pause releases:      create .github/RELEASE_FREEZE (honored here and in
+#     release-please.yml). Remove it to resume.
+#
+# Agents must NOT merge the chore:release PR by hand (see CLAUDE.md
+# "Commit and release discipline"). Releases are cut here, on cadence or on
+# explicit dispatch.
+
+on:
+  schedule:
+    # Daily at 14:00 UTC. Adjust to taste — this is the only line that sets cadence.
+    - cron: '0 14 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Never let two merges race (a scheduled run overlapping a manual dispatch).
+concurrency:
+  group: release-merge
+  cancel-in-progress: false
+
+jobs:
+  merge-release-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Respect release freeze
+        id: freeze
+        run: |
+          if [ -f .github/RELEASE_FREEZE ]; then
+            echo "::notice title=Release frozen::release-merge skipped — $(head -1 .github/RELEASE_FREEZE). Remove .github/RELEASE_FREEZE to resume."
+            echo "frozen=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "frozen=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge the open release-please PR
+        if: steps.freeze.outputs.frozen != 'true'
+        # PAT (not GITHUB_TOKEN) so the merge's push to main triggers
+        # release-please.yml, which is what actually tags + cuts the release.
+        # GITHUB_TOKEN-driven pushes cannot trigger downstream workflows
+        # (GitHub anti-recursion) — that would merge the PR but produce no release.
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" \
+                 --head release-please--branches--main \
+                 --state open --json number -q '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "No open release-please PR — nothing accumulated to release. Done."
+            exit 0
+          fi
+          echo "Merging release PR #$pr (no-squash per ADR 0010)…"
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --merge
+          echo "Merged #$pr. release-please.yml will tag + release.yml will build artifacts."

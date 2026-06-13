@@ -303,6 +303,7 @@ detailed rationale in the RADIO-1 entry in
 - Breaking changes: add `!` suffix and a `BREAKING CHANGE:` footer with a one-line user-facing explanation.
 - Update `dev/implementation-log.md` (once created) after any significant work item: plan executed, feature shipped, bug hunt cycle completed, adversarial review completed. Entry goes at the top, reverse-chronological, keyed by date + topic.
 - **Polish before push.** Per [ADR 0010](docs/adr/0010-no-squash-merge.md): squash-merge is banned, so the integration branch will preserve every task-branch commit. Clean up WIP / fixup / "oops" commits via non-interactive `git rebase <base>` on **local un-pushed commits** before `git push`. Once pushed, commits are immutable (the destructive-git ban on `--amend` of pushed commits and on `git rebase -i` ensures this). The push gates the polish.
+- **Never merge the release PR.** release-please maintains one rolling `chore: release X.Y.Z` PR (branch `release-please--branches--main`); merging it is what cuts a versioned release + fires a full multi-arch artifact build. Releases are **batched to a daily cadence** by the `release-merge.yml` scheduled workflow — agents do NOT merge that PR by hand (doing so per-PR is what inflated the version 0.41→0.56 in three days). To ship a release off-cadence, trigger `release-merge.yml` manually (`gh workflow run release-merge.yml`); to pause releases, create `.github/RELEASE_FREEZE`. Feature-branch PRs merge as normal — this rule is only about the release PR.
 
 ## Remote, CI, release, and artifact evidence discipline
 
