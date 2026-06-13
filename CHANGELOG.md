@@ -30,6 +30,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.57.2](https://github.com/cameronzucker/tuxlink/compare/v0.57.1...v0.57.2) (2026-06-13)
+
+
+### Bug Fixes
+
+* **identity:** un-brick transmit — bridge wizard/migration to the identity engine + auto-auth on launch ([7e2eae5](https://github.com/cameronzucker/tuxlink/commit/7e2eae588ad1507e79a91161e7e57a742e6af1b8))
+
 ## [0.57.1](https://github.com/cameronzucker/tuxlink/compare/v0.57.0...v0.57.1) (2026-06-13)
 
 
