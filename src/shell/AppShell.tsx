@@ -1088,6 +1088,83 @@ export function AppShell() {
     return null;
   }, [activeConnection, statusData.status]);
 
+  // The per-mode radio-panel body. Shared by two mount contexts (tuxlink-iehg):
+  // the bare dock (radioPanelMode-only, !aprsOpen) and the modem tab inside the
+  // shared APRS dock surface (aprsOpen && dockTab === 'modem'). Exactly one
+  // per-mode panel renders, selected by radioPanelMode; null collapses to
+  // nothing. Telnet (P2), Packet (P3), ARDOP HF (P4), and VARA HF/FM (Phase 2 —
+  // tuxlink-dfmf) ship real implementations; any other mode falls through to the
+  // placeholder. The P1 dual-mount of ArdopDock + placeholder for ARDOP HF is
+  // GONE — the ArdopRadioPanel covers the full dial-and-live-state surface.
+  const radioBody = (
+    <>
+      {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'cms' && (
+        <Suspense fallback={null}>
+          <TelnetRadioPanel
+            onClose={closeRadioPanel}
+          />
+        </Suspense>
+      )}
+      {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'p2p' && (
+        <Suspense fallback={null}>
+          <TelnetP2pRadioPanel
+            onClose={closeRadioPanel}
+          />
+        </Suspense>
+      )}
+      {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'post-office' && (
+        <Suspense fallback={null}>
+          <TelnetPostOfficeRadioPanel mode="local" onClose={closeRadioPanel} />
+        </Suspense>
+      )}
+      {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'network-po' && (
+        <Suspense fallback={null}>
+          <TelnetPostOfficeRadioPanel mode="network" onClose={closeRadioPanel} />
+        </Suspense>
+      )}
+      {radioPanelMode && radioPanelMode.kind === 'packet' && (
+        <Suspense fallback={null}>
+          <PacketRadioPanel
+            intent={radioPanelMode.intent}
+            baseCall={statusData.callsign}
+            onClose={closeRadioPanel}
+            onFindGateway={() => setCatalogBuilderOpen(true)}
+          />
+        </Suspense>
+      )}
+      {radioPanelMode && radioPanelMode.kind === 'ardop-hf' && (
+        <Suspense fallback={null}>
+          <ArdopRadioPanel
+            mode={radioPanelMode}
+            onClose={closeRadioPanel}
+            onFindGateway={() => setCatalogBuilderOpen(true)}
+          />
+        </Suspense>
+      )}
+      {radioPanelMode &&
+        (radioPanelMode.kind === 'vara-hf' || radioPanelMode.kind === 'vara-fm') && (
+          <Suspense fallback={null}>
+            <VaraRadioPanel
+              mode={radioPanelMode}
+              onClose={closeRadioPanel}
+              onFindGateway={() => setCatalogBuilderOpen(true)}
+            />
+          </Suspense>
+        )}
+      {radioPanelMode &&
+        radioPanelMode.kind !== 'telnet' &&
+        radioPanelMode.kind !== 'packet' &&
+        radioPanelMode.kind !== 'ardop-hf' &&
+        radioPanelMode.kind !== 'vara-hf' &&
+        radioPanelMode.kind !== 'vara-fm' && (
+          <PlaceholderRadioPanel
+            mode={radioPanelMode}
+            onClose={closeRadioPanel}
+          />
+        )}
+    </>
+  );
+
   return (
     <div className={`layout-b${isCompact ? ' compact' : ''}`} data-testid="app-shell-root">
       <TitleBar folderLabel={folderLabel(selectedFolder, userFolders)} />
@@ -1297,104 +1374,47 @@ export function AppShell() {
         {/* tuxlink-2f2n Plan 2: the shared dock hosts the APRS chat (default
             tenant once opened) or the modem console; the tab row flips between
             them. The tabs only render once the operator has opened chat;
-            otherwise the dock is the modem-only surface it always was. */}
-        {aprsOpen && (
-          <AprsDockTabs
-            active={dockTab}
-            unread={aprsUnread}
-            modemEnabled={radioPanelMode !== null}
-            onSelect={(tab) => {
-              setDockTab(tab);
-              if (tab === 'aprs') setAprsSeenAt(Date.now());
-            }}
-          />
-        )}
-        {aprsOpen && dockTab === 'aprs' ? (
-          <Suspense fallback={null}>
-            <AprsChatPanel
-              threads={aprs.threads}
-              listening={aprs.listening}
-              send={aprs.send}
-              controlStrip={
-                packetConfig.config?.linkKind === 'UvproNative' ? (
-                  <UvproControlStrip />
-                ) : undefined
-              }
+            otherwise the dock is the modem-only surface it always was.
+
+            tuxlink-iehg: when aprsOpen, the tab row + active body MUST be wrapped
+            in ONE `.aprs-dock-surface` element. The drawer (`.radio-drawer` +
+            `.radio-drawer-body`) is `display:contents` on desktop, so each direct
+            child of the body is promoted to a grid item of `.panes`. The grid
+            budgets exactly ONE dock column (`.panes--with-dock`), so two bare
+            children (tabs + panel) overflowed: the second landed in an implicit
+            track at the bottom-left. The wrapper keeps them as a single grid item
+            (a flex column) that fills the one dock column. The `!aprsOpen`
+            radio-panel-only path stays a bare grid item — unchanged. */}
+        {aprsOpen ? (
+          <div className="aprs-dock-surface" data-testid="aprs-dock-surface">
+            <AprsDockTabs
+              active={dockTab}
+              unread={aprsUnread}
+              modemEnabled={radioPanelMode !== null}
+              onSelect={(tab) => {
+                setDockTab(tab);
+                if (tab === 'aprs') setAprsSeenAt(Date.now());
+              }}
             />
-          </Suspense>
+            {dockTab === 'aprs' ? (
+              <Suspense fallback={null}>
+                <AprsChatPanel
+                  threads={aprs.threads}
+                  listening={aprs.listening}
+                  send={aprs.send}
+                  controlStrip={
+                    packetConfig.config?.linkKind === 'UvproNative' ? (
+                      <UvproControlStrip />
+                    ) : undefined
+                  }
+                />
+              </Suspense>
+            ) : (
+              radioBody
+            )}
+          </div>
         ) : (
-          <>
-        {/* Per-mode radio panels. Telnet (P2), Packet (P3), ARDOP HF (P4),
-            and VARA HF/FM (Phase 2 — tuxlink-dfmf) ship their real
-            implementations; any other mode (none today) would fall through
-            to the placeholder. The P1 dual-mount of ArdopDock + placeholder
-            for ARDOP HF is GONE — the ArdopRadioPanel covers the full
-            dial-and-live-state surface on its own. */}
-        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'cms' && (
-          <Suspense fallback={null}>
-            <TelnetRadioPanel
-              onClose={closeRadioPanel}
-            />
-          </Suspense>
-        )}
-        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'p2p' && (
-          <Suspense fallback={null}>
-            <TelnetP2pRadioPanel
-              onClose={closeRadioPanel}
-            />
-          </Suspense>
-        )}
-        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'post-office' && (
-          <Suspense fallback={null}>
-            <TelnetPostOfficeRadioPanel mode="local" onClose={closeRadioPanel} />
-          </Suspense>
-        )}
-        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'network-po' && (
-          <Suspense fallback={null}>
-            <TelnetPostOfficeRadioPanel mode="network" onClose={closeRadioPanel} />
-          </Suspense>
-        )}
-        {radioPanelMode && radioPanelMode.kind === 'packet' && (
-          <Suspense fallback={null}>
-            <PacketRadioPanel
-              intent={radioPanelMode.intent}
-              baseCall={statusData.callsign}
-              onClose={closeRadioPanel}
-              onFindGateway={() => setCatalogBuilderOpen(true)}
-            />
-          </Suspense>
-        )}
-        {radioPanelMode && radioPanelMode.kind === 'ardop-hf' && (
-          <Suspense fallback={null}>
-            <ArdopRadioPanel
-              mode={radioPanelMode}
-              onClose={closeRadioPanel}
-              onFindGateway={() => setCatalogBuilderOpen(true)}
-            />
-          </Suspense>
-        )}
-        {radioPanelMode &&
-          (radioPanelMode.kind === 'vara-hf' || radioPanelMode.kind === 'vara-fm') && (
-            <Suspense fallback={null}>
-              <VaraRadioPanel
-                mode={radioPanelMode}
-                onClose={closeRadioPanel}
-                onFindGateway={() => setCatalogBuilderOpen(true)}
-              />
-            </Suspense>
-          )}
-        {radioPanelMode &&
-          radioPanelMode.kind !== 'telnet' &&
-          radioPanelMode.kind !== 'packet' &&
-          radioPanelMode.kind !== 'ardop-hf' &&
-          radioPanelMode.kind !== 'vara-hf' &&
-          radioPanelMode.kind !== 'vara-fm' && (
-            <PlaceholderRadioPanel
-              mode={radioPanelMode}
-              onClose={closeRadioPanel}
-            />
-          )}
-          </>
+          radioBody
         )}
           </RadioDrawer>
         )}

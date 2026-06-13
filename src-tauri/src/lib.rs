@@ -13,6 +13,7 @@ pub mod identity;
 pub mod help_window;
 pub mod logging;
 pub mod logging_window;
+pub mod media;
 pub mod theme_state;
 pub mod native_mailbox;
 pub mod position;
@@ -641,6 +642,7 @@ pub fn run() {
             crate::ui_commands::message_attachment_preview, // tuxlink-ewtb (image attachment preview)
             crate::ui_commands::message_attachment_save, // tuxlink-0fyj (Save As attachment)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
+            crate::media::commands::prepare_attachment, // tuxlink-mg4s — attach-time image resize
             crate::ui_commands::send_form,             // HTML Forms v0.1 (tuxlink-v1p Task 3.1)
             // HTML Forms P1 Task 8 (tuxlink-tzr5; original plan tuxlink-ytya):
             // webview-form command surface — catalog list + per-open

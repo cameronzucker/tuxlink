@@ -10,6 +10,10 @@ B2F protocol directly in Rust and presents the mailbox, compose pane, and live
 session log inside one desktop window. No Windows, no WINE, no browser tab, no
 external CMS sidecar.
 
+Beyond Winlink, Tuxlink fuses strategic and tactical emergency communications in
+one workspace: long-haul Winlink email over HF, and tactical APRS messaging over
+VHF and UHF with native control of the Benshi UV-Pro handheld.
+
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg" alt="License: GPL v3"></a>
   <a href="https://github.com/cameronzucker/tuxlink/releases/latest"><img src="https://img.shields.io/badge/release-latest-blue.svg" alt="Latest release"></a>
@@ -71,6 +75,14 @@ run needs no README and no video tutorial. The OS keyring holds the Winlink CMS 
 it to a config file on disk. The mailbox, compose pane, address book, and
 session log all render inside one desktop window.
 
+Tuxlink unifies two layers of emergency communication that operators have
+historically run on separate devices. The strategic layer carries Winlink email
+over HF to wherever propagation reaches. The tactical layer carries APRS position
+and text over VHF and UHF to stations in local range, with native control of the
+Benshi UV-Pro handheld. Both run from one workspace on a mains-powered Linux
+station, instead of a Windows laptop for Winlink alongside a battery handheld for
+APRS.
+
 ## Features
 
 Tuxlink ships the following on Linux for x86_64 and arm64:
@@ -93,6 +105,18 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 - **VARA HF / VARA FM.** A connection panel manages the TCP link to an
   operator-supplied VARA instance, surfaces connect and error state, and edits
   the persisted VARA configuration. Over-the-air peer sessions are pending.
+
+### Tactical and local operations
+
+- **APRS tactical chat.** Per-callsign message threads over APRS on VHF and UHF
+  with delivery-acknowledgement tracking, presented inline beside the address
+  book. A fixed, mains-powered station carries local tactical traffic without
+  draining a handheld.
+- **Native UV-Pro control.** Direct Bluetooth control of the Benshi UV-Pro
+  handheld over its RFCOMM / GAIA link: a control strip for the radio, and a KISS
+  path that also carries AX.25 packet and Winlink.
+- **FULL and tactical identities.** A licensed FULL identity for Winlink and
+  tactical identities for local operation, managed under Settings → Identities.
 
 ### Mailbox and messaging
 
@@ -252,6 +276,9 @@ Where each path stands:
   loopback. **On-air RF validation over a real radio is the operator's to
   perform.** Tuxlink never transmits without explicit, per-invocation operator
   consent (see [Amateur radio and Part 97](#amateur-radio-and-part-97)).
+- **Operator-pending (Part 97):** APRS tactical chat and native UV-Pro Bluetooth
+  control are built and pass backend validation. On-air RF validation over a real
+  radio, including clean abort and de-key, is the operator's to perform.
 - **Production CMS:** reaching the production Winlink CMS requires Winlink's
   prior registration of the Tuxlink client. Until that completes, CMS
   connectivity targets the test server.
