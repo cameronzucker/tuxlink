@@ -4,8 +4,10 @@ This directory holds the **self-hosted vector OSM basemap** assets the app bundl
 so the map renders fully offline with no cross-service tile dependency. The
 binary assets are **produced out-of-band** by
 [`scripts/build-basemap-bundle.sh`](../../../scripts/build-basemap-bundle.sh)
-(it needs the ~120 GB Protomaps planet, so it does not run in CI) and are
-**provenanced**, not mystery blobs — see `provenance.json` after a build.
+(it `pmtiles extract`s world z0–6 — ~45 MB — from the remote Protomaps planet over
+HTTP Range in seconds; the ~120 GB planet is the remote source, never downloaded
+whole, so this just doesn't belong in CI) and are **provenanced**, not mystery
+blobs — see `provenance.json` after a build.
 
 Expected contents (absent until the build script has run):
 

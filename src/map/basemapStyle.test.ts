@@ -44,3 +44,39 @@ describe('buildBasemapStyle (light)', () => {
     expect(featureLayers.every((l) => l.source === BASEMAP_SOURCE_ID)).toBe(true);
   });
 });
+
+describe('buildBasemapStyle (dark, L2 baked)', () => {
+  it('uses the dark sprite but the same glyphs + source', () => {
+    const dark = buildBasemapStyle('dark');
+    const light = buildBasemapStyle('light');
+    expect(dark.sprite).toBe('/basemap/sprites/dark');
+    expect(dark.glyphs).toBe(light.glyphs);
+    expect(dark.sources[BASEMAP_SOURCE_ID]).toEqual(light.sources[BASEMAP_SOURCE_ID]);
+  });
+
+  it('bakes inverted colors — the background flips from light to dark', () => {
+    const dark = buildBasemapStyle('dark');
+    const light = buildBasemapStyle('light');
+    const bg = (l: typeof dark) =>
+      (l.layers.find((x) => x.type === 'background') as { paint?: Record<string, unknown> }).paint?.[
+        'background-color'
+      ];
+    expect(bg(dark)).not.toBe(bg(light));
+  });
+
+  it('leaves no light *-color untransformed (every color differs from light)', () => {
+    const dark = buildBasemapStyle('dark');
+    const light = buildBasemapStyle('light');
+    // Spot-check: each layer's first string color in dark differs from light.
+    for (let i = 0; i < light.layers.length; i++) {
+      const lp = (light.layers[i] as { paint?: Record<string, unknown> }).paint;
+      const dp = (dark.layers[i] as { paint?: Record<string, unknown> }).paint;
+      if (!lp) continue;
+      for (const k of Object.keys(lp)) {
+        if (k.endsWith('-color') && typeof lp[k] === 'string') {
+          expect(dp?.[k]).not.toBe(lp[k]);
+        }
+      }
+    }
+  });
+});
