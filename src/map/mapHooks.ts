@@ -37,14 +37,18 @@ import { useEffect, useRef } from 'react';
  * and the test double both satisfy it (kept narrow to avoid coupling to
  * maplibre-gl's full type and to keep the double honest). */
 export interface MapHookHost {
-  isStyleLoaded(): boolean;
+  // maplibre-gl types this `boolean | void`; the hooks only use it in a boolean
+  // context, so accept the wider type so a real Map satisfies the host.
+  isStyleLoaded(): boolean | void;
   on(type: string, handler: (...args: unknown[]) => void): unknown;
   off(type: string, handler: (...args: unknown[]) => void): unknown;
   getLayer(id: string): unknown;
-  addLayer(spec: Record<string, unknown>, beforeId?: string): void;
+  // `object` (not Record<string,unknown>) so BOTH maplibre's strict
+  // LayerSpecification/AddLayerObject and the test double satisfy the host.
+  addLayer(spec: object, beforeId?: string): void;
   removeLayer(id: string): void;
   getSource(id: string): unknown;
-  addSource(id: string, source: Record<string, unknown>): void;
+  addSource(id: string, source: object): void;
   removeSource(id: string): void;
 }
 

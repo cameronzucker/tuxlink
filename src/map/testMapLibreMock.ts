@@ -32,7 +32,17 @@ export interface MapLibreMockState {
   handlers: Map<string, Set<(...args: unknown[]) => void>>;
   styleLoaded: boolean;
   zoom: number;
+  /** Current viewport bounds (lng/lat extents) the overlays read via getBounds. */
+  bounds: { west: number; south: number; east: number; north: number };
   removed: boolean;
+}
+
+/** What `getBounds()` returns — the LngLatBounds accessor subset overlays use. */
+export interface MapLibreMockBounds {
+  getWest(): number;
+  getSouth(): number;
+  getEast(): number;
+  getNorth(): number;
 }
 
 /** The fake `maplibregl.Map` surface tuxlink touches, plus `__`-prefixed test controls. */
@@ -41,9 +51,11 @@ export interface MapLibreMock {
   __emit(type: string, ...args: unknown[]): void;
   __setStyleLoaded(value: boolean): void;
   __setZoom(zoom: number): void;
+  __setBounds(bounds: { west: number; south: number; east: number; north: number }): void;
 
   addSource: (id: string, source: Record<string, unknown>) => void;
   getSource: (id: string) => unknown | undefined;
+  getBounds: () => MapLibreMockBounds;
   removeSource: (id: string) => void;
   addLayer: (spec: Record<string, unknown>, beforeId?: string) => void;
   getLayer: (id: string) => { id: string } | undefined;
@@ -82,6 +94,7 @@ export function createMapLibreMock(
     handlers: new Map(),
     styleLoaded,
     zoom,
+    bounds: { west: -180, south: -85, east: 180, north: 85 },
     removed: false,
   };
 
@@ -97,11 +110,28 @@ export function createMapLibreMock(
     __setZoom(z) {
       state.zoom = z;
     },
+    __setBounds(b) {
+      state.bounds = b;
+    },
 
     addSource: vi.fn((id: string, source: Record<string, unknown>) => {
-      state.sources.set(id, source);
+      // Store a GeoJSONSource-like handle so consumers can call setData (the
+      // dynamic-data path overlays use on pan/zoom).
+      const handle: Record<string, unknown> = {
+        ...source,
+        setData: vi.fn((data: unknown) => {
+          handle.data = data;
+        }),
+      };
+      state.sources.set(id, handle);
     }),
     getSource: vi.fn((id: string) => state.sources.get(id)),
+    getBounds: vi.fn(() => ({
+      getWest: () => state.bounds.west,
+      getSouth: () => state.bounds.south,
+      getEast: () => state.bounds.east,
+      getNorth: () => state.bounds.north,
+    })),
     removeSource: vi.fn((id: string) => {
       state.sources.delete(id);
     }),
