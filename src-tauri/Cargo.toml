@@ -51,7 +51,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", features = ["json", "multipart", "stream", "gzip"] }  # tuxlink-z5f: dropped "blocking" — PatClient is async to avoid runtime-drop panic in #[tokio::test] contexts. tuxlink-xipa Codex P1 #1: "stream" added for forms::updater::download_archive chunked size enforcement. tuxlink-k61j: "gzip" — TileServer-GL/nginx serve tiles with Content-Encoding: gzip; the tile client must decompress so the image magic-byte check sees the real image, not gzip bytes.
 tokio = { version = "1", features = ["full"] }
-nix = { version = "0.31", features = ["signal", "process"] }
+nix = { version = "0.31", features = ["signal", "process", "fs"] }  # "fs" (tuxlink-ndi4): statvfs free-space pre-flight before a region-pack download
 thiserror = "2"            # NEW — for ConfigValidationError + ConfigReadError + ConfigWriteError
 tempfile = "3"             # PROMOTED from [dev-dependencies] below
 flate2 = "1"               # PROMOTED from [dev-dependencies] (tuxlink-ndi4) — basemap::validate decompresses gzip PMTiles metadata in production code, not just test fixtures

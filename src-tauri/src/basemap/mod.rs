@@ -20,6 +20,7 @@
 //! tight GPU/WebKit budget on the Pi). The registry's `RwLock` is held only long
 //! enough to clone the `Arc` out; the hot read path is lock-free.
 
+pub mod commands;
 pub mod download;
 pub mod packs;
 pub mod region_manifest;
@@ -131,6 +132,17 @@ impl PmtilesRegistry {
             .expect("PmtilesRegistry lock poisoned")
             .get(id)
             .cloned()
+    }
+
+    /// Unregister `id` (a deleted region pack). Subsequent `tile://pmtiles/<id>`
+    /// requests 404. The bundled `"world"` archive is never removed in practice.
+    /// Returns true if an archive was present.
+    pub fn remove(&self, id: &str) -> bool {
+        self.archives
+            .write()
+            .expect("PmtilesRegistry lock poisoned")
+            .remove(id)
+            .is_some()
     }
 }
 
