@@ -97,6 +97,17 @@ describe('MapLibreMap', () => {
     expect(map.flyTo).not.toHaveBeenCalled();
   });
 
+  it('setStyle swaps to the dark style when flavor changes after mount', () => {
+    const { rerender } = render(<MapLibreMap flavor="light" />);
+    const map = getLastMap()!;
+    loadMap(map);
+    expect(map.setStyle).not.toHaveBeenCalled(); // constructor used the initial flavor
+    rerender(<MapLibreMap flavor="dark" />);
+    expect(map.setStyle).toHaveBeenCalledTimes(1);
+    const style = vi.mocked(map.setStyle).mock.calls[0][0] as { sprite: string };
+    expect(style.sprite).toBe('/basemap/sprites/dark');
+  });
+
   it('adds an attribution control and removes the map on unmount', () => {
     const { unmount } = render(<MapLibreMap />);
     const map = getLastMap()!;
