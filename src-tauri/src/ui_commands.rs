@@ -3187,6 +3187,18 @@ pub struct ConfigViewDto {
     /// `Config.aredn_master_node_host`; the Network Post Office panel loads it
     /// into the discovery section's node-host input on open.
     pub aredn_master_node_host: Option<String>,
+    /// Persisted LAN tile source (tuxlink-dyop). Surfaced so the map
+    /// (`useTileSource`) AND the Settings dialog hydration can read the saved
+    /// source via `config_read`. Without this projection field the source was
+    /// silently dropped at the IPC boundary: the gatekeeper boot-seed reads the
+    /// raw `Config` directly (so tiles *served*), but the frontend's
+    /// `config_read().map_tile_source` was ALWAYS undefined → `useTileSource`
+    /// returned null → the map never went tile-backed → the zoom cap stayed at
+    /// the raster-native 3, and Settings hydration never repopulated
+    /// (bd tuxlink-k61j). Serialized snake_case (no `rename_all` on this DTO),
+    /// matching the TS `config.map_tile_source` read; the inner `TileSource`
+    /// stays camelCase per its own `rename_all`.
+    pub map_tile_source: Option<crate::tiles::TileSource>,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -3205,6 +3217,7 @@ impl From<&config::Config> for ConfigViewDto {
             position_source: c.privacy.position_source,
             review_inbound_before_download: c.review_inbound_before_download,
             aredn_master_node_host: c.aredn_master_node_host.clone(),
+            map_tile_source: c.map_tile_source.clone(),
         }
     }
 }
@@ -8621,6 +8634,35 @@ hw:CARD=Device,DEV=0
         cfg.review_inbound_before_download = true;
         let dto = ConfigViewDto::from(&cfg);
         assert!(dto.review_inbound_before_download);
+    }
+
+    // bd tuxlink-k61j: the persisted LAN tile source MUST map through the DTO.
+    // Before this field existed, `config_read` silently dropped it at the IPC
+    // boundary, so the frontend (`useTileSource` / Settings hydration) never saw
+    // a saved source and the Find-a-Station map stayed clamped at zoom 3 even
+    // after a successful bind. Absent → None; present → maps through verbatim.
+    #[test]
+    fn config_view_dto_surfaces_map_tile_source() {
+        let mut cfg = cms_config_fixture();
+        assert!(
+            ConfigViewDto::from(&cfg).map_tile_source.is_none(),
+            "no source configured → DTO field is None"
+        );
+        cfg.map_tile_source = Some(crate::tiles::TileSource {
+            url: "http://192.168.1.10:8080/{z}/{x}/{y}.png".into(),
+            scheme: crate::tiles::TileScheme::Xyz,
+            min_zoom: 0,
+            max_zoom: 16,
+            cache_budget_mb: 256,
+            attribution: None,
+            label: "shack".into(),
+        });
+        let dto = ConfigViewDto::from(&cfg);
+        assert_eq!(
+            dto.map_tile_source.as_ref().map(|s| s.url.clone()),
+            Some("http://192.168.1.10:8080/{z}/{x}/{y}.png".to_string()),
+            "configure → config_read must surface the persisted source to the FE"
+        );
     }
 
     // Offline-mode mapping: callsign None, identifier Some — mirrors the

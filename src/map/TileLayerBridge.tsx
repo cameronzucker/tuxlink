@@ -53,7 +53,20 @@ export function TileLayerBridge({ source, appMaxZoom }: TileLayerBridgeProps) {
     <TileLayer
       url={TILE_URL_TEMPLATE}
       subdomains={[]}
-      tms={source.scheme === 'Tms'}
+      // tms is ALWAYS false here: the `tile://` URL is an internal transport to
+      // OUR backend handler, not a real TMS server. Leaflet flips Y for `tms`
+      // when it fills the {y} token, and the backend (`build_tile_url` →
+      // `TileCoord::upstream_y`) ALSO flips Y for a TMS source — so honoring the
+      // source scheme HERE double-flips and serves the vertically-mirrored tile
+      // (bd tuxlink-k61j B1). The backend is the SOLE Y-flip site; the webview
+      // always speaks standard top-origin XYZ across the scheme boundary.
+      tms={false}
+      // `minZoom`/`maxZoom` bound the layer to the source's advertised range and
+      // let Leaflet up-scale its own native tiles in the [maxNativeZoom, maxZoom]
+      // band instead of 404-ing past native resolution. Below `minZoom` no tile
+      // is requested, which suppresses spurious coverage-404s (→ false `partial`).
+      minZoom={source.minZoom}
+      maxZoom={appMaxZoom}
       maxNativeZoom={maxNativeZoom}
       {...(source.attribution ? { attribution: source.attribution } : {})}
     />

@@ -138,6 +138,14 @@ pub fn build_tile_client() -> Result<reqwest::Client, FetchError> {
         // proxy would open the connection to the proxy host, not the vetted LAN
         // IP, so the LAN-only egress gate would be bypassed entirely.
         .no_proxy()
+        // TileServer-GL / nginx commonly serve tiles with `Content-Encoding:
+        // gzip` (MBTiles stores tiles gzipped; nginx passes the header through).
+        // Without transparent decompression the magic-byte check sees gzip
+        // (`1f 8b`) instead of the image and the source is wrongly rejected as
+        // incompatible (bd tuxlink-k61j). reqwest decompresses + strips the
+        // header; the streamed running-total cap still bounds the DECOMPRESSED
+        // size, so a gzip bomb is caught at MAX_TILE_BYTES.
+        .gzip(true)
         .build()
         .map_err(|e| FetchError::Network(format!("client build: {e}")))
 }
@@ -226,6 +234,9 @@ where
                 // SSRF (§8.3) — see build_tile_client: a proxy would defeat the
                 // resolve_to_addrs pin (it pins the host, not the proxy).
                 .no_proxy()
+                // Decompress gzip-encoded tiles (TileServer-GL/nginx) — see
+                // build_tile_client; the streamed cap still bounds decompressed size.
+                .gzip(true)
                 .resolve_to_addrs(&host, &resolved)
                 .build()
                 .map_err(|e| FetchError::Network(format!("client build: {e}")))
@@ -265,12 +276,38 @@ fn build_tile_url(source: &TileSource, coord: &TileCoord) -> Result<Url, FetchEr
     let raw = &source.url;
     let is_template = raw.contains("{z}") || raw.contains("{x}") || raw.contains("{y}");
 
+    // A URL that carries braces but NONE of the standard `{z}`/`{x}`/`{y}` tokens
+    // is a malformed placeholder attempt (e.g. uppercase `{Z}/{X}/{Y}`, `{zoom}`,
+    // a `{z]` typo that lost its only standard token). It is NOT a base-directory
+    // URL — appending z/x/y to it builds a guaranteed-404 path with url-encoded
+    // braces, which the 404→LanLive probe would then FALSELY validate (bd
+    // tuxlink-k61j B4). Reject up front so the operator sees the typo. (A real
+    // base-dir or template URL never contains a stray brace.)
+    if !is_template && (raw.contains('{') || raw.contains('}')) {
+        return Err(FetchError::BadUrl(format!(
+            "tile URL has a malformed placeholder (expected {{z}}/{{x}}/{{y}}): {raw}"
+        )));
+    }
+
     if is_template {
         // Substitute the bounded integers into the operator's stored template.
         let substituted = raw
             .replace("{z}", &coord.z.to_string())
             .replace("{x}", &coord.x.to_string())
             .replace("{y}", &y.to_string());
+        // A brace surviving substitution means a malformed/mistyped placeholder
+        // (e.g. `{z]`, `{Z}`, `{ z}`): the standard `{z}`/`{x}`/`{y}` tokens are
+        // gone, so anything left is a typo. Such a template can NEVER serve a real
+        // tile, and because the reachability probe maps a 404 → LanLive, it would
+        // otherwise FALSELY validate as "source active" on a URL that 404s every
+        // tile — the operator sees success and an empty map (bd tuxlink-k61j).
+        // Reject as BadUrl so the probe surfaces Incompatible and the typo is
+        // visible. (Tile URLs legitimately contain no other braces.)
+        if substituted.contains('{') || substituted.contains('}') {
+            return Err(FetchError::BadUrl(format!(
+                "tile template has a malformed placeholder (expected {{z}}/{{x}}/{{y}}): {raw}"
+            )));
+        }
         let url = Url::parse(&substituted)
             .map_err(|e| FetchError::BadUrl(format!("templated tile URL did not parse: {e}")))?;
         // Defense in depth: a placeholder in the authority (e.g. `http://{z}.x/`)
@@ -609,6 +646,28 @@ mod tests {
         assert!(matches!(err, FetchError::BadUrl(_)), "got {err:?}");
     }
 
+    #[test]
+    fn template_with_malformed_placeholder_is_rejected() {
+        // bd tuxlink-k61j: a typo'd placeholder (`{z]` instead of `{z}`) leaves a
+        // leftover brace after substitution. It must be BadUrl, NOT a 404 the
+        // probe maps to LanLive — otherwise the bind falsely reports "source
+        // active" on a URL that serves no tiles. This is the exact shape that
+        // shipped in an operator's persisted config and produced an empty map.
+        let src = source("http://10.0.0.5:8090/tiles/{z]/{x}/{y}.png");
+        let err = build_tile_url(&src, &coord()).unwrap_err();
+        assert!(matches!(err, FetchError::BadUrl(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn template_with_nonstandard_placeholder_is_rejected() {
+        // bd tuxlink-k61j B4: braces with NO standard {z}/{x}/{y} token (e.g.
+        // uppercase {Z}/{X}/{Y}, or {zoom}) must not fall through to the base-dir
+        // branch and build a 404-ing url-encoded-brace path — reject as BadUrl.
+        let src = source("http://10.0.0.5:8090/tiles/{Z}/{X}/{Y}.png");
+        let err = build_tile_url(&src, &coord()).unwrap_err();
+        assert!(matches!(err, FetchError::BadUrl(_)), "got {err:?}");
+    }
+
     // ---- Task 3.1 ----
 
     #[test]
@@ -839,6 +898,41 @@ mod tests {
         let src = source(&server.url());
         let err = fetch_tile_bytes(&src, &coord(), true).await.unwrap_err();
         assert!(matches!(err, FetchError::TooLarge), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn gzip_encoded_tile_is_transparently_decompressed() {
+        // bd tuxlink-k61j: TileServer-GL / nginx commonly serve tiles with
+        // `Content-Encoding: gzip` (Geographica's USGS imagery does — the JPEG
+        // body arrives gzip-wrapped). The tile client MUST decompress, else the
+        // magic-byte check sees gzip (`1f 8b`) instead of the image and the source
+        // is wrongly reported incompatible. This drives the REAL reqwest
+        // decompression path (the `gzip` feature + `.gzip(true)`), not a stub.
+        use std::io::Write;
+        let mut gz = Vec::new();
+        {
+            let mut enc =
+                flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+            enc.write_all(&png_bytes()).unwrap();
+            enc.finish().unwrap();
+        }
+        // Sanity: the wire body really is gzip-wrapped (not a raw PNG).
+        assert_eq!(&gz[0..2], &[0x1f, 0x8b], "fixture must be gzip on the wire");
+
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/3/5/2.png")
+            .with_status(200)
+            .with_header("content-type", "image/jpeg") // mislabeled on purpose: magic decides
+            .with_header("content-encoding", "gzip")
+            .with_body(gz)
+            .create_async()
+            .await;
+        let src = source(&server.url());
+        let (bytes, mime) = fetch_tile_bytes(&src, &coord(), true).await.unwrap();
+        // Decompressed → PNG magic recognized (NOT gzip, NOT the mislabeled jpeg).
+        assert_eq!(mime, "image/png");
+        assert!(bytes.starts_with(b"\x89PNG"), "body must be the decompressed image");
     }
 
     #[tokio::test]

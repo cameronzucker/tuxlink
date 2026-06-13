@@ -65,6 +65,19 @@ describe('<BaseMap> (shape only)', () => {
     expect(overlay.dataset.url).toBe('/world-mercator-2048.png');
   });
 
+  // bd tuxlink-k61j: the bundled raster MUST live in a pane below Leaflet's
+  // tilePane (z-index 200). An ImageOverlay's default pane is overlayPane (400),
+  // ABOVE the LAN TileLayer's tilePane (200) — so the raster painted OVER the
+  // tiles and hid them (tiles fetched HTTP 200 but never displayed). This asserts
+  // the raster is wrapped in a low-z pane; real stacking is grim-verified (C1).
+  it('renders the bundled raster in a pane below tilePane (z-index < 200) so LAN tiles are not occluded', () => {
+    render(<BaseMap tileSource={{ source: SOURCE, status: status('lan-live') }} />);
+    const pane = screen.getByTestId('leaflet-pane');
+    expect(pane.querySelector('[data-testid="image-overlay"]')).not.toBeNull();
+    const z = Number(JSON.parse(pane.dataset.style ?? '{}').zIndex);
+    expect(z).toBeLessThan(200);
+  });
+
   it('bridges a map click to onMapClick with a clamped LatLon', () => {
     const onMapClick = vi.fn();
     render(<BaseMap onMapClick={onMapClick} />);

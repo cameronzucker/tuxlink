@@ -152,10 +152,52 @@ export function MapTileSourceSettings() {
     };
   }
 
+  /**
+   * Reject form states the backend would accept but that pin the map uselessly
+   * (bd tuxlink-k61j): a cleared Maximum-zoom field parses to 0, which binds as a
+   * valid source whose only servable level is z0 — the map clamps to a single
+   * world tile. Require maxZoom ≥ 1 and maxZoom ≥ minZoom before any probe/bind.
+   * Returns an error message to show, or null when the form is sound.
+   */
+  function zoomRangeError(src: TileSource): string | null {
+    if (src.maxZoom < 1) return 'Maximum zoom must be at least 1.';
+    if (src.maxZoom < src.minZoom) return 'Maximum zoom must be ≥ minimum zoom.';
+    return null;
+  }
+
+  /**
+   * Catch a malformed URL template client-side with an HONEST message, before
+   * the backend is ever contacted (bd tuxlink-k61j). A typo like `{z]` or
+   * uppercase `{Z}` otherwise reaches the backend, which rejects it but reports
+   * "incompatible tile source — the server responded but did not return image
+   * tiles" — misleading, because the server was never contacted; the real fault
+   * is the URL. We strip the three valid tokens; any leftover brace is a typo.
+   * A brace-free URL (standard base-directory form) passes.
+   */
+  function templateError(u: string): string | null {
+    if (u.trim() === '') return 'Enter a tile URL.';
+    const stripped = u.replace(/\{z\}/g, '').replace(/\{x\}/g, '').replace(/\{y\}/g, '');
+    if (stripped.includes('{') || stripped.includes('}')) {
+      return 'Tile URL template is malformed — use {z}/{x}/{y} exactly, e.g. http://192.168.1.10:8080/tiles/{z}/{x}/{y}.png';
+    }
+    return null;
+  }
+
   async function handleTest() {
     setFeedback(null);
+    const tErr = templateError(url);
+    if (tErr) {
+      setFeedback(tErr);
+      return;
+    }
+    const src = buildSource();
+    const zErr = zoomRangeError(src);
+    if (zErr) {
+      setFeedback(zErr);
+      return;
+    }
     try {
-      const status = await testTileSource(buildSource());
+      const status = await testTileSource(src);
       setFeedback(statusMessage(status));
     } catch (e) {
       setFeedback(`Test failed: ${e}`);
@@ -164,8 +206,19 @@ export function MapTileSourceSettings() {
 
   async function handleUse() {
     setFeedback(null);
+    const tErr = templateError(url);
+    if (tErr) {
+      setFeedback(tErr);
+      return;
+    }
+    const src = buildSource();
+    const zErr = zoomRangeError(src);
+    if (zErr) {
+      setFeedback(zErr);
+      return;
+    }
     try {
-      const status = await configureTileSource(buildSource());
+      const status = await configureTileSource(src);
       setFeedback(bindMessage(status));
       // tuxlink-9rek: tell any mounted map to re-read the (possibly newly
       // activated) source so it applies without an app restart.
