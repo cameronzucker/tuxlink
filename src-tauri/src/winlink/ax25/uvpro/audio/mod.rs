@@ -20,4 +20,5 @@
 pub mod codec;
 pub mod framing;
 pub mod keying;
+pub mod sbc;
 pub mod transport;
