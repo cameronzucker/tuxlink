@@ -33,8 +33,8 @@
  * stretched raster above, which is Leaflet's default for a tile that fails to
  * load above `maxNativeZoom`).
  */
-import type { ReactNode } from 'react';
-import { MapContainer, ImageOverlay, useMapEvents } from 'react-leaflet';
+import { useEffect, type ReactNode } from 'react';
+import { MapContainer, ImageOverlay, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { MERCATOR_BOUNDS, clampLatLon, type LatLon } from './projection';
 import { TileLayerBridge } from './TileLayerBridge';
@@ -117,6 +117,30 @@ function MapZoomHandler({ onZoomChange }: { onZoomChange?: (zoom: number) => voi
   return null;
 }
 
+/**
+ * Imperatively keeps the live Leaflet map's max-zoom in sync with `maxZoom`.
+ *
+ * `<MapContainer>`'s `maxZoom` is read ONCE at construction and is NOT reactive
+ * (the same react-leaflet contract that makes `center`/`zoom` non-reactive —
+ * see `RecenterOnOperator` in StationFinderMap). The validated LAN tile source
+ * arrives ASYNCHRONOUSLY from `useTileSource` AFTER the map has mounted, so the
+ * raised cap (`tileSource.source.maxZoom`) would never take effect through the
+ * prop alone — the map would stay clamped at the raster-native `RASTER_MAX_ZOOM`
+ * (3) forever, and the operator could not zoom into the freshly-bound source
+ * (bd tuxlink-k61j). This child lives inside the MapContainer, gets the live map
+ * via `useMap()`, and `setMaxZoom`s whenever the computed cap changes
+ * (3→raised when a source binds, raised→3 if it is later cleared). The MapContainer
+ * `maxZoom` prop stays as the construction-time initial; this is the reactive
+ * follow-up for the post-mount case.
+ */
+function ApplyMaxZoom({ maxZoom }: { maxZoom: number }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setMaxZoom(maxZoom);
+  }, [map, maxZoom]);
+  return null;
+}
+
 export function BaseMap({
   children,
   onMapClick,
@@ -165,6 +189,10 @@ export function BaseMap({
       )}
       <MapClickHandler onMapClick={onMapClick} />
       <MapZoomHandler onZoomChange={onZoomChange} />
+      {/* react-leaflet reads `maxZoom` once at mount; this applies the cap
+          imperatively so an async-arriving tile source actually raises it
+          (bd tuxlink-k61j). */}
+      <ApplyMaxZoom maxZoom={maxZoom} />
       {children}
     </MapContainer>
   );

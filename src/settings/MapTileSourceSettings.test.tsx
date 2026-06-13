@@ -116,7 +116,11 @@ describe('MapTileSourceSettings', () => {
     });
     // crs field must NOT be present on the wire.
     expect(configureMock.mock.calls[0][0]).not.toHaveProperty('crs');
-    expect(await screen.findByText(/source validated/i)).toBeInTheDocument();
+    // A bind confirmation DISTINCT from "Test"'s "source validated": it states
+    // the source is active + the new zoom ceiling (LAN_LIVE.zoom === 13), so the
+    // operator can tell a real bind from a dry-run probe (bd tuxlink-k61j).
+    expect(await screen.findByText(/source active — map zoom reaches level 13/i)).toBeInTheDocument();
+    expect(screen.queryByText(/source validated/i)).toBeNull();
   });
 
   it('Clear tile cache calls clearTileCache', async () => {

@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { fireMapEvent, fireZoomEvent, setMockZoom, resetMapMock } from './testMapMock';
+import { fireMapEvent, fireZoomEvent, setMockZoom, resetMapMock, getMockMap } from './testMapMock';
 
 vi.mock('react-leaflet', async () => (await import('./testMapMock')).createReactLeafletMock());
 vi.mock('leaflet', async () => (await import('./testMapMock')).createLeafletMock());
@@ -140,6 +140,45 @@ describe('<BaseMap> (shape only)', () => {
     render(<BaseMap tileSource={{ source: SOURCE, status: status('unreachable') }} />);
     expect(screen.queryByTestId('leaflet-tilelayer')).toBeNull();
     expect(screen.getByTestId('leaflet-map').dataset.maxzoom).toBe('3');
+  });
+
+  // ── bd tuxlink-k61j: imperative maxZoom (react-leaflet maxZoom is mount-only) ──
+  //
+  // The `dataset.maxzoom` assertions above only prove the MapContainer *prop*.
+  // In real react-leaflet that prop is read ONCE at construction, so a tile
+  // source that arrives ASYNC (useTileSource resolves after mount) never raises
+  // the live cap through the prop. BaseMap must therefore also call
+  // `map.setMaxZoom(...)` imperatively. The mock's `setMaxZoom` spy is the only
+  // thing that can witness the real fix — the prop mirror cannot.
+
+  it('imperatively sets maxZoom to 3 when no tileSource is given', () => {
+    render(<BaseMap />);
+    expect(getMockMap().setMaxZoom).toHaveBeenCalledWith(3);
+  });
+
+  it('imperatively raises maxZoom to the validated source max when tile-backed', () => {
+    render(<BaseMap tileSource={{ source: SOURCE, status: status('lan-live') }} />);
+    expect(getMockMap().setMaxZoom).toHaveBeenCalledWith(16);
+  });
+
+  it('imperatively raises maxZoom when a tile source arrives AFTER mount (the async-bind bug)', () => {
+    // Mount with NO source (the real first render: useTileSource returns null),
+    // then re-render once the source resolves. The live map must pick up the
+    // raised cap via setMaxZoom — the regression that left Find a Station stuck
+    // at z3 even with a validated bound source.
+    const { rerender } = render(<BaseMap />);
+    expect(getMockMap().setMaxZoom).toHaveBeenLastCalledWith(3);
+    rerender(<BaseMap tileSource={{ source: SOURCE, status: status('lan-live') }} />);
+    expect(getMockMap().setMaxZoom).toHaveBeenLastCalledWith(16);
+  });
+
+  it('imperatively drops maxZoom back to 3 if a bound source is later cleared', () => {
+    const { rerender } = render(
+      <BaseMap tileSource={{ source: SOURCE, status: status('lan-live') }} />,
+    );
+    expect(getMockMap().setMaxZoom).toHaveBeenLastCalledWith(16);
+    rerender(<BaseMap />);
+    expect(getMockMap().setMaxZoom).toHaveBeenLastCalledWith(3);
   });
 
   it('renders children inside the map', () => {
