@@ -102,6 +102,7 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
+- About to claim a feature is end-to-end shipped / done / complete, or mark a PR ready → invoke **wire-walk** (HARD GATE). Operator supplies the user flows greenfield (do NOT draft them); trace each to code (`file:line`); any broken primary flow = NOT shipped. Canonical + rationale: `.claude/skills/wire-walk/SKILL.md` and the CLAUDE.md "Wire-walk gate" section.
 
 Codex fallback rule: if the native harness does not expose Claude's Skill tool
 or does not list a named project skill, read the local `SKILL.md` and follow it
