@@ -18,6 +18,7 @@ import type { GpsState, PositionPrecision } from './useStatus';
 import { LocationSettings } from '../location/LocationSettings';
 import { AprsSettings } from '../aprs/AprsSettings';
 import { FormSequenceSettings } from '../forms/FormSequenceSettings';
+import { OfflineMapsSettings } from '../map/OfflineMapsSettings';
 import { IdentitiesSettings } from './IdentitiesSettings';
 import './SettingsPanel.css';
 
@@ -203,6 +204,12 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         <fieldset className="tux-settings-group">
           <legend>Form sequence numbers</legend>
           <FormSequenceSettings />
+        </fieldset>
+
+        {/* tuxlink-ndi4 (phase 4): offline region-pack manager. */}
+        <fieldset className="tux-settings-group">
+          <legend>Offline maps</legend>
+          <OfflineMapsSettings />
         </fieldset>
       </div>
     </div>

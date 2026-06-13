@@ -11,6 +11,7 @@ import {
   BASEMAP_SOURCE_ID,
   PMTILES_SOURCE_URL,
   OSM_ATTRIBUTION,
+  REGION_MINZOOM,
 } from './basemapStyle';
 
 describe('buildBasemapStyle (light)', () => {
@@ -78,5 +79,54 @@ describe('buildBasemapStyle (dark, L2 baked)', () => {
         }
       }
     }
+  });
+});
+
+describe('buildBasemapStyle — R7 region-pack compositing', () => {
+  it('adds no extra sources/layers when no packs are installed', () => {
+    const none = buildBasemapStyle('light', []);
+    const base = buildBasemapStyle('light');
+    expect(Object.keys(none.sources)).toEqual([BASEMAP_SOURCE_ID]);
+    expect(none.layers.length).toBe(base.layers.length);
+  });
+
+  it('adds a vector source per pack served via tile://pmtiles/<id>', () => {
+    const style = buildBasemapStyle('light', [{ id: 'tier-wide-n34-w112' }]);
+    expect(style.sources['pack-tier-wide-n34-w112']).toMatchObject({
+      type: 'vector',
+      url: 'pmtiles://tile://pmtiles/tier-wide-n34-w112',
+      attribution: OSM_ATTRIBUTION,
+    });
+    // World overview source is untouched (stays present everywhere = never blank).
+    expect(style.sources[BASEMAP_SOURCE_ID]).toMatchObject({ url: PMTILES_SOURCE_URL });
+  });
+
+  it('clamps every pack layer to minzoom >= REGION_MINZOOM and binds it to the pack source', () => {
+    const style = buildBasemapStyle('light', [{ id: 'continent-na' }]);
+    const packLayers = style.layers.filter(
+      (l): l is typeof l & { source: string } => 'source' in l && l.source === 'pack-continent-na',
+    );
+    expect(packLayers.length).toBeGreaterThan(0);
+    expect(packLayers.every((l) => (l.minzoom ?? 0) >= REGION_MINZOOM)).toBe(true);
+    // Pack layer ids are namespaced so they can't collide with the overview's.
+    expect(packLayers.every((l) => l.id.startsWith('pack-continent-na-'))).toBe(true);
+  });
+
+  it('draws pack layers AFTER (on top of) the overview layers', () => {
+    const style = buildBasemapStyle('light', [{ id: 'tier-wide-n34-w112' }]);
+    const srcOf = (l: (typeof style.layers)[number]): string | undefined =>
+      'source' in l ? (l as { source?: string }).source : undefined;
+    const worldIdx = style.layers
+      .map((l, i) => (srcOf(l) === BASEMAP_SOURCE_ID ? i : -1))
+      .filter((i) => i >= 0);
+    const lastWorld = worldIdx[worldIdx.length - 1] ?? -1;
+    const firstPack = style.layers.findIndex((l) => srcOf(l) === 'pack-tier-wide-n34-w112');
+    expect(firstPack).toBeGreaterThan(lastWorld);
+  });
+
+  it('composites multiple packs, each with its own source', () => {
+    const style = buildBasemapStyle('dark', [{ id: 'tier-wide-n34-w112' }, { id: 'continent-na' }]);
+    expect(style.sources['pack-tier-wide-n34-w112']).toBeDefined();
+    expect(style.sources['pack-continent-na']).toBeDefined();
   });
 });
