@@ -151,8 +151,24 @@ pub fn migrate_identity_if_v1(
         .and_then(|b| b.as_bool())
         .unwrap_or(false);
 
+    // tuxlink-6wz3: provision the activation secret from the operator's existing
+    // CMS password so the migrated FULL is immediately authenticatable (launch
+    // auto-auth + the switcher unlock). Pre-epic builds stored only the CMS
+    // password; the activation-secret keyring entry does not exist yet on the
+    // first upgrade launch, so read the CMS credential and pass it through.
+    // `None` when offline / no callsign / no stored password.
+    let activation_secret: Option<String> = v1
+        .callsign
+        .as_deref()
+        .and_then(|c| crate::winlink::credentials::read_password(c).ok());
     let report = crate::config::IdentityMigration::plan(&v1)
-        .execute(svc, mbox_dir, store_path, has_cms_account, None)
+        .execute(
+            svc,
+            mbox_dir,
+            store_path,
+            has_cms_account,
+            activation_secret.as_deref(),
+        )
         .map_err(|e| format!("identity migration execute: {e}"))?;
 
     // Rewrite config at v2 so read_config() succeeds. v1->v2 wire format differs
@@ -418,11 +434,42 @@ pub(crate) fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: 
         .with_wire_log(wire)
         .with_mailbox_change(mailbox_change)
         .with_position(arbiter);
-    if let Some(full) = sole_full {
-        backend = backend.with_default_identity(&full);
+    if let Some(full) = &sole_full {
+        backend = backend.with_default_identity(full);
     }
     if let Some(index) = search_index {
         backend = backend.with_index(index);
+    }
+
+    // tuxlink-6wz3: auto-authenticate the configured identity on launch so
+    // transmit works without a manual per-launch unlock (WLE parity). The
+    // active-identity gate (Phase 3) otherwise blocks every transmit until the
+    // operator unlocks via the switcher; for the single configured identity that
+    // is friction the operator has not asked for. Reads the stored CMS password
+    // and authenticates against the activation secret (kept in sync by
+    // write_password / provisioned by migration). Best-effort: any failure
+    // (no secret, mismatch, keyring error) leaves the slot empty and the operator
+    // can still unlock manually via the switcher. Switching to a DIFFERENT FULL
+    // or a tactical still goes through the switcher's explicit unlock.
+    if let Some(full) = &sole_full {
+        let svc = crate::identity::IdentityService::new();
+        match resolve_auto_identity(&svc, full, |c| {
+            crate::winlink::credentials::read_password(c).ok()
+        }) {
+            Some(session) => {
+                backend.set_active_identity(session);
+                tracing::info!(
+                    target: "tuxlink::bootstrap",
+                    callsign = %full.as_str(),
+                    "auto-authenticated active identity from stored credential",
+                );
+            }
+            None => tracing::warn!(
+                target: "tuxlink::bootstrap",
+                callsign = %full.as_str(),
+                "auto-auth unavailable (no/mismatched stored credential); operator unlocks via the switcher",
+            ),
+        }
     }
 
     // 2026-05-31 operator-flagged: the 5s status poll missed sub-second
@@ -451,6 +498,28 @@ pub(crate) fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: 
         LogLevel::Info,
         "Native Winlink backend ready.".to_string(),
     );
+}
+
+/// Decide the active identity to auto-establish on launch (tuxlink-6wz3).
+///
+/// Fetches the stored credential for `full` via the injected `read_pw` and
+/// authenticates it against the activation secret. Returns the `SessionIdentity`
+/// to install, or `None` (no stored credential, or it does not match the
+/// activation secret — the operator unlocks manually via the switcher).
+///
+/// Factored out of `install_native` (which needs a real `AppHandle` + keyring)
+/// so the auto-auth decision is unit-testable headless: inject a memory-keyring
+/// `IdentityService` and a closure for the password read. This is the guardrail
+/// test seam for the transmit-un-brick (tuxlink-6wz3).
+fn resolve_auto_identity(
+    svc: &crate::identity::IdentityService,
+    full: &crate::identity::Callsign,
+    read_pw: impl FnOnce(&str) -> Option<String>,
+) -> Option<crate::identity::SessionIdentity> {
+    let pw = read_pw(full.as_str())?;
+    svc.authenticate(full, &pw)
+        .ok()
+        .map(crate::identity::SessionIdentity::full)
 }
 
 /// One iteration of the buffer-polling drain: emit every buffered line with
@@ -501,6 +570,36 @@ fn bootstrap_line_visible_in_session_log(level: LogLevel) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // tuxlink-6wz3 guardrail: the launch auto-auth decision. Establishes the
+    // active identity ONLY when the stored credential matches the activation
+    // secret; otherwise None (operator unlocks manually). This is the headless
+    // seam for the transmit-un-brick — it would have caught the "no active
+    // identity on a fresh install" brick that shipped.
+    #[test]
+    fn resolve_auto_identity_matches_stored_credential_else_none() {
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+        let call = crate::identity::Callsign::parse("W1ABC").unwrap();
+        svc.set_activation_secret(&call, "secret-pw").unwrap();
+
+        // Matching stored credential → active identity established.
+        let session = resolve_auto_identity(&svc, &call, |_| Some("secret-pw".to_string()));
+        assert!(session.is_some(), "matching credential must auto-authenticate");
+        assert_eq!(session.unwrap().mycall().as_str(), "W1ABC");
+
+        // Wrong credential → None (no false unlock).
+        assert!(
+            resolve_auto_identity(&svc, &call, |_| Some("wrong".to_string())).is_none(),
+            "a mismatched credential must NOT auto-authenticate"
+        );
+
+        // No stored credential → None.
+        assert!(
+            resolve_auto_identity(&svc, &call, |_| None).is_none(),
+            "absent credential must NOT auto-authenticate"
+        );
+    }
+
     use crate::config::{
         CmsTransport, Config, ConfigReadError, ConfigValidationError, ConnectConfig, GpsState,
         IdentityConfig, PacketConfig, PositionPrecision, PositionSource, PrivacyConfig,
