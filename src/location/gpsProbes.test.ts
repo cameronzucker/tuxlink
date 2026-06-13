@@ -77,10 +77,29 @@ describe('classifyGpsSources', () => {
     expect(triage.find((t) => t.kind === 'modemmanager')!.command).toContain('systemctl mask ModemManager');
   });
 
-  it('does not raise serial triage cards when there are no serial devices', () => {
-    const { sources, triage } = classifyGpsSources(detection({ modemManager: { active: true } }));
-    expect(sources).toHaveLength(0);
-    expect(triage).toHaveLength(0);
+  // tuxlink-yy1m: diagnostics are device-INDEPENDENT — the device often won't
+  // enumerate until dialout/ModemManager are fixed, so surface them with no
+  // device present (the regression that made the triage invisible).
+  it('raises the dialout triage even with NO serial device present', () => {
+    const { triage } = classifyGpsSources(detection({ dialout: { member: false, groupExists: true } }));
+    expect(triage.some((t) => t.kind === 'dialout')).toBe(true);
+  });
+
+  it('raises the ModemManager triage even with NO serial device present', () => {
+    const { triage } = classifyGpsSources(detection({ modemManager: { active: true } }));
+    expect(triage.some((t) => t.kind === 'modemmanager')).toBe(true);
+  });
+
+  it('reports noDevice when no serial device and gpsd is unreachable', () => {
+    expect(classifyGpsSources(detection()).noDevice).toBe(true);
+  });
+
+  it('does not report noDevice when gpsd is reachable', () => {
+    expect(classifyGpsSources(detection({ gpsd: { reachable: true } })).noDevice).toBe(false);
+  });
+
+  it('does not report noDevice when a serial device is present', () => {
+    expect(classifyGpsSources(detection({ serial: { devices: [dev()] } })).noDevice).toBe(false);
   });
 });
 
