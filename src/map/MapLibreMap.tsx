@@ -43,11 +43,18 @@ const MAP_MIN_ZOOM = 0;
 const MAP_MAX_ZOOM = 14;
 /** Default world view on the z0–14 fractional scale (was raster-native z1; finding 2). */
 const DEFAULT_ZOOM = 2;
-/** Mercator pan rectangle in MapLibre [lng, lat] order ([west,south],[east,north]). */
-const MAP_MAX_BOUNDS: [[number, number], [number, number]] = [
-  [-180, -85.0511],
-  [180, 85.0511],
-];
+// NOTE (tuxlink-rwo6): `maxBounds` is deliberately NOT set. maplibre-gl 5.24.0
+// crashes during construction when any camera-bounds constraint is applied
+// (constructor `maxBounds` OR a later `setMaxBounds`) on this build's
+// WebKitGTK/ANGLE WebGL context: `_calcMatrices` dereferences a null
+// ("null is not an object (evaluating 'n[0]')") via constrainInternal→setZoom.
+// That throw is what ErrorBoundary surfaced as "map cannot be displayed on this
+// system" (the map was BRICKED on the Pi). Reproduced in real WebKit2GTK 4.1 with
+// the real style; WebGL1+WebGL2 both work, so it is NOT a WebGL/CSP/HW-accel
+// issue — it is a maplibre 5.24.0 regression in the bounds-constraint path. The
+// map constructs + loads cleanly without bounds; the only loss is pan-into-void
+// past the world edges (cosmetic). Restoring a constraint (maplibre upgrade/pin
+// or a manual `moveend` center-clamp) is tracked in tuxlink-rwo6's follow-up.
 
 export interface MapLibreMapProps {
   /** Overlays that consume the map via MapContext + owned hooks. */
@@ -127,7 +134,8 @@ export function MapLibreMap({
         zoom: initialZoom ?? DEFAULT_ZOOM,
         minZoom: MAP_MIN_ZOOM,
         maxZoom: MAP_MAX_ZOOM,
-        maxBounds: MAP_MAX_BOUNDS,
+        // maxBounds intentionally omitted — see the MAP_MAX_BOUNDS note above
+        // (maplibre 5.24.0 bounds-constraint crash, tuxlink-rwo6).
         renderWorldCopies: false,
         // We add the AttributionControl explicitly so "© OpenStreetMap
         // contributors" (ODbL) renders from the source attribution.
