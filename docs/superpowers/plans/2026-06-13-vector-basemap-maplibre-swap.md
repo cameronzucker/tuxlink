@@ -44,7 +44,17 @@ Three independent adversarial agents (Rust-serving / React-lifecycle / style-off
 - **A18 (TileStatusPill):** its `StatusKind` vocabulary (lan-live/cached/partial/…) is raster-LAN-only; re-author for the pack world (bundled / region-detail). The `_exhaustive: never` guard will force the compile — budget the rewrite + the design §8.5 table re-author.
 
 **DEFERRED OPERATOR DECISIONS (surface at their phase, do not self-decide):**
-- **D1 (phase 4) — catalog-pack hosting/provenance.** Protomaps publishes only a ~120 GB whole-planet file, not per-region z0–14 packs. tuxlink must build each pack (`pmtiles extract` a bbox) and **host them** for runtime download. Operator decides: where/what budget to host; rebuild cadence; one pinned planet-build hash for bundle+packs. Until decided, "curated catalog" is aspirational.
+- **D1 (phase 4) — region-pack distribution. RESOLVED (operator, 2026-06-13).** Model flipped from
+  "tuxlink hosts per-region packs" to **extract-on-demand from the public Protomaps planet via
+  `go-pmtiles` Range** (one-time online per area → permanent/offline); tuxlink hosts only a ~KB
+  manifest naming the current planet build URL. The three sub-decisions (fixed-box-vs-admin-region;
+  default-box degrees; manifest hosting) and the schema-consistency-across-rotating-builds resolution
+  are the spec input for Phase 4 — see
+  [`docs/design/2026-06-13-ndi4-d1-region-pack-distribution.md`](../../design/2026-06-13-ndi4-d1-region-pack-distribution.md).
+  Net: fixed bbox centered on operator grid; Wide (~1 GB multi-state) default; manifest committed
+  in-repo + bundled offline default + Rust-refreshed (CSP unchanged); schema pinned via `validate.rs`,
+  not the exact build (rotations need only a manifest edit; a planetiler schema bump is the only
+  app-release event).
 - **D2 (phase 3) — baked-dark aesthetic re-approval.** The operator approved the meshmap look from the **CSS-filter-over-composited-canvas** mock. The baked per-slot path is mathematically different at translucent overlaps + label halos (`invert(a over b) ≠ invert(a) over invert(b)`), and the spike had NO labels — so the baked *aesthetic* is unproven. Phase 3 produces a real baked-dark render (with labels) for the operator to re-approve before phase 4 builds packs on top.
 
 ## Step 0 — Scope challenge
