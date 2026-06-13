@@ -19,5 +19,5 @@
 
 pub mod codec;
 pub mod framing;
-// pub mod keying;    // Task 5 — c1 audio opcodes over GAIA (default-off)
+pub mod keying;
 pub mod transport;

@@ -19,7 +19,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::super::link::ByteLink;
-use super::super::rfcomm::{resolve_spp_channel, RfcommSocket};
+use super::super::rfcomm::{resolve_audio_channels, resolve_spp_channel, RfcommSocket};
+use super::audio::codec::SbcCodec;
+use super::audio::transport::{AudioTransport, KeyingMode};
 use super::gaia::{gaia_wrap, GaiaDeframer};
 use super::message::{
     decode_frame, encode_get_dev_info, encode_get_ht_status, encode_ht_send_data,
@@ -429,6 +431,14 @@ pub struct UvproSession {
     /// hands it to the native APRS driver (`AprsState::start_native`) to feed the chat
     /// engine.
     aprs_rx: Mutex<Option<Receiver<Vec<u8>>>>,
+    /// MAC of the connected radio, cached at connect so the SSTV audio channel can be
+    /// opened to the SAME device (tuxlink-bcsy). `None` when disconnected.
+    mac: Mutex<Option<String>>,
+    /// The SSTV audio transport over a SECOND RFCOMM channel (tuxlink-bcsy), when a
+    /// send/receive is active. Independent of the control `inner` driver — a separate
+    /// socket multiplexed over the same Bluetooth ACL link, part of the same locked
+    /// native session.
+    audio: Mutex<Option<AudioTransport>>,
 }
 
 impl Default for UvproSession {
@@ -445,6 +455,8 @@ impl UvproSession {
             lock: Arc::new(UvproLinkLock::default()),
             snapshot: Mutex::new(UvproStatus::default()),
             aprs_rx: Mutex::new(None),
+            mac: Mutex::new(None),
+            audio: Mutex::new(None),
         }
     }
 
@@ -477,15 +489,19 @@ impl UvproSession {
         *self.inner.lock().unwrap() = Some(driver);
         *self.guard.lock().unwrap() = Some(guard);
         *self.aprs_rx.lock().unwrap() = Some(rx);
+        *self.mac.lock().unwrap() = Some(mac.to_string());
         self.set_snapshot(snap.clone());
         Ok(snap)
     }
 
-    /// Disconnect: drop the driver (closing the socket) and release the link.
+    /// Disconnect: abort any in-flight audio (RADIO-1: halt TX first), drop the
+    /// driver (closing the control socket), and release the link.
     pub fn disconnect(&self) {
+        self.abort_audio(); // halt + drop the audio socket before the control link
         *self.inner.lock().unwrap() = None;
         *self.guard.lock().unwrap() = None; // releases the lock via LinkGuard::drop
         *self.aprs_rx.lock().unwrap() = None;
+        *self.mac.lock().unwrap() = None;
         self.set_snapshot(UvproStatus::default());
     }
 
@@ -505,6 +521,95 @@ impl UvproSession {
 
     pub fn is_connected(&self) -> bool {
         self.inner.lock().unwrap().is_some()
+    }
+
+    // -----------------------------------------------------------------------
+    // SSTV audio channel (tuxlink-bcsy) — a SECOND RFCOMM socket to the same
+    // radio, multiplexed over the same ACL link as the GAIA control channel.
+    // -----------------------------------------------------------------------
+
+    /// Open the SSTV audio channel to the connected radio: resolve the audio-gateway
+    /// RFCOMM channel from the live SDP record, connect a SECOND socket, and build the
+    /// [`AudioTransport`] with the supplied SBC `codec` (injected because the codec is
+    /// a sibling sub-project, `tuxlink-vgvn`). Keying defaults to `Implicit` (benlink's
+    /// working POC keys TX by streaming on the audio channel, sending no `c1.TX_AUDIO`).
+    ///
+    /// Requires an active control connection — the audio channel belongs to the same
+    /// already-locked native session, so it does NOT re-acquire [`UvproLinkLock`] (a
+    /// 2nd RFCOMM channel to the same radio is multiplexed, not a competing host).
+    /// Tries the advertised audio-gateway channels in order; the first to connect wins.
+    pub fn open_audio(&self, codec: Arc<dyn SbcCodec>) -> Result<(), UvproError> {
+        let mac = self
+            .mac
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or(UvproError::NotConnected)?;
+        let channels = resolve_audio_channels(&mac);
+        if channels.is_empty() {
+            return Err(UvproError::Protocol(
+                "radio advertises no audio-gateway RFCOMM service".into(),
+            ));
+        }
+        let mut last_err: Option<String> = None;
+        for ch in channels {
+            match RfcommSocket::connect(&mac, ch, READ_POLL, WRITE_TIMEOUT) {
+                Ok(socket) => {
+                    let transport = AudioTransport::new(
+                        Box::new(socket),
+                        Arc::clone(&codec),
+                        KeyingMode::Implicit,
+                    );
+                    *self.audio.lock().unwrap() = Some(transport);
+                    return Ok(());
+                }
+                Err(e) => last_err = Some(e.to_string()),
+            }
+        }
+        Err(UvproError::Io(format!(
+            "failed to open any audio-gateway RFCOMM channel: {}",
+            last_err.unwrap_or_default()
+        )))
+    }
+
+    /// Send one PCM chunk over the open audio channel (encoded + framed by the
+    /// transport). `Err(NotConnected)` if no audio channel is open.
+    pub fn send_audio_pcm(&self, pcm: &[u8]) -> Result<(), UvproError> {
+        let mut g = self.audio.lock().unwrap();
+        let t = g.as_mut().ok_or(UvproError::NotConnected)?;
+        t.send_pcm(pcm).map_err(UvproError::Io)
+    }
+
+    /// Clean end of an audio transmission: send `AudioEnd`, drop the audio socket.
+    /// `Err(NotConnected)` if no audio channel is open.
+    pub fn finish_audio(&self) -> Result<(), UvproError> {
+        let mut g = self.audio.lock().unwrap();
+        let t = g.as_mut().ok_or(UvproError::NotConnected)?;
+        let r = t.finish().map_err(UvproError::Io);
+        *g = None; // transport is single-use; drop after finish
+        r
+    }
+
+    /// RADIO-1 working abort for the audio path: best-effort `AudioEnd` then DROP the
+    /// audio socket so no further audio can be transmitted. Safe to call with no audio
+    /// open (no-op). Also invoked by [`UvproSession::disconnect`].
+    pub fn abort_audio(&self) {
+        if let Some(mut t) = self.audio.lock().unwrap().take() {
+            t.abort();
+        }
+    }
+
+    /// True when an audio transport is open.
+    pub fn audio_active(&self) -> bool {
+        self.audio.lock().unwrap().is_some()
+    }
+
+    /// Test-only: inject a pre-built [`AudioTransport`] (over a fake `ByteLink`) so the
+    /// session-level audio lifecycle can be exercised without real Bluetooth — the
+    /// real socket path (`open_audio`) is operator-smoked, like `connect`.
+    #[cfg(test)]
+    fn inject_audio_for_test(&self, transport: AudioTransport) {
+        *self.audio.lock().unwrap() = Some(transport);
     }
 
     /// Run `op` against the connected driver, refreshing the cached snapshot.
@@ -676,6 +781,90 @@ mod tests {
 
     fn driver_with(peer: FakePeer) -> Driver {
         Driver::new(Box::new(peer))
+    }
+
+    // --- SSTV audio channel (tuxlink-bcsy) ---------------------------------
+    use super::super::audio::codec::NullSbcCodec;
+    use super::super::audio::framing::AudioMessage;
+
+    /// Minimal fake audio `ByteLink`: captures writes (TX), reads as EOF.
+    #[derive(Clone, Default)]
+    struct AudioSink {
+        buf: Arc<StdMutex<Vec<u8>>>,
+    }
+    impl AudioSink {
+        fn written(&self) -> Vec<u8> {
+            self.buf.lock().unwrap().clone()
+        }
+    }
+    impl Read for AudioSink {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            Ok(0)
+        }
+    }
+    impl Write for AudioSink {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            self.buf.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn audio_transport(sink: AudioSink) -> AudioTransport {
+        AudioTransport::new(Box::new(sink), Arc::new(NullSbcCodec), KeyingMode::Implicit)
+    }
+
+    #[test]
+    fn open_audio_errors_not_connected_without_a_control_session() {
+        let s = UvproSession::new();
+        // mac is None (never connected) → NotConnected before any socket work.
+        assert_eq!(
+            s.open_audio(Arc::new(NullSbcCodec)).unwrap_err().kind(),
+            "NotConnected"
+        );
+    }
+
+    #[test]
+    fn send_audio_pcm_errors_when_no_audio_channel_open() {
+        let s = UvproSession::new();
+        assert_eq!(s.send_audio_pcm(&[0x00]).unwrap_err().kind(), "NotConnected");
+        assert!(!s.audio_active());
+    }
+
+    #[test]
+    fn finish_audio_sends_end_and_clears_the_transport() {
+        let s = UvproSession::new();
+        let sink = AudioSink::default();
+        s.inject_audio_for_test(audio_transport(sink.clone()));
+        assert!(s.audio_active());
+        s.finish_audio().unwrap();
+        assert_eq!(sink.written(), AudioMessage::End.to_bytes());
+        assert!(!s.audio_active()); // single-use: dropped after finish
+    }
+
+    #[test]
+    fn abort_audio_halts_and_clears_the_transport() {
+        let s = UvproSession::new();
+        let sink = AudioSink::default();
+        s.inject_audio_for_test(audio_transport(sink.clone()));
+        s.abort_audio();
+        // RADIO-1: best-effort AudioEnd emitted, then the socket is dropped.
+        assert_eq!(sink.written(), AudioMessage::End.to_bytes());
+        assert!(!s.audio_active());
+        s.abort_audio(); // idempotent / safe with no audio open
+    }
+
+    #[test]
+    fn disconnect_tears_down_an_open_audio_channel() {
+        let s = UvproSession::new();
+        let sink = AudioSink::default();
+        s.inject_audio_for_test(audio_transport(sink.clone()));
+        assert!(s.audio_active());
+        s.disconnect();
+        assert!(!s.audio_active()); // disconnect aborts + drops audio (TX halted first)
+        assert_eq!(sink.written(), AudioMessage::End.to_bytes());
     }
 
     #[test]
