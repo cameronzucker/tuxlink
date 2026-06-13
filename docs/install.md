@@ -5,17 +5,27 @@ first run. For build-time toolchain setup, see [development.md](development.md).
 
 ## Install options
 
-### Option 1: prebuilt AppImage (forthcoming)
+### Option 1: prebuilt package (recommended)
 
-A prebuilt AppImage will arrive on the
-[Releases page](https://github.com/cameronzucker/tuxlink/releases) once the CI
-release pipeline lands (tracked separately from this guide). When available:
+Every release publishes `.deb`, `.rpm`, and `.AppImage` bundles for both `x86_64`
+and `arm64`, with `SHA256SUMS` for verification, on the
+[Releases page](https://github.com/cameronzucker/tuxlink/releases/latest).
 
-1. Download `tuxlink_<version>_amd64.AppImage` from the Releases page.
-2. Make it executable: `chmod +x tuxlink_*.AppImage`
-3. Run it: `./tuxlink_*.AppImage`
+```bash
+# Debian / Ubuntu (amd64 shown; arm64 bundles are also published)
+sudo dpkg -i tuxlink_*_amd64.deb
 
-No build toolchain required. **The AppImage cannot bundle the keyring daemon.** See [Runtime prerequisite](#runtime-prerequisite-secret-service-keyring) below.
+# Fedora / RHEL
+sudo rpm -i tuxlink-*.x86_64.rpm
+
+# Distribution-agnostic
+chmod +x tuxlink_*_amd64.AppImage && ./tuxlink_*_amd64.AppImage
+```
+
+No build toolchain required. **System dependency:** Tuxlink requires WebKitGTK 4.1;
+distributions that ship only WebKitGTK 4.0 (older Debian stable, older RHEL /
+CentOS) need a backport. The AppImage also cannot bundle the keyring daemon; see
+[Runtime prerequisite](#runtime-prerequisite-secret-service-keyring) below.
 
 ### Option 2: build from source
 
@@ -163,8 +173,9 @@ reinstalling if you already removed the package. In the desktop app, open
 run the same cleanup modes from the UI. From a terminal, use:
 
 ```bash
-tuxlink cleanup --dry-run
-tuxlink cleanup
+tuxlink cleanup --dry-run        # preview; removes nothing
+tuxlink cleanup --transient      # cache, logs, webview/map state; keep mailbox + settings
+tuxlink cleanup --all            # config, mailbox, contacts, stations, logs, known keyring entries
 ```
 
 Choices:
@@ -183,6 +194,19 @@ for callsigns found in Tuxlink listener/favorites files. Secret Service does not
 let Tuxlink enumerate every account under the `tuxlink` or legacy `tuxlink-pat`
 services, so inspect those services manually with a keyring manager if you used
 old builds with callsigns no longer present on disk.
+
+Then remove the package:
+
+```bash
+sudo apt remove tuxlink          # Debian / Ubuntu (.deb)
+sudo dnf remove tuxlink          # Fedora / RHEL (.rpm)
+# AppImage / manual: delete the .AppImage, then run scripts/uninstall-desktop-entry.sh
+```
+
+Verify it is gone: `dpkg -l | grep -i tuxlink` (Debian) or `rpm -q tuxlink`
+(Fedora) returns nothing. Package installs place the launcher and icons under
+`/usr/share` (removed by the package manager); the per-user launcher entries the
+cleanup tool handles apply only to AppImage / manual installs.
 
 ## Troubleshooting
 

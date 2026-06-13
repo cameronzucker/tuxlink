@@ -198,66 +198,13 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 
 ## Install
 
-Download the artifact for your distribution and architecture from the
+Download the `.deb`, `.rpm`, or `.AppImage` for your distribution and
+architecture (`x86_64` or `arm64`, with `SHA256SUMS`) from the
 **[latest release](https://github.com/cameronzucker/tuxlink/releases/latest)**.
-Every release publishes `.deb`, `.rpm`, and `.AppImage` bundles for both
-`x86_64` and `arm64`, alongside `SHA256SUMS` for verification.
 
-```bash
-# Debian / Ubuntu (amd64 shown; arm64 bundles are also published)
-sudo dpkg -i tuxlink_*_amd64.deb
-
-# Fedora / RHEL
-sudo rpm -i tuxlink-*.x86_64.rpm
-
-# Distribution-agnostic
-chmod +x tuxlink_*_amd64.AppImage && ./tuxlink_*_amd64.AppImage
-```
-
-**System dependency:** Tuxlink requires WebKitGTK 4.1 and a secret-service
-compatible keyring daemon. Distributions that ship only WebKitGTK 4.0 (older
-Debian stable, older RHEL / CentOS) need a backport.
-
-Full install and first-run instructions live in
-**[docs/install.md](docs/install.md)**. To build from source instead, see
-**[docs/development.md](docs/development.md)**; the build needs the Rust
-toolchain only (no Go).
-
-### Uninstall and data cleanup
-
-Uninstalling Tuxlink has two parts. Removing the package keeps operator data by
-default: messages, contacts, settings, station catalogs, logs, and OS-keyring
-credentials remain in the current user's profile so a reinstall resumes cleanly.
-A full uninstall removes both.
-
-**Part 1 — remove your data.** This is per-user and cannot be done by the package
-manager (it runs as root and cannot infer which user homes or keyrings to scrub).
-Open **Help → Uninstall Cleanup…** in the app, or run it from the terminal as the
-user whose data is being removed:
-
-```bash
-tuxlink cleanup --dry-run        # preview; removes nothing
-tuxlink cleanup --transient      # cache, logs, webview state; keep mailbox + settings
-tuxlink cleanup --all            # config, mailbox, contacts, stations, logs, known keyring entries
-```
-
-Run Part 1 before uninstalling, or reinstall and run it afterward if the package
-is already gone. Secret Service credentials cannot be enumerated service-wide;
-full cleanup removes the accounts it can discover, and the dialog lists the
-keyring services (`tuxlink`, legacy `tuxlink-pat`) to check manually.
-
-**Part 2 — remove the application.**
-
-```bash
-sudo apt remove tuxlink          # Debian / Ubuntu (.deb)
-sudo dnf remove tuxlink          # Fedora / RHEL (.rpm)
-# AppImage / manual: delete the .AppImage, then scripts/uninstall-desktop-entry.sh
-```
-
-Verify it is gone: `dpkg -l | grep -i tuxlink` (Debian) or `rpm -q tuxlink`
-(Fedora) returns nothing. Package installs put the launcher and icons under
-`/usr/share`, removed by the package manager; the per-user launcher entries the
-cleanup tool lists apply only to AppImage / manual installs.
+Install, first-run, uninstall, and build-from-source steps live in
+**[docs/install.md](docs/install.md)**. Tuxlink requires WebKitGTK 4.1 and a
+secret-service keyring daemon.
 
 ## Interface
 
