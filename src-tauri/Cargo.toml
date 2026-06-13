@@ -1,6 +1,6 @@
 [package]
 name = "tuxlink"
-version = "0.57.0"
+version = "0.57.1"
 description = "Linux-native full-capability Winlink client"
 authors = ["Cameron Zucker <cameronzucker@gmail.com>"]
 edition = "2021"
