@@ -3,12 +3,12 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { GribForm } from './GribForm';
 import type { GribRequest } from '../grib/types';
 
-// Mock GridMapPicker at the module boundary — assert the box→region WIRING,
-// not Leaflet (mirrors the former GRIB request panel's test). The mock exposes a button
-// that fires onBoxChange with two signed corners (the NE→SW drag from
-// gribRegion.test.ts case 1).
-vi.mock('../map/GridMapPicker', () => ({
-  GridMapPicker: ({
+// Mock GridPicker at the module boundary — assert the box→region WIRING,
+// not the map renderer (mirrors the former GRIB request panel's test). The mock
+// exposes a button that fires onBoxChange with two signed corners (the NE→SW drag
+// from gribRegion.test.ts case 1).
+vi.mock('../map/GridPicker', () => ({
+  GridPicker: ({
     onBoxChange,
   }: {
     onBoxChange?: (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => void;

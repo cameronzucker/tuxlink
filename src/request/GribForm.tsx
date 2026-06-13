@@ -23,7 +23,7 @@ import {
   type GribParameter,
   type GribRequest,
 } from '../grib/types';
-import { GridMapPicker } from '../map/GridMapPicker';
+import { GridPicker } from '../map/GridPicker';
 import { signedBboxToGribRegion } from '../map/gribRegion';
 import { Icon } from './icons';
 import './GribForm.css';
@@ -106,7 +106,7 @@ export function GribForm({ onAddSaildocs, onBack }: GribFormProps) {
         <section className="gsec">
           <h5>Region</h5>
           <div className="map" data-testid="grib-region-map">
-            <GridMapPicker
+            <GridPicker
               mode="box"
               onBoxChange={(a, b) => {
                 const r = signedBboxToGribRegion(a, b);
