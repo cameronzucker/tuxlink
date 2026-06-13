@@ -31,10 +31,13 @@ import './AprsChatPanel.css';
 /// airtime real (matches the backend codec's ≤67 text limit).
 const APRS_TEXT_MAX = 67;
 
-/// Format a local epoch-ms timestamp as a short HH:MM clock time, honoring the
-/// operator's locale. Exported for unit testing.
+/// Format a local epoch-ms timestamp as a short 24-hour HH:MM clock time.
+/// 24-hour (`hour12: false`) matches ham-radio convention and the rest of the
+/// tuxlink UI (the status-bar clock), and keeps the output locale-deterministic
+/// (no AM/PM suffix — otherwise CI's en-US locale renders "02:08 PM"). Exported
+/// for unit testing.
 export function formatTime(at: number): string {
-  return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 /// Map a delivery state to its operator-facing chip label + variant class.
