@@ -1,0 +1,149 @@
+/**
+ * Owned MapLibre hook layer (tuxlink-ndi4, plan L1/A15).
+ *
+ * tuxlink drives MapLibre through `maplibre-gl` directly (NOT react-map-gl), via
+ * this thin owned layer. "Thin" = a small API with LARGE lifecycle correctness:
+ * the failure modes the react-leaflet→MapLibre swap introduces all live here.
+ *
+ * Canonical lifecycle contract (every add/remove obeys it):
+ *   1. NEVER add before `isStyleLoaded()` — a source/layer added against an
+ *      unloaded style is silently dropped.
+ *   2. Re-add on `styledata`. It fires repeatedly and after every `setStyle`
+ *      (the light↔dark swap), which drops all sources/layers — so the add must
+ *      be IDEMPOTENT: guard `getLayer`/`getSource` before adding.
+ *   3. Tolerate StrictMode double-invoke (production `main.tsx` keeps
+ *      <StrictMode>): mount→cleanup→mount must converge to one source/layer.
+ *   4. Teardown order: `removeLayer` BEFORE `removeSource` (removing a source a
+ *      layer still references errors in MapLibre). This CANNOT come from hook
+ *      ordering: React 19 runs effect cleanups in DECLARATION order, the same
+ *      order as setup (verified empirically — `setup A, setup B, cleanup A,
+ *      cleanup B`). Setup needs source-before-layer (`addLayer` requires its
+ *      source), so a source-first declaration also cleans up source-first —
+ *      the wrong order. So a lifecycle-COUPLED source + its layers MUST be one
+ *      hook ([`useMapOverlay`]) whose single cleanup removes layers then source.
+ *
+ * Use [`useMapSource`] / [`useMapLayer`] only for INDEPENDENT management where
+ * teardown order is moot: a layer drawn on the always-present basemap source, or
+ * a source with no tuxlink-managed layers. For a self-contained overlay (the
+ * Maidenhead grid, the drag-select fill) use [`useMapOverlay`].
+ *
+ * Live paint/spec updates (same id, changed color) are NOT handled here — that is
+ * a `setPaintProperty` path added when a consumer needs it; this layer owns
+ * presence + lifecycle, not per-property reactivity.
+ */
+import { useEffect, useRef } from 'react';
+
+/** The structural subset of `maplibregl.Map` these hooks touch. The real Map
+ * and the test double both satisfy it (kept narrow to avoid coupling to
+ * maplibre-gl's full type and to keep the double honest). */
+export interface MapHookHost {
+  isStyleLoaded(): boolean;
+  on(type: string, handler: (...args: unknown[]) => void): unknown;
+  off(type: string, handler: (...args: unknown[]) => void): unknown;
+  getLayer(id: string): unknown;
+  addLayer(spec: Record<string, unknown>, beforeId?: string): void;
+  removeLayer(id: string): void;
+  getSource(id: string): unknown;
+  addSource(id: string, source: Record<string, unknown>): void;
+  removeSource(id: string): void;
+}
+
+/**
+ * Keep a GeoJSON/vector source present on `map` under `id` for the component's
+ * lifetime, surviving style swaps. Call BEFORE any `useMapLayer` that references
+ * this source so teardown order stays layer-then-source.
+ */
+export function useMapSource(
+  map: MapHookHost | null,
+  id: string,
+  source: Record<string, unknown>,
+): void {
+  // Hold the latest spec without re-running the effect on every render; the
+  // effect re-runs only when the map handle or id changes.
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+
+  useEffect(() => {
+    if (!map) return;
+    const ensure = () => {
+      if (!map.isStyleLoaded()) return;
+      if (!map.getSource(id)) map.addSource(id, sourceRef.current);
+    };
+    ensure();
+    map.on('styledata', ensure);
+    return () => {
+      map.off('styledata', ensure);
+      if (map.getSource(id)) map.removeSource(id);
+    };
+  }, [map, id]);
+}
+
+/**
+ * Keep `layer` present on `map` for the component's lifetime, surviving style
+ * swaps. `beforeId` controls draw order (insert beneath an existing layer).
+ */
+export function useMapLayer(
+  map: MapHookHost | null,
+  layer: Record<string, unknown> & { id: string },
+  beforeId?: string,
+): void {
+  const layerRef = useRef(layer);
+  layerRef.current = layer;
+  const id = layer.id;
+
+  useEffect(() => {
+    if (!map) return;
+    const ensure = () => {
+      if (!map.isStyleLoaded()) return;
+      if (!map.getLayer(id)) map.addLayer(layerRef.current, beforeId);
+    };
+    ensure();
+    map.on('styledata', ensure);
+    return () => {
+      map.off('styledata', ensure);
+      if (map.getLayer(id)) map.removeLayer(id);
+    };
+  }, [map, id, beforeId]);
+}
+
+/**
+ * Keep a source AND its layers present together for the component's lifetime,
+ * surviving style swaps, with a teardown that removes layers BEFORE the source.
+ *
+ * This is the canonical primitive for a self-contained overlay (a GeoJSON source
+ * with the layers that draw it). Because React cleans up effects in declaration
+ * order, the layer-before-source teardown order can only be guaranteed inside ONE
+ * effect's cleanup — which is what this hook provides. `layers` is applied in
+ * array order (index 0 drawn first / lowest); pass them bottom-to-top.
+ */
+export function useMapOverlay(
+  map: MapHookHost | null,
+  id: string,
+  source: Record<string, unknown>,
+  layers: Array<Record<string, unknown> & { id: string }>,
+): void {
+  const ref = useRef({ source, layers });
+  ref.current = { source, layers };
+
+  useEffect(() => {
+    if (!map) return;
+    const ensure = () => {
+      if (!map.isStyleLoaded()) return;
+      const current = ref.current;
+      if (!map.getSource(id)) map.addSource(id, current.source);
+      for (const layer of current.layers) {
+        if (!map.getLayer(layer.id)) map.addLayer(layer);
+      }
+    };
+    ensure();
+    map.on('styledata', ensure);
+    return () => {
+      map.off('styledata', ensure);
+      // Layers BEFORE source: MapLibre errors removing a source still in use.
+      for (const layer of ref.current.layers) {
+        if (map.getLayer(layer.id)) map.removeLayer(layer.id);
+      }
+      if (map.getSource(id)) map.removeSource(id);
+    };
+  }, [map, id]);
+}
