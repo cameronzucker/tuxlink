@@ -30,6 +30,24 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.59.0](https://github.com/cameronzucker/tuxlink/compare/v0.58.0...v0.59.0) (2026-06-13)
+
+
+### Features
+
+* **aprs:** UV-Pro native control strip + native transport declaration (ve3j) ([d248a22](https://github.com/cameronzucker/tuxlink/commit/d248a22c4a0271f33776f6338430965a2dc644b0))
+* **skill:** wire-walk — hard-gate reachability self-audit before any "done" claim ([3fceab7](https://github.com/cameronzucker/tuxlink/commit/3fceab76291b5784b670d6b43dd4aab74fcc44de))
+
+
+### Bug Fixes
+
+* **aprs:** a UvproNative radio opens as a KISS pipe too (packet/Winlink) ([ac842ca](https://github.com/cameronzucker/tuxlink/commit/ac842ca557a387c2467c8472107d4a756f26e8b3))
+
+
+### Refactors
+
+* **skill:** close five wire-walk loopholes surfaced by self-adrev ([31d288d](https://github.com/cameronzucker/tuxlink/commit/31d288daa77e0b797a94fda089c451a389483194))
+
 ## [0.58.0](https://github.com/cameronzucker/tuxlink/compare/v0.57.2...v0.58.0) (2026-06-13)
 
 
