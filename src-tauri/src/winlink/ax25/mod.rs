@@ -13,6 +13,7 @@ pub mod link;
 pub mod managed_direwolf;
 pub mod params;
 pub mod rfcomm;
+pub mod uvpro;
 
 // P3 public surface (consumed by config.rs, winlink_backend.rs, ui_commands.rs)
 pub use frame::Address;
