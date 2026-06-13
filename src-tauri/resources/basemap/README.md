@@ -46,9 +46,14 @@ It is intentionally **omitted** until the build script has produced the assets:
 present, the app's `.setup()` registers `tile://pmtiles/world` at startup; absent,
 that registration is a non-fatal skip (the source renders empty, no crash).
 
-## Deferred operator decisions (do not self-decide)
+## Region packs (D1 — RESOLVED, operator 2026-06-13)
 
-- **D1 (phase 4):** hosting/provenance for downloadable region packs — Protomaps
-  publishes only the whole-planet file, so tuxlink must `pmtiles extract` each
-  region pack and host it. Where/what budget/rebuild cadence is an operator call.
-- **D2 (phase 3):** baked-dark aesthetic re-approval against the meshmap mock.
+Downloadable region detail is **extracted on demand from the public Protomaps planet**
+via the `go-pmtiles` sidecar over HTTP Range — tuxlink does not host packs. The current
+planet build URL lives in `region-manifest.json` (bundled here as the offline default,
+refreshed online via a Rust command). Full spec, including the fixed-box coverage model,
+preset degree boxes, and schema-consistency-across-rotating-builds reasoning:
+[`docs/design/2026-06-13-ndi4-d1-region-pack-distribution.md`](../../../docs/design/2026-06-13-ndi4-d1-region-pack-distribution.md).
+
+- **D2 (phase 3):** baked-dark aesthetic re-approval against the meshmap mock — done
+  (operator: "looks just like meshmap now").

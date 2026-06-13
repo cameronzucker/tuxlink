@@ -20,11 +20,13 @@
  * runs, in which case `tile://pmtiles/world` 404s and the map renders empty — by
  * design (the render is verified at the smoke, not as a merge gate).
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import maplibregl from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
+import { invoke } from '@tauri-apps/api/core';
 import { clampLatLon, type LatLon } from './projection';
-import { buildBasemapStyle, type BasemapFlavor } from './basemapStyle';
+import { buildBasemapStyle, type BasemapFlavor, type PackSource } from './basemapStyle';
+import { BASEMAP_PACKS_CHANGED_EVENT, type PacksList } from './offlineMaps';
 import { useBasemapFlavor } from './useBasemapFlavor';
 import { MapProvider } from './MapContext';
 
@@ -94,6 +96,26 @@ export function MapLibreMap({
   // Tracks the flavor currently applied to the map (seeded at construction).
   const flavorRef = useRef(effectiveFlavor);
 
+  // Installed region packs composited over the world overview (R7). Fetched after
+  // mount (the construct-time style uses the overview only) and re-fetched when the
+  // pack manager signals a change; a change drives setStyle in the rebuild effect.
+  const [packs, setPacks] = useState<PackSource[]>([]);
+  const fetchPacks = useCallback(async () => {
+    try {
+      const list = await invoke<PacksList>('basemap_list_packs');
+      setPacks(list.packs.map((p) => ({ id: p.id })));
+    } catch {
+      // No backend (e.g. unit test / dev without the command) → overview only.
+      setPacks([]);
+    }
+  }, []);
+  useEffect(() => {
+    void fetchPacks();
+    const onChange = () => void fetchPacks();
+    window.addEventListener(BASEMAP_PACKS_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(BASEMAP_PACKS_CHANGED_EVENT, onChange);
+  }, [fetchPacks]);
+
   // Construct the map exactly once.
   useEffect(() => {
     if (!containerRef.current) return;
@@ -155,14 +177,21 @@ export function MapLibreMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, initialCenter?.lat, initialCenter?.lon]);
 
-  // Light↔dark swap (L2): a flavor change after construction reloads the style.
-  // The constructor already applied the initial flavor (flavorRef seed), so the
-  // first run is a no-op; overlays re-add on the `styledata` setStyle fires.
+  // Style rebuild on flavor change (L2 light↔dark) OR installed-pack change (R7).
+  // The constructor already applied {flavor, no packs}; this effect seeds from that
+  // and calls setStyle only when the effective {flavor, pack-ids} actually changes,
+  // so a redundant render never reloads the style. Overlays re-add on the
+  // `styledata` that setStyle fires (the owned hooks re-subscribe).
+  const styleKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!map || flavorRef.current === effectiveFlavor) return;
+    if (!map) return;
+    const key = `${effectiveFlavor}|${packs.map((p) => p.id).slice().sort().join(',')}`;
+    if (styleKeyRef.current === null) styleKeyRef.current = `${effectiveFlavor}|`; // construct-time
+    if (styleKeyRef.current === key) return;
+    styleKeyRef.current = key;
     flavorRef.current = effectiveFlavor;
-    map.setStyle(buildBasemapStyle(effectiveFlavor));
-  }, [map, effectiveFlavor]);
+    map.setStyle(buildBasemapStyle(effectiveFlavor, packs));
+  }, [map, effectiveFlavor, packs]);
 
   // tuxlink-52h6: a construction failure degrades to a contained panel rather
   // than propagating (which, with no error boundary above, blanked the whole

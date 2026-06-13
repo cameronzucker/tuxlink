@@ -40,9 +40,29 @@ const GLYPHS_URL = '/basemap/glyphs/{fontstack}/{range}.pbf';
  * style (L2 — NOT a runtime CSS filter), derived from the light flavor. */
 export type BasemapFlavor = 'light' | 'dark';
 
+/** Zoom at and above which a downloaded region pack's detailed layers take over
+ * (R7). The bundled overview covers z0–6; packs are z0–14. */
+export const REGION_MINZOOM = 6;
+
+/** An installed region pack to composite over the world overview (R7).
+ * `id` is the registered archive id served at `tile://pmtiles/<id>`. */
+export interface PackSource {
+  id: string;
+}
+
+/** Style source id for a pack's vector tiles. */
+function packSourceId(id: string): string {
+  return `pack-${id}`;
+}
+
+/** PMTiles protocol URL for a downloaded pack served via the Rust 206 seam. */
+function packUrl(id: string): string {
+  return `pmtiles://tile://pmtiles/${id}`;
+}
+
 /**
  * Build the MapLibre v8 style for the given flavor over the bundled PMTiles
- * world overview.
+ * world overview, compositing any installed region packs (R7).
  *
  * Both modes are generated from tuxlink's high-contrast `tuxlinkFlavor` (the
  * outdoor light palette). `dark` then bakes every `*-color` (invert →
@@ -50,20 +70,56 @@ export type BasemapFlavor = 'light' | 'dark';
  * meshmap's warm-roads-on-dark look because the source flavor is bold. The
  * sprite swaps to Protomaps' authored dark sheet (icons are raster, not
  * color-derivable; A7).
+ *
+ * R7 compositing (never blank; full detail where downloaded): the world overview
+ * source is left UNCLAMPED — MapLibre overzooms it past z6, so it is present
+ * everywhere as a coarse base (never a blank viewport). Each installed pack adds
+ * its own vector source whose layers are clamped to `minzoom >= REGION_MINZOOM`
+ * and drawn ON TOP of the overview, so inside a downloaded pack's coverage the
+ * detailed z6–14 tiles win, while outside it the overzoomed overview still shows.
+ * (This favors the required behavior over A11's literal "disjoint bands", which
+ * would blank the viewport above z6 outside any pack.)
  */
-export function buildBasemapStyle(flavor: BasemapFlavor): StyleSpecification {
-  const lightLayers = layers(BASEMAP_SOURCE_ID, tuxlinkFlavor(), { lang: 'en' });
+export function buildBasemapStyle(
+  flavor: BasemapFlavor,
+  packs: PackSource[] = [],
+): StyleSpecification {
+  const bake = (ls: ReturnType<typeof layers>) =>
+    flavor === 'dark' ? bakeDarkColors(ls) : ls;
+
+  const sources: StyleSpecification['sources'] = {
+    [BASEMAP_SOURCE_ID]: {
+      type: 'vector',
+      url: PMTILES_SOURCE_URL,
+      attribution: OSM_ATTRIBUTION,
+    },
+  };
+
+  // World overview layers (unclamped — overzoom past z6 = never blank).
+  const styleLayers = bake(layers(BASEMAP_SOURCE_ID, tuxlinkFlavor(), { lang: 'en' }));
+
+  // Composite each installed pack as a second source, layers clamped to z6+ and
+  // appended (drawn on top of the overview within the pack's coverage).
+  for (const pack of packs) {
+    const sid = packSourceId(pack.id);
+    sources[sid] = {
+      type: 'vector',
+      url: packUrl(pack.id),
+      attribution: OSM_ATTRIBUTION,
+    };
+    const packLayers = bake(layers(sid, tuxlinkFlavor(), { lang: 'en' })).map((layer) => ({
+      ...layer,
+      id: `${sid}-${layer.id}`,
+      minzoom: Math.max(layer.minzoom ?? 0, REGION_MINZOOM),
+    }));
+    styleLayers.push(...packLayers);
+  }
+
   return {
     version: 8,
     glyphs: GLYPHS_URL,
     sprite: `/basemap/sprites/${flavor}`,
-    sources: {
-      [BASEMAP_SOURCE_ID]: {
-        type: 'vector',
-        url: PMTILES_SOURCE_URL,
-        attribution: OSM_ATTRIBUTION,
-      },
-    },
-    layers: flavor === 'dark' ? bakeDarkColors(lightLayers) : lightLayers,
+    sources,
+    layers: styleLayers,
   };
 }

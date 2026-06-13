@@ -229,6 +229,15 @@ on WebKitGTK (not the raster mock — see R4). The earlier mock's
   large pack does not exhaust handles.
 
 ### Coverage, download, and pack management
+
+> **D1 RESOLVED (operator, 2026-06-13).** The distribution model below ("catalog of tuxlink-hosted
+> packs") was superseded: region detail is now **extracted on demand from the public Protomaps planet**
+> via the `go-pmtiles` sidecar over HTTP Range, with tuxlink hosting only a ~KB manifest. The fixed-box
+> coverage model, preset degree boxes, manifest hosting, and schema-consistency resolution are the
+> Phase-4 spec — see [`2026-06-13-ndi4-d1-region-pack-distribution.md`](2026-06-13-ndi4-d1-region-pack-distribution.md).
+> The compositing (R7), validation (R5), and "never blank; full detail where downloaded" behavior below
+> still hold.
+
 - **Bundled:** world z0–6 PMTiles in app resources (read-only). Guarantees a non-blank
   world map on first launch, offline, no config. MapLibre overzooms it past z6 (low
   detail but present everywhere).

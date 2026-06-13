@@ -460,6 +460,23 @@ pub fn run() {
                     }
                     app.manage(tile_gatekeeper);
 
+                    // tuxlink-ndi4 (phase 4): region-pack subsystem. Resolve the
+                    // packs dir under app-data, sweep interrupted/orphaned pack
+                    // files, and re-register every installed pack into the already-
+                    // managed PmtilesRegistry so `tile://pmtiles/<id>` resolves
+                    // after a restart. `init_packs` is best-effort (sweep/register
+                    // failures log, never block startup). The returned BasemapState
+                    // (cached manifest + packs dir) backs the basemap_* commands.
+                    {
+                        let registry =
+                            app.state::<std::sync::Arc<crate::basemap::PmtilesRegistry>>();
+                        let basemap_state = crate::basemap::commands::init_packs(
+                            data_dir.join("basemap-packs"),
+                            &registry,
+                        );
+                        app.manage(std::sync::Arc::new(basemap_state));
+                    }
+
                     // tuxlink-dx57 U2: persistent station-list cache. Seeds from
                     // disk on launch so a cold offline start shows last-known-good
                     // results. TTL and min-refetch are identical to the former
@@ -748,6 +765,12 @@ pub fn run() {
             crate::wizard::wizard_persist_cms,
             crate::wizard::wizard_persist_offline,
             crate::wizard::verify_cms_connection,   // Task 5.4 (tuxlink-9phd): replaces wizard_run_test_send
+            // tuxlink-ndi4 (phase 4): offline region-pack manager (Tools→Offline maps).
+            crate::basemap::commands::basemap_get_manifest,
+            crate::basemap::commands::basemap_refresh_manifest,
+            crate::basemap::commands::basemap_list_packs,
+            crate::basemap::commands::basemap_download_pack,
+            crate::basemap::commands::basemap_delete_pack,
             // Main-UI cluster commands. Task 12 (tuxlink-zsm) created
             // `mailbox_list`; Tasks 13/14/16 appended their command fns to
             // `ui_commands.rs` but deferred registration to this single
