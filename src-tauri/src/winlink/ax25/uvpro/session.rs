@@ -14,6 +14,7 @@
 //! transmitter, and no transmit command exists. Disconnect drops the socket.
 
 use std::io::{Read, Write};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -21,13 +22,14 @@ use super::super::link::ByteLink;
 use super::super::rfcomm::{resolve_spp_channel, RfcommSocket};
 use super::gaia::{gaia_wrap, GaiaDeframer};
 use super::message::{
-    decode_frame, encode_get_dev_info, encode_get_ht_status, encode_read_battery_pct,
-    encode_read_rf_ch, encode_read_settings, encode_register_notification, encode_write_rf_ch,
-    encode_write_settings, Event, EventType, Frame,
+    decode_frame, encode_get_dev_info, encode_get_ht_status, encode_ht_send_data,
+    encode_read_battery_pct, encode_read_rf_ch, encode_read_settings, encode_register_notification,
+    encode_write_rf_ch, encode_write_settings, Event, EventType, Frame,
 };
 use super::model::{ConnState, UvproChannel, UvproStatus};
 use super::rf_ch::{Bandwidth, Modulation, RfCh};
 use super::settings::{self, Vfo};
+use super::tncdata::{fragment_ax25, Reassembler};
 use super::UvproError;
 
 /// Per-command request/reply timeout. The radio answers control commands
@@ -89,6 +91,11 @@ pub struct Driver {
     status: UvproStatus,
     channels: Vec<RfCh>,
     settings_raw: Option<Vec<u8>>,
+    /// Reassembles inbound `DATA_RXD` fragments into whole AX.25 frames.
+    reassembler: Reassembler,
+    /// Completed inbound APRS frames are forwarded here for the APRS engine
+    /// (installed at connect; `None` for a control-only / test driver).
+    aprs_tx: Option<Sender<Vec<u8>>>,
 }
 
 impl Driver {
@@ -99,7 +106,38 @@ impl Driver {
             status: UvproStatus { state: ConnState::Connecting, ..Default::default() },
             channels: Vec::new(),
             settings_raw: None,
+            reassembler: Reassembler::new(),
+            aprs_tx: None,
         }
+    }
+
+    /// Install the channel that completed inbound APRS frames are forwarded on.
+    pub fn set_aprs_sender(&mut self, tx: Sender<Vec<u8>>) {
+        self.aprs_tx = Some(tx);
+    }
+
+    /// Send a raw AX.25 APRS frame over the native link as `HT_SEND_DATA`
+    /// fragments — the unified-model data path sharing this control connection.
+    /// Each fragment is acknowledged by a `SendDataReply`; a non-zero status or
+    /// an unexpected reply aborts the send. Live caller: `UvproSession::send_aprs_frame`
+    /// (via the native driver's `AprsFrameTx` impl), driven by `AprsState::start_native`.
+    pub fn send_aprs_frame(&mut self, ax25: &[u8]) -> Result<(), UvproError> {
+        for frag in fragment_ax25(ax25) {
+            match self.send_and_wait(&encode_ht_send_data(&frag), COMMAND_TIMEOUT)? {
+                Frame::SendDataReply { reply_status: 0 } => {}
+                Frame::SendDataReply { reply_status } => {
+                    return Err(UvproError::RadioRejected(format!(
+                        "send data status {reply_status}"
+                    )))
+                }
+                other => {
+                    return Err(UvproError::Protocol(format!(
+                        "expected send-data reply, got {other:?}"
+                    )))
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn snapshot(&self) -> UvproStatus {
@@ -192,6 +230,16 @@ impl Driver {
                 self.status.apply_status(status);
                 self.apply_current_channel_to_status();
             }
+            // Inbound APRS data: reassemble fragments and forward each completed
+            // AX.25 frame to the APRS engine (tuxlink-7my9). A dropped sender (no
+            // engine listening) is non-fatal — the frame is simply discarded.
+            Event::DataReceived { fragment } => {
+                if let Some(frame) = self.reassembler.push(fragment) {
+                    if let Some(tx) = &self.aprs_tx {
+                        let _ = tx.send(frame);
+                    }
+                }
+            }
             Event::OtherIgnored { .. } => {}
         }
     }
@@ -262,6 +310,8 @@ impl Driver {
 
         // Subscribe to push notifications (fire-and-forget — no reply frame).
         self.send_no_reply(&encode_register_notification(EventType::HtStatusChanged))?;
+        // Subscribe to inbound APRS data so DATA_RXD events stream to the engine.
+        self.send_no_reply(&encode_register_notification(EventType::DataRxd))?;
 
         self.status.state = ConnState::Connected;
         Ok(())
@@ -375,6 +425,10 @@ pub struct UvproSession {
     guard: Mutex<Option<LinkGuard>>,
     lock: Arc<UvproLinkLock>,
     snapshot: Mutex<UvproStatus>,
+    /// Receiver for completed inbound APRS frames, set at connect. `take_aprs_receiver`
+    /// hands it to the native APRS driver (`AprsState::start_native`) to feed the chat
+    /// engine.
+    aprs_rx: Mutex<Option<Receiver<Vec<u8>>>>,
 }
 
 impl Default for UvproSession {
@@ -390,6 +444,7 @@ impl UvproSession {
             guard: Mutex::new(None),
             lock: Arc::new(UvproLinkLock::default()),
             snapshot: Mutex::new(UvproStatus::default()),
+            aprs_rx: Mutex::new(None),
         }
     }
 
@@ -413,10 +468,15 @@ impl UvproSession {
         let socket = RfcommSocket::connect(mac, channel, READ_POLL, WRITE_TIMEOUT)
             .map_err(|e| UvproError::Io(e.to_string()))?;
         let mut driver = Driver::new(Box::new(socket));
+        // Wire the inbound APRS channel before hydrate so any DATA_RXD that
+        // arrives during/after subscription is captured for the engine.
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        driver.set_aprs_sender(tx);
         driver.hydrate()?;
         let snap = driver.snapshot();
         *self.inner.lock().unwrap() = Some(driver);
         *self.guard.lock().unwrap() = Some(guard);
+        *self.aprs_rx.lock().unwrap() = Some(rx);
         self.set_snapshot(snap.clone());
         Ok(snap)
     }
@@ -425,7 +485,22 @@ impl UvproSession {
     pub fn disconnect(&self) {
         *self.inner.lock().unwrap() = None;
         *self.guard.lock().unwrap() = None; // releases the lock via LinkGuard::drop
+        *self.aprs_rx.lock().unwrap() = None;
         self.set_snapshot(UvproStatus::default());
+    }
+
+    /// Take the inbound-APRS-frame receiver (once, after connect). The APRS
+    /// native driver owns it for the connection's lifetime; a second caller
+    /// gets `None`. Live caller: `AprsState::start_native`.
+    pub fn take_aprs_receiver(&self) -> Option<Receiver<Vec<u8>>> {
+        self.aprs_rx.lock().unwrap().take()
+    }
+
+    /// Send a raw AX.25 APRS frame over the native link (fragmented as
+    /// `HT_SEND_DATA`). Shares the one connection with control commands. Live caller:
+    /// the native driver's `AprsFrameTx` impl, driven by `AprsState::start_native`.
+    pub fn send_aprs_frame(&self, ax25: &[u8]) -> Result<(), UvproError> {
+        self.with_driver(|d| d.send_aprs_frame(ax25))
     }
 
     pub fn is_connected(&self) -> bool {
@@ -587,6 +662,7 @@ mod tests {
                     0x05 => self.enqueue(&hex("00 02 80 05 00 00 04 49")),
                     0x0e => self.enqueue(&hex(WRITE_RF_CH_REPLY)),
                     0x0b => self.enqueue(&hex(WRITE_SETTINGS_REPLY)),
+                    0x1f => self.enqueue(&hex("00 02 80 1f 00")), // HT_SEND_DATA reply: SUCCESS
                     0x06 => {} // REGISTER_NOTIFICATION: fire-and-forget
                     _ => {}
                 }
@@ -600,6 +676,41 @@ mod tests {
 
     fn driver_with(peer: FakePeer) -> Driver {
         Driver::new(Box::new(peer))
+    }
+
+    #[test]
+    fn send_aprs_frame_one_fragment_emits_ht_send_data() {
+        let peer = FakePeer::new(false);
+        let mut driver = driver_with(peer.clone());
+        driver.send_aprs_frame(&[0x41, 0x42, 0x43]).unwrap();
+        // The single (final) fragment encodes to exactly this HT_SEND_DATA body.
+        let frag = super::super::tncdata::TncDataFragment {
+            is_final: true,
+            fragment_id: 0,
+            channel_id: None,
+            data: vec![0x41, 0x42, 0x43],
+        };
+        assert_eq!(peer.last_written_message(), encode_ht_send_data(&frag));
+    }
+
+    #[test]
+    fn send_aprs_frame_fragments_long_frame_and_acks_all() {
+        let mut driver = driver_with(FakePeer::new(false));
+        // 120 bytes -> 3 fragments (53,53,14); each acked SUCCESS -> Ok overall.
+        assert!(driver.send_aprs_frame(&[0xAA; 120]).is_ok());
+    }
+
+    #[test]
+    fn data_rxd_fragments_reassemble_to_the_aprs_channel() {
+        let peer = FakePeer::new(true); // silent: events are injected manually
+        let mut driver = driver_with(peer.clone());
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        driver.set_aprs_sender(tx);
+        // Two DATA_RXD events: frag0 [11 22] (not final, id 0), frag1 [33] (final, id 1).
+        peer.push_event("00 02 00 09 02 00 11 22");
+        peer.push_event("00 02 00 09 02 81 33");
+        driver.pump_events(Duration::from_millis(50)).unwrap();
+        assert_eq!(rx.try_recv().unwrap(), vec![0x11, 0x22, 0x33]);
     }
 
     #[test]

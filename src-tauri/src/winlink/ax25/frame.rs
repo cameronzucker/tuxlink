@@ -132,6 +132,7 @@ pub enum Control {
     Rnr { nr: u8, pf: bool },
     Rej { nr: u8, pf: bool },
     I { ns: u8, nr: u8, pf: bool },
+    Ui { pf: bool }, // AX.25 Unnumbered Information frame (APRS rides these)
 }
 
 impl Control {
@@ -146,6 +147,7 @@ impl Control {
             Control::Rnr { nr, pf: p } => ((nr & 0x07) << 5) | pf(p) | 0x05,
             Control::Rej { nr, pf: p } => ((nr & 0x07) << 5) | pf(p) | 0x09,
             Control::I { ns, nr, pf: p } => ((nr & 0x07) << 5) | pf(p) | ((ns & 0x07) << 1),
+            Control::Ui { pf: p } => 0x03 | pf(p),
         }
     }
     pub fn decode(b: u8) -> Result<Control, FrameError> {
@@ -170,12 +172,13 @@ impl Control {
             0x43 => Ok(Control::Disc { pf }),
             0x63 => Ok(Control::Ua { pf }),
             0x0F => Ok(Control::Dm { pf }),
+            0x03 => Ok(Control::Ui { pf }),
             _ => Err(FrameError::UnknownControl(b)),
         }
     }
-    /// True for I and UI frames (which carry a PID + info). P1 has no UI yet.
+    /// True for I and UI frames (which carry a PID + info).
     pub fn has_info(&self) -> bool {
-        matches!(self, Control::I { .. })
+        matches!(self, Control::I { .. } | Control::Ui { .. })
     }
 }
 
@@ -202,6 +205,43 @@ mod control_tests {
         ] {
             assert_eq!(Control::decode(c.encode()).unwrap(), c);
         }
+    }
+}
+
+#[cfg(test)]
+mod ui_frame_tests {
+    use super::*;
+
+    #[test]
+    fn control_ui_encodes_to_0x03() {
+        assert_eq!(Control::Ui { pf: false }.encode(), 0x03);
+        assert_eq!(Control::Ui { pf: true }.encode(), 0x13); // P/F bit 0x10
+    }
+
+    #[test]
+    fn control_ui_decodes_from_0x03() {
+        assert_eq!(Control::decode(0x03).unwrap(), Control::Ui { pf: false });
+        assert_eq!(Control::decode(0x13).unwrap(), Control::Ui { pf: true });
+    }
+
+    #[test]
+    fn control_ui_has_info() {
+        assert!(Control::Ui { pf: false }.has_info());
+    }
+
+    #[test]
+    fn ui_frame_round_trips_with_pid_and_info() {
+        let path = Path {
+            dest: Address { call: "APZTUX".into(), ssid: 0 },
+            src: Address { call: "N0CALL".into(), ssid: 9 },
+            digis: vec![],
+        };
+        let info = b":N0CALL   :hi{01".to_vec();
+        let f = Frame { path: path.clone(), control: Control::Ui { pf: false }, info: info.clone() };
+        let bytes = f.encode().unwrap();
+        let decoded = Frame::decode(&bytes).unwrap();
+        assert_eq!(decoded.control, Control::Ui { pf: false });
+        assert_eq!(decoded.info, info);
     }
 }
 

@@ -3563,6 +3563,11 @@ impl From<&config::PacketConfig> for PacketConfigDto {
             Some(KissLinkConfig::Bluetooth { mac }) => {
                 (Some("Bluetooth".into()), None, None, None, None, Some(mac.clone()))
             }
+            // UV-Pro native rides the same `bt_mac` scalar as Bluetooth (both
+            // address the radio by MAC); the `link_kind` discriminates which path.
+            Some(KissLinkConfig::UvproNative { mac }) => {
+                (Some("UvproNative".into()), None, None, None, None, Some(mac.clone()))
+            }
             // The managed link carries no tcp_/serial_/bt_ scalar — its audio device
             // + PTT ride the structured `managed_*` fields, set below the tuple.
             Some(KissLinkConfig::ManagedDireWolf { .. }) => {
@@ -3627,6 +3632,11 @@ impl PacketConfigDto {
                     detail: "Bluetooth link needs bt_mac".into(),
                 })?,
             }),
+            Some("UvproNative") => Some(KissLinkConfig::UvproNative {
+                mac: self.bt_mac.ok_or_else(|| UiError::Internal {
+                    detail: "UvproNative link needs bt_mac".into(),
+                })?,
+            }),
             Some("Managed") => Some(KissLinkConfig::ManagedDireWolf {
                 audio_device: self.managed_audio_device.ok_or_else(|| UiError::Internal {
                     detail: "Managed link needs managed_audio_device".into(),
@@ -3685,6 +3695,182 @@ pub async fn packet_config_set(
     if let Some(backend) = state.current() {
         backend.set_config(cfg);
     }
+    Ok(())
+}
+
+// ============================================================================
+// APRS tactical chat (tuxlink-2f2n, Phase 1a)
+// ============================================================================
+
+/// Flat, frontend-facing projection of `config::AprsConfig` (the `[aprs]`
+/// section). camelCase on the wire to match the TS model: `sourceSsid` is the
+/// APRS-side SSID appended to the operator's base call; `tocall` is the APRS
+/// destination address (e.g. `APZTUX`); `path` is the comma-separated digipeater
+/// path (validated via `parse_path` on set).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AprsConfigDto {
+    pub source_ssid: u8,
+    pub tocall: String,
+    pub path: String,
+}
+
+impl From<&config::AprsConfig> for AprsConfigDto {
+    fn from(c: &config::AprsConfig) -> Self {
+        Self {
+            source_ssid: c.source_ssid,
+            tocall: c.tocall.clone(),
+            path: c.path.clone(),
+        }
+    }
+}
+
+impl AprsConfigDto {
+    pub fn into_aprs_config(self) -> config::AprsConfig {
+        config::AprsConfig {
+            source_ssid: self.source_ssid,
+            tocall: self.tocall,
+            path: self.path,
+        }
+    }
+}
+
+/// Read the `[aprs]` config section as a flat DTO. Reads `config.rs` directly
+/// (no BackendState), like `packet_config_get`.
+#[tauri::command]
+pub async fn aprs_config_get() -> Result<AprsConfigDto, UiError> {
+    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(AprsConfigDto::from(&cfg.aprs))
+}
+
+/// Apply the `[aprs]` section from a DTO: validate the digipeater path, read the
+/// current config, swap in the new aprs section, and write atomically. Mirrors
+/// `packet_config_set`'s read → swap → write → backend-refresh path. The JS arg
+/// key MUST be `dto` (frontend invokes `invoke('aprs_config_set', { dto })`).
+#[tauri::command]
+pub async fn aprs_config_set(
+    state: State<'_, BackendState>,
+    dto: AprsConfigDto,
+) -> Result<(), UiError> {
+    // Validate the path BEFORE mutating config, so a bad path is rejected without
+    // a half-applied write. `parse_path` returns Err(String) on >2 hops / bad token.
+    crate::winlink::aprs::identity::parse_path(&dto.path)
+        .map_err(|detail| UiError::Internal { detail })?;
+    let mut cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.aprs = dto.into_aprs_config();
+    cfg.validate().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    // Refresh the LIVE backend so a later read of config (callsign/params) stays
+    // consistent — same refresh path packet_config_set uses (tuxlink-p5u).
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg);
+    }
+    Ok(())
+}
+
+/// The APRS transport the configured packet link implies. Both UV-Pro paths are
+/// addressed by MAC; they differ in HOW the radio is driven — `Kiss` opens a KISS
+/// byte-pipe (a UV-Pro in `kiss_en` mode, or any Mobilinkd-class TNC), `Native`
+/// rides the UV-Pro's native GAIA session (control + chat over one connection).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AprsTransportKind {
+    /// KISS-over-RFCOMM to `mac` — the engine opens the link itself.
+    Kiss(String),
+    /// Native Benshi GAIA — APRS shares the already-connected `UvproSession`.
+    Native,
+}
+
+/// Pure: map the configured packet link to the APRS transport. The operator's
+/// declared link kind decides — Tuxlink does not infer it from which radio is
+/// connected. A non-UV-Pro link (TCP/serial/managed, or none) is not an APRS
+/// transport in this phase and yields a configure-it error.
+pub fn aprs_transport_from_link(
+    link: Option<&crate::winlink::ax25::link::KissLinkConfig>,
+) -> Result<AprsTransportKind, UiError> {
+    use crate::winlink::ax25::link::KissLinkConfig;
+    match link {
+        Some(KissLinkConfig::Bluetooth { mac }) => Ok(AprsTransportKind::Kiss(mac.clone())),
+        Some(KissLinkConfig::UvproNative { .. }) => Ok(AprsTransportKind::Native),
+        _ => Err(UiError::Internal {
+            detail: "APRS requires a UV-Pro link — configure Bluetooth (KISS) or UV-Pro (native) in packet settings first".to_string(),
+        }),
+    }
+}
+
+/// Start the APRS engine listening + ready to send over the operator's configured
+/// UV-Pro transport. `Bluetooth { mac }` opens the KISS link directly; `UvproNative`
+/// rides the already-connected native session (the operator brings the radio up via
+/// the UV-Pro control connection first). Resolves the on-air base call from the
+/// ACTIVE SessionIdentity (the authenticated Part 97 principal), mirroring
+/// `packet_listen` — NOT from a static config field.
+#[tauri::command]
+pub async fn aprs_listen_start(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
+    uvpro: State<'_, std::sync::Arc<crate::winlink::ax25::uvpro::session::UvproSession>>,
+) -> Result<(), UiError> {
+    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    // The operator's declared link kind selects the transport (before any identity
+    // resolution so a misconfigured link fails fast with a clear message).
+    let transport = aprs_transport_from_link(cfg.packet.link.as_ref())?;
+    // Active base call — REAL inline mechanism, mirroring packet_listen
+    // (ui_commands.rs ~3940-3968): resolve the active SessionIdentity off the
+    // live backend, then uppercase its base callsign. `active_identity()` returns
+    // Result<SessionIdentity, BackendError>; `?` maps via From<BackendError> for
+    // UiError (fail-closed NoActiveIdentity -> NotConfigured before any hardware).
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
+    let session_id = backend.active_identity()?;
+    let base = session_id.mycall().as_str().to_uppercase();
+    let identity = crate::winlink::aprs::identity::AprsIdentity {
+        source: crate::winlink::ax25::frame::Address {
+            call: base,
+            ssid: cfg.aprs.source_ssid,
+        },
+        tocall: crate::winlink::ax25::frame::Address {
+            call: cfg.aprs.tocall.clone(),
+            ssid: 0,
+        },
+        path: crate::winlink::aprs::identity::parse_path(&cfg.aprs.path)
+            .map_err(|detail| UiError::Internal { detail })?,
+    };
+    match transport {
+        AprsTransportKind::Kiss(mac) => aprs.start(app, mac, identity),
+        AprsTransportKind::Native => aprs.start_native(app, uvpro.inner().clone(), identity),
+    }
+    .map_err(|detail| UiError::Internal { detail })
+}
+
+/// Stop the APRS engine and close the link.
+#[tauri::command]
+pub async fn aprs_listen_stop(
+    aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
+) -> Result<(), UiError> {
+    aprs.stop();
+    Ok(())
+}
+
+/// Queue an APRS text message to `call`. Returns the minted msgid so the frontend
+/// can render + reconcile the outgoing bubble against later ack/timeout events.
+#[tauri::command]
+pub async fn aprs_send(
+    aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
+    call: String,
+    text: String,
+) -> Result<String, UiError> {
+    aprs.send(call, text)
+        .map_err(|detail| UiError::Internal { detail })
+}
+
+/// Abort all in-flight APRS transmissions (RADIO-1 working-abort path).
+#[tauri::command]
+pub async fn aprs_abort(
+    aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
+) -> Result<(), UiError> {
+    aprs.abort();
     Ok(())
 }
 
@@ -7717,6 +7903,20 @@ mod tests {
     use crate::winlink_backend::MessageId;
 
     #[test]
+    fn aprs_config_dto_round_trips() {
+        let cfg = crate::config::AprsConfig {
+            source_ssid: 5,
+            tocall: "APZTUX".into(),
+            path: "WIDE2-1".into(),
+        };
+        let dto = AprsConfigDto::from(&cfg);
+        assert_eq!(dto.source_ssid, 5);
+        assert_eq!(dto.tocall, "APZTUX");
+        let back = dto.into_aprs_config();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
     fn user_folder_dto_carries_parent_slug_and_omits_when_top_level() {
         // tuxlink-ka3z A4/finding #7: a subfolder serializes parentSlug; a
         // top-level folder omits the key entirely (TS parentSlug?: string).
@@ -8386,6 +8586,7 @@ hw:CARD=Device,DEV=0
             review_inbound_before_download: false,
             map_tile_source: None,
             aredn_master_node_host: None,
+            aprs: crate::config::AprsConfig::default(),
         }
     }
 
@@ -8613,6 +8814,7 @@ hw:CARD=Device,DEV=0
             review_inbound_before_download: false,
             map_tile_source: None,
             aredn_master_node_host: None,
+            aprs: crate::config::AprsConfig::default(),
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -9467,6 +9669,51 @@ hw:CARD=Device,DEV=0
     }
 
     #[test]
+    fn packet_config_dto_round_trips_uvpro_native() {
+        // The native UV-Pro link rides the bt_mac scalar; link_kind discriminates it
+        // from KISS-Bluetooth, so the two must NOT collapse into each other.
+        use crate::winlink::ax25::KissLinkConfig;
+        let pc = config::PacketConfig {
+            ssid: 7,
+            link: Some(KissLinkConfig::UvproNative { mac: "38:D2:00:01:55:5C".into() }),
+            params: config::Ax25ParamsConfig::default(),
+            listen_default: false,
+        };
+        let dto = PacketConfigDto::from(&pc);
+        assert_eq!(dto.link_kind.as_deref(), Some("UvproNative"));
+        assert_eq!(dto.bt_mac.as_deref(), Some("38:D2:00:01:55:5C"));
+        let back = dto.into_packet_config().unwrap();
+        assert_eq!(back, pc, "UvproNative must round-trip and stay distinct from Bluetooth");
+    }
+
+    #[test]
+    fn aprs_transport_from_link_honors_the_declared_link_kind() {
+        use crate::winlink::ax25::KissLinkConfig;
+        // Bluetooth (KISS) -> Kiss(mac), carrying the MAC the engine opens the link on.
+        assert_eq!(
+            aprs_transport_from_link(Some(&KissLinkConfig::Bluetooth { mac: "AA:BB".into() })).unwrap(),
+            AprsTransportKind::Kiss("AA:BB".into()),
+        );
+        // The SAME MAC declared as UvproNative selects the native path, NOT KISS —
+        // the operator's declaration decides, not the radio model behind the MAC.
+        assert_eq!(
+            aprs_transport_from_link(Some(&KissLinkConfig::UvproNative { mac: "AA:BB".into() })).unwrap(),
+            AprsTransportKind::Native,
+        );
+        // Non-UV-Pro links (and no link) are not an APRS transport in this phase.
+        for link in [
+            None,
+            Some(KissLinkConfig::Tcp { host: "127.0.0.1".into(), port: 8001 }),
+            Some(KissLinkConfig::Serial { device: "/dev/ttyUSB0".into(), baud: 9600 }),
+        ] {
+            assert!(matches!(
+                aprs_transport_from_link(link.as_ref()),
+                Err(UiError::Internal { .. })
+            ));
+        }
+    }
+
+    #[test]
     fn packet_config_dto_managed_missing_audio_device_errors_not_panics() {
         // A Managed DTO without managed_audio_device must return a named
         // UiError::Internal, never panic.
@@ -9815,6 +10062,7 @@ hw:CARD=Device,DEV=0
             review_inbound_before_download: false,
             map_tile_source: None,
             aredn_master_node_host: None,
+            aprs: crate::config::AprsConfig::default(),
         }
     }
 

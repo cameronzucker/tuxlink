@@ -330,6 +330,19 @@
 .layout-b .dashboard .abort-button:hover {
   background: color-mix(in srgb, var(--error, #e5534b) 16%, transparent);
 }
+/* APRS tactical-chat status control (entry ①) in the dashboard ribbon.
+   Button opens the APRS dock; shows listening state + unread badge. */
+.layout-b .dashboard .dash-aprs-control {
+  display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px;
+  cursor: pointer; background: var(--modem-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--modem-accent, #4ade80) 34%, transparent);
+  color: var(--modem-accent, #4ade80); border-radius: 6px; padding: 4px 10px;
+}
+.layout-b .dashboard .dash-aprs-control .dash-status-dot.is-off { background: var(--text-faint, #94a3b8); }
+.layout-b .dashboard .dash-aprs-unread {
+  background: var(--modem-accent, #4ade80); color: var(--bg, #0d1318);
+  font-size: 10px; font-weight: 700; border-radius: 9px; padding: 0 5px;
+}
 /* "On connect" segmented control — Review | Download all (tuxlink-pmp5). Inline
    opt-out for the review-pending-messages default; lives in the ribbon next to
    Connect, not in the Settings modal. */

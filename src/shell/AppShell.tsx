@@ -157,6 +157,19 @@ const TelnetRadioPanel = lazy(loadTelnetRadioPanel);
 const TelnetP2pRadioPanel = lazy(loadTelnetP2pRadioPanel);
 const TelnetPostOfficeRadioPanel = lazy(loadTelnetPostOfficeRadioPanel);
 const PacketRadioPanel = lazy(loadPacketRadioPanel);
+// tuxlink-2f2n Task 14: APRS tactical-chat inline surface, reached via the
+// sidebar's APRS Chat pseudo-folder (mirrors the Contacts pseudo-folder mount).
+// Inline only — NO new window. Lazy because it's off the cold-start path: it
+// only paints when the operator selects the APRS Chat row.
+const loadAprsChatPanel = () =>
+  import('../aprs/AprsChatPanel').then((m) => ({ default: m.AprsChatPanel }));
+const AprsChatPanel = lazy(loadAprsChatPanel);
+// tuxlink-2f2n Plan 2: APRS chat is re-homed from the sidebar pseudo-folder into
+// the shared right dock (chat ⇄ modem). AppShell lifts one useAprsChat instance
+// so the status-strip control (unread/listening) + the dock panel share state.
+import { useAprsChat } from '../aprs/useAprsChat';
+import { countUnread } from '../aprs/aprsUnread';
+import { AprsDockTabs } from '../aprs/AprsDockTabs';
 const ArdopRadioPanel = lazy(loadArdopRadioPanel);
 const VaraRadioPanel = lazy(loadVaraRadioPanel);
 const SearchDropdown = lazy(() =>
@@ -288,6 +301,18 @@ export function AppShell() {
   // chose plain Option A — no auto-open).
   const { isCompact } = useViewport();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // APRS tactical chat — lifted here (single instance) so the status-strip
+  // control (unread/listening) and the dock panel share one state. (spec §1,§3)
+  const aprs = useAprsChat();
+  const [aprsOpen, setAprsOpen] = useState(false);
+  const [dockTab, setDockTab] = useState<'aprs' | 'modem'>('aprs');
+  const [aprsSeenAt, setAprsSeenAt] = useState(0);
+  const aprsUnread = countUnread(aprs.threads, aprsSeenAt);
+  const openAprsChat = useCallback(() => {
+    setAprsOpen(true);
+    setDockTab('aprs');
+    setAprsSeenAt(Date.now());
+  }, []);
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Inline LAN map-tile source config overlay (tuxlink-a1cc / dyop, design §8.7),
@@ -1114,6 +1139,7 @@ export function AppShell() {
           onSsidChange={packetConfig.config ? packetConfig.setSsid : undefined}
           reviewInbound={reviewInbound}
           onReviewInboundChange={onReviewInboundChange}
+          aprs={{ listening: aprs.listening, unread: aprsUnread, onOpen: openAprsChat }}
           identities={identityList.data ?? null}
           activeIdentity={activeIdentity.data ?? null}
           onSwitchIdentity={onSwitchIdentity}
@@ -1121,7 +1147,7 @@ export function AppShell() {
       </div>
 
       <div
-        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}${drawerOpen ? ' drawer-open' : ''}`}
+        className={`panes${radioPanelMode !== null || aprsOpen ? ' panes--with-dock' : ''}${drawerOpen ? ' drawer-open' : ''}`}
         data-testid="shell-panes"
       >
         <FolderSidebar
@@ -1252,7 +1278,7 @@ export function AppShell() {
             the panel is the 4th grid column exactly as before. Compact: the
             wrapper is the collapsible 4th column (44px grip / 400px open). The
             inner per-mode conditionals are unchanged. */}
-        {radioPanelMode !== null && (
+        {(radioPanelMode !== null || aprsOpen) && (
           <RadioDrawer
             open={drawerOpen}
             onToggle={() => setDrawerOpen((o) => !o)}
@@ -1263,6 +1289,27 @@ export function AppShell() {
             })}
           >
 
+        {/* tuxlink-2f2n Plan 2: the shared dock hosts the APRS chat (default
+            tenant once opened) or the modem console; the tab row flips between
+            them. The tabs only render once the operator has opened chat;
+            otherwise the dock is the modem-only surface it always was. */}
+        {aprsOpen && (
+          <AprsDockTabs
+            active={dockTab}
+            unread={aprsUnread}
+            modemEnabled={radioPanelMode !== null}
+            onSelect={(tab) => {
+              setDockTab(tab);
+              if (tab === 'aprs') setAprsSeenAt(Date.now());
+            }}
+          />
+        )}
+        {aprsOpen && dockTab === 'aprs' ? (
+          <Suspense fallback={null}>
+            <AprsChatPanel threads={aprs.threads} listening={aprs.listening} send={aprs.send} />
+          </Suspense>
+        ) : (
+          <>
         {/* Per-mode radio panels. Telnet (P2), Packet (P3), ARDOP HF (P4),
             and VARA HF/FM (Phase 2 — tuxlink-dfmf) ship their real
             implementations; any other mode (none today) would fall through
@@ -1333,6 +1380,8 @@ export function AppShell() {
               onClose={closeRadioPanel}
             />
           )}
+          </>
+        )}
           </RadioDrawer>
         )}
       </div>

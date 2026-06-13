@@ -261,6 +261,9 @@ pub fn run() {
         .manage(std::sync::Arc::new(crate::ui_commands::VaraListenState::default()))
         // Phase 2 (tuxlink-7iy2): identity CRUD command state (keyring-backed; no store path held).
         .manage(crate::identity::IdentityService::new())
+        // APRS tactical-chat engine lifecycle (tuxlink-2f2n, Task 10). Task 11's
+        // Tauri commands consume this via `State<'_, AprsState>`.
+        .manage(crate::winlink::aprs::engine::AprsState::default())
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
 
@@ -692,6 +695,12 @@ pub fn run() {
             crate::ui_commands::app_quit,             // tuxlink-ng3 (HTML File→Quit / Ctrl+Q)
             crate::ui_commands::packet_config_get,    // tuxlink-7fr (packet config read)
             crate::ui_commands::packet_config_set,    // tuxlink-7fr (packet config write)
+            crate::ui_commands::aprs_config_get,      // tuxlink-2f2n (APRS config read)
+            crate::ui_commands::aprs_config_set,      // tuxlink-2f2n (APRS config write)
+            crate::ui_commands::aprs_listen_start,    // tuxlink-2f2n (start APRS engine)
+            crate::ui_commands::aprs_listen_stop,     // tuxlink-2f2n (stop APRS engine)
+            crate::ui_commands::aprs_send,            // tuxlink-2f2n (queue APRS message)
+            crate::ui_commands::aprs_abort,           // tuxlink-2f2n (abort in-flight APRS TX)
             crate::identity::commands::identity_list,        // tuxlink-7iy2 (Phase 2 identity CRUD)
             crate::identity::commands::identity_add_full,    // tuxlink-7iy2
             crate::identity::commands::identity_add_tactical,// tuxlink-7iy2

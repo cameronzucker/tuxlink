@@ -365,6 +365,14 @@ describe('<FolderSidebar> — Address / Contacts (tuxlink-raez A7)', () => {
     expect(item).toHaveTextContent('Contacts');
   });
 
+  it('does not render an APRS pseudo-folder (chat lives in the dock now)', () => {
+    // tuxlink-2f2n Plan 2: the APRS chat moved out of the sidebar into the
+    // shared right dock; the Address section no longer offers an APRS row.
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    expect(screen.queryByText(/APRS Chat/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('folder-aprs')).toBeNull();
+  });
+
   it('shows the passed contacts count in folder-count-contacts', () => {
     render(
       <FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} contactsCount={12} />,

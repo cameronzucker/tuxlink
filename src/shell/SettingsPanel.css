@@ -157,6 +157,43 @@
   border-color: var(--border-strong);
 }
 
+/* tuxlink-2f2n Task 14: APRS station identity section inputs. Reuses the field
+   layout (.tux-settings-field) + matches .tux-settings-host-input styling. */
+.aprs-settings .tux-settings-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+}
+.aprs-settings .tux-settings-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.aprs-settings .tux-settings-readonly {
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.tux-settings-save {
+  margin: 4px 10px 10px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tux-settings-save:hover {
+  border-color: var(--accent);
+}
+
 /* FZ-M1 compact mode (tuxlink-h7q7) — touch-target + sub-floor-font density for
  * the 1280x800 / ~216 PPI rugged tablet. Additive + scoped: desktop (>=1366px)
  * is byte-identical. Mirrors COMPACT_MEDIA_QUERY in src/shell/useViewport.ts.

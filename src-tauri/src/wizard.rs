@@ -188,6 +188,7 @@ pub async fn persist_cms_impl(
         review_inbound_before_download: true,
         map_tile_source: None,
         aredn_master_node_host: None,
+        aprs: crate::config::AprsConfig::default(),
     };
 
     // Step 4: Create keyring entry handle (needed for rollback in step 7).
@@ -422,6 +423,7 @@ pub async fn persist_offline_impl(
         review_inbound_before_download: true,
         map_tile_source: None,
         aredn_master_node_host: None,
+        aprs: crate::config::AprsConfig::default(),
     };
 
     // Single atomic write to config.json. No keyring involved.
