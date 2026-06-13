@@ -418,3 +418,12 @@ test('a tactical label shared across two parents is disambiguated by parent', ()
   const selected = after.filter((r) => r.getAttribute('aria-selected') === 'true');
   expect(selected).toHaveLength(1);
 });
+
+test('empty store shows an actionable empty-state, not a blank dropdown (tuxlink-z6yi)', () => {
+  const emptyList = { full: [], tactical: [], last_selected: null };
+  render(<IdentitySwitcher active={null} list={emptyList} onSwitch={vi.fn()} />);
+  fireEvent.click(screen.getByTestId('identity-switcher-trigger'));
+  const empty = screen.getByTestId('identity-switcher-empty');
+  expect(empty).toBeInTheDocument();
+  expect(empty).toHaveTextContent(/Settings/i);
+});
