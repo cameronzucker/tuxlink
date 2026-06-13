@@ -42,7 +42,7 @@ import { formatCallsign } from '../shell/useStatus';
 import { lookupForm } from '../forms';
 import { CatalogBrowser } from './CatalogBrowser';
 import { WebviewFormHost, type ParsedBody } from './WebviewFormHost';
-import { RecipientInput } from '../contacts/RecipientInput';
+import { RecipientInput, type RecipientInputHandle } from '../contacts/RecipientInput';
 import type { ContactsFile } from '../contacts/types';
 import { useContacts } from '../contacts/useContacts';
 import './Compose.css';
@@ -262,6 +262,11 @@ export function Compose({ draftId }: ComposeProps) {
   // Set to true after a successful send — gates the autosave interval so it
   // cannot recreate the draft that was intentionally cleared (Codex P1).
   const sentRef = useRef(false);
+  // Issue #648 — handles to flush each RecipientInput's in-progress (un-Entered)
+  // buffer at send time, so a recipient typed without pressing Enter is committed
+  // before buildRecipients reads it. Every send path goes through buildRecipients.
+  const toRef = useRef<RecipientInputHandle>(null);
+  const ccRef = useRef<RecipientInputHandle>(null);
   // Track if the user has interacted (only prompt on genuine changes)
   const isDirty = useCallback(() => {
     const s = savedSnapshotRef.current;
@@ -483,6 +488,13 @@ export function Compose({ draftId }: ComposeProps) {
   // cached hook values if the fresh read fails (offline / no backend) so send
   // still works without a Tauri runtime.
   const buildRecipients = useCallback(async (): Promise<{ to: string[]; cc: string[]; unknownGroups: string[] }> => {
+    // Issue #648 — flush any un-Entered text in the To/Cc inputs FIRST so a
+    // recipient typed without pressing Enter is committed before we read it.
+    // flush() returns the up-to-date string synchronously; the `to`/`cc` state
+    // set by its onChange would not yet be visible to this closure. Falls back
+    // to the committed state when a ref is unmounted (e.g. non-plain form modes).
+    const toStr = toRef.current?.flush() ?? to;
+    const ccStr = ccRef.current?.flush() ?? cc;
     let freshContacts = contacts;
     let freshGroups = groups;
     try {
@@ -494,8 +506,8 @@ export function Compose({ draftId }: ComposeProps) {
     } catch {
       // keep the cached hook value
     }
-    const rawTo = splitAddrs(to);
-    const rawCc = splitAddrs(cc);
+    const rawTo = splitAddrs(toStr);
+    const rawCc = splitAddrs(ccStr);
     const unknownGroups = findUnknownGroupTokens([...rawTo, ...rawCc], freshGroups);
     const expandedTo = expandGroupsAndDedup(rawTo, freshContacts, freshGroups);
     const expandedCc = expandGroupsAndDedup(rawCc, freshContacts, freshGroups, expandedTo);
@@ -916,6 +928,7 @@ export function Compose({ draftId }: ComposeProps) {
             To <span className="compose-label__req" aria-hidden="true">*</span>
           </label>
           <RecipientInput
+            ref={toRef}
             id="compose-to"
             value={to}
             onChange={setTo}
@@ -930,6 +943,7 @@ export function Compose({ draftId }: ComposeProps) {
         <div className="compose-field-row">
           <label htmlFor="compose-cc" className="compose-label">Cc</label>
           <RecipientInput
+            ref={ccRef}
             id="compose-cc"
             value={cc}
             onChange={setCc}

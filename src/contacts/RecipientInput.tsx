@@ -29,7 +29,7 @@
 //   - NEVER a native `<select>` / `<datalist>` (those render DISABLED on
 //           WebKitGTK).
 
-import { useMemo, useRef, useState } from 'react';
+import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import './RecipientInput.css';
 import type { Contact, Group } from './types';
 import {
@@ -56,7 +56,18 @@ export interface RecipientInputProps {
   'aria-label'?: string;
 }
 
-export function RecipientInput(props: RecipientInputProps) {
+/// Imperative handle exposed to callers (Compose) so a send path can flush any
+/// in-progress typed text before reading the committed value (issue #648).
+export interface RecipientInputHandle {
+  /// Commit any in-progress typed text as a raw chip and return the resulting
+  /// semicolon-separated value string. A no-op that returns the current value
+  /// unchanged when the buffer is empty/whitespace. Send paths call this so a
+  /// recipient typed-but-not-Entered is never silently dropped.
+  flush: () => string;
+}
+
+export const RecipientInput = forwardRef<RecipientInputHandle, RecipientInputProps>(
+  function RecipientInput(props, ref) {
   const { id, value, onChange, contacts, groups, placeholder } = props;
   const [text, setText] = useState('');
   // -1 = no row focused (the default — Enter then commits raw text, H10).
@@ -82,6 +93,22 @@ export function RecipientInput(props: RecipientInputProps) {
     setText('');
     setFocusIdx(-1);
   };
+
+  /// Commit the in-progress `text` buffer as a raw chip and return the resulting
+  /// value string. Returns the current committed `value` untouched when the
+  /// buffer is empty/whitespace. Shared by commit-on-blur and the imperative
+  /// flush() so neither relies on the async onChange state round-trip (#648).
+  const flushPendingText = (): string => {
+    const t = text.trim();
+    if (!t) return value;
+    const next = formatChips([...chips, { kind: 'raw', token: t }]);
+    onChange(next);
+    setText('');
+    setFocusIdx(-1);
+    return next;
+  };
+
+  useImperativeHandle(ref, () => ({ flush: flushPendingText }), [text, value, chips, onChange]);
 
   /// Append a group chip via its `group:<id>` sentinel.
   const addGroupToken = (token: string, group: Group) => {
@@ -164,6 +191,11 @@ export function RecipientInput(props: RecipientInputProps) {
           value={text}
           onChange={onChangeText}
           onKeyDown={onKeyDown}
+          // Commit the buffer when focus leaves the input (e.g. the user typed a
+          // recipient then clicked Send) so it is never silently dropped (#648).
+          // Dropdown rows / chip-remove use onMouseDown+preventDefault, so this
+          // does not fire ahead of an intended row pick.
+          onBlur={() => flushPendingText()}
           placeholder={chips.length === 0 ? placeholder : ''}
           aria-label={props['aria-label']}
           data-testid={`recipient-input-${id}`}
@@ -192,7 +224,7 @@ export function RecipientInput(props: RecipientInputProps) {
       )}
     </div>
   );
-}
+});
 
 /// A single rendered chip. Group chips show `name · <resolvedCount>` (M6);
 /// unknown-group chips show their raw token with a distinct class (H5).
