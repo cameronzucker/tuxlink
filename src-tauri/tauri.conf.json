@@ -48,7 +48,10 @@
         "section": "hamradio",
         "priority": "optional",
         "depends": [
-          "libsecret-1-0"
+          "libsecret-1-0",
+          "libheif1",
+          "libde265-0",
+          "libwebp7"
         ],
         "recommends": [
           "direwolf (>= 1.6)"
@@ -63,7 +66,10 @@
         "depends": [
           "libsecret",
           "webkit2gtk4.1",
-          "libayatana-appindicator-gtk3"
+          "libayatana-appindicator-gtk3",
+          "libheif",
+          "libde265",
+          "libwebp"
         ],
         "recommends": [
           "direwolf >= 1.6"

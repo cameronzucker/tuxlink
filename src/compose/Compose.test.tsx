@@ -14,6 +14,7 @@ import type { Contact, Group } from '../contacts/types';
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
+  dialogOpen: vi.fn(),
   win: {
     onCloseRequested: vi.fn(),
     minimize: vi.fn(async () => {}),
@@ -27,6 +28,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => mocks.win }));
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: mocks.dialogOpen }));
 // Defensive global stubs. Compose's close-handler effect does a dynamic
 // `import('@tauri-apps/api/window')` inside an async `.then()`; when a mounted
 // <Compose> outlives a fast test (the A6 send tests await an invoke, then
@@ -695,5 +697,51 @@ describe('<Compose> flushes un-Entered recipients on send (issue #648 / tuxlink-
     const draft = lastMessageSendDraft();
     expect(draft?.to).toEqual(['W6ABC']);
     expect(draft?.cc).toEqual(['W7DEF']);
+  });
+});
+
+// ============================================================================
+// tuxlink-mg4s: attachments thread through to message_send (production path)
+// ============================================================================
+
+/** Pull the raw message_send call args so we can assert draft.attachments. */
+function lastMessageSendCall(): { draft?: { attachments?: Array<{ filename: string; bytes: number[] }> } } | undefined {
+  const call = mocks.invoke.mock.calls.find(([cmd]) => cmd === 'message_send');
+  return call?.[1];
+}
+
+describe('<Compose> attachments (tuxlink-mg4s)', () => {
+  it('sends with a prepared attachment threaded into message_send', async () => {
+    mocks.dialogOpen.mockResolvedValueOnce('/tmp/photo.heic');
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+      if (cmd === 'prepare_attachment') {
+        return {
+          filename: 'photo.jpg',
+          bytes: [1, 2, 3],
+          kind: 'image',
+          originalLen: 2_000_000,
+          newLen: 40_000,
+        };
+      }
+      if (cmd === 'message_send') return 'MID-mg4s';
+      return null;
+    });
+    seedDraft('mg4s-attach', 'W6ABC');
+
+    render(<Compose draftId="mg4s-attach" />);
+    await screen.findByTestId('recipient-chip-W6ABC');
+
+    // Pick a file → handlePickFiles → prepare_attachment → list row appears.
+    fireEvent.click(screen.getByTestId('compose-attach-add'));
+    await screen.findByText('photo.jpg');
+
+    fireEvent.click(screen.getByTestId('compose-send-btn'));
+    await waitFor(() =>
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'message_send')).toBe(true),
+    );
+
+    const call = lastMessageSendCall();
+    expect(call?.draft?.attachments).toEqual([{ filename: 'photo.jpg', bytes: [1, 2, 3] }]);
   });
 });
