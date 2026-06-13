@@ -51,9 +51,33 @@ pub struct Template {
 }
 
 /// Enumerate every HTML template visible to tuxlink: bundled snapshot + the
-/// operator's custom-forms directory. Custom forms with the same `id` as a
-/// bundled form override the bundled entry. Returns a deterministically-
-/// sorted-by-id list.
+/// operator's custom-forms directory.
+///
+/// Catalog identity is **`(folder, id)`**, not `id` alone (tuxlink-8v3l). The
+/// WLE Standard Forms bundle files the same form under more than one category
+/// folder — e.g. `Customizable Form Initial.html` appears in both
+/// `General Forms/` and `ICS USA Forms/`. Keying the catalog by stem alone
+/// silently collapsed those into one entry (the displaced one was dropped by
+/// `HashMap::insert` with no error), so the form was only reachable under one
+/// of its two categories. Keying by `(folder, id)` preserves every
+/// folder-distinct entry, matching how WLE files them.
+///
+/// Custom forms **override the bundled entry at the same `(folder, id)`** — the
+/// operator's file shadows the bundled one. The import flow preserves source
+/// folder structure (`import::rel_parts`), so an operator-customized standard
+/// form lands at the same folder path as the bundled one and shadows it. A
+/// custom form at a *different* folder is a distinct catalog entry, not an
+/// override.
+///
+/// Returns a list deterministically sorted by `(folder, id)`. The sort order is
+/// load-bearing: the wire/draft form id is a bare stem (WLE interop carries no
+/// folder), so the by-stem lookups in `ui_commands` (`open_webview_form`,
+/// `open_webview_viewer`, `open_webview_reply`, `send_webview_form`) resolve to
+/// the first sorted match — deterministic only because this sort is stable on
+/// `(folder, id)`. For the bundle's byte-identical cross-folder collisions the
+/// chosen variant is immaterial; differing-content cross-folder duplicates can
+/// only arise from org imports, which the import classifier still skips as a
+/// stopgap (see `import::classify`).
 pub fn list(
     bundle_root: &Path,
     custom_root: Option<&Path>,
@@ -61,16 +85,19 @@ pub fn list(
     let bundled = walk_html(bundle_root, TemplateSource::Bundled);
     let custom = custom_root.map(|p| walk_html(p, TemplateSource::Custom)).unwrap_or_default();
 
-    let mut by_id: std::collections::HashMap<String, Template> = bundled
+    // Identity is (folder, id): a form filed under two category folders is two
+    // distinct entries; a custom form shadows the bundled one only at the same
+    // (folder, id).
+    let mut by_key: std::collections::HashMap<(String, String), Template> = bundled
         .into_iter()
-        .map(|t| (t.id.clone(), t))
+        .map(|t| ((t.folder.clone(), t.id.clone()), t))
         .collect();
     for t in custom {
-        by_id.insert(t.id.clone(), t);
+        by_key.insert((t.folder.clone(), t.id.clone()), t);
     }
 
-    let mut templates: Vec<Template> = by_id.into_values().collect();
-    templates.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut templates: Vec<Template> = by_key.into_values().collect();
+    templates.sort_by(|a, b| a.folder.cmp(&b.folder).then_with(|| a.id.cmp(&b.id)));
     Ok(templates)
 }
 
@@ -386,15 +413,19 @@ mod tests {
     }
 
     #[test]
-    fn list_custom_overrides_bundled_by_id() {
-        // If the operator drops a custom form with the same id as a bundled
-        // one, the custom takes precedence (per design §6 P1 — custom forms
-        // pickup-able). The catalog returns ONE entry per id.
+    fn list_custom_overrides_bundled_at_same_folder_and_id() {
+        // tuxlink-8v3l: identity is (folder, id). A custom form shadows the
+        // bundled one when BOTH folder and id match — the realistic
+        // operator-customization path, since the import flow preserves the
+        // source folder (`import::rel_parts`), so an override lands at the same
+        // folder as the bundled form it replaces.
         let td = TempDir::new().unwrap();
         let bundle = fake_bundle(&td);
         let custom = fake_custom(&td);
+        // Mirror the bundled folder ("ICS Forms") so (folder, id) matches.
+        std::fs::create_dir_all(custom.join("ICS Forms")).unwrap();
         std::fs::write(
-            custom.join("ICS213_Initial.html"),
+            custom.join("ICS Forms/ICS213_Initial.html"),
             "<html><!-- OPERATOR OVERRIDE --></html>",
         )
         .unwrap();
@@ -402,19 +433,82 @@ mod tests {
         let ics: Vec<_> = cat.iter().filter(|t| t.id == "ICS213_Initial").collect();
         assert_eq!(ics.len(), 1, "exactly one entry expected after override");
         assert_eq!(ics[0].source, TemplateSource::Custom);
+        assert_eq!(ics[0].folder, "ICS Forms");
     }
 
     #[test]
-    fn list_sorts_by_id() {
-        // Determinism is load-bearing for CatalogBrowser snapshot tests and
-        // for any cross-process assertion that the catalog order is stable.
+    fn list_custom_at_different_folder_is_distinct_not_override() {
+        // tuxlink-8v3l: a custom form sharing only the STEM (not the folder)
+        // with a bundled form is a distinct catalog entry, NOT an override —
+        // both surface. (Pre-8v3l, the stem-keyed catalog let a root-dropped
+        // custom shadow a bundled form in any folder; that ambiguity is gone.)
+        let td = TempDir::new().unwrap();
+        let bundle = fake_bundle(&td);
+        let custom = fake_custom(&td);
+        // Drop at custom root (folder = "") while bundled lives in "ICS Forms".
+        std::fs::write(
+            custom.join("ICS213_Initial.html"),
+            "<html><!-- root-dropped custom --></html>",
+        )
+        .unwrap();
+        let cat = list(&bundle, Some(&custom)).unwrap();
+        let ics: Vec<_> = cat.iter().filter(|t| t.id == "ICS213_Initial").collect();
+        assert_eq!(ics.len(), 2, "different folders → two distinct entries");
+        assert!(ics.iter().any(|t| t.source == TemplateSource::Bundled && t.folder == "ICS Forms"));
+        assert!(ics.iter().any(|t| t.source == TemplateSource::Custom && t.folder.is_empty()));
+    }
+
+    #[test]
+    fn list_preserves_cross_folder_same_stem_entries() {
+        // tuxlink-8v3l (the bug): the WLE bundle files the same form under more
+        // than one category folder (e.g. "Customizable Form Initial" in both
+        // "General Forms" and "ICS USA Forms"). A stem-keyed catalog collapsed
+        // them into one (HashMap::insert silently dropped the displaced entry),
+        // so the form was reachable under only one category. (folder, id)
+        // identity preserves both.
+        let td = TempDir::new().unwrap();
+        let root = td.path().join("Standard_Forms");
+        std::fs::create_dir_all(root.join("General Forms")).unwrap();
+        std::fs::create_dir_all(root.join("ICS USA Forms")).unwrap();
+        std::fs::write(
+            root.join("General Forms/Customizable Form Initial.html"),
+            "<html><!-- general --></html>",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("ICS USA Forms/Customizable Form Initial.html"),
+            "<html><!-- ics usa --></html>",
+        )
+        .unwrap();
+        let cat = list(&root, None).unwrap();
+        let dupes: Vec<_> = cat
+            .iter()
+            .filter(|t| t.id == "Customizable Form Initial")
+            .collect();
+        assert_eq!(dupes.len(), 2, "both folder-distinct entries must survive");
+        let folders: std::collections::HashSet<_> =
+            dupes.iter().map(|t| t.folder.as_str()).collect();
+        assert!(folders.contains("General Forms"));
+        assert!(folders.contains("ICS USA Forms"));
+    }
+
+    #[test]
+    fn list_sorts_by_folder_then_id() {
+        // tuxlink-8v3l: ordering is (folder, id). Determinism is load-bearing —
+        // the wire/draft form id is a bare stem (no folder), so the by-stem
+        // lookups in `ui_commands` resolve to the FIRST sorted match. A stable
+        // (folder, id) sort makes that choice deterministic.
         let td = TempDir::new().unwrap();
         let bundle = fake_bundle(&td);
         let cat = list(&bundle, None).unwrap();
-        let ids: Vec<_> = cat.iter().map(|t| t.id.as_str()).collect();
-        let mut sorted = ids.clone();
+        let keys: Vec<(String, String)> =
+            cat.iter().map(|t| (t.folder.clone(), t.id.clone())).collect();
+        let mut sorted = keys.clone();
         sorted.sort();
-        assert_eq!(ids, sorted, "catalog order must be sorted-by-id");
+        assert_eq!(keys, sorted, "catalog order must be sorted by (folder, id)");
+        // fake_bundle: ("ARC Forms","ARC213") sorts before the "ICS Forms" pair.
+        assert_eq!(cat[0].folder, "ARC Forms");
+        assert_eq!(cat[0].id, "ARC213");
     }
 
     /// tuxlink-z0le §11.1: enumeration must accept `.htm` and uppercase

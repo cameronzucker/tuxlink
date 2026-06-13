@@ -764,7 +764,13 @@ function SearchResultsList({ results, onPick }: SearchResultsListProps) {
   return (
     <ul className="catalog-browser__search-results">
       {results.map((t) => (
-        <li key={t.id}>
+        // Key by (folder, id): the catalog can carry the same stem under two
+        // category folders (tuxlink-8v3l, e.g. "Customizable Form Initial" in
+        // both General Forms and ICS USA Forms). A search matching both would
+        // render sibling rows with a colliding `key={t.id}`. The folder tree
+        // above is safe (same-stem entries land in different folder buckets, so
+        // never siblings); this flat results list is the one place they are.
+        <li key={`${t.folder}/${t.id}`}>
           <button
             type="button"
             className="catalog-browser__template-btn"
