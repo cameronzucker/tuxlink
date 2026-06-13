@@ -300,7 +300,22 @@ pub fn write_password(callsign: &str, password: &str) -> Result<(), KeyringError
 
     entry
         .set_password(password)
-        .map_err(|e| KeyringError::Backend(format!("{e}")))
+        .map_err(|e| KeyringError::Backend(format!("{e}")))?;
+
+    // tuxlink-6wz3: keep the identity activation secret in lockstep with the CMS
+    // credential. Both callers of write_password (the first-run wizard's
+    // persist_cms_impl and the credentials_write_password command) write the
+    // operator's OWN identity credential, so the active-identity gate + launch
+    // auto-auth authenticate against the exact value the operator just set —
+    // the two keyring entries can never drift. Guarded by Callsign::parse so a
+    // non-callsign account (none exists today) is skipped rather than minting a
+    // spurious activation secret.
+    if let Ok(cs) = crate::identity::Callsign::parse(callsign) {
+        crate::identity::IdentityService::new()
+            .set_activation_secret(&cs, password)
+            .map_err(|e| KeyringError::Backend(format!("activation-secret sync: {e}")))?;
+    }
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────

@@ -247,6 +247,47 @@ pub async fn persist_cms_impl(
         }
     }
 
+    // tuxlink-6wz3: register the callsign as a FULL identity in the IdentityStore
+    // so the new identity system recognizes it — the switcher lists it, launch
+    // auto-auth establishes it, and the transmit gate opens. Without this the
+    // store stays empty on a fresh install and transmit is bricked. The
+    // activation secret was already synced by write_password (step 6); this only
+    // adds the store record. Best-effort + idempotent: the config + keyring are
+    // already committed above; a store-write failure is logged, not fatal (a
+    // later successful persist or migration re-creates it).
+    {
+        use crate::identity::{Address, Callsign, FullIdentity, IdentityStore};
+        let store_path = crate::config::identity_store_path();
+        match IdentityStore::load(&store_path) {
+            Ok(mut store) => {
+                let already = store
+                    .full()
+                    .iter()
+                    .any(|f| f.callsign.as_str().eq_ignore_ascii_case(&callsign));
+                if !already {
+                    if let Ok(cs) = Callsign::parse(&callsign) {
+                        if let Err(e) = store.add_full(FullIdentity {
+                            callsign: cs.clone(),
+                            label: None,
+                            has_cms_account: true,
+                            cms_registered: false,
+                        }) {
+                            tracing::error!(target: "tuxlink::wizard", error = %e, "identity store add_full failed");
+                        } else {
+                            store.set_last_selected(Address::Full(cs));
+                            if let Err(e) = store.save() {
+                                tracing::error!(target: "tuxlink::wizard", error = %e, "identity store save failed");
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!(target: "tuxlink::wizard", error = %e, "identity store load failed; FULL not registered");
+            }
+        }
+    }
+
     tracing::info!(
         target: "tuxlink::wizard",
         callsign = %callsign,
