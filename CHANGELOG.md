@@ -30,6 +30,15 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.58.0](https://github.com/cameronzucker/tuxlink/compare/v0.57.2...v0.58.0) (2026-06-13)
+
+
+### Features
+
+* **aprs:** capability-gated native vs KISS transport selection (Task 8) ([8691fae](https://github.com/cameronzucker/tuxlink/commit/8691faeceb5514576caf297487118399a4127b1b))
+* **identity:** identity-management UI — add FULL/tactical, remove (Settings → Identities) ([66f68bb](https://github.com/cameronzucker/tuxlink/commit/66f68bbf78ceeacd1de9886ed116613a153cf4b9))
+* **identity:** switcher empty-state → point to Settings → Identities ([b296a21](https://github.com/cameronzucker/tuxlink/commit/b296a21ce2e3389d63eb028c41c8ce3a406eda99))
+
 ## [0.57.2](https://github.com/cameronzucker/tuxlink/compare/v0.57.1...v0.57.2) (2026-06-13)
 
 
