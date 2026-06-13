@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # build-basemap-bundle.sh — produce the bundled vector-basemap assets for tuxlink.
 #
-# tuxlink-ndi4, plan A8/A10/A12. OUT-OF-BAND: this needs the ~120 GB Protomaps
-# planet PMTiles (or a pinned planet build) and the protomaps/basemaps-assets
-# fonts+sprites. It does NOT run in PR CI — it is operator tooling, run on a
-# machine with the planet available, that emits provenanced artifacts the app
-# bundles. Treat the output like resources/propagation/ssn-forecast.json:
-# provenanced, reproducible, not a mystery blob.
+# tuxlink-ndi4, plan A8/A10/A12. OUT-OF-BAND (not PR CI): operator tooling that
+# emits provenanced artifacts the app bundles. It does NOT download the planet —
+# `pmtiles extract` reads the pinned REMOTE build over HTTP Range, fetching only
+# the requested tiles (world z0–6 ≈ 45 MB, seconds). The ~120 GB is the remote
+# source, never pulled whole. Needs the go-pmtiles CLI + the
+# protomaps/basemaps-assets fonts+sprites. Treat the output like
+# resources/propagation/ssn-forecast.json: provenanced, reproducible.
 #
 # Outputs into src-tauri/resources/basemap/:
 #   world-z0-6.pmtiles            world overview, zoom 0–6 (~30–60 MB)
@@ -74,15 +75,14 @@ PMTILES_VERSION="$(pmtiles version 2>/dev/null || echo unknown)"
 mkdir -p "${OUT_DIR}/glyphs" "${OUT_DIR}/sprites"
 
 # ── 1. World z0–6 overview ─────────────────────────────────────────────────────
-if [[ -z "${PLANET_PATH}" ]]; then
-  PLANET_PATH="${OUT_DIR}/.planet-${PLANET_BUILD}.pmtiles"
-  if [[ ! -f "${PLANET_PATH}" ]]; then
-    echo ">> downloading pinned planet build ${PLANET_BUILD} (~120 GB — this is the out-of-band step)…"
-    curl -fSL "${PLANET_URL_BASE}/${PLANET_BUILD}.pmtiles" -o "${PLANET_PATH}"
-  fi
-fi
-echo ">> extracting world z0-${MAXZOOM} from ${PLANET_PATH}…"
-pmtiles extract "${PLANET_PATH}" "${OUT_DIR}/world-z0-6.pmtiles" \
+# `pmtiles extract` reads the source over HTTP Range, fetching ONLY the tiles in
+# the requested zoom/bbox — NOT the whole planet. World z0–6 is ~45 MB transferred
+# in seconds. The ~120 GB pinned build is the REMOTE source, never downloaded
+# whole. Pass --planet for an already-local source (optional); otherwise extract
+# straight from the pinned remote build over Range.
+PLANET_SRC="${PLANET_PATH:-${PLANET_URL_BASE}/${PLANET_BUILD}.pmtiles}"
+echo ">> extracting world z0-${MAXZOOM} from ${PLANET_SRC} (HTTP Range — tens of MB, NOT the full planet)…"
+pmtiles extract "${PLANET_SRC}" "${OUT_DIR}/world-z0-6.pmtiles" \
   --maxzoom="${MAXZOOM}" --bbox="${BBOX}"
 
 # ── 2. Glyphs (served under the 'self' origin, NOT via pmtiles_read_range) ──────
