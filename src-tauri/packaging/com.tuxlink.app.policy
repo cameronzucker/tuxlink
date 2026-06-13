@@ -6,7 +6,7 @@
        below (no wildcards). The helper itself accepts only a fixed action enum. -->
   <action id="com.tuxlink.app.gps-fix">
     <description>Adjust GPS-related system configuration</description>
-    <message>Tuxlink would like to fix a GPS configuration issue. This requires your password. You can reverse the change from Settings → Location → Troubleshoot.</message>
+    <message>Tuxlink would like to fix a GPS configuration issue. This requires your password.</message>
     <icon_name>com.tuxlink.app</icon_name>
     <defaults>
       <allow_any>auth_admin</allow_any>

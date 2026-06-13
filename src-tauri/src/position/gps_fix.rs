@@ -65,9 +65,12 @@ pub async fn gps_run_fix(action: String) -> Result<GpsFixOutcome, crate::ui_comm
     }
 }
 
-/// Whether pkexec exists at all — drives "Fix it for me" button visibility.
-/// AppImage / minimal installs (no pkexec or no registered policy) fall back to
-/// the always-available "Show command" copy-paste path.
+/// Whether the pkexec *binary* exists — drives "Fix it for me" button visibility.
+/// This does NOT check that the PolicyKit policy is registered; on AppImage /
+/// minimal installs the helper binary is absent too, so a click then resolves to
+/// `PkexecMissing` (exit 127) → the UI falls back to the always-available "Show
+/// command" copy-paste path. The button is a best-effort affordance, not a
+/// guarantee the privileged path is wired.
 #[tauri::command]
 pub async fn gps_pkexec_available() -> Result<bool, crate::ui_commands::UiError> {
     Ok(which_pkexec().is_some())

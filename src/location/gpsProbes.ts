@@ -51,9 +51,19 @@ export const pkexecAvailable = () => invoke<boolean>('gps_pkexec_available');
 /** Run a fixed GPS fix via pkexec + the privileged helper. */
 export const runGpsFix = (action: GpsFixAction) => invoke<GpsFixOutcome>('gps_run_fix', { action });
 
-/** Map a triage card kind to its fix action. */
+/** Map a triage card kind to its fix action. Exhaustive: adding a new triage
+ *  kind without a mapping is a compile error, not a silent wrong root action. */
 export function triageFixAction(kind: GpsTriageCard['kind']): GpsFixAction {
-  return kind === 'dialout' ? 'add-dialout' : 'mask-modemmanager';
+  switch (kind) {
+    case 'dialout':
+      return 'add-dialout';
+    case 'modemmanager':
+      return 'mask-modemmanager';
+    default: {
+      const _exhaustive: never = kind;
+      return _exhaustive;
+    }
+  }
 }
 
 export const probeGpsd = () => invoke<GpsdProbe>('gps_probe_gpsd');

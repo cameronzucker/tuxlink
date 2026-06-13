@@ -102,9 +102,11 @@ export function GpsSourcePicker({
     try {
       const outcome = await runGpsFix(triageFixAction(kind));
       setFixResult({ kind, outcome });
-      // A successful fix changes the system state — re-scan so the cards reflect
-      // reality (dialout still needs a re-login, surfaced via the notice below).
-      if (outcome === 'ok') rescan();
+      // Re-scan only for ModemManager: masking takes effect immediately, so the
+      // card should disappear. dialout does NOT take effect until re-login, so a
+      // rescan would re-render the still-"blocked" card under the success notice
+      // (adrev P2) — leave it; the re-login notice tells the operator what's next.
+      if (outcome === 'ok' && kind === 'modemmanager') rescan();
     } catch {
       setFixResult({ kind, outcome: 'failed' });
     } finally {

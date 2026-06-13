@@ -4,11 +4,13 @@
 //! (installed at /usr/libexec/tuxlink-gps-fix). std-only, auditable, ~one screen.
 //!
 //! Security invariants (see docs/superpowers/plans/2026-06-13-gps-fix-it-pkexec.md):
-//!  1. Only the fixed actions add-dialout | mask-modemmanager | unmask-modemmanager.
-//!  2. Refuses to run without a valid numeric $PKEXEC_UID (must come through pkexec).
-//!  3. add-dialout resolves the target user from $PKEXEC_UID, never argv/$USER.
-//!  4. No shell, no interpolation: absolute binaries via Command + fixed argv.
-//!  5/6. The action token comes from a fixed match; operator text never reaches argv.
+//!
+//! - Only the fixed actions add-dialout / mask-modemmanager / unmask-modemmanager run.
+//! - Refuses to run without a valid numeric `$PKEXEC_UID` (must come through pkexec).
+//! - add-dialout resolves the target user from `$PKEXEC_UID`, never argv/`$USER`.
+//! - No shell, no interpolation: absolute binaries via Command + fixed argv, plus a
+//!   `--` end-of-options guard and a username sanity check on the dialout add.
+//! - The action token comes from a fixed match; operator text never reaches argv.
 //!
 //! Prints `ok` on success; `failed: <reason>` on stderr + nonzero exit otherwise.
 
@@ -47,11 +49,18 @@ fn main() -> ExitCode {
                 Some(n) => n,
                 None => return fail("could not resolve invoking user from PKEXEC_UID"),
             };
+            // Defense-in-depth (adrev P2): reject anything that could be parsed as
+            // a usermod option or is otherwise not a plausible username, even
+            // though /etc/passwd is root-owned and the uid is the caller's own.
+            if !is_safe_username(&username) {
+                return fail("resolved username failed the safety check");
+            }
             let bin = match resolve_bin(&USERMOD) {
                 Some(b) => b,
                 None => return fail("usermod not found"),
             };
-            Command::new(bin).arg("-aG").arg("dialout").arg(&username).status()
+            // `--` ends option parsing so a username can never be read as a flag.
+            Command::new(bin).arg("-aG").arg("dialout").arg("--").arg(&username).status()
         }
         "mask-modemmanager" => {
             let bin = match resolve_bin(&SYSTEMCTL) {
@@ -80,6 +89,14 @@ fn main() -> ExitCode {
     }
 }
 
+/// A plausible POSIX username that cannot be misread as a `usermod` option.
+/// Non-empty, no leading `-`, and limited to `[A-Za-z0-9._-]`.
+fn is_safe_username(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
 /// Resolve a numeric uid string to a username by reading /etc/passwd (no libc
 /// dependency). Lines are `name:passwd:uid:gid:...`. Returns None if not found.
 fn uid_to_username(uid: &str) -> Option<String> {
@@ -94,4 +111,23 @@ fn uid_to_username(uid: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_safe_username;
+
+    #[test]
+    fn accepts_plausible_usernames() {
+        for n in ["alice", "w4phs", "user_1", "a.b-c", "svc-gps"] {
+            assert!(is_safe_username(n), "{n} should be accepted");
+        }
+    }
+
+    #[test]
+    fn rejects_option_like_and_malformed_usernames() {
+        for n in ["", "-G", "--badname", "a b", "name;reboot", "na/me", "x\n"] {
+            assert!(!is_safe_username(n), "{n:?} should be rejected");
+        }
+    }
 }
