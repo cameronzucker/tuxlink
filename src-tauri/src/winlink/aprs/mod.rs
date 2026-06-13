@@ -3,4 +3,5 @@ pub mod engine;
 pub mod framebuild;
 pub mod identity;
 pub mod message;
+pub mod native_driver;
 pub mod tx;
