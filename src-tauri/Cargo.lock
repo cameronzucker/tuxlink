@@ -854,6 +854,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
+name = "crunchy"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2907,6 +2913,15 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
+]
+
+[[package]]
+name = "mini_sbc"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0522eb0199121b29e0ef8d3f3ff595914353173c116655c5f7b96ebb7458b830"
+dependencies = [
+ "crunchy",
 ]
 
 [[package]]
@@ -6223,6 +6238,7 @@ dependencies = [
  "mail-parser",
  "md-5 0.11.0",
  "mime",
+ "mini_sbc",
  "mockito",
  "multer",
  "native-tls",

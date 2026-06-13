@@ -96,6 +96,7 @@ urlencoding = "2"          # Task 8.1 GitHub URL body encoding
 # with main's "1" / "1" and cover both alpha-logging + redaction use cases.
 once_cell = "1.20"
 regex = "1.10"
+mini_sbc = "0.1.7"        # NEW (tuxlink-vgvn) — pure-Rust SBC DECODER for the UV-Pro SSTV audio transport; MIT/Apache (GPL-3 compatible). Encode is a from-scratch port (no pure-Rust SBC encoder on crates.io). Decode verified MAE 6.7 vs ffmpeg golden vectors.
 
 # tuxlink-cumx / G8 — faithful PDF export drives the live form's WebKitGTK view
 # via WebKitPrintOperation. Both crates are already in the build (transitive via
