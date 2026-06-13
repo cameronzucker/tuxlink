@@ -10137,6 +10137,8 @@ hw:CARD=Device,DEV=0
             gps_ready: true,
             broadcast_grid: "CN87".to_string(),
             ui_grid: "CN87".to_string(),
+            fix_lat: None,
+            fix_lon: None,
         };
         let v = serde_json::to_value(&dto).unwrap();
         assert!(v.get("active_source").is_none(),
@@ -10165,6 +10167,8 @@ hw:CARD=Device,DEV=0
                 && cfg.privacy.gps_state != GpsState::Off,
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
             ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
+            fix_lat: None,
+            fix_lon: None,
         };
         assert!(dto.gps_ready);
         assert_eq!(dto.broadcast_grid, "DM33", "GPS fix grid must appear in broadcast_grid");
@@ -10191,6 +10195,8 @@ hw:CARD=Device,DEV=0
                 && cfg.privacy.gps_state != GpsState::Off,
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
             ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
+            fix_lat: None,
+            fix_lon: None,
         };
         assert!(!dto.gps_ready);
         let v = serde_json::to_value(&dto).unwrap();
@@ -10218,6 +10224,8 @@ hw:CARD=Device,DEV=0
                 && cfg.privacy.gps_state != GpsState::Off,
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
             ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
+            fix_lat: None,
+            fix_lon: None,
         };
         assert_eq!(
             dto.broadcast_grid, "DM33",
@@ -10256,6 +10264,8 @@ hw:CARD=Device,DEV=0
             gps_ready: true,
             broadcast_grid: "DM33".to_string(),  // config fallback under LocalUiOnly
             ui_grid: "DM33ww".to_string(),       // live fix shown to operator
+            fix_lat: None,
+            fix_lon: None,
         };
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["broadcast_grid"], "DM33");
