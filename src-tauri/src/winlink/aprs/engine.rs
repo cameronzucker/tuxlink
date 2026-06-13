@@ -2,9 +2,12 @@
 //!
 //! `handle_inbound_bytes` does **promiscuous** decode — there is NO destination
 //! filter on received frames, because that is the whole point of APRS RX: every
-//! station on the channel hears every UI frame. Addressed message-type packets
-//! are routed to the UI and auto-ACKed; everything else (other stations' chatter,
-//! position beacons, telemetry) is decoded and dropped.
+//! station on the channel hears every UI frame. EVERY decoded text message is
+//! routed to the UI — the channel is a party line, so the feed shows all traffic
+//! (directed-to-anyone plus blank-addressee broadcasts), each carrying its
+//! `addressee`; non-message traffic (position beacons, telemetry, status) is
+//! decoded and dropped. Auto-ACK fires ONLY for a message addressed to our exact
+//! call (never a broadcast or another station's traffic — that would be SPAM).
 //!
 //! **The dedupe split is load-bearing (APRS-protocol correctness):**
 //!   - A long `dedupe` window (300 s) gates UI DISPLAY: a retransmitted or
@@ -33,16 +36,47 @@ use crate::winlink::ax25::frame::Frame;
 use crate::winlink::ax25::kiss::{kiss_data_frame, KissDecoder};
 
 use super::dedupe::{DedupeCache, DedupeKey};
-use super::framebuild::{build_ui_frame, extract_inbound, fmt_callsign};
+use super::framebuild::{build_ui_frame, extract_inbound, fmt_callsign, to_tnc2};
 use super::identity::AprsIdentity;
 use super::message::{encode_ack, encode_message, parse_info, AprsPayload};
 use super::tx::TxQueue;
 
-/// A decoded, addressed-to-us inbound text message destined for the UI.
+/// Dev-only raw-frame capture (tuxlink-iehg). When the env var
+/// `TUXLINK_APRS_RAW_CAPTURE` is set to a writable file path, append each
+/// received frame's literal TNC2 string to that file AND echo it to stderr
+/// (visible in the `tauri dev` console). Off by default — zero production noise.
+/// RX-side only: this path observes, it never transmits. The closure defers
+/// formatting so the disabled (no env var) path costs only one env lookup.
+fn raw_capture(line: impl FnOnce() -> String) {
+    let Ok(path) = std::env::var("TUXLINK_APRS_RAW_CAPTURE") else {
+        return;
+    };
+    let line = line();
+    eprintln!("APRS-RX-RAW {line}");
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+/// Compact space-separated hex for an undecodable frame's bytes.
+fn hex_bytes(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect::<Vec<_>>().join(" ")
+}
+
+/// A decoded inbound text message heard on the channel, destined for the UI.
+///
+/// `addressee` is the message's 9-char addressee field, trimmed — an empty
+/// string is a no-recipient **broadcast** heard by all (ground-truthed on air
+/// 2026-06-13: the BTECH/UV-Pro app sends broadcasts as `:` + 9 spaces). The
+/// engine emits EVERY heard message because APRS is a party line; the UI renders
+/// `sender → addressee` (or `→ all` when blank). Auto-ACK is a separate concern
+/// and fires only for our own exact call (see `ingest_ax25`).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboundMsg {
     pub sender: String,
+    pub addressee: String,
     pub text: String,
     pub msgid: Option<String>,
 }
@@ -143,8 +177,20 @@ impl AprsEngine {
     fn ingest_ax25(&mut self, body: &[u8], now_ms: u64) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
         let frame = match Frame::decode(body) {
-            Ok(f) => f,
-            Err(_) => return out,
+            Ok(f) => {
+                // tuxlink-iehg: capture the literal wire form of EVERY decoded
+                // frame BEFORE any addressed-to-us / payload filtering, so the
+                // on-air format of e.g. a no-recipient packet (blank addressee)
+                // is observable for ground-truthing. No-op unless opted in.
+                raw_capture(|| to_tnc2(&f));
+                f
+            }
+            Err(_) => {
+                // Undecodable frames are still interesting during capture — record
+                // their length + hex rather than discarding silently.
+                raw_capture(|| format!("[undecodable {} bytes] {}", body.len(), hex_bytes(body)));
+                return out;
+            }
         };
         let (sender, info) = match extract_inbound(&frame) {
             Some(x) => x,
@@ -160,9 +206,12 @@ impl AprsEngine {
                 text,
                 msgid,
             } => {
-                if !self.addressed_to_us(&addressee) {
-                    return out;
-                }
+                // APRS is a party line: EMIT every heard message (deduped),
+                // regardless of addressee, so the channel feed shows all traffic
+                // — directed-to-anyone plus blank-addressee broadcasts. The
+                // addressed-to-us check now gates ONLY the auto-ACK below, not
+                // display (it used to drop everything not for us).
+                let for_us = self.addressed_to_us(&addressee);
                 let dkey = DedupeKey {
                     src: sender.clone(),
                     kind: "msg".into(),
@@ -171,11 +220,16 @@ impl AprsEngine {
                 if !self.dedupe.seen(dkey, now_ms) {
                     self.sink.emit_message(InboundMsg {
                         sender: sender.clone(),
+                        addressee,
                         text,
                         msgid: msgid.clone(),
                     });
                 }
-                if let Some(id) = msgid {
+                // Auto-ACK ONLY a message addressed to our exact call that carries
+                // a msgid. NEVER ack a broadcast (blank addressee) or another
+                // station's traffic — that is documented network SPAM. The
+                // `.filter(|_| for_us)` collapses the gate to a single `if let`.
+                if let Some(id) = msgid.filter(|_| for_us) {
                     let akey = DedupeKey {
                         src: sender.clone(),
                         kind: "ackout".into(),
@@ -267,6 +321,32 @@ impl AprsEngine {
         }
     }
 
+    /// Queue a FIRE-ONCE broadcast (no recipient): **blank 9-space addressee, NO
+    /// msgno**, transmitted exactly once with no retransmit and no ACK expected.
+    /// Ground-truthed against the BTECH/UV-Pro app on air (2026-06-13): a
+    /// no-recipient message is `:` + 9 spaces + `:` + text. `local_id` is a
+    /// UI-only tracking handle (there is no wire msgid); we emit `Sent` once and
+    /// never a terminal state — a broadcast has no delivery confirmation on a
+    /// party line. Does NOT consume an in-flight ACK slot (nothing to await).
+    pub fn enqueue_broadcast(&mut self, text: &str, local_id: &str, now_ms: u64) {
+        let info = encode_message("", text, None);
+        let frame = build_ui_frame(&self.identity, &info);
+        let bytes = match frame.encode() {
+            Ok(b) => b,
+            Err(_) => return, // unencodable — nothing queued, nothing to release
+        };
+        let state = if self.tx.enqueue_once(local_id.to_string(), bytes, now_ms).is_ok() {
+            DeliveryState::Sent
+        } else {
+            // Queue full (8 fire-once frames in one tick — rare). Signal non-send.
+            DeliveryState::TimedOut
+        };
+        self.sink.emit_state(StateChange {
+            msgid: local_id.to_string(),
+            state,
+        });
+    }
+
     /// Drive the retransmit clock; returns due TX frames as RAW AX.25 (no KISS wrap) for
     /// non-KISS transports — the native Benshi path fragments these via `send_aprs_frame`.
     /// Emits TimedOut for messages whose retransmit budget is spent. `tick` is the
@@ -335,6 +415,12 @@ pub enum TxCommand {
         dest: String,
         text: String,
         msgid: String,
+    },
+    /// A no-recipient broadcast: blank addressee, fire-once, no ACK. `local_id`
+    /// is a UI tracking handle, not a wire msgid.
+    Broadcast {
+        text: String,
+        local_id: String,
     },
     Abort,
 }
@@ -443,28 +529,50 @@ impl AprsState {
         }
     }
 
-    /// Mint msgid, gate on capacity (synchronously, before the command crosses the channel),
-    /// increment in-flight, return the minted msgid.
-    pub fn send(&self, dest: String, text: String) -> Result<String, String> {
+    /// Send an APRS message. `dest = Some(callsign)` is a **directed** message
+    /// (mint msgid, gate in-flight capacity, bounded retransmit + ACK). `dest =
+    /// None` or an empty/whitespace string is a **broadcast** (blank addressee,
+    /// fire-once, no msgid, no ACK, no in-flight slot). Returns the tracking id
+    /// the UI uses to follow delivery state (a real wire msgid for directed; a
+    /// `b`-prefixed UI-only handle for broadcast).
+    pub fn send(&self, dest: Option<String>, text: String) -> Result<String, String> {
         let guard = self.inner.lock().unwrap();
         let handle = guard
             .as_ref()
             .ok_or_else(|| "not listening — start APRS first".to_string())?;
-        if self.in_flight.load(Ordering::SeqCst) >= crate::winlink::aprs::tx::CONCURRENT_CAP {
-            return Err("too many messages pending — wait for acks or timeouts".into());
+        match dest {
+            Some(call) if !call.trim().is_empty() => {
+                if self.in_flight.load(Ordering::SeqCst) >= crate::winlink::aprs::tx::CONCURRENT_CAP {
+                    return Err("too many messages pending — wait for acks or timeouts".into());
+                }
+                let n = self.counter.fetch_add(1, Ordering::SeqCst);
+                let msgid = mint_msgid(n);
+                self.in_flight.fetch_add(1, Ordering::SeqCst);
+                handle
+                    .cmd_tx
+                    .send(TxCommand::Send {
+                        dest: call,
+                        text,
+                        msgid: msgid.clone(),
+                    })
+                    .map_err(|_| "APRS driver stopped".to_string())?;
+                Ok(msgid)
+            }
+            _ => {
+                // Broadcast: no wire msgid, no ACK, no in-flight gating. The
+                // `b`-prefix keeps the UI handle distinct from base-36 msgids.
+                let n = self.counter.fetch_add(1, Ordering::SeqCst);
+                let local_id = format!("b{}", mint_msgid(n));
+                handle
+                    .cmd_tx
+                    .send(TxCommand::Broadcast {
+                        text,
+                        local_id: local_id.clone(),
+                    })
+                    .map_err(|_| "APRS driver stopped".to_string())?;
+                Ok(local_id)
+            }
         }
-        let n = self.counter.fetch_add(1, Ordering::SeqCst);
-        let msgid = mint_msgid(n);
-        self.in_flight.fetch_add(1, Ordering::SeqCst);
-        handle
-            .cmd_tx
-            .send(TxCommand::Send {
-                dest,
-                text,
-                msgid: msgid.clone(),
-            })
-            .map_err(|_| "APRS driver stopped".to_string())?;
-        Ok(msgid)
     }
 
     pub fn abort(&self) {
@@ -526,6 +634,9 @@ fn run(
             match cmd {
                 TxCommand::Send { dest, text, msgid } => {
                     engine.enqueue_send(&dest, &text, &msgid, now_ms())
+                }
+                TxCommand::Broadcast { text, local_id } => {
+                    engine.enqueue_broadcast(&text, &local_id, now_ms())
                 }
                 TxCommand::Abort => engine.abort(),
             }
@@ -637,6 +748,65 @@ mod tests {
         let decoded = Frame::decode(&strip_kiss(&tx[0])).unwrap();
         assert_eq!(decoded.path.dest.call, "APZTUX");
         assert_eq!(decoded.info, b":KK6XYZ   :ack04");
+    }
+
+    fn inbound_with(src: &str, info: &[u8]) -> Vec<u8> {
+        let f = Frame {
+            path: Path {
+                dest: Address { call: "APZTUX".into(), ssid: 0 },
+                src: Address { call: src.into(), ssid: 0 },
+                digis: vec![],
+            },
+            control: Control::Ui { pf: false },
+            info: info.to_vec(),
+        };
+        kiss_data_frame(&f.encode().unwrap())
+    }
+
+    #[test]
+    fn heard_message_for_another_station_is_emitted_but_not_acked() {
+        // Party line (tuxlink-iehg): a message addressed to ANOTHER station is
+        // shown in the feed (with its addressee) but never auto-ACKed — acking
+        // another station's traffic is documented network SPAM.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        let tx = engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b":W7OTHER  :hi{05"), 1000);
+        let msgs = sink.msgs.lock().unwrap();
+        assert_eq!(msgs.len(), 1, "heard message must reach the feed");
+        assert_eq!(msgs[0].sender, "KK6XYZ");
+        assert_eq!(msgs[0].addressee, "W7OTHER");
+        assert_eq!(msgs[0].text, "hi");
+        assert!(tx.is_empty(), "must NOT auto-ACK a message for another station");
+    }
+
+    #[test]
+    fn heard_broadcast_blank_addressee_is_emitted_not_acked() {
+        // A no-recipient broadcast (blank 9-space addressee) appears in the feed
+        // with an empty addressee and is never ACKed — even though the BTECH app
+        // wastefully attaches a msgno, nobody acks a blank addressee.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        let tx = engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b":         :net up{2"), 1000);
+        let msgs = sink.msgs.lock().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].addressee, "", "blank addressee == broadcast");
+        assert_eq!(msgs[0].text, "net up");
+        assert!(tx.is_empty(), "a broadcast is never auto-ACKed");
+    }
+
+    #[test]
+    fn broadcast_send_is_blank_addressee_no_msgno_and_fires_exactly_once() {
+        // Ground-truthed wire form: a no-recipient broadcast = `:` + 9 spaces +
+        // `:` + text, NO `{msgno`, transmitted once with no retransmit/timeout.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.enqueue_broadcast("ALCON test", "bX", 0);
+        let due = engine.tick_frames(0);
+        assert_eq!(due.len(), 1, "broadcast transmits exactly once");
+        let decoded = Frame::decode(&due[0]).unwrap();
+        assert_eq!(decoded.info, b":         :ALCON test", "blank addressee, no msgno");
+        assert!(engine.tick_frames(30_000).is_empty(), "no retransmit");
+        assert!(engine.tick_frames(200_000).is_empty(), "broadcast never times out");
     }
 
     #[test]

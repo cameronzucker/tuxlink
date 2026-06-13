@@ -2,16 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 
 // The "Pick on map…" affordance opens PositionPickerOverlay → PositionMapWidget →
-// BaseMap, which pulls in react-leaflet/leaflet + its assets. Mock them via the
-// shared testMapMock so the overlay renders headless and a pin can be simulated.
-import { fireMapEvent, resetMapMock } from '../map/testMapMock';
-vi.mock('react-leaflet', async () => (await import('../map/testMapMock')).createReactLeafletMock());
-vi.mock('leaflet', async () => (await import('../map/testMapMock')).createLeafletMock());
-vi.mock('../map/assets/world-mercator-2048.png', () => ({ default: '/world-mercator-2048.png' }));
-vi.mock('leaflet/dist/leaflet.css', () => ({}));
-vi.mock('leaflet/dist/images/marker-icon.png', () => ({ default: '/marker-icon.png' }));
-vi.mock('leaflet/dist/images/marker-icon-2x.png', () => ({ default: '/marker-icon-2x.png' }));
-vi.mock('leaflet/dist/images/marker-shadow.png', () => ({ default: '/marker-shadow.png' }));
+// MapLibreMap (globally mocked via test-setup). A pin is simulated by driving the
+// constructed map's click on the test double.
+import { getLastMap } from '../map/testMapLibreMock';
 
 import { PositionFormV2 } from './PositionFormV2';
 
@@ -46,7 +39,6 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 // Reset mock to defaults before each test so per-test overrides don't bleed.
 beforeEach(async () => {
-  resetMapMock();
   const { invoke } = await import('@tauri-apps/api/core');
   const mockInvoke = invoke as ReturnType<typeof vi.fn>;
   mockInvoke.mockImplementation(async (cmd: string) => {
@@ -115,15 +107,18 @@ describe('<PositionFormV2>', () => {
     fireEvent.click(screen.getByTestId('position-pick-on-map'));
     expect(screen.getByTestId('position-picker-overlay')).toBeInTheDocument();
 
-    act(() => {
-      fireMapEvent('click', { lat: 33.6, lng: -118.2 });
-    });
+    // Drive a click on the constructed MapLibre map, far from CN87us, so the
+    // picked grid is genuinely distinct (not just the CN87US→CN87 trim).
+    const map = getLastMap()!;
+    act(() => map.__emit('load'));
+    act(() => map.__emit('click', { lngLat: { lng: 8.5, lat: 47.4 } }));
     fireEvent.click(screen.getByTestId('position-picker-confirm'));
 
     // Overlay closed; grid input now holds the picked 4-char locator.
     expect(screen.queryByTestId('position-picker-overlay')).toBeNull();
     const input = screen.getByLabelText(/Maidenhead grid/i) as HTMLInputElement;
     expect(input.value).toMatch(/^[A-Z]{2}\d{2}$/);
+    expect(input.value).not.toBe('CN87');
     expect(input.value).not.toBe('CN87US');
   });
 

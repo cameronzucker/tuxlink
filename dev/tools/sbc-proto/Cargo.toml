@@ -1,0 +1,8 @@
+[package]
+name = "sbc-proto"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+mini_sbc = "0.1.7"

@@ -1,28 +1,15 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
-
-vi.mock('react-leaflet', async () => (await import('../map/testMapMock')).createReactLeafletMock());
-vi.mock('leaflet', async () => (await import('../map/testMapMock')).createLeafletMock());
-vi.mock('../map/assets/world-mercator-2048.png', () => ({ default: '/world-mercator-2048.png' }));
-vi.mock('leaflet/dist/leaflet.css', () => ({}));
-vi.mock('leaflet/dist/images/marker-icon.png', () => ({ default: '/marker-icon.png' }));
-vi.mock('leaflet/dist/images/marker-icon-2x.png', () => ({ default: '/marker-icon-2x.png' }));
-vi.mock('leaflet/dist/images/marker-shadow.png', () => ({ default: '/marker-shadow.png' }));
-vi.mock('../map/useTileSource', () => ({ useTileSource: vi.fn() }));
-import { resetMapMock, getMockMap } from '../map/testMapMock';
-import { gridToLatLon } from '../forms/position/maidenhead';
-import { useTileSource } from '../map/useTileSource';
-import type { TileSource, TileSourceStatus } from '../map/tileSource';
-
-import { StationFinderMap, stationPinIcon } from './StationFinderMap';
+import { describe, it, expect, vi } from 'vitest';
+import { render, act } from '@testing-library/react';
+import { getLastMap, type MapLibreMock } from '../map/testMapLibreMock';
+import { stationKey } from './useReachabilityMap';
+import { StationFinderMap } from './StationFinderMap';
+import type { ReachTier } from './reachability';
 import type { Station } from './stationModel';
 
-// NOTE: real-pin RENDERING + click are validated by browser smoke, not here.
-// react-leaflet draws pins as L.divIcon markers; the test map mock renders
-// <Marker> as a bare div and cannot represent divIcon HTML or eventHandlers
-// (relying on it is exactly what shipped the broken map — tuxlink-ku2b). These
-// tests cover the icon-building LOGIC (tier → colour class + size) and that the
-// component mounts the right number of markers without crashing.
+// MapLibre re-expression: pins are GeoJSON circle-layer features, not Leaflet
+// markers. These tests prove the source/feature wiring (tier + selected props,
+// gridless drop, operator pin, layer-scoped click→onSelect). Render fidelity +
+// recenter are covered by grim + MapLibreMap's own tests respectively.
 
 const stations: Station[] = [
   { baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, gatewayAntenna: null, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
@@ -30,102 +17,57 @@ const stations: Station[] = [
   { baseCallsign: 'NOGRID', grid: '', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, gatewayAntenna: null, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
 ];
 
-const LAN_SOURCE: TileSource = {
-  url: 'http://192.168.1.10:8080/{z}/{x}/{y}.png',
-  scheme: 'Xyz',
-  minZoom: 0,
-  maxZoom: 16,
-  cacheBudgetMb: 256,
-  attribution: null,
-  label: 'LAN source',
-};
-const LAN_STATUS: TileSourceStatus = { kind: 'lan-live', zoom: 16, label: 'LAN source', cachedAt: null };
+interface PinFeature {
+  properties: { key: string; tier: string; selected: boolean };
+}
 
-beforeEach(() => {
-  resetMapMock();
-  vi.mocked(useTileSource).mockReturnValue(null);
-});
+function loadLast(): MapLibreMock {
+  const map = getLastMap()!;
+  act(() => map.__emit('load'));
+  return map;
+}
 
-describe('stationPinIcon (reachability colour/size logic)', () => {
-  it('encodes the tier as a colour class + size in the icon HTML', () => {
-    const good = stationPinIcon('good', false, 'N0DAJ') as unknown as { html: string; iconSize: [number, number] };
-    expect(good.html).toMatch(/station-finder__pindot--good/);
-    expect(good.iconSize[0]).toBe(20);
-
-    const skip = stationPinIcon('skip', false, 'X') as unknown as { html: string; iconSize: [number, number] };
-    expect(skip.html).toMatch(/station-finder__pindot--skip/);
-    expect(skip.iconSize[0]).toBe(10);
-  });
-
-  it('falls back to an untiered dot when no tier is known', () => {
-    const u = stationPinIcon(undefined, false, 'X') as unknown as { html: string };
-    expect(u.html).toMatch(/station-finder__pindot--untiered/);
-  });
-
-  it('marks the selected pin', () => {
-    const sel = stationPinIcon('good', true, 'X') as unknown as { html: string };
-    expect(sel.html).toMatch(/is-selected/);
-  });
-
-  it('sizes the pin via iconSize (CSSOM), never an inline style attribute', () => {
-    // Regression guard for tuxlink-s0r1: an inline `style="width:..."` on the
-    // divIcon span is stripped by Tauri's packaged CSP in WebKitGTK, collapsing
-    // the dot into an oblong "black blob". Size must come from iconSize (which
-    // Leaflet applies to the wrapper via the CSSOM) + a width/height CSS rule.
-    const good = stationPinIcon('good', false, 'N0DAJ') as unknown as { html: string; iconSize: [number, number] };
-    expect(good.html).not.toMatch(/style\s*=/);
-    expect(good.iconSize).toEqual([20, 20]);
-  });
-});
+function sourceData(map: MapLibreMock, id: string): { features: PinFeature[] } {
+  return (map.getSource(id) as { data: { features: PinFeature[] } }).data;
+}
 
 describe('StationFinderMap', () => {
-  it('mounts a marker per placeable station + the operator pin, dropping gridless', () => {
-    render(
-      <StationFinderMap stations={stations} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
-    );
-    // 2 placeable stations (NOGRID dropped) + 1 operator "you" pin = 3 markers.
-    expect(screen.getAllByTestId('leaflet-marker')).toHaveLength(3);
+  it('builds one feature per placeable station, dropping gridless ones', () => {
+    render(<StationFinderMap stations={stations} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />);
+    const map = loadLast();
+    expect(sourceData(map, 'stations').features).toHaveLength(2); // NOGRID dropped
   });
 
-  it('omits the operator pin when no grid is set', () => {
-    render(
-      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
-    );
-    // 2 placeable stations, no "you" pin.
-    expect(screen.getAllByTestId('leaflet-marker')).toHaveLength(2);
+  it('encodes the reachability tier and selected flag on each feature', () => {
+    const key0 = stationKey(stations[0]);
+    const tiers = new Map<string, ReachTier>([[key0, 'good']]);
+    render(<StationFinderMap stations={stations} operatorGrid="" tiers={tiers} selectedKey={key0} onSelect={() => {}} />);
+    const map = loadLast();
+    const feats = sourceData(map, 'stations').features;
+    const selected = feats.find((f) => f.properties.key === key0)!;
+    expect(selected.properties.tier).toBe('good');
+    expect(selected.properties.selected).toBe(true);
+    const other = feats.find((f) => f.properties.key !== key0)!;
+    expect(other.properties.tier).toBe('untiered'); // no tier → untiered fallback
+    expect(other.properties.selected).toBe(false);
   });
 
-  // Regression: react-leaflet's MapContainer center/zoom are mount-only props,
-  // but StationFinderPanel loads the operator grid asynchronously (config_read)
-  // AFTER the map mounts. Without an imperative recenter the map stays parked at
-  // [0,0] (mid-Atlantic). The component must setView() to the operator latlon
-  // once a grid is present, and re-setView when the grid changes.
-  it('recenters the map on the operator grid once it is provided', () => {
-    const { rerender } = render(
-      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
-    );
-    // No grid yet → no imperative recenter.
-    expect(getMockMap().setView).not.toHaveBeenCalled();
+  it('places the operator pin only when a grid is set', () => {
+    const { rerender } = render(<StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />);
+    let map = loadLast();
+    expect(sourceData(map, 'operator').features).toHaveLength(0);
 
-    // Grid resolves (as config_read would) → recenter to the operator location.
-    rerender(
-      <StationFinderMap stations={stations} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
-    );
-    const me = gridToLatLon('DM43bp')!;
-    expect(getMockMap().setView).toHaveBeenCalledWith([me.lat, me.lon], expect.any(Number));
+    rerender(<StationFinderMap stations={stations} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />);
+    map = getLastMap()!;
+    expect(sourceData(map, 'operator').features).toHaveLength(1);
   });
 
-  // Task 7: validate tile source is wired through to BaseMap
-  it('passes tileSource to BaseMap when useTileSource returns a lan-live source', () => {
-    vi.mocked(useTileSource).mockReturnValue({ source: LAN_SOURCE, status: LAN_STATUS });
-    render(<StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />);
-    // When tileSource is tile-backed, BaseMap renders TileLayerBridge → leaflet-tilelayer
-    expect(screen.getByTestId('leaflet-tilelayer')).toBeInTheDocument();
-  });
-
-  it('renders no TileLayer when useTileSource returns null (offline fallback)', () => {
-    vi.mocked(useTileSource).mockReturnValue(null);
-    render(<StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />);
-    expect(screen.queryByTestId('leaflet-tilelayer')).toBeNull();
+  it('fires onSelect when a station pin is clicked (layer-scoped click)', () => {
+    const onSelect = vi.fn();
+    const key0 = stationKey(stations[0]);
+    render(<StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={onSelect} />);
+    const map = loadLast();
+    act(() => map.__emit('click:station-pins', { features: [{ properties: { key: key0 } }] }));
+    expect(onSelect).toHaveBeenCalledWith(stations[0]);
   });
 });

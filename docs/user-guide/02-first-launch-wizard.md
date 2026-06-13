@@ -117,9 +117,16 @@ section explains where each one lives:
 The Winlink account-creation flow lives at winlink.org and is outside
 tuxlink. The short version: you go to the Winlink site, register your
 callsign, set a password, and that password is what you enter in the
-tuxlink wizard. Account approval timing, recovery procedures, and the
-specific details of how Winlink handles your registration are
-documented by Winlink itself; tuxlink does not duplicate them.
+tuxlink wizard. Account approval timing and the specific details of how
+Winlink handles your registration are documented by Winlink itself;
+tuxlink does not duplicate them.
+
+**Set a password recovery address while you are there.** Winlink's only
+self-service password-recovery path emails your password to a recovery
+address stored on your account, and it works only if that address was set
+*before* you lose access. Add one in your winlink.org account profile now —
+a missing recovery address is the single most common reason operators get
+locked out of their Winlink account later.
 
 ### What happens to your password if you reinstall tuxlink
 
@@ -135,18 +142,27 @@ password is still your same Winlink password; you just enter it once
 on the new machine and tuxlink writes it to the new machine's keyring.
 
 If you lose your Winlink password entirely (not the keyring entry, but
-the actual password Winlink validates against), the recovery flow goes
-through winlink.org — tuxlink has no recovery path because tuxlink
-does not own the credential.
+the actual password Winlink validates against), recovery goes through
+winlink.org — tuxlink has no recovery path because tuxlink does not own
+the credential. Winlink's recovery tool emails your password to the
+recovery address on your account, so it only works if you set one
+beforehand (see above). If no recovery address was ever set, the
+self-service tool cannot help: post on the Winlink support forum and a
+Winlink administrator will add a recovery address for you, after which
+recovery works. The tool also covers **call-sign accounts only** —
+**tactical-address** passwords are not recoverable through it and likewise
+go through the support forum.
 
 ## What can go wrong
 
 - "Not configured" in the message list = the backend has no callsign or
-  no transport yet. Re-run the wizard via Tools → Settings, or delete the
-  config file.
+  no transport yet. Delete the config file to re-run the wizard on next
+  launch, or recover the callsign/password through the auth-recovery
+  banner that appears after a failed CMS login.
 - "CMS unreachable" — the optional verify step failed. Either retry with a
-  different CMS endpoint (Settings) or skip verification and let the first
-  real Connect surface the failure with full session log context.
+  different CMS endpoint (the Telnet connection panel) or skip verification
+  and let the first real Connect surface the failure with full session log
+  context.
 - **"Authentication failed" on first Connect** = the Winlink password
   entered in the wizard does not match what winlink.org has on file.
   Re-check the password (look-alikes between `0`/`O`, `1`/`l`/`I`); if

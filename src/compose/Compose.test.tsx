@@ -744,4 +744,37 @@ describe('<Compose> attachments (tuxlink-mg4s)', () => {
     const call = lastMessageSendCall();
     expect(call?.draft?.attachments).toEqual([{ filename: 'photo.jpg', bytes: [1, 2, 3] }]);
   });
+
+  it('warns when over the CMS limit and clears it when the operator resizes smaller (tuxlink-rbhg)', async () => {
+    mocks.dialogOpen.mockResolvedValueOnce('/tmp/big.heic');
+    mocks.invoke.mockImplementation(async (cmd: string, args?: { imagePreset?: string }) => {
+      if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+      if (cmd === 'prepare_attachment') {
+        // Medium (default) lands over the 120KB CMS limit; Small fits under.
+        const small = args?.imagePreset === 'small';
+        return {
+          filename: 'big.jpg',
+          bytes: [1],
+          kind: 'image',
+          originalLen: 3_780_000,
+          newLen: small ? 40_000 : 130_000,
+        };
+      }
+      return null;
+    });
+    seedDraft('rbhg-cms', 'W6ABC');
+
+    render(<Compose draftId="rbhg-cms" />);
+    await screen.findByTestId('recipient-chip-W6ABC');
+
+    fireEvent.click(screen.getByTestId('compose-attach-add'));
+    await screen.findByText('big.jpg');
+    // 130 KB total > 120 KB CMS limit → the over-limit warning shows.
+    await screen.findByTestId('compose-attach-cms-over');
+
+    // Operator picks a smaller resize → re-transcode to 40 KB → warning clears.
+    fireEvent.change(screen.getByTestId('compose-attach-resize-0'), { target: { value: 'small' } });
+    await waitFor(() => expect(screen.queryByTestId('compose-attach-cms-over')).toBeNull());
+    await screen.findByTestId('compose-attach-size-0');
+  });
 });

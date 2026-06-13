@@ -109,9 +109,9 @@ export const MENU_TREE: TopMenu[] = [
       // position precision). The former granular leaves (GPS state / Position
       // precision / a duplicate GPS) all opened the same box — consolidated.
       { id: 'menu:tools:settings_privacy', label: 'GPS & Privacy…' },
-      // tuxlink-a1cc / dyop: configure a LAN map-tile source (design §8.7) — the
-      // one reachable home for the dyop tile backend (no general prefs surface).
-      { id: 'menu:tools:settings_map_tiles', label: 'Map tiles…' },
+      // tuxlink-ndi4: the "Map tiles…" LAN-raster-source config entry was removed
+      // with the self-hosted vector basemap swap — the basemap no longer consumes
+      // a configurable LAN tile source.
     ] },
     // "Preferences" removed — it duplicated "Settings" (operator call 2026-05-22).
   ] },

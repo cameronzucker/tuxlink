@@ -254,6 +254,31 @@
   margin-left: auto;
 }
 
+/* tuxlink-rbhg: per-image resize picker + live size + CMS-limit warning. */
+.compose-attachments__size {
+  font-size: 11px;
+  color: var(--tux-fg-faint);
+}
+.compose-attachments__resized {
+  color: var(--tux-fg-faint);
+}
+.compose-attachments__opts {
+  display: inline-flex;
+  gap: 4px;
+}
+.compose-attachments__resize,
+.compose-attachments__format {
+  font-size: 11px;
+  padding: 1px 4px;
+}
+.compose-attachments__cms-over {
+  color: var(--tux-danger, #c0392b);
+  font-weight: 600;
+}
+.compose-attachments__cms-near {
+  color: var(--tux-warning, #b8860b);
+}
+
 /* ============================================================
  * Options row
  * ============================================================ */

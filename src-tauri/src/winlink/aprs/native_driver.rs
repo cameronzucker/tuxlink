@@ -70,6 +70,9 @@ impl NativeDriver {
             TxCommand::Send { dest, text, msgid } => {
                 self.engine.enqueue_send(&dest, &text, &msgid, now_ms)
             }
+            TxCommand::Broadcast { text, local_id } => {
+                self.engine.enqueue_broadcast(&text, &local_id, now_ms)
+            }
             TxCommand::Abort => self.engine.abort(),
         }
     }

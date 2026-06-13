@@ -23,19 +23,6 @@ VHF and UHF with native control of the Benshi UV-Pro handheld.
   <a href="https://www.kernel.org"><img src="https://img.shields.io/badge/platform-linux%20(x86__64%20%7C%20arm64)-lightgrey.svg?logo=linux&logoColor=white" alt="Platform: Linux x86_64 and arm64"></a>
 </p>
 
-> [!NOTE]
-> **Tuxlink is in alpha and looking for testers.** It installs from `.deb`,
-> `.rpm`, and `.AppImage` artifacts on every release. It is not yet ready for
-> field deployment. Install it, run it through real workflows, and
-> [file an issue](https://github.com/cameronzucker/tuxlink/issues) with a clear
-> repro and the exported logs (Help → Logging → Export logs).
->
-> Version tags are generated automatically from conventional-commit activity by
-> [release-please](https://github.com/googleapis/release-please) and track
-> repository velocity, not release readiness. The
-> [Maturity](#maturity-what-is-and-is-not-proven) section covers which paths
-> are validated and which are operator-verified.
-
 > [!TIP]
 > **Coming from Winlink Express or Pat?** Start with
 > [Moving from other Winlink clients](docs/user-guide/32-from-express-or-pat.md):
@@ -56,24 +43,35 @@ by emergency-communications (emcomm) teams, ARES and CERT organizations, the
 Red Cross, and offshore cruisers. It moves email-style messages over radio when
 the internet is down.
 
-Two clients have reached the Winlink network on Linux.
-[Winlink Express](https://winlink.org/WinlinkExpress) is the proprietary Windows
-reference client; Linux operators run it under WINE.
-[Pat](https://getpat.io/) is an open-source Go client that has served the Linux
-Winlink community for years: cross-platform, packaged for Debian and Ubuntu,
-with telnet, ARDOP, VARA HF/FM, PACTOR, and AX.25 support. Pat pairs a
-command-line tool with an optional browser-served web UI, stores operator
-credentials in `~/.config/pat/config.json`, and routes transport configuration
-(Dire Wolf, ardopcf, rig control) through community-written tutorials per
-transport.
+Two clients reach the Winlink network on Linux today.
+[Winlink Express](https://winlink.org/WinlinkExpress), the proprietary Windows
+reference client, runs under WINE. [Pat](https://getpat.io/) is an open-source Go
+client with broad transport support, pairing a command-line tool with an optional
+browser-served web UI.
 
-Tuxlink occupies a third axis: a native desktop GUI, delivered as a single
-[Tauri](https://tauri.app/) application. The complete Winlink Express Standard
-Forms catalog, an address book, station finding, location-aware request
-workflows, full-text search, and an offline map all ship in the box, and first
-run needs no README and no video tutorial. The OS keyring holds the Winlink CMS password; Tuxlink never writes
-it to a config file on disk. The mailbox, compose pane, address book, and
-session log all render inside one desktop window.
+| | Winlink Express | Pat | Tuxlink |
+|---|---|---|---|
+| Native Linux, no WINE | No (Windows) | Yes | Yes |
+| ARM / Raspberry Pi | No | Yes | Yes |
+| Native desktop GUI | Windows only | No (CLI + web UI) | Yes |
+| Winlink Standard Forms catalog | Yes | No | Yes |
+| Credential storage | Local file | Config file | OS keyring |
+| Native UV-Pro Bluetooth control | No | No | Yes |
+
+Tuxlink takes a third path: it implements the Winlink B2F protocol itself,
+natively in Rust. The mailbox, the CMS connection, and the wire-protocol exchange
+are one application, not a desktop GUI wrapped around a separate modem daemon or a
+Windows binary under emulation. The same build-it-natively approach reaches the
+radio link: Tuxlink is developing Sonde, a clean-room HF modem, rather than
+depending on closed Windows modem software.
+
+On that native engine it ships a single [Tauri](https://tauri.app/) desktop
+application. The complete Winlink Express Standard Forms catalog, an address book,
+station finding, location-aware request workflows, full-text search, and an
+offline map all ship in the box, and first run needs no README and no video
+tutorial. The OS keyring holds the Winlink CMS password; Tuxlink never writes it
+to a config file on disk. The mailbox, compose pane, address book, and session
+log all render inside one desktop window.
 
 Tuxlink unifies two layers of emergency communication that operators have
 historically run on separate devices. The strategic layer carries Winlink email
@@ -82,6 +80,19 @@ and text over VHF and UHF to stations in local range, with native control of the
 Benshi UV-Pro handheld. Both run from one workspace on a mains-powered Linux
 station, instead of a Windows laptop for Winlink alongside a battery handheld for
 APRS.
+
+> [!NOTE]
+> **Tuxlink is in alpha and looking for testers.** It installs from `.deb`,
+> `.rpm`, and `.AppImage` artifacts on every release. It is not yet ready for
+> field deployment. Install it, run it through real workflows, and
+> [file an issue](https://github.com/cameronzucker/tuxlink/issues) with a clear
+> repro and the exported logs (Help → Logging → Export logs).
+>
+> Version tags are generated automatically from conventional-commit activity by
+> [release-please](https://github.com/googleapis/release-please) and track
+> repository velocity, not release readiness. The
+> [Maturity](#maturity-what-is-and-is-not-proven) section covers which paths
+> are validated and which are operator-verified.
 
 ## Features
 
@@ -112,9 +123,12 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
   with delivery-acknowledgement tracking, presented inline beside the address
   book. A fixed, mains-powered station carries local tactical traffic without
   draining a handheld.
-- **Native UV-Pro control.** Direct Bluetooth control of the Benshi UV-Pro
-  handheld over its RFCOMM / GAIA link: a control strip for the radio, and a KISS
-  path that also carries AX.25 packet and Winlink.
+- **Native Benshi UV-Pro support.** Tuxlink drives the Benshi UV-Pro handheld
+  directly over Bluetooth, through its RFCOMM / GAIA control link, with no cable,
+  no sound card, and no separate TNC. A control strip surfaces the radio, and the
+  same Bluetooth link carries a KISS data path for APRS tactical chat, AX.25
+  packet, and Winlink. A modern handheld and a Linux machine make a complete
+  strategic-and-tactical station.
 - **FULL and tactical identities.** A licensed FULL identity for Winlink and
   tactical identities for local operation, managed under Settings → Identities.
 
@@ -184,66 +198,13 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 
 ## Install
 
-Download the artifact for your distribution and architecture from the
+Download the `.deb`, `.rpm`, or `.AppImage` for your distribution and
+architecture (`x86_64` or `arm64`, with `SHA256SUMS`) from the
 **[latest release](https://github.com/cameronzucker/tuxlink/releases/latest)**.
-Every release publishes `.deb`, `.rpm`, and `.AppImage` bundles for both
-`x86_64` and `arm64`, alongside `SHA256SUMS` for verification.
 
-```bash
-# Debian / Ubuntu (amd64 shown; arm64 bundles are also published)
-sudo dpkg -i tuxlink_*_amd64.deb
-
-# Fedora / RHEL
-sudo rpm -i tuxlink-*.x86_64.rpm
-
-# Distribution-agnostic
-chmod +x tuxlink_*_amd64.AppImage && ./tuxlink_*_amd64.AppImage
-```
-
-**System dependency:** Tuxlink requires WebKitGTK 4.1 and a secret-service
-compatible keyring daemon. Distributions that ship only WebKitGTK 4.0 (older
-Debian stable, older RHEL / CentOS) need a backport.
-
-Full install and first-run instructions live in
-**[docs/install.md](docs/install.md)**. To build from source instead, see
-**[docs/development.md](docs/development.md)**; the build needs the Rust
-toolchain only (no Go).
-
-### Uninstall and data cleanup
-
-Uninstalling Tuxlink has two parts. Removing the package keeps operator data by
-default: messages, contacts, settings, station catalogs, logs, and OS-keyring
-credentials remain in the current user's profile so a reinstall resumes cleanly.
-A full uninstall removes both.
-
-**Part 1 — remove your data.** This is per-user and cannot be done by the package
-manager (it runs as root and cannot infer which user homes or keyrings to scrub).
-Open **Help → Uninstall Cleanup…** in the app, or run it from the terminal as the
-user whose data is being removed:
-
-```bash
-tuxlink cleanup --dry-run        # preview; removes nothing
-tuxlink cleanup --transient      # cache, logs, webview state; keep mailbox + settings
-tuxlink cleanup --all            # config, mailbox, contacts, stations, logs, known keyring entries
-```
-
-Run Part 1 before uninstalling, or reinstall and run it afterward if the package
-is already gone. Secret Service credentials cannot be enumerated service-wide;
-full cleanup removes the accounts it can discover, and the dialog lists the
-keyring services (`tuxlink`, legacy `tuxlink-pat`) to check manually.
-
-**Part 2 — remove the application.**
-
-```bash
-sudo apt remove tuxlink          # Debian / Ubuntu (.deb)
-sudo dnf remove tuxlink          # Fedora / RHEL (.rpm)
-# AppImage / manual: delete the .AppImage, then scripts/uninstall-desktop-entry.sh
-```
-
-Verify it is gone: `dpkg -l | grep -i tuxlink` (Debian) or `rpm -q tuxlink`
-(Fedora) returns nothing. Package installs put the launcher and icons under
-`/usr/share`, removed by the package manager; the per-user launcher entries the
-cleanup tool lists apply only to AppImage / manual installs.
+Install, first-run, uninstall, and build-from-source steps live in
+**[docs/install.md](docs/install.md)**. Tuxlink requires WebKitGTK 4.1 and a
+secret-service keyring daemon.
 
 ## Interface
 

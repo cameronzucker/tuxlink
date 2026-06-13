@@ -14,7 +14,7 @@
 
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { GridMapPicker } from '../map/GridMapPicker';
+import { GridPicker } from '../map/GridPicker';
 import { normalizeGrid } from '../wizard/validators';
 import './GridPickerOverlay.css';
 
@@ -62,7 +62,7 @@ export function GridPickerOverlay({ initialGrid, onConfirm, onCancel }: GridPick
         </p>
 
         <div className="grid-picker-overlay__map">
-          <GridMapPicker
+          <GridPicker
             mode="pin"
             grid={picked || undefined}
             onGridChange={(g) => setPicked(normalizeGrid(g))}

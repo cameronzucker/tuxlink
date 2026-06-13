@@ -16,6 +16,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@protomaps/basemaps": "^5",
     "@radix-ui/react-dialog": "^1.1.16",
     "@radix-ui/react-dropdown-menu": "^2.1.17",
     "@radix-ui/react-tabs": "^1.1.14",
@@ -24,14 +25,14 @@
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "dompurify": "^3.4.8",
-    "leaflet": "^1.9.4",
+    "maplibre-gl": "^5",
     "marked": "^15.0.12",
     "marked-extended-tables": "^2.0.1",
     "marked-footnote": "^1.4.0",
     "mermaid": "^11.15.0",
+    "pmtiles": "^4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-leaflet": "^5.0.0",
     "react-virtuoso": "^4.18.7",
     "tz-lookup": "^6.1.25"
   },
@@ -40,7 +41,6 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/dompurify": "^3.2.0",
-    "@types/leaflet": "^1.9.21",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@types/tz-lookup": "^6.1.2",

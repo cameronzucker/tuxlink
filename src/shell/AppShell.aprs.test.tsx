@@ -102,4 +102,18 @@ describe('APRS dock integration', () => {
     // And the tab row sits directly inside the surface, above the body.
     expect(tabs.parentElement).toBe(surface);
   });
+
+  // tuxlink-iehg wire-walk flow 6: the chat opened one-way (no way to close it /
+  // free the reading pane). The dock close control must dismiss the whole APRS
+  // surface. With no radio session active (the mock returns a stopped modem),
+  // closing collapses the dock entirely.
+  it('closes the dock from the close control, freeing the reading pane', async () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('dash-aprs-control'));
+    expect(await screen.findByTestId('aprs-chat-panel')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('aprs-dock-close'));
+    // Dock surface + chat panel are gone (no radioPanelMode → no dock at all).
+    expect(screen.queryByTestId('aprs-dock-surface')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('aprs-chat-panel')).not.toBeInTheDocument();
+  });
 });

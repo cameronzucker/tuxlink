@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { humanSize, airtimeEstimate, isImageFilename } from './attachmentFormat';
+import { humanSize, airtimeEstimate, isImageFilename, cmsStatus, CMS_LIMIT_BYTES } from './attachmentFormat';
+
+describe('cmsStatus', () => {
+  it('is over above the 120KB CMS limit', () => {
+    expect(cmsStatus(CMS_LIMIT_BYTES + 1)).toBe('over');
+    expect(cmsStatus(200 * 1024)).toBe('over');
+  });
+  it('is near within 80-100% of the limit', () => {
+    expect(cmsStatus(Math.floor(CMS_LIMIT_BYTES * 0.9))).toBe('near');
+  });
+  it('is ok well under the limit', () => {
+    expect(cmsStatus(40 * 1024)).toBe('ok');
+    expect(cmsStatus(0)).toBe('ok');
+  });
+});
 
 describe('humanSize', () => {
   it('formats bytes/KB/MB', () => {

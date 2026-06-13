@@ -3106,6 +3106,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mini_sbc"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0522eb0199121b29e0ef8d3f3ff595914353173c116655c5f7b96ebb7458b830"
+dependencies = [
+ "crunchy",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6480,6 +6489,7 @@ dependencies = [
  "mail-parser",
  "md-5 0.11.0",
  "mime",
+ "mini_sbc",
  "mockito",
  "multer",
  "native-tls",

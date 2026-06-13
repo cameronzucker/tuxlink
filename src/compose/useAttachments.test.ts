@@ -62,4 +62,40 @@ describe('useAttachments', () => {
     expect(result.current.items).toHaveLength(0);
     expect(result.current.error).toBe('decode failed: garbage');
   });
+
+  it('re-transcodes an image in place when setOptions changes the preset', async () => {
+    invokeMock
+      .mockResolvedValueOnce({ filename: 'p.jpg', bytes: [1], kind: 'image', originalLen: 2_000_000, newLen: 90_000 })
+      .mockResolvedValueOnce({ filename: 'p.jpg', bytes: [2], kind: 'image', originalLen: 2_000_000, newLen: 30_000 });
+    const { result } = renderHook(() => useAttachments());
+    await act(async () => {
+      await result.current.addPath('/tmp/p.heic', { resize: 'medium', format: 'jpeg' });
+    });
+    expect(result.current.items[0].newLen).toBe(90_000);
+
+    await act(async () => {
+      await result.current.setOptions(0, { resize: 'small', format: 'jpeg' });
+    });
+    // Re-invoked with the retained source path + the new preset; item replaced.
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'prepare_attachment',
+      expect.objectContaining({ path: '/tmp/p.heic', imagePreset: 'small' }),
+    );
+    expect(result.current.items).toHaveLength(1);
+    expect(result.current.items[0].newLen).toBe(30_000);
+    expect(result.current.items[0].opts.resize).toBe('small');
+  });
+
+  it('setOptions is a no-op for non-image files', async () => {
+    invokeMock.mockResolvedValueOnce({ filename: 'a.txt', bytes: [1], kind: 'file', originalLen: 1, newLen: 1 });
+    const { result } = renderHook(() => useAttachments());
+    await act(async () => {
+      await result.current.addPath('/tmp/a.txt');
+    });
+    invokeMock.mockClear();
+    await act(async () => {
+      await result.current.setOptions(0, { resize: 'small', format: 'webp' });
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
 });

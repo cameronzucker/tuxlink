@@ -13,7 +13,10 @@ reproducing.
 The Hamlib model numbers below were verified against the Hamlib source at
 the time of writing (Hamlib master, accessed June 2026). Model IDs do
 shift between Hamlib versions; `rigctl --list | grep <model>` against the
-installed Hamlib confirms the current number for any rig.
+installed Hamlib confirms the current number for any rig. Tuxlink does not
+drive CAT itself — these model numbers and CAT settings apply when running
+rigctld for external software (Dire Wolf CAT-PTT, a logger); see
+[CAT and rigctld](12-cat-and-rigctld.md).
 
 ## Xiegu G90 (HF, 20 W)
 

@@ -1,4 +1,5 @@
 pub mod app_backend;
+pub mod basemap;
 pub mod bootstrap;
 pub mod tiles;
 pub mod catalog;
@@ -121,6 +122,94 @@ pub fn run() {
             // The path is `/{z}/{x}/{y}` (or `…/{y}.png`); serve_tile tolerates
             // the leading `/`. Own it before moving into the async task.
             let path = request.uri().path().to_string();
+
+            // tuxlink-ndi4 (plan A1): the vector-basemap PMTiles branch. PMTiles
+            // archives are served as RAW bytes over HTTP-206 `Range` on
+            // `tile://pmtiles/<archive>`, consumed by the `pmtiles` JS lib's native
+            // `FetchSource` — a distinct path-prefix branch from the LAN-raster
+            // `serve_tile` pipeline below (which is image-magic / SSRF shaped and
+            // parked for imagery). Zero content decoding here: PMTiles internal
+            // compression is decoded by the JS client.
+            if let Some(archive_id) =
+                crate::basemap::parse_pmtiles_uri(request.uri().host(), &path)
+            {
+                let range = request
+                    .headers()
+                    .get(tauri::http::header::RANGE)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(crate::basemap::parse_range_header);
+                let registry = match ctx
+                    .app_handle()
+                    .try_state::<std::sync::Arc<crate::basemap::PmtilesRegistry>>()
+                {
+                    Some(state) => (*state).clone(),
+                    None => {
+                        let _ = tauri::http::Response::builder()
+                            .status(503)
+                            .header(tauri::http::header::CONTENT_TYPE, "text/plain")
+                            .body(b"basemap registry unavailable".to_vec())
+                            .map(|resp| responder.respond(resp));
+                        return;
+                    }
+                };
+                let archive = match registry.get(&archive_id) {
+                    Some(a) => a,
+                    None => {
+                        // Archive not registered (e.g. bundle resource absent, or an
+                        // unknown region pack). 404 → MapLibre treats the source as
+                        // empty; the bundled overview beneath stays visible.
+                        let _ = tauri::http::Response::builder()
+                            .status(404)
+                            .header(tauri::http::header::CONTENT_TYPE, "text/plain")
+                            .body(b"pmtiles archive not found".to_vec())
+                            .map(|resp| responder.respond(resp));
+                        return;
+                    }
+                };
+                // Positioned file reads are blocking I/O — run them off the async
+                // worker pool (matches the project's spawn_blocking idiom). The
+                // responder is `Send`, so it can resolve from the blocking thread.
+                tauri::async_runtime::spawn_blocking(move || {
+                    match crate::basemap::read_range(&archive, range) {
+                        Ok(rr) => {
+                            let mut builder = tauri::http::Response::builder()
+                                .status(rr.status)
+                                .header(
+                                    tauri::http::header::CONTENT_TYPE,
+                                    crate::basemap::PMTILES_CONTENT_TYPE,
+                                )
+                                .header(tauri::http::header::ACCEPT_RANGES, "bytes")
+                                .header(
+                                    tauri::http::header::CONTENT_LENGTH,
+                                    rr.body.len().to_string(),
+                                )
+                                // Stable per-archive ETag (length-derived) so the
+                                // pmtiles client never sees a mid-read ETag change
+                                // between its header read and subsequent tile reads.
+                                .header(
+                                    tauri::http::header::ETAG,
+                                    format!("\"{}\"", rr.total_len),
+                                );
+                            if let Some(cr) = &rr.content_range {
+                                builder =
+                                    builder.header(tauri::http::header::CONTENT_RANGE, cr);
+                            }
+                            if let Ok(resp) = builder.body(rr.body) {
+                                responder.respond(resp);
+                            }
+                        }
+                        Err(_) => {
+                            let _ = tauri::http::Response::builder()
+                                .status(500)
+                                .header(tauri::http::header::CONTENT_TYPE, "text/plain")
+                                .body(b"pmtiles read error".to_vec())
+                                .map(|resp| responder.respond(resp));
+                        }
+                    }
+                });
+                return;
+            }
+
             // Retrieve the managed gatekeeper Arc and clone it into the task.
             // If it is not yet managed (setup failed to resolve app_data_dir),
             // respond 503 rather than panic.
@@ -265,12 +354,48 @@ pub fn run() {
         // APRS tactical-chat engine lifecycle (tuxlink-2f2n, Task 10). Task 11's
         // Tauri commands consume this via `State<'_, AprsState>`.
         .manage(crate::winlink::aprs::engine::AprsState::default())
+        // tuxlink-ndi4 (plan A1/A3): the vector-basemap PMTiles registry the
+        // `tile://pmtiles/<archive>` branch reads. Managed unconditionally (the
+        // handler is on the Builder above); the bundled `world` archive is
+        // registered in `.setup()` once its resource path resolves.
+        .manage(std::sync::Arc::new(crate::basemap::PmtilesRegistry::new()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
 
             // tuxlink-z0le: reap orphaned form-import staging dirs left by a
             // crashed prior run (best-effort, before any import can run).
             crate::forms::import::sweep_stale_staging();
+
+            // tuxlink-ndi4 (plan A1/A8): register the bundled world z0–6 vector
+            // basemap archive under id "world" so `tile://pmtiles/world` resolves.
+            // Resolves a packaged resource; absent in a build that has not yet
+            // bundled the archive (the out-of-band `scripts/build-basemap-bundle.sh`
+            // output) — that is non-fatal: the registry stays empty, the handler
+            // returns 404, and the map renders nothing for the source rather than
+            // crashing. The actual render is verified at the WebKitGTK smoke.
+            match app
+                .path()
+                .resolve("resources/basemap/world-z0-6.pmtiles", tauri::path::BaseDirectory::Resource)
+            {
+                Ok(world_path) if world_path.exists() => {
+                    let registry = app
+                        .state::<std::sync::Arc<crate::basemap::PmtilesRegistry>>();
+                    match registry.register_path("world", &world_path) {
+                        Ok(len) => {
+                            tracing::info!(target: "basemap", bytes = len, "registered bundled world PMTiles");
+                        }
+                        Err(e) => {
+                            tracing::warn!(target: "basemap", error = %e, "failed to open bundled world PMTiles");
+                        }
+                    }
+                }
+                Ok(world_path) => {
+                    tracing::warn!(target: "basemap", path = %world_path.display(), "bundled world PMTiles not present; basemap source will be empty");
+                }
+                Err(e) => {
+                    tracing::warn!(target: "basemap", error = %e, "could not resolve bundled world PMTiles resource path");
+                }
+            }
 
             // alpha-logging (tuxlink-qjgx Task 6): initialize the tracing pipeline.
             // Pull the already-managed SessionLogState Arc, then init the full

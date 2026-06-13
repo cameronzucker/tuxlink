@@ -3871,9 +3871,10 @@ pub async fn aprs_listen_stop(
 #[tauri::command]
 pub async fn aprs_send(
     aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
-    call: String,
+    call: Option<String>,
     text: String,
 ) -> Result<String, UiError> {
+    // `call = None`/empty ⇒ broadcast (blank addressee, no msgno); `Some(callsign)` ⇒ directed.
     aprs.send(call, text)
         .map_err(|detail| UiError::Internal { detail })
 }

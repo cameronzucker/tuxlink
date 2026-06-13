@@ -6,31 +6,41 @@
 use image::{DynamicImage, ImageFormat};
 
 /// Max-dimension presets (longest edge, px). `Original` skips resize.
+///
+/// Calibrated to the Winlink CMS ~120 KB message-size ceiling (tuxlink-rbhg):
+/// a JPEG photo's bytes scale ~with pixel count, and 1024px+ routinely blows
+/// 120 KB. Small/Medium usually fit; Large is borderline; Original is for
+/// fast/local links only. The compose UI shows the resulting byte size live so
+/// the operator picks a preset that actually fits — content-dependent size
+/// means no fixed dimension can guarantee the fit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResizePreset {
-    Small,    // 640
-    Medium,   // 1024
-    Large,    // 1600
+    Small,    // 480 — safely under the CMS limit for most photos
+    Medium,   // 640 — usually fits
+    Large,    // 800 — borderline; pair with WebP or check the live size
     Original,
 }
 
 impl ResizePreset {
     fn max_edge(self) -> Option<u32> {
         match self {
-            ResizePreset::Small => Some(640),
-            ResizePreset::Medium => Some(1024),
-            ResizePreset::Large => Some(1600),
+            ResizePreset::Small => Some(480),
+            ResizePreset::Medium => Some(640),
+            ResizePreset::Large => Some(800),
             ResizePreset::Original => None,
         }
     }
 }
 
-/// Output wire format. JPEG is the safe default (any recipient incl. Winlink
-/// Express); WebP is the tuxlink->tuxlink efficiency opt-in.
+/// Output encode format. JPEG is the safe default (any recipient incl. Winlink
+/// Express); WebP is the tuxlink->tuxlink efficiency opt-in; PNG is used only
+/// when the operator chose "keep original format" on a PNG source that is being
+/// resized (resize forces a re-encode). tuxlink-rbhg.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutFormat {
     Jpeg,
     Webp,
+    Png,
 }
 
 impl OutFormat {
@@ -38,6 +48,7 @@ impl OutFormat {
         match self {
             OutFormat::Jpeg => "jpg",
             OutFormat::Webp => "webp",
+            OutFormat::Png => "png",
         }
     }
 }
@@ -125,6 +136,13 @@ fn encode(img: &DynamicImage, format: OutFormat) -> Result<Vec<u8>, TranscodeErr
             let mem = encoder.encode(80.0);
             Ok(mem.to_vec())
         }
+        OutFormat::Png => {
+            // Lossless — used when "keep original format" resizes a PNG source.
+            let mut buf = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut buf, ImageFormat::Png)
+                .map_err(|e| TranscodeError::Encode(e.to_string()))?;
+            Ok(buf.into_inner())
+        }
     }
 }
 
@@ -174,9 +192,9 @@ mod tests {
     #[test]
     fn resize_caps_longest_edge_preserving_aspect() {
         let img = image::load_from_memory(&red_png(2000, 1000)).unwrap();
-        let out = resize_to(img, ResizePreset::Small); // 640
-        assert_eq!(out.width(), 640);
-        assert_eq!(out.height(), 320);
+        let out = resize_to(img, ResizePreset::Small); // 480
+        assert_eq!(out.width(), 480);
+        assert_eq!(out.height(), 240);
     }
 
     #[test]
@@ -189,7 +207,7 @@ mod tests {
     #[test]
     fn resize_skips_upscale_when_within_bounds() {
         let img = image::load_from_memory(&red_png(300, 200)).unwrap();
-        let out = resize_to(img, ResizePreset::Large); // 1600 — already smaller
+        let out = resize_to(img, ResizePreset::Large); // 800 — already smaller
         assert_eq!((out.width(), out.height()), (300, 200));
     }
 
@@ -203,17 +221,18 @@ mod tests {
             b.into_inner()
         };
         let out = transcode_image_bytes(&src, ResizePreset::Small, OutFormat::Jpeg).unwrap();
-        assert_eq!((out.width, out.height), (640, 320));
+        assert_eq!((out.width, out.height), (480, 240));
         let decoded = image::load_from_memory(&out.bytes).unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (640, 320));
+        assert_eq!((decoded.width(), decoded.height()), (480, 240));
     }
 
     #[test]
     fn transcode_webp_out_produces_decodable_webp() {
+        // 800x600 → Medium (640) caps the longest edge → 640x480.
         let src = red_png(800, 600);
         let out = transcode_image_bytes(&src, ResizePreset::Medium, OutFormat::Webp).unwrap();
         let decoded = image::load_from_memory(&out.bytes).unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (800, 600));
+        assert_eq!((decoded.width(), decoded.height()), (640, 480));
     }
 
     #[test]

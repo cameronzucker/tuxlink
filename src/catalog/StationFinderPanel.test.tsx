@@ -3,14 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
 
-vi.mock('react-leaflet', async () => (await import('../map/testMapMock')).createReactLeafletMock());
-vi.mock('leaflet', async () => (await import('../map/testMapMock')).createLeafletMock());
-vi.mock('../map/assets/world-mercator-2048.png', () => ({ default: '/world-mercator-2048.png' }));
-vi.mock('leaflet/dist/leaflet.css', () => ({}));
-vi.mock('leaflet/dist/images/marker-icon.png', () => ({ default: '/marker-icon.png' }));
-vi.mock('leaflet/dist/images/marker-icon-2x.png', () => ({ default: '/marker-icon-2x.png' }));
-vi.mock('leaflet/dist/images/marker-shadow.png', () => ({ default: '/marker-shadow.png' }));
-import { resetMapMock } from '../map/testMapMock';
+// StationFinderMap renders on MapLibreMap (globally mocked via test-setup).
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 import { invoke } from '@tauri-apps/api/core';
@@ -27,7 +20,6 @@ const N0DAJ = {
 };
 
 beforeEach(() => {
-  resetMapMock();
   vi.mocked(invoke).mockReset();
   // cmd-gated so the runner's stray no-arg cleanup call stays inert.
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -53,12 +45,14 @@ describe('StationFinderPanel', () => {
     expect(screen.getByRole('button', { name: /40 m/ })).toBeTruthy();
   });
 
-  it('fetches + aggregates stations and mounts a map marker', async () => {
+  it('fetches + aggregates stations and mounts the map', async () => {
     // N0DAJ (DM34oa) is ~134 mi from the operator (DM43bp) — inside the default
-    // 500 mi radius. Markers render as leaflet-marker divs in the mock; the
-    // operator pin + the station pin = 2. (Real pin colour/click → browser smoke.)
+    // 500 mi radius. Pins are now GeoJSON circle-layer features (MapLibre), not
+    // Leaflet markers; the per-station feature wiring is covered in
+    // StationFinderMap.test. Here the integration check is that the panel fetches
+    // and mounts the station map. (Real pin colour/click → browser smoke.)
     renderPanel(<StationFinderPanel onClose={() => {}} />);
-    await waitFor(() => expect(screen.getAllByTestId('leaflet-marker').length).toBeGreaterThan(1));
+    expect(await screen.findByTestId('station-map')).toBeTruthy();
   });
 
   // NOTE: pin-click → rail population is validated by browser smoke, not here:

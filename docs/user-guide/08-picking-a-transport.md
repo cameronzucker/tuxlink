@@ -21,9 +21,9 @@ fall-back when HF is poor.
   to-server, not on air).
 - **Use cases:** drafts, training, attachment-heavy mail, troubleshooting.
 
-Configuration: Tools → Settings → Connection (when wired). The host /
-port default to the operator-registered CMS endpoint; the wizard's
-default is the published Winlink telnet entry.
+Configuration: the Telnet connection panel (Connections → Winlink (CMS) →
+Telnet). The host / port default to the operator-registered CMS endpoint;
+the wizard's default is the published Winlink telnet entry.
 
 ## Packet (1200-baud AX.25)
 
@@ -53,9 +53,9 @@ generates the audio passed to the radio.
 - **Use cases:** long-range emcomm without internet, mountain net check-
   ins, regional gateway access.
 
-Configuration: Tools → Settings → ARDOP HF — capture / playback ALSA
-devices, optional PTT serial path, command port (default 8515), and ARQ
-bandwidth.
+Configuration: the ARDOP HF radio panel (Connections → ARDOP HF) —
+capture / playback ALSA devices, optional PTT serial path, command port
+(default 8515), and ARQ bandwidth.
 
 ## VARA HF
 
@@ -244,4 +244,4 @@ For an emergency RF stop, the right call is the radio's power switch.
 - [Operating modes](33-operating-modes.md) — CMS, P2P, Radio-only, and Post Office semantics.
 - [The mailbox](18-the-mailbox.md) — Inbox, Outbox, Sent, Drafts, Archive.
 - [The B2F protocol](06-the-b2f-protocol.md) — how a session exchanges proposals and messages.
-- [Settings](27-settings.md) — GPS, privacy, ARDOP, connection.
+- [Settings](27-settings.md) — identities, GPS & privacy, map tiles.

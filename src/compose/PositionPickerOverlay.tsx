@@ -15,31 +15,26 @@
  *
  * Precision selector (§6 + §8.6): segmented 4-char (default) | 6-char. 4-char is
  * the broadcast/APRS precision-reduction default. 6-char is GATED on
- * `sixCharAllowed` — disabled unless the view under the pin is backed by
- * validated real LAN tiles zoomed past SIX_CHAR_MIN_ZOOM. Because
- * PositionMapWidget passes no `tileSource` to BaseMap (the frozen C11 contract),
- * its substrate is pinned at the raster-native zoom, so 6-char stays gated until
- * the map gains a tile layer + zoom controls (the a1cc / dyop substrate wiring).
- * This replaces the prior silent contradiction where PositionMapWidget
- * hard-emitted 6-char on a z2 raster that cannot back it (illusory precision).
+ * `sixCharAllowed` (tuxlink-ndi4 A16): on the vector basemap the gate is
+ * zoom-only — disabled until the operator zooms past the subsquare threshold
+ * (the bundled overview overzooms, so a precise pick needs zoom, not a tile
+ * source). This avoids the illusory precision of hard-emitting 6-char on a
+ * zoomed-out view that cannot back it.
  *
  * The shared §5 control cluster (zoom +/-, fit, jump-to, scale bar) is the
  * separate Pillar-2 `a1cc` unit and is intentionally NOT built here; this
  * overlay degrades gracefully to the bundled-raster substrate per design §9.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PositionMapWidget } from './PositionMapWidget';
-import {
-  getTileSourceStatus,
-  sixCharAllowed,
-  type TileSourceStatus,
-} from '../map/tileSource';
+import { sixCharAllowed } from '../map/sixCharAllowed';
 import './PositionPickerOverlay.css';
 
-// (RASTER_VIEW_ZOOM constant removed in Task 8 — the overlay now tracks the
-// live view zoom via onZoomChange forwarded from PositionMapWidget → BaseMap's
-// zoomend bridge, so the 6-char gate reflects the operator's actual zoom.)
+// The overlay tracks the live view zoom via onZoomChange forwarded from
+// PositionMapWidget → MapLibreMap, so the 6-char gate reflects the operator's
+// actual zoom (A16: on the vector basemap the gate is zoom-only — the bundled
+// overview overzooms, so a precise pick needs zoom, not a LAN tile source).
 
 type Precision = 4 | 6;
 
@@ -64,23 +59,12 @@ export function PositionPickerOverlay({
   // the precision selector trims it at readout/confirm time.
   const [pickedFull, setPickedFull] = useState<string>(() => initialGrid.trim().toUpperCase());
   const [precision, setPrecision] = useState<Precision>(4);
-  const [status, setStatus] = useState<TileSourceStatus | null>(null);
-  // Live view zoom, updated via onZoomChange from PositionMapWidget's zoomend
-  // bridge. Initial value matches PositionMapWidget's initialZoom fallback (1)
-  // so the gate starts closed and only opens once the operator zooms in.
-  const [viewZoom, setViewZoom] = useState<number>(1);
+  // Live view zoom, updated via onZoomChange from PositionMapWidget. Starts at a
+  // zoomed-out value so the gate begins closed (4-char) and only opens once the
+  // operator zooms in past the subsquare threshold.
+  const [viewZoom, setViewZoom] = useState<number>(2);
 
-  useEffect(() => {
-    let mounted = true;
-    getTileSourceStatus()
-      .then((s) => mounted && setStatus(s))
-      .catch(() => mounted && setStatus(null));
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const sixAllowed = status ? sixCharAllowed(status, { zoom: viewZoom }) : false;
+  const sixAllowed = sixCharAllowed({ zoom: viewZoom });
   // If 6-char is selected but not (or no longer) allowed, fall back to 4-char.
   const effectivePrecision: Precision = precision === 6 && !sixAllowed ? 4 : precision;
 
@@ -172,8 +156,8 @@ export function PositionPickerOverlay({
 
         {!sixAllowed && (
           <p className="position-picker-overlay__precision-hint" data-testid="precision-hint">
-            6-char precision needs a LAN tile source and a closer zoom — configure one under
-            Tools → Settings → Map tiles… Until then, reports use the 4-char grid square.
+            6-char precision needs a closer zoom — zoom in to enable it. Until then, reports
+            use the 4-char grid square.
           </p>
         )}
 

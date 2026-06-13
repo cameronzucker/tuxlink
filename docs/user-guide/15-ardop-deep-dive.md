@@ -80,7 +80,7 @@ running.
 
 ## Tuxlink's ARDOP configuration
 
-**Tools → Settings → ARDOP HF** exposes:
+The **ARDOP HF radio panel** (Connections → ARDOP HF) exposes:
 
 - **Capture device** — ALSA input (the DigiRig sound card's input).
 - **Playback device** — ALSA output (the DigiRig sound card's output).

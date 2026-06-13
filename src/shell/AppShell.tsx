@@ -53,9 +53,6 @@ import { applyColorScheme, saveColorScheme } from './colorScheme';
 const SettingsPanel = lazy(() =>
   import('./SettingsPanel').then((m) => ({ default: m.SettingsPanel })),
 );
-const MapTileSettingsPanel = lazy(() =>
-  import('../settings/MapTileSettingsPanel').then((m) => ({ default: m.MapTileSettingsPanel })),
-);
 const ThemeDesigner = lazy(() =>
   import('./ThemeDesigner').then((m) => ({ default: m.ThemeDesigner })),
 );
@@ -312,7 +309,7 @@ export function AppShell() {
   const [aprsOpen, setAprsOpen] = useState(false);
   const [dockTab, setDockTab] = useState<'aprs' | 'modem'>('aprs');
   const [aprsSeenAt, setAprsSeenAt] = useState(0);
-  const aprsUnread = countUnread(aprs.threads, aprsSeenAt);
+  const aprsUnread = countUnread(aprs.messages, aprsSeenAt);
   const openAprsChat = useCallback(() => {
     setAprsOpen(true);
     setDockTab('aprs');
@@ -320,10 +317,6 @@ export function AppShell() {
   }, []);
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Inline LAN map-tile source config overlay (tuxlink-a1cc / dyop, design §8.7),
-  // opened from Tools → Settings → Map tiles…. The one reachable home for the
-  // dyop tile backend; same backdrop pattern as SettingsPanel.
-  const [mapTileSettingsOpen, setMapTileSettingsOpen] = useState(false);
   // Inline theme designer overlay (tuxlink-vgth), opened from View → Color
   // Scheme → Customize…. Same backdrop pattern as SettingsPanel.
   const [themeDesignerOpen, setThemeDesignerOpen] = useState(false);
@@ -920,7 +913,6 @@ export function AppShell() {
     toggleRadioPanel: () => setPinRadioPanel((s) => !s),
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => setSettingsOpen(true),
-    openMapTileSettings: () => setMapTileSettingsOpen(true),
     openThemeDesigner: () => setThemeDesignerOpen(true),
     openAbout: () => setAboutOpen(true),
     // tuxlink-0gsy / spec §4.1: Help → Documentation opens the separate
@@ -1395,13 +1387,17 @@ export function AppShell() {
                 setDockTab(tab);
                 if (tab === 'aprs') setAprsSeenAt(Date.now());
               }}
+              onClose={() => setAprsOpen(false)}
             />
             {dockTab === 'aprs' ? (
               <Suspense fallback={null}>
                 <AprsChatPanel
-                  threads={aprs.threads}
+                  messages={aprs.messages}
+                  heardStations={aprs.heardStations}
                   listening={aprs.listening}
                   send={aprs.send}
+                  getConfig={aprs.getConfig}
+                  setConfig={aprs.setConfig}
                   controlStrip={
                     packetConfig.config?.linkKind === 'UvproNative' ? (
                       <UvproControlStrip />
@@ -1434,12 +1430,6 @@ export function AppShell() {
       {settingsOpen && (
         <Suspense fallback={null}>
           <SettingsPanel open={true} onClose={() => setSettingsOpen(false)} />
-        </Suspense>
-      )}
-
-      {mapTileSettingsOpen && (
-        <Suspense fallback={null}>
-          <MapTileSettingsPanel open={true} onClose={() => setMapTileSettingsOpen(false)} />
         </Suspense>
       )}
 
