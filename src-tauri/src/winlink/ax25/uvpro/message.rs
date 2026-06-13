@@ -435,4 +435,68 @@ mod tests {
         assert_eq!(&enc[..4], &hex("00 02 00 0e")[..]);
         assert_eq!(enc.len(), 4 + 25);
     }
+
+    /// End-to-end (Task 10): a real outbound APRS message survives the full native
+    /// data path — fragment → DATA_RXD wire frame → decode_frame → reassemble — and
+    /// the APRS codec then recovers the original sender callsign + message text. Proves
+    /// the Benshi fragment layer is transparent to the APRS protocol above it.
+    #[test]
+    fn aprs_message_round_trips_through_native_fragment_layer_e2e() {
+        use super::super::tncdata::{fragment_ax25, Reassembler};
+        use crate::winlink::aprs::framebuild::{build_ui_frame, extract_inbound};
+        use crate::winlink::aprs::identity::AprsIdentity;
+        use crate::winlink::aprs::message::{encode_message, parse_info, AprsPayload};
+        use crate::winlink::ax25::frame::{Address, Frame as Ax25Frame};
+
+        // 1. Build a real outbound APRS message frame (raw AX.25). The text is long
+        //    enough (and < the 67-char APRS cap) that the frame spans >1 fragment.
+        let identity = AprsIdentity {
+            source: Address { call: "N0CALL".into(), ssid: 0 },
+            tocall: Address { call: "APZTUX".into(), ssid: 0 },
+            path: vec![],
+        };
+        let text = "native fragment round-trip: callsign and text must survive";
+        let info = encode_message("KK6XYZ", text, Some("42"));
+        let original = build_ui_frame(&identity, &info).encode().unwrap();
+
+        // 2. Fragment it exactly as the native TX path (send_aprs_frame) would.
+        let frags = fragment_ax25(&original);
+        assert!(frags.len() >= 2, "test frame should span more than one fragment");
+
+        // 3. Wrap each fragment as the radio would (a DATA_RXD EVENT_NOTIFICATION),
+        //    decode through the real decode_frame, feed the recovered fragment to the
+        //    reassembler — mirroring the inbound path in Driver::apply_event.
+        let mut ra = Reassembler::new();
+        let mut recovered: Option<Vec<u8>> = None;
+        for frag in &frags {
+            let mut w = header(CMD_EVENT_NOTIFICATION, false);
+            w.write_uint(EventType::DataRxd as u64, 8);
+            w.write_bytes(&frag.encode_body());
+            match decode_frame(&w.into_bytes()) {
+                Frame::Event(Event::DataReceived { fragment }) => {
+                    if let Some(done) = ra.push(&fragment) {
+                        recovered = Some(done);
+                    }
+                }
+                f => panic!("expected DataReceived, got {f:?}"),
+            }
+        }
+
+        // 4. The reassembled bytes equal the original AX.25 frame (layer is transparent).
+        let recovered = recovered.expect("the final fragment should complete the frame");
+        assert_eq!(recovered, original);
+
+        // 5. The APRS codec recovers the original sender callsign + message text.
+        let decoded = Ax25Frame::decode(&recovered).unwrap();
+        let (sender, info) = extract_inbound(&decoded).expect("addressed inbound frame");
+        assert_eq!(sender, "N0CALL");
+        match parse_info(&info).expect("message payload") {
+            AprsPayload::Message { addressee, text: got, msgid } => {
+                assert_eq!(addressee, "KK6XYZ");
+                assert_eq!(got, text);
+                assert_eq!(msgid.as_deref(), Some("42"));
+            }
+            other => panic!("expected Message, got {other:?}"),
+        }
+    }
 }
