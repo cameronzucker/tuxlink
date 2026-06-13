@@ -18,7 +18,9 @@ Branch is off `main` @ #668 (before #671 — trivial `audio/mod.rs` merge: #671 
 
 ### CI status (PR #673)
 <!-- CI673 -->
-Verify in progress at handoff (`gh pr checks 673`). If `verify` fails it's most likely a `clippy --all-targets -D warnings` idiom-lint in the new `sbc.rs` (could not cold-build locally per `no_cold_cargo`). The encoder/decode LOGIC is proven in the standalone crate; any failure is a lint/compile nit — fix-forward.
+**CI-GREEN** on `dc998c8f` — all 4 checks pass (build-linux + verify, amd64+arm64). Took 4 rounds: a `Default`-derive on `[f64;80]` (arrays >32 don't derive Default → manual impl), two `needless_range_loop`, two `useless_vec` in tests — all the `no_cold_cargo` tax (mechanical lints, not logic; the codec logic was proven in the standalone crate). Also merged `origin/main` twice to resolve conflicts (audio/mod.rs keying+sbc; then Cargo.lock for release 0.60.0 + #674). PR is `MERGEABLE`.
+
+**Merge decision (operator):** the codec is dormant (no caller injects `UvproSbcCodec` until the UI/yfyn), so merging is safe — BUT the encoder is known-imperfect (MAE ~156) and the full-image quality gate + Codex adrev have NOT run. Recommend validating via the SSTV-codec full-image round-trip (st5n) + the adrev BEFORE merging this transmitted-audio encoder to main; merge-now is acceptable if unblocking st5n/yfyn is preferred (they can also branch off this PR).
 
 ## KNOWN-OPEN — encoder quality (not a bug, a refinement)
 
