@@ -19,6 +19,6 @@
 
 pub mod codec;
 pub mod framing;
-// pub mod keying;    // (lands via the transport-wiring PR)
+pub mod keying;
 pub mod sbc;
 pub mod transport;
