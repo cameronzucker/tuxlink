@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { createRef, useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup } from '@testing-library/react';
 
 import type { Contact, Group } from './types';
-import { RecipientInput } from './RecipientInput';
+import { RecipientInput, type RecipientInputHandle } from './RecipientInput';
 
 // RecipientInput is a controlled component with no Tauri dependency — it takes
 // contacts/groups as props (the caller supplies them from useContacts). No
@@ -235,5 +235,125 @@ describe('RecipientInput', () => {
     render(<ControlledHost initial="W6ABC; group:g1" />);
     expect(screen.getByTestId('recipient-chip-W6ABC')).toBeInTheDocument();
     expect(screen.getByTestId('recipient-chip-group:g1')).toBeInTheDocument();
+  });
+
+  // --- Issue #648 (tuxlink-waxd): un-Entered text must not be silently dropped.
+
+  it('commits pending typed text as a chip on blur — no Enter required (issue #648)', () => {
+    const onChange = vi.fn();
+    function BlurHost() {
+      const [value, setValue] = useState('');
+      return (
+        <RecipientInput
+          id="to"
+          value={value}
+          onChange={(v) => {
+            onChange(v);
+            setValue(v);
+          }}
+          contacts={CONTACTS}
+          groups={GROUPS}
+        />
+      );
+    }
+    render(<BlurHost />);
+    const input = screen.getByTestId('recipient-input-to');
+    fireEvent.change(input, { target: { value: 'w6bi@winlink.org' } });
+    // Leaving the field (focus loss) must commit the buffer, not discard it.
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenCalledWith('w6bi@winlink.org');
+    expect(screen.getByTestId('recipient-chip-w6bi@winlink.org')).toBeInTheDocument();
+    expect((input as HTMLInputElement).value).toBe('');
+  });
+
+  it('blur with an empty / whitespace-only buffer commits nothing (issue #648)', () => {
+    const onChange = vi.fn();
+    function BlurHost() {
+      const [value, setValue] = useState('W6ABC');
+      return (
+        <RecipientInput
+          id="to"
+          value={value}
+          onChange={(v) => {
+            onChange(v);
+            setValue(v);
+          }}
+          contacts={CONTACTS}
+          groups={GROUPS}
+        />
+      );
+    }
+    render(<BlurHost />);
+    const input = screen.getByTestId('recipient-input-to');
+    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.blur(input);
+    // No spurious chip from a whitespace buffer; the existing chip is untouched.
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId('recipient-chip-W6ABC')).toBeInTheDocument();
+  });
+
+  it('flush() commits pending typed text and returns the full value string (issue #648)', () => {
+    const ref = createRef<RecipientInputHandle>();
+    const onChange = vi.fn();
+    function FlushHost() {
+      const [value, setValue] = useState('W6ABC');
+      return (
+        <RecipientInput
+          ref={ref}
+          id="to"
+          value={value}
+          onChange={(v) => {
+            onChange(v);
+            setValue(v);
+          }}
+          contacts={CONTACTS}
+          groups={GROUPS}
+        />
+      );
+    }
+    render(<FlushHost />);
+    const input = screen.getByTestId('recipient-input-to');
+    fireEvent.change(input, { target: { value: 'KX9ZZ' } });
+
+    let returned: string | undefined;
+    act(() => {
+      returned = ref.current?.flush();
+    });
+    // flush returns the up-to-date string SYNCHRONOUSLY (does not wait for the
+    // onChange state round-trip) so a send path can use it immediately.
+    expect(returned).toBe('W6ABC; KX9ZZ');
+    expect(onChange).toHaveBeenCalledWith('W6ABC; KX9ZZ');
+    expect(screen.getByTestId('recipient-chip-KX9ZZ')).toBeInTheDocument();
+  });
+
+  it('flush() with no pending text returns the current committed value unchanged (issue #648)', () => {
+    const ref = createRef<RecipientInputHandle>();
+    render(<ControlledHost initial="W6ABC" />);
+    // ControlledHost does not forward a ref; mount a tiny ref-bearing host.
+    cleanup();
+    const onChange = vi.fn();
+    function FlushHost() {
+      const [value, setValue] = useState('W6ABC');
+      return (
+        <RecipientInput
+          ref={ref}
+          id="to"
+          value={value}
+          onChange={(v) => {
+            onChange(v);
+            setValue(v);
+          }}
+          contacts={CONTACTS}
+          groups={GROUPS}
+        />
+      );
+    }
+    render(<FlushHost />);
+    let returned: string | undefined;
+    act(() => {
+      returned = ref.current?.flush();
+    });
+    expect(returned).toBe('W6ABC');
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

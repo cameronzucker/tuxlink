@@ -633,3 +633,67 @@ describe('isSaveDraftAvailable — webview-reply', () => {
     expect(isSaveDraftAvailable('webview-reply')).toBe(false);
   });
 });
+
+// ============================================================================
+// Issue #648 (tuxlink-waxd) — un-Entered recipient must not be silently dropped.
+//
+// Repro the FIRST external bug: type a recipient into To (or Cc) and click
+// "Post to Outbox" WITHOUT pressing Enter. Pre-fix, RecipientInput's in-progress
+// `text` buffer never promoted to the committed `value`, so `to`/`cc` were empty
+// and message_send carried an empty recipient list. The fix flushes each
+// RecipientInput's pending buffer at send time (buildRecipients), so every send
+// path (message_send / send_form / send_webview_form) sees the typed recipient.
+// ============================================================================
+describe('<Compose> flushes un-Entered recipients on send (issue #648 / tuxlink-waxd)', () => {
+  it('carries a To recipient typed WITHOUT pressing Enter into message_send', async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+      if (cmd === 'message_send') return 'MID-648';
+      return null;
+    });
+
+    render(<Compose draftId="issue-648-to" />);
+    const toInput = await screen.findByTestId('recipient-input-compose-to');
+    // Type the recipient but DO NOT press Enter — it stays in the buffer pre-fix.
+    fireEvent.change(toInput, { target: { value: 'w6bi@winlink.org' } });
+    // No chip is committed yet (the bug surface): the buffer is uncommitted.
+    expect(screen.queryByTestId('recipient-chip-w6bi@winlink.org')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('compose-send-btn'));
+
+    await waitFor(() =>
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'message_send')).toBe(true),
+    );
+    const draft = lastMessageSendDraft();
+    expect(draft?.to).toEqual(['w6bi@winlink.org']);
+  });
+
+  it('carries a Cc recipient typed WITHOUT pressing Enter into message_send', async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+      if (cmd === 'message_send') return 'MID-648-cc';
+      return null;
+    });
+
+    render(<Compose draftId="issue-648-cc" />);
+    const toInput = await screen.findByTestId('recipient-input-compose-to');
+    // A committed To chip (via Enter) so the send is well-formed.
+    fireEvent.change(toInput, { target: { value: 'W6ABC' } });
+    fireEvent.keyDown(toInput, { key: 'Enter' });
+    await screen.findByTestId('recipient-chip-W6ABC');
+
+    // Cc typed but NOT committed with Enter.
+    const ccInput = screen.getByTestId('recipient-input-compose-cc');
+    fireEvent.change(ccInput, { target: { value: 'W7DEF' } });
+    expect(screen.queryByTestId('recipient-chip-W7DEF')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('compose-send-btn'));
+
+    await waitFor(() =>
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'message_send')).toBe(true),
+    );
+    const draft = lastMessageSendDraft();
+    expect(draft?.to).toEqual(['W6ABC']);
+    expect(draft?.cc).toEqual(['W7DEF']);
+  });
+});
