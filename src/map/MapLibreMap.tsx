@@ -112,17 +112,22 @@ export function MapLibreMap({
   }, []);
 
   // Async-arrival recenter (the old RecenterOnOperator): a center that changes
-  // AFTER construction drives flyTo. Skip the first run (construction already
-  // used it).
-  const firstCenter = useRef(true);
+  // AFTER construction drives flyTo. Skip ONLY the construct-time center: if
+  // initialCenter was present at mount, the constructor already used it (skip the
+  // first reactive run); if it was ABSENT at mount (operator grid arrives later,
+  // e.g. StationFinderMap), the first non-null center MUST flyTo — do not skip it.
+  const skipConstructCenter = useRef(Boolean(initialCenter));
   useEffect(() => {
     if (!map || !initialCenter) return;
-    if (firstCenter.current) {
-      firstCenter.current = false;
+    if (skipConstructCenter.current) {
+      skipConstructCenter.current = false;
       return;
     }
     map.flyTo({ center: [initialCenter.lon, initialCenter.lat] });
-  }, [map, initialCenter]);
+    // Depend on the primitive lat/lon (not the object ref) so a re-render passing
+    // a fresh object with the SAME coordinates does not re-trigger a flyTo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, initialCenter?.lat, initialCenter?.lon]);
 
   return (
     <div ref={containerRef} style={{ height: '100%', width: '100%' }}>

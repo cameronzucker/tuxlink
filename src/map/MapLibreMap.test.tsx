@@ -78,6 +78,25 @@ describe('MapLibreMap', () => {
     expect(getByTestId('probe').textContent).toBe('has-map');
   });
 
+  it('flyTo recenters when initialCenter arrives async (was absent at mount)', () => {
+    // StationFinderMap case: operator grid resolves after the map mounts.
+    const { rerender } = render(<MapLibreMap />);
+    const map = getLastMap()!;
+    loadMap(map);
+    expect(map.flyTo).not.toHaveBeenCalled();
+    rerender(<MapLibreMap initialCenter={{ lat: 47.6, lon: -122.3 }} />);
+    expect(map.flyTo).toHaveBeenCalledWith({ center: [-122.3, 47.6] });
+  });
+
+  it('does NOT flyTo for a center that was already present at construction', () => {
+    const { rerender } = render(<MapLibreMap initialCenter={{ lat: 10, lon: 20 }} />);
+    const map = getLastMap()!;
+    loadMap(map);
+    // Re-render with the SAME center must not animate.
+    rerender(<MapLibreMap initialCenter={{ lat: 10, lon: 20 }} />);
+    expect(map.flyTo).not.toHaveBeenCalled();
+  });
+
   it('adds an attribution control and removes the map on unmount', () => {
     const { unmount } = render(<MapLibreMap />);
     const map = getLastMap()!;

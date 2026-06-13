@@ -53,12 +53,14 @@ describe('StationFinderPanel', () => {
     expect(screen.getByRole('button', { name: /40 m/ })).toBeTruthy();
   });
 
-  it('fetches + aggregates stations and mounts a map marker', async () => {
+  it('fetches + aggregates stations and mounts the map', async () => {
     // N0DAJ (DM34oa) is ~134 mi from the operator (DM43bp) — inside the default
-    // 500 mi radius. Markers render as leaflet-marker divs in the mock; the
-    // operator pin + the station pin = 2. (Real pin colour/click → browser smoke.)
+    // 500 mi radius. Pins are now GeoJSON circle-layer features (MapLibre), not
+    // Leaflet markers; the per-station feature wiring is covered in
+    // StationFinderMap.test. Here the integration check is that the panel fetches
+    // and mounts the station map. (Real pin colour/click → browser smoke.)
     renderPanel(<StationFinderPanel onClose={() => {}} />);
-    await waitFor(() => expect(screen.getAllByTestId('leaflet-marker').length).toBeGreaterThan(1));
+    expect(await screen.findByTestId('station-map')).toBeTruthy();
   });
 
   // NOTE: pin-click → rail population is validated by browser smoke, not here:

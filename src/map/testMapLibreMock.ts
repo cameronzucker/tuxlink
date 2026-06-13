@@ -62,8 +62,19 @@ export interface MapLibreMock {
   removeLayer: (id: string) => void;
   setStyle: (style: unknown) => void;
   isStyleLoaded: () => boolean;
-  on: (type: string, handler: (...args: unknown[]) => void) => MapLibreMock;
-  off: (type: string, handler: (...args: unknown[]) => void) => MapLibreMock;
+  // Supports both `on(type, handler)` and the layer-scoped `on(type, layerId,
+  // handler)` form (the latter keyed internally as `type:layerId`; fire it with
+  // `__emit('type:layerId', …)`).
+  on: (
+    type: string,
+    layerOrHandler: string | ((...args: unknown[]) => void),
+    maybeHandler?: (...args: unknown[]) => void,
+  ) => MapLibreMock;
+  off: (
+    type: string,
+    layerOrHandler: string | ((...args: unknown[]) => void),
+    maybeHandler?: (...args: unknown[]) => void,
+  ) => MapLibreMock;
   once: (type: string, handler: (...args: unknown[]) => void) => MapLibreMock;
   getZoom: () => number;
   /** Pan gesture handler (drag-select disables it while drawing a box). */
@@ -166,15 +177,31 @@ export function createMapLibreMock(
       state.layers = [];
     }),
     isStyleLoaded: vi.fn(() => state.styleLoaded),
-    on: vi.fn((type: string, handler: (...args: unknown[]) => void) => {
-      if (!state.handlers.has(type)) state.handlers.set(type, new Set());
-      state.handlers.get(type)!.add(handler);
-      return mock;
-    }),
-    off: vi.fn((type: string, handler: (...args: unknown[]) => void) => {
-      state.handlers.get(type)?.delete(handler);
-      return mock;
-    }),
+    on: vi.fn(
+      (
+        type: string,
+        layerOrHandler: string | ((...args: unknown[]) => void),
+        maybeHandler?: (...args: unknown[]) => void,
+      ) => {
+        const key = typeof layerOrHandler === 'string' ? `${type}:${layerOrHandler}` : type;
+        const handler = (typeof layerOrHandler === 'string' ? maybeHandler : layerOrHandler)!;
+        if (!state.handlers.has(key)) state.handlers.set(key, new Set());
+        state.handlers.get(key)!.add(handler);
+        return mock;
+      },
+    ),
+    off: vi.fn(
+      (
+        type: string,
+        layerOrHandler: string | ((...args: unknown[]) => void),
+        maybeHandler?: (...args: unknown[]) => void,
+      ) => {
+        const key = typeof layerOrHandler === 'string' ? `${type}:${layerOrHandler}` : type;
+        const handler = typeof layerOrHandler === 'string' ? maybeHandler : layerOrHandler;
+        if (handler) state.handlers.get(key)?.delete(handler);
+        return mock;
+      },
+    ),
     once: vi.fn((type: string, handler: (...args: unknown[]) => void) => {
       const wrapped = (...args: unknown[]) => {
         mock.off(type, wrapped);

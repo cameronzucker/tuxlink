@@ -2,19 +2,16 @@
 // coloured/sized by its reachability tier on the selected band; an operator
 // "you" pin; click-to-select.
 //
-// Pins are real Leaflet markers built with L.divIcon (the MaidenheadOverlay.tsx
-// pattern) + click wired via Marker `eventHandlers`. The earlier implementation
-// rendered custom <button> elements as <Marker> CHILDREN — which real
-// react-leaflet ignores (children are only for Popup/Tooltip), so the live map
-// showed default blue markers with no colour and no click (tuxlink-ku2b). This
-// layer is validated by browser smoke, not unit tests: the test map mock renders
-// Marker children as a div and cannot represent divIcon HTML or eventHandlers.
-
-import { useEffect } from 'react';
-import { Marker, useMap } from 'react-leaflet';
-import L from 'leaflet';
-import { BaseMap } from '../map/BaseMap';
-import { useTileSource } from '../map/useTileSource';
+// MapLibre re-expression (tuxlink-ndi4 phase 2): pins are GeoJSON CIRCLE layers
+// with data-driven radius/colour/selected-stroke — NOT maplibregl.Marker. Circle
+// layers are CSP-safe and need no per-pin DOM, sidestepping both the historical
+// divIcon CSP "black blob" (s0r1) and the A13 packaged-marker risk. Click-select
+// is a layer-scoped `map.on('click', 'station-pins', …)`. Render fidelity is
+// grim-verified; the unit test proves the source/layer/feature wiring (C1).
+import { useEffect, useMemo, useRef } from 'react';
+import { MapLibreMap } from '../map/MapLibreMap';
+import { useMapContext } from '../map/MapContext';
+import { useMapOverlay } from '../map/mapHooks';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { type ReachTier } from './reachability';
 import { stationKey } from './useReachabilityMap';
@@ -28,100 +25,165 @@ export interface StationFinderMapProps {
   onSelect: (station: Station) => void;
 }
 
-// Pin diameter (px) per reachability tier — good biggest, skip smallest,
-// untiered (no prediction / off-band) a neutral medium dot.
-const PIN_SIZE: Record<string, number> = {
-  good: 20,
-  fair: 16,
-  marginal: 13,
-  skip: 10,
-  untiered: 14,
-};
+// Recenter zoom on the operator, on the z0–14 scale (was raster-native z3; finding 2).
+const OPERATOR_ZOOM = 6;
 
-export function stationPinIcon(tier: ReachTier | undefined, selected: boolean, label: string): L.DivIcon {
-  const t = tier ?? 'untiered';
-  const sz = PIN_SIZE[t];
-  // The visible dot is a <span> sized to fill this divIcon's wrapper, whose
-  // width/height Leaflet sets from `iconSize` via the CSSOM. The dot's pixel
-  // size therefore comes from `iconSize` (below) + the `width:100%/height:100%`
-  // CSS rule — NOT an inline style="" attribute, which Tauri's packaged CSP
-  // strips in WebKitGTK and which produced the oblong "black blob" pins
-  // (tuxlink-s0r1). Classes are global CSS (StationFinderPanel.css) since
-  // Leaflet injects this outside the React tree.
-  const sel = selected ? ' is-selected' : '';
-  const safeLabel = label.replace(/"/g, '');
-  return L.divIcon({
-    className: 'station-finder__divpin',
-    html: `<span class="station-finder__pindot station-finder__pindot--${t}${sel}" title="${safeLabel}"></span>`,
-    iconSize: [sz, sz],
-    iconAnchor: [sz / 2, sz / 2],
-  });
+const STATIONS_SOURCE = 'stations';
+const OPERATOR_SOURCE = 'operator';
+const STATION_PINS_LAYER = 'station-pins';
+
+type FeatureCollection = { type: 'FeatureCollection'; features: unknown[] };
+const EMPTY_FC: FeatureCollection = { type: 'FeatureCollection', features: [] };
+
+// Pin radius (px) + colour per reachability tier — mirrors PIN_SIZE/2 and the
+// --reach-* CSS vars. Data-driven so one circle layer paints every tier.
+const STATION_LAYERS = (
+  [
+    {
+      id: STATION_PINS_LAYER,
+      type: 'circle',
+      source: STATIONS_SOURCE,
+      paint: {
+        'circle-radius': ['match', ['get', 'tier'], 'good', 10, 'fair', 8, 'marginal', 6.5, 'skip', 5, 7],
+        'circle-color': [
+          'match',
+          ['get', 'tier'],
+          'good', '#46d07f',
+          'fair', '#c9b23a',
+          'marginal', '#d2842f',
+          'skip', '#6c5a5a',
+          '#9fb6cc',
+        ],
+        'circle-opacity': ['case', ['==', ['get', 'tier'], 'skip'], 0.75, 1],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': ['case', ['get', 'selected'], 2, 0.5],
+      },
+    },
+  ] as unknown[]
+).map((l) => l as Record<string, unknown> & { id: string });
+
+const OPERATOR_LAYERS = (
+  [
+    {
+      id: 'operator-pin',
+      type: 'circle',
+      source: OPERATOR_SOURCE,
+      paint: {
+        'circle-radius': 7,
+        'circle-color': '#eaf3fb',
+        'circle-stroke-color': '#2f86f0',
+        'circle-stroke-width': 3,
+      },
+    },
+  ] as unknown[]
+).map((l) => l as Record<string, unknown> & { id: string });
+
+function buildStationFC(
+  stations: Station[],
+  tiers: Map<string, ReachTier>,
+  selectedKey: string | null,
+): FeatureCollection {
+  const features: unknown[] = [];
+  for (const s of stations) {
+    const ll = gridToLatLon(s.grid);
+    if (!ll) continue;
+    const key = stationKey(s);
+    features.push({
+      type: 'Feature',
+      properties: { key, tier: tiers.get(key) ?? 'untiered', selected: selectedKey === key },
+      geometry: { type: 'Point', coordinates: [ll.lon, ll.lat] },
+    });
+  }
+  return { type: 'FeatureCollection', features };
 }
 
-const ME_SIZE = 16;
-function operatorPinIcon(): L.DivIcon {
-  return L.divIcon({
-    className: 'station-finder__divpin',
-    html: `<span class="station-finder__me" title="Your location"></span>`,
-    iconSize: [ME_SIZE, ME_SIZE],
-    iconAnchor: [ME_SIZE / 2, ME_SIZE / 2],
-  });
-}
-
-// Zoom applied when recentering on the operator (clamped by BaseMap's
-// raster-native maxZoom). Mirrors the map's `initialZoom` for a placed operator.
-const OPERATOR_ZOOM = 3;
-
-/**
- * Imperatively recenter the map on the operator's location.
- *
- * `<MapContainer>`'s `center`/`zoom` are read ONCE at mount and are NOT
- * reactive (react-leaflet contract). The operator grid arrives asynchronously
- * (StationFinderPanel's `config_read`) AFTER the map has mounted, so a static
- * `initialCenter` leaves the view parked at [0,0] (mid-Atlantic) forever. This
- * child lives inside the MapContainer, gets the live map via `useMap()`, and
- * `setView`s whenever the operator latlon changes (null→value on first load, or
- * a later grid edit). It does not fight panning: the effect only fires when the
- * lat/lon/zoom deps change, not on every render.
- */
-function RecenterOnOperator({ lat, lon, zoom }: { lat: number; lon: number; zoom: number }) {
-  const map = useMap();
+/** Pushes GeoJSON to a source on change, re-pushing on styledata (style swap). */
+function usePushData(
+  map: ReturnType<typeof useMapContext>,
+  sourceId: string,
+  data: FeatureCollection,
+) {
   useEffect(() => {
-    map.setView([lat, lon], zoom);
-  }, [map, lat, lon, zoom]);
+    if (!map) return;
+    const push = () => {
+      const src = map.getSource(sourceId) as { setData?: (d: unknown) => void } | undefined;
+      src?.setData?.(data);
+    };
+    push();
+    map.on('styledata', push);
+    return () => {
+      map.off('styledata', push);
+    };
+  }, [map, sourceId, data]);
+}
+
+function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationFinderMapProps, 'operatorGrid'>) {
+  const map = useMapContext();
+
+  const byKey = useMemo(() => {
+    const m = new Map<string, Station>();
+    for (const s of stations) m.set(stationKey(s), s);
+    return m;
+  }, [stations]);
+  const byKeyRef = useRef(byKey);
+  byKeyRef.current = byKey;
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+
+  const fc = useMemo(() => buildStationFC(stations, tiers, selectedKey), [stations, tiers, selectedKey]);
+
+  useMapOverlay(map, STATIONS_SOURCE, { type: 'geojson', data: EMPTY_FC }, STATION_LAYERS);
+  usePushData(map, STATIONS_SOURCE, fc);
+
+  useEffect(() => {
+    if (!map) return;
+    const onClick = (e: { features?: Array<{ properties?: { key?: unknown } }> }) => {
+      const key = e.features?.[0]?.properties?.key;
+      if (key == null) return;
+      const station = byKeyRef.current.get(String(key));
+      if (station) onSelectRef.current(station);
+    };
+    map.on('click', STATION_PINS_LAYER, onClick as (...a: unknown[]) => void);
+    return () => {
+      map.off('click', STATION_PINS_LAYER, onClick as (...a: unknown[]) => void);
+    };
+  }, [map]);
+
+  return null;
+}
+
+function OperatorPin({ location }: { location: { lat: number; lon: number } | null }) {
+  const map = useMapContext();
+  const fc = useMemo<FeatureCollection>(
+    () =>
+      location
+        ? {
+            type: 'FeatureCollection',
+            features: [
+              { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [location.lon, location.lat] } },
+            ],
+          }
+        : EMPTY_FC,
+    [location?.lat, location?.lon],
+  );
+  useMapOverlay(map, OPERATOR_SOURCE, { type: 'geojson', data: EMPTY_FC }, OPERATOR_LAYERS);
+  usePushData(map, OPERATOR_SOURCE, fc);
   return null;
 }
 
 export function StationFinderMap(props: StationFinderMapProps) {
-  const tileSource = useTileSource();
   const me = props.operatorGrid ? gridToLatLon(props.operatorGrid) : null;
   return (
     <div className="station-finder__map" data-testid="station-map">
-      <BaseMap initialCenter={me ?? undefined} initialZoom={me ? OPERATOR_ZOOM : 1} tileSource={tileSource ?? undefined}>
-        {me && <RecenterOnOperator lat={me.lat} lon={me.lon} zoom={OPERATOR_ZOOM} />}
-        {me && (
-          <Marker
-            position={[me.lat, me.lon]}
-            icon={operatorPinIcon()}
-            interactive={false}
-            zIndexOffset={1000}
-          />
-        )}
-        {props.stations.map((s) => {
-          const ll = gridToLatLon(s.grid);
-          if (!ll) return null;
-          const key = stationKey(s);
-          const tier = props.tiers.get(key);
-          return (
-            <Marker
-              key={key}
-              position={[ll.lat, ll.lon]}
-              icon={stationPinIcon(tier, props.selectedKey === key, `${s.baseCallsign} · ${s.grid}`)}
-              eventHandlers={{ click: () => props.onSelect(s) }}
-            />
-          );
-        })}
-      </BaseMap>
+      <MapLibreMap initialCenter={me ?? undefined} initialZoom={me ? OPERATOR_ZOOM : 2}>
+        <StationLayers
+          stations={props.stations}
+          tiers={props.tiers}
+          selectedKey={props.selectedKey}
+          onSelect={props.onSelect}
+        />
+        <OperatorPin location={me} />
+      </MapLibreMap>
       <div className="station-finder__reachkey" aria-hidden>
         <span className="k good" /> good
         <span className="k fair" /> fair
