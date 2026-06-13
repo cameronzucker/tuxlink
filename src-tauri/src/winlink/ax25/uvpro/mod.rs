@@ -26,6 +26,7 @@ pub mod model;
 pub mod rf_ch;
 pub mod session;
 pub mod settings;
+pub mod tncdata;
 
 /// Errors surfaced to the command layer / frontend. The `kind` (variant name) is
 /// what the UI switches on; the payload carries operator-facing detail.
