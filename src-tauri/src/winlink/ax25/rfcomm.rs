@@ -272,6 +272,72 @@ pub fn resolve_spp_channel(mac: &str) -> u8 {
         .unwrap_or(1)
 }
 
+/// Extract RFCOMM channels of the UV-Pro's audio-gateway services from `sdptool
+/// records <mac>` output. The SSTV audio path (tuxlink-bcsy) rides a SEPARATE
+/// RFCOMM channel from SPP — one of the audio-gateway services the radio advertises
+/// ("Headset Audio Gateway" `0x1112` / "Handsfree Audio Gateway" `0x111f`), NOT the
+/// Serial Port (`0x1101`). Which one the vendor app uses for SSTV is operator-
+/// confirmed via an HCI snoop; until then the caller tries the returned candidates
+/// in advertised order. Returns channels in advertisement order; empty if no audio
+/// gateway is advertised (unlike SPP there is no sane channel-1 default for audio).
+pub fn parse_audio_channels(records: &str) -> Vec<u8> {
+    // Same block-walk shape as `parse_spp_channel`: blocks delimited by "Service
+    // Name:" headers, flagging blocks whose Service Class ID List names an audio
+    // gateway, then collecting each such block's RFCOMM channel.
+    #[derive(Default)]
+    struct Block {
+        is_audio_gateway: bool,
+        channel: Option<u8>,
+    }
+    let mut blocks: Vec<Block> = Vec::new();
+    let mut cur = Block::default();
+    let mut have_block = false;
+
+    let flush = |blocks: &mut Vec<Block>, cur: &mut Block, have: &mut bool| {
+        if *have {
+            blocks.push(std::mem::take(cur));
+        }
+        *have = false;
+    };
+
+    for raw in records.lines() {
+        let line = raw.trim();
+        if line.strip_prefix("Service Name:").is_some() {
+            flush(&mut blocks, &mut cur, &mut have_block);
+            have_block = true;
+        } else if line.contains("(0x1112)") || line.contains("(0x111f)") {
+            // Headset / Handsfree Audio Gateway in the Service Class ID List.
+            cur.is_audio_gateway = true;
+        } else if let Some(rest) = line.strip_prefix("Channel:") {
+            if let Ok(ch) = rest.trim().parse::<u8>() {
+                cur.channel = Some(ch);
+            }
+        }
+    }
+    flush(&mut blocks, &mut cur, &mut have_block);
+
+    blocks
+        .iter()
+        .filter(|b| b.is_audio_gateway)
+        .filter_map(|b| b.channel)
+        .collect()
+}
+
+/// Resolve audio-channel candidates from the radio's live SDP record (`sdptool
+/// records <mac>`). The channel rotates per registration, so it is resolved fresh
+/// at connect time (like `resolve_spp_channel`). Empty if the query fails or the
+/// radio advertises no audio gateway — the caller then surfaces a clear error
+/// rather than guessing a channel.
+pub fn resolve_audio_channels(mac: &str) -> Vec<u8> {
+    std::process::Command::new("sdptool")
+        .args(["records", mac])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| parse_audio_channels(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,6 +411,26 @@ Protocol Descriptor List:
     #[test]
     fn parse_spp_channel_picks_the_spp_serial_port_not_the_audio_gateways() {
         assert_eq!(parse_spp_channel(UVPRO_RECORDS), Some(1));
+    }
+
+    #[test]
+    fn parse_audio_channels_ranks_audio_gateways_in_advertised_order() {
+        // From UVPRO_RECORDS: Headset AG (0x1112) ch2, Handsfree AG (0x111f) ch3.
+        // Both are audio-channel candidates; SPP (0x1101, ch1) is NOT.
+        assert_eq!(parse_audio_channels(UVPRO_RECORDS), vec![2, 3]);
+    }
+
+    #[test]
+    fn parse_audio_channels_empty_when_no_audio_service() {
+        let records = "\
+Service Name: SPP Dev
+Service Class ID List:
+  \"Serial Port\" (0x1101)
+Protocol Descriptor List:
+  \"RFCOMM\" (0x0003)
+    Channel: 1
+";
+        assert!(parse_audio_channels(records).is_empty());
     }
 
     #[test]

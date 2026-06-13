@@ -22,6 +22,7 @@
 //! drop the RFCOMM socket. No auto-reconnect (a drop → disconnected; the operator
 //! re-connects). The agent never transmits; the operator runs the on-air smoke.
 
+pub mod audio;
 pub mod bits;
 pub mod commands;
 pub mod gaia;
