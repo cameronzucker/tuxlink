@@ -3788,25 +3788,40 @@ pub async fn aprs_config_set(
 /// rides the UV-Pro's native GAIA session (control + chat over one connection).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AprsTransportKind {
-    /// KISS-over-RFCOMM to `mac` — the engine opens the link itself.
-    Kiss(String),
+    /// KISS byte-pipe — the engine opens the link itself per the carried config
+    /// (`Bluetooth` RFCOMM socket, `Tcp` to Dire Wolf/SoundModem, or a `Serial`
+    /// TNC). tuxlink-a20f: carries the full `KissLinkConfig`, not just a MAC, so
+    /// the multi-transport selection reaches the engine intact.
+    Kiss(crate::winlink::ax25::link::KissLinkConfig),
     /// Native Benshi GAIA — APRS shares the already-connected `UvproSession`.
     Native,
 }
 
 /// Pure: map the configured packet link to the APRS transport. The operator's
 /// declared link kind decides — Tuxlink does not infer it from which radio is
-/// connected. A non-UV-Pro link (TCP/serial/managed, or none) is not an APRS
-/// transport in this phase and yields a configure-it error.
+/// connected.
+///
+/// tuxlink-a20f (Phase 1b multi-transport): every link the engine can open as a
+/// raw KISS byte-pipe — `Bluetooth`, `Tcp` (Dire Wolf / SoundModem :8001), and
+/// `Serial` (USB TNC) — maps to `Kiss(cfg)`. `UvproNative` selects the native
+/// GAIA path. `ManagedDireWolf` is NOT directly connectable (it needs the
+/// spawn/supervise lifecycle the Winlink backend owns, which the APRS engine does
+/// not run), and no link at all is unconfigured — both yield a named error rather
+/// than an accept-then-fail at connect time.
 pub fn aprs_transport_from_link(
     link: Option<&crate::winlink::ax25::link::KissLinkConfig>,
 ) -> Result<AprsTransportKind, UiError> {
     use crate::winlink::ax25::link::KissLinkConfig;
     match link {
-        Some(KissLinkConfig::Bluetooth { mac }) => Ok(AprsTransportKind::Kiss(mac.clone())),
+        Some(cfg @ KissLinkConfig::Bluetooth { .. })
+        | Some(cfg @ KissLinkConfig::Tcp { .. })
+        | Some(cfg @ KissLinkConfig::Serial { .. }) => Ok(AprsTransportKind::Kiss(cfg.clone())),
         Some(KissLinkConfig::UvproNative { .. }) => Ok(AprsTransportKind::Native),
-        _ => Err(UiError::Internal {
-            detail: "APRS requires a UV-Pro link — configure Bluetooth (KISS) or UV-Pro (native) in packet settings first".to_string(),
+        Some(KissLinkConfig::ManagedDireWolf { .. }) => Err(UiError::Internal {
+            detail: "Managed Dire Wolf is not yet an APRS transport — run Dire Wolf and point a TCP (KISS) link at it, or use a UV-Pro link".to_string(),
+        }),
+        None => Err(UiError::Internal {
+            detail: "APRS needs a packet link — configure a TCP/serial KISS TNC, Bluetooth (KISS), or UV-Pro (native) in packet settings first".to_string(),
         }),
     }
 }
@@ -3851,7 +3866,7 @@ pub async fn aprs_listen_start(
             .map_err(|detail| UiError::Internal { detail })?,
     };
     match transport {
-        AprsTransportKind::Kiss(mac) => aprs.start(app, mac, identity),
+        AprsTransportKind::Kiss(link) => aprs.start(app, link, identity),
         AprsTransportKind::Native => aprs.start_native(app, uvpro.inner().clone(), identity),
     }
     .map_err(|detail| UiError::Internal { detail })
@@ -9752,28 +9767,73 @@ hw:CARD=Device,DEV=0
     #[test]
     fn aprs_transport_from_link_honors_the_declared_link_kind() {
         use crate::winlink::ax25::KissLinkConfig;
-        // Bluetooth (KISS) -> Kiss(mac), carrying the MAC the engine opens the link on.
+        // Every directly-connectable KISS byte-pipe -> Kiss(cfg), carrying the FULL
+        // link config the engine opens (tuxlink-a20f: not just a Bluetooth MAC).
+        // Bluetooth RFCOMM socket.
         assert_eq!(
-            aprs_transport_from_link(Some(&KissLinkConfig::Bluetooth { mac: "AA:BB".into() })).unwrap(),
-            AprsTransportKind::Kiss("AA:BB".into()),
+            aprs_transport_from_link(Some(&KissLinkConfig::Bluetooth { mac: "AA:BB".into() }))
+                .unwrap(),
+            AprsTransportKind::Kiss(KissLinkConfig::Bluetooth { mac: "AA:BB".into() }),
+        );
+        // KISS-over-TCP (Dire Wolf / SoundModem on :8001) — Phase 1b multi-transport.
+        assert_eq!(
+            aprs_transport_from_link(Some(&KissLinkConfig::Tcp {
+                host: "127.0.0.1".into(),
+                port: 8001
+            }))
+            .unwrap(),
+            AprsTransportKind::Kiss(KissLinkConfig::Tcp {
+                host: "127.0.0.1".into(),
+                port: 8001
+            }),
+        );
+        // KISS-over-serial (USB TNC) — Phase 1b multi-transport.
+        assert_eq!(
+            aprs_transport_from_link(Some(&KissLinkConfig::Serial {
+                device: "/dev/ttyUSB0".into(),
+                baud: 9600
+            }))
+            .unwrap(),
+            AprsTransportKind::Kiss(KissLinkConfig::Serial {
+                device: "/dev/ttyUSB0".into(),
+                baud: 9600
+            }),
         );
         // The SAME MAC declared as UvproNative selects the native path, NOT KISS —
         // the operator's declaration decides, not the radio model behind the MAC.
         assert_eq!(
-            aprs_transport_from_link(Some(&KissLinkConfig::UvproNative { mac: "AA:BB".into() })).unwrap(),
+            aprs_transport_from_link(Some(&KissLinkConfig::UvproNative { mac: "AA:BB".into() }))
+                .unwrap(),
             AprsTransportKind::Native,
         );
-        // Non-UV-Pro links (and no link) are not an APRS transport in this phase.
-        for link in [
-            None,
-            Some(KissLinkConfig::Tcp { host: "127.0.0.1".into(), port: 8001 }),
-            Some(KissLinkConfig::Serial { device: "/dev/ttyUSB0".into(), baud: 9600 }),
-        ] {
-            assert!(matches!(
-                aprs_transport_from_link(link.as_ref()),
-                Err(UiError::Internal { .. })
-            ));
-        }
+    }
+
+    #[test]
+    fn aprs_transport_from_link_rejects_links_it_cannot_open_directly() {
+        use crate::winlink::ax25::devices::{PttChoice, StableAudioId, StableIdKind};
+        use crate::winlink::ax25::KissLinkConfig;
+        // No link configured -> configure-it error.
+        assert!(matches!(
+            aprs_transport_from_link(None),
+            Err(UiError::Internal { .. })
+        ));
+        // Managed Dire Wolf is NOT directly connectable as a raw KISS pipe — it needs
+        // the spawn/supervise lifecycle the Winlink backend owns, which the APRS
+        // engine (opening its own byte-pipe) does not run. Reject with a named error
+        // rather than accept-then-fail at connect time (tuxlink-a20f scope boundary).
+        let managed = KissLinkConfig::ManagedDireWolf {
+            audio_device: StableAudioId {
+                kind: StableIdKind::ByIdSymlink,
+                value: "usb-C-Media_DigiRig_Audio-00".into(),
+            },
+            ptt: PttChoice::Cm108Hid {
+                hidraw_path: "/dev/hidraw3".into(),
+            },
+        };
+        assert!(matches!(
+            aprs_transport_from_link(Some(&managed)),
+            Err(UiError::Internal { .. })
+        ));
     }
 
     #[test]
