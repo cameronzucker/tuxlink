@@ -180,45 +180,56 @@ pub fn install_pack(
     // Clear any leftover from a previous interrupted attempt.
     let _ = fs::remove_file(&tmp_path);
 
-    // Cleanup guard: remove the temp on any early return.
-    let result = (|| {
-        extractor.extract(&req.planet_url, &req.bbox, req.maxzoom, &tmp_path)?;
-
-        let archive = PmtilesArchive::open(&tmp_path).map_err(|e| DownloadError::Io(e.to_string()))?;
-        let v = validate::validate(&archive, req.size_budget)?;
-        // Drop the read handle before renaming (Windows-friendliness + clarity).
-        drop(archive);
-
-        let final_path = pack_path(packs_dir, &req.id);
-        // Atomic replace: rename over any existing same-id pack.
-        fs::rename(&tmp_path, &final_path).map_err(|e| DownloadError::Io(e.to_string()))?;
-        fsync_dir(packs_dir);
-
-        let entry = InstalledPack {
-            id: req.id.clone(),
-            label: req.label.clone(),
-            bbox: [req.bbox.west, req.bbox.south, req.bbox.east, req.bbox.north],
-            minzoom: v.min_zoom,
-            maxzoom: v.max_zoom,
-            schema_version: v.schema_version.clone(),
-            bytes: v.len,
-            source_build: req.source_build.clone(),
-            installed_at: req.installed_at.clone(),
-        };
-
-        // Manifest write happens AFTER the archive is in place + dir fsync'd, so a
-        // crash before this leaves an unreferenced archive (swept on next startup),
-        // never a manifest entry pointing at a missing/partial file.
-        let mut manifest = load_manifest(packs_dir);
-        manifest.upsert(entry.clone());
-        write_manifest_atomic(packs_dir, &manifest)?;
-        Ok(entry)
-    })();
+    // Cleanup guard: remove the temp on any error from the install sequence.
+    let result = install_into_temp(extractor, packs_dir, &tmp_path, req);
 
     if result.is_err() {
         let _ = fs::remove_file(&tmp_path);
     }
     result
+}
+
+/// The install sequence after the safe-id + free-space gates: extract into the
+/// temp file, validate, atomically rename into place, fsync the dir, then write
+/// the manifest entry. Any error leaves the caller to remove the temp. Split out
+/// of [`install_pack`] so the cleanup-on-error is a plain call, not an IIFE.
+fn install_into_temp(
+    extractor: &dyn Extractor,
+    packs_dir: &Path,
+    tmp_path: &Path,
+    req: &PackRequest,
+) -> Result<InstalledPack, DownloadError> {
+    extractor.extract(&req.planet_url, &req.bbox, req.maxzoom, tmp_path)?;
+
+    let archive = PmtilesArchive::open(tmp_path).map_err(|e| DownloadError::Io(e.to_string()))?;
+    let v = validate::validate(&archive, req.size_budget)?;
+    // Drop the read handle before renaming.
+    drop(archive);
+
+    let final_path = pack_path(packs_dir, &req.id);
+    // Atomic replace: rename over any existing same-id pack.
+    fs::rename(tmp_path, &final_path).map_err(|e| DownloadError::Io(e.to_string()))?;
+    fsync_dir(packs_dir);
+
+    let entry = InstalledPack {
+        id: req.id.clone(),
+        label: req.label.clone(),
+        bbox: [req.bbox.west, req.bbox.south, req.bbox.east, req.bbox.north],
+        minzoom: v.min_zoom,
+        maxzoom: v.max_zoom,
+        schema_version: v.schema_version.clone(),
+        bytes: v.len,
+        source_build: req.source_build.clone(),
+        installed_at: req.installed_at.clone(),
+    };
+
+    // Manifest write happens AFTER the archive is in place + dir fsync'd, so a
+    // crash before this leaves an unreferenced archive (swept on next startup),
+    // never a manifest entry pointing at a missing/partial file.
+    let mut manifest = load_manifest(packs_dir);
+    manifest.upsert(entry.clone());
+    write_manifest_atomic(packs_dir, &manifest)?;
+    Ok(entry)
 }
 
 /// Delete an installed pack: remove the archive + drop the manifest entry. Returns

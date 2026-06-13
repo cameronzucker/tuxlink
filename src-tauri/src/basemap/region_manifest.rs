@@ -17,7 +17,7 @@
 //! (`file://`, link-local/metadata IPs, a LAN host) nor smuggle a bbox the bbox
 //! math (`super::packs`) would otherwise turn into a degenerate sidecar argument.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The only manifest schema string this build understands. A manifest carrying a
 /// different schema is rejected so a future schema bump can never brick the pack
@@ -33,7 +33,7 @@ const DEFAULT_MANIFEST_JSON: &str = include_str!("../../resources/basemap/region
 
 /// The current Protomaps planet build + the coverage tiers and continents offered
 /// in the pack manager. Validated on construction ([`RegionManifest::parse`]).
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegionManifest {
     pub schema: String,
     pub planet_build: String,
@@ -46,14 +46,14 @@ pub struct RegionManifest {
 
 /// The vector schema the tiers were sized against. Recorded for manifest reviewers;
 /// the runtime gate is [`super::validate`] against the actual downloaded archive.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PmtilesSchema {
     pub planetiler_version: u32,
     pub vector_layers: Vec<String>,
 }
 
 /// A fixed coverage box centered on the operator grid, expressed as half-widths.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Tier {
     pub id: String,
     pub label: String,
@@ -66,7 +66,7 @@ pub struct Tier {
 }
 
 /// A named continent pack as a fixed `[west, south, east, north]` box.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Continent {
     pub id: String,
     pub label: String,

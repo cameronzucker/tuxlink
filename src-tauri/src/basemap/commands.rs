@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::State;
 
 use super::download::{self, DownloadError, Extractor, PackRequest};
 use super::packs::{self, Bbox, InstalledPack};
@@ -111,7 +111,13 @@ fn resolve_sidecar() -> PathBuf {
 /// budget still bound the result).
 fn available_bytes(path: &Path) -> u64 {
     match nix::sys::statvfs::statvfs(path) {
-        Ok(s) => (s.blocks_available() as u64).saturating_mul(s.fragment_size()),
+        Ok(s) => {
+            // On the 64-bit Linux build targets both are u64; the explicit bindings
+            // avoid an `as` cast (clippy unnecessary_cast under -D warnings).
+            let blocks: u64 = s.blocks_available();
+            let frag: u64 = s.fragment_size();
+            blocks.saturating_mul(frag)
+        }
         Err(_) => u64::MAX,
     }
 }
