@@ -449,14 +449,18 @@ impl AprsState {
     }
 
     /// Open the link, build the engine + sink, spawn the blocking driver, store the handle.
+    ///
+    /// `cfg` is any directly-connectable KISS byte-pipe — `Bluetooth` RFCOMM, `Tcp`
+    /// (Dire Wolf / SoundModem), or `Serial` (USB TNC). `connect_link_with_abort`
+    /// opens whichever variant the operator configured (tuxlink-a20f multi-transport);
+    /// the native UV-Pro GAIA path is a separate entry (`start_native`).
     pub fn start(
         &self,
         app: tauri::AppHandle,
-        mac: String,
+        cfg: crate::winlink::ax25::link::KissLinkConfig,
         identity: AprsIdentity,
     ) -> Result<(), String> {
         let abort = Arc::new(AtomicBool::new(false));
-        let cfg = crate::winlink::ax25::link::KissLinkConfig::Bluetooth { mac };
         let (link, _abort_sock) = crate::winlink::ax25::connect_link_with_abort(&cfg, abort.clone())
             .map_err(|e| {
                 format!(
