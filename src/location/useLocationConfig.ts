@@ -21,6 +21,14 @@ interface LocationConfigView {
   position_source: string;
 }
 
+/** Live arbiter status polled from position_status (tuxlink-yy1m). */
+interface PositionStatusView {
+  gps_ready: boolean;
+  ui_grid: string;
+  fix_lat?: number | null;
+  fix_lon?: number | null;
+}
+
 export interface UseLocationConfig {
   grid: string;
   /** Picker selection id: 'manual' | 'gpsd' | 'serial:/dev/...'. */
@@ -28,6 +36,15 @@ export interface UseLocationConfig {
   error: string | null;
   onGridChange: (grid: string) => void;
   onSelectSource: (id: string) => void;
+  // Live arbiter status (tuxlink-yy1m) — drives the confirm map + readout.
+  /** A fresh GPS fix exists and GPS is on. */
+  gpsReady: boolean;
+  /** Raw live-fix latitude (precise map pin), or null. LOCAL DISPLAY ONLY. */
+  fixLat: number | null;
+  /** Raw live-fix longitude; see fixLat. */
+  fixLon: number | null;
+  /** Effective local-display grid from the arbiter (live fix when source=Gps). */
+  uiGrid: string;
 }
 
 export function useLocationConfig(): UseLocationConfig {
@@ -36,6 +53,11 @@ export function useLocationConfig(): UseLocationConfig {
   // so a restored 'Gps' source shows as the gpsd card.
   const [selectedSource, setSelectedSource] = useState('manual');
   const [error, setError] = useState<string | null>(null);
+  // Live status (tuxlink-yy1m).
+  const [gpsReady, setGpsReady] = useState(false);
+  const [fixLat, setFixLat] = useState<number | null>(null);
+  const [fixLon, setFixLon] = useState<number | null>(null);
+  const [uiGrid, setUiGrid] = useState('');
 
   useEffect(() => {
     let mounted = true;
@@ -50,6 +72,32 @@ export function useLocationConfig(): UseLocationConfig {
       });
     return () => {
       mounted = false;
+    };
+  }, []);
+
+  // Poll live arbiter status (2 s, matching the ribbon's useStatus cadence) so a
+  // GPS fix arriving while the operator is on this step moves the map pin and
+  // flips "acquiring…" → "fix acquired" without a manual refresh.
+  useEffect(() => {
+    let mounted = true;
+    const poll = () => {
+      invoke<PositionStatusView>('position_status')
+        .then((s) => {
+          if (!mounted) return;
+          setGpsReady(s.gps_ready);
+          setUiGrid(s.ui_grid);
+          setFixLat(s.fix_lat ?? null);
+          setFixLon(s.fix_lon ?? null);
+        })
+        .catch(() => {
+          /* status unavailable — keep last known, don't surface an error */
+        });
+    };
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => {
+      mounted = false;
+      clearInterval(id);
     };
   }, []);
 
@@ -73,5 +121,5 @@ export function useLocationConfig(): UseLocationConfig {
     );
   };
 
-  return { grid, selectedSource, error, onGridChange, onSelectSource };
+  return { grid, selectedSource, error, onGridChange, onSelectSource, gpsReady, fixLat, fixLon, uiGrid };
 }

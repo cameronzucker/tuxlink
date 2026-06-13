@@ -13,7 +13,8 @@ import { GpsSourcePicker } from './GpsSourcePicker';
 import { useLocationConfig } from './useLocationConfig';
 
 export function LocationSettings() {
-  const { grid, selectedSource, error, onGridChange, onSelectSource } = useLocationConfig();
+  const { grid, selectedSource, error, onGridChange, onSelectSource, gpsReady, fixLat, fixLon, uiGrid } =
+    useLocationConfig();
 
   return (
     <div className="location-settings" data-testid="location-settings">
@@ -27,6 +28,9 @@ export function LocationSettings() {
         onGridChange={onGridChange}
         selectedSource={selectedSource}
         onSelectSource={onSelectSource}
+        gpsReady={gpsReady}
+        fixLatLon={fixLat != null && fixLon != null ? { lat: fixLat, lon: fixLon } : null}
+        uiGrid={uiGrid}
       />
     </div>
   );

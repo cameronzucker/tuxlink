@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+// Stub the map so these tests don't pull leaflet into jsdom (LocationMap has its
+// own shape test). Expose the grid it received for assertions.
+vi.mock('./LocationMap', () => ({
+  LocationMap: (p: { grid: string }) => <div data-testid="location-map-stub" data-grid={p.grid} />,
+}));
 import { invoke } from '@tauri-apps/api/core';
 import { GpsSourcePicker, type GpsSourcePickerProps } from './GpsSourcePicker';
 
@@ -25,11 +30,14 @@ function mockProbes(p: ProbeShape) {
 }
 
 function renderPicker(over: Partial<GpsSourcePickerProps> = {}) {
-  const props = {
+  const props: GpsSourcePickerProps = {
     grid: '',
     onGridChange: vi.fn(),
     selectedSource: 'manual',
     onSelectSource: vi.fn(),
+    gpsReady: false,
+    fixLatLon: null,
+    uiGrid: '',
     ...over,
   };
   render(<GpsSourcePicker {...props} />);
@@ -102,5 +110,32 @@ describe('GpsSourcePicker', () => {
       const after = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'gps_probe_gpsd').length;
       expect(after).toBeGreaterThan(callsBefore);
     });
+  });
+
+  // tuxlink-yy1m additions ----------------------------------------------------
+
+  it('always renders the confirmation map', async () => {
+    mockProbes({});
+    renderPicker();
+    expect(await screen.findByTestId('location-map-stub')).toBeInTheDocument();
+  });
+
+  it('shows the dialout triage AND a no-device card when no GPS and not in dialout', async () => {
+    mockProbes({ gpsd: { reachable: false }, serial: { devices: [] }, dialout: { member: false, groupExists: true } });
+    renderPicker();
+    expect(await screen.findByTestId('gps-triage-dialout')).toBeInTheDocument();
+    expect(screen.getByTestId('gps-no-device')).toBeInTheDocument();
+  });
+
+  it('shows "acquiring" when a GPS source is selected without a fix', async () => {
+    mockProbes({ gpsd: { reachable: true } });
+    renderPicker({ selectedSource: 'gpsd', gpsReady: false });
+    expect(await screen.findByTestId('gps-readout-acquiring')).toBeInTheDocument();
+  });
+
+  it('shows the grid readout once a fix is acquired', async () => {
+    mockProbes({ gpsd: { reachable: true } });
+    renderPicker({ selectedSource: 'gpsd', gpsReady: true, uiGrid: 'EM75km', fixLatLon: { lat: 36.1, lon: -86.8 } });
+    expect(await screen.findByTestId('gps-readout-fixed')).toHaveTextContent('EM75km');
   });
 });

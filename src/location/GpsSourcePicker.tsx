@@ -16,6 +16,7 @@ import {
   classifyGpsSources,
   type GpsClassification,
 } from './gpsProbes';
+import { LocationMap } from './LocationMap';
 import './GpsSourcePicker.css';
 
 export interface GpsSourcePickerProps {
@@ -25,13 +26,33 @@ export interface GpsSourcePickerProps {
   /** Selected source id: `'manual'` | `'gpsd'` | `'serial:/dev/ttyACM0'`. */
   selectedSource: string;
   onSelectSource: (id: string) => void;
+  // Live arbiter status (tuxlink-yy1m) — supplied by each chrome from
+  // useLocationConfig; drives the confirm map pin + the acquiring/fixed readout.
+  /** A fresh GPS fix exists and GPS is on. */
+  gpsReady: boolean;
+  /** Raw live-fix coords for the precise map pin, or null when no fresh fix. */
+  fixLatLon: { lat: number; lon: number } | null;
+  /** Effective local-display grid from the arbiter (live fix when source=Gps). */
+  uiGrid: string;
 }
 
 type Status = 'loading' | 'ready' | 'error';
 
-export function GpsSourcePicker({ grid, onGridChange, selectedSource, onSelectSource }: GpsSourcePickerProps) {
+export function GpsSourcePicker({
+  grid,
+  onGridChange,
+  selectedSource,
+  onSelectSource,
+  gpsReady,
+  fixLatLon,
+  uiGrid,
+}: GpsSourcePickerProps) {
   const [status, setStatus] = useState<Status>('loading');
-  const [classification, setClassification] = useState<GpsClassification>({ sources: [], triage: [] });
+  const [classification, setClassification] = useState<GpsClassification>({
+    sources: [],
+    triage: [],
+    noDevice: false,
+  });
   const [openCommand, setOpenCommand] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -68,6 +89,29 @@ export function GpsSourcePicker({ grid, onGridChange, selectedSource, onSelectSo
 
   return (
     <div className="gps-picker" data-testid="gps-picker">
+      {/* Confirmation surface (tuxlink-yy1m): the offline map shows where Tuxlink
+          thinks you are. Prefer the live arbiter grid (uiGrid) so a GPS fix is
+          framed; fall back to the manual grid. Click/drag sets it by hand. The
+          map + controls are separate containers so the wizard chrome can place
+          them side-by-side (full-screen) while Settings stacks them. */}
+      <div className="gps-picker__map">
+        <LocationMap grid={uiGrid || grid} fixLatLon={fixLatLon} onGridChange={onGridChange} />
+      </div>
+
+      <div className="gps-picker__controls">
+      {/* Live GPS readout — only meaningful when a GPS source is selected. */}
+      {selectedSource !== 'manual' &&
+        (gpsReady ? (
+          <div className="gps-readout gps-readout--ok" data-testid="gps-readout-fixed" role="status">
+            <span className="gps-readout__grid">{uiGrid || grid || '—'}</span>
+            <span className="gps-readout__sub">GPS fix acquired</span>
+          </div>
+        ) : (
+          <div className="gps-readout gps-readout--acq" data-testid="gps-readout-acquiring" role="status">
+            Acquiring GPS fix…
+          </div>
+        ))}
+
       <div className="gps-picker__head">
         <span className="gps-picker__title">GPS source</span>
         <button
@@ -148,6 +192,20 @@ export function GpsSourcePicker({ grid, onGridChange, selectedSource, onSelectSo
         </div>
       ))}
 
+      {/* No receiver detected yet (tuxlink-yy1m) — device-independent diagnostics
+          above still render; this tells the operator to plug in + rescan. */}
+      {classification.noDevice && (
+        <div className="gps-card gps-card--nodevice" data-testid="gps-no-device">
+          <div className="gps-card__body">
+            <span className="gps-card__label">No GPS receiver detected yet</span>
+            <span className="gps-card__detail">
+              Plug in your USB or serial GPS, then press Rescan. A phone sharing its
+              location over gpsd works too.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Manual grid — always first-class (Mike's "I'll just type my grid" path) */}
       <div className={`gps-card gps-card--manual${selectedSource === 'manual' ? ' is-selected' : ''}`} data-testid="gps-source-manual">
         <div className="gps-card__body">
@@ -170,6 +228,9 @@ export function GpsSourcePicker({ grid, onGridChange, selectedSource, onSelectSo
             </span>
           )}
           <span className="gps-card__detail">
+            …or click the map above to drop your location, and drag the pin to fine-tune.
+          </span>
+          <span className="gps-card__detail">
             Broadcast precision is reduced to a 4-character grid by default; set finer precision under Privacy.
           </span>
         </div>
@@ -182,6 +243,7 @@ export function GpsSourcePicker({ grid, onGridChange, selectedSource, onSelectSo
         >
           {selectedSource === 'manual' ? 'In use' : 'Use manual'}
         </button>
+      </div>
       </div>
     </div>
   );

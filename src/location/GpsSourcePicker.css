@@ -150,3 +150,58 @@
 .gps-card__grid-input[aria-invalid='true'] {
   border-color: var(--reach-bad, #e0606a);
 }
+
+/* ── Location confirmation: map + live readout + no-device (tuxlink-yy1m) ── */
+
+/* Default chrome (Settings, stacked): map block on top, controls below. The
+   wizard full-screen chrome (.wizard-step-location--fullscreen, in wizard.css)
+   overrides .gps-picker to a two-column grid (map left, controls right). */
+.gps-picker__map {
+  width: 100%;
+  height: 320px;
+  margin-bottom: 12px;
+}
+.location-map {
+  width: 100%;
+  height: 100%;
+  min-height: 220px;
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.location-map .leaflet-container {
+  width: 100%;
+  height: 100%;
+}
+
+.gps-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border2, #34556f);
+  background: var(--panel, #0f1c28);
+}
+.gps-readout--ok {
+  border-color: var(--reach-ok, #46c08a);
+}
+.gps-readout--acq {
+  border-color: var(--reach-warn, #d9a441);
+  color: var(--reach-warn, #d9a441);
+}
+.gps-readout__grid {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--reach-ok, #46c08a);
+}
+.gps-readout__sub {
+  color: var(--dim, #9fb6cc);
+  font-size: 0.85rem;
+}
+
+.gps-card--nodevice {
+  border-style: dashed;
+}
