@@ -70,15 +70,26 @@ fn decode_into(filter: &mut FilterState<1, 8>, sbc: &[u8]) -> Vec<i16> {
         };
         // Tolerate a wrong/absent CRC on RX (we cannot guarantee the peer's CRC under
         // a lossy RF path); structural decode is what matters for SSTV.
-        let frame = match FrameDecoder::new_skip_crc(&header, filter, &mut data) {
+        let mut frame = match FrameDecoder::new_skip_crc(&header, filter, &mut data) {
             Ok(f) => f,
             Err(_) => break,
         };
-        for block in frame {
-            for ch in block {
-                for sample in ch {
-                    pcm.push(sample);
+        // Drive the frame via the FALLIBLE inherent `next()` — NOT `for block in frame`,
+        // whose `Iterator` impl `.unwrap()`s a mid-frame read error and PANICS. The frame
+        // header can validate while the sample body is truncated/garbled (the normal case
+        // on a lossy RF link), so a read error mid-frame must stop the stream gracefully,
+        // never panic the RX loop. (Adversarial review P0, 2026-06-13.) `Err` covers both
+        // `NoBlock` (frame fully decoded) and a truncated-body read error; both stop here.
+        loop {
+            match frame.next() {
+                Ok(block) => {
+                    for ch in block {
+                        for sample in ch {
+                            pcm.push(sample);
+                        }
+                    }
                 }
+                Err(_) => break,
             }
         }
     }
@@ -444,5 +455,21 @@ mod tests {
     fn decode_garbage_does_not_panic() {
         let _ = decode_sbc(&[0x00, 0x01, 0x02]);
         let _ = decode_sbc(&[]);
+    }
+
+    #[test]
+    fn decode_truncated_frame_body_does_not_panic() {
+        // Adrev P0 regression: valid sync+header(0x71)+bitpool(0x10)+CRC + 4 scale-factor
+        // bytes, but NO audio sample body. Frame construction SUCCEEDS, then the body read
+        // fails mid-frame. The RX path sees this on a lossy RF link; it must NOT panic
+        // (the `for block in frame` Iterator path used to `.unwrap()` and panic here).
+        let truncated = [0x9C, 0x71, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let _ = decode_sbc(&truncated);
+        // Also: a real frame followed by a truncated one — must decode the good frame,
+        // then stop gracefully without panicking on the partial tail.
+        let codec = UvproSbcCodec::new();
+        let mut sbc = codec.encode(&pcm_to_bytes(&golden_pcm()[..SAMPLES_PER_FRAME]));
+        sbc.extend_from_slice(&[0x9C, 0x71, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        let _ = decode_sbc(&sbc);
     }
 }
