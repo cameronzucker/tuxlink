@@ -49,17 +49,18 @@ Three units, each independently testable:
 - On send, pass the real `attachments` (filename + base64/bytes) to `message_send`
   instead of `[]`.
 
-### 3.2 Backend — image transcode command (`forms`/`media` module, new)
+### 3.2 Backend — image transcode command (`media` module, new)
 - `#[tauri::command] transcode_image(bytes, preset, format) -> TranscodeResult`
   where `TranscodeResult { bytes, filename_ext, width, height, original_len,
   new_len }`.
-- **Decode:** the `image` crate (JPEG/PNG/GIF/WebP/TIFF/BMP). HEIC decode is
-  Phase 2 (§5).
+- **Decode (broad ingest):** the `image` crate (JPEG/PNG/GIF/WebP/TIFF/BMP)
+  **plus HEIC via libheif** (`libheif-rs`) so iPhone photos ingest directly.
 - **Resize:** to the chosen preset's max dimension, preserving aspect ratio
   (Lanczos3). Presets (proposed): Small 640px / Medium 1024px / Large 1600px /
   Original. (WLE-style choices; final numbers in the plan.)
-- **Encode:** JPEG (quality ~80) by default. WebP opt-in is Phase 2 (§5).
-- Pure-Rust path (decode + JPEG encode) — **no C dependency in Phase 1.**
+- **Encode (narrow wire):** JPEG (quality ~80) **default**; **WebP opt-in**
+  (libwebp via the `webp` crate) for tuxlink→tuxlink. Format is the caller's
+  choice; default JPEG keeps Winlink-Express recipients safe.
 
 ### 3.3 Wiring — already done
 `message_send` consumes `draft.attachments`; the frontend just has to populate it.
@@ -82,21 +83,18 @@ Locked direction (from the 2026-06-13 design session):
   compression" opt-in, blocked on Pi encode-time + decode verification. **HEIC is
   never a wire format** (HEVC patents; WebKitGTK can't display it).
 - **HEIC ingest** (iPhone photos — the contingency "people show up with whatever
-  devices" case): decode via **libheif** (C dep; macOS/Windows decode HEIC at OS
-  level, so Linux is the only mandatory bundling target). Decode-only is the
-  lower-risk patent case.
+  devices" case): decode via **libheif** (`libheif-rs`; C dep). Decode-only is the
+  lower-risk patent case. macOS/Windows decode HEIC at OS level, so Linux is the
+  primary bundling target — but the build vendors/links libheif uniformly so
+  behavior is identical across platforms rather than OS-conditional.
 
-**Phasing (proposed — for operator review):**
-- **Phase 1 (pure Rust, no C deps):** attach any file + decode the `image`-crate
-  formats + resize + JPEG re-encode + size warnings. Independently complete and
-  shippable; covers Android/JPEG cameras and the airtime win for common images.
-- **Phase 2 (C deps, CI-verified):** HEIC ingest (libheif) + WebP encode opt-in
-  (libwebp). Isolated because C-dep cross-platform integration is verifiable only
-  via Cloud CI here (no cold cargo on the Pi), so it should not block Phase 1.
-
-Rationale for phasing: it quarantines the one risky, slow-to-iterate part (C-dep
-cross-platform builds) from an otherwise pure-Rust feature, without making Phase 1
-a partial slice — Phase 1 is a complete attach+resize feature on its own.
+**Single ship (no phasing).** Everything above — any-file attach, broad decode
+incl. HEIC, resize, JPEG-default/WebP-opt-in encode — lands in one feature.
+Phasing was rejected: it has caused feature-edge gaps before, and the codec
+landscape is fully in context now. The C-dependency integration (libheif,
+libwebp) is part of this build and is verified through Cloud CI on both arches
+(no cold cargo on the Pi); the cross-platform `.deb`/bundle packaging of those
+libs is an explicit plan task, not a follow-on.
 
 ## 6. Error handling & limits
 - Corrupt/undecodable image → surface a clear error; offer to attach the original
@@ -123,5 +121,10 @@ a partial slice — Phase 1 is a complete attach+resize feature on its own.
   CI compiles + tests both arches.
 
 ## 9. Out of scope
-- AVIF encode (later opt-in). Wire-format changes. Receive-side attachment
-  rendering changes. Self-contained form payloads (separate, parked — tuxlink-z0gx).
+- **AVIF encode** — deferred pending a viability spike, NOT a convenience phase:
+  rav1e encode time on a Pi 5 and AVIF decode in our WebKitGTK 2.52 / mac+Win
+  bundles both need runtime confirmation before committing. JPEG+WebP already give
+  a safe default + an efficient tuxlink→tuxlink option; AVIF is a marginal further
+  gain with real unknowns. Revisit once the spike confirms encode-time + decode.
+- Wire-format changes. Receive-side attachment rendering changes. Self-contained
+  form payloads (separate, parked — tuxlink-z0gx).
