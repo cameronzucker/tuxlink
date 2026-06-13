@@ -43,16 +43,20 @@ by emergency-communications (emcomm) teams, ARES and CERT organizations, the
 Red Cross, and offshore cruisers. It moves email-style messages over radio when
 the internet is down.
 
-Two clients have reached the Winlink network on Linux.
-[Winlink Express](https://winlink.org/WinlinkExpress) is the proprietary Windows
-reference client; Linux operators run it under WINE.
-[Pat](https://getpat.io/) is an open-source Go client that has served the Linux
-Winlink community for years: cross-platform, packaged for Debian and Ubuntu,
-with telnet, ARDOP, VARA HF/FM, PACTOR, and AX.25 support. Pat pairs a
-command-line tool with an optional browser-served web UI, stores operator
-credentials in `~/.config/pat/config.json`, and routes transport configuration
-(Dire Wolf, ardopcf, rig control) through community-written tutorials per
-transport.
+Two clients reach the Winlink network on Linux today.
+[Winlink Express](https://winlink.org/WinlinkExpress), the proprietary Windows
+reference client, runs under WINE. [Pat](https://getpat.io/) is an open-source Go
+client with broad transport support, pairing a command-line tool with an optional
+browser-served web UI.
+
+| | Winlink Express | Pat | Tuxlink |
+|---|---|---|---|
+| Native Linux, no WINE | No (Windows) | Yes | Yes |
+| ARM / Raspberry Pi | No | Yes | Yes |
+| Native desktop GUI | Windows only | No (CLI + web UI) | Yes |
+| Winlink Standard Forms catalog | Yes | No | Yes |
+| Credential storage | Local file | Config file | OS keyring |
+| Native UV-Pro Bluetooth control | No | No | Yes |
 
 Tuxlink takes a third path: it implements the Winlink B2F protocol itself,
 natively in Rust. The mailbox, the CMS connection, and the wire-protocol exchange
