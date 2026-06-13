@@ -44,11 +44,6 @@ interface PseudoFolderItem {
 /// mailbox `counts` memo.
 const ADDRESS_ITEMS: readonly PseudoFolderItem[] = [
   { id: 'contacts', label: 'Contacts', icon: '◉', enabled: true },
-  // tuxlink-2f2n Task 14: APRS tactical-chat pseudo-folder. Like 'contacts',
-  // 'aprs' is NOT a MailboxFolder — selecting it mounts the inline AprsChatPanel
-  // in place of the message-list/reading-pane (AppShell early-return). No new
-  // window; reuses the generic pseudo-folder row + icon-rail.
-  { id: 'aprs', label: 'APRS Chat', icon: '◈', enabled: true },
 ];
 
 /// Mailbox section (mock B order). All four folders functional as of

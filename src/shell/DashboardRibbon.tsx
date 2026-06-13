@@ -90,13 +90,16 @@ export interface DashboardRibbonProps {
    *  When omitted, the "On connect" control is not rendered — keeps prop-free
    *  consumers/tests unchanged. */
   onReviewInboundChange?: (enabled: boolean) => void;
+  /** APRS tactical-chat status control (entry ①). Absent → the control is not
+   *  rendered. `unread` drives the badge; `onOpen` brings chat into the dock. */
+  aprs?: { listening: boolean; unread: number; onOpen: () => void };
 }
 
 // tuxlink-djnl: React.memo so 2s status-poll renders (now reference-stable
 // via useStatusData's useMemo) and other shell-level renders skip the ribbon
 // when its props haven't changed. The 1s clock tick already lives inside the
 // scoped ClockCell subtree, so a memo'd ribbon stays still while time advances.
-export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, ssid, onSsidChange, reviewInbound, onReviewInboundChange }: DashboardRibbonProps) {
+export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, ssid, onSsidChange, reviewInbound, onReviewInboundChange, aprs }: DashboardRibbonProps) {
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Task 14 (tuxlink-c79g, spec §4.3 + Codex P1 #4): after a grid commit or a
   // source flip resolves, invalidate the config_read query so the source chip
@@ -264,6 +267,28 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
                 Download all
               </button>
             </div>
+          </div>
+        </>
+      )}
+
+      {aprs && (
+        <>
+          <div className="dash-divider" />
+          <div className="dash-item dash-aprs">
+            <div className="dash-label">APRS</div>
+            <button
+              type="button"
+              className="dash-aprs-control"
+              data-testid="dash-aprs-control"
+              onClick={aprs.onOpen}
+              title="Open APRS tactical chat"
+            >
+              <span className={`dash-status-dot ${aprs.listening ? 'is-on' : 'is-off'}`} aria-hidden="true" />
+              <span className="dash-aprs-state">{aprs.listening ? 'Listening' : 'Off'}</span>
+              {aprs.unread > 0 && (
+                <span className="dash-aprs-unread" data-testid="dash-aprs-unread">{aprs.unread}</span>
+              )}
+            </button>
           </div>
         </>
       )}

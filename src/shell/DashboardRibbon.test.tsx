@@ -375,3 +375,26 @@ describe('DashboardRibbon — On connect review/download-all control (tuxlink-pm
     expect(onChange).toHaveBeenCalledWith(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// APRS status-strip control (entry ①) in the ribbon
+// ---------------------------------------------------------------------------
+
+describe('DashboardRibbon — APRS status control (plan 2, T4)', () => {
+  it('renders the APRS status control and opens chat on click', () => {
+    const onOpen = vi.fn();
+    render(<DashboardRibbon data={makeData()} aprs={{ listening: true, unread: 1, onOpen }} />);
+    const btn = screen.getByTestId('dash-aprs-control');
+    // The "APRS" label is in the dash-label sibling, not inside the button —
+    // check the containing dash-item instead.
+    expect(btn.closest('.dash-aprs')).toHaveTextContent(/APRS/i);
+    expect(screen.getByTestId('dash-aprs-unread')).toHaveTextContent('1');
+    fireEvent.click(btn);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not render the APRS control when aprs prop is absent', () => {
+    render(<DashboardRibbon data={makeData()} />);
+    expect(screen.queryByTestId('dash-aprs-control')).not.toBeInTheDocument();
+  });
+});

@@ -22,9 +22,8 @@
 // composer uses — no fabricated "listening" state.
 
 import { useState } from 'react';
-import type { FormEvent } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { useAprsChat } from './useAprsChat';
 import type { ChatMessage, DeliveryState, Thread } from './aprsTypes';
 import './AprsChatPanel.css';
 
@@ -82,8 +81,19 @@ function Bubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
-export function AprsChatPanel() {
-  const { threads, listening, send } = useAprsChat();
+export interface AprsChatPanelProps {
+  /// Per-callsign conversation map (owned by AppShell's lifted useAprsChat).
+  threads: Record<string, Thread>;
+  /// Whether the backend listener is armed (mirrors the backend).
+  listening: boolean;
+  /// Send `text` to `call`; resolves with the backend msgid (rejects → no bubble).
+  send: (call: string, text: string) => Promise<string>;
+  /// Optional device-control slot rendered above the composer. The seam for the
+  /// UV-Pro native control surface; undefined until the native backend lands.
+  controlStrip?: ReactNode;
+}
+
+export function AprsChatPanel({ threads, listening, send, controlStrip }: AprsChatPanelProps) {
   const [callsign, setCallsign] = useState('');
   const [text, setText] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
@@ -224,6 +234,8 @@ export function AprsChatPanel() {
               {sendError}
             </p>
           )}
+
+          {controlStrip}
 
           <form className="aprs-composer" onSubmit={onSubmit}>
             <label className="aprs-composer-call">
