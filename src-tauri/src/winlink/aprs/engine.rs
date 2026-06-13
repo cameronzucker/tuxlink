@@ -129,10 +129,8 @@ impl AprsEngine {
     /// Feed ONE raw AX.25 frame already deframed by a non-KISS transport (the native
     /// Benshi reassembler). Returns auto-ACK responses as RAW AX.25 frames (no KISS wrap)
     /// for the native driver to fragment via `send_aprs_frame`. Same promiscuous decode +
-    /// throttled auto-ACK as the KISS path; only the framing differs.
-    // TODO(tuxlink-7my9): drop the allow once Task 7's native_driver calls this. Exercised
-    // by tests today.
-    #[allow(dead_code)]
+    /// throttled auto-ACK as the KISS path; only the framing differs. Live caller:
+    /// the native driver (`NativeDriver::ingest_inbound`), spawned by `start_native`.
     pub fn handle_inbound_frame(&mut self, ax25: &[u8], now_ms: u64) -> Vec<Vec<u8>> {
         self.ingest_ax25(ax25, now_ms)
     }
@@ -272,10 +270,8 @@ impl AprsEngine {
     /// Drive the retransmit clock; returns due TX frames as RAW AX.25 (no KISS wrap) for
     /// non-KISS transports — the native Benshi path fragments these via `send_aprs_frame`.
     /// Emits TimedOut for messages whose retransmit budget is spent. `tick` is the
-    /// KISS-wrapping sibling for the KISS link path.
-    // TODO(tuxlink-7my9): drop the allow once Task 7's native_driver drains this. Exercised
-    // by tests today.
-    #[allow(dead_code)]
+    /// KISS-wrapping sibling for the KISS link path. Live caller: the native driver
+    /// (`NativeDriver::drain_due`), spawned by `start_native`.
     pub fn tick_frames(&mut self, now_ms: u64) -> Vec<Vec<u8>> {
         let due: Vec<Vec<u8>> = self.tx.tick(now_ms).into_iter().map(|d| d.bytes).collect();
         for msgid in self.tx.take_timed_out() {
@@ -390,6 +386,53 @@ impl AprsState {
         let listening = self.listening.clone();
         let abort_for_task = abort.clone();
         tokio::task::spawn_blocking(move || run(link, engine, cmd_rx, listening, abort_for_task));
+        *self.inner.lock().unwrap() = Some(AprsHandle { cmd_tx, abort });
+        Ok(())
+    }
+
+    /// Start APRS over the UV-Pro **native** path: instead of opening a KISS link,
+    /// reuse the already-connected `UvproSession` (control + chat share the one
+    /// connection). Takes the session's inbound-APRS receiver and spawns the native
+    /// driver (the analogue of `start`'s `run`). The session must already be
+    /// connected (the control connection is brought up first); stopping APRS aborts
+    /// the driver but leaves the session connected — control stays live.
+    pub fn start_native(
+        &self,
+        app: tauri::AppHandle,
+        session: Arc<crate::winlink::ax25::uvpro::session::UvproSession>,
+        identity: AprsIdentity,
+    ) -> Result<(), String> {
+        if !session.is_connected() {
+            return Err(
+                "connect the UV-Pro first — native APRS shares its control connection".to_string(),
+            );
+        }
+        // One receiver per connection: the native driver owns the inbound channel
+        // the session's event pump feeds. A second start (without reconnect) finds
+        // it already taken — surfaced as "already listening".
+        let aprs_rx = session
+            .take_aprs_receiver()
+            .ok_or_else(|| "native APRS is already listening on the UV-Pro".to_string())?;
+        let abort = Arc::new(AtomicBool::new(false));
+        let sink: Box<dyn EventSink> = Box::new(TauriEventSink {
+            app,
+            in_flight: self.in_flight.clone(),
+        });
+        let engine = AprsEngine::new(identity, sink);
+        let (cmd_tx, cmd_rx) = mpsc::channel::<TxCommand>();
+        let tx: Box<dyn crate::winlink::aprs::native_driver::AprsFrameTx> = Box::new(session);
+        let listening = self.listening.clone();
+        let abort_for_task = abort.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::winlink::aprs::native_driver::run_native(
+                aprs_rx,
+                tx,
+                engine,
+                cmd_rx,
+                listening,
+                abort_for_task,
+            )
+        });
         *self.inner.lock().unwrap() = Some(AprsHandle { cmd_tx, abort });
         Ok(())
     }

@@ -53,6 +53,15 @@ pub enum KissLinkConfig {
         audio_device: super::devices::StableAudioId,
         ptt: super::devices::PttChoice,
     },
+    /// UV-Pro native Benshi GAIA: the radio is driven over its native control
+    /// connection (RFCOMM + GAIA framing, owned by `UvproSession`), NOT as a KISS
+    /// TNC. Control + APRS chat + position share the one connection; there is no
+    /// KISS byte-pipe to open here. The operator declares this when their radio is
+    /// a UV-Pro they want driven natively (vs `Bluetooth { mac }`, which drives any
+    /// radio — including a UV-Pro in its `kiss_en` mode — as a plain KISS TNC).
+    /// `connect_link`/`connect_link_with_abort` reject it: the native path is
+    /// opened by the session, and APRS reaches it via `AprsState::start_native`.
+    UvproNative { mac: String },
 }
 
 /// A bidirectional, thread-movable byte stream — the KISS pipe the AX.25 state
@@ -128,6 +137,12 @@ pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> 
             std::io::ErrorKind::Unsupported,
             "ManagedDireWolf link is not yet connectable (lifecycle wiring is a later phase)",
         )),
+        // The UV-Pro native link is not a KISS byte-pipe — it is opened by
+        // `UvproSession` and reached via `AprsState::start_native`, never here.
+        KissLinkConfig::UvproNative { .. } => Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "UvproNative link is driven over the native session, not as a KISS pipe",
+        )),
     }
 }
 
@@ -189,6 +204,12 @@ pub fn connect_link_with_abort(
         KissLinkConfig::ManagedDireWolf { .. } => Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
             "ManagedDireWolf link is not yet connectable (lifecycle wiring is a later phase)",
+        )),
+        // As in `connect_link`: the UV-Pro native link is owned by `UvproSession`,
+        // not opened as a KISS pipe. APRS reaches it via `AprsState::start_native`.
+        KissLinkConfig::UvproNative { .. } => Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "UvproNative link is driven over the native session, not as a KISS pipe",
         )),
     }
 }
@@ -304,7 +325,8 @@ fn connect_serial(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> {
         // connect_link only routes the Serial variant here.
         KissLinkConfig::Tcp { .. }
         | KissLinkConfig::Bluetooth { .. }
-        | KissLinkConfig::ManagedDireWolf { .. } => {
+        | KissLinkConfig::ManagedDireWolf { .. }
+        | KissLinkConfig::UvproNative { .. } => {
             unreachable!("connect_serial called with a non-Serial config")
         }
     };

@@ -119,10 +119,8 @@ impl Driver {
     /// Send a raw AX.25 APRS frame over the native link as `HT_SEND_DATA`
     /// fragments — the unified-model data path sharing this control connection.
     /// Each fragment is acknowledged by a `SendDataReply`; a non-zero status or
-    /// an unexpected reply aborts the send.
-    // TODO(tuxlink-7my9): drop the allow once Task 7/8 gives the TX path a live
-    // caller (the native driver / aprs_listen_start). Exercised by tests today.
-    #[allow(dead_code)]
+    /// an unexpected reply aborts the send. Live caller: `UvproSession::send_aprs_frame`
+    /// (via the native driver's `AprsFrameTx` impl), driven by `AprsState::start_native`.
     pub fn send_aprs_frame(&mut self, ax25: &[u8]) -> Result<(), UvproError> {
         for frag in fragment_ax25(ax25) {
             match self.send_and_wait(&encode_ht_send_data(&frag), COMMAND_TIMEOUT)? {
@@ -427,10 +425,9 @@ pub struct UvproSession {
     guard: Mutex<Option<LinkGuard>>,
     lock: Arc<UvproLinkLock>,
     snapshot: Mutex<UvproStatus>,
-    /// Receiver for completed inbound APRS frames, set at connect. The APRS
-    /// native driver (tuxlink-7my9 Task 7) takes this to feed the chat engine.
-    // TODO(tuxlink-7my9): read only by take_aprs_receiver (dead until Task 7).
-    #[allow(dead_code)]
+    /// Receiver for completed inbound APRS frames, set at connect. `take_aprs_receiver`
+    /// hands it to the native APRS driver (`AprsState::start_native`) to feed the chat
+    /// engine.
     aprs_rx: Mutex<Option<Receiver<Vec<u8>>>>,
 }
 
@@ -494,18 +491,14 @@ impl UvproSession {
 
     /// Take the inbound-APRS-frame receiver (once, after connect). The APRS
     /// native driver owns it for the connection's lifetime; a second caller
-    /// gets `None`.
-    // TODO(tuxlink-7my9): drop the allow when Task 7 consumes the receiver.
-    #[allow(dead_code)]
+    /// gets `None`. Live caller: `AprsState::start_native`.
     pub fn take_aprs_receiver(&self) -> Option<Receiver<Vec<u8>>> {
         self.aprs_rx.lock().unwrap().take()
     }
 
     /// Send a raw AX.25 APRS frame over the native link (fragmented as
-    /// `HT_SEND_DATA`). Shares the one connection with control commands.
-    // TODO(tuxlink-7my9): drop the allow when Task 7/8 calls this from the
-    // native driver / aprs_listen_start.
-    #[allow(dead_code)]
+    /// `HT_SEND_DATA`). Shares the one connection with control commands. Live caller:
+    /// the native driver's `AprsFrameTx` impl, driven by `AprsState::start_native`.
     pub fn send_aprs_frame(&self, ax25: &[u8]) -> Result<(), UvproError> {
         self.with_driver(|d| d.send_aprs_frame(ax25))
     }

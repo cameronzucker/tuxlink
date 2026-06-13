@@ -44,10 +44,15 @@ impl From<UvproError> for UvproCommandError {
     }
 }
 
-/// The configured UV-Pro MAC, if the packet transport is a Bluetooth link.
+/// The configured UV-Pro MAC, if the packet transport addresses the radio by MAC —
+/// either `Bluetooth` (drive it as a KISS TNC) or `UvproNative` (drive it natively).
+/// Both reach the radio over the same RFCOMM MAC, so the control session connects
+/// for either declaration; the link kind only governs how APRS then talks to it.
 fn configured_mac() -> Option<String> {
     match config::read_config().ok()?.packet.link {
-        Some(KissLinkConfig::Bluetooth { mac }) => Some(mac),
+        Some(KissLinkConfig::Bluetooth { mac }) | Some(KissLinkConfig::UvproNative { mac }) => {
+            Some(mac)
+        }
         _ => None,
     }
 }

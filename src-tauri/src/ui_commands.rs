@@ -3563,6 +3563,11 @@ impl From<&config::PacketConfig> for PacketConfigDto {
             Some(KissLinkConfig::Bluetooth { mac }) => {
                 (Some("Bluetooth".into()), None, None, None, None, Some(mac.clone()))
             }
+            // UV-Pro native rides the same `bt_mac` scalar as Bluetooth (both
+            // address the radio by MAC); the `link_kind` discriminates which path.
+            Some(KissLinkConfig::UvproNative { mac }) => {
+                (Some("UvproNative".into()), None, None, None, None, Some(mac.clone()))
+            }
             // The managed link carries no tcp_/serial_/bt_ scalar — its audio device
             // + PTT ride the structured `managed_*` fields, set below the tuple.
             Some(KissLinkConfig::ManagedDireWolf { .. }) => {
@@ -3625,6 +3630,11 @@ impl PacketConfigDto {
             Some("Bluetooth") => Some(KissLinkConfig::Bluetooth {
                 mac: self.bt_mac.ok_or_else(|| UiError::Internal {
                     detail: "Bluetooth link needs bt_mac".into(),
+                })?,
+            }),
+            Some("UvproNative") => Some(KissLinkConfig::UvproNative {
+                mac: self.bt_mac.ok_or_else(|| UiError::Internal {
+                    detail: "UvproNative link needs bt_mac".into(),
                 })?,
             }),
             Some("Managed") => Some(KissLinkConfig::ManagedDireWolf {
@@ -3759,25 +3769,52 @@ pub async fn aprs_config_set(
     Ok(())
 }
 
-/// Open the UV-Pro Bluetooth KISS link and start the APRS engine listening +
-/// ready to send. Resolves the on-air base call from the ACTIVE SessionIdentity
-/// (the authenticated Part 97 principal), mirroring `packet_listen` — NOT from a
-/// static config field. Phase 1a requires the Bluetooth KISS transport.
+/// The APRS transport the configured packet link implies. Both UV-Pro paths are
+/// addressed by MAC; they differ in HOW the radio is driven — `Kiss` opens a KISS
+/// byte-pipe (a UV-Pro in `kiss_en` mode, or any Mobilinkd-class TNC), `Native`
+/// rides the UV-Pro's native GAIA session (control + chat over one connection).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AprsTransportKind {
+    /// KISS-over-RFCOMM to `mac` — the engine opens the link itself.
+    Kiss(String),
+    /// Native Benshi GAIA — APRS shares the already-connected `UvproSession`.
+    Native,
+}
+
+/// Pure: map the configured packet link to the APRS transport. The operator's
+/// declared link kind decides — Tuxlink does not infer it from which radio is
+/// connected. A non-UV-Pro link (TCP/serial/managed, or none) is not an APRS
+/// transport in this phase and yields a configure-it error.
+pub fn aprs_transport_from_link(
+    link: Option<&crate::winlink::ax25::link::KissLinkConfig>,
+) -> Result<AprsTransportKind, UiError> {
+    use crate::winlink::ax25::link::KissLinkConfig;
+    match link {
+        Some(KissLinkConfig::Bluetooth { mac }) => Ok(AprsTransportKind::Kiss(mac.clone())),
+        Some(KissLinkConfig::UvproNative { .. }) => Ok(AprsTransportKind::Native),
+        _ => Err(UiError::Internal {
+            detail: "APRS requires a UV-Pro link — configure Bluetooth (KISS) or UV-Pro (native) in packet settings first".to_string(),
+        }),
+    }
+}
+
+/// Start the APRS engine listening + ready to send over the operator's configured
+/// UV-Pro transport. `Bluetooth { mac }` opens the KISS link directly; `UvproNative`
+/// rides the already-connected native session (the operator brings the radio up via
+/// the UV-Pro control connection first). Resolves the on-air base call from the
+/// ACTIVE SessionIdentity (the authenticated Part 97 principal), mirroring
+/// `packet_listen` — NOT from a static config field.
 #[tauri::command]
 pub async fn aprs_listen_start(
     app: AppHandle,
     state: State<'_, BackendState>,
     aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
+    uvpro: State<'_, std::sync::Arc<crate::winlink::ax25::uvpro::session::UvproSession>>,
 ) -> Result<(), UiError> {
     let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
-    let mac = match &cfg.packet.link {
-        Some(crate::winlink::ax25::link::KissLinkConfig::Bluetooth { mac }) => mac.clone(),
-        _ => {
-            return Err(UiError::Internal {
-                detail: "APRS Phase 1a requires the UV-Pro Bluetooth KISS link; configure it in packet settings first".to_string(),
-            })
-        }
-    };
+    // The operator's declared link kind selects the transport (before any identity
+    // resolution so a misconfigured link fails fast with a clear message).
+    let transport = aprs_transport_from_link(cfg.packet.link.as_ref())?;
     // Active base call — REAL inline mechanism, mirroring packet_listen
     // (ui_commands.rs ~3940-3968): resolve the active SessionIdentity off the
     // live backend, then uppercase its base callsign. `active_identity()` returns
@@ -3800,8 +3837,11 @@ pub async fn aprs_listen_start(
         path: crate::winlink::aprs::identity::parse_path(&cfg.aprs.path)
             .map_err(|detail| UiError::Internal { detail })?,
     };
-    aprs.start(app, mac, identity)
-        .map_err(|detail| UiError::Internal { detail })
+    match transport {
+        AprsTransportKind::Kiss(mac) => aprs.start(app, mac, identity),
+        AprsTransportKind::Native => aprs.start_native(app, uvpro.inner().clone(), identity),
+    }
+    .map_err(|detail| UiError::Internal { detail })
 }
 
 /// Stop the APRS engine and close the link.
@@ -9625,6 +9665,51 @@ hw:CARD=Device,DEV=0
             };
             let back = PacketConfigDto::from(&pc).into_packet_config().unwrap();
             assert_eq!(back, pc, "existing link variant must round-trip through the DTO");
+        }
+    }
+
+    #[test]
+    fn packet_config_dto_round_trips_uvpro_native() {
+        // The native UV-Pro link rides the bt_mac scalar; link_kind discriminates it
+        // from KISS-Bluetooth, so the two must NOT collapse into each other.
+        use crate::winlink::ax25::KissLinkConfig;
+        let pc = config::PacketConfig {
+            ssid: 7,
+            link: Some(KissLinkConfig::UvproNative { mac: "38:D2:00:01:55:5C".into() }),
+            params: config::Ax25ParamsConfig::default(),
+            listen_default: false,
+        };
+        let dto = PacketConfigDto::from(&pc);
+        assert_eq!(dto.link_kind.as_deref(), Some("UvproNative"));
+        assert_eq!(dto.bt_mac.as_deref(), Some("38:D2:00:01:55:5C"));
+        let back = dto.into_packet_config().unwrap();
+        assert_eq!(back, pc, "UvproNative must round-trip and stay distinct from Bluetooth");
+    }
+
+    #[test]
+    fn aprs_transport_from_link_honors_the_declared_link_kind() {
+        use crate::winlink::ax25::KissLinkConfig;
+        // Bluetooth (KISS) -> Kiss(mac), carrying the MAC the engine opens the link on.
+        assert_eq!(
+            aprs_transport_from_link(Some(&KissLinkConfig::Bluetooth { mac: "AA:BB".into() })).unwrap(),
+            AprsTransportKind::Kiss("AA:BB".into()),
+        );
+        // The SAME MAC declared as UvproNative selects the native path, NOT KISS —
+        // the operator's declaration decides, not the radio model behind the MAC.
+        assert_eq!(
+            aprs_transport_from_link(Some(&KissLinkConfig::UvproNative { mac: "AA:BB".into() })).unwrap(),
+            AprsTransportKind::Native,
+        );
+        // Non-UV-Pro links (and no link) are not an APRS transport in this phase.
+        for link in [
+            None,
+            Some(KissLinkConfig::Tcp { host: "127.0.0.1".into(), port: 8001 }),
+            Some(KissLinkConfig::Serial { device: "/dev/ttyUSB0".into(), baud: 9600 }),
+        ] {
+            assert!(matches!(
+                aprs_transport_from_link(link.as_ref()),
+                Err(UiError::Internal { .. })
+            ));
         }
     }
 

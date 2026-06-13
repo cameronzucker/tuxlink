@@ -14,12 +14,9 @@
 //! flushes pending retransmits to terminal so in-flight slots are released. The
 //! driver never opens hardware itself — it is handed an already-connected sink.
 
-// TODO(tuxlink-7my9 Task 8): drop this module-level allow once `aprs_listen_start`
-// spawns `run_native` against a live `UvproSession`. That wiring is the live caller
-// for `run_native` + `AprsFrameTx` and for the session.rs TX-path methods
-// (`take_aprs_receiver` / `send_aprs_frame`), at which point their `allow(dead_code)`
-// markers come off too.
-#![allow(dead_code)]
+// Live caller: `AprsState::start_native` (engine.rs) spawns `run_native` against a
+// connected `UvproSession`, which is also the live caller for the `AprsFrameTx` impl
+// and the session.rs TX-path methods (`take_aprs_receiver` / `send_aprs_frame`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
