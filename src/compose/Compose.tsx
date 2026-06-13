@@ -45,8 +45,8 @@ import { WebviewFormHost, type ParsedBody } from './WebviewFormHost';
 import { RecipientInput, type RecipientInputHandle } from '../contacts/RecipientInput';
 import type { ContactsFile } from '../contacts/types';
 import { useContacts } from '../contacts/useContacts';
-import { useAttachments } from './useAttachments';
-import { humanSize, airtimeEstimate } from './attachmentFormat';
+import { useAttachments, type ImageOpts } from './useAttachments';
+import { humanSize, airtimeEstimate, cmsStatus } from './attachmentFormat';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import './Compose.css';
 
@@ -1094,8 +1094,18 @@ export function Compose({ draftId }: ComposeProps) {
             Attach files…
           </button>
           {attach.totalBytes > 0 && (
-            <span className="compose-attachments__total">
+            <span className="compose-attachments__total" data-testid="compose-attach-total">
               {humanSize(attach.totalBytes)} · {airtimeEstimate(attach.totalBytes)}
+              {cmsStatus(attach.totalBytes) === 'over' && (
+                <span className="compose-attachments__cms-over" data-testid="compose-attach-cms-over">
+                  {' '}· exceeds Winlink CMS ~120 KB limit — resize smaller
+                </span>
+              )}
+              {cmsStatus(attach.totalBytes) === 'near' && (
+                <span className="compose-attachments__cms-near">
+                  {' '}· near the CMS ~120 KB limit
+                </span>
+              )}
             </span>
           )}
         </div>
@@ -1109,14 +1119,47 @@ export function Compose({ draftId }: ComposeProps) {
             {attach.items.map((a, i) => (
               <li key={`${a.filename}-${i}`} className="compose-attachments__item">
                 <span className="compose-attachments__name">{a.filename}</span>
-                {a.kind === 'image' && a.newLen < a.originalLen && (
-                  <span className="compose-attachments__resized">
-                    resized {humanSize(a.originalLen)} → {humanSize(a.newLen)}
+                <span className="compose-attachments__size" data-testid={`compose-attach-size-${i}`}>
+                  {humanSize(a.newLen)}
+                  {a.kind === 'image' && a.newLen < a.originalLen && (
+                    <span className="compose-attachments__resized"> (from {humanSize(a.originalLen)})</span>
+                  )}
+                </span>
+                {a.kind === 'image' && (
+                  <span className="compose-attachments__opts">
+                    <select
+                      className="compose-attachments__preset"
+                      value={a.opts.preset}
+                      disabled={attach.busy}
+                      aria-label={`Resize for ${a.filename}`}
+                      data-testid={`compose-attach-preset-${i}`}
+                      onChange={(e) =>
+                        attach.setOptions(i, { ...a.opts, preset: e.target.value as ImageOpts['preset'] })
+                      }
+                    >
+                      <option value="small">Small (480px)</option>
+                      <option value="medium">Medium (640px)</option>
+                      <option value="large">Large (800px)</option>
+                      <option value="original">Original</option>
+                    </select>
+                    <select
+                      className="compose-attachments__format"
+                      value={a.opts.format}
+                      disabled={attach.busy}
+                      aria-label={`Format for ${a.filename}`}
+                      data-testid={`compose-attach-format-${i}`}
+                      onChange={(e) =>
+                        attach.setOptions(i, { ...a.opts, format: e.target.value as ImageOpts['format'] })
+                      }
+                    >
+                      <option value="jpeg">JPEG</option>
+                      <option value="webp">WebP (smaller)</option>
+                    </select>
                   </span>
                 )}
                 {a.kind === 'file' && a.newLen > 256 * 1024 && (
                   <span className="compose-attachments__warn">
-                    {humanSize(a.newLen)} · {airtimeEstimate(a.newLen)}
+                    {airtimeEstimate(a.newLen)}
                   </span>
                 )}
                 <button
