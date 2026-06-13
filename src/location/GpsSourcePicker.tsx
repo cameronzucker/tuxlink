@@ -14,7 +14,11 @@ import { validateGrid } from '../wizard/validators';
 import {
   runGpsDetection,
   classifyGpsSources,
+  pkexecAvailable,
+  runGpsFix,
+  triageFixAction,
   type GpsClassification,
+  type GpsFixOutcome,
 } from './gpsProbes';
 import { LocationMap } from './LocationMap';
 import './GpsSourcePicker.css';
@@ -55,6 +59,11 @@ export function GpsSourcePicker({
   });
   const [openCommand, setOpenCommand] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  // "Fix it for me" (tuxlink-m9ej): pkexec availability gates the buttons; the
+  // last fix result drives per-card feedback (e.g. the dialout re-login notice).
+  const [pkexec, setPkexec] = useState(false);
+  const [fixResult, setFixResult] = useState<{ kind: string; outcome: GpsFixOutcome } | null>(null);
+  const [fixing, setFixing] = useState<string | null>(null);
 
   const rescan = useCallback(() => {
     let cancelled = false;
@@ -74,6 +83,34 @@ export function GpsSourcePicker({
   }, []);
 
   useEffect(() => rescan(), [rescan]);
+
+  // Probe pkexec once so the fix buttons only enable where a system auth dialog
+  // is possible (AppImage / minimal installs degrade to "Show command").
+  useEffect(() => {
+    let mounted = true;
+    pkexecAvailable()
+      .then((ok) => mounted && setPkexec(ok))
+      .catch(() => mounted && setPkexec(false));
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const runFix = async (kind: 'dialout' | 'modemmanager') => {
+    setFixing(kind);
+    setFixResult(null);
+    try {
+      const outcome = await runGpsFix(triageFixAction(kind));
+      setFixResult({ kind, outcome });
+      // A successful fix changes the system state — re-scan so the cards reflect
+      // reality (dialout still needs a re-login, surfaced via the notice below).
+      if (outcome === 'ok') rescan();
+    } catch {
+      setFixResult({ kind, outcome: 'failed' });
+    } finally {
+      setFixing(null);
+    }
+  };
 
   const gridError = validateGrid(grid);
 
@@ -178,17 +215,45 @@ export function GpsSourcePicker({
             >
               {openCommand === t.kind ? 'Hide command' : 'Show command'}
             </button>
-            {/* Slice 2 (tuxlink-m9ej) activates this via a pkexec helper. */}
+            {/* tuxlink-m9ej: one-click fix via the pkexec helper. Enabled only
+                where it's fixable AND pkexec exists; otherwise the operator uses
+                "Show command" (AppImage / minimal installs). */}
             <button
               type="button"
               className="gps-card__fix"
               data-testid={`gps-fix-${t.kind}`}
-              disabled
-              title="Coming in the next release"
+              disabled={!pkexec || !t.fixable || fixing === t.kind}
+              title={
+                !pkexec
+                  ? 'PolicyKit (pkexec) not available — use Show command'
+                  : !t.fixable
+                    ? 'Automatic fix unavailable — use Show command'
+                    : undefined
+              }
+              onClick={() => runFix(t.kind)}
             >
-              Fix it for me
+              {fixing === t.kind ? 'Working…' : 'Fix it for me'}
             </button>
           </div>
+          {fixResult?.kind === t.kind && (
+            <div className="gps-card__fix-result" data-testid={`gps-fix-result-${t.kind}`} role="status">
+              {fixResult.outcome === 'ok' && t.kind === 'dialout' && (
+                <span data-testid="gps-relogin-notice">
+                  Done. Log out and back in for this to take effect — that's a Linux rule we can't bypass.
+                </span>
+              )}
+              {fixResult.outcome === 'ok' && t.kind === 'modemmanager' && (
+                <span>Done — ModemManager masked. Plug in your GPS and Rescan.</span>
+              )}
+              {fixResult.outcome === 'auth_dismissed' && <span>Cancelled — no changes made.</span>}
+              {fixResult.outcome === 'failed' && (
+                <span className="gps-card__detail--warn">Couldn't apply the fix. Use “Show command” to run it by hand.</span>
+              )}
+              {fixResult.outcome === 'pkexec_missing' && (
+                <span className="gps-card__detail--warn">PolicyKit unavailable. Use “Show command”.</span>
+              )}
+            </div>
+          )}
         </div>
       ))}
 

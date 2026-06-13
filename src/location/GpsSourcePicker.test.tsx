@@ -80,7 +80,8 @@ describe('GpsSourcePicker', () => {
     expect(screen.getByTestId('gps-copy-dialout')).toBeTruthy();
   });
 
-  it('ships the "Fix it for me" button disabled (pkexec helper is slice 2)', async () => {
+  it('disables "Fix it for me" when pkexec is unavailable (AppImage / minimal install)', async () => {
+    // mockProbes does not answer gps_pkexec_available → pkexec stays false.
     mockProbes({
       serial: { devices: [{ path: '/dev/ttyACM0', vendor: null, model: null, vendorId: null, productId: null }] },
       dialout: { member: false, groupExists: true },
@@ -88,6 +89,26 @@ describe('GpsSourcePicker', () => {
     renderPicker();
     const fix = await screen.findByTestId('gps-fix-dialout');
     expect(fix.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('runs the dialout fix via pkexec and shows the re-login notice (tuxlink-m9ej)', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      switch (cmd) {
+        case 'gps_pkexec_available': return true as unknown as never;
+        case 'gps_probe_gpsd': return { reachable: false } as unknown as never;
+        case 'gps_probe_serial_devices': return { devices: [] } as unknown as never;
+        case 'gps_probe_dialout': return { member: false, groupExists: true } as unknown as never;
+        case 'gps_probe_modemmanager': return { active: false } as unknown as never;
+        case 'gps_run_fix': return 'ok' as unknown as never;
+        default: return undefined as unknown as never;
+      }
+    });
+    renderPicker();
+    const fix = await screen.findByTestId('gps-fix-dialout');
+    await waitFor(() => expect(fix).not.toBeDisabled());
+    fireEvent.click(fix);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('gps_run_fix', { action: 'add-dialout' }));
+    expect(await screen.findByTestId('gps-relogin-notice')).toBeInTheDocument();
   });
 
   it('always offers manual grid entry; typing calls onGridChange and an invalid grid shows an error', async () => {

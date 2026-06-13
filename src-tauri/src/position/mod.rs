@@ -1,4 +1,5 @@
 pub mod arbiter;
+pub mod gps_fix;
 pub mod gpsd;
 pub mod maidenhead;
 pub mod probe;

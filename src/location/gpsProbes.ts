@@ -37,6 +37,25 @@ export interface GpsDetection {
 
 // ---- command bindings ------------------------------------------------------
 
+// ---- "Fix it for me" (tuxlink-m9ej) ---------------------------------------
+
+/** Outcome of a privileged GPS fix (mirrors the Rust GpsFixOutcome serde). */
+export type GpsFixOutcome = 'ok' | 'auth_dismissed' | 'pkexec_missing' | 'failed';
+
+/** Fixed action tokens accepted by the helper. */
+export type GpsFixAction = 'add-dialout' | 'mask-modemmanager' | 'unmask-modemmanager';
+
+/** Whether pkexec exists — gates "Fix it for me" button visibility. */
+export const pkexecAvailable = () => invoke<boolean>('gps_pkexec_available');
+
+/** Run a fixed GPS fix via pkexec + the privileged helper. */
+export const runGpsFix = (action: GpsFixAction) => invoke<GpsFixOutcome>('gps_run_fix', { action });
+
+/** Map a triage card kind to its fix action. */
+export function triageFixAction(kind: GpsTriageCard['kind']): GpsFixAction {
+  return kind === 'dialout' ? 'add-dialout' : 'mask-modemmanager';
+}
+
 export const probeGpsd = () => invoke<GpsdProbe>('gps_probe_gpsd');
 export const probeSerialDevices = () => invoke<SerialProbe>('gps_probe_serial_devices');
 export const probeDialout = () => invoke<DialoutProbe>('gps_probe_dialout');
