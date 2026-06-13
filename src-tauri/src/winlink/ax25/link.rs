@@ -53,14 +53,19 @@ pub enum KissLinkConfig {
         audio_device: super::devices::StableAudioId,
         ptt: super::devices::PttChoice,
     },
-    /// UV-Pro native Benshi GAIA: the radio is driven over its native control
-    /// connection (RFCOMM + GAIA framing, owned by `UvproSession`), NOT as a KISS
-    /// TNC. Control + APRS chat + position share the one connection; there is no
-    /// KISS byte-pipe to open here. The operator declares this when their radio is
-    /// a UV-Pro they want driven natively (vs `Bluetooth { mac }`, which drives any
-    /// radio — including a UV-Pro in its `kiss_en` mode — as a plain KISS TNC).
-    /// `connect_link`/`connect_link_with_abort` reject it: the native path is
-    /// opened by the session, and APRS reaches it via `AprsState::start_native`.
+    /// UV-Pro native Benshi GAIA: the operator declares this for a UV-Pro they want
+    /// driven over its native protocol — native APRS reaches it via
+    /// `AprsState::start_native` (control + chat + position over the one
+    /// `UvproSession` connection), and it lights up the always-live control strip.
+    ///
+    /// It addresses the radio by the SAME RFCOMM `mac` as `Bluetooth { mac }`, and is
+    /// NOT exclusively-native: the operator also drives the same radio as a plain KISS
+    /// TNC (the radio's `kiss_en` mode) for packet Winlink + KISS-APRS. So
+    /// `connect_link`/`connect_link_with_abort` open it as a KISS byte-pipe exactly
+    /// like `Bluetooth` — the native-vs-KISS choice is an APRS-layer concern
+    /// (`aprs_transport_from_link`), not a reason to refuse the pipe. `Bluetooth`
+    /// remains the choice for a non-UV-Pro radio or a UV-Pro the operator wants
+    /// treated as a plain TNC with no control strip.
     UvproNative { mac: String },
 }
 
@@ -137,12 +142,12 @@ pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> 
             std::io::ErrorKind::Unsupported,
             "ManagedDireWolf link is not yet connectable (lifecycle wiring is a later phase)",
         )),
-        // The UV-Pro native link is not a KISS byte-pipe — it is opened by
-        // `UvproSession` and reached via `AprsState::start_native`, never here.
-        KissLinkConfig::UvproNative { .. } => Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "UvproNative link is driven over the native session, not as a KISS pipe",
-        )),
+        // A UV-Pro declared `UvproNative` is ALSO driven as a plain KISS TNC over
+        // the same RFCOMM MAC (the radio's `kiss_en` mode) for packet Winlink +
+        // KISS-APRS — so open the byte-pipe exactly like `Bluetooth`. Native APRS
+        // bypasses this entirely via `AprsState::start_native`; the native-vs-KISS
+        // choice lives in the APRS layer, not here.
+        KissLinkConfig::UvproNative { mac } => connect_bluetooth(mac),
     }
 }
 
@@ -205,12 +210,13 @@ pub fn connect_link_with_abort(
             std::io::ErrorKind::Unsupported,
             "ManagedDireWolf link is not yet connectable (lifecycle wiring is a later phase)",
         )),
-        // As in `connect_link`: the UV-Pro native link is owned by `UvproSession`,
-        // not opened as a KISS pipe. APRS reaches it via `AprsState::start_native`.
-        KissLinkConfig::UvproNative { .. } => Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "UvproNative link is driven over the native session, not as a KISS pipe",
-        )),
+        // As in `connect_link`: a `UvproNative` radio is also driven as a KISS TNC
+        // over the same RFCOMM MAC (packet Winlink / KISS-APRS), so open it like
+        // `Bluetooth` with the shared-flag abort. Native APRS uses `start_native`.
+        KissLinkConfig::UvproNative { mac } => {
+            let inner = connect_bluetooth(mac)?;
+            Ok((Box::new(AbortableByteLink { inner, abort }), None))
+        }
     }
 }
 
