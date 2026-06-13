@@ -100,6 +100,14 @@ export function buildBasemapStyle(
 
   // Composite each installed pack as a second source, layers clamped to z6+ and
   // appended (drawn on top of the overview within the pack's coverage).
+  //
+  // CRITICAL: drop the `background` layer from each pack's set. @protomaps/basemaps
+  // `layers()` emits an opaque, SOURCELESS `background` layer that paints the WHOLE
+  // canvas. Appended on top of the overview it would hide the overview EVERYWHERE
+  // (not just inside the pack) and every overlay beneath it — a solid-colour map the
+  // moment any pack is installed. The overview's own background (added above) is the
+  // single global base; a pack contributes only its source-bound detail layers,
+  // which paint on top exclusively where the pack actually has tiles.
   for (const pack of packs) {
     const sid = packSourceId(pack.id);
     sources[sid] = {
@@ -107,11 +115,13 @@ export function buildBasemapStyle(
       url: packUrl(pack.id),
       attribution: OSM_ATTRIBUTION,
     };
-    const packLayers = bake(layers(sid, tuxlinkFlavor(), { lang: 'en' })).map((layer) => ({
-      ...layer,
-      id: `${sid}-${layer.id}`,
-      minzoom: Math.max(layer.minzoom ?? 0, REGION_MINZOOM),
-    }));
+    const packLayers = bake(layers(sid, tuxlinkFlavor(), { lang: 'en' }))
+      .filter((layer) => layer.type !== 'background')
+      .map((layer) => ({
+        ...layer,
+        id: `${sid}-${layer.id}`,
+        minzoom: Math.max(layer.minzoom ?? 0, REGION_MINZOOM),
+      }));
     styleLayers.push(...packLayers);
   }
 

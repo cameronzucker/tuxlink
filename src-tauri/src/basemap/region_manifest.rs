@@ -10,12 +10,22 @@
 //!
 //! SECURITY: the `planet_url` and tier degree values are *attacker-influenceable*
 //! — they come from a remotely-fetched manifest and flow into the `go-pmtiles`
-//! sidecar's argv. [`RegionManifest::parse`] therefore allowlists `planet_url` to
-//! `https://build.protomaps.com` (no other scheme, host, credentials, or port)
-//! and range-checks every tier/continent BEFORE the manifest is accepted, so a
-//! malicious manifest can neither point the extractor at an SSRF target
-//! (`file://`, link-local/metadata IPs, a LAN host) nor smuggle a bbox the bbox
-//! math (`super::packs`) would otherwise turn into a degenerate sidecar argument.
+//! sidecar's argv. [`RegionManifest::parse`] allowlists `planet_url` to
+//! `https://build.protomaps.com` (no other scheme, host, credentials, or port) and
+//! range-checks every tier/continent BEFORE the manifest is accepted, so a
+//! malicious manifest cannot *name* a non-Protomaps host (`file://`,
+//! link-local/metadata IPs, a LAN host) and cannot smuggle a bbox the bbox math
+//! (`super::packs`) would turn into a degenerate sidecar argument.
+//!
+//! HONEST SCOPE (do not overstate): this is a string allowlist on the *named* host.
+//! It does NOT constrain redirect-following inside go-pmtiles' own HTTP client — if
+//! `build.protomaps.com` itself were compromised/MITM'd and 3xx-redirected to an
+//! internal target, the sidecar (a separate process) would follow it; the Rust
+//! allowlist cannot police an egress it does not perform. The mitigation here is
+//! "can't be pointed at a non-Protomaps host by name"; transport-level redirect
+//! defense would require pinning go-pmtiles to a no-redirect/resolved-IP mode,
+//! which is out of scope for this layer. (Cf. `tiles::fetch`, which DOES set
+//! `redirect::Policy::none()` because it performs the egress itself.)
 
 use serde::{Deserialize, Serialize};
 
@@ -280,6 +290,22 @@ mod tests {
     #[test]
     fn rejects_explicit_port_on_allowed_host() {
         assert!(validate_planet_url("https://build.protomaps.com:8443/x.pmtiles").is_err());
+    }
+
+    #[test]
+    fn rejects_lookalike_and_suffix_hosts() {
+        // Allowlist must be exact-host, not substring/suffix — these are the classic
+        // bypasses against a naive `contains`/`ends_with` check.
+        assert!(validate_planet_url("https://build.protomaps.com.evil.com/x").is_err());
+        assert!(validate_planet_url("https://notbuild.protomaps.com/x").is_err());
+        assert!(validate_planet_url("https://build.protomaps.com./x").is_err()); // trailing dot
+        assert!(validate_planet_url("https://xn--build-protomaps.com/x").is_err()); // punycode lookalike
+    }
+
+    #[test]
+    fn accepts_uppercase_host_via_normalization() {
+        // WHATWG URL parsing lowercases the host, so an uppercase host still matches.
+        assert!(validate_planet_url("https://BUILD.PROTOMAPS.COM/20260608.pmtiles").is_ok());
     }
 
     #[test]
