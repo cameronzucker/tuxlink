@@ -25,6 +25,7 @@ import maplibregl from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
 import { clampLatLon, type LatLon } from './projection';
 import { buildBasemapStyle, type BasemapFlavor } from './basemapStyle';
+import { useBasemapFlavor } from './useBasemapFlavor';
 import { MapProvider } from './MapContext';
 
 // Register the PMTiles protocol once, at module load. `addProtocol` throws on a
@@ -57,8 +58,9 @@ export interface MapLibreMapProps {
   initialZoom?: number;
   /** Called with the live zoom after load and after every view change (A17). */
   onZoomChange?: (zoom: number) => void;
-  /** Basemap flavor (L2). `light` (default) or the baked GL-native `dark`. A
-   * change after mount drives `setStyle`; overlays re-add on the `styledata`
+  /** Basemap flavor override (L2). Omit to FOLLOW the app color scheme (dark
+   * scheme → dark map, the default behavior); pass `light`/`dark` to force one.
+   * A change after mount drives `setStyle`; overlays re-add on the `styledata`
    * that follows (the owned hooks already re-subscribe). */
   flavor?: BasemapFlavor;
 }
@@ -69,8 +71,11 @@ export function MapLibreMap({
   initialCenter,
   initialZoom,
   onZoomChange,
-  flavor = 'light',
+  flavor,
 }: MapLibreMapProps) {
+  // Follow the app color scheme unless an explicit flavor is passed.
+  const themeFlavor = useBasemapFlavor();
+  const effectiveFlavor = flavor ?? themeFlavor;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [map, setMap] = useState<maplibregl.Map | null>(null);
 
@@ -81,7 +86,7 @@ export function MapLibreMap({
   const onZoomRef = useRef(onZoomChange);
   onZoomRef.current = onZoomChange;
   // Tracks the flavor currently applied to the map (seeded at construction).
-  const flavorRef = useRef(flavor);
+  const flavorRef = useRef(effectiveFlavor);
 
   // Construct the map exactly once.
   useEffect(() => {
@@ -140,10 +145,10 @@ export function MapLibreMap({
   // The constructor already applied the initial flavor (flavorRef seed), so the
   // first run is a no-op; overlays re-add on the `styledata` setStyle fires.
   useEffect(() => {
-    if (!map || flavorRef.current === flavor) return;
-    flavorRef.current = flavor;
-    map.setStyle(buildBasemapStyle(flavor));
-  }, [map, flavor]);
+    if (!map || flavorRef.current === effectiveFlavor) return;
+    flavorRef.current = effectiveFlavor;
+    map.setStyle(buildBasemapStyle(effectiveFlavor));
+  }, [map, effectiveFlavor]);
 
   return (
     <div ref={containerRef} style={{ height: '100%', width: '100%' }}>
