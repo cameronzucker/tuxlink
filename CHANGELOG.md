@@ -30,6 +30,26 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.61.0](https://github.com/cameronzucker/tuxlink/compare/v0.60.0...v0.61.0) (2026-06-13)
+
+
+### Features
+
+* **basemap:** bundle world z0-6 + glyphs/sprites and wire bundle.resources ([064fcfc](https://github.com/cameronzucker/tuxlink/commit/064fcfc2412c5f977895365d83f7fa689b41e262))
+* **basemap:** pack download/validate/atomic-install + orphan sweep (R5, TDD) ([265aba1](https://github.com/cameronzucker/tuxlink/commit/265aba13c1b63b3840ef81da2c8d405b27a0fa63))
+* **basemap:** region manifest + pack coverage math (phase 4 foundation, TDD) ([c89b166](https://github.com/cameronzucker/tuxlink/commit/c89b1668378dd3f28c1e7d1861fe6fdc4c1279ce))
+* **basemap:** region-pack manager UI + R7 compositing (F-1/F-2/F-3) ([d8fd69b](https://github.com/cameronzucker/tuxlink/commit/d8fd69b8a5f188ab072769aa2bfe5ae89e9be00e))
+* **basemap:** region-pack Tauri commands + sidecar + startup register (R-4) ([d281924](https://github.com/cameronzucker/tuxlink/commit/d281924aa1ab47bb97e48d405875cfe0bcd394e4))
+
+
+### Bug Fixes
+
+* **app:** app-wide ErrorBoundary + map-init guard so a maplibre throw can't blank the whole UI ([14e20ab](https://github.com/cameronzucker/tuxlink/commit/14e20ab72300786e2f985c6fe749f5363222d763))
+* **basemap:** clippy explicit_auto_deref on init_packs registry arg ([bfa0836](https://github.com/cameronzucker/tuxlink/commit/bfa08369095f60198181aa27ab43cc8a6076c231))
+* **basemap:** drop unused std::cell::Cell import in download tests ([84501eb](https://github.com/cameronzucker/tuxlink/commit/84501eb2589592e4cdce45593f967f9e1c0446ed))
+* **basemap:** make phase-4 commands compile + clippy-clean (CI caught) ([cb3065d](https://github.com/cameronzucker/tuxlink/commit/cb3065d8271b4f42b212e9f801d3c41f617524db))
+* **basemap:** self-adrev findings on phase 4 (P0 opaque pack background + hardening) ([99326bf](https://github.com/cameronzucker/tuxlink/commit/99326bf72a32c99d036e41c5085eebbdc4115f62))
+
 ## [0.60.0](https://github.com/cameronzucker/tuxlink/compare/v0.59.0...v0.60.0) (2026-06-13)
 
 
