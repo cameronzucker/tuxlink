@@ -1,0 +1,137 @@
+/* UvproControlStrip — compact always-live device bar above the APRS composer.
+   Tokens mirror AprsChatPanel.css so the strip reads as part of the same panel. */
+
+.uvpro-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border, #2a3140);
+  background: var(--surface, #0f1218);
+  font-size: 13px;
+  color: var(--text, #cbd5e1);
+}
+
+.uvpro-strip-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.uvpro-strip-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.uvpro-strip-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-faint, #94a3b8);
+}
+
+.uvpro-strip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint, #64748b);
+}
+
+.uvpro-strip-state-connected {
+  color: var(--success, #4ade80);
+}
+.uvpro-strip-state-connected .uvpro-strip-dot {
+  background: var(--success, #4ade80);
+}
+.uvpro-strip-state-connecting .uvpro-strip-dot {
+  background: var(--warning, #fbbf24);
+}
+
+.uvpro-strip-metric {
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-faint, #94a3b8);
+}
+
+.uvpro-strip-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.uvpro-strip-channel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.uvpro-strip-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint, #94a3b8);
+}
+
+.uvpro-strip-select {
+  background: var(--surface-2, #161b24);
+  border: 1px solid var(--border-strong, #3a4150);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+  color: var(--text, #cbd5e1);
+}
+.uvpro-strip-select:focus {
+  outline: none;
+  border-color: var(--accent, #4ade80);
+  box-shadow: 0 0 0 1px var(--tux-focus-ring, var(--accent, #4ade80));
+}
+
+.uvpro-strip-freq {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text, #cbd5e1);
+}
+
+.uvpro-strip-hint,
+.uvpro-strip-busy {
+  font-size: 12px;
+  color: var(--text-faint, #94a3b8);
+}
+.uvpro-strip-busy {
+  color: var(--warning, #fbbf24);
+}
+
+.uvpro-strip-btn {
+  margin-left: auto;
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--modem-accent-soft, #14532d);
+  color: var(--modem-accent, #4ade80);
+}
+.uvpro-strip-btn:hover:not(:disabled) {
+  border-color: var(--modem-accent, #4ade80);
+}
+.uvpro-strip-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.uvpro-strip-btn-ghost {
+  background: transparent;
+  border-color: var(--border-strong, #3a4150);
+  color: var(--text-faint, #94a3b8);
+}
+
+.uvpro-strip-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger, #f87171);
+}

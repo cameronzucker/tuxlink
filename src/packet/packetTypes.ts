@@ -20,7 +20,7 @@
  *    rfcomm bind / no /dev/rfcommN. The SPP channel is resolved from SDP at
  *    connect time. (Replaces the old "BT = Serial + /dev/rfcomm0" affordance,
  *    whose serialport TTY open the radio tore down → "Broken pipe".) */
-export type PacketLinkKind = 'Tcp' | 'Serial' | 'Bluetooth' | 'Managed';
+export type PacketLinkKind = 'Tcp' | 'Serial' | 'Bluetooth' | 'Managed' | 'UvproNative';
 
 /** How a {@link StableAudioId} was derived — the camelCased projection of the
  *  Rust `StableIdKind` enum (`#[serde(rename_all = "camelCase")]`):

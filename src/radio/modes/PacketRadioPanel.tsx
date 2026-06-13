@@ -198,7 +198,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
   // the session via this state; the persisted linkKind only changes when they
   // actually pick a device (Managed) or edit the modem link (BYO).
   const isByoKind = (k: PacketConfigDto['linkKind']): boolean =>
-    k === 'Tcp' || k === 'Serial' || k === 'Bluetooth';
+    k === 'Tcp' || k === 'Serial' || k === 'Bluetooth' || k === 'UvproNative';
   const [connectionMode, setConnectionMode] = useState<'managed' | 'byo'>('managed');
   // Seed the connection mode from config once it loads (a fresh config with no
   // link → Managed; an existing Tcp/Serial/Bluetooth link → BYO so we don't
@@ -274,6 +274,8 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
       ? `${config.tcpHost ?? '127.0.0.1'}:${config.tcpPort ?? 8001}`
       : config.linkKind === 'Bluetooth'
       ? `BT ${config.btMac ?? '(no device)'}`
+      : config.linkKind === 'UvproNative'
+      ? `UV-Pro ${config.btMac ?? '(no device)'}`
       : config.linkKind === 'Managed'
       ? `Managed ${config.managedAudioDevice?.value ?? '(no sound card)'}`
       : config.linkKind === 'Serial'
@@ -335,6 +337,8 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
           kind={
             config?.linkKind === 'Bluetooth'
               ? 'Bluetooth'
+              : config?.linkKind === 'UvproNative'
+              ? 'UvproNative'
               : config?.linkKind === 'Serial'
               ? 'Serial'
               : 'Tcp'
@@ -344,6 +348,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
           serialDevice={config?.serialDevice ?? undefined}
           serialBaud={config?.serialBaud ?? undefined}
           btMac={config?.btMac ?? undefined}
+          allowUvproNative
           onChange={onLinkChange}
         />
       )}

@@ -170,6 +170,11 @@ const AprsChatPanel = lazy(loadAprsChatPanel);
 import { useAprsChat } from '../aprs/useAprsChat';
 import { countUnread } from '../aprs/aprsUnread';
 import { AprsDockTabs } from '../aprs/AprsDockTabs';
+// The always-live UV-Pro device control strip (tuxlink-ve3j). Capability-gated:
+// rendered into AprsChatPanel's controlStrip slot ONLY when the operator has
+// declared the native UV-Pro profile (linkKind === 'UvproNative'). A generic KISS
+// TNC has no control surface, so it shows plain chat with no strip.
+import { UvproControlStrip } from '../uvpro/UvproControlStrip';
 const ArdopRadioPanel = lazy(loadArdopRadioPanel);
 const VaraRadioPanel = lazy(loadVaraRadioPanel);
 const SearchDropdown = lazy(() =>
@@ -1306,7 +1311,16 @@ export function AppShell() {
         )}
         {aprsOpen && dockTab === 'aprs' ? (
           <Suspense fallback={null}>
-            <AprsChatPanel threads={aprs.threads} listening={aprs.listening} send={aprs.send} />
+            <AprsChatPanel
+              threads={aprs.threads}
+              listening={aprs.listening}
+              send={aprs.send}
+              controlStrip={
+                packetConfig.config?.linkKind === 'UvproNative' ? (
+                  <UvproControlStrip />
+                ) : undefined
+              }
+            />
           </Suspense>
         ) : (
           <>
