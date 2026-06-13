@@ -192,6 +192,10 @@ impl Driver {
                 self.status.apply_status(status);
                 self.apply_current_channel_to_status();
             }
+            // TODO(tuxlink-7my9 Task 5): push the fragment into a Reassembler and
+            // forward completed AX.25 frames to the APRS engine. Ignored for now so
+            // the messaging codec (Task 4) lands without the data-path wiring.
+            Event::DataReceived { .. } => {}
             Event::OtherIgnored { .. } => {}
         }
     }

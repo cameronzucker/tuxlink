@@ -23,6 +23,7 @@ const CMD_WRITE_SETTINGS: u64 = 11;
 const CMD_READ_RF_CH: u64 = 13;
 const CMD_WRITE_RF_CH: u64 = 14;
 const CMD_GET_HT_STATUS: u64 = 20;
+const CMD_HT_SEND_DATA: u64 = 31;
 
 /// Events the radio pushes after `REGISTER_NOTIFICATION`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +91,17 @@ pub fn encode_write_settings(settings_raw: &[u8]) -> Vec<u8> {
     w.into_bytes()
 }
 
+/// Encode an `HT_SEND_DATA` request carrying one APRS/AX.25 TNC fragment — the
+/// native data path that rides the same GAIA connection as control (tuxlink-7my9).
+// TODO(tuxlink-7my9): drop the allow when Task 5 (UvproSession::send_aprs_frame)
+// calls this; until then it is used only by this module's golden-vector tests.
+#[allow(dead_code)]
+pub fn encode_ht_send_data(frag: &super::tncdata::TncDataFragment) -> Vec<u8> {
+    let mut w = header(CMD_HT_SEND_DATA, false);
+    w.write_bytes(&frag.encode_body());
+    w.into_bytes()
+}
+
 // ---- decode (radio → host) ----
 
 /// Live radio status (from `GET_HT_STATUS` reply or `HT_STATUS_CHANGED` event).
@@ -121,7 +133,10 @@ pub struct DecodedDevInfo {
 pub enum Event {
     ChannelChanged { channel: RfCh },
     StatusChanged { status: DecodedStatus },
-    /// Any event we deliberately ignore (e.g. DATA_RXD — the data path).
+    /// Inbound APRS/AX.25 data fragment (`DATA_RXD`) — the native data path.
+    /// The session reassembles these into whole frames (tuxlink-7my9).
+    DataReceived { fragment: super::tncdata::TncDataFragment },
+    /// Any event we deliberately ignore.
     OtherIgnored { event_type: u8 },
 }
 
@@ -134,6 +149,7 @@ pub enum Frame {
     DevInfoReply { reply_status: u8, info: Option<DecodedDevInfo> },
     SettingsReply { reply_status: u8, settings_raw: Vec<u8> },
     WriteSettingsReply { reply_status: u8 },
+    SendDataReply { reply_status: u8 },
     Event(Event),
     Unknown { command: u16, is_reply: bool },
 }
@@ -244,6 +260,12 @@ pub fn decode_frame(bytes: &[u8]) -> Frame {
                     let ext = body.len() > 4; // event_type(1) + StatusExt(4) vs Status(2)
                     Frame::Event(Event::StatusChanged { status: decode_status(&mut br, ext) })
                 }
+                x if x == EventType::DataRxd as u8 => {
+                    match super::tncdata::TncDataFragment::decode_body(&body[1..]) {
+                        Some(fragment) => Frame::Event(Event::DataReceived { fragment }),
+                        None => Frame::Event(Event::OtherIgnored { event_type }),
+                    }
+                }
                 _ => Frame::Event(Event::OtherIgnored { event_type }),
             }
         }
@@ -274,6 +296,9 @@ pub fn decode_frame(bytes: &[u8]) -> Frame {
             Frame::SettingsReply { reply_status, settings_raw }
         }
         (true, CMD_WRITE_SETTINGS) => Frame::WriteSettingsReply {
+            reply_status: body.first().copied().unwrap_or(0xff),
+        },
+        (true, CMD_HT_SEND_DATA) => Frame::SendDataReply {
             reply_status: body.first().copied().unwrap_or(0xff),
         },
         _ => Frame::Unknown { command: command as u16, is_reply },
@@ -357,12 +382,46 @@ mod tests {
     }
 
     #[test]
-    fn data_rxd_event_is_ignored_not_errored() {
-        // EVENT_NOTIFICATION + event_type=2 (DATA_RXD) → OtherIgnored, never panics
+    fn data_rxd_event_decodes_to_a_fragment() {
+        // EVENT_NOTIFICATION(9) + event_type=2 (DATA_RXD) + fragment body. As of
+        // tuxlink-7my9 this is the native APRS data path, no longer ignored.
+        // byte 0xde = is_final(1) with_channel_id(1) fragment_id(0x1e); the
+        // trailing byte (0xef) is the channel id, leaving data = [ad be].
         match decode_frame(&hex("00 02 00 09 02 de ad be ef")) {
-            Frame::Event(Event::OtherIgnored { event_type: 2 }) => {}
+            Frame::Event(Event::DataReceived { fragment }) => {
+                assert!(fragment.is_final);
+                assert_eq!(fragment.fragment_id, 0x1e);
+                assert_eq!(fragment.channel_id, Some(0xef));
+                assert_eq!(fragment.data, vec![0xad, 0xbe]);
+            }
             f => panic!("wrong: {f:?}"),
         }
+    }
+
+    #[test]
+    fn ht_send_data_encodes_with_header_and_fragment_body() {
+        // header(31,false) = 00 02 00 1f; body for {not-final, frag 0, no
+        // channel id, data [0x41]} = 0x00 0x41.
+        let frag = super::super::tncdata::TncDataFragment {
+            is_final: false,
+            fragment_id: 0,
+            channel_id: None,
+            data: vec![0x41],
+        };
+        assert_eq!(encode_ht_send_data(&frag), hex("00 02 00 1f 00 41"));
+    }
+
+    #[test]
+    fn ht_send_data_reply_decodes_status() {
+        // header(31,true) = 00 02 80 1f, then reply_status byte.
+        assert!(matches!(
+            decode_frame(&hex("00 02 80 1f 00")),
+            Frame::SendDataReply { reply_status: 0 }
+        ));
+        assert!(matches!(
+            decode_frame(&hex("00 02 80 1f 05")),
+            Frame::SendDataReply { reply_status: 5 }
+        ));
     }
 
     #[test]
