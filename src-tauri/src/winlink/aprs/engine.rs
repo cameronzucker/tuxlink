@@ -112,97 +112,122 @@ impl AprsEngine {
         }
     }
 
-    /// Feed raw bytes read from the link. Returns KISS-ready frames to write back (auto-acks).
-    /// Auto-ACKs are intentionally OUTSIDE the abort/TxQueue path: each is a single fire-once
-    /// short frame with no retransmit timer, rate-limited by `ack_throttle` — RADIO-1-safe.
+    /// Feed raw bytes read from a KISS link. Returns KISS-ready frames to write back
+    /// (auto-acks). Auto-ACKs are intentionally OUTSIDE the abort/TxQueue path: each is a
+    /// single fire-once short frame with no retransmit timer, rate-limited by `ack_throttle`
+    /// — RADIO-1-safe. KISS-deframes, then KISS-wraps each raw auto-ACK `ingest_ax25` returns.
     pub fn handle_inbound_bytes(&mut self, bytes: &[u8], now_ms: u64) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
         for body in self.decoder.push(bytes) {
-            let frame = match Frame::decode(&body) {
-                Ok(f) => f,
-                Err(_) => continue,
-            };
-            let (sender, info) = match extract_inbound(&frame) {
-                Some(x) => x,
-                None => continue,
-            };
-            let payload = match parse_info(&info) {
-                Some(p) => p,
-                None => continue,
-            };
-            match payload {
-                AprsPayload::Message {
-                    addressee,
-                    text,
-                    msgid,
-                } => {
-                    if !self.addressed_to_us(&addressee) {
-                        continue;
-                    }
-                    let dkey = DedupeKey {
+            for raw in self.ingest_ax25(&body, now_ms) {
+                out.push(kiss_data_frame(&raw));
+            }
+        }
+        out
+    }
+
+    /// Feed ONE raw AX.25 frame already deframed by a non-KISS transport (the native
+    /// Benshi reassembler). Returns auto-ACK responses as RAW AX.25 frames (no KISS wrap)
+    /// for the native driver to fragment via `send_aprs_frame`. Same promiscuous decode +
+    /// throttled auto-ACK as the KISS path; only the framing differs.
+    // TODO(tuxlink-7my9): drop the allow once Task 7's native_driver calls this. Exercised
+    // by tests today.
+    #[allow(dead_code)]
+    pub fn handle_inbound_frame(&mut self, ax25: &[u8], now_ms: u64) -> Vec<Vec<u8>> {
+        self.ingest_ax25(ax25, now_ms)
+    }
+
+    /// Promiscuous decode + throttled auto-ACK for one already-deframed AX.25 frame.
+    /// Returns auto-ACK responses as RAW AX.25 frame bytes; the caller wraps for its
+    /// transport (`handle_inbound_bytes` KISS-wraps, `handle_inbound_frame` returns raw).
+    /// Early returns of the (empty-so-far) `out` mirror the per-frame `continue` the KISS
+    /// loop used: a non-addressed / undecodable frame yields no auto-ACK.
+    fn ingest_ax25(&mut self, body: &[u8], now_ms: u64) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        let frame = match Frame::decode(body) {
+            Ok(f) => f,
+            Err(_) => return out,
+        };
+        let (sender, info) = match extract_inbound(&frame) {
+            Some(x) => x,
+            None => return out,
+        };
+        let payload = match parse_info(&info) {
+            Some(p) => p,
+            None => return out,
+        };
+        match payload {
+            AprsPayload::Message {
+                addressee,
+                text,
+                msgid,
+            } => {
+                if !self.addressed_to_us(&addressee) {
+                    return out;
+                }
+                let dkey = DedupeKey {
+                    src: sender.clone(),
+                    kind: "msg".into(),
+                    id: msgid.clone().unwrap_or_else(|| text_hash(&text)),
+                };
+                if !self.dedupe.seen(dkey, now_ms) {
+                    self.sink.emit_message(InboundMsg {
+                        sender: sender.clone(),
+                        text,
+                        msgid: msgid.clone(),
+                    });
+                }
+                if let Some(id) = msgid {
+                    let akey = DedupeKey {
                         src: sender.clone(),
-                        kind: "msg".into(),
-                        id: msgid.clone().unwrap_or_else(|| text_hash(&text)),
+                        kind: "ackout".into(),
+                        id: id.clone(),
                     };
-                    if !self.dedupe.seen(dkey, now_ms) {
-                        self.sink.emit_message(InboundMsg {
-                            sender: sender.clone(),
-                            text,
-                            msgid: msgid.clone(),
-                        });
-                    }
-                    if let Some(id) = msgid {
-                        let akey = DedupeKey {
-                            src: sender.clone(),
-                            kind: "ackout".into(),
-                            id: id.clone(),
-                        };
-                        if !self.ack_throttle.seen(akey, now_ms) {
-                            let ack = encode_ack(&sender, &id);
-                            let frame = build_ui_frame(&self.identity, &ack);
-                            if let Ok(b) = frame.encode() {
-                                out.push(kiss_data_frame(&b));
-                            }
+                    if !self.ack_throttle.seen(akey, now_ms) {
+                        let ack = encode_ack(&sender, &id);
+                        let frame = build_ui_frame(&self.identity, &ack);
+                        if let Ok(b) = frame.encode() {
+                            out.push(b);
                         }
                     }
                 }
-                AprsPayload::Ack { addressee, msgid } => {
-                    if !self.addressed_to_us(&addressee) {
-                        continue;
-                    }
-                    let key = DedupeKey {
-                        src: sender,
-                        kind: "ack".into(),
-                        id: msgid.clone(),
-                    };
-                    if self.dedupe.seen(key, now_ms) {
-                        continue;
-                    }
-                    if self.tx.on_ack(&msgid) {
-                        self.sink.emit_state(StateChange {
-                            msgid,
-                            state: DeliveryState::Acked,
-                        });
-                    }
+            }
+            AprsPayload::Ack { addressee, msgid } => {
+                if !self.addressed_to_us(&addressee) {
+                    return out;
                 }
-                AprsPayload::Rej { addressee, msgid } => {
-                    if !self.addressed_to_us(&addressee) {
-                        continue;
-                    }
-                    let key = DedupeKey {
-                        src: sender,
-                        kind: "rej".into(),
-                        id: msgid.clone(),
-                    };
-                    if self.dedupe.seen(key, now_ms) {
-                        continue;
-                    }
-                    if self.tx.on_ack(&msgid) {
-                        self.sink.emit_state(StateChange {
-                            msgid,
-                            state: DeliveryState::Rejected,
-                        });
-                    }
+                let key = DedupeKey {
+                    src: sender,
+                    kind: "ack".into(),
+                    id: msgid.clone(),
+                };
+                if self.dedupe.seen(key, now_ms) {
+                    return out;
+                }
+                if self.tx.on_ack(&msgid) {
+                    self.sink.emit_state(StateChange {
+                        msgid,
+                        state: DeliveryState::Acked,
+                    });
+                }
+            }
+            AprsPayload::Rej { addressee, msgid } => {
+                if !self.addressed_to_us(&addressee) {
+                    return out;
+                }
+                let key = DedupeKey {
+                    src: sender,
+                    kind: "rej".into(),
+                    id: msgid.clone(),
+                };
+                if self.dedupe.seen(key, now_ms) {
+                    return out;
+                }
+                if self.tx.on_ack(&msgid) {
+                    self.sink.emit_state(StateChange {
+                        msgid,
+                        state: DeliveryState::Rejected,
+                    });
                 }
             }
         }
@@ -214,8 +239,11 @@ impl AprsEngine {
     pub fn enqueue_send(&mut self, dest_call: &str, text: &str, msgid: &str, now_ms: u64) {
         let info = encode_message(dest_call, text, Some(msgid));
         let frame = build_ui_frame(&self.identity, &info);
+        // Store the RAW AX.25 frame; the transport-specific drain wraps it (KISS via
+        // `tick`, raw via `tick_frames`). Keeping the TxQueue transport-neutral lets one
+        // engine serve both the KISS link and the native-Benshi path.
         let bytes = match frame.encode() {
-            Ok(b) => kiss_data_frame(&b),
+            Ok(b) => b,
             Err(_) => {
                 // Couldn't build the frame — emit a terminal state so the in-flight
                 // capacity slot reserved upstream in AprsState::send is released, not leaked.
@@ -241,8 +269,14 @@ impl AprsEngine {
         }
     }
 
-    /// Drive the retransmit clock; returns KISS-ready frames to write now. Emits TimedOut.
-    pub fn tick(&mut self, now_ms: u64) -> Vec<Vec<u8>> {
+    /// Drive the retransmit clock; returns due TX frames as RAW AX.25 (no KISS wrap) for
+    /// non-KISS transports — the native Benshi path fragments these via `send_aprs_frame`.
+    /// Emits TimedOut for messages whose retransmit budget is spent. `tick` is the
+    /// KISS-wrapping sibling for the KISS link path.
+    // TODO(tuxlink-7my9): drop the allow once Task 7's native_driver drains this. Exercised
+    // by tests today.
+    #[allow(dead_code)]
+    pub fn tick_frames(&mut self, now_ms: u64) -> Vec<Vec<u8>> {
         let due: Vec<Vec<u8>> = self.tx.tick(now_ms).into_iter().map(|d| d.bytes).collect();
         for msgid in self.tx.take_timed_out() {
             self.sink.emit_state(StateChange {
@@ -251,6 +285,15 @@ impl AprsEngine {
             });
         }
         due
+    }
+
+    /// Drive the retransmit clock; returns KISS-ready frames to write now. Emits TimedOut.
+    /// The KISS-wrapping wrapper over `tick_frames` for the KISS link path.
+    pub fn tick(&mut self, now_ms: u64) -> Vec<Vec<u8>> {
+        self.tick_frames(now_ms)
+            .iter()
+            .map(|raw| kiss_data_frame(raw))
+            .collect()
     }
 
     pub fn abort(&mut self) {
@@ -644,6 +687,52 @@ mod tests {
             .collect();
         assert!(timed_out.contains(&"01"));
         assert!(timed_out.contains(&"02"));
+    }
+
+    /// A raw AX.25 (non-KISS) inbound frame routes through the same promiscuous decode +
+    /// auto-ACK as the KISS path, but the auto-ACK comes back RAW — the native transport
+    /// fragments it itself, no KISS wrap.
+    #[test]
+    fn handle_inbound_frame_routes_raw_ax25_and_acks_raw() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // Same content as inbound_message_bytes(), but RAW (KISS framing stripped).
+        let raw = strip_kiss(&inbound_message_bytes());
+        let out = engine.handle_inbound_frame(&raw, 1000);
+        let msgs = sink.msgs.lock().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].sender, "KK6XYZ");
+        assert_eq!(msgs[0].text, "ping");
+        // The auto-ACK is returned RAW: it decodes directly as an AX.25 frame (no KISS strip).
+        assert_eq!(out.len(), 1);
+        let decoded = Frame::decode(&out[0]).unwrap();
+        assert_eq!(decoded.path.dest.call, "APZTUX");
+        assert_eq!(decoded.info, b":KK6XYZ   :ack04");
+    }
+
+    /// `tick_frames` drains due retransmits as RAW AX.25; `tick` returns the byte-identical
+    /// frame KISS-wrapped. Both draw from the one transport-neutral TxQueue, so
+    /// `tick` == `kiss_data_frame(tick_frames)`.
+    #[test]
+    fn tick_frames_returns_raw_while_tick_kiss_wraps() {
+        let sink = RecSink::default();
+        let mut e_raw = AprsEngine::new(identity(), Box::new(sink.clone()));
+        e_raw.enqueue_send("KK6XYZ", "hello", "07", 0);
+        let raw = e_raw.tick_frames(0);
+        assert_eq!(raw.len(), 1);
+        // Raw form decodes directly (no KISS framing bytes).
+        assert_eq!(Frame::decode(&raw[0]).unwrap().info, b":KK6XYZ   :hello{07");
+
+        // Identical frame drained via tick() comes back KISS-wrapped — exactly the wrap of raw.
+        let mut e_kiss = AprsEngine::new(identity(), Box::new(sink.clone()));
+        e_kiss.enqueue_send("KK6XYZ", "hello", "07", 0);
+        let wrapped = e_kiss.tick(0);
+        assert_eq!(wrapped.len(), 1);
+        assert_eq!(wrapped[0], kiss_data_frame(&raw[0]));
+        assert_eq!(
+            Frame::decode(&strip_kiss(&wrapped[0])).unwrap().info,
+            b":KK6XYZ   :hello{07"
+        );
     }
 
     fn strip_kiss(b: &[u8]) -> Vec<u8> {
