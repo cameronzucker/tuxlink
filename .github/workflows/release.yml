@@ -179,3 +179,20 @@ jobs:
         with:
           files: dist-artifacts/*
           fail_on_unmatched_files: true
+          # Two-channel releases: every auto-cut (nightly) release is a GitHub
+          # pre-release, so it never claims the "Latest" badge / releases/latest
+          # API. Casual visitors always see the last STABLE release that an
+          # operator promoted via promote-release.yml (gh release edit --latest).
+          prerelease: true
+
+      # Belt-and-suspenders: guarantee the pre-release flag even if the action
+      # above only honors `prerelease` on create (not on update of an existing
+      # release that release-please already opened). Idempotent. This flag is the
+      # whole point of the two-channel split, and it can't be smoke-tested ahead
+      # of a real release, so we enforce it explicitly.
+      - name: Enforce pre-release flag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --prerelease

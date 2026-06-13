@@ -1,0 +1,51 @@
+name: promote-release
+
+# Stable-milestone channel (operator-only).
+#
+# Nightly auto-cuts (release.yml) are GitHub PRE-releases, so they never claim the
+# "Latest" badge or the releases/latest API. A casual visitor always sees the last
+# STABLE release. This workflow is how a build becomes stable: it marks a chosen
+# release as non-prerelease + Latest — the only release end users perceive as the
+# current version.
+#
+# Run it when a build is genuinely worth shipping to testers (a milestone), NOT on a
+# clock. Agents never run this; releases-to-end-users is an operator decision.
+#   gh workflow run promote-release.yml -f tag=v0.65.0
+#   (omit tag to promote the most recent pre-release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to promote to stable Latest (e.g. v0.65.0). Blank = newest pre-release.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote a release to stable Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Untrusted dispatch input via env (never inline in the script).
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="$TAG_INPUT"
+          if [ -z "$tag" ]; then
+            tag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 30 \
+                    --json tagName,isPrerelease \
+                    -q 'map(select(.isPrerelease)) | .[0].tagName // empty')
+            echo "No tag given; defaulting to newest pre-release: ${tag:-<none>}"
+          fi
+          if [ -z "$tag" ]; then
+            echo "Nothing to promote (no tag specified and no pre-release found)."
+            exit 1
+          fi
+          echo "Promoting $tag to stable Latest…"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest
+          echo "$tag is now the stable Latest release — this is what end users see."
