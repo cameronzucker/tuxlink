@@ -32,12 +32,15 @@ impl ResizePreset {
     }
 }
 
-/// Output wire format. JPEG is the safe default (any recipient incl. Winlink
-/// Express); WebP is the tuxlink->tuxlink efficiency opt-in.
+/// Output encode format. JPEG is the safe default (any recipient incl. Winlink
+/// Express); WebP is the tuxlink->tuxlink efficiency opt-in; PNG is used only
+/// when the operator chose "keep original format" on a PNG source that is being
+/// resized (resize forces a re-encode). tuxlink-rbhg.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutFormat {
     Jpeg,
     Webp,
+    Png,
 }
 
 impl OutFormat {
@@ -45,6 +48,7 @@ impl OutFormat {
         match self {
             OutFormat::Jpeg => "jpg",
             OutFormat::Webp => "webp",
+            OutFormat::Png => "png",
         }
     }
 }
@@ -131,6 +135,13 @@ fn encode(img: &DynamicImage, format: OutFormat) -> Result<Vec<u8>, TranscodeErr
             let encoder = webp::Encoder::from_rgba(&rgba, rgba.width(), rgba.height());
             let mem = encoder.encode(80.0);
             Ok(mem.to_vec())
+        }
+        OutFormat::Png => {
+            // Lossless — used when "keep original format" resizes a PNG source.
+            let mut buf = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut buf, ImageFormat::Png)
+                .map_err(|e| TranscodeError::Encode(e.to_string()))?;
+            Ok(buf.into_inner())
         }
     }
 }

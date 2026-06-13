@@ -863,7 +863,7 @@ export function Compose({ draftId }: ComposeProps) {
       .map((f) => (f as File & { path?: string }).path)
       .filter((p): p is string => !!p);
     for (const p of paths) {
-      await attach.addPath(p, { preset: 'medium', format: 'jpeg' });
+      await attach.addPath(p, { resize: 'medium', format: 'jpeg' });
     }
   };
 
@@ -872,7 +872,7 @@ export function Compose({ draftId }: ComposeProps) {
     if (!selected) return;
     const paths = Array.isArray(selected) ? selected : [selected];
     for (const p of paths) {
-      await attach.addPath(p, { preset: 'medium', format: 'jpeg' });
+      await attach.addPath(p, { resize: 'medium', format: 'jpeg' });
     }
   };
 
@@ -1128,19 +1128,19 @@ export function Compose({ draftId }: ComposeProps) {
                 {a.kind === 'image' && (
                   <span className="compose-attachments__opts">
                     <select
-                      className="compose-attachments__preset"
-                      value={a.opts.preset}
+                      className="compose-attachments__resize"
+                      value={a.opts.resize}
                       disabled={attach.busy}
                       aria-label={`Resize for ${a.filename}`}
-                      data-testid={`compose-attach-preset-${i}`}
+                      data-testid={`compose-attach-resize-${i}`}
                       onChange={(e) =>
-                        attach.setOptions(i, { ...a.opts, preset: e.target.value as ImageOpts['preset'] })
+                        attach.setOptions(i, { ...a.opts, resize: e.target.value as ImageOpts['resize'] })
                       }
                     >
+                      <option value="original">Original size</option>
                       <option value="small">Small (480px)</option>
                       <option value="medium">Medium (640px)</option>
                       <option value="large">Large (800px)</option>
-                      <option value="original">Original</option>
                     </select>
                     <select
                       className="compose-attachments__format"
@@ -1152,6 +1152,7 @@ export function Compose({ draftId }: ComposeProps) {
                         attach.setOptions(i, { ...a.opts, format: e.target.value as ImageOpts['format'] })
                       }
                     >
+                      <option value="original">Original format</option>
                       <option value="jpeg">JPEG</option>
                       <option value="webp">WebP (smaller)</option>
                     </select>

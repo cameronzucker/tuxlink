@@ -266,7 +266,7 @@
   display: inline-flex;
   gap: 4px;
 }
-.compose-attachments__preset,
+.compose-attachments__resize,
 .compose-attachments__format {
   font-size: 11px;
   padding: 1px 4px;

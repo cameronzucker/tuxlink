@@ -16,9 +16,12 @@ export interface AttachmentDto {
   bytes: number[];
 }
 
+/** Two independent operator controls (tuxlink-rbhg): `resize` (dimensions) and
+ * `format` (re-encode). `format: 'original'` keeps the source format — combined
+ * with `resize: 'original'` it's a byte-for-byte passthrough of the source file. */
 export interface ImageOpts {
-  preset: 'small' | 'medium' | 'large' | 'original';
-  format: 'jpeg' | 'webp';
+  resize: 'original' | 'small' | 'medium' | 'large';
+  format: 'original' | 'jpeg' | 'webp';
 }
 
 /** A list entry: the backend result plus the source `path` and current `opts`,
@@ -29,7 +32,7 @@ export interface AttachmentItem extends PreparedAttachment {
   opts: ImageOpts;
 }
 
-const DEFAULT_OPTS: ImageOpts = { preset: 'medium', format: 'jpeg' };
+const DEFAULT_OPTS: ImageOpts = { resize: 'medium', format: 'jpeg' };
 
 export function useAttachments() {
   const [items, setItems] = useState<AttachmentItem[]>([]);
@@ -45,7 +48,7 @@ export function useAttachments() {
     try {
       const prepared = await invoke<PreparedAttachment>('prepare_attachment', {
         path,
-        imagePreset: opts.preset,
+        imagePreset: opts.resize,
         imageFormat: opts.format,
       });
       setItems((prev) => [...prev, { ...prepared, path, opts }]);
@@ -68,7 +71,7 @@ export function useAttachments() {
       try {
         const prepared = await invoke<PreparedAttachment>('prepare_attachment', {
           path: current.path,
-          imagePreset: opts.preset,
+          imagePreset: opts.resize,
           imageFormat: opts.format,
         });
         setItems((prev) => prev.map((it, i) => (i === index ? { ...prepared, path: current.path, opts } : it)));

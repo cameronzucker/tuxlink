@@ -773,7 +773,7 @@ describe('<Compose> attachments (tuxlink-mg4s)', () => {
     await screen.findByTestId('compose-attach-cms-over');
 
     // Operator picks a smaller resize → re-transcode to 40 KB → warning clears.
-    fireEvent.change(screen.getByTestId('compose-attach-preset-0'), { target: { value: 'small' } });
+    fireEvent.change(screen.getByTestId('compose-attach-resize-0'), { target: { value: 'small' } });
     await waitFor(() => expect(screen.queryByTestId('compose-attach-cms-over')).toBeNull());
     await screen.findByTestId('compose-attach-size-0');
   });
