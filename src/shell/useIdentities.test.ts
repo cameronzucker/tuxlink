@@ -13,6 +13,9 @@ import {
   useIdentityList,
   useActiveIdentity,
   useIdentitySwitch,
+  useAddFullIdentity,
+  useAddTactical,
+  useRemoveIdentity,
   IDENTITY_LIST_QUERY_KEY,
   IDENTITY_ACTIVE_QUERY_KEY,
 } from './useIdentities';
@@ -162,5 +165,175 @@ describe('parseIdentityError', () => {
   it('falls back to Error.message / String for non-UiError throws', () => {
     expect(parseIdentityError(new Error('plain'))).toBe('plain');
     expect(parseIdentityError('stringy')).toBe('stringy');
+  });
+});
+
+describe('useAddFullIdentity', () => {
+  it('adds a CMS FULL by calling credentials_write_password THEN identity_add_full', async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useAddFullIdentity(), { wrapper: wrapperWith(freshClient()) });
+
+    await result.current.mutateAsync({
+      callsign: 'W1ABC',
+      label: 'Personal',
+      hasCmsAccount: true,
+      password: 'pw',
+    });
+
+    // BOTH commands fire, in order: password write first, then add_full.
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'credentials_write_password', {
+      callsign: 'W1ABC',
+      password: 'pw',
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'identity_add_full', {
+      callsign: 'W1ABC',
+      label: 'Personal',
+      hasCmsAccount: true,
+      activationSecret: 'pw',
+    });
+  });
+
+  it('adds a non-CMS FULL by calling ONLY identity_add_full (password = activation secret)', async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useAddFullIdentity(), { wrapper: wrapperWith(freshClient()) });
+
+    await result.current.mutateAsync({
+      callsign: 'W7XYZ',
+      label: null,
+      hasCmsAccount: false,
+      password: 'local-secret',
+    });
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith('identity_add_full', {
+      callsign: 'W7XYZ',
+      label: null,
+      hasCmsAccount: false,
+      activationSecret: 'local-secret',
+    });
+  });
+
+  it('invalidates the identity list on success', async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const qc = freshClient();
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
+    const { result } = renderHook(() => useAddFullIdentity(), { wrapper: wrapperWith(qc) });
+
+    await result.current.mutateAsync({
+      callsign: 'W7XYZ',
+      label: null,
+      hasCmsAccount: false,
+      password: 'pw',
+    });
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: IDENTITY_LIST_QUERY_KEY }),
+    );
+  });
+
+  it('surfaces a rejection from identity_add_full', async () => {
+    invokeMock.mockRejectedValueOnce({ kind: 'Rejected', detail: 'duplicate callsign' });
+    const { result } = renderHook(() => useAddFullIdentity(), { wrapper: wrapperWith(freshClient()) });
+
+    await expect(
+      result.current.mutateAsync({
+        callsign: 'W7XYZ',
+        label: null,
+        hasCmsAccount: false,
+        password: 'pw',
+      }),
+    ).rejects.toBeTruthy();
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(parseIdentityError(result.current.error)).toBe('duplicate callsign');
+  });
+});
+
+describe('useAddTactical', () => {
+  it('adds a tactical via identity_add_tactical with label + parent', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    const { result } = renderHook(() => useAddTactical(), { wrapper: wrapperWith(freshClient()) });
+
+    await result.current.mutateAsync({ label: 'EOC-3', parent: 'W1ABC' });
+
+    expect(invokeMock).toHaveBeenCalledWith('identity_add_tactical', {
+      label: 'EOC-3',
+      parent: 'W1ABC',
+    });
+  });
+
+  it('invalidates the identity list on success', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    const qc = freshClient();
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
+    const { result } = renderHook(() => useAddTactical(), { wrapper: wrapperWith(qc) });
+
+    await result.current.mutateAsync({ label: 'EOC-3', parent: 'W1ABC' });
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: IDENTITY_LIST_QUERY_KEY }),
+    );
+  });
+
+  it('surfaces ParentNotFound', async () => {
+    invokeMock.mockRejectedValueOnce({ kind: 'NotFound', detail: 'parent W9NONE not found' });
+    const { result } = renderHook(() => useAddTactical(), { wrapper: wrapperWith(freshClient()) });
+
+    await expect(
+      result.current.mutateAsync({ label: 'EOC-3', parent: 'W9NONE' }),
+    ).rejects.toBeTruthy();
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(parseIdentityError(result.current.error)).toBe('parent W9NONE not found');
+  });
+});
+
+describe('useRemoveIdentity', () => {
+  it('removes a FULL with an externally-tagged { Full: callsign } address', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    const { result } = renderHook(() => useRemoveIdentity(), { wrapper: wrapperWith(freshClient()) });
+
+    await result.current.mutateAsync({ kind: 'full', callsign: 'W1ABC' });
+
+    expect(invokeMock).toHaveBeenCalledWith('identity_remove', {
+      address: { Full: 'W1ABC' },
+    });
+  });
+
+  it('removes a tactical with an externally-tagged { Tactical: label } address', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    const { result } = renderHook(() => useRemoveIdentity(), { wrapper: wrapperWith(freshClient()) });
+
+    await result.current.mutateAsync({ kind: 'tactical', label: 'EOC-3' });
+
+    expect(invokeMock).toHaveBeenCalledWith('identity_remove', {
+      address: { Tactical: 'EOC-3' },
+    });
+  });
+
+  it('invalidates BOTH the list and the active queries on success', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    const qc = freshClient();
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
+    const { result } = renderHook(() => useRemoveIdentity(), { wrapper: wrapperWith(qc) });
+
+    await result.current.mutateAsync({ kind: 'full', callsign: 'W1ABC' });
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: IDENTITY_LIST_QUERY_KEY });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: IDENTITY_ACTIVE_QUERY_KEY });
+    });
+  });
+
+  it('surfaces RemoveHasTacticals', async () => {
+    invokeMock.mockRejectedValueOnce({
+      kind: 'Internal',
+      detail: { detail: 'remove its tactical labels first' },
+    });
+    const { result } = renderHook(() => useRemoveIdentity(), { wrapper: wrapperWith(freshClient()) });
+
+    await expect(
+      result.current.mutateAsync({ kind: 'full', callsign: 'W1ABC' }),
+    ).rejects.toBeTruthy();
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(parseIdentityError(result.current.error)).toBe('remove its tactical labels first');
   });
 });
