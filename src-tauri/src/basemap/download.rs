@@ -285,7 +285,6 @@ mod tests {
     use super::*;
     use crate::basemap::packs::tier_bbox;
     use crate::basemap::validate::testutil::TestPmtiles;
-    use std::cell::Cell;
 
     fn req(id: &str, needed: u64, budget: u64) -> PackRequest {
         PackRequest {
