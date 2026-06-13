@@ -296,6 +296,14 @@ Canonical: ADR 0018 + [docs/live-cms-testing-policy.md](docs/live-cms-testing-po
 detailed rationale in the RADIO-1 entry in
 [docs/pitfalls/implementation-pitfalls.md](docs/pitfalls/implementation-pitfalls.md).
 
+## Wire-walk gate — feature reachability before any "done" claim
+
+Before claiming any feature is **end-to-end shipped / done / complete / working**, before marking a PR ready, and before closing a feature issue — run the **`wire-walk`** skill (`.claude/skills/wire-walk/`). It is a **hard gate**, not advice: the operator supplies the key user flows **greenfield** (you do NOT draft them — anchoring launders your own blind spots), you trace each flow verbatim to code (`file:line`), and **any broken primary/motivating flow means the feature is NOT shipped** — partially-wired is a defect, not a follow-up.
+
+This exists because "backend shipped, CI-green, connected to nothing a user can touch" recurred across features and agents (identity epic tuxlink-6wz3/z6yi; APRS/UV-Pro tuxlink-ve3j; PR #347/#392/U1) despite the standing "features shipped end-to-end" rule. Registration ≠ a caller; CI-green ≠ reachability. The orchestrator runs it at the **integration boundary** (a subagent only sees its slice; the cross-phase seam is where it breaks). Capture the flows at feature **start** as the definition-of-done; the gate then traces them at done-time. Grep + read only — no build, no external service, so it always runs (it cannot be deferred for quota the way an external reviewer can). Append it to the end of `build-robust-features` and the final review of `subagent-driven-development`.
+
+Canonical: the skill itself (`.claude/skills/wire-walk/SKILL.md`). This is a pointer.
+
 ## Commit and release discipline
 
 - Use conventional commit types: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `perf:`, `ci:`, `build:`. Match the commit `type:` to the actual intent. Never use `fix:` for docs fixes or `feat:` for internal refactors.
