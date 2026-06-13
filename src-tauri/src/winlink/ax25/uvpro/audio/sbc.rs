@@ -304,11 +304,17 @@ impl BitWriter {
 // SbcCodec trait impl (the transport seam)
 // ---------------------------------------------------------------------------
 
-#[derive(Default)]
 struct EncState {
     filter: [f64; 80],
     /// PCM samples not yet forming a complete 128-sample frame (carried across calls).
     residual: Vec<i16>,
+}
+
+impl Default for EncState {
+    fn default() -> Self {
+        // `[f64; 80]` exceeds the array length that derives `Default`, so impl by hand.
+        Self { filter: [0.0; 80], residual: Vec::new() }
+    }
 }
 
 /// The UV-Pro SBC codec: streaming encode (pure-Rust port) + decode (mini_sbc), each
