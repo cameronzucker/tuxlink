@@ -29,6 +29,98 @@ fn resolve_bin(candidates: &[&'static str]) -> Option<&'static str> {
 
 const USERMOD: [&str; 2] = ["/usr/sbin/usermod", "/usr/bin/usermod"];
 const SYSTEMCTL: [&str; 2] = ["/usr/bin/systemctl", "/bin/systemctl"];
+const APT_GET: [&str; 2] = ["/usr/bin/apt-get", "/bin/apt-get"];
+
+const GPSD_DEFAULTS_PATH: &str = "/etc/default/gpsd";
+
+/// A safe GPS device path: an absolute `/dev/...` node matching the serial
+/// device shapes we detect, OR a `/dev/serial/by-id/...` stable symlink. No `..`,
+/// no spaces/newlines/shell metacharacters — this string is written into
+/// /etc/default/gpsd, so it must be inert.
+fn is_safe_device_path(p: &str) -> bool {
+    if p.is_empty() || p.len() > 256 || !p.starts_with("/dev/") || p.contains("..") {
+        return false;
+    }
+    // Conservative charset for device nodes / by-id symlinks.
+    if !p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.' | ':')) {
+        return false;
+    }
+    p.starts_with("/dev/ttyACM")
+        || p.starts_with("/dev/ttyUSB")
+        || p.starts_with("/dev/ttyAMA")
+        || p.starts_with("/dev/ttyS")
+        || p.starts_with("/dev/serial/by-id/")
+        || p.starts_with("/dev/gps")
+}
+
+/// Render the /etc/default/gpsd contents. `device` is pre-validated (or None for
+/// USB-hotplug-only). Plain key=value — this is exactly what dpkg-reconfigure
+/// writes, so we skip its ncurses frontend entirely.
+fn gpsd_defaults(device: Option<&str>) -> String {
+    let devices = device.unwrap_or("");
+    format!(
+        "# Managed by Tuxlink (tuxlink-n399). Default settings for the gpsd init system.\n\
+         START_DAEMON=\"true\"\n\
+         USBAUTO=\"true\"\n\
+         DEVICES=\"{devices}\"\n\
+         GPSD_OPTIONS=\"-n\"\n"
+    )
+}
+
+/// Full gpsd setup in ONE privileged run (one pkexec prompt): apt-get install,
+/// write /etc/default/gpsd, then enable + (re)start the socket/service. Each step
+/// must succeed; the first failure aborts with a specific reason.
+fn setup_gpsd(device: Option<&str>) -> ExitCode {
+    if let Some(d) = device {
+        if !is_safe_device_path(d) {
+            return fail("device path failed the safety check");
+        }
+    }
+
+    // 1. Install (Debian-family). Fixed package names — no operator input.
+    let Some(apt) = resolve_bin(&APT_GET) else {
+        return fail("apt-get not found (non-Debian system); use the shown commands");
+    };
+    let install = Command::new(apt)
+        .arg("install")
+        .arg("-y")
+        .arg("gpsd")
+        .arg("gpsd-clients")
+        .env("DEBIAN_FRONTEND", "noninteractive")
+        .status();
+    match install {
+        Ok(s) if s.success() => {}
+        Ok(s) => return fail(&format!("apt-get install failed ({s}) — check network")),
+        Err(e) => return fail(&format!("could not run apt-get: {e}")),
+    }
+
+    // 2. Configure the device (direct file write; no ncurses dpkg-reconfigure).
+    if let Err(e) = std::fs::write(GPSD_DEFAULTS_PATH, gpsd_defaults(device)) {
+        return fail(&format!("could not write {GPSD_DEFAULTS_PATH}: {e}"));
+    }
+
+    // 3. Enable + (re)start so it reads the device now and on boot.
+    let Some(systemctl) = resolve_bin(&SYSTEMCTL) else {
+        return fail("systemctl not found");
+    };
+    let enable = Command::new(systemctl)
+        .arg("enable")
+        .arg("--now")
+        .arg("gpsd.socket")
+        .arg("gpsd.service")
+        .status();
+    match enable {
+        Ok(s) if s.success() => {}
+        Ok(s) => return fail(&format!("systemctl enable gpsd failed ({s})")),
+        Err(e) => return fail(&format!("could not run systemctl: {e}")),
+    }
+    // Restart to pick up the freshly written DEVICES (enable --now is a no-op if
+    // already active, so an explicit restart guarantees the new config loads).
+    let _ = Command::new(systemctl).arg("restart").arg("gpsd.socket").status();
+
+    println!("ok");
+    ExitCode::SUCCESS
+}
 
 fn main() -> ExitCode {
     // Invariant 2: must be invoked through pkexec (which sets PKEXEC_UID).
@@ -38,6 +130,19 @@ fn main() -> ExitCode {
     };
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.is_empty() {
+        return fail("an action argument is required");
+    }
+
+    // setup-gpsd is multi-step (install + configure + enable) and takes an
+    // OPTIONAL device path; handle it separately from the single-command actions.
+    if args[0] == "setup-gpsd" {
+        if args.len() > 2 {
+            return fail("setup-gpsd takes at most one device argument");
+        }
+        return setup_gpsd(args.get(1).map(String::as_str));
+    }
+
     if args.len() != 1 {
         return fail("exactly one action argument required");
     }
@@ -115,7 +220,7 @@ fn uid_to_username(uid: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_safe_username;
+    use super::{gpsd_defaults, is_safe_device_path, is_safe_username};
 
     #[test]
     fn accepts_plausible_usernames() {
@@ -129,5 +234,44 @@ mod tests {
         for n in ["", "-G", "--badname", "a b", "name;reboot", "na/me", "x\n"] {
             assert!(!is_safe_username(n), "{n:?} should be rejected");
         }
+    }
+
+    #[test]
+    fn accepts_real_gps_device_paths() {
+        for d in [
+            "/dev/ttyACM0",
+            "/dev/ttyUSB0",
+            "/dev/ttyAMA0",
+            "/dev/ttyS0",
+            "/dev/serial/by-id/usb-u-blox_AG_u-blox_GNSS_receiver-if00",
+            "/dev/gps0",
+        ] {
+            assert!(is_safe_device_path(d), "{d} should be accepted");
+        }
+    }
+
+    #[test]
+    fn rejects_injection_and_off_tree_device_paths() {
+        for d in [
+            "",
+            "/etc/passwd",
+            "/dev/ttyACM0; reboot",
+            "/dev/../etc/shadow",
+            "/dev/ttyACM0\nDEVICES=evil",
+            "ttyACM0",
+            "/dev/ttyACM0 ",
+            "/home/x",
+        ] {
+            assert!(!is_safe_device_path(d), "{d:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn gpsd_defaults_embeds_validated_device_and_is_inert() {
+        let out = gpsd_defaults(Some("/dev/ttyACM0"));
+        assert!(out.contains("DEVICES=\"/dev/ttyACM0\""));
+        assert!(out.contains("USBAUTO=\"true\""));
+        // No-device variant leaves DEVICES empty (USB hotplug only).
+        assert!(gpsd_defaults(None).contains("DEVICES=\"\""));
     }
 }

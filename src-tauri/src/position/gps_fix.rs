@@ -65,6 +65,64 @@ pub async fn gps_run_fix(action: String) -> Result<GpsFixOutcome, crate::ui_comm
     }
 }
 
+/// Same safe-device-path shape the helper enforces (defense-in-depth; the device
+/// comes from our own probe, never operator free-text, but validate anyway).
+fn is_safe_device_path(p: &str) -> bool {
+    if p.is_empty() || p.len() > 256 || !p.starts_with("/dev/") || p.contains("..") {
+        return false;
+    }
+    if !p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.' | ':')) {
+        return false;
+    }
+    p.starts_with("/dev/ttyACM")
+        || p.starts_with("/dev/ttyUSB")
+        || p.starts_with("/dev/ttyAMA")
+        || p.starts_with("/dev/ttyS")
+        || p.starts_with("/dev/serial/by-id/")
+        || p.starts_with("/dev/gps")
+}
+
+/// One-click gpsd setup (tuxlink-n399): install + configure + enable in a single
+/// privileged run (one pkexec prompt). `device` (optional) is the detected serial
+/// device to pin in /etc/default/gpsd; omit for USB-hotplug-only.
+#[tauri::command]
+pub async fn gps_setup_gpsd(device: Option<String>) -> Result<GpsFixOutcome, crate::ui_commands::UiError> {
+    if let Some(d) = device.as_deref() {
+        if !is_safe_device_path(d) {
+            return Err(crate::ui_commands::UiError::Rejected(
+                "refusing to configure gpsd with an unsafe device path".into(),
+            ));
+        }
+    }
+    let Some(pkexec) = which_pkexec() else {
+        return Ok(GpsFixOutcome::PkexecMissing);
+    };
+    let mut cmd = std::process::Command::new(pkexec);
+    cmd.arg("/usr/libexec/tuxlink-gps-fix").arg("setup-gpsd");
+    if let Some(d) = device.as_deref() {
+        cmd.arg(d);
+    }
+    match cmd.status() {
+        Ok(s) => Ok(classify_exit(s.code())),
+        Err(_) => Ok(GpsFixOutcome::PkexecMissing),
+    }
+}
+
+/// The system package manager, if one of the known ones is present — drives
+/// whether the UI offers one-click ("apt") or copy-paste guidance.
+#[tauri::command]
+pub async fn gps_pkg_manager() -> Result<Option<String>, crate::ui_commands::UiError> {
+    let candidates: [(&str, &[&str]); 3] = [
+        ("apt", &["/usr/bin/apt-get", "/bin/apt-get"]),
+        ("dnf", &["/usr/bin/dnf", "/bin/dnf"]),
+        ("pacman", &["/usr/bin/pacman", "/bin/pacman"]),
+    ];
+    Ok(candidates
+        .iter()
+        .find(|(_, paths)| paths.iter().any(|p| std::path::Path::new(p).exists()))
+        .map(|(name, _)| (*name).to_string()))
+}
+
 /// Whether the pkexec *binary* exists — drives "Fix it for me" button visibility.
 /// This does NOT check that the PolicyKit policy is registered; on AppImage /
 /// minimal installs the helper binary is absent too, so a click then resolves to
@@ -98,5 +156,15 @@ mod tests {
         assert_eq!(action_token("rm -rf /"), None);
         assert_eq!(action_token("add-dialout; reboot"), None);
         assert_eq!(action_token(""), None);
+    }
+
+    #[test]
+    fn device_path_validation_rejects_injection() {
+        assert!(is_safe_device_path("/dev/ttyACM0"));
+        assert!(is_safe_device_path("/dev/serial/by-id/usb-u-blox-if00"));
+        assert!(!is_safe_device_path("/etc/passwd"));
+        assert!(!is_safe_device_path("/dev/ttyACM0; reboot"));
+        assert!(!is_safe_device_path("/dev/../etc/shadow"));
+        assert!(!is_safe_device_path(""));
     }
 }

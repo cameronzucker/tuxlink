@@ -55,15 +55,19 @@ describe('GpsSourcePicker', () => {
     expect(props.onSelectSource).toHaveBeenCalledWith('gpsd');
   });
 
-  it('renders a serial device source with its human label when the user is in dialout', async () => {
+  it('surfaces a detected serial device in the gpsd-setup card (not as a fake "Use this" source)', async () => {
+    // tuxlink-n399: a serial device with gpsd down can't be read; it must not be a
+    // selectable source. It appears in the "Set up GPS" card instead.
     mockProbes({
+      gpsd: { reachable: false },
       serial: { devices: [{ path: '/dev/ttyACM0', vendor: 'u-blox AG', model: 'GNSS receiver', vendorId: '1546', productId: '01a8' }] },
       dialout: { member: true, groupExists: true },
     });
     renderPicker();
-    const card = await screen.findByTestId('gps-source-serial:/dev/ttyACM0');
-    expect(card.textContent).toMatch(/u-blox AG GNSS receiver/);
-    expect(card.textContent).toMatch(/\/dev\/ttyACM0/);
+    expect(screen.queryByTestId('gps-source-serial:/dev/ttyACM0')).toBeNull();
+    const setup = await screen.findByTestId('gps-setup-gpsd');
+    expect(setup.textContent).toMatch(/u-blox AG GNSS receiver/);
+    expect(setup.textContent).toMatch(/\/dev\/ttyACM0/);
   });
 
   it('shows a dialout triage card with a copy-pasteable fix command (the core Linux GPS wall)', async () => {
@@ -141,11 +145,53 @@ describe('GpsSourcePicker', () => {
     expect(await screen.findByTestId('location-map-stub')).toBeInTheDocument();
   });
 
-  it('shows the dialout triage AND a no-device card when no GPS and not in dialout', async () => {
+  it('shows the dialout triage AND the gpsd-setup card when no GPS and not in dialout', async () => {
     mockProbes({ gpsd: { reachable: false }, serial: { devices: [] }, dialout: { member: false, groupExists: true } });
     renderPicker();
     expect(await screen.findByTestId('gps-triage-dialout')).toBeInTheDocument();
-    expect(screen.getByTestId('gps-no-device')).toBeInTheDocument();
+    expect(screen.getByTestId('gps-setup-gpsd')).toBeInTheDocument();
+  });
+
+  it('one-click sets up gpsd via pkexec (apt + pkexec present) and rescans', async () => {
+    let setupCalls = 0;
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      switch (cmd) {
+        case 'gps_pkexec_available': return true as unknown as never;
+        case 'gps_pkg_manager': return 'apt' as unknown as never;
+        case 'gps_probe_gpsd': return { reachable: false } as unknown as never;
+        case 'gps_probe_serial_devices':
+          return { devices: [{ path: '/dev/ttyACM0', vendor: 'u-blox', model: 'GNSS', vendorId: null, productId: null }] } as unknown as never;
+        case 'gps_probe_dialout': return { member: true, groupExists: true } as unknown as never;
+        case 'gps_probe_modemmanager': return { active: false } as unknown as never;
+        case 'gps_setup_gpsd': setupCalls += 1; return 'ok' as unknown as never;
+        default: return undefined as unknown as never;
+      }
+    });
+    renderPicker();
+    const run = await screen.findByTestId('gps-setup-run');
+    fireEvent.click(run);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('gps_setup_gpsd', { device: '/dev/ttyACM0' }));
+    expect(await screen.findByTestId('gps-setup-result')).toHaveTextContent(/looking for a GPS fix/i);
+    expect(setupCalls).toBe(1);
+  });
+
+  it('offers copy-paste guidance (no one-click) when there is no apt', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      switch (cmd) {
+        case 'gps_pkexec_available': return true as unknown as never;
+        case 'gps_pkg_manager': return 'pacman' as unknown as never;
+        case 'gps_probe_gpsd': return { reachable: false } as unknown as never;
+        case 'gps_probe_serial_devices': return { devices: [] } as unknown as never;
+        case 'gps_probe_dialout': return { member: true, groupExists: true } as unknown as never;
+        case 'gps_probe_modemmanager': return { active: false } as unknown as never;
+        default: return undefined as unknown as never;
+      }
+    });
+    renderPicker();
+    await screen.findByTestId('gps-setup-gpsd');
+    expect(screen.queryByTestId('gps-setup-run')).toBeNull(); // no one-click on non-apt
+    fireEvent.click(screen.getByTestId('gps-setup-show-commands'));
+    expect(screen.getByTestId('gps-setup-command').textContent).toContain('pacman -S');
   });
 
   it('shows "acquiring" when a GPS source is selected without a fix', async () => {

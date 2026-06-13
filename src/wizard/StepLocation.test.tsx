@@ -67,12 +67,12 @@ describe('<StepLocation>', () => {
   // tuxlink-yy1m reachability regression: from a clean install with NO GPS device
   // and a broken dialout, the step must show the confirm map AND the Linux
   // diagnostics — NOT a blank grid box (the defect that motivated this feature).
-  it('shows the map + Linux diagnostics even with no GPS device', async () => {
+  it('shows the map + Linux diagnostics + gpsd setup even with no GPS device', async () => {
     mockBackend({ gpsd: { reachable: false }, dialout: { member: false, groupExists: true } });
     render(<WizardProvider initialStateOverride={{ step: 'location' }}><StepLocation /></WizardProvider>);
     expect(await screen.findByTestId('location-map-stub')).toBeInTheDocument();
     expect(await screen.findByTestId('gps-triage-dialout')).toBeInTheDocument();
-    expect(screen.getByTestId('gps-no-device')).toBeInTheDocument();
+    expect(screen.getByTestId('gps-setup-gpsd')).toBeInTheDocument();
   });
 
   it('seeds the manual grid field from config_read', async () => {

@@ -205,3 +205,8 @@
 .gps-card--nodevice {
   border-style: dashed;
 }
+
+/* gpsd one-click setup card (tuxlink-n399) — uses the triage palette/affordances. */
+.gps-card--setup {
+  border-color: var(--accent, #4aa3df);
+}

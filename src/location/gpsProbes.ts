@@ -51,6 +51,15 @@ export const pkexecAvailable = () => invoke<boolean>('gps_pkexec_available');
 /** Run a fixed GPS fix via pkexec + the privileged helper. */
 export const runGpsFix = (action: GpsFixAction) => invoke<GpsFixOutcome>('gps_run_fix', { action });
 
+/** One-click full gpsd setup (install + configure + enable) in a single pkexec
+ *  prompt (tuxlink-n399). `device` (optional) pins the detected device. */
+export const setupGpsd = (device: string | null) =>
+  invoke<GpsFixOutcome>('gps_setup_gpsd', { device: device ?? null });
+
+/** The system package manager ('apt' | 'dnf' | 'pacman') or null — drives
+ *  whether the UI offers one-click setup or copy-paste guidance. */
+export const pkgManager = () => invoke<string | null>('gps_pkg_manager');
+
 /** Map a triage card kind to its fix action. Exhaustive: adding a new triage
  *  kind without a mapping is a compile error, not a silent wrong root action. */
 export function triageFixAction(kind: GpsTriageCard['kind']): GpsFixAction {
@@ -117,6 +126,14 @@ export interface GpsClassification {
    *  still surface separately, because the device frequently won't enumerate
    *  until those are fixed. */
   noDevice: boolean;
+  /** Whether gpsd (the only thing that reads a GPS device) is reachable. When
+   *  false, the picker shows the "Set up GPS automatically" card (tuxlink-n399).*/
+  gpsdReachable: boolean;
+  /** First detected serial device path (e.g. /dev/ttyACM0), to pin in gpsd's
+   *  config during one-click setup, or null. */
+  detectedDevice: string | null;
+  /** Human label for the detected device, for the setup card. */
+  detectedDeviceLabel: string | null;
 }
 
 /** Best human label for a serial device, falling back to the path. */
@@ -126,23 +143,23 @@ export function serialDeviceLabel(d: SerialDevice): string {
 }
 
 /**
- * Turn raw probe results into source-cards (working) + triage-cards (blocked).
+ * Turn raw probe results into the source card (gpsd), triage cards (blocked),
+ * and the metadata the picker needs to offer gpsd setup.
  *
- * Sources (something usable to read a position from):
- * - gpsd reachable → a source card (the easy path).
- * - serial devices present AND user is in `dialout` → one source card each.
+ * gpsd is the ONLY thing that reads a GPS device (Tuxlink has no native serial
+ * reader — that's tuxlink-ley0). So:
+ * - gpsd reachable → ONE source card (gpsd). A raw serial device is NOT shown as
+ *   a selectable source: selecting it could never produce a fix without gpsd, so
+ *   it was a dead control (tuxlink-n399). Detected devices instead inform the
+ *   "Set up GPS automatically" card when gpsd is down.
+ * - gpsd unreachable → no source card; `gpsdReachable=false` drives the setup card.
  *
- * Triage is DEVICE-INDEPENDENT (tuxlink-yy1m). The original design gated triage
- * on a serial device already being enumerated, but on Linux the device
- * frequently won't appear *until* these are fixed (ModemManager grabs the port;
- * `dialout` blocks opening it), so the diagnostics must surface before any
- * device shows up — they're most needed exactly when nothing is detected:
- * - user NOT in `dialout` → a dialout triage card.
- * - ModemManager active → a ModemManager triage card.
+ * Triage is DEVICE-INDEPENDENT (tuxlink-yy1m): dialout / ModemManager block gpsd
+ * from reading the device and often stop it enumerating, so they surface before
+ * any device appears.
  *
- * `noDevice` reports "nothing to read from yet" (no serial + gpsd down) so the
- * picker can render a "plug in + Rescan" card. Manual-grid entry is always
- * offered by the picker itself, so it's not modeled here.
+ * `noDevice` = nothing to read from yet (no serial + gpsd down). Manual-grid
+ * entry is always offered by the picker itself, so it's not modeled here.
  */
 export function classifyGpsSources(d: GpsDetection): GpsClassification {
   const sources: GpsSourceCard[] = [];
@@ -153,11 +170,7 @@ export function classifyGpsSources(d: GpsDetection): GpsClassification {
   }
 
   const hasSerial = d.serial.devices.length > 0;
-  if (hasSerial && d.dialout.member) {
-    for (const dev of d.serial.devices) {
-      sources.push({ id: `serial:${dev.path}`, kind: 'serial', label: serialDeviceLabel(dev), detail: dev.path });
-    }
-  }
+  const firstDevice = hasSerial ? d.serial.devices[0] : null;
 
   // Device-independent: surface even with no device, since it blocks GPS the
   // moment a device appears (and often prevents it from appearing at all).
@@ -183,5 +196,12 @@ export function classifyGpsSources(d: GpsDetection): GpsClassification {
     });
   }
 
-  return { sources, triage, noDevice: !hasSerial && !d.gpsd.reachable };
+  return {
+    sources,
+    triage,
+    noDevice: !hasSerial && !d.gpsd.reachable,
+    gpsdReachable: d.gpsd.reachable,
+    detectedDevice: firstDevice?.path ?? null,
+    detectedDeviceLabel: firstDevice ? serialDeviceLabel(firstDevice) : null,
+  };
 }

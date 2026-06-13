@@ -40,23 +40,29 @@ describe('classifyGpsSources', () => {
     expect(sources[0]).toMatchObject({ kind: 'gpsd', id: 'gpsd' });
   });
 
-  it('offers each serial device as a source when the user is in dialout', () => {
-    const { sources, triage } = classifyGpsSources(
+  it('does NOT make a raw serial device a selectable source (gpsd is the reader); it informs detectedDevice instead', () => {
+    // tuxlink-n399: a serial device alone can't produce a fix (no native reader),
+    // so it must not appear as a "Use this" source — that was a dead control.
+    const { sources, detectedDevice, detectedDeviceLabel } = classifyGpsSources(
       detection({
-        serial: { devices: [dev({ path: '/dev/ttyACM0', vendor: 'u-blox AG', model: 'GNSS' }), dev({ path: '/dev/ttyUSB0' })] },
+        serial: { devices: [dev({ path: '/dev/ttyACM0', vendor: 'u-blox AG', model: 'GNSS' })] },
         dialout: { member: true, groupExists: true },
       }),
     );
-    expect(sources.map((s) => s.detail)).toEqual(['/dev/ttyACM0', '/dev/ttyUSB0']);
-    expect(sources[0].label).toBe('u-blox AG GNSS');
-    expect(triage).toHaveLength(0);
+    expect(sources).toHaveLength(0); // no serial source card
+    expect(detectedDevice).toBe('/dev/ttyACM0');
+    expect(detectedDeviceLabel).toBe('u-blox AG GNSS');
   });
 
-  it('raises a dialout triage card (not a source) when a device exists but the user is NOT in dialout — the core fix', () => {
-    const { sources, triage } = classifyGpsSources(
+  it('exposes gpsdReachable so the picker can offer setup', () => {
+    expect(classifyGpsSources(detection({ gpsd: { reachable: true } })).gpsdReachable).toBe(true);
+    expect(classifyGpsSources(detection()).gpsdReachable).toBe(false);
+  });
+
+  it('raises a dialout triage card when the user is NOT in dialout — the core fix', () => {
+    const { triage } = classifyGpsSources(
       detection({ serial: { devices: [dev()] }, dialout: { member: false, groupExists: true } }),
     );
-    expect(sources).toHaveLength(0);
     expect(triage).toHaveLength(1);
     expect(triage[0]).toMatchObject({ kind: 'dialout', fixable: true });
     expect(triage[0].command).toContain('usermod -aG dialout');

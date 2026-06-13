@@ -15,7 +15,9 @@ import {
   runGpsDetection,
   classifyGpsSources,
   pkexecAvailable,
+  pkgManager,
   runGpsFix,
+  setupGpsd,
   triageFixAction,
   type GpsClassification,
   type GpsFixOutcome,
@@ -56,6 +58,9 @@ export function GpsSourcePicker({
     sources: [],
     triage: [],
     noDevice: false,
+    gpsdReachable: false,
+    detectedDevice: null,
+    detectedDeviceLabel: null,
   });
   const [openCommand, setOpenCommand] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -64,6 +69,11 @@ export function GpsSourcePicker({
   const [pkexec, setPkexec] = useState(false);
   const [fixResult, setFixResult] = useState<{ kind: string; outcome: GpsFixOutcome } | null>(null);
   const [fixing, setFixing] = useState<string | null>(null);
+  // One-click gpsd setup (tuxlink-n399): package manager gates one-click vs guidance.
+  const [pkg, setPkg] = useState<string | null>(null);
+  const [gpsdSetupBusy, setGpsdSetupBusy] = useState(false);
+  const [gpsdSetupResult, setGpsdSetupResult] = useState<GpsFixOutcome | null>(null);
+  const [showGpsdCmds, setShowGpsdCmds] = useState(false);
 
   const rescan = useCallback(() => {
     let cancelled = false;
@@ -91,10 +101,37 @@ export function GpsSourcePicker({
     pkexecAvailable()
       .then((ok) => mounted && setPkexec(ok))
       .catch(() => mounted && setPkexec(false));
+    pkgManager()
+      .then((m) => mounted && setPkg(m))
+      .catch(() => mounted && setPkg(null));
     return () => {
       mounted = false;
     };
   }, []);
+
+  // One-click gpsd setup: install + configure + enable in one privileged run.
+  const runGpsdSetup = async () => {
+    setGpsdSetupBusy(true);
+    setGpsdSetupResult(null);
+    try {
+      const outcome = await setupGpsd(classification.detectedDevice);
+      setGpsdSetupResult(outcome);
+      if (outcome === 'ok') rescan(); // gpsd now up → a fix should start flowing
+    } catch {
+      setGpsdSetupResult('failed');
+    } finally {
+      setGpsdSetupBusy(false);
+    }
+  };
+
+  // The exact commands for the "Show commands" fallback, per package manager.
+  const gpsdInstallCmd =
+    pkg === 'dnf'
+      ? 'sudo dnf install -y gpsd gpsd-clients'
+      : pkg === 'pacman'
+        ? 'sudo pacman -S --noconfirm gpsd'
+        : 'sudo apt-get install -y gpsd gpsd-clients';
+  const gpsdEnableCmd = 'sudo systemctl enable --now gpsd.socket gpsd.service';
 
   const runFix = async (kind: 'dialout' | 'modemmanager') => {
     setFixing(kind);
@@ -264,16 +301,71 @@ export function GpsSourcePicker({
         </div>
       ))}
 
-      {/* No receiver detected yet (tuxlink-yy1m) — device-independent diagnostics
-          above still render; this tells the operator to plug in + rescan. */}
-      {classification.noDevice && (
-        <div className="gps-card gps-card--nodevice" data-testid="gps-no-device">
+      {/* gpsd is the only thing that reads a GPS device. When it isn't running,
+          offer to set it up — one click on Debian-family (apt) + pkexec, else
+          copy-paste guidance (tuxlink-n399). Covers both "device found, gpsd
+          down" and "no device yet". */}
+      {!classification.gpsdReachable && (
+        <div className="gps-card gps-card--setup" data-testid="gps-setup-gpsd">
           <div className="gps-card__body">
-            <span className="gps-card__label">No GPS receiver detected yet</span>
+            <span className="gps-card__label">Set up GPS reading (gpsd)</span>
             <span className="gps-card__detail">
-              Plug in your USB or serial GPS, then press Rescan. A phone sharing its
-              location over gpsd works too.
+              {classification.detectedDevice
+                ? `GPS device found: ${classification.detectedDeviceLabel ?? 'serial device'} (${classification.detectedDevice}). `
+                : 'No GPS receiver detected yet. Plug in a USB GPS, then Rescan. '}
+              Tuxlink reads GPS through the system <code>gpsd</code> service, which isn't running.
             </span>
+
+            {showGpsdCmds && (
+              <div className="gps-card__cmd">
+                <code data-testid="gps-setup-command">{`${gpsdInstallCmd}\n${gpsdEnableCmd}`}</code>
+                <button
+                  type="button"
+                  className="gps-card__copy"
+                  data-testid="gps-setup-copy"
+                  onClick={() => copy(`${gpsdInstallCmd} && ${gpsdEnableCmd}`, 'gpsd-setup')}
+                >
+                  {copied === 'gpsd-setup' ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            )}
+
+            {gpsdSetupResult && (
+              <span className="gps-card__detail" data-testid="gps-setup-result" role="status">
+                {gpsdSetupResult === 'ok' && 'gpsd is set up — looking for a GPS fix…'}
+                {gpsdSetupResult === 'auth_dismissed' && 'Cancelled — no changes made.'}
+                {gpsdSetupResult === 'failed' && (
+                  <span className="gps-card__detail--warn">
+                    Setup failed (check your network). Use “Show commands” to run it by hand.
+                  </span>
+                )}
+                {gpsdSetupResult === 'pkexec_missing' && (
+                  <span className="gps-card__detail--warn">PolicyKit unavailable. Use “Show commands”.</span>
+                )}
+              </span>
+            )}
+          </div>
+          <div className="gps-card__actions">
+            {pkg === 'apt' && pkexec ? (
+              <button
+                type="button"
+                className="gps-card__fix"
+                data-testid="gps-setup-run"
+                disabled={gpsdSetupBusy}
+                onClick={runGpsdSetup}
+              >
+                {gpsdSetupBusy ? 'Setting up…' : 'Set up GPS for me'}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="gps-card__show"
+              data-testid="gps-setup-show-commands"
+              aria-expanded={showGpsdCmds}
+              onClick={() => setShowGpsdCmds((s) => !s)}
+            >
+              {showGpsdCmds ? 'Hide commands' : 'Show commands'}
+            </button>
           </div>
         </div>
       )}
