@@ -114,16 +114,39 @@ jobs:
           rsync -a "$HOME/itshfbc/" src-tauri/resources/itshfbc/
           echo "Staged voacapl-${TRIPLE} ($(du -h "src-tauri/binaries/voacapl-${TRIPLE}" | cut -f1)) + itshfbc ($(du -sh src-tauri/resources/itshfbc | cut -f1))"
 
-      # Inject externalBin + the itshfbc resource glob — CI-ONLY, never committed.
-      # tauri-build validates externalBin existence at cargo-build time, so these
-      # entries in the committed tauri.conf.json would break the `verify` gate on
-      # runners that haven't staged the binary. See docs/reference/voacapl-ci-bundling.md.
-      - name: Inject voacapl bundle config (CI-only)
+      # tuxlink-ndi4 (phase 4): bundle the go-pmtiles region-pack extractor as a
+      # Tauri sidecar (externalBin). Downloaded per-arch on each matrix runner
+      # (same Option-A pattern as voacapl); never committed to git (50 MB/arch).
+      # The app resolves it adjacent to the main binary (current_exe()/pmtiles).
+      - name: Stage go-pmtiles sidecar (region-pack extractor)
+        run: |
+          set -euxo pipefail
+          GP_VER=1.30.3
+          case "${{ matrix.arch }}" in
+            amd64) GP_ARCH=x86_64 ;;
+            arm64) GP_ARCH=arm64 ;;
+            *) echo "unknown arch ${{ matrix.arch }}"; exit 1 ;;
+          esac
+          TRIPLE="$(rustc -vV | awk '/^host:/{print $2}')"
+          mkdir -p src-tauri/binaries
+          curl -fSL "https://github.com/protomaps/go-pmtiles/releases/download/v${GP_VER}/go-pmtiles_${GP_VER}_Linux_${GP_ARCH}.tar.gz" -o /tmp/gp.tgz
+          tar xzf /tmp/gp.tgz -C /tmp pmtiles
+          install -m 0755 /tmp/pmtiles "src-tauri/binaries/pmtiles-${TRIPLE}"
+          echo "Staged pmtiles-${TRIPLE} ($(du -h "src-tauri/binaries/pmtiles-${TRIPLE}" | cut -f1))"
+
+      # Inject externalBin + the itshfbc/basemap resource globs — CI-ONLY, never
+      # committed. tauri-build validates externalBin existence at cargo-build time,
+      # so these entries in the committed tauri.conf.json would break the `verify`
+      # gate on runners that haven't staged the binary. The resources list is
+      # REPLACED wholesale here, so it MUST re-state every committed glob
+      # (resources/basemap/**/* carries the bundled world overview + the region
+      # manifest — omitting it ships a blank map). See docs/reference/voacapl-ci-bundling.md.
+      - name: Inject voacapl + go-pmtiles bundle config (CI-only)
         run: |
           set -euxo pipefail
           cd src-tauri
-          jq '.bundle.externalBin = ["binaries/voacapl"]
-              | .bundle.resources = ["resources/wle-forms/**/*", "resources/itshfbc/**/*", "resources/propagation/ssn-forecast.json"]' \
+          jq '.bundle.externalBin = ["binaries/voacapl", "binaries/pmtiles"]
+              | .bundle.resources = ["resources/wle-forms/**/*", "resources/itshfbc/**/*", "resources/propagation/ssn-forecast.json", "resources/basemap/**/*"]' \
              tauri.conf.json > tauri.conf.json.tmp
           mv tauri.conf.json.tmp tauri.conf.json
           echo "Patched bundle config:"; jq '{externalBin: .bundle.externalBin, resources: .bundle.resources}' tauri.conf.json
@@ -137,7 +160,7 @@ jobs:
       # Production-mount-path check: the .deb must place voacapl ADJACENT to the
       # main binary (current_exe()/voacapl) and itshfbc under the Resource dir,
       # or prediction silently degrades to Unavailable in the installed app.
-      - name: Verify voacapl + itshfbc bundled where the app resolves them
+      - name: Verify voacapl + go-pmtiles + itshfbc + basemap bundled where the app resolves them
         run: |
           set -euxo pipefail
           deb="$(find src-tauri/target/release/bundle/deb -name '*.deb' | head -1)"
@@ -147,8 +170,11 @@ jobs:
           main="$(find /tmp/deb-extract -type f -name tuxlink | head -1)"
           test -n "$main"
           test -x "$(dirname "$main")/voacapl"   # sidecar adjacent to the main binary
+          test -x "$(dirname "$main")/pmtiles"   # go-pmtiles region-pack extractor, adjacent (tuxlink-ndi4)
           find /tmp/deb-extract -path '*resources/itshfbc/database/version.w32' | grep -q version.w32
-          echo "OK: voacapl adjacent to $main; itshfbc present under resources/"
+          # tuxlink-ndi4: the bundled world overview must ship, or the map is blank.
+          find /tmp/deb-extract -path '*resources/basemap/world-z0-6.pmtiles' | grep -q world-z0-6.pmtiles
+          echo "OK: voacapl + pmtiles adjacent to $main; itshfbc + basemap present under resources/"
 
       - name: Collect bundle artifacts
         run: |
