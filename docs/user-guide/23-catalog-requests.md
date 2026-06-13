@@ -63,22 +63,24 @@ pick from its contents.
 
 ## Driving a catalog request
 
-<!-- screenshot-needed: docs/user-guide/images/23-catalog-requests/catalog-request-form.png
-     Show: the Tools → Catalog request form with the checklist of
-     catalog items, the manual filename text field, and the Send via
-     transport picker. Form crop, ~600x500. -->
+<!-- screenshot-needed: docs/user-guide/images/23-catalog-requests/request-center.png
+     Show: the Request Center (Message → Request Center…) with the
+     "Browse full catalog by category" view open and a few items in the
+     request basket. ~900x600. -->
 
-**Tools → Catalog request** opens a small form:
+**Message → Request Center…** opens the request workspace:
 
-1. **Pick catalog items** — checklist of items the operator has used
-   before, plus a "fetch the index" affordance.
-2. **Add manual filename** — text field for items not in the picker.
-3. **Send via** — pick a transport. Telnet is the fastest path for
-   catalog requests because the response messages can be large and the
-   round trip is well-suited to a Telnet session.
-
-The form generates a properly-formatted Winlink message, drops it in
-the Outbox, and the next Connect sends it.
+1. **Browse or search the catalog** — the "Browse full catalog by
+   category" view lists items by category and the search field filters
+   across them. The index itself is a catalog item; fetch it first when
+   the available set is unknown.
+2. **Collect items in the basket** — selected items, plus the curated
+   hero cards (gateway lists, propagation, nearby stations), gather in the
+   shared request basket.
+3. **Send all** — CMS catalog items collapse into a single inquiry
+   message to the CMS. It lands in the Outbox, and the next Connect sends
+   it. Telnet is the fastest path because the response messages can be
+   large.
 
 > [!WARNING]
 > **A catalog request over RF is on-air transmission like any other
@@ -108,9 +110,9 @@ sequenceDiagram
     participant TX as Tuxlink
     participant CMS as Winlink CMS
 
-    Op->>TX: Tools → Catalog request
-    Op->>TX: Pick PUB_PACKET + PUB_VARA
-    Op->>TX: Send via Telnet
+    Op->>TX: Message → Request Center…
+    Op->>TX: Add PUB_PACKET + PUB_VARA to basket
+    Op->>TX: Send all (Telnet)
     TX->>TX: Compose to INQUIRY@winlink.org<br/>Subject: REQUEST<br/>Body: PUB_PACKET\nPUB_VARA
     TX->>TX: Land in Outbox
     Op->>TX: Connect
@@ -176,9 +178,11 @@ Body:    send gfs:40N,60N,140W,120W|2,2|24,48,72|PRESS,WIND
   model requests) or plain text (for NWS bulletins).
 
 The full Saildocs grammar is documented at https://saildocs.com/gribinfo.
-Tuxlink offers a dedicated GRIB request form that hides this grammar
-behind a region picker and parameter checkboxes — see the
-[HTML Forms](20-html-forms.md) topic.
+Tuxlink offers a dedicated GRIB request form in the Request Center
+(Message → Request Center… → GRIB, or Message → GRIB File Request…) that
+hides this grammar behind a region picker and parameter checkboxes.
+Saildocs requests ride their own rail in the basket — each is dispatched
+as its own outgoing message when the basket is sent.
 
 The reason this matters operationally: Saildocs is a separate service.
 Its availability is independent of Winlink's. An operator can request
@@ -231,4 +235,4 @@ slot them between traffic.
 - [CMS and RMS gateways](05-cms-and-rms.md) — what the gateway list describes.
 - [Picking a transport](08-picking-a-transport.md) — which transport for which size of response.
 - [The mailbox](18-the-mailbox.md) — where catalog responses land.
-- [HTML Forms](20-html-forms.md) — the GRIB request form.
+- [HTML Forms](20-html-forms.md) — form-based composition (separate from catalog requests).

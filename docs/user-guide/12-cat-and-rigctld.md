@@ -6,32 +6,34 @@ and dozens of others. Hamlib's `rigctld` is the standard server that
 exposes any CAT-capable radio over a single TCP port so multiple programs
 can share the radio.
 
-This topic covers when tuxlink benefits from CAT, the rigctld pattern, and
-the common configurations.
+This topic covers rigctld as external infrastructure: what it is, when an
+operator needs it, and how it relates to tuxlink's radio chain.
 
-## When CAT matters
+## Tuxlink does not drive CAT
 
-CAT control is **optional** for tuxlink in the strict sense — a station
-with a tuned-by-hand radio and a hardware PTT line can run Winlink without
-any CAT involvement. CAT becomes valuable when:
+Tuxlink has no built-in rig-control client. It does not read or set the
+radio's frequency, mode, or VFO, and it does not require rigctld to operate.
+Tune the radio by hand to the frequency a gateway listing names, then Connect.
 
-- **Multiple modes are operationally relevant.** Switching from VARA HF to
-  ARDOP to FM Packet without touching the radio means CAT can change the
-  mode + filter settings.
-- **Frequency hopping is expected.** Catalog requests fetch a gateway list
-  with dozens of frequencies; pre-tuned hopping requires CAT.
-- **PTT goes via CAT.** Some setups use CAT-command PTT rather than a
-  hardware line (see [PTT methods overview](09-ptt-overview.md)).
-- **Logging or propagation tooling shares the rig.** A logger like CQRLOG
-  or a band-decoder needs to read the current frequency.
+rigctld is **external, operator-run** infrastructure. Whether you run it at
+all depends on the *other* software sharing the radio. CAT via rigctld becomes
+valuable when:
 
-If none of these apply, CAT is a "nice to have." If two or more apply,
-CAT via rigctld is the production-ready setup.
+- **Dire Wolf needs CAT-command PTT.** A Packet setup that keys the radio
+  through CAT rather than a hardware PTT line points Dire Wolf at rigctld for
+  PTT (see [PTT methods overview](09-ptt-overview.md)).
+- **A logger or propagation tool shares the rig.** A logger like CQRLOG or a
+  band decoder reads the current frequency from rigctld.
+- **One daemon should own the serial port.** rigctld holds the CAT port once
+  and lets every client share it instead of fighting over it.
+
+For a tuxlink station with a hand-tuned radio and a hardware PTT line, rigctld
+is not required at all.
 
 ## The rigctld pattern
 
 `rigctld` is a daemon that opens the radio's serial port once and exposes
-it over TCP on port 4532 (by default). Every client — tuxlink, a logger,
+it over TCP on port 4532 (by default). Every client — Dire Wolf, a logger,
 a propagation tool — connects to rigctld over TCP, sends commands, and
 reads responses.
 
@@ -39,12 +41,12 @@ reads responses.
 flowchart LR
     Radio["Radio (serial CAT)"]
     Rigctld["rigctld daemon<br/>(holds /dev/ttyUSB0)"]
-    Tuxlink["tuxlink"]
+    DireWolf["Dire Wolf (CAT-PTT)"]
     Logger["Logger / propagation tool"]
     Decoder["Band decoder"]
 
     Radio --- Rigctld
-    Rigctld -- "TCP :4532" --> Tuxlink
+    Rigctld -- "TCP :4532" --> DireWolf
     Rigctld -- "TCP :4532" --> Logger
     Rigctld -- "TCP :4532" --> Decoder
 ```
@@ -114,44 +116,40 @@ A working setup returns the frequency in hertz. A non-working setup
 returns `RPRT -1` or a connection refused; the rigctld journal log
 (`journalctl -u rigctld`) explains.
 
-## Tuxlink's rigctld integration
+## Tuxlink and CAT
 
-Tuxlink reads the radio's frequency for display in the dashboard ribbon
-and for catalog request preview. Per-mode panels also use CAT for the
-operator-friendly "set radio to this gateway's frequency" button.
+Tuxlink does not integrate rigctld. There is no rig-control client in tuxlink
+and no Settings panel for one; the dashboard ribbon shows the operator's
+identity and grid, not a live CAT frequency. Tune the radio by hand — or with
+whatever rig-control software you already run — to the gateway's frequency
+before you Connect. Hamlib rig control inside tuxlink is deferred to a later
+release.
 
-Configuration: **Tools → Settings → Radio → rigctld**. Fields:
-
-- **Enabled** — toggle.
-- **Host** — typically `localhost`.
-- **Port** — typically `4532`.
-- **Poll interval** — how often to refresh the frequency display. 1
-  second is a sensible default; faster polls add load without operator
-  benefit.
-
-When rigctld is enabled, the dashboard's frequency display updates live
-as the operator tunes the radio. When disabled, the display reads "No
-CAT" and the gateway preview falls back to "verify frequency manually."
+rigctld remains useful *around* tuxlink: it lets Dire Wolf key the radio over
+CAT, and it lets loggers and propagation tools share the rig. Tuxlink's own
+modems handle their transmit path independently — ardopcf and VARA assert PTT
+through their own configuration, and the DigiRig's hardware PTT line keys the
+radio directly (see [DigiRig setup](10-digirig.md)).
 
 ## CAT-PTT conflict avoidance
 
-If tuxlink is configured to use CAT-command PTT, that command runs over
-rigctld too — rigctld accepts a `T 1` / `T 0` (transmit on / off)
-command from any client. The conflict to avoid: two programs sending
-overlapping PTT commands.
+If Dire Wolf — or another tool — keys the radio via CAT, that `T 1` / `T 0`
+(transmit on / off) command runs over rigctld, which accepts PTT from any
+client. The conflict to avoid is two programs sending overlapping PTT commands
+to the same rig.
 
-If hardware PTT is in use (DigiRig PTT line, SignaLink hardware-PTT
-mod), keep CAT-PTT off in tuxlink's config to avoid double-driving the
-transmit line.
+If a hardware PTT line is in use (DigiRig PTT line, SignaLink hardware-PTT
+mod), keep CAT-PTT off in every tool that could assert it, so the transmit
+line is driven from one source only.
 
 ## Common configurations
 
 | Setup | rigctld? | PTT source |
 |---|---|---|
-| Tuxlink only, hardware PTT (DigiRig) | Yes, for frequency display | Hardware (DigiRig RTS) |
-| Tuxlink + logger, hardware PTT | Yes, shared via rigctld | Hardware (DigiRig RTS) |
-| Tuxlink only, CAT-PTT | Yes | CAT command via rigctld |
-| FM Packet only, fixed frequency, no logger | No, hand-tune | Hardware (DigiRig RTS) |
+| Tuxlink + hardware PTT (DigiRig), no other rig software | Not needed | Hardware (DigiRig RTS) |
+| Tuxlink + a logger sharing the rig | Yes, for the logger | Hardware (DigiRig RTS) |
+| Packet via Dire Wolf with CAT-PTT | Yes, for Dire Wolf's PTT | CAT command via rigctld |
+| FM Packet, fixed frequency, no logger | No, hand-tune | Hardware (DigiRig RTS) |
 
 ## Common failures
 
@@ -159,12 +157,11 @@ transmit line.
 |---|---|
 | `rigctld: Permission denied: /dev/ttyUSB0` | User not in `dialout` group; or systemd unit running as `root` and the device-node permissions don't allow it |
 | `RPRT -1` from `rigctl F` | rigctld can't reach the radio (cable, baud rate mismatch, radio in wrong CAT mode) |
-| Frequency display in tuxlink stuck at 0.000 MHz | rigctld is running but the connection from tuxlink failed; check the configured host:port |
-| Logger and tuxlink both freeze | One client is sending malformed commands; check rigctld logs to find the culprit |
+| Frequency reads 0.000 MHz in a logger or rig-control tool | rigctld is running but that client's connection failed; check its configured host:port |
+| A logger and Dire Wolf both freeze | One client is sending malformed commands; check rigctld logs to find the culprit |
 
 ## Where next
 
 - [DigiRig setup](10-digirig.md) — physical wiring + udev rules.
 - [Radio-specific notes](13-radio-specific-notes.md) — per-rig CAT model numbers and quirks.
 - [PTT methods overview](09-ptt-overview.md) — when CAT-PTT is the right call.
-- [Settings](27-settings.md) — the tuxlink-side rigctld configuration panel.

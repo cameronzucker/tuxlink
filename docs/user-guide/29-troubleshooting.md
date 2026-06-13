@@ -107,9 +107,10 @@ The wizard re-runs on next launch.
 - Look for `Remote rejected` or `Remote deferred`. A reject usually means the
   remote side declined that MID; check the recipient address, message type, and
   whether the remote already has it. A defer means retry later.
-- Check that the message is not relying on a not-yet-shipped surface. Outbound
-  file attachments are visible in the Compose UI but are not sent yet; received
-  attachments do work.
+- For a message with a large attachment, confirm the attachment fits the
+  transport's practical limit (see
+  [Composing](19-composing.md#attachments)). An oversized attachment on a
+  narrow RF link can exhaust the session before the message completes.
 - For large messages, retry with Telnet or a faster RF mode. Packet and narrow
   HF links are easy to exhaust with catalog responses, form bundles, and
   image-heavy traffic.

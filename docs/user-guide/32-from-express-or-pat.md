@@ -69,27 +69,27 @@ That makes tuxlink complementary rather than universally superior:
 
 | Express setting | Tuxlink equivalent |
 |---|---|
-| **Setup → My Settings → Call Sign** | Tools → Settings → Identity → Callsign |
-| **Setup → My Settings → Grid Square** | Tools → Settings → Identity → Maidenhead Grid |
-| **Setup → My Settings → Password** | Tools → Settings → Identity → Password |
-| **Setup → Connections → Telnet Winlink** | Tools → Settings → Connection → Telnet (host + port) |
+| **Setup → My Settings → Call Sign** | Settings → Identities → add a FULL identity (callsign) |
+| **Setup → My Settings → Grid Square** | Dashboard ribbon → Grid (or the first-launch wizard) |
+| **Setup → My Settings → Password** | Settings → Identities (FULL identity password; stored in the OS keyring) |
+| **Setup → Connections → Telnet Winlink** | Telnet connection panel (Connections → Winlink (CMS) → Telnet) |
 | **Setup → Connections → Vara HF** | VARA HF radio panel (Host / Cmd Port / Data Port / Bandwidth) |
-| **Setup → Connections → Packet Winlink** | Tools → Settings → Packet → KISS host + KISS port + SSID |
+| **Setup → Connections → Packet Winlink** | Packet connection panel (Connections → Packet) + dashboard SSID picker |
 | **Open Session → New Message** | Compose window (Ctrl+N) |
 | **Open Session → Read Selected Message** | Message list → click → reading pane |
 | **Contacts / Address Book** | Address -> Contacts in the sidebar |
 | **Group Addresses** | Address -> Contacts -> Groups |
 | **Import / Export Contacts** | Not yet provided; recreate high-value entries manually for now |
 | **Channel Selection** | Catalog request → RMS_LIST → results show in the radio panel's gateway picker |
-| **Color preferences** | Tools → Settings → Color schemes (6 bundled schemes) |
+| **Color preferences** | View → Color scheme (bundled presets + custom theme) |
 
 ### From Pat
 
 | Pat config key | Tuxlink equivalent |
 |---|---|
-| `mycall` in `config.json` | Tools → Settings → Identity → Callsign |
-| `locator` in `config.json` | Tools → Settings → Identity → Maidenhead Grid |
-| `secure_login_password` | Tools → Settings → Identity → Password |
+| `mycall` in `config.json` | Settings → Identities (FULL identity callsign) |
+| `locator` in `config.json` | Dashboard ribbon → Grid (or the first-launch wizard) |
+| `secure_login_password` | Settings → Identities (stored in the OS keyring) |
 | `connect_aliases` | Per-transport panel (Telnet / Packet / ARDOP / VARA) |
 | `service.command` (auto-connect rules) | (Future work; tracked as the AutoConnect feature) |
 | `forms.path` | Built-in — Tuxlink ships the Winlink Forms catalog |
@@ -132,12 +132,12 @@ documentation makes it explicit.
 
 Express broadcasts what the GPS says: precise coordinates, sub-meter.
 Tuxlink defaults to 4-character Maidenhead (county-scale resolution). The
-operator opts up to 6-character, 8-character, or full GPS via Settings.
-See [Position and privacy](26-position-and-privacy.md) for the privacy
-framing.
+operator opts up to 6-character Maidenhead via Settings; Tuxlink does not
+broadcast finer than 6-character. See
+[Position and privacy](26-position-and-privacy.md) for the privacy framing.
 
-For an Express operator who specifically wants precise position broadcast,
-the Settings panel takes one toggle.
+An Express operator who wants finer position can step the broadcast up to
+6-character grid in the Settings panel.
 
 ### Folder semantics
 
@@ -182,7 +182,7 @@ operationally significant:
 | Mid-session resume after disconnect | Not supported — interrupted transfers restart from the beginning |
 | RMS Express Telnet (the special variant) | Not relevant — tuxlink speaks standard B2F over standard Telnet |
 | Send-as / message-type selector | Not yet — Compose currently sends ordinary Winlink messages, while forms, catalog requests, and weather requests use dedicated compose paths |
-| Outbound file attachments and image resize/crop | Partial — received attachments work; outbound attachment send and Express-style image tools are not shipped yet |
+| Outbound file attachments and image tools | Shipped — outbound attachments send, with attach-time image resize (Small / Medium / Large). Express-style crop is not yet shipped |
 | Message templates | Not yet — the Compose template button is visible but disabled |
 | Accept List / spam controls | Not yet — manage Winlink account-side Accept List rules outside tuxlink for now |
 | In-app import / export / archive conversion | Not yet — copy `native-mbox/` for backup; Express/Pat conversion remains a manual or one-time-script migration task |
@@ -190,7 +190,8 @@ operationally significant:
 
 The mapping the other way — features tuxlink has that Express does not —
 includes the per-session consent affordance (above), the privacy-default
-position model, and the inline-UI architecture.
+position model, the inline-UI architecture, APRS tactical chat, and native
+Benshi UV-Pro radio control.
 
 ## Parity gaps from Pat
 
@@ -198,7 +199,7 @@ position model, and the inline-UI architecture.
 |---|---|
 | Web UI | Not provided (intentional — see "Inline UI") |
 | HTTP/JSON API | Not exposed |
-| Multiple-profile support | Not yet — tuxlink assumes one callsign per install |
+| Multiple-profile support | Supported — FULL and tactical multi-identity under Settings → Identities |
 | Forwarding / inbox rules | Not yet |
 | GPSD direct integration | Same path — tuxlink reads from gpsd when available |
 

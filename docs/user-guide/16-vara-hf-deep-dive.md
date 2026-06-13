@@ -172,11 +172,13 @@ out of the box for that combination.
 VARA supports peer-to-peer mode, in which two stations connect directly
 without an RMS. The session runs the same B2F dance at the application
 layer; the difference is that both ends authenticate as operator callsigns
-rather than the gateway-side authenticating as an RMS.
+rather than the gateway side authenticating as an RMS.
 
-Tuxlink's peer-to-peer flow uses the same VARA radio panel — the operator
-enters the partner station's callsign instead of an RMS callsign, and the
-session log identifies the connection as peer-to-peer.
+Tuxlink's VARA radio panel opens and closes the TCP transport to the
+operator's VARA instance and runs the CMS/RMS path. RF connect-to-peer
+over VARA is pending — it needs the peer-to-peer session state machine and
+the per-session consent flow, which are not yet shipped. The VARA CMS/RMS
+flow is the supported VARA path today.
 
 ## VARA FM — the FM counterpart
 

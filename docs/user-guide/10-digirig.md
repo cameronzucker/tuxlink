@@ -135,13 +135,14 @@ light. If neither, the device path is wrong or the PTT cable isn't seated.
 
 The CAT cable handles frequency, mode, and split control. The DigiRig
 passes the CAT serial through transparently — Linux sees it as a normal
-USB serial port. Tuxlink does not own this port; it runs through Hamlib's
-rigctld (see [CAT and rigctld](12-cat-and-rigctld.md)).
+USB serial port. Tuxlink does not use this port; it has no rig-control
+client (see [CAT and rigctld](12-cat-and-rigctld.md)).
 
-A typical CAT config has rigctld running as a system service against the
-DigiRig's CAT port, on a fixed TCP port (4532 by default). Tuxlink and
-any other rig-aware software (logging, propagation tools) all talk to
-rigctld instead of fighting over the serial port.
+CAT matters only for external software. If Dire Wolf keys the radio via
+CAT-PTT, or a logger or propagation tool shares the rig, the typical config
+runs rigctld as a system service against the DigiRig's CAT port on a fixed
+TCP port (4532 by default), and those tools share it instead of fighting
+over the serial port.
 
 ## Verifying the full chain
 
@@ -185,8 +186,9 @@ pair (audio + CAT). After connecting:
 - Set CAT baud to 19200.
 
 This combination has been operationally confirmed on VARA HF Standard
-against real RMS gateways. The CAT serial settings — 19200 8N1 — match
-both rigctld and tuxlink's defaults.
+against real RMS gateways. The CAT serial settings — 19200 8N1 — are the
+Hamlib defaults for the G90, for an operator running rigctld for external
+software.
 
 ## Where next
 

@@ -16,12 +16,12 @@ custom-forms directory appear alongside the bundle.
 
 Two compose paths exist:
 
-- **Native compose** for the highest-volume forms: ICS-213 and Bulletin
-  render through dedicated React components, with form-validation and
-  the tuxlink theme applied directly. Position Report, ICS-309 Comms Log,
-  and Winlink Check-In are scheduled to move to native compose with
-  GPS auto-fill, message-aggregation, and save-slot features in a
-  follow-up phase.
+- **Native compose** for the highest-volume forms: ICS-213, Bulletin,
+  Position Report, ICS-309 Comms Log, and Winlink Check-In render through
+  dedicated React components, with form validation and the tuxlink theme
+  applied directly. The Position composer carries GPS auto-fill and map
+  selection. Damage Assessment is view-only — it renders received reports
+  but has no native composer.
 - **Webview compose** for every other catalog template: the WLE HTML
   loads inside a tuxlink-skinned child webview embedded in the Compose
   window. The form's native Submit button posts to a per-form loopback

@@ -142,11 +142,13 @@ does not own the credential.
 ## What can go wrong
 
 - "Not configured" in the message list = the backend has no callsign or
-  no transport yet. Re-run the wizard via Tools → Settings, or delete the
-  config file.
+  no transport yet. Delete the config file to re-run the wizard on next
+  launch, or recover the callsign/password through the auth-recovery
+  banner that appears after a failed CMS login.
 - "CMS unreachable" — the optional verify step failed. Either retry with a
-  different CMS endpoint (Settings) or skip verification and let the first
-  real Connect surface the failure with full session log context.
+  different CMS endpoint (the Telnet connection panel) or skip verification
+  and let the first real Connect surface the failure with full session log
+  context.
 - **"Authentication failed" on first Connect** = the Winlink password
   entered in the wizard does not match what winlink.org has on file.
   Re-check the password (look-alikes between `0`/`O`, `1`/`l`/`I`); if
