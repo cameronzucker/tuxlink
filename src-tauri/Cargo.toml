@@ -38,7 +38,14 @@ tauri-plugin-dialog = "2"  # tuxlink-0fyj — native Save As dialog for MessageV
 # webp = lossy WebP encode (libwebp C lib). System libs (libheif/libde265/
 # libwebp) installed by CI + bundled as .deb depends — see the mg4s plan.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp"] }
-libheif-rs = "2"  # 2.x API (LibHeif::new + ctx.read_from_bytes + lib.decode + planes().interleaved); needs libheif>=1.17 (ok on Ubuntu 24.04)
+# Pinned EXACTLY to 1.0.2: it uses libheif-sys ^2.1 (→ 2.2.1+1.17.6), which
+# pkg-configs against the libheif the build/target distro actually ships
+# (Ubuntu 24.04 = libheif 1.17.6). libheif-rs 2.x pulls libheif-sys 5.x which
+# requires libheif>=1.21 (NOT in 24.04 — CI build-script fails). 1.1.0 jumps to
+# libheif-sys ^3.1, so caret is unsafe — exact pin. The decode API
+# (LibHeif::new + ctx.read_from_bytes + lib.decode + planes().interleaved) is
+# identical in 1.0.2, so transcode.rs is unchanged.
+libheif-rs = "=1.0.2"
 webp = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
