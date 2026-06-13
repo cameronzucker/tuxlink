@@ -95,6 +95,10 @@ or two. A 6-character grid identifies the operator's town. An 8-character
 grid identifies a few city blocks around the operator. Full GPS
 identifies the operator's chair.
 
+Tuxlink broadcasts only the 4- or 6-character grid. The 8-character and
+full-GPS rows above explain the Maidenhead system; they are not selectable
+broadcast options.
+
 Tuxlink defaults to 4-character because the privacy / utility curve is
 asymmetric: 4-character is sufficient for most operating uses (gateway
 selection, regional propagation, net check-ins), and the marginal utility
@@ -128,8 +132,7 @@ Some operating contexts justify higher precision broadcasts:
 - **Emcomm at a fixed assignment.** Operating from a shelter, an EOC, or a
   staging area. The position is publicly-known (the shelter has a
   published address), and net coordinators benefit from knowing where the
-  operator is. 6-character is fine; 8-character is operationally
-  unnecessary.
+  operator is. 6-character — the finest Tuxlink broadcasts — is sufficient.
 - **Search and rescue / SHARES.** Some SAR-adjacent nets call for
   precise positions. Operator's call; the net's stated requirements apply.
 
@@ -150,11 +153,13 @@ Some operating contexts justify higher precision broadcasts:
 
 **Tools → Settings → GPS & Privacy** opens the inline panel. The settings:
 
-- **GPS state.** Three options: Off (no GPS read), On (read GPS, use
-  locally), Always-broadcast (read GPS and broadcast at the configured
-  precision).
-- **Broadcast precision.** Dropdown: 4-character Maidenhead (default),
-  6-character Maidenhead, 8-character Maidenhead, Full GPS.
+- **GPS state.** Three options: **Broadcast at precision** (default — GPS is
+  read and may be broadcast on air at the precision below), **Local display
+  only** (GPS is read for the local UI, but outbound traffic uses the
+  configured grid), and **Off** (GPS is not read; the configured grid is used).
+- **Broadcast precision.** Dropdown: **4-character grid** (~1°, default) and
+  **6-character grid** (~5 km). Tuxlink does not broadcast finer than
+  6-character.
 
 Changes take effect immediately. The next outbound message uses the new
 settings.
@@ -188,8 +193,8 @@ Subject: ARES check-in
 ```
 
 The grid in the example above is the 4-character default. With 6-character
-broadcast it would be `CN85qe`; with 8-character `CN85qe72`; with full GPS
-`37.7749,-122.4194` (precise decimal).
+broadcast it would be `CN85qe`. Tuxlink does not broadcast finer than
+6-character.
 
 ## Auditing what you broadcast
 

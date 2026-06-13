@@ -102,9 +102,9 @@ barrier for Winlink Express users:
 - **NEVER treat CLI as the primary interface.** A CLI may exist for
   power users and CI. The primary interface is the Tauri GUI. The CLI
   never has features the GUI lacks.
-- **NEVER require the user to understand that tuxlink manages Pat.**
-  The Pat daemon is an implementation detail. The user does not know
-  Pat exists unless they open About -> Credits.
+- **NEVER require the user to understand the backend transport engine.**
+  The native Winlink protocol engine is an implementation detail. The user
+  operates the client without needing to know how B2F sessions are carried.
 
 ## Anti-Patterns Observed in WoAD
 

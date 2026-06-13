@@ -40,9 +40,9 @@ pane swaps from the compose draft view to the Telnet connection panel —
 status, host, and a session log area that fills with line-by-line progress
 once Connect runs.
 
-If the Telnet entry is missing, the wizard's CMS step was skipped. Open
-**Tools → Settings → Connection** and enter the published CMS Telnet
-endpoint (host + port) and credentials.
+If the Telnet entry is missing, the wizard's CMS step was skipped. Select
+**Connections → Winlink (CMS) → Telnet** in the sidebar and set the CMS
+host and transport in the Telnet connection panel.
 
 ## Connect
 
@@ -123,8 +123,9 @@ transport from here (Packet, ARDOP, VARA HF) is the next layer.
 ## What can go wrong
 
 - **"Login failed"** — the wizard saved a different password than what's
-  registered against your callsign. Re-run the wizard via **Tools →
-  Settings → Identity** to update.
+  registered against your callsign. Update the password through the
+  auth-recovery banner that appears after a failed CMS login, or edit the
+  identity under **Settings → Identities**.
 - **"CMS unreachable"** — DNS, firewall, or upstream issue. The session log
   shows the underlying error (connection refused, timeout, TLS).
 - **Outbox stays non-zero after a successful disconnect** — the message

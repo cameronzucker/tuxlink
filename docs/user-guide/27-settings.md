@@ -1,15 +1,16 @@
 # Settings
 
-Tuxlink alpha does not have one large preferences window. Settings live where
-the operator uses them: GPS and map settings are under Tools, themes are under
-View, logging controls are in the Logging window, and transport settings sit in
-their transport panels.
+Tuxlink distributes settings to where the operator uses them. The unified
+Settings panel (Tools → Settings → GPS & Privacy...) holds identities, the GPS
+position source, and broadcast privacy; map tiles have their own Settings entry;
+themes are under View; logging controls are in the Logging window; and transport
+settings sit in their transport panels.
 
 ## Quick reference
 
 | Setting | Where to change it | Notes |
 |---|---|---|
-| Callsign | First-launch wizard; auth recovery can reopen the callsign step after a CMS identity failure | Tuxlink alpha assumes one primary callsign per install. |
+| Callsign and identities | First-launch wizard for the first identity; Tools -> Settings -> GPS & Privacy... -> Identities to add, edit, or switch | FULL (licensed) and tactical identities are both supported; the dashboard ribbon's identity switcher selects the active one. |
 | Winlink password | First-launch wizard; auth recovery can re-enter the password after a CMS auth failure | Stored in the OS keyring, not in `config.json`. |
 | Manual grid | Dashboard ribbon -> Grid | Click the grid value to type a grid, or choose **Pick on map...** from the grid editor. |
 | GPS/manual position source | Dashboard ribbon -> Grid source segments | Pick **GPS** to use a receiver when available; pick **MANUAL** to pin a manual grid. |
@@ -26,23 +27,24 @@ their transport panels.
 
 ## Identity
 
-The wizard writes the operator identity into Tuxlink's config file:
+The wizard writes the operator's first identity into Tuxlink's config. The
+**Identities** section of the Settings panel (Tools -> Settings -> GPS &
+Privacy...) manages the rest. Tuxlink supports two identity kinds:
 
-- **Callsign** for Winlink/CMS operation.
-- **Station identifier** for offline/radio-only deployments that do not log
-  into CMS.
-- **Manual grid** as the fallback position when GPS is unavailable or disabled.
+- **FULL identities** — a licensed amateur callsign with its Winlink password,
+  used for CMS/RMS operation. The password is stored in the OS keyring.
+- **Tactical identities** — a tactical address nested under a parent FULL
+  callsign, for served-agency or net traffic that does not log into CMS.
+
+The Identities section lists each FULL identity with its tacticals beneath it,
+offers add forms for both kinds, and supports per-row removal. The dashboard
+ribbon's identity switcher selects the active identity for the next session.
 
 The callsign and grid are not secrets. They live in
 `~/.config/tuxlink/config.json` unless `TUXLINK_CONFIG_DIR` points Tuxlink at a
 custom config directory. Tuxlink validates the basic shape of the callsign or
-identifier, but the CMS is the authority for whether a callsign/password pair is
-accepted.
-
-Alpha limitation: there is not yet a polished general-purpose **Identity**
-settings panel. To change the station's grid, use the dashboard ribbon. To
-recover from a bad callsign or password, use the auth recovery banner that
-appears after a failed CMS login.
+tactical label, but the CMS is the authority for whether a callsign/password
+pair is accepted. To change the station's grid, use the dashboard ribbon.
 
 ## Position and privacy
 
@@ -95,8 +97,8 @@ practice behind these defaults.
 
 ## Connection settings
 
-The disabled Tools -> Settings -> Connection menu item is a placeholder. Current
-alpha transport settings live in the connection panels themselves.
+Tuxlink has no Connection settings menu item — transport settings live in the
+connection panels themselves.
 
 ### CMS Telnet
 
@@ -287,7 +289,6 @@ The next CMS-authenticated flow that needs the password will ask for it again.
 Winlink Express exposes several preference families that Tuxlink does not yet
 ship as settings:
 
-- Multiple callsigns or full multi-profile switching.
 - Automatic forwarding rules and inbox rules.
 - Form-preference panels for HTML form behavior.
 - PACTOR, Robust Packet, Iridium GO, and other unsupported transport setup

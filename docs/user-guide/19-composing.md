@@ -73,22 +73,22 @@ successful send.
      strip visible at the top, displaying file name + size for one or two
      attachments. Reading-pane crop, ~700x400. -->
 
-The compose window has a drop-zone for attachments, but the send-side
-multipart wire-up is not yet shipped — dropping a file shows a notice in
-the console and does not attach. Outbound attachments are tracked under
-the HTML Forms epic.
+The compose window has a drop-zone for attachments. Dropping or picking a
+file attaches it to the outbound message; each attachment row shows the
+file's name, size, and the airtime cost on the selected transport.
 
-Received attachments DO work end-to-end. The message reading pane shows
-an attachment strip with name and size; clicking an entry opens the
+Image attachments can be resized at attach time. Pick a **Small**,
+**Medium** (default), or **Large** preset — or **Original** — and Tuxlink
+transcodes the image to JPEG at the chosen size before it goes on air. A
+sharp 200 KB site photo beats a multi-megabyte phone original on every RF
+path. Express-style image cropping is not yet shipped; crop the image
+before importing if a tighter frame matters.
+
+Received attachments work end-to-end as well. The message reading pane
+shows an attachment strip with name and size; clicking an entry opens the
 native Save As dialog and writes the file to disk via the backend.
 
-Tuxlink does not yet include Winlink Express-style image crop / resize tools.
-When outbound attachments are wired, resize images before attaching them and
-pick the smallest file that still preserves the operational detail. A sharp
-200 KB site photo beats a multi-megabyte phone original on every RF path.
-
-Indicative size limits once outbound is wired (the receiver still applies
-its own caps):
+Indicative size limits (the receiver still applies its own caps):
 
 - **Telnet:** ~1 MB practical limit (CMS-side per-message cap).
 - **Packet:** ~1 KB practical limit (1200-baud session airtime).
@@ -96,7 +96,7 @@ its own caps):
 - **VARA:** ~50 KB practical limit (HF session airtime at higher
   throughput).
 
-For multi-MB inbound attachments, the sender should use Telnet.
+For multi-MB attachments, use Telnet.
 
 ## HTML forms
 
