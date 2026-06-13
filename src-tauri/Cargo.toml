@@ -35,7 +35,7 @@ tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"  # tuxlink-0fyj — native Save As dialog for MessageView attachment download
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }  # tuxlink-z5f: dropped "blocking" — PatClient is async to avoid runtime-drop panic in #[tokio::test] contexts. tuxlink-xipa Codex P1 #1: "stream" added for forms::updater::download_archive chunked size enforcement.
+reqwest = { version = "0.12", features = ["json", "multipart", "stream", "gzip"] }  # tuxlink-z5f: dropped "blocking" — PatClient is async to avoid runtime-drop panic in #[tokio::test] contexts. tuxlink-xipa Codex P1 #1: "stream" added for forms::updater::download_archive chunked size enforcement. tuxlink-k61j: "gzip" — TileServer-GL/nginx serve tiles with Content-Encoding: gzip; the tile client must decompress so the image magic-byte check sees the real image, not gzip bytes.
 tokio = { version = "1", features = ["full"] }
 nix = { version = "0.31", features = ["signal", "process"] }
 thiserror = "2"            # NEW — for ConfigValidationError + ConfigReadError + ConfigWriteError
@@ -120,6 +120,7 @@ serial_test = "3"          # NEW — gates env-var-mutating tests
 proptest = "1.4"           # NEW (tuxlink-c79g T7) — state-space matrix tests for position arbiter invariants I1-I5
 static_assertions = "1.1"  # alpha-logging (tuxlink-qjgx) — credential-struct Debug audit test
 tracing-test = "0.2"       # alpha-logging (tuxlink-qjgx) — Task 9.1 emission-coverage tests
+flate2 = "1"               # tuxlink-k61j — build a gzip-encoded tile fixture to prove the tile client decompresses Content-Encoding: gzip (TileServer-GL/nginx); already in the tree via reqwest's "gzip"
 syn = { version = "2", features = ["full", "parsing", "visit"] }  # alpha-logging (tuxlink-qjgx) — credential struct source-scan (§10.2 #9)
 quote = "1"                # alpha-logging (tuxlink-qjgx) — ToTokens for type normalization in source-scan
 

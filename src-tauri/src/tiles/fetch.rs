@@ -138,6 +138,14 @@ pub fn build_tile_client() -> Result<reqwest::Client, FetchError> {
         // proxy would open the connection to the proxy host, not the vetted LAN
         // IP, so the LAN-only egress gate would be bypassed entirely.
         .no_proxy()
+        // TileServer-GL / nginx commonly serve tiles with `Content-Encoding:
+        // gzip` (MBTiles stores tiles gzipped; nginx passes the header through).
+        // Without transparent decompression the magic-byte check sees gzip
+        // (`1f 8b`) instead of the image and the source is wrongly rejected as
+        // incompatible (bd tuxlink-k61j). reqwest decompresses + strips the
+        // header; the streamed running-total cap still bounds the DECOMPRESSED
+        // size, so a gzip bomb is caught at MAX_TILE_BYTES.
+        .gzip(true)
         .build()
         .map_err(|e| FetchError::Network(format!("client build: {e}")))
 }
@@ -226,6 +234,9 @@ where
                 // SSRF (§8.3) — see build_tile_client: a proxy would defeat the
                 // resolve_to_addrs pin (it pins the host, not the proxy).
                 .no_proxy()
+                // Decompress gzip-encoded tiles (TileServer-GL/nginx) — see
+                // build_tile_client; the streamed cap still bounds decompressed size.
+                .gzip(true)
                 .resolve_to_addrs(&host, &resolved)
                 .build()
                 .map_err(|e| FetchError::Network(format!("client build: {e}")))
@@ -887,6 +898,41 @@ mod tests {
         let src = source(&server.url());
         let err = fetch_tile_bytes(&src, &coord(), true).await.unwrap_err();
         assert!(matches!(err, FetchError::TooLarge), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn gzip_encoded_tile_is_transparently_decompressed() {
+        // bd tuxlink-k61j: TileServer-GL / nginx commonly serve tiles with
+        // `Content-Encoding: gzip` (Geographica's USGS imagery does — the JPEG
+        // body arrives gzip-wrapped). The tile client MUST decompress, else the
+        // magic-byte check sees gzip (`1f 8b`) instead of the image and the source
+        // is wrongly reported incompatible. This drives the REAL reqwest
+        // decompression path (the `gzip` feature + `.gzip(true)`), not a stub.
+        use std::io::Write;
+        let mut gz = Vec::new();
+        {
+            let mut enc =
+                flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+            enc.write_all(&png_bytes()).unwrap();
+            enc.finish().unwrap();
+        }
+        // Sanity: the wire body really is gzip-wrapped (not a raw PNG).
+        assert_eq!(&gz[0..2], &[0x1f, 0x8b], "fixture must be gzip on the wire");
+
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/3/5/2.png")
+            .with_status(200)
+            .with_header("content-type", "image/jpeg") // mislabeled on purpose: magic decides
+            .with_header("content-encoding", "gzip")
+            .with_body(gz)
+            .create_async()
+            .await;
+        let src = source(&server.url());
+        let (bytes, mime) = fetch_tile_bytes(&src, &coord(), true).await.unwrap();
+        // Decompressed → PNG magic recognized (NOT gzip, NOT the mislabeled jpeg).
+        assert_eq!(mime, "image/png");
+        assert!(bytes.starts_with(b"\x89PNG"), "body must be the decompressed image");
     }
 
     #[tokio::test]
