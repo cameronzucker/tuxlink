@@ -78,6 +78,34 @@
 .layout-b .panes--with-dock.panes--with-legacy-dock {
   grid-template-columns: 200px 380px 1fr 400px 290px;
 }
+/* tuxlink-iehg: the shared APRS dock surface. When the operator opens APRS chat,
+ * the dock holds the tab switcher PLUS an active body (chat or modem). The drawer
+ * (`.radio-drawer` + `.radio-drawer-body`) is `display:contents` on desktop, so
+ * its direct children are promoted to grid items of `.panes`. Two bare children
+ * would overflow the single budgeted dock column (`.panes--with-dock`'s 4th
+ * track) — the second escaped to an implicit row/col (bottom-left). This wrapper
+ * is the ONE grid item that fills the dock column and stacks the tabs over the
+ * body. The `!aprsOpen` radio-panel-only path stays a bare panel grid item. */
+.layout-b .aprs-dock-surface {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+/* The active body (chat panel or the selected per-mode radio panel) fills the
+ * remaining height below the fixed-height tab row. min-height:0 lets the inner
+ * scroll regions (thread list / message log) own their overflow. */
+.layout-b .aprs-dock-surface > .aprs-chat,
+.layout-b .aprs-dock-surface > .radio-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* `.radio-panel` ships `height: 100%`, which (as a flex child sharing the
+   * column with the fixed-height tab row) would overflow by the tab-row height.
+   * Let flex own the height so the body fills exactly the space below the tabs. */
+  height: auto;
+}
 
 /* tuxlink-r4je: the Contacts pseudo-folder mounts ContactsPanel as a single
  * direct child of `.panes`, replacing the MessageList + reading-pane pair (M8).
