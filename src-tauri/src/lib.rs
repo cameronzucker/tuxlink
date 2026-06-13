@@ -911,6 +911,12 @@ pub fn run() {
             crate::position::probe::gps_probe_serial_devices,
             crate::position::probe::gps_probe_dialout,
             crate::position::probe::gps_probe_modemmanager,
+            // tuxlink-m9ej: one-click "Fix it for me" via the pkexec helper.
+            crate::position::gps_fix::gps_run_fix,
+            crate::position::gps_fix::gps_pkexec_available,
+            // tuxlink-n399: one-click full gpsd setup + package-manager probe.
+            crate::position::gps_fix::gps_setup_gpsd,
+            crate::position::gps_fix::gps_pkg_manager,
             // tuxlink-vrpk: GRIB request via Saildocs (3rd-party SMTP).
             crate::grib::commands::grib_send_request,
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)

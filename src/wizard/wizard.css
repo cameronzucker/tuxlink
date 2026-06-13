@@ -53,6 +53,40 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Full-screen Location step (tuxlink-yy1m): the wizard is a full-window
+   takeover, so this step uses the whole screen with a large, usable map.
+   Wide card + a two-column body (map left, controls right); stacks on narrow
+   viewports. The default 580px wizard-step cap does not apply here. */
+.wizard-root .wizard-step.wizard-step-location--fullscreen {
+  max-width: min(1280px, 100%);
+  padding: 28px 32px 26px;
+}
+.wizard-root .wizard-step-location--fullscreen .gps-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.wizard-root .wizard-step-location--fullscreen .gps-picker__map {
+  height: calc(100vh - 320px);
+  min-height: 360px;
+  margin-bottom: 0;
+}
+.wizard-root .wizard-step-location--fullscreen .gps-picker__controls {
+  min-width: 0;
+}
+/* Stack on narrow viewports so the rail never gets crushed. */
+@media (max-width: 880px) {
+  .wizard-root .wizard-step-location--fullscreen .gps-picker {
+    grid-template-columns: 1fr;
+  }
+  .wizard-root .wizard-step-location--fullscreen .gps-picker__map {
+    height: 42vh;
+    min-height: 280px;
+    margin-bottom: 16px;
+  }
+}
+
 .wizard-root .wizard-step > h1 {
   margin: 0 0 10px;
   font-size: 25px;

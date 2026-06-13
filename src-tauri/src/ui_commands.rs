@@ -6149,6 +6149,13 @@ pub struct PositionStatusDto {
     /// operator sees the live fix locally but the on-air locator stays at
     /// the static config grid. Serializes as `ui_grid` (snake_case).
     pub ui_grid: String,
+    /// Raw latitude of the live GPS fix, present only when `gps_ready` (i.e. a
+    /// fresh fix exists AND `gps_state != Off`). LOCAL DISPLAY ONLY — the precise
+    /// pin on the setup map (tuxlink-yy1m); never broadcast. `None` for Manual
+    /// source / no fix / GPS off.
+    pub fix_lat: Option<f64>,
+    /// Raw longitude of the live GPS fix; see `fix_lat`.
+    pub fix_lon: Option<f64>,
 }
 
 #[tauri::command]
@@ -6156,11 +6163,24 @@ pub async fn position_status(
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
 ) -> Result<PositionStatusDto, UiError> {
     let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let gps_ready =
+        arbiter.has_fresh_fix() && cfg.privacy.gps_state != crate::config::GpsState::Off;
+    // Surface the raw fix coords only when the fix is live AND GPS is on — so a
+    // Manual install or GPS-off install never leaks coords into the DTO.
+    let (fix_lat, fix_lon) = if gps_ready {
+        match arbiter.fresh_fix_latlon() {
+            Some((la, lo)) => (Some(la), Some(lo)),
+            None => (None, None),
+        }
+    } else {
+        (None, None)
+    };
     Ok(PositionStatusDto {
-        gps_ready: arbiter.has_fresh_fix()
-            && cfg.privacy.gps_state != crate::config::GpsState::Off,
+        gps_ready,
         broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
         ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
+        fix_lat,
+        fix_lon,
     })
 }
 
@@ -10118,6 +10138,8 @@ hw:CARD=Device,DEV=0
             gps_ready: true,
             broadcast_grid: "CN87".to_string(),
             ui_grid: "CN87".to_string(),
+            fix_lat: None,
+            fix_lon: None,
         };
         let v = serde_json::to_value(&dto).unwrap();
         assert!(v.get("active_source").is_none(),
@@ -10146,6 +10168,8 @@ hw:CARD=Device,DEV=0
                 && cfg.privacy.gps_state != GpsState::Off,
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
             ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
+            fix_lat: None,
+            fix_lon: None,
         };
         assert!(dto.gps_ready);
         assert_eq!(dto.broadcast_grid, "DM33", "GPS fix grid must appear in broadcast_grid");
@@ -10172,6 +10196,8 @@ hw:CARD=Device,DEV=0
                 && cfg.privacy.gps_state != GpsState::Off,
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
             ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
+            fix_lat: None,
+            fix_lon: None,
         };
         assert!(!dto.gps_ready);
         let v = serde_json::to_value(&dto).unwrap();
@@ -10199,6 +10225,8 @@ hw:CARD=Device,DEV=0
                 && cfg.privacy.gps_state != GpsState::Off,
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
             ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
+            fix_lat: None,
+            fix_lon: None,
         };
         assert_eq!(
             dto.broadcast_grid, "DM33",
@@ -10237,6 +10265,8 @@ hw:CARD=Device,DEV=0
             gps_ready: true,
             broadcast_grid: "DM33".to_string(),  // config fallback under LocalUiOnly
             ui_grid: "DM33ww".to_string(),       // live fix shown to operator
+            fix_lat: None,
+            fix_lon: None,
         };
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["broadcast_grid"], "DM33");

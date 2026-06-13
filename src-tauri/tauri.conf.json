@@ -7,6 +7,7 @@
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build",
+    "beforeBundleCommand": "cargo build --release --manifest-path src-tauri/Cargo.toml --bin tuxlink-gps-fix",
     "frontendDist": "../dist"
   },
   "app": {
@@ -57,7 +58,9 @@
           "direwolf (>= 1.6)"
         ],
         "files": {
-          "/usr/share/applications/tuxlink.desktop": "../scripts/tuxlink.desktop"
+          "/usr/share/applications/tuxlink.desktop": "../scripts/tuxlink.desktop",
+          "/usr/libexec/tuxlink-gps-fix": "target/release/tuxlink-gps-fix",
+          "/usr/share/polkit-1/actions/com.tuxlink.app.policy": "packaging/com.tuxlink.app.policy"
         }
       },
       "rpm": {
@@ -73,7 +76,11 @@
         ],
         "recommends": [
           "direwolf >= 1.6"
-        ]
+        ],
+        "files": {
+          "/usr/libexec/tuxlink-gps-fix": "target/release/tuxlink-gps-fix",
+          "/usr/share/polkit-1/actions/com.tuxlink.app.policy": "packaging/com.tuxlink.app.policy"
+        }
       },
       "appimage": {
         "bundleMediaFramework": false

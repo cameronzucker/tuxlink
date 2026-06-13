@@ -1,15 +1,22 @@
 use std::sync::Mutex;
 use crate::config::{broadcast_grid, PositionPrecision, PositionSource};
 
-/// A GPS fix reduced to a grid + freshness, as handed in by the gpsd client.
+/// A GPS fix: the derived grid plus the raw lat/lon it came from, and freshness.
+/// The raw `lat`/`lon` are LOCAL-DISPLAY ONLY (the precise setup-map pin,
+/// tuxlink-yy1m) — never broadcast; the on-air path uses the grid + precision
+/// reduction in `broadcast_grid`.
 #[derive(Debug, Clone)]
 pub struct Fix {
     pub grid: String,
+    pub lat: f64,
+    pub lon: f64,
     pub received: std::time::Instant,
 }
 impl Fix {
     #[cfg(test)]
-    pub fn test(grid: &str) -> Self { Self { grid: grid.into(), received: std::time::Instant::now() } }
+    pub fn test(grid: &str) -> Self {
+        Self { grid: grid.into(), lat: 0.0, lon: 0.0, received: std::time::Instant::now() }
+    }
     fn is_fresh(&self, window: std::time::Duration) -> bool { self.received.elapsed() < window }
 }
 
@@ -114,6 +121,17 @@ impl PositionArbiter {
         self.inner.lock().unwrap().last_fix.as_ref().is_some_and(|f| f.is_fresh(FIX_STALENESS))
     }
 
+    /// The newest fix's raw lat/lon, but only while it is fresh. LOCAL DISPLAY
+    /// ONLY (the precise pin on the operator's own setup map, tuxlink-yy1m) —
+    /// never broadcast. `None` when there is no fix or it has gone stale.
+    pub fn fresh_fix_latlon(&self) -> Option<(f64, f64)> {
+        let i = self.inner.lock().unwrap();
+        i.last_fix
+            .as_ref()
+            .filter(|f| f.is_fresh(FIX_STALENESS))
+            .map(|f| (f.lat, f.lon))
+    }
+
     /// Hold the arbiter mutex for a full transactional critical section. Used
     /// by commands that need to read config → write config → mutate arbiter
     /// atomically (spec §3.3, R3 F1 + F7 from the 2026-06-01 position-subsystem
@@ -159,6 +177,22 @@ mod tests {
             "active_grid must stay manual_grid while source = Manual");
         assert!(arbiter.has_fresh_fix(),
             "apply_gps_fix must record last_fix even while source = Manual");
+    }
+
+    // tuxlink-yy1m: fresh_fix_latlon returns the raw coords only while fresh.
+    #[test]
+    fn fresh_fix_latlon_some_when_fresh_none_when_absent() {
+        let a = PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
+        assert_eq!(a.fresh_fix_latlon(), None, "no fix yet → None");
+        let mut f = Fix::test("DM33ab");
+        f.lat = 33.5;
+        f.lon = -112.1;
+        a.apply_gps_fix(f);
+        assert_eq!(
+            a.fresh_fix_latlon(),
+            Some((33.5, -112.1)),
+            "fresh fix returns its raw coords"
+        );
     }
 
     #[test]

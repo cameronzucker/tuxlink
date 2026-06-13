@@ -23,39 +23,56 @@ import { useLocationConfig } from '../location/useLocationConfig';
 
 export function StepLocation() {
   const { dispatch } = useWizard();
-  const { grid, selectedSource, error, onGridChange, onSelectSource } = useLocationConfig();
+  const { grid, selectedSource, error, onGridChange, onSelectSource, gpsReady, fixLat, fixLon, uiGrid } =
+    useLocationConfig();
 
   return (
-    <div className="wizard-step wizard-step-location" data-testid="wizard-step-location">
-      <h1>Where is this station?</h1>
-      <p>
-        Tuxlink can read your location from a GPS receiver, or you can enter your grid
-        square by hand. Your grid identifies your station on the network and powers
-        propagation predictions. This is optional — you can set or change it any time
-        under <strong>Tools → Settings → Location</strong>.
-      </p>
+    <div
+      className="wizard-step wizard-step-location wizard-step-location--fullscreen"
+      data-testid="wizard-step-location"
+    >
+      <div className="wizard-location__rail">
+        <h1>Set up your location</h1>
+        <p>
+          This is where Tuxlink thinks your station is. Confirm it on the map, or set it
+          yourself by clicking the map or typing a grid. Your grid powers propagation
+          predictions and your on-air position report. Optional — change it any time
+          under <strong>Tools → Settings → Location</strong>.
+        </p>
 
-      {error && (
-        <div role="alert" className="wizard-error-banner" data-testid="wizard-location-error">
-          {error}
+        {error && (
+          <div role="alert" className="wizard-error-banner" data-testid="wizard-location-error">
+            {error}
+          </div>
+        )}
+
+        <GpsSourcePicker
+          grid={grid}
+          onGridChange={onGridChange}
+          selectedSource={selectedSource}
+          onSelectSource={onSelectSource}
+          gpsReady={gpsReady}
+          fixLatLon={fixLat != null && fixLon != null ? { lat: fixLat, lon: fixLon } : null}
+          uiGrid={uiGrid}
+        />
+
+        <div className="wizard-submit-row">
+          <button
+            type="button"
+            className="wizard-btn-secondary"
+            data-testid="wizard-location-skip"
+            onClick={() => dispatch({ type: 'ADVANCE_FROM_LOCATION' })}
+          >
+            Set later
+          </button>
+          <button
+            type="button"
+            data-testid="wizard-location-continue"
+            onClick={() => dispatch({ type: 'ADVANCE_FROM_LOCATION' })}
+          >
+            Looks right — Continue
+          </button>
         </div>
-      )}
-
-      <GpsSourcePicker
-        grid={grid}
-        onGridChange={onGridChange}
-        selectedSource={selectedSource}
-        onSelectSource={onSelectSource}
-      />
-
-      <div className="wizard-submit-row">
-        <button
-          type="button"
-          data-testid="wizard-location-continue"
-          onClick={() => dispatch({ type: 'ADVANCE_FROM_LOCATION' })}
-        >
-          Continue to Tuxlink
-        </button>
       </div>
     </div>
   );

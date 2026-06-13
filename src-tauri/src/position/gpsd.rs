@@ -36,7 +36,9 @@ pub(crate) fn parse_tpv(line: &str) -> Option<Fix> {
     if v.get("mode")?.as_i64()? < 2 { return None; }   // 0/1 = no fix
     let lat = v.get("lat")?.as_f64()?;
     let lon = v.get("lon")?.as_f64()?;
-    Some(Fix { grid: lat_lon_to_grid(lat, lon), received: std::time::Instant::now() })
+    // Retain the raw lat/lon (tuxlink-yy1m): the setup map shows a precise pin at
+    // the operator's actual position. Local display only — never broadcast.
+    Some(Fix { grid: lat_lon_to_grid(lat, lon), lat, lon, received: std::time::Instant::now() })
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +137,14 @@ mod tests {
         let line = r#"{"class":"TPV","mode":3,"lat":48.143,"lon":11.608}"#;
         let fix = parse_tpv(line).unwrap();
         assert_eq!(fix.grid, "JN58td");
+    }
+    #[test]
+    fn parse_tpv_retains_lat_lon() {
+        // tuxlink-yy1m: the raw lat/lon survive parsing (precise setup-map pin).
+        let line = r#"{"class":"TPV","mode":3,"lat":48.143,"lon":11.608}"#;
+        let fix = parse_tpv(line).unwrap();
+        assert!((fix.lat - 48.143).abs() < 1e-9, "lat retained");
+        assert!((fix.lon - 11.608).abs() < 1e-9, "lon retained");
     }
     #[test]
     fn rejects_no_fix_and_non_tpv() {

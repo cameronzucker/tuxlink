@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+// Stub the offline map so the Settings test doesn't mount leaflet in jsdom.
+vi.mock('./LocationMap', () => ({ LocationMap: () => <div data-testid="location-map-stub" /> }));
 import { invoke } from '@tauri-apps/api/core';
 import { LocationSettings } from './LocationSettings';
 
@@ -10,6 +12,8 @@ function mockBackend(over: { grid?: string | null; position_source?: string } = 
     switch (cmd) {
       case 'config_read':
         return { grid: over.grid ?? null, position_source: over.position_source ?? 'Manual' } as unknown as never;
+      case 'position_status':
+        return { gps_ready: false, broadcast_grid: '', ui_grid: '', fix_lat: null, fix_lon: null } as unknown as never;
       case 'gps_probe_gpsd': return { reachable: true } as unknown as never;
       case 'gps_probe_serial_devices': return { devices: [] } as unknown as never;
       case 'gps_probe_dialout': return { member: false, groupExists: true } as unknown as never;

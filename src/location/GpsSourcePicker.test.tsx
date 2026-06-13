@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+// Stub the map so these tests don't pull leaflet into jsdom (LocationMap has its
+// own shape test). Expose the grid it received for assertions.
+vi.mock('./LocationMap', () => ({
+  LocationMap: (p: { grid: string }) => <div data-testid="location-map-stub" data-grid={p.grid} />,
+}));
 import { invoke } from '@tauri-apps/api/core';
 import { GpsSourcePicker, type GpsSourcePickerProps } from './GpsSourcePicker';
 
@@ -25,11 +30,14 @@ function mockProbes(p: ProbeShape) {
 }
 
 function renderPicker(over: Partial<GpsSourcePickerProps> = {}) {
-  const props = {
+  const props: GpsSourcePickerProps = {
     grid: '',
     onGridChange: vi.fn(),
     selectedSource: 'manual',
     onSelectSource: vi.fn(),
+    gpsReady: false,
+    fixLatLon: null,
+    uiGrid: '',
     ...over,
   };
   render(<GpsSourcePicker {...props} />);
@@ -47,15 +55,19 @@ describe('GpsSourcePicker', () => {
     expect(props.onSelectSource).toHaveBeenCalledWith('gpsd');
   });
 
-  it('renders a serial device source with its human label when the user is in dialout', async () => {
+  it('surfaces a detected serial device in the gpsd-setup card (not as a fake "Use this" source)', async () => {
+    // tuxlink-n399: a serial device with gpsd down can't be read; it must not be a
+    // selectable source. It appears in the "Set up GPS" card instead.
     mockProbes({
+      gpsd: { reachable: false },
       serial: { devices: [{ path: '/dev/ttyACM0', vendor: 'u-blox AG', model: 'GNSS receiver', vendorId: '1546', productId: '01a8' }] },
       dialout: { member: true, groupExists: true },
     });
     renderPicker();
-    const card = await screen.findByTestId('gps-source-serial:/dev/ttyACM0');
-    expect(card.textContent).toMatch(/u-blox AG GNSS receiver/);
-    expect(card.textContent).toMatch(/\/dev\/ttyACM0/);
+    expect(screen.queryByTestId('gps-source-serial:/dev/ttyACM0')).toBeNull();
+    const setup = await screen.findByTestId('gps-setup-gpsd');
+    expect(setup.textContent).toMatch(/u-blox AG GNSS receiver/);
+    expect(setup.textContent).toMatch(/\/dev\/ttyACM0/);
   });
 
   it('shows a dialout triage card with a copy-pasteable fix command (the core Linux GPS wall)', async () => {
@@ -72,7 +84,8 @@ describe('GpsSourcePicker', () => {
     expect(screen.getByTestId('gps-copy-dialout')).toBeTruthy();
   });
 
-  it('ships the "Fix it for me" button disabled (pkexec helper is slice 2)', async () => {
+  it('disables "Fix it for me" when pkexec is unavailable (AppImage / minimal install)', async () => {
+    // mockProbes does not answer gps_pkexec_available → pkexec stays false.
     mockProbes({
       serial: { devices: [{ path: '/dev/ttyACM0', vendor: null, model: null, vendorId: null, productId: null }] },
       dialout: { member: false, groupExists: true },
@@ -80,6 +93,26 @@ describe('GpsSourcePicker', () => {
     renderPicker();
     const fix = await screen.findByTestId('gps-fix-dialout');
     expect(fix.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('runs the dialout fix via pkexec and shows the re-login notice (tuxlink-m9ej)', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      switch (cmd) {
+        case 'gps_pkexec_available': return true as unknown as never;
+        case 'gps_probe_gpsd': return { reachable: false } as unknown as never;
+        case 'gps_probe_serial_devices': return { devices: [] } as unknown as never;
+        case 'gps_probe_dialout': return { member: false, groupExists: true } as unknown as never;
+        case 'gps_probe_modemmanager': return { active: false } as unknown as never;
+        case 'gps_run_fix': return 'ok' as unknown as never;
+        default: return undefined as unknown as never;
+      }
+    });
+    renderPicker();
+    const fix = await screen.findByTestId('gps-fix-dialout');
+    await waitFor(() => expect(fix).not.toBeDisabled());
+    fireEvent.click(fix);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('gps_run_fix', { action: 'add-dialout' }));
+    expect(await screen.findByTestId('gps-relogin-notice')).toBeInTheDocument();
   });
 
   it('always offers manual grid entry; typing calls onGridChange and an invalid grid shows an error', async () => {
@@ -102,5 +135,74 @@ describe('GpsSourcePicker', () => {
       const after = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'gps_probe_gpsd').length;
       expect(after).toBeGreaterThan(callsBefore);
     });
+  });
+
+  // tuxlink-yy1m additions ----------------------------------------------------
+
+  it('always renders the confirmation map', async () => {
+    mockProbes({});
+    renderPicker();
+    expect(await screen.findByTestId('location-map-stub')).toBeInTheDocument();
+  });
+
+  it('shows the dialout triage AND the gpsd-setup card when no GPS and not in dialout', async () => {
+    mockProbes({ gpsd: { reachable: false }, serial: { devices: [] }, dialout: { member: false, groupExists: true } });
+    renderPicker();
+    expect(await screen.findByTestId('gps-triage-dialout')).toBeInTheDocument();
+    expect(screen.getByTestId('gps-setup-gpsd')).toBeInTheDocument();
+  });
+
+  it('one-click sets up gpsd via pkexec (apt + pkexec present) and rescans', async () => {
+    let setupCalls = 0;
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      switch (cmd) {
+        case 'gps_pkexec_available': return true as unknown as never;
+        case 'gps_pkg_manager': return 'apt' as unknown as never;
+        case 'gps_probe_gpsd': return { reachable: false } as unknown as never;
+        case 'gps_probe_serial_devices':
+          return { devices: [{ path: '/dev/ttyACM0', vendor: 'u-blox', model: 'GNSS', vendorId: null, productId: null }] } as unknown as never;
+        case 'gps_probe_dialout': return { member: true, groupExists: true } as unknown as never;
+        case 'gps_probe_modemmanager': return { active: false } as unknown as never;
+        case 'gps_setup_gpsd': setupCalls += 1; return 'ok' as unknown as never;
+        default: return undefined as unknown as never;
+      }
+    });
+    renderPicker();
+    const run = await screen.findByTestId('gps-setup-run');
+    fireEvent.click(run);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('gps_setup_gpsd', { device: '/dev/ttyACM0' }));
+    expect(await screen.findByTestId('gps-setup-result')).toHaveTextContent(/looking for a GPS fix/i);
+    expect(setupCalls).toBe(1);
+  });
+
+  it('offers copy-paste guidance (no one-click) when there is no apt', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      switch (cmd) {
+        case 'gps_pkexec_available': return true as unknown as never;
+        case 'gps_pkg_manager': return 'pacman' as unknown as never;
+        case 'gps_probe_gpsd': return { reachable: false } as unknown as never;
+        case 'gps_probe_serial_devices': return { devices: [] } as unknown as never;
+        case 'gps_probe_dialout': return { member: true, groupExists: true } as unknown as never;
+        case 'gps_probe_modemmanager': return { active: false } as unknown as never;
+        default: return undefined as unknown as never;
+      }
+    });
+    renderPicker();
+    await screen.findByTestId('gps-setup-gpsd');
+    expect(screen.queryByTestId('gps-setup-run')).toBeNull(); // no one-click on non-apt
+    fireEvent.click(screen.getByTestId('gps-setup-show-commands'));
+    expect(screen.getByTestId('gps-setup-command').textContent).toContain('pacman -S');
+  });
+
+  it('shows "acquiring" when a GPS source is selected without a fix', async () => {
+    mockProbes({ gpsd: { reachable: true } });
+    renderPicker({ selectedSource: 'gpsd', gpsReady: false });
+    expect(await screen.findByTestId('gps-readout-acquiring')).toBeInTheDocument();
+  });
+
+  it('shows the grid readout once a fix is acquired', async () => {
+    mockProbes({ gpsd: { reachable: true } });
+    renderPicker({ selectedSource: 'gpsd', gpsReady: true, uiGrid: 'EM75km', fixLatLon: { lat: 36.1, lon: -86.8 } });
+    expect(await screen.findByTestId('gps-readout-fixed')).toHaveTextContent('EM75km');
   });
 });

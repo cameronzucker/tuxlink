@@ -14,8 +14,15 @@ import { validateGrid } from '../wizard/validators';
 import {
   runGpsDetection,
   classifyGpsSources,
+  pkexecAvailable,
+  pkgManager,
+  runGpsFix,
+  setupGpsd,
+  triageFixAction,
   type GpsClassification,
+  type GpsFixOutcome,
 } from './gpsProbes';
+import { LocationMap } from './LocationMap';
 import './GpsSourcePicker.css';
 
 export interface GpsSourcePickerProps {
@@ -25,15 +32,48 @@ export interface GpsSourcePickerProps {
   /** Selected source id: `'manual'` | `'gpsd'` | `'serial:/dev/ttyACM0'`. */
   selectedSource: string;
   onSelectSource: (id: string) => void;
+  // Live arbiter status (tuxlink-yy1m) — supplied by each chrome from
+  // useLocationConfig; drives the confirm map pin + the acquiring/fixed readout.
+  /** A fresh GPS fix exists and GPS is on. */
+  gpsReady: boolean;
+  /** Raw live-fix coords for the precise map pin, or null when no fresh fix. */
+  fixLatLon: { lat: number; lon: number } | null;
+  /** Effective local-display grid from the arbiter (live fix when source=Gps). */
+  uiGrid: string;
 }
 
 type Status = 'loading' | 'ready' | 'error';
 
-export function GpsSourcePicker({ grid, onGridChange, selectedSource, onSelectSource }: GpsSourcePickerProps) {
+export function GpsSourcePicker({
+  grid,
+  onGridChange,
+  selectedSource,
+  onSelectSource,
+  gpsReady,
+  fixLatLon,
+  uiGrid,
+}: GpsSourcePickerProps) {
   const [status, setStatus] = useState<Status>('loading');
-  const [classification, setClassification] = useState<GpsClassification>({ sources: [], triage: [] });
+  const [classification, setClassification] = useState<GpsClassification>({
+    sources: [],
+    triage: [],
+    noDevice: false,
+    gpsdReachable: false,
+    detectedDevice: null,
+    detectedDeviceLabel: null,
+  });
   const [openCommand, setOpenCommand] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  // "Fix it for me" (tuxlink-m9ej): pkexec availability gates the buttons; the
+  // last fix result drives per-card feedback (e.g. the dialout re-login notice).
+  const [pkexec, setPkexec] = useState(false);
+  const [fixResult, setFixResult] = useState<{ kind: string; outcome: GpsFixOutcome } | null>(null);
+  const [fixing, setFixing] = useState<string | null>(null);
+  // One-click gpsd setup (tuxlink-n399): package manager gates one-click vs guidance.
+  const [pkg, setPkg] = useState<string | null>(null);
+  const [gpsdSetupBusy, setGpsdSetupBusy] = useState(false);
+  const [gpsdSetupResult, setGpsdSetupResult] = useState<GpsFixOutcome | null>(null);
+  const [showGpsdCmds, setShowGpsdCmds] = useState(false);
 
   const rescan = useCallback(() => {
     let cancelled = false;
@@ -54,6 +94,63 @@ export function GpsSourcePicker({ grid, onGridChange, selectedSource, onSelectSo
 
   useEffect(() => rescan(), [rescan]);
 
+  // Probe pkexec once so the fix buttons only enable where a system auth dialog
+  // is possible (AppImage / minimal installs degrade to "Show command").
+  useEffect(() => {
+    let mounted = true;
+    pkexecAvailable()
+      .then((ok) => mounted && setPkexec(ok))
+      .catch(() => mounted && setPkexec(false));
+    pkgManager()
+      .then((m) => mounted && setPkg(m))
+      .catch(() => mounted && setPkg(null));
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // One-click gpsd setup: install + configure + enable in one privileged run.
+  const runGpsdSetup = async () => {
+    setGpsdSetupBusy(true);
+    setGpsdSetupResult(null);
+    try {
+      const outcome = await setupGpsd(classification.detectedDevice);
+      setGpsdSetupResult(outcome);
+      if (outcome === 'ok') rescan(); // gpsd now up → a fix should start flowing
+    } catch {
+      setGpsdSetupResult('failed');
+    } finally {
+      setGpsdSetupBusy(false);
+    }
+  };
+
+  // The exact commands for the "Show commands" fallback, per package manager.
+  const gpsdInstallCmd =
+    pkg === 'dnf'
+      ? 'sudo dnf install -y gpsd gpsd-clients'
+      : pkg === 'pacman'
+        ? 'sudo pacman -Sy --noconfirm gpsd' // -Sy refreshes the index first
+        : 'sudo apt-get update && sudo apt-get install -y gpsd gpsd-clients';
+  const gpsdEnableCmd = 'sudo systemctl enable --now gpsd.socket gpsd.service';
+
+  const runFix = async (kind: 'dialout' | 'modemmanager') => {
+    setFixing(kind);
+    setFixResult(null);
+    try {
+      const outcome = await runGpsFix(triageFixAction(kind));
+      setFixResult({ kind, outcome });
+      // Re-scan only for ModemManager: masking takes effect immediately, so the
+      // card should disappear. dialout does NOT take effect until re-login, so a
+      // rescan would re-render the still-"blocked" card under the success notice
+      // (adrev P2) — leave it; the re-login notice tells the operator what's next.
+      if (outcome === 'ok' && kind === 'modemmanager') rescan();
+    } catch {
+      setFixResult({ kind, outcome: 'failed' });
+    } finally {
+      setFixing(null);
+    }
+  };
+
   const gridError = validateGrid(grid);
 
   const copy = async (text: string, key: string) => {
@@ -68,13 +165,44 @@ export function GpsSourcePicker({ grid, onGridChange, selectedSource, onSelectSo
 
   return (
     <div className="gps-picker" data-testid="gps-picker">
+      {/* Confirmation surface (tuxlink-yy1m): the offline map shows where Tuxlink
+          thinks you are. Prefer the live arbiter grid (uiGrid) so a GPS fix is
+          framed; fall back to the manual grid. Click/drag sets it by hand. The
+          map + controls are separate containers so the wizard chrome can place
+          them side-by-side (full-screen) while Settings stacks them. */}
+      <div className="gps-picker__map">
+        <LocationMap
+          grid={uiGrid || grid}
+          fixLatLon={fixLatLon}
+          selectedSource={selectedSource}
+          onGridChange={onGridChange}
+        />
+      </div>
+
+      <div className="gps-picker__controls">
+      {/* Live GPS readout — only meaningful when a GPS source is selected. */}
+      {selectedSource !== 'manual' &&
+        (gpsReady ? (
+          <div className="gps-readout gps-readout--ok" data-testid="gps-readout-fixed" role="status">
+            <span className="gps-readout__grid">{uiGrid || grid || '—'}</span>
+            <span className="gps-readout__sub">GPS fix acquired</span>
+          </div>
+        ) : (
+          <div className="gps-readout gps-readout--acq" data-testid="gps-readout-acquiring" role="status">
+            Acquiring GPS fix…
+          </div>
+        ))}
+
       <div className="gps-picker__head">
         <span className="gps-picker__title">GPS source</span>
         <button
           type="button"
           className="gps-picker__rescan"
           data-testid="gps-picker-rescan"
-          onClick={rescan}
+          onClick={() => {
+            setGpsdSetupResult(null); // clear a stale setup outcome on explicit rescan (adrev P2)
+            rescan();
+          }}
           disabled={status === 'loading'}
         >
           {status === 'loading' ? 'Scanning…' : 'Rescan'}
@@ -134,19 +262,116 @@ export function GpsSourcePicker({ grid, onGridChange, selectedSource, onSelectSo
             >
               {openCommand === t.kind ? 'Hide command' : 'Show command'}
             </button>
-            {/* Slice 2 (tuxlink-m9ej) activates this via a pkexec helper. */}
+            {/* tuxlink-m9ej: one-click fix via the pkexec helper. Enabled only
+                where it's fixable AND pkexec exists; otherwise the operator uses
+                "Show command" (AppImage / minimal installs). */}
             <button
               type="button"
               className="gps-card__fix"
               data-testid={`gps-fix-${t.kind}`}
-              disabled
-              title="Coming in the next release"
+              disabled={!pkexec || !t.fixable || fixing === t.kind}
+              title={
+                !pkexec
+                  ? 'PolicyKit (pkexec) not available — use Show command'
+                  : !t.fixable
+                    ? 'Automatic fix unavailable — use Show command'
+                    : undefined
+              }
+              onClick={() => runFix(t.kind)}
             >
-              Fix it for me
+              {fixing === t.kind ? 'Working…' : 'Fix it for me'}
+            </button>
+          </div>
+          {fixResult?.kind === t.kind && (
+            <div className="gps-card__fix-result" data-testid={`gps-fix-result-${t.kind}`} role="status">
+              {fixResult.outcome === 'ok' && t.kind === 'dialout' && (
+                <span data-testid="gps-relogin-notice">
+                  Done. Log out and back in for this to take effect — that's a Linux rule we can't bypass.
+                </span>
+              )}
+              {fixResult.outcome === 'ok' && t.kind === 'modemmanager' && (
+                <span>Done — ModemManager masked. Plug in your GPS and Rescan.</span>
+              )}
+              {fixResult.outcome === 'auth_dismissed' && <span>Cancelled — no changes made.</span>}
+              {fixResult.outcome === 'failed' && (
+                <span className="gps-card__detail--warn">Couldn't apply the fix. Use “Show command” to run it by hand.</span>
+              )}
+              {fixResult.outcome === 'pkexec_missing' && (
+                <span className="gps-card__detail--warn">PolicyKit unavailable. Use “Show command”.</span>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+
+      {/* gpsd is the only thing that reads a GPS device. When it isn't running,
+          offer to set it up — one click on Debian-family (apt) + pkexec, else
+          copy-paste guidance (tuxlink-n399). Covers both "device found, gpsd
+          down" and "no device yet". */}
+      {!classification.gpsdReachable && (
+        <div className="gps-card gps-card--setup" data-testid="gps-setup-gpsd">
+          <div className="gps-card__body">
+            <span className="gps-card__label">Set up GPS reading (gpsd)</span>
+            <span className="gps-card__detail">
+              {classification.detectedDevice
+                ? `GPS device found: ${classification.detectedDeviceLabel ?? 'serial device'} (${classification.detectedDevice}). `
+                : 'No GPS receiver detected yet. Plug in a USB GPS, then Rescan. '}
+              Tuxlink reads GPS through the system <code>gpsd</code> service, which isn't running.
+            </span>
+
+            {showGpsdCmds && (
+              <div className="gps-card__cmd">
+                <code data-testid="gps-setup-command">{`${gpsdInstallCmd}\n${gpsdEnableCmd}`}</code>
+                <button
+                  type="button"
+                  className="gps-card__copy"
+                  data-testid="gps-setup-copy"
+                  onClick={() => copy(`${gpsdInstallCmd} && ${gpsdEnableCmd}`, 'gpsd-setup')}
+                >
+                  {copied === 'gpsd-setup' ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            )}
+
+            {gpsdSetupResult && (
+              <span className="gps-card__detail" data-testid="gps-setup-result" role="status">
+                {gpsdSetupResult === 'ok' && 'gpsd is set up — looking for a GPS fix…'}
+                {gpsdSetupResult === 'auth_dismissed' && 'Cancelled — no changes made.'}
+                {gpsdSetupResult === 'failed' && (
+                  <span className="gps-card__detail--warn">
+                    Setup failed (check your network). Use “Show commands” to run it by hand.
+                  </span>
+                )}
+                {gpsdSetupResult === 'pkexec_missing' && (
+                  <span className="gps-card__detail--warn">PolicyKit unavailable. Use “Show commands”.</span>
+                )}
+              </span>
+            )}
+          </div>
+          <div className="gps-card__actions">
+            {pkg === 'apt' && pkexec ? (
+              <button
+                type="button"
+                className="gps-card__fix"
+                data-testid="gps-setup-run"
+                disabled={gpsdSetupBusy}
+                onClick={runGpsdSetup}
+              >
+                {gpsdSetupBusy ? 'Setting up…' : 'Set up GPS for me'}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="gps-card__show"
+              data-testid="gps-setup-show-commands"
+              aria-expanded={showGpsdCmds}
+              onClick={() => setShowGpsdCmds((s) => !s)}
+            >
+              {showGpsdCmds ? 'Hide commands' : 'Show commands'}
             </button>
           </div>
         </div>
-      ))}
+      )}
 
       {/* Manual grid — always first-class (Mike's "I'll just type my grid" path) */}
       <div className={`gps-card gps-card--manual${selectedSource === 'manual' ? ' is-selected' : ''}`} data-testid="gps-source-manual">
@@ -170,6 +395,9 @@ export function GpsSourcePicker({ grid, onGridChange, selectedSource, onSelectSo
             </span>
           )}
           <span className="gps-card__detail">
+            …or click the map above to drop your location, and drag the pin to fine-tune.
+          </span>
+          <span className="gps-card__detail">
             Broadcast precision is reduced to a 4-character grid by default; set finer precision under Privacy.
           </span>
         </div>
@@ -182,6 +410,7 @@ export function GpsSourcePicker({ grid, onGridChange, selectedSource, onSelectSo
         >
           {selectedSource === 'manual' ? 'In use' : 'Use manual'}
         </button>
+      </div>
       </div>
     </div>
   );
