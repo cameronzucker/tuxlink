@@ -1,0 +1,26 @@
+[package]
+name = "sstv-proto"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone fast-iteration harness for the SSTV PCM<->image codec (bd tuxlink-st5n).
+# Core codec (lib) is std-only so it compiles in seconds under the no_cold_cargo rule;
+# image I/O lives behind the `harness` feature used only by the bin + round-trip tests.
+
+[features]
+default = []
+harness = ["dep:image"]
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"], optional = true }
+
+[[bin]]
+name = "sstv-proto"
+required-features = ["harness"]
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+# For the decisive round-trip gate (tuxlink-st5n): the vendored UvproSbcCodec
+# decode path uses mini_sbc, matching the shipped src-tauri codec.
+mini_sbc = "0.1.7"
