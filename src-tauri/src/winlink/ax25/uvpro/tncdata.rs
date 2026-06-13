@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn fragment_exact_multiple_last_is_final() {
-        let frags = fragment_ax25(&vec![0xCC; 53 * 2]);
+        let frags = fragment_ax25(&[0xCC; 53 * 2]);
         assert_eq!(frags.len(), 2);
         assert!(frags[1].is_final);
     }
