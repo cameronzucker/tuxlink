@@ -66,6 +66,10 @@ export interface MapLibreMock {
   off: (type: string, handler: (...args: unknown[]) => void) => MapLibreMock;
   once: (type: string, handler: (...args: unknown[]) => void) => MapLibreMock;
   getZoom: () => number;
+  /** Pan gesture handler (drag-select disables it while drawing a box). */
+  dragPan: { enable: () => void; disable: () => void };
+  /** Shift-drag box-zoom handler (disabled — it conflicts with drag-select). */
+  boxZoom: { enable: () => void; disable: () => void };
   setMaxZoom: (z: number) => void;
   setMinZoom: (z: number) => void;
   flyTo: (opts: unknown) => void;
@@ -179,6 +183,8 @@ export function createMapLibreMock(
       return mock.on(type, wrapped);
     }),
     getZoom: vi.fn(() => state.zoom),
+    dragPan: { enable: vi.fn(), disable: vi.fn() },
+    boxZoom: { enable: vi.fn(), disable: vi.fn() },
     setMaxZoom: vi.fn(),
     setMinZoom: vi.fn(),
     flyTo: vi.fn(),
