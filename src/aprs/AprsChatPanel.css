@@ -1,13 +1,13 @@
 /* src/aprs/AprsChatPanel.css
  *
- * APRS tactical-chat inline surface (Task 13). Reuses the radio-panel theme
- * tokens (--surface / --border / --text / --modem-accent / semantic
- * --success/--accent-2/--error) so the chat reads as part of the modem
+ * APRS tactical-chat inline surface — the OPEN CHANNEL model. Reuses the
+ * radio-panel theme tokens (--surface / --border / --text / --modem-accent /
+ * semantic --success/--accent-2/--error) so the chat reads as part of the modem
  * family across all themes (Daylight / High contrast / Paper).
  *
- * Inline only — this is a panel/section, never a pop-up window. Width is
- * clamped to a realistic reading-pane (max 720px); it does not stretch
- * full-width.
+ * Inline only — this is a panel/section, never a pop-up window. It is a SINGLE
+ * NARROW COLUMN that fills the ~400px radio dock: header → open-channel cue →
+ * flat feed → composer. NO side column, NO thread rail.
  */
 .aprs-chat {
   display: flex;
@@ -17,9 +17,8 @@
   border-radius: 6px;
   color: var(--text, #cbd5e1);
   font-size: 13px;
-  /* Constrained reading-pane width — do NOT stretch full-width. */
+  /* Fills the single dock column — no min-width demand, no side columns. */
   width: 100%;
-  max-width: 720px;
   min-height: 360px;
   overflow: hidden;
 }
@@ -27,7 +26,7 @@
 .aprs-chat-h {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 10px 12px;
   background: var(--modem-accent-soft);
   border-bottom: 1px solid color-mix(in srgb, var(--modem-accent) 18%, transparent);
@@ -39,14 +38,13 @@
   color: var(--modem-accent, #4ade80);
 }
 
-/* Listening indicator — honest state, read-only here (Task 14 owns the
-   Start/Stop toggle). */
+/* Listening indicator — honest state. */
 .aprs-listening {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   margin-left: auto;
-  font-size: 12px;
+  font-size: 11px;
   font-family: ui-monospace, monospace;
 }
 .aprs-listening-dot {
@@ -70,11 +68,10 @@
   background: var(--error, #f87171);
 }
 
-/* Start/Stop listening toggle (Task 14). Sits at the trailing edge of the
-   header; the listening indicator's margin-left:auto pushes both right. */
+/* Start/Stop listening toggle. */
 .aprs-listen-toggle {
   flex-shrink: 0;
-  padding: 5px 12px;
+  padding: 4px 10px;
   border-radius: 4px;
   font-size: 12px;
   font-weight: 500;
@@ -92,85 +89,27 @@
   cursor: not-allowed;
 }
 
+/* Open-channel honesty cue — a quiet full-width banner under the header.
+   Never implies privacy. */
 .aprs-open-channel {
+  margin: 0;
+  padding: 5px 12px;
   font-size: 11px;
   color: var(--text-faint, #94a3b8);
   font-style: italic;
-  white-space: nowrap;
+  background: color-mix(in srgb, var(--accent-2, #fbbf24) 7%, transparent);
+  border-bottom: 1px solid var(--border-soft, rgba(255, 255, 255, 0.08));
 }
 
-.aprs-chat-body {
+/* The channel feed — one flat, time-ordered list. */
+.aprs-feed {
   flex: 1;
-  display: flex;
-  min-height: 0;
-}
-
-/* Thread list — per-callsign sidebar. */
-.aprs-thread-list {
-  width: 160px;
-  flex-shrink: 0;
-  border-right: 1px solid var(--border, #2a3140);
-  overflow-y: auto;
-  background: var(--surface-2, #11161f);
-}
-.aprs-thread-ul {
   list-style: none;
   margin: 0;
-  padding: 0;
-}
-.aprs-thread-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--border-soft, rgba(255, 255, 255, 0.08));
   padding: 8px 10px;
-  cursor: pointer;
-  color: var(--text, #cbd5e1);
-  font: inherit;
-}
-.aprs-thread-item:hover {
-  background: var(--elevated, rgba(255, 255, 255, 0.04));
-}
-.aprs-thread-item-active {
-  background: var(--modem-accent-soft);
-}
-.aprs-thread-call {
-  font-weight: 600;
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-}
-.aprs-thread-preview {
-  font-size: 11px;
-  color: var(--text-faint, #94a3b8);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.aprs-thread-empty {
-  margin: 0;
-  padding: 12px 10px;
-  font-size: 11px;
-  color: var(--text-faint, #94a3b8);
-}
-
-/* Conversation pane — bubbles + composer. */
-.aprs-conversation {
-  flex: 1;
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-.aprs-bubbles {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+  gap: 4px;
   overflow-y: auto;
   min-height: 0;
 }
@@ -180,52 +119,70 @@
   font-size: 12px;
   color: var(--text-faint, #94a3b8);
   line-height: 1.5;
+  list-style: none;
 }
 
-.aprs-bubble {
-  max-width: 80%;
-  padding: 7px 10px;
-  border-radius: 10px;
-  font-size: 13px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
+/* Each message is a LIGHT log row, not a heavy chat bubble. Outbound rows get a
+   subtle left accent rule to distinguish "ours" from heard traffic. */
+.aprs-msg {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 1px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border-left: 2px solid transparent;
 }
-.aprs-bubble-in {
-  align-self: flex-start;
-  background: var(--surface-2, #1a2230);
-  border: 1px solid var(--border, #2a3140);
-  border-bottom-left-radius: 3px;
+.aprs-msg-out {
+  border-left-color: color-mix(in srgb, var(--modem-accent, #4ade80) 60%, transparent);
+  background: color-mix(in srgb, var(--modem-accent, #4ade80) 6%, transparent);
 }
-.aprs-bubble-out {
-  align-self: flex-end;
-  background: var(--modem-accent-soft);
-  border: 1px solid color-mix(in srgb, var(--modem-accent) 30%, transparent);
-  border-bottom-right-radius: 3px;
+.aprs-msg-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
 }
-.aprs-bubble-text {
-  white-space: pre-wrap;
+.aprs-msg-addr {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text, #cbd5e1);
+  overflow-wrap: anywhere;
 }
-.aprs-bubble-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  align-self: flex-end;
+.aprs-msg-arrow {
+  color: var(--text-faint, #94a3b8);
+  font-weight: 400;
 }
-.aprs-bubble-in .aprs-bubble-meta {
-  align-self: flex-start;
+.aprs-msg-to-all {
+  color: var(--accent-2, #fbbf24);
 }
-.aprs-bubble-time {
+.aprs-msg-time {
+  flex-shrink: 0;
   font-size: 10px;
   color: var(--text-faint, #94a3b8);
   font-variant-numeric: tabular-nums;
 }
+.aprs-msg-body {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.aprs-msg-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.aprs-msg-state {
+  flex-shrink: 0;
+}
 
 /* Delivery-state chips — honest backend states only. */
 .aprs-chip {
-  align-self: flex-end;
+  display: inline-block;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -254,8 +211,17 @@
   border-color: color-mix(in srgb, var(--error, #f87171) 40%, transparent);
   background: color-mix(in srgb, var(--error, #f87171) 12%, transparent);
 }
+/* Broadcast chip — fire-and-forget, NO delivery semantics. Neutral tone so it
+   never reads as a delivery confirmation. */
+.aprs-chip-broadcast {
+  color: var(--text-faint, #94a3b8);
+  border-color: color-mix(in srgb, var(--text-faint, #94a3b8) 35%, transparent);
+  background: color-mix(in srgb, var(--text-faint, #94a3b8) 8%, transparent);
+  text-transform: none;
+  font-weight: 500;
+}
 
-/* Inline send-error notice (NOT a bubble — a rejected send queues nothing). */
+/* Inline send-error notice (NOT a feed row — a rejected send queues nothing). */
 .aprs-send-error {
   margin: 0;
   padding: 8px 12px;
@@ -265,26 +231,42 @@
   border-top: 1px solid color-mix(in srgb, var(--error, #f87171) 30%, transparent);
 }
 
-/* Composer — callsign field + text field + Send. */
+/* Composer — stacked compact rows: [recipient + mode] / [message + count + Send]
+   / [Path]. Everything fits the single narrow column. */
 .aprs-composer {
   display: flex;
+  flex-direction: column;
   gap: 6px;
-  align-items: stretch;
   padding: 10px 12px;
   border-top: 1px solid var(--border, #2a3140);
 }
-.aprs-composer-call {
+.aprs-composer-row {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  flex: 0 0 120px;
+  align-items: center;
+  gap: 6px;
 }
-.aprs-composer-call > span {
+.aprs-composer-recipient {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+.aprs-recipient-mode {
+  flex-shrink: 0;
   font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-faint, #94a3b8);
+  font-family: ui-monospace, monospace;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.aprs-recipient-mode-broadcast {
+  color: var(--accent-2, #fbbf24);
+  background: color-mix(in srgb, var(--accent-2, #fbbf24) 12%, transparent);
+}
+.aprs-recipient-mode-directed {
+  color: var(--success, #4ade80);
+  background: color-mix(in srgb, var(--success, #4ade80) 12%, transparent);
 }
 .aprs-composer-text {
   flex: 1;
@@ -295,15 +277,12 @@
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
   border-radius: 4px;
-  padding: 7px 9px;
+  padding: 6px 9px;
   font-size: 13px;
   color: var(--text, #cbd5e1);
   font-family: ui-monospace, monospace;
   width: 100%;
   box-sizing: border-box;
-}
-.aprs-composer-text .aprs-input {
-  height: 100%;
 }
 .aprs-input:focus {
   outline: none;
@@ -312,8 +291,7 @@
 }
 .aprs-send-btn {
   flex-shrink: 0;
-  align-self: flex-end;
-  padding: 8px 16px;
+  padding: 6px 16px;
   border-radius: 4px;
   font-size: 13px;
   font-weight: 500;
@@ -332,7 +310,6 @@
 }
 
 .aprs-char-count {
-  align-self: center;
   flex-shrink: 0;
   font-size: 11px;
   color: var(--text-faint, #94a3b8);
@@ -342,6 +319,35 @@
 .aprs-char-count-over {
   color: var(--accent-2, #fbbf24);
   font-weight: 600;
+}
+
+/* Path control — a compact editable digipeater-path field. */
+.aprs-path-row {
+  flex-wrap: wrap;
+}
+.aprs-composer-path {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.aprs-path-label {
+  flex-shrink: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint, #94a3b8);
+  font-weight: 600;
+}
+.aprs-input-path {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.aprs-path-error {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--error, #f87171);
 }
 
 .aprs-visually-hidden {

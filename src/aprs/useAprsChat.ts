@@ -1,38 +1,52 @@
 // src/aprs/useAprsChat.ts
 //
-// React hook backing the APRS tactical-chat panel. Subscribes to the three
-// backend event channels (Task 10) and exposes a `send` action plus the
-// per-callsign thread map.
+// React hook backing the APRS tactical-chat panel. APRS is a single OPEN
+// CHANNEL (party line): every message heard on the channel — directed or
+// broadcast, to us or to anyone — plus our own sends lands in ONE flat,
+// time-ordered feed (`messages`). There is no per-callsign thread grouping.
 //
-// RF-honesty (round-1 hardened): `send` mints NO local msgid. It awaits
-// `aprs_send`, and only on success — when the backend has accepted the message
-// into its outbound queue and returned the minted msgid — inserts an optimistic
-// `sent` bubble. On reject (capacity / not-listening), the promise rejects, no
-// bubble is inserted, and the error propagates so the panel can toast it. This
-// prevents a stuck "sent" bubble for a message that was never queued.
+// Subscribes to the three backend event channels and exposes a `send` action,
+// the derived `heardStations` list (for the recipient dropdown), and
+// `aprs_config` get/set passthroughs for the composer's Path control.
+//
+// RF-honesty: `send` mints NO local id. It awaits `aprs_send`, and only on
+// success — when the backend has accepted the message into its outbound queue
+// and returned the tracking id — appends an optimistic `sent` message. On
+// reject (capacity / not-listening), the promise rejects, no message is
+// appended, and the error propagates so the panel can surface it. This prevents
+// a stuck "sent" message for traffic that was never queued.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
   AprsConfigDto,
-  ChatMessage,
+  ChannelMessage,
+  HeardStation,
   InboundMsgDto,
   StateChangeDto,
-  Thread,
 } from './aprsTypes';
 
 export interface UseAprsChat {
-  /// Conversations keyed by remote callsign.
-  threads: Record<string, Thread>;
+  /// The open channel: one flat, time-ordered feed of inbound + outbound
+  /// messages (oldest first).
+  messages: ChannelMessage[];
+  /// Stations heard on the channel, most-recently-heard first, deduped by
+  /// callsign. Backs the recipient dropdown.
+  heardStations: HeardStation[];
   /// Whether the APRS listener is currently active (mirrors the backend).
   listening: boolean;
-  /// Send `text` to `call`. Awaits the backend-minted msgid and inserts an
-  /// optimistic outgoing bubble ONLY on success. Rejects (without inserting a
-  /// bubble) when the backend refuses (capacity / not-listening).
-  send: (call: string, text: string) => Promise<string>;
-  /// Refresh the cached APRS station configuration from the backend.
-  refreshConfig: () => Promise<void>;
+  /// Send `text` to `recipient`. `null` or `''` ⇒ broadcast (no addressee, no
+  /// delivery ack); a callsign ⇒ directed (ack-tracked). Awaits the backend
+  /// tracking id and appends an optimistic outgoing message ONLY on success.
+  /// Rejects (without appending) when the backend refuses (capacity /
+  /// not-listening).
+  send: (recipient: string | null, text: string) => Promise<string>;
+  /// Read the cached APRS station configuration from the backend.
+  getConfig: () => Promise<AprsConfigDto>;
+  /// Persist the APRS station configuration (read-modify-write of the full DTO;
+  /// the backend command takes the whole `AprsConfigDto` under the `dto` key).
+  setConfig: (dto: AprsConfigDto) => Promise<void>;
 }
 
 let localIdSeq = 0;
@@ -41,51 +55,27 @@ function nextLocalId(): string {
   return `local-${localIdSeq}`;
 }
 
-/// Append `msg` to `call`'s thread, creating the thread if absent. Returns a
-/// new threads object (immutable update) so React re-renders.
-function appendMessage(
-  threads: Record<string, Thread>,
-  call: string,
-  msg: ChatMessage,
-): Record<string, Thread> {
-  const existing = threads[call];
-  const thread: Thread = existing
-    ? { callsign: call, messages: [...existing.messages, msg] }
-    : { callsign: call, messages: [msg] };
-  return { ...threads, [call]: thread };
-}
-
-/// Set `.state` on the message whose `.msgid === msgid`, searching every
-/// thread. Stamps `ackedAt` when transitioning to `acked`. Returns a new
-/// threads object only for the thread that changed.
+/// Set `.state` on the message whose `.msgid === msgid`. Stamps `ackedAt` when
+/// transitioning to `acked`. Returns a new array only when something changed.
 function applyState(
-  threads: Record<string, Thread>,
+  messages: ChannelMessage[],
   msgid: string,
   state: StateChangeDto['state'],
   at: number,
-): Record<string, Thread> {
-  const next: Record<string, Thread> = {};
-  let changed = false;
-  for (const [call, thread] of Object.entries(threads)) {
-    const idx = thread.messages.findIndex((m) => m.msgid === msgid);
-    if (idx === -1) {
-      next[call] = thread;
-      continue;
-    }
-    const messages = thread.messages.slice();
-    messages[idx] = {
-      ...messages[idx],
-      state,
-      ...(state === 'acked' ? { ackedAt: at } : {}),
-    };
-    next[call] = { callsign: thread.callsign, messages };
-    changed = true;
-  }
-  return changed ? next : threads;
+): ChannelMessage[] {
+  const idx = messages.findIndex((m) => m.msgid === msgid);
+  if (idx === -1) return messages;
+  const next = messages.slice();
+  next[idx] = {
+    ...next[idx],
+    state,
+    ...(state === 'acked' ? { ackedAt: at } : {}),
+  };
+  return next;
 }
 
 export function useAprsChat(): UseAprsChat {
-  const [threads, setThreads] = useState<Record<string, Thread>>({});
+  const [messages, setMessages] = useState<ChannelMessage[]>([]);
   const [listening, setListening] = useState<boolean>(false);
 
   useEffect(() => {
@@ -113,18 +103,21 @@ export function useAprsChat(): UseAprsChat {
     };
 
     subscribe<InboundMsgDto>('aprs-message:new', (payload) => {
-      const msg: ChatMessage = {
+      const msg: ChannelMessage = {
         id: payload.msgid ?? nextLocalId(),
         direction: 'in',
+        from: payload.sender,
+        // Blank addressee ⇒ broadcast (`→ all`).
+        to: payload.addressee === '' ? null : payload.addressee,
         text: payload.text,
         msgid: payload.msgid,
         at: Date.now(),
       };
-      setThreads((prev) => appendMessage(prev, payload.sender, msg));
+      setMessages((prev) => [...prev, msg]);
     });
 
     subscribe<StateChangeDto>('aprs-message:state', (payload) => {
-      setThreads((prev) => applyState(prev, payload.msgid, payload.state, Date.now()));
+      setMessages((prev) => applyState(prev, payload.msgid, payload.state, Date.now()));
     });
 
     subscribe<boolean>('aprs-listening:change', (payload) => {
@@ -137,29 +130,54 @@ export function useAprsChat(): UseAprsChat {
     };
   }, []);
 
-  const send = useCallback(async (call: string, text: string): Promise<string> => {
-    // Mint no local msgid. Await the backend; on reject, let it propagate
-    // WITHOUT inserting a bubble (RF-honesty).
-    const id = await invoke<string>('aprs_send', { call, text });
-    const msg: ChatMessage = {
-      id,
-      direction: 'out',
-      text,
-      msgid: id,
-      state: 'sent',
-      at: Date.now(),
-    };
-    setThreads((prev) => appendMessage(prev, call, msg));
-    return id;
-  }, []);
-
-  const refreshConfig = useCallback(async (): Promise<void> => {
-    try {
-      await invoke<AprsConfigDto>('aprs_config_get');
-    } catch {
-      // Backend absent (tests) — config refresh is best-effort.
+  // Most-recently-heard-first, deduped by callsign — derived from inbound
+  // senders only (we don't list ourselves).
+  const heardStations = useMemo<HeardStation[]>(() => {
+    const lastHeard = new Map<string, number>();
+    for (const m of messages) {
+      if (m.direction !== 'in') continue;
+      const prev = lastHeard.get(m.from);
+      if (prev === undefined || m.at > prev) lastHeard.set(m.from, m.at);
     }
-  }, []);
+    return [...lastHeard.entries()]
+      .map(([call, at]) => ({ call, lastHeard: at }))
+      .sort((a, b) => b.lastHeard - a.lastHeard);
+  }, [messages]);
 
-  return { threads, listening, send, refreshConfig };
+  const send = useCallback(
+    async (recipient: string | null, text: string): Promise<string> => {
+      // Normalize empty/whitespace recipient to null ⇒ broadcast.
+      const call = recipient && recipient.trim() ? recipient.trim() : null;
+      // Mint no local id. Await the backend; on reject, let it propagate WITHOUT
+      // appending a message (RF-honesty).
+      const id = await invoke<string>('aprs_send', { call, text });
+      const msg: ChannelMessage = {
+        id,
+        direction: 'out',
+        // The sender is us; the backend stamps the wire callsign. We display
+        // the addressee, so "from" is a local marker only.
+        from: 'me',
+        to: call,
+        text,
+        msgid: id,
+        state: 'sent',
+        at: Date.now(),
+      };
+      setMessages((prev) => [...prev, msg]);
+      return id;
+    },
+    [],
+  );
+
+  const getConfig = useCallback(
+    (): Promise<AprsConfigDto> => invoke<AprsConfigDto>('aprs_config_get'),
+    [],
+  );
+
+  const setConfig = useCallback(
+    (dto: AprsConfigDto): Promise<void> => invoke('aprs_config_set', { dto }),
+    [],
+  );
+
+  return { messages, heardStations, listening, send, getConfig, setConfig };
 }

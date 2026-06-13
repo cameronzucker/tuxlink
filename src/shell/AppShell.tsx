@@ -312,7 +312,7 @@ export function AppShell() {
   const [aprsOpen, setAprsOpen] = useState(false);
   const [dockTab, setDockTab] = useState<'aprs' | 'modem'>('aprs');
   const [aprsSeenAt, setAprsSeenAt] = useState(0);
-  const aprsUnread = countUnread(aprs.threads, aprsSeenAt);
+  const aprsUnread = countUnread(aprs.messages, aprsSeenAt);
   const openAprsChat = useCallback(() => {
     setAprsOpen(true);
     setDockTab('aprs');
@@ -1399,9 +1399,12 @@ export function AppShell() {
             {dockTab === 'aprs' ? (
               <Suspense fallback={null}>
                 <AprsChatPanel
-                  threads={aprs.threads}
+                  messages={aprs.messages}
+                  heardStations={aprs.heardStations}
                   listening={aprs.listening}
                   send={aprs.send}
+                  getConfig={aprs.getConfig}
+                  setConfig={aprs.setConfig}
                   controlStrip={
                     packetConfig.config?.linkKind === 'UvproNative' ? (
                       <UvproControlStrip />
