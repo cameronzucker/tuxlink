@@ -472,7 +472,7 @@ pub fn run() {
                             app.state::<std::sync::Arc<crate::basemap::PmtilesRegistry>>();
                         let basemap_state = crate::basemap::commands::init_packs(
                             data_dir.join("basemap-packs"),
-                            &**registry,
+                            &registry,
                         );
                         app.manage(std::sync::Arc::new(basemap_state));
                     }
