@@ -129,8 +129,8 @@ export function GpsSourcePicker({
     pkg === 'dnf'
       ? 'sudo dnf install -y gpsd gpsd-clients'
       : pkg === 'pacman'
-        ? 'sudo pacman -S --noconfirm gpsd'
-        : 'sudo apt-get install -y gpsd gpsd-clients';
+        ? 'sudo pacman -Sy --noconfirm gpsd' // -Sy refreshes the index first
+        : 'sudo apt-get update && sudo apt-get install -y gpsd gpsd-clients';
   const gpsdEnableCmd = 'sudo systemctl enable --now gpsd.socket gpsd.service';
 
   const runFix = async (kind: 'dialout' | 'modemmanager') => {
@@ -199,7 +199,10 @@ export function GpsSourcePicker({
           type="button"
           className="gps-picker__rescan"
           data-testid="gps-picker-rescan"
-          onClick={rescan}
+          onClick={() => {
+            setGpsdSetupResult(null); // clear a stale setup outcome on explicit rescan (adrev P2)
+            rescan();
+          }}
           disabled={status === 'loading'}
         >
           {status === 'loading' ? 'Scanning…' : 'Rescan'}

@@ -67,9 +67,35 @@ fn gpsd_defaults(device: Option<&str>) -> String {
     )
 }
 
-/// Full gpsd setup in ONE privileged run (one pkexec prompt): apt-get install,
-/// write /etc/default/gpsd, then enable + (re)start the socket/service. Each step
-/// must succeed; the first failure aborts with a specific reason.
+/// Write /etc/default/gpsd safely (adrev P1/P2):
+///  - back up a pre-existing, non-Tuxlink-managed REGULAR file so a hand-tuned
+///    config isn't silently destroyed;
+///  - write a temp file in the same (root-owned) dir, then `rename` over the
+///    target — atomic, and it REPLACES a symlink at the path rather than
+///    following it to clobber an arbitrary file.
+fn write_gpsd_defaults(device: Option<&str>) -> Result<(), String> {
+    if let Ok(meta) = std::fs::symlink_metadata(GPSD_DEFAULTS_PATH) {
+        // Only back up a real file we didn't author; a symlink is intentionally
+        // not followed (the rename below replaces it with our regular file).
+        if meta.file_type().is_file() {
+            if let Ok(existing) = std::fs::read_to_string(GPSD_DEFAULTS_PATH) {
+                if !existing.contains("# Managed by Tuxlink") {
+                    let _ = std::fs::write(format!("{GPSD_DEFAULTS_PATH}.tuxlink.bak"), &existing);
+                }
+            }
+        }
+    }
+    let tmp = format!("{GPSD_DEFAULTS_PATH}.tuxlink.tmp");
+    std::fs::write(&tmp, gpsd_defaults(device))
+        .map_err(|e| format!("could not write {tmp}: {e}"))?;
+    std::fs::rename(&tmp, GPSD_DEFAULTS_PATH)
+        .map_err(|e| format!("could not install {GPSD_DEFAULTS_PATH}: {e}"))?;
+    Ok(())
+}
+
+/// Full gpsd setup in ONE privileged run (one pkexec prompt): apt-get update +
+/// install, write /etc/default/gpsd, then enable + (re)start the socket/service.
+/// Each step must succeed; the first failure aborts with a specific reason.
 fn setup_gpsd(device: Option<&str>) -> ExitCode {
     if let Some(d) = device {
         if !is_safe_device_path(d) {
@@ -81,6 +107,10 @@ fn setup_gpsd(device: Option<&str>) -> ExitCode {
     let Some(apt) = resolve_bin(&APT_GET) else {
         return fail("apt-get not found (non-Debian system); use the shown commands");
     };
+    // `apt-get update` first: a fresh Pi/Debian image often has a stale/pruned
+    // index, so `install` would 404 with a misleading "check network" (adrev P0).
+    // Best-effort — if the index can't refresh, install may still work from cache.
+    let _ = Command::new(apt).arg("update").env("DEBIAN_FRONTEND", "noninteractive").status();
     let install = Command::new(apt)
         .arg("install")
         .arg("-y")
@@ -90,13 +120,15 @@ fn setup_gpsd(device: Option<&str>) -> ExitCode {
         .status();
     match install {
         Ok(s) if s.success() => {}
-        Ok(s) => return fail(&format!("apt-get install failed ({s}) — check network")),
+        Ok(s) => return fail(&format!(
+            "apt-get install failed ({s}) — check your network / package index"
+        )),
         Err(e) => return fail(&format!("could not run apt-get: {e}")),
     }
 
     // 2. Configure the device (direct file write; no ncurses dpkg-reconfigure).
-    if let Err(e) = std::fs::write(GPSD_DEFAULTS_PATH, gpsd_defaults(device)) {
-        return fail(&format!("could not write {GPSD_DEFAULTS_PATH}: {e}"));
+    if let Err(e) = write_gpsd_defaults(device) {
+        return fail(&e);
     }
 
     // 3. Enable + (re)start so it reads the device now and on boot.
@@ -114,9 +146,11 @@ fn setup_gpsd(device: Option<&str>) -> ExitCode {
         Ok(s) => return fail(&format!("systemctl enable gpsd failed ({s})")),
         Err(e) => return fail(&format!("could not run systemctl: {e}")),
     }
-    // Restart to pick up the freshly written DEVICES (enable --now is a no-op if
-    // already active, so an explicit restart guarantees the new config loads).
-    let _ = Command::new(systemctl).arg("restart").arg("gpsd.socket").status();
+    // Restart the SERVICE (not just the socket) so it re-reads the freshly written
+    // DEVICES — on a re-run gpsd.service may already be active and `enable --now`
+    // is then a no-op, so restarting only the socket would never load the new
+    // config (adrev P1). Best-effort; gpsd -n opens the device on (re)start.
+    let _ = Command::new(systemctl).arg("restart").arg("gpsd.socket").arg("gpsd.service").status();
 
     println!("ok");
     ExitCode::SUCCESS
