@@ -20,18 +20,25 @@ Branch is off `main` @ #668 (before #671 — trivial `audio/mod.rs` merge: #671 
 <!-- CI673 -->
 **CI-GREEN** on `dc998c8f` — all 4 checks pass (build-linux + verify, amd64+arm64). Took 4 rounds: a `Default`-derive on `[f64;80]` (arrays >32 don't derive Default → manual impl), two `needless_range_loop`, two `useless_vec` in tests — all the `no_cold_cargo` tax (mechanical lints, not logic; the codec logic was proven in the standalone crate). Also merged `origin/main` twice to resolve conflicts (audio/mod.rs keying+sbc; then Cargo.lock for release 0.60.0 + #674). PR is `MERGEABLE`.
 
-**Merge decision (operator):** the codec is dormant (no caller injects `UvproSbcCodec` until the UI/yfyn), so merging is safe — BUT the encoder is known-imperfect (MAE ~156) and the full-image quality gate + Codex adrev have NOT run. Recommend validating via the SSTV-codec full-image round-trip (st5n) + the adrev BEFORE merging this transmitted-audio encoder to main; merge-now is acceptable if unblocking st5n/yfyn is preferred (they can also branch off this PR).
+**Merge decision (operator, 2026-06-13):** Codex was quota-blocked, so a **self-adrev** was run instead (fresh-context reviewer agent over `sbc.rs` + the mini_sbc reference) and #673 merged on green-with-no-major-findings. The review found **one P0** — `decode` panicked on a truncated/garbage SBC frame body (`for block in frame` used mini_sbc's `Iterator` impl, which `.unwrap()`s a mid-frame read error), violating the "one corrupt RX frame can't kill the receive loop" contract on the lossy-RF path. **Fixed** (commit `190fbba4`: fallible `frame.next()` + break; regression test; verified no-panic in the standalone harness). Allocation port, CRC, quantize, framing, streaming all audited clean. One P2 (odd-byte PCM input silently dropped — out-of-contract, the transport hands whole samples) left as a documented minor. Encoder amplitude refinement (MAE ~156) remains separately tracked, gated on the full-image round-trip.
 
 ## KNOWN-OPEN — encoder quality (not a bug, a refinement)
 
 The encoder round-trips faithfully (decodable, CRC-valid) but a 1 kHz calibration tone reconstructs at **MAE ~156 / peak-err ~9850 vs ffmpeg's 6.7** — fine-grained quantization/scale-factor refinement (the analysis CONVENTION is confirmed correct via a variant scan). **The decisive quality gate is a full-image round-trip, not tone MAE**: SSTV decode is STFT (frequency-domain), expected robust to amplitude error. So:
 - Next: build the **SSTV codec (`tuxlink-st5n`)** and run image → SSTV-encode → `UvproSbcCodec` → decode → SSTV-decode → image. If the image survives, the encoder is DONE; if not, the harness `dev/tools/sbc-proto/` is set up to refine it.
 
-## Deferred
+## ▶ START HERE next session — SSTV codec (`tuxlink-st5n`)
 
-- **Codex adversarial review** of the transport (on `main`) + the codec — quota-blocked this session (reset ~1:49 PM); per `codex_quota_gotcha` do NOT substitute a Claude agent. Attack angles: RADIO-1 abort/runaway-TX, two-socket concurrency, wire correctness, the encoder's transmitted-audio correctness.
-- **SSTV codec** (`tuxlink-st5n`, PCM↔image, HTCommander port) → **inline UI** (`tuxlink-yfyn`, deps on bcsy+vgvn+st5n) → the **whole-feature `wire-walk` gate**.
-- Operator HCI snoop before any on-air run (audio channel#/UUID + Implicit-vs-`c1`-GAIA keying confirmation) — confirm-before-transmit, not a code blocker (ADR 0018).
+The transport + SBC codec are done/merged. The next build piece is the **SSTV codec**, which is *also the quality gate that closes out the SBC encoder*.
+
+1. **Build `tuxlink-st5n`** — pure-Rust PCM↔image SSTV. Port from HTCommander C# (`dev/scratch/benshi-re/HTCommander/src/SSTV/`: `Encoder.cs`, `Robot_72_Color`, `ShortTimeFourierTransform.cs`; `docs/SSTV.md`). Encode at least **Robot36 + one PD mode**; decode via **STFT**. 32 kHz mono PCM (matches the audio path). Golden-vector + round-trip tested. Use the standalone-fast-iteration-crate pattern (`dev/tools/sbc-proto/` is the template) if DSP iteration is needed under `no_cold_cargo`.
+2. **Full-image quality gate (decisive):** image → SSTV-encode → `UvproSbcCodec::encode` → `decode` → SSTV-decode → image. **This determines whether the SBC encoder's MAE-156 matters.** If the image is clean, the encoder is DONE; if corrupted, refine the encoder in `dev/tools/sbc-proto/` (analysis-filterbank fixed-point precision / scale).
+3. Then **inline UI** (`tuxlink-yfyn`, deps bcsy+vgvn+st5n) — composer attach + inbound thumbnail in `AprsChatPanel`; **inject the codec** at `UvproSession::open_audio(Arc::new(UvproSbcCodec::new()))`. The **whole-feature `wire-walk` gate** fires here.
+
+## Deferred (gates, not build pieces)
+
+- **Codex adversarial review** of the *transport* (on `main`) — still quota-deferred. The *codec* was self-adrev'd this session (P0 fixed, see merge note); the transport adrev is lower-urgency (structurally simpler, abort logic). Re-run when Codex quota is available; per `codex_quota_gotcha` don't substitute Claude unless the operator directs it (they did for the codec).
+- Operator **HCI snoop** before any on-air run (audio channel#/UUID + Implicit-vs-`c1`-GAIA keying confirmation) — confirm-before-transmit, not a code blocker (ADR 0018).
 
 ## Worktree state
 - `worktrees/bd-tuxlink-vgvn-sbc-codec` — ACTIVE, PR #673 draft. Gitignored on disk: `node_modules/` (docs linter), `target/`, `dev/scratch/sbc-proto/` (the scratch copy of the harness; the TRACKED copy is `dev/tools/sbc-proto/`). No at-risk untracked content.
