@@ -1,0 +1,5 @@
+/target
+Cargo.lock
+# Harness scratch artifacts
+*.pcm
+*.png
