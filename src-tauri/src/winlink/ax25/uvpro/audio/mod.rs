@@ -17,7 +17,7 @@
 //! confirms no such limit; the HTCommander 60s claim is unreliable and not
 //! propagated). The agent never transmits; the operator runs the on-air smoke.
 
+pub mod codec;
 pub mod framing;
-// pub mod codec;     // Task 2 — SbcCodec trait seam + test fakes
 // pub mod keying;    // Task 5 — c1 audio opcodes over GAIA (default-off)
 // pub mod transport; // Task 4 — AudioTransport TX/RX assembly + RADIO-1 abort
