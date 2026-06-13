@@ -21,9 +21,9 @@
 //! All three units are pure (no I/O) and pinned to golden vectors, the nx95
 //! testing posture. RADIO-1: this module never transmits; it only shapes bytes.
 
-// TODO(tuxlink-7my9): remove this allow when Task 5 (UvproSession::send_aprs_frame
-// + DATA_RXD reassembly) consumes these items — until then they are used only by
-// the golden-vector tests, which the non-test clippy pass sees as dead_code.
+// TODO(tuxlink-7my9): the TX path (fragment_ax25 + encode_body) has no live
+// caller until Task 7/8 wires UvproSession::send_aprs_frame to the native APRS
+// driver; the RX path (Reassembler) is already live via the session event loop.
 #![allow(dead_code)]
 
 use super::bits::{BitReader, BitWriter};

@@ -93,8 +93,8 @@ pub fn encode_write_settings(settings_raw: &[u8]) -> Vec<u8> {
 
 /// Encode an `HT_SEND_DATA` request carrying one APRS/AX.25 TNC fragment — the
 /// native data path that rides the same GAIA connection as control (tuxlink-7my9).
-// TODO(tuxlink-7my9): drop the allow when Task 5 (UvproSession::send_aprs_frame)
-// calls this; until then it is used only by this module's golden-vector tests.
+// TODO(tuxlink-7my9): drop the allow when Task 7/8 gives send_aprs_frame a live
+// caller; until then this TX encoder is reached only from dead code + tests.
 #[allow(dead_code)]
 pub fn encode_ht_send_data(frag: &super::tncdata::TncDataFragment) -> Vec<u8> {
     let mut w = header(CMD_HT_SEND_DATA, false);
