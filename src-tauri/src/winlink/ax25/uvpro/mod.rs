@@ -13,6 +13,10 @@
 //! `docs/design/2026-06-12-uvpro-benshi-control-phase2-design.md`,
 //! `docs/design/uvpro-benshi-golden-vectors.md`.
 //!
+//! Attribution + license review (benlink + HTCommander, both Apache-2.0;
+//! independent Rust reimplementation, no source copied):
+//! `docs/reference/uvpro-benshi-protocol-attribution.md`.
+//!
 //! RADIO-1 / ADR 0018: control commands do NOT key the transmitter; this profile
 //! exposes no transmit command and is non-transmitting by construction. Abort =
 //! drop the RFCOMM socket. No auto-reconnect (a drop → disconnected; the operator

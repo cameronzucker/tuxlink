@@ -42,6 +42,10 @@ Two independent ones agree 1:1 (the RE equivalent of a passing test):
 ⚠️ This is the **opposite** of the clean-sheet VARA rule. RE here is explicitly
 sanctioned by the task and the parent spec. Do NOT apply the VARA prohibition.
 
+Both prior-art projects are Apache-2.0; tuxlink reimplements the protocol
+independently in Rust (no source copied). Full attribution + license-compliance
+review: [`docs/reference/uvpro-benshi-protocol-attribution.md`](../reference/uvpro-benshi-protocol-attribution.md).
+
 Full grounded protocol facts live in `GROUNDING-FINDINGS.md`. The load-bearing
 ones:
 
