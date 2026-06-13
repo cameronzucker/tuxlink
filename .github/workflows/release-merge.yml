@@ -65,6 +65,11 @@ jobs:
             echo "No open release-please PR — nothing accumulated to release. Done."
             exit 0
           fi
-          echo "Merging release PR #$pr (no-squash per ADR 0010)…"
+          # The release PR opens as a DRAFT (release-please-config draft-pull-request)
+          # so the agent swarm can't merge it ad-hoc — only this scheduled job (or a
+          # deliberate workflow_dispatch override) readies + merges it. That is the
+          # nightly-cadence gate.
+          echo "Readying + merging draft release PR #$pr (no-squash per ADR 0010)…"
+          gh pr ready "$pr" --repo "$GITHUB_REPOSITORY"
           gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --merge
-          echo "Merged #$pr. release-please.yml will tag + release.yml will build artifacts."
+          echo "Merged #$pr → release-please.yml tags → release.yml builds + marks PRE-release."

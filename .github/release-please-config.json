@@ -3,6 +3,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
+      "draft-pull-request": true,
       "include-v-in-tag": true,
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": false,
