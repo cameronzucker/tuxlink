@@ -56,11 +56,13 @@ function appendMessage(
 }
 
 /// Set `.state` on the message whose `.msgid === msgid`, searching every
-/// thread. Returns a new threads object only for the thread that changed.
+/// thread. Stamps `ackedAt` when transitioning to `acked`. Returns a new
+/// threads object only for the thread that changed.
 function applyState(
   threads: Record<string, Thread>,
   msgid: string,
   state: StateChangeDto['state'],
+  at: number,
 ): Record<string, Thread> {
   const next: Record<string, Thread> = {};
   let changed = false;
@@ -71,7 +73,11 @@ function applyState(
       continue;
     }
     const messages = thread.messages.slice();
-    messages[idx] = { ...messages[idx], state };
+    messages[idx] = {
+      ...messages[idx],
+      state,
+      ...(state === 'acked' ? { ackedAt: at } : {}),
+    };
     next[call] = { callsign: thread.callsign, messages };
     changed = true;
   }
@@ -118,7 +124,7 @@ export function useAprsChat(): UseAprsChat {
     });
 
     subscribe<StateChangeDto>('aprs-message:state', (payload) => {
-      setThreads((prev) => applyState(prev, payload.msgid, payload.state));
+      setThreads((prev) => applyState(prev, payload.msgid, payload.state, Date.now()));
     });
 
     subscribe<boolean>('aprs-listening:change', (payload) => {

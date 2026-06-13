@@ -92,6 +92,13 @@
   cursor: not-allowed;
 }
 
+.aprs-open-channel {
+  font-size: 11px;
+  color: var(--text-faint, #94a3b8);
+  font-style: italic;
+  white-space: nowrap;
+}
+
 .aprs-chat-body {
   flex: 1;
   display: flex;
@@ -201,6 +208,20 @@
 .aprs-bubble-text {
   white-space: pre-wrap;
 }
+.aprs-bubble-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-end;
+}
+.aprs-bubble-in .aprs-bubble-meta {
+  align-self: flex-start;
+}
+.aprs-bubble-time {
+  font-size: 10px;
+  color: var(--text-faint, #94a3b8);
+  font-variant-numeric: tabular-nums;
+}
 
 /* Delivery-state chips — honest backend states only. */
 .aprs-chip {
@@ -308,6 +329,19 @@
 .aprs-send-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.aprs-char-count {
+  align-self: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-faint, #94a3b8);
+  font-variant-numeric: tabular-nums;
+  padding: 0 2px;
+}
+.aprs-char-count-over {
+  color: var(--accent-2, #fbbf24);
+  font-weight: 600;
 }
 
 .aprs-visually-hidden {

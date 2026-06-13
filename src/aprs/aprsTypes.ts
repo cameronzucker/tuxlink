@@ -34,7 +34,12 @@ export interface ChatMessage {
   text: string;
   msgid: string | null;
   state?: DeliveryState;
+  /// Local epoch-ms when tuxlink received (inbound) or sent (outbound) this
+  /// message. Honest client-stamp — NOT a claimed origin time.
   at: number;
+  /// Local epoch-ms when the `acked` transition arrived. Set only on ACK so the
+  /// UI can show "Acked HH:MM" (the round-trip close time). Undefined otherwise.
+  ackedAt?: number;
 }
 
 /// A conversation with one remote callsign.

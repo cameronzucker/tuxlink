@@ -39,4 +39,14 @@ describe('useAprsChat', () => {
     await act(async () => { await result.current.send('KK6XYZ', 'hello').catch(() => {}); });
     expect(result.current.threads['KK6XYZ']?.messages ?? []).toHaveLength(0);
   });
+
+  it('stamps ackedAt when a message transitions to acked', async () => {
+    const { result } = renderHook(() => useAprsChat());
+    await act(async () => {});
+    await act(async () => { await result.current.send('KK6XYZ', 'hello'); });
+    act(() => { handlers['aprs-message:state']?.({ payload: { msgid: 'A1', state: 'acked' } }); });
+    const msg = result.current.threads['KK6XYZ'].messages.find((x) => x.msgid === 'A1');
+    expect(msg?.state).toBe('acked');
+    expect(typeof msg?.ackedAt).toBe('number');
+  });
 });

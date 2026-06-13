@@ -28,6 +28,16 @@ import { useAprsChat } from './useAprsChat';
 import type { ChatMessage, DeliveryState, Thread } from './aprsTypes';
 import './AprsChatPanel.css';
 
+/// APRS message text budget — the per-message character cap that makes bounded
+/// airtime real (matches the backend codec's ≤67 text limit).
+const APRS_TEXT_MAX = 67;
+
+/// Format a local epoch-ms timestamp as a short HH:MM clock time, honoring the
+/// operator's locale. Exported for unit testing.
+export function formatTime(at: number): string {
+  return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 /// Map a delivery state to its operator-facing chip label + variant class.
 /// Honest states only — there is no synthetic "delivered".
 const CHIP: Record<DeliveryState, { label: string; variant: string }> = {
@@ -37,15 +47,19 @@ const CHIP: Record<DeliveryState, { label: string; variant: string }> = {
   rejected: { label: 'Rejected', variant: 'error' },
 };
 
-function DeliveryChip({ state }: { state: DeliveryState }) {
+function DeliveryChip({ state, msg }: { state: DeliveryState; msg?: ChatMessage }) {
   const chip = CHIP[state];
+  const label =
+    state === 'acked' && msg?.ackedAt != null
+      ? `${chip.label} ${formatTime(msg.ackedAt)}`
+      : chip.label;
   return (
     <span
       className={`aprs-chip aprs-chip-${chip.variant}`}
       data-testid="aprs-delivery-chip"
       data-state={state}
     >
-      {chip.label}
+      {label}
     </span>
   );
 }
@@ -58,7 +72,12 @@ function Bubble({ msg }: { msg: ChatMessage }) {
       data-direction={msg.direction}
     >
       <span className="aprs-bubble-text">{msg.text}</span>
-      {msg.direction === 'out' && msg.state && <DeliveryChip state={msg.state} />}
+      <span className="aprs-bubble-meta">
+        <span className="aprs-bubble-time" data-testid="aprs-bubble-time">
+          {formatTime(msg.at)}
+        </span>
+        {msg.direction === 'out' && msg.state && <DeliveryChip state={msg.state} msg={msg} />}
+      </span>
     </div>
   );
 }
@@ -144,6 +163,9 @@ export function AprsChatPanel() {
         >
           <span className="aprs-listening-dot" />
           {listening ? 'Listening' : 'Not listening — radio disconnected'}
+        </span>
+        <span className="aprs-open-channel" data-testid="aprs-open-channel" title="APRS is received by every station in range and digipeated — not a private channel.">
+          Heard by all stations in range
         </span>
         <button
           type="button"
@@ -234,6 +256,13 @@ export function AprsChatPanel() {
                 onChange={(e) => setText(e.target.value)}
               />
             </label>
+            <span
+              className={`aprs-char-count ${text.length > APRS_TEXT_MAX ? 'aprs-char-count-over' : ''}`}
+              data-testid="aprs-char-count"
+              aria-live="polite"
+            >
+              {text.length} / {APRS_TEXT_MAX}
+            </span>
             <button
               type="submit"
               className="aprs-send-btn"
