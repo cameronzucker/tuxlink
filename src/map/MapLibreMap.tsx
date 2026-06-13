@@ -78,6 +78,12 @@ export function MapLibreMap({
   const effectiveFlavor = flavor ?? themeFlavor;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [map, setMap] = useState<maplibregl.Map | null>(null);
+  // tuxlink-52h6: `new maplibregl.Map()` throws synchronously when WebGL is
+  // unavailable (the WebKitGTK case behind the 0.60.0 blank location screen) or
+  // the style is invalid. Catch it (below) and degrade to a local "unavailable"
+  // panel so the failure stays contained — the consumer's surrounding UI keeps
+  // working instead of the whole screen unmounting.
+  const [mapError, setMapError] = useState(false);
 
   // Latest callbacks held in refs so the construct-once effect never re-runs on
   // a changed callback identity.
@@ -91,35 +97,43 @@ export function MapLibreMap({
   // Construct the map exactly once.
   useEffect(() => {
     if (!containerRef.current) return;
-    const instance = new maplibregl.Map({
-      container: containerRef.current,
-      style: buildBasemapStyle(flavorRef.current),
-      center: initialCenter ? [initialCenter.lon, initialCenter.lat] : [0, 0],
-      zoom: initialZoom ?? DEFAULT_ZOOM,
-      minZoom: MAP_MIN_ZOOM,
-      maxZoom: MAP_MAX_ZOOM,
-      maxBounds: MAP_MAX_BOUNDS,
-      renderWorldCopies: false,
-      // We add the AttributionControl explicitly so "© OpenStreetMap
-      // contributors" (ODbL) renders from the source attribution.
-      attributionControl: false,
-    });
-    instance.addControl(new maplibregl.AttributionControl({ compact: false }));
-    instance.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    try {
+      const instance = new maplibregl.Map({
+        container: containerRef.current,
+        style: buildBasemapStyle(flavorRef.current),
+        center: initialCenter ? [initialCenter.lon, initialCenter.lat] : [0, 0],
+        zoom: initialZoom ?? DEFAULT_ZOOM,
+        minZoom: MAP_MIN_ZOOM,
+        maxZoom: MAP_MAX_ZOOM,
+        maxBounds: MAP_MAX_BOUNDS,
+        renderWorldCopies: false,
+        // We add the AttributionControl explicitly so "© OpenStreetMap
+        // contributors" (ODbL) renders from the source attribution.
+        attributionControl: false,
+      });
+      instance.addControl(new maplibregl.AttributionControl({ compact: false }));
+      instance.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 
-    instance.on('click', (e: maplibregl.MapMouseEvent) => {
-      onClickRef.current?.(clampLatLon(e.lngLat.lat, e.lngLat.lng));
-    });
-    const emitZoom = () => onZoomRef.current?.(instance.getZoom());
-    instance.on('load', () => {
-      setMap(instance);
-      emitZoom();
-    });
-    instance.on('moveend', emitZoom);
+      instance.on('click', (e: maplibregl.MapMouseEvent) => {
+        onClickRef.current?.(clampLatLon(e.lngLat.lat, e.lngLat.lng));
+      });
+      const emitZoom = () => onZoomRef.current?.(instance.getZoom());
+      instance.on('load', () => {
+        setMap(instance);
+        emitZoom();
+      });
+      instance.on('moveend', emitZoom);
 
-    return () => {
-      instance.remove();
-    };
+      return () => {
+        instance.remove();
+      };
+    } catch (e) {
+      // WebGL unavailable / invalid style → keep the failure local (tuxlink-52h6).
+      // eslint-disable-next-line no-console
+      console.error('MapLibre map construction failed; rendering fallback:', e);
+      setMapError(true);
+      return;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- construct once; props read at mount, later changes handled by dedicated effects
   }, []);
 
@@ -149,6 +163,31 @@ export function MapLibreMap({
     flavorRef.current = effectiveFlavor;
     map.setStyle(buildBasemapStyle(effectiveFlavor));
   }, [map, effectiveFlavor]);
+
+  // tuxlink-52h6: a construction failure degrades to a contained panel rather
+  // than propagating (which, with no error boundary above, blanked the whole
+  // app in 0.60.0). The consumer's surrounding chrome — grid input, controls —
+  // keeps rendering because the throw never escaped this component.
+  if (mapError) {
+    return (
+      <div
+        className="maplibre-unavailable"
+        data-testid="map-unavailable"
+        role="alert"
+        style={{
+          height: '100%',
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1rem',
+          textAlign: 'center',
+        }}
+      >
+        <span>The map could not be displayed on this system.</span>
+      </div>
+    );
+  }
 
   return (
     <div ref={containerRef} style={{ height: '100%', width: '100%' }}>

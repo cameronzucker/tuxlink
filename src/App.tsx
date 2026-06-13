@@ -2,6 +2,7 @@ import { useEffect, useState, lazy, Suspense, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { AppShell } from './shell/AppShell';
+import { ErrorBoundary } from './ErrorBoundary';
 import { parseComposeRoute, parseHelpRoute, parseLoggingRoute } from './routing';
 import './App.css';
 
@@ -123,7 +124,10 @@ export default function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {content}
+      {/* tuxlink-52h6: app-wide catch-all. Without it, a single unguarded throw
+          (the 0.60.0 maplibre map-init failure) unmounts the whole React root to
+          a blank window. The boundary turns that into a reload-to-recover screen. */}
+      <ErrorBoundary>{content}</ErrorBoundary>
     </QueryClientProvider>
   );
 }
