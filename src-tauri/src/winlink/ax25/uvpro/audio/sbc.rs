@@ -433,10 +433,10 @@ mod tests {
     fn encode_buffers_partial_frame_residual() {
         let codec = UvproSbcCodec::new();
         // 100 samples < 128 → no full frame yet, all buffered.
-        let out = codec.encode(&pcm_to_bytes(&vec![0i16; 100]));
+        let out = codec.encode(&pcm_to_bytes(&[0i16; 100]));
         assert!(out.is_empty());
         // 28 more → completes one 128-sample frame.
-        let out2 = codec.encode(&pcm_to_bytes(&vec![0i16; 28]));
+        let out2 = codec.encode(&pcm_to_bytes(&[0i16; 28]));
         assert_eq!(out2.len(), 40);
     }
 
