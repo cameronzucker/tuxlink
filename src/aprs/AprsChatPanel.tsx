@@ -1,30 +1,45 @@
 // src/aprs/AprsChatPanel.tsx
 //
-// APRS tactical-chat inline surface (Task 13). The visible product: a
-// per-callsign thread list, a conversation view (in/out bubbles), a composer
-// (callsign + text + Send), delivery-state chips on outgoing bubbles, and a
-// listening indicator.
+// APRS tactical-chat inline surface — the OPEN CHANNEL model. The visible
+// product, in ONE narrow column that fits the ~400px radio dock:
 //
-// Inline only — NO pop-up windows (hard project rule). The surface is
-// constrained to a realistic reading-pane width (not stretched full-width)
-// and reuses the radio-panel theme tokens for visual consistency.
+//   header   — title + listening state + a quiet open-channel honesty cue
+//   feed     — one flat, time-ordered list of every message heard on the
+//              channel plus our own sends (`from → to`, or `→ all` for a
+//              broadcast), with honest delivery states on our directed sends
+//   composer — a COMPACT recipient control (type a callsign OR pick from the
+//              heard-stations dropdown; empty ⇒ broadcast), a message input,
+//              Send, and a compact editable digipeater Path field
+//
+// APRS is a party line, not a private chat: there is NO per-callsign thread
+// list, NO conversations roster, NO side column. The heard-stations list is a
+// dropdown on the recipient field, not a visible column.
+//
+// Inline only — NO pop-up windows (hard project rule). The surface is a single
+// narrow column constrained to the dock width; it does not require or add side
+// columns.
 //
 // RF-honesty: delivery chips reflect ONLY the backend-reported `DeliveryState`
-// (sent / acked / timedOut / rejected) — no fabricated "delivered". `send`
-// delegates entirely to `useAprsChat().send`, which inserts the outgoing
-// bubble ONLY on a successful backend ack of queueing; a rejected send is
-// caught here and surfaced as an inline notice with NO bubble.
+// (sent / acked / timedOut / rejected) — no fabricated "delivered". Broadcasts
+// are fire-and-forget: they show "broadcast · sent" and NEVER a delivery
+// checkmark. `send` delegates to `useAprsChat().send`, which appends the
+// outgoing message ONLY on a successful backend ack of queueing; a rejected
+// send is caught here and surfaced as an inline notice with NO message.
 //
-// Start/Stop listening (Task 14): the toggle below arms/disarms the backend
-// listener via aprs_listen_start / aprs_listen_stop and reflects the hook's
-// `listening` state. A failed start (e.g. the Bluetooth/serial link is not
-// configured) is caught and surfaced through the same inline error notice the
-// composer uses — no fabricated "listening" state.
+// Start/Stop listening: the toggle arms/disarms the backend listener via
+// aprs_listen_start / aprs_listen_stop and reflects the hook's `listening`
+// state. A failed start is caught and surfaced through the same inline error
+// notice the composer uses — no fabricated "listening" state.
 
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import type { ChatMessage, DeliveryState, Thread } from './aprsTypes';
+import type {
+  AprsConfigDto,
+  ChannelMessage,
+  DeliveryState,
+  HeardStation,
+} from './aprsTypes';
 import './AprsChatPanel.css';
 
 /// APRS message text budget — the per-message character cap that makes bounded
@@ -49,10 +64,10 @@ const CHIP: Record<DeliveryState, { label: string; variant: string }> = {
   rejected: { label: 'Rejected', variant: 'error' },
 };
 
-function DeliveryChip({ state, msg }: { state: DeliveryState; msg?: ChatMessage }) {
+function DeliveryChip({ state, msg }: { state: DeliveryState; msg: ChannelMessage }) {
   const chip = CHIP[state];
   const label =
-    state === 'acked' && msg?.ackedAt != null
+    state === 'acked' && msg.ackedAt != null
       ? `${chip.label} ${formatTime(msg.ackedAt)}`
       : chip.label;
   return (
@@ -66,64 +81,136 @@ function DeliveryChip({ state, msg }: { state: DeliveryState; msg?: ChatMessage 
   );
 }
 
-function Bubble({ msg }: { msg: ChatMessage }) {
+/// One row in the channel feed. The address line reads `FROM → TO` (or
+/// `→ all` for a broadcast). Outbound rows are subtly distinguished (a left
+/// accent rule) — intentionally LIGHT, not heavy chat bubbles, because this is
+/// a shared channel log, not a private conversation.
+function FeedRow({ msg }: { msg: ChannelMessage }) {
+  const broadcast = msg.to === null;
   return (
-    <div
-      className={`aprs-bubble aprs-bubble-${msg.direction}`}
-      data-testid="aprs-bubble"
+    <li
+      className={`aprs-msg aprs-msg-${msg.direction}`}
+      data-testid="aprs-msg"
       data-direction={msg.direction}
+      data-broadcast={broadcast}
     >
-      <span className="aprs-bubble-text">{msg.text}</span>
-      <span className="aprs-bubble-meta">
-        <span className="aprs-bubble-time" data-testid="aprs-bubble-time">
+      <div className="aprs-msg-head">
+        <span className="aprs-msg-addr" data-testid="aprs-msg-addr">
+          {msg.direction === 'out' ? (
+            <span className="aprs-msg-from">me</span>
+          ) : (
+            <span className="aprs-msg-from">{msg.from}</span>
+          )}
+          <span className="aprs-msg-arrow" aria-hidden="true">
+            {' → '}
+          </span>
+          {broadcast ? (
+            <span className="aprs-msg-to aprs-msg-to-all">all</span>
+          ) : (
+            <span className="aprs-msg-to">{msg.to}</span>
+          )}
+        </span>
+        <span className="aprs-msg-time" data-testid="aprs-msg-time">
           {formatTime(msg.at)}
         </span>
-        {msg.direction === 'out' && msg.state && <DeliveryChip state={msg.state} msg={msg} />}
-      </span>
-    </div>
+      </div>
+      <div className="aprs-msg-body">
+        <span className="aprs-msg-text">{msg.text}</span>
+        {msg.direction === 'out' && (
+          <span className="aprs-msg-state">
+            {broadcast ? (
+              // Broadcast is fire-and-forget: surface "broadcast · sent" with NO
+              // delivery checkmark, ever.
+              <span
+                className="aprs-chip aprs-chip-broadcast"
+                data-testid="aprs-broadcast-chip"
+              >
+                Broadcast · sent
+              </span>
+            ) : (
+              msg.state && <DeliveryChip state={msg.state} msg={msg} />
+            )}
+          </span>
+        )}
+      </div>
+    </li>
   );
 }
 
 export interface AprsChatPanelProps {
-  /// Per-callsign conversation map (owned by AppShell's lifted useAprsChat).
-  threads: Record<string, Thread>;
+  /// The open channel — one flat, time-ordered feed (owned by AppShell's lifted
+  /// useAprsChat).
+  messages: ChannelMessage[];
+  /// Stations heard on the channel, most-recent-first; backs the recipient
+  /// dropdown.
+  heardStations: HeardStation[];
   /// Whether the backend listener is armed (mirrors the backend).
   listening: boolean;
-  /// Send `text` to `call`; resolves with the backend msgid (rejects → no bubble).
-  send: (call: string, text: string) => Promise<string>;
+  /// Send `text` to `recipient` (null/empty ⇒ broadcast); resolves with the
+  /// backend tracking id (rejects → no message appended).
+  send: (recipient: string | null, text: string) => Promise<string>;
+  /// Read the live APRS config — used to seed the Path field.
+  getConfig: () => Promise<AprsConfigDto>;
+  /// Persist the APRS config (full DTO) — used to save an edited Path.
+  setConfig: (dto: AprsConfigDto) => Promise<void>;
   /// Optional device-control slot rendered above the composer. The seam for the
   /// UV-Pro native control surface; undefined until the native backend lands.
   controlStrip?: ReactNode;
 }
 
-export function AprsChatPanel({ threads, listening, send, controlStrip }: AprsChatPanelProps) {
-  const [callsign, setCallsign] = useState('');
+export function AprsChatPanel({
+  messages,
+  heardStations,
+  listening,
+  send,
+  getConfig,
+  setConfig,
+  controlStrip,
+}: AprsChatPanelProps) {
+  const [recipient, setRecipient] = useState('');
   const [text, setText] = useState('');
-  const [selected, setSelected] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [toggling, setToggling] = useState(false);
 
-  const callsigns = Object.keys(threads);
-  const hasThreads = callsigns.length > 0;
+  // Path control — seeded from the live config, persisted on blur/commit. The
+  // full config DTO is cached so a save is a read-modify-write (the backend
+  // command takes the whole DTO).
+  const [config, setLocalConfig] = useState<AprsConfigDto | null>(null);
+  const [path, setPath] = useState('');
+  const [pathError, setPathError] = useState<string | null>(null);
 
-  // The active conversation: the explicitly-selected thread, falling back to
-  // the composer's callsign (so an outgoing send shows up immediately even
-  // before a thread is clicked).
-  const activeCall = selected ?? (callsign.trim() ? callsign.trim().toUpperCase() : null);
-  const activeThread: Thread | null = activeCall ? threads[activeCall] ?? null : null;
+  const recipientListId = useId();
+  const feedRef = useRef<HTMLOListElement | null>(null);
 
-  const onSelectThread = (call: string) => {
-    setSelected(call);
-    setCallsign(call);
-    setSendError(null);
-  };
+  // Seed the Path field once from the backend config.
+  useEffect(() => {
+    let mounted = true;
+    getConfig()
+      .then((cfg) => {
+        if (!mounted) return;
+        setLocalConfig(cfg);
+        setPath(cfg.path);
+      })
+      .catch(() => {
+        // Backend absent (tests) — Path stays empty/editable; no crash.
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [getConfig]);
 
-  // Start/Stop listening toggle (Task 14). The backend is the source of truth:
+  // Keep the feed pinned to the newest message as traffic arrives.
+  useEffect(() => {
+    const el = feedRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length]);
+
+  const broadcastMode = recipient.trim() === '';
+
+  // Start/Stop listening toggle. The backend is the source of truth:
   // `listening` flips when the backend emits aprs-listening:change, NOT
-  // optimistically here. A failed start surfaces through the inline notice (the
-  // listener could not arm — e.g. the radio link is not configured) and leaves
-  // the indicator in its honest "not listening" state.
+  // optimistically here. A failed start surfaces through the inline notice.
   const onToggleListening = async () => {
     if (toggling) return;
     setSendError(null);
@@ -145,30 +232,50 @@ export function AprsChatPanel({ threads, listening, send, controlStrip }: AprsCh
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    const call = callsign.trim().toUpperCase();
     const body = text.trim();
-    if (!call || !body || sending) return;
+    if (!body || sending) return;
+    // Empty recipient ⇒ broadcast (send normalizes empty/whitespace to null).
+    const to = recipient.trim() ? recipient.trim().toUpperCase() : null;
     setSendError(null);
     setSending(true);
     try {
-      await send(call, body);
+      await send(to, body);
       setText('');
-      setSelected(call);
     } catch (err) {
-      // RF-honesty: the hook inserts NO bubble on a rejected send. Surface the
-      // failure as an inline notice instead of a phantom "sent" message.
-      setSendError(
-        err instanceof Error ? err.message : 'Send rejected — not queued.',
-      );
+      // RF-honesty: the hook appends NO message on a rejected send. Surface the
+      // failure as an inline notice instead of a phantom "sent" row.
+      setSendError(err instanceof Error ? err.message : 'Send rejected — not queued.');
     } finally {
       setSending(false);
     }
   };
 
+  // Persist an edited Path (read-modify-write of the full config DTO). Called on
+  // blur and on Enter in the Path field; a no-op when unchanged or config is
+  // not yet loaded.
+  const commitPath = async () => {
+    if (!config) return;
+    const next = path.trim();
+    if (next === config.path) {
+      setPathError(null);
+      return;
+    }
+    setPathError(null);
+    try {
+      const dto: AprsConfigDto = { ...config, path: next };
+      await setConfig(dto);
+      setLocalConfig(dto);
+    } catch (err) {
+      setPathError(err instanceof Error ? err.message : 'Could not save path.');
+    }
+  };
+
+  const hasMessages = messages.length > 0;
+
   return (
     <section className="aprs-chat" data-testid="aprs-chat-panel">
       <header className="aprs-chat-h">
-        <span className="aprs-chat-title">APRS tactical chat</span>
+        <span className="aprs-chat-title">APRS channel</span>
         <span
           className={`aprs-listening ${listening ? 'aprs-listening-on' : 'aprs-listening-off'}`}
           data-testid="aprs-listening-indicator"
@@ -176,9 +283,6 @@ export function AprsChatPanel({ threads, listening, send, controlStrip }: AprsCh
         >
           <span className="aprs-listening-dot" />
           {listening ? 'Listening' : 'Not listening — radio disconnected'}
-        </span>
-        <span className="aprs-open-channel" data-testid="aprs-open-channel" title="APRS is received by every station in range and digipeated — not a private channel.">
-          Heard by all stations in range
         </span>
         <button
           type="button"
@@ -188,107 +292,126 @@ export function AprsChatPanel({ threads, listening, send, controlStrip }: AprsCh
           disabled={toggling}
           onClick={onToggleListening}
         >
-          {listening ? 'Stop listening' : 'Start listening'}
+          {listening ? 'Stop' : 'Start'}
         </button>
       </header>
 
-      <div className="aprs-chat-body">
-        <aside className="aprs-thread-list" data-testid="aprs-thread-list">
-          {hasThreads ? (
-            <ul className="aprs-thread-ul">
-              {callsigns.map((call) => {
-                const last = threads[call].messages.at(-1);
-                return (
-                  <li key={call}>
-                    <button
-                      type="button"
-                      className={`aprs-thread-item ${activeCall === call ? 'aprs-thread-item-active' : ''}`}
-                      data-testid="aprs-thread-item"
-                      aria-pressed={activeCall === call}
-                      onClick={() => onSelectThread(call)}
-                    >
-                      <span className="aprs-thread-call">{call}</span>
-                      {last && (
-                        <span className="aprs-thread-preview">{last.text}</span>
-                      )}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="aprs-thread-empty">No conversations</p>
-          )}
-        </aside>
+      <p
+        className="aprs-open-channel"
+        data-testid="aprs-open-channel"
+        title="APRS is received by every station in range and digipeated — not a private channel."
+      >
+        Open channel — every station in range hears this.
+      </p>
 
-        <main className="aprs-conversation">
-          <div className="aprs-bubbles" data-testid="aprs-bubbles">
-            {!hasThreads && (
-              <p className="aprs-empty-state" data-testid="aprs-empty-state">
-                No conversations yet — send a message or wait for inbound.
-              </p>
-            )}
-            {activeThread &&
-              activeThread.messages.map((msg) => <Bubble key={msg.id} msg={msg} />)}
-          </div>
+      <ol className="aprs-feed" data-testid="aprs-feed" ref={feedRef}>
+        {!hasMessages && (
+          <li className="aprs-empty-state" data-testid="aprs-empty-state">
+            No traffic yet — heard messages and your sends appear here.
+          </li>
+        )}
+        {messages.map((msg) => (
+          <FeedRow key={msg.id} msg={msg} />
+        ))}
+      </ol>
 
-          {sendError && (
-            <p className="aprs-send-error" data-testid="aprs-send-error" role="alert">
-              {sendError}
-            </p>
-          )}
+      {sendError && (
+        <p className="aprs-send-error" data-testid="aprs-send-error" role="alert">
+          {sendError}
+        </p>
+      )}
 
-          {controlStrip}
+      {controlStrip}
 
-          <form className="aprs-composer" onSubmit={onSubmit}>
-            <label className="aprs-composer-call">
-              <span>Callsign</span>
-              <input
-                type="text"
-                className="aprs-input"
-                data-testid="aprs-composer-callsign"
-                placeholder="W7RPT-9"
-                value={callsign}
-                spellCheck={false}
-                autoCapitalize="characters"
-                autoCorrect="off"
-                onChange={(e) => {
-                  setCallsign(e.target.value);
-                  // A hand-typed callsign drops the selected-thread pin so the
-                  // composer drives the active conversation.
-                  setSelected(null);
-                }}
-              />
-            </label>
-            <label className="aprs-composer-text">
-              <span className="aprs-visually-hidden">Message</span>
-              <input
-                type="text"
-                className="aprs-input"
-                data-testid="aprs-composer-text"
-                placeholder="Message"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-              />
-            </label>
-            <span
-              className={`aprs-char-count ${text.length > APRS_TEXT_MAX ? 'aprs-char-count-over' : ''}`}
-              data-testid="aprs-char-count"
-              aria-live="polite"
-            >
-              {text.length} / {APRS_TEXT_MAX}
+      <form className="aprs-composer" onSubmit={onSubmit}>
+        <div className="aprs-composer-row">
+          <label className="aprs-composer-recipient">
+            <span className="aprs-visually-hidden">Recipient callsign</span>
+            <input
+              type="text"
+              className="aprs-input aprs-input-recipient"
+              data-testid="aprs-composer-recipient"
+              list={recipientListId}
+              placeholder="To (empty = all)"
+              value={recipient}
+              spellCheck={false}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              onChange={(e) => setRecipient(e.target.value)}
+            />
+            <datalist id={recipientListId} data-testid="aprs-heard-stations">
+              {heardStations.map((s) => (
+                <option key={s.call} value={s.call} />
+              ))}
+            </datalist>
+          </label>
+          <span
+            className={`aprs-recipient-mode ${broadcastMode ? 'aprs-recipient-mode-broadcast' : 'aprs-recipient-mode-directed'}`}
+            data-testid="aprs-recipient-mode"
+            data-broadcast={broadcastMode}
+          >
+            {broadcastMode ? '→ all' : '→ directed'}
+          </span>
+        </div>
+
+        <div className="aprs-composer-row">
+          <label className="aprs-composer-text">
+            <span className="aprs-visually-hidden">Message</span>
+            <input
+              type="text"
+              className="aprs-input"
+              data-testid="aprs-composer-text"
+              placeholder="Message"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+          </label>
+          <span
+            className={`aprs-char-count ${text.length > APRS_TEXT_MAX ? 'aprs-char-count-over' : ''}`}
+            data-testid="aprs-char-count"
+            aria-live="polite"
+          >
+            {text.length} / {APRS_TEXT_MAX}
+          </span>
+          <button
+            type="submit"
+            className="aprs-send-btn"
+            data-testid="aprs-send-btn"
+            disabled={sending || !text.trim()}
+          >
+            Send
+          </button>
+        </div>
+
+        <div className="aprs-composer-row aprs-path-row">
+          <label className="aprs-composer-path">
+            <span className="aprs-path-label">Path</span>
+            <input
+              type="text"
+              className="aprs-input aprs-input-path"
+              data-testid="aprs-composer-path"
+              placeholder="WIDE1-1,WIDE2-1"
+              value={path}
+              spellCheck={false}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              onChange={(e) => setPath(e.target.value)}
+              onBlur={commitPath}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void commitPath();
+                }
+              }}
+            />
+          </label>
+          {pathError && (
+            <span className="aprs-path-error" data-testid="aprs-path-error" role="alert">
+              {pathError}
             </span>
-            <button
-              type="submit"
-              className="aprs-send-btn"
-              data-testid="aprs-send-btn"
-              disabled={sending || !callsign.trim() || !text.trim()}
-            >
-              Send
-            </button>
-          </form>
-        </main>
-      </div>
+          )}
+        </div>
+      </form>
     </section>
   );
 }
