@@ -80,16 +80,12 @@ fn decode_into(filter: &mut FilterState<1, 8>, sbc: &[u8]) -> Vec<i16> {
         // on a lossy RF link), so a read error mid-frame must stop the stream gracefully,
         // never panic the RX loop. (Adversarial review P0, 2026-06-13.) `Err` covers both
         // `NoBlock` (frame fully decoded) and a truncated-body read error; both stop here.
-        loop {
-            match frame.next() {
-                Ok(block) => {
-                    for ch in block {
-                        for sample in ch {
-                            pcm.push(sample);
-                        }
-                    }
+        // `Err` (NoBlock = frame done, or a truncated-body read error) ends the frame.
+        while let Ok(block) = frame.next() {
+            for ch in block {
+                for sample in ch {
+                    pcm.push(sample);
                 }
-                Err(_) => break,
             }
         }
     }
