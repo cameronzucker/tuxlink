@@ -80,4 +80,26 @@ describe('APRS dock integration', () => {
     expect(await screen.findByTestId('aprs-chat-panel')).toBeInTheDocument();
     expect(screen.getByTestId('aprs-dock-tabs')).toBeInTheDocument();
   });
+
+  // tuxlink-iehg regression: the tab row + chat panel MUST be wrapped in ONE
+  // `.aprs-dock-surface` container. The drawer body is `display:contents` on
+  // desktop, so two bare children get promoted to separate grid items and the
+  // second overflows the single dock column (the bug: chat escaped to the
+  // bottom-left, tabs stretched the right column). jsdom has no layout engine,
+  // so the only catchable invariant is structural — both must descend from the
+  // single surface element. Without the wrapper this test cannot find the
+  // surface (and the children are bare siblings), so it fails pre-fix.
+  it('wraps the dock tabs and chat panel in a single dock-surface container', async () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('dash-aprs-control'));
+    const chat = await screen.findByTestId('aprs-chat-panel');
+    const tabs = screen.getByTestId('aprs-dock-tabs');
+    const surface = screen.getByTestId('aprs-dock-surface');
+    // Both the tab row and the chat panel live inside the ONE dock surface —
+    // not as bare siblings that the grid would scatter.
+    expect(surface).toContainElement(tabs);
+    expect(surface).toContainElement(chat);
+    // And the tab row sits directly inside the surface, above the body.
+    expect(tabs.parentElement).toBe(surface);
+  });
 });
