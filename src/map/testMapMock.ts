@@ -145,6 +145,14 @@ export function createReactLeafletMock(): Record<string, unknown> {
   function ImageOverlay(props: Record<string, unknown>): React.ReactElement {
     return leafDiv('image-overlay', props);
   }
+  // A Leaflet pane wrapper — in real react-leaflet it creates a z-index stacking
+  // context for its children. SHAPE-ONLY here: renders a div carrying the pane
+  // name/style and its children, so a test can assert children are wrapped in the
+  // right pane; jsdom cannot represent the real z-index stacking (grim-verified,
+  // C1) — which is exactly why the raster-over-tiles occlusion went uncaught.
+  function Pane(props: Record<string, unknown>): React.ReactElement {
+    return leafDiv('leaflet-pane', props);
+  }
   function TileLayer(props: Record<string, unknown>): React.ReactElement {
     return leafDiv('leaflet-tilelayer', props);
   }
@@ -170,6 +178,7 @@ export function createReactLeafletMock(): Record<string, unknown> {
   return {
     MapContainer,
     ImageOverlay,
+    Pane,
     TileLayer,
     Marker,
     Rectangle,

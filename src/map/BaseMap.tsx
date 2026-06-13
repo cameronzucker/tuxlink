@@ -34,7 +34,7 @@
  * load above `maxNativeZoom`).
  */
 import { useEffect, type ReactNode } from 'react';
-import { MapContainer, ImageOverlay, useMap, useMapEvents } from 'react-leaflet';
+import { MapContainer, ImageOverlay, Pane, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { MERCATOR_BOUNDS, clampLatLon, type LatLon } from './projection';
 import { TileLayerBridge } from './TileLayerBridge';
@@ -180,10 +180,18 @@ export function BaseMap({
       attributionControl={false}
       style={{ height: '100%', width: '100%' }}
     >
-      {/* Bundled Mercator raster is the ALWAYS-present base. The validated LAN
-          tile layer (when present) renders ABOVE it so a 404 tile reveals the
-          raster beneath at/below raster-native zoom (§8.5). */}
-      <ImageOverlay url={worldMercatorPng} bounds={MERCATOR_BOUNDS} />
+      {/* Bundled Mercator raster is the ALWAYS-present base. It MUST live in a
+          pane BELOW Leaflet's `tilePane` (z-index 200): an `ImageOverlay`'s
+          default pane is `overlayPane` (z-index 400), which sits ABOVE the LAN
+          `TileLayer` in `tilePane` — so the bundled raster would PAINT OVER the
+          LAN tiles and hide them entirely. That occlusion is why bound tiles
+          fetched (HTTP 200) yet never displayed; Leaflet stacks by PANE z-index,
+          not DOM order, so the prior "renders above via DOM order" assumption was
+          wrong (bd tuxlink-k61j). The custom pane at z-index 100 keeps the raster
+          the bottom layer, with LAN tiles (200) and grid/markers (400+) above. */}
+      <Pane name="tux-raster-base" style={{ zIndex: 100 }}>
+        <ImageOverlay url={worldMercatorPng} bounds={MERCATOR_BOUNDS} />
+      </Pane>
       {tileBacked && (
         <TileLayerBridge source={tileSource!.source} appMaxZoom={TILE_MAX_ZOOM_CAP} />
       )}
