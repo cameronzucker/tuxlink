@@ -23,19 +23,6 @@ VHF and UHF with native control of the Benshi UV-Pro handheld.
   <a href="https://www.kernel.org"><img src="https://img.shields.io/badge/platform-linux%20(x86__64%20%7C%20arm64)-lightgrey.svg?logo=linux&logoColor=white" alt="Platform: Linux x86_64 and arm64"></a>
 </p>
 
-> [!NOTE]
-> **Tuxlink is in alpha and looking for testers.** It installs from `.deb`,
-> `.rpm`, and `.AppImage` artifacts on every release. It is not yet ready for
-> field deployment. Install it, run it through real workflows, and
-> [file an issue](https://github.com/cameronzucker/tuxlink/issues) with a clear
-> repro and the exported logs (Help → Logging → Export logs).
->
-> Version tags are generated automatically from conventional-commit activity by
-> [release-please](https://github.com/googleapis/release-please) and track
-> repository velocity, not release readiness. The
-> [Maturity](#maturity-what-is-and-is-not-proven) section covers which paths
-> are validated and which are operator-verified.
-
 > [!TIP]
 > **Coming from Winlink Express or Pat?** Start with
 > [Moving from other Winlink clients](docs/user-guide/32-from-express-or-pat.md):
@@ -67,13 +54,20 @@ credentials in `~/.config/pat/config.json`, and routes transport configuration
 (Dire Wolf, ardopcf, rig control) through community-written tutorials per
 transport.
 
-Tuxlink occupies a third axis: a native desktop GUI, delivered as a single
-[Tauri](https://tauri.app/) application. The complete Winlink Express Standard
-Forms catalog, an address book, station finding, location-aware request
-workflows, full-text search, and an offline map all ship in the box, and first
-run needs no README and no video tutorial. The OS keyring holds the Winlink CMS password; Tuxlink never writes
-it to a config file on disk. The mailbox, compose pane, address book, and
-session log all render inside one desktop window.
+Tuxlink takes a third path: it implements the Winlink B2F protocol itself,
+natively in Rust. The mailbox, the CMS connection, and the wire-protocol exchange
+are one application, not a desktop GUI wrapped around a separate modem daemon or a
+Windows binary under emulation. The same build-it-natively approach reaches the
+radio link: Tuxlink is developing Sonde, a clean-room HF modem, rather than
+depending on closed Windows modem software.
+
+On that native engine it ships a single [Tauri](https://tauri.app/) desktop
+application. The complete Winlink Express Standard Forms catalog, an address book,
+station finding, location-aware request workflows, full-text search, and an
+offline map all ship in the box, and first run needs no README and no video
+tutorial. The OS keyring holds the Winlink CMS password; Tuxlink never writes it
+to a config file on disk. The mailbox, compose pane, address book, and session
+log all render inside one desktop window.
 
 Tuxlink unifies two layers of emergency communication that operators have
 historically run on separate devices. The strategic layer carries Winlink email
@@ -82,6 +76,19 @@ and text over VHF and UHF to stations in local range, with native control of the
 Benshi UV-Pro handheld. Both run from one workspace on a mains-powered Linux
 station, instead of a Windows laptop for Winlink alongside a battery handheld for
 APRS.
+
+> [!NOTE]
+> **Tuxlink is in alpha and looking for testers.** It installs from `.deb`,
+> `.rpm`, and `.AppImage` artifacts on every release. It is not yet ready for
+> field deployment. Install it, run it through real workflows, and
+> [file an issue](https://github.com/cameronzucker/tuxlink/issues) with a clear
+> repro and the exported logs (Help → Logging → Export logs).
+>
+> Version tags are generated automatically from conventional-commit activity by
+> [release-please](https://github.com/googleapis/release-please) and track
+> repository velocity, not release readiness. The
+> [Maturity](#maturity-what-is-and-is-not-proven) section covers which paths
+> are validated and which are operator-verified.
 
 ## Features
 
@@ -112,9 +119,12 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
   with delivery-acknowledgement tracking, presented inline beside the address
   book. A fixed, mains-powered station carries local tactical traffic without
   draining a handheld.
-- **Native UV-Pro control.** Direct Bluetooth control of the Benshi UV-Pro
-  handheld over its RFCOMM / GAIA link: a control strip for the radio, and a KISS
-  path that also carries AX.25 packet and Winlink.
+- **Native Benshi UV-Pro support.** Tuxlink drives the Benshi UV-Pro handheld
+  directly over Bluetooth, through its RFCOMM / GAIA control link, with no cable,
+  no sound card, and no separate TNC. A control strip surfaces the radio, and the
+  same Bluetooth link carries a KISS data path for APRS tactical chat, AX.25
+  packet, and Winlink. A modern handheld and a Linux machine make a complete
+  strategic-and-tactical station.
 - **FULL and tactical identities.** A licensed FULL identity for Winlink and
   tactical identities for local operation, managed under Settings → Identities.
 
