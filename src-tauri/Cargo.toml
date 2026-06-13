@@ -54,6 +54,7 @@ tokio = { version = "1", features = ["full"] }
 nix = { version = "0.31", features = ["signal", "process"] }
 thiserror = "2"            # NEW — for ConfigValidationError + ConfigReadError + ConfigWriteError
 tempfile = "3"             # PROMOTED from [dev-dependencies] below
+flate2 = "1"               # PROMOTED from [dev-dependencies] (tuxlink-ndi4) — basemap::validate decompresses gzip PMTiles metadata in production code, not just test fixtures
 async-trait = "0.1"        # NEW (tuxlink-z5f) — WinlinkBackend trait async-fn macro for object-safety
 futures = "0.3"            # NEW (tuxlink-z5f) — Stream + BoxStream for stream_log return type
 tokio-stream = { version = "0.1", features = ["sync"] }  # NEW (tuxlink-z5f) — BroadcastStream wrapper
@@ -134,7 +135,6 @@ serial_test = "3"          # NEW — gates env-var-mutating tests
 proptest = "1.4"           # NEW (tuxlink-c79g T7) — state-space matrix tests for position arbiter invariants I1-I5
 static_assertions = "1.1"  # alpha-logging (tuxlink-qjgx) — credential-struct Debug audit test
 tracing-test = "0.2"       # alpha-logging (tuxlink-qjgx) — Task 9.1 emission-coverage tests
-flate2 = "1"               # tuxlink-k61j — build a gzip-encoded tile fixture to prove the tile client decompresses Content-Encoding: gzip (TileServer-GL/nginx); already in the tree via reqwest's "gzip"
 syn = { version = "2", features = ["full", "parsing", "visit"] }  # alpha-logging (tuxlink-qjgx) — credential struct source-scan (§10.2 #9)
 quote = "1"                # alpha-logging (tuxlink-qjgx) — ToTokens for type normalization in source-scan
 

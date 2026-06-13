@@ -3,9 +3,41 @@
 **Date:** 2026-06-13
 **Agent:** mink-shoal-maple
 **bd issue:** tuxlink-ndi4
-**Status:** APPROVED (premises + renderer + imagery extension confirmed by operator; build phasing pending eng-review + Codex adrev)
+**Status:** APPROVED + AMENDED 2026-06-13 (see "AMENDMENT" block below: R4 spike changed the dark-mode mechanism from runtime CSS filter → build-time-baked GL-native inverted style). Premises + renderer + imagery extension confirmed by operator; build phasing pending eng-review + Codex adrev.
 **Code baseline:** `origin/main` (the map subsystem `src/map/` + `src-tauri/src/tiles/` and the #659 raster path live on `main`, merged commit `f3ba5bb9`; they are NOT present on the current `bd-tuxlink-xygm/recover-handoffs` working tree, which is a stale handoff-recovery branch — build this feature from a branch off `main`).
 **Supersedes framing in:** handoff `dev/handoffs/2026-06-13-dahlia-spruce-osprey-lan-tiles-shipped-vector-map-design.md` Part 2 (two of its "confirmed facts" are corrected below).
+
+---
+
+## AMENDMENT 2026-06-13 (R4 gating spike, mink-kingfisher-magpie) — dark-mode mechanism
+
+The R4 gating spike was run on the Pi's real WebKitGTK 4.1 engine (with
+`WEBKIT_DISABLE_DMABUF_RENDERER=1`, the app's required setting — `src-tauri/src/lib.rs:66`,
+bd tuxlink-wfw). Result: a full-canvas **CSS `invert(1) hue-rotate(180deg) brightness(1.33)`
+filter is too slow** — ~15 fps during pan/zoom (median 63 ms vs 22 ms light), and even bare
+`invert(1)` ~26 fps. The cost is the CSS-filter-on-canvas *mechanism* (a per-pixel CPU pass on
+the DMA-BUF-off path), **not** the filter values, so the design's "tune the filter values"
+note cannot fix it; a GPU compositing-layer hint (`translateZ(0)`) does not help either.
+The earlier 0%-overhead reading was measured on the broken DMA-BUF path (renders "TV static")
+and was non-representative.
+
+**Operator decision (2026-06-13):** produce the dark look with a **GL-native baked dark
+style** instead of a runtime CSS filter. The invert + W3C-hue-rotate(180°) + brightness(1.33)
+transform is applied to each layer's colors at BUILD/style-construction time, yielding an
+"inverted" dark flavor derived from the `@protomaps/basemaps` light flavor. PROVEN in the
+spike: baked-GL-dark = 45 fps / 21 ms = the light baseline (zero filter cost), same inverted-
+OSM aesthetic, labels colored-for-dark in-style. This is **not** darkmatter (operator-rejected)
+— it is the operator's wanted inverted-light look, precomputed.
+
+**What this amends:** premise 1 and premise 6's "dark = the same light style with the meshmap
+CSS filter", the "### Dark/light mechanism" section's CSS rule, the "Dark vector" view-mode
+bullet, and R4. Everywhere those say "apply a CSS filter to the canvas for dark mode," read
+instead "select a build-time-baked GL-native inverted dark style (no runtime filter)." The
+DOM-pins-not-inverted note no longer applies (no canvas filter); pins/UI are simply styled
+for the active mode. **Unchanged:** the inverted-OSM *aesthetic*, the renderer (MapLibre GL
+JS), the format (PMTiles), coverage, imagery extension, and R1 (the pmtiles-Source-over-Tauri-
+IPC seam — spike PASSED; use Tauri v2 raw-bytes `invoke` response, not base64). Spike detail:
+`dev/scratch/ndi4-spikes/SPIKE-FINDINGS.md` (gitignored) + this session's handoff.
 
 ---
 
