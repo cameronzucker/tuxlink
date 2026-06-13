@@ -30,6 +30,80 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.60.0](https://github.com/cameronzucker/tuxlink/compare/v0.59.0...v0.60.0) (2026-06-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **basemap:** the LAN map-tile-source settings UI is removed; the basemap is the self-hosted vector overview (no operator tile-source configuration).
+
+### Features
+
+* **aprs:** channel-model backend — emit all heard + blank-addressee broadcast (tuxlink-iehg) ([c522237](https://github.com/cameronzucker/tuxlink/commit/c5222372ad4652e78b284040857d20b6559e9b5d))
+* **aprs:** channel-model frontend — flat feed, recipient picker, path (tuxlink-iehg) ([07056da](https://github.com/cameronzucker/tuxlink/commit/07056da9efb29e6fc7e9e104bcf064a64194b364))
+* **aprs:** env-gated raw-frame capture for on-air ground-truthing (tuxlink-iehg) ([8dfe8d9](https://github.com/cameronzucker/tuxlink/commit/8dfe8d9c70aa4cb41b7fccb654e049769993fcaa))
+* **aprs:** multi-transport — accept TCP (Dire Wolf) + serial KISS for chat ([53e7d86](https://github.com/cameronzucker/tuxlink/commit/53e7d86b6a4d29ac407c50207618a5331de6ff72))
+* **basemap:** baked GL-native dark style + flavor swap mechanism (phase 3, L2) ([0ebd5cf](https://github.com/cameronzucker/tuxlink/commit/0ebd5cfabd581b19cabd4e85dafff5fbdc5c7002))
+* **basemap:** basemap follows the app color scheme (phase 3 wiring) ([005dc25](https://github.com/cameronzucker/tuxlink/commit/005dc2528540f11bf323c77eee66f0e90989cdbc))
+* **basemap:** flip GribForm/GridPickerOverlay/PositionMapWidget + A16 zoom-only 6-char gate (phase 2) ([760257d](https://github.com/cameronzucker/tuxlink/commit/760257d35f98bd2a6dec64859f73637df4e2559b))
+* **basemap:** flip StationFinderMap to MapLibre + fix async recenter (phase 2) ([25ba69e](https://github.com/cameronzucker/tuxlink/commit/25ba69e9d8da56064773d2b9b1e440ee99fed8d2))
+* **basemap:** high-contrast tuxlink flavor — outdoor light + meshmap dark (phase 3) ([40888c4](https://github.com/cameronzucker/tuxlink/commit/40888c48f25fb924a4e222ed052992442e79bc2b))
+* **basemap:** MapLibre GridPicker with drag-select rewrite (phase 2, finding 8) ([70c71ab](https://github.com/cameronzucker/tuxlink/commit/70c71ab648a57fdd64ef65283fa8a24fefb4f4ff))
+* **basemap:** MapLibre Maidenhead grid overlay as GeoJSON layers (phase 2) ([4248a5e](https://github.com/cameronzucker/tuxlink/commit/4248a5e893697fe46fcaef2227c488c8258a666e))
+* **basemap:** MapLibreMap component + light style builder + map context (phase 2) ([238a5c7](https://github.com/cameronzucker/tuxlink/commit/238a5c7fa4dcbfbf2e0976c3182af60cea5e9323))
+* **basemap:** PMTiles 206-Range seam over tile:// (Rust) ([f1ef39e](https://github.com/cameronzucker/tuxlink/commit/f1ef39effdec08390fad87ed651a7f67f8d2f4c0))
+* **compose:** attachment picker + drop + list, wired into message_send ([e0b703a](https://github.com/cameronzucker/tuxlink/commit/e0b703a84eabb99970a98cc3ae89388a312362bb))
+* **compose:** attachment size/airtime/image-classifier helpers ([669e979](https://github.com/cameronzucker/tuxlink/commit/669e979f985502ef701f9ba300054ba1d708bf9b))
+* **compose:** CMS_LIMIT_BYTES (~120KB) + cmsStatus helper ([45e575d](https://github.com/cameronzucker/tuxlink/commit/45e575d614348a5ae52b803c9b7985ee11a4941e))
+* **compose:** decouple resize from re-encode — independent operator controls ([09a6f1e](https://github.com/cameronzucker/tuxlink/commit/09a6f1e258b53cfc566d73ea0f90e9c7e7ee43d0))
+* **compose:** grant dialog:allow-open for the attachment picker ([2b8678c](https://github.com/cameronzucker/tuxlink/commit/2b8678c4ded6c977a378f3cf0854d2a8b7cd71c8))
+* **compose:** per-image resize picker + live size + CMS-limit warning ([e928200](https://github.com/cameronzucker/tuxlink/commit/e928200daeb4e6c06cd45525ae8644ed93ddc890))
+* **compose:** useAttachments hook (add via prepare_attachment, remove, toDto) ([d3a7abc](https://github.com/cameronzucker/tuxlink/commit/d3a7abc0cc64c338fe10a5d62c4b01782714e760))
+* **compose:** useAttachments retains path/opts + setOptions re-transcode ([6472d4c](https://github.com/cameronzucker/tuxlink/commit/6472d4c804c32cc93429d076f6f1b0bca33ee9a8))
+* **gps:** one-click "Fix it for me" via pkexec helper (tuxlink-m9ej) ([89fce2e](https://github.com/cameronzucker/tuxlink/commit/89fce2eeeba35711395f05fcdb880918dd33afef))
+* **gps:** one-click gpsd setup — install + configure + enable (tuxlink-n399) ([e60ffab](https://github.com/cameronzucker/tuxlink/commit/e60ffab321e476b2603a523998b4b86ca800bf6b))
+* **location:** map-based position confirmation + live readout + manual pin (tuxlink-yy1m) ([aa0eac8](https://github.com/cameronzucker/tuxlink/commit/aa0eac85d31daf68d65928f495e0be0480b77f30))
+* **location:** run GPS diagnostics unconditionally + add noDevice state (tuxlink-yy1m) ([d8bf5ee](https://github.com/cameronzucker/tuxlink/commit/d8bf5eecb2b2352cba7bff8ce4f496102b62471f))
+* **media:** prepare_attachment command — read, classify, transcode/passthrough ([9ed06aa](https://github.com/cameronzucker/tuxlink/commit/9ed06aa2a6c38c62ce3aa1196e33de72c09b0754))
+* **media:** recalibrate resize presets to the CMS ~120KB ceiling ([1db55f5](https://github.com/cameronzucker/tuxlink/commit/1db55f543c64654bfd5e5866b337460192706ab8))
+* **media:** transcode core — resize presets, JPEG/WebP encode, HEIC decode ([930538c](https://github.com/cameronzucker/tuxlink/commit/930538c1e7d3c59de0ca3f82b310b647d21b1eef))
+* **position:** plumb raw GPS lat/lon for the local setup-map pin (tuxlink-yy1m) ([19766e3](https://github.com/cameronzucker/tuxlink/commit/19766e3f0bc9f67308a15b39e32b1ef35e2c8a6d))
+* **rfcomm:** resolve UV-Pro audio-gateway RFCOMM channel via SDP (tuxlink-bcsy) ([922dd9f](https://github.com/cameronzucker/tuxlink/commit/922dd9f42886b1f74a6c4f6658aa3ad1bd88853d))
+* **sstv:** pure-Rust SSTV codec + SBC round-trip gate (tuxlink-st5n) ([fe5bdbf](https://github.com/cameronzucker/tuxlink/commit/fe5bdbf19593487bfa8f10de8cf01da80e45d997))
+* **uvpro:** audio-channel HDLC framing for SSTV transport (tuxlink-bcsy) ([37a65ae](https://github.com/cameronzucker/tuxlink/commit/37a65aea17aaed367f2b33f5821fe72905cb8966))
+* **uvpro:** AudioTransport TX/RX assembly with RADIO-1 abort (tuxlink-bcsy) ([9e454f9](https://github.com/cameronzucker/tuxlink/commit/9e454f95e5bbacc9fb1d5d05ccbccb1c0ac91a17))
+* **uvpro:** c1 audio keying opcodes over GAIA (default-off, snoop-gated) (tuxlink-bcsy) ([d3e96d2](https://github.com/cameronzucker/tuxlink/commit/d3e96d279bfdce72455e7bdcb09a601194568db4))
+* **uvpro:** SBC decode via mini_sbc + golden vectors for SSTV audio (tuxlink-vgvn) ([9073731](https://github.com/cameronzucker/tuxlink/commit/907373128242b9e574322cecc87672009d842db7))
+* **uvpro:** SbcCodec trait seam + test fakes for audio transport (tuxlink-bcsy) ([dff5fef](https://github.com/cameronzucker/tuxlink/commit/dff5fef816dd612bc3d66aa09362bb0cad23f5d8))
+* **uvpro:** wire AudioTransport into UvproSession (open_audio/abort_audio) (tuxlink-bcsy) ([d3ea61e](https://github.com/cameronzucker/tuxlink/commit/d3ea61e11ffa9ad90d95088f7df334c904ad0bf1))
+* **uvpro:** wire UvproSbcCodec — pure-Rust SBC encode+decode with CRC (tuxlink-vgvn) ([2b1efb9](https://github.com/cameronzucker/tuxlink/commit/2b1efb9ea360168e9098332110cb351e53c9c208))
+
+
+### Bug Fixes
+
+* **aprs:** add dock close control — chat was open-only (tuxlink-iehg wire-walk flow 6) ([25242b8](https://github.com/cameronzucker/tuxlink/commit/25242b8146597fc734f93ca05c6dc72243bcdff4))
+* **aprs:** wrap shared dock in one grid-item surface (tuxlink-iehg) ([df5869f](https://github.com/cameronzucker/tuxlink/commit/df5869f8375a96743be16dfafb5e72db5f8bbc78))
+* **basemap:** bundle build Range-extracts from remote planet, not a 120 GB download ([117499c](https://github.com/cameronzucker/tuxlink/commit/117499c272658677e29e35dcf03a29a709fc4b49))
+* **basemap:** promote flate2 to a regular dependency ([3d43600](https://github.com/cameronzucker/tuxlink/commit/3d43600bfdd74cf7585452e59e4dae128f2cd781))
+* **gps:** clippy doc-lint + self-adrev hardening of the pkexec helper (tuxlink-m9ej) ([28db199](https://github.com/cameronzucker/tuxlink/commit/28db1993594097a11562e91e6d63d42b02659661))
+* **gps:** self-adrev hardening of one-click gpsd setup (tuxlink-n399) ([8194b87](https://github.com/cameronzucker/tuxlink/commit/8194b87ea13d00cd27de3283978fc0f9f46d74b2))
+* **location:** draggable pin works while a GPS fix is shown (wire-walk flow 3, tuxlink-yy1m) ([78dbe64](https://github.com/cameronzucker/tuxlink/commit/78dbe64fc073aa87eb9fc98161fc64f6f6d98279))
+* **location:** port LocationMap to the MapLibre stack (un-strand PR [#678](https://github.com/cameronzucker/tuxlink/issues/678)) (tuxlink-yy1m) ([6b9ce13](https://github.com/cameronzucker/tuxlink/commit/6b9ce1372c20bb1f204a6c34b56173d015961128))
+* **media:** derive PartialEq/Eq on PresetArg ([c62053f](https://github.com/cameronzucker/tuxlink/commit/c62053f7dea580371276df33747b6e40ce8a3f40))
+* **media:** HEIF-brand match compiles (slice ==) + clippy-clean row copy ([0b7ba42](https://github.com/cameronzucker/tuxlink/commit/0b7ba4202d2b5623fa98a4c71067bf09313d9157))
+* **media:** pin libheif-rs =1.0.2 to match distro libheif 1.17.6 ([e7d9d2b](https://github.com/cameronzucker/tuxlink/commit/e7d9d2b073db11b2e9d2e519728e5e40ce8f6715))
+* **position:** add fix_lat/fix_lon to PositionStatusDto test literals (tuxlink-yy1m) ([fd218d4](https://github.com/cameronzucker/tuxlink/commit/fd218d4a91b6abdca4bd7e4336334b3860894d47))
+* **uvpro:** clippy needless_range_loop in sbc encoder (2 loops) (tuxlink-vgvn) ([5689e9b](https://github.com/cameronzucker/tuxlink/commit/5689e9bae7647209df887709110dd0c80ee1223d))
+* **uvpro:** clippy useless_vec in sbc tests (&vec![] -&gt; &[]) (tuxlink-vgvn) ([f019dd1](https://github.com/cameronzucker/tuxlink/commit/f019dd18245ebbe2e5201dfa98a4f6f2a93bf326))
+* **uvpro:** clippy while_let_loop in decode (loop+match -&gt; while let Ok) (tuxlink-vgvn) ([cc5ec9a](https://github.com/cameronzucker/tuxlink/commit/cc5ec9a08d5dfcbac5b215dcda571b2d583b07bf))
+* **uvpro:** decode must not panic on a truncated/garbage SBC frame body (tuxlink-vgvn) ([190fbba](https://github.com/cameronzucker/tuxlink/commit/190fbba4c2b78eb25202641506279baf32b58047))
+* **uvpro:** manual Default for EncState ([f64;80] exceeds derive-Default array len) (tuxlink-vgvn) ([8b848da](https://github.com/cameronzucker/tuxlink/commit/8b848da4274b997695759edbc9b0093c3538cc44))
+
+
+### Refactors
+
+* **basemap:** remove the Leaflet + LAN-raster frontend stack (phase 2) ([743cb56](https://github.com/cameronzucker/tuxlink/commit/743cb561286ac66a4f3c5c10381c0d03bee23791))
+
 ## [0.59.0](https://github.com/cameronzucker/tuxlink/compare/v0.58.0...v0.59.0) (2026-06-13)
 
 
