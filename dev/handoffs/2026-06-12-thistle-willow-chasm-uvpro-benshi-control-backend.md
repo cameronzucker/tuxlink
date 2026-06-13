@@ -61,15 +61,18 @@ offline from benlink's pure encoder (no radio) are committed at
   `dev/adversarial/` (codex stub). None are at-risk project content — all
   regenerable. Dispose via the ADR-0009 ritual once the PR merges.
 
-## Pending (gates before mark-ready / merge)
-1. **Deferred Codex cross-provider adrev** (tuxlink-bv0b) — Codex daily quota
-   was exhausted; resets **Jun 13 1:49 PM**. Run on the code diff
-   (`git diff origin/main..bd-tuxlink-nx95/uvpro-benshi-control`). NOT skippable
-   (no_carveout_on_cross_provider_adrev). Self-adrev rounds already folded in.
-2. **Operator on-air smoke** — RADIO-1 operator-only: connect to the real UV-Pro,
+## Status: PR #647 marked READY (2026-06-12, CI-green, all 4 jobs)
+
+Operator decision 2026-06-12: **not gating on Codex** (can't wait for the quota
+reset), so #647 was marked ready on CI-green alone.
+
+Remaining (post-merge / non-blocking):
+1. **Operator on-air smoke** — RADIO-1 operator-only: connect to the real UV-Pro,
    read live status into a UI, set a frequency and watch the radio retune, confirm
    disconnect works + `isTx` never asserts from control. Agent cannot run this.
-3. Mark PR #647 ready once 1 + 2 pass.
+2. **Optional** Codex cross-provider adrev (tuxlink-bv0b) — downgraded to a
+   non-blocking post-merge review; run if/when Codex quota returns. Self-adrev
+   rounds already folded into the spec.
 
 ## Follow-up bd issues filed (all depend-on nx95)
 - **tuxlink-bv0b** (P2) — the deferred Codex adrev round.
