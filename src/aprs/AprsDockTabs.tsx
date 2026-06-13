@@ -1,8 +1,11 @@
 // src/aprs/AprsDockTabs.tsx
 //
-// The shared right-dock tab switcher: [ APRS chat | Modem ]. The dock hosts the
-// APRS chat (default tenant) or the modem console; these tabs flip between them.
-// The Modem tab is disabled when no connection/modem panel is available.
+// The shared right-dock tab switcher: [ APRS chat | Modem ] with a close control.
+// The dock hosts the APRS chat (default tenant) or the modem console; these tabs
+// flip between them. The Modem tab is disabled when no connection/modem panel is
+// available. The close button dismisses the whole APRS dock surface — when no
+// radio session is active that frees the reading pane to the window edge
+// (tuxlink-iehg: the chat opened one-way before, with no way to close it).
 
 import './AprsDockTabs.css';
 
@@ -14,9 +17,12 @@ export interface AprsDockTabsProps {
   /// Whether the Modem tab can be selected (a radio panel mode is available).
   modemEnabled: boolean;
   onSelect: (tab: DockTab) => void;
+  /// Dismiss the APRS dock surface (sets `aprsOpen=false` in AppShell). With no
+  /// radio session active this collapses the dock and frees the reading pane.
+  onClose: () => void;
 }
 
-export function AprsDockTabs({ active, unread, modemEnabled, onSelect }: AprsDockTabsProps) {
+export function AprsDockTabs({ active, unread, modemEnabled, onSelect, onClose }: AprsDockTabsProps) {
   return (
     <div className="aprs-dock-tabs" role="tablist" data-testid="aprs-dock-tabs">
       <button
@@ -42,6 +48,16 @@ export function AprsDockTabs({ active, unread, modemEnabled, onSelect }: AprsDoc
         onClick={() => onSelect('modem')}
       >
         Modem
+      </button>
+      <button
+        type="button"
+        className="aprs-dock-close"
+        data-testid="aprs-dock-close"
+        aria-label="Close APRS chat"
+        title="Close APRS chat"
+        onClick={onClose}
+      >
+        ×
       </button>
     </div>
   );

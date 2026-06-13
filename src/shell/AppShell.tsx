@@ -1395,6 +1395,7 @@ export function AppShell() {
                 setDockTab(tab);
                 if (tab === 'aprs') setAprsSeenAt(Date.now());
               }}
+              onClose={() => setAprsOpen(false)}
             />
             {dockTab === 'aprs' ? (
               <Suspense fallback={null}>
