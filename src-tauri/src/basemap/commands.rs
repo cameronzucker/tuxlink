@@ -13,7 +13,7 @@
 //! arg, flag, or SSRF target.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -44,6 +44,12 @@ const BUDGET_MULT: u64 = 3; // size_budget = typical * 3 (generous; rejects absu
 pub struct BasemapState {
     pub manifest: RwLock<RegionManifest>,
     pub packs_dir: PathBuf,
+    /// Serializes pack install/delete so the packs-manifest read-modify-write
+    /// (load → upsert/remove → atomic write) can't lose an update under two
+    /// concurrent downloads (Tauri dispatches sync commands on a thread pool). A
+    /// lost update would leave a completed pack's archive unreferenced → the
+    /// startup orphan-sweep would silently delete the just-downloaded pack.
+    pub install_lock: Mutex<()>,
 }
 
 impl BasemapState {
@@ -51,6 +57,7 @@ impl BasemapState {
         Self {
             manifest: RwLock::new(RegionManifest::bundled_default()),
             packs_dir,
+            install_lock: Mutex::new(()),
         }
     }
 }
@@ -151,7 +158,17 @@ pub fn basemap_get_manifest(state: State<'_, Arc<BasemapState>>) -> RegionManife
 pub async fn basemap_refresh_manifest(
     state: State<'_, Arc<BasemapState>>,
 ) -> Result<RegionManifest, String> {
-    let body = reqwest::get(MANIFEST_URL)
+    // Bounded fetch: the bytes are re-validated by parse(), but a timeout keeps a
+    // slow/hung endpoint from stalling the command. (The host is pinned by
+    // validate_planet_url on the payload, not by the transport; redirect-following
+    // inside reqwest/go-pmtiles is out of scope — see region_manifest SECURITY.)
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("manifest client: {e}"))?;
+    let body = client
+        .get(MANIFEST_URL)
+        .send()
         .await
         .map_err(|e| format!("fetch manifest: {e}"))?
         .text()
@@ -187,6 +204,10 @@ pub fn basemap_download_pack(
         bin: resolve_sidecar(),
     };
     let available = available_bytes(&state.packs_dir);
+    // Serialize the install (free-space + extract + validate + atomic install +
+    // manifest RMW) against any concurrent download/delete so the packs-manifest
+    // read-modify-write can't lose an update (which would orphan a completed pack).
+    let _install = state.install_lock.lock().expect("install lock poisoned");
     let entry = download::install_pack(&extractor, &state.packs_dir, available, &req)
         .map_err(|e| e.to_string())?;
     // Register so the new pack is served immediately (no restart needed).
@@ -203,6 +224,8 @@ pub fn basemap_delete_pack(
     state: State<'_, Arc<BasemapState>>,
     id: String,
 ) -> Result<bool, String> {
+    // Same lock as install: delete also does a manifest read-modify-write.
+    let _install = state.install_lock.lock().expect("install lock poisoned");
     let removed = download::delete_pack(&state.packs_dir, &id).map_err(|e| e.to_string())?;
     registry.remove(&id);
     Ok(removed)

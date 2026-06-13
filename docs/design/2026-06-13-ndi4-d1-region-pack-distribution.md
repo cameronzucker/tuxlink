@@ -179,8 +179,15 @@ manifest reviewer sees the schema the tiers were sized against.
  PmtilesRegistry.register_path(<pack-id>, <installed path>)   (ALREADY BUILT)
         │
         ▼  served via the SAME tile://pmtiles/<pack-id> 206 seam (ALREADY BUILT)
- R7 dual-source compositing: overview source layers maxzoom 6 + region source layers minzoom 6
-   (per-source zoom-range clamping, A11 — disjoint bands; never blank; full detail where downloaded)
+ R7 dual-source compositing (AS SHIPPED — supersedes A11's literal "disjoint bands"):
+   the overview source stays UNCLAMPED (MapLibre overzooms it past z6 → present
+   everywhere = never blank); each pack adds its own vector source whose layers are
+   clamped to minzoom>=6 and drawn ON TOP, minus the sourceless `background` layer
+   (which would otherwise paint the whole canvas opaque). Inside a downloaded pack
+   the detailed z6–14 layers win; outside it the overzoomed overview still shows.
+   (A11's hard overview-maxzoom-6 clamp was rejected: it blanks the viewport above
+   z6 outside any pack. Required behavior — "never blank; full detail where
+   downloaded" — wins over the literal mechanism.)
 ```
 
 **Reused, already on `main` (do not rebuild):** `basemap::validate` (PMTiles v3 + 13-id schema +
@@ -215,8 +222,8 @@ None. Map rendering and HTTPS file download only; no transmission path is touche
 2. A location-set proactive offer (Wide, anchored on the operator grid) downloads a pack end-to-end
    through the sidecar; pre-flight space check, temp+atomic install, and post-rename manifest write
    prevent any corrupt/half-registered pack.
-3. A downloaded pack renders full z0–14 detail in its box, compositing with the bundled overview at
-   the z6 boundary with no seam/blank (R7 / A11).
+3. A downloaded pack renders full z0–14 detail in its box, composited on top of the (unclamped,
+   never-blank) overview; outside the pack the overview still shows (R7 as shipped — see Mechanism).
 4. A schema-invalid or truncated download is rejected with a clear error; no pack is installed.
 5. The operator can delete a pack, freeing disk; the manifest and registry both drop it.
 6. The region manifest refreshes from the canonical raw URL via a Rust command (CSP unchanged) and

@@ -36,6 +36,12 @@ const TILE_TYPE_MVT: u8 = 1;
 const COMPRESSION_NONE: u8 = 1;
 const COMPRESSION_GZIP: u8 = 2;
 
+/// Decompression cap for the gzip metadata block (decompression-bomb guard).
+/// Protomaps basemap metadata is tens of KB; 16 MiB is generous headroom while
+/// bounding a hostile/MITM archive that declares a tiny compressed block inflating
+/// to gigabytes.
+const MAX_METADATA_DECOMPRESSED_BYTES: u64 = 16 * 1024 * 1024;
+
 /// The Protomaps basemaps vector-layer ids this app's light/dark styles render.
 /// Locked against the real planet-build metadata (plan A10); a pack missing any
 /// of these would leave style layers unpainted, so it is rejected.
@@ -194,10 +200,18 @@ pub fn validate(archive: &PmtilesArchive, max_bytes: u64) -> Result<PmtilesValid
     let meta_json = match internal_compression {
         COMPRESSION_NONE => raw_meta,
         COMPRESSION_GZIP => {
+            // Decompression-bomb guard (a hostile/MITM pack can inflate a tiny
+            // compressed block to gigabytes → OOM the validator). Cap via `take`;
+            // hitting the cap means the metadata is implausibly large → reject.
             let mut out = Vec::new();
-            flate2::read::GzDecoder::new(&raw_meta[..])
+            let mut decoder =
+                flate2::read::GzDecoder::new(&raw_meta[..]).take(MAX_METADATA_DECOMPRESSED_BYTES);
+            decoder
                 .read_to_end(&mut out)
                 .map_err(|_| ValidationError::MetadataDecode)?;
+            if out.len() as u64 >= MAX_METADATA_DECOMPRESSED_BYTES {
+                return Err(ValidationError::MetadataDecode);
+            }
             out
         }
         _ => return Err(ValidationError::MetadataDecode),

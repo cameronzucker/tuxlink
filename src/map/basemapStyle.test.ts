@@ -129,4 +129,19 @@ describe('buildBasemapStyle — R7 region-pack compositing', () => {
     expect(style.sources['pack-tier-wide-n34-w112']).toBeDefined();
     expect(style.sources['pack-continent-na']).toBeDefined();
   });
+
+  it('contributes NO extra background/global layer per pack (regression: opaque canvas)', () => {
+    // @protomaps/basemaps layers() emits an opaque, sourceless `background` layer.
+    // If a pack's background were appended it would paint the whole canvas, hiding
+    // the overview + overlays. There must be exactly ONE background (the overview's),
+    // and every pack layer must be source-bound (so it only draws within the pack).
+    const base = buildBasemapStyle('light');
+    const baseBg = base.layers.filter((l) => l.type === 'background').length;
+    const withPacks = buildBasemapStyle('light', [{ id: 'tier-wide-n34-w112' }, { id: 'continent-na' }]);
+    const composedBg = withPacks.layers.filter((l) => l.type === 'background').length;
+    expect(composedBg).toBe(baseBg); // packs add zero backgrounds
+    const packLayers = withPacks.layers.filter((l) => l.id.startsWith('pack-'));
+    expect(packLayers.length).toBeGreaterThan(0);
+    expect(packLayers.every((l) => 'source' in l && Boolean((l as { source?: string }).source))).toBe(true);
+  });
 });
