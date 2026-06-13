@@ -841,6 +841,10 @@ pub fn run() {
             crate::contacts::commands::group_upsert,
             crate::contacts::commands::group_delete,
             crate::contacts::commands::contacts_suggestions, // Task A3: suggest-from-history
+            // tuxlink-je5d: read-only connection record by callsign, aggregating
+            // attempts across every favorite whose gateway == callsign (reuses
+            // the favorites store + tod_hint gate; no new storage).
+            crate::contacts::commands::contacts_connection_record,
             // favorites (tuxlink-egmp, Task B2): per-radio-mode Favorites/Recents
             // CRUD + the honest connection record, over the managed
             // `Arc<Mutex<FavoritesStore>>`. `favorite_upsert` MERGES only

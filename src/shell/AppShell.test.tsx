@@ -1071,20 +1071,18 @@ describe('<AppShell> — Contacts App-level mount with routed data (A9: M9 + Cod
     expect(screen.queryByTestId('rows-pane')).toBeNull();
 
     // contacts_read → useContacts → ContactsPanel: the routed contact + group
-    // render through the production stack.
-    expect(await screen.findByTestId('person-row-c-w6abc')).toHaveTextContent('W6ABC');
-    expect(screen.getByTestId('group-row-g-netcontrol')).toHaveTextContent('Net Control');
+    // render through the production stack (the unified outline — tuxlink-je5d).
+    expect(await screen.findByTestId('contact-row-c-w6abc')).toHaveTextContent('W6ABC');
+    expect(screen.getByTestId('group-name-g-netcontrol')).toHaveTextContent('Net Control');
 
     // KEY A9 COVERAGE — contacts_suggestions flows end-to-end through the real
-    // providers: the Suggested section (gated on suggestions.length > 0) renders
-    // the routed suggestion AND its message count. A8's ContactsPanel test
-    // scaffolds its own provider; this proves the PRODUCTION mount path wires the
-    // suggestions query.
-    const suggested = await screen.findByTestId('contacts-suggested');
-    expect(suggested).toBeInTheDocument();
-    const suggestionCard = screen.getByTestId('suggestion-KK4XYZ');
+    // providers: the routed suggested-from-traffic callsign renders as an
+    // Ungrouped row (New tag + message count) through the PRODUCTION mount path.
+    // A8's ContactsPanel test scaffolds its own provider; this proves production
+    // wiring of the suggestions query.
+    const suggestionCard = await screen.findByTestId('suggestion-KK4XYZ');
     expect(suggestionCard).toHaveTextContent('KK4XYZ');
-    expect(suggestionCard).toHaveTextContent('exchanged 4 messages with KK4XYZ');
+    expect(suggestionCard).toHaveTextContent('4 messages');
 
     // Codex#11 — no mailbox_list({folder:'contacts'}) fired during the mount.
     const firedContactsMailbox = vi
