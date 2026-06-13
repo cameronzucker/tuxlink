@@ -65,6 +65,22 @@ that makes any Winlink session possible.
   Tuxlink's B2F implementation references wl2k-go (Pat's protocol
   library) for cross-checking wire-format behaviour.
 
+### Radio-control protocol decoding
+
+- **benlink** (https://github.com/khusmann/benlink) by **Kyle Husmann
+  (KC3SLD)**. The open-source decode of the **Benshi/Vero** Bluetooth
+  control protocol used by the BTECH UV-Pro and related radios. Tuxlink's
+  native UV-Pro device control (channel / frequency / mode / status over
+  Bluetooth) derives its protocol from benlink. Apache-2.0.
+- **HTCommander** (https://github.com/Ylianst/HTCommander) by **Ylian
+  Saint-Hilaire**. A full control client for the same radio family, built
+  on benlink's work; tuxlink cross-validated the command set and
+  channel-selection mechanism against it. Apache-2.0.
+
+  Tuxlink reimplements the protocol independently in Rust (no source code
+  copied). A full attribution + license-compliance review lives in the
+  developer reference docs (`docs/reference/uvpro-benshi-protocol-attribution.md`).
+
 ### Modem / mode references
 
 - **VARA HF** by EA5HVK. The closed-source HF modem tuxlink can drive
