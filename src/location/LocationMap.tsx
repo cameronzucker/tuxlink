@@ -23,6 +23,10 @@ export interface LocationMapProps {
   grid: string;
   /** Raw live GPS fix coords for the precise marker, or null when no fresh fix. */
   fixLatLon: { lat: number; lon: number } | null;
+  /** Picker selection id ('manual' | 'gpsd' | 'serial:...'). When 'manual', the
+   *  marker follows the manual grid (not the live fix) so a hand-set location
+   *  isn't visually overridden by an arriving fix. */
+  selectedSource: string;
   /** Fired with the new grid when the operator clicks the map or drags the pin. */
   onGridChange: (grid: string) => void;
 }
@@ -33,9 +37,13 @@ const HALF_LAT_4 = 0.5;
 const HALF_LON_6 = 2.5 / 60;
 const HALF_LAT_6 = 1.25 / 60;
 
-export function LocationMap({ grid, fixLatLon, onGridChange }: LocationMapProps) {
+export function LocationMap({ grid, fixLatLon, selectedSource, onGridChange }: LocationMapProps) {
   const tileSource = useTileSource();
   const ll = grid ? gridToLatLon(grid) : null;
+  // Show the live fix marker only while a GPS source is selected; once the
+  // operator picks/sets Manual, the marker follows the manual grid so an
+  // arriving fix doesn't yank their hand-set pin (flow 3).
+  const showFix = selectedSource !== 'manual' && fixLatLon != null;
   const is6 = grid.toUpperCase().length === 6;
   const halfLat = is6 ? HALF_LAT_6 : HALF_LAT_4;
   const halfLon = is6 ? HALF_LON_6 : HALF_LON_4;
@@ -54,7 +62,16 @@ export function LocationMap({ grid, fixLatLon, onGridChange }: LocationMapProps)
     },
   };
 
-  const center = fixLatLon ?? ll ?? undefined;
+  // Marker position: the live fix when a GPS source is active, else the grid
+  // center. The marker is ALWAYS draggable — dragging it sets the location by
+  // hand (→ Manual), which is how the operator overrides a GPS fix they don't
+  // want (flow 3). Clicking the map does the same.
+  const markerPos: [number, number] | null = showFix
+    ? [fixLatLon!.lat, fixLatLon!.lon]
+    : ll
+      ? [ll.lat, ll.lon]
+      : null;
+  const center = (showFix ? fixLatLon : ll) ?? undefined;
 
   // The wrapper div (.location-map) is the CSS sizing target for both chromes
   // (large left pane in the wizard; min-height block in Settings) — Task C4.
@@ -69,11 +86,7 @@ export function LocationMap({ grid, fixLatLon, onGridChange }: LocationMapProps)
         {bounds && (
           <Rectangle bounds={bounds} pathOptions={{ color: '#5fd39a', weight: 2, fillOpacity: 0.1 }} />
         )}
-        {fixLatLon ? (
-          <Marker position={[fixLatLon.lat, fixLatLon.lon]} />
-        ) : (
-          ll && <Marker position={[ll.lat, ll.lon]} draggable eventHandlers={dragHandlers} />
-        )}
+        {markerPos && <Marker position={markerPos} draggable eventHandlers={dragHandlers} />}
       </BaseMap>
     </div>
   );

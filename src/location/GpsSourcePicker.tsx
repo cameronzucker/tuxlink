@@ -134,7 +134,12 @@ export function GpsSourcePicker({
           map + controls are separate containers so the wizard chrome can place
           them side-by-side (full-screen) while Settings stacks them. */}
       <div className="gps-picker__map">
-        <LocationMap grid={uiGrid || grid} fixLatLon={fixLatLon} onGridChange={onGridChange} />
+        <LocationMap
+          grid={uiGrid || grid}
+          fixLatLon={fixLatLon}
+          selectedSource={selectedSource}
+          onGridChange={onGridChange}
+        />
       </div>
 
       <div className="gps-picker__controls">
