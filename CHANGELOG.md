@@ -30,6 +30,80 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.57.0](https://github.com/cameronzucker/tuxlink/compare/v0.56.0...v0.57.0) (2026-06-13)
+
+
+### Features
+
+* **contacts:** unified outline reshape — groups+members in one tree, callsign-first, connection record (tuxlink-je5d) ([dc06262](https://github.com/cameronzucker/tuxlink/commit/dc06262edeac32e092856ce0d23b483e936a4d1a))
+
+
+### Bug Fixes
+
+* **contacts:** import tempfile::tempdir in commands test module (tuxlink-je5d) ([e5277d7](https://github.com/cameronzucker/tuxlink/commit/e5277d776a469e8ffd8d319b1a95319b3ac27ad7))
+* **contacts:** per-call id closure in connection-record test (clippy) (tuxlink-je5d) ([4198d30](https://github.com/cameronzucker/tuxlink/commit/4198d30e6758b2356ba89508d0c2c19585439a92))
+
+## [0.56.0](https://github.com/cameronzucker/tuxlink/compare/v0.55.0...v0.56.0) (2026-06-12)
+
+
+### Features
+
+* **forms:** reply-form threading — honor ReplyTemplate, open SendReply pre-bound (G10) ([23ed412](https://github.com/cameronzucker/tuxlink/commit/23ed412b4115643c0064e156660d487517b5cb49))
+* **forms:** runtime .txt message-template engine for catalog/org forms (G12-A) ([ededc54](https://github.com/cameronzucker/tuxlink/commit/ededc545f4beb4ddf898ade9a1e8c98ffa38fd24))
+* **forms:** SeqInc message serial numbering for radiogram/RRI/net-log forms (G12-C) ([c150e3c](https://github.com/cameronzucker/tuxlink/commit/c150e3c9f9d49ce71e25abe1218ab0433c098244))
+* **identity:** IdentityStore::set_tactical_cms cache write-through (tuxlink-tseu) ([598fac3](https://github.com/cameronzucker/tuxlink/commit/598fac3cc1792660b2fb0594880f4f4762cc2f61))
+* **identity:** IdentitySwitcher — closed chip + dropdown + inline unlock ([e809767](https://github.com/cameronzucker/tuxlink/commit/e80976766ba2ccda55b0b2669ae9adb171d2ad5f))
+* **identity:** listener identity badges in the radio panel ([79d85b4](https://github.com/cameronzucker/tuxlink/commit/79d85b4c5d970efa583ea0e4b88a3ab73f7694e5))
+* **identity:** mailbox identity filter (functional end-to-end) ([9910e35](https://github.com/cameronzucker/tuxlink/commit/9910e35e937bb5ae59ea94280db33572add37700))
+* **identity:** mount IdentitySwitcher in the dashboard ribbon ([2bdc795](https://github.com/cameronzucker/tuxlink/commit/2bdc795a1cbe1a41950f3b63afb1c742dbe4aaa6))
+* **identity:** Phase 7 DTO enrichment — ActiveIdentityDto + needs_auth/last_selected ([b3fdd52](https://github.com/cameronzucker/tuxlink/commit/b3fdd529db77d0604e7f9dc865cd6173c9fd2f59))
+* **identity:** production authenticate/lock/active commands — un-bricks transmit (tuxlink-5ekg) ([27334d6](https://github.com/cameronzucker/tuxlink/commit/27334d6da0c04d3221fa32b9290a23405cacf6ee))
+* **identity:** pure CMS-gate decision + online tactical verifier, fail-closed (tuxlink-tseu) ([f4d2505](https://github.com/cameronzucker/tuxlink/commit/f4d2505186a7c9b2776dec89edac5c22e306e228))
+* **identity:** TS DTO mirror + useIdentities react-query hooks ([1bca0ba](https://github.com/cameronzucker/tuxlink/commit/1bca0ba4db5c1de85d75ec20c417840e5fc5f5f7))
+* **location:** GpsSourcePicker — detect/triage GPS sources + manual fallback (tuxlink-9xy1) ([c849412](https://github.com/cameronzucker/tuxlink/commit/c8494121eadb4f5237e1b19bb0c2bd21e48bd195))
+* **mailbox:** default-identity namespace + robust legacy migration ([4e5c913](https://github.com/cameronzucker/tuxlink/commit/4e5c913546114e2e888be9688ecc552c8e26c7e0))
+* **mailbox:** drain shared Outbox by active session identity ([0061f64](https://github.com/cameronzucker/tuxlink/commit/0061f64508eec4f68b4bac2d2f9bd98eede74468))
+* **mailbox:** per-FULL received-mail namespace + tagging + legacy migration ([2be71da](https://github.com/cameronzucker/tuxlink/commit/2be71da8f86e71277492b949be35c5a69cdcc043))
+* **mailbox:** wire production reads to per-FULL namespace; retire ej7a heal ([fccc57f](https://github.com/cameronzucker/tuxlink/commit/fccc57f0c3da0ff1af754af9f7ed871c6e9adb57))
+* **packet:** P1 stable audio-device + PTT discovery (managed Dire Wolf) ([eeeafb3](https://github.com/cameronzucker/tuxlink/commit/eeeafb3d9c03275222f3d9b0bcf5e353a5fa3366))
+* **packet:** P2 direwolf.conf generation (pure, timing-free) ([7cb483f](https://github.com/cameronzucker/tuxlink/commit/7cb483f07881c4fcb573e17d4a4de539577a3420))
+* **packet:** P3 Dire Wolf presence/version + conf + device-busy probes ([0ea892b](https://github.com/cameronzucker/tuxlink/commit/0ea892b910f5c905117d8d3d8b0104b854415843))
+* **packet:** P4 managed Dire Wolf lifecycle (spawn/SIGINT/arbitration) ([d130f53](https://github.com/cameronzucker/tuxlink/commit/d130f53dbaa26c4893fcfadfc66ac99d165257e3))
+* **packet:** P5 ManagedDireWolf config variant + DTO round-trip ([e7d9145](https://github.com/cameronzucker/tuxlink/commit/e7d91454969c256f689753b59f7f194ec84073b2))
+* **packet:** P6 wire managed Dire Wolf into the packet connect path ([07f8b8b](https://github.com/cameronzucker/tuxlink/commit/07f8b8bcfafa3660e20edbbbdb54a41d3ffc8d5e))
+* **packet:** P7 managed-mode UI — pick sound card + PTT, no .conf ([d7b9c9b](https://github.com/cameronzucker/tuxlink/commit/d7b9c9bd7363a8945d2fee6613b8717dc5d88e27))
+* **position:** GPS source detection probes (tuxlink-9xy1 slice 1) ([d21a3e2](https://github.com/cameronzucker/tuxlink/commit/d21a3e2f66c01e96d96ad749af572f97bc27d4fd))
+* **search:** identity_tag column (schema v3→v4) for per-identity mail ([0f7cc33](https://github.com/cameronzucker/tuxlink/commit/0f7cc33df96951e8e359e3bf7edecdc27c7b59cb))
+* **settings:** wire GPS setup assistance into Settings → Location (tuxlink-9xy1) ([3d7d5cb](https://github.com/cameronzucker/tuxlink/commit/3d7d5cbe4c4666be3c8f0c2e950adecf47071bc8))
+* **shell:** pre-Alpha menu declutter + wire Verify CMS Connection (tuxlink-lqw2) ([ec92e82](https://github.com/cameronzucker/tuxlink/commit/ec92e824c8581e004457b28edf874e3f8e0f56f4))
+* **winlink:** gate CMS entry on tactical CMS-registration, fail-closed (tuxlink-tseu) ([bb37a93](https://github.com/cameronzucker/tuxlink/commit/bb37a9310f9e9bf6480f7a87290a5b2823e192da))
+* **winlink:** set/clear_active_identity on WinlinkBackend trait (tuxlink-5ekg) ([1ad0929](https://github.com/cameronzucker/tuxlink/commit/1ad0929900c6eac2eda1c69112b1f829ecd79962))
+* **wizard:** add GPS/location setup step to first-run onboarding (tuxlink-9xy1) ([1a34649](https://github.com/cameronzucker/tuxlink/commit/1a346494b01dc14e29c6ed979346d497241ddd4b))
+
+
+### Bug Fixes
+
+* **compose:** Compose/Forms UI regressions — alignment, send-as, import affordance (tuxlink-bl8p) ([d282198](https://github.com/cameronzucker/tuxlink/commit/d282198725b9e0a217b390c4d5c87c4b0e638a76))
+* **identity:** address Phase 7 adversarial review ([bb21358](https://github.com/cameronzucker/tuxlink/commit/bb213586f57763770619fce2e12ca4597020e18f))
+* **identity:** case-insensitive tactical-parent check + wrong-parent test (tuxlink-5ekg) ([14ceb70](https://github.com/cameronzucker/tuxlink/commit/14ceb700844d418772a89552c42ad1a492709070))
+* **mailbox:** drop dead resolve_dir wrapper (clippy -D dead_code) ([4ba3ea9](https://github.com/cameronzucker/tuxlink/commit/4ba3ea9c6d639afaec8debfa71b8b309d78aa9ba))
+* **packet:** clippy::question_mark in card_index_from_symlink_target ([68a725c](https://github.com/cameronzucker/tuxlink/commit/68a725cd6776c92f794f24f5be1c67a65b1e2723))
+* **packet:** correct USB device-node resolution in read_sys_snapshot (smoke blocker) ([563884e](https://github.com/cameronzucker/tuxlink/commit/563884ea1d2a6977a6b9f63ff1b9faf3a24067b8))
+* **packet:** derive Debug on ManagedModem + ManagedDireWolf (CI test build) ([29d35c3](https://github.com/cameronzucker/tuxlink/commit/29d35c3ff3fbb5c3f0aac643150d3c677bc7ac5a))
+* **position:** use unwrap_or for cheap probe fallbacks (clippy) ([0da36e2](https://github.com/cameronzucker/tuxlink/commit/0da36e299eaa594fe84fbdd7e2a4dbc260b531f9))
+* **request:** resolve Request Center grid from live GPS, not static config ([af4361d](https://github.com/cameronzucker/tuxlink/commit/af4361d551ec20f94de22203fe2c4c2e9720c61c))
+* **test:** update search_integration rebuild_index call for the FULL arg ([d64158a](https://github.com/cameronzucker/tuxlink/commit/d64158a2cb3505180c94aff74d369fbf07785b03))
+* **test:** use the public winlink_backend::MessageId path ([dbd8896](https://github.com/cameronzucker/tuxlink/commit/dbd8896822186acd57d42114584787f4297815e2))
+* **ui:** map BackendError::TacticalNotCmsRegistered in the exhaustive UiError projection (tuxlink-tseu) ([c6b3213](https://github.com/cameronzucker/tuxlink/commit/c6b321309d09171aa6405dc62bf47ca2a283a3a3))
+* **winlink:** gate cms_connect_test + persist gate cache only on change (tuxlink-tseu) ([f576ae5](https://github.com/cameronzucker/tuxlink/commit/f576ae5a74e4402ea5a4f6d1307e536d3841c989))
+
+
+### Refactors
+
+* remove extracted Sonde modem workspace from tuxlink (Op B6) ([5902301](https://github.com/cameronzucker/tuxlink/commit/5902301586f1ee156c8f35441fd439844f3fb0c2))
+* **sonde:** rename tuxmodem workspace + crates to Sonde ([842c891](https://github.com/cameronzucker/tuxlink/commit/842c89106560fc03219e667af97fa1c4767cc2f1))
+* **sonde:** update live cross-references to the renamed workspace ([284fead](https://github.com/cameronzucker/tuxlink/commit/284fead779aebe9ed5c46327c6ad018129e0db39))
+
 ## [0.55.0](https://github.com/cameronzucker/tuxlink/compare/v0.54.0...v0.55.0) (2026-06-12)
 
 

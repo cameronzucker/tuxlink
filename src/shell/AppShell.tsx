@@ -22,6 +22,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
 import type { HighlightRange } from '../mailbox/MessageList';
+import { deriveIdentityFilterOptions } from '../mailbox/identityFilter';
 import { selectionToFolderItems, dropId, dropIds } from '../mailbox/bulkSelection';
 import { type SortState, loadSortState, saveSortState } from '../mailbox/messageSort';
 import { useMailbox, useMailboxChangeEvents } from '../mailbox/useMailbox';
@@ -38,6 +39,7 @@ import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
 import type { ConnectionKey } from '../mailbox/FolderSidebar';
 import { DashboardRibbon } from './DashboardRibbon';
+import { useIdentityList, useActiveIdentity, useIdentitySwitch } from './useIdentities';
 import { StatusBar } from './StatusBar';
 import { useStatusData, type StatusTone } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
@@ -349,6 +351,10 @@ export function AppShell() {
     saveSortState(next);
   }, []);
 
+  // Mailbox identity filter (Task 11, tuxlink-noa0). `null` = "All identities".
+  // Options derived from the identity list (declared below as `identityList`).
+  const [identityFilter, setIdentityFilter] = useState<string | null>(null);
+
   // tuxlink-etxt Task 11: multi-row selection state. Cleared whenever the
   // active folder changes so stale ids from a previous folder can't bleed
   // through to a bulk command against a different folder's messages.
@@ -525,6 +531,39 @@ export function AppShell() {
   // config and emits writes; the shared listener here picks those up). Operator
   // smoke 2026-05-31 caught that the prior code hardcoded SSID=0 in the ribbon.
   const packetConfig = usePacketConfig();
+
+  // Phase 7 (tuxlink-noa0): identity list + active session + switch mutation for
+  // the dashboard's inline IdentitySwitcher. The list/active queries feed the
+  // closed chip + dropdown; the mutation authenticates (= switches) and
+  // invalidates both queries on success (see useIdentitySwitch). QueryClientProvider
+  // is the same ancestor useMailbox / useStatusData already rely on.
+  const identityList = useIdentityList();
+  const activeIdentity = useActiveIdentity();
+  const identitySwitch = useIdentitySwitch();
+  // Stable handler (the memo'd DashboardRibbon must not re-render on every 2s
+  // status poll) that also RESETS the mutation after it settles, so the typed
+  // credential held in the mutation's `variables` does not linger in the
+  // MutationCache (default gcTime 5m) past the switch. The switcher reads the
+  // error from the thrown rejection it catches, so the reset loses no UI state.
+  const switchMutateAsync = identitySwitch.mutateAsync;
+  const switchReset = identitySwitch.reset;
+  const onSwitchIdentity = useCallback(
+    async (args: { callsign: string; credential: string; tacticalLabel: string | null }) => {
+      try {
+        await switchMutateAsync(args);
+      } finally {
+        switchReset();
+      }
+    },
+    [switchMutateAsync, switchReset],
+  );
+  // Task 11 (tuxlink-noa0): toolbar identity-filter options derived from the
+  // same identity list (no second backend call). "All identities" + one entry
+  // per FULL callsign + one per tactical label.
+  const identityFilterOptions = useMemo(
+    () => deriveIdentityFilterOptions(identityList.data ?? null),
+    [identityList.data],
+  );
 
   // tuxlink-bsiy: inbound pending-message selection ("Review Pending Messages").
   // Subscribes to the b2f-event channel for `inbound_proposals_offered`; when a
@@ -1101,6 +1140,9 @@ export function AppShell() {
           reviewInbound={reviewInbound}
           onReviewInboundChange={onReviewInboundChange}
           aprs={{ listening: aprs.listening, unread: aprsUnread, onOpen: openAprsChat }}
+          identities={identityList.data ?? null}
+          activeIdentity={activeIdentity.data ?? null}
+          onSwitchIdentity={onSwitchIdentity}
         />
       </div>
 
@@ -1151,6 +1193,9 @@ export function AppShell() {
           onBulkMove={bulkMoveToFolder}
           onBulkArchive={bulkArchive}
           onSetReadState={setMessageReadState}
+          identityFilter={identityFilter}
+          onIdentityFilterChange={setIdentityFilter}
+          identityFilterOptions={identityFilterOptions}
         />
         {(() => {
           // tuxlink-djnl: shared render fragment for the reading pane. When

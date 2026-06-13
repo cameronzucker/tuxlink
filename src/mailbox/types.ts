@@ -33,6 +33,14 @@ export interface MessageMeta {
   /// Optional folder badge for cross-folder search rendering (spec §7.2).
   /// Absent → no badge.
   folder?: MailboxFolder;
+  /// Owning identity (FULL callsign or tactical label) for the mailbox identity
+  /// filter (Task 11, tuxlink-noa0). Surfaced end-to-end: `MessageMetaDto.identity`
+  /// (`ui_commands.rs`) carries it, sourced in `Mailbox::list_*` from the FULL
+  /// namespace for received mail (Inbox/Archive/user folders) and the
+  /// `<mid>.identity` sidecar for the shared Sent/Outbox. Absent only for
+  /// untagged legacy mail → the row matches only the "All identities" selection
+  /// (see `messageMatchesIdentity`).
+  identity?: string;
 }
 
 /// Reading-pane parsed view (Task 13 produces this from raw RFC5322 at the

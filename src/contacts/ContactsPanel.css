@@ -1,11 +1,13 @@
-/* ContactsPanel — inline list/detail surface (Task A8).
+/* ContactsPanel — the unified Contacts outline (tuxlink-je5d).
  *
- * Occupies the MessageList + reading-pane span of `.panes` (M8). The list
- * column is ~286px (design A.4); the detail pane fills the remainder. */
+ * Occupies the MessageList + reading-pane span of `.panes` (AppShell sets the
+ * grid-column span). Internally a two-column grid: the roster (the single
+ * outline, ~380px) and the polymorphic reading-pane detail. The detail squeezes
+ * to a compact column when the radio modem is open — both panes stay usable. */
 
 .contacts-panel {
   display: grid;
-  grid-template-columns: 286px 1fr;
+  grid-template-columns: 380px minmax(0, 1fr);
   min-height: 0;
   height: 100%;
   background: var(--bg);
@@ -18,25 +20,24 @@
   overflow: auto;
 }
 
-/* ---- list column ---- */
-.contacts-list {
+/* ============================================================================
+ * Roster — the single outline.
+ * ========================================================================== */
+.contacts-roster {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
   border-right: 1px solid var(--border);
   background: var(--surface);
-  overflow-y: auto;
 }
 
-.contacts-list-toolbar {
+.contacts-roster-toolbar {
   display: flex;
   gap: 6px;
   padding: 8px;
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
   background: var(--surface);
-  z-index: 1;
 }
 
 .contacts-search {
@@ -71,81 +72,142 @@
   background: var(--accent-2);
 }
 
-.contacts-section {
-  padding: 6px 0;
-}
-
-.contacts-section-label {
-  margin: 0;
-  padding: 8px 12px 4px;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-faint);
-}
-
-/* Section header with a trailing affordance (e.g. "+ New group"). */
-.contacts-section-head {
+/* ---- sort row ---- */
+.contacts-sort {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-right: 8px;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
 }
 
-.contacts-section-add {
-  flex: 0 0 auto;
-  padding: 2px 8px;
+.contacts-sort-btn {
+  padding: 3px 9px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--text-dim);
   background: none;
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border: 1px solid transparent;
   border-radius: 4px;
   cursor: pointer;
 }
 
-.contacts-section-add:hover {
-  color: var(--bg);
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.contacts-group-li {
-  list-style: none;
-}
-
-/* A group row rendered as a button (clickable to open the editor). */
-.contacts-group-row--button {
-  cursor: pointer;
-}
-
-.contacts-group-row--button:hover {
+.contacts-sort-btn:hover {
+  color: var(--text);
   background: var(--surface-2);
 }
 
-.contacts-empty {
-  margin: 0;
-  padding: 2px 12px 8px;
-  font-size: 12px;
-  color: var(--text-faint);
+.contacts-sort-btn--active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-/* shared row layout (group + person) */
-.contacts-group-list {
+/* ---- the tree ---- */
+.contacts-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+
+.contacts-rows {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-.contacts-group-row,
-.contacts-person-row {
+.contacts-rows--indented {
+  padding-left: 18px;
+}
+
+.contacts-row-li {
+  list-style: none;
+}
+
+/* ---- group sections ---- */
+.contacts-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.contacts-group-head {
   display: grid;
-  grid-template-columns: 28px 1fr auto;
+  grid-template-columns: 22px 1fr auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.contacts-group-head--selected {
+  background: var(--accent-soft);
+}
+
+.contacts-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.contacts-caret:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.contacts-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.contacts-group-name:hover {
+  color: var(--accent);
+}
+
+.contacts-group-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* avatar stack — overlapping small discs */
+.contacts-avatar-stack {
+  display: inline-flex;
+  align-items: center;
+}
+
+.contacts-avatar-stack .contacts-avatar--sm {
+  margin-left: -8px;
+  border: 1px solid var(--surface);
+}
+
+.contacts-avatar-stack .contacts-avatar--sm:first-child {
+  margin-left: 0;
+}
+
+/* ---- identity rows ---- */
+.contacts-row {
+  display: grid;
+  grid-template-columns: 22px auto 1fr auto;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 12px;
+  padding: 5px 10px;
   font-size: 13px;
   color: var(--text);
   background: none;
@@ -154,115 +216,279 @@
   cursor: pointer;
 }
 
-.contacts-group-row {
-  cursor: default;
+.contacts-row--raw,
+.contacts-row--suggestion {
+  grid-template-columns: auto 1fr auto auto;
 }
 
-.contacts-person-row:hover {
+.contacts-row:hover {
   background: var(--surface-2);
 }
 
-.contacts-person-row--selected {
+.contacts-row--selected {
   background: var(--accent-soft);
+}
+
+.contacts-row--multi {
+  background: color-mix(in srgb, var(--info) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--info);
+}
+
+.contacts-row-callsign {
+  font-family: var(--mono, monospace);
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .contacts-row-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 12px;
 }
 
-.contacts-row-sub {
+.contacts-row-name--add {
+  font-style: italic;
+  color: var(--text-faint);
+}
+
+.contacts-row-meta {
   font-size: 11px;
   color: var(--text-faint);
-  font-family: var(--mono, monospace);
+  white-space: nowrap;
 }
 
-/* avatars — round; groups are blue (design A.4), people use the surface tone */
+/* avatars — initials disc (named contacts only); placeholder keeps the grid. */
 .contacts-avatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  color: var(--text);
-  background: var(--border-strong);
-}
-
-.contacts-avatar--group {
-  color: #fff;
-  background: #3b82f6;
-}
-
-.contacts-avatar--lg {
-  width: 48px;
-  height: 48px;
-  font-size: 18px;
-}
-
-/* react-virtuoso needs a bounded height to scroll. */
-.contacts-people-list {
-  height: 320px;
-  min-height: 120px;
-}
-
-/* ---- suggested ---- */
-.contacts-suggested {
-  border-bottom: 1px solid var(--border);
-}
-
-.contacts-suggestion-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.contacts-suggestion {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-}
-
-.contacts-suggestion-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.contacts-suggestion-callsign {
-  font-size: 13px;
-  font-weight: 600;
-  font-family: var(--mono, monospace);
-}
-
-.contacts-suggestion-count {
-  font-size: 11px;
-  color: var(--text-faint);
-}
-
-.contacts-suggestion-add {
-  flex: 0 0 auto;
-  padding: 3px 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border: 1px solid var(--accent);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.contacts-suggestion-add:hover {
   color: var(--bg);
   background: var(--accent);
 }
 
-/* ---- detail pane ---- */
+.contacts-avatar--sm {
+  width: 20px;
+  height: 20px;
+  font-size: 9px;
+}
+
+.contacts-avatar--lg {
+  width: 46px;
+  height: 46px;
+  font-size: 17px;
+}
+
+.contacts-avatar-placeholder {
+  width: 22px;
+  height: 22px;
+}
+
+/* tags — "New" + tactical chips */
+.contacts-tag {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.contacts-tag--new {
+  color: var(--info);
+  background: color-mix(in srgb, var(--info) 16%, transparent);
+}
+
+.contacts-tag--tactical {
+  color: var(--form-tag);
+  background: color-mix(in srgb, var(--form-tag) 16%, transparent);
+  font-family: var(--mono, monospace);
+}
+
+.contacts-row-save {
+  flex: 0 0 auto;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.contacts-row-save:hover {
+  color: var(--bg);
+  background: var(--accent);
+}
+
+/* ---- ungrouped section ---- */
+.contacts-ungrouped {
+  margin-top: 4px;
+}
+
+.contacts-ungrouped-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 4px;
+}
+
+.contacts-ungrouped-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+.contacts-ungrouped-head::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.contacts-ungrouped-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.contacts-empty {
+  margin: 0;
+  padding: 4px 12px 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.contacts-empty--member {
+  padding-left: 28px;
+  list-style: none;
+}
+
+/* ============================================================================
+ * Bulk bar — Ctrl/Shift multi-select actions.
+ * ========================================================================== */
+.contacts-bulk-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.contacts-bulk-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.contacts-bulk-acts {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.contacts-bulk-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.contacts-bulk-btn:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+.contacts-bulk-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.contacts-bulk-btn--danger {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 40%, transparent);
+}
+
+.contacts-bulk-btn--ghost {
+  color: var(--text-dim);
+  background: none;
+  border-color: transparent;
+}
+
+.contacts-bulk-picker {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.contacts-bulk-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.contacts-bulk-group {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 12px;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.contacts-bulk-group:hover {
+  background: var(--surface-2);
+}
+
+.contacts-bulk-newgroup {
+  display: flex;
+  gap: 6px;
+}
+
+.contacts-bulk-newgroup-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+/* ============================================================================
+ * Detail — polymorphic reading pane.
+ * ========================================================================== */
 .contacts-detail {
   min-height: 0;
   overflow-y: auto;
@@ -275,6 +501,7 @@
   font-size: 13px;
 }
 
+/* ---- contact detail ---- */
 .contact-detail-header {
   display: flex;
   align-items: center;
@@ -286,23 +513,47 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-
-.contact-detail-name {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
+  min-width: 0;
 }
 
 .contact-detail-callsign {
-  font-size: 13px;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
   font-family: var(--mono, monospace);
-  color: var(--accent-2);
+  color: var(--text);
+}
+
+.contact-detail-name {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.contact-detail-name--add {
+  font-style: italic;
+  color: var(--text-faint);
+}
+
+.contact-card-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+
+.contact-record-card {
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
 }
 
 .contact-detail-fields {
   display: grid;
-  grid-template-columns: 90px 1fr;
+  grid-template-columns: 84px 1fr;
   gap: 6px 12px;
   margin: 0 0 20px;
 }
@@ -350,4 +601,194 @@
 
 .contact-detail-btn-primary:hover {
   background: var(--accent-2);
+}
+
+/* ============================================================================
+ * Group management — inline (no popup).
+ * ========================================================================== */
+.group-management-head {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.group-management-name {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+.group-management-name:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.group-management-rename {
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.group-management-rename:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.group-management-members {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.group-management-member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.group-management-member-primary {
+  font-family: var(--mono, monospace);
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.group-management-member-secondary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.group-management-member-remove {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-faint);
+  background: none;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.group-management-member-remove:hover {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+}
+
+.group-management-add {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.group-management-add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+.group-management-add-btn {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.group-management-add-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.group-management-options {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  margin: 4px 0 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.group-management-option {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 5px 8px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.group-management-option:hover {
+  background: var(--surface-2);
+}
+
+.group-management-option-callsign {
+  font-family: var(--mono, monospace);
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.group-management-option-name {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.group-management-delete {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--error);
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--error) 45%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.group-management-delete:hover {
+  color: var(--bg);
+  background: var(--error);
+  border-color: var(--error);
 }

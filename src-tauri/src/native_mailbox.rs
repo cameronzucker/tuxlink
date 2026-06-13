@@ -211,6 +211,18 @@ impl Mailbox {
                 meta.unread =
                     matches!(folder, MailboxFolder::Inbox | MailboxFolder::Archive)
                         && !path.with_extension("read").exists();
+                // Identity tag for the mailbox filter (Phase 7, tuxlink-noa0):
+                // received mail (Inbox/Archive) belongs to the FULL namespace it
+                // was listed from; the shared Sent/Outbox carry a per-message
+                // `<mid>.identity` sidecar (the sent/queued-as identity).
+                meta.identity = match folder {
+                    MailboxFolder::Sent | MailboxFolder::Outbox => {
+                        read_identity_sidecar(&path)
+                    }
+                    _ => ns
+                        .or(self.default_ns.as_ref())
+                        .map(|n| n.as_str().to_string()),
+                };
                 metas.push(meta);
             }
         }
@@ -870,7 +882,16 @@ impl Mailbox {
         slug: &str,
     ) -> Result<Vec<MessageMeta>, BackendError> {
         let dir = user_folders::folder_dir(&self.received_root(ns), slug);
-        Self::list_dir(&dir, /*surface_unread=*/ true)
+        let mut metas = Self::list_dir(&dir, /*surface_unread=*/ true)?;
+        // User folders hold received mail under a FULL namespace; stamp each row
+        // with that FULL so the Phase-7 mailbox identity filter matches them
+        // (the same namespace `list_user_ns` resolved the dir from).
+        if let Some(id) = ns.or(self.default_ns.as_ref()).map(|n| n.as_str().to_string()) {
+            for m in &mut metas {
+                m.identity = Some(id.clone());
+            }
+        }
+        Ok(metas)
     }
 
     /// Read a raw message from a user folder. Returns `NotFound` if the slug
@@ -1011,6 +1032,9 @@ impl Mailbox {
             if let Ok(msg) = Message::from_bytes(&raw) {
                 let mut meta = meta_from_message(&msg);
                 meta.unread = surface_unread && !path.with_extension("read").exists();
+                // `meta.identity` is stamped by the caller: user folders hold
+                // received mail under a FULL namespace (no per-message sidecar),
+                // so `list_user_ns` sets it from the resolved namespace.
                 metas.push(meta);
             }
         }
@@ -1201,7 +1225,22 @@ fn meta_from_message(msg: &Message) -> MessageMeta {
         unread: false,
         body_size,
         has_attachments: false, // attachment parsing is a later step
+        // Placeholder; populated in the listing loops from the `<mid>.identity`
+        // sidecar, which they can resolve from the `.b2f` path (Phase 7).
+        identity: None,
     }
+}
+
+/// Read a message's Phase-4 `<mid>.identity` sidecar given its `.b2f` path.
+/// Returns the trimmed tag, or `None` when absent/empty (untagged → the
+/// mailbox identity filter treats it as "All identities" only). Used by the
+/// listing loops (Phase 7, tuxlink-noa0) to surface the identity onto the
+/// list-row DTO without a per-message folder/namespace lookup.
+fn read_identity_sidecar(b2f_path: &Path) -> Option<String> {
+    fs::read_to_string(b2f_path.with_extension("identity"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Parse an RFC 3339 timestamp into seconds since the epoch, for use as a
@@ -1313,6 +1352,69 @@ mod tests {
             mbox.read_identity_tag(MailboxFolder::Sent, &id).as_deref(),
             Some("W1ABC"),
             "the identity tag travels with the message into Sent"
+        );
+    }
+
+    // Phase 7 (tuxlink-noa0): the stored `<mid>.identity` sidecar must surface
+    // onto the list-row MessageMeta so the mailbox identity filter has data to
+    // act on. Untagged messages list with `identity == None` (match "All" only).
+    #[test]
+    fn list_surfaces_the_identity_tag_onto_meta() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        // Distinct timestamps → distinct MIDs (the MID derives from
+        // sender/recipient/time, NOT subject/body, so `raw()` alone would
+        // collide both messages onto one MID in the shared Outbox).
+        let tagged = mbox
+            .for_identity("W1ABC")
+            .store(MailboxFolder::Outbox, &raw_at("Tagged", "x", 1_716_200_000))
+            .unwrap();
+        // A bare store (no identity) leaves the Outbox message untagged.
+        let untagged = mbox
+            .store(MailboxFolder::Outbox, &raw_at("Untagged", "y", 1_716_300_000))
+            .unwrap();
+        assert_ne!(tagged, untagged, "test needs two distinct MIDs");
+
+        let metas = mbox.list(MailboxFolder::Outbox).unwrap();
+        let tag_of = |id: &MessageId| {
+            metas
+                .iter()
+                .find(|m| &m.id == id)
+                .unwrap()
+                .identity
+                .clone()
+        };
+        assert_eq!(tag_of(&tagged).as_deref(), Some("W1ABC"));
+        assert_eq!(tag_of(&untagged), None);
+    }
+
+    // Phase 7 (tuxlink-noa0): received mail (Inbox/Archive + user folders) has no
+    // per-message sidecar — it is namespaced by FULL — so its list-row identity
+    // must be stamped from the namespace it was listed from, else the mailbox
+    // filter would empty the Inbox for any concrete-identity selection.
+    #[test]
+    fn list_stamps_received_mail_identity_from_namespace() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let scoped = mbox.for_identity("W1ABC");
+        let id = scoped.store(MailboxFolder::Inbox, &raw("In", "x")).unwrap();
+
+        // Listed under its own namespace → tagged with that FULL.
+        let metas = scoped.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(
+            metas.iter().find(|m| m.id == id).unwrap().identity.as_deref(),
+            Some("W1ABC"),
+            "received mail lists tagged with its FULL namespace"
+        );
+
+        // A default-identity mailbox stamps the un-namespaced (None) Inbox too.
+        let mbox2 = Mailbox::new(dir.path())
+            .with_default_identity(&crate::identity::Callsign::parse("W1ABC").unwrap());
+        let metas2 = mbox2.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(
+            metas2.iter().find(|m| m.id == id).unwrap().identity.as_deref(),
+            Some("W1ABC"),
+            "the default namespace stamps the bare `list` path"
         );
     }
 

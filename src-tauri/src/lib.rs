@@ -220,6 +220,13 @@ pub fn run() {
         // (start/stop/status) serialize on the transport handle. Phase 2
         // minimal surface; full session state machine arrives in Phase 3.
         .manage(std::sync::Arc::new(crate::winlink::modem::vara::VaraSession::new()))
+        // tuxlink-nx95: native UV-Pro Benshi control session (APRS-chat Phase 2).
+        // Holds the RFCOMM/GAIA driver + cached radio state + the single-
+        // Bluetooth-host owner-lock. Shared by the uvpro_* commands and the
+        // uvpro:status broadcaster.
+        .manage(std::sync::Arc::new(
+            crate::winlink::ax25::uvpro::session::UvproSession::new(),
+        ))
         // tuxlink-0pnb: P2P-Telnet single-flight + abort coordination (mirrors
         // NativeBackend's connect_in_progress + aborting flags, but held in
         // managed state because P2P bypasses WinlinkBackend entirely).
@@ -483,6 +490,24 @@ pub fn run() {
                     use tauri::Emitter as _;
                     let _ = app_handle_for_broadcaster
                         .emit(crate::modem_status::STATUS_EVENT, s);
+                },
+            );
+
+            // tuxlink-nx95: spawn the UV-Pro control status broadcaster — a
+            // std::thread that, while a native control session is connected,
+            // polls live status every 2 s and emits it as the `uvpro:status`
+            // event (mirrors the modem broadcaster above). Idle (disconnected)
+            // ticks are cheap no-ops; no tokio (ADR 0015).
+            let uvpro_for_broadcaster = (*app
+                .state::<std::sync::Arc<crate::winlink::ax25::uvpro::session::UvproSession>>())
+            .clone();
+            let app_handle_for_uvpro = app.handle().clone();
+            let _uvpro_broadcaster = crate::winlink::ax25::uvpro::commands::spawn_status_broadcaster(
+                uvpro_for_broadcaster,
+                move |s| {
+                    use tauri::Emitter as _;
+                    let _ = app_handle_for_uvpro
+                        .emit(crate::winlink::ax25::uvpro::commands::STATUS_EVENT, s);
                 },
             );
 
@@ -788,6 +813,17 @@ pub fn run() {
             // + B2F handshake + intent-filtered mailbox drain + DISCONNECT, all
             // in one Tauri call. Mirror of `modem_ardop_b2f_exchange`'s shape.
             crate::winlink::modem::vara::commands::modem_vara_b2f_exchange,
+            // tuxlink-nx95: native UV-Pro Benshi device-control commands (APRS-chat
+            // Phase 2). Connect/disconnect over the radio's native Bluetooth link +
+            // read status (channel/freq/mode/battery/RSSI) + set channel/freq/mode.
+            // Non-transmitting; single-Bluetooth-host arbitrated via the owner-lock.
+            crate::winlink::ax25::uvpro::commands::uvpro_connect,
+            crate::winlink::ax25::uvpro::commands::uvpro_disconnect,
+            crate::winlink::ax25::uvpro::commands::uvpro_get_status,
+            crate::winlink::ax25::uvpro::commands::uvpro_get_channels,
+            crate::winlink::ax25::uvpro::commands::uvpro_set_channel,
+            crate::winlink::ax25::uvpro::commands::uvpro_set_frequency,
+            crate::winlink::ax25::uvpro::commands::uvpro_set_mode,
             // tuxlink-0pnb Task 4 (refactored): P2P-Telnet connect + abort + peer-password management.
             // telnet_p2p_dial renamed to telnet_p2p_connect (StatusBar pipeline wiring);
             // telnet_p2p_abort added to mirror cms_abort (operator cancel semantics).
@@ -850,6 +886,10 @@ pub fn run() {
             crate::contacts::commands::group_upsert,
             crate::contacts::commands::group_delete,
             crate::contacts::commands::contacts_suggestions, // Task A3: suggest-from-history
+            // tuxlink-je5d: read-only connection record by callsign, aggregating
+            // attempts across every favorite whose gateway == callsign (reuses
+            // the favorites store + tod_hint gate; no new storage).
+            crate::contacts::commands::contacts_connection_record,
             // favorites (tuxlink-egmp, Task B2): per-radio-mode Favorites/Recents
             // CRUD + the honest connection record, over the managed
             // `Arc<Mutex<FavoritesStore>>`. `favorite_upsert` MERGES only

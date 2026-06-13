@@ -1,24 +1,30 @@
-// ConnectionRecord — the per-unit connection record line + outcome strip + the
-// gated time-of-day hint (Task B5).
+// ConnectionRecord — the connection record line + outcome strip + the gated
+// time-of-day hint (Task B5; props-lifted for tuxlink-je5d).
 //
 // The design's internal framing for this surface is the "honest connection
 // record" — it states the OBSERVED record plainly and NEVER predicts. That
 // framing is fine HERE in a code comment; NO user-facing string may carry the
 // word "honest" (VOICE). The ToD hint states observed counts, never a forecast.
 //
+// PROPS-DRIVEN (tuxlink-je5d): this component renders `attempts` + `hint` passed
+// in by its caller. It no longer fetches `favorite_tod_hint` itself — that lets
+// the same render serve BOTH the favorites caller (FavoriteRow, which fetches
+// the per-favorite hint) and the contacts caller (ContactDetail, which fetches
+// the aggregate-by-callsign record). Lifting the query out is the only behavior
+// change; the strip / record line / hint / empty-state markup is unchanged.
+//
 // L2: the wall-clock comes from the `ts_local` OFFSET literal (the station's own
 // clock) via `stationWallClock`; the "ago" delta uses the absolute instant via
 // `relativeAgo`. See record-format.ts.
 
-import { useQuery } from '@tanstack/react-query';
-import { invoke } from '@tauri-apps/api/core';
 import type { ConnectionAttempt, TodHint } from './types';
 import { relativeAgo, stationWallClock } from './record-format';
 
 export interface ConnectionRecordProps {
-  unitId: string;
-  /** This unit's attempts (already filtered by unit_id). */
+  /** The attempts to render (already scoped to the unit/callsign by the caller). */
   attempts: ConnectionAttempt[];
+  /** The gated time-of-day hint, or null when the caller has none to show. */
+  hint: TodHint | null;
   /** Test-only injection point for a deterministic "now"; defaults to live clock. */
   now?: Date;
 }
@@ -38,21 +44,9 @@ const BUCKET_LABEL: Record<TodHint['bucket'], string> = {
   night: 'night',
 };
 
-export function ConnectionRecord({ unitId, attempts, now }: ConnectionRecordProps) {
+export function ConnectionRecord({ attempts, hint, now }: ConnectionRecordProps) {
   const ref = now ?? new Date();
   const ordered = sortedNewestFirst(attempts);
-
-  // The gated hint. Rendered ONLY when the backend returns a non-null TodHint —
-  // never synthesized, never a prediction. The backend already excludes
-  // zero-success buckets (H2).
-  const hintQuery = useQuery({
-    queryKey: ['favorite_tod_hint', unitId],
-    // Tauri auto-camelCases Rust snake_case command args on the JS wire:
-    // `unit_id: String` in Rust → `unitId` key here (see PacketRadioPanel.tsx:79).
-    // Snake_case keys silently fail to bind and the command no-ops at runtime.
-    queryFn: () => invoke<TodHint | null>('favorite_tod_hint', { unitId }),
-  });
-  const hint = hintQuery.data ?? null;
 
   const reached = ordered.filter((a) => a.outcome === 'reached');
   const failed = ordered.filter((a) => a.outcome === 'failed');

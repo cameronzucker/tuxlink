@@ -1,0 +1,179 @@
+/* IdentitySwitcher — closed chip reproduces the DashboardRibbon
+ * `.dash-callsign-row`; open state is an in-flow dropdown anchored under the
+ * chip. Phase 7 (tuxlink-noa0).
+ *
+ * The closed-chip rules deliberately mirror AppShell.css's
+ * `.dash-callsign-text` / `.dash-callsign-select` so the switcher is
+ * pixel-identical to the prior ribbon callsign cell when closed. The trigger
+ * <button> is CSS-reset to read as plain text (matching the de-buttoned SSID
+ * select). The dropdown panel is absolutely positioned within the
+ * `.dash-callsign-row` (its `position: relative` anchor) so it floats below the
+ * chip without disturbing ribbon layout; it is NOT a portal / position:fixed
+ * popup (the inline-unlock form lives inside it, per the no-popup-window rule). */
+
+.identity-switcher-row {
+  position: relative; /* positioning context for the absolute dropdown */
+}
+
+/* Trigger reset to plain text — matches the callsign-text color/weight. */
+.identity-switcher-trigger {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--accent-2);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  line-height: inherit;
+}
+.identity-switcher-trigger:hover,
+.identity-switcher-trigger:focus-visible {
+  text-decoration: underline;
+  outline: none;
+}
+
+/* Small parent indicator beneath/after a tactical's primary label. */
+.identity-active-parent {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0;
+}
+
+/* Dropdown panel — anchored below the chip, above the ribbon, dark surface. */
+.identity-switcher-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40; /* above the ribbon controls */
+  min-width: 220px;
+  max-width: 320px;
+  background: var(--surface, #141c23);
+  border: 1px solid var(--border-strong, #2c3744);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.identity-list-loading {
+  padding: 8px 10px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.identity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  padding: 6px 10px;
+  color: var(--text, #e4ebf2);
+  font-family: var(--mono);
+  font-size: 13px;
+  cursor: pointer;
+}
+.identity-row:hover,
+.identity-row:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+  outline: none;
+}
+.identity-row[aria-current='true'] {
+  color: var(--accent-2);
+}
+
+/* Tactical rows indent beneath their parent FULL. */
+.identity-row--tactical {
+  padding-left: 26px;
+  font-size: 12px;
+}
+
+.identity-row-label {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.identity-lock {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+/* CMS badges. */
+.cms-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.cms-badge--ok {
+  color: var(--success, #5dd6a0);
+  border: 1px solid var(--success, #5dd6a0);
+}
+.cms-badge--blocked,
+.cms-badge--unknown {
+  color: var(--error, #ee6b6b);
+  border: 1px solid var(--error, #ee6b6b);
+}
+
+/* Inline unlock form — in-flow within the list (NO position:fixed/portal). */
+.identity-unlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-strong, #2c3744);
+  margin-top: 2px;
+}
+.identity-unlock label {
+  font-size: 12px;
+  color: var(--text-dim, #94a0ad);
+}
+.identity-unlock-input {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text, #e4ebf2);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-strong, #2c3744);
+  border-radius: 4px;
+  padding: 5px 7px;
+}
+.identity-unlock-input:focus {
+  border-color: var(--accent-2, #ffba6e);
+  outline: none;
+}
+.identity-unlock-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.identity-unlock-submit {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--surface, #141c23);
+  background: var(--accent-2, #ffba6e);
+  border: 0;
+  border-radius: 4px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.identity-unlock-error {
+  color: var(--error, #ee6b6b);
+  font-size: 12px;
+}

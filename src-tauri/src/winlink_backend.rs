@@ -89,6 +89,12 @@ pub struct MessageMeta {
     /// 12 (tuxlink-zsm). The full attachment list is materialized at read time
     /// (Task 13's RFC5322 parse), not in the list view.
     pub has_attachments: bool,
+    /// The identity this message belongs to (Phase 7, tuxlink-noa0): the
+    /// per-FULL namespace for received mail, or the sent/queued-as identity for
+    /// the shared Sent/Outbox (read from the Phase-4 `<mid>.identity` sidecar in
+    /// the listing loop). `None` = untagged (legacy / pre-Phase-4) → the mailbox
+    /// identity filter treats it as matching only the "All identities" option.
+    pub identity: Option<String>,
 }
 
 /// Full body returned by `read_message`. Byte fidelity per spec §3.2 v2

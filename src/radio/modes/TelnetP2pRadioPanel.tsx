@@ -51,6 +51,7 @@ import { useSessionLog } from '../sections/useSessionLog';
 import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
 import { ListenArmButton } from '../sections/ListenArmButton';
 import { useListenerState } from '../sections/useListenerState';
+import { useActiveIdentity } from '../../shell/useIdentities';
 import '../sections/ListenSection.css';
 
 export interface TelnetP2pRadioPanelProps {
@@ -137,7 +138,9 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
 
   // Listener arms + allowlist plumbing via the shared hook. The Telnet
   // commands take `enabled`/`callsign`/`pattern` args by name.
+  const activeIdentity = useActiveIdentity();
   const listener = useListenerState({
+    activeIdentityLabel: activeIdentity.data?.address_as ?? null,
     commands: {
       listen: 'telnet_listen',
       setListen: 'telnet_set_listen',
@@ -487,6 +490,7 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
         <ListenArmButton
           armed={listener.armed}
           minutesRemaining={listener.minutesRemaining}
+          boundIdentity={listener.boundIdentityLabel}
           busy={listener.busy}
           helpText={`Accepts inbound Telnet P2P sessions on ${listenConfig.bind_addr}:${listenConfig.port} until disarmed or the TTL expires.`}
           onArm={listener.arm}
