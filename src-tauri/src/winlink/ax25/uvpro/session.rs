@@ -14,7 +14,7 @@
 //! transmitter, and no transmit command exists. Disconnect drops the socket.
 
 use std::io::{Read, Write};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -473,7 +473,7 @@ impl UvproSession {
         let mut driver = Driver::new(Box::new(socket));
         // Wire the inbound APRS channel before hydrate so any DATA_RXD that
         // arrives during/after subscription is captured for the engine.
-        let (tx, rx) = channel::<Vec<u8>>();
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
         driver.set_aprs_sender(tx);
         driver.hydrate()?;
         let snap = driver.snapshot();
@@ -711,7 +711,7 @@ mod tests {
     fn data_rxd_fragments_reassemble_to_the_aprs_channel() {
         let peer = FakePeer::new(true); // silent: events are injected manually
         let mut driver = driver_with(peer.clone());
-        let (tx, rx) = channel::<Vec<u8>>();
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
         driver.set_aprs_sender(tx);
         // Two DATA_RXD events: frag0 [11 22] (not final, id 0), frag1 [33] (final, id 1).
         peer.push_event("00 02 00 09 02 00 11 22");
