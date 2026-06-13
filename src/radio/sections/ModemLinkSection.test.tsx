@@ -58,6 +58,40 @@ describe('<ModemLinkSection>', () => {
     );
   });
 
+  it('hides the UV-Pro segment unless allowUvproNative is set', () => {
+    render(<ModemLinkSection kind="Tcp" host="127.0.0.1" port={8001} onChange={() => {}} />);
+    expect(screen.queryByTestId('modem-seg-uvpro')).not.toBeInTheDocument();
+  });
+
+  it('offers a UV-Pro segment that emits linkKind UvproNative', () => {
+    const onChange = vi.fn();
+    render(
+      <ModemLinkSection
+        kind="Bluetooth"
+        btMac="38:D2:00:01:55:5C"
+        allowUvproNative
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('modem-seg-uvpro'));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ linkKind: 'UvproNative', btMac: '38:D2:00:01:55:5C' }),
+    );
+  });
+
+  it('opens directly on the UV-Pro segment when kind=UvproNative', () => {
+    render(
+      <ModemLinkSection
+        kind="UvproNative"
+        btMac="38:D2:00:01:55:5C"
+        allowUvproNative
+        onChange={() => {}}
+      />,
+    );
+    expect(screen.getByTestId('modem-seg-uvpro')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('modem-uvpro-help')).toBeInTheDocument();
+  });
+
   it('shows TCP host + port when kind=Tcp', () => {
     render(
       <ModemLinkSection

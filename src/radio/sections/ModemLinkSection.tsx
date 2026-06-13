@@ -25,7 +25,7 @@ import './ModemLinkSection.css';
 /** UI-segment identity. Each maps to a distinct wire `linkKind`: TCP →
  *  `Tcp`, USB → `Serial`, BT → `Bluetooth`. The UI segment is the
  *  authoritative source for the kind; the field set follows. */
-type ModemSegment = 'tcp' | 'usb' | 'bt';
+type ModemSegment = 'tcp' | 'usb' | 'bt' | 'uvpro';
 
 /** A USB-class serial device returned by `packet_list_serial_devices`. */
 interface SerialDeviceDto {
@@ -44,7 +44,7 @@ interface BluetoothDeviceDto {
  *  subset that the modem editor owns; parent merges this into its config
  *  DTO and persists via `packet_config_set`. */
 export interface ModemLinkFields {
-  linkKind: 'Tcp' | 'Serial' | 'Bluetooth';
+  linkKind: 'Tcp' | 'Serial' | 'Bluetooth' | 'UvproNative';
   tcpHost: string | null;
   tcpPort: number | null;
   serialDevice: string | null;
@@ -58,7 +58,7 @@ export interface ModemLinkFields {
 export interface ModemLinkSectionProps {
   /** Current link kind from the persisted config. Drives the active
    *  segment on first render + when the config reloads underneath. */
-  kind: 'Tcp' | 'Serial' | 'Bluetooth';
+  kind: 'Tcp' | 'Serial' | 'Bluetooth' | 'UvproNative';
   /** TCP host (used when kind='Tcp'). */
   host?: string;
   /** TCP port (used when kind='Tcp'). */
@@ -67,8 +67,12 @@ export interface ModemLinkSectionProps {
   serialDevice?: string;
   /** Serial host-link baud (used when kind='Serial'). */
   serialBaud?: number;
-  /** Bluetooth radio MAC (used when kind='Bluetooth'). */
+  /** Bluetooth radio MAC (used when kind='Bluetooth' or 'UvproNative'). */
   btMac?: string;
+  /** Offer the native UV-Pro segment (control + chat over one link). Only the
+   *  VHF/packet context sets this; HF modes (ARDOP/VARA) leave it off, since the
+   *  native Benshi profile is a UV-Pro/VHF concept, not an HF-modem one. */
+  allowUvproNative?: boolean;
   /** Emit the flat field set after every persist trigger. */
   onChange: (fields: ModemLinkFields) => void;
 }
@@ -86,9 +90,10 @@ const DEFAULT_SERIAL_BAUD = 1200;
  *  Bluetooth SPP adapters. Wire field on PacketConfigDto = serialBaud. */
 const SERIAL_BAUD_OPTIONS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200] as const;
 
-function initialSegment(kind: 'Tcp' | 'Serial' | 'Bluetooth'): ModemSegment {
+function initialSegment(kind: 'Tcp' | 'Serial' | 'Bluetooth' | 'UvproNative'): ModemSegment {
   if (kind === 'Tcp') return 'tcp';
   if (kind === 'Bluetooth') return 'bt';
+  if (kind === 'UvproNative') return 'uvpro';
   return 'usb';
 }
 
@@ -99,6 +104,7 @@ export function ModemLinkSection({
   serialDevice,
   serialBaud,
   btMac,
+  allowUvproNative = false,
   onChange,
 }: ModemLinkSectionProps) {
   // Controlled local state so editing TCP host / port doesn't bounce
@@ -152,7 +158,7 @@ export function ModemLinkSection({
   // segment-switch without forcing them to click Refresh first.
   useEffect(() => {
     if (segment === 'usb') loadSerialDevices();
-    else if (segment === 'bt') loadBluetoothDevices();
+    else if (segment === 'bt' || segment === 'uvpro') loadBluetoothDevices();
   }, [segment, loadSerialDevices, loadBluetoothDevices]);
 
   const emit = (
@@ -182,10 +188,13 @@ export function ModemLinkSection({
         btMac: null,
       });
     } else {
-      // bt segment
+      // bt + uvpro both address the radio by its RFCOMM MAC; the segment picks
+      // the linkKind — `Bluetooth` drives the radio as a plain KISS TNC,
+      // `UvproNative` drives it over the native Benshi GAIA session (control +
+      // chat over one link). Same MAC field either way.
       const mac = (overrides?.mac ?? btMacInput).trim();
       onChange({
-        linkKind: 'Bluetooth',
+        linkKind: seg === 'uvpro' ? 'UvproNative' : 'Bluetooth',
         tcpHost: null,
         tcpPort: null,
         serialDevice: null,
@@ -237,6 +246,17 @@ export function ModemLinkSection({
         >
           BT
         </button>
+        {allowUvproNative && (
+          <button
+            type="button"
+            className={segment === 'uvpro' ? 'active' : ''}
+            aria-pressed={segment === 'uvpro'}
+            data-testid="modem-seg-uvpro"
+            onClick={() => selectSegment('uvpro')}
+          >
+            UV-Pro
+          </button>
+        )}
       </div>
 
       {segment === 'tcp' ? (
@@ -349,7 +369,7 @@ export function ModemLinkSection({
               onChange={(e) => {
                 const next = e.target.value;
                 setBtMacInput(next);
-                emit('bt', { mac: next });
+                emit(segment, { mac: next });
               }}
             >
               <option value="" disabled>
@@ -383,9 +403,16 @@ export function ModemLinkSection({
               autoCorrect="off"
               placeholder="AA:BB:CC:DD:EE:FF (unpaired)"
               onChange={(e) => setBtMacInput(e.target.value)}
-              onBlur={() => emit('bt')}
+              onBlur={() => emit(segment)}
             />
           </label>
+          {segment === 'uvpro' && (
+            <p className="modem-link-help" data-testid="modem-uvpro-help">
+              Native UV-Pro: control + APRS chat over one Bluetooth link, with the
+              device control strip in the chat. Choose <strong>BT</strong> instead to
+              drive the radio as a plain KISS TNC (no control strip).
+            </p>
+          )}
         </>
       )}
     </section>
