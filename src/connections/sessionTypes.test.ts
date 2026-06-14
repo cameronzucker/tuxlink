@@ -63,6 +63,29 @@ describe('session-type catalog', () => {
   it('isBuilt is still false for post-office+packet (PKT stays unbuilt, tuxlink-6c9y)', () => {
     expect(isBuilt({ sessionType: 'post-office', protocol: 'packet' })).toBe(false);
   });
+
+  // tuxlink-3wwr: Sonde HF/FM are "coming soon" teasers — listed under the RF
+  // session types (mirroring VARA) but always built:false (disabled + "soon"
+  // badge), and never wired to a backend. Guards against an accidental
+  // built:true flip that would render a dead control.
+  it('Sonde HF/FM appear under the RF session types as UNBUILT teasers', () => {
+    for (const st of ['cms', 'radio-only', 'p2p'] as const) {
+      const ids = protocolsFor(st).map((p) => p.id);
+      expect(ids).toContain('sonde-hf');
+      expect(ids).toContain('sonde-fm');
+      // Never selectable/usable — coming-soon only.
+      expect(isBuilt({ sessionType: st, protocol: 'sonde-hf' })).toBe(false);
+      expect(isBuilt({ sessionType: st, protocol: 'sonde-fm' })).toBe(false);
+    }
+  });
+
+  it('Sonde is NOT listed under the telnet/packet-only session types', () => {
+    for (const st of ['post-office', 'network-po'] as const) {
+      const ids = protocolsFor(st).map((p) => p.id);
+      expect(ids).not.toContain('sonde-hf');
+      expect(ids).not.toContain('sonde-fm');
+    }
+  });
 });
 
 describe('radio-only session type', () => {
