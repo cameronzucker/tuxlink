@@ -238,6 +238,15 @@ fn install_into_temp(
         on_progress,
     )?;
 
+    // A cancel can land in the window AFTER extract returns but BEFORE the
+    // irreversible install (validate → atomic rename → manifest). Re-check here so
+    // a click in that gap still aborts: returning Cancelled lets the caller's
+    // cleanup guard drop the temp, so no pack is installed and success is never
+    // reported for a cancelled download (Codex review 2026-06-13, P2).
+    if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(DownloadError::Cancelled);
+    }
+
     let archive = PmtilesArchive::open(tmp_path).map_err(|e| DownloadError::Io(e.to_string()))?;
     let v = validate::validate(&archive, req.size_budget)?;
     // Drop the read handle before renaming.
@@ -473,6 +482,49 @@ mod tests {
         let m = load_manifest(dir.path());
         assert_eq!(m.packs.len(), 1);
         assert_eq!(m.packs[0].id, "tier-wide-n34-w112");
+    }
+
+    /// Writes a VALID archive, then flips the cancel flag and returns Ok —
+    /// simulating a cancel that lands AFTER extract completes but BEFORE install.
+    /// Without the post-extract re-check this pack would validate + install + report
+    /// success despite the cancel (Codex review 2026-06-13, P2).
+    struct ValidThenCancelExtractor;
+    impl Extractor for ValidThenCancelExtractor {
+        fn extract(
+            &self,
+            _url: &str,
+            _b: &Bbox,
+            _z: u8,
+            dest: &Path,
+            cancel: &Arc<AtomicBool>,
+            on_progress: &dyn Fn(u64),
+        ) -> Result<(), DownloadError> {
+            let bytes = TestPmtiles::default().build();
+            fs::write(dest, &bytes).map_err(|e| DownloadError::Io(e.to_string()))?;
+            on_progress(bytes.len() as u64);
+            // The cancel arrives just as the transfer finishes.
+            cancel.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn cancel_after_extract_but_before_install_aborts_and_installs_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = install_pack(
+            &ValidThenCancelExtractor,
+            dir.path(),
+            u64::MAX,
+            &req("tier-wide-n34-w112", 1, 10_000_000),
+            &no_cancel(),
+            &noop_progress,
+        )
+        .unwrap_err();
+        assert!(matches!(err, DownloadError::Cancelled));
+        // The valid archive was NOT installed — cancel won the race.
+        assert!(!pack_path(dir.path(), "tier-wide-n34-w112").exists());
+        assert!(!dir.path().join("tier-wide-n34-w112.pmtiles.part").exists());
+        assert!(load_manifest(dir.path()).packs.is_empty());
     }
 
     #[test]

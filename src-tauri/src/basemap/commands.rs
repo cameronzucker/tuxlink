@@ -299,13 +299,24 @@ pub fn basemap_download_pack(
     let available = available_bytes(&state.packs_dir);
 
     // Register a fresh cancel flag for this pack so `basemap_cancel_download` can
-    // stop the in-flight extract. Removed below regardless of outcome.
+    // stop the in-flight extract. Removed below regardless of outcome. Reject a
+    // duplicate in-flight download for the same id: overwriting the flag would
+    // orphan the running sidecar's Arc, making the original uncancellable (Codex
+    // review 2026-06-13, P2 — defense-in-depth; the UI also disables this).
     let cancel = Arc::new(AtomicBool::new(false));
-    state
-        .download_cancels
-        .lock()
-        .expect("download_cancels lock poisoned")
-        .insert(req.id.clone(), cancel.clone());
+    {
+        let mut cancels = state
+            .download_cancels
+            .lock()
+            .expect("download_cancels lock poisoned");
+        if cancels.contains_key(&req.id) {
+            return Err(format!(
+                "a download for {} is already in progress",
+                req.id
+            ));
+        }
+        cancels.insert(req.id.clone(), cancel.clone());
+    }
 
     // Throttled progress emitter: the poll loop samples every POLL_INTERVAL, but
     // the UI only needs ~1 repaint per EMIT_THROTTLE. `total` is the manifest's
