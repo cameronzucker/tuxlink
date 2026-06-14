@@ -30,6 +30,27 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.62.0](https://github.com/cameronzucker/tuxlink/compare/v0.61.0...v0.62.0) (2026-06-14)
+
+
+### Features
+
+* **aprs:** add Mic-E position decoder (tuxlink-l2pu) ([db49523](https://github.com/cameronzucker/tuxlink/commit/db49523f43a1adc68cbc174c45ba56384823b333))
+* **aprs:** position-report parser — uncompressed + compressed (tuxlink-l2pu) ([ac9fc7f](https://github.com/cameronzucker/tuxlink/commit/ac9fc7f929248cc1d17e4cce1ecf2467253d62a5))
+* **aprs:** reachable connect surface + inline addressing for Tac Chat ([f73d48c](https://github.com/cameronzucker/tuxlink/commit/f73d48c093e234ad88dc957760828867eeafcdbb))
+* **packet:** add usePacketConfig.setLink to persist transport+radio ([aa871dd](https://github.com/cameronzucker/tuxlink/commit/aa871dd08d01e80a517f5b6c9f4973f2a150999a))
+
+
+### Bug Fixes
+
+* **aprs:** address Codex adversarial review of the connect surface ([9ac3a8d](https://github.com/cameronzucker/tuxlink/commit/9ac3a8d3cced6cc18b910280eb9e6a3c108a497f))
+* **basemap:** cap PMTiles response bytes to bound a whole-archive read ([3b6c926](https://github.com/cameronzucker/tuxlink/commit/3b6c9260d373b07eba1343f886308a40927eac07))
+* **basemap:** CORS on tile://pmtiles + absolute sprite/glyphs URLs (blank map) ([559bb72](https://github.com/cameronzucker/tuxlink/commit/559bb720acdf6e005530202210f47e7c521b74d6))
+* **map:** drop maxBounds — unbricks the map on WebKitGTK (maplibre 5.24.0 crash) ([d6ea35c](https://github.com/cameronzucker/tuxlink/commit/d6ea35cab40a71c12d6024e681dccce1e0f5079c))
+* **map:** resolve sprite/glyphs against location.href, not opaque origin ([ce0c0c7](https://github.com/cameronzucker/tuxlink/commit/ce0c0c7ca23f8d125c64d63d8a02c3714b00a499))
+* **map:** restore pan-constraint via center clamp (tuxlink-rwo6) ([b021111](https://github.com/cameronzucker/tuxlink/commit/b021111c60434af7e4671eb6bfda87615d2fee07))
+* **tiles:** add CORS to legacy tile:// raster responses ([1ef5588](https://github.com/cameronzucker/tuxlink/commit/1ef558837133bf99c670327ddcd1e004bcdce3f0))
+
 ## [0.61.0](https://github.com/cameronzucker/tuxlink/compare/v0.60.0...v0.61.0) (2026-06-13)
 
 
