@@ -30,6 +30,18 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.63.0](https://github.com/cameronzucker/tuxlink/compare/v0.62.0...v0.63.0) (2026-06-14)
+
+
+### Features
+
+* **aprs:** plot heard station positions on a reading-pane map (tuxlink-6vgt) ([1befc86](https://github.com/cameronzucker/tuxlink/commit/1befc86f7eaa9997f68cb883d601022ac8961404))
+
+
+### Bug Fixes
+
+* **map:** force software GL so the maplibre basemap renders on Pi WebKitGTK ([0fea60f](https://github.com/cameronzucker/tuxlink/commit/0fea60f739e75dae7618f38f98be5f5b4d95851f))
+
 ## [0.62.0](https://github.com/cameronzucker/tuxlink/compare/v0.61.0...v0.62.0) (2026-06-14)
 
 
