@@ -102,7 +102,8 @@ describe('MapLibreMap', () => {
     try {
       render(<MapLibreMap />);
       const style = getLastMap()!.__state.options.style as { sprite: string };
-      expect(style.sprite).toBe('/basemap/sprites/light');
+      // maplibre v5 requires absolute sprite URLs (tuxlink-56ki).
+      expect(style.sprite).toBe(`${location.origin}/basemap/sprites/light`);
     } finally {
       delete document.documentElement.dataset.theme;
     }
@@ -116,7 +117,7 @@ describe('MapLibreMap', () => {
     rerender(<MapLibreMap flavor="dark" />);
     expect(map.setStyle).toHaveBeenCalledTimes(1);
     const style = vi.mocked(map.setStyle).mock.calls[0][0] as { sprite: string };
-    expect(style.sprite).toBe('/basemap/sprites/dark');
+    expect(style.sprite).toBe(`${location.origin}/basemap/sprites/dark`);
   });
 
   it('adds an attribution control and removes the map on unmount', () => {

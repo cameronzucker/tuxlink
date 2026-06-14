@@ -147,6 +147,7 @@ pub fn run() {
                         let _ = tauri::http::Response::builder()
                             .status(503)
                             .header(tauri::http::header::CONTENT_TYPE, "text/plain")
+                            .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                             .body(b"basemap registry unavailable".to_vec())
                             .map(|resp| responder.respond(resp));
                         return;
@@ -161,6 +162,7 @@ pub fn run() {
                         let _ = tauri::http::Response::builder()
                             .status(404)
                             .header(tauri::http::header::CONTENT_TYPE, "text/plain")
+                            .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                             .body(b"pmtiles archive not found".to_vec())
                             .map(|resp| responder.respond(resp));
                         return;
@@ -179,6 +181,20 @@ pub fn run() {
                                     crate::basemap::PMTILES_CONTENT_TYPE,
                                 )
                                 .header(tauri::http::header::ACCEPT_RANGES, "bytes")
+                                // tuxlink-56ki: the webview consumes this via
+                                // maplibre/pmtiles `fetch()` from a different origin
+                                // (tauri://localhost packaged, http://localhost:1420
+                                // in dev), so the response MUST carry CORS or the
+                                // browser blocks it ("not allowed by
+                                // Access-Control-Allow-Origin", even on a 206) →
+                                // blank map. Local bundled bytes, no credentials, so
+                                // `*` is safe. Expose Content-Range/-Length so the
+                                // pmtiles client can read the range it requested.
+                                .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                                .header(
+                                    tauri::http::header::ACCESS_CONTROL_EXPOSE_HEADERS,
+                                    "Content-Range, Content-Length, ETag, Accept-Ranges",
+                                )
                                 .header(
                                     tauri::http::header::CONTENT_LENGTH,
                                     rr.body.len().to_string(),
@@ -202,6 +218,7 @@ pub fn run() {
                             let _ = tauri::http::Response::builder()
                                 .status(500)
                                 .header(tauri::http::header::CONTENT_TYPE, "text/plain")
+                                .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                                 .body(b"pmtiles read error".to_vec())
                                 .map(|resp| responder.respond(resp));
                         }
