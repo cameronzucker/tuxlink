@@ -202,18 +202,52 @@ pub struct RangeResponse {
     pub total_len: u64,
 }
 
+/// Maximum bytes any single basemap response will allocate. The `pmtiles` client
+/// only ever requests small bounded ranges (the ~16 KiB header, directories, and
+/// individual tiles), so a legitimate read never approaches this. It bounds the
+/// worst case where a missing / malformed / open-ended Range would otherwise read
+/// an ENTIRE archive — the bundled world overview is 43 MB and a region pack is
+/// hundreds of MB — into memory on the Pi (tuxlink-1tai / Codex adrev P1). 16 MiB
+/// leaves ~1000x headroom over any real single fetch while staying well below the
+/// whole-archive sizes the cap exists to refuse.
+pub const MAX_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
+
 /// Build the response for `range` against `archive`, reading the requested bytes.
 ///
-/// - No `range` → 200 with the full archive body.
+/// - No `range` → 200 with the full archive body (only when it fits the cap).
 /// - In-bounds `range` → 206, clamped to EOF, with `Content-Range: bytes s-e/total`.
-/// - `range.start >= total` → 416 with `Content-Range: bytes */total`.
+/// - `range.start >= total`, or a read that would exceed [`MAX_RESPONSE_BYTES`] →
+///   416 with `Content-Range: bytes */total`.
 pub fn read_range(
     archive: &PmtilesArchive,
     range: Option<RangeSpec>,
 ) -> io::Result<RangeResponse> {
+    read_range_capped(archive, range, MAX_RESPONSE_BYTES)
+}
+
+/// [`read_range`] with an explicit byte cap. Split out so the cap behavior is
+/// unit-testable against tiny archives (no need to materialize a 16 MiB file).
+fn read_range_capped(
+    archive: &PmtilesArchive,
+    range: Option<RangeSpec>,
+    max_bytes: u64,
+) -> io::Result<RangeResponse> {
     let total = archive.len();
+    // 416 refusal that still exposes the archive's true extent in `Content-Range`.
+    let refuse = || RangeResponse {
+        status: 416,
+        body: Vec::new(),
+        content_range: Some(format!("bytes */{total}")),
+        total_len: total,
+    };
+
     let Some(spec) = range else {
-        // Full-body request (e.g. a non-range GET). Serve everything.
+        // No (or unparseable) Range. The pmtiles client always sends a bounded
+        // Range, so this is anomalous — refuse rather than read the whole archive
+        // into memory (tuxlink-1tai). Small archives under the cap keep 200-full.
+        if total > max_bytes {
+            return Ok(refuse());
+        }
         let body = archive.read_at(0, total as usize)?;
         return Ok(RangeResponse {
             status: 200,
@@ -225,19 +259,19 @@ pub fn read_range(
 
     if spec.start >= total {
         // Unsatisfiable: start beyond EOF.
-        return Ok(RangeResponse {
-            status: 416,
-            body: Vec::new(),
-            content_range: Some(format!("bytes */{total}")),
-            total_len: total,
-        });
+        return Ok(refuse());
     }
 
     // Clamp the inclusive end to the last byte; open-ended runs to EOF.
     let last = total - 1;
     let end_inclusive = spec.end_inclusive.unwrap_or(last).min(last);
-    let length = (end_inclusive - spec.start + 1) as usize;
-    let body = archive.read_at(spec.start, length)?;
+    let length = end_inclusive - spec.start + 1;
+    // Bound the single-response allocation: a range spanning a whole archive (e.g.
+    // an open-ended `bytes=0-`) is anomalous → refuse rather than OOM (tuxlink-1tai).
+    if length > max_bytes {
+        return Ok(refuse());
+    }
+    let body = archive.read_at(spec.start, length as usize)?;
     // `read_at` may short-read at EOF; reflect the bytes actually returned so the
     // Content-Range end and Content-Length agree with the body.
     let actual_end = spec.start + body.len() as u64 - 1;
@@ -441,6 +475,82 @@ mod tests {
         assert_eq!(resp.status, 416);
         assert!(resp.body.is_empty());
         assert_eq!(resp.content_range.as_deref(), Some("bytes */20"));
+    }
+
+    #[test]
+    fn read_range_no_range_over_cap_is_refused_not_full_read() {
+        // The pmtiles client always sends a bounded Range; a no-range (or
+        // unparseable-Range) request is anomalous and must NOT read an entire
+        // archive into memory (a region pack is hundreds of MB) — tuxlink-1tai P1.
+        let data: Vec<u8> = (0..20u8).collect();
+        let (_f, archive) = archive_of(&data);
+        let resp = read_range_capped(&archive, None, 8).unwrap();
+        assert_eq!(resp.status, 416);
+        assert!(resp.body.is_empty());
+        assert_eq!(resp.content_range.as_deref(), Some("bytes */20"));
+    }
+
+    #[test]
+    fn read_range_no_range_under_cap_still_serves_full_200() {
+        // Small archives under the cap keep the graceful full-body behavior.
+        let data: Vec<u8> = (0..20u8).collect();
+        let (_f, archive) = archive_of(&data);
+        let resp = read_range_capped(&archive, None, 1024).unwrap();
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.body, data);
+    }
+
+    #[test]
+    fn read_range_oversized_in_bounds_range_is_refused() {
+        let data: Vec<u8> = (0..100u8).collect();
+        let (_f, archive) = archive_of(&data);
+        let resp = read_range_capped(
+            &archive,
+            Some(RangeSpec {
+                start: 0,
+                end_inclusive: Some(99),
+            }),
+            8,
+        )
+        .unwrap();
+        assert_eq!(resp.status, 416);
+        assert!(resp.body.is_empty());
+    }
+
+    #[test]
+    fn read_range_open_ended_over_cap_is_refused() {
+        // bytes=0- runs to EOF = whole archive; bounded by the cap (tuxlink-1tai).
+        let data: Vec<u8> = (0..100u8).collect();
+        let (_f, archive) = archive_of(&data);
+        let resp = read_range_capped(
+            &archive,
+            Some(RangeSpec {
+                start: 0,
+                end_inclusive: None,
+            }),
+            8,
+        )
+        .unwrap();
+        assert_eq!(resp.status, 416);
+        assert!(resp.body.is_empty());
+    }
+
+    #[test]
+    fn read_range_within_cap_serves_206() {
+        let data: Vec<u8> = (0..100u8).collect();
+        let (_f, archive) = archive_of(&data);
+        let resp = read_range_capped(
+            &archive,
+            Some(RangeSpec {
+                start: 0,
+                end_inclusive: Some(7),
+            }),
+            8,
+        )
+        .unwrap();
+        assert_eq!(resp.status, 206);
+        assert_eq!(resp.body, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(resp.content_range.as_deref(), Some("bytes 0-7/100"));
     }
 
     #[test]
