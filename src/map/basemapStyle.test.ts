@@ -29,9 +29,10 @@ describe('buildBasemapStyle (light)', () => {
   it('resolves glyphs + sprite to bundled self-origin paths (fully offline)', () => {
     const style = buildBasemapStyle('light');
     // Glyphs are {fontstack}/{range}-keyed whole-file fetches served from 'self',
-    // distinct from the pmtiles byte-range path (plan A8).
-    expect(style.glyphs).toBe('/basemap/glyphs/{fontstack}/{range}.pbf');
-    expect(style.sprite).toBe('/basemap/sprites/light');
+    // distinct from the pmtiles byte-range path (plan A8). maplibre v5 requires
+    // ABSOLUTE URLs (tuxlink-56ki) — origin-prefixed at runtime.
+    expect(style.glyphs).toBe(`${location.origin}/basemap/glyphs/{fontstack}/{range}.pbf`);
+    expect(style.sprite).toBe(`${location.origin}/basemap/sprites/light`);
   });
 
   it('includes the protomaps layers, all referencing the source, with a background', () => {
@@ -50,7 +51,7 @@ describe('buildBasemapStyle (dark, L2 baked)', () => {
   it('uses the dark sprite but the same glyphs + source', () => {
     const dark = buildBasemapStyle('dark');
     const light = buildBasemapStyle('light');
-    expect(dark.sprite).toBe('/basemap/sprites/dark');
+    expect(dark.sprite).toBe(`${location.origin}/basemap/sprites/dark`);
     expect(dark.glyphs).toBe(light.glyphs);
     expect(dark.sources[BASEMAP_SOURCE_ID]).toEqual(light.sources[BASEMAP_SOURCE_ID]);
   });

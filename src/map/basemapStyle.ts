@@ -33,8 +33,19 @@ export const PMTILES_SOURCE_URL = 'pmtiles://tile://pmtiles/world';
  * MapLibre AttributionControl). */
 export const OSM_ATTRIBUTION = '© OpenStreetMap contributors';
 
-/** Bundled glyph PBFs, served from the `'self'` origin. */
-const GLYPHS_URL = '/basemap/glyphs/{fontstack}/{range}.pbf';
+/** The webview's own origin (tauri://localhost packaged, http://localhost:1420 in
+ * dev). maplibre v5 REQUIRES absolute sprite/glyphs URLs — it rejects root-relative
+ * ones ("Invalid sprite URL '/basemap/...', must be absolute"), which silently drops
+ * labels + icons. Resolve at call time so it picks up the real runtime origin
+ * (tuxlink-56ki). */
+function selfOrigin(): string {
+  return typeof location !== 'undefined' ? location.origin : '';
+}
+
+/** Bundled glyph PBFs, served from the `'self'` origin (absolute — see selfOrigin). */
+function glyphsUrl(): string {
+  return `${selfOrigin()}/basemap/glyphs/{fontstack}/{range}.pbf`;
+}
 
 /** Supported style flavors. `dark` is the build-time-baked GL-native inverted
  * style (L2 — NOT a runtime CSS filter), derived from the light flavor. */
@@ -127,8 +138,8 @@ export function buildBasemapStyle(
 
   return {
     version: 8,
-    glyphs: GLYPHS_URL,
-    sprite: `/basemap/sprites/${flavor}`,
+    glyphs: glyphsUrl(),
+    sprite: `${selfOrigin()}/basemap/sprites/${flavor}`,
     sources,
     layers: styleLayers,
   };
