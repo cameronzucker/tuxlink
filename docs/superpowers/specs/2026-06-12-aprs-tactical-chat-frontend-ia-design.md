@@ -8,6 +8,18 @@
 
 ---
 
+## ⚠️ CORRECTION (settled 2026-06-13, extensively litigated) — OPEN CHANNEL, not threaded
+
+The §1-3 placement decisions (shared right dock; connection driven from the status bar / status strip, not the panel) stand. The §4 **surface** prose originally described a *threaded* chat — per-callsign threads, a thread selector, inbound-left/outbound-right bubbles, and a "callsign / To" field in the composer. **That is superseded and must not be reintroduced.** The settled, shipped model is an **OPEN CHANNEL**:
+
+- **One flat, time-ordered feed** of every message heard on the channel plus our own sends. NO per-callsign threads, NO thread selector, NO conversation roster, NO side rail. Rows are light log lines (`from → to`, or `→ all` for a broadcast), not left/right chat bubbles.
+- **Broadcast by default.** Addressing (the "To") is expressed **inline within the single compose field** per APRS prior art — there is **NO separate To / recipient input box**. No addressee ⇒ broadcast to all. (This was vetoed repeatedly; do not add a To field.)
+- **Connection is not a panel concern.** Transport/radio/connect live in the status bar + status-strip APRS control (§3 ①). The chat panel never hosts transport/radio/connect form fields.
+
+Where §4 / §7 below conflict with this banner, **the banner wins.** It is aligned to the shipped open-channel `src/aprs/AprsChatPanel.tsx`, minus that file's separate recipient input, which is the defect to remove (tuxlink-ckmb).
+
+---
+
 ## Decision summary
 
 | Decision | Locked choice |
@@ -62,15 +74,15 @@ The shared dock carries a tab row at its top: `[ APRS chat | Modem ]`.
 
 Clean Office register. Keep the functional substance; drop the ops-console styling. The surface, top to bottom:
 
-- **Header / context row** — the active thread callsign + (when known) a friendly label (e.g. `W7RPT-9 · Shelter 3`), a thread selector (dropdown, appropriate to the dock's width), and a **listening indicator** (honest: "Listening" / "Radio disconnected").
+- **Header row** — the `APRS channel` title, a **listening indicator** (honest: "Listening" / "Radio disconnected"), and the connection control (status-strip APRS control, §3 ①). NO active-thread callsign, NO thread selector — this is one open channel, not a set of conversations.
 - **Open-channel honesty** — a quiet, persistent cue that APRS is heard by all stations in range and digipeated (not a private DM). Understated, not a loud badge.
-- **Conversation** — inbound bubbles left, outbound right. Human message text in the body (sans). Each message carries a **timestamp** (client-stamped local time — when tuxlink heard/sent it; honest, no backend dependency).
+- **Feed (one flat channel log)** — a single time-ordered list of every message heard on the channel plus our own sends. Light log rows showing `FROM → TO` (or `→ all` for a broadcast), our own sends subtly accented — NOT left/right chat bubbles. Each row carries a **timestamp** (client-stamped local time — when tuxlink heard/sent it; honest, no backend dependency).
 - **Delivery states (outbound only) — RF-honest, no fabricated "delivered":**
   - `Sent` — queued/transmitted, no ACK yet (neutral).
   - `Acked HH:MM` — round-trip confirmed; shows **when** the ACK arrived (success color).
   - `Timed out` — no ACK after the bounded retransmit schedule (warning color); may note the try count.
   - `Rejected` — explicit REJ received (error color).
-- **Composer** — callsign field + message field + Send, plus a live **`n / 67` character counter** (the APRS per-message airtime budget, felt as you type).
+- **Composer** — a single message field + Send, plus a live **`n / 67` character counter** (the APRS per-message airtime budget, felt as you type). Addressing is inline in that one field (empty ⇒ broadcast to all); there is **NO separate To / recipient input**.
 - **Inline error notice** — a rejected send queues nothing and shows an inline notice, never a phantom bubble (existing behavior, retained).
 
 Typography and color use the existing tuxlink tokens (`--surface` / `--border` / `--text` / `--modem-accent` / semantic `--success` / `--accent-2` / `--error`) so the surface reads as part of the workspace across all themes. Monospace is used for RF-identity data (callsigns, times, the character count) and sans for human message text and UI chrome — a restrained accent, not an all-mono console.
@@ -102,8 +114,8 @@ Native UV-Pro control (channel / frequency / mode / battery / RSSI) is being bui
 |---|---|
 | `AprsChatPanel` mounted via an `'aprs'` pseudo-folder in the sidebar (near Contacts), taking over the reading pane. | Re-homed into the **shared right dock**; removed from sidebar/Contacts nav. |
 | No entry control beyond the sidebar item. | **① status-strip control** + **② dock tabs** + **③ View-menu** backstop. |
-| Bubbles: text + delivery chip; **no timestamps**. | Add **timestamps** (client-stamped) and **`Acked HH:MM`** (ACK time). |
-| Composer: callsign + text + Send. | Add the **`n / 67` character counter**. |
+| Flat-feed rows: text + delivery chip; **no timestamps**. | Add **timestamps** (client-stamped) and **`Acked HH:MM`** (ACK time). Still one open-channel feed — no threads/bubbles. |
+| Composer: single message field + Send (addressing inline; **no To field**). | Add the **`n / 67` character counter**. |
 | Delivery chips styled as pills. | Restrained, Office-register delivery states (same four: Sent / Acked / Timed out / Rejected). |
 | No open-channel cue; no device-control placement. | Quiet **open-channel** cue; **UV-Pro control strip** placement (wiring per Section 5). |
 

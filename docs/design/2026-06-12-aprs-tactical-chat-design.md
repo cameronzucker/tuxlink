@@ -116,7 +116,7 @@ The load-bearing decision. The messaging/chat layer sits **above** whatever carr
 
 The protocol is a few hundred lines; the experience is the whole ballgame. Requirements:
 
-- **Conversation threads per callsign**, message bubbles, in the Winlink workspace (the Gmail-chat-in-the-inbox home, not a separate window — consistent with tuxlink's inline-UI / no-window-clutter rule).
+- **One open-channel feed** — a single flat, time-ordered log of all traffic heard on the channel plus our own sends, in the Winlink workspace (inline, not a separate window). NO per-callsign threads, NO conversation roster, NO chat bubbles: APRS is a party line, not a private DM. (SETTLED 2026-06-13, extensively litigated — supersedes the earlier "conversation threads per callsign / message bubbles" framing. Addressing a station is done inline in the compose field; there is no separate To/recipient field.)
 - **RF-honest delivery states.** This is the hard design problem and the differentiator. APRS is fire-and-forget over a shared, congested, line-of-sight channel; the app-layer ACK is best-effort. The UX must be beautiful AND truthful: states like **sent → heard-locally → ACKed → timed-out**, NO fake "delivered" checkmark. Keep what APRSIS-CE got right (it surfaced ACK status); modernize the legibility. Making it *feel* like internet chat when it is not is the trap that makes it read as broken.
 - **Semi-public is honest, too.** APRS messages are addressed but heard by everyone in range and digipeated. Closer to an addressed group channel than a private DM. The UX should not imply privacy it does not have.
 - **Position context** (Phase 3) inline when available.
@@ -166,7 +166,7 @@ Net-new for Phase 1: the APRS UI-frame codec, the APRS message format + bounded-
 
 ## Success criteria
 
-- **Phase 1:** an operator picks a transport (UV-Pro BT KISS, or managed Dire Wolf, or any TNC), opens the chat surface, sends an APRS message to a callsign, sees honest delivery states, and receives inbound APRS messages into per-callsign threads — all inside the Winlink workspace. Operator on-air smoke (UV-Pro, real APRS frequency) is the validation; agent never transmits.
+- **Phase 1:** an operator connects a radio from the status bar / status-strip APRS control, opens the chat surface, sends an APRS message (broadcast, or addressed inline in the compose field), sees honest delivery states, and sees inbound APRS messages appear in the one open-channel feed — all inside the Winlink workspace. Operator on-air smoke (UV-Pro, real APRS frequency) is the validation; agent never transmits.
 - **Phase 2:** the UV-Pro's channel/frequency/settings are controllable from tuxlink's screen over the same Bluetooth link, and the control UX is demonstrably *not* janky.
 
 ## Distribution
