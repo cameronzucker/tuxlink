@@ -128,13 +128,20 @@ describe('GpsSourcePicker', () => {
   it('rescans on demand', async () => {
     mockProbes({});
     renderPicker();
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('gps_probe_gpsd'));
+    // Wait for the INITIAL scan to fully settle before counting — the button
+    // returns to "Rescan" (status !== loading) only once the first detection
+    // resolves. Capturing the count mid-flight raced on the slow ARM CI runner.
+    const rescanBtn = await screen.findByTestId('gps-picker-rescan');
+    await waitFor(() => expect(rescanBtn).toHaveTextContent(/rescan/i));
     const callsBefore = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'gps_probe_gpsd').length;
-    fireEvent.click(screen.getByTestId('gps-picker-rescan'));
-    await waitFor(() => {
-      const after = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'gps_probe_gpsd').length;
-      expect(after).toBeGreaterThan(callsBefore);
-    });
+    fireEvent.click(rescanBtn);
+    await waitFor(
+      () => {
+        const after = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'gps_probe_gpsd').length;
+        expect(after).toBeGreaterThan(callsBefore);
+      },
+      { timeout: 4000 },
+    );
   });
 
   // tuxlink-yy1m additions ----------------------------------------------------
