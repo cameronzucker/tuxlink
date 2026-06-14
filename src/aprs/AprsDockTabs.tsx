@@ -20,9 +20,23 @@ export interface AprsDockTabsProps {
   /// Dismiss the APRS dock surface (sets `aprsOpen=false` in AppShell). With no
   /// radio session active this collapses the dock and frees the reading pane.
   onClose: () => void;
+  /// Whether the heard-positions map is currently expanded into the reading pane
+  /// (tuxlink-6vgt). Omit to hide the Map toggle entirely.
+  mapOpen?: boolean;
+  /// Toggle the heard-positions map open/closed. When set, a "Map" control is
+  /// rendered in the dock header; absent ⇒ no toggle (e.g. legacy callers).
+  onToggleMap?: () => void;
 }
 
-export function AprsDockTabs({ active, unread, modemEnabled, onSelect, onClose }: AprsDockTabsProps) {
+export function AprsDockTabs({
+  active,
+  unread,
+  modemEnabled,
+  onSelect,
+  onClose,
+  mapOpen,
+  onToggleMap,
+}: AprsDockTabsProps) {
   return (
     <div className="aprs-dock-tabs" role="tablist" data-testid="aprs-dock-tabs">
       <button
@@ -49,6 +63,18 @@ export function AprsDockTabs({ active, unread, modemEnabled, onSelect, onClose }
       >
         Modem
       </button>
+      {onToggleMap && (
+        <button
+          type="button"
+          className={`aprs-dock-maptoggle ${mapOpen ? 'is-active' : ''}`}
+          data-testid="aprs-map-toggle"
+          aria-pressed={Boolean(mapOpen)}
+          title={mapOpen ? 'Hide the heard-positions map' : 'Show heard stations on a map'}
+          onClick={onToggleMap}
+        >
+          Map
+        </button>
+      )}
       <button
         type="button"
         className="aprs-dock-close"

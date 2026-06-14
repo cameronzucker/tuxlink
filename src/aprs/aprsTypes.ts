@@ -69,6 +69,32 @@ export interface HeardStation {
   lastHeard: number;
 }
 
+/// Payload of `aprs-position:new` — a position report decoded from a frame heard
+/// on the channel (RX-only). Mirrors the Rust `InboundPos` (serde camelCase):
+/// `sender` is the transmitting callsign; lat/lon/symbol/comment are exactly
+/// what was decoded off the wire (RF-honesty — no estimated location).
+export interface InboundPosDto {
+  sender: string;
+  lat: number;
+  lon: number;
+  symbolTable: string;
+  symbolCode: string;
+  comment: string;
+}
+
+/// A heard station's most-recent decoded position, accumulated by
+/// `useAprsPositions` and plotted on the Tac Chat map. Deduped by `call`
+/// (latest-position-wins). `at` is the local epoch-ms when this fix was heard.
+export interface HeardPosition {
+  call: string;
+  lat: number;
+  lon: number;
+  symbolTable: string;
+  symbolCode: string;
+  comment: string;
+  at: number;
+}
+
 /// Current APRS station configuration, returned by `aprs_config_get`.
 export interface AprsConfigDto {
   sourceSsid: number;
