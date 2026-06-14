@@ -53,6 +53,25 @@ export interface MapHookHost {
 }
 
 /**
+ * Run a best-effort teardown mutation on the map (tuxlink-bal7).
+ *
+ * During unmount maplibre may have already destroyed the style (`map.remove()`
+ * ran), after which `getLayer`/`getSource` throw `undefined is not an object
+ * (evaluating 'this.style.getLayer')` — so the existence guard ITSELF throws,
+ * which propagated out of the effect cleanup and crashed the app to the
+ * ErrorBoundary (the Find-a-Station close-crash). Removing layers/sources is
+ * pointless once the map is gone (they are destroyed with it), so a throw here
+ * means "nothing to remove" and is safely swallowed.
+ */
+function safeTeardown(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    /* map/style already torn down — its layers + sources are gone with it */
+  }
+}
+
+/**
  * Keep a GeoJSON/vector source present on `map` under `id` for the component's
  * lifetime, surviving style swaps. Call BEFORE any `useMapLayer` that references
  * this source so teardown order stays layer-then-source.
@@ -76,8 +95,10 @@ export function useMapSource(
     ensure();
     map.on('styledata', ensure);
     return () => {
-      map.off('styledata', ensure);
-      if (map.getSource(id)) map.removeSource(id);
+      safeTeardown(() => {
+        map.off('styledata', ensure);
+        if (map.getSource(id)) map.removeSource(id);
+      });
     };
   }, [map, id]);
 }
@@ -104,8 +125,10 @@ export function useMapLayer(
     ensure();
     map.on('styledata', ensure);
     return () => {
-      map.off('styledata', ensure);
-      if (map.getLayer(id)) map.removeLayer(id);
+      safeTeardown(() => {
+        map.off('styledata', ensure);
+        if (map.getLayer(id)) map.removeLayer(id);
+      });
     };
   }, [map, id, beforeId]);
 }
@@ -142,12 +165,14 @@ export function useMapOverlay(
     ensure();
     map.on('styledata', ensure);
     return () => {
-      map.off('styledata', ensure);
-      // Layers BEFORE source: MapLibre errors removing a source still in use.
-      for (const layer of ref.current.layers) {
-        if (map.getLayer(layer.id)) map.removeLayer(layer.id);
-      }
-      if (map.getSource(id)) map.removeSource(id);
+      safeTeardown(() => {
+        map.off('styledata', ensure);
+        // Layers BEFORE source: MapLibre errors removing a source still in use.
+        for (const layer of ref.current.layers) {
+          if (map.getLayer(layer.id)) map.removeLayer(layer.id);
+        }
+        if (map.getSource(id)) map.removeSource(id);
+      });
     };
   }, [map, id]);
 }

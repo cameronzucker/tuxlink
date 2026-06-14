@@ -137,3 +137,48 @@ function Overlay({ map }: { map: ReturnType<typeof createMapLibreMock> }) {
   ]);
   return null;
 }
+
+// tuxlink-bal7 — the Find-a-Station close-crash. On unmount a cleanup ran AFTER
+// maplibre destroyed the style (map.remove()), so the existence guard
+// `if (map.getLayer(id))` itself threw "undefined is not an object (this.style…)"
+// and crashed the app to the ErrorBoundary. The cleanups must tolerate it.
+describe('cleanups tolerate a torn-down map (tuxlink-bal7)', () => {
+  // Mount normally, then make the map behave like maplibre after remove():
+  // getLayer/getSource throw because `this.style` is undefined.
+  const destroyStyle = (map: ReturnType<typeof createMapLibreMock>) => {
+    const thrown = () => {
+      throw new TypeError("undefined is not an object (evaluating 'this.style.getLayer')");
+    };
+    map.getLayer = thrown as unknown as typeof map.getLayer;
+    map.getSource = thrown as unknown as typeof map.getSource;
+  };
+
+  it('useMapOverlay cleanup does not throw after the style is destroyed', () => {
+    const map = createMapLibreMock({ styleLoaded: true });
+    const { unmount } = render(<Overlay map={map} />);
+    destroyStyle(map);
+    expect(() => unmount()).not.toThrow();
+  });
+
+  it('useMapLayer cleanup does not throw after the style is destroyed', () => {
+    const map = createMapLibreMock({ styleLoaded: true });
+    const Probe = () => {
+      useMapLayer(map, LAYER);
+      return null;
+    };
+    const { unmount } = render(<Probe />);
+    destroyStyle(map);
+    expect(() => unmount()).not.toThrow();
+  });
+
+  it('useMapSource cleanup does not throw after the style is destroyed', () => {
+    const map = createMapLibreMock({ styleLoaded: true });
+    const Probe = () => {
+      useMapSource(map, 'basemap', SOURCE);
+      return null;
+    };
+    const { unmount } = render(<Probe />);
+    destroyStyle(map);
+    expect(() => unmount()).not.toThrow();
+  });
+});
