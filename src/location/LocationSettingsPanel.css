@@ -5,7 +5,10 @@
 .tux-location-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  /* Above .tux-settings-backdrop (z-index 100) — this panel opens ON TOP of the
+     Settings modal it's launched from; at 60 it opened underneath and was
+     invisible, so the feature looked removed (tuxlink-h4d3). */
+  z-index: 120;
   display: flex;
   align-items: center;
   justify-content: center;
