@@ -1,5 +1,5 @@
 import { renderHook, act } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mirror useAprsChat.test.ts's listen idiom: capture the registered handler per
 // channel so the test can drive `aprs-position:new` payloads synchronously.
@@ -28,6 +28,7 @@ const BASE = {
   symbolTable: '/',
   symbolCode: '-',
   comment: 'Hello',
+  ambiguity: 0,
 };
 
 describe('useAprsPositions', () => {
@@ -75,5 +76,46 @@ describe('useAprsPositions', () => {
     expect(result.current.positions).toHaveLength(2);
     const calls = result.current.positions.map((p) => p.call).sort();
     expect(calls).toEqual(['KK6XYZ', 'W7ABC']);
+  });
+
+  it('carries the decoded ambiguity level (RF-honesty)', async () => {
+    const { result } = renderHook(() => useAprsPositions());
+    await act(async () => {});
+    emitPos({ ...BASE, ambiguity: 3 });
+    expect(result.current.positions[0].ambiguity).toBe(3);
+  });
+
+  describe('staleness', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('prunes a station that has gone silent past the TTL', async () => {
+      const { result } = renderHook(() => useAprsPositions());
+      await act(async () => {});
+      emitPos(BASE); // heard at t=0
+      expect(result.current.positions).toHaveLength(1);
+      // 61 minutes of silence (> 60-min TTL): the prune sweep drops the pin.
+      await act(async () => {
+        vi.setSystemTime(61 * 60 * 1000);
+        vi.advanceTimersByTime(61 * 60 * 1000);
+      });
+      expect(result.current.positions).toHaveLength(0);
+    });
+
+    it('keeps a station heard within the TTL', async () => {
+      const { result } = renderHook(() => useAprsPositions());
+      await act(async () => {});
+      emitPos(BASE); // heard at t=0
+      await act(async () => {
+        vi.setSystemTime(10 * 60 * 1000);
+        vi.advanceTimersByTime(10 * 60 * 1000);
+      });
+      expect(result.current.positions).toHaveLength(1);
+    });
   });
 });
