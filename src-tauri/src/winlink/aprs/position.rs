@@ -151,6 +151,122 @@ fn sane(lat: f64, lon: f64) -> Option<()> {
     }
 }
 
+/// Parse a Mic-E packet. Ported from aprslib `mice.py`.
+///
+/// Mic-E is the odd one: latitude (+ 3 message-type bits + position ambiguity)
+/// is packed into the AX.25 **destination address**, while longitude / speed /
+/// course / symbol live in the info field. So this takes BOTH the destination
+/// callsign (`dest`, SSID stripped, exactly 6 chars) and the info field (`info`,
+/// with the Mic-E DTI at `info[0]`: `` ` `` current, `'` old, or 0x1c/0x1d for
+/// the TM-D700 variants). Note the symbol order is reversed vs normal reports:
+/// symbol *code* precedes symbol *table*.
+///
+/// Surfaces lat/lon + symbol + comment only; speed/course/altitude/telemetry are
+/// decodable but not part of [`AprsPosition`].
+pub fn parse_mice(dest: &str, info: &[u8]) -> Option<AprsPosition> {
+    if !matches!(*info.first()?, 0x60 | 0x27 | 0x1c | 0x1d) {
+        return None;
+    }
+    let body = &info[1..];
+    if body.len() < 8 {
+        return None;
+    }
+    let d = dest.as_bytes();
+    if d.len() != 6 {
+        return None;
+    }
+    // dstcall must match ^[0-9A-Z]{3}[0-9L-Z]{3}$
+    for (i, &c) in d.iter().enumerate() {
+        let ok = if i < 3 {
+            c.is_ascii_digit() || c.is_ascii_uppercase()
+        } else {
+            c.is_ascii_digit() || (b'L'..=b'Z').contains(&c)
+        };
+        if !ok {
+            return None;
+        }
+    }
+
+    // Translate each dest char to a latitude digit (or ambiguity space).
+    let mut tmp = [0u8; 6];
+    for (i, &c) in d.iter().enumerate() {
+        tmp[i] = match c {
+            b'K' | b'L' | b'Z' => b' ', // ambiguity spaces
+            _ if c > 76 => c - 32,      // P-Y -> '0'..'9'
+            _ if c > 57 => c - 17,      // A-J -> '0'..'9'
+            _ => c,                     // '0'..'9'
+        };
+    }
+
+    // Position ambiguity = trailing spaces; anything else must be a digit.
+    let mut posamb = 0usize;
+    let mut seen_space = false;
+    for &t in &tmp {
+        if t == b' ' {
+            seen_space = true;
+            posamb += 1;
+        } else {
+            if seen_space || !t.is_ascii_digit() {
+                return None;
+            }
+        }
+    }
+    // Move the coordinate to the center of the ambiguity box.
+    if posamb >= 4 {
+        tmp[2] = b'3';
+    } else if posamb > 0 {
+        tmp[6 - posamb] = b'5';
+    }
+
+    let dd = two_digit(tmp[0], tmp[1])?;
+    let mm = two_digit(tmp[2], tmp[3])? as f64 + two_digit(tmp[4], tmp[5])? as f64 / 100.0;
+    let mut lat = dd as f64 + mm / 60.0;
+    if d[3] <= 0x4c {
+        lat = -lat; // dest[3] <= 'L' => South
+    }
+
+    // Longitude: degrees from info[0] + the 100°/180-189/190-199 corrections.
+    let mut lon_deg = body[0] as i32 - 28;
+    if d[4] >= 0x50 {
+        lon_deg += 100; // dest[4] >= 'P' => +100 offset
+    }
+    if (180..=189).contains(&lon_deg) {
+        lon_deg -= 80;
+    }
+    if (190..=199).contains(&lon_deg) {
+        lon_deg -= 190;
+    }
+    let mut lngmin = body[1] as f64 - 28.0;
+    if lngmin >= 60.0 {
+        lngmin -= 60.0;
+    }
+    lngmin += (body[2] as f64 - 28.0) / 100.0;
+    match posamb {
+        0 => {}
+        1 => lngmin = ((lngmin * 10.0).floor() + 0.5) / 10.0,
+        2 => lngmin = lngmin.floor() + 0.5,
+        3 => lngmin = ((lngmin / 10.0).floor() + 0.5) * 10.0,
+        4 => lngmin = 30.0,
+        _ => return None, // ambiguity > 4 unsupported for longitude
+    }
+    let mut lon = lon_deg as f64 + lngmin / 60.0;
+    if d[5] >= 0x50 {
+        lon = -lon; // dest[5] >= 'P' => West
+    }
+
+    // Symbol order is REVERSED in Mic-E: code then table.
+    let symbol_code = body[6] as char;
+    let symbol_table = body[7] as char;
+    let comment = if body.len() > 8 {
+        String::from_utf8_lossy(&body[8..]).trim().to_string()
+    } else {
+        String::new()
+    };
+
+    sane(lat, lon)?;
+    Some(AprsPosition { lat, lon, symbol_table, symbol_code, comment })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +352,38 @@ mod tests {
     fn rejects_out_of_range() {
         // 99 degrees latitude is impossible.
         assert!(parse_position(b"!9903.50N/07201.75W-").is_none());
+    }
+
+    // -- Mic-E --------------------------------------------------------------
+    // Hand-derived vectors (aprslib mice.py formulas applied by hand):
+    // dest "332UVT": digits 33/25.64, dest[3]='U'(>'L')=>N, dest[4]='V'(>='P')=>+100,
+    //   dest[5]='T'(>='P')=>W. info "`(`n\x1c\x1c\x1c>/": lon byte '('=>12(+100=112),
+    //   '`'=>8 min, 'n'=>.82 => 112°08.82'W; symbol code '>' table '/'.
+    const MICE_INFO: &[u8] = b"\x60\x28\x60\x6e\x1c\x1c\x1c\x3e\x2f";
+
+    #[test]
+    fn mice_north_west_with_offset() {
+        let p = parse_mice("332UVT", MICE_INFO).unwrap();
+        approx(p.lat, 33.427333); // 33 + 25.64/60
+        approx(p.lon, -112.147); // -(112 + 8.82/60)
+        assert_eq!(p.symbol_code, '>');
+        assert_eq!(p.symbol_table, '/');
+    }
+
+    #[test]
+    fn mice_south_east_no_offset() {
+        // All-digit dest => same magnitudes but dest[3]='5'(<='L')=>S,
+        // dest[4]='6'(<'P')=> no offset, dest[5]='4'(<'P')=>E.
+        let p = parse_mice("332564", MICE_INFO).unwrap();
+        approx(p.lat, -33.427333);
+        approx(p.lon, 12.147); // +(12 + 8.82/60)
+    }
+
+    #[test]
+    fn mice_rejects_bad_input() {
+        assert!(parse_mice("332UVT", b"!short").is_none()); // wrong DTI
+        assert!(parse_mice("332UVT", b"\x60\x28\x60").is_none()); // body < 8
+        assert!(parse_mice("332UV", MICE_INFO).is_none()); // dest not 6 chars
+        assert!(parse_mice("33!UVT", MICE_INFO).is_none()); // invalid dest char
     }
 }
