@@ -64,12 +64,36 @@ export type DownloadArgs =
   | { kind: 'tier'; tier_id: string; lon0: number; lat0: number }
   | { kind: 'continent'; continent_id: string };
 
+/** `basemap:download-progress` event payload (mirrors Rust `DownloadProgress`). */
+export interface DownloadProgress {
+  packId: string;
+  /** Bytes written to the in-progress `.part` so far. */
+  bytes: number;
+  /** Expected total (the manifest `typical_bytes` estimate) — the bar denominator. */
+  total: number;
+}
+
+/** `basemap:download-done` event payload (mirrors Rust `DownloadDone`). */
+export interface DownloadDone {
+  packId: string;
+  ok: boolean;
+  error: string | null;
+}
+
+/** Tauri event channels for the download progress UI (see useDownloadProgress). */
+export const DOWNLOAD_PROGRESS_EVENT = 'basemap:download-progress';
+export const DOWNLOAD_DONE_EVENT = 'basemap:download-done';
+
 export const listPacks = () => invoke<PacksList>('basemap_list_packs');
 export const getManifest = () => invoke<RegionManifest>('basemap_get_manifest');
 export const refreshManifest = () => invoke<RegionManifest>('basemap_refresh_manifest');
 export const downloadPack = (args: DownloadArgs) =>
   invoke<InstalledPack>('basemap_download_pack', { args });
 export const deletePack = (id: string) => invoke<boolean>('basemap_delete_pack', { id });
+
+/** Cancel an in-flight pack download. No-op if nothing is downloading that id. */
+export const cancelDownload = (packId: string) =>
+  invoke<void>('basemap_cancel_download', { packId });
 
 /** Notify the live map that installed packs changed (after a download/delete). */
 export function emitPacksChanged(): void {

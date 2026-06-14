@@ -17,6 +17,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use super::packs::{is_safe_pack_id, Bbox, InstalledPack, PacksManifest};
 use super::validate::{self, ValidationError};
@@ -32,12 +34,20 @@ const TMP_SUFFIX: &str = ".part";
 pub trait Extractor {
     /// Extract `bbox` (z0..=`maxzoom`) from `planet_url` into `dest`. Blocking.
     /// `planet_url` has already passed [`super::region_manifest::validate_planet_url`].
+    ///
+    /// `cancel` is polled while the transfer runs; when set the extractor stops
+    /// ASAP (killing the sidecar child) and returns [`DownloadError::Cancelled`].
+    /// `on_progress(bytes_written_so_far)` is invoked as bytes accumulate so the
+    /// command layer can emit a progress event. Both are wired through from
+    /// [`install_pack`]; tests may ignore them.
     fn extract(
         &self,
         planet_url: &str,
         bbox: &Bbox,
         maxzoom: u8,
         dest: &Path,
+        cancel: &Arc<AtomicBool>,
+        on_progress: &dyn Fn(u64),
     ) -> Result<(), DownloadError>;
 }
 
@@ -52,6 +62,10 @@ pub struct PackRequest {
     pub bbox: Bbox,
     pub maxzoom: u8,
     pub source_build: String,
+    /// The manifest's `typical_bytes` size estimate for this tier/continent — the
+    /// progress bar's denominator (`total`). Distinct from `needed_bytes` (which
+    /// carries free-space headroom) so the UI shows the honest expected size.
+    pub typical_bytes: u64,
     /// Reject the download up front unless this many bytes are free.
     pub needed_bytes: u64,
     /// Reject the *downloaded* archive if it exceeds this (validate.rs size budget).
@@ -71,6 +85,9 @@ pub enum DownloadError {
     InsufficientSpace { needed: u64, available: u64 },
     /// The go-pmtiles sidecar failed / was killed.
     ExtractFailed(String),
+    /// The operator cancelled the download mid-extract. Like every other error
+    /// variant, the temp `.part` is cleaned up so no partial pack persists.
+    Cancelled,
     /// The downloaded archive failed PMTiles/schema/size validation.
     Validation(ValidationError),
     /// A filesystem step (temp create, rename, fsync, manifest write) failed.
@@ -86,6 +103,7 @@ impl std::fmt::Display for DownloadError {
                 "not enough free space: need ~{needed} bytes, {available} available"
             ),
             DownloadError::ExtractFailed(e) => write!(f, "map extraction failed: {e}"),
+            DownloadError::Cancelled => write!(f, "download cancelled"),
             DownloadError::Validation(e) => write!(f, "downloaded pack is invalid: {e}"),
             DownloadError::Io(e) => write!(f, "pack install I/O error: {e}"),
         }
@@ -157,11 +175,19 @@ fn fsync_dir(dir: &Path) {
 ///
 /// `available_bytes` is the free space on the packs filesystem (injected so the
 /// free-space gate is testable; the runtime layer supplies it via statvfs).
+///
+/// `cancel` is polled during the extract; if the operator cancels, the sidecar
+/// is killed and `Err(DownloadError::Cancelled)` is returned — the temp `.part`
+/// is removed by the same cleanup guard as any other error, so no partial pack
+/// persists. `on_progress(bytes)` is invoked with the growing temp-file size for
+/// the UI's progress bar.
 pub fn install_pack(
     extractor: &dyn Extractor,
     packs_dir: &Path,
     available_bytes: u64,
     req: &PackRequest,
+    cancel: &Arc<AtomicBool>,
+    on_progress: &dyn Fn(u64),
 ) -> Result<InstalledPack, DownloadError> {
     if !is_safe_pack_id(&req.id) {
         return Err(DownloadError::UnsafeId(req.id.clone()));
@@ -180,8 +206,10 @@ pub fn install_pack(
     // Clear any leftover from a previous interrupted attempt.
     let _ = fs::remove_file(&tmp_path);
 
-    // Cleanup guard: remove the temp on any error from the install sequence.
-    let result = install_into_temp(extractor, packs_dir, &tmp_path, req);
+    // Cleanup guard: remove the temp on any error from the install sequence
+    // (extract failure, validation reject, AND cancel — a cancelled download
+    // leaves no installed pack, only the temp, removed here).
+    let result = install_into_temp(extractor, packs_dir, &tmp_path, req, cancel, on_progress);
 
     if result.is_err() {
         let _ = fs::remove_file(&tmp_path);
@@ -198,8 +226,17 @@ fn install_into_temp(
     packs_dir: &Path,
     tmp_path: &Path,
     req: &PackRequest,
+    cancel: &Arc<AtomicBool>,
+    on_progress: &dyn Fn(u64),
 ) -> Result<InstalledPack, DownloadError> {
-    extractor.extract(&req.planet_url, &req.bbox, req.maxzoom, tmp_path)?;
+    extractor.extract(
+        &req.planet_url,
+        &req.bbox,
+        req.maxzoom,
+        tmp_path,
+        cancel,
+        on_progress,
+    )?;
 
     let archive = PmtilesArchive::open(tmp_path).map_err(|e| DownloadError::Io(e.to_string()))?;
     let v = validate::validate(&archive, req.size_budget)?;
@@ -280,11 +317,37 @@ pub fn sweep_orphans(packs_dir: &Path, manifest: &PacksManifest) -> usize {
     removed
 }
 
+/// Throttle gate for progress emissions: emit if at least `interval` has elapsed
+/// since `last` (or if `last` is `None`, i.e. the first sample). Factored out as a
+/// pure function so the command layer's per-event throttle is unit-testable
+/// without a Tauri runtime. Returns `true` when the caller should emit + update
+/// its `last` cursor.
+pub fn should_emit(
+    last: Option<std::time::Instant>,
+    now: std::time::Instant,
+    interval: std::time::Duration,
+) -> bool {
+    match last {
+        None => true,
+        Some(prev) => now.duration_since(prev) >= interval,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::basemap::packs::tier_bbox;
     use crate::basemap::validate::testutil::TestPmtiles;
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    /// A never-cancelled flag for tests that don't exercise cancellation.
+    fn no_cancel() -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+
+    /// A no-op progress sink for tests that don't assert on progress.
+    fn noop_progress(_: u64) {}
 
     fn req(id: &str, needed: u64, budget: u64) -> PackRequest {
         PackRequest {
@@ -294,17 +357,31 @@ mod tests {
             bbox: tier_bbox(-112.0, 33.5, 7.5, 6.0).unwrap(),
             maxzoom: 14,
             source_build: "20260608".to_string(),
+            typical_bytes: needed,
             needed_bytes: needed,
             size_budget: budget,
             installed_at: "2026-06-13T00:00:00Z".to_string(),
         }
     }
 
-    /// Extractor that writes a well-formed (default TestPmtiles) archive.
+    /// Extractor that writes a well-formed (default TestPmtiles) archive. Reports
+    /// the final byte count via `on_progress` so happy-path callers still exercise
+    /// the progress channel.
     struct GoodExtractor;
     impl Extractor for GoodExtractor {
-        fn extract(&self, _url: &str, _b: &Bbox, _z: u8, dest: &Path) -> Result<(), DownloadError> {
-            fs::write(dest, TestPmtiles::default().build()).map_err(|e| DownloadError::Io(e.to_string()))
+        fn extract(
+            &self,
+            _url: &str,
+            _b: &Bbox,
+            _z: u8,
+            dest: &Path,
+            _cancel: &Arc<AtomicBool>,
+            on_progress: &dyn Fn(u64),
+        ) -> Result<(), DownloadError> {
+            let bytes = TestPmtiles::default().build();
+            fs::write(dest, &bytes).map_err(|e| DownloadError::Io(e.to_string()))?;
+            on_progress(bytes.len() as u64);
+            Ok(())
         }
     }
 
@@ -312,7 +389,15 @@ mod tests {
     /// reject + cleanup path.
     struct RasterExtractor;
     impl Extractor for RasterExtractor {
-        fn extract(&self, _url: &str, _b: &Bbox, _z: u8, dest: &Path) -> Result<(), DownloadError> {
+        fn extract(
+            &self,
+            _url: &str,
+            _b: &Bbox,
+            _z: u8,
+            dest: &Path,
+            _cancel: &Arc<AtomicBool>,
+            _on_progress: &dyn Fn(u64),
+        ) -> Result<(), DownloadError> {
             let bytes = TestPmtiles { tile_type: 2, ..Default::default() }.build();
             fs::write(dest, bytes).map_err(|e| DownloadError::Io(e.to_string()))
         }
@@ -321,15 +406,63 @@ mod tests {
     /// Extractor that fails (sidecar error / killed).
     struct FailingExtractor;
     impl Extractor for FailingExtractor {
-        fn extract(&self, _url: &str, _b: &Bbox, _z: u8, _dest: &Path) -> Result<(), DownloadError> {
+        fn extract(
+            &self,
+            _url: &str,
+            _b: &Bbox,
+            _z: u8,
+            _dest: &Path,
+            _cancel: &Arc<AtomicBool>,
+            _on_progress: &dyn Fn(u64),
+        ) -> Result<(), DownloadError> {
             Err(DownloadError::ExtractFailed("killed".into()))
+        }
+    }
+
+    /// Extractor that writes the temp in growing chunks, calling `on_progress`
+    /// after each, and honors the cancel flag (mirrors the SidecarExtractor poll
+    /// loop without a child process). If cancelled it leaves a partial temp and
+    /// returns `Cancelled`, so the install cleanup guard is exercised.
+    struct ChunkedExtractor {
+        chunks: usize,
+        cancel_after: Option<usize>,
+    }
+    impl Extractor for ChunkedExtractor {
+        fn extract(
+            &self,
+            _url: &str,
+            _b: &Bbox,
+            _z: u8,
+            dest: &Path,
+            cancel: &Arc<AtomicBool>,
+            on_progress: &dyn Fn(u64),
+        ) -> Result<(), DownloadError> {
+            use std::io::Write;
+            let mut f = fs::File::create(dest).map_err(|e| DownloadError::Io(e.to_string()))?;
+            let mut written = 0u64;
+            for i in 0..self.chunks {
+                if let Some(n) = self.cancel_after {
+                    if i == n {
+                        cancel.store(true, Ordering::SeqCst);
+                    }
+                }
+                if cancel.load(Ordering::SeqCst) {
+                    return Err(DownloadError::Cancelled);
+                }
+                let chunk = [0u8; 16];
+                f.write_all(&chunk).map_err(|e| DownloadError::Io(e.to_string()))?;
+                f.flush().map_err(|e| DownloadError::Io(e.to_string()))?;
+                written += chunk.len() as u64;
+                on_progress(written);
+            }
+            Ok(())
         }
     }
 
     #[test]
     fn install_happy_path_writes_archive_and_manifest() {
         let dir = tempfile::tempdir().unwrap();
-        let entry = install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000)).unwrap();
+        let entry = install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000), &no_cancel(), &noop_progress).unwrap();
         assert_eq!(entry.id, "tier-wide-n34-w112");
         assert!(entry.bytes > 0);
         assert_eq!(entry.maxzoom, 6); // TestPmtiles default
@@ -345,7 +478,7 @@ mod tests {
     #[test]
     fn insufficient_space_rejects_before_extract() {
         let dir = tempfile::tempdir().unwrap();
-        let err = install_pack(&GoodExtractor, dir.path(), 100, &req("tier-wide-n34-w112", 1_000_000, 10_000_000)).unwrap_err();
+        let err = install_pack(&GoodExtractor, dir.path(), 100, &req("tier-wide-n34-w112", 1_000_000, 10_000_000), &no_cancel(), &noop_progress).unwrap_err();
         assert!(matches!(err, DownloadError::InsufficientSpace { .. }));
         // Nothing written.
         assert!(!pack_path(dir.path(), "tier-wide-n34-w112").exists());
@@ -355,7 +488,7 @@ mod tests {
     #[test]
     fn invalid_download_is_rejected_and_leaves_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let err = install_pack(&RasterExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000)).unwrap_err();
+        let err = install_pack(&RasterExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000), &no_cancel(), &noop_progress).unwrap_err();
         assert!(matches!(err, DownloadError::Validation(ValidationError::NotVectorTiles(_))));
         // No archive, no temp, no manifest entry — corrupt state never persisted.
         assert!(!pack_path(dir.path(), "tier-wide-n34-w112").exists());
@@ -367,7 +500,7 @@ mod tests {
     fn over_budget_download_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         // Budget smaller than the (small) test archive → SizeBudgetExceeded.
-        let err = install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10)).unwrap_err();
+        let err = install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10), &no_cancel(), &noop_progress).unwrap_err();
         assert!(matches!(err, DownloadError::Validation(ValidationError::SizeBudgetExceeded { .. })));
         assert!(load_manifest(dir.path()).packs.is_empty());
     }
@@ -375,7 +508,7 @@ mod tests {
     #[test]
     fn extractor_failure_cleans_temp() {
         let dir = tempfile::tempdir().unwrap();
-        let err = install_pack(&FailingExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000)).unwrap_err();
+        let err = install_pack(&FailingExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000), &no_cancel(), &noop_progress).unwrap_err();
         assert!(matches!(err, DownloadError::ExtractFailed(_)));
         assert!(!dir.path().join("tier-wide-n34-w112.pmtiles.part").exists());
     }
@@ -383,22 +516,22 @@ mod tests {
     #[test]
     fn unsafe_id_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
-        let err = install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("../etc/passwd", 1, 10_000_000)).unwrap_err();
+        let err = install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("../etc/passwd", 1, 10_000_000), &no_cancel(), &noop_progress).unwrap_err();
         assert!(matches!(err, DownloadError::UnsafeId(_)));
     }
 
     #[test]
     fn reinstall_same_id_replaces_not_duplicates() {
         let dir = tempfile::tempdir().unwrap();
-        install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000)).unwrap();
-        install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000)).unwrap();
+        install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000), &no_cancel(), &noop_progress).unwrap();
+        install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000), &no_cancel(), &noop_progress).unwrap();
         assert_eq!(load_manifest(dir.path()).packs.len(), 1);
     }
 
     #[test]
     fn delete_removes_archive_and_entry() {
         let dir = tempfile::tempdir().unwrap();
-        install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000)).unwrap();
+        install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000), &no_cancel(), &noop_progress).unwrap();
         assert!(delete_pack(dir.path(), "tier-wide-n34-w112").unwrap());
         assert!(!pack_path(dir.path(), "tier-wide-n34-w112").exists());
         assert!(load_manifest(dir.path()).packs.is_empty());
@@ -409,7 +542,7 @@ mod tests {
     #[test]
     fn sweep_removes_orphans_keeps_registered() {
         let dir = tempfile::tempdir().unwrap();
-        install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000)).unwrap();
+        install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000), &no_cancel(), &noop_progress).unwrap();
         // A stray interrupted temp + an unreferenced archive.
         fs::write(dir.path().join("tier-old-n10-e10.pmtiles.part"), b"partial").unwrap();
         fs::write(dir.path().join("continent-na.pmtiles"), b"orphan").unwrap();
@@ -428,5 +561,81 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(manifest_path(dir.path()), b"{ this is not json").unwrap();
         assert!(load_manifest(dir.path()).packs.is_empty());
+    }
+
+    #[test]
+    fn progress_callback_is_invoked_with_growing_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let seen = std::sync::Mutex::new(Vec::<u64>::new());
+        let ex = ChunkedExtractor { chunks: 4, cancel_after: None };
+        let _ = install_pack(
+            &ex,
+            dir.path(),
+            u64::MAX,
+            &req("tier-wide-n34-w112", 1, 10_000_000),
+            &no_cancel(),
+            &|b| seen.lock().unwrap().push(b),
+        );
+        let seen = seen.into_inner().unwrap();
+        // One progress sample per chunk, strictly increasing.
+        assert_eq!(seen.len(), 4);
+        assert!(seen.windows(2).all(|w| w[1] > w[0]), "bytes must grow: {seen:?}");
+        assert_eq!(seen[0], 16);
+        assert_eq!(seen[3], 64);
+    }
+
+    #[test]
+    fn cancel_returns_cancelled_and_leaves_no_pack() {
+        let dir = tempfile::tempdir().unwrap();
+        // Cancel after the 2nd chunk: a partial temp exists when Cancelled fires.
+        let ex = ChunkedExtractor { chunks: 8, cancel_after: Some(2) };
+        let err = install_pack(
+            &ex,
+            dir.path(),
+            u64::MAX,
+            &req("tier-wide-n34-w112", 1, 10_000_000),
+            &no_cancel(),
+            &noop_progress,
+        )
+        .unwrap_err();
+        assert!(matches!(err, DownloadError::Cancelled));
+        // No installed archive, no leftover temp, no manifest entry.
+        assert!(!pack_path(dir.path(), "tier-wide-n34-w112").exists());
+        assert!(!dir.path().join("tier-wide-n34-w112.pmtiles.part").exists());
+        assert!(load_manifest(dir.path()).packs.is_empty());
+    }
+
+    #[test]
+    fn cancel_flag_set_before_extract_aborts_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = Arc::new(AtomicBool::new(true));
+        let ex = ChunkedExtractor { chunks: 8, cancel_after: None };
+        let err = install_pack(
+            &ex,
+            dir.path(),
+            u64::MAX,
+            &req("tier-wide-n34-w112", 1, 10_000_000),
+            &cancel,
+            &noop_progress,
+        )
+        .unwrap_err();
+        assert!(matches!(err, DownloadError::Cancelled));
+        assert!(!dir.path().join("tier-wide-n34-w112.pmtiles.part").exists());
+    }
+
+    #[test]
+    fn should_emit_gates_on_interval() {
+        let interval = Duration::from_millis(400);
+        let t0 = Instant::now();
+        // First sample (no prior cursor) always emits.
+        assert!(should_emit(None, t0, interval));
+        // Too soon after the last emit → suppressed.
+        let soon = t0 + Duration::from_millis(100);
+        assert!(!should_emit(Some(t0), soon, interval));
+        // At/after the interval → emit.
+        let later = t0 + Duration::from_millis(400);
+        assert!(should_emit(Some(t0), later, interval));
+        let much_later = t0 + Duration::from_secs(2);
+        assert!(should_emit(Some(t0), much_later, interval));
     }
 }

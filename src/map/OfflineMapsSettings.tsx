@@ -16,12 +16,14 @@ import {
   getManifest,
   downloadPack,
   deletePack,
+  cancelDownload,
   emitPacksChanged,
   type Continent,
   type InstalledPack,
   type RegionManifest,
   type Tier,
 } from './offlineMaps';
+import { useDownloadProgress } from './useDownloadProgress';
 import './OfflineMapsSettings.css';
 
 /** Human-readable byte size (MB/GB), for the pack list + preset estimates. */
@@ -32,6 +34,26 @@ export function formatBytes(n: number): string {
   return `${n} B`;
 }
 
+/** Transfer rate (e.g. `14.8 MB/s`) for the download progress row. */
+export function formatRate(bytesPerSec: number | null): string {
+  if (bytesPerSec == null || !Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return '—';
+  if (bytesPerSec >= 1_000_000) return `${(bytesPerSec / 1_000_000).toFixed(1)} MB/s`;
+  if (bytesPerSec >= 1000) return `${Math.round(bytesPerSec / 1000)} KB/s`;
+  return `${Math.round(bytesPerSec)} B/s`;
+}
+
+/** Rough time-remaining (e.g. `~2 min left`, `~45 sec left`) for the progress row. */
+export function formatEta(secs: number | null): string {
+  if (secs == null || !Number.isFinite(secs) || secs < 0) return '';
+  if (secs >= 3600) {
+    const h = Math.floor(secs / 3600);
+    const m = Math.round((secs % 3600) / 60);
+    return `~${h} hr${m ? ` ${m} min` : ''} left`;
+  }
+  if (secs >= 60) return `~${Math.round(secs / 60)} min left`;
+  return `~${Math.max(1, Math.round(secs))} sec left`;
+}
+
 export function OfflineMapsSettings() {
   const { grid, fixLat, fixLon } = useLocationConfig();
   const [manifest, setManifest] = useState<RegionManifest | null>(null);
@@ -40,6 +62,14 @@ export function OfflineMapsSettings() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [continentId, setContinentId] = useState('');
+  // The active *download* busy key (tier-*/continent-*, not delete-*) drives the
+  // inline progress row. A failed download stays here so the row shows the error
+  // + Retry until the operator retries or starts something else.
+  const [downloadKey, setDownloadKey] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [retry, setRetry] = useState<(() => void) | null>(null);
+
+  const progress = useDownloadProgress(downloadKey);
 
   // Operator centroid: prefer the precise live fix, else the configured grid.
   const centroid =
@@ -62,7 +92,36 @@ export function OfflineMapsSettings() {
     void refresh();
   }, [refresh]);
 
-  async function runDownload(label: string, fn: () => Promise<unknown>, key: string) {
+  // A download: drives the inline progress row (download-done event clears it).
+  // On failure the row shows the error + Retry; the failure also lands in
+  // `downloadError` so it persists after `busy` clears.
+  async function runDownloadOp(label: string, fn: () => Promise<unknown>, key: string) {
+    setBusy(key);
+    setError(null);
+    setDownloadError(null);
+    setDownloadKey(key);
+    setRetry(() => () => void runDownloadOp(label, fn, key));
+    try {
+      await fn();
+      emitPacksChanged();
+      await refresh();
+      setDownloadKey(null);
+    } catch (e) {
+      // A cancel surfaces as the backend's "download cancelled" error — that is
+      // an operator action, not a failure: return the row to idle (no error +
+      // Retry). Any other rejection keeps the message for the inline error row.
+      if (String(e).includes('download cancelled')) {
+        setDownloadKey(null);
+      } else {
+        setDownloadError(`${label} failed: ${e}`);
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // A delete: no progress bar, just the inline "Deleting…" affordance.
+  async function runDeleteOp(label: string, fn: () => Promise<unknown>, key: string) {
     setBusy(key);
     setError(null);
     try {
@@ -81,7 +140,7 @@ export function OfflineMapsSettings() {
       setError('Set your location first to download detail for your area.');
       return;
     }
-    void runDownload(
+    void runDownloadOp(
       `Download ${t.label}`,
       () => downloadPack({ kind: 'tier', tier_id: t.id, lon0: centroid.lon, lat0: centroid.lat }),
       `tier-${t.id}`,
@@ -89,7 +148,7 @@ export function OfflineMapsSettings() {
   }
 
   function onDownloadContinent(c: Continent) {
-    void runDownload(
+    void runDownloadOp(
       `Download ${c.label}`,
       () => downloadPack({ kind: 'continent', continent_id: c.id }),
       `continent-${c.id}`,
@@ -97,11 +156,21 @@ export function OfflineMapsSettings() {
   }
 
   function onDelete(p: InstalledPack) {
-    void runDownload(`Delete ${p.label}`, () => deletePack(p.id), `delete-${p.id}`);
+    void runDeleteOp(`Delete ${p.label}`, () => deletePack(p.id), `delete-${p.id}`);
+  }
+
+  function onCancel() {
+    // The progress hook tracks the backend pack id; the command takes it. Since
+    // only one download runs at a time, cancelling the tracked pack is correct.
+    if (progress.trackedId) void cancelDownload(progress.trackedId);
   }
 
   const downloading = busy != null;
   const continent = manifest?.continents.find((c) => c.id === continentId);
+  // The inline progress row renders for an active download (or a failed one
+  // awaiting Retry) — never for a delete.
+  const showProgressRow =
+    downloadKey != null && (busy === downloadKey || downloadError != null);
 
   return (
     <section className="tux-offlinemaps" aria-label="Offline maps">
@@ -161,6 +230,56 @@ export function OfflineMapsSettings() {
               {busy === `continent-${continentId}` ? 'Downloading…' : 'Download'}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Inline download progress row (no popup) — a determinate bar plus the
+          live byte/rate/eta readout and a Cancel, or an error + Retry on failure.
+          Renders only while a download is active or awaiting Retry. */}
+      {showProgressRow && (
+        <div className="tux-offlinemaps-progress" role="status" aria-live="polite">
+          {downloadError ? (
+            <div className="tux-offlinemaps-progress-failed">
+              <span className="tux-offlinemaps-progress-error">
+                Download failed: {progress.error ?? downloadError}
+              </span>
+              <button
+                type="button"
+                className="tux-offlinemaps-progress-retry"
+                onClick={() => retry?.()}
+              >
+                Retry
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="tux-offlinemaps-progress-bar-row">
+                <progress
+                  className="tux-offlinemaps-progress-bar"
+                  max={1}
+                  value={progress.percent}
+                  aria-label="Download progress"
+                />
+                <span className="tux-offlinemaps-progress-pct">
+                  {Math.round(progress.percent * 100)}%
+                </span>
+                <button
+                  type="button"
+                  className="tux-offlinemaps-progress-cancel"
+                  onClick={onCancel}
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="tux-offlinemaps-progress-meta">
+                <span>
+                  {formatBytes(progress.bytes)} / {formatBytes(progress.total)}
+                </span>
+                <span>{formatRate(progress.rateBps)}</span>
+                {formatEta(progress.etaSecs) && <span>{formatEta(progress.etaSecs)}</span>}
+              </div>
+            </>
+          )}
         </div>
       )}
 

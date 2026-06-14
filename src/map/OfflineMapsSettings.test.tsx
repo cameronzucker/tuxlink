@@ -7,11 +7,48 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
+type ProgressView = {
+  bytes: number;
+  total: number;
+  percent: number;
+  rateBps: number | null;
+  etaSecs: number | null;
+  status: string;
+  error: string | null;
+  trackedId: string | null;
+};
+const IDLE_PROGRESS: ProgressView = {
+  bytes: 0,
+  total: 0,
+  percent: 0,
+  rateBps: null,
+  etaSecs: null,
+  status: 'idle',
+  error: null,
+  trackedId: null,
+};
+
 const h = vi.hoisted(() => ({
   packsResp: { packs: [] as Array<Record<string, unknown>>, total_bytes: 0 },
   downloadPack: vi.fn().mockResolvedValue({}),
   deletePack: vi.fn().mockResolvedValue(true),
+  cancelDownload: vi.fn().mockResolvedValue(undefined),
   emitPacksChanged: vi.fn(),
+  // Mutable progress view the mocked hook returns (the UI tests drive states).
+  progress: {
+    bytes: 0,
+    total: 0,
+    percent: 0,
+    rateBps: null as number | null,
+    etaSecs: null as number | null,
+    status: 'idle',
+    error: null as string | null,
+    trackedId: null as string | null,
+  },
+}));
+
+vi.mock('./useDownloadProgress', () => ({
+  useDownloadProgress: () => h.progress,
 }));
 
 vi.mock('../location/useLocationConfig', () => ({
@@ -36,16 +73,19 @@ vi.mock('./offlineMaps', () => ({
     }),
   downloadPack: h.downloadPack,
   deletePack: h.deletePack,
+  cancelDownload: h.cancelDownload,
   emitPacksChanged: h.emitPacksChanged,
 }));
 
-import { OfflineMapsSettings, formatBytes } from './OfflineMapsSettings';
+import { OfflineMapsSettings, formatBytes, formatRate, formatEta } from './OfflineMapsSettings';
 
 beforeEach(() => {
   h.packsResp = { packs: [], total_bytes: 0 };
   h.downloadPack.mockClear();
   h.deletePack.mockClear();
+  h.cancelDownload.mockClear();
   h.emitPacksChanged.mockClear();
+  h.progress = { ...IDLE_PROGRESS };
 });
 
 describe('formatBytes', () => {
@@ -53,6 +93,24 @@ describe('formatBytes', () => {
     expect(formatBytes(1_000_000_000)).toBe('1.0 GB');
     expect(formatBytes(203_000_000)).toBe('203 MB');
     expect(formatBytes(17_000_000)).toBe('17 MB');
+  });
+});
+
+describe('formatRate', () => {
+  it('renders MB/s and KB/s, dash for unknown', () => {
+    expect(formatRate(14_800_000)).toBe('14.8 MB/s');
+    expect(formatRate(250_000)).toBe('250 KB/s');
+    expect(formatRate(null)).toBe('—');
+    expect(formatRate(0)).toBe('—');
+  });
+});
+
+describe('formatEta', () => {
+  it('renders minutes/seconds/hours, empty for unknown', () => {
+    expect(formatEta(120)).toBe('~2 min left');
+    expect(formatEta(45)).toBe('~45 sec left');
+    expect(formatEta(3700)).toBe('~1 hr 2 min left');
+    expect(formatEta(null)).toBe('');
   });
 });
 
@@ -110,5 +168,75 @@ describe('OfflineMapsSettings', () => {
     fireEvent.click(screen.getByText('Download'));
     await waitFor(() => expect(h.downloadPack).toHaveBeenCalledTimes(1));
     expect(h.downloadPack.mock.calls[0][0]).toMatchObject({ kind: 'continent', continent_id: 'na' });
+  });
+
+  it('shows an inline progress row with bar, percent, rate, eta, and Cancel while downloading', async () => {
+    // Keep the download promise pending so the row stays mounted.
+    let resolveDl: (v: unknown) => void = () => {};
+    h.downloadPack.mockImplementationOnce(() => new Promise((r) => (resolveDl = r)));
+    h.progress = {
+      bytes: 1_400_000_000,
+      total: 2_700_000_000,
+      percent: 0.53,
+      rateBps: 14_800_000,
+      etaSecs: 120,
+      status: 'downloading',
+      error: null,
+      trackedId: 'tier-wide-n34-w112',
+    };
+    render(<OfflineMapsSettings />);
+    const wide = await screen.findByText(/Wide · ~1\.0 GB/);
+    fireEvent.click(wide);
+
+    expect(await screen.findByLabelText('Download progress')).toBeInTheDocument();
+    expect(screen.getByText('53%')).toBeInTheDocument();
+    expect(screen.getByText(/1\.4 GB \/ 2\.7 GB/)).toBeInTheDocument();
+    expect(screen.getByText('14.8 MB/s')).toBeInTheDocument();
+    expect(screen.getByText('~2 min left')).toBeInTheDocument();
+
+    const cancel = screen.getByText('Cancel');
+    fireEvent.click(cancel);
+    expect(h.cancelDownload).toHaveBeenCalledWith('tier-wide-n34-w112');
+    resolveDl({});
+  });
+
+  it('shows Download failed + Retry on a failed download', async () => {
+    h.downloadPack.mockRejectedValueOnce('go-pmtiles exit 1: boom');
+    h.progress = {
+      ...IDLE_PROGRESS,
+      status: 'error',
+      error: 'go-pmtiles exit 1: boom',
+      trackedId: 'tier-wide-n34-w112',
+    };
+    render(<OfflineMapsSettings />);
+    const wide = await screen.findByText(/Wide · ~1\.0 GB/);
+    fireEvent.click(wide);
+
+    expect(await screen.findByText(/Download failed: go-pmtiles exit 1: boom/)).toBeInTheDocument();
+    const retry = screen.getByText('Retry');
+    fireEvent.click(retry);
+    await waitFor(() => expect(h.downloadPack).toHaveBeenCalledTimes(2));
+  });
+
+  it('returns to idle (no error/Retry) when a download is cancelled', async () => {
+    h.downloadPack.mockRejectedValueOnce('download cancelled');
+    render(<OfflineMapsSettings />);
+    const wide = await screen.findByText(/Wide · ~1\.0 GB/);
+    fireEvent.click(wide);
+    await waitFor(() => expect(h.downloadPack).toHaveBeenCalled());
+    // No error row, no Retry — a cancel is an operator action, not a failure.
+    await waitFor(() => expect(screen.queryByText(/Download failed/)).not.toBeInTheDocument());
+    expect(screen.queryByText('Retry')).not.toBeInTheDocument();
+  });
+
+  it('clears the progress row when a download succeeds (returns to idle)', async () => {
+    h.downloadPack.mockResolvedValueOnce({});
+    render(<OfflineMapsSettings />);
+    const wide = await screen.findByText(/Wide · ~1\.0 GB/);
+    fireEvent.click(wide);
+    await waitFor(() => expect(h.downloadPack).toHaveBeenCalled());
+    // After resolve, the row is gone (no progressbar, no Cancel).
+    await waitFor(() => expect(screen.queryByLabelText('Download progress')).not.toBeInTheDocument());
+    expect(screen.queryByText('Cancel')).not.toBeInTheDocument();
   });
 });
