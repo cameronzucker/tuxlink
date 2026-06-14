@@ -113,6 +113,8 @@ fn live_dm43_to_dm34_full_pipeline() {
         // path, not the antenna-preset selection; keep the captured deck inputs.
         tx_antenna_voa: "const17.voa".to_string(),
         rx_antenna_voa: "swwhip.voa".to_string(),
+        tx_antenna_voa_content: None,
+        noise_dbw: 145.0,
     };
 
     // Build the deck.
