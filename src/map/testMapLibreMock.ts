@@ -32,6 +32,9 @@ export interface MapLibreMockState {
   handlers: Map<string, Set<(...args: unknown[]) => void>>;
   styleLoaded: boolean;
   zoom: number;
+  /** Current map center (lng/lat), seeded from the constructor `center` option;
+   * mutated by `setCenter` and the `__setCenter` test control. */
+  center: { lng: number; lat: number };
   /** Current viewport bounds (lng/lat extents) the overlays read via getBounds. */
   bounds: { west: number; south: number; east: number; north: number };
   removed: boolean;
@@ -52,6 +55,8 @@ export interface MapLibreMock {
   __setStyleLoaded(value: boolean): void;
   __setZoom(zoom: number): void;
   __setBounds(bounds: { west: number; south: number; east: number; north: number }): void;
+  /** Simulate a pan: set the center the next `getCenter()` reports (lng, lat). */
+  __setCenter(lng: number, lat: number): void;
 
   addSource: (id: string, source: Record<string, unknown>) => void;
   getSource: (id: string) => unknown | undefined;
@@ -84,6 +89,7 @@ export interface MapLibreMock {
   setMaxZoom: (z: number) => void;
   setMinZoom: (z: number) => void;
   flyTo: (opts: unknown) => void;
+  getCenter: () => { lng: number; lat: number };
   setCenter: (center: unknown) => void;
   setZoom: (z: number) => void;
   getCanvas: () => HTMLCanvasElement;
@@ -102,6 +108,10 @@ export function createMapLibreMock(
 ): MapLibreMock {
   const { styleLoaded = true, zoom = 1, ...options } = opts;
 
+  const seedCenter = Array.isArray(options.center)
+    ? { lng: Number(options.center[0]), lat: Number(options.center[1]) }
+    : { lng: 0, lat: 0 };
+
   const state: MapLibreMockState = {
     options,
     sources: new Map(),
@@ -109,6 +119,7 @@ export function createMapLibreMock(
     handlers: new Map(),
     styleLoaded,
     zoom,
+    center: seedCenter,
     bounds: { west: -180, south: -85, east: 180, north: 85 },
     removed: false,
   };
@@ -127,6 +138,9 @@ export function createMapLibreMock(
     },
     __setBounds(b) {
       state.bounds = b;
+    },
+    __setCenter(lng, lat) {
+      state.center = { lng, lat };
     },
 
     addSource: vi.fn((id: string, source: Record<string, unknown>) => {
@@ -215,7 +229,12 @@ export function createMapLibreMock(
     setMaxZoom: vi.fn(),
     setMinZoom: vi.fn(),
     flyTo: vi.fn(),
-    setCenter: vi.fn(),
+    getCenter: vi.fn(() => ({ lng: state.center.lng, lat: state.center.lat })),
+    setCenter: vi.fn((center: unknown) => {
+      if (Array.isArray(center)) {
+        state.center = { lng: Number(center[0]), lat: Number(center[1]) };
+      }
+    }),
     setZoom: vi.fn((z: number) => {
       state.zoom = z;
     }),

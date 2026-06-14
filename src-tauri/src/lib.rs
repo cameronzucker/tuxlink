@@ -239,6 +239,12 @@ pub fn run() {
                     let _ = tauri::http::Response::builder()
                         .status(503)
                         .header(tauri::http::header::CONTENT_TYPE, "text/plain")
+                        // tuxlink-1tai: the webview consumes tile:// via fetch() from
+                        // a different origin, so every response (incl. errors) MUST
+                        // carry CORS or the browser blocks it → blank. Same fix class
+                        // as the pmtiles branch above; applied to the legacy raster
+                        // path so a future maplibre imagery source can't re-blank.
+                        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                         .body(b"tile gatekeeper unavailable".to_vec())
                         .map(|resp| responder.respond(resp));
                     return;
@@ -251,6 +257,9 @@ pub fn run() {
                     Ok((bytes, mime)) => tauri::http::Response::builder()
                         .status(200)
                         .header(tauri::http::header::CONTENT_TYPE, mime)
+                        // tuxlink-1tai: CORS so the webview can read its own tile
+                        // proxy (local/LAN bytes, no credentials → `*` is safe).
+                        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                         .body(bytes),
                     Err(e) => {
                         use crate::tiles::serve::ServeError;
@@ -267,6 +276,8 @@ pub fn run() {
                         tauri::http::Response::builder()
                             .status(status)
                             .header(tauri::http::header::CONTENT_TYPE, "text/plain")
+                            // tuxlink-1tai: CORS on the error path too (see above).
+                            .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                             .body(e.to_string().into_bytes())
                     }
                 };

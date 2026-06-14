@@ -33,18 +33,35 @@ export const PMTILES_SOURCE_URL = 'pmtiles://tile://pmtiles/world';
  * MapLibre AttributionControl). */
 export const OSM_ATTRIBUTION = '© OpenStreetMap contributors';
 
-/** The webview's own origin (tauri://localhost packaged, http://localhost:1420 in
- * dev). maplibre v5 REQUIRES absolute sprite/glyphs URLs — it rejects root-relative
- * ones ("Invalid sprite URL '/basemap/...', must be absolute"), which silently drops
- * labels + icons. Resolve at call time so it picks up the real runtime origin
- * (tuxlink-56ki). */
-function selfOrigin(): string {
-  return typeof location !== 'undefined' ? location.origin : '';
+/**
+ * Resolve a bundled-asset path to an ABSOLUTE URL against the webview's document
+ * URL. maplibre v5 rejects root-relative sprite/glyphs URLs ("must be absolute"),
+ * silently dropping labels + icons (tuxlink-56ki).
+ *
+ * Resolve against `location.href`, NOT `location.origin` (tuxlink-1tai / Codex
+ * adrev): a custom scheme like `tauri://localhost` is an OPAQUE origin, so
+ * `location.origin` is the string `'null'` and concatenating it yields
+ * `null/basemap/...` — broken in the packaged build even though it works in the
+ * `http://localhost:1420` dev server (a tuple origin). `new URL(path, href)`
+ * resolves correctly for `tauri://`, `http://`, and `file://` alike.
+ *
+ * The fallback base (no `location`, e.g. a non-browser import) is only ever hit
+ * outside a webview, where the style is never actually consumed by maplibre.
+ */
+function absoluteBasemapUrl(path: string): string {
+  const base =
+    typeof location !== 'undefined' && location.href ? location.href : 'http://localhost/';
+  return new URL(path, base).href;
 }
 
-/** Bundled glyph PBFs, served from the `'self'` origin (absolute — see selfOrigin). */
+/** Bundled glyph PBFs, served absolute from the webview origin.
+ *
+ * The `{fontstack}`/`{range}` tokens are maplibre template placeholders it
+ * substitutes at fetch time — they MUST stay literal. `new URL()` percent-encodes
+ * braces (`{` → `%7B`), which would 404 every font, so resolve only the brace-free
+ * directory to absolute and append the template by string (tuxlink-1tai). */
 function glyphsUrl(): string {
-  return `${selfOrigin()}/basemap/glyphs/{fontstack}/{range}.pbf`;
+  return `${absoluteBasemapUrl('/basemap/glyphs/')}{fontstack}/{range}.pbf`;
 }
 
 /** Supported style flavors. `dark` is the build-time-baked GL-native inverted
@@ -139,7 +156,7 @@ export function buildBasemapStyle(
   return {
     version: 8,
     glyphs: glyphsUrl(),
-    sprite: `${selfOrigin()}/basemap/sprites/${flavor}`,
+    sprite: absoluteBasemapUrl(`/basemap/sprites/${flavor}`),
     sources,
     layers: styleLayers,
   };

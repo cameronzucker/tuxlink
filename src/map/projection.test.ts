@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { pixelToLatLon, latLonToPixel, clampLatLon, WORLD_BOUNDS } from './projection';
+import {
+  pixelToLatLon,
+  latLonToPixel,
+  clampLatLon,
+  clampMapCenter,
+  MERCATOR_MAX_LAT,
+  WORLD_BOUNDS,
+} from './projection';
 
 describe('EPSG4326 projection (plate carrée, linear)', () => {
   const W = 2048,
@@ -40,5 +47,25 @@ describe('EPSG4326 projection (plate carrée, linear)', () => {
       [-90, -180],
       [90, 180],
     ]);
+  });
+});
+
+describe('clampMapCenter — pan-constraint restoration (tuxlink-rwo6)', () => {
+  it('clamps longitude into [-180,180] (renderWorldCopies=false pans into void)', () => {
+    // [lng, lat] order, matching maplibre's getCenter/setCenter.
+    expect(clampMapCenter(215, 10)).toEqual([180, 10]);
+    expect(clampMapCenter(-250, -10)).toEqual([-180, -10]);
+  });
+
+  it('clamps latitude to the Web Mercator limit (±85.0511), not ±90', () => {
+    expect(clampMapCenter(0, 95)).toEqual([0, MERCATOR_MAX_LAT]);
+    expect(clampMapCenter(0, -95)).toEqual([0, -MERCATOR_MAX_LAT]);
+    // 88° is past the mercator limit even though it is a valid latitude.
+    expect(clampMapCenter(0, 88)).toEqual([0, MERCATOR_MAX_LAT]);
+  });
+
+  it('leaves an in-world center untouched (no spurious re-center)', () => {
+    expect(clampMapCenter(-122.3, 47.6)).toEqual([-122.3, 47.6]);
+    expect(clampMapCenter(0, 0)).toEqual([0, 0]);
   });
 });

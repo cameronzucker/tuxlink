@@ -5,7 +5,7 @@
  * light flavor over the bundled PMTiles vector source. Pure function — exercises
  * the REAL @protomaps/basemaps layers()/namedFlavor() (not mocked).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   buildBasemapStyle,
   BASEMAP_SOURCE_ID,
@@ -80,6 +80,41 @@ describe('buildBasemapStyle (dark, L2 baked)', () => {
         }
       }
     }
+  });
+});
+
+describe('buildBasemapStyle — absolute URL hardening for opaque origins (tuxlink-1tai)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('resolves sprite to an absolute URL when the origin is opaque (tauri://localhost)', () => {
+    // A custom scheme like tauri://localhost is an OPAQUE origin in the URL spec:
+    // location.origin === 'null'. The #693 origin-concat fix would emit
+    // 'null/basemap/sprites/light' in a packaged build — a URL maplibre rejects,
+    // silently dropping icons. Resolving against location.href instead is correct.
+    vi.stubGlobal('location', { href: 'tauri://localhost/index.html', origin: 'null' });
+    const style = buildBasemapStyle('light');
+    // Exact value proves it is absolute AND not the 'null/...' opaque-origin bug.
+    expect(style.sprite).toBe('tauri://localhost/basemap/sprites/light');
+  });
+
+  it('keeps {fontstack}/{range} tokens LITERAL in the absolute glyphs URL', () => {
+    // maplibre substitutes {fontstack}/{range} at fetch time, so they MUST stay
+    // literal. A naive new URL() over the whole template percent-encodes the
+    // braces (%7Bfontstack%7D) and breaks every font load — guard against it.
+    vi.stubGlobal('location', { href: 'tauri://localhost/index.html', origin: 'null' });
+    const style = buildBasemapStyle('light');
+    expect(style.glyphs).toBe('tauri://localhost/basemap/glyphs/{fontstack}/{range}.pbf');
+    expect(style.glyphs).not.toContain('%7B');
+    expect(style.glyphs).toContain('{fontstack}');
+  });
+
+  it('produces a valid absolute http URL in a dev (tuple) origin', () => {
+    vi.stubGlobal('location', { href: 'http://localhost:1420/', origin: 'http://localhost:1420' });
+    const style = buildBasemapStyle('dark');
+    expect(style.sprite).toBe('http://localhost:1420/basemap/sprites/dark');
+    expect(style.glyphs).toBe('http://localhost:1420/basemap/glyphs/{fontstack}/{range}.pbf');
   });
 });
 

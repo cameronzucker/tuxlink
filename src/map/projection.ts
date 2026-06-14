@@ -53,3 +53,23 @@ export function clampLatLon(lat: number, lon: number): LatLon {
     lon: Math.min(180, Math.max(-180, lon)),
   };
 }
+
+/** Web Mercator latitude limit — the projection cannot display beyond ±this, so
+ * a map CENTER is meaningless past it (matches the removed maxBounds extent). */
+export const MERCATOR_MAX_LAT = 85.0511;
+
+/**
+ * Clamp a maplibre map CENTER (`[lng, lat]` order) to the displayable world.
+ *
+ * Restores the pan-constraint that was dropped with `maxBounds` (which crashes
+ * maplibre 5.24.0 on this WebKitGTK build — tuxlink-rwo6): with
+ * `renderWorldCopies=false` the center can pan past the antimeridian into gray
+ * void, so longitude is clamped to [-180, 180]; latitude is clamped to the Web
+ * Mercator limit. Returns `[lng, lat]` ready for `setCenter`/`flyTo`.
+ */
+export function clampMapCenter(lng: number, lat: number): [number, number] {
+  return [
+    Math.min(180, Math.max(-180, lng)),
+    Math.min(MERCATOR_MAX_LAT, Math.max(-MERCATOR_MAX_LAT, lat)),
+  ];
+}

@@ -24,7 +24,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import maplibregl from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
 import { invoke } from '@tauri-apps/api/core';
-import { clampLatLon, type LatLon } from './projection';
+import { clampLatLon, clampMapCenter, type LatLon } from './projection';
 import { buildBasemapStyle, type BasemapFlavor, type PackSource } from './basemapStyle';
 import { BASEMAP_PACKS_CHANGED_EVENT, type PacksList } from './offlineMaps';
 import { useBasemapFlavor } from './useBasemapFlavor';
@@ -130,7 +130,9 @@ export function MapLibreMap({
       const instance = new maplibregl.Map({
         container: containerRef.current,
         style: buildBasemapStyle(flavorRef.current),
-        center: initialCenter ? [initialCenter.lon, initialCenter.lat] : [0, 0],
+        // Clamp the initial center to the displayable world so a bad GPS / catalog
+        // coordinate can't start the camera off-map (tuxlink-rwo6).
+        center: clampMapCenter(initialCenter?.lon ?? 0, initialCenter?.lat ?? 0),
         zoom: initialZoom ?? DEFAULT_ZOOM,
         minZoom: MAP_MIN_ZOOM,
         maxZoom: MAP_MAX_ZOOM,
@@ -153,6 +155,18 @@ export function MapLibreMap({
         emitZoom();
       });
       instance.on('moveend', emitZoom);
+      // Restore the pan-constraint dropped with maxBounds (which crashes maplibre
+      // 5.24.0 on this WebKitGTK build — tuxlink-rwo6): with renderWorldCopies off,
+      // the center can pan past the antimeridian into gray void. Soft-clamp it back
+      // on moveend. Uses setCenter (NOT setMaxBounds, the crash path); the snap-back
+      // re-fires moveend, but the now-in-world center clamps to itself → no loop.
+      instance.on('moveend', () => {
+        const c = instance.getCenter();
+        const [lng, lat] = clampMapCenter(c.lng, c.lat);
+        if (lng !== c.lng || lat !== c.lat) {
+          instance.setCenter([lng, lat]);
+        }
+      });
 
       return () => {
         instance.remove();
@@ -179,7 +193,7 @@ export function MapLibreMap({
       skipConstructCenter.current = false;
       return;
     }
-    map.flyTo({ center: [initialCenter.lon, initialCenter.lat] });
+    map.flyTo({ center: clampMapCenter(initialCenter.lon, initialCenter.lat) });
     // Depend on the primitive lat/lon (not the object ref) so a re-render passing
     // a fresh object with the SAME coordinates does not re-trigger a flyTo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
