@@ -30,6 +30,20 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.64.0](https://github.com/cameronzucker/tuxlink/compare/v0.63.0...v0.64.0) (2026-06-14)
+
+
+### Features
+
+* **connections:** add Sonde HF/FM as "coming soon" teaser modems ([feac555](https://github.com/cameronzucker/tuxlink/commit/feac55582a676726f877880311a4538912115877))
+
+
+### Bug Fixes
+
+* **basemap:** require the real 9 Protomaps layers, not 4 phantom ones (region-pack download) ([64c88b1](https://github.com/cameronzucker/tuxlink/commit/64c88b16fa53a46a5e021b806effce82969772e9))
+* **location:** dedicated wide two-pane Location & GPS panel in Settings (tuxlink-2sl6) ([009d223](https://github.com/cameronzucker/tuxlink/commit/009d2238e577981df16d93bd9aa7bbbf771fa97f))
+* **map:** guard moveend pan-clamp against non-finite center (close-crash) ([0464a76](https://github.com/cameronzucker/tuxlink/commit/0464a7609796042535c734e1707f5026db64be2b))
+
 ## [0.63.0](https://github.com/cameronzucker/tuxlink/compare/v0.62.0...v0.63.0) (2026-06-14)
 
 
