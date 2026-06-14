@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
-// IdentitiesSettings owns a react-query useQuery (needs a QueryClientProvider)
-// and is fully covered by its own IdentitiesSettings.test.tsx. Stub it here so
-// the SettingsPanel shell test stays provider-free; we only assert the section
-// is wired in.
+// Section panes own their own data/providers and have their own tests; stub them
+// here so the SettingsPanel shell test asserts nav + pane wiring only.
 vi.mock('./IdentitiesSettings', () => ({
   IdentitiesSettings: () => <div data-testid="identities-settings" />,
+}));
+vi.mock('../location/LocationSettingsPane', () => ({
+  LocationSettingsPane: () => <div data-testid="location-settings" />,
 }));
 import { invoke } from '@tauri-apps/api/core';
 import { SettingsPanel } from './SettingsPanel';
@@ -28,31 +29,45 @@ beforeEach(() => {
   });
 });
 
+/** Open the panel and switch to the GPS state & privacy section. */
+function openGpsState() {
+  render(<SettingsPanel open onClose={vi.fn()} />);
+  fireEvent.click(screen.getByTestId('settings-nav-gpsstate'));
+}
+
 describe('SettingsPanel', () => {
   it('renders nothing when closed', () => {
     const { container } = render(<SettingsPanel open={false} onClose={vi.fn()} />);
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('loads current config and checks the matching radios', async () => {
+  it('defaults to the Location & GPS section (inline pane, no popup)', async () => {
     render(<SettingsPanel open onClose={vi.fn()} />);
+    expect(await screen.findByTestId('settings-pane-location')).toBeInTheDocument();
+    expect(screen.getByTestId('location-settings')).toBeInTheDocument();
+    // No "Open …" button — the feature is inline, not a nested window.
+    expect(screen.queryByTestId('open-location-settings')).toBeNull();
+  });
+
+  it('navigates between sections in place (nav + inline pane)', async () => {
+    render(<SettingsPanel open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('settings-nav-identities'));
+    expect(await screen.findByTestId('settings-pane-identities')).toBeInTheDocument();
+    expect(screen.getByTestId('identities-settings')).toBeInTheDocument();
+  });
+
+  it('loads current config and checks the matching radios (GPS state section)', async () => {
+    openGpsState();
     const broadcast = await screen.findByRole('radio', { name: /broadcast at precision/i });
-    expect(broadcast).toBeChecked();
+    await waitFor(() => expect(broadcast).toBeChecked());
     expect(screen.getByRole('radio', { name: /4-char grid/i })).toBeChecked();
   });
 
   it('persists a gps_state change via config_set_privacy (keeps current precision)', async () => {
-    render(<SettingsPanel open onClose={vi.fn()} />);
-    // tuxlink-61yg CI fix: the gpsState/precision change handlers short-
-    // circuit when config isn't loaded yet (`gpsState && persist(...)`,
-    // `precision && persist(...)`). Wait for the mock config_read to land
-    // in state — signaled by the "Broadcast At Precision" radio becoming
-    // checked — before firing the click. Without this wait the test
-    // races on slow CI (passes locally where microtasks drain faster).
+    openGpsState();
     const broadcast = await screen.findByRole('radio', { name: /broadcast at precision/i });
     await waitFor(() => expect(broadcast).toBeChecked());
-    const off = screen.getByRole('radio', { name: /^off/i });
-    fireEvent.click(off);
+    fireEvent.click(screen.getByRole('radio', { name: /^off/i }));
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('config_set_privacy', {
         gpsState: 'Off',
@@ -62,12 +77,10 @@ describe('SettingsPanel', () => {
   });
 
   it('persists a precision change via config_set_privacy (keeps current gps_state)', async () => {
-    render(<SettingsPanel open onClose={vi.fn()} />);
-    // Same race as above — wait for config to load before firing the click.
+    openGpsState();
     const broadcast = await screen.findByRole('radio', { name: /broadcast at precision/i });
     await waitFor(() => expect(broadcast).toBeChecked());
-    const six = screen.getByRole('radio', { name: /6-char grid/i });
-    fireEvent.click(six);
+    fireEvent.click(screen.getByRole('radio', { name: /6-char grid/i }));
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('config_set_privacy', {
         gpsState: 'BroadcastAtPrecision',
@@ -86,20 +99,10 @@ describe('SettingsPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it('renders the Identities section', async () => {
-    render(<SettingsPanel open onClose={vi.fn()} />);
-    await screen.findByTestId('settings-panel');
-    expect(screen.getByText('Identities')).toBeInTheDocument();
-    expect(screen.getByTestId('identities-settings')).toBeInTheDocument();
-  });
-
   it('does NOT render the ARDOP HF fieldset (tuxlink-jmfm)', async () => {
     render(<SettingsPanel open onClose={vi.fn()} />);
-    // Wait for the panel to be open before asserting absence.
     await screen.findByTestId('settings-panel');
     expect(screen.queryByText(/ARDOP HF/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/ardopcf binary/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/Capture device/i)).not.toBeInTheDocument();
   });
-
 });

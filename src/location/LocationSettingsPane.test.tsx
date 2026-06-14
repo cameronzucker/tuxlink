@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
-// Stub the map so this test doesn't mount MapLibre/WebGL in jsdom (LocationMap
-// has its own wiring test).
+// Stub the map so this test doesn't mount MapLibre/WebGL in jsdom.
 vi.mock('./LocationMap', () => ({ LocationMap: () => <div data-testid="location-map-stub" /> }));
 import { invoke } from '@tauri-apps/api/core';
-import { LocationSettingsPanel } from './LocationSettingsPanel';
+import { LocationSettingsPane } from './LocationSettingsPane';
 
 beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -33,32 +32,18 @@ beforeEach(() => {
   });
 });
 
-describe('LocationSettingsPanel', () => {
-  it('renders nothing when closed', () => {
-    render(<LocationSettingsPanel open={false} onClose={vi.fn()} />);
+describe('LocationSettingsPane', () => {
+  it('renders the shared GPS picker inline (no modal, no Open button)', async () => {
+    render(<LocationSettingsPane />);
+    expect(await screen.findByTestId('gps-picker')).toBeInTheDocument();
+    expect(screen.getByTestId('location-map-stub')).toBeInTheDocument();
+    expect(screen.queryByTestId('open-location-settings')).toBeNull();
     expect(screen.queryByTestId('location-modal')).toBeNull();
   });
 
-  it('renders a dedicated modal with the GPS picker when open', async () => {
-    render(<LocationSettingsPanel open onClose={vi.fn()} />);
-    expect(screen.getByTestId('location-modal')).toBeInTheDocument();
-    // The shared picker (map + source/diagnostics/manual) is mounted inside.
-    expect(await screen.findByTestId('gps-picker')).toBeInTheDocument();
-    expect(screen.getByTestId('location-map-stub')).toBeInTheDocument();
-  });
-
-  it('closes via the Done button and the backdrop', () => {
-    const onClose = vi.fn();
-    render(<LocationSettingsPanel open onClose={onClose} />);
-    fireEvent.click(screen.getByTestId('location-done'));
-    fireEvent.click(screen.getByTestId('location-backdrop'));
-    expect(onClose).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not close when the dialog body is clicked', () => {
-    const onClose = vi.fn();
-    render(<LocationSettingsPanel open onClose={onClose} />);
-    fireEvent.click(screen.getByTestId('location-modal'));
-    expect(onClose).not.toHaveBeenCalled();
+  it('seeds the manual grid from config', async () => {
+    render(<LocationSettingsPane />);
+    const input = (await screen.findByTestId('gps-manual-grid-input')) as HTMLInputElement;
+    await vi.waitFor(() => expect(input.value).toBe('EM75'));
   });
 });
