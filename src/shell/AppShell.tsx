@@ -161,10 +161,17 @@ const PacketRadioPanel = lazy(loadPacketRadioPanel);
 const loadAprsChatPanel = () =>
   import('../aprs/AprsChatPanel').then((m) => ({ default: m.AprsChatPanel }));
 const AprsChatPanel = lazy(loadAprsChatPanel);
+// tuxlink-6vgt: the heard-positions map expands into the reading pane (left of
+// the chat dock) when toggled. Lazy so the MapLibre stack only loads on first
+// open — same cold-start discipline as the chat panel.
+const loadAprsPositionsMap = () =>
+  import('../aprs/AprsPositionsMap').then((m) => ({ default: m.AprsPositionsMap }));
+const AprsPositionsMap = lazy(loadAprsPositionsMap);
 // tuxlink-2f2n Plan 2: APRS chat is re-homed from the sidebar pseudo-folder into
 // the shared right dock (chat ⇄ modem). AppShell lifts one useAprsChat instance
 // so the status-strip control (unread/listening) + the dock panel share state.
 import { useAprsChat } from '../aprs/useAprsChat';
+import { useAprsPositions } from '../aprs/useAprsPositions';
 import { countUnread } from '../aprs/aprsUnread';
 import { AprsDockTabs } from '../aprs/AprsDockTabs';
 // The always-live UV-Pro device control strip (tuxlink-ve3j). Capability-gated:
@@ -312,7 +319,12 @@ export function AppShell() {
   // APRS tactical chat — lifted here (single instance) so the status-strip
   // control (unread/listening) and the dock panel share one state. (spec §1,§3)
   const aprs = useAprsChat();
+  // tuxlink-6vgt: heard-station positions, lifted alongside the chat so the
+  // reading-pane map and the dock share one subscription.
+  const aprsPositions = useAprsPositions();
   const [aprsOpen, setAprsOpen] = useState(false);
+  // Whether the heard-positions map is expanded into the reading-pane region.
+  const [aprsMapOpen, setAprsMapOpen] = useState(false);
   const [dockTab, setDockTab] = useState<'aprs' | 'modem'>('aprs');
   const [aprsSeenAt, setAprsSeenAt] = useState(0);
   const aprsUnread = countUnread(aprs.messages, aprsSeenAt);
@@ -1358,6 +1370,19 @@ export function AppShell() {
           identityFilterOptions={identityFilterOptions}
         />
         {(() => {
+          // tuxlink-6vgt: when the APRS dock is open AND its Map toggle is on,
+          // the heard-positions map EXPANDS INTO the reading-pane region (left
+          // of the right-side chat dock). The MessageList column stays; only
+          // the reading pane is replaced by the map. Closing the toggle (or the
+          // dock) restores the normal reading pane. A later issue makes this a
+          // pop-out window — this in-pane render does not preclude that.
+          if (aprsOpen && aprsMapOpen) {
+            return (
+              <Suspense fallback={null}>
+                <AprsPositionsMap positions={aprsPositions.positions} />
+              </Suspense>
+            );
+          }
           // tuxlink-djnl: shared render fragment for the reading pane. When
           // nothing is selected, render the eager MessageViewEmpty directly
           // (no lazy fetch — cold-start sees this). When a message IS
@@ -1473,7 +1498,13 @@ export function AppShell() {
                 setDockTab(tab);
                 if (tab === 'aprs') setAprsSeenAt(Date.now());
               }}
-              onClose={() => setAprsOpen(false)}
+              onClose={() => {
+                setAprsOpen(false);
+                // Closing the dock collapses the map back to the normal reading pane.
+                setAprsMapOpen(false);
+              }}
+              mapOpen={aprsMapOpen}
+              onToggleMap={() => setAprsMapOpen((o) => !o)}
             />
             {dockTab === 'aprs' ? (
               <>

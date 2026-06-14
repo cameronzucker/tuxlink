@@ -136,7 +136,7 @@ pub fn run_native(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::winlink::aprs::engine::{EventSink, InboundMsg, StateChange};
+    use crate::winlink::aprs::engine::{EventSink, InboundMsg, InboundPos, StateChange};
     use crate::winlink::aprs::identity::AprsIdentity;
     use crate::winlink::ax25::frame::{Address, Control, Frame, Path};
     use std::sync::Mutex;
@@ -145,6 +145,7 @@ mod tests {
     struct RecSink {
         msgs: Arc<Mutex<Vec<InboundMsg>>>,
         states: Arc<Mutex<Vec<StateChange>>>,
+        positions: Arc<Mutex<Vec<InboundPos>>>,
     }
     impl EventSink for RecSink {
         fn emit_message(&self, ev: InboundMsg) {
@@ -154,6 +155,9 @@ mod tests {
             self.states.lock().unwrap().push(ev);
         }
         fn emit_listening(&self, _on: bool) {}
+        fn emit_position(&self, ev: InboundPos) {
+            self.positions.lock().unwrap().push(ev);
+        }
     }
 
     /// Recording frame tx — the in-memory stand-in for `UvproSession::send_aprs_frame`.

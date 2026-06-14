@@ -39,6 +39,7 @@ use super::dedupe::{DedupeCache, DedupeKey};
 use super::framebuild::{build_ui_frame, extract_inbound, fmt_callsign, to_tnc2};
 use super::identity::AprsIdentity;
 use super::message::{encode_ack, encode_message, parse_info, AprsPayload};
+use super::position::{parse_mice, parse_position};
 use super::tx::TxQueue;
 
 /// Dev-only raw-frame capture (tuxlink-iehg). When the env var
@@ -112,18 +113,46 @@ pub struct StateChange {
     pub state: DeliveryState,
 }
 
+/// A position report decoded from a frame HEARD on the channel (RX-only).
+///
+/// Mirrors [`InboundMsg`]'s shape: `sender` is the transmitting station's
+/// callsign (`CALL-SSID`), and lat/lon/symbol/comment come straight off the
+/// wire — RF-honesty: only what was actually decoded, no estimated location.
+/// Serializes camelCase so the UI's `aprs-position:new` payload reads
+/// `symbolTable` / `symbolCode`. Emitted whenever a heard frame carries a
+/// well-formed (uncompressed / compressed / Mic-E) position report — separate
+/// from, and in addition to, any message decode of the same frame.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboundPos {
+    pub sender: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub symbol_table: char,
+    pub symbol_code: char,
+    pub comment: String,
+}
+
 /// Side-effect sink the engine emits into. The async driver implements this with
 /// a Tauri event emitter; tests implement it with a recording sink.
 pub trait EventSink: Send {
     fn emit_message(&self, ev: InboundMsg);
     fn emit_state(&self, ev: StateChange);
     fn emit_listening(&self, on: bool);
+    /// Emit a position report decoded from a heard frame (`aprs-position:new`).
+    fn emit_position(&self, ev: InboundPos);
 }
 
 /// Display dedupe window (ms): suppress re-showing ANY retransmitted/digipeated copy.
 const DEDUPE_WINDOW_MS: u64 = 300_000;
 /// Auto-ACK throttle window (ms): re-ACK every received copy EXCEPT collapse a burst.
 const ACK_THROTTLE_MS: u64 = 5_000;
+/// Position dedupe window (ms): suppress re-emitting an IDENTICAL position
+/// (same station, same coordinates+symbol) within the window. A station that
+/// MOVES (new coordinates) re-emits immediately — the dedupe key includes the
+/// position, so latest-position-wins is preserved while a re-beacon of the same
+/// fix (or a digipeated copy) is collapsed. Matches the display-dedupe window.
+const POS_DEDUPE_WINDOW_MS: u64 = 300_000;
 
 pub struct AprsEngine {
     identity: AprsIdentity,
@@ -131,6 +160,7 @@ pub struct AprsEngine {
     decoder: KissDecoder,
     dedupe: DedupeCache,
     ack_throttle: DedupeCache,
+    pos_dedupe: DedupeCache,
     tx: TxQueue,
 }
 
@@ -142,6 +172,7 @@ impl AprsEngine {
             decoder: KissDecoder::new(),
             dedupe: DedupeCache::new(DEDUPE_WINDOW_MS),
             ack_throttle: DedupeCache::new(ACK_THROTTLE_MS),
+            pos_dedupe: DedupeCache::new(POS_DEDUPE_WINDOW_MS),
             tx: TxQueue::new(),
         }
     }
@@ -196,6 +227,13 @@ impl AprsEngine {
             Some(x) => x,
             None => return out,
         };
+        // Position decode runs on EVERY heard UI frame, independent of the
+        // message decode below: a position beacon is NOT a message-type payload
+        // (`parse_info` returns None for it), so this must precede the message
+        // early-return. The AX.25 destination callsign (base call, SSID
+        // stripped) carries Mic-E latitude, so it is passed to `parse_mice`.
+        self.try_emit_position(&sender, &frame.path.dest.call, &info, now_ms);
+
         let payload = match parse_info(&info) {
             Some(p) => p,
             None => return out,
@@ -388,6 +426,47 @@ impl AprsEngine {
 
     fn addressed_to_us(&self, addressee: &str) -> bool {
         addressee == fmt_callsign(&self.identity.source)
+    }
+
+    /// Attempt a position decode on a heard frame and emit it (deduped) if one
+    /// is present. Tries the standard uncompressed/compressed parser first;
+    /// failing that, the Mic-E parser (which needs the AX.25 destination
+    /// callsign, where Mic-E packs latitude). `dest` is the base destination
+    /// call (SSID already stripped by the AX.25 `Address`). No-op when the frame
+    /// carries no well-formed position (message/ack/telemetry/etc.).
+    ///
+    /// Dedupe is keyed by `sender` + the decoded coordinates+symbol, so a
+    /// re-beacon of an unchanged fix (or a digipeated duplicate) is suppressed
+    /// while a MOVE (new coordinates) emits immediately — latest-position-wins.
+    fn try_emit_position(&mut self, sender: &str, dest: &str, info: &[u8], now_ms: u64) {
+        let pos = match parse_position(info) {
+            Some(p) => p,
+            None => match parse_mice(dest, info) {
+                Some(p) => p,
+                None => return,
+            },
+        };
+        let key = DedupeKey {
+            src: sender.to_string(),
+            kind: "pos".into(),
+            // Round to ~1e-4 deg (~11 m) so float jitter does not defeat dedupe,
+            // while a genuine move still produces a distinct key.
+            id: format!(
+                "{:.4},{:.4},{}{}",
+                pos.lat, pos.lon, pos.symbol_table, pos.symbol_code
+            ),
+        };
+        if self.pos_dedupe.seen(key, now_ms) {
+            return;
+        }
+        self.sink.emit_position(InboundPos {
+            sender: sender.to_string(),
+            lat: pos.lat,
+            lon: pos.lon,
+            symbol_table: pos.symbol_table,
+            symbol_code: pos.symbol_code,
+            comment: pos.comment,
+        });
     }
 }
 
@@ -682,6 +761,9 @@ impl EventSink for TauriEventSink {
     fn emit_listening(&self, on: bool) {
         let _ = self.app.emit("aprs-listening:change", on);
     }
+    fn emit_position(&self, ev: InboundPos) {
+        let _ = self.app.emit("aprs-position:new", &ev);
+    }
 }
 
 #[cfg(test)]
@@ -695,6 +777,7 @@ mod tests {
     struct RecSink {
         msgs: Arc<Mutex<Vec<InboundMsg>>>,
         states: Arc<Mutex<Vec<StateChange>>>,
+        positions: Arc<Mutex<Vec<InboundPos>>>,
     }
     impl EventSink for RecSink {
         fn emit_message(&self, ev: InboundMsg) {
@@ -704,6 +787,9 @@ mod tests {
             self.states.lock().unwrap().push(ev);
         }
         fn emit_listening(&self, _on: bool) {}
+        fn emit_position(&self, ev: InboundPos) {
+            self.positions.lock().unwrap().push(ev);
+        }
     }
 
     fn identity() -> super::super::identity::AprsIdentity {
@@ -961,5 +1047,108 @@ mod tests {
     fn aprs_state_starts_not_listening() {
         let st = AprsState::default();
         assert!(!st.is_listening());
+    }
+
+    // -- Position RX (tuxlink-6vgt) -----------------------------------------
+
+    /// Build a KISS-wrapped inbound UI frame with an arbitrary destination call
+    /// (Mic-E packs latitude into the dest, so position tests need to set it).
+    fn inbound_with_dest(src: &str, dest: &str, info: &[u8]) -> Vec<u8> {
+        let f = Frame {
+            path: Path {
+                dest: Address { call: dest.into(), ssid: 0 },
+                src: Address { call: src.into(), ssid: 0 },
+                digis: vec![],
+            },
+            control: Control::Ui { pf: false },
+            info: info.to_vec(),
+        };
+        kiss_data_frame(&f.encode().unwrap())
+    }
+
+    #[test]
+    fn heard_uncompressed_position_emits_position_with_latlon_and_symbol() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // "!4903.50N/07201.75W-Hello" → 49.058, -72.029, table '/', code '-'.
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!4903.50N/07201.75W-Hello"), 1000);
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 1);
+        assert_eq!(pos[0].sender, "KK6XYZ");
+        assert!((pos[0].lat - 49.058333).abs() < 1e-3);
+        assert!((pos[0].lon - (-72.029167)).abs() < 1e-3);
+        assert_eq!(pos[0].symbol_table, '/');
+        assert_eq!(pos[0].symbol_code, '-');
+        assert_eq!(pos[0].comment, "Hello");
+        // A position beacon is not a message, so nothing lands in the chat feed.
+        assert!(sink.msgs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn heard_compressed_position_emits_position() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // aprslib reference compressed report "/5L!!<*e7>" → 49.5, -72.75.
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!/5L!!<*e7>  T"), 1000);
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 1);
+        assert!((pos[0].lat - 49.5).abs() < 1e-3);
+        assert!((pos[0].lon - (-72.75)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn heard_mice_frame_emits_position_using_dest_latitude() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // Mic-E: dest "332UVT" carries lat; info carries lon+symbol (position.rs vector).
+        let mice_info: &[u8] = b"\x60\x28\x60\x6e\x1c\x1c\x1c\x3e\x2f";
+        engine.handle_inbound_bytes(&inbound_with_dest("KK6XYZ", "332UVT", mice_info), 1000);
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 1, "a Mic-E frame must emit a position");
+        assert_eq!(pos[0].sender, "KK6XYZ");
+        assert!((pos[0].lat - 33.427333).abs() < 1e-3);
+        assert!((pos[0].lon - (-112.147)).abs() < 1e-3);
+        assert_eq!(pos[0].symbol_code, '>');
+        assert_eq!(pos[0].symbol_table, '/');
+    }
+
+    #[test]
+    fn heard_message_frame_emits_message_not_position() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.handle_inbound_bytes(&inbound_message_bytes(), 1000);
+        assert_eq!(sink.msgs.lock().unwrap().len(), 1, "message frame routes to chat");
+        assert!(
+            sink.positions.lock().unwrap().is_empty(),
+            "a message frame carries no position"
+        );
+    }
+
+    #[test]
+    fn identical_position_rebeacon_is_deduped_within_window() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        let frame = inbound_with("KK6XYZ", b"!4903.50N/07201.75W-Hello");
+        engine.handle_inbound_bytes(&frame, 1_000);
+        engine.handle_inbound_bytes(&frame, 60_000); // same fix within window
+        assert_eq!(
+            sink.positions.lock().unwrap().len(),
+            1,
+            "an identical re-beacon must not re-emit"
+        );
+    }
+
+    #[test]
+    fn moved_station_emits_new_position_immediately() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!4903.50N/07201.75W-"), 1_000);
+        // Different coordinates from the same station => not a dup, emits again.
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!4905.00N/07205.00W-"), 2_000);
+        assert_eq!(
+            sink.positions.lock().unwrap().len(),
+            2,
+            "a moved station must emit the new fix"
+        );
     }
 }

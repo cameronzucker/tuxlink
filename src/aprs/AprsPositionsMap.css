@@ -1,0 +1,63 @@
+/* APRS Tac Chat positions map (tuxlink-6vgt). Fills the reading-pane region to
+   the left of the chat dock when the map toggle is on. Styling follows the
+   existing map/panel conventions (station-finder map: relative-positioned,
+   flex-filled, themed border). */
+
+.aprs-positions-map {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  border-right: 1px solid var(--border, #243a52);
+  background: var(--surface, #0c1620);
+  overflow: hidden;
+}
+
+/* Inline pin popup — anchored to the map's lower-left, consistent with the
+   inline-UI / no-window-clutter convention. */
+.aprs-positions-map__popup {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 280px;
+  padding: 8px 28px 8px 10px;
+  border: 1px solid var(--border, #243a52);
+  border-radius: 6px;
+  background: var(--panel, #13202e);
+  color: var(--text, #eaf3fb);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.aprs-positions-map__popup-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  border: none;
+  background: transparent;
+  color: var(--faint, #6f8aa3);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.aprs-positions-map__popup-close:hover {
+  color: var(--text, #eaf3fb);
+}
+
+.aprs-positions-map__popup-call {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.aprs-positions-map__popup-comment {
+  font-size: 0.8rem;
+  color: var(--muted, #9fb6cc);
+  word-break: break-word;
+}

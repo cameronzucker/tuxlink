@@ -116,4 +116,22 @@ describe('APRS dock integration', () => {
     expect(screen.queryByTestId('aprs-dock-surface')).not.toBeInTheDocument();
     expect(screen.queryByTestId('aprs-chat-panel')).not.toBeInTheDocument();
   });
+
+  // tuxlink-6vgt: the Map toggle expands the heard-positions map into the
+  // reading-pane region (left of the chat dock); toggling it off restores the
+  // normal reading pane. The map is lazy-loaded (findByTestId awaits the chunk).
+  it('toggles the heard-positions map into the reading pane', async () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('dash-aprs-control'));
+    await screen.findByTestId('aprs-chat-panel');
+    // Map not shown until toggled on; the chat dock stays put.
+    expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('aprs-map-toggle'));
+    expect(await screen.findByTestId('aprs-positions-map')).toBeInTheDocument();
+    // Chat dock remains docked on the right alongside the expanded map.
+    expect(screen.getByTestId('aprs-chat-panel')).toBeInTheDocument();
+    // Toggling off collapses the map back to the normal reading pane.
+    fireEvent.click(screen.getByTestId('aprs-map-toggle'));
+    expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument();
+  });
 });
