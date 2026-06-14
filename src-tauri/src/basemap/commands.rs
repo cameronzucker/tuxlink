@@ -282,13 +282,40 @@ pub fn basemap_list_packs(state: State<'_, Arc<BasemapState>>) -> PacksList {
 }
 
 /// Download + validate + install a region pack, then register it so
-/// `tile://pmtiles/<id>` serves it. Blocking (sidecar + fs) — Tauri runs sync
-/// commands off the main thread, so this does not stall the UI thread.
+/// `tile://pmtiles/<id>` serves it.
+///
+/// tuxlink-mgus: this is **async** and runs the blocking work (a multi-GB sidecar
+/// extract + fs install) inside `spawn_blocking`, matching the project's idiom
+/// (lib.rs / winlink_backend.rs). A SYNC Tauri command runs on the MAIN thread —
+/// so the previous sync version pinned the UI for the entire download (a continent
+/// at z14 is many GB → an unrecoverable freeze) AND starved the `download-progress`
+/// events, which are emitted from this same thread and can't reach the webview
+/// while it's blocked. Off the main thread, the UI stays responsive and progress
+/// flows.
 #[tauri::command]
-pub fn basemap_download_pack(
+pub async fn basemap_download_pack(
     app: AppHandle,
     registry: State<'_, Arc<PmtilesRegistry>>,
     state: State<'_, Arc<BasemapState>>,
+    args: DownloadArgs,
+) -> Result<InstalledPack, String> {
+    // `State` borrows the invocation and can't cross the spawn_blocking boundary;
+    // clone the inner Arcs (cheap, Send + 'static) and move them in.
+    let registry = registry.inner().clone();
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || download_pack_blocking(app, registry, state, args))
+        .await
+        .map_err(|e| format!("download task failed to run: {e}"))?
+}
+
+/// The blocking download body, run on the async worker pool (never the main
+/// thread) by [`basemap_download_pack`]. Owns its `Arc`s + `AppHandle` so it is
+/// `Send + 'static`. The cancel registry + progress emitter work unchanged from a
+/// worker thread (`AppHandle::emit` is thread-safe; the webview is responsive).
+fn download_pack_blocking(
+    app: AppHandle,
+    registry: Arc<PmtilesRegistry>,
+    state: Arc<BasemapState>,
     args: DownloadArgs,
 ) -> Result<InstalledPack, String> {
     let manifest = state.manifest.read().expect("manifest lock").clone();
