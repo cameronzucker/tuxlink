@@ -1,0 +1,119 @@
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+// ModemLinkSection loads device lists via invoke; mock it so jsdom doesn't crash.
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue([]) }));
+import { AprsConnectStrip } from './AprsConnectStrip';
+import type { AprsConnectStripProps } from './AprsConnectStrip';
+
+function renderStrip(over: Partial<AprsConnectStripProps> = {}) {
+  const onConnect = over.onConnect ?? vi.fn().mockResolvedValue(undefined);
+  const onDisconnect = over.onDisconnect ?? vi.fn().mockResolvedValue(undefined);
+  const onLinkChange = over.onLinkChange ?? vi.fn();
+  const props: AprsConnectStripProps = {
+    listening: false,
+    linkKind: 'Tcp',
+    radioLabel: '127.0.0.1:8001',
+    allowUvproNative: true,
+    onConnect,
+    onDisconnect,
+    onLinkChange,
+    ...over,
+  };
+  return { ...render(<AprsConnectStrip {...props} />), onConnect, onDisconnect, onLinkChange };
+}
+
+describe('AprsConnectStrip', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders the compact always-visible strip with radio label + state', () => {
+    renderStrip();
+    expect(screen.getByTestId('aprs-connect-strip')).toBeInTheDocument();
+    expect(screen.getByTestId('aprs-connect-strip')).toHaveTextContent('127.0.0.1:8001');
+    expect(screen.getByTestId('aprs-connect-state')).toHaveTextContent(/not listening/i);
+  });
+
+  it('shows "no link" when no link is configured', () => {
+    renderStrip({ linkKind: null, radioLabel: null });
+    expect(screen.getByTestId('aprs-connect-strip')).toHaveTextContent(/no link/i);
+  });
+
+  it('shows the listening state when listening is true', () => {
+    renderStrip({ listening: true });
+    expect(screen.getByTestId('aprs-connect-state')).toHaveTextContent(/^listening$/i);
+  });
+
+  it('renders Connect when not listening, Disconnect when listening', () => {
+    const { rerender } = renderStrip();
+    expect(screen.getByTestId('aprs-connect-btn')).toBeInTheDocument();
+    expect(screen.queryByTestId('aprs-disconnect-btn')).not.toBeInTheDocument();
+    rerender(
+      <AprsConnectStrip
+        listening={true}
+        linkKind="Tcp"
+        radioLabel="127.0.0.1:8001"
+        onConnect={vi.fn()}
+        onDisconnect={vi.fn()}
+        onLinkChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('aprs-disconnect-btn')).toBeInTheDocument();
+    expect(screen.queryByTestId('aprs-connect-btn')).not.toBeInTheDocument();
+  });
+
+  it('calls onConnect and shows connecting… while the promise is in flight', async () => {
+    let resolve!: () => void;
+    const onConnect = vi.fn(() => new Promise<void>((r) => (resolve = r)));
+    renderStrip({ onConnect });
+    fireEvent.click(screen.getByTestId('aprs-connect-btn'));
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.getByTestId('aprs-connect-state')).toHaveTextContent(/connecting/i),
+    );
+    resolve();
+    await waitFor(() =>
+      expect(screen.getByTestId('aprs-connect-state')).not.toHaveTextContent(/connecting/i),
+    );
+  });
+
+  it('surfaces a connect error inline and does NOT flip to listening', async () => {
+    const onConnect = vi.fn().mockRejectedValue(new Error('backend offline'));
+    renderStrip({ onConnect });
+    fireEvent.click(screen.getByTestId('aprs-connect-btn'));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/backend offline/i);
+    // Still showing Connect (listening prop never flipped — backend is truth).
+    expect(screen.getByTestId('aprs-connect-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('aprs-connect-state')).toHaveTextContent(/not listening/i);
+  });
+
+  it('calls onDisconnect when listening and Disconnect is clicked', async () => {
+    const onDisconnect = vi.fn().mockResolvedValue(undefined);
+    renderStrip({ listening: true, onDisconnect });
+    fireEvent.click(screen.getByTestId('aprs-disconnect-btn'));
+    await waitFor(() => expect(onDisconnect).toHaveBeenCalledTimes(1));
+  });
+
+  it('auto-expands the setup picker when no link is configured', () => {
+    renderStrip({ linkKind: null, radioLabel: null });
+    expect(screen.getByTestId('modem-link-section')).toBeInTheDocument();
+  });
+
+  it('hides the setup picker by default when a link IS configured, toggled by the caret', () => {
+    renderStrip({ linkKind: 'Tcp', radioLabel: '127.0.0.1:8001' });
+    expect(screen.queryByTestId('modem-link-section')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('aprs-connect-setup-toggle'));
+    expect(screen.getByTestId('modem-link-section')).toBeInTheDocument();
+  });
+
+  it('persists a link selection via onLinkChange', () => {
+    const onLinkChange = vi.fn();
+    renderStrip({ linkKind: null, radioLabel: null, onLinkChange });
+    // The picker is auto-expanded; switching to the BT segment emits a link.
+    fireEvent.click(screen.getByTestId('modem-seg-bt'));
+    expect(onLinkChange).toHaveBeenCalledWith(
+      expect.objectContaining({ linkKind: 'Bluetooth' }),
+    );
+  });
+});

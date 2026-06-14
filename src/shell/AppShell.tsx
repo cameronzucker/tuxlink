@@ -172,6 +172,11 @@ import { AprsDockTabs } from '../aprs/AprsDockTabs';
 // declared the native UV-Pro profile (linkKind === 'UvproNative'). A generic KISS
 // TNC has no control surface, so it shows plain chat with no strip.
 import { UvproControlStrip } from '../uvpro/UvproControlStrip';
+// The APRS connect surface (bd-tuxlink-ckmb): a compact status strip in the
+// dock header that hosts transport+radio selection and Connect/Disconnect for
+// ALL transports (the fresh-install path the in-panel toggle couldn't satisfy).
+import { AprsConnectStrip } from '../aprs/AprsConnectStrip';
+import type { ModemLinkFields } from '../radio/sections/ModemLinkSection';
 const ArdopRadioPanel = lazy(loadArdopRadioPanel);
 const VaraRadioPanel = lazy(loadVaraRadioPanel);
 const SearchDropdown = lazy(() =>
@@ -529,6 +534,56 @@ export function AppShell() {
   // config and emits writes; the shared listener here picks those up). Operator
   // smoke 2026-05-31 caught that the prior code hardcoded SSID=0 in the ribbon.
   const packetConfig = usePacketConfig();
+
+  // bd-tuxlink-ckmb: APRS connect surface wiring. The dock-header AprsConnectStrip
+  // composes ONE connect/disconnect sequence per transport here, so the strip
+  // itself stays presentational.
+  //   - UvproNative: the engine rides the already-connected UV-Pro session, so
+  //     connect = uvpro.connect() THEN aprs_listen_start (two steps); disconnect
+  //     = aprs_listen_stop THEN uvpro.disconnect().
+  //   - KISS (Tcp/Serial/Bluetooth): the engine opens the link itself, so
+  //     connect = aprs_listen_start (one step); disconnect = aprs_listen_stop.
+  // Backend rejects (no active identity) propagate to the strip's inline alert.
+  // The connect/disconnect SEQUENCE below invokes the uvpro commands directly
+  // (not via useUvproControl().connect(), which swallows errors into its own
+  // `error` state) so a failure REJECTS and the connect strip surfaces it inline.
+  // The UvproControlStrip rendered as the connected-native detail manages its own
+  // useUvproControl instance for live status + channel switching.
+  const aprsLinkKind = packetConfig.config?.linkKind ?? null;
+  const aprsRadioLabel = ((): string | null => {
+    const c = packetConfig.config;
+    if (!c) return null;
+    switch (c.linkKind) {
+      case 'Tcp':
+        return c.tcpHost && c.tcpPort ? `${c.tcpHost}:${c.tcpPort}` : 'TCP KISS';
+      case 'Serial':
+        return c.serialDevice ?? 'USB TNC';
+      case 'Bluetooth':
+        return c.btMac ? `BT ${c.btMac}` : 'Bluetooth';
+      case 'UvproNative':
+        return c.btMac ? `UV-Pro ${c.btMac}` : 'UV-Pro (native)';
+      default:
+        return null;
+    }
+  })();
+  const onAprsConnect = useCallback(async () => {
+    if (aprsLinkKind === 'UvproNative') {
+      // Ride the native session: connect it first (rejects propagate), then arm
+      // the listener. Don't arm a listener with no underlying link.
+      await invoke('uvpro_connect', {});
+    }
+    await invoke('aprs_listen_start');
+  }, [aprsLinkKind]);
+  const onAprsDisconnect = useCallback(async () => {
+    await invoke('aprs_listen_stop');
+    if (aprsLinkKind === 'UvproNative') {
+      await invoke('uvpro_disconnect');
+    }
+  }, [aprsLinkKind]);
+  const onAprsLinkChange = useCallback(
+    (fields: ModemLinkFields) => packetConfig.setLink(fields),
+    [packetConfig],
+  );
 
   // Phase 7 (tuxlink-noa0): identity list + active session + switch mutation for
   // the dashboard's inline IdentitySwitcher. The list/active queries feed the
@@ -1390,21 +1445,39 @@ export function AppShell() {
               onClose={() => setAprsOpen(false)}
             />
             {dockTab === 'aprs' ? (
-              <Suspense fallback={null}>
-                <AprsChatPanel
-                  messages={aprs.messages}
-                  heardStations={aprs.heardStations}
+              <>
+                {/* bd-tuxlink-ckmb: the connect surface lives in the dock-header
+                    band, ABOVE the chat, for ALL transports (the fresh-install
+                    path the old in-panel Start/Stop toggle couldn't satisfy). */}
+                <AprsConnectStrip
                   listening={aprs.listening}
-                  send={aprs.send}
-                  getConfig={aprs.getConfig}
-                  setConfig={aprs.setConfig}
-                  controlStrip={
-                    packetConfig.config?.linkKind === 'UvproNative' ? (
-                      <UvproControlStrip />
-                    ) : undefined
-                  }
+                  linkKind={aprsLinkKind}
+                  radioLabel={aprsRadioLabel}
+                  allowUvproNative
+                  onConnect={onAprsConnect}
+                  onDisconnect={onAprsDisconnect}
+                  onLinkChange={onAprsLinkChange}
                 />
-              </Suspense>
+                <Suspense fallback={null}>
+                  <AprsChatPanel
+                    messages={aprs.messages}
+                    heardStations={aprs.heardStations}
+                    listening={aprs.listening}
+                    send={aprs.send}
+                    getConfig={aprs.getConfig}
+                    setConfig={aprs.setConfig}
+                    controlStrip={
+                      // The native UV-Pro device detail (channel/freq/battery)
+                      // remains co-presented with chat once connected-native; the
+                      // connect strip above subsumes the connect ACTION, this is
+                      // the live-device DETAIL only.
+                      packetConfig.config?.linkKind === 'UvproNative' ? (
+                        <UvproControlStrip />
+                      ) : undefined
+                    }
+                  />
+                </Suspense>
+              </>
             ) : (
               radioBody
             )}
