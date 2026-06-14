@@ -111,6 +111,20 @@ describe('MapLibreMap', () => {
     expect(map.setCenter).not.toHaveBeenCalled();
   });
 
+  it('does NOT call setCenter for a non-finite center on moveend (tuxlink-dvfh close-crash)', () => {
+    // A degenerate transform (e.g. a moveend fired while the map tears down on
+    // modal close) can yield a non-finite center. clampMapCenter propagates NaN
+    // and the change-guard treats NaN as "changed", so the old handler called
+    // setCenter([NaN,NaN]) — which maplibre rejects by throwing "Invalid LngLat",
+    // crashing the app to the ErrorBoundary. The handler must bail on non-finite.
+    render(<MapLibreMap />);
+    const map = getLastMap()!;
+    loadMap(map);
+    map.__setCenter(Number.NaN, Number.NaN);
+    act(() => map.__emit('moveend'));
+    expect(map.setCenter).not.toHaveBeenCalled();
+  });
+
   it('flyTo recenters when initialCenter arrives async (was absent at mount)', () => {
     // StationFinderMap case: operator grid resolves after the map mounts.
     const { rerender } = render(<MapLibreMap />);
