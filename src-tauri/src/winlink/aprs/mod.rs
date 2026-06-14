@@ -1,3 +1,4 @@
+pub mod beacon;
 pub mod dedupe;
 pub mod engine;
 pub mod framebuild;

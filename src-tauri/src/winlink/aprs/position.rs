@@ -60,20 +60,24 @@ pub fn parse_position(info: &[u8]) -> Option<AprsPosition> {
 /// wraps into an AX.25 UI frame for transmit.
 ///
 /// Precision is the CALLER's responsibility (RF-honesty): the beacon passes the
-/// already-precision-reduced broadcast position from the GPS arbiter, so this
-/// encoder never widens precision beyond what the operator chose to share.
+/// already-precision-reduced broadcast position from the GPS arbiter plus the
+/// matching `ambiguity` level (0–4), so this encoder never advertises more
+/// precision than the operator chose to share. `ambiguity > 0` masks the N
+/// least-significant minute digits of BOTH coordinates with spaces, exactly the
+/// representation [`parse_position`] decodes back into an ambiguity level.
 pub fn encode_position(
     lat: f64,
     lon: f64,
     symbol_table: char,
     symbol_code: char,
     comment: &str,
+    ambiguity: u8,
 ) -> Vec<u8> {
     let mut out = Vec::new();
     out.push(b'=');
-    out.extend_from_slice(encode_lat(lat).as_bytes());
+    out.extend_from_slice(&encode_lat(lat, ambiguity));
     push_char(&mut out, symbol_table);
-    out.extend_from_slice(encode_lon(lon).as_bytes());
+    out.extend_from_slice(&encode_lon(lon, ambiguity));
     push_char(&mut out, symbol_code);
     out.extend_from_slice(comment.as_bytes());
     out
@@ -81,18 +85,33 @@ pub fn encode_position(
 
 /// `DDMM.mmH` — latitude degrees+minutes, 2-decimal minutes, N/S hemisphere.
 /// Carries a minute that rounds to 60.00 up into the degree so the field stays
-/// well-formed (e.g. 49.999999 → `5000.00N`, never `4960.00N`).
-fn encode_lat(lat: f64) -> String {
+/// well-formed (e.g. 49.999999 → `5000.00N`, never `4960.00N`). Masks the
+/// `ambiguity` least-significant minute digits (positions 6,5,3,2) with spaces.
+fn encode_lat(lat: f64, ambiguity: u8) -> Vec<u8> {
     let hemi = if lat < 0.0 { 'S' } else { 'N' };
     let (deg, mm, hh) = deg_min_hundredths(lat.abs());
-    format!("{:02}{:02}.{:02}{}", deg.min(90), mm, hh, hemi)
+    let mut f = format!("{:02}{:02}.{:02}{}", deg.min(90), mm, hh, hemi).into_bytes();
+    mask_minutes(&mut f, &[6, 5, 3, 2], ambiguity);
+    f
 }
 
-/// `DDDMM.mmH` — longitude with a 3-digit degree field, E/W hemisphere.
-fn encode_lon(lon: f64) -> String {
+/// `DDDMM.mmH` — longitude with a 3-digit degree field, E/W hemisphere. Masks
+/// the `ambiguity` least-significant minute digits (positions 7,6,4,3).
+fn encode_lon(lon: f64, ambiguity: u8) -> Vec<u8> {
     let hemi = if lon < 0.0 { 'W' } else { 'E' };
     let (deg, mm, hh) = deg_min_hundredths(lon.abs());
-    format!("{:03}{:02}.{:02}{}", deg.min(180), mm, hh, hemi)
+    let mut f = format!("{:03}{:02}.{:02}{}", deg.min(180), mm, hh, hemi).into_bytes();
+    mask_minutes(&mut f, &[7, 6, 4, 3], ambiguity);
+    f
+}
+
+/// Replace the first `level` (clamped 0–4) minute-digit positions — given
+/// least-significant first — with ASCII spaces, the APRS position-ambiguity
+/// representation.
+fn mask_minutes(field: &mut [u8], least_to_most: &[usize], level: u8) {
+    for &pos in least_to_most.iter().take(level.min(4) as usize) {
+        field[pos] = b' ';
+    }
 }
 
 /// Split a non-negative coordinate magnitude into (degrees, whole-minutes,
@@ -426,13 +445,13 @@ mod tests {
     #[test]
     fn encode_known_vector_matches_wire_format() {
         // 49°03.50'N, 72°01.75'W, primary table, house symbol.
-        let info = encode_position(49.058333, -72.029167, '/', '-', "tuxlink");
+        let info = encode_position(49.058333, -72.029167, '/', '-', "tuxlink", 0);
         assert_eq!(info, b"=4903.50N/07201.75W-tuxlink");
     }
 
     #[test]
     fn encode_then_parse_round_trips() {
-        let info = encode_position(33.427333, -112.147, '/', '>', "mobile");
+        let info = encode_position(33.427333, -112.147, '/', '>', "mobile", 0);
         let p = parse_position(&info).unwrap();
         approx(p.lat, 33.427333);
         approx(p.lon, -112.147);
@@ -443,7 +462,7 @@ mod tests {
 
     #[test]
     fn encode_southern_eastern_hemispheres() {
-        let info = encode_position(-33.5, 18.42, '/', '-', "");
+        let info = encode_position(-33.5, 18.42, '/', '-', "", 0);
         let p = parse_position(&info).unwrap();
         approx(p.lat, -33.5);
         approx(p.lon, 18.42);
@@ -455,7 +474,7 @@ mod tests {
     #[test]
     fn encode_carries_minute_rounding_into_degree() {
         // 49.999999° must not produce a malformed "4960.00N" — it carries.
-        let info = encode_position(49.999999, 0.0, '/', '-', "");
+        let info = encode_position(49.999999, 0.0, '/', '-', "", 0);
         let p = parse_position(&info).unwrap();
         approx(p.lat, 50.0);
         // The latitude field is exactly "5000.00N", never "4960.00N".
@@ -469,10 +488,38 @@ mod tests {
     #[test]
     fn encode_non_ascii_symbol_does_not_corrupt_offsets() {
         // A bogus non-ASCII symbol must still yield a parseable 1-byte field.
-        let info = encode_position(10.0, 20.0, '🚗', '🚗', "x");
+        let info = encode_position(10.0, 20.0, '🚗', '🚗', "x", 0);
         let p = parse_position(&info).unwrap();
         approx(p.lat, 10.0);
         approx(p.lon, 20.0);
+    }
+
+    #[test]
+    fn encode_with_ambiguity_masks_minutes_and_round_trips() {
+        // A FourCharGrid-style coarse beacon: encode the grid centre (42.5, -71.0)
+        // at ambiguity 4 — all minute digits masked — and confirm it decodes back
+        // to that ambiguity level and re-centres to the grid centre.
+        let info = encode_position(42.5, -71.0, '/', '-', "", 4);
+        // Latitude minutes fully masked on the wire.
+        assert!(
+            info.windows(8).any(|w| w == b"42  .  N"),
+            "got {:?}",
+            String::from_utf8_lossy(&info)
+        );
+        let p = parse_position(&info).unwrap();
+        assert_eq!(p.ambiguity, 4);
+        // Decoded low corner is the degree floor; +half-cell (30') recovers 42.5.
+        approx(p.lat, 42.0);
+        approx(p.lon, -71.0);
+    }
+
+    #[test]
+    fn encode_ambiguity_level_one_masks_only_hundredths() {
+        let info = encode_position(49.058333, -72.029167, '/', '-', "", 1);
+        let p = parse_position(&info).unwrap();
+        assert_eq!(p.ambiguity, 1);
+        // Only the hundredths digit masked: "4903.5 N".
+        assert!(info.windows(8).any(|w| w == b"4903.5 N"));
     }
 
     // -- Mic-E --------------------------------------------------------------
