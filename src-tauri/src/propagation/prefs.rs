@@ -16,6 +16,42 @@ use super::antenna::{AntennaPreset, GroundType};
 /// File name under the config directory.
 const PREFS_FILE: &str = "propagation_prefs.json";
 
+/// Man-made radio-noise environment — the VOACAP SYSTEM-card noise level. These
+/// are the ITU-R P.372 categories; voacapl renders the chosen level as
+/// `-<value> dBW`. The operator's local noise floor strongly affects predicted
+/// reliability (a city station hears far less than a remote one), so this is
+/// operator-selectable. `Residential` (-145 dBW) is VOACAP's own default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum NoiseEnvironment {
+    /// City / industrial (-140 dBW). Noisiest.
+    City,
+    /// Residential / suburban (-145 dBW). VOACAP default.
+    #[default]
+    Residential,
+    /// Rural (-150 dBW).
+    Rural,
+    /// Quiet rural (-155 dBW).
+    QuietRural,
+    /// Remote (-164 dBW). Quietest.
+    Remote,
+}
+
+impl NoiseEnvironment {
+    /// The positive dBW@3MHz magnitude written into the SYSTEM card's noise
+    /// field (voacapl renders it as a negative dBW). All values are 3 digits so
+    /// they fit the card's fixed-width field.
+    pub fn system_card_dbw(self) -> f64 {
+        match self {
+            NoiseEnvironment::City => 140.0,
+            NoiseEnvironment::Residential => 145.0,
+            NoiseEnvironment::Rural => 150.0,
+            NoiseEnvironment::QuietRural => 155.0,
+            NoiseEnvironment::Remote => 164.0,
+        }
+    }
+}
+
 /// REQ.SNR default when the connecting mode is unknown, in dB-Hz.
 ///
 /// VOACAP's REQ.SNR is signal-to-noise referenced to a **1 Hz** noise bandwidth:
@@ -76,6 +112,10 @@ pub struct PropagationPrefs {
     /// pattern via the ground reflection coefficient).
     #[serde(default)]
     pub ground_type: GroundType,
+    /// Man-made radio-noise environment at the operator's location (VOACAP SYSTEM
+    /// card noise level). Default `Residential` preserves the prior -145 dBW.
+    #[serde(default)]
+    pub noise_environment: NoiseEnvironment,
 }
 
 impl Default for PropagationPrefs {
@@ -86,6 +126,7 @@ impl Default for PropagationPrefs {
             tx_power_w: DEFAULT_TX_POWER_W,
             antenna_height_m: DEFAULT_ANTENNA_HEIGHT_M,
             ground_type: GroundType::default(),
+            noise_environment: NoiseEnvironment::default(),
         }
     }
 }
@@ -165,6 +206,7 @@ mod tests {
             tx_power_w: 50.0,
             antenna_height_m: 12.0,
             ground_type: GroundType::PoorSoil,
+            noise_environment: NoiseEnvironment::Rural,
         };
         save(&p, &prefs).unwrap();
         assert_eq!(load(&p), prefs);

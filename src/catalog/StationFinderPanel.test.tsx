@@ -25,7 +25,7 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     if (cmd === 'config_read') return { grid: 'DM43bp' } as unknown as never;
     if (cmd === 'propagation_prefs_read')
-      return { antenna_preset: 'efhw-sloper', req_snr_db: 22, tx_power_w: 100, antenna_height_m: 9, ground_type: 'average' } as unknown as never;
+      return { antenna_preset: 'efhw-sloper', req_snr_db: 22, tx_power_w: 100, antenna_height_m: 9, ground_type: 'average', noise_environment: 'residential' } as unknown as never;
     if (cmd === 'propagation_prefs_write') return undefined as unknown as never;
     if (cmd === 'catalog_fetch_stations')
       return [{ mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1_700_000_000_000, gateways: [N0DAJ] }] as unknown as never;
@@ -100,7 +100,7 @@ describe('StationFinderPanel', () => {
         return { grid: 'DM43bp', source: 'Gps', fresh: true } as unknown as never;
       if (cmd === 'config_read') return { grid: null } as unknown as never; // no manual grid
       if (cmd === 'propagation_prefs_read')
-        return { antenna_preset: 'efhw-sloper', req_snr_db: 22, tx_power_w: 100, antenna_height_m: 9, ground_type: 'average' } as unknown as never;
+        return { antenna_preset: 'efhw-sloper', req_snr_db: 22, tx_power_w: 100, antenna_height_m: 9, ground_type: 'average', noise_environment: 'residential' } as unknown as never;
       if (cmd === 'catalog_fetch_stations')
         return [{ mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1_700_000_000_000, gateways: [N0DAJ] }] as unknown as never;
       if (cmd === 'propagation_predict_path')
@@ -123,7 +123,7 @@ describe('StationFinderPanel', () => {
       if (cmd === 'position_current_fix') return { grid: null } as unknown as never;
       if (cmd === 'config_read') return { grid: null } as unknown as never;
       if (cmd === 'propagation_prefs_read')
-        return { antenna_preset: 'efhw-sloper', req_snr_db: 22, tx_power_w: 100, antenna_height_m: 9, ground_type: 'average' } as unknown as never;
+        return { antenna_preset: 'efhw-sloper', req_snr_db: 22, tx_power_w: 100, antenna_height_m: 9, ground_type: 'average', noise_environment: 'residential' } as unknown as never;
       return undefined as unknown as never;
     });
     renderPanel(<StationFinderPanel onClose={() => {}} />);

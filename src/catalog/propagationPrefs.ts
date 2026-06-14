@@ -23,6 +23,10 @@ export type AntennaPreset =
 /// Rust `GroundType` serde shape; shapes the elevation pattern server-side.
 export type GroundType = 'average' | 'sea-water' | 'good-soil' | 'poor-soil';
 
+/// Man-made radio-noise environment (VOACAP SYSTEM-card noise level). Kebab-case
+/// mirrors the Rust `NoiseEnvironment` serde shape.
+export type NoiseEnvironment = 'city' | 'residential' | 'rural' | 'quiet-rural' | 'remote';
+
 /// Clean camelCase prefs the UI works with.
 export interface PropagationPrefs {
   antennaPreset: AntennaPreset;
@@ -34,6 +38,8 @@ export interface PropagationPrefs {
   antennaHeightM: number;
   /** Ground type under the antenna. */
   groundType: GroundType;
+  /** Local man-made radio-noise environment. */
+  noiseEnvironment: NoiseEnvironment;
 }
 
 /// The serde wire shape returned by `propagation_prefs_read` (snake_case, no rename).
@@ -43,6 +49,7 @@ interface PropagationPrefsWire {
   tx_power_w: number;
   antenna_height_m: number;
   ground_type: GroundType;
+  noise_environment: NoiseEnvironment;
 }
 
 /** Defaults mirror the Rust side (EFHW sloper, 38 dB-Hz unknown-mode SNR, 100 W).
@@ -55,6 +62,7 @@ export const DEFAULT_PROPAGATION_PREFS: PropagationPrefs = {
   txPowerW: 100,
   antennaHeightM: 9,
   groundType: 'average',
+  noiseEnvironment: 'residential',
 };
 
 /// Ground-type options with operator labels. Order is the UI order.
@@ -63,6 +71,16 @@ export const GROUND_TYPE_OPTIONS: { value: GroundType; label: string; help: stri
   { value: 'good-soil', label: 'Good / moist soil', help: 'Marsh, fertile or fresh-water-rich ground (ε 40, σ 0.02).' },
   { value: 'poor-soil', label: 'Poor / rocky / desert', help: 'Sandy, rocky or arid ground (ε 3, σ 0.001).' },
   { value: 'sea-water', label: 'Salt water', help: 'Coastal / over-water (ε 80, σ 5.0). Best low-angle ground.' },
+];
+
+/// Noise-environment options with operator labels (noisiest → quietest). Order is
+/// the UI order. The local noise floor strongly affects predicted reliability.
+export const NOISE_ENVIRONMENT_OPTIONS: { value: NoiseEnvironment; label: string; help: string }[] = [
+  { value: 'city', label: 'City / industrial', help: 'Noisiest (-140 dBW). Dense urban, industrial, strong RFI.' },
+  { value: 'residential', label: 'Residential / suburban', help: 'Suburban lot (-145 dBW). Default.' },
+  { value: 'rural', label: 'Rural', help: 'Open rural (-150 dBW).' },
+  { value: 'quiet-rural', label: 'Quiet rural', help: 'Low-RFI countryside (-155 dBW).' },
+  { value: 'remote', label: 'Remote', help: 'Quietest (-164 dBW). Far from power lines / RFI.' },
 ];
 
 /// Selectable presets with operator-facing labels + a one-line model note. Order
@@ -90,6 +108,7 @@ export async function readPropagationPrefs(): Promise<PropagationPrefs> {
     txPowerW: w.tx_power_w,
     antennaHeightM: w.antenna_height_m,
     groundType: w.ground_type,
+    noiseEnvironment: w.noise_environment,
   };
 }
 
@@ -101,5 +120,6 @@ export async function writePropagationPrefs(prefs: PropagationPrefs): Promise<vo
     txPowerW: prefs.txPowerW,
     antennaHeightM: prefs.antennaHeightM,
     groundType: prefs.groundType,
+    noiseEnvironment: prefs.noiseEnvironment,
   });
 }

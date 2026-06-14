@@ -11,8 +11,10 @@
 import {
   ANTENNA_PRESET_OPTIONS,
   GROUND_TYPE_OPTIONS,
+  NOISE_ENVIRONMENT_OPTIONS,
   type AntennaPreset,
   type GroundType,
+  type NoiseEnvironment,
   type PropagationPrefs,
 } from './propagationPrefs';
 
@@ -71,6 +73,22 @@ export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) 
           onChange={(e) => onChange({ ...prefs, groundType: e.target.value as GroundType })}
         >
           {GROUND_TYPE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value} title={o.help}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="station-finder__antenna-field">
+        <span className="station-finder__antenna-lab">Noise</span>
+        <select
+          className="station-finder__antenna-select"
+          data-testid="noise-select"
+          value={prefs.noiseEnvironment}
+          onChange={(e) => onChange({ ...prefs, noiseEnvironment: e.target.value as NoiseEnvironment })}
+        >
+          {NOISE_ENVIRONMENT_OPTIONS.map((o) => (
             <option key={o.value} value={o.value} title={o.help}>
               {o.label}
             </option>

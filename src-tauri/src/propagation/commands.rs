@@ -109,6 +109,7 @@ pub(crate) fn run_prediction(
     req_snr_db: f64,
     tx_power_w: f64,
     tx_antenna_voa_content: Option<String>,
+    noise_dbw: f64,
 ) -> Result<PathPrediction, PropagationError> {
     let (year, month) = utc_year_month(clock);
     let ssn_val = forecast.ssn_for(year, month);
@@ -127,6 +128,7 @@ pub(crate) fn run_prediction(
         tx_antenna_voa,
         rx_antenna_voa,
         tx_antenna_voa_content,
+        noise_dbw,
     };
     // Filter + validate frequencies first (fast path before any disk I/O or
     // engine invocation — bad inputs are rejected here).
@@ -196,6 +198,7 @@ pub async fn propagation_predict_path(
     let rx_antenna_voa = antenna::gateway_voa_file(gateway_antenna).to_string();
     let req_snr_db = prefs.req_snr_db;
     let tx_power_w = prefs.tx_power_w;
+    let noise_dbw = prefs.noise_environment.system_card_dbw();
 
     // Clone everything we need into the blocking closure — the engine call is a
     // blocking std::process::Command; we must never hold it across an async boundary.
@@ -219,6 +222,7 @@ pub async fn propagation_predict_path(
             req_snr_db,
             tx_power_w,
             tx_antenna_voa_content,
+            noise_dbw,
         )
     })
     .await
@@ -257,6 +261,7 @@ pub async fn propagation_prefs_write(
     tx_power_w: f64,
     antenna_height_m: f64,
     ground_type: antenna::GroundType,
+    noise_environment: prefs::NoiseEnvironment,
 ) -> Result<(), UiError> {
     if !req_snr_db.is_finite() || !(0.0..100.0).contains(&req_snr_db) {
         return Err(UiError::Rejected(format!(
@@ -279,6 +284,7 @@ pub async fn propagation_prefs_write(
         tx_power_w,
         antenna_height_m,
         ground_type,
+        noise_environment,
     };
     let config_path = crate::config::config_path();
     let dir = config_path.parent().ok_or_else(|| UiError::Internal {
@@ -420,6 +426,7 @@ mod tests {
             22.0,
             100.0,
             None,
+            145.0,
         );
         let err = result.expect_err("invalid rx_grid should produce an error");
         assert!(
@@ -479,6 +486,7 @@ mod tests {
             22.0,
             100.0,
             None,
+            145.0,
         );
         let err = result.expect_err("empty frequencies should produce an error");
         assert!(

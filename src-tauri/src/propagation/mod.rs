@@ -57,6 +57,10 @@ pub struct PredictionInputs {
     /// instead of a stock file. When `None`, `tx_antenna_voa` names a stock file
     /// already present there (e.g. `ccir.000` for the `Unknown` preset).
     pub tx_antenna_voa_content: Option<String>,
+    /// Man-made noise level for the SYSTEM card, as the positive dBW@3MHz
+    /// magnitude (voacapl renders it `-<value> dBW`). From the operator's noise
+    /// environment; default 145 (residential).
+    pub noise_dbw: f64,
 }
 
 /// Per-frequency reliability over the 24 UTC hours.
