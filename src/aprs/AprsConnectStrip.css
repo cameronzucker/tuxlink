@@ -1,0 +1,123 @@
+/* AprsConnectStrip — compact connect surface for the APRS dock header.
+   Tokens mirror UvproControlStrip.css / AprsChatPanel.css so the strip reads as
+   part of the same dock band. */
+
+.aprs-connect-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #2a3140);
+  background: var(--surface, #0f1218);
+  font-size: 13px;
+  color: var(--text, #cbd5e1);
+}
+
+.aprs-connect-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.aprs-connect-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.aprs-connect-label {
+  font-weight: 600;
+}
+
+.aprs-connect-sep {
+  color: var(--text-faint, #64748b);
+}
+
+.aprs-connect-radio {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-faint, #94a3b8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aprs-connect-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-faint, #94a3b8);
+}
+
+.aprs-connect-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint, #64748b);
+}
+
+.aprs-connect-state-listening {
+  color: var(--success, #4ade80);
+}
+.aprs-connect-state-listening .aprs-connect-dot {
+  background: var(--success, #4ade80);
+}
+.aprs-connect-state-connecting .aprs-connect-dot {
+  background: var(--warning, #fbbf24);
+}
+
+.aprs-connect-btn {
+  margin-left: auto;
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--modem-accent-soft, #14532d);
+  color: var(--modem-accent, #4ade80);
+}
+.aprs-connect-btn:hover:not(:disabled) {
+  border-color: var(--modem-accent, #4ade80);
+}
+.aprs-connect-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.aprs-connect-btn-ghost {
+  background: transparent;
+  border-color: var(--border-strong, #3a4150);
+  color: var(--text-faint, #94a3b8);
+}
+
+.aprs-connect-caret {
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong, #3a4150);
+  background: transparent;
+  color: var(--text-faint, #94a3b8);
+  font-size: 13px;
+  cursor: pointer;
+}
+.aprs-connect-caret:hover {
+  border-color: var(--accent, #4ade80);
+}
+.aprs-connect-caret-open {
+  color: var(--text, #cbd5e1);
+  border-color: var(--accent, #4ade80);
+}
+
+.aprs-connect-setup {
+  border-top: 1px solid var(--border, #2a3140);
+  padding-top: 8px;
+}
+
+.aprs-connect-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger, #f87171);
+}

@@ -91,4 +91,95 @@ describe('usePacketConfig', () => {
     });
     expect(result.current.ssid).toBe(3);
   });
+
+  it('setLink merges the link fields and persists the full DTO', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const { result } = renderHook(() => usePacketConfig());
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    act(() => {
+      result.current.setLink({
+        linkKind: 'Bluetooth',
+        tcpHost: null,
+        tcpPort: null,
+        serialDevice: null,
+        serialBaud: null,
+        btMac: 'AA:BB:CC:DD:EE:FF',
+      });
+    });
+    // Persists the merged DTO: preserves untouched fields (ssid 7), applies the
+    // new link fields.
+    expect(core.invoke).toHaveBeenCalledWith(
+      'packet_config_set',
+      expect.objectContaining({
+        dto: expect.objectContaining({
+          ssid: 7,
+          linkKind: 'Bluetooth',
+          btMac: 'AA:BB:CC:DD:EE:FF',
+          tcpHost: null,
+        }),
+      }),
+    );
+    // Optimistic local update reflects the new link.
+    expect(result.current.config?.linkKind).toBe('Bluetooth');
+  });
+
+  it('setLink is a no-op when config is unloaded', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'packet_config_get') throw new Error('NotConfigured');
+      return undefined;
+    });
+    const { result } = renderHook(() => usePacketConfig());
+    await new Promise((r) => setTimeout(r, 10));
+    (core.invoke as ReturnType<typeof vi.fn>).mockClear();
+    act(() => {
+      result.current.setLink({
+        linkKind: 'Tcp',
+        tcpHost: '1.2.3.4',
+        tcpPort: 8001,
+        serialDevice: null,
+        serialBaud: null,
+        btMac: null,
+      });
+    });
+    expect(core.invoke).not.toHaveBeenCalled();
+  });
+
+  it('setLink returns an awaitable promise that resolves once the persist settles', async () => {
+    // The connect flow awaits this before aprs_listen_start so the backend reads
+    // the just-persisted link, not a stale one (Codex adrev 2026-06-14 P1 race).
+    const { result } = renderHook(() => usePacketConfig());
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    let p!: Promise<void>;
+    act(() => {
+      p = result.current.setLink({
+        linkKind: 'Tcp',
+        tcpHost: '1.2.3.4',
+        tcpPort: 8001,
+        serialDevice: null,
+        serialBaud: null,
+        btMac: null,
+      });
+    });
+    await expect(p).resolves.toBeUndefined();
+  });
+
+  it('setLink (unloaded config) still returns a resolved promise, not undefined', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'packet_config_get') throw new Error('NotConfigured');
+      return undefined;
+    });
+    const { result } = renderHook(() => usePacketConfig());
+    await new Promise((r) => setTimeout(r, 10));
+    const p = result.current.setLink({
+      linkKind: 'Tcp',
+      tcpHost: '1.2.3.4',
+      tcpPort: 8001,
+      serialDevice: null,
+      serialBaud: null,
+      btMac: null,
+    });
+    await expect(p).resolves.toBeUndefined();
+  });
 });
