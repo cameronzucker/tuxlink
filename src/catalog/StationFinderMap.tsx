@@ -44,7 +44,14 @@ const STATION_LAYERS = (
       type: 'circle',
       source: STATIONS_SOURCE,
       paint: {
-        'circle-radius': ['match', ['get', 'tier'], 'good', 10, 'fair', 8, 'marginal', 6.5, 'skip', 5, 7],
+        // Selected pin reads as ONE emphasised marker: the per-tier radius is
+        // nudged +2px and a white STROKE hugs the circle (no detached ring).
+        'circle-radius': [
+          'case',
+          ['get', 'selected'],
+          ['match', ['get', 'tier'], 'good', 12, 'fair', 10, 'marginal', 8.5, 'skip', 7, 9],
+          ['match', ['get', 'tier'], 'good', 10, 'fair', 8, 'marginal', 6.5, 'skip', 5, 7],
+        ],
         'circle-color': [
           'match',
           ['get', 'tier'],
@@ -55,8 +62,10 @@ const STATION_LAYERS = (
           '#9fb6cc',
         ],
         'circle-opacity': ['case', ['==', ['get', 'tier'], 'skip'], 0.75, 1],
+        // White stroke hugging the circle; thicker when selected so the marker
+        // is emphasised in place rather than gaining a second, offset ring.
         'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': ['case', ['get', 'selected'], 2, 0.5],
+        'circle-stroke-width': ['case', ['get', 'selected'], 2.5, 0.5],
       },
     },
   ] as unknown[]

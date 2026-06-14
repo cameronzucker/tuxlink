@@ -5,13 +5,18 @@
  * stacking invariant, inherited from the superseded CatalogBuilderPanel). */
 
 :root {
+  /* SIGNAL / reachability OWNS the green→red colour ramp (pins, forecast bars,
+     channel pips). Modes do NOT use these hues. */
   --reach-good: #46d07f;
   --reach-fair: #c9b23a;
   --reach-marginal: #d2842f;
   --reach-skip: #6c5a5a;
-  --m-vara: #5fd089;
-  --m-ardop: #f0a23a;
-  --m-packet: #56b6ff;
+  /* MODES get a distinct SHAPE + an OFF-RAMP colour (blue / purple / cyan) so a
+     coloured swatch is never confusable with a reachability tier (tuxlink-obpa).
+     VARA ▲ triangle, ARDOP ■ square, Packet ◆ diamond. */
+  --m-vara: #4aa3ff;
+  --m-ardop: #b07cf0;
+  --m-packet: #34d0d0;
 }
 
 .station-finder-overlay {
@@ -38,16 +43,19 @@
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6);
 }
 
+/* COMPACT HEADER (tuxlink-obpa item 3): the title row is shrunk and its bottom
+   border dropped so it merges visually with the conditions row beneath it,
+   reclaiming vertical space for the map. */
 .station-finder__header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border, #243a52);
+  gap: 10px;
+  padding: 7px 14px 3px;
 }
 .station-finder__header h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
+  white-space: nowrap;
 }
 .station-finder__close {
   margin-left: auto;
@@ -68,11 +76,11 @@
 }
 .station-finder__cond {
   display: flex;
-  gap: 14px;
+  gap: 12px;
   align-items: center;
   flex-wrap: wrap;
-  padding: 8px 14px;
-  font-size: 11px;
+  padding: 3px 14px 7px;
+  font-size: 10.5px;
   color: var(--dim, #9fb6cc);
   font-family: var(--mono, ui-monospace, monospace);
 }
@@ -136,20 +144,26 @@
 .station-finder__chip.off {
   opacity: 0.5;
 }
+/* Mode swatch: a distinct SHAPE per mode (not a coloured circle) so the visual
+   encoding is disambiguated from the reachability colour ramp. Shape via
+   clip-path / border-radius on the existing span — no extra markup. */
 .station-finder__sw {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
+  width: 11px;
+  height: 11px;
+  flex: none;
   display: inline-block;
 }
 .station-finder__sw--vara-hf {
   background: var(--m-vara);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%); /* ▲ triangle */
 }
 .station-finder__sw--ardop-hf {
   background: var(--m-ardop);
+  border-radius: 2px; /* ■ square */
 }
 .station-finder__sw--packet {
   background: var(--m-packet);
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); /* ◆ diamond */
 }
 .station-finder__listage {
   font-size: 11px;
@@ -278,8 +292,10 @@
   background: #9fb6cc;
 }
 .station-finder__pindot.is-selected {
-  outline: 2px solid #fff;
-  outline-offset: 3px;
+  /* One emphasised marker: a white rim hugging the dot + soft glow — NOT a
+     detached outline-offset ring that reads as two stacked circles. */
+  border-color: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6), 0 0 9px 2px rgba(255, 255, 255, 0.55);
 }
 .station-finder__me {
   display: block;
@@ -345,22 +361,24 @@
   display: flex;
   gap: 5px;
 }
+/* Mode badge: a neutral pill carrying the per-mode SHAPE swatch + label. Colour
+   no longer rides on the badge background (that overloaded the reachability
+   ramp); the shape + off-ramp swatch hue does the encoding (tuxlink-obpa). */
 .station-finder__mb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 10px;
   font-weight: 700;
   border-radius: 4px;
-  padding: 1px 6px;
-  color: #0a121b;
-  background: #9fb6cc;
+  padding: 2px 6px;
+  color: #cfe3f2;
+  background: #13283b;
+  border: 1px solid var(--border2, #34556f);
 }
-.station-finder__mb--vara-hf {
-  background: var(--m-vara);
-}
-.station-finder__mb--ardop-hf {
-  background: var(--m-ardop);
-}
-.station-finder__mb--packet {
-  background: var(--m-packet);
+.station-finder__mb .station-finder__sw {
+  width: 9px;
+  height: 9px;
 }
 .station-finder__who {
   font-size: 12px;
@@ -606,55 +624,60 @@
   font-size: 11px;
 }
 
-/* ── Operator antenna + prediction tuning row (tuxlink-s0r1 #3c) ─────────── */
+/* ── Operator antenna + prediction tuning row (tuxlink-s0r1 #3c) ──────────
+   Compact (tuxlink-obpa item 3): the 6 fields sit on a SINGLE WRAPPING ROW,
+   label-ABOVE-input with fixed compact widths (selects ~104-200px, number
+   inputs 62px) — not full-width stacked rows — so the strip is short and the
+   map gains the reclaimed height. */
 .station-finder__antenna {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   flex-wrap: wrap;
-  gap: 6px 14px;
-  padding: 8px 14px;
+  gap: 8px;
+  padding: 7px 14px;
   border-top: 1px solid var(--border, #243a52);
   font-size: 12px;
 }
 .station-finder__antenna-field {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 2px;
 }
-.station-finder__antenna-field--wide {
-  flex: 1 1 240px;
+.station-finder__antenna-field--wide .station-finder__antenna-select {
   min-width: 200px;
 }
 .station-finder__antenna-lab {
   color: var(--faint, #6f8aa3);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-size: 11px;
+  letter-spacing: 0.05em;
+  font-size: 9.5px;
   white-space: nowrap;
 }
 .station-finder__antenna-select {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 4px 8px;
+  width: 104px;
+  padding: 3px 6px;
+  height: 26px;
   background: var(--panel, #0f1c28);
   color: var(--text, #e8f1fa);
   border: 1px solid var(--border2, #34556f);
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 11.5px;
 }
 .station-finder__antenna-num {
-  width: 56px;
-  padding: 4px 6px;
+  width: 62px;
+  padding: 3px 6px;
+  height: 26px;
   background: var(--panel, #0f1c28);
   color: var(--text, #e8f1fa);
   border: 1px solid var(--border2, #34556f);
   border-radius: 4px;
   font-family: var(--mono, ui-monospace, monospace);
-  font-size: 12px;
+  font-size: 11.5px;
 }
+/* Units are implied by the label (Height m, Req SNR, TX W) — hide the trailing
+   unit span so each field is one compact column (matches the mock's .af). */
 .station-finder__antenna-unit {
-  color: var(--faint, #6f8aa3);
-  font-size: 11px;
+  display: none;
 }
 .station-finder__antenna-err {
   flex-basis: 100%;
