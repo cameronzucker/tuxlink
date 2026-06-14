@@ -25,6 +25,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { PacketConfigDto } from './packetTypes';
+import type { ModemLinkFields } from '../radio/sections/ModemLinkSection';
 
 export interface UsePacketConfig {
   /** Loaded config, or null when not yet loaded (pre-wizard / load error). */
@@ -33,6 +34,13 @@ export interface UsePacketConfig {
   ssid: number;
   /** Persist a new SSID. No-op when config is unloaded. */
   setSsid: (n: number) => void;
+  /** Persist the transport/radio link fields (read-modify-write of the full
+   *  DTO; merges the ModemLinkSection field set in). No-op when config is
+   *  unloaded — we cannot merge into a DTO we never read. Mirrors setSsid:
+   *  optimistic local update + same-window CustomEvent broadcast + persist via
+   *  packet_config_set. Persisting is what makes `config.linkKind` exist on a
+   *  fresh install. */
+  setLink: (fields: ModemLinkFields) => void;
 }
 
 /**
@@ -114,9 +122,31 @@ export function usePacketConfig(): UsePacketConfig {
     [config],
   );
 
+  const setLink = useCallback(
+    (fields: ModemLinkFields) => {
+      if (!config) return;
+      // Merge the link field set into the persisted DTO. The ModemLinkFields
+      // subset (linkKind + per-transport address fields) overrides; every other
+      // AX.25 / SSID field is preserved.
+      const next: PacketConfigDto = { ...config, ...fields };
+      // Optimistic local update.
+      setConfig(next);
+      // Broadcast to peer hooks within the same window so they re-seed without
+      // waiting for the backend (which doesn't emit a change event today).
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: next }));
+      }
+      void invoke('packet_config_set', { dto: next }).catch(() => {
+        /* persist errors surface via the session log */
+      });
+    },
+    [config],
+  );
+
   return {
     config,
     ssid: config?.ssid ?? 0,
     setSsid,
+    setLink,
   };
 }
