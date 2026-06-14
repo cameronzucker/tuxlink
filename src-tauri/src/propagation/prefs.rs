@@ -11,26 +11,83 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::antenna::AntennaPreset;
+use super::antenna::{AntennaPreset, GroundType};
 
 /// File name under the config directory.
 const PREFS_FILE: &str = "propagation_prefs.json";
 
-/// REQ.SNR default for robust VARA/ARDOP ARQ data, in dB-Hz (SNR + 10·log₁₀ BW).
-/// 22 sits between VOACAP's published CW (19) and SSB (44) anchors — robust data,
-/// more capable than voice, less aggressive than FT8. The prior 73 was a
-/// voice/broadcast value and made every data path read pessimistic. Operator-
-/// adjustable; rationale in `dev/scratch/antenna-presets-research.md`.
-pub const DEFAULT_REQ_SNR_DB: f64 = 22.0;
+/// Man-made radio-noise environment — the VOACAP SYSTEM-card noise level. These
+/// are the ITU-R P.372 categories; voacapl renders the chosen level as
+/// `-<value> dBW`. The operator's local noise floor strongly affects predicted
+/// reliability (a city station hears far less than a remote one), so this is
+/// operator-selectable. `Residential` (-145 dBW) is VOACAP's own default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum NoiseEnvironment {
+    /// City / industrial (-140 dBW). Noisiest.
+    City,
+    /// Residential / suburban (-145 dBW). VOACAP default.
+    #[default]
+    Residential,
+    /// Rural (-150 dBW).
+    Rural,
+    /// Quiet rural (-155 dBW).
+    QuietRural,
+    /// Remote (-164 dBW). Quietest.
+    Remote,
+}
+
+impl NoiseEnvironment {
+    /// The positive dBW@3MHz magnitude written into the SYSTEM card's noise
+    /// field (voacapl renders it as a negative dBW). All values are 3 digits so
+    /// they fit the card's fixed-width field.
+    pub fn system_card_dbw(self) -> f64 {
+        match self {
+            NoiseEnvironment::City => 140.0,
+            NoiseEnvironment::Residential => 145.0,
+            NoiseEnvironment::Rural => 150.0,
+            NoiseEnvironment::QuietRural => 155.0,
+            NoiseEnvironment::Remote => 164.0,
+        }
+    }
+}
+
+/// REQ.SNR default when the connecting mode is unknown, in dB-Hz.
+///
+/// VOACAP's REQ.SNR is signal-to-noise referenced to a **1 Hz** noise bandwidth:
+/// `REQ.SNR[dB-Hz] = SNR[dB] + 10·log₁₀(bandwidth_Hz)` (voacap.com "Ten common
+/// mistakes" #3; the official VOACAP blog gives the formula + worked values). So
+/// the right number for a *reliable* digital link is the mode's in-channel SNR
+/// plus its bandwidth term — NOT the mode's absolute decode floor.
+///
+/// Published anchors (dB-Hz): CW ≈ 19, FT8 ≈ 13, SSB voice ≈ 38–44,
+/// **VARA-HF reliable connect ≈ 35–37**, ARDOP ≈ 24–27. The prior 22 was
+/// CW-grade — near VARA's *absolute decode floor* (~12–20), where a link
+/// establishes then drops — so it predicted "excellent" reachability for short
+/// NVIS paths even at 1 W (confirmed by direct voacapl runs 2026-06-14). 38 is
+/// the VOACAP author's SSB value: mildly conservative against VARA/ARDOP, the
+/// safe direction for an availability predictor. Operator-adjustable; per-mode
+/// derivation is the follow-up. Full rationale + per-mode table + citations:
+/// docs/design/2026-06-14-find-a-station-prediction-recalibration.md.
+pub const DEFAULT_REQ_SNR_DB: f64 = 38.0;
 
 /// TX power default, watts. Operator-adjustable.
 pub const DEFAULT_TX_POWER_W: f64 = 100.0;
+
+/// Antenna height default, metres above ground. ~9 m is a typical home wire
+/// height (a low-ish dipole that still shows useful high-angle/NVIS gain).
+/// Operator-adjustable; feeds the height parameter of the generated IONCAP
+/// pattern for horizontal antennas.
+pub const DEFAULT_ANTENNA_HEIGHT_M: f64 = 9.0;
 
 fn default_req_snr_db() -> f64 {
     DEFAULT_REQ_SNR_DB
 }
 fn default_tx_power_w() -> f64 {
     DEFAULT_TX_POWER_W
+}
+fn default_antenna_height_m() -> f64 {
+    DEFAULT_ANTENNA_HEIGHT_M
 }
 
 /// Operator preferences that shape an HF prediction. `#[serde(default)]` on every
@@ -46,6 +103,19 @@ pub struct PropagationPrefs {
     /// TX power in watts. Must be > 0 on write.
     #[serde(default = "default_tx_power_w")]
     pub tx_power_w: f64,
+    /// Operator antenna height above ground, metres. Drives the height parameter
+    /// of the generated IONCAP pattern for horizontal antennas. Bounded 0..200 on
+    /// write. (Does not apply to ground-mounted verticals.)
+    #[serde(default = "default_antenna_height_m")]
+    pub antenna_height_m: f64,
+    /// Ground electrical type under the operator's antenna (shapes the elevation
+    /// pattern via the ground reflection coefficient).
+    #[serde(default)]
+    pub ground_type: GroundType,
+    /// Man-made radio-noise environment at the operator's location (VOACAP SYSTEM
+    /// card noise level). Default `Residential` preserves the prior -145 dBW.
+    #[serde(default)]
+    pub noise_environment: NoiseEnvironment,
 }
 
 impl Default for PropagationPrefs {
@@ -54,6 +124,9 @@ impl Default for PropagationPrefs {
             antenna_preset: AntennaPreset::default(),
             req_snr_db: DEFAULT_REQ_SNR_DB,
             tx_power_w: DEFAULT_TX_POWER_W,
+            antenna_height_m: DEFAULT_ANTENNA_HEIGHT_M,
+            ground_type: GroundType::default(),
+            noise_environment: NoiseEnvironment::default(),
         }
     }
 }
@@ -131,6 +204,9 @@ mod tests {
             antenna_preset: AntennaPreset::BaseVerticalRadials,
             req_snr_db: 24.0,
             tx_power_w: 50.0,
+            antenna_height_m: 12.0,
+            ground_type: GroundType::PoorSoil,
+            noise_environment: NoiseEnvironment::Rural,
         };
         save(&p, &prefs).unwrap();
         assert_eq!(load(&p), prefs);

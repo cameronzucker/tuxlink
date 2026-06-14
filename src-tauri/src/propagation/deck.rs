@@ -63,6 +63,17 @@ pub fn build_deck(inputs: &PredictionInputs) -> Result<String, PropagationError>
         )));
     }
 
+    // Guard the man-made-noise magnitude to a 3-digit value so the SYSTEM card's
+    // fixed-width noise field ({:3.0}.) cannot overflow and shift the rest of the
+    // card. Operator selections (140–164) are always in range; this guards a bad
+    // programmatic value.
+    if !inputs.noise_dbw.is_finite() || !(0.0..1000.0).contains(&inputs.noise_dbw) {
+        return Err(PropagationError::RunFailed(format!(
+            "noise_dbw {} out of range (0..1000) — SYSTEM card noise field width",
+            inputs.noise_dbw
+        )));
+    }
+
     let (tx_lat, tx_lon) = grid_to_lat_lon(&inputs.tx_grid)
         .ok_or_else(|| PropagationError::InvalidGrid(inputs.tx_grid.clone()))?;
     let (rx_lat, rx_lon) = grid_to_lat_lon(&inputs.rx_grid)
@@ -92,8 +103,8 @@ pub fn build_deck(inputs: &PredictionInputs) -> Result<String, PropagationError>
     // {:4.1} is a 4-char Fortran field ("73.0"); values ≥ 100.0 would overflow
     // to 5 chars and shift the rest of the card — guarded above in build_deck.
     let system = format!(
-        "SYSTEM       1. 145. 0.10  90. {:4.1} 3.00 0.10",
-        inputs.req_snr_db
+        "SYSTEM       1. {:3.0}. 0.10  90. {:4.1} 3.00 0.10",
+        inputs.noise_dbw, inputs.req_snr_db
     );
 
     // ANTENNA cards: the bracketed `[default/<file>]` is a fixed 21-char Fortran
@@ -165,6 +176,9 @@ mod tests {
             // parsed gateway antenna) are exercised by the antenna-specific tests.
             tx_antenna_voa: "const17.voa".to_string(),
             rx_antenna_voa: "swwhip.voa".to_string(),
+            tx_antenna_voa_content: None,
+            // 145 (residential) keeps the golden deck's "145." noise field.
+            noise_dbw: 145.0,
         }
     }
 
@@ -343,6 +357,32 @@ mod tests {
             .find(|l| l.starts_with("SYSTEM"))
             .expect("SYSTEM line missing");
         assert!(system_line.contains("20.0"), "req_snr_db=20.0 must appear in SYSTEM card");
+    }
+
+    #[test]
+    fn noise_dbw_flows_into_system_card_at_fixed_width() {
+        let mut inputs = dm43_dm34();
+        inputs.noise_dbw = 150.0; // rural
+        let deck = build_deck(&inputs).unwrap();
+        let system_line = deck
+            .lines()
+            .find(|l| l.starts_with("SYSTEM"))
+            .expect("SYSTEM line missing");
+        // The noise field renders as "150." in the same fixed column as "145.".
+        assert!(system_line.contains(" 150. "), "noise 150 must appear as '150.':\n{system_line}");
+        // The card length is unchanged from the golden 145 case (no field shift).
+        let golden = build_deck(&dm43_dm34()).unwrap();
+        let golden_system = golden.lines().find(|l| l.starts_with("SYSTEM")).unwrap();
+        assert_eq!(system_line.len(), golden_system.len(), "SYSTEM card width must be stable");
+    }
+
+    #[test]
+    fn noise_dbw_out_of_range_is_error() {
+        let mut inputs = dm43_dm34();
+        inputs.noise_dbw = 1000.0; // 4 digits would overflow the field
+        assert!(matches!(build_deck(&inputs), Err(PropagationError::RunFailed(_))));
+        inputs.noise_dbw = f64::NAN;
+        assert!(matches!(build_deck(&inputs), Err(PropagationError::RunFailed(_))));
     }
 
     /// Fix 3: req_snr_db ≥ 100.0 (or non-finite) must be rejected before building
