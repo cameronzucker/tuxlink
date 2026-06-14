@@ -50,6 +50,18 @@ describe('StationRail', () => {
     expect(screen.getByText(/best now: 40 m/i)).toBeTruthy();
   });
 
+  it('colours each band bar by its reachability tier (not a static fill)', () => {
+    // 80m rel 0.74 and 40m rel 0.86 are both "good" → green tier var; unmodelled
+    // bands have no channel and stay uncoloured. The fix: the bar background is
+    // driven by relToTier, not a fixed CSS colour.
+    const { container } = render(
+      <StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} activePrefillMode="vara-hf" />,
+    );
+    const fills = Array.from(container.querySelectorAll('.station-finder__fill')) as HTMLElement[];
+    const coloured = fills.filter((f) => f.style.background === 'var(--reach-good)');
+    expect(coloured.length).toBeGreaterThanOrEqual(2); // 80m + 40m bars
+  });
+
   it('hides the forecast and shows a degrade note when prediction is unavailable', () => {
     render(<StationRail station={station} prediction={null} predictionStatus="unavailable" operatorGrid="DM43bp" utcHour={21} activePrefillMode="vara-hf" />);
     expect(screen.queryByText(/best now/i)).toBeNull();

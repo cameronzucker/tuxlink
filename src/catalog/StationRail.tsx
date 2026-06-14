@@ -7,7 +7,7 @@
 
 import type { CSSProperties } from 'react';
 import { groupChannelsByMode, channelToDial, channelReliability } from './channelGrouping';
-import { bestBandNow } from './reachability';
+import { bestBandNow, relToTier, tierColorVar } from './reachability';
 import { bandLabel, bandForKhz, HF_BANDS } from './bandPlan';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
 import { distanceFromGrids, kmToMi } from './distance';
@@ -127,7 +127,15 @@ export function StationRail(props: StationRailProps) {
               <div key={b} className={`station-finder__pbar${best?.band === b ? ' is-current' : ''}`}>
                 <span className="station-finder__bn">{bandLabel(b)}</span>
                 <div className="station-finder__track">
-                  <div className="station-finder__fill" style={{ width: `${Math.round((rel ?? 0) * 100)}%` }} />
+                  <div
+                    className="station-finder__fill"
+                    style={{
+                      width: `${Math.round((rel ?? 0) * 100)}%`,
+                      // Colour the bar by reachability tier (good→green … skip→red),
+                      // matching the per-channel pip and mock D — not a static fill.
+                      background: rel != null ? tierColorVar(relToTier(rel)) : undefined,
+                    }}
+                  />
                 </div>
                 <span className="station-finder__pct">{rel != null ? `${Math.round(rel * 100)}%` : '—'}</span>
               </div>
