@@ -1,5 +1,5 @@
 export type SessionTypeId = 'cms' | 'radio-only' | 'post-office' | 'p2p' | 'network-po';
-export type ProtocolId = 'telnet' | 'packet' | 'vara-hf' | 'vara-fm' | 'ardop-hf';
+export type ProtocolId = 'telnet' | 'packet' | 'vara-hf' | 'vara-fm' | 'ardop-hf' | 'sonde-hf' | 'sonde-fm';
 export interface ConnectionKey { sessionType: SessionTypeId; protocol: ProtocolId; }
 
 export interface ProtocolEntry { id: ProtocolId; label: string; built: boolean; }
@@ -12,6 +12,11 @@ const TEL = { id: 'telnet' as const, label: 'Telnet' };
 const ARD = { id: 'ardop-hf' as const, label: 'ARDOP HF' };
 const VHF = { id: 'vara-hf' as const, label: 'VARA HF' };
 const VFM = { id: 'vara-fm' as const, label: 'VARA FM' };
+// tuxlink-3wwr: Sonde HF/FM — the clean-room modem, surfaced as a "coming soon"
+// teaser (always built:false → disabled row + "soon" badge in FolderSidebar).
+// No backend; mirrors VARA's placement under the RF session types.
+const SHF = { id: 'sonde-hf' as const, label: 'Sonde HF' };
+const SFM = { id: 'sonde-fm' as const, label: 'Sonde FM' };
 
 // `built` on a protocol = the (sessionType, protocol) pane has UI + backend today.
 export const SESSION_TYPES: SessionTypeEntry[] = [
@@ -30,6 +35,9 @@ export const SESSION_TYPES: SessionTypeEntry[] = [
       // stays unbuilt for now — flip once the P2P intent is exercised.
       { ...VHF, built: true },
       { ...VFM, built: true },
+      // tuxlink-3wwr: Sonde teaser — coming soon, not yet wired.
+      { ...SHF, built: false },
+      { ...SFM, built: false },
     ],
   },
   {
@@ -48,6 +56,9 @@ export const SESSION_TYPES: SessionTypeEntry[] = [
       { ...ARD, built: true },
       { ...VHF, built: true },
       { ...VFM, built: true },
+      // tuxlink-3wwr: Sonde teaser — coming soon, not yet wired.
+      { ...SHF, built: false },
+      { ...SFM, built: false },
     ],
   },
   {
@@ -77,6 +88,9 @@ export const SESSION_TYPES: SessionTypeEntry[] = [
       // peer is Phase 3 (tuxlink-fzl7), parallel to CMS's Phase 3 dial.
       { ...VHF, built: true },
       { ...VFM, built: true },
+      // tuxlink-3wwr: Sonde teaser — coming soon, not yet wired.
+      { ...SHF, built: false },
+      { ...SFM, built: false },
     ],
   },
   {
