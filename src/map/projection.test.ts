@@ -68,4 +68,13 @@ describe('clampMapCenter — pan-constraint restoration (tuxlink-rwo6)', () => {
     expect(clampMapCenter(-122.3, 47.6)).toEqual([-122.3, 47.6]);
     expect(clampMapCenter(0, 0)).toEqual([0, 0]);
   });
+
+  it('coerces non-finite input to 0, never propagating NaN (tuxlink-dvfh)', () => {
+    // Math.min/max pass NaN through; setCenter([NaN,…]) throws maplibre "Invalid
+    // LngLat". A non-finite coordinate must become a valid finite center instead.
+    expect(clampMapCenter(Number.NaN, Number.NaN)).toEqual([0, 0]);
+    expect(clampMapCenter(10, Number.NaN)).toEqual([10, 0]);
+    expect(clampMapCenter(Number.POSITIVE_INFINITY, 47.6)).toEqual([0, 47.6]);
+    expect(clampMapCenter(Number.NaN, Number.NaN).every(Number.isFinite)).toBe(true);
+  });
 });

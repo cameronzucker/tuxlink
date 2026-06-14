@@ -146,6 +146,10 @@ export function MapLibreMap({
       instance.addControl(new maplibregl.AttributionControl({ compact: false }));
       instance.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 
+      // Set in the cleanup BEFORE instance.remove() so a moveend fired
+      // synchronously during teardown can't touch the dying map (tuxlink-dvfh).
+      let mapRemoved = false;
+
       instance.on('click', (e: maplibregl.MapMouseEvent) => {
         onClickRef.current?.(clampLatLon(e.lngLat.lat, e.lngLat.lng));
       });
@@ -161,7 +165,14 @@ export function MapLibreMap({
       // on moveend. Uses setCenter (NOT setMaxBounds, the crash path); the snap-back
       // re-fires moveend, but the now-in-world center clamps to itself → no loop.
       instance.on('moveend', () => {
+        if (mapRemoved) return;
         const c = instance.getCenter();
+        // A degenerate transform (during teardown on modal close, or any transient
+        // bad camera state) can yield a non-finite center. clampMapCenter would
+        // propagate NaN and the `!==` check treats NaN as "changed", so
+        // setCenter([NaN,NaN]) would throw maplibre's "Invalid LngLat" and crash
+        // the React tree via the app ErrorBoundary (tuxlink-dvfh). Bail on it.
+        if (!Number.isFinite(c.lng) || !Number.isFinite(c.lat)) return;
         const [lng, lat] = clampMapCenter(c.lng, c.lat);
         if (lng !== c.lng || lat !== c.lat) {
           instance.setCenter([lng, lat]);
@@ -169,6 +180,7 @@ export function MapLibreMap({
       });
 
       return () => {
+        mapRemoved = true;
         instance.remove();
       };
     } catch (e) {

@@ -66,10 +66,16 @@ export const MERCATOR_MAX_LAT = 85.0511;
  * `renderWorldCopies=false` the center can pan past the antimeridian into gray
  * void, so longitude is clamped to [-180, 180]; latitude is clamped to the Web
  * Mercator limit. Returns `[lng, lat]` ready for `setCenter`/`flyTo`.
+ *
+ * A non-finite input (`NaN`/`Infinity`, e.g. a degenerate transform read during
+ * teardown) coerces to `0`, NOT a propagated `NaN` — `Math.min/max` pass `NaN`
+ * through, and `setCenter([NaN,…])` throws maplibre's "Invalid LngLat" (tuxlink-dvfh).
  */
 export function clampMapCenter(lng: number, lat: number): [number, number] {
+  const safeLng = Number.isFinite(lng) ? lng : 0;
+  const safeLat = Number.isFinite(lat) ? lat : 0;
   return [
-    Math.min(180, Math.max(-180, lng)),
-    Math.min(MERCATOR_MAX_LAT, Math.max(-MERCATOR_MAX_LAT, lat)),
+    Math.min(180, Math.max(-180, safeLng)),
+    Math.min(MERCATOR_MAX_LAT, Math.max(-MERCATOR_MAX_LAT, safeLat)),
   ];
 }
