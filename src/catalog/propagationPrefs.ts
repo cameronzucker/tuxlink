@@ -35,10 +35,13 @@ interface PropagationPrefsWire {
   tx_power_w: number;
 }
 
-/** Defaults mirror the Rust side (EFHW sloper, 22 dB-Hz data SNR, 100 W). */
+/** Defaults mirror the Rust side (EFHW sloper, 38 dB-Hz unknown-mode SNR, 100 W).
+ * 38 = VOACAP author's SSB anchor; mildly conservative vs VARA-HF reliable-connect
+ * (~35-37 dB-Hz). See propagation/prefs.rs DEFAULT_REQ_SNR_DB + the recalibration
+ * design note for the dB-Hz formula + per-mode table. */
 export const DEFAULT_PROPAGATION_PREFS: PropagationPrefs = {
   antennaPreset: 'efhw-sloper',
-  reqSnrDb: 22,
+  reqSnrDb: 38,
   txPowerW: 100,
 };
 

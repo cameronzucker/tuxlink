@@ -16,12 +16,24 @@ use super::antenna::AntennaPreset;
 /// File name under the config directory.
 const PREFS_FILE: &str = "propagation_prefs.json";
 
-/// REQ.SNR default for robust VARA/ARDOP ARQ data, in dB-Hz (SNR + 10·log₁₀ BW).
-/// 22 sits between VOACAP's published CW (19) and SSB (44) anchors — robust data,
-/// more capable than voice, less aggressive than FT8. The prior 73 was a
-/// voice/broadcast value and made every data path read pessimistic. Operator-
-/// adjustable; rationale in `dev/scratch/antenna-presets-research.md`.
-pub const DEFAULT_REQ_SNR_DB: f64 = 22.0;
+/// REQ.SNR default when the connecting mode is unknown, in dB-Hz.
+///
+/// VOACAP's REQ.SNR is signal-to-noise referenced to a **1 Hz** noise bandwidth:
+/// `REQ.SNR[dB-Hz] = SNR[dB] + 10·log₁₀(bandwidth_Hz)` (voacap.com "Ten common
+/// mistakes" #3; the official VOACAP blog gives the formula + worked values). So
+/// the right number for a *reliable* digital link is the mode's in-channel SNR
+/// plus its bandwidth term — NOT the mode's absolute decode floor.
+///
+/// Published anchors (dB-Hz): CW ≈ 19, FT8 ≈ 13, SSB voice ≈ 38–44,
+/// **VARA-HF reliable connect ≈ 35–37**, ARDOP ≈ 24–27. The prior 22 was
+/// CW-grade — near VARA's *absolute decode floor* (~12–20), where a link
+/// establishes then drops — so it predicted "excellent" reachability for short
+/// NVIS paths even at 1 W (confirmed by direct voacapl runs 2026-06-14). 38 is
+/// the VOACAP author's SSB value: mildly conservative against VARA/ARDOP, the
+/// safe direction for an availability predictor. Operator-adjustable; per-mode
+/// derivation is the follow-up. Full rationale + per-mode table + citations:
+/// docs/design/2026-06-14-find-a-station-prediction-recalibration.md.
+pub const DEFAULT_REQ_SNR_DB: f64 = 38.0;
 
 /// TX power default, watts. Operator-adjustable.
 pub const DEFAULT_TX_POWER_W: f64 = 100.0;
