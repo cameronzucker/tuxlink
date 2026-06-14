@@ -19,6 +19,10 @@ export type AntennaPreset =
   | 'beam-yagi'
   | 'unknown';
 
+/// Ground electrical type under the operator's antenna. Kebab-case mirrors the
+/// Rust `GroundType` serde shape; shapes the elevation pattern server-side.
+export type GroundType = 'average' | 'sea-water' | 'good-soil' | 'poor-soil';
+
 /// Clean camelCase prefs the UI works with.
 export interface PropagationPrefs {
   antennaPreset: AntennaPreset;
@@ -26,6 +30,10 @@ export interface PropagationPrefs {
   reqSnrDb: number;
   /** TX power, watts. */
   txPowerW: number;
+  /** Antenna height above ground, metres (drives the high-angle/NVIS pattern). */
+  antennaHeightM: number;
+  /** Ground type under the antenna. */
+  groundType: GroundType;
 }
 
 /// The serde wire shape returned by `propagation_prefs_read` (snake_case, no rename).
@@ -33,6 +41,8 @@ interface PropagationPrefsWire {
   antenna_preset: AntennaPreset;
   req_snr_db: number;
   tx_power_w: number;
+  antenna_height_m: number;
+  ground_type: GroundType;
 }
 
 /** Defaults mirror the Rust side (EFHW sloper, 38 dB-Hz unknown-mode SNR, 100 W).
@@ -43,7 +53,17 @@ export const DEFAULT_PROPAGATION_PREFS: PropagationPrefs = {
   antennaPreset: 'efhw-sloper',
   reqSnrDb: 38,
   txPowerW: 100,
+  antennaHeightM: 9,
+  groundType: 'average',
 };
+
+/// Ground-type options with operator labels. Order is the UI order.
+export const GROUND_TYPE_OPTIONS: { value: GroundType; label: string; help: string }[] = [
+  { value: 'average', label: 'Average soil', help: 'Typical ground (ε 13, σ 0.005). Default.' },
+  { value: 'good-soil', label: 'Good / moist soil', help: 'Marsh, fertile or fresh-water-rich ground (ε 40, σ 0.02).' },
+  { value: 'poor-soil', label: 'Poor / rocky / desert', help: 'Sandy, rocky or arid ground (ε 3, σ 0.001).' },
+  { value: 'sea-water', label: 'Salt water', help: 'Coastal / over-water (ε 80, σ 5.0). Best low-angle ground.' },
+];
 
 /// Selectable presets with operator-facing labels + a one-line model note. Order
 /// is the UI order; EFHW sloper leads as the default. Grounded in the Hamexandria
@@ -64,14 +84,22 @@ export const ANTENNA_PRESET_OPTIONS: { value: AntennaPreset; label: string; help
 /** Read the operator's propagation prefs (defaults on a fresh install). */
 export async function readPropagationPrefs(): Promise<PropagationPrefs> {
   const w = await invoke<PropagationPrefsWire>('propagation_prefs_read');
-  return { antennaPreset: w.antenna_preset, reqSnrDb: w.req_snr_db, txPowerW: w.tx_power_w };
+  return {
+    antennaPreset: w.antenna_preset,
+    reqSnrDb: w.req_snr_db,
+    txPowerW: w.tx_power_w,
+    antennaHeightM: w.antenna_height_m,
+    groundType: w.ground_type,
+  };
 }
 
-/** Persist the operator's propagation prefs. Rejects an out-of-range SNR/power Rust-side. */
+/** Persist the operator's propagation prefs. Rejects an out-of-range SNR/power/height Rust-side. */
 export async function writePropagationPrefs(prefs: PropagationPrefs): Promise<void> {
   await invoke('propagation_prefs_write', {
     antennaPreset: prefs.antennaPreset,
     reqSnrDb: prefs.reqSnrDb,
     txPowerW: prefs.txPowerW,
+    antennaHeightM: prefs.antennaHeightM,
+    groundType: prefs.groundType,
   });
 }

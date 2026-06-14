@@ -27,12 +27,27 @@ pub fn run_voacapl(
     deck_text: &str,
     scratch_parent: &Path,
 ) -> Result<String, PropagationError> {
-    run_voacapl_with_timeout(paths, deck_text, scratch_parent, DEFAULT_TIMEOUT)
+    run_voacapl_with_timeout(paths, deck_text, &[], scratch_parent, DEFAULT_TIMEOUT)
+}
+
+/// Like [`run_voacapl`] but also writes generated antenna pattern files into the
+/// scratch `antennas/default/` before the run. Each `(name, content)` becomes
+/// `antennas/default/<name>`; the deck's ANTENNA card references `name` via its
+/// `default/<name>` field. Used to inject the operator's height-aware IONCAP
+/// pattern (`antenna::operator_voa_content`).
+pub fn run_voacapl_with_files(
+    paths: &EnginePaths,
+    deck_text: &str,
+    antenna_files: &[(String, String)],
+    scratch_parent: &Path,
+) -> Result<String, PropagationError> {
+    run_voacapl_with_timeout(paths, deck_text, antenna_files, scratch_parent, DEFAULT_TIMEOUT)
 }
 
 pub fn run_voacapl_with_timeout(
     paths: &EnginePaths,
     deck_text: &str,
+    antenna_files: &[(String, String)],
     scratch_parent: &Path,
     timeout: Duration,
 ) -> Result<String, PropagationError> {
@@ -46,6 +61,15 @@ pub fn run_voacapl_with_timeout(
     // Build the per-call scratch itshfbc root (RAII-cleaned on all exit paths).
     let scratch = make_scratch_itshfbc(paths, scratch_parent)?;
     let run_dir = scratch.path().join("run");
+
+    // Drop any generated antenna patterns into the writable antennas/default/.
+    if !antenna_files.is_empty() {
+        let default_dir = scratch.path().join("antennas").join("default");
+        std::fs::create_dir_all(&default_dir)?;
+        for (name, content) in antenna_files {
+            std::fs::write(default_dir.join(name), content)?;
+        }
+    }
 
     // Write the input deck.
     std::fs::write(run_dir.join("voacapx.dat"), deck_text)?;
@@ -167,13 +191,40 @@ fn make_scratch_itshfbc(
         std::fs::create_dir_all(scratch.path().join("run"))?;
 
         // Symlink each read-only subtree that exists in the bundled itshfbc root.
-        // voacapl opens database/, coeffs/, and antennas/ with status='old' (read-only);
-        // only run/ is written.
-        for sub in &["coeffs", "antennas", "database", "geocity", "geonatio", "geostate"] {
+        // voacapl opens database/, coeffs/ with status='old' (read-only); only run/
+        // and the generated antenna patterns are written.
+        for sub in &["coeffs", "database", "geocity", "geonatio", "geostate"] {
             let src = paths.itshfbc_root.join(sub);
             if src.exists() {
                 let dst = scratch.path().join(sub);
                 std::os::unix::fs::symlink(&src, &dst)?;
+            }
+        }
+
+        // antennas/ must be partly WRITABLE so a per-run generated pattern (the
+        // operator's height-aware IONCAP antenna) can be dropped into
+        // antennas/default/ — voacapl resolves the ANTENNA card's `default/<file>`
+        // to <root>/antennas/default/<file>. Build a real antennas/default/ and
+        // symlink each stock pattern file (ccir.000, swwhip.voa, …) into it, so the
+        // stock RX/fallback files still resolve while generated files can be added.
+        // remove_dir_all (RAII drop) removes the symlinks as links, never their
+        // targets, so the bundled read-only patterns are safe.
+        let ant_src = paths.itshfbc_root.join("antennas");
+        if ant_src.exists() {
+            let ant_dst = scratch.path().join("antennas");
+            let default_dst = ant_dst.join("default");
+            std::fs::create_dir_all(&default_dst)?;
+            let default_src = ant_src.join("default");
+            if default_src.exists() {
+                for entry in std::fs::read_dir(&default_src)? {
+                    let entry = entry?;
+                    std::os::unix::fs::symlink(entry.path(), default_dst.join(entry.file_name()))?;
+                }
+            }
+            // samples/ is read-only; symlink the whole subdir.
+            let samples_src = ant_src.join("samples");
+            if samples_src.exists() {
+                std::os::unix::fs::symlink(&samples_src, ant_dst.join("samples"))?;
             }
         }
 
@@ -251,6 +302,43 @@ mod tests {
         }
     }
 
+    /// When the bundled itshfbc has an `antennas/` tree, the scratch must contain
+    /// a WRITABLE real `antennas/default/` with the stock pattern files symlinked
+    /// in — so a generated per-run antenna file can be dropped alongside them.
+    #[cfg(unix)]
+    #[test]
+    fn scratch_antennas_default_is_writable_with_stock_files_symlinked() {
+        let fake_itshfbc = tempfile::tempdir().expect("fake itshfbc");
+        let default_src = fake_itshfbc.path().join("antennas").join("default");
+        std::fs::create_dir_all(&default_src).unwrap();
+        std::fs::write(default_src.join("ccir.000"), "ISOTROPE\n").unwrap();
+
+        let scratch_parent = tempfile::tempdir().expect("scratch parent");
+        let paths = EnginePaths {
+            binary: PathBuf::from("/nonexistent/voacapl"),
+            itshfbc_root: fake_itshfbc.path().to_path_buf(),
+        };
+        let scratch = make_scratch_itshfbc(&paths, scratch_parent.path()).expect("scratch");
+
+        let default_dst = scratch.path().join("antennas").join("default");
+        // default/ is a real directory (not a symlink), so it accepts writes.
+        assert!(default_dst.is_dir(), "antennas/default should be a real dir");
+        assert!(
+            !default_dst.symlink_metadata().unwrap().file_type().is_symlink(),
+            "antennas/default must be a real dir, not a symlink"
+        );
+        // The stock file is symlinked in and resolves.
+        let stock = default_dst.join("ccir.000");
+        assert!(stock.exists(), "stock ccir.000 should resolve in scratch");
+        assert!(
+            stock.symlink_metadata().unwrap().file_type().is_symlink(),
+            "stock files are symlinked, not copied"
+        );
+        // A generated file can be written next to it.
+        std::fs::write(default_dst.join("txgen.voa"), "gen\n")
+            .expect("antennas/default must be writable for generated patterns");
+    }
+
     /// Test that a runaway process is killed within the timeout and the error
     /// message is clear.
     ///
@@ -290,6 +378,7 @@ mod tests {
         let result = run_voacapl_with_timeout(
             &paths,
             "deck",
+            &[],
             scratch_parent.path(),
             Duration::from_millis(300),
         );

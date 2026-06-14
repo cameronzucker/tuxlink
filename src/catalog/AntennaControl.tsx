@@ -8,7 +8,13 @@
 // and TX power are the other two prediction knobs. All three persist via
 // propagation_prefs_write; changing one re-runs the forecast once the write lands.
 
-import { ANTENNA_PRESET_OPTIONS, type AntennaPreset, type PropagationPrefs } from './propagationPrefs';
+import {
+  ANTENNA_PRESET_OPTIONS,
+  GROUND_TYPE_OPTIONS,
+  type AntennaPreset,
+  type GroundType,
+  type PropagationPrefs,
+} from './propagationPrefs';
 
 export interface AntennaControlProps {
   prefs: PropagationPrefs;
@@ -29,6 +35,42 @@ export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) 
           onChange={(e) => onChange({ ...prefs, antennaPreset: e.target.value as AntennaPreset })}
         >
           {ANTENNA_PRESET_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value} title={o.help}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="station-finder__antenna-field">
+        <span className="station-finder__antenna-lab">Height</span>
+        <input
+          className="station-finder__antenna-num"
+          data-testid="antenna-height-input"
+          type="number"
+          min={0}
+          max={200}
+          step={1}
+          value={prefs.antennaHeightM}
+          aria-label="Antenna height above ground in metres"
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            // Persist only an in-range value; Rust enforces the same 0..200 bound.
+            if (Number.isFinite(v) && v >= 0 && v <= 200) onChange({ ...prefs, antennaHeightM: v });
+          }}
+        />
+        <span className="station-finder__antenna-unit">m</span>
+      </label>
+
+      <label className="station-finder__antenna-field">
+        <span className="station-finder__antenna-lab">Ground</span>
+        <select
+          className="station-finder__antenna-select"
+          data-testid="ground-select"
+          value={prefs.groundType}
+          onChange={(e) => onChange({ ...prefs, groundType: e.target.value as GroundType })}
+        >
+          {GROUND_TYPE_OPTIONS.map((o) => (
             <option key={o.value} value={o.value} title={o.help}>
               {o.label}
             </option>

@@ -108,6 +108,154 @@ pub fn gateway_voa_file(antenna: Option<GatewayAntenna>) -> &'static str {
     }
 }
 
+/// Ground electrical properties for the VOACAP antenna model. The complex ground
+/// reflection coefficient (a function of permittivity ε_r and conductivity σ)
+/// shapes the elevation pattern — especially the low-angle lobes of horizontals
+/// and the gain of verticals. Operator-selectable; `Average` is the safe default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum GroundType {
+    /// Average soil (ε_r 13, σ 0.005 S/m) — the EZNEC/VOACAP generic default.
+    #[default]
+    Average,
+    /// Salt water (ε_r 80, σ 5.0) — best low-angle ground.
+    SeaWater,
+    /// Good/moist soil, marsh, fresh-water-rich (ε_r 40, σ 0.02).
+    GoodSoil,
+    /// Poor/rocky/sandy/desert soil (ε_r 3, σ 0.001).
+    PoorSoil,
+}
+
+impl GroundType {
+    /// `(dielectric ε_r, conductivity σ S/m)` — standard VOACAP/EZNEC values.
+    fn constants(self) -> (f64, f64) {
+        match self {
+            GroundType::Average => (13.0, 0.005),
+            GroundType::SeaWater => (80.0, 5.0),
+            GroundType::GoodSoil => (40.0, 0.02),
+            GroundType::PoorSoil => (3.0, 0.001),
+        }
+    }
+}
+
+/// The IONCAP parametric antenna a preset maps to. voacapl computes the
+/// height/ground/frequency-dependent elevation pattern internally from these —
+/// we supply *physical geometry*, never invented gain-vs-angle numbers (the
+/// pattern math is the validated Fortran's job, sidestepping the AI-unreliable
+/// pattern-number concern in the module docs).
+struct IoncapAntenna {
+    /// VOACAP antenna-type code: 22 vertical monopole, 23 horizontal dipole,
+    /// 24 horizontal Yagi (verified against the voacapl source + shipped samples).
+    type_code: u8,
+    /// Element length/height in wavelengths (negative = wavelengths per the
+    /// IONCAP sign convention). For type 22 this is the monopole element; for
+    /// 23/24 it is the dipole/boom length.
+    length_wl: f64,
+    /// Forward gain over a dipole (dB) for directional types; 0 for plain wires.
+    gain_over_dipole_db: f64,
+}
+
+impl AntennaPreset {
+    /// The IONCAP parametric antenna for this preset, or `None` to keep the stock
+    /// isotrope model (no height dependence) — used for `Unknown`.
+    fn ioncap(self) -> Option<IoncapAntenna> {
+        use AntennaPreset::*;
+        match self {
+            // Horizontal wires / loops → resonant half-wave horizontal dipole (23).
+            // Mag loop / random wire have no native VOACAP type; the low horizontal
+            // dipole is the documented proxy (see the recalibration design note).
+            EfhwSloper | NvisWireDipole | RandomWireUnun | ResonantPortableDipole
+            | MagneticLoop => Some(IoncapAntenna {
+                type_code: 23,
+                length_wl: -0.50,
+                gain_over_dipole_db: 0.0,
+            }),
+            // Verticals → quarter-wave vertical monopole (22), ground-mounted.
+            PortableVerticalWhip | BaseVerticalRadials | MobileHfWhip => Some(IoncapAntenna {
+                type_code: 22,
+                length_wl: -0.25,
+                gain_over_dipole_db: 0.0,
+            }),
+            // Beam → horizontal Yagi (24) with forward gain over a dipole.
+            BeamYagi => Some(IoncapAntenna {
+                type_code: 24,
+                length_wl: -0.50,
+                gain_over_dipole_db: 6.0,
+            }),
+            // Unknown → keep stock isotrope (height does not apply).
+            Unknown => None,
+        }
+    }
+
+    /// A short title line for the generated `.voa` (≤70 chars; informational).
+    fn voa_title(self) -> &'static str {
+        use AntennaPreset::*;
+        match self {
+            EfhwSloper => "tuxlink EFHW / sloper (horizontal dipole model)",
+            NvisWireDipole => "tuxlink low NVIS wire dipole",
+            RandomWireUnun => "tuxlink random wire (horizontal dipole model)",
+            ResonantPortableDipole => "tuxlink resonant portable dipole",
+            MagneticLoop => "tuxlink magnetic loop (horizontal dipole model)",
+            PortableVerticalWhip => "tuxlink portable vertical whip (monopole)",
+            BaseVerticalRadials => "tuxlink base vertical + radials (monopole)",
+            MobileHfWhip => "tuxlink mobile HF whip (monopole)",
+            BeamYagi => "tuxlink beam / Yagi (horizontal yagi)",
+            Unknown => "tuxlink generic",
+        }
+    }
+}
+
+/// The generated `.voa` filename written into the scratch `antennas/default/`
+/// for an operator preset that maps to a parametric IONCAP antenna.
+pub const OPERATOR_VOA_FILENAME: &str = "txgen.voa";
+
+/// Build the VOACAP pattern-file content for the operator's (TX) antenna, with
+/// the operator's `height_m` (metres, above ground) and `ground` plugged in.
+///
+/// Returns `None` when the preset has no parametric model (`Unknown`) — the
+/// caller then falls back to the stock isotrope file from [`AntennaPreset::voa_file`].
+///
+/// Height enters as a **positive metres** value (param [7] for the horizontal
+/// types), so voacapl recomputes the height-in-wavelengths pattern per band
+/// within a run — a 9 m dipole is ~0.1 λ on 80 m but ~0.4 λ on 20 m, with the
+/// correct per-band high-angle (NVIS) behaviour. Length stays −0.50 λ (resonant
+/// half-wave, assuming an ATU-matched amateur wire on each band). For verticals
+/// (type 22, ground-mounted) the height field does not apply; the −0.25 λ element
+/// drives the pattern. voacapl reads each line's leading number (list-directed),
+/// so exact column alignment is not required.
+pub fn operator_voa_content(
+    preset: AntennaPreset,
+    height_m: f64,
+    ground: GroundType,
+) -> Option<String> {
+    let ant = preset.ioncap()?;
+    let (eps, sig) = ground.constants();
+    // Clamp to a physically sane mast range so a junk height can't produce a
+    // pathological deck (voacapl would otherwise accept absurd values).
+    let h = if height_m.is_finite() {
+        height_m.clamp(0.5, 100.0)
+    } else {
+        9.0
+    };
+    let title = preset.voa_title();
+    let content = if ant.type_code == 22 {
+        // Vertical monopole: 7 params, element height/length at [6].
+        format!(
+            "{title}\n 7     7 parameters\n  0.00  [ 1] Max Gain dBi..:\n  22    [ 2] Antenna Type..:\n  {eps:.0}    [ 3] Dielectric....:\n {sig:.5} [ 4] Conductivity..:\n 14.000  [ 5] Operating Freq:\n {len:.2}  [ 6] Antenna Height:\n  0.0   [ 7] Gain ab dipole:\n",
+            len = ant.length_wl,
+        )
+    } else {
+        // Horizontal dipole (23) / Yagi (24): 8 params, height (metres) at [7].
+        format!(
+            "{title}\n 8     8 parameters\n  0.00  [ 1] Max Gain dBi..:\n  {tc}    [ 2] Antenna Type..:\n  {eps:.0}    [ 3] Dielectric....:\n {sig:.5} [ 4] Conductivity..:\n 14.000  [ 5] Operating Freq:\n {len:.2}  [ 6] Antenna Length:\n {h:.2}  [ 7] Antenna Height:\n  {gd:.1}   [ 8] Gain ab dipole:\n",
+            tc = ant.type_code,
+            len = ant.length_wl,
+            gd = ant.gain_over_dipole_db,
+        )
+    };
+    Some(content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +314,71 @@ mod tests {
         assert_eq!(json, "\"efhw-sloper\"");
         let back: AntennaPreset = serde_json::from_str("\"portable-vertical-whip\"").unwrap();
         assert_eq!(back, AntennaPreset::PortableVerticalWhip);
+    }
+
+    #[test]
+    fn ground_type_defaults_to_average_and_serializes_kebab() {
+        assert_eq!(GroundType::default(), GroundType::Average);
+        assert_eq!(serde_json::to_string(&GroundType::SeaWater).unwrap(), "\"sea-water\"");
+        let back: GroundType = serde_json::from_str("\"poor-soil\"").unwrap();
+        assert_eq!(back, GroundType::PoorSoil);
+    }
+
+    #[test]
+    fn horizontal_preset_generates_type23_voa_with_height_and_ground() {
+        let voa = operator_voa_content(AntennaPreset::NvisWireDipole, 9.0, GroundType::Average)
+            .expect("horizontal preset must produce a parametric pattern");
+        // Type 23 (horizontal dipole), 8 params, half-wave length, metres height,
+        // average-ground constants.
+        assert!(voa.contains("8     8 parameters"), "want 8-param file:\n{voa}");
+        assert!(voa.contains("23    [ 2] Antenna Type"), "want type 23:\n{voa}");
+        assert!(voa.contains("-0.50  [ 6] Antenna Length"), "want half-wave length:\n{voa}");
+        assert!(voa.contains("9.00  [ 7] Antenna Height"), "want 9 m height:\n{voa}");
+        assert!(voa.contains("13    [ 3] Dielectric"), "want average ε_r=13:\n{voa}");
+        assert!(voa.contains("0.00500 [ 4] Conductivity"), "want average σ=0.005:\n{voa}");
+    }
+
+    #[test]
+    fn vertical_preset_generates_type22_monopole() {
+        let voa = operator_voa_content(AntennaPreset::BaseVerticalRadials, 9.0, GroundType::Average)
+            .expect("vertical preset must produce a parametric pattern");
+        // Type 22 (vertical monopole), 7 params, quarter-wave element; the height
+        // field does not apply (ground-mounted).
+        assert!(voa.contains("7     7 parameters"), "want 7-param file:\n{voa}");
+        assert!(voa.contains("22    [ 2] Antenna Type"), "want type 22:\n{voa}");
+        assert!(voa.contains("-0.25  [ 6] Antenna Height"), "want quarter-wave element:\n{voa}");
+        assert!(!voa.contains("[ 8]"), "type 22 has no 8th param:\n{voa}");
+    }
+
+    #[test]
+    fn beam_generates_type24_yagi_with_gain_over_dipole() {
+        let voa = operator_voa_content(AntennaPreset::BeamYagi, 15.0, GroundType::Average)
+            .expect("beam must produce a parametric pattern");
+        assert!(voa.contains("24    [ 2] Antenna Type"), "want type 24:\n{voa}");
+        assert!(voa.contains("15.00  [ 7] Antenna Height"), "want 15 m boom height:\n{voa}");
+        assert!(voa.contains("6.0   [ 8] Gain ab dipole"), "want forward gain over dipole:\n{voa}");
+    }
+
+    #[test]
+    fn sea_water_ground_constants_appear_in_voa() {
+        let voa = operator_voa_content(AntennaPreset::EfhwSloper, 9.0, GroundType::SeaWater).unwrap();
+        assert!(voa.contains("80    [ 3] Dielectric"), "want sea ε_r=80:\n{voa}");
+        assert!(voa.contains("5.00000 [ 4] Conductivity"), "want sea σ=5.0:\n{voa}");
+    }
+
+    #[test]
+    fn unknown_preset_has_no_generated_pattern() {
+        assert!(
+            operator_voa_content(AntennaPreset::Unknown, 9.0, GroundType::Average).is_none(),
+            "Unknown keeps the stock isotrope file, not a generated pattern"
+        );
+    }
+
+    #[test]
+    fn nonfinite_or_extreme_height_is_clamped_not_propagated() {
+        let nan = operator_voa_content(AntennaPreset::NvisWireDipole, f64::NAN, GroundType::Average).unwrap();
+        assert!(nan.contains("9.00  [ 7] Antenna Height"), "NaN height → 9 m fallback:\n{nan}");
+        let huge = operator_voa_content(AntennaPreset::NvisWireDipole, 9999.0, GroundType::Average).unwrap();
+        assert!(huge.contains("100.00  [ 7] Antenna Height"), "height clamped to 100 m:\n{huge}");
     }
 }

@@ -8,19 +8,19 @@ beforeEach(() => vi.mocked(invoke).mockReset());
 
 describe('readPropagationPrefs', () => {
   it('maps the snake_case wire shape to camelCase', async () => {
-    vi.mocked(invoke).mockResolvedValue({ antenna_preset: 'base-vertical-radials', req_snr_db: 24, tx_power_w: 50 } as unknown as never);
+    vi.mocked(invoke).mockResolvedValue({ antenna_preset: 'base-vertical-radials', req_snr_db: 24, tx_power_w: 50, antenna_height_m: 12, ground_type: 'poor-soil' } as unknown as never);
     const got = await readPropagationPrefs();
     expect(invoke).toHaveBeenCalledWith('propagation_prefs_read');
-    expect(got).toEqual({ antennaPreset: 'base-vertical-radials', reqSnrDb: 24, txPowerW: 50 });
+    expect(got).toEqual({ antennaPreset: 'base-vertical-radials', reqSnrDb: 24, txPowerW: 50, antennaHeightM: 12, groundType: 'poor-soil' });
   });
 });
 
 describe('writePropagationPrefs', () => {
   it('invokes with camelCase keys Tauri maps to the Rust snake_case params', async () => {
     vi.mocked(invoke).mockResolvedValue(undefined as unknown as never);
-    await writePropagationPrefs({ antennaPreset: 'efhw-sloper', reqSnrDb: 22, txPowerW: 100 });
+    await writePropagationPrefs({ antennaPreset: 'efhw-sloper', reqSnrDb: 22, txPowerW: 100, antennaHeightM: 9, groundType: 'average' });
     expect(invoke).toHaveBeenCalledWith('propagation_prefs_write', {
-      antennaPreset: 'efhw-sloper', reqSnrDb: 22, txPowerW: 100,
+      antennaPreset: 'efhw-sloper', reqSnrDb: 22, txPowerW: 100, antennaHeightM: 9, groundType: 'average',
     });
   });
 });

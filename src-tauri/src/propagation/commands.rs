@@ -108,6 +108,7 @@ pub(crate) fn run_prediction(
     rx_antenna_voa: String,
     req_snr_db: f64,
     tx_power_w: f64,
+    tx_antenna_voa_content: Option<String>,
 ) -> Result<PathPrediction, PropagationError> {
     let (year, month) = utc_year_month(clock);
     let ssn_val = forecast.ssn_for(year, month);
@@ -125,12 +126,19 @@ pub(crate) fn run_prediction(
         req_snr_db,
         tx_antenna_voa,
         rx_antenna_voa,
+        tx_antenna_voa_content,
     };
     // Filter + validate frequencies first (fast path before any disk I/O or
     // engine invocation — bad inputs are rejected here).
     let active = deck::active_hf_frequencies_khz(&inputs.frequencies_khz)?;
     let deck_text = deck::build_deck(&inputs)?;
-    let out = engine::run_voacapl(paths, &deck_text, scratch_parent)?;
+    // When the operator's preset produced a height-aware IONCAP pattern, hand it
+    // to the engine to write into the scratch antennas/default/ before the run.
+    let antenna_files: Vec<(String, String)> = match &inputs.tx_antenna_voa_content {
+        Some(content) => vec![(inputs.tx_antenna_voa.clone(), content.clone())],
+        None => Vec::new(),
+    };
+    let out = engine::run_voacapl_with_files(paths, &deck_text, &antenna_files, scratch_parent)?;
     parse::parse_voacapx_out(&out, &active, ssn_val, year, month)
 }
 
@@ -169,12 +177,22 @@ pub async fn propagation_predict_path(
     //  - TX (own station) ← operator's saved antenna preset.
     //  - RX (far/gateway end) ← the station's parsed antenna code, isotrope fallback
     //    (NEVER a forced whip — the whip's zenith null is what killed NVIS paths).
-    //  - REQ.SNR + power ← saved prefs (defaults: 22 dB-Hz data SNR, 100 W).
+    //  - REQ.SNR + power ← saved prefs (defaults: 38 dB-Hz unknown-mode SNR, 100 W).
     let prefs = match crate::config::config_path().parent() {
         Some(dir) => prefs::load(&prefs::prefs_path(dir)),
         None => prefs::PropagationPrefs::default(),
     };
-    let tx_antenna_voa = prefs.antenna_preset.voa_file().to_string();
+    // Generate a height-aware IONCAP pattern from the operator's preset + height +
+    // ground. When the preset has a parametric model, the deck references a
+    // generated file (written into the scratch by the engine); otherwise it falls
+    // back to the stock isotrope file (Unknown preset).
+    let tx_antenna_voa_content =
+        antenna::operator_voa_content(prefs.antenna_preset, prefs.antenna_height_m, prefs.ground_type);
+    let tx_antenna_voa = if tx_antenna_voa_content.is_some() {
+        antenna::OPERATOR_VOA_FILENAME.to_string()
+    } else {
+        prefs.antenna_preset.voa_file().to_string()
+    };
     let rx_antenna_voa = antenna::gateway_voa_file(gateway_antenna).to_string();
     let req_snr_db = prefs.req_snr_db;
     let tx_power_w = prefs.tx_power_w;
@@ -200,6 +218,7 @@ pub async fn propagation_predict_path(
             rx_antenna_voa,
             req_snr_db,
             tx_power_w,
+            tx_antenna_voa_content,
         )
     })
     .await
@@ -236,6 +255,8 @@ pub async fn propagation_prefs_write(
     antenna_preset: antenna::AntennaPreset,
     req_snr_db: f64,
     tx_power_w: f64,
+    antenna_height_m: f64,
+    ground_type: antenna::GroundType,
 ) -> Result<(), UiError> {
     if !req_snr_db.is_finite() || !(0.0..100.0).contains(&req_snr_db) {
         return Err(UiError::Rejected(format!(
@@ -247,10 +268,17 @@ pub async fn propagation_prefs_write(
             "tx_power_w {tx_power_w} invalid — must be > 0 W"
         )));
     }
+    if !antenna_height_m.is_finite() || !(0.0..=200.0).contains(&antenna_height_m) {
+        return Err(UiError::Rejected(format!(
+            "antenna_height_m {antenna_height_m} out of range — must be 0..200 m"
+        )));
+    }
     let new_prefs = prefs::PropagationPrefs {
         antenna_preset,
         req_snr_db,
         tx_power_w,
+        antenna_height_m,
+        ground_type,
     };
     let config_path = crate::config::config_path();
     let dir = config_path.parent().ok_or_else(|| UiError::Internal {
@@ -391,6 +419,7 @@ mod tests {
             "ccir.000".into(),
             22.0,
             100.0,
+            None,
         );
         let err = result.expect_err("invalid rx_grid should produce an error");
         assert!(
@@ -449,6 +478,7 @@ mod tests {
             "ccir.000".into(),
             22.0,
             100.0,
+            None,
         );
         let err = result.expect_err("empty frequencies should produce an error");
         assert!(

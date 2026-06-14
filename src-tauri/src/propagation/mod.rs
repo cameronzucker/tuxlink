@@ -50,6 +50,13 @@ pub struct PredictionInputs {
     /// reports none. NEVER force `swwhip.voa` for an unknown gateway — the whip's
     /// zenith null is what made short NVIS paths predict ~0% reliability.
     pub rx_antenna_voa: String,
+    /// Generated VOACAP pattern content for the TX antenna (operator preset +
+    /// height + ground, built by `antenna::operator_voa_content`). When `Some`,
+    /// the engine writes it to the scratch `antennas/default/<tx_antenna_voa>`
+    /// before the run, so a height-aware IONCAP pattern (type 22/23/24) is used
+    /// instead of a stock file. When `None`, `tx_antenna_voa` names a stock file
+    /// already present there (e.g. `ccir.000` for the `Unknown` preset).
+    pub tx_antenna_voa_content: Option<String>,
 }
 
 /// Per-frequency reliability over the 24 UTC hours.

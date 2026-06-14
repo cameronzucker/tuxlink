@@ -165,6 +165,7 @@ mod tests {
             // parsed gateway antenna) are exercised by the antenna-specific tests.
             tx_antenna_voa: "const17.voa".to_string(),
             rx_antenna_voa: "swwhip.voa".to_string(),
+            tx_antenna_voa_content: None,
         }
     }
 

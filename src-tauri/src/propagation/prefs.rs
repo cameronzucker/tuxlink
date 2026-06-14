@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::antenna::AntennaPreset;
+use super::antenna::{AntennaPreset, GroundType};
 
 /// File name under the config directory.
 const PREFS_FILE: &str = "propagation_prefs.json";
@@ -38,11 +38,20 @@ pub const DEFAULT_REQ_SNR_DB: f64 = 38.0;
 /// TX power default, watts. Operator-adjustable.
 pub const DEFAULT_TX_POWER_W: f64 = 100.0;
 
+/// Antenna height default, metres above ground. ~9 m is a typical home wire
+/// height (a low-ish dipole that still shows useful high-angle/NVIS gain).
+/// Operator-adjustable; feeds the height parameter of the generated IONCAP
+/// pattern for horizontal antennas.
+pub const DEFAULT_ANTENNA_HEIGHT_M: f64 = 9.0;
+
 fn default_req_snr_db() -> f64 {
     DEFAULT_REQ_SNR_DB
 }
 fn default_tx_power_w() -> f64 {
     DEFAULT_TX_POWER_W
+}
+fn default_antenna_height_m() -> f64 {
+    DEFAULT_ANTENNA_HEIGHT_M
 }
 
 /// Operator preferences that shape an HF prediction. `#[serde(default)]` on every
@@ -58,6 +67,15 @@ pub struct PropagationPrefs {
     /// TX power in watts. Must be > 0 on write.
     #[serde(default = "default_tx_power_w")]
     pub tx_power_w: f64,
+    /// Operator antenna height above ground, metres. Drives the height parameter
+    /// of the generated IONCAP pattern for horizontal antennas. Bounded 0..200 on
+    /// write. (Does not apply to ground-mounted verticals.)
+    #[serde(default = "default_antenna_height_m")]
+    pub antenna_height_m: f64,
+    /// Ground electrical type under the operator's antenna (shapes the elevation
+    /// pattern via the ground reflection coefficient).
+    #[serde(default)]
+    pub ground_type: GroundType,
 }
 
 impl Default for PropagationPrefs {
@@ -66,6 +84,8 @@ impl Default for PropagationPrefs {
             antenna_preset: AntennaPreset::default(),
             req_snr_db: DEFAULT_REQ_SNR_DB,
             tx_power_w: DEFAULT_TX_POWER_W,
+            antenna_height_m: DEFAULT_ANTENNA_HEIGHT_M,
+            ground_type: GroundType::default(),
         }
     }
 }
@@ -143,6 +163,8 @@ mod tests {
             antenna_preset: AntennaPreset::BaseVerticalRadials,
             req_snr_db: 24.0,
             tx_power_w: 50.0,
+            antenna_height_m: 12.0,
+            ground_type: GroundType::PoorSoil,
         };
         save(&p, &prefs).unwrap();
         assert_eq!(load(&p), prefs);
