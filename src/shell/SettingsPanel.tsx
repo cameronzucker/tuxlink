@@ -15,7 +15,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GpsState, PositionPrecision } from './useStatus';
-import { LocationSettings } from '../location/LocationSettings';
+import { LocationSettingsPanel } from '../location/LocationSettingsPanel';
 import { AprsSettings } from '../aprs/AprsSettings';
 import { FormSequenceSettings } from '../forms/FormSequenceSettings';
 import { OfflineMapsSettings } from '../map/OfflineMapsSettings';
@@ -69,6 +69,9 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [gpsState, setGpsState] = useState<GpsState | null>(null);
   const [precision, setPrecision] = useState<PositionPrecision | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Location & GPS opens its own dedicated wide two-pane panel (tuxlink-2sl6) —
+  // a map feature doesn't belong crammed into this stacked settings column.
+  const [locationOpen, setLocationOpen] = useState(false);
 
   // Load the current values each time the panel opens (live config, not cached).
   useEffect(() => {
@@ -118,6 +121,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   }
 
   return (
+    <>
     <div className="tux-settings-backdrop" data-testid="settings-backdrop" onClick={onClose}>
       <div
         className="tux-settings-panel"
@@ -153,7 +157,18 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
 
         <fieldset className="tux-settings-group">
           <legend>Location &amp; GPS source</legend>
-          <LocationSettings />
+          <p className="tux-settings-section-blurb">
+            Set where your station is — confirm or drag your position on the map, detect a GPS
+            source, troubleshoot Linux GPS, or enter your grid by hand.
+          </p>
+          <button
+            type="button"
+            className="tux-settings-open-btn"
+            data-testid="open-location-settings"
+            onClick={() => setLocationOpen(true)}
+          >
+            Open Location &amp; GPS setup →
+          </button>
         </fieldset>
 
         <fieldset className="tux-settings-group">
@@ -213,5 +228,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         </fieldset>
       </div>
     </div>
+    <LocationSettingsPanel open={locationOpen} onClose={() => setLocationOpen(false)} />
+    </>
   );
 }

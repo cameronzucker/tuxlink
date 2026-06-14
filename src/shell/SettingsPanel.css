@@ -241,3 +241,26 @@
     font-size: 13px;
   }
 }
+
+/* Location & GPS opens a dedicated wide panel (tuxlink-2sl6); the section here is
+   a compact summary + entry button, not the crammed inline map. */
+.tux-settings-section-blurb {
+  margin: 0 0 10px;
+  color: var(--text-dim, #9fb6cc);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.tux-settings-open-btn {
+  padding: 8px 14px;
+  background: var(--accent-soft, rgba(74, 163, 223, 0.12));
+  color: var(--accent, #4aa3df);
+  border: 1px solid var(--accent, #4aa3df);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.tux-settings-open-btn:hover {
+  background: var(--accent, #4aa3df);
+  color: #fff;
+}
