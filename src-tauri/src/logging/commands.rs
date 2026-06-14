@@ -424,6 +424,25 @@ pub fn emit_first_paint_complete(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Forward a frontend (webview) error into the structured log (tuxlink-4b96).
+///
+/// A React ErrorBoundary capture, a `window.onerror`, or an `unhandledrejection`
+/// otherwise reaches ONLY the WebKitGTK devtools console / `tauri dev` stdout —
+/// invisible to the robust logs (`tuxlink.<hour>.jsonl` + the Logging window),
+/// so a webview crash cannot be diagnosed from logs the way alpha expects.
+/// Emitting it as a `tracing::error!` runs it through the FanoutLayer like any
+/// backend event. Infallible + cheap: the caller is already on an error path and
+/// its logging must never throw.
+#[tauri::command]
+pub fn log_frontend_error(source: String, message: String, stack: Option<String>) {
+    tracing::error!(
+        target: "tuxlink::frontend",
+        source = %source,
+        stack = stack.as_deref().unwrap_or(""),
+        "frontend error: {message}",
+    );
+}
+
 // ─── Report Issue flow ────────────────────────────────────────────────────────
 
 /// Result returned to the frontend after a successful `report_issue_flow` call.

@@ -3,6 +3,13 @@
 // React root to a blank window. See the 0.60.0 blank-location-screen incident.
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
+
+const { mockReport } = vi.hoisted(() => ({ mockReport: vi.fn() }));
+vi.mock('./frontendErrorLog', () => ({
+  reportFrontendError: mockReport,
+  installGlobalErrorForwarding: vi.fn(),
+}));
+
 import { ErrorBoundary } from './ErrorBoundary';
 
 afterEach(cleanup);
@@ -47,6 +54,22 @@ describe('ErrorBoundary', () => {
     expect(screen.getByTestId('map-unavailable')).toBeInTheDocument();
     // The default fallback is NOT used when a custom one is supplied.
     expect(screen.queryByTestId('error-boundary-fallback')).not.toBeInTheDocument();
+    spy.mockRestore();
+  });
+
+  it('forwards the caught error to the structured log (tuxlink-4b96)', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockReport.mockClear();
+    render(
+      <ErrorBoundary>
+        <Boom />
+      </ErrorBoundary>,
+    );
+    expect(mockReport).toHaveBeenCalledWith(
+      'react-error-boundary',
+      'kaboom',
+      expect.stringContaining('Component stack:'),
+    );
     spy.mockRestore();
   });
 });

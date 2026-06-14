@@ -12,6 +12,7 @@
 // Error boundaries must be class components — there is no hook equivalent.
 
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { reportFrontendError } from './frontendErrorLog';
 
 export interface ErrorBoundaryProps {
   children: ReactNode;
@@ -33,9 +34,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    // Surface the trace for the WebKitGTK inspector / tauri stdout. This is the
-    // only record of WHAT threw, since the UI no longer crashes to a blank
-    // window that an operator would otherwise screenshot.
+    // Forward into the structured log (jsonl + Logging window) so a webview crash
+    // is diagnosable from the robust logs, not only the devtools console (tuxlink-4b96).
+    reportFrontendError(
+      'react-error-boundary',
+      error.message,
+      `${error.stack ?? ''}\nComponent stack:${info.componentStack ?? ''}`,
+    );
+    // Also surface the trace for the WebKitGTK inspector / tauri stdout.
     // eslint-disable-next-line no-console
     console.error('Uncaught error boundary capture:', error, info.componentStack);
   }
