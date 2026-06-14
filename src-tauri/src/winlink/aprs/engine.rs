@@ -459,11 +459,12 @@ impl AprsEngine {
             // spot with a CHANGED comment/status (e.g. "/A=001234 QRT") is not
             // suppressed — that is a real update the map popup should reflect.
             id: format!(
-                "{:.4},{:.4},{}{},{}",
+                "{:.4},{:.4},{}{},a{},{}",
                 pos.lat,
                 pos.lon,
                 pos.symbol_table,
                 pos.symbol_code,
+                pos.ambiguity,
                 text_hash(&pos.comment)
             ),
         };
@@ -1188,5 +1189,19 @@ mod tests {
         let pos = sink.positions.lock().unwrap();
         assert_eq!(pos.len(), 2, "a changed comment at the same spot must re-emit");
         assert_eq!(pos[1].comment, "QRT");
+    }
+
+    #[test]
+    fn precision_change_at_same_spot_re_emits() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // Same rounded coords + symbol + comment, but the station drops from a
+        // full-precision fix to an ambiguous one — a real precision change the
+        // map must reflect, so the dedupe (which now keys on ambiguity) re-emits.
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!4903.50N/07201.50W-"), 1_000);
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!4903.5 N/07201.5 W-"), 60_000);
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 2, "a precision change at the same spot must re-emit");
+        assert_eq!(pos[1].ambiguity, 1);
     }
 }

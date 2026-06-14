@@ -49,11 +49,25 @@ const NOW_TICK_MS = 30 * 1000;
 const AMBIGUITY_HALF_MINUTES = [0, 0.05, 0.5, 5, 30];
 const METERS_PER_MINUTE_LAT = 1852;
 
-/// Radius, in metres, of the uncertainty region for a given ambiguity level.
-/// `0` for a full-precision fix (level 0) — no region is drawn.
+/// Half-width, in metres, of the ambiguity cell for a given level — the "±"
+/// distance shown in the popup. `0` for a full-precision fix (level 0).
 export function ambiguityRadiusMeters(level: number): number {
   const l = Math.max(0, Math.min(4, Math.floor(level)));
   return AMBIGUITY_HALF_MINUTES[l] * METERS_PER_MINUTE_LAT;
+}
+
+/// The decoded coordinate is the LOW corner of the ambiguity cell (the parser
+/// zero-fills masked minute digits), so plot the cell CENTRE — half a cell
+/// toward increasing magnitude on each axis — and let the region circumscribe
+/// the box. A full-precision fix is returned unchanged.
+function cellCenter(p: HeardPosition): { lon: number; lat: number } {
+  const l = Math.max(0, Math.min(4, Math.floor(p.ambiguity)));
+  const offDeg = AMBIGUITY_HALF_MINUTES[l] / 60;
+  if (offDeg === 0) return { lon: p.lon, lat: p.lat };
+  return {
+    lat: p.lat + Math.sign(p.lat) * offDeg,
+    lon: p.lon + Math.sign(p.lon) * offDeg,
+  };
 }
 
 type FeatureCollection = { type: 'FeatureCollection'; features: unknown[] };
@@ -69,9 +83,22 @@ const POSITION_LAYERS = (
       type: 'circle',
       source: POSITIONS_SOURCE,
       paint: {
-        'circle-radius': 7,
-        'circle-color': ['case', ['get', 'stale'], '#7d8794', '#2f86f0'],
-        'circle-opacity': ['case', ['get', 'stale'], 0.5, 0.9],
+        // Ambiguous fixes render as a small, soft amber centroid (the region
+        // carries the real information); exact fixes are a solid blue pin,
+        // greyed when stale.
+        'circle-radius': ['case', ['>', ['get', 'ambiguity'], 0], 4, 7],
+        'circle-color': [
+          'case',
+          ['>', ['get', 'ambiguity'], 0],
+          '#f0c24a',
+          ['case', ['get', 'stale'], '#7d8794', '#2f86f0'],
+        ],
+        'circle-opacity': [
+          'case',
+          ['>', ['get', 'ambiguity'], 0],
+          0.35,
+          ['case', ['get', 'stale'], 0.5, 0.9],
+        ],
         'circle-stroke-color': ['case', ['>', ['get', 'ambiguity'], 0], '#f0c24a', '#ffffff'],
         'circle-stroke-width': 1.5,
       },
@@ -123,7 +150,10 @@ const UNCERTAINTY_LAYERS = (
 /// the centre. Closed (first point repeated) so it forms a valid GeoJSON polygon.
 function circlePolygon(lon: number, lat: number, radiusM: number, steps = 48): number[][] {
   const dLat = radiusM / 111320;
-  const dLon = radiusM / (111320 * Math.cos((lat * Math.PI) / 180));
+  // Clamp cos(lat) so a near-polar fix (cos → 0) cannot blow dLon up to NaN /
+  // out-of-range coordinates pushed into MapLibre.
+  const cosLat = Math.max(Math.cos((lat * Math.PI) / 180), 0.01);
+  const dLon = radiusM / (111320 * cosLat);
   const ring: number[][] = [];
   for (let i = 0; i <= steps; i++) {
     const theta = (i / steps) * 2 * Math.PI;
@@ -133,32 +163,40 @@ function circlePolygon(lon: number, lat: number, radiusM: number, steps = 48): n
 }
 
 function buildPositionFC(positions: HeardPosition[], now: number): FeatureCollection {
-  const features: unknown[] = positions.map((p) => ({
-    type: 'Feature',
-    properties: {
-      call: p.call,
-      comment: p.comment,
-      ambiguity: p.ambiguity,
-      stale: now - p.at > STALE_MS,
-    },
-    geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
-  }));
+  const features: unknown[] = positions.map((p) => {
+    // Ambiguous fixes plot at the cell CENTRE as a deliberately soft, small
+    // marker — never a sharp pin claiming a coordinate the packet did not carry.
+    const c = cellCenter(p);
+    return {
+      type: 'Feature',
+      properties: {
+        call: p.call,
+        comment: p.comment,
+        ambiguity: p.ambiguity,
+        stale: now - p.at > STALE_MS,
+      },
+      geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
+    };
+  });
   return { type: 'FeatureCollection', features };
 }
 
 /// Uncertainty regions for ambiguous fixes only — a full-precision fix gets no
-/// halo, so the map never implies uncertainty the wire did not report.
+/// halo, so the map never implies uncertainty the wire did not report. The
+/// circle is centred on the ambiguity cell and sized (×√2) to circumscribe the
+/// box, so it covers every coordinate the fix could actually be — never less.
 function buildUncertaintyFC(positions: HeardPosition[]): FeatureCollection {
   const features: unknown[] = positions
     .filter((p) => p.ambiguity > 0)
-    .map((p) => ({
-      type: 'Feature',
-      properties: { call: p.call, ambiguity: p.ambiguity },
-      geometry: {
-        type: 'Polygon',
-        coordinates: [circlePolygon(p.lon, p.lat, ambiguityRadiusMeters(p.ambiguity))],
-      },
-    }));
+    .map((p) => {
+      const c = cellCenter(p);
+      const r = ambiguityRadiusMeters(p.ambiguity) * Math.SQRT2;
+      return {
+        type: 'Feature',
+        properties: { call: p.call, ambiguity: p.ambiguity },
+        geometry: { type: 'Polygon', coordinates: [circlePolygon(c.lon, c.lat, r)] },
+      };
+    });
   return { type: 'FeatureCollection', features };
 }
 
@@ -176,13 +214,6 @@ function ambiguityNote(level: number): string {
   const r = ambiguityRadiusMeters(level);
   const approx = r >= 1000 ? `~${(r / 1000).toFixed(r >= 10000 ? 0 : 1)} km` : `~${Math.round(r)} m`;
   return `approximate position (±${approx})`;
-}
-
-interface PopupState {
-  call: string;
-  comment: string;
-  ambiguity: number;
-  at: number;
 }
 
 /** Pushes GeoJSON to the source on change, re-pushing on styledata (style swap). */
@@ -207,7 +238,10 @@ function usePushData(
 
 function PositionLayers({ positions }: AprsPositionsMapProps) {
   const map = useMapContext();
-  const [popup, setPopup] = useState<PopupState | null>(null);
+  // Store only the SELECTED callsign; the popup body is derived from the live
+  // `byCall` entry each render, so a re-beacon updates the open popup and a
+  // pruned station closes it (no stale snapshot).
+  const [popupCall, setPopupCall] = useState<string | null>(null);
 
   // Re-tick "now" so pins age (dim) and the popup age stays roughly current
   // even when no new traffic arrives.
@@ -240,8 +274,7 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
     const onClick = (e: { features?: Array<{ properties?: { call?: unknown } }> }) => {
       const call = e.features?.[0]?.properties?.call;
       if (call == null) return;
-      const p = byCallRef.current.get(String(call));
-      if (p) setPopup({ call: p.call, comment: p.comment, ambiguity: p.ambiguity, at: p.at });
+      if (byCallRef.current.has(String(call))) setPopupCall(String(call));
     };
     map.on('click', POSITION_PINS_LAYER, onClick as (...a: unknown[]) => void);
     return () => {
@@ -249,27 +282,32 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
     };
   }, [map]);
 
-  if (!popup) return null;
+  // Derive the popup body from the CURRENT fix for the selected call; if that
+  // station was pruned (stale TTL), the popup closes on its own.
+  const selected = popupCall ? byCall.get(popupCall) : undefined;
+  if (!selected) return null;
   return (
     <div className="aprs-positions-map__popup" role="status" data-testid="aprs-position-popup">
       <button
         type="button"
         className="aprs-positions-map__popup-close"
         aria-label="Dismiss"
-        onClick={() => setPopup(null)}
+        onClick={() => setPopupCall(null)}
       >
         ×
       </button>
-      <span className="aprs-positions-map__popup-call">{popup.call}</span>
+      <span className="aprs-positions-map__popup-call">{selected.call}</span>
       <span className="aprs-positions-map__popup-age" data-testid="aprs-position-age">
-        last heard {formatAge(Math.max(0, now - popup.at))}
+        last heard {formatAge(Math.max(0, now - selected.at))}
       </span>
-      {popup.ambiguity > 0 && (
+      {selected.ambiguity > 0 && (
         <span className="aprs-positions-map__popup-ambiguity" data-testid="aprs-position-ambiguity">
-          {ambiguityNote(popup.ambiguity)}
+          {ambiguityNote(selected.ambiguity)}
         </span>
       )}
-      {popup.comment && <span className="aprs-positions-map__popup-comment">{popup.comment}</span>}
+      {selected.comment && (
+        <span className="aprs-positions-map__popup-comment">{selected.comment}</span>
+      )}
     </div>
   );
 }

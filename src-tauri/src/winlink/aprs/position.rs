@@ -68,11 +68,29 @@ fn parse_uncompressed(b: &[u8]) -> Option<AprsPosition> {
     let symbol_code = b[18] as char;
     let comment = String::from_utf8_lossy(&b[19..]).trim_end().to_string();
     sane(lat, lon)?;
-    // APRS position ambiguity = masked (space) minute digits, taken from the
-    // latitude field per the spec (lon mirrors lat). The four maskable minute
-    // bytes of `DDMM.mmH` are at indices 2, 3, 5, 6 (skipping `.`@4 and hemi@7).
-    let ambiguity = [b[2], b[3], b[5], b[6]].iter().filter(|&&c| c == b' ').count() as u8;
+    // APRS position ambiguity is the count of masked (space) low-order minute
+    // digits. Take the COARSER of the latitude and longitude fields so a
+    // lat-ambiguous/lon-exact (or malformed, non-suffix) packet is never plotted
+    // as more precise than it really is (RF-honesty). Lat minute digits, most-
+    // to-least significant: lat `DDMM.mmH` at b-indices 2,3,5,6; lon `DDDMM.mmH`
+    // (3-digit degrees shift everything by one) at b-indices 12,13,15,16.
+    let ambiguity = minute_ambiguity([b[2], b[3], b[5], b[6]])
+        .max(minute_ambiguity([b[12], b[13], b[15], b[16]]));
     Some(AprsPosition { lat, lon, symbol_table, symbol_code, comment, ambiguity })
+}
+
+/// Ambiguity level (0–4) from four minute-digit bytes given MOST-significant
+/// (tens-of-minutes) to LEAST (hundredths-of-minutes). The level is the
+/// significance rank of the most-significant masked (space) digit: a standard
+/// suffix mask yields its exact level, and a malformed non-suffix mask is taken
+/// as the coarser worst case rather than understated.
+fn minute_ambiguity(most_to_least: [u8; 4]) -> u8 {
+    for (i, &c) in most_to_least.iter().enumerate() {
+        if c == b' ' {
+            return (4 - i) as u8; // i=0 (tens') -> 4 … i=3 (hundredths') -> 1
+        }
+    }
+    0
 }
 
 /// `DDMM.mmH` — 8 bytes. Ambiguity spaces are treated as `0` (aprslib).
@@ -351,6 +369,22 @@ mod tests {
         let p4 = parse_position(b"!49  .  N/072  .  W-").unwrap();
         assert_eq!(p4.ambiguity, 4);
         approx(p4.lat, 49.0); // 00.00'
+    }
+
+    #[test]
+    fn ambiguity_takes_the_coarser_of_lat_and_lon() {
+        // Latitude exact, longitude masked to level 2 — never claim more
+        // precision than the coarser axis (RF-honesty).
+        let p = parse_position(b"!4903.50N/07201.  W-").unwrap();
+        assert_eq!(p.ambiguity, 2);
+    }
+
+    #[test]
+    fn ambiguity_non_suffix_mask_takes_worst_case() {
+        // Malformed: a space in the tens-of-minutes slot but a digit below it.
+        // Treated as the coarsest (level 4), not understated to level 1.
+        let p = parse_position(b"!49 3.50N/072 1.50W-").unwrap();
+        assert_eq!(p.ambiguity, 4);
     }
 
     #[test]

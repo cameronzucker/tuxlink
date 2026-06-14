@@ -85,6 +85,28 @@ describe('AprsPositionsMap', () => {
     expect(circles[0].geometry.type).toBe('Polygon');
   });
 
+  it('plots an ambiguous fix at the cell centre, not the decoded low corner', () => {
+    const amb: HeardPosition[] = [
+      { call: 'FUZZY', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 2 },
+    ];
+    render(<AprsPositionsMap positions={amb} />);
+    const map = loadLast();
+    const [lon, lat] = sourceData(map, 'aprs-positions').features[0].geometry.coordinates;
+    // Centre is shifted toward increasing magnitude on each axis (N => +lat,
+    // W => more-negative lon), so it is NOT the raw decoded [-100, 40].
+    expect(lat).toBeGreaterThan(40);
+    expect(lon).toBeLessThan(-100);
+  });
+
+  it('plots an exact fix at its decoded coordinate (no centre shift)', () => {
+    const exact: HeardPosition[] = [
+      { call: 'EXACT', lat: 40, lon: -100, symbolTable: '/', symbolCode: '-', comment: '', at: Date.now(), ambiguity: 0 },
+    ];
+    render(<AprsPositionsMap positions={exact} />);
+    const map = loadLast();
+    expect(sourceData(map, 'aprs-positions').features[0].geometry.coordinates).toEqual([-100, 40]);
+  });
+
   it('maps ambiguity level to a growing uncertainty radius; 0 = none', () => {
     expect(ambiguityRadiusMeters(0)).toBe(0);
     expect(ambiguityRadiusMeters(1)).toBeGreaterThan(0);
