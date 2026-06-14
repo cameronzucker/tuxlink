@@ -49,6 +49,73 @@ pub fn parse_position(info: &[u8]) -> Option<AprsPosition> {
     }
 }
 
+/// Encode our own position as an uncompressed APRS position-report info field —
+/// the inverse of [`parse_position`]. Used by the beacon (tuxlink-hj4k) to put
+/// OUR position on the open channel.
+///
+/// Emits the `=` DTI (position without timestamp, **message-capable** — tuxlink
+/// receives and sends APRS messages, so advertising messaging is honest) then
+/// `DDMM.mmH` latitude (8) + symbol-table (1) + `DDDMM.mmH` longitude (9) +
+/// symbol-code (1) + the comment. The result is exactly what `build_ui_frame`
+/// wraps into an AX.25 UI frame for transmit.
+///
+/// Precision is the CALLER's responsibility (RF-honesty): the beacon passes the
+/// already-precision-reduced broadcast position from the GPS arbiter, so this
+/// encoder never widens precision beyond what the operator chose to share.
+pub fn encode_position(
+    lat: f64,
+    lon: f64,
+    symbol_table: char,
+    symbol_code: char,
+    comment: &str,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.push(b'=');
+    out.extend_from_slice(encode_lat(lat).as_bytes());
+    push_char(&mut out, symbol_table);
+    out.extend_from_slice(encode_lon(lon).as_bytes());
+    push_char(&mut out, symbol_code);
+    out.extend_from_slice(comment.as_bytes());
+    out
+}
+
+/// `DDMM.mmH` — latitude degrees+minutes, 2-decimal minutes, N/S hemisphere.
+/// Carries a minute that rounds to 60.00 up into the degree so the field stays
+/// well-formed (e.g. 49.999999 → `5000.00N`, never `4960.00N`).
+fn encode_lat(lat: f64) -> String {
+    let hemi = if lat < 0.0 { 'S' } else { 'N' };
+    let (deg, mm, hh) = deg_min_hundredths(lat.abs());
+    format!("{:02}{:02}.{:02}{}", deg.min(90), mm, hh, hemi)
+}
+
+/// `DDDMM.mmH` — longitude with a 3-digit degree field, E/W hemisphere.
+fn encode_lon(lon: f64) -> String {
+    let hemi = if lon < 0.0 { 'W' } else { 'E' };
+    let (deg, mm, hh) = deg_min_hundredths(lon.abs());
+    format!("{:03}{:02}.{:02}{}", deg.min(180), mm, hh, hemi)
+}
+
+/// Split a non-negative coordinate magnitude into (degrees, whole-minutes,
+/// hundredths-of-minute), rounding to the nearest hundredth-minute and carrying
+/// a 60.00′ result up into the next degree.
+fn deg_min_hundredths(mag: f64) -> (u32, u32, u32) {
+    let deg = mag.floor() as u32;
+    let mut hundredths = ((mag - deg as f64) * 6000.0).round() as u32;
+    let mut deg = deg;
+    if hundredths >= 6000 {
+        deg += 1;
+        hundredths -= 6000;
+    }
+    (deg, hundredths / 100, hundredths % 100)
+}
+
+/// Push a symbol char as a single ASCII byte (symbols are printable ASCII; a
+/// non-ASCII char would corrupt field offsets, so fall back to the generic `/`
+/// primary table / `.` "no symbol" rather than emit multi-byte UTF-8).
+fn push_char(out: &mut Vec<u8>, c: char) {
+    out.push(if c.is_ascii() { c as u8 } else { b'.' });
+}
+
 fn parse_uncompressed(b: &[u8]) -> Option<AprsPosition> {
     // DDMM.mmH(8) + sym-table(1) + DDDMM.mmH(9) + sym-code(1) = 19 minimum.
     if b.len() < 19 {
@@ -352,6 +419,60 @@ mod tests {
     fn rejects_out_of_range() {
         // 99 degrees latitude is impossible.
         assert!(parse_position(b"!9903.50N/07201.75W-").is_none());
+    }
+
+    // -- encode (beacon TX, tuxlink-hj4k) -----------------------------------
+
+    #[test]
+    fn encode_known_vector_matches_wire_format() {
+        // 49°03.50'N, 72°01.75'W, primary table, house symbol.
+        let info = encode_position(49.058333, -72.029167, '/', '-', "tuxlink");
+        assert_eq!(info, b"=4903.50N/07201.75W-tuxlink");
+    }
+
+    #[test]
+    fn encode_then_parse_round_trips() {
+        let info = encode_position(33.427333, -112.147, '/', '>', "mobile");
+        let p = parse_position(&info).unwrap();
+        approx(p.lat, 33.427333);
+        approx(p.lon, -112.147);
+        assert_eq!(p.symbol_table, '/');
+        assert_eq!(p.symbol_code, '>');
+        assert_eq!(p.comment, "mobile");
+    }
+
+    #[test]
+    fn encode_southern_eastern_hemispheres() {
+        let info = encode_position(-33.5, 18.42, '/', '-', "");
+        let p = parse_position(&info).unwrap();
+        approx(p.lat, -33.5);
+        approx(p.lon, 18.42);
+        // 'S' / 'E' hemisphere bytes are present on the wire.
+        assert!(info.windows(1).any(|w| w == b"S"));
+        assert!(info.windows(1).any(|w| w == b"E"));
+    }
+
+    #[test]
+    fn encode_carries_minute_rounding_into_degree() {
+        // 49.999999° must not produce a malformed "4960.00N" — it carries.
+        let info = encode_position(49.999999, 0.0, '/', '-', "");
+        let p = parse_position(&info).unwrap();
+        approx(p.lat, 50.0);
+        // The latitude field is exactly "5000.00N", never "4960.00N".
+        assert!(
+            info.windows(8).any(|w| w == b"5000.00N"),
+            "got {:?}",
+            String::from_utf8_lossy(&info)
+        );
+    }
+
+    #[test]
+    fn encode_non_ascii_symbol_does_not_corrupt_offsets() {
+        // A bogus non-ASCII symbol must still yield a parseable 1-byte field.
+        let info = encode_position(10.0, 20.0, '🚗', '🚗', "x");
+        let p = parse_position(&info).unwrap();
+        approx(p.lat, 10.0);
+        approx(p.lon, 20.0);
     }
 
     // -- Mic-E --------------------------------------------------------------
