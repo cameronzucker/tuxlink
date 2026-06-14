@@ -14,9 +14,35 @@ import { useEffect, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import type { HeardPosition, InboundPosDto } from './aprsTypes';
 
+/// A heard position is dropped from the map after this long without a re-beacon.
+/// APRS stations beacon every ~10–30 min, so an hour of silence (≈2–4 missed
+/// beacons) is reliably stale — the pin no longer reflects where the station is.
+export const POSITION_TTL_MS = 60 * 60 * 1000;
+/// How often the silent-station sweep runs, so a pin drops even with no new
+/// traffic on the channel.
+const PRUNE_INTERVAL_MS = 60 * 1000;
+
 export interface UseAprsPositions {
   /// Heard stations' latest positions, one per callsign (latest-position-wins).
   positions: HeardPosition[];
+}
+
+/// Drop entries last heard more than [`POSITION_TTL_MS`] ago. Returns the same
+/// map reference when nothing expired so React can skip a needless re-render.
+function pruneStale(byCall: Map<string, HeardPosition>, now: number): Map<string, HeardPosition> {
+  let expired = false;
+  for (const v of byCall.values()) {
+    if (now - v.at > POSITION_TTL_MS) {
+      expired = true;
+      break;
+    }
+  }
+  if (!expired) return byCall;
+  const next = new Map(byCall);
+  for (const [call, v] of next) {
+    if (now - v.at > POSITION_TTL_MS) next.delete(call);
+  }
+  return next;
 }
 
 export function useAprsPositions(): UseAprsPositions {
@@ -39,9 +65,12 @@ export function useAprsPositions(): UseAprsPositions {
           symbolTable: p.symbolTable,
           symbolCode: p.symbolCode,
           comment: p.comment,
+          ambiguity: p.ambiguity,
           at: Date.now(),
         });
-        return next;
+        // Sweep on every fix too, so a busy channel keeps the set trimmed
+        // without waiting for the interval tick.
+        return pruneStale(next, Date.now());
       });
     })
       .then((un) => {
@@ -55,9 +84,17 @@ export function useAprsPositions(): UseAprsPositions {
         // listen() unavailable (jsdom without Tauri — mocked in tests).
       });
 
+    // Periodic sweep so a station that goes silent eventually drops off the map
+    // even when no further traffic arrives to trigger the per-fix prune.
+    const sweep = setInterval(() => {
+      if (!mounted) return;
+      setByCall((prev) => pruneStale(prev, Date.now()));
+    }, PRUNE_INTERVAL_MS);
+
     return () => {
       mounted = false;
       unlisten?.();
+      clearInterval(sweep);
     };
   }, []);
 

@@ -56,6 +56,17 @@
   font-size: 0.9rem;
 }
 
+.aprs-positions-map__popup-age {
+  font-size: 0.72rem;
+  color: var(--faint, #6f8aa3);
+}
+
+/* Amber to match the uncertainty region — marks the fix as approximate. */
+.aprs-positions-map__popup-ambiguity {
+  font-size: 0.72rem;
+  color: #f0c24a;
+}
+
 .aprs-positions-map__popup-comment {
   font-size: 0.8rem;
   color: var(--muted, #9fb6cc);

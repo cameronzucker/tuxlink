@@ -131,6 +131,10 @@ pub struct InboundPos {
     pub symbol_table: char,
     pub symbol_code: char,
     pub comment: String,
+    /// APRS position-ambiguity level (0–4) decoded off the wire. `0` is a
+    /// full-precision fix; higher means the sender masked low-order minute
+    /// digits, so the UI must plot a region, not a false-exact pin (RF-honesty).
+    pub ambiguity: u8,
 }
 
 /// Side-effect sink the engine emits into. The async driver implements this with
@@ -450,10 +454,18 @@ impl AprsEngine {
             src: sender.to_string(),
             kind: "pos".into(),
             // Round to ~1e-4 deg (~11 m) so float jitter does not defeat dedupe,
-            // while a genuine move still produces a distinct key.
+            // while a genuine move still produces a distinct key. The comment
+            // hash is part of the key so a station that re-beacons from the SAME
+            // spot with a CHANGED comment/status (e.g. "/A=001234 QRT") is not
+            // suppressed — that is a real update the map popup should reflect.
             id: format!(
-                "{:.4},{:.4},{}{}",
-                pos.lat, pos.lon, pos.symbol_table, pos.symbol_code
+                "{:.4},{:.4},{}{},a{},{}",
+                pos.lat,
+                pos.lon,
+                pos.symbol_table,
+                pos.symbol_code,
+                pos.ambiguity,
+                text_hash(&pos.comment)
             ),
         };
         if self.pos_dedupe.seen(key, now_ms) {
@@ -466,6 +478,7 @@ impl AprsEngine {
             symbol_table: pos.symbol_table,
             symbol_code: pos.symbol_code,
             comment: pos.comment,
+            ambiguity: pos.ambiguity,
         });
     }
 }
@@ -1080,8 +1093,20 @@ mod tests {
         assert_eq!(pos[0].symbol_table, '/');
         assert_eq!(pos[0].symbol_code, '-');
         assert_eq!(pos[0].comment, "Hello");
+        assert_eq!(pos[0].ambiguity, 0, "a full-precision fix reports ambiguity 0");
         // A position beacon is not a message, so nothing lands in the chat feed.
         assert!(sink.msgs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn heard_ambiguous_position_reports_ambiguity_level() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // One masked hundredths-of-minute digit in each coordinate => level 1.
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!4903.5 N/07201.7 W-"), 1000);
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 1);
+        assert_eq!(pos[0].ambiguity, 1, "the masked-digit fix must surface as ambiguous");
     }
 
     #[test]
@@ -1150,5 +1175,33 @@ mod tests {
             2,
             "a moved station must emit the new fix"
         );
+    }
+
+    #[test]
+    fn same_spot_changed_comment_re_emits() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // Same coordinates + symbol, but the station updates its status/comment.
+        // That is a real change (e.g. "QRT", a new altitude) the map must reflect,
+        // so it must NOT be collapsed by the position dedupe.
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!4903.50N/07201.75W-In service"), 1_000);
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!4903.50N/07201.75W-QRT"), 60_000);
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 2, "a changed comment at the same spot must re-emit");
+        assert_eq!(pos[1].comment, "QRT");
+    }
+
+    #[test]
+    fn precision_change_at_same_spot_re_emits() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // Same rounded coords + symbol + comment, but the station drops from a
+        // full-precision fix to an ambiguous one — a real precision change the
+        // map must reflect, so the dedupe (which now keys on ambiguity) re-emits.
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!4903.50N/07201.50W-"), 1_000);
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!4903.5 N/07201.5 W-"), 60_000);
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 2, "a precision change at the same spot must re-emit");
+        assert_eq!(pos[1].ambiguity, 1);
     }
 }

@@ -80,6 +80,10 @@ export interface InboundPosDto {
   symbolTable: string;
   symbolCode: string;
   comment: string;
+  /// APRS position-ambiguity level (0–4) decoded off the wire. `0` is a
+  /// full-precision fix; higher means the sender masked low-order minute digits,
+  /// so the map must plot a region of uncertainty, not a false-exact pin.
+  ambiguity: number;
 }
 
 /// A heard station's most-recent decoded position, accumulated by
@@ -93,6 +97,9 @@ export interface HeardPosition {
   symbolCode: string;
   comment: string;
   at: number;
+  /// APRS position-ambiguity level (0–4) carried from the decoded report, so the
+  /// map can plot an uncertainty region for masked fixes instead of a sharp pin.
+  ambiguity: number;
 }
 
 /// Current APRS station configuration, returned by `aprs_config_get`.

@@ -21,6 +21,14 @@ pub struct AprsPosition {
     pub symbol_table: char,
     pub symbol_code: char,
     pub comment: String,
+    /// APRS position-ambiguity level (0–4): how many least-significant minute
+    /// digits the sender masked. `0` = full precision; higher = a coarser fix.
+    /// RF-honesty: the wire reports a *region*, not a point, when this is > 0, so
+    /// the parser surfaces the level rather than silently collapsing the masked
+    /// digits to a false-exact coordinate. (Uncompressed: count of masked minute
+    /// digits; Mic-E: the destination-encoded ambiguity; compressed: always 0 —
+    /// Base-91 reports carry no ambiguity field.)
+    pub ambiguity: u8,
 }
 
 /// Parse an APRS position info field. Returns `None` if it is not a well-formed
@@ -60,7 +68,29 @@ fn parse_uncompressed(b: &[u8]) -> Option<AprsPosition> {
     let symbol_code = b[18] as char;
     let comment = String::from_utf8_lossy(&b[19..]).trim_end().to_string();
     sane(lat, lon)?;
-    Some(AprsPosition { lat, lon, symbol_table, symbol_code, comment })
+    // APRS position ambiguity is the count of masked (space) low-order minute
+    // digits. Take the COARSER of the latitude and longitude fields so a
+    // lat-ambiguous/lon-exact (or malformed, non-suffix) packet is never plotted
+    // as more precise than it really is (RF-honesty). Lat minute digits, most-
+    // to-least significant: lat `DDMM.mmH` at b-indices 2,3,5,6; lon `DDDMM.mmH`
+    // (3-digit degrees shift everything by one) at b-indices 12,13,15,16.
+    let ambiguity = minute_ambiguity([b[2], b[3], b[5], b[6]])
+        .max(minute_ambiguity([b[12], b[13], b[15], b[16]]));
+    Some(AprsPosition { lat, lon, symbol_table, symbol_code, comment, ambiguity })
+}
+
+/// Ambiguity level (0–4) from four minute-digit bytes given MOST-significant
+/// (tens-of-minutes) to LEAST (hundredths-of-minutes). The level is the
+/// significance rank of the most-significant masked (space) digit: a standard
+/// suffix mask yields its exact level, and a malformed non-suffix mask is taken
+/// as the coarser worst case rather than understated.
+fn minute_ambiguity(most_to_least: [u8; 4]) -> u8 {
+    for (i, &c) in most_to_least.iter().enumerate() {
+        if c == b' ' {
+            return (4 - i) as u8; // i=0 (tens') -> 4 … i=3 (hundredths') -> 1
+        }
+    }
+    0
 }
 
 /// `DDMM.mmH` — 8 bytes. Ambiguity spaces are treated as `0` (aprslib).
@@ -128,7 +158,9 @@ fn parse_compressed(b: &[u8]) -> Option<AprsPosition> {
     // not surfaced in this atomic slice.
     let comment = String::from_utf8_lossy(&b[13..]).trim_end().to_string();
     sane(lat, lon)?;
-    Some(AprsPosition { lat, lon, symbol_table, symbol_code, comment })
+    // Base-91 compressed reports carry no position-ambiguity field (always full
+    // precision to ~0.3 m); ambiguity is 0.
+    Some(AprsPosition { lat, lon, symbol_table, symbol_code, comment, ambiguity: 0 })
 }
 
 /// Base-91 decode of a printable APRS field (each byte in `!`..=`{`).
@@ -264,7 +296,7 @@ pub fn parse_mice(dest: &str, info: &[u8]) -> Option<AprsPosition> {
     };
 
     sane(lat, lon)?;
-    Some(AprsPosition { lat, lon, symbol_table, symbol_code, comment })
+    Some(AprsPosition { lat, lon, symbol_table, symbol_code, comment, ambiguity: posamb as u8 })
 }
 
 #[cfg(test)]
@@ -283,6 +315,7 @@ mod tests {
         assert_eq!(p.symbol_table, '/');
         assert_eq!(p.symbol_code, '-');
         assert_eq!(p.comment, "Hello");
+        assert_eq!(p.ambiguity, 0); // full-precision fix
     }
 
     #[test]
@@ -323,6 +356,35 @@ mod tests {
         let p = parse_position(b"!4903.5 N/07201.7 W-").unwrap();
         approx(p.lat, 49.058333); // 03.50'
         approx(p.lon, -72.028333); // 01.70'
+        assert_eq!(p.ambiguity, 1); // one masked minute digit (hundredths)
+    }
+
+    #[test]
+    fn position_ambiguity_level_reported() {
+        // Level 2: both hundredths-of-minute digits masked (DDMM.  ).
+        let p2 = parse_position(b"!4903.  N/07201.  W-").unwrap();
+        assert_eq!(p2.ambiguity, 2);
+        approx(p2.lat, 49.05); // 03.00'
+        // Level 4: all four minute digits masked (DD  .  ).
+        let p4 = parse_position(b"!49  .  N/072  .  W-").unwrap();
+        assert_eq!(p4.ambiguity, 4);
+        approx(p4.lat, 49.0); // 00.00'
+    }
+
+    #[test]
+    fn ambiguity_takes_the_coarser_of_lat_and_lon() {
+        // Latitude exact, longitude masked to level 2 — never claim more
+        // precision than the coarser axis (RF-honesty).
+        let p = parse_position(b"!4903.50N/07201.  W-").unwrap();
+        assert_eq!(p.ambiguity, 2);
+    }
+
+    #[test]
+    fn ambiguity_non_suffix_mask_takes_worst_case() {
+        // Malformed: a space in the tens-of-minutes slot but a digit below it.
+        // Treated as the coarsest (level 4), not understated to level 1.
+        let p = parse_position(b"!49 3.50N/072 1.50W-").unwrap();
+        assert_eq!(p.ambiguity, 4);
     }
 
     #[test]
@@ -333,6 +395,7 @@ mod tests {
         approx(p.lon, -72.75);
         assert_eq!(p.symbol_table, '/');
         assert_eq!(p.symbol_code, '>');
+        assert_eq!(p.ambiguity, 0); // compressed reports carry no ambiguity
     }
 
     #[test]
@@ -368,6 +431,15 @@ mod tests {
         approx(p.lon, -112.147); // -(112 + 8.82/60)
         assert_eq!(p.symbol_code, '>');
         assert_eq!(p.symbol_table, '/');
+        assert_eq!(p.ambiguity, 0); // all-digit dest => no ambiguity
+    }
+
+    #[test]
+    fn mice_ambiguity_from_masked_dest() {
+        // dest with trailing ambiguity chars (K/L/Z => masked) => posamb > 0.
+        // "332UVL": positions 33/2x.xx with the last lat digit masked (L) => amb 1.
+        let p = parse_mice("332UVL", MICE_INFO).unwrap();
+        assert_eq!(p.ambiguity, 1);
     }
 
     #[test]
