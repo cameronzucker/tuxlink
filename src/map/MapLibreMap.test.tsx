@@ -78,6 +78,39 @@ describe('MapLibreMap', () => {
     expect(getByTestId('probe').textContent).toBe('has-map');
   });
 
+  it('clamps the constructor center when initialCenter is outside the world (rwo6)', () => {
+    render(<MapLibreMap initialCenter={{ lat: 95, lon: 250 }} />);
+    const map = getLastMap()!;
+    expect(map.__state.options.center).toEqual([180, 85.0511]);
+  });
+
+  it('clamps the flyTo center when an async initialCenter is outside the world (rwo6)', () => {
+    const { rerender } = render(<MapLibreMap />);
+    const map = getLastMap()!;
+    loadMap(map);
+    rerender(<MapLibreMap initialCenter={{ lat: -95, lon: -250 }} />);
+    expect(map.flyTo).toHaveBeenCalledWith({ center: [-180, -85.0511] });
+  });
+
+  it('re-centers back into the world on moveend when panned into the void (rwo6)', () => {
+    render(<MapLibreMap />);
+    const map = getLastMap()!;
+    loadMap(map);
+    // Pan the center east past the antimeridian (renderWorldCopies=false → gray).
+    map.__setCenter(215, 10);
+    act(() => map.__emit('moveend'));
+    expect(map.setCenter).toHaveBeenCalledWith([180, 10]);
+  });
+
+  it('does NOT re-center on moveend when the center is already in the world (rwo6)', () => {
+    render(<MapLibreMap />);
+    const map = getLastMap()!;
+    loadMap(map);
+    map.__setCenter(-122, 47);
+    act(() => map.__emit('moveend'));
+    expect(map.setCenter).not.toHaveBeenCalled();
+  });
+
   it('flyTo recenters when initialCenter arrives async (was absent at mount)', () => {
     // StationFinderMap case: operator grid resolves after the map mounts.
     const { rerender } = render(<MapLibreMap />);
