@@ -56,16 +56,77 @@ fn uninstall_cleanup_execute(
     crate::uninstall_cleanup::execute_current_user_cleanup(mode)
 }
 
+/// The WebKitGTK GL environment the Linux build requires for the webview — and
+/// especially the maplibre-gl WebGL vector basemap — to render correctly.
+///
+/// On this Pi-class hardware (Mesa V3D + WebKitGTK's ANGLE WebGL) the *hardware*
+/// GL path is non-functional: it reports a bogus "Apple GPU" renderer and a bare
+/// `clear`/`draw` reads back `[0,0,0,0]` with `GL_INVALID_OPERATION`, so the map
+/// canvas paints uninitialized GPU memory ("magenta static") — tuxlink-spo2. The
+/// ndi4 vector-basemap spike + `dev/render-harness` validated rendering under
+/// SOFTWARE GL (llvmpipe), and the baked-dark style was chosen specifically to
+/// fit the software-GL CPU budget (spike: 45 fps). `WEBKIT_DISABLE_DMABUF_RENDERER`
+/// separately fixes a first-frame whole-webview static (tuxlink-wfw).
+///
+/// All must be set BEFORE the webview initializes — webkit/Mesa read them at
+/// web-context / GL-context creation during window setup. Edition 2021 →
+/// `set_var` is safe here.
+#[cfg(target_os = "linux")]
+const LINUX_WEBVIEW_GL_ENV: &[(&str, &str)] = &[
+    ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
+    ("LIBGL_ALWAYS_SOFTWARE", "1"),
+    ("GALLIUM_DRIVER", "llvmpipe"),
+];
+
+/// Apply [`LINUX_WEBVIEW_GL_ENV`] before any webview/GL initialization.
+#[cfg(target_os = "linux")]
+fn apply_linux_webview_gl_env() {
+    for (key, value) in LINUX_WEBVIEW_GL_ENV {
+        std::env::set_var(key, value);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_gl_env_tests {
+    use super::LINUX_WEBVIEW_GL_ENV;
+
+    fn value_of(key: &str) -> Option<&'static str> {
+        LINUX_WEBVIEW_GL_ENV
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, v)| *v)
+    }
+
+    /// Regression guard (tuxlink-spo2): the software-GL vars were never baked into
+    /// the shipped build, leaving the maplibre WebGL map on this Pi's broken
+    /// hardware GL path → magenta static. WEBKIT_DISABLE_DMABUF_RENDERER alone (the
+    /// only var that shipped) does NOT fix it. All three must be present.
+    #[test]
+    fn requires_software_gl_and_dmabuf_disable() {
+        assert_eq!(
+            value_of("WEBKIT_DISABLE_DMABUF_RENDERER"),
+            Some("1"),
+            "DMA-BUF renderer must be disabled (tuxlink-wfw first-frame static)"
+        );
+        assert_eq!(
+            value_of("LIBGL_ALWAYS_SOFTWARE"),
+            Some("1"),
+            "WebGL must use software GL — hardware V3D/ANGLE is broken on Pi (tuxlink-spo2)"
+        );
+        assert_eq!(
+            value_of("GALLIUM_DRIVER"),
+            Some("llvmpipe"),
+            "Gallium must select the llvmpipe software rasterizer (tuxlink-spo2)"
+        );
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // tuxlink-wfw: on Linux/GTK the webkit2gtk DMA-BUF renderer (Mesa V3D on
-    // Pi-class hardware) paints uninitialized GPU memory on first frame —
-    // the window shows "TV static" until the first repaint. Disabling the
-    // DMA-BUF renderer path fixes it with no discernible regression. Set
-    // before the webview initializes (webkit reads this env var at web-context
-    // creation, during window setup). Edition 2021 → set_var is safe.
+    // Force the working WebKitGTK GL environment before the webview inits.
+    // tuxlink-spo2 (software GL) + tuxlink-wfw (DMA-BUF disable). See the const.
     #[cfg(target_os = "linux")]
-    std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    apply_linux_webview_gl_env();
 
     // Task 5 (tuxlink-686): build the PositionArbiter before the Builder so
     // the `let` binding stays alive for Task 11's gpsd clone.
