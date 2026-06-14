@@ -1109,6 +1109,7 @@ pub fn run() {
             crate::logging::commands::logging_env_probes_snapshot,
             crate::logging::commands::logging_env_probes_rerun,
             crate::logging::commands::emit_first_paint_complete,   // Amendment E.7.7
+            crate::logging::commands::log_frontend_error,          // tuxlink-4b96 — webview errors → logs
             crate::logging::commands::report_issue_flow,           // Task 8 — Report Issue
             // tuxlink-hnkn P2 Task 4: FormDraftLibrary — save/reuse named form slots.
             crate::ui_commands::form_draft_library_list,

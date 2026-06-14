@@ -2,6 +2,12 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { applyColorScheme, loadColorScheme } from "./shell/colorScheme";
+import { installGlobalErrorForwarding } from "./frontendErrorLog";
+
+// Forward uncaught errors + unhandled rejections (outside any React boundary)
+// into the structured log so a webview crash is diagnosable from the robust logs
+// (tuxlink-4b96). Install before React mounts so an error during bootstrap is caught.
+installGlobalErrorForwarding();
 
 // Apply the persisted color scheme before React mounts. tuxlink-k0q3 added an
 // inline boot script in index.html that does this synchronously in the HTML
