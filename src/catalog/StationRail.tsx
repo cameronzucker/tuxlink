@@ -85,7 +85,8 @@ export function StationRail(props: StationRailProps) {
           <span className="station-finder__call">{station.baseCallsign}</span>
           <span className="station-finder__badges">
             {station.modes.map((m) => (
-              <span key={m} className={`station-finder__mb station-finder__mb--${m}`}>
+              <span key={m} className="station-finder__mb">
+                <span className={`station-finder__sw station-finder__sw--${m}`} />
                 {MODE_LABEL[m] ?? m}
               </span>
             ))}

@@ -45,7 +45,7 @@ export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) 
       </label>
 
       <label className="station-finder__antenna-field">
-        <span className="station-finder__antenna-lab">Height</span>
+        <span className="station-finder__antenna-lab">Height m</span>
         <input
           className="station-finder__antenna-num"
           data-testid="antenna-height-input"
@@ -118,7 +118,7 @@ export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) 
       </label>
 
       <label className="station-finder__antenna-field">
-        <span className="station-finder__antenna-lab">TX power</span>
+        <span className="station-finder__antenna-lab">TX W</span>
         <input
           className="station-finder__antenna-num"
           data-testid="tx-power-input"
