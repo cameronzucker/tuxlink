@@ -86,6 +86,33 @@ fn apply_linux_webview_gl_env() {
     }
 }
 
+/// Extract a human-readable message from a panic payload (tuxlink-ebyt). Panics
+/// carry `&str` (the common `panic!("msg")` / `unwrap`/`expect` case) or `String`;
+/// anything else is reported generically rather than lost. Used by the panic hook
+/// that forwards panics into the structured log.
+fn panic_payload_string(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "<non-string panic payload>".to_string())
+}
+
+#[cfg(test)]
+mod panic_payload_tests {
+    use super::panic_payload_string;
+
+    #[test]
+    fn extracts_str_and_string_payloads_else_generic() {
+        // &str payload (panic!("…"), unwrap/expect).
+        assert_eq!(panic_payload_string(&"boom"), "boom");
+        // String payload (panic!("{}", x)).
+        assert_eq!(panic_payload_string(&String::from("dynamic boom")), "dynamic boom");
+        // Non-string payload → generic, not lost.
+        assert_eq!(panic_payload_string(&42_i32), "<non-string panic payload>");
+    }
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod linux_gl_env_tests {
     use super::LINUX_WEBVIEW_GL_ENV;
@@ -510,6 +537,32 @@ pub fn run() {
                         // No probe runner in degraded mode (no LoggingHandle to pass).
                     }
                 }
+
+                // tuxlink-ebyt: route panics (command / thread / async-task) into
+                // the structured log. Without this a backend panic crashes with
+                // NOTHING in the robust logs — the worst + most invisible failure
+                // class. Installed AFTER logging::init so `tracing::error!` reaches
+                // the FanoutLayer; chains the previous hook so the default stderr
+                // backtrace is preserved.
+                let previous_hook = std::panic::take_hook();
+                std::panic::set_hook(Box::new(move |info| {
+                    let location = info
+                        .location()
+                        .map(|l| format!("{}:{}", l.file(), l.line()))
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let payload = panic_payload_string(info.payload());
+                    let thread = std::thread::current()
+                        .name()
+                        .unwrap_or("<unnamed>")
+                        .to_string();
+                    tracing::error!(
+                        target: "tuxlink::panic",
+                        location = %location,
+                        thread = %thread,
+                        "panic: {payload}",
+                    );
+                    previous_hook(info);
+                }));
             }
 
             // Install system tray icon + menu (tuxlink-rit / Task 8).
