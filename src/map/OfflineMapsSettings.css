@@ -126,3 +126,65 @@
   font-size: 0.85rem;
   color: var(--tux-danger, #d9534f);
 }
+
+/* Inline download progress row. */
+.tux-offlinemaps-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--tux-border, rgba(128, 128, 128, 0.4));
+  border-radius: 6px;
+}
+
+.tux-offlinemaps-progress-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tux-offlinemaps-progress-bar {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 0.5rem;
+  accent-color: var(--tux-accent, #4a90d9);
+}
+
+.tux-offlinemaps-progress-pct {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  min-width: 2.5rem;
+  text-align: right;
+}
+
+.tux-offlinemaps-progress-cancel,
+.tux-offlinemaps-progress-retry {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--tux-border, rgba(128, 128, 128, 0.4));
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.tux-offlinemaps-progress-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  opacity: 0.8;
+}
+
+.tux-offlinemaps-progress-failed {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.tux-offlinemaps-progress-error {
+  flex: 1 1 auto;
+  font-size: 0.85rem;
+  color: var(--tux-danger, #d9534f);
+}

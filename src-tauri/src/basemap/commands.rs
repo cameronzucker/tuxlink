@@ -12,11 +12,14 @@
 //! and `dest` an app-controlled path — so a hostile manifest cannot inject an
 //! arg, flag, or SSRF target.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use super::download::{self, DownloadError, Extractor, PackRequest};
 use super::packs::{self, Bbox, InstalledPack};
@@ -31,6 +34,38 @@ const MANIFEST_URL: &str =
 /// `--maxzoom` for every on-demand pack (z0–14, D1). App constant — never from
 /// the manifest, so it can't be turned into an oversized extract.
 const PACK_MAXZOOM: u8 = 14;
+
+/// How often the sidecar poll loop wakes to check cancel + sample the temp size.
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Progress-event emission throttle: at most one `basemap:download-progress` per
+/// this window (the poll loop samples more often than the UI needs to repaint).
+const EMIT_THROTTLE: Duration = Duration::from_millis(400);
+
+/// Event channels for the pack-download progress UI (see `useDownloadProgress.ts`).
+const PROGRESS_EVENT: &str = "basemap:download-progress";
+const DONE_EVENT: &str = "basemap:download-done";
+
+/// `basemap:download-progress` payload: live byte count + the expected total so
+/// the UI can render a determinate bar, rate, and ETA. serde camelCase to match
+/// the TS `DownloadProgress` type.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgress {
+    pack_id: String,
+    bytes: u64,
+    total: u64,
+}
+
+/// `basemap:download-done` payload: terminal signal so the UI clears the bar even
+/// on failure/cancel (the command Result alone wouldn't reach a listener-based UI).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadDone {
+    pack_id: String,
+    ok: bool,
+    error: Option<String>,
+}
 
 /// Free-space safety margin over the manifest's `typical_bytes` estimate, and the
 /// validation size budget multiplier (a real extract can exceed the estimate; the
@@ -50,6 +85,12 @@ pub struct BasemapState {
     /// lost update would leave a completed pack's archive unreferenced → the
     /// startup orphan-sweep would silently delete the just-downloaded pack.
     pub install_lock: Mutex<()>,
+    /// Per-download cancel flags keyed by pack id. `basemap_download_pack` inserts
+    /// a fresh `false` flag before extract and removes it after (success/err/
+    /// cancel); `basemap_cancel_download` flips the flag so the in-flight extract's
+    /// poll loop stops + kills the sidecar. Atomic install already guarantees a
+    /// cancelled download leaves no installed pack (only the `.part`, swept).
+    pub download_cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl BasemapState {
@@ -58,6 +99,7 @@ impl BasemapState {
             manifest: RwLock::new(RegionManifest::bundled_default()),
             packs_dir,
             install_lock: Mutex::new(()),
+            download_cancels: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -74,26 +116,76 @@ impl Extractor for SidecarExtractor {
         bbox: &Bbox,
         maxzoom: u8,
         dest: &Path,
+        cancel: &Arc<AtomicBool>,
+        on_progress: &dyn Fn(u64),
     ) -> Result<(), DownloadError> {
+        use std::process::{Command, Stdio};
+
         // No shell — argv tokens are passed directly to execvp. planet_url/bbox
-        // are pre-validated; maxzoom/dest are app-controlled.
-        let output = std::process::Command::new(&self.bin)
+        // are pre-validated; maxzoom/dest are app-controlled. We `.spawn()` (not
+        // `.output()`) so the loop below can poll the cancel flag + the temp's
+        // size for progress. stdout/stderr are captured only for the error
+        // message on a non-zero exit — progress comes from polling `dest` size,
+        // never from parsing sidecar output (robust + sidecar-agnostic).
+        let mut child = Command::new(&self.bin)
             .arg("extract")
             .arg(planet_url)
             .arg(dest)
             .arg(format!("--maxzoom={maxzoom}"))
             .arg(format!("--bbox={}", bbox.to_arg()))
-            .output()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|e| DownloadError::ExtractFailed(format!("spawn go-pmtiles: {e}")))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DownloadError::ExtractFailed(format!(
-                "go-pmtiles exit {:?}: {}",
-                output.status.code(),
-                stderr.trim()
-            )));
+
+        // Drain stderr on a thread so a chatty sidecar can't deadlock on a full
+        // pipe while we poll; joined after exit for the error message.
+        let stderr_handle = child.stderr.take().map(|mut s| {
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut buf = String::new();
+                let _ = s.read_to_string(&mut buf);
+                buf
+            })
+        });
+
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(DownloadError::Cancelled);
+            }
+            // Poll the temp size for the progress bar. A missing/locked file early
+            // on just yields 0 — not an error.
+            let written = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+            on_progress(written);
+
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    // Final size sample before reporting completion.
+                    let written = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(written);
+                    on_progress(written);
+                    if status.success() {
+                        return Ok(());
+                    }
+                    let stderr = stderr_handle
+                        .and_then(|h| h.join().ok())
+                        .unwrap_or_default();
+                    return Err(DownloadError::ExtractFailed(format!(
+                        "go-pmtiles exit {:?}: {}",
+                        status.code(),
+                        stderr.trim()
+                    )));
+                }
+                Ok(None) => std::thread::sleep(POLL_INTERVAL),
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(DownloadError::ExtractFailed(format!("wait go-pmtiles: {e}")));
+                }
+            }
         }
-        Ok(())
     }
 }
 
@@ -194,6 +286,7 @@ pub fn basemap_list_packs(state: State<'_, Arc<BasemapState>>) -> PacksList {
 /// commands off the main thread, so this does not stall the UI thread.
 #[tauri::command]
 pub fn basemap_download_pack(
+    app: AppHandle,
     registry: State<'_, Arc<PmtilesRegistry>>,
     state: State<'_, Arc<BasemapState>>,
     args: DownloadArgs,
@@ -204,17 +297,112 @@ pub fn basemap_download_pack(
         bin: resolve_sidecar(),
     };
     let available = available_bytes(&state.packs_dir);
+
+    // Register a fresh cancel flag for this pack so `basemap_cancel_download` can
+    // stop the in-flight extract. Removed below regardless of outcome. Reject a
+    // duplicate in-flight download for the same id: overwriting the flag would
+    // orphan the running sidecar's Arc, making the original uncancellable (Codex
+    // review 2026-06-13, P2 — defense-in-depth; the UI also disables this).
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut cancels = state
+            .download_cancels
+            .lock()
+            .expect("download_cancels lock poisoned");
+        if cancels.contains_key(&req.id) {
+            return Err(format!(
+                "a download for {} is already in progress",
+                req.id
+            ));
+        }
+        cancels.insert(req.id.clone(), cancel.clone());
+    }
+
+    // Throttled progress emitter: the poll loop samples every POLL_INTERVAL, but
+    // the UI only needs ~1 repaint per EMIT_THROTTLE. `total` is the manifest's
+    // typical_bytes estimate (the bar denominator).
+    let pack_id = req.id.clone();
+    let total = req.typical_bytes;
+    let progress_app = app.clone();
+    let last_emit = Mutex::new(None::<Instant>);
+    let on_progress = move |bytes: u64| {
+        let mut last = last_emit.lock().expect("last_emit lock poisoned");
+        if download::should_emit(*last, Instant::now(), EMIT_THROTTLE) {
+            *last = Some(Instant::now());
+            let _ = progress_app.emit(
+                PROGRESS_EVENT,
+                &DownloadProgress {
+                    pack_id: pack_id.clone(),
+                    bytes,
+                    total,
+                },
+            );
+        }
+    };
+
     // Serialize the install (free-space + extract + validate + atomic install +
     // manifest RMW) against any concurrent download/delete so the packs-manifest
     // read-modify-write can't lose an update (which would orphan a completed pack).
-    let _install = state.install_lock.lock().expect("install lock poisoned");
-    let entry = download::install_pack(&extractor, &state.packs_dir, available, &req)
-        .map_err(|e| e.to_string())?;
-    // Register so the new pack is served immediately (no restart needed).
-    registry
-        .register_path(&entry.id, &download::pack_path(&state.packs_dir, &entry.id))
-        .map_err(|e| format!("register pack: {e}"))?;
-    Ok(entry)
+    let result = {
+        let _install = state.install_lock.lock().expect("install lock poisoned");
+        download::install_pack(&extractor, &state.packs_dir, available, &req, &cancel, &on_progress)
+    };
+
+    // Drop this download's cancel flag (success/err/cancel all land here).
+    state
+        .download_cancels
+        .lock()
+        .expect("download_cancels lock poisoned")
+        .remove(&req.id);
+
+    match result {
+        Ok(entry) => {
+            // Register so the new pack is served immediately (no restart needed).
+            let reg = registry
+                .register_path(&entry.id, &download::pack_path(&state.packs_dir, &entry.id))
+                .map_err(|e| format!("register pack: {e}"));
+            match reg {
+                Ok(_) => {
+                    let _ = app.emit(
+                        DONE_EVENT,
+                        &DownloadDone { pack_id: req.id.clone(), ok: true, error: None },
+                    );
+                    Ok(entry)
+                }
+                Err(e) => {
+                    let _ = app.emit(
+                        DONE_EVENT,
+                        &DownloadDone { pack_id: req.id.clone(), ok: false, error: Some(e.clone()) },
+                    );
+                    Err(e)
+                }
+            }
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = app.emit(
+                DONE_EVENT,
+                &DownloadDone { pack_id: req.id.clone(), ok: false, error: Some(msg.clone()) },
+            );
+            Err(msg)
+        }
+    }
+}
+
+/// Cancel an in-flight pack download. Sets the cancel flag for `pack_id`; the
+/// running extract's poll loop sees it, kills the sidecar, and unwinds with
+/// `Cancelled` (the atomic-install cleanup guard removes the `.part`, so no
+/// installed pack persists). A no-op if no download for that id is in flight.
+#[tauri::command]
+pub fn basemap_cancel_download(state: State<'_, Arc<BasemapState>>, pack_id: String) {
+    if let Some(flag) = state
+        .download_cancels
+        .lock()
+        .expect("download_cancels lock poisoned")
+        .get(&pack_id)
+    {
+        flag.store(true, Ordering::SeqCst);
+    }
 }
 
 /// Delete a pack: archive + manifest entry + registry. Returns true if present.
@@ -250,6 +438,7 @@ fn build_request(manifest: &RegionManifest, args: &DownloadArgs) -> Result<PackR
                 bbox,
                 maxzoom: PACK_MAXZOOM,
                 source_build: manifest.planet_build.clone(),
+                typical_bytes: tier.typical_bytes,
                 needed_bytes: tier.typical_bytes.saturating_mul(NEEDED_MARGIN_NUM) / NEEDED_MARGIN_DEN,
                 size_budget: tier.typical_bytes.saturating_mul(BUDGET_MULT),
                 installed_at: now,
@@ -272,6 +461,7 @@ fn build_request(manifest: &RegionManifest, args: &DownloadArgs) -> Result<PackR
                 bbox,
                 maxzoom: PACK_MAXZOOM,
                 source_build: manifest.planet_build.clone(),
+                typical_bytes: c.typical_bytes,
                 needed_bytes: c.typical_bytes.saturating_mul(NEEDED_MARGIN_NUM) / NEEDED_MARGIN_DEN,
                 size_budget: c.typical_bytes.saturating_mul(BUDGET_MULT),
                 installed_at: now,

@@ -859,6 +859,7 @@ pub fn run() {
             crate::basemap::commands::basemap_refresh_manifest,
             crate::basemap::commands::basemap_list_packs,
             crate::basemap::commands::basemap_download_pack,
+            crate::basemap::commands::basemap_cancel_download,
             crate::basemap::commands::basemap_delete_pack,
             // Main-UI cluster commands. Task 12 (tuxlink-zsm) created
             // `mailbox_list`; Tasks 13/14/16 appended their command fns to
