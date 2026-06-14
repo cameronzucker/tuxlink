@@ -107,6 +107,15 @@ describe('AprsConnectStrip', () => {
     expect(screen.getByTestId('modem-link-section')).toBeInTheDocument();
   });
 
+  it('locks link edits while listening: the setup toggle is disabled and the picker is hidden', () => {
+    // Codex adrev P1: changing the transport/radio under a live listener would
+    // leave the engine on the old link / orphan a UV-Pro session. Disconnect first.
+    renderStrip({ listening: true, linkKind: 'UvproNative', radioLabel: 'UV-Pro AA:BB' });
+    expect(screen.getByTestId('aprs-connect-setup-toggle')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('aprs-connect-setup-toggle'));
+    expect(screen.queryByTestId('modem-link-section')).not.toBeInTheDocument();
+  });
+
   it('persists a link selection via onLinkChange', () => {
     const onLinkChange = vi.fn();
     renderStrip({ linkKind: null, radioLabel: null, onLinkChange });

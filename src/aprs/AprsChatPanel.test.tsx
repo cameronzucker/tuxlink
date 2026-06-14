@@ -2,10 +2,9 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 import { AprsChatPanel, formatTime, parseCompose } from './AprsChatPanel';
-import type { ChannelMessage, HeardStation } from './aprsTypes';
+import type { ChannelMessage } from './aprsTypes';
 
 const noMessages: ChannelMessage[] = [];
-const noStations: HeardStation[] = [];
 const send = vi.fn().mockResolvedValue('A1');
 const getConfig = vi.fn().mockResolvedValue({ sourceSsid: 9, tocall: 'APZTUX', path: 'WIDE1-1,WIDE2-1' });
 const setConfig = vi.fn().mockResolvedValue(undefined);
@@ -14,8 +13,6 @@ function renderPanel(over: Partial<Parameters<typeof AprsChatPanel>[0]> = {}) {
   return render(
     <AprsChatPanel
       messages={noMessages}
-      heardStations={noStations}
-      listening={false}
       send={send}
       getConfig={getConfig}
       setConfig={setConfig}
@@ -29,8 +26,22 @@ describe('parseCompose (inline addressing)', () => {
     expect(parseCompose('W1AW: hello there')).toEqual({ recipient: 'W1AW', body: 'hello there' });
   });
 
-  it('treats a leading callsign + whitespace as a directed addressee', () => {
-    expect(parseCompose('W1AW hello there')).toEqual({ recipient: 'W1AW', body: 'hello there' });
+  it('requires a colon: a leading callsign WITHOUT a colon is a broadcast', () => {
+    // Codex adrev P1: a whitespace-only delimiter silently mis-addressed
+    // ordinary text. Broadcast-by-default; no colon ⇒ no directed send.
+    expect(parseCompose('W1AW hello there')).toEqual({
+      recipient: null,
+      body: 'W1AW hello there',
+    });
+  });
+
+  it('does NOT mis-address ordinary text whose first word is callsign-shaped', () => {
+    // "K9S are on site" / "B2B test" parse as broadcasts, not directed sends.
+    expect(parseCompose('K9S are on site')).toEqual({
+      recipient: null,
+      body: 'K9S are on site',
+    });
+    expect(parseCompose('B2B test')).toEqual({ recipient: null, body: 'B2B test' });
   });
 
   it('parses a callsign with an SSID suffix', () => {

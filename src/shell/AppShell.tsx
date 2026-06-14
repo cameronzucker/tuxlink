@@ -177,6 +177,7 @@ import { UvproControlStrip } from '../uvpro/UvproControlStrip';
 // ALL transports (the fresh-install path the in-panel toggle couldn't satisfy).
 import { AprsConnectStrip } from '../aprs/AprsConnectStrip';
 import type { ModemLinkFields } from '../radio/sections/ModemLinkSection';
+import type { PacketLinkKind } from '../packet/packetTypes';
 const ArdopRadioPanel = lazy(loadArdopRadioPanel);
 const VaraRadioPanel = lazy(loadVaraRadioPanel);
 const SearchDropdown = lazy(() =>
@@ -566,24 +567,54 @@ export function AppShell() {
         return null;
     }
   })();
-  const onAprsConnect = useCallback(async () => {
-    if (aprsLinkKind === 'UvproNative') {
-      // Ride the native session: connect it first (rejects propagate), then arm
-      // the listener. Don't arm a listener with no underlying link.
-      await invoke('uvpro_connect', {});
-    }
-    await invoke('aprs_listen_start');
-  }, [aprsLinkKind]);
-  const onAprsDisconnect = useCallback(async () => {
-    await invoke('aprs_listen_stop');
-    if (aprsLinkKind === 'UvproNative') {
-      await invoke('uvpro_disconnect');
-    }
-  }, [aprsLinkKind]);
+  // The most-recent link-persist promise. onAprsConnect awaits it before
+  // aprs_listen_start so the backend reads the JUST-PERSISTED link, not a stale
+  // one (Codex adrev 2026-06-14 P1 race: setLink's packet_config_set is async).
+  const aprsLinkPersist = useRef<Promise<void>>(Promise.resolve());
+  // The transport the LIVE listener actually came up on (set on a successful
+  // connect, cleared on disconnect). Teardown keys off THIS, not the editable
+  // aprsLinkKind — otherwise changing the picker while listening would skip the
+  // UV-Pro session cleanup (Codex adrev 2026-06-14 P1). null = not listening.
+  const aprsActiveTransport = useRef<PacketLinkKind | null>(null);
   const onAprsLinkChange = useCallback(
-    (fields: ModemLinkFields) => packetConfig.setLink(fields),
+    (fields: ModemLinkFields) => {
+      aprsLinkPersist.current = packetConfig.setLink(fields);
+    },
     [packetConfig],
   );
+  const onAprsConnect = useCallback(async () => {
+    // Wait for the picked link to actually persist before arming.
+    await aprsLinkPersist.current;
+    if (aprsLinkKind === 'UvproNative') {
+      // Ride the native session: connect it first (rejects propagate), then arm
+      // the listener. If arming fails (e.g. no active identity), roll the
+      // session back so a failed connect never leaves the UV-Pro connected.
+      await invoke('uvpro_connect', {});
+      try {
+        await invoke('aprs_listen_start');
+      } catch (err) {
+        await invoke('uvpro_disconnect').catch(() => undefined);
+        throw err;
+      }
+    } else {
+      await invoke('aprs_listen_start');
+    }
+    // Record the transport the listener actually came up on for teardown.
+    aprsActiveTransport.current = aprsLinkKind;
+  }, [aprsLinkKind]);
+  const onAprsDisconnect = useCallback(async () => {
+    const active = aprsActiveTransport.current;
+    try {
+      await invoke('aprs_listen_stop');
+    } finally {
+      // Clean up the UV-Pro session even if stopping the engine threw — keyed to
+      // the transport that was actually live, not the (possibly edited) picker.
+      if (active === 'UvproNative') {
+        await invoke('uvpro_disconnect').catch(() => undefined);
+      }
+      aprsActiveTransport.current = null;
+    }
+  }, []);
 
   // Phase 7 (tuxlink-noa0): identity list + active session + switch mutation for
   // the dashboard's inline IdentitySwitcher. The list/active queries feed the
@@ -1461,8 +1492,6 @@ export function AppShell() {
                 <Suspense fallback={null}>
                   <AprsChatPanel
                     messages={aprs.messages}
-                    heardStations={aprs.heardStations}
-                    listening={aprs.listening}
                     send={aprs.send}
                     getConfig={aprs.getConfig}
                     setConfig={aprs.setConfig}

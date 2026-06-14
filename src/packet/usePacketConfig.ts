@@ -39,8 +39,14 @@ export interface UsePacketConfig {
    *  unloaded — we cannot merge into a DTO we never read. Mirrors setSsid:
    *  optimistic local update + same-window CustomEvent broadcast + persist via
    *  packet_config_set. Persisting is what makes `config.linkKind` exist on a
-   *  fresh install. */
-  setLink: (fields: ModemLinkFields) => void;
+   *  fresh install.
+   *
+   *  RETURNS the persist promise (resolves once packet_config_set settles; never
+   *  rejects) so the connect flow can AWAIT it before arming the listener —
+   *  aprs_listen_start reads the PERSISTED backend config, not JS state, so
+   *  connecting before the write lands would read a stale/absent link (Codex
+   *  adrev 2026-06-14 P1 race). */
+  setLink: (fields: ModemLinkFields) => Promise<void>;
 }
 
 /**
@@ -123,8 +129,8 @@ export function usePacketConfig(): UsePacketConfig {
   );
 
   const setLink = useCallback(
-    (fields: ModemLinkFields) => {
-      if (!config) return;
+    (fields: ModemLinkFields): Promise<void> => {
+      if (!config) return Promise.resolve();
       // Merge the link field set into the persisted DTO. The ModemLinkFields
       // subset (linkKind + per-transport address fields) overrides; every other
       // AX.25 / SSID field is preserved.
@@ -136,9 +142,12 @@ export function usePacketConfig(): UsePacketConfig {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: next }));
       }
-      void invoke('packet_config_set', { dto: next }).catch(() => {
-        /* persist errors surface via the session log */
-      });
+      // Return the persist promise so the connect flow can await it (P1 race);
+      // swallow the error so awaiting never throws (persist errors surface via
+      // the session log).
+      return invoke('packet_config_set', { dto: next })
+        .then(() => undefined)
+        .catch(() => undefined);
     },
     [config],
   );

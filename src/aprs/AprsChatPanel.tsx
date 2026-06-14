@@ -3,17 +3,20 @@
 // APRS tactical-chat inline surface — the OPEN CHANNEL model. The visible
 // product, in ONE narrow column that fits the ~400px radio dock:
 //
-//   header   — title + listening state + a quiet open-channel honesty cue
+//   header   — title + a quiet open-channel honesty cue (connection state lives
+//              in the dock-header AprsConnectStrip, not here)
 //   feed     — one flat, time-ordered list of every message heard on the
 //              channel plus our own sends (`from → to`, or `→ all` for a
-//              broadcast), with honest delivery states on our directed sends
-//   composer — a COMPACT recipient control (type a callsign OR pick from the
-//              heard-stations dropdown; empty ⇒ broadcast), a message input,
-//              Send, and a compact editable digipeater Path field
+//              broadcast), with honest delivery states on our directed sends.
+//              Tapping an inbound row seeds a reply (mechanic B).
+//   composer — ONE compose field with inline addressing (`W1AW: msg` directs;
+//              otherwise broadcast), a live `→ target` indicator, Send, and a
+//              compact editable digipeater Path field
 //
 // APRS is a party line, not a private chat: there is NO per-callsign thread
-// list, NO conversations roster, NO side column. The heard-stations list is a
-// dropdown on the recipient field, not a visible column.
+// list, NO conversations roster, NO side column, and NO separate recipient
+// field. Directed addressing is a leading `CALL:` token in the one compose
+// field; tapping a heard station's feed row seeds that token.
 //
 // Inline only — NO pop-up windows (hard project rule). The surface is a single
 // narrow column constrained to the dock width; it does not require or add side
@@ -27,14 +30,15 @@
 // send is caught here and surfaced as an inline notice with NO message.
 //
 // Connection is NOT in this panel (settled design): the operator connects from
-// the compact AprsConnectStrip in the dock header. This panel is chat-only — it
-// accepts `listening` as backend truth (used elsewhere) but hosts no Start/Stop
-// control.
+// the compact AprsConnectStrip in the dock header. This panel is chat-only and
+// hosts no Start/Stop control.
 //
 // Addressing is INLINE in the single compose field (settled: no separate "To:"
 // field). Two mechanics:
-//   A) A leading callsign token — `W1AW: msg` or `W1AW msg` — directs the
-//      message to that callsign; no recognizable token ⇒ broadcast.
+//   A) A leading callsign token followed by a COLON — `W1AW: msg` — directs the
+//      message; no `CALL:` token ⇒ broadcast (the colon is required so ordinary
+//      text whose first word is callsign-shaped is never an accidental directed
+//      send — Codex adrev 2026-06-14 P1).
 //   B) Tapping an inbound feed row seeds the compose field with `<CALL>: `.
 // `parseCompose` is the single pure source of truth for the parse.
 
@@ -44,7 +48,6 @@ import type {
   AprsConfigDto,
   ChannelMessage,
   DeliveryState,
-  HeardStation,
 } from './aprsTypes';
 import './AprsChatPanel.css';
 
@@ -54,22 +57,31 @@ const APRS_TEXT_MAX = 67;
 
 /// Amateur-callsign shape for the inline-addressing leading token: 1-2
 /// letters/digits, a digit, 1-3 letters, an optional `-SSID` suffix (1-2
-/// alphanumerics). Anchored to the start; the token must be followed by `:` or
-/// whitespace for the remainder to count as the body. Case-insensitive; the
-/// recipient is normalized to uppercase by `parseCompose`.
-const CALLSIGN_TOKEN = /^([A-Za-z0-9]{1,2}[0-9][A-Za-z]{1,3}(?:-[A-Za-z0-9]{1,2})?)(?::|\s)/;
+/// alphanumerics). Anchored to the start; an EXPLICIT COLON delimiter is
+/// REQUIRED for the leading token to count as an addressee. Case-insensitive;
+/// the recipient is normalized to uppercase by `parseCompose`.
+///
+/// The colon is mandatory (Codex adrev 2026-06-14, P1): a whitespace-only
+/// delimiter mis-addressed ordinary text whose first word happened to be
+/// callsign-shaped — `K9S are on site`, `B2B test` — silently turning a
+/// broadcast into a directed send. APRS is broadcast-by-default, so any
+/// ambiguity MUST fall to broadcast, never to an accidental directed
+/// transmission. Tap-to-reply seeds `CALL: ` (colon form), so the two
+/// addressing paths agree.
+const CALLSIGN_TOKEN = /^([A-Za-z0-9]{1,2}[0-9][A-Za-z]{1,3}(?:-[A-Za-z0-9]{1,2})?):/;
 
 /// Parse the addressee out of the single compose field. A leading callsign token
-/// followed by `:` or whitespace directs the message to that callsign (body =
-/// the remainder, trimmed of the separator); anything else is a broadcast
-/// (recipient null, body = the whole input verbatim). Exported for unit testing
-/// and reuse by the live target indicator.
+/// immediately followed by a colon (`W1AW: msg`) directs the message to that
+/// callsign (body = the remainder, left-trimmed); anything else — INCLUDING a
+/// callsign-shaped word with no colon — is a BROADCAST (recipient null, body =
+/// the whole input verbatim). Exported for unit testing and the live target
+/// indicator.
 export function parseCompose(input: string): { recipient: string | null; body: string } {
   const lead = input.replace(/^\s+/, '');
   const m = CALLSIGN_TOKEN.exec(lead);
   if (m) {
     const recipient = m[1].toUpperCase();
-    // Body is everything after the matched token + its separator, left-trimmed.
+    // Body is everything after the matched `CALL:` token, left-trimmed.
     const body = lead.slice(m[0].length).replace(/^\s+/, '');
     return { recipient, body };
   }
@@ -189,14 +201,6 @@ export interface AprsChatPanelProps {
   /// The open channel — one flat, time-ordered feed (owned by AppShell's lifted
   /// useAprsChat).
   messages: ChannelMessage[];
-  /// Stations heard on the channel, most-recent-first. Retained on the props
-  /// for callers (AppShell) and possible future affordances; inline addressing
-  /// no longer renders a recipient dropdown from it.
-  heardStations?: HeardStation[];
-  /// Whether the backend listener is armed (mirrors the backend). The connect
-  /// control lives in the dock-header AprsConnectStrip, not this panel; the
-  /// panel accepts the flag for callers' convenience but renders no toggle.
-  listening?: boolean;
   /// Send `text` to `recipient` (null/empty ⇒ broadcast); resolves with the
   /// backend tracking id (rejects → no message appended).
   send: (recipient: string | null, text: string) => Promise<string>;

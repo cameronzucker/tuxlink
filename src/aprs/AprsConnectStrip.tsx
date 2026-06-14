@@ -173,15 +173,21 @@ export function AprsConnectStrip({
           type="button"
           className={`aprs-connect-caret ${setupOpen ? 'aprs-connect-caret-open' : ''}`}
           data-testid="aprs-connect-setup-toggle"
-          aria-expanded={setupOpen}
+          aria-expanded={setupOpen && !listening}
           aria-label="Transport and radio setup"
+          // No link edits while listening: changing the transport/radio under a
+          // live listener would leave the engine on the OLD link (and could
+          // orphan a UV-Pro session). Disconnect first to re-pick (Codex adrev
+          // 2026-06-14 P1).
+          disabled={listening}
+          title={listening ? 'Disconnect to change transport or radio' : undefined}
           onClick={() => setSetupOpen((v) => !v)}
         >
           ⚙
         </button>
       </div>
 
-      {setupOpen && (
+      {setupOpen && !listening && (
         <div className="aprs-connect-setup" data-testid="aprs-connect-setup">
           <ModemLinkSection
             kind={pickerKind(linkKind)}

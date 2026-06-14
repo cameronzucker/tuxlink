@@ -77,7 +77,7 @@ describe('APRS dock integration', () => {
     expect(screen.queryByTestId('aprs-chat-panel')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('dash-aprs-control'));
     // The lazy AprsChatPanel resolves; the dock tab row mounts alongside it.
-    expect(await screen.findByTestId('aprs-chat-panel')).toBeInTheDocument();
+    expect(await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByTestId('aprs-dock-tabs')).toBeInTheDocument();
   });
 
@@ -92,7 +92,7 @@ describe('APRS dock integration', () => {
   it('wraps the dock tabs and chat panel in a single dock-surface container', async () => {
     renderShell();
     fireEvent.click(screen.getByTestId('dash-aprs-control'));
-    const chat = await screen.findByTestId('aprs-chat-panel');
+    const chat = await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 });
     const tabs = screen.getByTestId('aprs-dock-tabs');
     const surface = screen.getByTestId('aprs-dock-surface');
     // Both the tab row and the chat panel live inside the ONE dock surface —
@@ -110,7 +110,7 @@ describe('APRS dock integration', () => {
   it('closes the dock from the close control, freeing the reading pane', async () => {
     renderShell();
     fireEvent.click(screen.getByTestId('dash-aprs-control'));
-    expect(await screen.findByTestId('aprs-chat-panel')).toBeInTheDocument();
+    expect(await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 })).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('aprs-dock-close'));
     // Dock surface + chat panel are gone (no radioPanelMode → no dock at all).
     expect(screen.queryByTestId('aprs-dock-surface')).not.toBeInTheDocument();

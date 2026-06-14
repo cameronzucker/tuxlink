@@ -144,4 +144,42 @@ describe('usePacketConfig', () => {
     });
     expect(core.invoke).not.toHaveBeenCalled();
   });
+
+  it('setLink returns an awaitable promise that resolves once the persist settles', async () => {
+    // The connect flow awaits this before aprs_listen_start so the backend reads
+    // the just-persisted link, not a stale one (Codex adrev 2026-06-14 P1 race).
+    const { result } = renderHook(() => usePacketConfig());
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    let p!: Promise<void>;
+    act(() => {
+      p = result.current.setLink({
+        linkKind: 'Tcp',
+        tcpHost: '1.2.3.4',
+        tcpPort: 8001,
+        serialDevice: null,
+        serialBaud: null,
+        btMac: null,
+      });
+    });
+    await expect(p).resolves.toBeUndefined();
+  });
+
+  it('setLink (unloaded config) still returns a resolved promise, not undefined', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'packet_config_get') throw new Error('NotConfigured');
+      return undefined;
+    });
+    const { result } = renderHook(() => usePacketConfig());
+    await new Promise((r) => setTimeout(r, 10));
+    const p = result.current.setLink({
+      linkKind: 'Tcp',
+      tcpHost: '1.2.3.4',
+      tcpPort: 8001,
+      serialDevice: null,
+      serialBaud: null,
+      btMac: null,
+    });
+    await expect(p).resolves.toBeUndefined();
+  });
 });
