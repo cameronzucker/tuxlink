@@ -212,7 +212,9 @@ mod tests {
         let m = RegionManifest::bundled_default();
         assert_eq!(m.schema, MANIFEST_SCHEMA);
         assert_eq!(m.planet_build, "20260608");
-        assert_eq!(m.pmtiles_schema.vector_layers.len(), 13);
+        // tuxlink-4o9r: the pinned planet build emits 9 vector_layers (not the
+        // obsolete 13); matches REQUIRED_LAYER_IDS + the @protomaps/basemaps@5 style.
+        assert_eq!(m.pmtiles_schema.vector_layers.len(), 9);
         assert!(!m.tiers.is_empty());
         assert!(!m.continents.is_empty());
     }

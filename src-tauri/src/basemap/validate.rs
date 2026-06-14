@@ -9,15 +9,16 @@
 //!   file (catches truncated downloads);
 //! - `tile_type == 1` (MVT) — a raster PMTiles is the wrong artifact for a vector
 //!   basemap;
-//! - the metadata `vector_layers` set is a SUPERSET of the 13 ids the Protomaps
-//!   schema this app's styles target use (plan A10 — pinned against the real
-//!   pack's metadata, not hand-maintained prose);
+//! - the metadata `vector_layers` set is a SUPERSET of the 9 ids the Protomaps
+//!   schema this app's styles target use (pinned against the real pack's
+//!   metadata, not hand-maintained prose);
 //! - a size budget (defence against an over-large download).
 //!
-//! The 13-id set + schema-version key were extracted from the real Protomaps
-//! planet build (`version: "3.7.1"`, `planetiler:version` present). Phase 4 pins
-//! ONE planet-build hash for the bundle AND every catalog pack so schemas can't
-//! diverge (plan A10); this validator is the runtime gate that enforces the id set.
+//! The 9-id set + schema-version key were extracted from the real Protomaps
+//! planet build (`version: "3.7.1"`, `planetiler:version` present) and equal the
+//! `source-layer` ids `@protomaps/basemaps@5` references (tuxlink-4o9r). Phase 4
+//! pins ONE planet-build hash for the bundle AND every catalog pack so schemas
+//! can't diverge; this validator is the runtime gate that enforces the id set.
 
 use std::io::Read;
 
@@ -43,21 +44,25 @@ const COMPRESSION_GZIP: u8 = 2;
 const MAX_METADATA_DECOMPRESSED_BYTES: u64 = 16 * 1024 * 1024;
 
 /// The Protomaps basemaps vector-layer ids this app's light/dark styles render.
-/// Locked against the real planet-build metadata (plan A10); a pack missing any
-/// of these would leave style layers unpainted, so it is rejected.
-pub const REQUIRED_LAYER_IDS: [&str; 13] = [
+/// A pack missing any of these would leave style layers unpainted, so it is rejected.
+///
+/// GROUND TRUTH (tuxlink-4o9r): this is the EXACT set of `source-layer` ids the
+/// pinned `@protomaps/basemaps@5` style references, which equals the `vector_layers`
+/// the pinned planet build (`build.protomaps.com/20260608`) actually emits — verified
+/// against the bundled `world-z0-6.pmtiles` metadata. The earlier 13-id list (plan
+/// A10's "13-id v4 schema") was wrong: `natural`, `physical_line`, `physical_point`,
+/// and `transit` are NOT separate vector_layers in this build and are referenced by
+/// nothing in the style, so requiring them rejected every legitimately-extracted
+/// region pack (the bundled world dodged it because bundled packs skip validation).
+pub const REQUIRED_LAYER_IDS: [&str; 9] = [
     "boundaries",
     "buildings",
     "earth",
     "landcover",
     "landuse",
-    "natural",
-    "physical_line",
-    "physical_point",
     "places",
     "pois",
     "roads",
-    "transit",
     "water",
 ];
 
@@ -263,7 +268,7 @@ pub(crate) mod testutil {
     use std::io::Write;
 
     /// Builder for synthetic PMTiles archives used across the basemap tests.
-    /// Defaults produce a well-formed Protomaps-vector archive with all 13 ids.
+    /// Defaults produce a well-formed Protomaps-vector archive with all 9 ids.
     pub struct TestPmtiles {
         pub magic: [u8; 7],
         pub version: u8,
@@ -397,7 +402,32 @@ mod tests {
         assert_eq!(v.planetiler_version.as_deref(), Some("0.8-SNAPSHOT"));
         assert_eq!(v.min_zoom, 0);
         assert_eq!(v.max_zoom, 6);
-        assert_eq!(v.layer_ids.len(), 13);
+        assert_eq!(v.layer_ids.len(), 9);
+    }
+
+    #[test]
+    fn required_layers_match_real_protomaps5_schema_not_obsolete_13() {
+        // tuxlink-4o9r regression guard: REQUIRED_LAYER_IDS must equal the 9
+        // `source-layer` ids @protomaps/basemaps@5 references == the `vector_layers`
+        // the pinned planet build emits (verified vs the bundled world-z0-6.pmtiles).
+        // The obsolete 13-id list required four layers that exist nowhere in the
+        // pipeline, so it rejected every legitimately-extracted region pack.
+        // (The other tests can't catch this: their synthetic archives derive their
+        // layers FROM this constant, so a wrong constant validates against itself.)
+        assert_eq!(REQUIRED_LAYER_IDS.len(), 9);
+        for phantom in ["natural", "physical_line", "physical_point", "transit"] {
+            assert!(
+                !REQUIRED_LAYER_IDS.contains(&phantom),
+                "phantom layer still required (not in the Protomaps build schema): {phantom}",
+            );
+        }
+        let expected = [
+            "boundaries", "buildings", "earth", "landcover", "landuse", "places", "pois",
+            "roads", "water",
+        ];
+        for id in expected {
+            assert!(REQUIRED_LAYER_IDS.contains(&id), "missing real schema layer: {id}");
+        }
     }
 
     #[test]
