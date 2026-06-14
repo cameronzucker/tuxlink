@@ -1,26 +1,134 @@
 /* SettingsPanel — inline (in-webview) overlay for GPS/privacy settings (tuxlink-39b).
    Uses theme tokens so it follows the active color scheme (default/night/grayscale). */
 
-.tux-settings-backdrop {
+.tux-settings-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.55);
 }
 
-.tux-settings-panel {
-  width: min(520px, calc(100vw - 48px));
-  max-height: calc(100vh - 96px);
-  overflow-y: auto;
+/* Sized like Find a Station (station-finder): a roomy centered surface that uses
+   the screen — NOT a thin column, and NO nested windows (tuxlink-b95x). */
+.tux-settings-window {
+  width: min(1180px, 96vw);
+  height: min(820px, 92vh);
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
   font-family: var(--sans);
   color: var(--text);
+  overflow: hidden;
+}
+
+/* Body: section nav (left) + inline content pane (right). */
+.tux-settings-cols {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.tux-settings-nav {
+  width: 210px;
+  flex: none;
+  border-right: 1px solid var(--border);
+  padding: 10px 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tux-settings-navgroup-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 12px 10px 4px;
+}
+.tux-settings-navgroup:first-child .tux-settings-navgroup-label {
+  margin-top: 4px;
+}
+.tux-settings-navitem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 13px;
+  cursor: pointer;
+}
+.tux-settings-navitem:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.tux-settings-navitem.is-active {
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+.tux-settings-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+.tux-settings-formblock {
+  max-width: 560px;
+}
+
+/* Location & GPS renders INLINE in the pane as a two-pane map+rail (no popup).
+   The shared GpsSourcePicker draws .gps-picker__map + .gps-picker__controls;
+   here they sit side-by-side and the map gets real height. */
+.tux-settings-pane--location {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+}
+.tux-settings-pane--location .location-settings {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+.tux-settings-pane--location .gps-picker {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr);
+  gap: 18px;
+  align-items: stretch;
+  min-height: 0;
+  padding: 16px 20px;
+}
+.tux-settings-pane--location .gps-picker__map {
+  height: 100%;
+  min-height: 0;
+  margin-bottom: 0;
+}
+.tux-settings-pane--location .location-map {
+  height: 100%;
+}
+.tux-settings-pane--location .gps-picker__controls {
+  min-width: 0;
+  overflow-y: auto;
+}
+@media (max-width: 820px) {
+  .tux-settings-pane--location .gps-picker {
+    grid-template-columns: 1fr;
+  }
+  .tux-settings-pane--location .gps-picker__map {
+    height: 300px;
+  }
 }
 
 .tux-settings-header {
@@ -242,25 +350,3 @@
   }
 }
 
-/* Location & GPS opens a dedicated wide panel (tuxlink-2sl6); the section here is
-   a compact summary + entry button, not the crammed inline map. */
-.tux-settings-section-blurb {
-  margin: 0 0 10px;
-  color: var(--text-dim, #9fb6cc);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-.tux-settings-open-btn {
-  padding: 8px 14px;
-  background: var(--accent-soft, rgba(74, 163, 223, 0.12));
-  color: var(--accent, #4aa3df);
-  border: 1px solid var(--accent, #4aa3df);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-}
-.tux-settings-open-btn:hover {
-  background: var(--accent, #4aa3df);
-  color: #fff;
-}

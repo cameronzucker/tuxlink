@@ -1,21 +1,20 @@
 /**
- * SettingsPanel — inline (in-webview) Settings overlay for the GPS privacy
- * controls (tuxlink-39b). NOT a separate OS window (operator pet-peeve: no
- * window clutter; Compose is the lone window exception).
+ * SettingsPanel — inline (in-webview) Settings overlay (tuxlink-39b, redesigned
+ * tuxlink-b95x). NOT a separate OS window, and NO nested windows: one roomy
+ * surface sized like Find a Station (width min(1180px,96vw), max-height 92vh)
+ * with a section nav on the left and an INLINE content pane on the right. Each
+ * section renders in the pane; nothing pops a second window (the operator's WLE
+ * pet-peeve: no window clutter; Compose is the lone window exception).
  *
- * Closes the gap found in the post-merge smoke of #113: gps_state +
- * position_precision were ENFORCED but unreachable — the Tools→Settings menu
- * items were dead no-op stubs and no backend setter existed. This panel reads
- * the live config (config_read) and writes via config_set_privacy.
- *
- * Opened by AppShell from the three Tools→Settings GPS/privacy menu items
- * (see dispatchMenuAction `openSettings`).
+ * Opened by AppShell from the Tools→Settings menu items (dispatchMenuAction
+ * `openSettings`). GPS state + precision persist via config_set_privacy; the
+ * Location & GPS pane renders the shared GpsSourcePicker inline.
  */
 
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GpsState, PositionPrecision } from './useStatus';
-import { LocationSettingsPanel } from '../location/LocationSettingsPanel';
+import { LocationSettingsPane } from '../location/LocationSettingsPane';
 import { AprsSettings } from '../aprs/AprsSettings';
 import { FormSequenceSettings } from '../forms/FormSequenceSettings';
 import { OfflineMapsSettings } from '../map/OfflineMapsSettings';
@@ -56,24 +55,47 @@ const PRECISION_OPTIONS: { value: PositionPrecision; label: string; help: string
 interface SettingsView {
   gps_state: GpsState;
   position_precision: PositionPrecision;
-  /** tuxlink-bsiy: opt-in Review-Pending-Messages preference; default false. */
   review_inbound_before_download: boolean;
 }
+
+type SectionId = 'identities' | 'location' | 'gpsstate' | 'aprs' | 'forms' | 'maps';
+
+const NAV: { group: string; items: { id: SectionId; label: string }[] }[] = [
+  {
+    group: 'Profile',
+    items: [
+      { id: 'identities', label: 'Identities' },
+      { id: 'location', label: 'Location & GPS' },
+      { id: 'gpsstate', label: 'GPS state & privacy' },
+    ],
+  },
+  {
+    group: 'On air',
+    items: [
+      { id: 'aprs', label: 'APRS tactical chat' },
+      { id: 'forms', label: 'Form sequence numbers' },
+    ],
+  },
+  {
+    group: 'App',
+    items: [{ id: 'maps', label: 'Offline maps' }],
+  },
+];
 
 export interface SettingsPanelProps {
   open: boolean;
   onClose: () => void;
+  /** Optional initial section (defaults to Location & GPS). */
+  initialSection?: SectionId;
 }
 
-export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
+export function SettingsPanel({ open, onClose, initialSection = 'location' }: SettingsPanelProps) {
+  const [active, setActive] = useState<SectionId>(initialSection);
   const [gpsState, setGpsState] = useState<GpsState | null>(null);
   const [precision, setPrecision] = useState<PositionPrecision | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Location & GPS opens its own dedicated wide two-pane panel (tuxlink-2sl6) —
-  // a map feature doesn't belong crammed into this stacked settings column.
-  const [locationOpen, setLocationOpen] = useState(false);
 
-  // Load the current values each time the panel opens (live config, not cached).
+  // Load gps_state/precision each time the panel opens (live config, not cached).
   useEffect(() => {
     if (!open) return;
     let mounted = true;
@@ -92,7 +114,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
     };
   }, [open]);
 
-  // Esc closes (matches the click-away/Esc affordances elsewhere in the chrome).
+  // Esc closes.
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
@@ -104,8 +126,6 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
 
   if (!open) return null;
 
-  // Persist both fields together (config_set_privacy takes the full privacy
-  // state). Optimistically reflect the choice; surface a failure inline.
   async function persist(next: { gpsState: GpsState; precision: PositionPrecision }) {
     setGpsState(next.gpsState);
     setPrecision(next.precision);
@@ -120,11 +140,12 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
     }
   }
 
+  const sectionTitle = NAV.flatMap((g) => g.items).find((i) => i.id === active)?.label ?? '';
+
   return (
-    <>
-    <div className="tux-settings-backdrop" data-testid="settings-backdrop" onClick={onClose}>
+    <div className="tux-settings-overlay" data-testid="settings-backdrop" onClick={onClose}>
       <div
-        className="tux-settings-panel"
+        className="tux-settings-window"
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
@@ -144,91 +165,92 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
           </button>
         </div>
 
-        {error && (
-          <div className="tux-settings-error" role="alert">
-            {error}
-          </div>
-        )}
+        <div className="tux-settings-cols">
+          <nav className="tux-settings-nav" aria-label="Settings sections">
+            {NAV.map((g) => (
+              <div key={g.group} className="tux-settings-navgroup">
+                <div className="tux-settings-navgroup-label">{g.group}</div>
+                {g.items.map((i) => (
+                  <button
+                    key={i.id}
+                    type="button"
+                    className={`tux-settings-navitem${active === i.id ? ' is-active' : ''}`}
+                    data-testid={`settings-nav-${i.id}`}
+                    aria-current={active === i.id ? 'page' : undefined}
+                    onClick={() => setActive(i.id)}
+                  >
+                    {i.label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </nav>
 
-        <fieldset className="tux-settings-group">
-          <legend>Identities</legend>
-          <IdentitiesSettings />
-        </fieldset>
-
-        <fieldset className="tux-settings-group">
-          <legend>Location &amp; GPS source</legend>
-          <p className="tux-settings-section-blurb">
-            Set where your station is — confirm or drag your position on the map, detect a GPS
-            source, troubleshoot Linux GPS, or enter your grid by hand.
-          </p>
-          <button
-            type="button"
-            className="tux-settings-open-btn"
-            data-testid="open-location-settings"
-            onClick={() => setLocationOpen(true)}
+          <section
+            className={`tux-settings-pane tux-settings-pane--${active}`}
+            data-testid={`settings-pane-${active}`}
+            aria-label={sectionTitle}
           >
-            Open Location &amp; GPS setup →
-          </button>
-        </fieldset>
+            {error && (
+              <div className="tux-settings-error" role="alert">
+                {error}
+              </div>
+            )}
 
-        <fieldset className="tux-settings-group">
-          <legend>GPS state</legend>
-          {GPS_STATE_OPTIONS.map((o) => (
-            <label key={o.value} className="tux-settings-opt">
-              <input
-                type="radio"
-                name="gps-state"
-                value={o.value}
-                checked={gpsState === o.value}
-                onChange={() => precision && persist({ gpsState: o.value, precision })}
-              />
-              <span className="tux-settings-opt-text">
-                <span className="tux-settings-opt-label">{o.label}</span>
-                <span className="tux-settings-opt-help">{o.help}</span>
-              </span>
-            </label>
-          ))}
-        </fieldset>
+            {active === 'identities' && <IdentitiesSettings />}
 
-        <fieldset className="tux-settings-group">
-          <legend>Broadcast precision</legend>
-          {PRECISION_OPTIONS.map((o) => (
-            <label key={o.value} className="tux-settings-opt">
-              <input
-                type="radio"
-                name="precision"
-                value={o.value}
-                checked={precision === o.value}
-                onChange={() => gpsState && persist({ gpsState, precision: o.value })}
-              />
-              <span className="tux-settings-opt-text">
-                <span className="tux-settings-opt-label">{o.label}</span>
-                <span className="tux-settings-opt-help">{o.help}</span>
-              </span>
-            </label>
-          ))}
-        </fieldset>
+            {active === 'location' && <LocationSettingsPane />}
 
-        {/* tuxlink-2f2n Task 14: APRS station identity (source SSID / path /
-            tocall), persisted via aprs_config_set. */}
-        <fieldset className="tux-settings-group">
-          <legend>APRS tactical chat</legend>
-          <AprsSettings />
-        </fieldset>
+            {active === 'gpsstate' && (
+              <div className="tux-settings-formblock">
+                <fieldset className="tux-settings-group">
+                  <legend>GPS state</legend>
+                  {GPS_STATE_OPTIONS.map((o) => (
+                    <label key={o.value} className="tux-settings-opt">
+                      <input
+                        type="radio"
+                        name="gps-state"
+                        value={o.value}
+                        checked={gpsState === o.value}
+                        onChange={() => precision && persist({ gpsState: o.value, precision })}
+                      />
+                      <span className="tux-settings-opt-text">
+                        <span className="tux-settings-opt-label">{o.label}</span>
+                        <span className="tux-settings-opt-help">{o.help}</span>
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
 
-        <fieldset className="tux-settings-group">
-          <legend>Form sequence numbers</legend>
-          <FormSequenceSettings />
-        </fieldset>
+                <fieldset className="tux-settings-group">
+                  <legend>Broadcast precision</legend>
+                  {PRECISION_OPTIONS.map((o) => (
+                    <label key={o.value} className="tux-settings-opt">
+                      <input
+                        type="radio"
+                        name="precision"
+                        value={o.value}
+                        checked={precision === o.value}
+                        onChange={() => gpsState && persist({ gpsState, precision: o.value })}
+                      />
+                      <span className="tux-settings-opt-text">
+                        <span className="tux-settings-opt-label">{o.label}</span>
+                        <span className="tux-settings-opt-help">{o.help}</span>
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+              </div>
+            )}
 
-        {/* tuxlink-ndi4 (phase 4): offline region-pack manager. */}
-        <fieldset className="tux-settings-group">
-          <legend>Offline maps</legend>
-          <OfflineMapsSettings />
-        </fieldset>
+            {active === 'aprs' && <AprsSettings />}
+
+            {active === 'forms' && <FormSequenceSettings />}
+
+            {active === 'maps' && <OfflineMapsSettings />}
+          </section>
+        </div>
       </div>
     </div>
-    <LocationSettingsPanel open={locationOpen} onClose={() => setLocationOpen(false)} />
-    </>
   );
 }
