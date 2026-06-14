@@ -1,0 +1,128 @@
+/* LocationSettingsPanel (tuxlink-2sl6) — dedicated wide two-pane Location & GPS
+   modal. Bounded + centered (NOT stretched full-width); map hero on the left,
+   controls rail on the right; nothing clips, no endless scroll. */
+
+.tux-location-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 8, 12, 0.6);
+}
+
+.tux-location-modal {
+  width: min(960px, calc(100vw - 48px));
+  height: min(600px, calc(100vh - 64px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface, #0e1822);
+  border: 1px solid var(--border-strong, #293d50);
+  border-radius: 12px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  font-family: var(--sans);
+  color: var(--text, #cdd9e6);
+  overflow: hidden;
+}
+
+.tux-location-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--border-soft, #26384a);
+  flex: none;
+}
+.tux-location-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text, #eaf2fb);
+}
+.tux-location-close {
+  background: transparent;
+  border: none;
+  color: var(--dim, #6f8398);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 8px;
+}
+.tux-location-close:hover {
+  color: var(--text, #eaf2fb);
+}
+
+.tux-location-error {
+  margin: 0;
+  padding: 8px 18px;
+  color: var(--reach-bad, #e0606a);
+  font-size: 12px;
+}
+
+/* Body fills the remaining height so the map can fill its pane. */
+.tux-location-body {
+  flex: 1;
+  min-height: 0;
+  padding: 16px 18px;
+  overflow: hidden;
+}
+
+.tux-location-foot {
+  flex: none;
+  border-top: 1px solid var(--border-soft, #26384a);
+  padding: 11px 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+.tux-location-done {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent, #2f6fd0);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* ── Two-pane: map hero (left) + controls rail (right) ─────────────────────
+   The embedded GpsSourcePicker renders .gps-picker__map + .gps-picker__controls;
+   here they sit side-by-side and fill the modal body height. */
+.tux-location-modal .gps-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr);
+  gap: 18px;
+  align-items: stretch;
+  height: 100%;
+  min-height: 0;
+}
+.tux-location-modal .gps-picker__map {
+  height: 100%;
+  min-height: 0;
+  margin-bottom: 0;
+}
+.tux-location-modal .location-map {
+  height: 100%;
+}
+.tux-location-modal .gps-picker__controls {
+  min-width: 0;
+  overflow-y: auto;
+  max-height: 100%;
+  padding-right: 2px;
+}
+
+/* Stack on narrow viewports so the rail never gets crushed. */
+@media (max-width: 760px) {
+  .tux-location-modal {
+    height: min(92vh, 760px);
+  }
+  .tux-location-modal .gps-picker {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  .tux-location-modal .gps-picker__map {
+    height: 300px;
+  }
+}
