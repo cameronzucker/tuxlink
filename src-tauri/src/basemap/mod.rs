@@ -38,12 +38,20 @@ use std::sync::{Arc, RwLock};
 /// is correct — NOT `application/x-protobuf` (that is the *decoded* tile payload).
 pub const PMTILES_CONTENT_TYPE: &str = "application/octet-stream";
 
-/// Cache directive for PMTiles range responses (B4, tuxlink-vnk7). An archive's
-/// bytes are immutable for the session — the ETag is length-derived — so the
+/// Archive id of the bundled, app-shipped world overview (`pmtiles://tile://pmtiles/world`).
+/// This archive is immutable by construction — it ships inside the app bundle and
+/// only changes with an app upgrade (a new asset). It is the ONLY archive eligible
+/// for the `immutable` cache directive; region packs are mutable (Codex P1, B4).
+pub const BUNDLED_OVERVIEW_ARCHIVE_ID: &str = "world";
+
+/// Cache directive for the BUNDLED overview's PMTiles range responses (B4,
+/// tuxlink-vnk7). Its bytes never change for an installed app version, so the
 /// webview / `pmtiles` JS client may cache directory + leaf ranges indefinitely
 /// instead of refetching the SAME bytes on every tile resolution during pan/zoom
 /// (each refetch is a webview→wry→spawn_blocking→pread round trip contending with
 /// the software-GL rasterizer). `immutable` tells the cache never to revalidate.
+/// NOT applied to region packs — they share a stable URL but are replaceable, so
+/// `immutable` could serve stale ranges after a same-id re-download (Codex P1).
 pub const PMTILES_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 
 /// A single PMTiles archive opened once and read concurrently via `pread`.
