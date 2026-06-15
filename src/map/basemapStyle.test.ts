@@ -83,6 +83,30 @@ describe('buildBasemapStyle (dark, L2 baked)', () => {
   });
 });
 
+describe('buildBasemapStyle (dark) memoization (B3, tuxlink-vnk7)', () => {
+  it('returns the SAME baked base layer array across no-pack calls (bake once per flavor)', () => {
+    const a = buildBasemapStyle('dark');
+    const b = buildBasemapStyle('dark');
+    // The overview (non-pack) layers must be the identical cached array reference,
+    // proving bakeDarkColors ran once for the base, not on every call.
+    expect(a.layers).toBe(b.layers);
+  });
+  it('light path is also memoized (same base array reference across no-pack calls)', () => {
+    const a = buildBasemapStyle('light');
+    const b = buildBasemapStyle('light');
+    expect(a.layers).toBe(b.layers);
+  });
+  it('dark still differs from light per-color after memoization', () => {
+    const dark = buildBasemapStyle('dark');
+    const light = buildBasemapStyle('light');
+    const bg = (s: typeof dark) =>
+      (s.layers.find((x) => x.type === 'background') as { paint?: Record<string, unknown> }).paint?.[
+        'background-color'
+      ];
+    expect(bg(dark)).not.toBe(bg(light));
+  });
+});
+
 describe('buildBasemapStyle — absolute URL hardening for opaque origins (tuxlink-1tai)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();

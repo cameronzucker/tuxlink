@@ -3,7 +3,9 @@
  *
  * Dark mode is a GL-native inverted style, NOT a runtime CSS filter (the R4 spike
  * measured the CSS filter at ~15fps vs ~45fps for the baked style on the Pi's
- * WebKitGTK path). Each style color is transformed once at build time:
+ * WebKitGTK path). Each style color is transformed by this module and the result
+ * is memoized once per flavor by `basemapStyle.baseLayers` (B3 — the transform is
+ * multi-hundred-ms on the Pi, so it must not re-run per style build):
  *
  *   invert(1) → W3C hue-rotate(180°) → brightness(1.33)
  *

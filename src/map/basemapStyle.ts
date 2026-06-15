@@ -2,9 +2,9 @@
  * MapLibre basemap style builder (tuxlink-ndi4, plan phase 2 / L1).
  *
  * Assembles a MapLibre GL v8 style from @protomaps/basemaps' light flavor over
- * the bundled PMTiles vector source. The dark flavor (a build-time-baked,
- * GL-native inverted style — plan L2) is added in phase 3; this is the light
- * path that the renderer swap renders first.
+ * the bundled PMTiles vector source. The dark flavor (a GL-native inverted style
+ * — plan L2) bakes colors via darkStyle; the per-flavor base layer array is
+ * memoized (baked once, not per build — B3, tuxlink-vnk7).
  *
  * Serving (fully offline, no cross-service dependency):
  *  - vector tiles: `pmtiles://tile://pmtiles/world` — the `pmtiles` JS protocol
@@ -108,13 +108,28 @@ function packUrl(id: string): string {
  * (This favors the required behavior over A11's literal "disjoint bands", which
  * would blank the viewport above z6 outside any pack.)
  */
+/**
+ * Module-level memo of the per-flavor base (world-overview) layer array. The
+ * `@protomaps/basemaps` `layers()` generator + `bakeDarkColors` are pure for a
+ * fixed (source, flavor), so compute once and reuse by reference — the dark
+ * transform deep-copies + recurses every `*-color` and is multi-hundred-ms on
+ * the Pi's software-GL CPU budget (B3, tuxlink-vnk7). Callers MUST NOT mutate the
+ * returned array; `buildBasemapStyle` copies it before appending pack layers.
+ */
+const baseLayerCache = new Map<BasemapFlavor, ReturnType<typeof layers>>();
+function baseLayers(flavor: BasemapFlavor): ReturnType<typeof layers> {
+  const hit = baseLayerCache.get(flavor);
+  if (hit) return hit;
+  const built = layers(BASEMAP_SOURCE_ID, tuxlinkFlavor(), { lang: 'en' });
+  const baked = flavor === 'dark' ? bakeDarkColors(built) : built;
+  baseLayerCache.set(flavor, baked);
+  return baked;
+}
+
 export function buildBasemapStyle(
   flavor: BasemapFlavor,
   packs: PackSource[] = [],
 ): StyleSpecification {
-  const bake = (ls: ReturnType<typeof layers>) =>
-    flavor === 'dark' ? bakeDarkColors(ls) : ls;
-
   const sources: StyleSpecification['sources'] = {
     [BASEMAP_SOURCE_ID]: {
       type: 'vector',
@@ -123,8 +138,10 @@ export function buildBasemapStyle(
     },
   };
 
-  // World overview layers (unclamped — overzoom past z6 = never blank).
-  const styleLayers = bake(layers(BASEMAP_SOURCE_ID, tuxlinkFlavor(), { lang: 'en' }));
+  // World overview layers (memoized per flavor; baked once — B3). Overzoom past
+  // z6 = never blank. Copy only when packs are appended so the cache stays pure.
+  const base = baseLayers(flavor);
+  const styleLayers = packs.length === 0 ? base : [...base];
 
   // Composite each installed pack as a second source, layers clamped to z6+ and
   // appended (drawn on top of the overview within the pack's coverage).
@@ -143,7 +160,8 @@ export function buildBasemapStyle(
       url: packUrl(pack.id),
       attribution: OSM_ATTRIBUTION,
     };
-    const packLayers = bake(layers(sid, tuxlinkFlavor(), { lang: 'en' }))
+    const packBuilt = layers(sid, tuxlinkFlavor(), { lang: 'en' });
+    const packLayers = (flavor === 'dark' ? bakeDarkColors(packBuilt) : packBuilt)
       .filter((layer) => layer.type !== 'background')
       .map((layer) => ({
         ...layer,
