@@ -240,9 +240,8 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
           onSearchChange={setSearch}
           onRefresh={() => stations.fetch(FILTER_MODES as ListingMode[])}
           refreshing={stations.loading}
+          filterExtra={<ServiceCodesField onApplied={() => stations.fetch(FILTER_MODES as ListingMode[])} />}
         />
-
-        <ServiceCodesField onApplied={() => stations.fetch(FILTER_MODES as ListingMode[])} />
 
         {prefs && (
           <AntennaControl prefs={prefs} onChange={handlePrefsChange} error={prefsError} />

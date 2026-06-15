@@ -87,6 +87,7 @@ export function ServiceCodesField({ onApplied }: ServiceCodesFieldProps) {
         autoCapitalize="off"
         autoCorrect="off"
         aria-label="Station-listing service codes"
+        title="Most stations use PUBLIC. MARS/SHARES members: enter the code your group provides."
         onChange={(e) => setDraft(e.target.value)}
       />
       {PUBLIC_PRESETS.map((code) => (
@@ -114,9 +115,6 @@ export function ServiceCodesField({ onApplied }: ServiceCodesFieldProps) {
           {error}
         </span>
       )}
-      <p className="station-finder__svc-hint">
-        Most stations use PUBLIC. MARS/SHARES members: enter the code your group provides.
-      </p>
     </div>
   );
 }

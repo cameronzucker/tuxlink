@@ -3,6 +3,7 @@
 // prediction (F12); SFI/K-index are shown only when a value is supplied — never
 // fabricated (amateur-radio-reliability discipline: display only what we have).
 
+import type { ReactNode } from 'react';
 import { HF_BANDS, bandLabel, type Band } from './bandPlan';
 
 export type FilterMode = 'vara-hf' | 'ardop-hf' | 'packet';
@@ -41,6 +42,10 @@ export interface StationFinderControlsProps {
   onSearchChange: (q: string) => void;
   onRefresh: () => void;
   refreshing: boolean;
+  /** Extra controls rendered inline in the Search row (the service-code field +
+   *  presets + Apply), so they share the filter line instead of a row of their
+   *  own (tuxlink-obpa compaction). */
+  filterExtra?: ReactNode;
 }
 
 /** Radius options (miles) for the search-radius selector; null = All. */
@@ -149,6 +154,7 @@ export function StationFinderControls(props: StationFinderControlsProps) {
       </div>
 
       <div className="station-finder__filterbar">
+        <span className="station-finder__grouplab">Search</span>
         <input
           type="search"
           className="station-finder__search"
@@ -176,6 +182,7 @@ export function StationFinderControls(props: StationFinderControlsProps) {
         {!props.hasOperatorGrid && (
           <span className="station-finder__stale">set your location (status bar) for distance + bearing</span>
         )}
+        {props.filterExtra}
       </div>
     </div>
   );
