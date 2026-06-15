@@ -103,7 +103,7 @@ tar = "0.4"
 dirs = "5"
 hex = "0.4"
 strip-ansi-escapes = "0.2"
-toml = "0.8"               # Task 6.1 settings persistence
+toml = "1.1"               # Task 6.1 settings persistence
 urlencoding = "2"          # Task 8.1 GitHub URL body encoding
 # uuid and chrono features merged into existing entries above (v4+v7+serde, clock+serde).
 # regex + once_cell were added on main as part of tuxlink-7do4 (Codex BLOCKER #1
