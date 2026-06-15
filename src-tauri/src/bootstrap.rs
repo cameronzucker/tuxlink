@@ -426,9 +426,9 @@ pub(crate) fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: 
     // (`mailbox/<FULL>/`) — matching where `migrate_legacy_layout` re-homes mail.
     // `None` (no identity yet, fresh install) leaves the mailbox un-defaulted
     // (resolves `_default`).
-    let sole_full = crate::identity::IdentityStore::load(&crate::config::identity_store_path())
-        .ok()
-        .and_then(|s| s.full().first().map(|f| f.callsign.clone()));
+    // tuxlink-nx3g: EXACTLY one FULL (not `.first()`), so a multi-FULL store does
+    // not silently default to / auto-auth / self-heal one arbitrary identity.
+    let sole_full = exactly_one_full(&crate::config::identity_store_path());
 
     let mut backend = NativeBackend::with_progress(cfg, mbox_dir, progress)
         .with_wire_log(wire)
@@ -456,7 +456,7 @@ pub(crate) fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: 
         match resolve_auto_identity(&svc, full, |c| {
             crate::winlink::credentials::read_password(c).ok()
         }) {
-            Some(session) => {
+            AutoAuth::Authenticated(session) => {
                 backend.set_active_identity(session);
                 tracing::info!(
                     target: "tuxlink::bootstrap",
@@ -464,7 +464,41 @@ pub(crate) fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: 
                     "auto-authenticated active identity from stored credential",
                 );
             }
-            None => tracing::warn!(
+            AutoAuth::Healed(session) => {
+                backend.set_active_identity(session);
+                // tuxlink-nx3g: auto-provisioning a credential is VISIBLE, not silent.
+                emit_backend_line(
+                    app_handle,
+                    LogLevel::Warn,
+                    format!(
+                        "Repaired the missing activation secret for {} from your saved \
+                         credentials and unlocked transmit.",
+                        full.as_str()
+                    ),
+                );
+                tracing::warn!(
+                    target: "tuxlink::bootstrap",
+                    callsign = %full.as_str(),
+                    "self-healed missing activation secret from stored CMS credential",
+                );
+            }
+            AutoAuth::HealFailed => {
+                emit_backend_line(
+                    app_handle,
+                    LogLevel::Warn,
+                    format!(
+                        "{} could not be unlocked automatically (activation secret missing \
+                         and not repairable). Unlock it from the callsign menu, or re-run setup.",
+                        full.as_str()
+                    ),
+                );
+                tracing::warn!(
+                    target: "tuxlink::bootstrap",
+                    callsign = %full.as_str(),
+                    "auto-auth self-heal failed (empty stored credential or keyring error)",
+                );
+            }
+            AutoAuth::Unavailable => tracing::warn!(
                 target: "tuxlink::bootstrap",
                 callsign = %full.as_str(),
                 "auto-auth unavailable (no/mismatched stored credential); operator unlocks via the switcher",
@@ -511,15 +545,72 @@ pub(crate) fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: 
 /// so the auto-auth decision is unit-testable headless: inject a memory-keyring
 /// `IdentityService` and a closure for the password read. This is the guardrail
 /// test seam for the transmit-un-brick (tuxlink-6wz3).
+/// Outcome of the launch auto-auth + self-heal attempt (tuxlink-nx3g), so the
+/// caller can emit the right VISIBLE session-log line — auto-provisioning a
+/// credential must not be silent.
+enum AutoAuth {
+    /// Authenticated from an existing activation secret (the normal path).
+    Authenticated(crate::identity::SessionIdentity),
+    /// The activation secret was MISSING and was self-healed from the stored CMS
+    /// password (orphan-v2 un-brick); now authenticated.
+    Healed(crate::identity::SessionIdentity),
+    /// The secret was missing and a heal was attempted but could not complete
+    /// (empty stored credential, or a keyring backend error).
+    HealFailed,
+    /// No usable identity: no stored credential, or a credential mismatch.
+    Unavailable,
+}
+
+impl AutoAuth {
+    fn into_session(self) -> Option<crate::identity::SessionIdentity> {
+        match self {
+            AutoAuth::Authenticated(s) | AutoAuth::Healed(s) => Some(s),
+            AutoAuth::HealFailed | AutoAuth::Unavailable => None,
+        }
+    }
+}
+
 fn resolve_auto_identity(
     svc: &crate::identity::IdentityService,
     full: &crate::identity::Callsign,
     read_pw: impl FnOnce(&str) -> Option<String>,
-) -> Option<crate::identity::SessionIdentity> {
-    let pw = read_pw(full.as_str())?;
-    svc.authenticate(full, &pw)
-        .ok()
-        .map(crate::identity::SessionIdentity::full)
+) -> AutoAuth {
+    let pw = match read_pw(full.as_str()) {
+        Some(pw) => pw,
+        None => return AutoAuth::Unavailable, // no stored CMS credential — nothing to do
+    };
+    match svc.authenticate(full, &pw) {
+        Ok(h) => AutoAuth::Authenticated(crate::identity::SessionIdentity::full(h)),
+        Err(crate::identity::IdentityError::NoSecretSet) => {
+            // Orphan-v2: the activation secret was never written. Heal it from the
+            // TRUSTED stored CMS password (read from the keyring — no user input, so
+            // no bypass), then retry once. `heal_activation_secret` refuses an empty
+            // pw, never overwrites an existing secret, and fails closed on a backend
+            // error (tuxlink-nx3g).
+            match svc.heal_activation_secret(full, &pw) {
+                Ok(true) => match svc.authenticate(full, &pw) {
+                    Ok(h) => AutoAuth::Healed(crate::identity::SessionIdentity::full(h)),
+                    _ => AutoAuth::HealFailed,
+                },
+                _ => AutoAuth::HealFailed, // Ok(false) [empty pw] or Err [backend] — could not heal
+            }
+        }
+        Err(_) => AutoAuth::Unavailable, // CredentialMismatch / Keyring — never auto-heal
+    }
+}
+
+/// The SOLE FULL identity in the store, or `None` if there are zero or MORE than
+/// one (tuxlink-nx3g). A multi-FULL store must not silently default to, auto-auth,
+/// or self-heal one arbitrary FULL — the operator picks via the switcher. (The
+/// prior `.first()` mis-scoped BOTH the mailbox default and the auto-auth.)
+fn exactly_one_full(store_path: &std::path::Path) -> Option<crate::identity::Callsign> {
+    let store = crate::identity::IdentityStore::load(store_path).ok()?;
+    let fulls = store.full();
+    if fulls.len() == 1 {
+        Some(fulls[0].callsign.clone())
+    } else {
+        None
+    }
 }
 
 /// One iteration of the buffer-polling drain: emit every buffered line with
@@ -583,21 +674,79 @@ mod tests {
         svc.set_activation_secret(&call, "secret-pw").unwrap();
 
         // Matching stored credential → active identity established.
-        let session = resolve_auto_identity(&svc, &call, |_| Some("secret-pw".to_string()));
+        let session = resolve_auto_identity(&svc, &call, |_| Some("secret-pw".to_string())).into_session();
         assert!(session.is_some(), "matching credential must auto-authenticate");
         assert_eq!(session.unwrap().mycall().as_str(), "W1ABC");
 
         // Wrong credential → None (no false unlock).
         assert!(
-            resolve_auto_identity(&svc, &call, |_| Some("wrong".to_string())).is_none(),
+            resolve_auto_identity(&svc, &call, |_| Some("wrong".to_string())).into_session().is_none(),
             "a mismatched credential must NOT auto-authenticate"
         );
 
         // No stored credential → None.
         assert!(
-            resolve_auto_identity(&svc, &call, |_| None).is_none(),
+            resolve_auto_identity(&svc, &call, |_| None).into_session().is_none(),
             "absent credential must NOT auto-authenticate"
         );
+    }
+
+    #[test]
+    fn resolve_auto_identity_self_heals_an_orphan_v2_missing_secret() {
+        // tuxlink-nx3g: orphan-v2 — a stored CMS password but NO activation secret.
+        // Auto-auth must heal the secret from the CMS password and authenticate.
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+        let call = crate::identity::Callsign::parse("W1ABC").unwrap();
+        // No set_activation_secret -> authenticate would be NoSecretSet.
+        let outcome = resolve_auto_identity(&svc, &call, |_| Some("cms-pw".to_string()));
+        assert!(matches!(outcome, AutoAuth::Healed(_)), "missing secret must self-heal");
+        // The secret is now provisioned: a second launch authenticates normally.
+        assert!(matches!(
+            resolve_auto_identity(&svc, &call, |_| Some("cms-pw".to_string())),
+            AutoAuth::Authenticated(_)
+        ), "after heal, the next launch authenticates from the now-present secret");
+    }
+
+    #[test]
+    fn resolve_auto_identity_does_not_heal_without_a_stored_cms_pw() {
+        let svc = crate::identity::IdentityService::with_memory_keyring();
+        let call = crate::identity::Callsign::parse("W1ABC").unwrap();
+        // NoSecretSet AND no CMS pw to copy from -> Unavailable (nothing to heal).
+        assert!(matches!(
+            resolve_auto_identity(&svc, &call, |_| None),
+            AutoAuth::Unavailable
+        ));
+    }
+
+    #[test]
+    fn exactly_one_full_is_some_only_for_a_single_full() {
+        use crate::identity::{Callsign, FullIdentity, IdentityStore};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identity-store.json");
+        let mk = |c: &str| FullIdentity {
+            callsign: Callsign::parse(c).unwrap(),
+            label: None,
+            has_cms_account: true,
+            cms_registered: true,
+        };
+
+        // Missing store / zero FULLs -> None.
+        assert!(exactly_one_full(&path).is_none(), "no store / zero FULLs -> None");
+
+        // One FULL -> Some(that call).
+        let mut store = IdentityStore::load(&path).unwrap();
+        store.add_full(mk("W1ABC")).unwrap();
+        store.save().unwrap();
+        assert_eq!(
+            exactly_one_full(&path).map(|c| c.as_str().to_string()),
+            Some("W1ABC".to_string())
+        );
+
+        // Two FULLs -> None (no auto-default / auto-auth / auto-heal of an arbitrary one).
+        let mut store = IdentityStore::load(&path).unwrap();
+        store.add_full(mk("KK7XYZ")).unwrap();
+        store.save().unwrap();
+        assert!(exactly_one_full(&path).is_none(), "multi-FULL must NOT resolve a sole identity");
     }
 
     use crate::config::{
