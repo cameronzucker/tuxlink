@@ -33,9 +33,21 @@ export type DownloadStatus = 'idle' | 'downloading' | 'done' | 'error' | 'cancel
 
 export interface DownloadProgressView {
   bytes: number;
+  /**
+   * Effective denominator for the bar: max(estimate, bytes) so a real extract
+   * larger than the manifest `typical_bytes` estimate never pins the bar at 99%
+   * or shows "1.4 GB / 1.0 GB" (C4). When bytes reach/exceed the estimate this
+   * equals bytes, and `finishing` flips true to render the bar indeterminate.
+   */
   total: number;
   /** 0..1; clamped below 1 while downloading, exactly 1 once done-ok. */
   percent: number;
+  /**
+   * True while downloading once bytes are within epsilon of (or past) the
+   * estimate — render the bar indeterminate / "finishing…" rather than a stuck
+   * 99%, since the real size is unknown until done (C4).
+   */
+  finishing: boolean;
   /** Smoothed transfer rate in bytes/sec; null until two samples seen. */
   rateBps: number | null;
   /** Estimated seconds remaining; null until a rate is known. */
@@ -50,10 +62,15 @@ export interface DownloadProgressView {
 /** EMA smoothing factor for the rate (higher = more weight on recent samples). */
 const RATE_ALPHA = 0.3;
 
+/** Within this fraction of the estimate, treat the bar as "finishing" (the real
+ * extract size is unknown until the done event, so don't pin a stuck 99%). */
+const FINISHING_EPSILON = 0.005;
+
 const IDLE: DownloadProgressView = {
   bytes: 0,
   total: 0,
   percent: 0,
+  finishing: false,
   rateBps: null,
   etaSecs: null,
   status: 'idle',
@@ -110,13 +127,26 @@ export function useDownloadProgress(active: string | null): DownloadProgressView
       lastSample.current = { bytes: p.bytes, at: now };
 
       const rate = rateRef.current;
-      const remaining = Math.max(0, p.total - p.bytes);
-      const eta = rate && rate > 0 ? remaining / rate : null;
-      const percent = p.total > 0 ? Math.min(p.bytes / p.total, 0.999) : 0;
+      // C4: the estimate (p.total = manifest typical_bytes) can be smaller than
+      // the real extract. Clamp the denominator UP so percent never exceeds 100%
+      // and `current` never exceeds `total` ("1.4 GB / 1.0 GB"). When bytes meet
+      // or pass the estimate, the true size is unknown — flag `finishing` so the
+      // bar renders indeterminate rather than pinned at a stuck 99%.
+      const estimate = p.total;
+      const effectiveTotal = Math.max(estimate, p.bytes);
+      const finishing = estimate > 0 && p.bytes >= estimate * (1 - FINISHING_EPSILON);
+      const remaining = Math.max(0, effectiveTotal - p.bytes);
+      const eta = !finishing && rate && rate > 0 ? remaining / rate : null;
+      const percent = finishing
+        ? 0.999
+        : effectiveTotal > 0
+          ? Math.min(p.bytes / effectiveTotal, 0.999)
+          : 0;
       setView({
         bytes: p.bytes,
-        total: p.total,
+        total: effectiveTotal,
         percent,
+        finishing,
         rateBps: rate,
         etaSecs: eta,
         status: 'downloading',
@@ -139,7 +169,7 @@ export function useDownloadProgress(active: string | null): DownloadProgressView
       setView((v) => {
         const base = { ...v, trackedId: trackedId.current };
         if (d.ok) {
-          return { ...base, percent: 1, status: 'done' as const, error: null };
+          return { ...base, percent: 1, finishing: false, status: 'done' as const, error: null };
         }
         if (isCancelled(d.error)) {
           return { ...base, status: 'cancelled' as const, error: null };

@@ -95,6 +95,30 @@ export const deletePack = (id: string) => invoke<boolean>('basemap_delete_pack',
 export const cancelDownload = (packId: string) =>
   invoke<void>('basemap_cancel_download', { packId });
 
+/**
+ * Deterministic pack id the backend derives for a download request — mirrors
+ * Rust `basemap::packs::{tier_pack_id, continent_pack_id}`. The UI knows this id
+ * from the args it sent, so Cancel can target it immediately, before the first
+ * progress event latches it in the hook (see C5: cancel-before-first-event).
+ *
+ * Tier: `tier-{tier_id}-{lat_tok}-{lon_tok}` where each token is a compass
+ * letter + rounded integer magnitude (lat n/s, lon e/w), e.g. `tier-wide-n34-w112`.
+ * Continent: `continent-{continent_id}`.
+ */
+function coordToken(value: number, positive: string, negative: string): string {
+  const mag = Math.round(Math.abs(value));
+  const dir = value < 0 ? negative : positive;
+  return `${dir}${mag}`;
+}
+export function packIdForArgs(args: DownloadArgs): string {
+  if (args.kind === 'tier') {
+    const latTok = coordToken(args.lat0, 'n', 's');
+    const lonTok = coordToken(args.lon0, 'e', 'w');
+    return `tier-${args.tier_id}-${latTok}-${lonTok}`;
+  }
+  return `continent-${args.continent_id}`;
+}
+
 /** Notify the live map that installed packs changed (after a download/delete). */
 export function emitPacksChanged(): void {
   window.dispatchEvent(new CustomEvent(BASEMAP_PACKS_CHANGED_EVENT));
