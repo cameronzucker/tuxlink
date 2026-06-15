@@ -100,7 +100,7 @@ tracing-appender = "0.2"
 # feature set. There is NO "zdict" cargo feature in zstd 0.13. Omit features.
 zstd = "0.13"
 tar = "0.4"
-dirs = "5"
+dirs = "6"
 hex = "0.4"
 strip-ansi-escapes = "0.2"
 toml = "1.1"               # Task 6.1 settings persistence
