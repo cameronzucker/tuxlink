@@ -52,6 +52,36 @@ describe('LocationMap (MapLibre)', () => {
     expect(onGridChange).not.toHaveBeenCalled();
   });
 
+  it('coalesces drag preview setData to one update per animation frame (B10)', () => {
+    const rafCbs: FrameRequestCallback[] = [];
+    const rafSpy = vi
+      .spyOn(globalThis, 'requestAnimationFrame')
+      .mockImplementation((cb) => {
+        rafCbs.push(cb);
+        return rafCbs.length;
+      });
+    try {
+      render(<LocationMap grid="EM75km" fixLatLon={null} selectedSource="manual" onGridChange={vi.fn()} />);
+      const map = loadLast();
+      const src = map.getSource('location-pin') as { setData: ReturnType<typeof vi.fn> };
+      const before = src.setData.mock.calls.length;
+      act(() => map.__emit('mousedown:loc-pin-dot', { lngLat: { lng: -86, lat: 36 }, preventDefault() {} }));
+      act(() => {
+        map.__emit('mousemove', { lngLat: { lng: -87, lat: 36 } });
+        map.__emit('mousemove', { lngLat: { lng: -88, lat: 36 } });
+        map.__emit('mousemove', { lngLat: { lng: -89, lat: 36 } });
+      });
+      // No synchronous setData during the moves; exactly one frame scheduled.
+      expect(src.setData.mock.calls.length).toBe(before);
+      expect(rafCbs.length).toBe(1);
+      // Flushing the frame yields exactly one preview setData (the latest point).
+      act(() => rafCbs.forEach((cb) => cb(0)));
+      expect(src.setData.mock.calls.length).toBe(before + 1);
+    } finally {
+      rafSpy.mockRestore();
+    }
+  });
+
   it('registers the marker overlay source + layers once the style is loaded', () => {
     render(<LocationMap grid="EM75km" fixLatLon={{ lat: 36.1, lon: -86.8 }} selectedSource="gpsd" onGridChange={vi.fn()} />);
     const map = loadLast();
