@@ -193,7 +193,12 @@ function LocationOverlay({ grid, fixLatLon, selectedSource, onGridChange }: Loca
     const onUp = (e: MapMouseEvent) => {
       if (!dragging) return;
       dragging = false;
+      // Cancel any pending throttled frame, but commit the FINAL release point
+      // synchronously first (Codex P2): otherwise, if onGridChange resolves to the
+      // same grid, no FC re-push occurs and the pin lags at the last flushed frame.
       cancelPreview();
+      const src = map.getSource(SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
+      src?.setData?.(buildFC(grid, ll, [e.lngLat.lng, e.lngLat.lat]));
       map.dragPan.enable();
       setCursor('');
       onGridChange(latLonToGrid(e.lngLat.lat, e.lngLat.lng));

@@ -51,10 +51,13 @@ const LABEL_LAYER = {
     'text-field': ['get', 'text'],
     'text-font': ['Noto Sans Regular'],
     'text-size': 12,
-    // Collision culling left ON (B6, tuxlink-vnk7): forcing
-    // text-allow-overlap/text-ignore-placement made the software rasterizer draw
-    // EVERY overlapping cell label. MapLibre's default placement drops occluded
-    // labels — a large fill-rate win at wide zoom where cell count peaks.
+    // Forced placement RESTORED (Codex P2): Maidenhead locator labels are
+    // functional — every visible cell must show its locator — so they must not be
+    // collision-culled by basemap symbols. The B6 perf win comes from the
+    // recompute gating (regenerate only on level/extent change), not from culling
+    // these few labels; deterministic per-level label counts keep the cost bounded.
+    'text-allow-overlap': true,
+    'text-ignore-placement': true,
   },
   paint: { 'text-color': '#475569', 'text-halo-color': '#ffffff', 'text-halo-width': 1 },
 } as const;

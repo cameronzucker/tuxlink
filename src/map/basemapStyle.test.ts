@@ -150,10 +150,12 @@ describe('buildBasemapStyle — R7 region-pack compositing', () => {
     expect(none.layers.length).toBe(base.layers.length);
   });
 
-  it('clamps the overview source maxzoom so it does not overzoom to z14 (D3/maxzoom)', () => {
+  it('does NOT advertise an overview source maxzoom above the z0-6 archive max (D3, Codex P1)', () => {
+    // Advertising maxzoom>6 makes MapLibre request z7+ tiles the archive lacks →
+    // blank above z6. Let the PMTiles header (z6) govern; MapLibre overzooms it.
     const style = buildBasemapStyle('light');
     const src = style.sources[BASEMAP_SOURCE_ID] as { maxzoom?: number };
-    expect(src.maxzoom).toBeLessThanOrEqual(7);
+    expect(src.maxzoom === undefined || src.maxzoom <= REGION_MINZOOM).toBe(true);
   });
 
   it('adds a vector source per pack served via tile://pmtiles/<id>', () => {

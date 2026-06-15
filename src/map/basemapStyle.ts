@@ -135,12 +135,14 @@ export function buildBasemapStyle(
       type: 'vector',
       url: PMTILES_SOURCE_URL,
       attribution: OSM_ATTRIBUTION,
-      // Overview is z0–6; cap source maxzoom so MapLibre overzooms ONE step
-      // (smoothness) instead of rasterizing up to 8 stretched levels to z14
-      // outside pack coverage — wasted software-GL fill for no detail (D3,
-      // tuxlink-vnk7). Pack sources keep their own z14 detail; "never blank" is
-      // preserved (the clamped source still overzoom-fills the viewport).
-      maxzoom: REGION_MINZOOM + 1,
+      // NOTE (D3, tuxlink-vnk7 — Codex P1): do NOT advertise a source `maxzoom`
+      // ABOVE the archive's real max. The bundled overview is z0–6; the PMTiles
+      // header already reports maxzoom=6, so MapLibre overzooms the z6 tiles for
+      // z7–14 (the "never blank" behavior) WITHOUT requesting nonexistent deeper
+      // tiles. An explicit override of 7+ made MapLibre fetch z7 tiles the archive
+      // lacks → empty → blank above z6. Overzoom cost is addressed by reducing
+      // interactive maxZoom outside pack coverage (deferred, plan A-followup), not
+      // by lying about tile availability.
     },
   };
 

@@ -129,6 +129,10 @@ export function MapLibreMap({
       setPacks(next);
     } catch {
       // No backend (e.g. unit test / dev without the command) → overview only.
+      // Invalidate the cache too (Codex P3): a stale pack in `lastKnownPacks`
+      // would otherwise make the NEXT remount construct with a pack that may have
+      // been deleted — a stale-pack first paint is worse than overview-only.
+      lastKnownPacks = [];
       setPacks([]);
     }
   }, []);

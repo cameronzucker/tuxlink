@@ -168,21 +168,37 @@ function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationF
 
   // Drive selection via `setFeatureState` instead of rebuilding the FC: clear the
   // previously-selected feature's state and set `{selected:true}` on the new one.
+  // Also RE-APPLY on `styledata` (Codex P2): a setStyle (flavor/pack change) drops
+  // all feature-state, and the hooks re-add the source on the same tick — without
+  // this the selected pin would lose its emphasis until selectedKey changes.
   const prevSelectedRef = useRef<string | null>(null);
+  const selectedKeyRef = useRef<string | null>(selectedKey);
+  selectedKeyRef.current = selectedKey;
   useEffect(() => {
     if (!map) return;
     const m = map as unknown as {
       setFeatureState?: (t: { source: string; id: string | number }, s: Record<string, unknown>) => void;
       removeFeatureState?: (t: { source: string; id?: string | number }, key?: string) => void;
+      on: (t: string, h: (...a: unknown[]) => void) => unknown;
+      off: (t: string, h: (...a: unknown[]) => void) => unknown;
     };
-    const prev = prevSelectedRef.current;
-    if (prev != null && prev !== selectedKey) {
-      m.removeFeatureState?.({ source: STATIONS_SOURCE, id: prev }, 'selected');
-    }
-    if (selectedKey != null) {
-      m.setFeatureState?.({ source: STATIONS_SOURCE, id: selectedKey }, { selected: true });
-    }
-    prevSelectedRef.current = selectedKey;
+    const apply = () => {
+      const cur = selectedKeyRef.current;
+      const prev = prevSelectedRef.current;
+      if (prev != null && prev !== cur) {
+        m.removeFeatureState?.({ source: STATIONS_SOURCE, id: prev }, 'selected');
+      }
+      if (cur != null) {
+        m.setFeatureState?.({ source: STATIONS_SOURCE, id: cur }, { selected: true });
+      }
+      prevSelectedRef.current = cur;
+    };
+    apply();
+    // Re-apply after a style swap re-creates the source (clears feature-state).
+    m.on('styledata', apply as (...a: unknown[]) => void);
+    return () => {
+      m.off('styledata', apply as (...a: unknown[]) => void);
+    };
   }, [map, selectedKey]);
 
   useEffect(() => {
