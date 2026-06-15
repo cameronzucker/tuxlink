@@ -293,6 +293,14 @@ pub fn run() {
                                 .header(
                                     tauri::http::header::ETAG,
                                     format!("\"{}\"", rr.total_len),
+                                )
+                                // Immutable archive bytes → let the webview cache
+                                // directory/leaf ranges instead of refetching the
+                                // same bytes per tile during pan/zoom (B4,
+                                // tuxlink-vnk7).
+                                .header(
+                                    tauri::http::header::CACHE_CONTROL,
+                                    crate::basemap::PMTILES_CACHE_CONTROL,
                                 );
                             if let Some(cr) = &rr.content_range {
                                 builder =
