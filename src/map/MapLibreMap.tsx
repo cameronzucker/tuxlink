@@ -139,6 +139,12 @@ export function MapLibreMap({
         // maxBounds intentionally omitted — see the MAP_MAX_BOUNDS note above
         // (maplibre 5.24.0 bounds-constraint crash, tuxlink-rwo6).
         renderWorldCopies: false,
+        // Software-GL (llvmpipe) render profile (B7, tuxlink-vnk7). pixelRatio:1
+        // avoids the quadratic fill cost of a HiDPI canvas the CPU rasterizer
+        // can't afford; fadeDuration:0 drops per-tile/symbol cross-fade passes
+        // during loads. Standard software-GL mitigations, safe on this target.
+        pixelRatio: 1,
+        fadeDuration: 0,
         // We add the AttributionControl explicitly so "© OpenStreetMap
         // contributors" (ODbL) renders from the source attribution.
         attributionControl: false,

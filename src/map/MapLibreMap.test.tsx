@@ -29,6 +29,13 @@ describe('MapLibreMap', () => {
     );
   });
 
+  it('constructs with the software-GL render profile (pixelRatio:1, fadeDuration:0) (B7)', () => {
+    render(<MapLibreMap />);
+    const opts = getLastMap()!.__state.options as { pixelRatio?: number; fadeDuration?: number };
+    expect(opts.pixelRatio).toBe(1);
+    expect(opts.fadeDuration).toBe(0);
+  });
+
   it('passes initialCenter (as lng,lat) and initialZoom to the constructor', () => {
     render(<MapLibreMap initialCenter={{ lat: 47.6, lon: -122.3 }} initialZoom={9} />);
     const map = getLastMap()!;
