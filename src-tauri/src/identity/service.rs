@@ -99,6 +99,49 @@ impl IdentityService {
         let entry = (self.factory)(SERVICE, &account);
         entry.get_password().is_ok()
     }
+
+    /// Fail-CLOSED activation-secret existence check (tuxlink-nx3g). Unlike
+    /// [`has_activation_secret`] (which collapses backend errors to `false`),
+    /// this distinguishes the three states the self-heal must not conflate:
+    /// `Ok(true)` = present, `Ok(false)` = confirmed `NoEntry` (the orphan case),
+    /// `Err(Keyring)` = backend read error (locked / unavailable). The heal MUST
+    /// NOT treat a backend error as "absent" and then provision a secret.
+    pub fn activation_secret_status(&self, full: &Callsign) -> Result<bool, IdentityError> {
+        let account = activation_account(full.as_str());
+        let entry = (self.factory)(SERVICE, &account);
+        match entry.get_password() {
+            Ok(_) => Ok(true),
+            Err(keyring::Error::NoEntry) => Ok(false),
+            Err(other) => Err(IdentityError::Keyring(format!("{other}"))),
+        }
+    }
+
+    /// Self-heal an orphan-v2 FULL whose activation secret was never written
+    /// (tuxlink-nx3g), by provisioning it FROM the trusted CMS password — restoring
+    /// the `write_password` lockstep invariant. Returns `Ok(true)` if it healed,
+    /// `Ok(false)` if no heal was needed/allowed (empty `cms_pw`, or a secret is
+    /// already present), `Err` (fail-closed, no write) on a keyring backend error.
+    ///
+    /// SECURITY: the caller MUST have established trust in `cms_pw` — bootstrap reads
+    /// it from the keyring (the trust root, no user input); the manual command proves
+    /// it equals the stored CMS password (proof-of-knowledge). This never overwrites an
+    /// EXISTING secret, so it structurally cannot touch a `CredentialMismatch`, and it
+    /// never writes on a backend read error. Keeping this OUT of [`authenticate`] is
+    /// what prevents "any typed string becomes the secret" (Codex R1 P0).
+    pub fn heal_activation_secret(
+        &self,
+        full: &Callsign,
+        cms_pw: &str,
+    ) -> Result<bool, IdentityError> {
+        if cms_pw.is_empty() {
+            return Ok(false); // nothing trusted to copy from
+        }
+        if self.activation_secret_status(full)? {
+            return Ok(false); // already present (or fail-closed on backend error) — never overwrite
+        }
+        self.set_activation_secret(full, cms_pw)?;
+        Ok(true)
+    }
 }
 
 impl Default for IdentityService {
@@ -164,8 +207,10 @@ impl EntryLike for RealEntry {
 }
 
 /// Constant-time, length-oracle-free string equality (SHA-256 digest + `subtle`),
-/// identical in approach to `station_password::ct_eq_strings`.
-fn ct_eq_strings(a: &str, b: &str) -> bool {
+/// identical in approach to `station_password::ct_eq_strings`. `pub(crate)` so the
+/// manual self-heal proof-of-knowledge compare (tuxlink-nx3g, commands.rs) reuses the
+/// same constant-time path the auth gate uses.
+pub(crate) fn ct_eq_strings(a: &str, b: &str) -> bool {
     use sha2::{Digest, Sha256};
     let digest_a = Sha256::digest(a.as_bytes());
     let digest_b = Sha256::digest(b.as_bytes());
@@ -299,5 +344,78 @@ mod tests {
         let (svc, _store) = mock_service();
         svc.set_activation_secret(&call("w1abc"), "hunter2").unwrap();
         assert!(svc.authenticate(&call("W1ABC"), "hunter2").is_ok());
+    }
+
+    // -- self-heal (tuxlink-nx3g) -------------------------------------------
+
+    #[test]
+    fn activation_secret_status_distinguishes_present_from_absent() {
+        let (svc, _store) = mock_service();
+        assert_eq!(svc.activation_secret_status(&call("W1ABC")), Ok(false), "absent");
+        svc.set_activation_secret(&call("W1ABC"), "pw").unwrap();
+        assert_eq!(svc.activation_secret_status(&call("W1ABC")), Ok(true), "present");
+    }
+
+    #[test]
+    fn heal_provisions_the_secret_from_cms_pw_when_absent_then_authenticates() {
+        let (svc, _store) = mock_service();
+        // Orphan-v2: no activation secret yet.
+        assert_eq!(svc.authenticate(&call("W1ABC"), "cms-pw").err(), Some(IdentityError::NoSecretSet));
+        assert_eq!(svc.heal_activation_secret(&call("W1ABC"), "cms-pw"), Ok(true), "should heal");
+        // Now authenticatable with the (copied) CMS password.
+        assert!(svc.authenticate(&call("W1ABC"), "cms-pw").is_ok(), "healed identity authenticates");
+    }
+
+    #[test]
+    fn heal_never_overwrites_an_existing_secret() {
+        let (svc, _store) = mock_service();
+        svc.set_activation_secret(&call("W1ABC"), "real-secret").unwrap();
+        // CMS pw differs (e.g. a CredentialMismatch state) — heal must NOT overwrite.
+        assert_eq!(svc.heal_activation_secret(&call("W1ABC"), "different"), Ok(false), "no-op");
+        assert!(svc.authenticate(&call("W1ABC"), "real-secret").is_ok(), "original secret intact");
+        assert_eq!(svc.authenticate(&call("W1ABC"), "different").err(), Some(IdentityError::CredentialMismatch));
+    }
+
+    #[test]
+    fn heal_rejects_an_empty_cms_pw() {
+        let (svc, _store) = mock_service();
+        assert_eq!(svc.heal_activation_secret(&call("W1ABC"), ""), Ok(false), "empty pw never heals");
+        assert_eq!(svc.activation_secret_status(&call("W1ABC")), Ok(false), "still no secret written");
+    }
+
+    #[test]
+    fn heal_fails_closed_on_a_keyring_backend_error_and_does_not_write() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        // A factory whose reads error with a NON-NoEntry backend failure and whose
+        // writes are counted — the heal MUST NOT treat the error as "absent" and write.
+        let writes = Arc::new(AtomicUsize::new(0));
+        let writes_for_factory = Arc::clone(&writes);
+        let factory: EntryFactory = Box::new(move |_svc: &str, _account: &str| {
+            Box::new(FailingEntry { writes: Arc::clone(&writes_for_factory) }) as Box<dyn EntryLike>
+        });
+        let svc = IdentityService::with_factory(factory);
+
+        assert!(svc.activation_secret_status(&call("W1ABC")).is_err(), "backend error surfaces");
+        assert!(svc.heal_activation_secret(&call("W1ABC"), "cms-pw").is_err(), "heal fails closed");
+        assert_eq!(writes.load(Ordering::SeqCst), 0, "no provisioning write on a backend read error");
+    }
+
+    /// Reads always fail with a backend (non-NoEntry) error; writes are counted.
+    struct FailingEntry {
+        writes: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl EntryLike for FailingEntry {
+        fn get_password(&self) -> Result<String, keyring::Error> {
+            Err(keyring::Error::PlatformFailure(Box::new(std::io::Error::other(
+                "backend unavailable",
+            ))))
+        }
+        fn set_password(&self, _password: &str) -> Result<(), keyring::Error> {
+            self.writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        fn delete_password(&self) -> Result<(), keyring::Error> {
+            Ok(())
+        }
     }
 }
