@@ -72,6 +72,11 @@ FLAG_DRY_RUN=0
 FLAG_SKIP_LAUNCH=0
 FLAG_FORCE_KILL_OWNED=0
 
+# Set to 1 by stage_prediction_engine when the offline-HF-prediction engine
+# (voacapl + itshfbc) was staged, so launch_tauri_dev injects the itshfbc
+# resources glob via an ephemeral --config (voacapl is placed directly).
+STAGED_PREDICTION=0
+
 # ─── ANSI helpers ──────────────────────────────────────────────────────────
 
 if [[ -t 1 ]]; then
@@ -513,6 +518,71 @@ verify_port_free() {
   ok "port 1420 is free"
 }
 
+# ─── Phase: stage the offline-HF-prediction engine (voacapl + itshfbc) ─────
+#
+# The voacapl sidecar + itshfbc coefficient tree are deliberately NOT in the
+# committed tauri.conf.json: commit 16fe98d6 removed them because Tauri validates
+# externalBin at `cargo build` time, so a committed entry broke clean checkouts /
+# CI that lack the gitignored per-triple binary. CI's release.yml re-stages them
+# at bundle time (build voacapl + makeitshfbc, then inject externalBin + the
+# itshfbc resources glob). A local `tauri dev` build does NONE of that — so
+# without this step the app finds no voacapl next to the dev exe and an empty
+# itshfbc tree, and Find-a-Station silently degrades to "no forecast — distance
+# only". This step does for the dev build what release.yml does for the bundle.
+#
+# Placement is verified against the running dev build's layout:
+#   - voacapl → <exe-dir>/voacapl   (lib.rs resolves current_exe().parent()/voacapl).
+#     Copied directly: the exe dir's ROOT is not touched by Tauri's resource sync,
+#     so it survives the build (unlike target/debug/resources/, which Tauri prunes
+#     to match the glob — hence itshfbc cannot just be dropped there).
+#   - itshfbc → stage the data under src-tauri/resources/itshfbc/ (the glob source)
+#     and add `resources/itshfbc/**/*` to bundle.resources via an ephemeral
+#     `tauri dev --config` (JSON-merge-patch REPLACES the array, so we pass the
+#     full list). Tauri then copies it into target/debug/resources/itshfbc, where
+#     BaseDirectory::Resource resolves. The committed config is never edited, so
+#     phase 3's dirty-worktree guard does not trip (target/, resources/itshfbc/*,
+#     and binaries/* are all gitignored at origin/main).
+#
+# Sources are the operator's local install per docs/reference/voacapl-ci-bundling.md
+# "Local staging" (~/.local/bin/voacapl + ~/itshfbc). Best-effort: if either is
+# absent, warn loudly and launch anyway (distance-only) rather than failing.
+stage_prediction_engine() {
+  local dry="$1"
+  local debug_dir="${DISPOSABLE_WT_DIR}/src-tauri/target/debug"
+  local voacapl_dst="${debug_dir}/voacapl"
+  local itshfbc_dst="${DISPOSABLE_WT_DIR}/src-tauri/resources/itshfbc"
+  local voacapl_src="${HOME}/.local/bin/voacapl"
+  local itshfbc_src="${HOME}/itshfbc"
+
+  local missing=""
+  [[ -x "${voacapl_src}" ]] || missing+=" voacapl(${voacapl_src})"
+  [[ -f "${itshfbc_src}/database/version.w32" ]] || missing+=" itshfbc(${itshfbc_src})"
+  if [[ -n "${missing}" ]]; then
+    warn "offline HF prediction engine NOT staged — missing:${missing}"
+    warn "Find-a-Station will run distance-only. Build voacapl + run makeitshfbc"
+    warn "(docs/reference/voacapl-ci-bundling.md → 'Local staging'), then re-run."
+    audit "prediction_engine_unstaged" "$(printf '{"missing":"%s"}' "${missing# }")"
+    return 0
+  fi
+
+  if [[ "${dry}" -eq 1 ]]; then
+    dim "  [dry-run] would: install ${voacapl_src} → ${voacapl_dst}"
+    dim "  [dry-run] would: rsync ${itshfbc_src}/ → ${itshfbc_dst}/ (glob source)"
+    dim "  [dry-run] would: launch with --config adding resources/itshfbc/**/*"
+    STAGED_PREDICTION=1
+    return 0
+  fi
+
+  step "staging offline HF prediction engine (voacapl + itshfbc) for the dev build"
+  mkdir -p "${debug_dir}" "${itshfbc_dst}"
+  install -m 0755 "${voacapl_src}" "${voacapl_dst}"
+  # No --delete: preserve the tracked .gitkeep; the gitignored data files overlay.
+  rsync -a "${itshfbc_src}/" "${itshfbc_dst}/"
+  STAGED_PREDICTION=1
+  ok "staged voacapl → ${voacapl_dst} + itshfbc ($(du -sh "${itshfbc_dst}" 2>/dev/null | cut -f1)) source"
+  audit "prediction_engine_staged" "$(printf '{"voacapl":"%s","itshfbc_src":"%s"}' "${voacapl_dst}" "${itshfbc_dst}")"
+}
+
 # ─── Phase: launch ────────────────────────────────────────────────────────
 
 launch_tauri_dev() {
@@ -527,13 +597,27 @@ launch_tauri_dev() {
     echo "would-launch"
     return 0
   fi
-  step "launching: cd ${DISPOSABLE_WT_DIR} && pnpm tauri dev"
   ok "converged at disposable=$(git -C "${DISPOSABLE_WT_DIR}" rev-parse --short HEAD) (origin/main=$(git -C "${REPO_ROOT}" rev-parse --short origin/main))"
   ok "audit log: ${AUDIT_LOG}"
-  audit "launching" "$(printf '{"disposable_head":"%s","origin_main":"%s"}' \
+  audit "launching" "$(printf '{"disposable_head":"%s","origin_main":"%s","prediction_staged":%d}' \
     "$(git -C "${DISPOSABLE_WT_DIR}" rev-parse HEAD)" \
-    "$(git -C "${REPO_ROOT}" rev-parse origin/main)")"
+    "$(git -C "${REPO_ROOT}" rev-parse origin/main)" \
+    "${STAGED_PREDICTION}")"
   cd "${DISPOSABLE_WT_DIR}"
+
+  if [[ "${STAGED_PREDICTION}" -eq 1 ]]; then
+    # Inject the itshfbc resources glob so Tauri copies the staged data tree into
+    # the dev Resource dir (target/debug/resources/itshfbc). JSON-merge-patch
+    # REPLACES arrays, so we pass the FULL resources list (the committed set +
+    # itshfbc) read from the worktree config — never editing the committed file.
+    local cfg
+    cfg="$(jq -c '{bundle:{resources:((.bundle.resources // []) + ["resources/itshfbc/**/*"] | unique)}}' \
+      src-tauri/tauri.conf.json)"
+    step "launching: pnpm tauri dev --config <+itshfbc resources glob>"
+    exec pnpm tauri dev --config "${cfg}"
+  fi
+
+  step "launching: pnpm tauri dev"
   exec pnpm tauri dev
 }
 
@@ -627,10 +711,13 @@ main() {
   audit "processes_killed" "$(printf '{"pids":%s}' "${killed_json}")"
   verify_port_free "${FLAG_DRY_RUN}"
 
-  # 6. Write state + launch.
-  step "phase 6/6 — launch"
+  # 6. Stage the offline-HF-prediction engine (voacapl + itshfbc), write state,
+  #    + launch. The engine is staged after the build-artifact decision so a
+  #    target wipe (phase 4) can't remove the staged voacapl before launch.
+  step "phase 6/6 — stage prediction engine + launch"
+  stage_prediction_engine "${FLAG_DRY_RUN}"
   write_state "${FLAG_DRY_RUN}"
-  audit "convergence_complete_pre_launch" "$(printf '{"dry_run":%d}' "${FLAG_DRY_RUN}")"
+  audit "convergence_complete_pre_launch" "$(printf '{"dry_run":%d,"prediction_staged":%d}' "${FLAG_DRY_RUN}" "${STAGED_PREDICTION}")"
   launch_tauri_dev "${FLAG_DRY_RUN}"
 }
 
