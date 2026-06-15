@@ -6,7 +6,7 @@
  * gridGeometry. Render correctness is grim-only; this asserts the source/layers
  * exist and the right features are pushed.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, act } from '@testing-library/react';
 import type { Map as MaplibreMap } from 'maplibre-gl';
 import { createMapLibreMock, type MapLibreMock } from './testMapLibreMock';
@@ -57,6 +57,31 @@ describe('MaidenheadGridLayer', () => {
     act(() => map.__emit('styledata'));
     expect(map.getSource(GRID_SOURCE_ID)).toBeTruthy();
     expect(sourceData(map).features.length).toBeGreaterThan(0);
+  });
+
+  it('does NOT regenerate/setData on a moveend within the padded extent (B6)', () => {
+    const map = createMapLibreMock({ styleLoaded: true });
+    map.__setZoom(8);
+    map.__setBounds({ west: -123, south: 47, east: -122, north: 48 });
+    renderInMap(map, <MaidenheadGridLayer />); // derives bounds/level from the map
+    const src = map.getSource(GRID_SOURCE_ID) as { setData: ReturnType<typeof vi.fn> };
+    const before = src.setData.mock.calls.length;
+    // A small pan that stays inside the already-generated padded extent.
+    map.__setBounds({ west: -122.9, south: 47.1, east: -121.9, north: 48.1 });
+    act(() => map.__emit('moveend'));
+    expect(src.setData.mock.calls.length).toBe(before);
+  });
+
+  it('DOES regenerate when the view leaves the padded extent (B6)', () => {
+    const map = createMapLibreMock({ styleLoaded: true });
+    map.__setZoom(8);
+    map.__setBounds({ west: -123, south: 47, east: -122, north: 48 });
+    renderInMap(map, <MaidenheadGridLayer />);
+    const src = map.getSource(GRID_SOURCE_ID) as { setData: ReturnType<typeof vi.fn> };
+    const before = src.setData.mock.calls.length;
+    map.__setBounds({ west: 10, south: 10, east: 11, north: 11 }); // far outside
+    act(() => map.__emit('moveend'));
+    expect(src.setData.mock.calls.length).toBeGreaterThan(before);
   });
 
   it('does not throw when the map is null (pre-load)', () => {

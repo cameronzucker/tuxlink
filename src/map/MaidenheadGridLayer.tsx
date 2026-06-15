@@ -13,7 +13,7 @@
  * source is fed an empty collection rather than toggling layer presence, so the
  * layers stay stable and the source just empties.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMapContext } from './MapContext';
 import { useMapOverlay } from './mapHooks';
 import {
@@ -51,8 +51,10 @@ const LABEL_LAYER = {
     'text-field': ['get', 'text'],
     'text-font': ['Noto Sans Regular'],
     'text-size': 12,
-    'text-allow-overlap': true,
-    'text-ignore-placement': true,
+    // Collision culling left ON (B6, tuxlink-vnk7): forcing
+    // text-allow-overlap/text-ignore-placement made the software rasterizer draw
+    // EVERY overlapping cell label. MapLibre's default placement drops occluded
+    // labels — a large fill-rate win at wide zoom where cell count peaks.
   },
   paint: { 'text-color': '#475569', 'text-halo-color': '#ffffff', 'text-halo-width': 1 },
 } as const;
@@ -91,52 +93,96 @@ function gridToGeoJSON(bounds: GridBounds, { lonLines, latLines, labels }: GridL
   return { type: 'FeatureCollection', features };
 }
 
+/** True when `inner` lies entirely within `outer`. */
+function contains(outer: GridBounds, inner: GridBounds): boolean {
+  return (
+    inner.south >= outer.south &&
+    inner.north <= outer.north &&
+    inner.west >= outer.west &&
+    inner.east <= outer.east
+  );
+}
+
+/** Expand bounds by half its span on each side (clamped to ±90 lat), so the
+ * lattice is generated for ~2× the visible area and a small pan stays inside it
+ * (B6 — avoids regenerating on every moveend). */
+function padBounds(b: GridBounds): GridBounds {
+  const dLat = (b.north - b.south) / 2;
+  const dLon = (b.east - b.west) / 2;
+  return {
+    south: Math.max(-90, b.south - dLat),
+    north: Math.min(90, b.north + dLat),
+    west: b.west - dLon,
+    east: b.east + dLon,
+  };
+}
+
 export function MaidenheadGridLayer({ visible = true, bounds, level }: MaidenheadGridLayerProps) {
   const map = useMapContext();
-  // Recompute on pan/zoom by bumping a tick; the map is the source of truth.
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (!map) return;
-    const bump = () => setTick((t) => t + 1);
-    map.on('moveend', bump);
-    return () => {
-      map.off('moveend', bump);
-    };
-  }, [map]);
+  const [geojson, setGeojson] = useState<FeatureCollection>(EMPTY_FC);
+  const geojsonRef = useRef(geojson);
+  geojsonRef.current = geojson;
 
-  const effBounds: GridBounds | null =
-    bounds ??
-    (map
-      ? (() => {
-          const b = map.getBounds();
-          return { south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() };
-        })()
-      : null);
-  const effLevel: GridLevel | null = level ?? (map ? levelFromZoom(map.getZoom()) : null);
-
-  const geojson = useMemo<FeatureCollection>(() => {
-    if (!visible || !effBounds || effLevel === null) return EMPTY_FC;
-    return gridToGeoJSON(effBounds, gridLines(effBounds, effLevel));
-  }, [visible, effBounds?.south, effBounds?.west, effBounds?.north, effBounds?.east, effLevel]);
+  // The (level, padded-extent) the current lattice was generated for. We only
+  // regenerate when the level changes or the view leaves the padded extent (B6,
+  // tuxlink-vnk7) — NOT on every moveend, which re-tessellated the whole lattice
+  // on every pan even when no cell boundary was crossed.
+  const genRef = useRef<{ level: GridLevel; padded: GridBounds } | null>(null);
 
   // Source + layers are always present (cheap when empty); the owned hook keeps
   // them across style swaps with correct teardown order.
   useMapOverlay(map, GRID_SOURCE_ID, { type: 'geojson', data: EMPTY_FC }, GRID_LAYERS);
 
-  // Push the current lattice. Re-push on `styledata` too: a style swap drops the
-  // source, and the hook re-adds it (empty) on the same event — this restores
-  // the data on that tick. setData is idempotent.
+  // Recompute the lattice on pan/zoom, but only when it would actually change.
+  useEffect(() => {
+    if (!map) return;
+    const recompute = () => {
+      const effBounds: GridBounds | null =
+        bounds ?? {
+          south: map.getBounds().getSouth(),
+          west: map.getBounds().getWest(),
+          north: map.getBounds().getNorth(),
+          east: map.getBounds().getEast(),
+        };
+      const effLevel: GridLevel | null = level ?? levelFromZoom(map.getZoom());
+      if (!visible || !effBounds || effLevel === null) {
+        genRef.current = null;
+        setGeojson(EMPTY_FC);
+        return;
+      }
+      const g = genRef.current;
+      if (g && g.level === effLevel && contains(g.padded, effBounds)) return; // no change
+      const padded = padBounds(effBounds);
+      genRef.current = { level: effLevel, padded };
+      setGeojson(gridToGeoJSON(padded, gridLines(padded, effLevel)));
+    };
+    recompute();
+    map.on('moveend', recompute);
+    return () => {
+      map.off('moveend', recompute);
+    };
+  }, [map, visible, bounds, level]);
+
+  // Re-push on `styledata` (a style swap drops the source; the hook re-adds it
+  // empty on the same tick). Subscribe ONCE and read the latest lattice from a
+  // ref (B6) — the old effect re-subscribed on every geojson change.
   useEffect(() => {
     if (!map) return;
     const push = () => {
       const src = map.getSource(GRID_SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
-      src?.setData?.(geojson);
+      src?.setData?.(geojsonRef.current);
     };
-    push();
     map.on('styledata', push);
     return () => {
       map.off('styledata', push);
     };
+  }, [map]);
+
+  // Push imperatively whenever the lattice actually changes.
+  useEffect(() => {
+    if (!map) return;
+    const src = map.getSource(GRID_SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
+    src?.setData?.(geojson);
   }, [map, geojson]);
 
   return null;
