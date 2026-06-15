@@ -9,6 +9,7 @@ pub mod engine;
 pub mod parse;
 pub mod prefs;
 pub mod ssn;
+pub mod type14;
 
 use serde::{Deserialize, Serialize};
 
