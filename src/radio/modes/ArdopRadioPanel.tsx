@@ -275,6 +275,16 @@ export function ArdopRadioPanel({
   const [captureInput, setCaptureInput] = useState<string>('');
   const [playbackInput, setPlaybackInput] = useState<string>('');
   const [pttSerialInput, setPttSerialInput] = useState<string>('');
+  // tuxlink-0kew: collapse the Radio-configuration group to reclaim panel
+  // real estate once it's set. Default open (discoverable on first use); the
+  // operator's collapse choice persists across sessions via localStorage.
+  const [radioCfgOpen, setRadioCfgOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('tuxlink.ardop.radioCfgOpen') !== '0';
+    } catch {
+      return true;
+    }
+  });
   // cmd_port + binary inputs (tuxlink-jmfm Task 3). PR #185 commit 4c88618
   // added Capture / Playback / PTT / WebGUI; Task 2 of the radio-panel-width
   // plan deleted the Settings ARDOP fieldset, so cmd_port + binary needed an
@@ -742,7 +752,21 @@ export function ArdopRadioPanel({
           pattern in the Connect section above.) */}
       {isStopped && (
         <section className="radio-panel-sec" data-testid="ardop-radio-section">
-          <h5>Radio</h5>
+          <details
+            className="expander"
+            open={radioCfgOpen}
+            onToggle={(e) => {
+              const open = e.currentTarget.open;
+              setRadioCfgOpen(open);
+              try {
+                localStorage.setItem('tuxlink.ardop.radioCfgOpen', open ? '1' : '0');
+              } catch {
+                /* localStorage unavailable — in-memory toggle still works */
+              }
+            }}
+            data-testid="ardop-config-expander"
+          >
+            <summary className="expander-summary">Radio</summary>
           {/* tuxlink-y7x7: Capture / Playback / PTT now load real device
               lists from the backend and render dropdown + Refresh + manual
               fallback (same pattern as ModemLinkSection's AX.25 picker).
@@ -960,6 +984,7 @@ export function ArdopRadioPanel({
               onBlur={commitBinary}
             />
           </label>
+          </details>
         </section>
       )}
 
