@@ -105,8 +105,20 @@ pub fn modem_get_status(session: State<'_, Arc<ModemSession>>) -> ModemStatus {
 /// Stopped, and shuts the transport down (best-effort `DISCONNECT` on the
 /// cmd socket).
 #[tauri::command]
-pub fn modem_ardop_disconnect(session: State<'_, Arc<ModemSession>>) -> Result<(), String> {
-    modem_ardop_disconnect_inner(&session)
+pub async fn modem_ardop_disconnect(
+    session: State<'_, Arc<ModemSession>>,
+) -> Result<(), String> {
+    // tuxlink-ab9h: run the abort + link-disconnect (bounded 5 s) OFF the
+    // WebKitGTK main thread. A synchronous command here blocks the UI event
+    // loop, so the operator's Stop/Disconnect click could not dispatch and
+    // the listener "Stop" path froze the app. `abort_in_flight` inside
+    // `_inner` is still the first thing to run — a quick cmd-socket write —
+    // so it reaches any in-flight connect_arq running on its own
+    // spawn_blocking worker.
+    let session = Arc::clone(session.inner());
+    tokio::task::spawn_blocking(move || modem_ardop_disconnect_inner(&session))
+        .await
+        .map_err(|e| format!("disconnect task panicked: {e}"))?
 }
 
 /// Inner helper with a factory seam — ARDOP connect with in-process busy guard.
@@ -891,7 +903,7 @@ pub fn check_identity_present(cfg: &Config) -> Result<(), String> {
 /// identity (callsign or identifier) is configured. The wizard sets one of
 /// these; an unconfigured deployment must complete the wizard first.
 #[tauri::command]
-pub fn modem_ardop_connect(
+pub async fn modem_ardop_connect(
     app: AppHandle,
     session: State<'_, Arc<ModemSession>>,
     target: String,
@@ -921,19 +933,31 @@ pub fn modem_ardop_connect(
         );
     }
 
-    // Delegate to the gated factory variant (busy guard inside).
-    modem_ardop_connect_gated_with_factory(
-        &session,
-        &session_id,
-        &cfg,
-        &target,
-        &ardop_ui,
-        |cfg, _target| {
-            ArdopTransport::with_managed_modem(cfg)
-                .map(|t| Box::new(t) as Box<dyn ModemTransport>)
-                .map_err(|e| format!("spawn failed: {e}"))
-        },
-    )
+    // tuxlink-ab9h: the gated connect — in-process busy guard, ardopcf spawn,
+    // init, and the blocking `connect_arq` (bounded by ardopcf ARQTIMEOUT ×
+    // CONNECT_REPEAT + the operator's ABORT side channel) — runs OFF the
+    // WebKitGTK main thread. As a synchronous command it blocked the UI event
+    // loop for the entire transmission, so the Stop button (status-event
+    // gated) could not render and the operator had NO working abort during
+    // TX. The fast identity + audio gates above stay synchronous (RADIO-1 /
+    // fail-closed before any modem I/O).
+    let session = Arc::clone(session.inner());
+    tokio::task::spawn_blocking(move || {
+        modem_ardop_connect_gated_with_factory(
+            &session,
+            &session_id,
+            &cfg,
+            &target,
+            &ardop_ui,
+            |cfg, _target| {
+                ArdopTransport::with_managed_modem(cfg)
+                    .map(|t| Box::new(t) as Box<dyn ModemTransport>)
+                    .map_err(|e| format!("spawn failed: {e}"))
+            },
+        )
+    })
+    .await
+    .map_err(|e| format!("connect task panicked: {e}"))?
 }
 
 /// Run a B2F mail exchange over an open ARDOP session (tuxlink-ytg +
@@ -999,7 +1023,7 @@ pub fn modem_ardop_connect(
 /// today; for `P2p`/`RadioOnly` the user-visible behavior matches the
 /// existing dial-with-listener-armed gap.
 #[tauri::command]
-pub fn modem_ardop_b2f_exchange(
+pub async fn modem_ardop_b2f_exchange(
     app: AppHandle,
     session: State<'_, Arc<ModemSession>>,
     target: String,
@@ -1020,66 +1044,49 @@ pub fn modem_ardop_b2f_exchange(
         ));
     }
 
-    // tuxlink-pdnw (Codex Phase 3-4 P1 #1): snapshot the close-generation
-    // BEFORE the transport take. If `ardop_close_session_inner` runs
-    // during this exchange, it will bump the generation; the guarded
-    // install-back below sees the stale snapshot and drops the transport
-    // instead of restoring it into a session the operator just closed.
-    let close_gen_snapshot = session.current_close_generation();
+    // tuxlink-ab9h: the take-transport → connect_arq → B2F → link-disconnect
+    // → guarded re-install sequence is blocking I/O (the ARQCALL plus the
+    // full mail exchange). Run it OFF the WebKitGTK main thread so a
+    // Send/Receive does not freeze the UI and the operator stays able to
+    // abort. The transport-kind validation above stayed synchronous.
+    let session = Arc::clone(session.inner());
+    tokio::task::spawn_blocking(move || {
+        // Snapshot the close-generation BEFORE the transport take
+        // (tuxlink-pdnw, Codex Phase 3-4 P1 #1): if `ardop_close_session_inner`
+        // runs during this exchange it bumps the generation; the guarded
+        // install-back below then drops the transport rather than restoring
+        // it into a session the operator just closed.
+        let close_gen_snapshot = session.current_close_generation();
 
-    // ─── Take the installed transport ────────────────────────────────────
-    // The transport was installed by `ardop_open_session` (Task 3.5) after
-    // a successful spawn + init. If it's missing, the operator didn't open
-    // a session first — surface that cleanly.
-    //
-    // TODO(tuxlink-17u9): swap this for an arbiter-aware
-    // `take_transport_for_outbound` once the listener consumer task honors
-    // the yield request (Task 4.3 has the session-side state machine; the
-    // ARDOP consumer side needs to drop into a yield branch on notify
-    // before the wire-in is deadlock-safe).
-    let mut transport = session.take_transport().ok_or_else(|| {
-        "ARDOP session not open — press Open Session (ARDOP HF) before Send/Receive"
-            .to_string()
-    })?;
+        // Take the installed transport (placed by `ardop_open_session`). If
+        // missing, the operator didn't open a session first. (TODO
+        // tuxlink-17u9: arbiter-aware `take_transport_for_outbound`.)
+        let mut transport = session.take_transport().ok_or_else(|| {
+            "ARDOP session not open — press Open Session (ARDOP HF) before Send/Receive"
+                .to_string()
+        })?;
 
-    // Drive the connect + exchange via the inner helper so the cleanup
-    // path is uniform on both success and failure.
-    let outcome = run_ardop_connect_b2f_with_transport(
-        &app,
-        &mut *transport,
-        &target,
-        intent,
-    );
+        // connect_arq → B2F via the inner helper (uniform cleanup, both paths).
+        let outcome =
+            run_ardop_connect_b2f_with_transport(&app, &mut *transport, &target, intent);
 
-    // ─── Always tear down the ARQ LINK + return transport, regardless of outcome ──
-    //
-    // Codex R2 P1 #3: do NOT close the session (no `transport.disconnect()`
-    // that maps to a full shutdown, no `reset_to_stopped`). The ARDOP
-    // transport's `disconnect` is link-only (cmd-port `DISCONNECT` +
-    // bounded wait for `DISCONNECTED`); the cmd socket and ardopcf
-    // process stay alive. After this, the transport is RE-INSTALLED into
-    // the session so the listener (if armed by intent) can re-arm and a
-    // subsequent Send/Receive can run without re-opening.
-    //
-    // 5 s deadline mirrors `modem_ardop_disconnect_inner`'s link-disconnect
-    // policy. Best-effort: even if the wait times out, we still re-install
-    // the transport so the operator's next action (retry Send/Receive or
-    // Close Session) can proceed.
-    let _ = transport.disconnect(Duration::from_secs(5));
-    // tuxlink-pdnw (Codex Phase 3-4 P1 #1): guarded install. Stale snapshot
-    // (close intervened) → drop the transport explicitly. The drop closes
-    // the cmd socket; the session is in a Stopped posture from
-    // `reset_to_stopped` and a fresh open will spawn a new transport.
-    if let Err(dropped) =
-        session.install_transport_if_generation_matches(transport, close_gen_snapshot)
-    {
-        // Explicit drop — the session was closed since we took the
-        // transport, so re-installing would defeat the close. Letting the
-        // transport fall out of scope here is the correct behavior.
-        drop(dropped);
-    }
+        // Always tear down the ARQ LINK (link-only, 5 s budget) + re-install
+        // the transport regardless of outcome. Codex R2 P1 #3: do NOT
+        // `reset_to_stopped` — the open-session window + listener arming must
+        // survive so a retry / re-arm needs no re-open.
+        let _ = transport.disconnect(Duration::from_secs(5));
+        // Guarded install (tuxlink-pdnw): stale snapshot (a close intervened)
+        // → drop the transport explicitly, defeating no operator close.
+        if let Err(dropped) =
+            session.install_transport_if_generation_matches(transport, close_gen_snapshot)
+        {
+            drop(dropped);
+        }
 
-    outcome
+        outcome
+    })
+    .await
+    .map_err(|e| format!("b2f task panicked: {e}"))?
 }
 
 /// Inner helper for [`modem_ardop_b2f_exchange`]: drives the full
