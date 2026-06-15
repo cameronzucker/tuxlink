@@ -78,7 +78,7 @@ serialport = "4"           # NEW (tuxlink-7fr P2) — KISS over USB-serial COM a
 libc = "0.2"               # NEW (tuxlink-nx2) — AF_BLUETOOTH/BTPROTO_RFCOMM socket for the in-app Bluetooth transport (no rfcomm bind / no root / no serialport TTY)
 rusqlite = { version = "0.40", features = ["bundled", "modern_sqlite"] }  # NEW (tuxlink-1hu) — FTS5-indexed search; bundled SQLite ≥ 3.9 ensures FTS5 is compiled in
 uuid = { version = "1", features = ["v4", "v7", "serde"] }  # NEW (tuxlink-1hu) — saved-search IDs; v7 added for alpha-logging boot_id
-rand = "0.9"               # NEW (tuxlink-4ek Task 3.1) — RADIO-1 consent-token mint (16 hex chars); intra-process replay protection, not a secret
+rand = "0.10"               # NEW (tuxlink-4ek Task 3.1) — RADIO-1 consent-token mint (16 hex chars); intra-process replay protection, not a secret
 quick-xml = { version = "0.40", default-features = false, features = ["serialize"] }  # NEW (tuxlink-v1p T1.3) — XML parse/serialize for HTML Forms; per spec §10 (hardening) + plan rev-4 T1.3
 axum = "0.8"                                     # NEW (tuxlink-ytya P1) — lazy loopback HTTP server for HTML Forms webview path; design §5.3
 tower = { version = "0.5", features = ["util"] } # NEW (tuxlink-ytya P1) — service composition for the form-server router
