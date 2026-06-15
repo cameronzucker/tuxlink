@@ -45,7 +45,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # libheif-sys ^3.1, so caret is unsafe — exact pin. The decode API
 # (LibHeif::new + ctx.read_from_bytes + lib.decode + planes().interleaved) is
 # identical in 1.0.2, so transcode.rs is unchanged.
-libheif-rs = "=1.0.2"
+libheif-rs = "=2.7.0"
 webp = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
