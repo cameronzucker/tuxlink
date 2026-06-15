@@ -99,12 +99,22 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   // connectable instead of on disabled Send/Receive. Consumed by the auto-open
   // effect once the live transport state is known (race-safe vs the mount poll).
   const [autoOpenPending, setAutoOpenPending] = useState(false);
-  // Live refs so the stable openSession callback self-guards against the current
-  // status/busy without being re-created on every render.
+  // True once the mount `vara_status` poll has resolved. The auto-open effect
+  // waits for this so it never acts on the indistinguishable INITIAL 'closed'
+  // (Codex p6iq [P1]).
+  const [initialStatusLoaded, setInitialStatusLoaded] = useState(false);
+  // Live status ref so the stable openSession callback reads the current state
+  // without being re-created on every render.
   const statusRef = useRef<VaraStatusDto>(status);
   statusRef.current = status;
-  const busyRef = useRef(busy);
-  busyRef.current = busy;
+  // Synchronous open-in-flight guard — set true BEFORE the first await so a
+  // manual Start click and the auto-open effect firing in the same tick cannot
+  // both issue vara_open_session (a render-synced ref can't: it only updates at
+  // render). Codex p6iq [P2].
+  const openInFlightRef = useRef(false);
+  // An open has been INITIATED — the one-shot mount status poll must not clobber
+  // it with a stale mount-time snapshot if it resolves late. Codex p6iq [P1].
+  const openInitiatedRef = useRef(false);
 
   // Local input mirrors so the operator can type freely; commit on blur.
   const [hostInput, setHostInput] = useState<string>('');
@@ -203,10 +213,15 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     let cancelled = false;
     invoke<VaraStatusDto>('vara_status')
       .then((s) => {
-        if (!cancelled) setStatus(s);
+        if (cancelled) return;
+        // Don't clobber an open that the operator/auto-flow already kicked off
+        // while this poll was in flight (Codex p6iq [P1]).
+        if (!openInitiatedRef.current && s) setStatus(s);
+        setInitialStatusLoaded(true);
       })
       .catch(() => {
-        /* No-op — status defaults to closed. */
+        // status defaults to closed; mark loaded so the auto-open gate releases.
+        if (!cancelled) setInitialStatusLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -264,9 +279,13 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   // than a double-open. tuxlink-poh6: NO platformBlocked guard here — the
   // operator CAN open a session against a remote VARA host from a Pi.
   const openSession = useCallback(async () => {
-    if (busyRef.current) return;
+    if (openInFlightRef.current) return;
     const st = statusRef.current.state;
     if (st === 'open' || st === 'connecting') return;
+    // Claim in-flight + initiated SYNCHRONOUSLY, before any await, so a racing
+    // caller in the same tick is a no-op (Codex p6iq [P1]/[P2]).
+    openInFlightRef.current = true;
+    openInitiatedRef.current = true;
     setBusy(true);
     setActionError(null);
     try {
@@ -286,12 +305,13 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
       // Refresh status so a backend-side Error state surfaces.
       try {
         const s = await invoke<VaraStatusDto>('vara_status');
-        setStatus(s);
+        if (s) setStatus(s);
       } catch {
         /* keep prior status */
       }
     } finally {
       setBusy(false);
+      openInFlightRef.current = false;
     }
   }, [mode.intent, mode.kind]);
 
@@ -299,19 +319,20 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     void openSession();
   };
 
-  // tuxlink-p6iq: consume an auto-open request once the live transport state is
-  // known. Waiting on `status.state` (and `busy`) makes this race-safe against
-  // the mount status poll: we open only after status has settled to closed/error
-  // — never clobbering an already-open session, and never double-firing.
+  // tuxlink-p6iq: consume an auto-open request. Gate on `initialStatusLoaded` so
+  // we never act on the indistinguishable INITIAL 'closed' — only once the mount
+  // poll has reported the real backend state (Codex p6iq [P1]). Then open only
+  // if genuinely closed/error: an already-open/connecting session just clears the
+  // request, and openSession's synchronous guard prevents a double-open.
   useEffect(() => {
-    if (!autoOpenPending || busy) return;
+    if (!autoOpenPending || !initialStatusLoaded || busy) return;
     if (status.state === 'open' || status.state === 'connecting') {
       setAutoOpenPending(false);
       return;
     }
     setAutoOpenPending(false);
     void openSession();
-  }, [autoOpenPending, busy, status.state, openSession]);
+  }, [autoOpenPending, initialStatusLoaded, busy, status.state, openSession]);
 
   const onStopClick = async () => {
     if (busy) return;

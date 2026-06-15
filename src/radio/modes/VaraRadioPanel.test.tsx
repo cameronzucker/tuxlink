@@ -613,6 +613,38 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       await act(async () => {});
       expect(invokeSpy).not.toHaveBeenCalledWith('vara_open_session', expect.anything());
     });
+
+    it('opens the transport exactly once for a single use (no double-open)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+      invokeSpy.mockImplementation(makeInvoke({ vara_open_session: openStatus }));
+      renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+      await screen.findByTestId('vara-send-receive-btn');
+      await act(async () => {
+        emitGatewayPrefill(dial);
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId('vara-send-receive-btn')).not.toBeDisabled();
+      });
+      const opens = invokeSpy.mock.calls.filter(([c]) => c === 'vara_open_session').length;
+      expect(opens).toBe(1);
+    });
+
+    it('waits for the mount status poll before auto-opening (no spurious open when already open)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+      // Backend is ALREADY open; the mount poll reports it. A prefill racing the
+      // poll must NOT fire vara_open_session against the indistinguishable initial
+      // 'closed' (Codex p6iq [P1]).
+      invokeSpy.mockImplementation(makeInvoke({ vara_status: openStatus }));
+      renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+      await act(async () => {
+        emitGatewayPrefill(dial);
+      });
+      await waitFor(() => expect(screen.getByTestId('vara-start-btn')).toBeDisabled()); // open
+      await act(async () => {});
+      expect(invokeSpy).not.toHaveBeenCalledWith('vara_open_session', expect.anything());
+    });
   });
 
   it('shows a visible transport-closed hint pointing to Start (manual path)', async () => {
