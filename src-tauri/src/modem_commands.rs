@@ -1574,15 +1574,25 @@ mod tests {
     /// removed `consent_token`, changes the `intent` type back to `String`),
     /// the fn-pointer coercion below fails to compile and this test fails.
     #[test]
-    #[allow(clippy::type_complexity)] // intentional: this test ASSERTS the fn signature shape
     fn modem_ardop_b2f_exchange_signature_accepts_intent_and_transport_kind() {
-        let _f: fn(
-            AppHandle,
-            State<'_, Arc<ModemSession>>,
-            String, // target
-            SessionIntent, // intent (typed; was `String` pre-Task-3.6)
-            crate::winlink::listener::transport::TransportKind, // transport_kind (new)
-        ) -> Result<(), String> = modem_ardop_b2f_exchange;
+        // tuxlink-ab9h: the command is now `async fn`, so it cannot coerce to a
+        // named `fn(...) -> Result<(), String>` pointer (its return is an opaque
+        // Future). Assert the parameter-list shape via an async wrapper with the
+        // exact signature that forwards to the command: if the list drifts
+        // (loses `transport_kind`, regains the removed `consent_token`, or
+        // changes `intent` back to `String`), this forwarding call fails to
+        // compile and the test fails — same guarantee as the prior fn-pointer
+        // coercion.
+        async fn _assert_sig(
+            app: AppHandle,
+            session: State<'_, Arc<ModemSession>>,
+            target: String,                                        // target
+            intent: SessionIntent,                                 // typed (was String pre-Task-3.6)
+            transport_kind: crate::winlink::listener::transport::TransportKind, // new
+        ) -> Result<(), String> {
+            modem_ardop_b2f_exchange(app, session, target, intent, transport_kind).await
+        }
+        let _ = _assert_sig;
     }
 
     // ── tuxlink-5738 — pre-flight identity check ─────────────────────────
