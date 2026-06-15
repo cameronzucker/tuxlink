@@ -30,6 +30,33 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.65.0](https://github.com/cameronzucker/tuxlink/compare/v0.64.0...v0.65.0) (2026-06-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **basemap:** run pack download off the main thread (UI freeze + dead progress)
+
+### Features
+
+* **catalog:** Find-a-Station encoding disambiguation + control-strip compaction (items 2-3) ([9896b9a](https://github.com/cameronzucker/tuxlink/commit/9896b9a44eccb7d81b5d6958f0e53a64f117f93e))
+* **logging:** forward frontend errors into the structured log (tuxlink-4b96) ([7c89a56](https://github.com/cameronzucker/tuxlink/commit/7c89a56f189dc033e04e5c7c7cc95ad6501c4d6e))
+* **propagation:** height-aware antenna model (operator item 4 + isotropic-collapse fix) ([cd477bd](https://github.com/cameronzucker/tuxlink/commit/cd477bd3978d79262a7736c6eef72057db1881aa))
+* **propagation:** operator-selectable man-made noise environment (SYSTEM card) ([e5fdb36](https://github.com/cameronzucker/tuxlink/commit/e5fdb3667e9b6b6ac039e7e306fd9cc8543881b1))
+* **settings:** redesign Settings as a Find-a-Station-sized nav + inline pane (tuxlink-b95x) ([746e830](https://github.com/cameronzucker/tuxlink/commit/746e830c824ae4d468c5582cc9f13b78220b7c6e))
+
+
+### Bug Fixes
+
+* **basemap:** close two cancel-path holes from Codex review ([05798e7](https://github.com/cameronzucker/tuxlink/commit/05798e7580237e4ea92edff2c423683f4d62c6d2))
+* **basemap:** run pack download off the main thread (UI freeze + dead progress) ([c5bd289](https://github.com/cameronzucker/tuxlink/commit/c5bd289f5a09d1cd33dfce0e88b608afd198074a))
+* **catalog:** colour Find-a-Station band-forecast bars by reachability tier (item 1) ([ec7a15d](https://github.com/cameronzucker/tuxlink/commit/ec7a15d78af653dbb16571480722b69bcc5aa5a6))
+* **location:** raise Location panel above the Settings modal (z-index) (tuxlink-h4d3) ([2879851](https://github.com/cameronzucker/tuxlink/commit/287985132dc8208725feae841223cf77d28ee6f9))
+* **logging:** forward Rust panics into the structured log via a panic hook ([b35ece4](https://github.com/cameronzucker/tuxlink/commit/b35ece4a0a7e9a35e83d52816469ef3e95281138))
+* **map:** add overlays without gating on isStyleLoaded (Find-a-Station no-pins) ([cf47f6f](https://github.com/cameronzucker/tuxlink/commit/cf47f6f591149d4157c11221d6e483137927e1d3))
+* **map:** tolerate a torn-down map in hook cleanups (Find-a-Station close-crash) ([ac6cdd0](https://github.com/cameronzucker/tuxlink/commit/ac6cdd0707917c44695c4f8cfe3f6103911991bb))
+* **propagation:** correct REQ.SNR default 22→38 dB-Hz (Find-a-Station over-optimism) ([a465127](https://github.com/cameronzucker/tuxlink/commit/a465127a64722fdf5e1a82533f97f5a97bff008d))
+
 ## [0.64.0](https://github.com/cameronzucker/tuxlink/compare/v0.63.0...v0.64.0) (2026-06-14)
 
 
