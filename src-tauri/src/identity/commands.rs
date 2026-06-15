@@ -104,6 +104,60 @@ pub(crate) fn add_full_inner(
     Ok(())
 }
 
+/// Manual-unlock self-heal for an orphan-v2 FULL (tuxlink-nx3g): when
+/// `authenticate()` returned `NoSecretSet`, provision the missing activation secret
+/// from the stored CMS password and mint a handle — but ONLY if the typed
+/// `credential` PROVES knowledge of that stored CMS password (constant-time compare).
+/// That proof is what prevents an arbitrary typed string from becoming the secret.
+///
+/// Validates the target BEFORE any keyring write: the FULL must exist in the store
+/// (its canonical stored callsign is used to read the CMS password, since CMS reads
+/// use the raw account string while activation accounts uppercase), and a requested
+/// tactical must be a known label under it. Returns `None` (caller → `AuthFailed`)
+/// on a missing FULL/tactical, no/empty stored CMS password, or a credential that
+/// does not match. `read_cms_pw` is injected for headless testing.
+fn manual_heal_handle(
+    svc: &IdentityService,
+    store_path: &Path,
+    full_typed: &Callsign,
+    credential: &str,
+    tactical_label: Option<&str>,
+    read_cms_pw: impl Fn(&str) -> Option<String>,
+) -> Option<crate::identity::IdentityHandle> {
+    if credential.is_empty() {
+        return None;
+    }
+    let store = IdentityStore::load(store_path).ok()?;
+    // The FULL must exist; resolve its canonical (stored) callsign.
+    let canonical = store
+        .full()
+        .iter()
+        .find(|f| f.callsign.as_str().eq_ignore_ascii_case(full_typed.as_str()))
+        .map(|f| f.callsign.clone())?;
+    // A requested tactical must be a known label under this FULL — validate BEFORE
+    // writing any secret (no spurious provisioning for an unknown tactical attempt).
+    if let Some(label) = tactical_label {
+        let known = store
+            .tactical()
+            .iter()
+            .any(|t| t.label == label && t.parent.as_str().eq_ignore_ascii_case(canonical.as_str()));
+        if !known {
+            return None;
+        }
+    }
+    // Proof-of-knowledge: the typed credential must equal the stored CMS password.
+    let cms_pw = read_cms_pw(canonical.as_str())?;
+    if cms_pw.is_empty() || !crate::identity::service::ct_eq_strings(&cms_pw, credential) {
+        return None;
+    }
+    // Heal the FULL's activation secret from the proven CMS password, then
+    // authenticate with the TYPED callsign so the minted handle matches the
+    // non-heal path exactly. `heal_activation_secret` is a no-op if a secret already
+    // exists and fails closed on a backend error.
+    svc.heal_activation_secret(&canonical, credential).ok()?;
+    svc.authenticate(full_typed, credential).ok()
+}
+
 /// Authenticate a FULL credential and build the active session, persisting the
 /// non-authoritative `last_selected` hint. See [`identity_authenticate`] for the
 /// command-level contract.
@@ -122,15 +176,35 @@ fn authenticate_inner(
         reason: e.to_string(),
     })?;
 
-    // Authenticate the FULL credential -> a fresh handle (keyring-gated).
-    let handle = svc.authenticate(&full, credential).map_err(|e| match e {
-        IdentityError::CredentialMismatch | IdentityError::NoSecretSet => UiError::AuthFailed {
-            reason: e.to_string(),
-        },
-        other => UiError::Internal {
-            detail: other.to_string(),
-        },
-    })?;
+    // Authenticate the FULL credential -> a fresh handle (keyring-gated). On
+    // NoSecretSet (orphan-v2: the activation secret was never written), attempt a
+    // manual self-heal — but ONLY if the typed credential proves knowledge of the
+    // stored CMS password (tuxlink-nx3g). Keeping the proof here, not in
+    // authenticate(), is what stops any typed string from becoming the secret.
+    let handle = match svc.authenticate(&full, credential) {
+        Ok(h) => h,
+        Err(IdentityError::NoSecretSet) => manual_heal_handle(
+            svc,
+            store_path,
+            &full,
+            credential,
+            tactical_label,
+            |c| crate::winlink::credentials::read_password(c).ok(),
+        )
+        .ok_or_else(|| UiError::AuthFailed {
+            reason: IdentityError::NoSecretSet.to_string(),
+        })?,
+        Err(IdentityError::CredentialMismatch) => {
+            return Err(UiError::AuthFailed {
+                reason: IdentityError::CredentialMismatch.to_string(),
+            })
+        }
+        Err(other) => {
+            return Err(UiError::Internal {
+                detail: other.to_string(),
+            })
+        }
+    };
 
     // Build the active session: FULL, or a tactical that must exist under this parent.
     let (session, selected) = match tactical_label {
@@ -666,5 +740,97 @@ mod tests {
             backend.active_identity(),
             Err(BackendError::NoActiveIdentity)
         ));
+    }
+
+    // --- manual self-heal (tuxlink-nx3g) -----------------------------------
+
+    /// A FULL in the store but NO activation secret (the orphan-v2 state).
+    fn orphan_store(path: &Path, call: &str) {
+        let mut store = IdentityStore::load(path).unwrap();
+        store
+            .add_full(FullIdentity {
+                callsign: Callsign::parse(call).unwrap(),
+                label: None,
+                has_cms_account: true,
+                cms_registered: true,
+            })
+            .unwrap();
+        store.save().unwrap();
+    }
+
+    #[test]
+    fn manual_heal_provisions_secret_with_proof_of_cms_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        let svc = IdentityService::with_memory_keyring();
+        orphan_store(&path, "W1ABC");
+        let full = Callsign::parse("W1ABC").unwrap();
+        assert_eq!(svc.authenticate(&full, "cms-pw").err(), Some(IdentityError::NoSecretSet));
+        let h = manual_heal_handle(&svc, &path, &full, "cms-pw", None, |_| Some("cms-pw".to_string()));
+        assert!(h.is_some(), "matching CMS password proves knowledge -> heal + authenticate");
+        assert!(svc.has_activation_secret(&full), "secret provisioned by the heal");
+    }
+
+    #[test]
+    fn manual_heal_refuses_a_wrong_credential_and_writes_nothing() {
+        // THE bypass guard: a typed string that does NOT match the stored CMS
+        // password must never become the activation secret.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        let svc = IdentityService::with_memory_keyring();
+        orphan_store(&path, "W1ABC");
+        let full = Callsign::parse("W1ABC").unwrap();
+        let h = manual_heal_handle(&svc, &path, &full, "guessed", None, |_| Some("cms-pw".to_string()));
+        assert!(h.is_none(), "non-matching credential must NOT heal");
+        assert!(!svc.has_activation_secret(&full), "no secret written on a failed proof");
+    }
+
+    #[test]
+    fn manual_heal_refuses_when_no_stored_cms_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        let svc = IdentityService::with_memory_keyring();
+        orphan_store(&path, "W1ABC");
+        let full = Callsign::parse("W1ABC").unwrap();
+        let h = manual_heal_handle(&svc, &path, &full, "cms-pw", None, |_| None);
+        assert!(h.is_none());
+        assert!(!svc.has_activation_secret(&full));
+    }
+
+    #[test]
+    fn manual_heal_refuses_an_unknown_tactical_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        let svc = IdentityService::with_memory_keyring();
+        orphan_store(&path, "W1ABC");
+        let full = Callsign::parse("W1ABC").unwrap();
+        let h = manual_heal_handle(&svc, &path, &full, "cms-pw", Some("GHOST"), |_| Some("cms-pw".to_string()));
+        assert!(h.is_none(), "unknown tactical -> no heal");
+        assert!(!svc.has_activation_secret(&full), "no secret written for an unknown tactical");
+    }
+
+    #[test]
+    fn manual_heal_refuses_a_full_not_in_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json"); // empty store
+        let svc = IdentityService::with_memory_keyring();
+        let full = Callsign::parse("W1ABC").unwrap();
+        let h = manual_heal_handle(&svc, &path, &full, "cms-pw", None, |_| Some("cms-pw".to_string()));
+        assert!(h.is_none());
+    }
+
+    #[test]
+    fn manual_heal_resolves_canonical_callsign_for_a_lowercase_typed_call() {
+        // The store holds "W1ABC"; the operator types "w1abc". The CMS password
+        // read MUST use the canonical "W1ABC" (CMS reads use the raw account).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        let svc = IdentityService::with_memory_keyring();
+        orphan_store(&path, "W1ABC");
+        let typed = Callsign::parse("w1abc").unwrap();
+        let h = manual_heal_handle(&svc, &path, &typed, "cms-pw", None, |c| {
+            if c == "W1ABC" { Some("cms-pw".to_string()) } else { None }
+        });
+        assert!(h.is_some(), "lowercase typed call must heal the canonical stored FULL");
     }
 }

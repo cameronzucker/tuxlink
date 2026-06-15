@@ -207,8 +207,10 @@ impl EntryLike for RealEntry {
 }
 
 /// Constant-time, length-oracle-free string equality (SHA-256 digest + `subtle`),
-/// identical in approach to `station_password::ct_eq_strings`.
-fn ct_eq_strings(a: &str, b: &str) -> bool {
+/// identical in approach to `station_password::ct_eq_strings`. `pub(crate)` so the
+/// manual self-heal proof-of-knowledge compare (tuxlink-nx3g, commands.rs) reuses the
+/// same constant-time path the auth gate uses.
+pub(crate) fn ct_eq_strings(a: &str, b: &str) -> bool {
     use sha2::{Digest, Sha256};
     let digest_a = Sha256::digest(a.as_bytes());
     let digest_b = Sha256::digest(b.as_bytes());
