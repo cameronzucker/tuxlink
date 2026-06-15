@@ -72,6 +72,9 @@ function makeInvoke(overrides: Record<string, unknown> = {}) {
     }
     if (cmd === 'config_get_vara') return defaultConfig;
     if (cmd === 'vara_status') return closedStatus;
+    // vara_open_session defaults to a successful open (the real command always
+    // returns a VaraStatusDto). Tests override it for failure-path coverage.
+    if (cmd === 'vara_open_session') return openStatus;
     if (cmd === 'platform_info') return x86Platform;
     if (cmd === 'session_log_snapshot') return [];
     // Favorites surface (B6 VARA mirror). The mounted FavoritesTabs/useFavorites
@@ -541,6 +544,89 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
         expect.objectContaining({ transportKind: 'vara-fm' }),
       );
     });
+  });
+
+  // tuxlink-p6iq: Find-a-Station "Use →" (and a favorite Connect) must land the
+  // operator CONNECTABLE, not on a dead-end of disabled Send/Receive. A
+  // gateway-prefill auto-opens the transport (a socket, NOT a transmission —
+  // Send/Receive stays the explicit consent click).
+  describe('use-a-gateway auto-opens the transport (no dead-end)', () => {
+    const dial = { mode: 'vara-hf' as const, gateway: 'W7RMS-10' };
+
+    it('auto-opens the VARA transport when a gateway is used (prefill)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+      invokeSpy.mockImplementation(makeInvoke()); // closed by default
+      renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+      await screen.findByTestId('vara-send-receive-btn');
+      await act(async () => {
+        emitGatewayPrefill(dial);
+      });
+      await waitFor(() => {
+        expect(invokeSpy).toHaveBeenCalledWith(
+          'vara_open_session',
+          expect.objectContaining({ intent: 'cms', transportKind: 'vara-hf' }),
+        );
+      });
+    });
+
+    it('lands connectable: after Use → the session opens and Send/Receive enables', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+      invokeSpy.mockImplementation(makeInvoke({ vara_open_session: openStatus }));
+      renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+      await screen.findByTestId('vara-send-receive-btn');
+      await act(async () => {
+        emitGatewayPrefill(dial);
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId('vara-send-receive-btn')).not.toBeDisabled();
+      });
+    });
+
+    it('surfaces an error (not a silent dead-end) when the transport cannot open', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+      invokeSpy.mockImplementation(makeInvoke({ vara_open_session: new Error('connection refused') }));
+      renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+      await screen.findByTestId('vara-send-receive-btn');
+      await act(async () => {
+        emitGatewayPrefill(dial);
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId('vara-action-error')).toHaveTextContent(/Start failed/i);
+      });
+      // The operator can retry — Start stays available, no dead silence.
+      expect(screen.getByTestId('vara-start-btn')).not.toBeDisabled();
+    });
+
+    it('does not re-open the transport when a gateway is used while already open', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+      invokeSpy.mockImplementation(makeInvoke({ vara_status: openStatus }));
+      renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+      await waitFor(() => expect(screen.getByTestId('vara-start-btn')).toBeDisabled()); // open
+      invokeSpy.mockClear();
+      await act(async () => {
+        emitGatewayPrefill(dial);
+      });
+      await act(async () => {});
+      expect(invokeSpy).not.toHaveBeenCalledWith('vara_open_session', expect.anything());
+    });
+  });
+
+  it('shows a visible transport-closed hint pointing to Start (manual path)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(makeInvoke({ vara_status: closedStatus }));
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    expect(await screen.findByTestId('vara-transport-hint')).toBeInTheDocument();
+  });
+
+  it('hides the transport-closed hint once the session is open', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(makeInvoke({ vara_status: openStatus }));
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await waitFor(() => expect(screen.queryByTestId('vara-transport-hint')).toBeNull());
   });
 
   it('disables Send/Receive until the session is Open AND a target is present', async () => {

@@ -94,6 +94,17 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   const [platform, setPlatform] = useState<PlatformInfoDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // tuxlink-p6iq: set when a "use this gateway" action (Find-a-Station "Use →"
+  // or a favorite Connect) wants the transport opened so the operator lands
+  // connectable instead of on disabled Send/Receive. Consumed by the auto-open
+  // effect once the live transport state is known (race-safe vs the mount poll).
+  const [autoOpenPending, setAutoOpenPending] = useState(false);
+  // Live refs so the stable openSession callback self-guards against the current
+  // status/busy without being re-created on every render.
+  const statusRef = useRef<VaraStatusDto>(status);
+  statusRef.current = status;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
 
   // Local input mirrors so the operator can type freely; commit on blur.
   const [hostInput, setHostInput] = useState<string>('');
@@ -120,6 +131,11 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   const handlePrefill = useCallback((dial: FavoriteDial) => {
     setTarget(dial.gateway);
     pendingDialRef.current = dial;
+    // tuxlink-p6iq: a "use this gateway" action lands the operator CONNECTABLE.
+    // Request an auto-open of the transport — opening the cmd/data sockets does
+    // NOT transmit (the Start button says as much), so this preserves the
+    // prefill-never-transmits rule: Send/Receive stays the explicit consent click.
+    setAutoOpenPending(true);
   }, []);
 
   const { entries: logEntries, clear: clearLog } = useSessionLog();
@@ -242,30 +258,29 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     }
   };
 
-  const onStartClick = async () => {
-    // tuxlink-poh6: previously this guard included `platformBlocked`, which
-    // silently no-op'd Start clicks on aarch64. The whole point of removing
-    // `platformBlocked` from the `disabled` prop (tuxlink-ze98 / PR #231)
-    // was so the operator CAN start a session against a remote VARA host
-    // from a Pi. The handler must agree — the only gate here is in-flight
-    // re-entrancy via `busy`.
-    if (busy) return;
+  // Open the VARA transport. Shared by the explicit Start click and the
+  // auto-open-on-use path (tuxlink-p6iq). Self-guards via refs so a concurrent
+  // call (e.g. the auto-open effect racing a manual click) is a no-op rather
+  // than a double-open. tuxlink-poh6: NO platformBlocked guard here — the
+  // operator CAN open a session against a remote VARA host from a Pi.
+  const openSession = useCallback(async () => {
+    if (busyRef.current) return;
+    const st = statusRef.current.state;
+    if (st === 'open' || st === 'connecting') return;
     setBusy(true);
     setActionError(null);
     try {
       // tuxlink-o0c8: thread the sidebar-selected intent (cms / p2p / radio-only)
-      // from mode.intent — mirroring ARDOP (tuxlink-nnws). Previously hardcoded
-      // 'cms', which silently mis-routed p2p / radio-only VARA selections as
-      // gateway sessions. transportKind is the panel's mode.kind ('vara-hf' vs
-      // 'vara-fm') so the backend records the operator-meaningful discriminator
-      // on session state (the wire transport is identical between the two —
-      // Codex Round 3 P1 #3: lets the frontend detect sidebar-nav drift
-      // mid-session).
+      // from mode.intent — mirroring ARDOP (tuxlink-nnws). transportKind is the
+      // panel's mode.kind ('vara-hf' vs 'vara-fm') so the backend records the
+      // operator-meaningful discriminator on session state.
       const next = await invoke<VaraStatusDto>('vara_open_session', {
         intent: mode.intent,
         transportKind: mode.kind,
       });
-      setStatus(next);
+      // Defensive: only adopt a real status object (the backend always returns
+      // one; this guards a malformed response from clobbering state with undefined).
+      if (next) setStatus(next);
     } catch (e) {
       setActionError(`Start failed: ${String(e)}`);
       // Refresh status so a backend-side Error state surfaces.
@@ -278,7 +293,25 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     } finally {
       setBusy(false);
     }
+  }, [mode.intent, mode.kind]);
+
+  const onStartClick = () => {
+    void openSession();
   };
+
+  // tuxlink-p6iq: consume an auto-open request once the live transport state is
+  // known. Waiting on `status.state` (and `busy`) makes this race-safe against
+  // the mount status poll: we open only after status has settled to closed/error
+  // — never clobbering an already-open session, and never double-firing.
+  useEffect(() => {
+    if (!autoOpenPending || busy) return;
+    if (status.state === 'open' || status.state === 'connecting') {
+      setAutoOpenPending(false);
+      return;
+    }
+    setAutoOpenPending(false);
+    void openSession();
+  }, [autoOpenPending, busy, status.state, openSession]);
 
   const onStopClick = async () => {
     if (busy) return;
@@ -548,6 +581,16 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
               ? `Send / Receive (${target.trim()})`
               : 'Send / Receive'}
         </button>
+        {/* tuxlink-p6iq: a VISIBLE closed-state hint (not just the button's hover
+            title) so the manual-target path is never a silent dead-end. Find-a-
+            Station "Use →" auto-opens the transport; an operator who instead
+            opens the panel and types a target needs to know to press Start. */}
+        {status.state !== 'open' && status.state !== 'connecting' && (
+          <p className="radio-panel-radio-help" data-testid="vara-transport-hint">
+            Transport closed — press <strong>Start</strong> below to open the VARA
+            session, then Send / Receive.
+          </p>
+        )}
       </section>
 
       {/* Listen (Accept Inbound) — VARA P2P listener arms + allowlist.
