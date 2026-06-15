@@ -37,6 +37,16 @@ import { MapProvider } from './MapContext';
 const pmtilesProtocol = new Protocol();
 maplibregl.addProtocol('pmtiles', pmtilesProtocol.tile);
 
+// Last-known installed packs, cached at module scope across mounts (B2,
+// tuxlink-vnk7). The map remounts whenever the operator navigates to a
+// map-bearing surface; without this, EVERY mount constructed overview-only and
+// then fired a full `setStyle` once `basemap_list_packs` resolved. Caching the
+// last result lets a remount construct WITH packs already known, so the async
+// resolution is a no-op (key unchanged) instead of a teardown/rebuild. The
+// first-ever mount (cache empty) is unchanged. A genuine pack install/delete
+// still flips the key and rebuilds — that is correct and rare.
+let lastKnownPacks: PackSource[] = [];
+
 /** Min interactive zoom (whole world fits at ~z1 on the z0–14 scale). */
 const MAP_MIN_ZOOM = 0;
 /** Max interactive zoom — region packs carry z0–14; the overview overzooms past z6. */
@@ -106,11 +116,17 @@ export function MapLibreMap({
   // Installed region packs composited over the world overview (R7). Fetched after
   // mount (the construct-time style uses the overview only) and re-fetched when the
   // pack manager signals a change; a change drives setStyle in the rebuild effect.
-  const [packs, setPacks] = useState<PackSource[]>([]);
+  const [packs, setPacks] = useState<PackSource[]>(() => lastKnownPacks);
+  // The packs known at THIS mount's construction (the module cache snapshot).
+  // The construct effect builds the style with these and seeds the style-key, so
+  // a later identical fetch is a no-op rather than a redundant setStyle (B2).
+  const constructPacksRef = useRef(packs);
   const fetchPacks = useCallback(async () => {
     try {
       const list = await invoke<PacksList>('basemap_list_packs');
-      setPacks(list.packs.map((p) => ({ id: p.id })));
+      const next = list.packs.map((p) => ({ id: p.id }));
+      lastKnownPacks = next; // cache for the next mount's construction (B2)
+      setPacks(next);
     } catch {
       // No backend (e.g. unit test / dev without the command) → overview only.
       setPacks([]);
@@ -129,7 +145,9 @@ export function MapLibreMap({
     try {
       const instance = new maplibregl.Map({
         container: containerRef.current,
-        style: buildBasemapStyle(flavorRef.current),
+        // Construct WITH the packs known at mount (B2) — the module cache makes a
+        // remount carry packs so the async fetchPacks resolution is a no-op.
+        style: buildBasemapStyle(flavorRef.current, constructPacksRef.current),
         // Clamp the initial center to the displayable world so a bad GPS / catalog
         // coordinate can't start the camera off-map (tuxlink-rwo6).
         center: clampMapCenter(initialCenter?.lon ?? 0, initialCenter?.lat ?? 0),
@@ -235,8 +253,14 @@ export function MapLibreMap({
   const styleKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!map) return;
-    const key = `${effectiveFlavor}|${packs.map((p) => p.id).slice().sort().join(',')}`;
-    if (styleKeyRef.current === null) styleKeyRef.current = `${effectiveFlavor}|`; // construct-time
+    const packKey = (ps: PackSource[]) => ps.map((p) => p.id).slice().sort().join(',');
+    const key = `${effectiveFlavor}|${packKey(packs)}`;
+    // Seed from what the CONSTRUCTOR actually used (flavor + construct-time packs,
+    // B2). If the async fetch resolves to the same packs the cache gave the
+    // constructor, the key matches and no setStyle fires.
+    if (styleKeyRef.current === null) {
+      styleKeyRef.current = `${effectiveFlavor}|${packKey(constructPacksRef.current)}`;
+    }
     if (styleKeyRef.current === key) return;
     styleKeyRef.current = key;
     flavorRef.current = effectiveFlavor;
