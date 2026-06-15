@@ -66,6 +66,15 @@ pub struct Type14Pattern {
 }
 
 /// Reasons a [`Type14Pattern`] cannot be rendered to a valid `.voa`.
+///
+/// The value-range / finiteness variants exist because voacapl reads the gain
+/// table with **fixed-width** Fortran fields (`F7.3` gains, `F6.2` efficiency):
+/// a value whose rendered form overflows its field would *widen* the column and
+/// silently shift every subsequent value voacapl reads — a plausible-but-wrong
+/// pattern, not a loud failure. The emitter is the last line of defence against
+/// that, so it refuses rather than emits. Callers feeding real NEC output (whose
+/// deep nulls can run below −100 dBi) must clamp to the representable floor
+/// (≥ −99.999 dBi, physically the noise floor) *before* emitting.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum Type14Error {
     #[error("expected {N_BLOCKS} frequency blocks, got {0}")]
@@ -74,6 +83,14 @@ pub enum Type14Error {
     GainCount { block: usize, got: usize },
     #[error("title is {0} chars, exceeds the {MAX_TITLE_CHARS}-char limit")]
     TitleTooLong(usize),
+    #[error("block {block} gain[{index}] is not finite ({value})")]
+    NonFiniteGain { block: usize, index: usize, value: f64 },
+    #[error("block {block} gain[{index}] = {value} overflows the F7.3 field")]
+    GainOutOfRange { block: usize, index: usize, value: f64 },
+    #[error("block {block} efficiency is not finite ({value})")]
+    NonFiniteEfficiency { block: usize, value: f64 },
+    #[error("block {block} efficiency = {value} overflows the F6.2 field")]
+    EfficiencyOutOfRange { block: usize, value: f64 },
 }
 
 /// Suppress a single leading zero in the integer part, g77-style:
@@ -116,11 +133,44 @@ impl Type14Pattern {
             return Err(Type14Error::BlockCount(self.blocks.len()));
         }
         for (i, b) in self.blocks.iter().enumerate() {
+            let block = i + 1;
             if b.gains.len() != N_GAINS {
                 return Err(Type14Error::GainCount {
-                    block: i + 1,
+                    block,
                     got: b.gains.len(),
                 });
+            }
+            // Efficiency must be finite and fit its F6.2 column.
+            if !b.efficiency.is_finite() {
+                return Err(Type14Error::NonFiniteEfficiency {
+                    block,
+                    value: b.efficiency,
+                });
+            }
+            if f6_2(b.efficiency).len() > 6 {
+                return Err(Type14Error::EfficiencyOutOfRange {
+                    block,
+                    value: b.efficiency,
+                });
+            }
+            // Every gain must be finite and fit its F7.3 column; a value that
+            // overflowed would widen the field and shift all following columns,
+            // so voacapl would silently read a different gain table.
+            for (j, g) in b.gains.iter().enumerate() {
+                if !g.is_finite() {
+                    return Err(Type14Error::NonFiniteGain {
+                        block,
+                        index: j,
+                        value: *g,
+                    });
+                }
+                if f7_3(*g).len() > 7 {
+                    return Err(Type14Error::GainOutOfRange {
+                        block,
+                        index: j,
+                        value: *g,
+                    });
+                }
             }
         }
 
@@ -292,5 +342,78 @@ mod tests {
         let mut p = synth_high();
         p.title = "x".repeat(71);
         assert_eq!(p.to_voa(), Err(Type14Error::TitleTooLong(71)));
+    }
+
+    #[test]
+    fn rejects_non_finite_gain() {
+        // NaN/inf must be refused, not formatted as '    NaN'/'    inf' inside
+        // the field. `matches!` (not assert_eq!) because NaN != NaN under
+        // PartialEq would defeat an equality assertion on the carried value.
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut p = synth_high();
+            p.blocks[3].gains[60] = bad;
+            assert!(
+                matches!(
+                    p.to_voa(),
+                    Err(Type14Error::NonFiniteGain {
+                        block: 4,
+                        index: 60,
+                        ..
+                    })
+                ),
+                "non-finite gain {bad} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_gain_that_overflows_the_f7_3_field() {
+        // A deep NEC null below -100 dBi renders "-100.000" (8 chars) and would
+        // shift every following column; +1000 dBi likewise. Both must error.
+        for bad in [-100.0, -120.5, 1000.0] {
+            let mut p = synth_high();
+            p.blocks[0].gains[0] = bad;
+            assert_eq!(
+                p.to_voa(),
+                Err(Type14Error::GainOutOfRange {
+                    block: 1,
+                    index: 0,
+                    value: bad
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_extreme_but_field_representable_values() {
+        // The boundary values that still fit F7.3 / F6.2 must NOT be rejected.
+        let mut p = synth_high();
+        p.blocks[0].gains[0] = -99.999; // 7 chars exactly
+        p.blocks[0].gains[1] = 999.999; // 7 chars exactly
+        p.blocks[0].efficiency = -99.99; // 6 chars exactly
+        assert!(p.to_voa().is_ok());
+    }
+
+    #[test]
+    fn rejects_non_finite_efficiency() {
+        let mut p = synth_high();
+        p.blocks[2].efficiency = f64::NAN;
+        assert!(matches!(
+            p.to_voa(),
+            Err(Type14Error::NonFiniteEfficiency { block: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_efficiency_that_overflows_the_f6_2_field() {
+        let mut p = synth_high();
+        p.blocks[1].efficiency = -100.0; // "-100.00" is 7 chars, overflows F6.2
+        assert_eq!(
+            p.to_voa(),
+            Err(Type14Error::EfficiencyOutOfRange {
+                block: 2,
+                value: -100.0
+            })
+        );
     }
 }
