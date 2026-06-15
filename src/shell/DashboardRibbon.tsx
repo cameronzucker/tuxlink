@@ -93,8 +93,19 @@ export interface DashboardRibbonProps {
    *  consumers/tests unchanged. */
   onReviewInboundChange?: (enabled: boolean) => void;
   /** APRS tactical-chat status control (entry ①). Absent → the control is not
-   *  rendered. `unread` drives the badge; `onOpen` brings chat into the dock. */
-  aprs?: { listening: boolean; unread: number; onOpen: () => void };
+   *  rendered. `unread` drives the badge; `onOpen` brings chat into the dock.
+   *  `onToggleListening` (when provided) renders a slider switch that starts/stops
+   *  the APRS listener (off⇄on) — the status bar is the operator's settled home
+   *  for the APRS on/off control. `toggleBusy` disables the switch while a
+   *  start/stop is in flight. `listening` reflects BACKEND TRUTH (the switch
+   *  never optimistically flips). */
+  aprs?: {
+    listening: boolean;
+    unread: number;
+    onOpen: () => void;
+    onToggleListening?: () => void;
+    toggleBusy?: boolean;
+  };
   /** Phase 7 (tuxlink-noa0): the full identity list for the inline switcher
    *  dropdown, or null while loading. Only consulted when `onSwitchIdentity`
    *  is also provided (the switcher branch). */
@@ -309,19 +320,37 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
           <div className="dash-divider" />
           <div className="dash-item dash-aprs">
             <div className="dash-label">APRS</div>
-            <button
-              type="button"
-              className="dash-aprs-control"
-              data-testid="dash-aprs-control"
-              onClick={aprs.onOpen}
-              title="Open APRS tactical chat"
-            >
-              <span className={`dash-status-dot ${aprs.listening ? 'is-on' : 'is-off'}`} aria-hidden="true" />
-              <span className="dash-aprs-state">{aprs.listening ? 'Listening' : 'Off'}</span>
-              {aprs.unread > 0 && (
-                <span className="dash-aprs-unread" data-testid="dash-aprs-unread">{aprs.unread}</span>
+            <div className="dash-aprs-controls">
+              {aprs.onToggleListening && (
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={aprs.listening}
+                  aria-label={aprs.listening ? 'Stop APRS listening' : 'Start APRS listening'}
+                  className={`dash-aprs-switch ${aprs.listening ? 'is-on' : 'is-off'}`}
+                  data-testid="dash-aprs-toggle"
+                  disabled={aprs.toggleBusy}
+                  onClick={aprs.onToggleListening}
+                  title={aprs.listening ? 'Stop APRS listening' : 'Start APRS listening'}
+                >
+                  <span className="dash-aprs-track" aria-hidden="true">
+                    <span className="dash-aprs-thumb" />
+                  </span>
+                </button>
               )}
-            </button>
+              <button
+                type="button"
+                className="dash-aprs-control"
+                data-testid="dash-aprs-control"
+                onClick={aprs.onOpen}
+                title="Open APRS tactical chat"
+              >
+                <span className="dash-aprs-state">{aprs.listening ? 'Listening' : 'Off'}</span>
+                {aprs.unread > 0 && (
+                  <span className="dash-aprs-unread" data-testid="dash-aprs-unread">{aprs.unread}</span>
+                )}
+              </button>
+            </div>
           </div>
         </>
       )}

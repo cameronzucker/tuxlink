@@ -1,26 +1,106 @@
-.aprs-dock-tabs { display: flex; border-bottom: 1px solid var(--border, #2a3140); background: var(--surface-2); }
+/* Shared right-dock tab row: [ ⊞ Map · APRS Chat | Modem ] … ×
+   Styling follows the approved unified mock (.dock-tabs / .dtab): a darker rail,
+   content-sized tabs separated by hairlines, and an accent underline drawn with
+   an inset shadow on the active tab — NOT the stretched full-width buttons the
+   redesign replaced. Map is a companion toggle (left), distinct from the two
+   mutually-exclusive chat⇄modem tabs. */
+.aprs-dock-tabs {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg, #0b1015);
+  border-bottom: 1px solid var(--border, #2a3140);
+}
+
+.aprs-dock-tabgroup {
+  display: flex;
+  align-items: stretch;
+}
+
+/* Exclusive chat⇄modem tabs — content-sized, hairline-separated, accent
+   underline (inset shadow) + surface fill on the active tab. */
 .aprs-dock-tab {
-  flex: 1; padding: 8px 0; font: inherit; font-size: 12px; cursor: pointer;
-  background: transparent; border: none; color: var(--text-faint, #94a3b8);
-  border-bottom: 2px solid transparent; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 15px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border, #2a3140);
+  color: var(--text-faint, #94a3b8);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
 }
-.aprs-dock-tab.is-active { color: var(--modem-accent, #4ade80); border-bottom-color: var(--modem-accent, #4ade80); background: var(--modem-accent-soft); }
-.aprs-dock-tab:disabled { opacity: 0.45; cursor: not-allowed; }
-.aprs-dock-tab-badge { background: var(--modem-accent, #4ade80); color: var(--bg, #0d1318); font-size: 10px; font-weight: 700; border-radius: 9px; padding: 0 5px; }
-/* Close the APRS dock surface (frees the reading pane when no radio session is
-   active). Fixed-width at the end of the tab row, not a flex:1 tab. */
-.aprs-dock-close {
-  flex: 0 0 auto; width: 30px; padding: 8px 0; font: inherit; font-size: 16px; line-height: 1;
-  background: transparent; border: none; border-left: 1px solid var(--border, #2a3140);
-  color: var(--text-faint, #94a3b8); cursor: pointer;
+.aprs-dock-tab.is-active {
+  background: var(--surface, #0f1218);
+  color: var(--modem-accent, #4ade80);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--modem-accent, #4ade80);
 }
-.aprs-dock-close:hover { color: var(--text, #cbd5e1); background: var(--surface-3, #11171d); }
-/* tuxlink-6vgt: toggle the heard-positions map into the reading pane. Fixed-width
-   text control at the end of the tab row, alongside the close button. */
+.aprs-dock-tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.aprs-dock-tab:not(:disabled):not(.is-active):hover {
+  color: var(--text, #cbd5e1);
+}
+
+.aprs-dock-tab-badge {
+  background: var(--modem-accent, #4ade80);
+  color: var(--bg, #0d1318);
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 9px;
+  padding: 0 5px;
+}
+
+/* Map companion toggle — pinned LEFT, pairs WITH a tab rather than replacing one
+   (tuxlink-6vgt + operator decision 2026-06-15). Same height/rhythm as a tab;
+   accent text + soft fill when the map is expanded. */
 .aprs-dock-maptoggle {
-  flex: 0 0 auto; padding: 8px 10px; font: inherit; font-size: 12px; line-height: 1;
-  background: transparent; border: none; border-left: 1px solid var(--border, #2a3140);
-  color: var(--text-faint, #94a3b8); cursor: pointer;
+  padding: 8px 13px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border, #2a3140);
+  color: var(--text-faint, #94a3b8);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
-.aprs-dock-maptoggle:hover { color: var(--text, #cbd5e1); background: var(--surface-3, #11171d); }
-.aprs-dock-maptoggle.is-active { color: var(--modem-accent, #4ade80); }
+.aprs-dock-maptoggle:hover {
+  color: var(--text, #cbd5e1);
+}
+.aprs-dock-maptoggle.is-active {
+  color: var(--modem-accent, #4ade80);
+  background: var(--modem-accent-soft, rgba(74, 222, 128, 0.1));
+}
+.aprs-dock-map-glyph {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* Close the dock surface (frees the reading pane when no radio session is
+   active). Fixed-width, pushed to the right end of the row. */
+.aprs-dock-close {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 32px;
+  padding: 8px 0;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border, #2a3140);
+  color: var(--text-faint, #94a3b8);
+  cursor: pointer;
+}
+.aprs-dock-close:hover {
+  color: var(--text, #cbd5e1);
+  background: var(--surface-3, #11171d);
+}

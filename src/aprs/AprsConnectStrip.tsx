@@ -126,9 +126,6 @@ export function AprsConnectStrip({
     <section className="aprs-connect-strip" data-testid="aprs-connect-strip" aria-label="APRS connection">
       <div className="aprs-connect-row">
         <span className="aprs-connect-id">
-          <span className="aprs-connect-badge" aria-hidden="true">
-            📡
-          </span>
           <span className="aprs-connect-label">APRS</span>
           <span className="aprs-connect-sep" aria-hidden="true">
             ·

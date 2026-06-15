@@ -628,6 +628,32 @@ export function AppShell() {
     }
   }, []);
 
+  // Status-bar APRS slider (tuxlink-l0z5): the ribbon's on/off switch starts/stops
+  // the listener via the SAME composed sequences the dock connect-strip uses, so
+  // both surfaces drive one backend state. Turning ON also opens the dock so the
+  // operator lands on the live chat (and, on failure, on the connect-strip that
+  // surfaces why + offers the transport picker). `listening` stays backend-truth:
+  // a reject never optimistically flips the switch — the aprs-listening:change
+  // event is the only thing that does.
+  const [aprsToggling, setAprsToggling] = useState(false);
+  const onToggleAprsListening = useCallback(async () => {
+    if (aprsToggling) return;
+    setAprsToggling(true);
+    try {
+      if (aprs.listening) {
+        await onAprsDisconnect();
+      } else {
+        openAprsChat();
+        await onAprsConnect();
+      }
+    } catch {
+      // Swallowed: the listener state is backend truth. A failed start leaves the
+      // switch off; the dock (opened above) shows the connect-strip for retry.
+    } finally {
+      setAprsToggling(false);
+    }
+  }, [aprsToggling, aprs.listening, onAprsConnect, onAprsDisconnect, openAprsChat]);
+
   // Phase 7 (tuxlink-noa0): identity list + active session + switch mutation for
   // the dashboard's inline IdentitySwitcher. The list/active queries feed the
   // closed chip + dropdown; the mutation authenticates (= switches) and
@@ -1311,7 +1337,13 @@ export function AppShell() {
           onSsidChange={packetConfig.config ? packetConfig.setSsid : undefined}
           reviewInbound={reviewInbound}
           onReviewInboundChange={onReviewInboundChange}
-          aprs={{ listening: aprs.listening, unread: aprsUnread, onOpen: openAprsChat }}
+          aprs={{
+            listening: aprs.listening,
+            unread: aprsUnread,
+            onOpen: openAprsChat,
+            onToggleListening: onToggleAprsListening,
+            toggleBusy: aprsToggling,
+          }}
           identities={identityList.data ?? null}
           activeIdentity={activeIdentity.data ?? null}
           onSwitchIdentity={onSwitchIdentity}

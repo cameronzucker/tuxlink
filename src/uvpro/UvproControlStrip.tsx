@@ -46,12 +46,12 @@ export function UvproControlStrip() {
         </span>
         {connected && status.batteryPercent != null && (
           <span className="uvpro-strip-metric" data-testid="uvpro-battery" title="Battery">
-            🔋 {status.batteryPercent}%
+            <span className="uvpro-strip-metric-label">Batt</span> {status.batteryPercent}%
           </span>
         )}
         {connected && status.rssi != null && (
           <span className="uvpro-strip-metric" data-testid="uvpro-rssi" title="Signal (RSSI)">
-            📶 {status.rssi}
+            <span className="uvpro-strip-metric-label">RSSI</span> {status.rssi}
           </span>
         )}
       </header>

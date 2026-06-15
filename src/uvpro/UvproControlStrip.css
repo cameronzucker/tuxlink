@@ -54,6 +54,13 @@
   font-family: ui-monospace, monospace;
   color: var(--text-faint, #94a3b8);
 }
+.uvpro-strip-metric-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint, #94a3b8);
+}
 
 .uvpro-strip-body {
   display: flex;
