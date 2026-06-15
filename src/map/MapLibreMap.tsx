@@ -159,7 +159,17 @@ export function MapLibreMap({
       instance.on('click', (e: maplibregl.MapMouseEvent) => {
         onClickRef.current?.(clampLatLon(e.lngLat.lat, e.lngLat.lng));
       });
-      const emitZoom = () => onZoomRef.current?.(instance.getZoom());
+      // Emit only on a REAL zoom change (B8, tuxlink-vnk7). `moveend` fires after
+      // pans too, so emitting unconditionally re-rendered the consumer subtree
+      // (e.g. the position picker modal) at the end of every drag. Dedupe against
+      // the last emitted zoom; `load` seeds it (NaN !== initial → fires once).
+      let lastZoom = Number.NaN;
+      const emitZoom = () => {
+        const z = instance.getZoom();
+        if (z === lastZoom) return;
+        lastZoom = z;
+        onZoomRef.current?.(z);
+      };
       instance.on('load', () => {
         setMap(instance);
         emitZoom();

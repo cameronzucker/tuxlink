@@ -70,6 +70,18 @@ describe('MapLibreMap', () => {
     expect(onZoomChange).toHaveBeenLastCalledWith(8);
   });
 
+  it('does NOT re-fire onZoomChange on a moveend that leaves zoom unchanged (B8)', () => {
+    const onZoomChange = vi.fn();
+    render(<MapLibreMap initialZoom={5} onZoomChange={onZoomChange} />);
+    const map = getLastMap()!;
+    loadMap(map); // seed → called with 5
+    map.__setZoom(8);
+    act(() => map.__emit('moveend')); // real change → called with 8
+    expect(onZoomChange).toHaveBeenCalledTimes(2);
+    act(() => map.__emit('moveend')); // pan, zoom still 8 → must NOT re-fire
+    expect(onZoomChange).toHaveBeenCalledTimes(2);
+  });
+
   it('provides the map to children via context only after load', () => {
     function Probe() {
       const map = useMapContext();
