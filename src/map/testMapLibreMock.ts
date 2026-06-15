@@ -144,6 +144,10 @@ export function createMapLibreMock(
     },
 
     addSource: vi.fn((id: string, source: Record<string, unknown>) => {
+      // Real MapLibre throws if the style isn't loaded yet; the owned hooks
+      // attempt-and-retry on this (tuxlink-7jru) rather than gating on the
+      // over-strict isStyleLoaded(). Model that so the retry path is tested.
+      if (!state.styleLoaded) throw new Error('Style is not done loading.');
       // Store a GeoJSONSource-like handle so consumers can call setData (the
       // dynamic-data path overlays use on pan/zoom).
       const handle: Record<string, unknown> = {
@@ -165,6 +169,7 @@ export function createMapLibreMock(
       state.sources.delete(id);
     }),
     addLayer: vi.fn((spec: Record<string, unknown>, beforeId?: string) => {
+      if (!state.styleLoaded) throw new Error('Style is not done loading.');
       const id = String(spec.id);
       const entry = { id, spec, beforeId };
       if (beforeId) {
