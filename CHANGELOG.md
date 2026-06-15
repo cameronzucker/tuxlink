@@ -30,6 +30,28 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.66.0](https://github.com/cameronzucker/tuxlink/compare/v0.65.0...v0.66.0) (2026-06-15)
+
+
+### Features
+
+* **ardop:** collapsible Radio-configuration group to reclaim panel space (tuxlink-0kew) ([2f6a063](https://github.com/cameronzucker/tuxlink/commit/2f6a063bee5003bdf8cbb7df733dece1927ce472))
+* **catalog:** consolidate Find-a-Station controls into Search | Station-setup band ([309d226](https://github.com/cameronzucker/tuxlink/commit/309d2265edcd5ba2a50048cabd419c6dce1b31e3))
+
+
+### Bug Fixes
+
+* **basemap:** region-pack download end-to-end (bug-hunt + Codex follow-ups + wire-walk) ([29a799f](https://github.com/cameronzucker/tuxlink/commit/29a799f8d6de271c5b9e99aa796180c8753d30b9))
+* **basemap:** repoint planet to live build 20260614 + surface go-pmtiles errors + harden download (bug-hunt) ([e5103cd](https://github.com/cameronzucker/tuxlink/commit/e5103cd4c4a4b873a694ef5d352e704d154f3806))
+* **basemap:** resolve 5 Codex follow-ups on region-pack download ([7a27a7e](https://github.com/cameronzucker/tuxlink/commit/7a27a7ecf07b4436a0b8cb25dbb0b5b0229637bd))
+* **identity:** address Codex implementation review (tuxlink-nx3g) ([28dec73](https://github.com/cameronzucker/tuxlink/commit/28dec736616010c87d17cb2384c78977af252815))
+* **identity:** bootstrap self-heal for orphan-v2 missing activation secret (tuxlink-nx3g) [1/2] ([a75fee7](https://github.com/cameronzucker/tuxlink/commit/a75fee725f449238b269aa4bb671df8d1754db43))
+* **identity:** clippy io_other_error in the heal fail-closed test (tuxlink-nx3g) ([3f315bb](https://github.com/cameronzucker/tuxlink/commit/3f315bb9a4b7c0112d46c0661856e91b5bd93260))
+* **identity:** manual-unlock self-heal with proof-of-knowledge (tuxlink-nx3g) [2/2] ([2a7f472](https://github.com/cameronzucker/tuxlink/commit/2a7f472e5532aacab2baeef628f8a2904a7828fa))
+* **map:** refresh manifest on open + honest progress + early cancel + retry reset (bug-hunt) ([770e339](https://github.com/cameronzucker/tuxlink/commit/770e33998083e43d7ab82a49ea81622afe838007))
+* **vara:** close auto-open races flagged by Codex (tuxlink-p6iq) ([1e0cb86](https://github.com/cameronzucker/tuxlink/commit/1e0cb860d7432d25257cc1fb7b3d9173a2778666))
+* **vara:** make Find-a-Station → VARA HF reach Send/Receive (no dead-end) (tuxlink-p6iq) ([a3a1542](https://github.com/cameronzucker/tuxlink/commit/a3a1542419592ad4d158934ba821e4991bdead71))
+
 ## [0.65.0](https://github.com/cameronzucker/tuxlink/compare/v0.64.0...v0.65.0) (2026-06-15)
 
 
