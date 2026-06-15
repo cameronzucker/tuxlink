@@ -24,7 +24,7 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-shell": "^2.3.5",
-    "dompurify": "^3.4.8",
+    "dompurify": "^3.4.10",
     "maplibre-gl": "^5",
     "marked": "^15.0.12",
     "marked-extended-tables": "^2.0.1",
