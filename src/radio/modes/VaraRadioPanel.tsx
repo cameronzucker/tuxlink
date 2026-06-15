@@ -94,6 +94,27 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   const [platform, setPlatform] = useState<PlatformInfoDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // tuxlink-p6iq: set when a "use this gateway" action (Find-a-Station "Use →"
+  // or a favorite Connect) wants the transport opened so the operator lands
+  // connectable instead of on disabled Send/Receive. Consumed by the auto-open
+  // effect once the live transport state is known (race-safe vs the mount poll).
+  const [autoOpenPending, setAutoOpenPending] = useState(false);
+  // True once the mount `vara_status` poll has resolved. The auto-open effect
+  // waits for this so it never acts on the indistinguishable INITIAL 'closed'
+  // (Codex p6iq [P1]).
+  const [initialStatusLoaded, setInitialStatusLoaded] = useState(false);
+  // Live status ref so the stable openSession callback reads the current state
+  // without being re-created on every render.
+  const statusRef = useRef<VaraStatusDto>(status);
+  statusRef.current = status;
+  // Synchronous open-in-flight guard — set true BEFORE the first await so a
+  // manual Start click and the auto-open effect firing in the same tick cannot
+  // both issue vara_open_session (a render-synced ref can't: it only updates at
+  // render). Codex p6iq [P2].
+  const openInFlightRef = useRef(false);
+  // An open has been INITIATED — the one-shot mount status poll must not clobber
+  // it with a stale mount-time snapshot if it resolves late. Codex p6iq [P1].
+  const openInitiatedRef = useRef(false);
 
   // Local input mirrors so the operator can type freely; commit on blur.
   const [hostInput, setHostInput] = useState<string>('');
@@ -120,6 +141,11 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   const handlePrefill = useCallback((dial: FavoriteDial) => {
     setTarget(dial.gateway);
     pendingDialRef.current = dial;
+    // tuxlink-p6iq: a "use this gateway" action lands the operator CONNECTABLE.
+    // Request an auto-open of the transport — opening the cmd/data sockets does
+    // NOT transmit (the Start button says as much), so this preserves the
+    // prefill-never-transmits rule: Send/Receive stays the explicit consent click.
+    setAutoOpenPending(true);
   }, []);
 
   const { entries: logEntries, clear: clearLog } = useSessionLog();
@@ -187,10 +213,15 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     let cancelled = false;
     invoke<VaraStatusDto>('vara_status')
       .then((s) => {
-        if (!cancelled) setStatus(s);
+        if (cancelled) return;
+        // Don't clobber an open that the operator/auto-flow already kicked off
+        // while this poll was in flight (Codex p6iq [P1]).
+        if (!openInitiatedRef.current && s) setStatus(s);
+        setInitialStatusLoaded(true);
       })
       .catch(() => {
-        /* No-op — status defaults to closed. */
+        // status defaults to closed; mark loaded so the auto-open gate releases.
+        if (!cancelled) setInitialStatusLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -242,43 +273,66 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     }
   };
 
-  const onStartClick = async () => {
-    // tuxlink-poh6: previously this guard included `platformBlocked`, which
-    // silently no-op'd Start clicks on aarch64. The whole point of removing
-    // `platformBlocked` from the `disabled` prop (tuxlink-ze98 / PR #231)
-    // was so the operator CAN start a session against a remote VARA host
-    // from a Pi. The handler must agree — the only gate here is in-flight
-    // re-entrancy via `busy`.
-    if (busy) return;
+  // Open the VARA transport. Shared by the explicit Start click and the
+  // auto-open-on-use path (tuxlink-p6iq). Self-guards via refs so a concurrent
+  // call (e.g. the auto-open effect racing a manual click) is a no-op rather
+  // than a double-open. tuxlink-poh6: NO platformBlocked guard here — the
+  // operator CAN open a session against a remote VARA host from a Pi.
+  const openSession = useCallback(async () => {
+    if (openInFlightRef.current) return;
+    const st = statusRef.current.state;
+    if (st === 'open' || st === 'connecting') return;
+    // Claim in-flight + initiated SYNCHRONOUSLY, before any await, so a racing
+    // caller in the same tick is a no-op (Codex p6iq [P1]/[P2]).
+    openInFlightRef.current = true;
+    openInitiatedRef.current = true;
     setBusy(true);
     setActionError(null);
     try {
       // tuxlink-o0c8: thread the sidebar-selected intent (cms / p2p / radio-only)
-      // from mode.intent — mirroring ARDOP (tuxlink-nnws). Previously hardcoded
-      // 'cms', which silently mis-routed p2p / radio-only VARA selections as
-      // gateway sessions. transportKind is the panel's mode.kind ('vara-hf' vs
-      // 'vara-fm') so the backend records the operator-meaningful discriminator
-      // on session state (the wire transport is identical between the two —
-      // Codex Round 3 P1 #3: lets the frontend detect sidebar-nav drift
-      // mid-session).
+      // from mode.intent — mirroring ARDOP (tuxlink-nnws). transportKind is the
+      // panel's mode.kind ('vara-hf' vs 'vara-fm') so the backend records the
+      // operator-meaningful discriminator on session state.
       const next = await invoke<VaraStatusDto>('vara_open_session', {
         intent: mode.intent,
         transportKind: mode.kind,
       });
-      setStatus(next);
+      // Defensive: only adopt a real status object (the backend always returns
+      // one; this guards a malformed response from clobbering state with undefined).
+      if (next) setStatus(next);
     } catch (e) {
       setActionError(`Start failed: ${String(e)}`);
       // Refresh status so a backend-side Error state surfaces.
       try {
         const s = await invoke<VaraStatusDto>('vara_status');
-        setStatus(s);
+        if (s) setStatus(s);
       } catch {
         /* keep prior status */
       }
     } finally {
       setBusy(false);
+      openInFlightRef.current = false;
     }
+  }, [mode.intent, mode.kind]);
+
+  const onStartClick = () => {
+    void openSession();
   };
+
+  // tuxlink-p6iq: consume an auto-open request. Gate on `initialStatusLoaded` so
+  // we never act on the indistinguishable INITIAL 'closed' — only once the mount
+  // poll has reported the real backend state (Codex p6iq [P1]). Then open only
+  // if genuinely closed/error: an already-open/connecting session just clears the
+  // request, and openSession's synchronous guard prevents a double-open.
+  useEffect(() => {
+    if (!autoOpenPending || !initialStatusLoaded || busy) return;
+    if (status.state === 'open' || status.state === 'connecting') {
+      setAutoOpenPending(false);
+      return;
+    }
+    setAutoOpenPending(false);
+    void openSession();
+  }, [autoOpenPending, initialStatusLoaded, busy, status.state, openSession]);
 
   const onStopClick = async () => {
     if (busy) return;
@@ -548,6 +602,16 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
               ? `Send / Receive (${target.trim()})`
               : 'Send / Receive'}
         </button>
+        {/* tuxlink-p6iq: a VISIBLE closed-state hint (not just the button's hover
+            title) so the manual-target path is never a silent dead-end. Find-a-
+            Station "Use →" auto-opens the transport; an operator who instead
+            opens the panel and types a target needs to know to press Start. */}
+        {status.state !== 'open' && status.state !== 'connecting' && (
+          <p className="radio-panel-radio-help" data-testid="vara-transport-hint">
+            Transport closed — press <strong>Start</strong> below to open the VARA
+            session, then Send / Receive.
+          </p>
+        )}
       </section>
 
       {/* Listen (Accept Inbound) — VARA P2P listener arms + allowlist.
