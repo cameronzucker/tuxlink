@@ -89,7 +89,7 @@ percent-encoding = "2"                           # NEW (tuxlink-ytya P1) — url
 walkdir = "2"                                    # NEW (tuxlink-ytya P1) — bundled + custom WLE template recursive enumeration
 bytes = "1"                                      # NEW (tuxlink-ytya P1) — request body buffer passed to multer's stream-once wrapper
 subtle = "2.6"                                   # NEW (tuxlink-3o2o) — constant-time byte comparison for StationPassword::verify; prevents timing side-channels on listener-mode password challenges
-sha2 = "0.10"                                    # NEW (tuxlink-3o2o) — fixed-size digest for password verify; eliminates length-oracle in ct_eq_strings (Codex 2026-06-03)
+sha2 = "0.11"                                    # NEW (tuxlink-3o2o) — fixed-size digest for password verify; eliminates length-oracle in ct_eq_strings (Codex 2026-06-03)
 printpdf = "0.9"                                 # NEW (tuxlink-hnkn P2 Task 2) — ICS-309 PDF export; operator decision 2026-06-04; ~500KB compiled
 zip = { version = "2", default-features = false, features = ["deflate"] }  # NEW (tuxlink-xipa Phase 3) — extract winlink.org Standard Forms zip into the runtime forms snapshot. default-features off + deflate-only keeps the dep weight down (bzip2 / aes / zstd not needed for WLE archives).
 # alpha-logging (tuxlink-qjgx) — tracing pipeline + export + redaction
