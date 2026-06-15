@@ -102,6 +102,36 @@ describe('useDownloadProgress', () => {
     expect(result.current.percent).toBe(1);
   });
 
+  it('clamps the denominator up when bytes exceed the estimate (C4)', async () => {
+    const { result } = renderHook(() => useDownloadProgress('tier-wide'));
+    await act(async () => {});
+    // Estimate is 1.0 GB but the real extract is already 1.4 GB — the bar must
+    // not report >100% or "1.4 GB / 1.0 GB".
+    emitProgress('tier-wide', 1_400_000_000, 1_000_000_000);
+    expect(result.current.percent).toBeLessThanOrEqual(1);
+    expect(result.current.total).toBeGreaterThanOrEqual(result.current.bytes);
+    // Past the estimate → indeterminate "finishing" rather than a stuck 99%.
+    expect(result.current.finishing).toBe(true);
+  });
+
+  it('flags finishing within epsilon of the estimate (C4)', async () => {
+    const { result } = renderHook(() => useDownloadProgress('tier-wide'));
+    await act(async () => {});
+    // 99.9% of the estimate — inside the finishing epsilon.
+    emitProgress('tier-wide', 999_000_000, 1_000_000_000);
+    expect(result.current.finishing).toBe(true);
+    expect(result.current.percent).toBeLessThanOrEqual(1);
+  });
+
+  it('is not finishing early in the download (C4)', async () => {
+    const { result } = renderHook(() => useDownloadProgress('tier-wide'));
+    await act(async () => {});
+    emitProgress('tier-wide', 100_000_000, 1_000_000_000); // 10%
+    expect(result.current.finishing).toBe(false);
+    expect(result.current.total).toBe(1_000_000_000);
+    expect(result.current.percent).toBeCloseTo(0.1, 3);
+  });
+
   it('surfaces an error on done with ok=false', async () => {
     const { result } = renderHook(() => useDownloadProgress('tier-wide'));
     await act(async () => {});

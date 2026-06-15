@@ -1,7 +1,7 @@
 {
   "schema": "tuxlink-basemap-manifest/1",
-  "planet_build": "20260608",
-  "planet_url": "https://build.protomaps.com/20260608.pmtiles",
+  "planet_build": "20260614",
+  "planet_url": "https://build.protomaps.com/20260614.pmtiles",
   "pmtiles_schema": {
     "planetiler_version": 4,
     "vector_layers": [

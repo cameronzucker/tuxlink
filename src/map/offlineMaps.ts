@@ -31,6 +31,17 @@ export interface PacksList {
   total_bytes: number;
 }
 
+/**
+ * `basemap_download_pack` result (mirrors Rust `DownloadResult`): the installed
+ * pack plus whether it is live immediately. `requiresRestart` is true only when
+ * the pack installed durably but in-memory registration failed — it serves after
+ * the next restart. The UI surfaces an honest "restart to use" notice in that
+ * case and skips signalling the live map to add a not-yet-servable source.
+ */
+export interface DownloadResult extends InstalledPack {
+  requiresRestart: boolean;
+}
+
 /** A coverage tier preset (mirrors Rust `region_manifest::Tier`). */
 export interface Tier {
   id: string;
@@ -88,12 +99,36 @@ export const listPacks = () => invoke<PacksList>('basemap_list_packs');
 export const getManifest = () => invoke<RegionManifest>('basemap_get_manifest');
 export const refreshManifest = () => invoke<RegionManifest>('basemap_refresh_manifest');
 export const downloadPack = (args: DownloadArgs) =>
-  invoke<InstalledPack>('basemap_download_pack', { args });
+  invoke<DownloadResult>('basemap_download_pack', { args });
 export const deletePack = (id: string) => invoke<boolean>('basemap_delete_pack', { id });
 
 /** Cancel an in-flight pack download. No-op if nothing is downloading that id. */
 export const cancelDownload = (packId: string) =>
   invoke<void>('basemap_cancel_download', { packId });
+
+/**
+ * Deterministic pack id the backend derives for a download request — mirrors
+ * Rust `basemap::packs::{tier_pack_id, continent_pack_id}`. The UI knows this id
+ * from the args it sent, so Cancel can target it immediately, before the first
+ * progress event latches it in the hook (see C5: cancel-before-first-event).
+ *
+ * Tier: `tier-{tier_id}-{lat_tok}-{lon_tok}` where each token is a compass
+ * letter + rounded integer magnitude (lat n/s, lon e/w), e.g. `tier-wide-n34-w112`.
+ * Continent: `continent-{continent_id}`.
+ */
+function coordToken(value: number, positive: string, negative: string): string {
+  const mag = Math.round(Math.abs(value));
+  const dir = value < 0 ? negative : positive;
+  return `${dir}${mag}`;
+}
+export function packIdForArgs(args: DownloadArgs): string {
+  if (args.kind === 'tier') {
+    const latTok = coordToken(args.lat0, 'n', 's');
+    const lonTok = coordToken(args.lon0, 'e', 'w');
+    return `tier-${args.tier_id}-${latTok}-${lonTok}`;
+  }
+  return `continent-${args.continent_id}`;
+}
 
 /** Notify the live map that installed packs changed (after a download/delete). */
 export function emitPacksChanged(): void {

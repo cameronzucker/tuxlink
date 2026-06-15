@@ -211,7 +211,7 @@ mod tests {
     fn bundled_default_is_valid() {
         let m = RegionManifest::bundled_default();
         assert_eq!(m.schema, MANIFEST_SCHEMA);
-        assert_eq!(m.planet_build, "20260608");
+        assert_eq!(m.planet_build, "20260614");
         // tuxlink-4o9r: the pinned planet build emits 9 vector_layers (not the
         // obsolete 13); matches REQUIRED_LAYER_IDS + the @protomaps/basemaps@5 style.
         assert_eq!(m.pmtiles_schema.vector_layers.len(), 9);
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn parse_rejects_manifest_with_bad_url() {
         let json = valid_json().replace(
-            "https://build.protomaps.com/20260608.pmtiles",
+            "https://build.protomaps.com/20260614.pmtiles",
             "file:///etc/passwd",
         );
         assert!(matches!(

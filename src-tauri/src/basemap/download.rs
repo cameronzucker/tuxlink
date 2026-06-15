@@ -285,12 +285,18 @@ pub fn delete_pack(packs_dir: &Path, id: &str) -> Result<bool, DownloadError> {
     if !is_safe_pack_id(id) {
         return Err(DownloadError::UnsafeId(id.to_string()));
     }
-    let _ = fs::remove_file(pack_path(packs_dir, id));
+    // Manifest-first, mirroring install's manifest-last discipline in reverse: drop
+    // the entry (and durably persist that) BEFORE deleting the archive, so a crash
+    // mid-delete leaves an unreferenced archive (swept on next startup) rather than
+    // a manifest entry pointing at a deleted file (which would 404 every read until
+    // a restart re-derived state). The archive removal is best-effort; if it fails
+    // after the manifest write, the orphan sweep reclaims the file later.
     let mut manifest = load_manifest(packs_dir);
     let removed = manifest.remove(id).is_some();
     if removed {
         write_manifest_atomic(packs_dir, &manifest)?;
     }
+    let _ = fs::remove_file(pack_path(packs_dir, id));
     Ok(removed)
 }
 
@@ -589,6 +595,20 @@ mod tests {
         assert!(load_manifest(dir.path()).packs.is_empty());
         // Deleting a missing pack is a no-op (false), not an error.
         assert!(!delete_pack(dir.path(), "tier-wide-n34-w112").unwrap());
+    }
+
+    #[test]
+    fn delete_removes_manifest_entry_even_if_archive_already_gone() {
+        // Manifest-first delete ordering: the entry is dropped + persisted before the
+        // archive removal, so an already-missing archive (e.g. a crash that removed
+        // the file but not the entry on a prior run) still cleanly drops the entry —
+        // no manifest entry is left pointing at a deleted file.
+        let dir = tempfile::tempdir().unwrap();
+        install_pack(&GoodExtractor, dir.path(), u64::MAX, &req("tier-wide-n34-w112", 1, 10_000_000), &no_cancel(), &noop_progress).unwrap();
+        // Simulate the archive already gone (manifest still references it).
+        fs::remove_file(pack_path(dir.path(), "tier-wide-n34-w112")).unwrap();
+        assert!(delete_pack(dir.path(), "tier-wide-n34-w112").unwrap());
+        assert!(load_manifest(dir.path()).packs.is_empty());
     }
 
     #[test]
