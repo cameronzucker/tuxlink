@@ -72,6 +72,27 @@ function safeTeardown(fn: () => void): void {
 }
 
 /**
+ * Best-effort add of a source/layer (tuxlink-7jru).
+ *
+ * Previously every `ensure` gated on `if (!map.isStyleLoaded()) return`. But with
+ * a large OFFLINE region-pack basemap, `isStyleLoaded()` can stay `false`
+ * indefinitely (it requires every source's tiles + sprite/glyphs to be fully
+ * loaded), so the gate never opened and EVERY overlay was silently dropped — the
+ * Find-a-Station "no station pins / no operator pin" bug, root-caused live on the
+ * running app. `addSource`/`addLayer` only need the style *loaded* (post-`load`),
+ * a strictly lower bar than `isStyleLoaded()`. So attempt the add and let it
+ * throw if the style genuinely isn't ready yet; a later `load`/`styledata`
+ * retries. (Hence each `ensure` now also fires on `load`, not just `styledata`.)
+ */
+function safeEnsure(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    /* style not addable yet (pre-load) — a later 'load'/'styledata' retries */
+  }
+}
+
+/**
  * Keep a GeoJSON/vector source present on `map` under `id` for the component's
  * lifetime, surviving style swaps. Call BEFORE any `useMapLayer` that references
  * this source so teardown order stays layer-then-source.
@@ -88,14 +109,15 @@ export function useMapSource(
 
   useEffect(() => {
     if (!map) return;
-    const ensure = () => {
-      if (!map.isStyleLoaded()) return;
+    const ensure = () => safeEnsure(() => {
       if (!map.getSource(id)) map.addSource(id, sourceRef.current);
-    };
+    });
     ensure();
+    map.on('load', ensure);
     map.on('styledata', ensure);
     return () => {
       safeTeardown(() => {
+        map.off('load', ensure);
         map.off('styledata', ensure);
         if (map.getSource(id)) map.removeSource(id);
       });
@@ -118,14 +140,15 @@ export function useMapLayer(
 
   useEffect(() => {
     if (!map) return;
-    const ensure = () => {
-      if (!map.isStyleLoaded()) return;
+    const ensure = () => safeEnsure(() => {
       if (!map.getLayer(id)) map.addLayer(layerRef.current, beforeId);
-    };
+    });
     ensure();
+    map.on('load', ensure);
     map.on('styledata', ensure);
     return () => {
       safeTeardown(() => {
+        map.off('load', ensure);
         map.off('styledata', ensure);
         if (map.getLayer(id)) map.removeLayer(id);
       });
@@ -154,18 +177,19 @@ export function useMapOverlay(
 
   useEffect(() => {
     if (!map) return;
-    const ensure = () => {
-      if (!map.isStyleLoaded()) return;
+    const ensure = () => safeEnsure(() => {
       const current = ref.current;
       if (!map.getSource(id)) map.addSource(id, current.source);
       for (const layer of current.layers) {
         if (!map.getLayer(layer.id)) map.addLayer(layer);
       }
-    };
+    });
     ensure();
+    map.on('load', ensure);
     map.on('styledata', ensure);
     return () => {
       safeTeardown(() => {
+        map.off('load', ensure);
         map.off('styledata', ensure);
         // Layers BEFORE source: MapLibre errors removing a source still in use.
         for (const layer of ref.current.layers) {

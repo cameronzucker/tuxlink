@@ -128,6 +128,24 @@ describe('useMapOverlay (coupled source + layers)', () => {
     expect(map.getLayer('grid-line')).toBeTruthy();
     expect(map.getLayer('grid-fill')).toBeTruthy();
   });
+
+  // tuxlink-7jru: with a large offline region-pack basemap, isStyleLoaded() can
+  // stay false indefinitely, so the old isStyleLoaded()-gated ensure never added
+  // the overlay (Find-a-Station showed no station/operator pins). The hook now
+  // attempts the add (retrying on 'load'/'styledata') instead of gating, so the
+  // overlay appears once the style is addable — here driven by the 'load' event.
+  it('adds the overlay on the load event, not only styledata (offline-pack bug)', () => {
+    const map = createMapLibreMock({ styleLoaded: false });
+    render(<Overlay map={map} />);
+    // Pre-load the add throws and is swallowed — nothing added yet.
+    expect(map.getSource('grid')).toBeUndefined();
+    // Style becomes addable and the map fires 'load' (NOT styledata).
+    map.__setStyleLoaded(true);
+    map.__emit('load');
+    expect(map.getSource('grid')).toBeTruthy();
+    expect(map.getLayer('grid-line')).toBeTruthy();
+    expect(map.getLayer('grid-fill')).toBeTruthy();
+  });
 });
 
 function Overlay({ map }: { map: ReturnType<typeof createMapLibreMock> }) {
