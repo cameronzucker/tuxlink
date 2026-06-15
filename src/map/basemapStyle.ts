@@ -160,9 +160,15 @@ export function buildBasemapStyle(
       url: packUrl(pack.id),
       attribution: OSM_ATTRIBUTION,
     };
+    // A pack contributes only its FILL/LINE detail (the geometry the overzoomed
+    // overview lacks). Labels/symbols are owned by the single base overview layer
+    // set — duplicating them per pack adds the most expensive llvmpipe primitive
+    // (glyph shaping + collision, run globally) for the SAME OSM names, no visual
+    // gain (B1, tuxlink-vnk7). So drop `symbol` alongside the existing sourceless
+    // `background` drop. Look-preserving: labels still render, from the base.
     const packBuilt = layers(sid, tuxlinkFlavor(), { lang: 'en' });
     const packLayers = (flavor === 'dark' ? bakeDarkColors(packBuilt) : packBuilt)
-      .filter((layer) => layer.type !== 'background')
+      .filter((layer) => layer.type !== 'background' && layer.type !== 'symbol')
       .map((layer) => ({
         ...layer,
         id: `${sid}-${layer.id}`,

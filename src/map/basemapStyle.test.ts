@@ -190,6 +190,25 @@ describe('buildBasemapStyle — R7 region-pack compositing', () => {
     expect(style.sources['pack-continent-na']).toBeDefined();
   });
 
+  it('a pack contributes NO duplicate symbol/label layers — labels come from the base only (B1)', () => {
+    const style = buildBasemapStyle('light', [{ id: 'continent-na' }]);
+    const packLayers = style.layers.filter(
+      (l): l is typeof l & { source: string } => 'source' in l && l.source === 'pack-continent-na',
+    );
+    expect(packLayers.length).toBeGreaterThan(0); // detail layers present
+    expect(packLayers.every((l) => l.type !== 'symbol')).toBe(true); // but NO label layers
+  });
+
+  it('total label (symbol) layer count does NOT grow with pack count (B1)', () => {
+    const symbolCount = (s: ReturnType<typeof buildBasemapStyle>) =>
+      s.layers.filter((l) => l.type === 'symbol').length;
+    const zero = symbolCount(buildBasemapStyle('light', []));
+    const three = symbolCount(
+      buildBasemapStyle('light', [{ id: 'a' }, { id: 'b' }, { id: 'c' }]),
+    );
+    expect(three).toBe(zero); // labels owned by the base overview only
+  });
+
   it('contributes NO extra background/global layer per pack (regression: opaque canvas)', () => {
     // @protomaps/basemaps layers() emits an opaque, sourceless `background` layer.
     // If a pack's background were appended it would paint the whole canvas, hiding
