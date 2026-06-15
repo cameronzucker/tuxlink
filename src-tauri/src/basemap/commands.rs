@@ -160,11 +160,22 @@ impl Extractor for SidecarExtractor {
         let stdout_handle = drain(child.stdout.take());
         let stderr_handle = drain(child.stderr.take());
 
-        loop {
+        // What the poll loop resolved to. The loop only decides the outcome and
+        // breaks; the drain threads are joined ONCE after the loop on EVERY path
+        // (Codex #3) — the prior code joined them only on a non-zero exit, leaking
+        // both threads on success / cancel / try_wait-error. After a natural exit
+        // or a kill+wait, the child's pipe write ends are closed, so the reads hit
+        // EOF and the joins return promptly.
+        enum Outcome {
+            Exited(std::process::ExitStatus),
+            Cancelled,
+            WaitErr(std::io::Error),
+        }
+        let outcome = loop {
             if cancel.load(Ordering::SeqCst) {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(DownloadError::Cancelled);
+                break Outcome::Cancelled;
             }
             // Poll the temp size for the progress bar. A missing/locked file early
             // on just yields 0 — not an error.
@@ -176,27 +187,33 @@ impl Extractor for SidecarExtractor {
                     // Final size sample before reporting completion.
                     let written = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(written);
                     on_progress(written);
-                    if status.success() {
-                        return Ok(());
-                    }
-                    // Join BOTH drains on the error path so neither output is lost.
-                    let stderr = stderr_handle
-                        .and_then(|h| h.join().ok())
-                        .unwrap_or_default();
-                    let stdout = stdout_handle
-                        .and_then(|h| h.join().ok())
-                        .unwrap_or_default();
-                    return Err(DownloadError::ExtractFailed(sidecar_exit_error(
-                        status.code(),
-                        &stderr,
-                        &stdout,
-                    )));
+                    break Outcome::Exited(status);
                 }
                 Ok(None) => std::thread::sleep(POLL_INTERVAL),
                 Err(e) => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(DownloadError::ExtractFailed(format!("wait go-pmtiles: {e}")));
+                    break Outcome::WaitErr(e);
+                }
+            }
+        };
+
+        // Join both drains now, on every exit path, so neither thread leaks.
+        let stdout = stdout_handle.and_then(|h| h.join().ok()).unwrap_or_default();
+        let stderr = stderr_handle.and_then(|h| h.join().ok()).unwrap_or_default();
+
+        match outcome {
+            Outcome::Cancelled => Err(DownloadError::Cancelled),
+            Outcome::WaitErr(e) => Err(DownloadError::ExtractFailed(format!("wait go-pmtiles: {e}"))),
+            Outcome::Exited(status) => {
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(DownloadError::ExtractFailed(sidecar_exit_error(
+                        status.code(),
+                        &stderr,
+                        &stdout,
+                    )))
                 }
             }
         }
@@ -250,21 +267,25 @@ fn resolve_sidecar() -> PathBuf {
     PathBuf::from("pmtiles")
 }
 
-/// Free bytes on the filesystem holding `path`. On a statvfs failure FAILS CLOSED
-/// — returns `0` so the free-space gate (`available < needed`) trips and surfaces
-/// `InsufficientSpace` rather than silently waving through a multi-GB download onto
-/// a filesystem whose free space could not be determined (e.g. the path does not
-/// exist). The prior `u64::MAX` made the gate always pass, defeating it entirely.
-fn available_bytes(path: &Path) -> u64 {
+/// Free bytes on the filesystem holding `path`, or `None` if free space cannot be
+/// determined (statvfs failed — e.g. the path does not exist). The caller MUST
+/// treat `None` as "do not proceed": a download that cannot confirm free space
+/// must not silently wave a multi-GB transfer onto an unknown filesystem. Kept
+/// distinct from `Some(0)` (a real, determinable, full filesystem) so the command
+/// layer can surface a stat failure ("could not determine free space") separately
+/// from a genuine out-of-space rejection (`InsufficientSpace`) — Codex #2. (The
+/// prior contract returned a fail-closed `0`, which conflated the two and could
+/// report "0 available" when the dir was merely missing.)
+fn available_bytes(path: &Path) -> Option<u64> {
     match nix::sys::statvfs::statvfs(path) {
         Ok(s) => {
             // On the 64-bit Linux build targets both are u64; the explicit bindings
             // avoid an `as` cast (clippy unnecessary_cast under -D warnings).
             let blocks: u64 = s.blocks_available();
             let frag: u64 = s.fragment_size();
-            blocks.saturating_mul(frag)
+            Some(blocks.saturating_mul(frag))
         }
-        Err(_) => 0,
+        Err(_) => None,
     }
 }
 
@@ -284,25 +305,43 @@ pub struct PacksList {
     pub total_bytes: u64,
 }
 
+/// `basemap_download_pack` result: the installed pack plus whether it is live
+/// immediately. `requires_restart` is true only when the pack installed durably
+/// (validated, renamed into place, manifest written) but the in-memory
+/// `PmtilesRegistry` registration failed — `init_packs` re-registers every
+/// installed pack on the next startup, so the pack is usable then. The UI uses
+/// this to (a) surface an honest "installed — restart to use offline" notice and
+/// (b) NOT signal the live map to add a `tile://pmtiles/<id>` source the registry
+/// cannot serve yet (Codex #5). `#[serde(flatten)]` keeps `InstalledPack`'s own
+/// (snake_case) field names so the existing TS `InstalledPack` shape is preserved;
+/// only the added flag is camelCased.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadResult {
+    #[serde(flatten)]
+    pub pack: InstalledPack,
+    pub requires_restart: bool,
+}
+
 /// The cached manifest (bundled default until a refresh succeeds).
 #[tauri::command]
 pub fn basemap_get_manifest(state: State<'_, Arc<BasemapState>>) -> RegionManifest {
     state.manifest.read().expect("manifest lock").clone()
 }
 
-/// Refresh the manifest from the canonical raw URL (Rust egress; CSP closed). On
-/// any failure the cached manifest is kept and an error is returned — the UI
-/// keeps working with the previous/bundled manifest.
-#[tauri::command]
-pub async fn basemap_refresh_manifest(
-    state: State<'_, Arc<BasemapState>>,
-) -> Result<RegionManifest, String> {
+/// Refresh the cached manifest from the canonical raw URL (Rust egress; CSP
+/// closed) and store it in `state`. On any failure the cached manifest is left
+/// untouched and the error is returned — every caller keeps working with the
+/// previous/bundled manifest. Shared by the explicit `basemap_refresh_manifest`
+/// command and the best-effort pre-download refresh in `basemap_download_pack`
+/// (Codex #1, race-free freshness).
+async fn refresh_manifest_into(state: &BasemapState) -> Result<RegionManifest, String> {
     // Bounded fetch: the bytes are re-validated by parse(), but a timeout keeps a
     // slow/hung endpoint from stalling the command. (The host is pinned by
     // validate_planet_url on the payload, not by the transport; redirect-following
     // inside reqwest/go-pmtiles is out of scope — see region_manifest SECURITY.)
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| format!("manifest client: {e}"))?;
     let body = client
@@ -316,6 +355,16 @@ pub async fn basemap_refresh_manifest(
     let manifest = RegionManifest::parse(&body).map_err(|e| e.to_string())?;
     *state.manifest.write().expect("manifest lock") = manifest.clone();
     Ok(manifest)
+}
+
+/// Refresh the manifest from the canonical raw URL (Rust egress; CSP closed). On
+/// any failure the cached manifest is kept and an error is returned — the UI
+/// keeps working with the previous/bundled manifest.
+#[tauri::command]
+pub async fn basemap_refresh_manifest(
+    state: State<'_, Arc<BasemapState>>,
+) -> Result<RegionManifest, String> {
+    refresh_manifest_into(state.inner()).await
 }
 
 /// List installed packs + total disk used.
@@ -345,11 +394,28 @@ pub async fn basemap_download_pack(
     registry: State<'_, Arc<PmtilesRegistry>>,
     state: State<'_, Arc<BasemapState>>,
     args: DownloadArgs,
-) -> Result<InstalledPack, String> {
+) -> Result<DownloadResult, String> {
     // `State` borrows the invocation and can't cross the spawn_blocking boundary;
     // clone the inner Arcs (cheap, Send + 'static) and move them in.
     let registry = registry.inner().clone();
     let state = state.inner().clone();
+
+    // Codex #1 (HIGH): refresh the cached manifest best-effort HERE, in the async
+    // command body, BEFORE the blocking work reads `state.manifest` to build the
+    // request. Awaiting completes the refresh (and its write to `state.manifest`)
+    // before `spawn_blocking` runs `build_request`, so a download can never build
+    // from a stale `planet_url` — which is what let a rotated Protomaps build 404
+    // the extract. This replaces relying on the UI's fire-and-forget on-open
+    // refresh (which a quick click could outrun). A refresh failure (e.g. offline)
+    // is non-fatal: keep the cached/bundled manifest and proceed.
+    if let Err(e) = refresh_manifest_into(&state).await {
+        tracing::warn!(
+            target: "tuxlink::basemap",
+            error = %e,
+            "pre-download manifest refresh failed; using cached manifest"
+        );
+    }
+
     tokio::task::spawn_blocking(move || download_pack_blocking(app, registry, state, args))
         .await
         .map_err(|e| format!("download task failed to run: {e}"))?
@@ -364,7 +430,7 @@ fn download_pack_blocking(
     registry: Arc<PmtilesRegistry>,
     state: Arc<BasemapState>,
     args: DownloadArgs,
-) -> Result<InstalledPack, String> {
+) -> Result<DownloadResult, String> {
     let manifest = state.manifest.read().expect("manifest lock").clone();
     let req = match build_request(&manifest, &args) {
         Ok(req) => req,
@@ -381,7 +447,6 @@ fn download_pack_blocking(
     let extractor = SidecarExtractor {
         bin: resolve_sidecar(),
     };
-    let available = available_bytes(&state.packs_dir);
 
     // Register a fresh cancel flag for this pack so `basemap_cancel_download` can
     // stop the in-flight extract. Removed below regardless of outcome. Reject a
@@ -395,11 +460,13 @@ fn download_pack_blocking(
             .lock()
             .expect("download_cancels lock poisoned");
         if cancels.contains_key(&req.id) {
-            // C3: emit a terminal done before this early return so the UI's row
-            // clears (the in-flight original keeps its own progress/done events).
-            let msg = format!("a download for {} is already in progress", req.id);
-            emit_done(&app, &req.id, false, Some(msg.clone()));
-            return Err(msg);
+            // Codex #4: do NOT emit a terminal done here. `req.id` belongs to the
+            // ALREADY-RUNNING download; a `download-done` carrying it would flip
+            // that live download's progress row to error (`useDownloadProgress`
+            // matches done events by pack id). The duplicate caller learns of the
+            // reject from THIS command's rejected promise, which clears its own row
+            // — so no event is needed, and emitting one only poisons the original.
+            return Err(format!("a download for {} is already in progress", req.id));
         }
         cancels.insert(req.id.clone(), cancel.clone());
     }
@@ -429,9 +496,36 @@ fn download_pack_blocking(
     // Serialize the install (free-space + extract + validate + atomic install +
     // manifest RMW) against any concurrent download/delete so the packs-manifest
     // read-modify-write can't lose an update (which would orphan a completed pack).
+    //
+    // Codex #2: ensure the packs dir exists and sample free space INSIDE the lock,
+    // immediately before install_pack. Sampling under the lock means a second
+    // (serialized) download measures the disk AFTER the first one installed, not
+    // from a shared pre-lock snapshot both could pass. Creating the dir first means
+    // a transient missing dir surfaces as a real mkdir error and a statvfs failure
+    // on the now-existing dir surfaces as a distinct "could not determine free
+    // space" — neither is silently conflated with a genuine out-of-space rejection.
     let result = {
         let _install = state.install_lock.lock().expect("install lock poisoned");
-        download::install_pack(&extractor, &state.packs_dir, available, &req, &cancel, &on_progress)
+        match std::fs::create_dir_all(&state.packs_dir) {
+            Err(e) => Err(DownloadError::Io(format!(
+                "create packs dir {}: {e}",
+                state.packs_dir.display()
+            ))),
+            Ok(()) => match available_bytes(&state.packs_dir) {
+                None => Err(DownloadError::Io(format!(
+                    "could not determine free space on {}",
+                    state.packs_dir.display()
+                ))),
+                Some(available) => download::install_pack(
+                    &extractor,
+                    &state.packs_dir,
+                    available,
+                    &req,
+                    &cancel,
+                    &on_progress,
+                ),
+            },
+        }
     };
 
     // Drop this download's cancel flag (success/err/cancel all land here).
@@ -450,7 +544,13 @@ fn download_pack_blocking(
             // `init_packs` re-registers every installed pack on the next startup.
             // Throwing away a multi-GB validated download for a transient registration
             // error would be wrong — log it and report success.
-            if let Err(e) = registry
+            //
+            // Codex #5: track whether the live registration succeeded. On failure the
+            // pack is installed but `tile://pmtiles/<id>` cannot serve it until the
+            // next restart re-registers it, so we report `requires_restart` to the UI
+            // — which surfaces an honest "restart to use" notice and does NOT signal
+            // the live map to add a source the registry can't yet serve.
+            let requires_restart = if let Err(e) = registry
                 .register_path(&entry.id, &download::pack_path(&state.packs_dir, &entry.id))
             {
                 tracing::warn!(
@@ -459,12 +559,15 @@ fn download_pack_blocking(
                     error = %e,
                     "pack installed but live registration failed; it will be re-registered on next startup"
                 );
-            }
+                true
+            } else {
+                false
+            };
             let _ = app.emit(
                 DONE_EVENT,
                 &DownloadDone { pack_id: req.id.clone(), ok: true, error: None },
             );
-            Ok(entry)
+            Ok(DownloadResult { pack: entry, requires_restart })
         }
         Err(e) => {
             let msg = e.to_string();
@@ -682,20 +785,21 @@ mod tests {
     // ── C1(a): the free-space gate must FAIL CLOSED on a stat error ──────────────
 
     #[test]
-    fn available_bytes_fails_closed_on_nonexistent_path() {
-        // A path that cannot be statvfs'd (does not exist) must return 0, NOT
-        // u64::MAX — otherwise `available < needed` is always false and the gate is
-        // defeated, silently waving through a multi-GB download.
+    fn available_bytes_returns_none_on_nonexistent_path() {
+        // A path that cannot be statvfs'd (does not exist) returns None, NOT a
+        // bogus large figure — the caller must refuse the download rather than wave
+        // a multi-GB transfer onto a filesystem it can't measure. None is distinct
+        // from Some(0) so the command surfaces "could not determine free space"
+        // separately from a genuine out-of-space rejection (Codex #2).
         let missing = Path::new("/nonexistent/tuxlink/basemap/packs/definitely-not-here");
-        assert_eq!(available_bytes(missing), 0);
+        assert_eq!(available_bytes(missing), None);
     }
 
     #[test]
     fn available_bytes_reports_nonzero_for_real_dir() {
-        // Sanity: a real, statvfs-able directory yields a positive free-space figure
-        // (so the fail-closed change didn't make every path return 0).
+        // Sanity: a real, statvfs-able directory yields Some(positive free space).
         let dir = tempfile::tempdir().unwrap();
-        assert!(available_bytes(dir.path()) > 0);
+        assert!(available_bytes(dir.path()).is_some_and(|n| n > 0));
     }
 
     // ── B2: the sidecar error message must surface stdout AND stderr ─────────────

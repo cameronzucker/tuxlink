@@ -165,6 +165,20 @@ describe('OfflineMapsSettings', () => {
     expect(h.emitPacksChanged).toHaveBeenCalled();
   });
 
+  // Codex #5: when a download installs durably but live registration fails
+  // (requiresRestart), the pack is on disk but not yet servable. The UI must NOT
+  // signal the live map (which would add a source that 404s every tile) and must
+  // surface an honest "restart to use" notice instead.
+  it('shows a restart notice and does not signal the map when registration is deferred', async () => {
+    h.downloadPack.mockResolvedValueOnce({ id: 'tier-wide-n34-w111', requiresRestart: true });
+    render(<OfflineMapsSettings />);
+    const wide = await screen.findByText(/Wide · ~1\.0 GB/);
+    fireEvent.click(wide);
+    await waitFor(() => expect(h.downloadPack).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/restart Tuxlink to use it offline/i)).toBeInTheDocument();
+    expect(h.emitPacksChanged).not.toHaveBeenCalled();
+  });
+
   it('lists installed packs with size + total disk, and deletes them', async () => {
     h.packsResp = {
       packs: [

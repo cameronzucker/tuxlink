@@ -127,6 +127,13 @@
   color: var(--tux-danger, #d9534f);
 }
 
+/* Neutral advisory (e.g. "installed — restart to use") — not an error. */
+.tux-offlinemaps-notice {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--tux-muted, #6c757d);
+}
+
 /* Inline download progress row. */
 .tux-offlinemaps-progress {
   display: flex;

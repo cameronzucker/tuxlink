@@ -31,6 +31,17 @@ export interface PacksList {
   total_bytes: number;
 }
 
+/**
+ * `basemap_download_pack` result (mirrors Rust `DownloadResult`): the installed
+ * pack plus whether it is live immediately. `requiresRestart` is true only when
+ * the pack installed durably but in-memory registration failed — it serves after
+ * the next restart. The UI surfaces an honest "restart to use" notice in that
+ * case and skips signalling the live map to add a not-yet-servable source.
+ */
+export interface DownloadResult extends InstalledPack {
+  requiresRestart: boolean;
+}
+
 /** A coverage tier preset (mirrors Rust `region_manifest::Tier`). */
 export interface Tier {
   id: string;
@@ -88,7 +99,7 @@ export const listPacks = () => invoke<PacksList>('basemap_list_packs');
 export const getManifest = () => invoke<RegionManifest>('basemap_get_manifest');
 export const refreshManifest = () => invoke<RegionManifest>('basemap_refresh_manifest');
 export const downloadPack = (args: DownloadArgs) =>
-  invoke<InstalledPack>('basemap_download_pack', { args });
+  invoke<DownloadResult>('basemap_download_pack', { args });
 export const deletePack = (id: string) => invoke<boolean>('basemap_delete_pack', { id });
 
 /** Cancel an in-flight pack download. No-op if nothing is downloading that id. */

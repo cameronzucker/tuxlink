@@ -74,6 +74,9 @@ export function OfflineMapsSettings() {
   const [totalBytes, setTotalBytes] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A non-error advisory (e.g. a pack installed but needs a restart to serve —
+  // Codex #5). Distinct from `error` so it renders in a neutral, not alarming, row.
+  const [notice, setNotice] = useState<string | null>(null);
   const [continentId, setContinentId] = useState('');
   // The active *download* busy key (tier-*/continent-*, not delete-*) drives the
   // inline progress row. A failed download stays here so the row shows the error
@@ -106,15 +109,21 @@ export function OfflineMapsSettings() {
   }, []);
 
   useEffect(() => {
-    // B1: pull a fresh remote manifest best-effort on mount so a deployed app
-    // picks up the operator's weekly planet_url bump without an app release —
-    // nothing else calls refreshManifest(). Fire-and-forget: ignore its result
-    // (and failures, e.g. offline), then read the now-freshest local manifest so
-    // a download uses the latest planet_url.
-    void refreshManifest().catch(() => {});
-    getManifest()
-      .then(setManifest)
-      .catch(() => setManifest(null));
+    // B1: refresh the remote manifest best-effort on mount so the DISPLAYED
+    // presets/estimates reflect the operator's weekly planet_url bump. The refresh
+    // writes the backend's cached manifest; we then read it back via getManifest()
+    // for display regardless of whether the refresh succeeded (offline → the
+    // cached/bundled manifest still renders). Download-time freshness no longer
+    // depends on this: the backend `basemap_download_pack` refreshes the manifest
+    // itself before building the request (Codex #1), so a quick click can't outrun
+    // a stale planet_url.
+    void refreshManifest()
+      .catch(() => {})
+      .finally(() => {
+        getManifest()
+          .then(setManifest)
+          .catch(() => setManifest(null));
+      });
     void refresh();
   }, [refresh]);
 
@@ -131,13 +140,23 @@ export function OfflineMapsSettings() {
     const hookKey = `${busyKey}#${attempt}`;
     setBusy(busyKey);
     setError(null);
+    setNotice(null);
     setDownloadError(null);
     setActivePackId(packIdForArgs(args)); // C5: cancel can target this immediately
     setDownloadKey(hookKey);
     setRetry(() => () => void runDownloadOp(label, args, busyKey, attempt + 1));
     try {
-      await downloadPack(args);
-      emitPacksChanged();
+      const result = await downloadPack(args);
+      // Codex #5: only tell the live map to composite the new pack when it is
+      // actually servable. If registration failed (requiresRestart), the pack is
+      // on disk but `tile://pmtiles/<id>` can't serve it until the next restart —
+      // adding the source now would 404 every tile. Show an honest notice instead;
+      // `refresh()` still lists it as installed either way.
+      if (result.requiresRestart) {
+        setNotice(`${label.replace(/^Download /, '')} installed — restart Tuxlink to use it offline.`);
+      } else {
+        emitPacksChanged();
+      }
       await refresh();
       setDownloadKey(null);
       setActivePackId(null);
@@ -359,6 +378,12 @@ export function OfflineMapsSettings() {
           </ul>
         )}
       </div>
+
+      {notice && (
+        <p className="tux-offlinemaps-notice" role="status">
+          {notice}
+        </p>
+      )}
 
       {error && (
         <p className="tux-offlinemaps-error" role="alert">
