@@ -5,9 +5,14 @@
 //! station on the channel hears every UI frame. EVERY decoded text message is
 //! routed to the UI — the channel is a party line, so the feed shows all traffic
 //! (directed-to-anyone plus blank-addressee broadcasts), each carrying its
-//! `addressee`; non-message traffic (position beacons, telemetry, status) is
-//! decoded and dropped. Auto-ACK fires ONLY for a message addressed to our exact
-//! call (never a broadcast or another station's traffic — that would be SPAM).
+//! `addressee`. Non-message traffic (position beacons, telemetry, status,
+//! objects) is ALSO surfaced — as a raw feed row carrying its verbatim info
+//! field (tuxlink-8tz1: an operator diagnostic to confirm native RX sees the
+//! whole channel; positions additionally emit to the map). A UI-side frame-type
+//! filter is the eventual home for "what to show" (tuxlink-l0z5 follow-up); the
+//! backend no longer DROPS heard frames. Auto-ACK still fires ONLY for a message
+//! addressed to our exact call (never a broadcast or another station's traffic —
+//! that would be SPAM).
 //!
 //! **The dedupe split is load-bearing (APRS-protocol correctness):**
 //!   - A long `dedupe` window (300 s) gates UI DISPLAY: a retransmitted or
@@ -240,7 +245,38 @@ impl AprsEngine {
 
         let payload = match parse_info(&info) {
             Some(p) => p,
-            None => return out,
+            None => {
+                // tuxlink-8tz1 (operator-directed diagnostic slice): the feed used
+                // to DROP every non-message frame here — positions, status,
+                // telemetry, objects, weather, bulletins. On a live channel
+                // dominated by position beacons that made the feed look nearly
+                // empty even when native RX was healthy ("some, far fewer than I
+                // hear"). To verify native RX end-to-end (and expose any upstream
+                // GAIA-reassembly loss), surface EVERY heard frame's raw info as a
+                // feed row instead of returning early. Positions ALSO still go to
+                // the map via try_emit_position above. Eventual design is a UI-side
+                // frame-type filter (tuxlink-l0z5 follow-up), NOT a backend drop —
+                // the operator wants all traffic visible while validating the path.
+                let raw_text = String::from_utf8_lossy(&info).trim_end().to_string();
+                if !raw_text.is_empty() {
+                    let dkey = DedupeKey {
+                        src: sender.clone(),
+                        kind: "raw".into(),
+                        id: text_hash(&raw_text),
+                    };
+                    if !self.dedupe.seen(dkey, now_ms) {
+                        self.sink.emit_message(InboundMsg {
+                            sender,
+                            // No APRS addressee on a non-message frame → render as a
+                            // broadcast row (the UI maps "" → "→ all").
+                            addressee: String::new(),
+                            text: raw_text,
+                            msgid: None,
+                        });
+                    }
+                }
+                return out;
+            }
         };
         match payload {
             AprsPayload::Message {
@@ -1094,8 +1130,35 @@ mod tests {
         assert_eq!(pos[0].symbol_code, '-');
         assert_eq!(pos[0].comment, "Hello");
         assert_eq!(pos[0].ambiguity, 0, "a full-precision fix reports ambiguity 0");
-        // A position beacon is not a message, so nothing lands in the chat feed.
-        assert!(sink.msgs.lock().unwrap().is_empty());
+        // tuxlink-8tz1: a position beacon emits to the map (asserted above) AND
+        // now ALSO surfaces as a raw feed row (operator diagnostic — confirm all
+        // heard traffic reaches the chat). The row carries the verbatim info field
+        // and renders as a broadcast (blank addressee).
+        let msgs = sink.msgs.lock().unwrap();
+        assert_eq!(msgs.len(), 1, "non-message frame now surfaces as a raw feed row");
+        assert_eq!(msgs[0].sender, "KK6XYZ");
+        assert_eq!(msgs[0].addressee, "", "raw frame renders as broadcast");
+        assert_eq!(msgs[0].text, "!4903.50N/07201.75W-Hello");
+        assert!(msgs[0].msgid.is_none(), "a raw frame is not ACK-tracked");
+    }
+
+    #[test]
+    fn heard_status_frame_surfaces_as_raw_feed_row() {
+        // tuxlink-8tz1: a non-message, non-position frame (APRS status `>`) is not
+        // a `parse_info` payload and not a position — historically dropped. It must
+        // now surface as a raw feed row so the operator sees the full channel.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b">EOC active, monitoring 146.52"), 1000);
+        let msgs = sink.msgs.lock().unwrap();
+        assert_eq!(msgs.len(), 1, "status frame surfaces as a raw feed row");
+        assert_eq!(msgs[0].sender, "KK6XYZ");
+        assert_eq!(msgs[0].addressee, "");
+        assert_eq!(msgs[0].text, ">EOC active, monitoring 146.52");
+        assert!(
+            sink.positions.lock().unwrap().is_empty(),
+            "a status frame is not a position"
+        );
     }
 
     #[test]
