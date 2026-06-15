@@ -406,8 +406,7 @@ mod tests {
     }
     impl EntryLike for FailingEntry {
         fn get_password(&self) -> Result<String, keyring::Error> {
-            Err(keyring::Error::PlatformFailure(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(keyring::Error::PlatformFailure(Box::new(std::io::Error::other(
                 "backend unavailable",
             ))))
         }
