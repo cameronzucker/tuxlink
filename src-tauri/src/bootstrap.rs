@@ -454,7 +454,23 @@ pub(crate) fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: 
     if let Some(full) = &sole_full {
         let svc = crate::identity::IdentityService::new();
         match resolve_auto_identity(&svc, full, |c| {
-            crate::winlink::credentials::read_password(c).ok()
+            // tuxlink-nx3g: distinguish "no stored CMS password" (expected; nothing to
+            // heal) from a keyring BACKEND failure (locked / unavailable) so the latter
+            // is visible in the trace instead of looking like an absent credential.
+            // Both still fail closed (return None).
+            match crate::winlink::credentials::read_password(c) {
+                Ok(pw) => Some(pw),
+                Err(crate::winlink::credentials::KeyringError::NoEntry { .. }) => None,
+                Err(e @ crate::winlink::credentials::KeyringError::Backend(_)) => {
+                    tracing::warn!(
+                        target: "tuxlink::bootstrap",
+                        error = ?e,
+                        callsign = %c,
+                        "CMS credential keyring read failed (backend locked/unavailable); auto-auth cannot proceed",
+                    );
+                    None
+                }
+            }
         }) {
             AutoAuth::Authenticated(session) => {
                 backend.set_active_identity(session);
@@ -561,7 +577,10 @@ enum AutoAuth {
     Unavailable,
 }
 
+#[cfg(test)]
 impl AutoAuth {
+    /// Test helper: collapse the outcome to the session (if any). Production code
+    /// matches the variants directly (to emit per-variant log lines).
     fn into_session(self) -> Option<crate::identity::SessionIdentity> {
         match self {
             AutoAuth::Authenticated(s) | AutoAuth::Healed(s) => Some(s),

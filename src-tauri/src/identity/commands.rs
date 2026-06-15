@@ -151,11 +151,12 @@ fn manual_heal_handle(
         return None;
     }
     // Heal the FULL's activation secret from the proven CMS password, then
-    // authenticate with the TYPED callsign so the minted handle matches the
-    // non-heal path exactly. `heal_activation_secret` is a no-op if a secret already
-    // exists and fails closed on a backend error.
+    // authenticate with the CANONICAL stored callsign — so the minted handle (whose
+    // callsign is the Part 97 station ID on RF) is the real `W1ABC`, never the typed
+    // case. `heal_activation_secret` is a no-op if a secret already exists and fails
+    // closed on a backend error (Codex impl-review P2).
     svc.heal_activation_secret(&canonical, credential).ok()?;
-    svc.authenticate(full_typed, credential).ok()
+    svc.authenticate(&canonical, credential).ok()
 }
 
 /// Authenticate a FULL credential and build the active session, persisting the
@@ -831,6 +832,26 @@ mod tests {
         let h = manual_heal_handle(&svc, &path, &typed, "cms-pw", None, |c| {
             if c == "W1ABC" { Some("cms-pw".to_string()) } else { None }
         });
-        assert!(h.is_some(), "lowercase typed call must heal the canonical stored FULL");
+        let h = h.expect("lowercase typed call must heal the canonical stored FULL");
+        // The minted handle's callsign is the Part 97 RF station ID — it MUST be the
+        // canonical stored "W1ABC", never the lowercase typed form (Codex impl-review P2).
+        assert_eq!(h.full_callsign().as_str(), "W1ABC", "handle must carry the canonical callsign");
+    }
+
+    #[test]
+    fn manual_heal_does_not_run_on_a_credential_mismatch() {
+        // If an activation secret ALREADY exists but the credential is wrong, the
+        // outer authenticate() returns CredentialMismatch (not NoSecretSet), so the
+        // heal path is never entered. Even if manual_heal_handle is reached, a present
+        // secret is a no-op and the wrong cred fails re-auth -> None (no overwrite).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        let svc = IdentityService::with_memory_keyring();
+        orphan_store(&path, "W1ABC");
+        let full = Callsign::parse("W1ABC").unwrap();
+        svc.set_activation_secret(&full, "real-secret").unwrap(); // not orphan anymore
+        let h = manual_heal_handle(&svc, &path, &full, "cms-pw", None, |_| Some("cms-pw".to_string()));
+        assert!(h.is_none(), "an existing secret must not be overwritten/bypassed by the heal");
+        assert!(svc.authenticate(&full, "real-secret").is_ok(), "original secret intact");
     }
 }
