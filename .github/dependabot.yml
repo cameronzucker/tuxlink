@@ -15,6 +15,20 @@ updates:
     labels:
       - dependencies
       - rust
+    # Block major-version proposals that are un-buildable in our environment.
+    # Patch + minor updates still come through normally; only semver-major
+    # bumps are suppressed.
+    ignore:
+      # libheif-rs 2.x pulls libheif-sys 5.x, whose build script pkg-configs
+      # against the SYSTEM libheif and requires >= 1.21. Ubuntu 24.04
+      # (CI / build / target) ships libheif 1.17.6, so the build script fails
+      # on EVERY job (e.g. PR #727). src-tauri/Cargo.toml pins
+      # `libheif-rs = "=1.0.2"` for exactly this reason. Remove this ignore if
+      # the build/runtime baseline ever moves to a libheif >= 1.21.
+      - dependency-name: "libheif-rs"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "libheif-sys"
+        update-types: ["version-update:semver-major"]
 
   # npm dependencies (Tauri frontend)
   - package-ecosystem: npm
