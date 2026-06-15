@@ -18,7 +18,8 @@ const stations: Station[] = [
 ];
 
 interface PinFeature {
-  properties: { key: string; tier: string; selected: boolean };
+  id: string;
+  properties: { key: string; tier: string };
 }
 
 function loadLast(): MapLibreMock {
@@ -38,18 +39,82 @@ describe('StationFinderMap', () => {
     expect(sourceData(map, 'stations').features).toHaveLength(2); // NOGRID dropped
   });
 
-  it('encodes the reachability tier and selected flag on each feature', () => {
+  it('encodes the reachability tier and a stable feature id on each feature', () => {
     const key0 = stationKey(stations[0]);
     const tiers = new Map<string, ReachTier>([[key0, 'good']]);
     render(<StationFinderMap stations={stations} operatorGrid="" tiers={tiers} selectedKey={key0} onSelect={() => {}} />);
     const map = loadLast();
     const feats = sourceData(map, 'stations').features;
-    const selected = feats.find((f) => f.properties.key === key0)!;
-    expect(selected.properties.tier).toBe('good');
-    expect(selected.properties.selected).toBe(true);
+    const good = feats.find((f) => f.properties.key === key0)!;
+    expect(good.properties.tier).toBe('good');
+    expect(good.id).toBe(key0); // top-level id targets setFeatureState
+    // `selected` is no longer baked into feature properties — it is feature-state.
+    expect('selected' in good.properties).toBe(false);
     const other = feats.find((f) => f.properties.key !== key0)!;
     expect(other.properties.tier).toBe('untiered'); // no tier → untiered fallback
-    expect(other.properties.selected).toBe(false);
+  });
+
+  it('drives selection via setFeatureState — selecting does NOT rebuild the FC', () => {
+    const key0 = stationKey(stations[0]);
+    // Hold `stations`/`tiers` identity stable so only `selectedKey` changes — this
+    // isolates the selection path (feature-state), which must not push setData.
+    const tiers = new Map<string, ReachTier>();
+    const { rerender } = render(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={tiers} selectedKey={null} onSelect={() => {}} />,
+    );
+    const map = loadLast();
+    const src = map.getSource('stations') as { setData: ReturnType<typeof vi.fn> };
+    src.setData.mockClear();
+
+    act(() => {
+      rerender(
+        <StationFinderMap stations={stations} operatorGrid="" tiers={tiers} selectedKey={key0} onSelect={() => {}} />,
+      );
+    });
+
+    // Selection flips one feature's state; it does NOT push a new FeatureCollection.
+    expect(map.setFeatureState).toHaveBeenCalledWith(
+      { source: 'stations', id: key0 },
+      { selected: true },
+    );
+    expect(src.setData).not.toHaveBeenCalled();
+  });
+
+  it('changing the selection clears the previous feature-state then sets the new one', () => {
+    const key0 = stationKey(stations[0]);
+    const key1 = stationKey(stations[1]);
+    const { rerender } = render(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={key0} onSelect={() => {}} />,
+    );
+    const map = loadLast();
+    (map.setFeatureState as ReturnType<typeof vi.fn>).mockClear();
+    (map.removeFeatureState as ReturnType<typeof vi.fn>).mockClear();
+
+    act(() => {
+      rerender(
+        <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={key1} onSelect={() => {}} />,
+      );
+    });
+
+    expect(map.removeFeatureState).toHaveBeenCalledWith({ source: 'stations', id: key0 }, 'selected');
+    expect(map.setFeatureState).toHaveBeenCalledWith({ source: 'stations', id: key1 }, { selected: true });
+  });
+
+  it('changing stations still pushes a new FeatureCollection (setData)', () => {
+    const { rerender } = render(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    const map = loadLast();
+    const src = map.getSource('stations') as { setData: ReturnType<typeof vi.fn> };
+    src.setData.mockClear();
+
+    act(() => {
+      rerender(
+        <StationFinderMap stations={[stations[0]]} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+      );
+    });
+
+    expect(src.setData).toHaveBeenCalled();
   });
 
   it('places the operator pin only when a grid is set', () => {

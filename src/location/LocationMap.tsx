@@ -18,7 +18,7 @@
  * Real render/drag smoothness is grim-verified (the map subsystem's C1
  * convention); the tests prove wiring only via the global maplibre mock.
  */
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { MapMouseEvent } from 'maplibre-gl';
 import { MapLibreMap } from '../map/MapLibreMap';
 import { MaidenheadGridLayer } from '../map/MaidenheadGridLayer';
@@ -120,18 +120,27 @@ function LocationOverlay({ grid, fixLatLon, selectedSource, onGridChange }: Loca
 
   useMapOverlay(map, SOURCE_ID, { type: 'geojson', data: EMPTY_FC }, LAYERS);
 
-  // Push the latest data (and re-push after a style swap clears sources).
+  // Subscribe `styledata` ONCE and push the latest data from a ref (B10,
+  // tuxlink-vnk7) — the old effect re-subscribed on every `fc` change.
+  const fcRef = useRef(fc);
+  fcRef.current = fc;
   useEffect(() => {
     if (!map) return;
     const push = () => {
       const src = map.getSource(SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
-      src?.setData?.(fc);
+      src?.setData?.(fcRef.current);
     };
-    push();
     map.on('styledata', push);
     return () => {
       map.off('styledata', push);
     };
+  }, [map]);
+
+  // Push imperatively whenever the data actually changes.
+  useEffect(() => {
+    if (!map) return;
+    const src = map.getSource(SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
+    src?.setData?.(fc);
   }, [map, fc]);
 
   // Draggable marker (flow 3): drag the pin to set the location by hand. Standard
@@ -140,6 +149,26 @@ function LocationOverlay({ grid, fixLatLon, selectedSource, onGridChange }: Loca
   useEffect(() => {
     if (!map) return;
     let dragging = false;
+    // Coalesce the live drag preview to one setData per animation frame (B10,
+    // tuxlink-vnk7) — pointer mousemove can fire faster than the (software-GL)
+    // render cadence, so an un-throttled setData rebuilt the GeoJSON many times
+    // per frame while the map was already CPU-limited.
+    let rafId: number | null = null;
+    let pending: [number, number] | null = null;
+    const flushPreview = () => {
+      rafId = null;
+      if (!pending) return;
+      const src = map.getSource(SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
+      src?.setData?.(buildFC(grid, ll, pending));
+      pending = null;
+    };
+    const cancelPreview = () => {
+      if (rafId != null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      pending = null;
+    };
     const setCursor = (c: string) => {
       try {
         map.getCanvas().style.cursor = c;
@@ -158,12 +187,18 @@ function LocationOverlay({ grid, fixLatLon, selectedSource, onGridChange }: Loca
     };
     const onMove = (e: MapMouseEvent) => {
       if (!dragging) return;
-      const src = map.getSource(SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
-      src?.setData?.(buildFC(grid, ll, [e.lngLat.lng, e.lngLat.lat]));
+      pending = [e.lngLat.lng, e.lngLat.lat];
+      if (rafId == null) rafId = requestAnimationFrame(flushPreview);
     };
     const onUp = (e: MapMouseEvent) => {
       if (!dragging) return;
       dragging = false;
+      // Cancel any pending throttled frame, but commit the FINAL release point
+      // synchronously first (Codex P2): otherwise, if onGridChange resolves to the
+      // same grid, no FC re-push occurs and the pin lags at the last flushed frame.
+      cancelPreview();
+      const src = map.getSource(SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
+      src?.setData?.(buildFC(grid, ll, [e.lngLat.lng, e.lngLat.lat]));
       map.dragPan.enable();
       setCursor('');
       onGridChange(latLonToGrid(e.lngLat.lat, e.lngLat.lng));
@@ -174,6 +209,7 @@ function LocationOverlay({ grid, fixLatLon, selectedSource, onGridChange }: Loca
     map.on('mousemove', onMove);
     map.on('mouseup', onUp);
     return () => {
+      cancelPreview();
       map.off('mouseenter', MARKER_LAYER_ID, onEnter);
       map.off('mouseleave', MARKER_LAYER_ID, onLeave);
       map.off('mousedown', MARKER_LAYER_ID, onDown);

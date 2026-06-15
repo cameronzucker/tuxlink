@@ -170,6 +170,14 @@ The implementation pitfall says: "Every AMD MUST ship with a paired bd issue if 
 
 ---
 
+## 9. Rendering & Performance Forecasts
+
+Performance numbers are only as representative as the scene they measure. A fps figure from a stripped-down harness predicts nothing about a production scene with real assets, markers, and compositing — and a mocked harness silently strips exactly the work that dominates render cost.
+
+- [ ] **🔥 MAP-PERF-1 — A perf forecast from the mocked render-harness is not an app-level prediction.** The front-end render-harness (`dev/render-harness/`) uses canned Tauri data and a trivial scene (no real tile decode, no markers, no pack compositing); its fps number MUST NOT gate a perf-sensitive map ship. Map perf claims require the on-Pi frame-timing smoke (`dev/perf-harness/`) with a region pack + station pins + the Maidenhead grid mounted at real resolution under software GL (llvmpipe), measuring p50/p95 frame time during scripted pan/zoom. (Found in tuxlink-vnk7, 2026-06-15: the ~45 fps "forecast" was measured on the front-end-only render-harness, so it never predicted real app perf — MapLibre GL JS forced through software GL on the Pi is a different fill-rate problem.)
+
+---
+
 ## How to Add a Testing-Pitfall
 
 When a bug reaches production (or staging, or late integration testing) because a test was missing:

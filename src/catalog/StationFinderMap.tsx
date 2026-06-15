@@ -46,9 +46,11 @@ const STATION_LAYERS = (
       paint: {
         // Selected pin reads as ONE emphasised marker: the per-tier radius is
         // nudged +2px and a white STROKE hugs the circle (no detached ring).
+        // Selection is driven by `feature-state` (B9, tuxlink-vnk7) so clicking a
+        // pin flips one feature's state instead of rebuilding the whole FC.
         'circle-radius': [
           'case',
-          ['get', 'selected'],
+          ['boolean', ['feature-state', 'selected'], false],
           ['match', ['get', 'tier'], 'good', 12, 'fair', 10, 'marginal', 8.5, 'skip', 7, 9],
           ['match', ['get', 'tier'], 'good', 10, 'fair', 8, 'marginal', 6.5, 'skip', 5, 7],
         ],
@@ -65,7 +67,7 @@ const STATION_LAYERS = (
         // White stroke hugging the circle; thicker when selected so the marker
         // is emphasised in place rather than gaining a second, offset ring.
         'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': ['case', ['get', 'selected'], 2.5, 0.5],
+        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2.5, 0.5],
       },
     },
   ] as unknown[]
@@ -87,42 +89,60 @@ const OPERATOR_LAYERS = (
   ] as unknown[]
 ).map((l) => l as Record<string, unknown> & { id: string });
 
-function buildStationFC(
-  stations: Station[],
-  tiers: Map<string, ReachTier>,
-  selectedKey: string | null,
-): FeatureCollection {
+function buildStationFC(stations: Station[], tiers: Map<string, ReachTier>): FeatureCollection {
   const features: unknown[] = [];
   for (const s of stations) {
     const ll = gridToLatLon(s.grid);
     if (!ll) continue;
     const key = stationKey(s);
     features.push({
+      // Top-level `id` (the station key) is what `setFeatureState` targets — a
+      // string id is valid GeoJSON and lets selection flip one feature's state
+      // without rebuilding the FeatureCollection (B9, tuxlink-vnk7).
       type: 'Feature',
-      properties: { key, tier: tiers.get(key) ?? 'untiered', selected: selectedKey === key },
+      id: key,
+      properties: { key, tier: tiers.get(key) ?? 'untiered' },
       geometry: { type: 'Point', coordinates: [ll.lon, ll.lat] },
     });
   }
   return { type: 'FeatureCollection', features };
 }
 
-/** Pushes GeoJSON to a source on change, re-pushing on styledata (style swap). */
+/**
+ * Pushes GeoJSON to a source on change, re-pushing on styledata (style swap).
+ *
+ * Subscribes `styledata` ONCE (deps `[map, sourceId]`) and re-pushes the latest
+ * data from a ref; the push-on-change lives in a SEPARATE effect (deps
+ * `[map, sourceId, data]`). The old single-effect form re-subscribed `styledata`
+ * and full-replaced the source on EVERY data change (B9, tuxlink-vnk7); mirrors
+ * the pattern in LocationMap.
+ */
 function usePushData(
   map: ReturnType<typeof useMapContext>,
   sourceId: string,
   data: FeatureCollection,
 ) {
+  const dataRef = useRef(data);
+  dataRef.current = data;
+
+  // Subscribe `styledata` once; re-push the latest data after a style swap.
   useEffect(() => {
     if (!map) return;
     const push = () => {
       const src = map.getSource(sourceId) as { setData?: (d: unknown) => void } | undefined;
-      src?.setData?.(data);
+      src?.setData?.(dataRef.current);
     };
-    push();
     map.on('styledata', push);
     return () => {
       map.off('styledata', push);
     };
+  }, [map, sourceId]);
+
+  // Push imperatively whenever the data actually changes.
+  useEffect(() => {
+    if (!map) return;
+    const src = map.getSource(sourceId) as { setData?: (d: unknown) => void } | undefined;
+    src?.setData?.(data);
   }, [map, sourceId, data]);
 }
 
@@ -139,10 +159,47 @@ function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationF
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
 
-  const fc = useMemo(() => buildStationFC(stations, tiers, selectedKey), [stations, tiers, selectedKey]);
+  // Selection is feature-state-driven (below), so the FC rebuilds only when the
+  // station set or tiers change — NOT on every selection click (B9, tuxlink-vnk7).
+  const fc = useMemo(() => buildStationFC(stations, tiers), [stations, tiers]);
 
   useMapOverlay(map, STATIONS_SOURCE, { type: 'geojson', data: EMPTY_FC }, STATION_LAYERS);
   usePushData(map, STATIONS_SOURCE, fc);
+
+  // Drive selection via `setFeatureState` instead of rebuilding the FC: clear the
+  // previously-selected feature's state and set `{selected:true}` on the new one.
+  // Also RE-APPLY on `styledata` (Codex P2): a setStyle (flavor/pack change) drops
+  // all feature-state, and the hooks re-add the source on the same tick — without
+  // this the selected pin would lose its emphasis until selectedKey changes.
+  const prevSelectedRef = useRef<string | null>(null);
+  const selectedKeyRef = useRef<string | null>(selectedKey);
+  selectedKeyRef.current = selectedKey;
+  useEffect(() => {
+    if (!map) return;
+    const m = map as unknown as {
+      setFeatureState?: (t: { source: string; id: string | number }, s: Record<string, unknown>) => void;
+      removeFeatureState?: (t: { source: string; id?: string | number }, key?: string) => void;
+      on: (t: string, h: (...a: unknown[]) => void) => unknown;
+      off: (t: string, h: (...a: unknown[]) => void) => unknown;
+    };
+    const apply = () => {
+      const cur = selectedKeyRef.current;
+      const prev = prevSelectedRef.current;
+      if (prev != null && prev !== cur) {
+        m.removeFeatureState?.({ source: STATIONS_SOURCE, id: prev }, 'selected');
+      }
+      if (cur != null) {
+        m.setFeatureState?.({ source: STATIONS_SOURCE, id: cur }, { selected: true });
+      }
+      prevSelectedRef.current = cur;
+    };
+    apply();
+    // Re-apply after a style swap re-creates the source (clears feature-state).
+    m.on('styledata', apply as (...a: unknown[]) => void);
+    return () => {
+      m.off('styledata', apply as (...a: unknown[]) => void);
+    };
+  }, [map, selectedKey]);
 
   useEffect(() => {
     if (!map) return;

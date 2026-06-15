@@ -83,6 +83,30 @@ describe('buildBasemapStyle (dark, L2 baked)', () => {
   });
 });
 
+describe('buildBasemapStyle (dark) memoization (B3, tuxlink-vnk7)', () => {
+  it('returns the SAME baked base layer array across no-pack calls (bake once per flavor)', () => {
+    const a = buildBasemapStyle('dark');
+    const b = buildBasemapStyle('dark');
+    // The overview (non-pack) layers must be the identical cached array reference,
+    // proving bakeDarkColors ran once for the base, not on every call.
+    expect(a.layers).toBe(b.layers);
+  });
+  it('light path is also memoized (same base array reference across no-pack calls)', () => {
+    const a = buildBasemapStyle('light');
+    const b = buildBasemapStyle('light');
+    expect(a.layers).toBe(b.layers);
+  });
+  it('dark still differs from light per-color after memoization', () => {
+    const dark = buildBasemapStyle('dark');
+    const light = buildBasemapStyle('light');
+    const bg = (s: typeof dark) =>
+      (s.layers.find((x) => x.type === 'background') as { paint?: Record<string, unknown> }).paint?.[
+        'background-color'
+      ];
+    expect(bg(dark)).not.toBe(bg(light));
+  });
+});
+
 describe('buildBasemapStyle — absolute URL hardening for opaque origins (tuxlink-1tai)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -126,6 +150,14 @@ describe('buildBasemapStyle — R7 region-pack compositing', () => {
     expect(none.layers.length).toBe(base.layers.length);
   });
 
+  it('does NOT advertise an overview source maxzoom above the z0-6 archive max (D3, Codex P1)', () => {
+    // Advertising maxzoom>6 makes MapLibre request z7+ tiles the archive lacks →
+    // blank above z6. Let the PMTiles header (z6) govern; MapLibre overzooms it.
+    const style = buildBasemapStyle('light');
+    const src = style.sources[BASEMAP_SOURCE_ID] as { maxzoom?: number };
+    expect(src.maxzoom === undefined || src.maxzoom <= REGION_MINZOOM).toBe(true);
+  });
+
   it('adds a vector source per pack served via tile://pmtiles/<id>', () => {
     const style = buildBasemapStyle('light', [{ id: 'tier-wide-n34-w112' }]);
     expect(style.sources['pack-tier-wide-n34-w112']).toMatchObject({
@@ -164,6 +196,25 @@ describe('buildBasemapStyle — R7 region-pack compositing', () => {
     const style = buildBasemapStyle('dark', [{ id: 'tier-wide-n34-w112' }, { id: 'continent-na' }]);
     expect(style.sources['pack-tier-wide-n34-w112']).toBeDefined();
     expect(style.sources['pack-continent-na']).toBeDefined();
+  });
+
+  it('a pack contributes NO duplicate symbol/label layers — labels come from the base only (B1)', () => {
+    const style = buildBasemapStyle('light', [{ id: 'continent-na' }]);
+    const packLayers = style.layers.filter(
+      (l): l is typeof l & { source: string } => 'source' in l && l.source === 'pack-continent-na',
+    );
+    expect(packLayers.length).toBeGreaterThan(0); // detail layers present
+    expect(packLayers.every((l) => l.type !== 'symbol')).toBe(true); // but NO label layers
+  });
+
+  it('total label (symbol) layer count does NOT grow with pack count (B1)', () => {
+    const symbolCount = (s: ReturnType<typeof buildBasemapStyle>) =>
+      s.layers.filter((l) => l.type === 'symbol').length;
+    const zero = symbolCount(buildBasemapStyle('light', []));
+    const three = symbolCount(
+      buildBasemapStyle('light', [{ id: 'a' }, { id: 'b' }, { id: 'c' }]),
+    );
+    expect(three).toBe(zero); // labels owned by the base overview only
   });
 
   it('contributes NO extra background/global layer per pack (regression: opaque canvas)', () => {

@@ -256,6 +256,13 @@ pub fn run() {
                         return;
                     }
                 };
+                // Only the bundled, truly-immutable overview archive may be served
+                // with `Cache-Control: immutable` (B4, tuxlink-vnk7 — Codex P1).
+                // Region packs share a stable `tile://pmtiles/<id>` URL but are
+                // MUTABLE (delete + re-download under the same id), so an immutable
+                // directive would serve stale ranges; they keep the original
+                // no-cache-directive behavior until their URLs are content-addressed.
+                let cacheable = archive_id == crate::basemap::BUNDLED_OVERVIEW_ARCHIVE_ID;
                 // Positioned file reads are blocking I/O — run them off the async
                 // worker pool (matches the project's spawn_blocking idiom). The
                 // responder is `Send`, so it can resolve from the blocking thread.
@@ -294,6 +301,17 @@ pub fn run() {
                                     tauri::http::header::ETAG,
                                     format!("\"{}\"", rr.total_len),
                                 );
+                            // Immutable cache directive ONLY for the bundled
+                            // overview (never changes) — lets the webview cache its
+                            // directory/leaf ranges instead of refetching per tile
+                            // during pan/zoom (B4, tuxlink-vnk7). Mutable packs are
+                            // excluded (Codex P1).
+                            if cacheable {
+                                builder = builder.header(
+                                    tauri::http::header::CACHE_CONTROL,
+                                    crate::basemap::PMTILES_CACHE_CONTROL,
+                                );
+                            }
                             if let Some(cr) = &rr.content_range {
                                 builder =
                                     builder.header(tauri::http::header::CONTENT_RANGE, cr);

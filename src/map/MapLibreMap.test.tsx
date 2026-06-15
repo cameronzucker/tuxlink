@@ -29,6 +29,13 @@ describe('MapLibreMap', () => {
     );
   });
 
+  it('constructs with the software-GL render profile (pixelRatio:1, fadeDuration:0) (B7)', () => {
+    render(<MapLibreMap />);
+    const opts = getLastMap()!.__state.options as { pixelRatio?: number; fadeDuration?: number };
+    expect(opts.pixelRatio).toBe(1);
+    expect(opts.fadeDuration).toBe(0);
+  });
+
   it('passes initialCenter (as lng,lat) and initialZoom to the constructor', () => {
     render(<MapLibreMap initialCenter={{ lat: 47.6, lon: -122.3 }} initialZoom={9} />);
     const map = getLastMap()!;
@@ -61,6 +68,18 @@ describe('MapLibreMap', () => {
     map.__setZoom(8);
     act(() => map.__emit('moveend'));
     expect(onZoomChange).toHaveBeenLastCalledWith(8);
+  });
+
+  it('does NOT re-fire onZoomChange on a moveend that leaves zoom unchanged (B8)', () => {
+    const onZoomChange = vi.fn();
+    render(<MapLibreMap initialZoom={5} onZoomChange={onZoomChange} />);
+    const map = getLastMap()!;
+    loadMap(map); // seed → called with 5
+    map.__setZoom(8);
+    act(() => map.__emit('moveend')); // real change → called with 8
+    expect(onZoomChange).toHaveBeenCalledTimes(2);
+    act(() => map.__emit('moveend')); // pan, zoom still 8 → must NOT re-fire
+    expect(onZoomChange).toHaveBeenCalledTimes(2);
   });
 
   it('provides the map to children via context only after load', () => {

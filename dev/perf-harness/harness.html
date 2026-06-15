@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Map perf harness — on-Pi frame timing</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0d1318; }
+  #root { height: 100%; width: 100%; }
+  /* The result readout the Python driver scrapes. Off-canvas, fixed, so it does
+     not perturb the map's fill area; data-testid is the stable selector. */
+  #perf-result {
+    position: fixed; top: 0; left: 0; z-index: 9999;
+    font: 12px/1.4 monospace; color: #cfe3f5; background: rgba(0,0,0,0.6);
+    padding: 4px 6px; white-space: pre; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<pre id="perf-result" data-testid="perf-result" data-state="pending">pending</pre>
+<script type="module" src="./harness.tsx"></script>
+</body>
+</html>

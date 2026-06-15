@@ -32,6 +32,8 @@ export interface MapLibreMockState {
   handlers: Map<string, Set<(...args: unknown[]) => void>>;
   styleLoaded: boolean;
   zoom: number;
+  /** Feature-state by source id → feature id → state object (setFeatureState). */
+  featureStates: Map<string, Map<string | number, Record<string, unknown>>>;
   /** Current map center (lng/lat), seeded from the constructor `center` option;
    * mutated by `setCenter` and the `__setCenter` test control. */
   center: { lng: number; lat: number };
@@ -60,6 +62,17 @@ export interface MapLibreMock {
 
   addSource: (id: string, source: Record<string, unknown>) => void;
   getSource: (id: string) => unknown | undefined;
+  // Feature-state driving (selection without rebuilding the FeatureCollection):
+  // `setFeatureState({source, id}, state)` merges state; `removeFeatureState`
+  // clears it (a whole feature's state when no `key` given).
+  setFeatureState: (
+    target: { source: string; id: string | number; sourceLayer?: string },
+    state: Record<string, unknown>,
+  ) => void;
+  removeFeatureState: (
+    target: { source: string; id?: string | number; sourceLayer?: string },
+    key?: string,
+  ) => void;
   getBounds: () => MapLibreMockBounds;
   removeSource: (id: string) => void;
   addLayer: (spec: Record<string, unknown>, beforeId?: string) => void;
@@ -121,6 +134,7 @@ export function createMapLibreMock(
     zoom,
     center: seedCenter,
     bounds: { west: -180, south: -85, east: 180, north: 85 },
+    featureStates: new Map(),
     removed: false,
   };
 
@@ -159,6 +173,35 @@ export function createMapLibreMock(
       state.sources.set(id, handle);
     }),
     getSource: vi.fn((id: string) => state.sources.get(id)),
+    setFeatureState: vi.fn(
+      (
+        target: { source: string; id: string | number; sourceLayer?: string },
+        featureState: Record<string, unknown>,
+      ) => {
+        if (!state.featureStates.has(target.source)) {
+          state.featureStates.set(target.source, new Map());
+        }
+        const bySource = state.featureStates.get(target.source)!;
+        const prev = bySource.get(target.id) ?? {};
+        bySource.set(target.id, { ...prev, ...featureState });
+      },
+    ),
+    removeFeatureState: vi.fn(
+      (target: { source: string; id?: string | number; sourceLayer?: string }, key?: string) => {
+        const bySource = state.featureStates.get(target.source);
+        if (!bySource) return;
+        if (target.id == null) {
+          bySource.clear();
+          return;
+        }
+        if (key == null) {
+          bySource.delete(target.id);
+          return;
+        }
+        const cur = bySource.get(target.id);
+        if (cur) delete cur[key];
+      },
+    ),
     getBounds: vi.fn(() => ({
       getWest: () => state.bounds.west,
       getSouth: () => state.bounds.south,
