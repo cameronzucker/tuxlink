@@ -26,40 +26,23 @@ function freqLabel(rxMhz?: number, txMhz?: number): string | null {
 }
 
 export function UvproControlStrip() {
-  const { status, channels, busy, error, connect, disconnect, setChannel } =
-    useUvproControl();
+  const { status, channels, busy, error, connect, setChannel } = useUvproControl();
   const connected = status.state === 'connected';
   const connecting = status.state === 'connecting';
   const freq = freqLabel(status.rxMhz, status.txMhz);
 
   return (
     <section className="uvpro-strip" data-testid="uvpro-control-strip" aria-label="UV-Pro control">
-      <header className="uvpro-strip-h">
-        <span className="uvpro-strip-title">{status.deviceModel ?? 'UV-Pro'}</span>
-        <span
-          className={`uvpro-strip-state uvpro-strip-state-${status.state}`}
-          data-testid="uvpro-state"
-          data-state={status.state}
-        >
-          <span className="uvpro-strip-dot" />
-          {STATE_LABEL[status.state] ?? status.state}
-        </span>
-        {connected && status.batteryPercent != null && (
-          <span className="uvpro-strip-metric" data-testid="uvpro-battery" title="Battery">
-            <span className="uvpro-strip-metric-label">Batt</span> {status.batteryPercent}%
-          </span>
-        )}
-        {connected && status.rssi != null && (
-          <span className="uvpro-strip-metric" data-testid="uvpro-rssi" title="Signal (RSSI)">
-            <span className="uvpro-strip-metric-label">RSSI</span> {status.rssi}
-          </span>
-        )}
-      </header>
-
       {connected ? (
-        <div className="uvpro-strip-body" data-testid="uvpro-connected">
+        // Declutter (tuxlink-l0z5, Codex S1/S3): ONE compact row of the LIVE
+        // controls unique to this strip — channel · frequency · battery · signal.
+        // The radio identity, listening state, and Disconnect/Stop are NOT
+        // duplicated here; they live in the connect strip above (and the
+        // status-bar toggle). This collapses the old header+body+Disconnect (≈3
+        // rows) into a single tight row between the feed and the composer.
+        <div className="uvpro-strip-live" data-testid="uvpro-connected">
           <label className="uvpro-strip-channel">
-            <span className="uvpro-strip-label">Channel</span>
+            <span className="uvpro-strip-label">Ch</span>
             <select
               className="uvpro-strip-select"
               data-testid="uvpro-channel-select"
@@ -88,37 +71,46 @@ export function UvproControlStrip() {
               {status.mode ? ` · ${status.mode}` : ''}
             </span>
           )}
-          <button
-            type="button"
-            className="uvpro-strip-btn uvpro-strip-btn-ghost"
-            data-testid="uvpro-disconnect"
-            disabled={busy}
-            onClick={() => void disconnect()}
-          >
-            Disconnect
-          </button>
+          {status.batteryPercent != null && (
+            <span className="uvpro-strip-metric" data-testid="uvpro-battery" title="Battery">
+              <span className="uvpro-strip-metric-label">Batt</span> {status.batteryPercent}%
+            </span>
+          )}
+          {status.rssi != null && (
+            <span className="uvpro-strip-metric" data-testid="uvpro-rssi" title="Signal (RSSI)">
+              <span className="uvpro-strip-metric-label">RSSI</span> {status.rssi}
+            </span>
+          )}
         </div>
       ) : (
-        <div className="uvpro-strip-body" data-testid="uvpro-disconnected">
+        // Disconnected/connecting: a single slim row with the state + a Connect
+        // affordance (the connect strip above is the primary connect surface; in
+        // the standalone unit test this branch carries the connect flow).
+        <header className="uvpro-strip-h" data-testid="uvpro-disconnected">
+          <span
+            className={`uvpro-strip-state uvpro-strip-state-${status.state}`}
+            data-testid="uvpro-state"
+            data-state={status.state}
+          >
+            <span className="uvpro-strip-dot" />
+            {STATE_LABEL[status.state] ?? status.state}
+          </span>
           {status.linkBusyHolder ? (
             <span className="uvpro-strip-busy" data-testid="uvpro-link-busy">
               Radio in use by {status.linkBusyHolder}
             </span>
           ) : (
-            <span className="uvpro-strip-hint">
-              Connect to control the radio and start native APRS.
-            </span>
+            <button
+              type="button"
+              className="uvpro-strip-btn"
+              data-testid="uvpro-connect"
+              disabled={busy || connecting || Boolean(status.linkBusyHolder)}
+              onClick={() => void connect()}
+            >
+              {connecting ? 'Connecting…' : 'Connect'}
+            </button>
           )}
-          <button
-            type="button"
-            className="uvpro-strip-btn"
-            data-testid="uvpro-connect"
-            disabled={busy || connecting || Boolean(status.linkBusyHolder)}
-            onClick={() => void connect()}
-          >
-            {connecting ? 'Connecting…' : 'Connect'}
-          </button>
-        </div>
+        </header>
       )}
 
       {error && (

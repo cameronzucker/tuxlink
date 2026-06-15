@@ -4,24 +4,30 @@
 .uvpro-strip {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 7px 12px;
   border-top: 1px solid var(--border, #2a3140);
   background: var(--surface, #0f1218);
   font-size: 13px;
   color: var(--text, #cbd5e1);
 }
 
-.uvpro-strip-h {
+/* Connected: one tight row of live controls (channel · freq · batt · rssi),
+   wrapping only on the narrowest docks. The old header/body/Disconnect stack is
+   gone — declutter tuxlink-l0z5. */
+.uvpro-strip-live {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-.uvpro-strip-title {
-  font-weight: 600;
-  font-size: 13px;
+/* Disconnected/connecting: slim state + Connect row. */
+.uvpro-strip-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .uvpro-strip-state {
@@ -62,13 +68,6 @@
   color: var(--text-faint, #94a3b8);
 }
 
-.uvpro-strip-body {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
 .uvpro-strip-channel {
   display: inline-flex;
   align-items: center;
@@ -103,12 +102,8 @@
   color: var(--text, #cbd5e1);
 }
 
-.uvpro-strip-hint,
 .uvpro-strip-busy {
   font-size: 12px;
-  color: var(--text-faint, #94a3b8);
-}
-.uvpro-strip-busy {
   color: var(--warning, #fbbf24);
 }
 
@@ -129,12 +124,6 @@
 .uvpro-strip-btn:disabled {
   opacity: 0.55;
   cursor: default;
-}
-
-.uvpro-strip-btn-ghost {
-  background: transparent;
-  border-color: var(--border-strong, #3a4150);
-  color: var(--text-faint, #94a3b8);
 }
 
 .uvpro-strip-error {
