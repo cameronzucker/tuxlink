@@ -150,6 +150,12 @@ describe('buildBasemapStyle — R7 region-pack compositing', () => {
     expect(none.layers.length).toBe(base.layers.length);
   });
 
+  it('clamps the overview source maxzoom so it does not overzoom to z14 (D3/maxzoom)', () => {
+    const style = buildBasemapStyle('light');
+    const src = style.sources[BASEMAP_SOURCE_ID] as { maxzoom?: number };
+    expect(src.maxzoom).toBeLessThanOrEqual(7);
+  });
+
   it('adds a vector source per pack served via tile://pmtiles/<id>', () => {
     const style = buildBasemapStyle('light', [{ id: 'tier-wide-n34-w112' }]);
     expect(style.sources['pack-tier-wide-n34-w112']).toMatchObject({

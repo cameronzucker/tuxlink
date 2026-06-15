@@ -135,6 +135,12 @@ export function buildBasemapStyle(
       type: 'vector',
       url: PMTILES_SOURCE_URL,
       attribution: OSM_ATTRIBUTION,
+      // Overview is z0–6; cap source maxzoom so MapLibre overzooms ONE step
+      // (smoothness) instead of rasterizing up to 8 stretched levels to z14
+      // outside pack coverage — wasted software-GL fill for no detail (D3,
+      // tuxlink-vnk7). Pack sources keep their own z14 detail; "never blank" is
+      // preserved (the clamped source still overzoom-fills the viewport).
+      maxzoom: REGION_MINZOOM + 1,
     },
   };
 
