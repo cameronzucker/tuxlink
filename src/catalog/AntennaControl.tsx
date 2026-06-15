@@ -28,6 +28,7 @@ export interface AntennaControlProps {
 export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) {
   return (
     <div className="station-finder__antenna" data-testid="antenna-control">
+      <span className="station-finder__grouplab">Station setup</span>
       <label className="station-finder__antenna-field station-finder__antenna-field--wide">
         <span className="station-finder__antenna-lab">Your antenna</span>
         <select

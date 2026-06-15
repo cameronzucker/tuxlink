@@ -569,14 +569,12 @@
 /* Service-codes control (tuxlink-6j14) — a thin row under the band bar where
    the operator sets which sysop-tagged gateway set the catalog fetches. Most
    stations leave it at PUBLIC; MARS/SHARES members paste their member code. */
+/* tuxlink-obpa: the service-code controls now live INLINE in the Search group
+   (rendered via StationFinderControls' filterExtra slot). display:contents makes
+   this wrapper vanish from layout so its children become flex items of the
+   filterbar row, instead of a full-width row of their own. */
 .station-finder__svc {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 14px;
-  border-top: 1px solid var(--border, #243a52);
-  font-size: 12px;
+  display: contents;
 }
 .station-finder__svc-lab {
   color: var(--faint, #6f8aa3);
@@ -585,8 +583,8 @@
   font-size: 11px;
 }
 .station-finder__svc-input {
-  flex: 1 1 180px;
-  min-width: 140px;
+  flex: 0 1 150px;
+  min-width: 110px;
   padding: 4px 8px;
   background: var(--panel, #0f1c28);
   color: var(--text, #e8f1fa);
@@ -622,6 +620,16 @@
   margin: 0;
   color: var(--faint, #6f8aa3);
   font-size: 11px;
+}
+
+/* tuxlink-obpa: subtle group label leading the Search / Station-setup rows. */
+.station-finder__grouplab {
+  align-self: center;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint, #6f8aa3);
+  flex: 0 0 auto;
 }
 
 /* ── Operator antenna + prediction tuning row (tuxlink-s0r1 #3c) ──────────
