@@ -133,6 +133,21 @@ describe('<PacketRadioPanel>', () => {
     });
   });
 
+  it('renders a Stop button and clicking it fires cms_abort (operator halt — tuxlink-9ym7)', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+    const stop = await screen.findByTestId('packet-stop-btn');
+    fireEvent.click(stop);
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('cms_abort');
+    });
+  });
+
+  it('exposes Stop in p2p intent too (a session can always be halted)', async () => {
+    renderPanel(<PacketRadioPanel intent="p2p" baseCall="N7CPZ" onClose={() => {}} />);
+    expect(await screen.findByTestId('packet-stop-btn')).toBeInTheDocument();
+  });
+
   it('clicking Connect fires packet_connect with the typed call sign and empty path', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
