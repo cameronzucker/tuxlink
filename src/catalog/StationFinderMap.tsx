@@ -31,43 +31,73 @@ const OPERATOR_ZOOM = 6;
 const STATIONS_SOURCE = 'stations';
 const OPERATOR_SOURCE = 'operator';
 const STATION_PINS_LAYER = 'station-pins';
+const STATION_SEL_HALO_LAYER = 'station-sel-halo';
 
 type FeatureCollection = { type: 'FeatureCollection'; features: unknown[] };
 const EMPTY_FC: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
 // Pin radius (px) + colour per reachability tier — mirrors PIN_SIZE/2 and the
 // --reach-* CSS vars. Data-driven so one circle layer paints every tier.
+// Per-tier hex MUST mirror the --reach-* CSS vars (MapLibre paint can't read CSS
+// custom properties). Six-step green→red→grey ramp; see reachability.ts.
+const TIER_COLOR_MATCH = [
+  'match',
+  ['get', 'tier'],
+  'good', '#41ba6c',
+  'fair', '#8cc23f',
+  'marginal', '#d9b13a',
+  'poor', '#e2862f',
+  'unlikely', '#d64a40', // red — almost certainly not
+  'skip', '#6c5a5a', // grey — not reachable, inside radius
+  '#9fb6cc', // untiered (no usable channel / no prediction)
+];
+
 const STATION_LAYERS = (
   [
+    {
+      // Selection HALO — a bright ring drawn BENEATH the pins, visible only for
+      // the selected feature (feature-state). The prior in-place +2px/white-stroke
+      // cue was too subtle to tell which pin was selected (operator, 2026-06-16);
+      // a detached ring with a clear map gap is unambiguous. Radius 0 when not
+      // selected so it paints nothing.
+      id: STATION_SEL_HALO_LAYER,
+      type: 'circle',
+      source: STATIONS_SOURCE,
+      paint: {
+        'circle-radius': [
+          'case',
+          ['boolean', ['feature-state', 'selected'], false],
+          ['match', ['get', 'tier'], 'good', 20, 'fair', 18, 'marginal', 16.5, 'poor', 15.5, 'unlikely', 15, 'skip', 14.5, 17],
+          0,
+        ],
+        'circle-color': 'rgba(255,255,255,0)', // ring only — transparent fill
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2.5, 0],
+        'circle-stroke-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.95, 0],
+      },
+    },
     {
       id: STATION_PINS_LAYER,
       type: 'circle',
       source: STATIONS_SOURCE,
       paint: {
-        // Selected pin reads as ONE emphasised marker: the per-tier radius is
-        // nudged +2px and a white STROKE hugs the circle (no detached ring).
+        // Selected pin grows +3px; the halo ring above carries the main cue.
         // Selection is driven by `feature-state` (B9, tuxlink-vnk7) so clicking a
         // pin flips one feature's state instead of rebuilding the whole FC.
         'circle-radius': [
           'case',
           ['boolean', ['feature-state', 'selected'], false],
-          ['match', ['get', 'tier'], 'good', 12, 'fair', 10, 'marginal', 8.5, 'skip', 7, 9],
-          ['match', ['get', 'tier'], 'good', 10, 'fair', 8, 'marginal', 6.5, 'skip', 5, 7],
+          ['match', ['get', 'tier'], 'good', 13, 'fair', 11, 'marginal', 9.5, 'poor', 8.5, 'unlikely', 8, 'skip', 7.5, 10],
+          ['match', ['get', 'tier'], 'good', 10, 'fair', 8, 'marginal', 6.5, 'poor', 5.5, 'unlikely', 5, 'skip', 4.5, 7],
         ],
-        'circle-color': [
-          'match',
-          ['get', 'tier'],
-          'good', '#46d07f',
-          'fair', '#c9b23a',
-          'marginal', '#d2842f',
-          'skip', '#6c5a5a',
-          '#9fb6cc',
-        ],
-        'circle-opacity': ['case', ['==', ['get', 'tier'], 'skip'], 0.75, 1],
-        // White stroke hugging the circle; thicker when selected so the marker
-        // is emphasised in place rather than gaining a second, offset ring.
-        'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2.5, 0.5],
+        'circle-color': TIER_COLOR_MATCH,
+        // The grey "not reachable" bottom tier sits back (smaller, dimmer) so the
+        // live red/orange/green stations read first; red "unlikely" stays full.
+        'circle-opacity': ['case', ['==', ['get', 'tier'], 'skip'], 0.7, 1],
+        // A dark rim separates the selected pin from the white halo ring; other
+        // pins keep a thin white rim for contrast against the basemap.
+        'circle-stroke-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#0b1622', '#ffffff'],
+        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2, 0.5],
       },
     },
   ] as unknown[]
@@ -254,7 +284,9 @@ export function StationFinderMap(props: StationFinderMapProps) {
         <span className="k good" /> good
         <span className="k fair" /> fair
         <span className="k marginal" /> marginal
-        <span className="k skip" /> unlikely
+        <span className="k poor" /> maybe not
+        <span className="k unlikely" /> unlikely
+        <span className="k skip" /> not reachable
       </div>
     </div>
   );

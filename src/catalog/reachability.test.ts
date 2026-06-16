@@ -7,14 +7,22 @@ function hours(v: number): number[] {
 }
 
 describe('relToTier', () => {
-  it('buckets reliability into the four Mock-D tiers', () => {
+  it('buckets reliability into the six-step green→red→grey ramp', () => {
     expect(relToTier(0.86)).toBe<ReachTier>('good');
-    expect(relToTier(0.70)).toBe<ReachTier>('good');
+    expect(relToTier(0.75)).toBe<ReachTier>('good');
+    expect(relToTier(0.70)).toBe<ReachTier>('fair');
     expect(relToTier(0.58)).toBe<ReachTier>('fair');
-    expect(relToTier(0.40)).toBe<ReachTier>('fair');
-    expect(relToTier(0.19)).toBe<ReachTier>('marginal');
-    expect(relToTier(0.15)).toBe<ReachTier>('marginal');
-    expect(relToTier(0.12)).toBe<ReachTier>('skip');
+    expect(relToTier(0.50)).toBe<ReachTier>('marginal');
+    expect(relToTier(0.42)).toBe<ReachTier>('marginal');
+    expect(relToTier(0.35)).toBe<ReachTier>('poor'); // "maybe not" — orange
+    expect(relToTier(0.28)).toBe<ReachTier>('poor');
+    // Operator anchor (2026-06-16): ~1-day-in-5 reliability is "almost certainly
+    // not" and must read RED (unlikely), not orange.
+    expect(relToTier(0.20)).toBe<ReachTier>('unlikely');
+    expect(relToTier(0.12)).toBe<ReachTier>('unlikely');
+    expect(relToTier(0.08)).toBe<ReachTier>('unlikely');
+    // Absolute bottom: not reachable at all (inside radius) → grey, not red.
+    expect(relToTier(0.04)).toBe<ReachTier>('skip');
     expect(relToTier(0)).toBe<ReachTier>('skip');
   });
 });

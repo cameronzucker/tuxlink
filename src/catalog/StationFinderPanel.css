@@ -7,9 +7,11 @@
 :root {
   /* SIGNAL / reachability OWNS the green→red colour ramp (pins, forecast bars,
      channel pips). Modes do NOT use these hues. */
-  --reach-good: #46d07f;
-  --reach-fair: #c9b23a;
-  --reach-marginal: #d2842f;
+  --reach-good: #41ba6c;
+  --reach-fair: #8cc23f;
+  --reach-marginal: #d9b13a;
+  --reach-poor: #e2862f;
+  --reach-unlikely: #d64a40;
   --reach-skip: #6c5a5a;
   /* MODES get a distinct SHAPE + an OFF-RAMP colour (blue / purple / cyan) so a
      coloured swatch is never confusable with a reachability tier (tuxlink-obpa).
@@ -336,8 +338,14 @@
 .station-finder__reachkey .k.marginal {
   background: var(--reach-marginal);
 }
+.station-finder__reachkey .k.poor {
+  background: var(--reach-poor);
+}
+.station-finder__reachkey .k.unlikely {
+  background: var(--reach-unlikely);
+}
 .station-finder__reachkey .k.skip {
-  border: 2px dashed #6c5a5a;
+  background: var(--reach-skip);
 }
 
 /* ── rail content ─────────────────────────────────────────────────────── */

@@ -51,15 +51,19 @@ describe('StationRail', () => {
   });
 
   it('colours each band bar by its reachability tier (not a static fill)', () => {
-    // 80m rel 0.74 and 40m rel 0.86 are both "good" → green tier var; unmodelled
-    // bands have no channel and stay uncoloured. The fix: the bar background is
-    // driven by relToTier, not a fixed CSS colour.
+    // 80m rel 0.74 → fair, 40m rel 0.86 → good on the recalibrated ramp; both are
+    // coloured by a per-tier --reach-* var. Unmodelled bands have no channel and
+    // stay uncoloured. The point: the bar background is driven by relToTier, not a
+    // fixed CSS colour.
     const { container } = render(
       <StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} activePrefillMode="vara-hf" />,
     );
     const fills = Array.from(container.querySelectorAll('.station-finder__fill')) as HTMLElement[];
-    const coloured = fills.filter((f) => f.style.background === 'var(--reach-good)');
+    const coloured = fills.filter((f) => /^var\(--reach-(good|fair|marginal|poor|skip)\)$/.test(f.style.background));
     expect(coloured.length).toBeGreaterThanOrEqual(2); // 80m + 40m bars
+    // Tier-driven, not a single static hue: the two modelled bands differ in tier.
+    expect(fills.some((f) => f.style.background === 'var(--reach-good)')).toBe(true);
+    expect(fills.some((f) => f.style.background === 'var(--reach-fair)')).toBe(true);
   });
 
   it('hides the forecast and shows a degrade note when prediction is unavailable', () => {
