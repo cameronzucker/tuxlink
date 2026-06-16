@@ -296,6 +296,68 @@ pub async fn propagation_prefs_write(
 }
 
 // ============================================================================
+// Antenna-pattern preview (polar elevation lobe)
+// ============================================================================
+
+/// A 91-point elevation slice of an antenna's pattern at a chosen frequency,
+/// for the Find-a-Station polar-pattern preview. This is a **read-only
+/// projection** of the same precomputed Type-14 data that feeds voacapl via
+/// [`antenna::operator_voa_content`] — the preview cannot disagree with the
+/// model actually used for the forecast.
+///
+/// Serializes snake_case (no rename); the TS wrapper maps it to camelCase.
+#[derive(serde::Serialize)]
+pub struct AntennaPreview {
+    /// `gains_dbi[i]` = gain (dBi) at elevation `i`° (i in 0..=90).
+    pub gains_dbi: Vec<f64>,
+    /// Elevation (deg) of the peak gain — the main-lobe takeoff angle.
+    pub peak_elevation_deg: u32,
+    /// The grid stop the requested height snapped to (metres). Informational
+    /// for verticals (the UI hides the height control for them).
+    pub snapped_height_m: f64,
+    /// Whether mast height varies this pattern (horizontal) or it is fixed
+    /// (ground-mounted vertical / neutral).
+    pub height_variable: bool,
+}
+
+/// Map a frequency (kHz) to its Type-14 block index. Block `i` carries `i` MHz
+/// (the corrected table: `FREQS_MHZ[i-1] = i.0` MHz, verified against voacapl
+/// `antcalc.for:183`), so the block is the frequency rounded to the nearest
+/// integer MHz, clamped to `1..=30`. 14_100 kHz → 14 MHz → block 14.
+fn freq_to_block(freq_khz: f64) -> usize {
+    let mhz = (freq_khz / 1000.0).round();
+    (mhz as i64).clamp(1, super::type14::N_BLOCKS as i64) as usize
+}
+
+/// Return the 91-point elevation slice for the operator's antenna at a chosen
+/// height + frequency, for the polar-pattern preview. Pure: reads the committed
+/// precomputed library — no engine, sidecar, or network. Defaults to ~14.1 MHz
+/// (20 m) when `freq_khz` is omitted.
+#[tauri::command]
+pub async fn antenna_pattern_preview(
+    antenna_preset: antenna::AntennaPreset,
+    height_m: f64,
+    freq_khz: Option<f64>,
+) -> Result<AntennaPreview, UiError> {
+    let voa = crate::propagation::patterns::pattern_voa(antenna_preset, height_m);
+    let block = freq_to_block(freq_khz.unwrap_or(14_100.0));
+    let gains = super::type14::read_block_gains(voa, block)
+        .map_err(|detail| UiError::Internal { detail })?;
+    let peak = gains
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(i, _)| i as u32)
+        .unwrap_or(0);
+    Ok(AntennaPreview {
+        gains_dbi: gains,
+        peak_elevation_deg: peak,
+        snapped_height_m: crate::propagation::patterns::snap_height(height_m),
+        height_variable: crate::propagation::patterns::is_height_variable(antenna_preset),
+    })
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -311,6 +373,32 @@ mod tests {
         fn now_millis(&self) -> u64 {
             self.0
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Antenna-pattern preview
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn freq_to_block_rounds_to_integer_mhz_and_clamps() {
+        // Corrected table: block i = i MHz. 14.1 MHz → block 14 (NOT 13).
+        assert_eq!(freq_to_block(14_100.0), 14);
+        assert_eq!(freq_to_block(7_103.0), 7);
+        assert_eq!(freq_to_block(1_000.0), 1);
+        assert_eq!(freq_to_block(30_000.0), 30);
+        // Out-of-band requests clamp into 1..=30 rather than panicking.
+        assert_eq!(freq_to_block(50.0), 1);
+        assert_eq!(freq_to_block(99_000.0), 30);
+    }
+
+    #[test]
+    fn antenna_preview_slice_is_91_points_at_14mhz() {
+        // The preview reads the SAME committed pattern operator_voa_content serves.
+        let voa = crate::propagation::patterns::pattern_voa(antenna::AntennaPreset::NvisWireDipole, 2.5);
+        let block = freq_to_block(14_100.0); // = 14
+        let gains = super::super::type14::read_block_gains(voa, block).unwrap();
+        assert_eq!(gains.len(), 91);
+        assert!(gains.iter().all(|g| g.is_finite() && *g >= -99.999));
     }
 
     // -------------------------------------------------------------------------

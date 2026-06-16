@@ -1090,6 +1090,8 @@ pub fn run() {
             // tuxlink-s0r1: operator antenna preset + REQ.SNR + power prefs.
             crate::propagation::commands::propagation_prefs_read,
             crate::propagation::commands::propagation_prefs_write,
+            // tuxlink-bl01: 91-point elevation-pattern preview for the polar UI.
+            crate::propagation::commands::antenna_pattern_preview,
             // tuxlink-9xy1 slice 1: GPS source detection probes (unprivileged).
             crate::position::probe::gps_probe_gpsd,
             crate::position::probe::gps_probe_serial_devices,
