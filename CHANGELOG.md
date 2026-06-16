@@ -30,6 +30,95 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.67.0](https://github.com/cameronzucker/tuxlink/compare/v0.66.0...v0.67.0) (2026-06-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **antenna:** the random-wire-unun and magnetic-loop antenna presets are retired; persisted values migrate to unknown.
+
+### Features
+
+* **antenna:** antenna_pattern_preview command (91-pt elevation slice) ([61b027b](https://github.com/cameronzucker/tuxlink/commit/61b027b1a6d00ee6d86ed71226bc67ce79f05de6))
+* **antenna:** curate catalog to 8 models + serve precomputed Type-14 patterns ([172d817](https://github.com/cameronzucker/tuxlink/commit/172d817d9a8f667959c3d3ab6e1617cc1833deea))
+* **antenna:** NEC antenna geometries + generate 20-pattern Type-14 library ([2f7799c](https://github.com/cameronzucker/tuxlink/commit/2f7799c608d007aef73f7500198c14f94caaf328))
+* **aprs:** configure the radio link from Settings, decoupled from connect ([#3](https://github.com/cameronzucker/tuxlink/issues/3)) ([8a18db1](https://github.com/cameronzucker/tuxlink/commit/8a18db1fd6c06516398edc4c6a38193888d2dd6a))
+* **aprs:** declutter post-connect UV-Pro control strip + add reusable Codex UI-declutter prompt ([8fc2011](https://github.com/cameronzucker/tuxlink/commit/8fc2011d2c5ed0fcdfe4fea8eb4b27d62e3805e8))
+* **aprs:** dock UI punch-list — Map companion tab, status-bar listen toggle, emoji/caps/tab restyle ([af1687e](https://github.com/cameronzucker/tuxlink/commit/af1687eb06591825ddeb91e34f8950ca6a6efe39))
+* **catalog:** antenna picker — snapping height slider + live polar preview ([409ba69](https://github.com/cameronzucker/tuxlink/commit/409ba69c60841bc6907b4dcfa986edb0bc2777f7))
+* **catalog:** honest 6-step reachability ramp + legible selected-pin halo ([53d18f1](https://github.com/cameronzucker/tuxlink/commit/53d18f18ba961206d6f2f6009258349f90869a6b))
+* **catalog:** reclaim a row — actions+conditions top bar; merge Search into band bar ([f8e37a2](https://github.com/cameronzucker/tuxlink/commit/f8e37a2aebd514c4c049b877faee0d96af791ea1))
+* **catalog:** save a Find-a-Station channel to favorites (tuxlink-5016) ([c987053](https://github.com/cameronzucker/tuxlink/commit/c987053db88b1a45ec0120ddb0aeded171daea72))
+* **catalog:** TX power preset selector (wire-walk fix, F3) ([e9e141f](https://github.com/cameronzucker/tuxlink/commit/e9e141f9149e1ee378551e5546411adb73e7dcbb))
+* **favorites:** top-level Favorites home in the Address section (bd-tuxlink-kiaa) ([17830d0](https://github.com/cameronzucker/tuxlink/commit/17830d0aa8306d1196f1fb05c40f05398d6c048a))
+* **map:** operator-centered first-run + "center on me" control; harden storage ([9ff5a96](https://github.com/cameronzucker/tuxlink/commit/9ff5a9662f119f4f62adcdd8f5d61214e35e1fb7))
+* **map:** recover hardware WebGL on Pi (guarded GLES override + safe-mode fallback) ([6924a09](https://github.com/cameronzucker/tuxlink/commit/6924a09ab1a74c20e55c5f132d91c770d69fe032))
+* **map:** remember + restore the operator's prior viewport (APRS + Find-a-Station) ([f83eefe](https://github.com/cameronzucker/tuxlink/commit/f83eefe88a324b3cad46cf2cd6c5740a25c2edf2))
+* **packet:** graceful Stop — send a DISC to the remote, not a rude socket kill ([0567a59](https://github.com/cameronzucker/tuxlink/commit/0567a59b528c21926f3501161a8b07d08b855407))
+* **packet:** trace every AX.25 frame to the session log (Show Raw) ([f36df65](https://github.com/cameronzucker/tuxlink/commit/f36df65f79b03766ff420acfec85d54b4c8910bd))
+* **propagation:** read_block_gains — Type-14 .voa → 91-pt elevation slice ([b0330fd](https://github.com/cameronzucker/tuxlink/commit/b0330fd692bb3c7f257f3668086eec53d591e87c))
+* **propagation:** runtime-mutable SSN forecast + SWPC/WWV solar parsers (ot71 L1) ([e624ce1](https://github.com/cameronzucker/tuxlink/commit/e624ce198a5325086474b5f49bc077212333d57f))
+* **propagation:** solar-update orchestration + apply forecast at runtime (ot71 L2) ([695efcb](https://github.com/cameronzucker/tuxlink/commit/695efcb2668319baf37defdc2a7793341c1e9c79))
+* **propagation:** voacapl Type-14 real-pattern emitter (Phase 0 foundation) ([d128cf6](https://github.com/cameronzucker/tuxlink/commit/d128cf61db5aae510f1a43bdfb1b9d6f2589c715))
+* **shell:** status-bar Connect one-click fires the last-selected mode's send/receive (tuxlink-vu97) ([ea36ab9](https://github.com/cameronzucker/tuxlink/commit/ea36ab9cd81110df4c114dfb32bf41e6b6c8cbff))
+
+
+### Bug Fixes
+
+* **antenna:** clear clippy -D warnings (dead GroundType::constants, range-contains) ([1918419](https://github.com/cameronzucker/tuxlink/commit/19184193722ceed8a8974fe130af34334c6bfe71))
+* **antenna:** F2 Codex RF round — azimuth-average wires, connect radials, resonant V ([e54c629](https://github.com/cameronzucker/tuxlink/commit/e54c6290f6e654c198600ca9ad1f6ae085c24283))
+* **aprs:** drop the redundant "APRS" label from the connect strip ([#4](https://github.com/cameronzucker/tuxlink/issues/4)a) ([cdc9b06](https://github.com/cameronzucker/tuxlink/commit/cdc9b06ffebdcf6d924453ed80c0065763f549ee))
+* **aprs:** honest single APRS status control + ARDOP/VARA caps + APRS Channel + radio-panel-btn-sm ([d3a35d7](https://github.com/cameronzucker/tuxlink/commit/d3a35d7a6af9450d731022e167492b010f834eb4))
+* **aprs:** seed the connect-strip picker from the saved link (no null-MAC blank) ([1a4cb54](https://github.com/cameronzucker/tuxlink/commit/1a4cb54fc468b662326f76d5bde083d49d5fe11f))
+* **aprs:** surface ALL heard frames in the chat feed, not just text messages ([6aa74ce](https://github.com/cameronzucker/tuxlink/commit/6aa74ce915b286cae14ca57919928df9b7119f0a))
+* **ardop:** add listen_ttl_minutes to ArdopUiConfig test literals (5g5d compile-fix) ([ad42acf](https://github.com/cameronzucker/tuxlink/commit/ad42acf8c22f15270642f2e337edf6826c12bd1e))
+* **ardop:** listener no-expiry by default, operator-configurable duration in minutes ([5f0ffda](https://github.com/cameronzucker/tuxlink/commit/5f0ffdadd517c59abf750de5dc9f781b6bee714d))
+* **ardop:** one-click Stop fully tears down — bump close generation in disconnect path ([bd9830f](https://github.com/cameronzucker/tuxlink/commit/bd9830f5000c1577b7744be26c3e45af49b17c6e))
+* **ardop:** replace inspect_err with if-let (MSRV 1.75 floor) ([bf77fab](https://github.com/cameronzucker/tuxlink/commit/bf77fab59044a58a3286d7336166de751eb5d95d))
+* **ardop:** surface modem errors in the session log, not inline panel elements ([b1a1799](https://github.com/cameronzucker/tuxlink/commit/b1a17990341861880c9177a799d44a8c6ca8112f))
+* **ardop:** tap cmd-port traffic into the session log so Show Raw works (alpha log-truth) ([6d465a3](https://github.com/cameronzucker/tuxlink/commit/6d465a3fe2142e75224134cc6fb5f93c2bf51b3d))
+* **b2f:** don't abort the handshake on a packet RMS "Connected to CMS" status ([30a564a](https://github.com/cameronzucker/tuxlink/commit/30a564a729dabb31b68fa159ff3335a216fe83fd))
+* **basemap:** scope Cache-Control immutable to the bundled overview only (Codex P1) ([3b7651e](https://github.com/cameronzucker/tuxlink/commit/3b7651ee08e4a9a92095bfa2513f4c249df0eb46))
+* **catalog:** drop the single-ground caption from the antenna row ([407814a](https://github.com/cameronzucker/tuxlink/commit/407814a9767d6b56e75eab2d4c4a3b5e2ca5fcb3))
+* **catalog:** freeform TX power + restore (stronger) selected-pin emphasis ([6084f88](https://github.com/cameronzucker/tuxlink/commit/6084f8863f78eb0abb0c2de7d069df8156cf8d84))
+* **catalog:** keep selected-pin feature-state alive across setData (real bug) ([479eb32](https://github.com/cameronzucker/tuxlink/commit/479eb327fdd2cf77a3f1fe4a08d7c502eec2fb81))
+* **catalog:** promoteId on the stations source — the real selection root cause ([4d0eb01](https://github.com/cameronzucker/tuxlink/commit/4d0eb0169f64a54c1946b97f6f85426fb7ec8290))
+* **catalog:** recompute reachability map on prefs change (stale-tier bug) ([a79dcc6](https://github.com/cameronzucker/tuxlink/commit/a79dcc6833b81bb60db62f91859a2eaed21a70e6))
+* **catalog:** tone down selected-pin size + repaint on first click ([d2cac89](https://github.com/cameronzucker/tuxlink/commit/d2cac893c6b1adc2d9a5b55545cef14d41e92a04))
+* **connections:** don't record ARDOP pre-air connect failures into Recent (Codex P2) ([5ff4f3b](https://github.com/cameronzucker/tuxlink/commit/5ff4f3bdb50ada5d1cdda03259ccc811ce40db82))
+* **connections:** record ribbon Connect outcomes into Recent (tuxlink-ypz3 3b) ([696c6cc](https://github.com/cameronzucker/tuxlink/commit/696c6cc6e9abc7821330a237ec7f9725a606de42))
+* **map:** address Codex post-impl review (P1 maxzoom, P2 selection/grid/drag, P3 cache) ([e925c49](https://github.com/cameronzucker/tuxlink/commit/e925c4949020b5bb876287ad0eb8e0069158be5f))
+* **map:** show operator "you" pin on the APRS map + closer local zoom (tuxlink-1sro) ([179820e](https://github.com/cameronzucker/tuxlink/commit/179820e0e191817bf0502d6485c2ea570ed08fbd))
+* **map:** test helper lifetime — gl_env_vars returns &'static, has() must too (clippy -D warnings) ([cb2203d](https://github.com/cameronzucker/tuxlink/commit/cb2203d8fcfcb136ab0b7bf02875045178d9e9b6))
+* **packet-config:** guard B4 rollback against clobbering a newer write ([f39c27b](https://github.com/cameronzucker/tuxlink/commit/f39c27bcd113017676dbd12adb26851e59747dd7))
+* **packet-config:** preserve saved link on link_kind-less persist + emit change event ([8613ada](https://github.com/cameronzucker/tuxlink/commit/8613ada8dc41e0e2f35a51ff1e4773035569228b))
+* **packet-config:** roll back optimistic writes on persist failure + resync the panel ([4e37c20](https://github.com/cameronzucker/tuxlink/commit/4e37c20a200091292fc91f22be1328ca9f885195))
+* **packet:** broadcast the live locator in the B2F greeting (wire PositionArbiter) ([80a4a88](https://github.com/cameronzucker/tuxlink/commit/80a4a88022a6e40febc4afe76ed03131f28f421b))
+* **packet:** log AX.25 TX frame only after the link accepts it ([a683495](https://github.com/cameronzucker/tuxlink/commit/a68349556b311d504fcb71f398275eeee94f4f3f))
+* **packet:** mark cms_locator allow(dead_code) after the packet path stopped using it ([b4cb05a](https://github.com/cameronzucker/tuxlink/commit/b4cb05a401cab9fa803ca79a4055c6fc37c90080))
+* **packet:** restore operator Stop button on the packet panel (RADIO-1) ([68425f3](https://github.com/cameronzucker/tuxlink/commit/68425f3898d3b38627a39e9a208d192c23303d9f))
+* **packet:** set AX.25 v2.2 command/response C-bits per frame type ([00d77b1](https://github.com/cameronzucker/tuxlink/commit/00d77b1f1ef5cc37bbc94733aa154e1fcf562a53))
+* **propagation:** reject non-finite / field-overflowing Type-14 gains (Codex RF round) ([4928f52](https://github.com/cameronzucker/tuxlink/commit/4928f520665e79bdb7bc1af9cb0099e69ad2d736))
+* **radio:** restore per-mode last target on panel mount (tuxlink-ypz3 3a) ([9967279](https://github.com/cameronzucker/tuxlink/commit/9967279bc86b9250029cc14d2bcab241a83a96c0))
+* **shell:** route radio-only (+p2p) ARDOP HF to the panel, not the "coming soon" stub ([74d1de9](https://github.com/cameronzucker/tuxlink/commit/74d1de909b47bf7b0a352b462ea105fad3321eaf))
+* **ui:** appearance:none on global button so WebKitGTK stops painting native chrome ([1827795](https://github.com/cameronzucker/tuxlink/commit/18277956198ee20de69ccc341be2f7dc85fb82a1))
+* **winlink:** queue to Outbox without an authenticated identity (tuxlink-spbw, GH [#691](https://github.com/cameronzucker/tuxlink/issues/691)) ([9f05d2c](https://github.com/cameronzucker/tuxlink/commit/9f05d2c130e33cf46087f0fe36dda4269c87917e))
+
+
+### Performance
+
+* **basemap:** Cache-Control immutable on pmtiles range responses (B4) ([e502c14](https://github.com/cameronzucker/tuxlink/commit/e502c14c3aecdfaec74546107fe986f8c4e569ec))
+* **catalog:** debounce Find-a-Station reachability recompute on prefs change ([4107e50](https://github.com/cameronzucker/tuxlink/commit/4107e50827782934be64ad343bda5a992fc83cae))
+* **map:** cache installed packs so remounts construct with them, no post-load setStyle (B2) ([515eedc](https://github.com/cameronzucker/tuxlink/commit/515eedc8365cadda015296df489e00277310e36f))
+* **map:** clamp overview source maxzoom to stop 8-level overzoom (D3) ([853a405](https://github.com/cameronzucker/tuxlink/commit/853a4057059c7a3dd06117ab656f63cd1e343365))
+* **map:** emit onZoomChange only on real zoom change, not every pan (B8) ([dfb1a8f](https://github.com/cameronzucker/tuxlink/commit/dfb1a8fcb3731e898f415e8a982e65fa16910577))
+* **map:** gate grid recompute to level/extent change; subscribe styledata once; cull labels (B6) ([57f87d0](https://github.com/cameronzucker/tuxlink/commit/57f87d0f4a7db5307fd27378ba42a06d13f42c2c))
+* **map:** memoize baked-dark base layers — bake once per flavor, not per build (B3) ([6be3994](https://github.com/cameronzucker/tuxlink/commit/6be399418a8439219b97a0a5c7f38d1bacfbdd2f))
+* **map:** rAF-throttle LocationMap drag; subscribe styledata once (B10) ([2f63609](https://github.com/cameronzucker/tuxlink/commit/2f636094b4931d9af66377c28a8441dd142f1bd4))
+* **map:** region packs contribute detail-only layers, labels from base (B1) ([f5e728c](https://github.com/cameronzucker/tuxlink/commit/f5e728c6d1c8ca547d20fe5ab1b3d37b7c66279b))
+* **map:** software-GL render profile (pixelRatio:1, fadeDuration:0) (B7) ([0aafb16](https://github.com/cameronzucker/tuxlink/commit/0aafb16f2d950199f1366973a5bf23de22e4c261))
+* **map:** StationFinderMap selection via setFeatureState; push styledata once (B9) ([6be59b3](https://github.com/cameronzucker/tuxlink/commit/6be59b38a5c1f28bbfe54dcaace7c0dedf45aae9))
+
 ## [0.66.0](https://github.com/cameronzucker/tuxlink/compare/v0.65.0...v0.66.0) (2026-06-15)
 
 
