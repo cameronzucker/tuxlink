@@ -34,6 +34,10 @@ beforeEach(() => {
         bearingDeg: 318, distanceKm: 77, ssn: 118, year: 2026, month: 6,
         channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(12), mufdayByHour: Array(24).fill(0.9) }],
       } as unknown as never;
+    // tuxlink-5016: the panel now reads the favorites file to drive the ★ save
+    // affordance. Return an empty file so the query RESOLVES (a bare undefined
+    // would trip react-query's "Query data cannot be undefined").
+    if (cmd === 'favorites_read') return { favorites: [] } as unknown as never;
     return undefined as unknown as never;
   });
 });

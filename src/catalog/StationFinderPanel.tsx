@@ -6,8 +6,12 @@
 // per-path forecast light up when U1 prediction is available and degrade to
 // distance-only otherwise. RADIO-1: nothing here transmits.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
+import { FAVORITES_QUERY_KEY } from '../favorites/useFavorites';
+import { dialToNewFavorite, favoriteKey } from '../favorites/dialToFavorite';
+import type { Favorite, StationsFile } from '../favorites/types';
 import { useStations } from './useStations';
 import { aggregateStations, stationMatchesBandMode, type Station } from './stationModel';
 import { useReachabilityMap, stationKey } from './useReachabilityMap';
@@ -157,6 +161,48 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
   );
   const pred = useStationPrediction(grid, selected, predictReload);
 
+  // Save-to-favorites (tuxlink-5016). Read the whole stations file (shared
+  // ['favorites'] query key with useFavorites, so a save here refreshes the
+  // radio panels' Favorites tabs and vice-versa) and index every unit by
+  // mode+gateway. Saving a discovered channel STARS the matching unit, minting
+  // it first if no unit exists yet — never a duplicate of a recents unit.
+  const qc = useQueryClient();
+  const favFile = useQuery({
+    queryKey: FAVORITES_QUERY_KEY,
+    queryFn: () => invoke<StationsFile>('favorites_read'),
+  });
+  const favByKey = useMemo(() => {
+    const m = new Map<string, Favorite>();
+    for (const f of favFile.data?.favorites ?? []) m.set(favoriteKey(f), f);
+    return m;
+  }, [favFile.data]);
+  const isSaved = useCallback(
+    (dial: FavoriteDial) => favByKey.get(favoriteKey(dial))?.starred ?? false,
+    [favByKey],
+  );
+  const onSaveFavorite = useCallback(
+    async (dial: FavoriteDial) => {
+      const existing = favByKey.get(favoriteKey(dial));
+      if (existing) {
+        // Toggle the star on the existing unit (star-to-save / unstar). This is
+        // the ONLY writer of `starred`; a non-starred recents unit becomes a
+        // favorite without duplicating it.
+        await invoke('favorite_star', { id: existing.id, starred: !existing.starred }).catch(
+          () => {},
+        );
+      } else {
+        const created = await invoke<Favorite>('favorite_upsert', {
+          favorite: dialToNewFavorite(dial),
+        }).catch(() => null);
+        if (created?.id) {
+          await invoke('favorite_star', { id: created.id, starred: true }).catch(() => {});
+        }
+      }
+      await qc.invalidateQueries({ queryKey: FAVORITES_QUERY_KEY });
+    },
+    [favByKey, qc],
+  );
+
   const ssnAgeDays = pred.prediction ? ssnAge(pred.prediction.year, pred.prediction.month) : null;
   // Freshest station-list fetch stamp across loaded listings (U2 freshness).
   const listFetchedAtMs = useMemo(() => {
@@ -266,6 +312,8 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
             utcHour={utcHour}
             activePrefillMode={activePrefillMode}
             onUse={onUse}
+            onSaveFavorite={onSaveFavorite}
+            isSaved={isSaved}
           />
         </div>
       </div>
