@@ -203,8 +203,17 @@ pub async fn propagation_predict_path(
     // Clone everything we need into the blocking closure — the engine call is a
     // blocking std::process::Command; we must never hold it across an async boundary.
     let clock: Arc<dyn Clock> = ready.clock.clone();
-    // SsnForecast derives Clone (BTreeMap<String,f64> is cheap to clone).
-    let forecast = ready.forecast.clone();
+    // Runtime-mutable forecast (tuxlink-ot71): load the forecast fresh from disk
+    // per prediction — writable (a persisted internet/RF propagation update)
+    // preferred, else the bundled table — exactly as prefs are read fresh above.
+    // This is what makes an "Update propagation data" take effect WITHOUT an app
+    // restart. The forecast JSON is tiny and prediction sweeps are debounced
+    // (tuxlink-ziyu), so the per-call read is negligible. Falls back to the
+    // startup-loaded `ready.forecast` only if the config dir is unavailable.
+    let forecast = match crate::config::config_path().parent() {
+        Some(dir) => ssn::SsnForecast::load_writable_then_bundled(dir),
+        None => ready.forecast.clone(),
+    };
     let paths = ready.paths.clone();
     let scratch = ready.scratch_parent.clone();
 
