@@ -221,17 +221,9 @@
   font-weight: 700;
   font-size: 14px;
 }
-/* Callsign + inline SSID picker (operator smoke 2026-05-31 round 4 —
-   tuxlink-i63g). The round-3 "one select with full `<base>-<N>` options"
-   approach was rejected: operator wanted the picker to be just the SSID
-   (`-N`), and at 2-digit SSIDs (`-10`..`-15`) the OS popup scroll bar
-   visually clipped the second digit. Restored pattern: bare callsign
-   text chip + adjacent narrow picker whose options are just `-N`. The
-   `.dash-ssid-select` modifier sets an explicit min-width that gives the
-   open popup enough room for `-15` PLUS the OS scrollbar gutter without
-   them overlapping. The appearance reset stays as it was — without it
-   the OS-default light-grey select shell reads as "disabled" against the
-   dark dashboard background. */
+/* Callsign chip. The inline SSID picker that used to sit here was removed in
+   bd-tuxlink-y8tf — AX.25 SSID is set per-transport in the Packet/APRS panes,
+   not on the ribbon identity chip. */
 .layout-b .dashboard .dash-callsign-row {
   display: inline-flex;
   align-items: baseline;
@@ -243,49 +235,6 @@
   font-weight: 700;
   letter-spacing: -0.01em;
   color: var(--accent-2);
-}
-.layout-b .dashboard .dash-callsign-select {
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--accent-2);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  padding: 0 16px 0 4px;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%2394a3b8' d='M0 0l5 6 5-6z'/></svg>");
-  background-repeat: no-repeat;
-  background-position: right 4px center;
-}
-.layout-b .dashboard .dash-callsign-select:hover,
-.layout-b .dashboard .dash-callsign-select:focus {
-  border-color: var(--accent-2);
-  outline: none;
-}
-/* SSID-only picker variant — explicit min-width so the open popup is wide
-   enough to fit `-15` next to the OS scrollbar gutter without clipping.
-   Mono font is ~8.4px per char at 14px, so `-15` is ~25px; with 16px right
-   padding (chevron) + ~14px scrollbar gutter + 4px option padding, the
-   calculated minimum is 59px. The earlier 72px setting (tuxlink-i63g)
-   overshot — operator smoke 2026-06-05 caught the closed control taking
-   far more horizontal space than its content warrants. Tightened to 60px
-   (1px buffer above the calculated minimum) — keeps `-15` visible in the
-   open popup while letting the closed control sit closer to its content
-   width on the dashboard ribbon. tuxlink-yn58. */
-.layout-b .dashboard .dash-ssid-select {
-  min-width: 60px;
-}
-/* Option list itself (when the OS popup opens) uses the system color, but
-   force a sane dark fallback so the dropdown isn't blinding white-on-white. */
-.layout-b .dashboard .dash-callsign-select option {
-  background: var(--surface, #0f1218);
-  color: var(--text, #cbd5e1);
-  padding: 0 4px;
 }
 .layout-b .dashboard .dash-value.good {
   color: var(--success);

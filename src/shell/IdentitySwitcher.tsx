@@ -37,7 +37,6 @@ import type {
   TacticalIdentityDto,
 } from './identityTypes';
 import { parseIdentityError } from './identityTypes';
-import { ssidOptions } from '../packet/packetConfig';
 import './IdentitySwitcher.css';
 
 export interface IdentitySwitcherProps {
@@ -46,10 +45,6 @@ export interface IdentitySwitcherProps {
   active: ActiveIdentityDto | null;
   /** Dropdown contents; null while loading → a placeholder row. */
   list: IdentityListDto | null;
-  /** Effective AX.25 SSID (0..15) for the chip's SSID select. */
-  ssid?: number;
-  /** Persist a new SSID. When omitted, the SSID renders as a plain text span. */
-  onSsidChange?: (n: number) => void;
   /** Authenticate + switch. The credential is the typed unlock value; the
    *  callsign is always the parent FULL; tacticalLabel is the presented
    *  tactical (or null for a FULL row). */
@@ -98,7 +93,7 @@ function tacticalCmsBadge(badge: CmsBadge) {
   }
 }
 
-export function IdentitySwitcher({ active, list, ssid, onSsidChange, onSwitch }: IdentitySwitcherProps) {
+export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherProps) {
   const [open, setOpen] = useState(false);
   const [unlockTarget, setUnlockTarget] = useState<UnlockTarget | null>(null);
   const [credential, setCredential] = useState('');
@@ -285,25 +280,6 @@ export function IdentitySwitcher({ active, list, ssid, onSsidChange, onSwitch }:
           </span>
         )}
       </button>
-
-      {onSsidChange ? (
-        <select
-          className="dash-callsign-select dash-ssid-select"
-          data-testid="ribbon-ssid-select"
-          aria-label="AX.25 SSID"
-          title="Click to switch AX.25 SSID"
-          value={ssid ?? 0}
-          // Sibling placement already keeps this out of the trigger; stop the
-          // mousedown/click from bubbling to any ancestor open handler too.
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => onSsidChange(Number(e.target.value))}
-        >
-          {ssidOptions().map((n) => (
-            <option key={n} value={n}>{`-${n}`}</option>
-          ))}
-        </select>
-      ) : null}
 
       {open && (
         <div
