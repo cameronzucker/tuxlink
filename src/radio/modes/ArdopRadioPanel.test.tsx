@@ -125,9 +125,9 @@ describe('<ArdopRadioPanel>', () => {
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(defaultInvokeImpl);
   });
 
-  it('renders the Ardop Winlink title in the RadioPanel chrome', () => {
+  it('renders the ARDOP Winlink title in the RadioPanel chrome', () => {
     renderPanel(<ArdopRadioPanel onClose={() => {}} />);
-    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Ardop Winlink');
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('ARDOP Winlink');
   });
 
   it('renders the selected ARDOP intent in the RadioPanel chrome', () => {
@@ -137,7 +137,7 @@ describe('<ArdopRadioPanel>', () => {
         onClose={() => {}}
       />,
     );
-    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Ardop Radio-only');
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('ARDOP Radio-only');
   });
 
   it('mounts the SessionLogSection (children of RadioPanel body)', () => {

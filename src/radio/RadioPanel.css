@@ -352,6 +352,29 @@ select.radio-panel-input option {
   border: 1px solid;
   flex: 1;
 }
+/* Small secondary/ghost button (compact actions: detect device, browse, manage).
+   Used STANDALONE (not with .radio-panel-btn), and was previously defined NOWHERE
+   — so it rendered as a raw browser button, the "Claude Code default" look across
+   the modem panels (ModemLinkSection / ManagedModemSection / ArdopRadioPanel).
+   Now carries the dark-UI ghost style with an accent hover, matching the family. */
+.radio-panel-btn-sm {
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--border-strong, #3a4150);
+  color: var(--text, #cbd5e1);
+}
+.radio-panel-btn-sm:hover:not(:disabled) {
+  border-color: var(--modem-accent, #4ade80);
+  color: var(--modem-accent, #4ade80);
+}
+.radio-panel-btn-sm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 /* Primary action (Connect, Start, Save). Outlined-with-bright-text —
  * the original radio dock aesthetic that pre-dated PR #217.
  * tuxlink-2ief's first pass used filled-accent (var(--modem-accent) bg

@@ -98,12 +98,12 @@ describe('<VaraRadioPanel>', () => {
 
   it('renders the VARA HF panel title for vara-hf mode', async () => {
     renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
-    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara HF');
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('VARA HF');
   });
 
   it('renders the VARA FM panel title for vara-fm mode', async () => {
     renderPanel(<VaraRadioPanel mode={FM_MODE} onClose={() => {}} />);
-    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM');
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('VARA FM');
   });
 
   it('hydrates host + ports from config_get_vara', async () => {

@@ -18,7 +18,7 @@ describe('<RadioPanel>', () => {
       </RadioPanel>,
     );
     expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
-    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Ardop Winlink');
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('ARDOP Winlink');
     expect(screen.getByTestId('child-content')).toBeInTheDocument();
   });
 
