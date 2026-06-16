@@ -111,3 +111,16 @@ The L1+L2 correctness is currently backed by CI-green unit tests, not an adrev.
   pre-existing, not investigated.
 - tuxlink-kiaa (Favorites have no top-level home) — still open, needs the operator mock brainstorm
   per the prior handoff; untouched this session.
+
+## Added late-session — tuxlink-fwse: high-contrast Daylight theme (PR #776)
+Recurring operator request (AZ-sun outdoor readability, release gate). After a long
+visual-companion brainstorm (I undershot "high contrast" repeatedly — see memory
+`feedback_high_contrast_means_dramatic`: overshoot-then-dial-back; theme is palette-ONLY,
+don't change shapes/fonts/borders). Operator approved: **colors only**, the key being
+**bold stateful fills** — selected message + active folder become a solid `--accent #a83800`
+fill with white text (daylight-scoped, other themes untouched), plus a palette punch
+(near-black text, darkened secondary text, saturated accent/green). `src/App.css` only;
+borders left untouched ("no added lines"). **PR #776, needs operator field-test in the real
+WebKitGTK app (grim + sun) — mocks were untrustworthy.** Deferred: `--reach-*` map-tier
+daylight overrides (operator: main-UI not map). Worktree `worktrees/bd-tuxlink-fwse-daylight-high-contrast`
+(node_modules installed; `.superpowers/brainstorm/` mocks are gitignored).
