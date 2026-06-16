@@ -10,6 +10,7 @@ pub mod parse;
 pub mod patterns;
 pub mod prefs;
 pub mod solar;
+pub mod solar_update;
 pub mod ssn;
 pub mod type14;
 
