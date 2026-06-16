@@ -81,13 +81,30 @@ pub fn modem_ardop_disconnect_inner(session: &Arc<ModemSession>) -> Result<(), S
     // ABORT on an idle TNC is a no-op, so it's safe to call unconditionally.
     let _ = session.abort_in_flight();
 
+    // tuxlink-vyby: bump the close generation BEFORE reclaiming the transport.
+    // When an in-flight worker holds the transport (a b2f exchange mid-run, or
+    // an armed listener consumer), `reset_to_stopped()` below finds nothing to
+    // drop. Those workers re-install on their way out via
+    // `install_transport_if_generation_matches(transport, snapshot)` where the
+    // snapshot was taken BEFORE this Stop. Bumping the generation invalidates
+    // that snapshot, so the guarded install rejects the handle and the worker
+    // DROPS it — the transport's `ManagedModem::Drop` (SIGINT→SIGKILL) then
+    // kills ardopcf. Without this bump the worker re-installs the LIVE transport
+    // into the just-stopped session, so ardopcf keeps running and REJ frames
+    // scroll until a SECOND Stop click reclaims it — the operator-reported
+    // two-click teardown. Mirrors the close-path bump in
+    // `ardop_close_session_inner` (tuxlink-pdnw); a double-bump on the close
+    // path is harmless because the guard compares snapshot-vs-live by equality.
+    let _ = session.bump_close_generation();
+
     if let Some(mut transport) = session.reset_to_stopped() {
-        // Best-effort: even if disconnect errors, the session is already
-        // marked Stopped so reconnects are possible. The TNC process (when
-        // managed) is torn down separately via ArdopTransport::shutdown —
-        // disconnect() here only sends the DISCONNECT command on the cmd
-        // socket. Process teardown lands when the full shutdown wiring
-        // arrives in a follow-up.
+        // The session directly held the transport (no in-flight worker). Send a
+        // best-effort link DISCONNECT, then drop: `ManagedModem::Drop` reaps the
+        // ardopcf process (SIGINT, 200 ms grace, then SIGKILL), and
+        // `CmdSocket::Drop` shuts down + joins the cmd reader thread. Even if
+        // disconnect errors, the session is already Stopped so a reconnect can
+        // proceed. The in-flight-owner case is handled by the generation bump
+        // above (the worker drops the handle, killing the process the same way).
         let _ = transport.disconnect(Duration::from_secs(5));
         drop(transport);
     }
@@ -1319,6 +1336,39 @@ mod tests {
         modem_ardop_disconnect_inner(&session).unwrap();
 
         assert_eq!(session.status_snapshot().state, ModemState::Stopped);
+    }
+
+    #[test]
+    fn modem_ardop_disconnect_bumps_close_generation_to_defeat_in_flight_reinstall() {
+        // tuxlink-vyby: the Stop button (modem_ardop_disconnect) must fully
+        // tear down even when an in-flight b2f exchange or an armed listener
+        // currently HOLDS the transport — so `reset_to_stopped` finds none to
+        // drop. Those workers re-install via
+        // `install_transport_if_generation_matches(transport, snapshot)` with a
+        // `snapshot` captured BEFORE Stop. Bumping the close generation in the
+        // disconnect path invalidates that snapshot, so the guarded install
+        // rejects the handle — the worker drops it and the transport's
+        // `ManagedModem::Drop` kills ardopcf. Without the bump the worker
+        // re-installs the LIVE transport into the just-stopped session, so
+        // ardopcf keeps running and REJ frames scroll until a SECOND Stop click
+        // reclaims it (the operator-reported two-click teardown).
+        let session = Arc::new(ModemSession::new());
+
+        // A worker snapshots the generation before taking the transport.
+        let snapshot = session.current_close_generation();
+
+        // Operator clicks Stop while the worker holds the transport.
+        modem_ardop_disconnect_inner(&session).expect("disconnect must succeed");
+
+        // The worker unwinds and tries to re-install with its pre-Stop
+        // snapshot. The guard MUST reject it (hand the transport back to drop).
+        let reinstall =
+            session.install_transport_if_generation_matches(stub_transport(), snapshot);
+        assert!(
+            reinstall.is_err(),
+            "Stop must bump the close generation so an in-flight worker's \
+             pre-Stop re-install is rejected and ardopcf is torn down in ONE click",
+        );
     }
 
     // ── Task 3.3 tests — consent-gated connect via factory seam ─────────
