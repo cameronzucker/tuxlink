@@ -27,6 +27,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
+import { writeLastTarget } from '../../connections/connectDispatch';
 import { RadioPanel, type RadioPanelState } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -326,6 +327,9 @@ export function ArdopRadioPanel({
   const handlePrefill = useCallback((dial: FavoriteDial) => {
     setTarget(dial.gateway);
     pendingDialRef.current = dial;
+    // tuxlink-vu97: persist so the ribbon Connect can dial this target with the
+    // pane closed.
+    writeLastTarget('ardop-hf', dial.gateway);
   }, []);
 
   useEffect(
@@ -683,6 +687,9 @@ export function ArdopRadioPanel({
     // A hand-typed target is not the prefilled favorite — drop the association
     // so the connection record doesn't carry stale favorite metadata.
     pendingDialRef.current = null;
+    // tuxlink-vu97: persist the configured target so the ribbon Connect button
+    // can fire ARDOP's full send/receive with this pane closed.
+    writeLastTarget('ardop-hf', e.target.value);
   };
 
   const headerSub = `${status.peer ?? '—'} · ${status.widthHz ? `${status.widthHz} Hz` : '—'}`;

@@ -119,6 +119,7 @@ import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
 import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
+import { connectFor, abortFor, MissingTargetError } from '../connections/connectDispatch';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
 import type { FavoriteDial } from '../favorites/types';
 import { StubPanel } from '../connections/StubPanel';
@@ -808,28 +809,40 @@ export function AppShell() {
     // The backend single-flight guard is the hard guarantee; this just avoids a
     // spurious "already in progress" error line on a double-press.
     if (connecting) return;
-    if (!(activeConnection.sessionType === 'cms' && activeConnection.protocol === 'telnet')) {
-      setSelectedConnection(activeConnection);
-      return;
-    }
+    // tuxlink-vu97: the ribbon Connect now fires the LAST-SELECTED mode's full
+    // send/receive (connect + exchange) for ARDOP / VARA / packet too — not just
+    // Telnet-CMS — with the radio pane kept CLOSED. The prior navigate-only
+    // branch (setSelectedConnection → open the pane, dial nothing) is gone:
+    // connectFor replicates each panel's exact connect+exchange invoke sequence,
+    // reading the operator-configured target the panels persist to localStorage.
     setConnecting(true);
     try {
-      await invoke('cms_connect');
+      await connectFor(activeConnection);
       await queryClient.invalidateQueries({ queryKey: ['mailbox'] });
-    } catch {
-      // The result and any failure reason are shown in the session log + the
-      // connection-status ribbon by the backend — nothing inline here.
+    } catch (e) {
+      // A backend connect/exchange failure surfaces in the session log + the
+      // connection-status ribbon (emitted by the backend) — nothing inline
+      // beside the button. The one purely-frontend failure is MissingTargetError
+      // (no persisted target for an RF mode): there is no frontend session-log
+      // emit path, so warn to the console with its actionable message rather
+      // than crash. The operator's fix is to open the mode's panel and set a
+      // target, which persists it for the next ribbon Connect.
+      if (e instanceof MissingTargetError) {
+        console.warn(`Connect: ${e.message}`);
+      }
     } finally {
       setConnecting(false);
     }
   }, [activeConnection, queryClient, connecting]);
 
   const onAbort = useCallback(() => {
-    // Fire-and-forget (tuxlink-9z2): the abort shuts the connecting socket; the
-    // in-flight cms_connect promise then resolves (Cancelled) and its `finally`
-    // clears `connecting`. The session log carries the "Aborting…" line.
-    void invoke('cms_abort');
-  }, []);
+    // tuxlink-vu97: abort the LAST-SELECTED mode (cms_abort / modem_ardop_disconnect
+    // / vara_close_session / packet→cms_abort). Fire-and-forget (tuxlink-9z2): the
+    // abort shuts the connecting socket; the in-flight connectFor promise then
+    // resolves (Cancelled) and its `finally` clears `connecting`. The session log
+    // carries the "Aborting…" line.
+    void abortFor(activeConnection);
+  }, [activeConnection]);
 
   // tuxlink-pmp5: load the review-inbound preference once so the ribbon's "On
   // connect" control reflects the persisted choice. Reads the LIVE config via the

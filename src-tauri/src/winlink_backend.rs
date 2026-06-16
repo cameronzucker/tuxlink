@@ -1592,14 +1592,28 @@ impl WinlinkBackend for NativeBackend {
         &self,
         msg: OutboundMessage,
     ) -> Result<MessageId, BackendError> {
-        let session_id = self.active_identity()?;
-        let from = address_string(session_id.address_as());
+        // GH #691 / tuxlink-spbw: queueing to the Outbox is NOT transmitting, so it
+        // must not require an AUTHENTICATED active identity. Use the active
+        // identity's address when one is authenticated; otherwise fall back to the
+        // operator's configured active-full callsign so an RF-only / offline
+        // operator (callsign configured, no stored CMS password) can still draft a
+        // message into the Outbox. The authenticated-identity gate stays where it
+        // belongs — at connect/transmit time, NOT at queue time.
+        let from: String = match self.active_identity() {
+            Ok(session_id) => address_string(session_id.address_as()).to_string(),
+            Err(_) => self
+                .live_config()
+                .identity
+                .active_full
+                .clone()
+                .ok_or(BackendError::NoActiveIdentity)?,
+        };
         // The trait carries an RFC 3339 date; fall back to now if unparseable.
         let unix_secs = parse_rfc3339_secs(&msg.date).unwrap_or_else(now_unix_secs);
         let to: Vec<&str> = msg.to.iter().map(String::as_str).collect();
         let cc: Vec<&str> = msg.cc.iter().map(String::as_str).collect();
         let message = compose::compose_message_with_files(
-            from,
+            &from,
             &to,
             &cc,
             &msg.subject,
@@ -3817,6 +3831,67 @@ mod mailbox_change_tests {
             !raw.contains("From: W7AUX"),
             "From header must NOT be the config callsign W7AUX; got:\n{raw}"
         );
+    }
+
+    // tuxlink-spbw / GH #691: queueing to the Outbox must NOT require an
+    // authenticated active identity. With a configured callsign but no active
+    // session (the RF-only / offline operator — callsign set, no stored CMS
+    // password), send_message falls back to config.identity.active_full for the
+    // From, so the draft queues instead of failing "no active identity —
+    // authenticate before transmitting".
+    #[tokio::test]
+    async fn send_message_queues_without_active_identity_using_config_callsign() {
+        let dir = tempdir().unwrap();
+        let mut cfg = crate::test_helpers::native_test_config();
+        cfg.identity.active_full = Some("W6BI".to_string());
+        let backend = NativeBackend::new(cfg, dir.path());
+        // NO set_active_identity — the slot is empty (not authenticated).
+
+        let id = backend
+            .send_message(OutboundMessage {
+                to: vec!["W1AW".to_string()],
+                cc: vec![],
+                subject: "queue without auth".to_string(),
+                body: "body".to_string(),
+                date: "2026-06-15T00:00:00Z".to_string(),
+                attachments: vec![],
+            })
+            .await
+            .expect("draft queues to the Outbox without an authenticated identity");
+
+        let body = backend
+            .mailbox
+            .read(MailboxFolder::Outbox, &id)
+            .expect("read stored message");
+        let raw = String::from_utf8_lossy(&body.raw_rfc5322);
+        assert!(
+            raw.contains("From: W6BI"),
+            "From must fall back to the configured callsign W6BI; got:\n{raw}"
+        );
+    }
+
+    // Guard: the fallback does NOT over-relax — with neither an active session
+    // NOR a configured active_full callsign, there is genuinely no From, so
+    // send_message still returns NoActiveIdentity.
+    #[tokio::test]
+    async fn send_message_still_errs_when_no_identity_configured_at_all() {
+        let dir = tempdir().unwrap();
+        let mut cfg = crate::test_helpers::native_test_config();
+        cfg.identity.active_full = None;
+        let backend = NativeBackend::new(cfg, dir.path());
+
+        let err = backend
+            .send_message(OutboundMessage {
+                to: vec!["W1AW".to_string()],
+                cc: vec![],
+                subject: "no identity".to_string(),
+                body: "body".to_string(),
+                date: "2026-06-15T00:00:00Z".to_string(),
+                attachments: vec![],
+            })
+            .await
+            .expect_err("no active identity and no configured callsign → error");
+        assert!(matches!(err, BackendError::NoActiveIdentity));
     }
 }
 
