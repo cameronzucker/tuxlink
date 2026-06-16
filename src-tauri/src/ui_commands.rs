@@ -2925,6 +2925,37 @@ pub async fn cms_abort(
     Ok(())
 }
 
+/// Gracefully end an in-flight packet session (tuxlink-avu9): unlike [`cms_abort`]'s
+/// rude socket-kill, this lets the link key a DISC to the remote so the far end isn't
+/// left half-open (which is what orphans an RMS gateway into the stale state that
+/// then fails our next connect). The packet Stop button calls this first; a second
+/// press escalates to `cms_abort` (force-kill). A no-op when nothing is connected.
+#[tauri::command]
+pub async fn cms_disconnect(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+    registry: State<'_, crate::winlink::inbound_selection::SelectionRegistry>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+
+    tracing::info!(target: "tuxlink::cms", "graceful disconnect requested");
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        "Disconnecting (sending session end to the remote)…".to_string(),
+    );
+    backend.graceful_disconnect().await?;
+
+    // Wake any parked selection decider, mirroring cms_abort's ordering.
+    *registry.lock().unwrap() = None;
+
+    Ok(())
+}
+
 // ============================================================================
 // Task 5 (tuxlink-bsiy) — cms_resolve_inbound_selection
 // ============================================================================
