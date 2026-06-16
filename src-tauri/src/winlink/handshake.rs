@@ -157,6 +157,15 @@ fn read_handshake<R: BufRead>(
 
         if let Some(rest) = line.strip_prefix("***") {
             let raw = rest.trim().to_string();
+            // A PACKET RMS relays us to the CMS and emits POSITIVE bridge-status lines
+            // like "*** N7CPZ-7 Connected to CMS" BEFORE the SID (tuxlink-zlo8, KT7RUN-10
+            // on-air 2026-06-16). Those are not errors — skip and keep reading toward the
+            // `[WL2K-…]` SID. (Direct telnet to the CMS never sees them, so this path was
+            // never exercised.) Genuine failure/disconnect lines ("*** Callsign not
+            // authorized - Disconnecting", "*** Rejected …") still abort the handshake.
+            if raw.to_ascii_uppercase().contains("CONNECTED") {
+                continue;
+            }
             let scrubbed = super::redaction::redact_freeform(&raw).into_owned();
             return Err(HandshakeError::RemoteError(scrubbed));
         }
@@ -367,6 +376,23 @@ mod tests {
             }
             other => panic!("expected RemoteError, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn handshake_skips_packet_rms_connected_status_before_sid() {
+        // tuxlink-zlo8: a packet RMS bridges us to the CMS and emits POSITIVE status
+        // lines ("Trying …", "*** <call> Connected to CMS") BEFORE the SID. Those must
+        // NOT abort the handshake — the on-air KT7RUN-10 failure 2026-06-16, where we
+        // RemoteError'd on "*** N7CPZ-7 Connected to CMS" one frame before the SID.
+        // Realistic on-air master flow (the gateway ends its handshake with a `>`
+        // prompt, like every existing success test): bridge status lines, then SID,
+        // then PQ challenge, then the prompt.
+        let data = b"Trying ec2-44-218-195-235.compute-1.amazonaws.com\r*** N7CPZ-7 Connected to CMS\r[WL2K-5.0-B2FWIHJM$]\r;PQ: 23828153\rCMS via K7YCA >\r";
+        let mut cursor = std::io::Cursor::new(&data[..]);
+        let hs = read_remote_handshake(&mut cursor)
+            .expect("must read through the bridge status lines to the SID, not RemoteError");
+        assert!(hs.sid.contains("B2F"), "expected the WL2K SID, got: {}", hs.sid);
+        assert_eq!(hs.challenge.as_deref(), Some("23828153"), "PQ challenge after the status line");
     }
 
     #[test]
