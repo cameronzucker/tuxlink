@@ -22,6 +22,7 @@ import {
   GROUND_TYPE_OPTIONS,
   HEIGHT_GRID_M,
   NOISE_ENVIRONMENT_OPTIONS,
+  TX_POWER_OPTIONS_W,
   isHeightVariable,
   readAntennaPreview,
   type AntennaPreset,
@@ -178,20 +179,27 @@ export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) 
 
       <label className="station-finder__antenna-field">
         <span className="station-finder__antenna-lab">TX W</span>
-        <input
-          className="station-finder__antenna-num"
+        <select
+          className="station-finder__antenna-select"
           data-testid="tx-power-input"
-          type="number"
-          min={1}
-          step={5}
-          value={prefs.txPowerW}
+          value={String(prefs.txPowerW)}
           aria-label="TX power in watts"
           onChange={(e) => {
             const v = Number(e.target.value);
             if (Number.isFinite(v) && v > 0) onChange({ ...prefs, txPowerW: v });
           }}
-        />
-        <span className="station-finder__antenna-unit">W</span>
+        >
+          {/* Preserve a persisted off-list value as a one-off option so it is
+              never silently changed; otherwise just the standard power steps. */}
+          {!TX_POWER_OPTIONS_W.includes(prefs.txPowerW as (typeof TX_POWER_OPTIONS_W)[number]) && (
+            <option value={String(prefs.txPowerW)}>{prefs.txPowerW} W</option>
+          )}
+          {TX_POWER_OPTIONS_W.map((w) => (
+            <option key={w} value={String(w)}>
+              {w} W
+            </option>
+          ))}
+        </select>
       </label>
 
       <div className="station-finder__antenna-field station-finder__antenna-preview" data-testid="antenna-preview">
