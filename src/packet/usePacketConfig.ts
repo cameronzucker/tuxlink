@@ -21,7 +21,7 @@
  *  the event detail, so a write in one panel propagates to others. */
 const PACKET_CONFIG_LOCAL_EVENT = 'tuxlink:packet-config:change';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { PacketConfigDto } from './packetTypes';
@@ -58,6 +58,13 @@ export interface UsePacketConfig {
  */
 export function usePacketConfig(): UsePacketConfig {
   const [config, setConfig] = useState<PacketConfigDto | null>(null);
+  // Latest committed config, readable from async callbacks. Kept in sync each
+  // render so a persist-rejection rollback can tell whether the optimistic value
+  // it set is STILL current (vs. superseded by a newer write — this hook, a peer
+  // broadcast, or the backend echo). Reverting a superseded value would clobber
+  // the newer write (Codex + 2x Claude adrev: stale-rollback race, tuxlink-hoi1).
+  const configRef = useRef<PacketConfigDto | null>(null);
+  configRef.current = config;
 
   useEffect(() => {
     let cancelled = false;
@@ -124,6 +131,9 @@ export function usePacketConfig(): UsePacketConfig {
       void invoke('packet_config_set', { dto: next }).catch(() => {
         // tuxlink-hoi1 B4: a rejected persist must not leave the UI showing an
         // un-saved value — revert this hook AND its peers to the persisted truth.
+        // BUT only if our optimistic `next` is still current: a newer write would
+        // have replaced it, and reverting then would clobber that newer value.
+        if (configRef.current !== next) return;
         setConfig(prior);
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: prior }));
@@ -154,7 +164,9 @@ export function usePacketConfig(): UsePacketConfig {
         .then(() => undefined)
         .catch(() => {
           // tuxlink-hoi1 B4: revert the optimistic update (and peers) on a
-          // rejected persist so the UI never shows an un-saved link.
+          // rejected persist so the UI never shows an un-saved link — but only if
+          // `next` is still current (a newer write must not be clobbered).
+          if (configRef.current !== next) return undefined;
           setConfig(prior);
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: prior }));

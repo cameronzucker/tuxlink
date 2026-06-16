@@ -9969,6 +9969,28 @@ hw:CARD=Device,DEV=0
     }
 
     #[test]
+    fn apply_packet_dto_absent_link_kind_preserves_managed_link() {
+        // The Managed (Dire Wolf) link rides structured fields, not a scalar, and
+        // must survive an SSID-only write exactly like the scalar variants — a
+        // regression here would silently strip a configured managed modem (B1).
+        use crate::winlink::ax25::devices::{PttChoice, StableAudioId, StableIdKind};
+        use crate::winlink::ax25::KissLinkConfig;
+        let existing = Some(KissLinkConfig::ManagedDireWolf {
+            audio_device: StableAudioId {
+                kind: StableIdKind::ByIdSymlink,
+                value: "usb-C-Media_DigiRig_Audio-00".into(),
+            },
+            ptt: PttChoice::Cm108Hid {
+                hidraw_path: "/dev/hidraw3".into(),
+            },
+        });
+        let dto = make_packet_dto(9, None);
+        let out = apply_packet_dto(existing.clone(), dto).unwrap();
+        assert_eq!(out.link, existing, "a Managed link must survive an absent link_kind");
+        assert_eq!(out.ssid, 9);
+    }
+
+    #[test]
     fn apply_packet_dto_present_link_kind_sets_link_from_none() {
         use crate::winlink::ax25::KissLinkConfig;
         // A real link write (link_kind present) over no prior link sets it — this

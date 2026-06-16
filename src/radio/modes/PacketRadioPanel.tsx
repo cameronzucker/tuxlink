@@ -60,6 +60,12 @@ export interface PacketRadioPanelProps {
 
 export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: PacketRadioPanelProps) {
   const [config, setConfig] = useState<PacketConfigDto | null>(null);
+  // Latest committed config, readable from the persist-rejection rollback so it
+  // only reverts when its optimistic value is STILL current — a newer write (a
+  // peer broadcast, the backend echo, or another panel edit) must not be
+  // clobbered by a stale rollback (Codex + Claude adrev, tuxlink-hoi1 B4 race).
+  const configRef = useRef<PacketConfigDto | null>(null);
+  configRef.current = config;
   const [target, setTarget] = useState('');
   const [relays, setRelays] = useState<string[]>([]);
   const [armed, setArmed] = useState(false);
@@ -215,8 +221,9 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
     void invoke('packet_config_set', { dto: next }).catch(() => {
       // tuxlink-hoi1 B4: a rejected persist must not leave the panel showing an
       // un-saved value — revert the optimistic update (and peers) to the prior
-      // persisted truth.
-      if (prior) {
+      // persisted truth. Only if `next` is still current: a newer write (this
+      // panel, a peer, or the backend echo) must not be reverted to stale state.
+      if (prior && configRef.current === next) {
         setConfig(prior);
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
