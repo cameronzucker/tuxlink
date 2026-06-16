@@ -1,0 +1,119 @@
+/* FavoritesPanel — shell-level cross-mode Favorites home (bd-tuxlink-kiaa).
+ *
+ * Mounts in the content area (selectedFolder === 'favorites'), like
+ * ContactsPanel. The shared FavoriteRow internals (.favorite-row, .favorite-star,
+ * .favorite-connect — green --modem-accent) are styled by FavoritesTabs.css,
+ * which is bundled via the always-eager radio panels. This file styles only the
+ * panel chrome: the Favorites/Recent toggle, per-mode group headers, and the
+ * empty/filter states. The toggle uses the amber --accent (shell surface), not
+ * the modem green — green stays on the rows' Connect action per the Option-B
+ * decision (a favorite is a dial target; only Connect carries the radio identity).
+ */
+
+.favorites-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg);
+  padding: 14px 18px 24px;
+}
+
+/* Favorites | Recent segmented toggle. */
+.favorites-panel-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.favorites-panel-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+
+.favorites-panel-tab + .favorites-panel-tab {
+  border-left: 1px solid var(--border);
+}
+
+.favorites-panel-tab:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.favorites-panel-tab--active {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+/* Filter row (shown only past the threshold). */
+.favorites-panel-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.favorites-panel-filter input {
+  flex: 0 0 280px;
+  max-width: 280px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.favorites-panel-filter-count {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* Per-mode groups. */
+.favorites-panel-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.favorites-panel-group-head {
+  margin: 10px 0 4px;
+  font-weight: 400;
+}
+
+.favorites-panel-group-pill {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px 9px;
+}
+
+.favorites-panel-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.favorites-panel-empty {
+  color: var(--text-faint);
+  font-size: 13px;
+  padding: 28px 4px;
+  max-width: 420px;
+}

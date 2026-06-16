@@ -37,14 +37,28 @@ interface PseudoFolderItem {
   v01?: boolean;
 }
 
-/// Address section (tuxlink-raez, Task A7). A single Contacts pseudo-folder
-/// row. Declared as a list (mirroring `MAILBOX_ITEMS`) so the icon-rail picks
-/// it up generically; the count is supplied at render time from the
-/// `contactsCount` prop (sourced from `useContacts` in AppShell), never the
-/// mailbox `counts` memo.
+/// Address section (tuxlink-raez, Task A7; Favorites added bd-tuxlink-kiaa).
+/// Pseudo-folder rows. Declared as a list (mirroring `MAILBOX_ITEMS`) so the
+/// icon-rail picks them up generically; counts are supplied at render time from
+/// the `contactsCount` / `favoritesCount` props, never the mailbox `counts` memo.
+/// Favorites is listed ABOVE Contacts (operator Option-B decision, 2026-06-16):
+/// a cross-mode home for saved dial targets, distinct from Contacts (people).
 const ADDRESS_ITEMS: readonly PseudoFolderItem[] = [
+  { id: 'favorites', label: 'Favorites', icon: '★', enabled: true },
   { id: 'contacts', label: 'Contacts', icon: '◉', enabled: true },
 ];
+
+/// Per-Address-item badge count. Contacts → contactsCount; Favorites →
+/// favoritesCount (starred). Pseudo-folders never enter the mailbox `counts` memo.
+function addressItemCount(
+  id: MailboxFolderRef,
+  contactsCount: number,
+  favoritesCount: number,
+): number | undefined {
+  if (id === 'contacts') return contactsCount;
+  if (id === 'favorites') return favoritesCount;
+  return undefined;
+}
 
 /// Mailbox section (mock B order). All four folders functional as of
 /// tuxlink-ca5x (user-folders Phase 1). The Phase 2 open-set folder model
@@ -80,6 +94,11 @@ export interface FolderSidebarProps {
    *  `MailboxFolder`), since `'contacts'` is not a mailbox folder. Zero/missing
    *  → no badge. */
   contactsCount?: number;
+  /** Starred-favorites count for the Address section's Favorites pseudo-folder
+   *  badge (bd-tuxlink-kiaa). Sourced from `favorites_read` starred count in
+   *  AppShell — like `contactsCount`, kept SEPARATE from the mailbox `counts`
+   *  memo since `'favorites'` is not a mailbox folder. Zero/missing → no badge. */
+  favoritesCount?: number;
   /** User-created folders (tuxlink-f62f). Rendered in a dedicated "Folders"
    *  section below "Mailbox", with a `+` button that fires `onCreateFolder`. */
   userFolders?: UserFolder[];
@@ -228,6 +247,7 @@ export const FolderSidebar = memo(function FolderSidebar({
   onSelectFolder,
   counts = {},
   contactsCount = 0,
+  favoritesCount = 0,
   userFolders = [],
   onCreateFolder,
   onDropMessage,
@@ -616,7 +636,7 @@ export const FolderSidebar = memo(function FolderSidebar({
       </div>
       {ADDRESS_ITEMS.map((item) => {
         const active = item.id === selectedFolder;
-        const count = item.id === 'contacts' ? contactsCount : undefined;
+        const count = addressItemCount(item.id, contactsCount, favoritesCount);
         const className = ['nav-item', active ? 'active' : '', item.enabled ? '' : 'disabled']
           .filter(Boolean)
           .join(' ');
@@ -805,9 +825,9 @@ export const FolderSidebar = memo(function FolderSidebar({
       </div>
       {ADDRESS_ITEMS.map((item) => {
         const active = item.id === selectedFolder;
-        // Per-item count: only Contacts has one, from `contactsCount`. Kept off
-        // the mailbox `counts` memo on purpose (M-scope: pseudo-folder).
-        const count = item.id === 'contacts' ? contactsCount : undefined;
+        // Per-item count: Contacts → contactsCount, Favorites → favoritesCount.
+        // Kept off the mailbox `counts` memo on purpose (pseudo-folders).
+        const count = addressItemCount(item.id, contactsCount, favoritesCount);
         const className = ['nav-item', active ? 'active' : '', item.enabled ? '' : 'disabled']
           .filter(Boolean)
           .join(' ');

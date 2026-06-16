@@ -234,6 +234,30 @@ describe('<FolderSidebar> (compact rail + flyout — Mock B)', () => {
     fireEvent.click(flyoutContacts);
     expect(onSelect).toHaveBeenCalledWith('contacts');
   });
+
+  it('exposes the Favorites pseudo-folder in the Address section, above Contacts, with a starred-count badge (bd-tuxlink-kiaa)', () => {
+    const onSelect = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={onSelect}
+        favoritesCount={4}
+        contactsCount={5}
+      />,
+    );
+    const favorites = screen.getByTestId('folder-favorites');
+    expect(favorites).toBeInTheDocument();
+    expect(favorites).not.toBeDisabled();
+    expect(screen.getByTestId('folder-count-favorites')).toHaveTextContent('4');
+    fireEvent.click(favorites);
+    expect(onSelect).toHaveBeenCalledWith('favorites');
+
+    // Favorites sits ABOVE Contacts (operator Option-B ordering).
+    const contactsEl = screen.getByTestId('folder-contacts');
+    expect(
+      favorites.compareDocumentPosition(contactsEl) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });
 
 // ============================================================================

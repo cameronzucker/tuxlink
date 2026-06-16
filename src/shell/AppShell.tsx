@@ -19,7 +19,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
 import type { HighlightRange } from '../mailbox/MessageList';
 import { deriveIdentityFilterOptions } from '../mailbox/identityFilter';
@@ -32,6 +32,8 @@ import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/ty
 import { useUserFolders, useMoveUserFolder } from '../mailbox/useUserFolders';
 import { useContacts } from '../contacts/useContacts';
 import { ContactsPanel } from '../contacts/ContactsPanel';
+import { FavoritesPanel } from '../favorites/FavoritesPanel';
+import { FAVORITES_QUERY_KEY } from '../favorites/useFavorites';
 import { FolderContextMenu } from '../mailbox/FolderContextMenu';
 import type { UserFolder } from '../mailbox/types';
 import type { MessageMetaDto } from '../search/types';
@@ -121,7 +123,7 @@ import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
 import { connectFor, abortFor, MissingTargetError } from '../connections/connectDispatch';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
-import type { FavoriteDial } from '../favorites/types';
+import type { FavoriteDial, StationsFile } from '../favorites/types';
 import { StubPanel } from '../connections/StubPanel';
 import { useInboundSelection } from '../connections/useInboundSelection';
 import { SearchBar } from '../search/SearchBar';
@@ -216,6 +218,14 @@ const FOLDER_LABELS: Record<MailboxFolder, string> = {
   archive: 'Archive',
 };
 
+/// Address-section pseudo-folder labels (bd-tuxlink-kiaa). `'favorites'` and
+/// `'contacts'` are pseudo-folder selection keys, not `MailboxFolder`s, so they
+/// are not in FOLDER_LABELS; this map title-cases them for the window title.
+const PSEUDO_FOLDER_LABELS: Record<string, string> = {
+  favorites: 'Favorites',
+  contacts: 'Contacts',
+};
+
 /// Folder-label lookup that handles both system folders and user-folder
 /// slugs. For system folders → `FOLDER_LABELS`; for user folders → the
 /// display name from the registry; for an unknown slug → the slug itself
@@ -225,6 +235,9 @@ function folderLabel(
   userFolders: { slug: string; displayName: string }[],
 ): string {
   if (folder in FOLDER_LABELS) return FOLDER_LABELS[folder as MailboxFolder];
+  // Address-section pseudo-folders (not MailboxFolders, so absent from
+  // FOLDER_LABELS) get a proper title-cased window-title label.
+  if (folder in PSEUDO_FOLDER_LABELS) return PSEUDO_FOLDER_LABELS[folder];
   const uf = userFolders.find((f) => f.slug === folder);
   return uf?.displayName ?? folder;
 }
@@ -468,6 +481,17 @@ export function AppShell() {
   // pseudo-folder badge. Sourced from useContacts, NOT the mailbox `counts`
   // memo — `'contacts'` is a pseudo-folder, not a MailboxFolder.
   const { contacts } = useContacts();
+  // bd-tuxlink-kiaa: starred-favorites count for the sidebar's Address →
+  // Favorites pseudo-folder badge. Same ['favorites'] key FavoritesPanel uses
+  // (react-query dedupes the fetch); a pseudo-folder, not a MailboxFolder.
+  const favoritesQuery = useQuery({
+    queryKey: FAVORITES_QUERY_KEY,
+    queryFn: () => invoke<StationsFile>('favorites_read'),
+  });
+  const favoritesCount = useMemo(
+    () => (favoritesQuery.data?.favorites ?? []).filter((f) => f.starred).length,
+    [favoritesQuery.data],
+  );
   const notConnected = isNotConfigured(error);
   const [draftMessages, setDraftMessages] = useState<MessageMeta[]>(() => listDraftMessages());
 
@@ -1156,6 +1180,20 @@ export function AppShell() {
     [onSelectConnection],
   );
 
+  // bd-tuxlink-kiaa: Connect from the shell-level Favorites home. Identical
+  // open-and-arm path to handleStationUse (FavoriteRow's Connect is pure
+  // prefill — RADIO-1), minus the finder close: selectedFolder stays
+  // 'favorites' so the operator keeps the favorites list in the content area
+  // with the armed modem dock open beside it. The operator clicks the panel's
+  // own Send/Receive (the Part 97 consent). No transmit fires here.
+  const handleFavoritesConnect = useCallback(
+    (dial: FavoriteDial) => {
+      onSelectConnection({ sessionType: 'cms', protocol: dial.mode as ConnectionKey['protocol'] });
+      emitGatewayPrefill(dial);
+    },
+    [onSelectConnection],
+  );
+
   // tuxlink-268k (Codex P3): stabilize the two inline FolderSidebar
   // callbacks so the React.memo wrap actually skips re-renders. Before
   // these existed inline at the call site, the shallow-compare always
@@ -1388,6 +1426,7 @@ export function AppShell() {
           onSelectFolder={onSelectFolder}
           counts={counts}
           contactsCount={contacts.length}
+          favoritesCount={favoritesCount}
           userFolders={userFolders}
           onCreateFolder={onCreateFolder}
           onDropMessage={moveByIdToFolder}
@@ -1404,6 +1443,11 @@ export function AppShell() {
             left (two list columns). */}
         {selectedFolder === 'contacts' ? (
           <ContactsPanel />
+        ) : selectedFolder === 'favorites' ? (
+          // bd-tuxlink-kiaa: the Favorites pseudo-folder, like Contacts, replaces
+          // BOTH the MessageList column AND the reading pane with the inline
+          // cross-mode FavoritesPanel. Connect opens+arms the matching modem dock.
+          <FavoritesPanel onConnect={handleFavoritesConnect} />
         ) : (
           <>
         <MessageList

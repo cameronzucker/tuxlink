@@ -51,6 +51,15 @@ describe('isBackendFolder', () => {
     expect(isBackendFolder('deleted')).toBe(false);
   });
 
+  // bd-tuxlink-kiaa: 'favorites' is a pseudo-folder (Address section), like
+  // 'contacts' — it owns no backend mailbox, so the shell must NOT attempt a
+  // mailbox fetch for it. Without the explicit exclusion it matches the valid
+  // user-folder slug regex and would be (wrongly) treated as fetchable.
+  it('treats the favorites/contacts pseudo-folders as NON-backend folders', () => {
+    expect(isBackendFolder('favorites')).toBe(false);
+    expect(isBackendFolder('contacts')).toBe(false);
+  });
+
   // tuxlink-f62f: user-folder slugs ride alongside system folder identifiers.
   // The Tauri backend dispatches at parse time; the frontend just needs to
   // recognize valid slugs as fetchable.
