@@ -653,6 +653,24 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.getByTestId('proto-radio-only-telnet')).toBeDisabled();
   });
 
+  // tuxlink-picr: Radio-only · ARDOP HF is a BUILT combo — selecting it must
+  // mount the ArdopRadioPanel (intent radio-only) and fall the reading pane back
+  // to mail, NOT render the "not yet built. Coming soon" StubPanel. Regression
+  // guard for the reading-pane router matching protocol==='ardop-hf' for every
+  // intent (not just cms).
+  it('renders ArdopRadioPanel (radio-only) and NOT a StubPanel for radio-only+ardop-hf (tuxlink-picr)', async () => {
+    renderShell();
+    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
+    selectConnection('sess-radio-only', 'proto-radio-only-ardop-hf');
+    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+    expect(panel).toBeInTheDocument();
+    const title = await screen.findByTestId('radio-panel-title', undefined, { timeout: 10000 });
+    expect(title).toHaveTextContent('ARDOP');
+    // The "coming soon" stub must NOT appear, and the reading pane stays on mail.
+    expect(screen.queryByText(/not yet built/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
+  });
+
   // tuxlink-6c9y B4: Post Office (local mode) — production mount path.
   // Selecting post-office+telnet must mount TelnetPostOfficeRadioPanel in
   // 'local' mode (panel title = "MODEM · Post Office"; po-banner present)
