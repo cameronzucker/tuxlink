@@ -806,20 +806,28 @@ fill + border this is mostly masked; but a **transparent / borderless** button
 as a generic "default button." Chromium does **not** render native chrome, so
 every Playwright/dev-browser check looks fine while the shipped app is wrong.
 
-**Observed (tuxlink-zvif, recurred 4×):** the APRS dock tabs
-(`.aprs-dock-tab` / `.aprs-dock-maptoggle` / `.aprs-dock-close` —
-`background: transparent; border: none`) rendered as native GTK default buttons
-because `src/App.css`'s global `button {}` rule set `background-color` + `border`
-+ `border-radius` but **not** `appearance: none`. Operator saw "Claude
-default-style buttons"; four CSS reviews "looked fine" because they reasoned
-about the cascade in Chromium terms. Same class as the `<select>` GTK-gray bug
-(PR #752 / `tuxlink-ytay`).
+**The `<select>` case (real):** native dropdowns render GTK-gray without
+`appearance: none` (PR #752 / `tuxlink-ytay`) — set it **with** a custom caret (an
+appearance-reset select loses its arrow; see RadioPanel.css / AppShell.css). The
+global `button {}` rule also sets `appearance: none; -webkit-appearance: none;
+-moz-appearance: none;` (inert for already-styled buttons; defensive for
+under-styled ones).
 
-**Fix:** set `appearance: none; -webkit-appearance: none; -moz-appearance: none;`
-on the global `button {}` rule (inert for already-styled buttons; only suppresses
-native chrome on under-styled ones). For `<select>` use it **with** a custom
-caret (an appearance-reset select loses its dropdown arrow — see RadioPanel.css /
-AppShell.css precedents).
+**⚠️ Correction (tuxlink-sdjd) — do NOT assume "default-looking buttons" means a
+missing `appearance: none`.** The APRS dock tabs were reported as "Claude
+default-style buttons" five times. #760 added `appearance: none` to the global
+`button {}` and claimed the fix — but a real-bundle WebKit2GTK **computed-style
+inspection** (not a screenshot, not a hand-built mock) showed the tabs **already**
+resolved to `appearance: none` + `border: none` + transparent/surface background.
+Before/after that change rendered **identically**. The actual cause was the global
+`input,textarea,select,button { border-radius: 6px }` applying to the tabs, so the
+active tab's fill + the Map toggle read as **rounded buttons**. Real fix:
+`border-radius: 0` on `.aprs-dock-tab / .aprs-dock-maptoggle / .aprs-dock-close`.
+**Lesson:** when a UI element "looks like a default button," dump
+`getComputedStyle()` for `appearance`, `border`, `background`, `border-radius` from
+the **real production bundle** rendered in WebKitGTK before deciding which property
+is the culprit — and never reason from an isolated mock's cascade (it omits the
+global rules that actually decide the look).
 
 **Verify on the real engine, not Chromium:** WebKit2GTK 4.1 is available via
 python-gi. Render the suspect markup + CSS headless and snapshot:
