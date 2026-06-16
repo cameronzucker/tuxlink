@@ -111,12 +111,18 @@ Per `feedback_ai_amateur_radio_reliability`, pattern honesty is bounded by state
 radial count, the poor-soil ground, the discrete height grid, and yagi-at-boresight. These ship
 documented, not implied as exact.
 
-**Single-ground limitation (Phase 1).** Patterns are precomputed only at poor/dry-desert ground. The
-ground selector still feeds voacapl's path-level ground card, but the antenna *pattern* axis is fixed
-at poor soil. For the target audience this is the representative case — coastal US chaparral-biome
+**Single-ground limitation (Phase 1).** Patterns are precomputed only at poor/dry-desert ground.
+**Correction (2026-06-15, found during implementation):** ground entered the prediction *only* via
+the IONCAP antenna card (`GroundType::constants()` → `operator_voa_content`); VOACAP point-to-point
+has no separate path-level ground card, and `deck.rs`/`engine.rs` never used ground. So switching to
+precomputed poor-soil patterns makes the **Ground selector inert** in Phase 1. **Operator decision
+2026-06-15: keep the Ground dropdown, labeled as a known limitation** ("Phase 1 models poor-desert
+ground regardless of selection"), preserving its place for a future ground × pattern matrix. The
+`ground` param stays in `operator_voa_content`'s signature (forward-compat) but is ignored for
+selection. For the target audience poor soil is the representative case — coastal US chaparral-biome
 soil south of NorCal is effectively desert-like, so poor soil covers nearly the whole audience. A
 salt-water operator's vertical would have a stronger low-angle lobe than the preview shows; that is
-the documented edge. Operator decision 2026-06-15: accept the limitation for Phase 1; no ground ×
+the documented edge. No ground ×
 pattern matrix.
 
 ## Testing & RF discipline

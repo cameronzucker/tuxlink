@@ -12,6 +12,47 @@
 
 ---
 
+## Implementation status (2026-06-15, agent cardinal-moraine-glade)
+
+**DONE + pushed (branch `bd-tuxlink-bl01/phase1-picker-library`):**
+- **Group A** — generator built as a **standalone lightweight crate `tools/pattern-gen/`** (NOT
+  `src-tauri/src/bin/` as drafted): it path-includes `src-tauri/src/propagation/type14.rs` and depends
+  only on `thiserror`, so it builds in ~15s without the full Tauri lib (cold app builds don't finish on
+  this Pi). `run_nec2c` + `parse_total_gains` + `clamp_gain` + `elevation_vector` + `build_pattern`. 22 tests pass.
+- **CORRECTED frequency table:** `FREQS_MHZ = [1..30]`, **block i = i MHz** (was drafted `[2..31]`).
+  Verified against voacapl `voacapw/antcalc.for:183` (`ifreq = freqarea(1)`; record number = integer MHz;
+  voacapl interpolates between integer-MHz blocks). The drafted `[2..31]` would have misaligned every pattern.
+- **Group B + B4** — 8 refined, physically-distinct geometries; **20 `.voa` files generated** (600 nec2c
+  runs, 484 KB) at `src-tauri/src/propagation/patterns/`, pinned `-text` in `.gitattributes` (CRLF for
+  include_str!/voacapl). Physics verified honest (verticals null overhead, low wires peak overhead,
+  height-sensitive, yagi directional). Gated regression test guards the relationships.
+- **D3 parser** — `read_block_gains(voa, block) -> Vec<f64>` added to **`type14.rs`** (co-located with its
+  inverse `to_voa`, not a separate `preview.rs`), so the lightweight gen crate tests it locally. Round-trip test passes.
+
+**REMAINING (all in the full Tauri lib → write carefully + verify via CI draft PR, not local cold build):**
+- **Group C** — remove `RandomWireUnun` + `MagneticLoop` from `AntennaPreset` (antenna.rs:47-71); add
+  `#[serde(other)]` to `Unknown` (migration); fix `voa_file()` arms + the antenna.rs tests that list them.
+- **Group D1** — create `src-tauri/src/propagation/patterns.rs` (`pattern_voa`, `snap_height`,
+  `is_height_variable`, `HEIGHT_GRID_M=[2.5,4,6,9]`) `include_str!`-ing the 20 committed `.voa`; register `pub mod patterns;` in mod.rs.
+- **Group D2** — rewrite `operator_voa_content` to `Some(patterns::pattern_voa(preset, height_m).to_string())`
+  for ALL presets; **delete now-dead `ioncap()`, `voa_title()`, `IoncapAntenna`**. Keep the `ground` param
+  (rename `_ground`; ignored for selection — see ground decision below). Rewrite the IONCAP-asserting antenna.rs tests.
+- **Group D3 command** — `antenna_pattern_preview(antenna_preset, height_m, freq_khz?) -> AntennaPreview`
+  in commands.rs using `type14::read_block_gains` + `patterns::{snap_height,is_height_variable}`; register in the `generate_handler!` list.
+- **Group E** — frontend (locally testable via `pnpm test`): curate `propagationPrefs.ts` list (drop the 2),
+  `HEIGHT_GRID_M`, `isHeightVariable`, ground default → `poor-soil`, `readAntennaPreview` binding;
+  `PolarPattern.tsx`; `AntennaControl.tsx` snapping slider + conditional vertical state + live preview.
+- **Group F** — distinctness/height-sensitivity tests (can reuse `read_block_gains` over committed `.voa`),
+  Codex RF round (geometries + clamp; runs locally, no build), wire-walk gate, PR.
+
+**GROUND DECISION (operator, 2026-06-15):** ground entered ONLY via the IONCAP card; switching to
+precomputed poor-soil patterns makes the Ground selector **inert**. Operator chose: **keep the Ground
+dropdown, labeled as a known limitation** ("Phase 1 models poor-desert ground regardless of selection").
+Keep the prefs field + the `ground` param (forward-compat for a future ground × pattern matrix). See the
+spec's corrected "Single-ground limitation" section.
+
+---
+
 ## Ground truth (verified 2026-06-15, do not re-derive)
 
 - **Phase 0 emitter** `src-tauri/src/propagation/type14.rs`: `Type14Pattern { title: String, blocks: Vec<FreqBlock> }` (exactly `N_BLOCKS=30` blocks), `FreqBlock { efficiency: f64, gains: Vec<f64> }` (exactly `N_GAINS=91`), `pub fn to_voa(&self) -> Result<String, Type14Error>`. Gains must be finite and in **−99.999..999.999 dBi** (F7.3); efficiency finite in **−99.99..99.99** (F6.2). Out-of-range → `Type14Error::GainOutOfRange` / `EfficiencyOutOfRange`.
