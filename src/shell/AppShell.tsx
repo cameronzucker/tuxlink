@@ -638,6 +638,14 @@ export function AppShell() {
   const [aprsToggling, setAprsToggling] = useState(false);
   const onToggleAprsListening = useCallback(async () => {
     if (aprsToggling) return;
+    // Not listening + NO radio configured: there is nothing to start. Rather than
+    // fire a connect that fails silently (the tuxlink-ube7 "does nothing" report),
+    // just open the APRS panel — its connect strip auto-expands the radio picker
+    // when there's no link, so the operator lands exactly where they set one up.
+    if (!aprs.listening && aprsLinkKind == null) {
+      openAprsChat();
+      return;
+    }
     setAprsToggling(true);
     try {
       if (aprs.listening) {
@@ -647,12 +655,12 @@ export function AppShell() {
         await onAprsConnect();
       }
     } catch {
-      // Swallowed: the listener state is backend truth. A failed start leaves the
-      // switch off; the dock (opened above) shows the connect-strip for retry.
+      // Backend truth: a failed start leaves the indicator Off; the dock (opened
+      // above) shows the connect strip + its inline error for retry.
     } finally {
       setAprsToggling(false);
     }
-  }, [aprsToggling, aprs.listening, onAprsConnect, onAprsDisconnect, openAprsChat]);
+  }, [aprsToggling, aprs.listening, aprsLinkKind, onAprsConnect, onAprsDisconnect, openAprsChat]);
 
   // Phase 7 (tuxlink-noa0): identity list + active session + switch mutation for
   // the dashboard's inline IdentitySwitcher. The list/active queries feed the

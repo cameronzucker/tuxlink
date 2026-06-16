@@ -315,7 +315,7 @@ export function AprsChatPanel({
   return (
     <section className="aprs-chat" data-testid="aprs-chat-panel">
       <header className="aprs-chat-h">
-        <span className="aprs-chat-title">APRS channel</span>
+        <span className="aprs-chat-title">APRS Channel</span>
       </header>
 
       <p

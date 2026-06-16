@@ -20,9 +20,9 @@ describe('RadioPanelMode', () => {
 
 describe('panelTitle', () => {
   it('returns Radio-only suffix for radio-only intent', () => {
-    expect(panelTitle({ kind: 'ardop-hf', intent: 'radio-only' })).toBe('Ardop Radio-only');
-    expect(panelTitle({ kind: 'vara-hf',  intent: 'radio-only' })).toBe('Vara HF Radio-only');
-    expect(panelTitle({ kind: 'vara-fm',  intent: 'radio-only' })).toBe('Vara FM Radio-only');
+    expect(panelTitle({ kind: 'ardop-hf', intent: 'radio-only' })).toBe('ARDOP Radio-only');
+    expect(panelTitle({ kind: 'vara-hf',  intent: 'radio-only' })).toBe('VARA HF Radio-only');
+    expect(panelTitle({ kind: 'vara-fm',  intent: 'radio-only' })).toBe('VARA FM Radio-only');
   });
 
   it('returns Winlink suffix for cms intent', () => {
@@ -32,7 +32,7 @@ describe('panelTitle', () => {
 
   it('returns P2P suffix for p2p intent', () => {
     expect(panelTitle({ kind: 'telnet', intent: 'p2p' })).toBe('Telnet P2P');
-    expect(panelTitle({ kind: 'vara-hf', intent: 'p2p' })).toBe('Vara HF P2P');
+    expect(panelTitle({ kind: 'vara-hf', intent: 'p2p' })).toBe('VARA HF P2P');
   });
 
   it('returns Post Office suffix for post-office intent (tuxlink-6c9y)', () => {

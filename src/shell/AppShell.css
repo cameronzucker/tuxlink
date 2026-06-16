@@ -358,51 +358,40 @@
 .layout-b .dashboard .abort-button:hover {
   background: color-mix(in srgb, var(--error, #e5534b) 16%, transparent);
 }
-/* APRS tactical-chat status control (entry ①) in the dashboard ribbon.
-   A slider switch starts/stops the listener (off⇄on); the adjacent text button
-   opens the dock + carries the unread badge. Styled to sit WITH the other ribbon
-   items — neutral when off, accent when listening — consistent, not identical. */
-.layout-b .dashboard .dash-aprs-controls {
+/* APRS tactical-chat status control (entry ①) — a dot + state label that MIRRORS
+   the Connection item's pattern (.dash-connection), so it reads as part of the
+   ribbon rather than a bespoke slider. Click starts/stops listening + opens the
+   APRS panel; the dot is BACKEND TRUTH (reuses .dash-status-dot: green=listening,
+   .connecting=amber pulse, .idle=faint off). */
+.layout-b .dashboard .dash-aprs-control {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-}
-/* Slider switch — track + thumb; accent-filled with the thumb to the right when
-   the listener is armed (BACKEND TRUTH via aria-checked). */
-.layout-b .dashboard .dash-aprs-switch {
-  display: inline-flex; align-items: center; padding: 0; border: none;
-  background: transparent; cursor: pointer;
-}
-.layout-b .dashboard .dash-aprs-switch:disabled { cursor: default; opacity: 0.6; }
-.layout-b .dashboard .dash-aprs-track {
-  position: relative; width: 30px; height: 16px; border-radius: 999px;
-  background: var(--surface-3, #11171d);
-  border: 1px solid var(--border-strong, #3a4150);
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-.layout-b .dashboard .dash-aprs-thumb {
-  position: absolute; top: 1px; left: 1px; width: 12px; height: 12px;
-  border-radius: 50%; background: var(--text-faint, #94a3b8);
-  transition: transform 0.15s ease, background 0.15s ease;
-}
-.layout-b .dashboard .dash-aprs-switch.is-on .dash-aprs-track {
-  background: var(--modem-accent-soft, rgba(74, 222, 128, 0.18));
-  border-color: color-mix(in srgb, var(--modem-accent, #4ade80) 55%, transparent);
-}
-.layout-b .dashboard .dash-aprs-switch.is-on .dash-aprs-thumb {
-  transform: translateX(14px); background: var(--modem-accent, #4ade80);
-}
-/* Open-dock control — neutral text + unread badge (accent reserved for the live
-   switch + the badge, so the item is not a solid green pill anymore). */
-.layout-b .dashboard .dash-aprs-control {
-  display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px;
-  cursor: pointer; background: transparent; border: none; padding: 2px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
   color: var(--text, #cbd5e1);
 }
-.layout-b .dashboard .dash-aprs-control:hover { color: var(--modem-accent, #4ade80); }
+.layout-b .dashboard .dash-aprs-control:hover:not(:disabled) {
+  color: var(--modem-accent, #4ade80);
+}
+.layout-b .dashboard .dash-aprs-control:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.layout-b .dashboard .dash-aprs-state {
+  font-variant-numeric: tabular-nums;
+}
 .layout-b .dashboard .dash-aprs-unread {
-  background: var(--modem-accent, #4ade80); color: var(--bg, #0d1318);
-  font-size: 10px; font-weight: 700; border-radius: 9px; padding: 0 5px;
+  margin-left: 6px;
+  background: var(--modem-accent, #4ade80);
+  color: var(--bg, #0d1318);
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 9px;
+  padding: 0 5px;
 }
 /* "On connect" segmented control — Review | Download all (tuxlink-pmp5). Inline
    opt-out for the review-pending-messages default; lives in the ribbon next to

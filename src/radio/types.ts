@@ -51,8 +51,8 @@ export function panelTitle(mode: RadioPanelMode): string {
   switch (mode.kind) {
     case 'telnet':   return `Telnet ${intentSuffix}`;
     case 'packet':   return `Packet ${intentSuffix}`;
-    case 'ardop-hf': return `Ardop ${intentSuffix}`;
-    case 'vara-hf':  return `Vara HF ${intentSuffix}`;
-    case 'vara-fm':  return `Vara FM ${intentSuffix}`;
+    case 'ardop-hf': return `ARDOP ${intentSuffix}`;
+    case 'vara-hf':  return `VARA HF ${intentSuffix}`;
+    case 'vara-fm':  return `VARA FM ${intentSuffix}`;
   }
 }

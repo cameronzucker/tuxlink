@@ -320,37 +320,41 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
           <div className="dash-divider" />
           <div className="dash-item dash-aprs">
             <div className="dash-label">APRS</div>
-            <div className="dash-aprs-controls">
-              {aprs.onToggleListening && (
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={aprs.listening}
-                  aria-label={aprs.listening ? 'Stop APRS listening' : 'Start APRS listening'}
-                  className={`dash-aprs-switch ${aprs.listening ? 'is-on' : 'is-off'}`}
-                  data-testid="dash-aprs-toggle"
-                  disabled={aprs.toggleBusy}
-                  onClick={aprs.onToggleListening}
-                  title={aprs.listening ? 'Stop APRS listening' : 'Start APRS listening'}
-                >
-                  <span className="dash-aprs-track" aria-hidden="true">
-                    <span className="dash-aprs-thumb" />
-                  </span>
-                </button>
+            {/* One control, mirroring the Connection item's dot+label pattern (not
+                a bespoke slider — that was the lone archetype that read "too
+                different" AND split the click target ambiguously). Clicking it
+                starts/stops APRS listening and opens the APRS panel; the dot is
+                BACKEND TRUTH (green=listening, amber=connecting, faint=off).
+                Starting needs a configured radio — when none is set up the panel
+                opens to its radio picker so the operator can set one up, instead
+                of the control silently refusing. Falls back to onOpen for
+                prop-light consumers/tests that don't pass onToggleListening. */}
+            <button
+              type="button"
+              className="dash-aprs-control"
+              data-testid="dash-aprs-control"
+              aria-pressed={aprs.listening}
+              disabled={aprs.toggleBusy}
+              onClick={aprs.onToggleListening ?? aprs.onOpen}
+              title={
+                aprs.listening
+                  ? 'APRS listening — click to stop'
+                  : aprs.toggleBusy
+                    ? 'Starting APRS…'
+                    : 'Start APRS listening — opens the APRS panel (set up a radio there if none is configured)'
+              }
+            >
+              <span
+                className={`dash-status-dot ${aprs.listening ? '' : aprs.toggleBusy ? 'connecting' : 'idle'}`}
+                aria-hidden="true"
+              />
+              <span className="dash-aprs-state">
+                {aprs.listening ? 'Listening' : aprs.toggleBusy ? 'Connecting…' : 'Off'}
+              </span>
+              {aprs.unread > 0 && (
+                <span className="dash-aprs-unread" data-testid="dash-aprs-unread">{aprs.unread}</span>
               )}
-              <button
-                type="button"
-                className="dash-aprs-control"
-                data-testid="dash-aprs-control"
-                onClick={aprs.onOpen}
-                title="Open APRS tactical chat"
-              >
-                <span className="dash-aprs-state">{aprs.listening ? 'Listening' : 'Off'}</span>
-                {aprs.unread > 0 && (
-                  <span className="dash-aprs-unread" data-testid="dash-aprs-unread">{aprs.unread}</span>
-                )}
-              </button>
-            </div>
+            </button>
           </div>
         </>
       )}

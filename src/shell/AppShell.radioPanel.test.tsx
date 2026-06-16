@@ -282,7 +282,7 @@ describe('<AppShell> radio panel', () => {
     renderShell();
     selectConnection('sess-radio-only', 'proto-radio-only-ardop-hf');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
-    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Ardop Radio-only');
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('ARDOP Radio-only');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
   });
 
@@ -323,7 +323,7 @@ describe('<AppShell> radio panel', () => {
     renderShell();
     selectConnection('sess-cms', 'proto-cms-vara-fm');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
-    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM');
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('VARA FM');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
   });
 
@@ -337,7 +337,7 @@ describe('<AppShell> radio panel', () => {
     selectConnection('sess-p2p', 'proto-p2p-vara-hf');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByTestId('vara-host-input')).toBeInTheDocument();
-    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara HF P2P');
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('VARA HF P2P');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
   });
 
@@ -346,7 +346,7 @@ describe('<AppShell> radio panel', () => {
     renderShell();
     selectConnection('sess-p2p', 'proto-p2p-vara-fm');
     expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 })).toBeInTheDocument();
-    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM P2P');
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('VARA FM P2P');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
   });
 
