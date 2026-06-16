@@ -683,13 +683,19 @@ impl Ax25Stream {
             match frame.control {
                 // Fix I: RNR is remote-busy backpressure — ack through, but mark the
                 // peer busy so `write` stops sending new I-frames until an RR clears it.
-                Control::Rnr { nr, .. } => {
+                Control::Rnr { nr, pf } => {
                     self.ack_through(nr);
                     self.remote_busy = true;
+                    if pf {
+                        self.answer_supervisory_poll()?;
+                    }
                 }
-                Control::Rr { nr, .. } => {
+                Control::Rr { nr, pf } => {
                     self.ack_through(nr);
                     self.remote_busy = false;
+                    if pf {
+                        self.answer_supervisory_poll()?;
+                    }
                 }
                 Control::Rej { nr, .. } => {
                     self.ack_through(nr);
@@ -716,6 +722,29 @@ impl Ax25Stream {
             }
         }
         Ok(())
+    }
+
+    /// Answer an inbound supervisory command poll (RR/RNR with P=1) per AX.25 v2.2
+    /// §6.2: a command frame with the P bit set REQUIRES a response with the F bit set.
+    /// We reply `RR(N(R)=V(R), F=1)` — RR encodes as a response (`is_command()` is false
+    /// ⇒ src C=1 / dest C=0).
+    ///
+    /// Load-bearing for connect: an RMS gateway checkpoints the freshly-established link
+    /// with `RR(P=1)` BEFORE it sends its B2F SID. Without this final the gateway re-polls
+    /// every T1 forever and never advances, so the Dial-role `read_remote_handshake`
+    /// (which expects the remote to speak first) blocks until the operator aborts
+    /// (tuxlink-uv1i; on-air trace 2026-06-16, the `RR nr=0 P=1` storm from KT7RUN-7).
+    ///
+    /// Keying on the P/F bit alone is sound here: this station never ORIGINATES a
+    /// supervisory poll, so an inbound RR/RNR with the bit set is necessarily a command
+    /// poll, never a response final — there is no response we could be misreading.
+    fn answer_supervisory_poll(&mut self) -> std::io::Result<()> {
+        let rr = Frame {
+            path: self.out_path(),
+            control: Control::Rr { nr: self.vr, pf: true },
+            info: vec![],
+        };
+        self.send_frame(&rr)
     }
 
     /// Mark all I-frames with N(S) < nr (mod 8) as acknowledged; advance V(A).
@@ -1119,6 +1148,81 @@ mod lifecycle_tests {
         let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
         let sabm = frames.iter().map(|b| Frame::decode(b).unwrap()).find(|f| matches!(f.control, Control::Sabm { .. })).unwrap();
         assert_eq!(sabm.path.digis, vec![digi]);
+    }
+}
+
+#[cfg(test)]
+mod poll_response_tests {
+    use super::test_peer::ScriptedPeer;
+    use super::*;
+
+    fn call(c: &str, ssid: u8) -> Address { Address { call: c.into(), ssid } }
+
+    fn connected(peer: &ScriptedPeer) -> Ax25Stream {
+        Ax25Stream {
+            link: Box::new(peer.clone()),
+            decoder: KissDecoder::new(),
+            mycall: call("N7CPZ", 7), peer: call("KT7RUN", 7), digis: vec![],
+            params: Ax25Params { t1: Duration::from_millis(20), ..Ax25Params::default() },
+            vs: 0, vr: 3, va: 0, // V(R)=3 so the response N(R) is observable
+            remote_busy: false,
+            pending_frames: std::collections::VecDeque::new(),
+            inbound: std::collections::VecDeque::new(),
+            unacked: std::collections::BTreeMap::new(),
+            closed: false,
+            established: true,
+            frame_log: None,
+        }
+    }
+
+    #[test]
+    fn answers_an_rr_p1_poll_with_an_rr_f1_response() {
+        // tuxlink-uv1i: an RMS gateway checkpoints the freshly-established link with
+        // RR(P=1) before sending its B2F SID. We MUST reply RR(F=1) (AX.25 v2.2 §6.2)
+        // or it re-polls forever and the connect stalls. (The fed frame's C-bit is
+        // irrelevant — our decode reads only the control byte's P/F bit.)
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let gw = call("KT7RUN", 7);
+        let poll = Frame {
+            path: Path { dest: mine.clone(), src: gw.clone(), digis: vec![] },
+            control: Control::Rr { nr: 0, pf: true },
+            info: vec![],
+        };
+        peer.feed(&kiss_data_frame(&poll.encode().unwrap()));
+
+        let mut s = connected(&peer);
+        s.pump_acks().unwrap();
+
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        let rr = frames
+            .iter()
+            .map(|b| Frame::decode(b).unwrap())
+            .find(|f| matches!(f.control, Control::Rr { pf: true, .. }))
+            .expect("must answer the poll with an RR(F=1)");
+        assert_eq!(rr.control, Control::Rr { nr: 3, pf: true }, "N(R)=V(R), F=1");
+        assert_eq!(rr.path.dest, gw, "addressed to the polling gateway");
+        assert_eq!(rr.path.src, mine);
+        // It must go out RESPONSE-framed (dest C=0 / src C=1).
+        let bytes = rr.encode().unwrap();
+        assert_eq!(bytes[6] & 0x80, 0x00, "RR response: dest C=0");
+        assert_eq!(bytes[13] & 0x80, 0x80, "RR response: src C=1");
+    }
+
+    #[test]
+    fn a_plain_rr_ack_is_not_answered() {
+        // A plain RR ack (P/F=0) carries no poll, so it must NOT trigger a response —
+        // otherwise two stations ack-storm each other.
+        let peer = ScriptedPeer::new();
+        let ack = Frame {
+            path: Path { dest: call("N7CPZ", 7), src: call("KT7RUN", 7), digis: vec![] },
+            control: Control::Rr { nr: 0, pf: false },
+            info: vec![],
+        };
+        peer.feed(&kiss_data_frame(&ack.encode().unwrap()));
+        let mut s = connected(&peer);
+        s.pump_acks().unwrap();
+        assert!(peer.drain_tx().is_empty(), "a plain RR ack must not be answered");
     }
 }
 
