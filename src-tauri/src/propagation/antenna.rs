@@ -134,18 +134,6 @@ pub enum GroundType {
     PoorSoil,
 }
 
-impl GroundType {
-    /// `(dielectric ε_r, conductivity σ S/m)` — standard VOACAP/EZNEC values.
-    fn constants(self) -> (f64, f64) {
-        match self {
-            GroundType::Average => (13.0, 0.005),
-            GroundType::SeaWater => (80.0, 5.0),
-            GroundType::GoodSoil => (40.0, 0.02),
-            GroundType::PoorSoil => (3.0, 0.001),
-        }
-    }
-}
-
 /// The generated `.voa` filename written into the scratch `antennas/default/`
 /// for the operator's selected preset. Every preset now resolves to a
 /// precomputed Type-14 pattern (see [`crate::propagation::patterns`]), so this

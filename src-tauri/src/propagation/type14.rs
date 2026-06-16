@@ -211,7 +211,7 @@ impl Type14Pattern {
 /// every line. Used by the antenna-pattern preview (a read-only projection of the
 /// same data that feeds voacapl). ASCII content, so byte offset == char offset.
 pub fn read_block_gains(voa: &str, block: usize) -> Result<Vec<f64>, String> {
-    if block < 1 || block > N_BLOCKS {
+    if !(1..=N_BLOCKS).contains(&block) {
         return Err(format!("block {block} out of range 1..={N_BLOCKS}"));
     }
     let lines: Vec<&str> = voa.lines().collect();

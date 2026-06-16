@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn yagi_is_directional_with_high_forward_gain() {
         let yagi = read_block_gains(pattern_voa(AntennaPreset::BeamYagi, 9.0), 14).unwrap();
-        let peak = yagi.iter().cloned().fold(f64::MIN, f64::max);
+        let peak = yagi.iter().copied().fold(f64::MIN, f64::max);
         assert!(peak > 6.0, "yagi forward gain should exceed +6 dBi (got {peak})");
     }
 }
