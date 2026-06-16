@@ -101,4 +101,13 @@ describe('StationFinderControls', () => {
     render(<StationFinderControls {...baseProps} listFetchedAtMs={null} />);
     expect(screen.queryByTestId('list-age')).toBeNull();
   });
+
+  it('surfaces a recomputing affordance while reachability re-sweeps (tuxlink-ziyu)', () => {
+    const { rerender } = render(<StationFinderControls {...baseProps} recomputing={false} />);
+    expect(screen.queryByTestId('reach-recomputing')).toBeNull();
+    rerender(<StationFinderControls {...baseProps} recomputing={true} />);
+    const status = screen.getByTestId('reach-recomputing');
+    expect(status.textContent).toMatch(/updating reachability/i);
+    expect(status.getAttribute('role')).toBe('status');
+  });
 });

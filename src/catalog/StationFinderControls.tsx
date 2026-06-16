@@ -29,6 +29,9 @@ export interface StationFinderControlsProps {
   sfi?: number | null;
   kIndex?: number | null;
   predictionAvailable: boolean;
+  /** Reachability tiers are recomputing (a prefs change kicked off a re-sweep).
+   *  Surfaced so the re-coloring map doesn't read as frozen (tuxlink-ziyu). */
+  recomputing?: boolean;
   /** Freshest station-list fetch stamp (Unix ms) for the "updated N ago"
    *  caption — the U2 last-known-good freshness surface (design §6). */
   listFetchedAtMs?: number | null;
@@ -112,6 +115,11 @@ export function StationFinderControls(props: StationFinderControlsProps) {
           )}
           {props.ssnAgeDays != null && (
             <span className="station-finder__stale">solar data {props.ssnAgeDays}d old</span>
+          )}
+          {props.recomputing && (
+            <span className="station-finder__recomputing" data-testid="reach-recomputing" role="status">
+              updating reachability…
+            </span>
           )}
           {!props.predictionAvailable && (
             <span className="station-finder__stale">no forecast — distance only</span>
