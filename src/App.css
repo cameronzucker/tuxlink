@@ -289,8 +289,13 @@ body,
  * buttons remain readable.
  * -------------------------------------------------------------------------- */
 
-/* Daylight — soft off-white surfaces with warm-amber accent. Designed for
- * indoor + bright-sun moderate conditions; not full-contrast. */
+/* Daylight — high-contrast light theme for direct-sun / outdoor use (tuxlink-fwse).
+ * COLORS ONLY: same component shapes/fonts/borders. Contrast comes from (1) black
+ * body text + darkened secondary text (no faint grays that vanish in glare), (2)
+ * saturated accents, and (3) BOLD stateful fills — the selected message + active
+ * folder become a solid --accent block with white text (see the daylight-scoped
+ * overrides below), not a 13% wash you can't see washed-out. Borders are left
+ * untouched (operator: don't add lines to fake contrast). */
 :root[data-theme='daylight'] {
   --bg: #f4f6f9;
   --surface: #ffffff;
@@ -299,30 +304,64 @@ body,
   --border: #d4dae2;
   --border-strong: #9ea7b3;
   --border-soft: #e6eaef;
-  --text: #101820;
-  --text-dim: #3d4753;
-  --text-faint: #6c7682;
-  --accent: #a04a00;
-  --accent-2: #7a3700;
-  --accent-soft: rgba(160, 74, 0, 0.10);
+  --text: #050a0f;
+  --text-dim: #1e252c;
+  --text-faint: #394149;
+  --accent: #a83800;
+  --accent-2: #7a2900;
+  --accent-soft: rgba(168, 56, 0, 0.10);
   /* tuxlink-2ief: modem-accent carries the radio dock's green identity
      across light themes — deep forest green for high contrast on the
      off-white surface. The amber accent stays for general highlights. */
-  --modem-accent: #0a6d3b;
-  --modem-accent-2: #137a47;
-  --modem-accent-soft: rgba(10, 109, 59, 0.10);
+  --modem-accent: #0a6b2e;
+  --modem-accent-2: #0f7a38;
+  --modem-accent-soft: rgba(10, 107, 46, 0.10);
   --modem-accent-fg: #ffffff;
-  --unread-dot: #a04a00;
-  --success: #0a6d3b;
-  --error: #a3171e;
-  --info: #0b4f9c;
+  --unread-dot: #a83800;
+  --success: #0a6b2e;
+  --error: #a80012;
+  --info: #0a4a96;
   --form-tag: #5b21b6;
   /* literal --tux-* tokens (no primitive to alias) */
   --tux-accent-fg: #ffffff;
   --tux-danger-fg: #ffffff;
   --tux-danger-surface: rgba(163, 23, 30, 0.10);
-  --tux-focus-ring: rgba(160, 74, 0, 0.45);
+  --tux-focus-ring: rgba(168, 56, 0, 0.45);
   color-scheme: light;
+}
+
+/* tuxlink-fwse: daylight high-contrast stateful fills. The selected message row
+ * and active folder ship cross-theme as a ~10% --accent-soft wash — invisible on
+ * a sun-washed white surface ("you can barely tell it's highlighted"). In daylight
+ * ONLY, make them a SOLID --accent block with white text: a big light/dark
+ * difference that reads at a glance, washed out or not. Daylight-scoped so every
+ * other theme is untouched; colors only — no shape/border/font changes. The
+ * `:root[data-theme='daylight']` prefix outranks the base `.layout-b .row.selected`
+ * (and `:not(.unread)`) rules on specificity. */
+:root[data-theme='daylight'] .layout-b .row.selected {
+  background: var(--accent);
+}
+:root[data-theme='daylight'] .layout-b .row.selected .from,
+:root[data-theme='daylight'] .layout-b .row.selected .from .from-text,
+:root[data-theme='daylight'] .layout-b .row.selected .subject,
+:root[data-theme='daylight'] .layout-b .row.selected .subject .subject-text,
+:root[data-theme='daylight'] .layout-b .row.selected .date,
+:root[data-theme='daylight'] .layout-b .row.selected .size,
+:root[data-theme='daylight'] .layout-b .row.selected .preview {
+  color: var(--tux-accent-fg);
+}
+:root[data-theme='daylight'] .layout-b .row.selected .from .unread-dot {
+  background: var(--tux-accent-fg);
+  box-shadow: none;
+}
+:root[data-theme='daylight'] .layout-b .sidebar .nav-item.active {
+  background: var(--accent);
+  color: var(--tux-accent-fg);
+  border-left-color: var(--accent);
+}
+:root[data-theme='daylight'] .layout-b .sidebar .nav-item.active .icon,
+:root[data-theme='daylight'] .layout-b .sidebar .nav-item.active .count {
+  color: var(--tux-accent-fg);
 }
 
 /* High-contrast light — white reading surfaces on a visible neutral ladder,
