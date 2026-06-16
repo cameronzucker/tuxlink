@@ -37,7 +37,15 @@ identical across all three) — left untouched. Archives are local-only (gitigno
 
 ## In progress
 
-### PR #765 (DRAFT) — tuxlink-ot71 "Update propagation data" — Layers 1+2 of 5
+> **UPDATE (post-handoff, same session):** operator directed merging #765 for today's
+> combined release. **#765 is now MERGED to main** (merge commit `50e48b27`) — Layers 1+2
+> are in `main`. The `bd-tuxlink-ot71/propagation-update` branch is merged-dead and its
+> worktree was disposed. **L3–5 continue on a FRESH worktree off the updated main**
+> (e.g. `bd-tuxlink-ot71/propagation-update-l3`), NOT the old worktree. tuxlink-ot71 stays
+> open. The merged foundation is inert (no user-facing surface yet); the runtime-mutable
+> change is behavior-identical today since nothing writes the writable forecast.
+
+### PR #765 (MERGED) — tuxlink-ot71 "Update propagation data" — Layers 1+2 of 5
 **Operator source decision (2026-06-16):** NOAA SWPC, **model-correct** posture —
 `predicted-solar-cycle.json` → monthly smoothed `predicted_ssn` (the VOACAP input, keyed
 `YYYY-MM`, maps directly onto `SsnForecast.monthly`); `wwv.txt` → live SFI/K **context only**.
