@@ -190,6 +190,32 @@ describe('<ArdopRadioPanel>', () => {
     expect(invokeMock).not.toHaveBeenCalledWith('modem_mint_consent');
   });
 
+  it('a modem_ardop_connect failure does NOT render an inline panel error — it goes to the session log (tuxlink-nnjz)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'modem_ardop_connect') {
+        throw new Error('spawn failed: ardopcf not found');
+      }
+      return defaultInvokeImpl(cmd, args);
+    });
+    const { container } = renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+    await switchToManualTab();
+    const target = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
+    fireEvent.change(target, { target: { value: 'W7RMS-10' } });
+    fireEvent.click(screen.getByTestId('ardop-start-btn'));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'modem_ardop_connect',
+        expect.objectContaining({ target: 'W7RMS-10' }),
+      );
+    });
+    // Modem errors belong in the log window (the backend emits them on
+    // session_log:line), NOT in an inline element wedged beside the buttons.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.querySelector('.radio-panel-error')).toBeNull();
+  });
+
   it('Stop button fires modem_ardop_disconnect when modem is running', async () => {
     mockUseModemStatus.mockReturnValue({
       status: RUNNING,

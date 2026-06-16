@@ -596,7 +596,11 @@ export function ArdopRadioPanel({
         target: target.trim(),
       });
     } catch (e) {
-      setConnectError(String(e));
+      // tuxlink-nnjz: modem errors are surfaced in the session log (the backend
+      // emits an Error line on failure) — not in an inline panel element wedged
+      // next to the buttons. Keep a dev-console trace; the operator-facing
+      // report is the log row right there in the panel.
+      console.debug('ARDOP connect failed (surfaced in session log):', e);
     } finally {
       setConnecting(false);
     }
@@ -621,7 +625,10 @@ export function ArdopRadioPanel({
         transportKind: 'ardop',
       });
     } catch (e) {
-      setConnectError(`Send/Receive failed: ${e}`);
+      // tuxlink-nnjz: the send/receive failure is surfaced in the session log
+      // by the backend (Error line), not an inline panel element. The gateway
+      // `failed` record below is a separate, deliberate empirical fact.
+      console.debug('ARDOP send/receive failed (surfaced in session log):', e);
       // Record a gateway `failed` (C3) — in the CATCH, never the FINALLY, so a
       // pre-air busy-guard rejection or the local connect never logs a spurious
       // gateway failure. The guard at the top (isExchangeReady / effectiveTarget
@@ -643,7 +650,8 @@ export function ArdopRadioPanel({
     try {
       await invoke('modem_ardop_disconnect');
     } catch (e) {
-      setConnectError(String(e));
+      // tuxlink-nnjz: surfaced in the session log by the backend, not inline.
+      console.debug('ARDOP disconnect failed (surfaced in session log):', e);
     } finally {
       setDisconnecting(false);
     }

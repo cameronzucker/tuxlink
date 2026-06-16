@@ -13,16 +13,39 @@ use tauri::{AppHandle, Manager, State};
 use crate::config::{self, ArdopUiConfig, Config};
 use crate::modem_status::{ModemSession, ModemState, ModemStatus};
 use crate::native_mailbox::Mailbox;
+use crate::session_log::SessionLogState;
 use crate::winlink::modem::ardop::transport::ArdopTransport;
 use crate::winlink::modem::ardop::ArdopConfig;
 use crate::winlink::modem::{InitConfig, ModemTransport};
 use crate::winlink::session::SessionIntent;
+use crate::winlink_backend::{LogLevel, LogSource};
 
 /// Number of ARQ retries packed into the `ARQCALL` setter.
 const CONNECT_REPEAT: u32 = 3;
 
 /// ARQ-link idle timeout passed to the TNC via `ARQTIMEOUT` during init.
 const ARQ_TIMEOUT_SECS: u32 = 30;
+
+/// Surface a modem-operation failure in the operator session log (tuxlink-nnjz).
+///
+/// Modem/transport errors belong in the session-log window the operator is
+/// already watching — NOT in an inline panel element wedged next to the
+/// buttons. Emitting at `LogLevel::Error` / `LogSource::Transport` lands the
+/// line live on `session_log:line` (projected to a visible `alert` row, not the
+/// `raw`/Wire bucket) AND in the durable snapshot, so it survives a panel
+/// re-mount. Best-effort: a missing `SessionLogState` or emit failure is
+/// swallowed — the command still returns its `Err` so the caller can clear its
+/// in-flight spinner.
+fn emit_modem_error(app: &AppHandle, message: &str) {
+    let buffer = app.state::<Arc<SessionLogState>>();
+    crate::session_log_emit::emit(
+        app,
+        &buffer,
+        LogLevel::Error,
+        LogSource::Transport,
+        message,
+    );
+}
 
 /// Return the persisted ARDOP configuration, or the struct default if nothing
 /// has been written yet (first run) or the config file is absent.
@@ -123,6 +146,7 @@ pub fn modem_get_status(session: State<'_, Arc<ModemSession>>) -> ModemStatus {
 /// cmd socket).
 #[tauri::command]
 pub async fn modem_ardop_disconnect(
+    app: AppHandle,
     session: State<'_, Arc<ModemSession>>,
 ) -> Result<(), String> {
     // tuxlink-ab9h: run the abort + link-disconnect (bounded 5 s) OFF the
@@ -136,6 +160,9 @@ pub async fn modem_ardop_disconnect(
     tokio::task::spawn_blocking(move || modem_ardop_disconnect_inner(&session))
         .await
         .map_err(|e| format!("disconnect task panicked: {e}"))?
+        // tuxlink-nnjz: a disconnect error (best-effort path; rare) surfaces in
+        // the session log rather than an inline panel element.
+        .inspect_err(|e| emit_modem_error(&app, e))
 }
 
 /// Inner helper with a factory seam — ARDOP connect with in-process busy guard.
@@ -975,6 +1002,10 @@ pub async fn modem_ardop_connect(
     })
     .await
     .map_err(|e| format!("connect task panicked: {e}"))?
+    // tuxlink-nnjz: surface a connect failure in the session log (where the
+    // operator is already looking) rather than an inline panel element. The
+    // Err still propagates so the panel clears its connecting spinner.
+    .inspect_err(|e| emit_modem_error(&app, e))
 }
 
 /// Run a B2F mail exchange over an open ARDOP session (tuxlink-ytg +
@@ -1104,6 +1135,10 @@ pub async fn modem_ardop_b2f_exchange(
     })
     .await
     .map_err(|e| format!("b2f task panicked: {e}"))?
+    // tuxlink-nnjz: surface a send/receive failure in the session log instead
+    // of an inline panel element. Err still propagates (the panel clears its
+    // exchanging spinner + records the gateway `failed` attempt).
+    .inspect_err(|e| emit_modem_error(&app, e))
 }
 
 /// Inner helper for [`modem_ardop_b2f_exchange`]: drives the full

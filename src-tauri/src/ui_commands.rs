@@ -3497,6 +3497,34 @@ pub fn session_log_clear(
     Ok(())
 }
 
+/// Append an operator-facing line to the session log from the frontend
+/// (tuxlink-nnjz).
+///
+/// For purely-frontend failures that never reach a backend command — notably
+/// the ribbon Connect's `MissingTargetError` (no persisted target for an RF
+/// mode), which previously only `console.warn`'d and so was invisible to the
+/// operator (AppShell `onConnect`). Routes through the same append + broadcast
+/// path as backend lines so the message lands live in the session-log window
+/// the operator is already watching, plus the durable snapshot. `level` is one
+/// of `"error" | "warn" | "info"` (anything else maps to `info`). Source is
+/// `Backend` so the line is operator-visible — never the hidden `Wire`/raw
+/// bucket the default Show-raw=off filter suppresses.
+#[tauri::command]
+pub fn session_log_append(
+    app: AppHandle,
+    state: State<'_, std::sync::Arc<SessionLogState>>,
+    level: String,
+    message: String,
+) -> Result<(), UiError> {
+    let lvl = match level.as_str() {
+        "error" => LogLevel::Error,
+        "warn" => LogLevel::Warn,
+        _ => LogLevel::Info,
+    };
+    emit_session_line_with_source(&app, state.inner(), lvl, LogSource::Backend, message);
+    Ok(())
+}
+
 // ============================================================================
 // tuxlink-ng3 — app_quit (HTML chrome File→Quit / Ctrl+Q)
 // ============================================================================
