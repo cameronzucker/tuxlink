@@ -27,6 +27,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { writeLastTarget } from '../../connections/connectDispatch';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -83,6 +84,8 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
   const handlePrefill = useCallback((dial: FavoriteDial) => {
     setTarget(dial.gateway);
     pendingDialRef.current = dial;
+    // tuxlink-vu97: persist so the ribbon Connect can dial this target (pane closed).
+    writeLastTarget('packet', dial.gateway);
   }, []);
 
   useEffect(
@@ -484,6 +487,9 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
                     // A hand-typed target is not the prefilled favorite — drop
                     // the association so the record doesn't carry stale metadata.
                     pendingDialRef.current = null;
+                    // tuxlink-vu97: persist the configured target so the ribbon
+                    // Connect can fire packet's connect→B2F with this pane closed.
+                    writeLastTarget('packet', e.target.value);
                   }}
                 />
               </label>
