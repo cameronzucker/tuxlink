@@ -15,6 +15,7 @@ import type { Favorite, StationsFile } from '../favorites/types';
 import { useStations } from './useStations';
 import { aggregateStations, stationMatchesBandMode, type Station } from './stationModel';
 import { useReachabilityMap, stationKey } from './useReachabilityMap';
+import { useDebouncedCommit } from './useDebouncedCommit';
 import { useStationPrediction } from './useStationPrediction';
 import { distanceFromGrids, kmToMi } from './distance';
 import { StationFinderControls, type FilterMode } from './StationFinderControls';
@@ -42,6 +43,12 @@ export interface StationFinderPanelProps {
 }
 
 const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet'];
+
+// Coalesce an antenna-control gesture (a height-slider drag, SNR/power typing)
+// into ONE persist + ONE reachability re-sweep once the operator settles, rather
+// than one full N-station voacapl sweep per onChange event (tuxlink-ziyu). 300 ms
+// is below the threshold of feeling laggy yet long enough to swallow a drag.
+const PREFS_COMMIT_DEBOUNCE_MS = 300;
 
 // UTC hour is captured once on open (not a live clock) to keep ranking stable.
 function currentUtcHour(): number {
@@ -228,15 +235,29 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
     };
   }, []);
 
-  // Persist a prefs change, then bump the reload key so the forecast re-runs with
-  // the new TX model — only AFTER the write resolves (the backend reads the prefs
-  // file fresh each prediction, so re-running before the write would read stale).
+  // Debounced commit: persist the prefs change, then bump the reload key so the
+  // forecast re-runs with the new TX model — only AFTER the write resolves (the
+  // backend reads the prefs file fresh each prediction, so re-running before the
+  // write would read stale). Debouncing collapses a slider drag / typing burst
+  // into a single persist + single N-station re-sweep (tuxlink-ziyu). On unmount
+  // a still-pending value is persisted WITHOUT the reload bump (the component is
+  // gone — no setState), so a final drag is not silently lost.
+  const commitPrefs = useDebouncedCommit<PropagationPrefs>(
+    (next) => {
+      writePropagationPrefs(next)
+        .then(() => setPredictReload((v) => v + 1))
+        .catch(() => setPrefsError('Could not save antenna settings.'));
+    },
+    PREFS_COMMIT_DEBOUNCE_MS,
+    (next) => {
+      void writePropagationPrefs(next).catch(() => {});
+    },
+  );
+
   const handlePrefsChange = (next: PropagationPrefs) => {
-    setPrefs(next);
+    setPrefs(next); // live UI follows the slider immediately
     setPrefsError(null);
-    writePropagationPrefs(next)
-      .then(() => setPredictReload((v) => v + 1))
-      .catch(() => setPrefsError('Could not save antenna settings.'));
+    commitPrefs(next); // debounced persist + recompute
   };
 
   const toggleMode = (m: FilterMode) =>
@@ -281,6 +302,7 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
           ssn={pred.prediction?.ssn ?? null}
           ssnAgeDays={ssnAgeDays}
           predictionAvailable={reach.available || pred.status === 'ok'}
+          recomputing={reach.loading}
           listFetchedAtMs={listFetchedAtMs}
           radiusMi={radiusMi}
           onRadiusChange={setRadiusMi}

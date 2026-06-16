@@ -122,6 +122,33 @@ describe('StationFinderPanel', () => {
     );
   });
 
+  // tuxlink-ziyu regression: a burst of antenna-control changes (a height-slider
+  // drag fires onChange per grid-index crossing) must NOT persist + recompute
+  // once per event. Before the fix, each change synchronously called
+  // propagation_prefs_write and bumped the reachability reload key, launching a
+  // full N-station voacapl re-sweep per tick. The debounced commit defers the
+  // write and coalesces the burst into a single persist.
+  it('debounces + coalesces a burst of antenna-control changes into one persist', async () => {
+    renderPanel(<StationFinderPanel onClose={() => {}} />);
+    await screen.findByRole('dialog', { name: /find a station/i });
+    const slider = await screen.findByTestId('antenna-height-slider');
+
+    // Fire a rapid burst (a slider drag across several grid stops).
+    for (const idx of ['0', '1', '2', '3', '4']) {
+      fireEvent.change(slider, { target: { value: idx } });
+    }
+    // Deferred, not synchronous: the old code would already have written here.
+    expect(invoke).not.toHaveBeenCalledWith('propagation_prefs_write', expect.anything());
+
+    // After the debounce settles, exactly one persist for the whole burst.
+    await waitFor(
+      () => expect(invoke).toHaveBeenCalledWith('propagation_prefs_write', expect.anything()),
+      { timeout: 1500 },
+    );
+    const writes = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'propagation_prefs_write');
+    expect(writes.length).toBe(1);
+  });
+
   it('shows the "set your location" hint only when neither GPS nor a manual grid is available', async () => {
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'position_current_fix') return { grid: null } as unknown as never;

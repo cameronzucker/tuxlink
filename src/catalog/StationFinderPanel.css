@@ -116,6 +116,24 @@
 .station-finder__stale {
   color: #e0c060;
 }
+.station-finder__recomputing {
+  color: var(--accent, #5fa8e0);
+  font-style: italic;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .station-finder__recomputing {
+    animation: station-finder-pulse 1.2s ease-in-out infinite;
+  }
+}
+@keyframes station-finder-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
 .station-finder__bandbar {
   display: flex;
   align-items: center;
