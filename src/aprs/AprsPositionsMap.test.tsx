@@ -135,6 +135,21 @@ describe('AprsPositionsMap', () => {
     expect(getByTestId('aprs-position-age').textContent).toContain('min ago');
     expect(getByTestId('aprs-position-ambiguity').textContent).toContain('approximate');
   });
+
+  it('popup names the decoded APRS symbol on click', () => {
+    const stations: HeardPosition[] = [
+      // "/_" = primary table, code '_' → Weather station.
+      { call: 'WX1AA', lat: 41, lon: -72, symbolTable: '/', symbolCode: '_', comment: '', at: Date.now(), ambiguity: 0 },
+      // "/>" = primary table, code '>' → Car.
+      { call: 'MOBILE', lat: 42, lon: -71, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 0 },
+    ];
+    const { getByTestId } = render(<AprsPositionsMap positions={stations} />);
+    const map = loadLast();
+    act(() => map.__emit('click:aprs-position-pins', { features: [{ properties: { call: 'WX1AA' } }] }));
+    expect(getByTestId('aprs-position-symbol').textContent).toContain('Weather station');
+    act(() => map.__emit('click:aprs-position-pins', { features: [{ properties: { call: 'MOBILE' } }] }));
+    expect(getByTestId('aprs-position-symbol').textContent).toContain('Car');
+  });
 });
 
 describe('AprsPositionsMap viewport persistence (tuxlink-dwzu)', () => {

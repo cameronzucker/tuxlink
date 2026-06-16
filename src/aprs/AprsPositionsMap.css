@@ -61,6 +61,20 @@
   color: var(--faint, #6f8aa3);
 }
 
+/* The decoded APRS symbol identity (glyph + name) for the heard station. */
+.aprs-positions-map__popup-symbol {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted, #9fb6cc);
+}
+
+.aprs-positions-map__popup-symbol-glyph {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
 /* Amber to match the uncertainty region — marks the fix as approximate. */
 .aprs-positions-map__popup-ambiguity {
   font-size: 0.72rem;

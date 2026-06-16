@@ -25,6 +25,7 @@ import { useMapOverlay } from '../map/mapHooks';
 import { usePersistedViewport } from '../map/usePersistedViewport';
 import { RecenterControl } from '../map/RecenterControl';
 import { gridToLatLon } from '../forms/position/maidenhead';
+import { lookupAprsSymbol } from './aprsSymbols';
 import type { HeardPosition } from './aprsTypes';
 import './AprsPositionsMap.css';
 
@@ -321,6 +322,10 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
   // station was pruned (stale TTL), the popup closes on its own.
   const selected = popupCall ? byCall.get(popupCall) : undefined;
   if (!selected) return null;
+  // Identify the station's APRS symbol from the table+code it transmitted, so
+  // the popup names what kind of station this is (car, weather, digipeater, …).
+  // RF-honesty: this only reflects the symbol actually on the wire.
+  const symbol = lookupAprsSymbol(selected.symbolTable, selected.symbolCode);
   return (
     <div className="aprs-positions-map__popup" role="status" data-testid="aprs-position-popup">
       <button
@@ -332,6 +337,12 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
         ×
       </button>
       <span className="aprs-positions-map__popup-call">{selected.call}</span>
+      <span className="aprs-positions-map__popup-symbol" data-testid="aprs-position-symbol">
+        <span className="aprs-positions-map__popup-symbol-glyph" aria-hidden="true">
+          {symbol.glyph}
+        </span>
+        {symbol.overlay ? `${symbol.name} (overlay ${symbol.overlay})` : symbol.name}
+      </span>
       <span className="aprs-positions-map__popup-age" data-testid="aprs-position-age">
         last heard {formatAge(Math.max(0, now - selected.at))}
       </span>
