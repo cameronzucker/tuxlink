@@ -2035,6 +2035,10 @@ impl NativeBackend {
         let abort_handle = self.abort_handle.clone();
         let aborting = self.aborting.clone();
         let disconnecting = self.disconnecting.clone();
+        // tuxlink-uvi7: thread the shared PositionArbiter into the packet path so the
+        // B2F greeting broadcasts the live locator (Arc is Send + 'static, safe to move
+        // across spawn_blocking). Mirrors native_connect (telnet).
+        let position = self.position.clone();
         let allowlist_override = self.packet_allowlist_override.clone();
 
         self.set_status(initial_status);
@@ -2050,6 +2054,7 @@ impl NativeBackend {
                 &abort_handle,
                 aborting,
                 disconnecting,
+                position,
                 allowlist_override,
             )
         })
@@ -2272,10 +2277,16 @@ fn native_packet_connect(
     abort_handle: &Mutex<Option<TcpStream>>,
     aborting: Arc<AtomicBool>,
     disconnecting: Arc<AtomicBool>,
+    position: Option<Arc<crate::position::PositionArbiter>>,
     allowlist_override: Option<crate::winlink::listener::AllowedStations>,
 ) -> Result<(), BackendError> {
     let params = config.packet.params.clone().into_params();
-    let locator = cms_locator(config);
+    // tuxlink-uvi7: resolve the on-air locator via the shared PositionArbiter (live GPS
+    // or manual grid, reduced to broadcast precision) — same path as native_connect
+    // (telnet). The packet path previously used the static cms_locator(config), which
+    // reads only config.identity.grid, so a GPS-derived grid never reached the B2F
+    // greeting and it went out as an empty `()` (on-air K7YCA-8 2026-06-16).
+    let locator = crate::position::effective_broadcast_locator(config, position.as_deref());
     let base = resolved.base_mycall.clone();
     // tuxlink-nfwv: trace every keyed/received AX.25 frame to the session log (`raw`
     // level → operator "Show Raw" / alpha-tester bug-report attachment). Reuses the
@@ -2649,10 +2660,15 @@ fn abort_aware_outcome(
     }
 }
 
-/// The grid locator advertised in the CMS handshake, reduced to the configured
-/// broadcast precision (tuxlink-882). Empty when no grid is set. This is the single
-/// on-air position surface today; it MUST go through `broadcast_grid` so a stored
-/// 6-char grid never leaks past a 4-char privacy setting.
+/// The static (config-grid-only) locator, reduced to broadcast precision.
+///
+/// tuxlink-uvi7: production now resolves the on-air locator via
+/// `crate::position::effective_broadcast_locator` (GPS-arbiter aware) on BOTH the
+/// telnet and packet paths. This static helper is retained as the no-arbiter
+/// reference the `resolve_locator` / `cms_locator_*` tests assert against, so it
+/// has no production caller — `allow(dead_code)` rather than `cfg(test)` to keep
+/// the shared `broadcast_grid` import live in non-test builds.
+#[allow(dead_code)]
 fn cms_locator(config: &Config) -> String {
     config
         .identity
