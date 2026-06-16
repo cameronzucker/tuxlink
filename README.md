@@ -105,6 +105,9 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 
 ### Winlink engine
 
+<img src="docs/readme/images/tuxlink-ardop-hf.png" width="340" align="right"
+     alt="ARDOP HF radio panel: Find-a-Gateway, Favorites/Recent station tabs, ALSA capture/playback and PTT selectors, ARQ bandwidth, a live quality meter, and an ARDOP frame ribbon" />
+
 - **Native B2F engine.** The Winlink B2F protocol is implemented directly in
   Rust: CMS over telnet (TLS or plaintext), the full propose / accept message
   exchange, and on-disk mailbox persistence. No external modem daemon or
@@ -114,36 +117,19 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 - **AX.25 1200-baud packet.** Connected-mode AX.25 over a KISS TNC: USB serial,
   Bluetooth RFCOMM, or KISS-over-TCP to a soundcard modem such as
   [Dire Wolf](https://github.com/wb2osz/direwolf). Inline radio panel with an
-  SSID picker.
-- **ARDOP HF.** A complete UI for the ARDOP transport: pre-flight, dial, abort,
-  quality scoring, and session log. A local `ardopcf` daemon drives the
-  transport over its command and data sockets.
+  SSID picker and a digipeater relay path.
+- **ARDOP HF** *(pictured)*. A complete panel for the ARDOP transport, driving a
+  local `ardopcf` over its command and data sockets: **Find a Gateway** sorts
+  RMS stations by distance from your grid; favorites and recent stations are
+  saved per transport; ALSA capture/playback and the PTT serial line are picked
+  inline; ARQ bandwidth is selectable; and a live quality meter, an ARDOP frame
+  ribbon, and the session log track the link as it runs — freeze-free, with a
+  working abort.
 - **VARA HF / VARA FM.** A connection panel manages the TCP link to an
   operator-supplied VARA instance, surfaces connect and error state, and edits
   the persisted VARA configuration. Over-the-air peer sessions are pending.
 
-Every transport gets its own in-window radio panel — pre-flight, dial, abort,
-device and PTT setup, live signal telemetry, and a session log.
-
-<img src="docs/readme/images/tuxlink-ardop-hf.png" width="360" align="right"
-     alt="ARDOP HF radio panel: Find-a-gateway, Favorites/Recent/Manual station tabs, ALSA capture/playback and PTT selectors, a quality meter, and an ARDOP frame ribbon" />
-
-**ARDOP HF** drives a local `ardopcf`. The panel finds a gateway by distance,
-remembers favorite and recent stations, selects ALSA capture/playback and the
-PTT serial line, and tracks link quality with a live meter and an ARDOP frame
-ribbon as the session runs.
-
 <br clear="right" />
-
-<img src="docs/readme/images/tuxlink-packet.png" width="360" align="left"
-     alt="Packet (AX.25) radio panel: TCP / USB / Bluetooth modem link, station call and SSID, a connect target with a digipeater relay path, and a session log" />
-
-**Packet (AX.25)** runs connected-mode 1200-baud over a KISS TNC — USB serial,
-Bluetooth RFCOMM, or KISS-over-TCP. The panel sets the link, the station call
-and SSID, and a digipeater relay path inline, then streams the connected session
-into the log below.
-
-<br clear="left" />
 
 ### Tactical and local operations
 
@@ -236,26 +222,18 @@ on HF and real-time tactical chat on VHF without the two contending.
 - **OS keyring credentials.** The OS keyring (secret-service on Linux) holds
   the Winlink CMS password. Tuxlink never persists it to a config file on disk.
 
-Emergency operating happens in a tent at noon and an EOC at 3 a.m., so color
-schemes re-skin the whole interface for the lighting at hand.
+Emergency operating happens in a tent at noon and an EOC at 3 a.m. Every color
+scheme re-skins the whole interface — ribbon, folders, message list, reading
+pane — not just an accent. **Night / tactical (red)** preserves night vision in
+a darkened shelter; **Daylight** is a light, high-contrast palette for reading
+an LCD in direct sun. The same mailbox, two lighting modes:
 
-<img src="docs/readme/images/tuxlink-color-night-red.png" width="440" align="right"
-     alt="Tuxlink in the Night / tactical red color scheme: red-on-black across the ribbon, folder sidebar, message list, and reading pane" />
-
-The **Night / tactical (red)** scheme drops the whole interface to red-on-black
-to preserve night vision in a darkened EOC or field shelter — every surface, not
-just an accent.
-
-<br clear="right" />
-
-<img src="docs/readme/images/tuxlink-color-daylight.png" width="440" align="left"
-     alt="Tuxlink in the Daylight color scheme: a light, high-contrast palette across the ribbon, folder sidebar, message list, and reading pane" />
-
-The **Daylight** scheme switches to a light, high-contrast palette for reading an
-LCD in direct sun. It is one of several bundled presets, and the inline Theme
-Designer builds custom palettes from any of them.
-
-<br clear="left" />
+<p align="center">
+  <img src="docs/readme/images/tuxlink-color-night-red.png" width="49%"
+       alt="Tuxlink in the Night / tactical red color scheme: red-on-black across the ribbon, folder sidebar, message list, and reading pane" />
+  <img src="docs/readme/images/tuxlink-color-daylight.png" width="49%"
+       alt="Tuxlink in the Daylight color scheme: a light, high-contrast palette across the ribbon, folder sidebar, message list, and reading pane" />
+</p>
 
 ## Install
 
