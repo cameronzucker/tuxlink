@@ -63,6 +63,16 @@ describe('AprsSettings', () => {
   it('persists a link change from Settings via packet_config_set', async () => {
     render(<AprsSettings />);
     await screen.findByTestId('modem-link-section');
+    // Wait for the persisted config to load and re-seed the picker before
+    // clicking: `usePacketConfig.setLink` is a NO-OP until `config` is loaded
+    // (`if (!config) return`), and the section renders before the async
+    // `packet_config_get` resolves. Clicking too early drops the change
+    // silently — a race that flakes on slow CI (arm64) but passes locally.
+    // The loaded config is UvproNative, so the UV-Pro segment becoming active
+    // is the deterministic "config loaded" signal.
+    await waitFor(() =>
+      expect(screen.getByTestId('modem-seg-uvpro')).toHaveAttribute('aria-pressed', 'true'),
+    );
     // Tap the TCP segment → ModemLinkSection emits a Tcp link → usePacketConfig.setLink.
     fireEvent.click(screen.getByTestId('modem-seg-tcp'));
     await waitFor(() =>

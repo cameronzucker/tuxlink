@@ -30,29 +30,33 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpip
     docs/readme/images/tuxlink-request-center.png 1366 820 8000
 ```
 
-Feature images (radio docks, APRS chat, color schemes):
+Feature images are **cropped to the panel they advertise** so they read as
+distinct features at thumbnail size, not near-identical full-window shots. The
+6th `snapshot.py` arg is a CSS selector (cropped to that element's bounding box,
++ optional 7th `pad` arg) or `clip:x,y,w,h` for a multi-element region.
 
 ```bash
-# ARDOP HF / Packet radio docks
+# ARDOP HF / Packet radio docks — cropped to the modem panel
 for d in ardop packet; do
   WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
     python3 dev/render-harness/snapshot.py \
       "http://127.0.0.1:1420/dev/readme-screenshot-harness/harness.html?view=shell&dock=$d" \
-      "docs/readme/images/tuxlink-$d.png" 1920 920 13000
+      "docs/readme/images/tuxlink-$d.png" 1920 920 13000 "[data-testid=radio-panel-root]" 10
 done
+# (tuxlink-ardop-hf.png keeps the -hf suffix: cp tuxlink-ardop.png tuxlink-ardop-hf.png)
 
-# APRS tactical chat (simultaneous HF/VHF workspace — injects heard traffic)
+# Simultaneous HF/VHF workspace — reading pane + APRS chat dock (injects heard traffic)
 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
   python3 dev/render-harness/snapshot.py \
     "http://127.0.0.1:1420/dev/readme-screenshot-harness/harness.html?view=shell&dock=aprs" \
-    docs/readme/images/tuxlink-aprs-chat.png 1920 920 13000
+    docs/readme/images/tuxlink-workspace.png 1920 920 13000 "clip:520,52,1400,868"
 
-# Color schemes (re-skins the whole shell)
+# Color schemes — cropped to ribbon + folders + list + reading pane (excludes the dock)
 for s in night-red daylight; do
   WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
     python3 dev/render-harness/snapshot.py \
       "http://127.0.0.1:1420/dev/readme-screenshot-harness/harness.html?view=shell&dock=vara&scheme=$s" \
-      "docs/readme/images/tuxlink-color-$s.png" 1920 920 13000
+      "docs/readme/images/tuxlink-color-$s.png" 1920 920 13000 "clip:0,0,1180,920"
 done
 ```
 
