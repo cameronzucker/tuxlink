@@ -12,6 +12,9 @@
 //
 // Query params:
 //   view=shell|wizard|request
+//   dock=vara|ardop|packet   (shell) — open that transport's radio modem dock
+//   dock=aprs                (shell) — open the APRS tactical-chat dock + inject heard traffic
+//   scheme=<color-scheme-id> (shell) — apply a color scheme before render
 
 import React, { Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -175,8 +178,52 @@ const VARA_CONFIG = { host: '127.0.0.1', cmdPort: 8300, dataPort: 8301, bandwidt
 const VARA_STATUS_OPEN = { state: 'open', lastError: null, boundHost: '127.0.0.1', boundCmdPort: 8300 };
 const PLATFORM_INFO = { arch: 'aarch64', os: 'linux', varaSupported: true };
 
+// FULL/tactical identity (post multi-identity refactor the ribbon callsign comes
+// from identity_active, not config.callsign).
+const ACTIVE_IDENTITY = { mycall: 'W4PHS', address_as: 'W4PHS', is_tactical: false };
+const IDENTITY_LIST = {
+  full: [{ callsign: 'W4PHS', label: null, has_cms_account: true, cms_registered: true, needs_auth: false }],
+  tactical: [],
+  last_selected: 'W4PHS',
+};
+
+// ARDOP HF dock fixtures.
+const ARDOP_CONFIG = {
+  binary: 'ardopcf', capture_device: 'plughw:1,0', playback_device: 'plughw:1,0',
+  ptt_serial_path: '/dev/ttyUSB0', cmd_port: 8515, bandwidth_hz: 2000, webgui_port: null,
+};
+const ARDOP_DEVICES = {
+  captures: [{ name: 'plughw:1,0', description: 'USB Audio CODEC', isHardware: true }],
+  playbacks: [{ name: 'plughw:1,0', description: 'USB Audio CODEC', isHardware: true }],
+};
+const SERIAL_DEVICES = [{ path: '/dev/ttyUSB0', kind: 'usb', label: 'CP210x USB-UART' }];
+const BT_DEVICES = [{ name: 'UV-PRO 5C', address: '38:D2:00:01:55:5C' }];
+
+// APRS tactical chat fixtures (privacy-safe). AprsConfigDto + a few inbound
+// InboundMsgDto payloads injected over the `aprs-message:new` event.
+const APRS_CONFIG = { sourceSsid: 7, tocall: 'APTUX1', path: 'WIDE1-1,WIDE2-1' };
+const APRS_INBOUND = [
+  { sender: 'K4ARC', addressee: '', text: 'Net opens 1800Z on the county VARA gateway — QNI welcome.', msgid: '42' },
+  { sender: 'WX4MTL', addressee: 'W4PHS', text: 'Bartlett HS staging confirmed, ETA 1545L with 6 cots.', msgid: '17' },
+  { sender: 'N4SAR', addressee: '', text: 'Welfare: Hutchins family OK, sheltering in place.', msgid: '88' },
+];
+
 let callbackId = 1;
 const callbacks = new Map<number, (...args: unknown[]) => unknown>();
+// event-name -> registered callback id (populated as components call listen()).
+const eventHandlers = new Map<string, number>();
+let eventListenerId = 1000;
+
+/** Fire a backend event into the app, exactly as the Tauri event bus would. */
+function emitTauriEvent(name: string, payload: unknown) {
+  const id = eventHandlers.get(name);
+  if (id == null) return;
+  callbacks.get(id)?.({ event: name, id, payload });
+}
+
+const qs = (testid: string) => document.querySelector<HTMLElement>(`[data-testid="${testid}"]`);
+const pinRadioPanel = () =>
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true, bubbles: true }));
 
 function installTauriShim() {
   const w = window as unknown as { __TAURI_INTERNALS__: TauriInternals & { metadata: unknown } };
@@ -215,6 +262,13 @@ function installTauriShim() {
       }
       if (cmd === 'modem_get_status') return MODEM_STOPPED;
       if (cmd === 'packet_config_get') return PACKET_CONFIG;
+      if (cmd === 'identity_active') return ACTIVE_IDENTITY;
+      if (cmd === 'identity_list') return IDENTITY_LIST;
+      if (cmd === 'config_get_ardop') return ARDOP_CONFIG;
+      if (cmd === 'ardop_list_audio_devices') return ARDOP_DEVICES;
+      if (cmd === 'packet_list_serial_devices') return SERIAL_DEVICES;
+      if (cmd === 'packet_list_bluetooth_devices') return BT_DEVICES;
+      if (cmd === 'aprs_config_get') return APRS_CONFIG;
       if (cmd === 'contacts_read') return CONTACTS;
       if (cmd === 'contacts_suggestions') return [];
       if (cmd === 'user_folders_list') return [];
@@ -224,6 +278,13 @@ function installTauriShim() {
       if (cmd === 'catalog_list') return CATALOG;
       if (cmd === 'catalog_send_inquiry') return 'MID-README-0001';
 
+      // Capture event subscriptions so the dock drivers can inject backend
+      // events (e.g. APRS chat traffic) after the components mount.
+      if (cmd === 'plugin:event|listen') {
+        const a = args as { event?: string; handler?: number } | undefined;
+        if (a?.event && typeof a.handler === 'number') eventHandlers.set(a.event, a.handler);
+        return eventListenerId++;
+      }
       if (cmd.includes('plugin:event') || cmd.includes('event')) return null;
       if (cmd.includes('plugin:window') || cmd.includes('window')) return null;
       if (cmd.includes('plugin:webview') || cmd.includes('webview')) return null;
@@ -248,6 +309,19 @@ function installTauriShim() {
 
 async function main() {
   installTauriShim();
+
+  // Optional color scheme (e.g. ?scheme=night-red, ?scheme=daylight). Applied
+  // before render so the whole shell paints in the chosen palette.
+  const scheme = params.get('scheme');
+  if (scheme) {
+    try {
+      localStorage.setItem('tuxlink.colorScheme', scheme);
+      const { applyColorScheme } = await import('../../src/shell/colorScheme');
+      applyColorScheme(scheme as never);
+    } catch {
+      /* colorScheme module shape drift — ignore in the harness */
+    }
+  }
 
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -284,27 +358,45 @@ async function main() {
     </HarnessBoundary>,
   );
 
-  // For the hero: open the VARA HF radio modem dock by driving the sidebar
-  // (expand the Winlink/CMS accordion, then select the VARA HF protocol). The
-  // accordion auto-expands once selectedConnection is set, but the proto row
-  // must exist first, so expand explicitly.
-  if (params.get('dock') === 'vara') {
+  // Open a transport radio dock by driving the sidebar (expand the Winlink/CMS
+  // accordion, then select the protocol). The proto row must exist before the
+  // accordion auto-expands, so expand explicitly. dock=vara|ardop|packet.
+  const dock = params.get('dock');
+  const PROTO: Record<string, string> = {
+    vara: 'proto-cms-vara-hf',
+    ardop: 'proto-cms-ardop-hf',
+    packet: 'proto-cms-packet',
+  };
+  if (dock && PROTO[dock]) {
     window.setTimeout(() => {
-      document.querySelector<HTMLElement>('[data-testid="sess-cms"]')?.click();
+      qs('sess-cms')?.click();
       window.setTimeout(() => {
-        // Selecting VARA HF sets the active connection (persists in the ribbon).
-        document.querySelector<HTMLElement>('[data-testid="proto-cms-vara-hf"]')?.click();
+        // Selecting the protocol sets the active connection (persists in the ribbon).
+        qs(PROTO[dock])?.click();
         // Pin the radio panel (Ctrl+Shift+M) so the dock stays open even with a
         // message selected, then open a message so the reading pane has content.
         window.setTimeout(() => {
-          window.dispatchEvent(
-            new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true, bubbles: true }),
-          );
-          window.setTimeout(() => {
-            document.querySelector<HTMLElement>('[data-testid="message-row-M1"]')?.click();
-          }, 500);
+          pinRadioPanel();
+          window.setTimeout(() => qs('message-row-M1')?.click(), 500);
         }, 500);
       }, 600);
+    }, 1500);
+  }
+
+  // APRS tactical-chat dock: toggle it open from the dashboard ribbon, mark the
+  // channel listening, inject a few heard messages over the event bus, and open
+  // a mailbox message so the Winlink reading pane has content — illustrating the
+  // simultaneous HF Winlink + VHF APRS workspace in one window.
+  if (dock === 'aprs') {
+    window.setTimeout(() => {
+      qs('dash-aprs-control')?.click();
+      window.setTimeout(() => {
+        emitTauriEvent('aprs-listening:change', true);
+        APRS_INBOUND.forEach((m, i) =>
+          window.setTimeout(() => emitTauriEvent('aprs-message:new', m), 250 + i * 200),
+        );
+        window.setTimeout(() => qs('message-row-M1')?.click(), 700);
+      }, 800);
     }, 1500);
   }
 }
