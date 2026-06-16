@@ -257,7 +257,6 @@ impl Ax25Stream {
         let bytes = frame
             .encode()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e:?}")))?;
-        self.log_frame("TX", &bytes, Some(frame));
         let kiss_bytes = kiss_data_frame(&bytes);
         tracing::trace!(
             target: "tuxlink::winlink::ax25::frame",
@@ -266,7 +265,13 @@ impl Ax25Stream {
             direction = "tx",
             "kiss frame",
         );
-        self.link.write_all(&kiss_bytes)
+        // Write FIRST, then trace — only after the link accepts the bytes (Codex P2,
+        // 2026-06-16). An abort-gated or failing write must NOT emit "TX" evidence for a
+        // frame that was never handed to the link: this trace is keyed-frame provenance,
+        // so logging an unkeyed frame would mislead an operator/alpha-tester diagnosis.
+        self.link.write_all(&kiss_bytes)?;
+        self.log_frame("TX", &bytes, Some(frame));
+        Ok(())
     }
 
     /// Pull bytes from the link into the KISS decoder and return the next decoded,
