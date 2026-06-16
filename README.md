@@ -236,18 +236,24 @@ Winlink catalog, and collects selected items in a unified send basket:
 
 Where each path stands:
 
-- **Validated:** native CMS connection over telnet and real Winlink message
-  receive and render, against the Winlink CMS test server.
-- **Operator-pending (Part 97):** AX.25 has cleared validation over a TCP / KISS
-  loopback. **On-air RF validation over a real radio is the operator's to
-  perform.** Tuxlink never transmits without explicit, per-invocation operator
+- **On-air validated (RF path end-to-end):** AX.25 1200-baud packet and ARDOP HF
+  both connect over a real radio, and the transmit path to the Winlink network is
+  proven end-to-end — a production Winlink CMS protocol response was received over
+  the air. That response was a rejection pending the client registration noted
+  below, which is precisely what confirms the chain (transmit, RF link, gateway,
+  CMS) is intact; the gap is an account, not a path. Peer-to-peer sessions on both
+  modes work today. Transmission always requires explicit, per-invocation operator
   consent (see [Amateur radio and Part 97](#amateur-radio-and-part-97)).
+- **Validated (internet):** native CMS connection over telnet and real Winlink
+  message receive and render, against the Winlink CMS test server.
 - **Operator-pending (Part 97):** APRS tactical chat and native UV-Pro Bluetooth
   control are built and pass backend validation. On-air RF validation over a real
   radio, including clean abort and de-key, is the operator's to perform.
-- **Production CMS:** reaching the production Winlink CMS requires Winlink's
-  prior registration of the Tuxlink client. Until that completes, CMS
-  connectivity targets the test server.
+- **Production CMS registration:** message exchange with the production Winlink
+  CMS requires Winlink's prior registration of the Tuxlink client. The
+  over-the-air rejection above confirms the RF path already reaches the production
+  CMS; message exchange begins once registration completes. Until then, CMS
+  message exchange targets the test server.
 
 ### Pending
 
