@@ -535,7 +535,8 @@
 }
 .station-finder__ch {
   display: grid;
-  grid-template-columns: 10px 1fr auto auto;
+  /* rel-pip · freq/sub · q% · ★save · Use→ (tuxlink-5016 adds the save column) */
+  grid-template-columns: 10px 1fr auto auto auto;
   gap: 9px;
   align-items: center;
   padding: 7px 13px;
@@ -582,6 +583,29 @@
 }
 .station-finder__use:disabled {
   opacity: 0.4;
+  cursor: not-allowed;
+}
+/* ★ Save-to-favorites toggle (tuxlink-5016). A quiet star next to Use → that
+   fills + turns amber once the channel is a starred favorite. */
+.station-finder__save {
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--faint, #6f8aa3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.station-finder__save:hover:not(:disabled) {
+  color: var(--star, #f5c451);
+}
+.station-finder__save.is-saved {
+  color: var(--star, #f5c451);
+}
+.station-finder__save:disabled {
+  opacity: 0.3;
   cursor: not-allowed;
 }
 
