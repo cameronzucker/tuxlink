@@ -5,6 +5,39 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-06-15 — Link/transport config persistence remediation (tuxlink-hoi1)
+
+Radio link/transport config did not persist across app restart — the physical
+device was retained but the link kind/transport reset to "no link". 3-hunter bug
+cycle (consolidated) pinned a destructive full-replace primitive (B1) plus four
+contributing defects (B2–B5). Executed the remediation plan (PR #746).
+
+- **B1 + B5 (backend, `ui_commands.rs`)**: `packet_config_set` full-replaced
+  `cfg.packet` from the DTO, and `into_packet_config` mapped an absent
+  `link_kind` to `link: None` — so any SSID/timing-only write erased the saved
+  link. New pure helper `apply_packet_dto` preserves the existing link when the
+  DTO carries no `link_kind` ("absent == unchanged"; the UI has no clear-link
+  path). The command now also emits `packet_config:change` (B5) — the frontend
+  listener was already there but dead, no emitter existed.
+- **B2 (frontend, `AprsConnectStrip` + `AppShell`)**: the APRS connect strip
+  mounted `ModemLinkSection` with no address props, so tapping the UV-Pro segment
+  on a configured link emitted `btMac: null`. Threaded the saved address fields
+  (tcpHost/tcpPort/serialDevice/serialBaud/btMac) through from `packetConfig`.
+- **B4 + B3 (frontend, `usePacketConfig` + `PacketRadioPanel`)**: optimistic
+  writes swallowed persist errors (UI/disk divergence); the panel held a frozen
+  snapshot and never re-synced (cross-surface clobber). Added rollback-on-reject
+  + subscribed the panel to `packet_config:change` / the same-window CustomEvent.
+- **Adversarial review** (Codex [P2] + 2 Claude reviewers, independently
+  converged): the B4 rollback re-opened the multi-writer clobber it closed — an
+  older rejected write could revert a newer successful one to stale state.
+  Guarded with a render-synced `configRef`: roll back only if the optimistic
+  value is still current. Regression-tested (fails without the guard).
+- New testing-pitfall: absent-field-erases / multi-writer clobber (incl. the
+  rollback-as-writer corollary). Operator validates the 4 wire-walk flows + a
+  real on-air UV-Pro round where relevant.
+
+---
+
 ## 2026-06-12 — SeqInc message serial numbering (Forms-push G12-C, tuxlink-2tom)
 
 22 bundled `.txt` templates (radiogram / RRI / net-log serials) carry the
