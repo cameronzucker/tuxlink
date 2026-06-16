@@ -77,6 +77,11 @@ export interface MapLibreMapProps {
   initialZoom?: number;
   /** Called with the live zoom after load and after every view change (A17). */
   onZoomChange?: (zoom: number) => void;
+  /** Called on every camera settle (moveend) with the clamped center + zoom, so
+   *  a consumer can persist the viewport and restore it next mount (tuxlink-dwzu).
+   *  The center is soft-clamped to the world rectangle; a non-finite transient
+   *  (teardown) is skipped. */
+  onViewportChange?: (center: LatLon, zoom: number) => void;
   /** Basemap flavor override (L2). Omit to FOLLOW the app color scheme (dark
    * scheme → dark map, the default behavior); pass `light`/`dark` to force one.
    * A change after mount drives `setStyle`; overlays re-add on the `styledata`
@@ -90,6 +95,7 @@ export function MapLibreMap({
   initialCenter,
   initialZoom,
   onZoomChange,
+  onViewportChange,
   flavor,
 }: MapLibreMapProps) {
   // Follow the app color scheme unless an explicit flavor is passed.
@@ -110,6 +116,8 @@ export function MapLibreMap({
   onClickRef.current = onMapClick;
   const onZoomRef = useRef(onZoomChange);
   onZoomRef.current = onZoomChange;
+  const onViewportRef = useRef(onViewportChange);
+  onViewportRef.current = onViewportChange;
   // Tracks the flavor currently applied to the map (seeded at construction).
   const flavorRef = useRef(effectiveFlavor);
 
@@ -220,6 +228,19 @@ export function MapLibreMap({
         if (lng !== c.lng || lat !== c.lat) {
           instance.setCenter([lng, lat]);
         }
+      });
+      // Persist-the-viewport hook (tuxlink-dwzu): emit the clamped center + zoom
+      // on every settle so a consumer can remember where the operator left the
+      // map. Registered AFTER the soft-clamp above so the emitted center is the
+      // in-world one (the clamp's snap-back re-fires moveend → final emit is
+      // clamped). A non-finite transient (teardown) is skipped, like the clamp.
+      instance.on('moveend', () => {
+        if (mapRemoved) return;
+        if (!onViewportRef.current) return;
+        const c = instance.getCenter();
+        if (!Number.isFinite(c.lng) || !Number.isFinite(c.lat)) return;
+        const [lng, lat] = clampMapCenter(c.lng, c.lat);
+        onViewportRef.current({ lat, lon: lng }, instance.getZoom());
       });
 
       return () => {

@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, act } from '@testing-library/react';
 import { getLastMap, type MapLibreMock } from '../map/testMapLibreMock';
+import { gridToLatLon } from '../forms/position/maidenhead';
 import { stationKey } from './useReachabilityMap';
 import { StationFinderMap } from './StationFinderMap';
 import type { ReachTier } from './reachability';
@@ -134,5 +135,53 @@ describe('StationFinderMap', () => {
     const map = loadLast();
     act(() => map.__emit('click:station-pins', { features: [{ properties: { key: key0 } }] }));
     expect(onSelect).toHaveBeenCalledWith(stations[0]);
+  });
+});
+
+describe('StationFinderMap viewport persistence (tuxlink-dwzu)', () => {
+  const KEY = 'tuxlink:map-viewport:station-finder';
+  beforeEach(() => window.localStorage.clear());
+
+  it('opens at the saved viewport and suppresses the operator flyTo when one is stored', () => {
+    window.localStorage.setItem(KEY, JSON.stringify({ center: { lat: 40, lon: -100 }, zoom: 8 }));
+    render(
+      <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    const map = getLastMap()!;
+    expect(map.__state.options.center).toEqual([-100, 40]); // [lon, lat] — the saved view, not the operator
+    expect(map.getZoom()).toBe(8);
+    act(() => map.__emit('load'));
+    expect(map.flyTo).not.toHaveBeenCalled(); // saved view wins: no laborious pan to the operator
+  });
+
+  it('falls back to the operator position at OPERATOR_ZOOM on first run (no saved viewport)', () => {
+    render(
+      <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    const map = getLastMap()!;
+    const me = gridToLatLon('DM43bp')!;
+    expect(map.__state.options.center).toEqual([me.lon, me.lat]);
+    expect(map.getZoom()).toBe(6); // OPERATOR_ZOOM
+  });
+
+  it('persists the viewport after the operator pans (moveend, debounced)', () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+      );
+      const map = getLastMap()!;
+      act(() => map.__emit('load'));
+      map.__setCenter(-71.06, 42.36);
+      map.__setZoom(10);
+      act(() => map.__emit('moveend'));
+      act(() => vi.advanceTimersByTime(400));
+      expect(JSON.parse(window.localStorage.getItem(KEY)!)).toEqual({
+        center: { lat: 42.36, lon: -71.06 },
+        zoom: 10,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

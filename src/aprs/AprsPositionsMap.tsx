@@ -22,6 +22,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapLibreMap } from '../map/MapLibreMap';
 import { useMapContext } from '../map/MapContext';
 import { useMapOverlay } from '../map/mapHooks';
+import { usePersistedViewport } from '../map/usePersistedViewport';
 import type { HeardPosition } from './aprsTypes';
 import './AprsPositionsMap.css';
 
@@ -313,9 +314,17 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
 }
 
 export function AprsPositionsMap({ positions }: AprsPositionsMapProps) {
+  // tuxlink-dwzu: remember + restore the operator's last viewport so the map
+  // opens where it was left rather than the default world view. First run (no
+  // saved view) keeps today's world-view default.
+  const { saved, onViewportChange } = usePersistedViewport('tuxlink:map-viewport:aprs');
   return (
     <div className="aprs-positions-map" data-testid="aprs-positions-map">
-      <MapLibreMap>
+      <MapLibreMap
+        initialCenter={saved?.center}
+        initialZoom={saved?.zoom}
+        onViewportChange={onViewportChange}
+      >
         <PositionLayers positions={positions} />
       </MapLibreMap>
     </div>

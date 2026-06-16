@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { MapLibreMap } from '../map/MapLibreMap';
 import { useMapContext } from '../map/MapContext';
 import { useMapOverlay } from '../map/mapHooks';
+import { usePersistedViewport } from '../map/usePersistedViewport';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { type ReachTier } from './reachability';
 import { stationKey } from './useReachabilityMap';
@@ -239,9 +240,22 @@ function OperatorPin({ location }: { location: { lat: number; lon: number } | nu
 
 export function StationFinderMap(props: StationFinderMapProps) {
   const me = props.operatorGrid ? gridToLatLon(props.operatorGrid) : null;
+  // tuxlink-dwzu: restore the operator's last viewport. A saved view wins over
+  // the operator-centred default AND suppresses the async operator flyTo — a
+  // stable saved center passed at mount makes MapLibreMap skip its arrival
+  // recenter (skipConstructCenter), so the map opens exactly where it was left
+  // instead of panning to the operator. First run (no saved view) keeps the
+  // operator-centred behaviour.
+  const { saved, onViewportChange } = usePersistedViewport('tuxlink:map-viewport:station-finder');
+  const initialCenter = saved ? saved.center : (me ?? undefined);
+  const initialZoom = saved ? saved.zoom : me ? OPERATOR_ZOOM : 2;
   return (
     <div className="station-finder__map" data-testid="station-map">
-      <MapLibreMap initialCenter={me ?? undefined} initialZoom={me ? OPERATOR_ZOOM : 2}>
+      <MapLibreMap
+        initialCenter={initialCenter}
+        initialZoom={initialZoom}
+        onViewportChange={onViewportChange}
+      >
         <StationLayers
           stations={props.stations}
           tiers={props.tiers}
