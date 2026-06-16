@@ -60,16 +60,26 @@ describe('connectFor — records the ribbon Connect outcome into Recent (3b)', (
     expect((calls[0][1] as { tsLocal: string }).tsLocal).toMatch(/[+-]\d{2}:\d{2}$/);
   });
 
-  it('ARDOP on-air failure records a `failed` attempt AND rejects', async () => {
+  it('ARDOP: link reached then exchange failure records BOTH reached and failed', async () => {
+    // modem_ardop_connect resolves (link up = on-air reached); the on-air B2F
+    // exchange then throws (failed). Two distinct empirical facts, matching
+    // ArdopRadioPanel (reached at connected-* + failed in the exchange catch).
     writeLastTarget('ardop-hf', 'W1ABC-10');
     routeInvoke({ cmd: 'modem_ardop_b2f_exchange', message: 'no answer' });
     await expect(connectFor(ARDOP)).rejects.toThrow('no answer');
-    const calls = recordCalls();
-    expect(calls).toHaveLength(1);
-    expect(calls[0][1]).toMatchObject({
-      dial: { mode: 'ardop-hf', gateway: 'W1ABC-10' },
-      outcome: 'failed',
-    });
+    const outcomes = recordCalls().map((c) => (c[1] as { outcome: string }).outcome);
+    expect(outcomes).toEqual(['reached', 'failed']);
+  });
+
+  it('ARDOP preflight (modem_ardop_connect) failure records NOTHING — pre-air, never dialed', async () => {
+    // A connect rejection is PRE-AIR (missing identity / unconfigured audio /
+    // busy guard / spawn-init) — no RF attempt happened, so Recent must stay
+    // clean. The ARDOP panel records nothing for these Start failures either
+    // (Codex ypz3 P2).
+    writeLastTarget('ardop-hf', 'W1ABC-10');
+    routeInvoke({ cmd: 'modem_ardop_connect', message: 'no playback device configured' });
+    await expect(connectFor(ARDOP)).rejects.toThrow('no playback device configured');
+    expect(recordCalls()).toHaveLength(0);
   });
 
   it('Packet success records `reached`; failure records `failed` and rejects', async () => {

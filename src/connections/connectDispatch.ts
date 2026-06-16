@@ -137,10 +137,21 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
     // time; the ribbon one-click awaits the connect, then exchanges with the
     // SAME target it dialed (panel uses status.peer once connected — identical
     // callsign). transportKind:'ardop' mirrors ArdopRadioPanel.onSendReceiveClick.
-    // Both the ARQ connect and the exchange are ON-AIR, so a throw at either is
-    // an honest `failed` (tuxlink-ypz3 3b).
+    //
+    // Honest-outcome recording (tuxlink-ypz3 3b, Codex P2): modem_ardop_connect
+    // can reject PRE-AIR — missing identity/backend, unconfigured audio devices,
+    // a busy-channel guard, or ardopcf spawn/init failure — before any RF dial.
+    // The ARDOP panel records NOTHING for those Start failures (it records
+    // `reached` only on the connected-* status transition and `failed` only in
+    // the later B2F catch), so the ribbon must not either: otherwise a
+    // saved-target Connect with no audio config would pollute Recent with a
+    // bogus `failed`. A connect RESOLVE means the link reached connected-* — an
+    // honest on-air `reached`; a B2F throw after that is an honest `failed`
+    // (reached-at-link-up + failed-at-exchange are distinct empirical facts, as
+    // ArdopRadioPanel records them).
+    await invoke('modem_ardop_connect', { target });
+    recordRibbonAttempt('ardop-hf', target, 'reached');
     try {
-      await invoke('modem_ardop_connect', { target });
       await invoke('modem_ardop_b2f_exchange', {
         target,
         intent,
@@ -150,7 +161,6 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
       recordRibbonAttempt('ardop-hf', target, 'failed');
       throw e;
     }
-    recordRibbonAttempt('ardop-hf', target, 'reached');
     return;
   }
 
