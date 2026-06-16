@@ -733,9 +733,3 @@
   font-size: 11px;
   white-space: nowrap;
 }
-/* Single-ground-model limitation note — spans the row under the controls. */
-.station-finder__antenna-note {
-  flex-basis: 100%;
-  color: var(--faint, #6f8aa3);
-  font-size: 10px;
-}

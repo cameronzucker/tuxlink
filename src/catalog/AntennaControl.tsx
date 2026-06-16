@@ -169,10 +169,6 @@ export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) 
         <span className="station-finder__antenna-unit">W</span>
       </label>
 
-      <span className="station-finder__antenna-note">
-        Patterns model poor / dry-desert ground regardless of the Ground selection.
-      </span>
-
       {error && (
         <span className="station-finder__antenna-err" role="alert">
           {error}

@@ -76,10 +76,4 @@ describe('AntennaControl', () => {
     expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'efhw-sloper', antennaHeightM: 2.5 });
   });
 
-  it('labels the single-ground limitation without leaking an internal phase ref', () => {
-    render(<AntennaControl prefs={DEFAULT_PROPAGATION_PREFS} onChange={() => {}} />);
-    const note = screen.getByText(/poor \/ dry-desert ground/i);
-    expect(note.textContent).toMatch(/regardless of the ground selection/i);
-    expect(note.textContent).not.toMatch(/phase\s*1/i);
-  });
 });
