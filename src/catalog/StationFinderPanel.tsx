@@ -147,7 +147,10 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
     });
   }, [bandModeVisible, search, radiusMi, grid]);
 
-  const reach = useReachabilityMap(grid, visible, enabledBands, utcHour);
+  // `predictReload` (bumped after a prefs save persists) also re-runs the map
+  // tiers, so changing power / antenna / height / ground / noise / SNR refreshes
+  // reachability — not just the selected-station forecast.
+  const reach = useReachabilityMap(grid, visible, enabledBands, utcHour, predictReload);
   const selected: Station | null = useMemo(
     () => visible.find((s) => stationKey(s) === selectedKey) ?? null,
     [visible, selectedKey],

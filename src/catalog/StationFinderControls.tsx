@@ -71,31 +71,52 @@ export function StationFinderControls(props: StationFinderControlsProps) {
   const utcLabel = `${String(props.utcHour).padStart(2, '0')}:00Z`;
   return (
     <div className="station-finder__controls">
-      <div className="station-finder__cond" data-testid="conditions">
-        <span>
-          {props.localTime} local · <b>{utcLabel}</b>
-        </span>
-        {props.sfi != null && (
+      {/* Row 1 (directly under the title): data-update actions on the left,
+          live conditions/time pushed to the right. The "Update propagation data"
+          action lands here beside "Update station list" once that feature ships
+          (deferred — a non-functional button would be a placeholder stub). */}
+      <div className="station-finder__topbar">
+        <div className="station-finder__actions">
+          <button
+            type="button"
+            className="station-finder__refresh"
+            onClick={props.onRefresh}
+            disabled={props.refreshing}
+          >
+            {props.refreshing ? 'Updating…' : 'Update station list'}
+          </button>
+          {props.listFetchedAtMs != null && (
+            <span className="station-finder__listage" data-testid="list-age">
+              {listAgeLabel(props.listFetchedAtMs)}
+            </span>
+          )}
+        </div>
+        <div className="station-finder__cond" data-testid="conditions">
           <span>
-            SFI <b>{props.sfi}</b>
+            {props.localTime} local · <b>{utcLabel}</b>
           </span>
-        )}
-        {props.ssn != null && (
-          <span>
-            SSN <b>{props.ssn}</b>
-          </span>
-        )}
-        {props.kIndex != null && (
-          <span>
-            K <b>{props.kIndex}</b>
-          </span>
-        )}
-        {props.ssnAgeDays != null && (
-          <span className="station-finder__stale">solar data {props.ssnAgeDays}d old</span>
-        )}
-        {!props.predictionAvailable && (
-          <span className="station-finder__stale">no forecast — distance only</span>
-        )}
+          {props.sfi != null && (
+            <span>
+              SFI <b>{props.sfi}</b>
+            </span>
+          )}
+          {props.ssn != null && (
+            <span>
+              SSN <b>{props.ssn}</b>
+            </span>
+          )}
+          {props.kIndex != null && (
+            <span>
+              K <b>{props.kIndex}</b>
+            </span>
+          )}
+          {props.ssnAgeDays != null && (
+            <span className="station-finder__stale">solar data {props.ssnAgeDays}d old</span>
+          )}
+          {!props.predictionAvailable && (
+            <span className="station-finder__stale">no forecast — distance only</span>
+          )}
+        </div>
       </div>
 
       <div className="station-finder__bandbar">
@@ -138,51 +159,39 @@ export function StationFinderControls(props: StationFinderControlsProps) {
           ))}
         </span>
 
-        {props.listFetchedAtMs != null && (
-          <span className="station-finder__listage" data-testid="list-age">
-            {listAgeLabel(props.listFetchedAtMs)}
-          </span>
-        )}
-        <button
-          type="button"
-          className="station-finder__refresh"
-          onClick={props.onRefresh}
-          disabled={props.refreshing}
-        >
-          {props.refreshing ? 'Checking…' : 'Check for newer list'}
-        </button>
-      </div>
-
-      <div className="station-finder__filterbar">
-        <span className="station-finder__grouplab">Search</span>
-        <input
-          type="search"
-          className="station-finder__search"
-          aria-label="Filter stations by callsign"
-          placeholder="Filter by callsign…"
-          value={props.search}
-          onChange={(e) => props.onSearchChange(e.target.value)}
-        />
-        <label className="station-finder__radius">
-          <span className="station-finder__lab">Within</span>
-          <select
-            aria-label="Search radius"
-            value={props.radiusMi == null ? 'all' : String(props.radiusMi)}
-            disabled={!props.hasOperatorGrid}
-            title={props.hasOperatorGrid ? undefined : 'Set your location in the status bar to filter by distance'}
-            onChange={(e) => props.onRadiusChange(e.target.value === 'all' ? null : Number(e.target.value))}
-          >
-            {RADIUS_OPTIONS.map((o) => (
-              <option key={o.label} value={o.mi == null ? 'all' : String(o.mi)}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        {!props.hasOperatorGrid && (
-          <span className="station-finder__stale">set your location (status bar) for distance + bearing</span>
-        )}
-        {props.filterExtra}
+        {/* Search group merged onto the band-bar row (reclaims the old filter
+            row); pushed to the right of the bands/modes via margin-left:auto. */}
+        <span className="station-finder__searchgroup">
+          <span className="station-finder__grouplab">Search</span>
+          <input
+            type="search"
+            className="station-finder__search"
+            aria-label="Filter stations by callsign"
+            placeholder="Filter by callsign…"
+            value={props.search}
+            onChange={(e) => props.onSearchChange(e.target.value)}
+          />
+          <label className="station-finder__radius">
+            <span className="station-finder__lab">Within</span>
+            <select
+              aria-label="Search radius"
+              value={props.radiusMi == null ? 'all' : String(props.radiusMi)}
+              disabled={!props.hasOperatorGrid}
+              title={props.hasOperatorGrid ? undefined : 'Set your location in the status bar to filter by distance'}
+              onChange={(e) => props.onRadiusChange(e.target.value === 'all' ? null : Number(e.target.value))}
+            >
+              {RADIUS_OPTIONS.map((o) => (
+                <option key={o.label} value={o.mi == null ? 'all' : String(o.mi)}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {!props.hasOperatorGrid && (
+            <span className="station-finder__stale">set your location (status bar) for distance + bearing</span>
+          )}
+          {props.filterExtra}
+        </span>
       </div>
     </div>
   );

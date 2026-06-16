@@ -1,1 +1,2 @@
 src-tauri/src/propagation/testdata/*.voa -text
+src-tauri/src/propagation/patterns/*.voa -text

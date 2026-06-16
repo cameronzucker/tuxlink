@@ -1,17 +1,24 @@
 // AntennaControl — in-context operator-antenna + prediction-tuning row for the
-// Find-a-Station panel (tuxlink-s0r1 #3c). Sits right above the map/forecast so
-// the operator sets their OWN antenna where the forecast reacts to it — not
-// buried in a Settings submenu (the WLE anti-pattern the operator called out).
+// Find-a-Station panel (tuxlink-s0r1 #3c; antenna picker tuxlink-bl01 Group E).
+// Sits right above the map/forecast so the operator sets their OWN antenna where
+// the forecast reacts to it — not buried in a Settings submenu (the WLE
+// anti-pattern the operator called out).
 //
 // The operator's antenna drives the TX end of the VOACAP model; the gateway's
 // parsed antenna drives the RX end (threaded per-station elsewhere). Required SNR
-// and TX power are the other two prediction knobs. All three persist via
+// and TX power are the other two prediction knobs. All persist via
 // propagation_prefs_write; changing one re-runs the forecast once the write lands.
+//
+// The antenna + height resolve to a precomputed NEC pattern. Horizontal antennas
+// snap to a four-stop height grid; ground-mounted verticals have a fixed pattern
+// (no height control).
 
 import {
   ANTENNA_PRESET_OPTIONS,
   GROUND_TYPE_OPTIONS,
+  HEIGHT_GRID_M,
   NOISE_ENVIRONMENT_OPTIONS,
+  isHeightVariable,
   type AntennaPreset,
   type GroundType,
   type NoiseEnvironment,
@@ -25,7 +32,23 @@ export interface AntennaControlProps {
   error?: string | null;
 }
 
+/** Index of the grid stop nearest a height (metres). */
+function nearestGridIndex(heightM: number): number {
+  let best = 0;
+  let bestDist = Infinity;
+  HEIGHT_GRID_M.forEach((v, i) => {
+    const d = Math.abs(v - heightM);
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  });
+  return best;
+}
+
 export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) {
+  const heightVariable = isHeightVariable(prefs.antennaPreset);
+
   return (
     <div className="station-finder__antenna" data-testid="antenna-control">
       <span className="station-finder__grouplab">Station setup</span>
@@ -45,25 +68,33 @@ export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) 
         </select>
       </label>
 
-      <label className="station-finder__antenna-field">
-        <span className="station-finder__antenna-lab">Height m</span>
-        <input
-          className="station-finder__antenna-num"
-          data-testid="antenna-height-input"
-          type="number"
-          min={0}
-          max={200}
-          step={1}
-          value={prefs.antennaHeightM}
-          aria-label="Antenna height above ground in metres"
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            // Persist only an in-range value; Rust enforces the same 0..200 bound.
-            if (Number.isFinite(v) && v >= 0 && v <= 200) onChange({ ...prefs, antennaHeightM: v });
-          }}
-        />
-        <span className="station-finder__antenna-unit">m</span>
-      </label>
+      {heightVariable ? (
+        <label className="station-finder__antenna-field">
+          <span className="station-finder__antenna-lab">
+            Height {HEIGHT_GRID_M[nearestGridIndex(prefs.antennaHeightM)]} m
+          </span>
+          <input
+            className="station-finder__antenna-slider"
+            data-testid="antenna-height-slider"
+            type="range"
+            min={0}
+            max={HEIGHT_GRID_M.length - 1}
+            step={1}
+            value={nearestGridIndex(prefs.antennaHeightM)}
+            aria-label="Antenna apex height above ground"
+            onChange={(e) => {
+              const idx = Number(e.target.value);
+              const snapped = HEIGHT_GRID_M[idx];
+              if (snapped !== undefined) onChange({ ...prefs, antennaHeightM: snapped });
+            }}
+          />
+        </label>
+      ) : (
+        <div className="station-finder__antenna-field" data-testid="antenna-ground-mounted">
+          <span className="station-finder__antenna-lab">Mounting</span>
+          <span className="station-finder__antenna-fixed">Ground-mounted — height fixed</span>
+        </div>
+      )}
 
       <label className="station-finder__antenna-field">
         <span className="station-finder__antenna-lab">Ground</span>
@@ -125,11 +156,13 @@ export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) 
           data-testid="tx-power-input"
           type="number"
           min={1}
-          step={5}
+          step={1}
           value={prefs.txPowerW}
           aria-label="TX power in watts"
           onChange={(e) => {
             const v = Number(e.target.value);
+            // Any positive wattage is valid — operators run far more than a fixed
+            // set of levels. Rust enforces the same > 0 bound on write.
             if (Number.isFinite(v) && v > 0) onChange({ ...prefs, txPowerW: v });
           }}
         />

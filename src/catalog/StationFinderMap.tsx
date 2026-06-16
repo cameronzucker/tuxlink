@@ -33,43 +33,68 @@ const OPERATOR_ZOOM = 6;
 const STATIONS_SOURCE = 'stations';
 const OPERATOR_SOURCE = 'operator';
 const STATION_PINS_LAYER = 'station-pins';
+const STATION_SEL_GLOW_LAYER = 'station-sel-glow';
 
 type FeatureCollection = { type: 'FeatureCollection'; features: unknown[] };
 const EMPTY_FC: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
 // Pin radius (px) + colour per reachability tier — mirrors PIN_SIZE/2 and the
 // --reach-* CSS vars. Data-driven so one circle layer paints every tier.
+// Per-tier hex MUST mirror the --reach-* CSS vars (MapLibre paint can't read CSS
+// custom properties). Six-step green→red→grey ramp; see reachability.ts.
+const TIER_COLOR_MATCH = [
+  'match',
+  ['get', 'tier'],
+  'good', '#41ba6c',
+  'fair', '#8cc23f',
+  'marginal', '#d9b13a',
+  'poor', '#e2862f',
+  'unlikely', '#d64a40', // red — almost certainly not
+  'skip', '#6c5a5a', // grey — not reachable, inside radius
+  '#9fb6cc', // untiered (no usable channel / no prediction)
+];
+
 const STATION_LAYERS = (
   [
+    {
+      // Soft selection GLOW — a filled (non-transparent) white disc drawn BENEATH
+      // the pins, sized larger than the selected pin so a halo shows around it.
+      // Filled (not a transparent-fill ring) so the GL path never culls it. Radius
+      // 0 / opacity 0 when not selected → paints nothing. Selection is driven by
+      // `feature-state` (B9, tuxlink-vnk7).
+      id: STATION_SEL_GLOW_LAYER,
+      type: 'circle',
+      source: STATIONS_SOURCE,
+      paint: {
+        'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 12, 0],
+        'circle-color': '#ffffff',
+        'circle-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.25, 0],
+        'circle-blur': 0.6,
+      },
+    },
     {
       id: STATION_PINS_LAYER,
       type: 'circle',
       source: STATIONS_SOURCE,
       paint: {
-        // Selected pin reads as ONE emphasised marker: the per-tier radius is
-        // nudged +2px and a white STROKE hugs the circle (no detached ring).
-        // Selection is driven by `feature-state` (B9, tuxlink-vnk7) so clicking a
-        // pin flips one feature's state instead of rebuilding the whole FC.
+        // Selected pin gets a MODEST bump + a bright-white rim (a soft glow sits
+        // beneath) — enough to read clearly without ballooning (operator
+        // 2026-06-16: the prior +5/glow-18 looked huge). Selection is
+        // `feature-state`-driven so a click flips one feature's state, not the FC.
         'circle-radius': [
           'case',
           ['boolean', ['feature-state', 'selected'], false],
-          ['match', ['get', 'tier'], 'good', 12, 'fair', 10, 'marginal', 8.5, 'skip', 7, 9],
-          ['match', ['get', 'tier'], 'good', 10, 'fair', 8, 'marginal', 6.5, 'skip', 5, 7],
+          ['match', ['get', 'tier'], 'good', 12, 'fair', 10, 'marginal', 8.5, 'poor', 7.5, 'unlikely', 7, 'skip', 6.5, 9],
+          ['match', ['get', 'tier'], 'good', 10, 'fair', 8, 'marginal', 6.5, 'poor', 5.5, 'unlikely', 5, 'skip', 4.5, 7],
         ],
-        'circle-color': [
-          'match',
-          ['get', 'tier'],
-          'good', '#46d07f',
-          'fair', '#c9b23a',
-          'marginal', '#d2842f',
-          'skip', '#6c5a5a',
-          '#9fb6cc',
-        ],
-        'circle-opacity': ['case', ['==', ['get', 'tier'], 'skip'], 0.75, 1],
-        // White stroke hugging the circle; thicker when selected so the marker
-        // is emphasised in place rather than gaining a second, offset ring.
+        'circle-color': TIER_COLOR_MATCH,
+        // The grey "not reachable" bottom tier sits back (dimmer) so the live
+        // red/orange/green stations read first; red "unlikely" stays full.
+        'circle-opacity': ['case', ['==', ['get', 'tier'], 'skip'], 0.7, 1],
+        // Selected → bright-white rim; others keep a thin white rim for basemap
+        // contrast. White renders reliably on this webview.
         'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2.5, 0.5],
+        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2, 0.6],
       },
     },
   ] as unknown[]
@@ -165,7 +190,13 @@ function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationF
   // station set or tiers change — NOT on every selection click (B9, tuxlink-vnk7).
   const fc = useMemo(() => buildStationFC(stations, tiers), [stations, tiers]);
 
-  useMapOverlay(map, STATIONS_SOURCE, { type: 'geojson', data: EMPTY_FC }, STATION_LAYERS);
+  // `promoteId` is REQUIRED for feature-state here: MapLibre only honors
+  // feature-state on a GeoJSON source whose feature ids are numeric OR promoted
+  // from a property — top-level STRING ids (our `CALL|GRID` station keys) are
+  // silently ignored, so setFeatureState was a no-op and the selected pin never
+  // got its emphasis (operator 2026-06-16, root cause). Promote the `key`
+  // property (= the station key) to the feature id so selection actually paints.
+  useMapOverlay(map, STATIONS_SOURCE, { type: 'geojson', data: EMPTY_FC, promoteId: 'key' }, STATION_LAYERS);
   usePushData(map, STATIONS_SOURCE, fc);
 
   // Drive selection via `setFeatureState` instead of rebuilding the FC: clear the
@@ -181,6 +212,7 @@ function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationF
     const m = map as unknown as {
       setFeatureState?: (t: { source: string; id: string | number }, s: Record<string, unknown>) => void;
       removeFeatureState?: (t: { source: string; id?: string | number }, key?: string) => void;
+      triggerRepaint?: () => void;
       on: (t: string, h: (...a: unknown[]) => void) => unknown;
       off: (t: string, h: (...a: unknown[]) => void) => unknown;
     };
@@ -194,12 +226,27 @@ function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationF
         m.setFeatureState?.({ source: STATIONS_SOURCE, id: cur }, { selected: true });
       }
       prevSelectedRef.current = cur;
+      // Force a frame: a feature-state change does not always schedule a repaint
+      // on its own, so the new emphasis wouldn't draw until the next map
+      // interaction — the "needs two clicks" bug (operator 2026-06-16).
+      m.triggerRepaint?.();
     };
     apply();
     // Re-apply after a style swap re-creates the source (clears feature-state).
     m.on('styledata', apply as (...a: unknown[]) => void);
+    // Re-apply after a data push. `GeoJSONSource.setData` drops ALL feature-state
+    // for the source, and reachability tiers stream in (one setData per update,
+    // plus a full re-push on every prefs change), so without this the selected
+    // pin loses its glow/emphasis the instant a tier updates — the "selection
+    // doesn't show" bug (operator, 2026-06-16). `sourcedata` fires when the
+    // source finishes (re)loading; re-applying then survives the async clear.
+    const onSourceData = (e: { sourceId?: string; isSourceLoaded?: boolean }) => {
+      if (e.sourceId === STATIONS_SOURCE && e.isSourceLoaded) apply();
+    };
+    m.on('sourcedata', onSourceData as (...a: unknown[]) => void);
     return () => {
       m.off('styledata', apply as (...a: unknown[]) => void);
+      m.off('sourcedata', onSourceData as (...a: unknown[]) => void);
     };
   }, [map, selectedKey]);
 
@@ -270,7 +317,9 @@ export function StationFinderMap(props: StationFinderMapProps) {
         <span className="k good" /> good
         <span className="k fair" /> fair
         <span className="k marginal" /> marginal
-        <span className="k skip" /> unlikely
+        <span className="k poor" /> maybe not
+        <span className="k unlikely" /> unlikely
+        <span className="k skip" /> not reachable
       </div>
     </div>
   );

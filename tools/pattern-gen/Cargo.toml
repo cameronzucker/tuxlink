@@ -1,0 +1,19 @@
+# Standalone, lightweight generator for the Find-a-Station antenna pattern library.
+# Path-includes src-tauri/src/propagation/type14.rs (the Phase 0 emitter — one source
+# of truth, no duplication) and depends only on thiserror, so it compiles in seconds
+# WITHOUT building the full Tauri lib. Run locally (nec2c is local-only):
+#   cd tools/pattern-gen && cargo run
+# Output: src-tauri/src/propagation/patterns/*.voa (committed; include_str!'d at runtime).
+# NOT a member of any workspace; never part of the app/CI build.
+[package]
+name = "pattern-gen"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+thiserror = "2"
+
+[[bin]]
+name = "gen_antenna_patterns"
+path = "src/main.rs"

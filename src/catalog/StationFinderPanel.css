@@ -7,9 +7,11 @@
 :root {
   /* SIGNAL / reachability OWNS the green→red colour ramp (pins, forecast bars,
      channel pips). Modes do NOT use these hues. */
-  --reach-good: #46d07f;
-  --reach-fair: #c9b23a;
-  --reach-marginal: #d2842f;
+  --reach-good: #41ba6c;
+  --reach-fair: #8cc23f;
+  --reach-marginal: #d9b13a;
+  --reach-poor: #e2862f;
+  --reach-unlikely: #d64a40;
   --reach-skip: #6c5a5a;
   /* MODES get a distinct SHAPE + an OFF-RAMP colour (blue / purple / cyan) so a
      coloured swatch is never confusable with a reachability tier (tuxlink-obpa).
@@ -74,12 +76,27 @@
   border-bottom: 1px solid var(--border, #243a52);
   background: var(--panel, #0f1c28);
 }
+/* Row 1 (under the title): data-update actions left, live conditions right. */
+.station-finder__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 7px 14px;
+}
+.station-finder__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .station-finder__cond {
   display: flex;
   gap: 12px;
   align-items: center;
   flex-wrap: wrap;
-  padding: 3px 14px 7px;
+  justify-content: flex-end;
+  margin-left: auto;
   font-size: 10.5px;
   color: var(--dim, #9fb6cc);
   font-family: var(--mono, ui-monospace, monospace);
@@ -171,13 +188,13 @@
   font-family: var(--mono, ui-monospace, monospace);
 }
 
-/* filter row: callsign search + search radius (design §7) */
-.station-finder__filterbar {
-  display: flex;
+/* Search group — callsign search + radius (design §7), now merged onto the
+   band-bar row. Sits after the mode chips; `__modes` margin-left:auto already
+   pushes this cluster to the right of the bands. */
+.station-finder__searchgroup {
+  display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 14px;
-  border-top: 1px solid var(--border, #243a52);
   flex-wrap: wrap;
 }
 .station-finder__search {
@@ -336,8 +353,14 @@
 .station-finder__reachkey .k.marginal {
   background: var(--reach-marginal);
 }
+.station-finder__reachkey .k.poor {
+  background: var(--reach-poor);
+}
+.station-finder__reachkey .k.unlikely {
+  background: var(--reach-unlikely);
+}
 .station-finder__reachkey .k.skip {
-  border: 2px dashed #6c5a5a;
+  background: var(--reach-skip);
 }
 
 /* ── rail content ─────────────────────────────────────────────────────── */
@@ -690,4 +713,23 @@
 .station-finder__antenna-err {
   flex-basis: 100%;
   color: var(--reach-bad, #e0606a);
+}
+
+/* Snapping height slider (horizontal antennas only): a 4-stop range over the
+   height grid, sized to align with the adjacent compact fields. */
+.station-finder__antenna-slider {
+  width: 104px;
+  height: 26px;
+  margin: 0;
+  accent-color: var(--accent, #4ea1d3);
+  cursor: pointer;
+}
+/* Fixed-pattern note (ground-mounted verticals) + the placeholder dash. */
+.station-finder__antenna-fixed {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  color: var(--faint, #6f8aa3);
+  font-size: 11px;
+  white-space: nowrap;
 }

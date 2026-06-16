@@ -81,6 +81,37 @@ describe('StationFinderMap', () => {
     expect(src.setData).not.toHaveBeenCalled();
   });
 
+  it('promotes the station key to the feature id (feature-state needs it on GeoJSON)', () => {
+    // MapLibre silently ignores feature-state on a GeoJSON source with top-level
+    // STRING ids unless promoteId is set — the root cause of "selection never
+    // showed" (operator 2026-06-16). The stations source must promote `key`.
+    render(<StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />);
+    const map = loadLast();
+    expect(map.addSource).toHaveBeenCalledWith('stations', expect.objectContaining({ promoteId: 'key' }));
+  });
+
+  it('re-applies the selected feature-state after a data push (setData clears it)', () => {
+    // Regression (operator 2026-06-16): GeoJSONSource.setData drops all
+    // feature-state, and reachability tiers stream in (each a setData), so the
+    // selected pin lost its emphasis the instant a tier updated. The map must
+    // re-apply feature-state when the source finishes (re)loading.
+    const key0 = stationKey(stations[0]);
+    render(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={key0} onSelect={() => {}} />,
+    );
+    const map = loadLast();
+    (map.setFeatureState as ReturnType<typeof vi.fn>).mockClear();
+
+    // Simulate a tier-driven setData reload completing.
+    act(() => map.__emit('sourcedata', { sourceId: 'stations', isSourceLoaded: true }));
+
+    expect(map.setFeatureState).toHaveBeenCalledWith({ source: 'stations', id: key0 }, { selected: true });
+    // An unrelated source's load must NOT trigger a re-apply.
+    (map.setFeatureState as ReturnType<typeof vi.fn>).mockClear();
+    act(() => map.__emit('sourcedata', { sourceId: 'operator', isSourceLoaded: true }));
+    expect(map.setFeatureState).not.toHaveBeenCalled();
+  });
+
   it('changing the selection clears the previous feature-state then sets the new one', () => {
     const key0 = stationKey(stations[0]);
     const key1 = stationKey(stations[1]);

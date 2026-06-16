@@ -7,6 +7,7 @@ pub mod commands;
 pub mod deck;
 pub mod engine;
 pub mod parse;
+pub mod patterns;
 pub mod prefs;
 pub mod ssn;
 pub mod type14;

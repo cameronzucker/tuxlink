@@ -29,14 +29,14 @@ describe('useReachabilityMap', () => {
     vi.mocked(invoke).mockImplementation(async (cmd, args) => {
       if (cmd !== 'propagation_predict_path') return undefined as unknown as never;
       const rx = (args as { rxGrid: string }).rxGrid;
-      const rel = rx === 'DM34oa' ? 0.86 : 0.12; // near=good, far=skip on 40m
+      const rel = rx === 'DM34oa' ? 0.86 : 0.12; // near=good, far=unlikely (red) on 40m
       return { bearingDeg: 0, distanceKm: 1, ssn: 118, year: 2026, month: 6,
         channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(rel), snrByHour: Array(24).fill(5), mufdayByHour: Array(24).fill(0.5) }] } as unknown as never;
     });
     const { result } = renderHook(() => useReachabilityMap('DM43bp', stations, new Set<Band>(['40m']), 21), { wrapper: wrap() });
     await waitFor(() => expect(result.current.available).toBe(true));
     expect(result.current.tiers.get(stationKey(stations[0]))).toBe('good');
-    expect(result.current.tiers.get(stationKey(stations[1]))).toBe('skip');
+    expect(result.current.tiers.get(stationKey(stations[1]))).toBe('unlikely');
   });
 
   it('marks unavailable + empty tiers when the engine is not bundled', async () => {
@@ -58,6 +58,30 @@ describe('useReachabilityMap', () => {
     const { result } = renderHook(() => useReachabilityMap('DM43bp', stations, new Set<Band>(['40m']), 21), { wrapper: wrap() });
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.distances.get(stationKey(stations[0]))).toBeGreaterThan(0);
+  });
+
+  // Regression (operator-found 2026-06-16): the reachability tiers must recompute
+  // when the operator's propagation prefs change (power / antenna / height / ground
+  // / noise / SNR). The caller bumps a reload key after the prefs write persists;
+  // the map must re-predict on that bump, not only when the station set changes.
+  it('re-predicts when the reload key is bumped (prefs changed)', async () => {
+    let calls = 0;
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      if (cmd !== 'propagation_predict_path') return undefined as unknown as never;
+      calls += 1;
+      return { bearingDeg: 0, distanceKm: 1, ssn: 118, year: 2026, month: 6,
+        channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(5), mufdayByHour: Array(24).fill(0.5) }] } as unknown as never;
+    });
+    const { result, rerender } = renderHook(
+      ({ rk }) => useReachabilityMap('DM43bp', stations, new Set<Band>(['40m']), 21, rk),
+      { initialProps: { rk: 0 }, wrapper: wrap() },
+    );
+    await waitFor(() => expect(result.current.available).toBe(true));
+    const afterFirst = calls;
+    expect(afterFirst).toBeGreaterThan(0);
+    // Same stations/bands/hour/grid — only the reload key changes (a prefs save).
+    rerender({ rk: 1 });
+    await waitFor(() => expect(calls).toBeGreaterThan(afterFirst));
   });
 
   // Perf regression: predictions are independent voacapl runs and must run

@@ -13,9 +13,7 @@ export type AntennaPreset =
   | 'nvis-wire-dipole'
   | 'base-vertical-radials'
   | 'mobile-hf-whip'
-  | 'random-wire-unun'
   | 'resonant-portable-dipole'
-  | 'magnetic-loop'
   | 'beam-yagi'
   | 'unknown';
 
@@ -61,9 +59,28 @@ export const DEFAULT_PROPAGATION_PREFS: PropagationPrefs = {
   reqSnrDb: 38,
   txPowerW: 100,
   antennaHeightM: 9,
-  groundType: 'average',
+  // Phase 1 models poor/dry-desert ground (ε 3, σ 0.001) for every precomputed
+  // pattern; the default reflects that. The Ground selector is retained but inert
+  // for the pattern (a known limitation, labeled in the UI).
+  groundType: 'poor-soil',
   noiseEnvironment: 'residential',
 };
+
+/// Apex-height grid stops (metres) for the height-variable antennas. Mirrors the
+/// Rust `patterns::HEIGHT_GRID_M`; the height slider snaps to these.
+export const HEIGHT_GRID_M = [2.5, 4, 6, 9] as const;
+
+/// Whether an antenna's elevation pattern varies with mast height (horizontal
+/// wires + the Yagi) or is fixed (ground-mounted verticals + the neutral model).
+/// Mirrors the Rust `patterns::is_height_variable`.
+export function isHeightVariable(preset: AntennaPreset): boolean {
+  return (
+    preset === 'efhw-sloper' ||
+    preset === 'nvis-wire-dipole' ||
+    preset === 'resonant-portable-dipole' ||
+    preset === 'beam-yagi'
+  );
+}
 
 /// Ground-type options with operator labels. Order is the UI order.
 export const GROUND_TYPE_OPTIONS: { value: GroundType; label: string; help: string }[] = [
@@ -90,8 +107,6 @@ export const ANTENNA_PRESET_OPTIONS: { value: AntennaPreset; label: string; help
   { value: 'efhw-sloper', label: 'End-fed half-wave (EFHW) / sloper', help: 'Horizontal or sloped wire. No overhead null — models regional and DX paths evenly. Default.' },
   { value: 'nvis-wire-dipole', label: 'Low NVIS wire dipole / OCFD', help: 'Low horizontal wire for regional short-skip. Favors high-angle paths.' },
   { value: 'resonant-portable-dipole', label: 'Portable dipole (linked / inverted-V)', help: 'Field horizontal dipole.' },
-  { value: 'random-wire-unun', label: 'Random wire + 9:1 unun', help: 'End-fed long wire; mixed takeoff angle.' },
-  { value: 'magnetic-loop', label: 'Magnetic loop', help: 'Small transmitting loop.' },
   { value: 'portable-vertical-whip', label: 'Portable vertical whip', help: 'Chameleon / Wolf River / MP1 class. Low-angle; weak overhead (NVIS).' },
   { value: 'base-vertical-radials', label: 'Base vertical + radials', help: 'Ground-mounted vertical. Low-angle DX; weak overhead (NVIS).' },
   { value: 'mobile-hf-whip', label: 'Mobile HF whip (screwdriver / Hamstick)', help: 'Short loaded vertical. Low-angle; weak overhead (NVIS).' },

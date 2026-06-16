@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+
 import { AntennaControl } from './AntennaControl';
 import { DEFAULT_PROPAGATION_PREFS } from './propagationPrefs';
 
@@ -31,12 +32,17 @@ describe('AntennaControl', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('persists a positive TX power but rejects a non-positive one', () => {
+  it('persists an arbitrary positive power (not just common levels)', () => {
     const onChange = vi.fn();
     render(<AntennaControl prefs={DEFAULT_PROPAGATION_PREFS} onChange={onChange} />);
-    fireEvent.change(screen.getByTestId('tx-power-input'), { target: { value: '50' } });
-    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_PROPAGATION_PREFS, txPowerW: 50 });
-    onChange.mockClear();
+    // 73 W is not a "round" preset — freeform entry must still take it.
+    fireEvent.change(screen.getByTestId('tx-power-input'), { target: { value: '73' } });
+    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_PROPAGATION_PREFS, txPowerW: 73 });
+  });
+
+  it('rejects a non-positive power', () => {
+    const onChange = vi.fn();
+    render(<AntennaControl prefs={DEFAULT_PROPAGATION_PREFS} onChange={onChange} />);
     fireEvent.change(screen.getByTestId('tx-power-input'), { target: { value: '0' } });
     expect(onChange).not.toHaveBeenCalled();
   });
@@ -45,4 +51,29 @@ describe('AntennaControl', () => {
     render(<AntennaControl prefs={DEFAULT_PROPAGATION_PREFS} onChange={() => {}} error="Could not save antenna settings." />);
     expect(screen.getByRole('alert').textContent).toMatch(/could not save/i);
   });
+
+  // ---- Antenna picker (tuxlink-bl01 Group E) ----
+
+  it('hides the height slider and shows ground-mounted for a vertical', () => {
+    render(<AntennaControl prefs={{ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'base-vertical-radials' }} onChange={() => {}} />);
+    expect(screen.queryByTestId('antenna-height-slider')).toBeNull();
+    expect(screen.getByTestId('antenna-ground-mounted').textContent).toMatch(/ground-mounted/i);
+  });
+
+  it('shows a four-stop height slider for a horizontal', () => {
+    render(<AntennaControl prefs={{ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'efhw-sloper' }} onChange={() => {}} />);
+    const slider = screen.getByTestId('antenna-height-slider') as HTMLInputElement;
+    expect(slider.min).toBe('0');
+    expect(slider.max).toBe('3'); // 4 grid indices: 0..3
+    expect(slider.step).toBe('1');
+  });
+
+  it('snaps the slider index to a grid height when dragged', () => {
+    const onChange = vi.fn();
+    render(<AntennaControl prefs={{ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'efhw-sloper' }} onChange={onChange} />);
+    // index 0 → 2.5 m grid stop
+    fireEvent.change(screen.getByTestId('antenna-height-slider'), { target: { value: '0' } });
+    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'efhw-sloper', antennaHeightM: 2.5 });
+  });
+
 });
