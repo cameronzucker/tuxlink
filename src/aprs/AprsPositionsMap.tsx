@@ -36,8 +36,10 @@ export interface AprsPositionsMapProps {
   operatorGrid?: string;
 }
 
-/// First-run / recenter zoom on the operator (matches StationFinderMap).
-const OPERATOR_ZOOM = 6;
+/// First-run / recenter zoom on the operator. APRS is local VHF, so this is a
+/// LOCAL-area zoom (metro/county) — not StationFinderMap's continental Z6, which
+/// suits its national HF-gateway context. Tunable; operator feedback drove this.
+const OPERATOR_ZOOM = 10;
 
 const POSITIONS_SOURCE = 'aprs-positions';
 const POSITION_PINS_LAYER = 'aprs-position-pins';
@@ -45,6 +47,12 @@ const POSITION_LABELS_LAYER = 'aprs-position-labels';
 const UNCERTAINTY_SOURCE = 'aprs-position-uncertainty';
 const UNCERTAINTY_FILL_LAYER = 'aprs-position-uncertainty-fill';
 const UNCERTAINTY_LINE_LAYER = 'aprs-position-uncertainty-outline';
+// The operator's OWN position ("you" pin). Not a decoded beacon — it's the
+// known operator grid, drawn distinctly (blue-ringed) so it reads as "me", not a
+// heard station. Does not violate the map's RF-honesty (it is not claimed to be
+// a received fix).
+const OPERATOR_SOURCE = 'aprs-operator';
+const OPERATOR_PIN_LAYER = 'aprs-operator-pin';
 
 /// A fix not re-heard within this long is shown dimmed (and its age is surfaced
 /// in the popup). The hook drops it entirely after a longer TTL.
@@ -150,6 +158,24 @@ const UNCERTAINTY_LAYERS = (
         'line-opacity': 0.5,
         'line-width': 1,
         'line-dasharray': [2, 2],
+      },
+    },
+  ] as unknown[]
+).map((l) => l as Record<string, unknown> & { id: string });
+
+// The operator's own "you" pin — a blue-ringed dot (mirrors StationFinderMap's
+// operator pin) so it reads as "me", distinct from the blue heard-station pins.
+const OPERATOR_LAYERS = (
+  [
+    {
+      id: OPERATOR_PIN_LAYER,
+      type: 'circle',
+      source: OPERATOR_SOURCE,
+      paint: {
+        'circle-radius': 7,
+        'circle-color': '#eaf3fb',
+        'circle-stroke-color': '#2f86f0',
+        'circle-stroke-width': 3,
       },
     },
   ] as unknown[]
@@ -321,12 +347,33 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
   );
 }
 
+/// The operator's own position pin ("you"). Sourced from the operator grid, not a
+/// decoded beacon — drawn distinctly so it never reads as a heard station.
+function OperatorPin({ location }: { location: { lat: number; lon: number } | null }) {
+  const map = useMapContext();
+  const fc = useMemo<FeatureCollection>(
+    () =>
+      location
+        ? {
+            type: 'FeatureCollection',
+            features: [
+              { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [location.lon, location.lat] } },
+            ],
+          }
+        : EMPTY_FC,
+    [location?.lat, location?.lon],
+  );
+  useMapOverlay(map, OPERATOR_SOURCE, { type: 'geojson', data: EMPTY_FC }, OPERATOR_LAYERS);
+  usePushData(map, OPERATOR_SOURCE, fc);
+  return null;
+}
+
 export function AprsPositionsMap({ positions, operatorGrid }: AprsPositionsMapProps) {
   const me = operatorGrid ? gridToLatLon(operatorGrid) : null;
   // tuxlink-dwzu: remember + restore the operator's last viewport so the map
   // opens where it was left. First run (no saved view) centers on the operator
-  // at Z6 — never the mid-Atlantic world view — falling back to the world view
-  // only when no operator grid is known.
+  // at the local zoom — never the mid-Atlantic world view — falling back to the
+  // world view only when no operator grid is known.
   const { saved, onViewportChange } = usePersistedViewport('tuxlink:map-viewport:aprs');
   const initialCenter = saved ? saved.center : (me ?? undefined);
   const initialZoom = saved ? saved.zoom : me ? OPERATOR_ZOOM : 2;
@@ -338,6 +385,7 @@ export function AprsPositionsMap({ positions, operatorGrid }: AprsPositionsMapPr
         onViewportChange={onViewportChange}
       >
         <PositionLayers positions={positions} />
+        <OperatorPin location={me} />
         <RecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </MapLibreMap>
     </div>

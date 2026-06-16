@@ -149,12 +149,12 @@ describe('AprsPositionsMap viewport persistence (tuxlink-dwzu)', () => {
     expect(map.getZoom()).toBe(7);
   });
 
-  it('centers on the operator at Z6 on first run when an operator grid is known', () => {
+  it('centers on the operator at the local zoom on first run when an operator grid is known', () => {
     render(<AprsPositionsMap positions={[]} operatorGrid="DM43bp" />);
     const map = getLastMap()!;
     const me = gridToLatLon('DM43bp')!;
     expect(map.__state.options.center).toEqual([me.lon, me.lat]); // operator, not mid-Atlantic
-    expect(map.getZoom()).toBe(6);
+    expect(map.getZoom()).toBe(10); // local area, not the continental Z6
   });
 
   it('falls back to the world view on first run only when no operator grid is known', () => {
@@ -189,7 +189,16 @@ describe('AprsPositionsMap viewport persistence (tuxlink-dwzu)', () => {
     act(() => map.__emit('load'));
     const me = gridToLatLon('DM43bp')!;
     fireEvent.click(screen.getByTestId('map-recenter'));
-    expect(map.flyTo).toHaveBeenCalledWith({ center: [me.lon, me.lat], zoom: 6 });
+    expect(map.flyTo).toHaveBeenCalledWith({ center: [me.lon, me.lat], zoom: 10 });
+  });
+
+  it('renders an operator "you" pin at the operator grid (none when no grid is set)', () => {
+    const { rerender } = render(<AprsPositionsMap positions={[]} operatorGrid="" />);
+    const map = getLastMap()!;
+    act(() => map.__emit('load'));
+    expect(sourceData(map, 'aprs-operator').features).toHaveLength(0);
+    act(() => rerender(<AprsPositionsMap positions={[]} operatorGrid="DM43bp" />));
+    expect(sourceData(map, 'aprs-operator').features).toHaveLength(1);
   });
 
   it('hides the recenter control when no operator grid is known', () => {
