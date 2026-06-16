@@ -195,6 +195,11 @@ export function MapLibreMap({
       instance.on('load', () => {
         setMap(instance);
         emitZoom();
+        // tuxlink-4pdu: the map reached a loaded WebGL context on this launch —
+        // clear the hardware-GL safe-mode marker so a hardware attempt that DID
+        // render is not second-guessed next launch. Best-effort; harmless no-op in
+        // software mode / off-Linux.
+        void invoke('gl_render_confirmed').catch(() => {});
       });
       instance.on('moveend', emitZoom);
       // Restore the pan-constraint dropped with maxBounds (which crashes maplibre

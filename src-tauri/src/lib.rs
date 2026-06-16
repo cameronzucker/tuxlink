@@ -56,35 +56,153 @@ fn uninstall_cleanup_execute(
     crate::uninstall_cleanup::execute_current_user_cleanup(mode)
 }
 
-/// The WebKitGTK GL environment the Linux build requires for the webview — and
-/// especially the maplibre-gl WebGL vector basemap — to render correctly.
-///
-/// On this Pi-class hardware (Mesa V3D + WebKitGTK's ANGLE WebGL) the *hardware*
-/// GL path is non-functional: it reports a bogus "Apple GPU" renderer and a bare
-/// `clear`/`draw` reads back `[0,0,0,0]` with `GL_INVALID_OPERATION`, so the map
-/// canvas paints uninitialized GPU memory ("magenta static") — tuxlink-spo2. The
-/// ndi4 vector-basemap spike + `dev/render-harness` validated rendering under
-/// SOFTWARE GL (llvmpipe), and the baked-dark style was chosen specifically to
-/// fit the software-GL CPU budget (spike: 45 fps). `WEBKIT_DISABLE_DMABUF_RENDERER`
-/// separately fixes a first-frame whole-webview static (tuxlink-wfw).
-///
-/// All must be set BEFORE the webview initializes — webkit/Mesa read them at
-/// web-context / GL-context creation during window setup. Edition 2021 →
-/// `set_var` is safe here.
+/// GL rendering mode for the Linux WebKitGTK webview (tuxlink-4pdu).
 #[cfg(target_os = "linux")]
-const LINUX_WEBVIEW_GL_ENV: &[(&str, &str)] = &[
-    ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
-    ("LIBGL_ALWAYS_SOFTWARE", "1"),
-    ("GALLIUM_DRIVER", "llvmpipe"),
-];
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GlMode {
+    /// Real GPU. On Raspberry Pi V3D this additionally needs
+    /// `MESA_GLES_VERSION_OVERRIDE=3.2`: WebKitGTK/ANGLE's WebGL2 init wants GLES
+    /// 3.2, V3D's Mesa advertises 3.1, and without the override ANGLE aborts with
+    /// `GL_INVALID_OPERATION` → magenta canvas. With it, WebGL renders on the real
+    /// V3D GPU (proven on a Pi 5: loader uses vc4/v3d, never llvmpipe). The "Apple
+    /// GPU" renderer string the prior tuxlink-spo2 fix trusted is an ANGLE spoof
+    /// (it shows even when GL works) and was a misdiagnosis.
+    Hardware,
+    /// llvmpipe CPU rasterizer — the safe fallback when hardware WebGL can't init.
+    Software,
+}
 
-/// Apply [`LINUX_WEBVIEW_GL_ENV`] before any webview/GL initialization.
+/// True when the device-tree model names a Raspberry Pi (the V3D/ANGLE WebGL2
+/// version gate applies). Pure for testing; [`detect_raspberry_pi`] reads the model.
 #[cfg(target_os = "linux")]
-fn apply_linux_webview_gl_env() {
-    for (key, value) in LINUX_WEBVIEW_GL_ENV {
-        std::env::set_var(key, value);
+fn model_is_raspberry_pi(dt_model: Option<&str>) -> bool {
+    dt_model.map(|m| m.contains("Raspberry Pi")).unwrap_or(false)
+}
+
+/// Read `/proc/device-tree/model` (NUL-terminated) and classify as Pi or not.
+#[cfg(target_os = "linux")]
+fn detect_raspberry_pi() -> bool {
+    let bytes = std::fs::read("/proc/device-tree/model").ok();
+    let model = bytes.as_ref().map(|b| String::from_utf8_lossy(b));
+    model_is_raspberry_pi(model.as_deref())
+}
+
+/// Decide the GL mode from the explicit override, the safe-mode marker, and
+/// whether this is a Pi. Pure — unit-tested.
+///
+/// - `TUXLINK_GL=software|hardware` (escape hatch) forces the mode.
+/// - else (auto): a Pi whose previous hardware attempt never confirmed a render
+///   (`marker_present`) drops to Software (safe mode); otherwise Hardware. Off-Pi
+///   defaults to Hardware (native GPU GL; the marker only governs the Pi override).
+#[cfg(target_os = "linux")]
+fn decide_gl_mode(tuxlink_gl: Option<&str>, marker_present: bool, is_pi: bool) -> GlMode {
+    match tuxlink_gl.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("software") | Some("sw") | Some("llvmpipe") => GlMode::Software,
+        Some("hardware") | Some("hw") | Some("gpu") => GlMode::Hardware,
+        _ if is_pi && marker_present => GlMode::Software,
+        _ => GlMode::Hardware,
     }
 }
+
+/// Env vars to set for `mode` on this machine. Pure — unit-tested.
+///
+/// `WEBKIT_DISABLE_DMABUF_RENDERER` is always set (tuxlink-wfw first-frame static).
+/// Software adds the llvmpipe pair (tuxlink-spo2 fallback). Hardware on a Pi adds
+/// the GLES version override that passes ANGLE's WebGL2 gate (tuxlink-4pdu);
+/// Hardware off-Pi adds nothing GL-specific (use the native driver — and notably
+/// does NOT force llvmpipe, which the prior all-Linux software default wrongly did).
+#[cfg(target_os = "linux")]
+fn gl_env_vars(mode: GlMode, is_pi: bool) -> Vec<(&'static str, &'static str)> {
+    let mut vars = vec![("WEBKIT_DISABLE_DMABUF_RENDERER", "1")];
+    match mode {
+        GlMode::Software => {
+            vars.push(("LIBGL_ALWAYS_SOFTWARE", "1"));
+            vars.push(("GALLIUM_DRIVER", "llvmpipe"));
+        }
+        GlMode::Hardware => {
+            if is_pi {
+                vars.push(("MESA_GLES_VERSION_OVERRIDE", "3.2"));
+            }
+        }
+    }
+    vars
+}
+
+/// Path of the safe-mode marker (XDG_STATE_HOME aware, default
+/// `~/.local/state/tuxlink/gl-hardware-pending`). Armed when a hardware attempt
+/// begins; cleared by [`gl_render_confirmed`] when the map renders a frame. Its
+/// presence at startup means the previous hardware attempt never confirmed → the
+/// next auto launch falls back to software (tuxlink-4pdu).
+#[cfg(target_os = "linux")]
+fn gl_safe_mode_marker_path() -> Option<std::path::PathBuf> {
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .filter(|v| !v.is_empty())
+                .map(|h| std::path::PathBuf::from(h).join(".local").join("state"))
+        })?;
+    Some(state.join("tuxlink").join("gl-hardware-pending"))
+}
+
+/// Decide + apply the WebKitGTK GL env BEFORE any webview/GL init, and manage the
+/// safe-mode marker. tuxlink-4pdu (hardware recovery, guarded + self-healing) +
+/// tuxlink-wfw (dmabuf) + tuxlink-spo2 (software fallback). Edition 2021 →
+/// `set_var` is safe here (single-threaded startup, before the webview exists).
+#[cfg(target_os = "linux")]
+fn apply_linux_webview_gl_env() {
+    let is_pi = detect_raspberry_pi();
+    let marker = gl_safe_mode_marker_path();
+    let marker_present = marker.as_ref().map(|p| p.exists()).unwrap_or(false);
+    let tuxlink_gl = std::env::var("TUXLINK_GL").ok();
+    let mode = decide_gl_mode(tuxlink_gl.as_deref(), marker_present, is_pi);
+
+    for (key, value) in gl_env_vars(mode, is_pi) {
+        std::env::set_var(key, value);
+    }
+
+    // Marker lifecycle: arm before a Pi hardware attempt (a launch that never
+    // confirms a render disarms nothing → next auto launch is safe-mode software);
+    // disarm whenever we run software (forced or fallen-back).
+    if let Some(path) = marker {
+        if mode == GlMode::Hardware && is_pi {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(&path, b"hardware GL attempt; removed on confirmed map render\n");
+        } else {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    tracing::info!(
+        target: "tuxlink::gl",
+        is_pi,
+        ?mode,
+        marker_present,
+        tuxlink_gl = tuxlink_gl.as_deref().unwrap_or("(unset)"),
+        "applied WebKitGTK GL env"
+    );
+}
+
+/// Clear the safe-mode marker once the map confirms a successful GPU render
+/// (tuxlink-4pdu). Invoked from the frontend on the map's first `load`. Best-effort
+/// (a missing marker — e.g. software mode — is a harmless no-op).
+#[cfg(target_os = "linux")]
+#[tauri::command]
+fn gl_render_confirmed() {
+    if let Some(path) = gl_safe_mode_marker_path() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// No GL-env/marker management off Linux; the command exists so the frontend can
+/// call it unconditionally.
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+fn gl_render_confirmed() {}
 
 /// Extract a human-readable message from a panic payload (tuxlink-ebyt). Panics
 /// carry `&str` (the common `panic!("msg")` / `unwrap`/`expect` case) or `String`;
@@ -115,36 +233,72 @@ mod panic_payload_tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod linux_gl_env_tests {
-    use super::LINUX_WEBVIEW_GL_ENV;
+    use super::{decide_gl_mode, gl_env_vars, model_is_raspberry_pi, GlMode};
 
-    fn value_of(key: &str) -> Option<&'static str> {
-        LINUX_WEBVIEW_GL_ENV
-            .iter()
-            .find(|(k, _)| *k == key)
-            .map(|(_, v)| *v)
+    fn has(vars: &[(&str, &str)], key: &str) -> Option<&'static str> {
+        vars.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
     }
 
-    /// Regression guard (tuxlink-spo2): the software-GL vars were never baked into
-    /// the shipped build, leaving the maplibre WebGL map on this Pi's broken
-    /// hardware GL path → magenta static. WEBKIT_DISABLE_DMABUF_RENDERER alone (the
-    /// only var that shipped) does NOT fix it. All three must be present.
     #[test]
-    fn requires_software_gl_and_dmabuf_disable() {
-        assert_eq!(
-            value_of("WEBKIT_DISABLE_DMABUF_RENDERER"),
-            Some("1"),
-            "DMA-BUF renderer must be disabled (tuxlink-wfw first-frame static)"
-        );
-        assert_eq!(
-            value_of("LIBGL_ALWAYS_SOFTWARE"),
-            Some("1"),
-            "WebGL must use software GL — hardware V3D/ANGLE is broken on Pi (tuxlink-spo2)"
-        );
-        assert_eq!(
-            value_of("GALLIUM_DRIVER"),
-            Some("llvmpipe"),
-            "Gallium must select the llvmpipe software rasterizer (tuxlink-spo2)"
-        );
+    fn detects_raspberry_pi_from_model_string() {
+        assert!(model_is_raspberry_pi(Some("Raspberry Pi 5 Model B Rev 1.0")));
+        assert!(model_is_raspberry_pi(Some("Raspberry Pi 4 Model B")));
+        assert!(!model_is_raspberry_pi(Some("Generic x86_64 Desktop")));
+        assert!(!model_is_raspberry_pi(None));
+    }
+
+    #[test]
+    fn explicit_override_forces_mode_regardless_of_pi_or_marker() {
+        for &is_pi in &[true, false] {
+            for &marker in &[true, false] {
+                assert_eq!(decide_gl_mode(Some("software"), marker, is_pi), GlMode::Software);
+                assert_eq!(decide_gl_mode(Some("hardware"), marker, is_pi), GlMode::Hardware);
+                // aliases + case-insensitivity + whitespace
+                assert_eq!(decide_gl_mode(Some("  SW "), marker, is_pi), GlMode::Software);
+                assert_eq!(decide_gl_mode(Some("GPU"), marker, is_pi), GlMode::Hardware);
+            }
+        }
+    }
+
+    #[test]
+    fn auto_mode_defaults_to_hardware_but_safe_modes_on_pi_after_failed_attempt() {
+        // Pi, no prior failure → hardware (the recovered path, tuxlink-4pdu).
+        assert_eq!(decide_gl_mode(None, false, true), GlMode::Hardware);
+        // Pi, prior hardware attempt never confirmed → safe-mode software.
+        assert_eq!(decide_gl_mode(None, true, true), GlMode::Software);
+        // Off-Pi: native GPU GL; the Pi-only marker does not force software.
+        assert_eq!(decide_gl_mode(None, true, false), GlMode::Hardware);
+        assert_eq!(decide_gl_mode(None, false, false), GlMode::Hardware);
+    }
+
+    #[test]
+    fn software_mode_sets_llvmpipe_and_dmabuf_disable() {
+        let v = gl_env_vars(GlMode::Software, true);
+        assert_eq!(has(&v, "WEBKIT_DISABLE_DMABUF_RENDERER"), Some("1"));
+        assert_eq!(has(&v, "LIBGL_ALWAYS_SOFTWARE"), Some("1"));
+        assert_eq!(has(&v, "GALLIUM_DRIVER"), Some("llvmpipe"));
+        assert_eq!(has(&v, "MESA_GLES_VERSION_OVERRIDE"), None);
+    }
+
+    #[test]
+    fn hardware_on_pi_sets_gles_override_and_no_software_force() {
+        let v = gl_env_vars(GlMode::Hardware, true);
+        // The fix: pass ANGLE's WebGL2 gate on V3D (tuxlink-4pdu).
+        assert_eq!(has(&v, "MESA_GLES_VERSION_OVERRIDE"), Some("3.2"));
+        // Must NOT force software — that was the misdiagnosis being reversed.
+        assert_eq!(has(&v, "LIBGL_ALWAYS_SOFTWARE"), None);
+        assert_eq!(has(&v, "GALLIUM_DRIVER"), None);
+        // dmabuf-disable retained (tuxlink-wfw, separate first-frame-static bug).
+        assert_eq!(has(&v, "WEBKIT_DISABLE_DMABUF_RENDERER"), Some("1"));
+    }
+
+    #[test]
+    fn hardware_off_pi_uses_native_gl_no_override_no_software() {
+        let v = gl_env_vars(GlMode::Hardware, false);
+        assert_eq!(has(&v, "WEBKIT_DISABLE_DMABUF_RENDERER"), Some("1"));
+        assert_eq!(has(&v, "MESA_GLES_VERSION_OVERRIDE"), None);
+        assert_eq!(has(&v, "LIBGL_ALWAYS_SOFTWARE"), None);
+        assert_eq!(has(&v, "GALLIUM_DRIVER"), None);
     }
 }
 
@@ -1181,6 +1335,7 @@ pub fn run() {
             crate::logging::commands::logging_env_probes_rerun,
             crate::logging::commands::emit_first_paint_complete,   // Amendment E.7.7
             crate::logging::commands::log_frontend_error,          // tuxlink-4b96 — webview errors → logs
+            gl_render_confirmed,                                    // tuxlink-4pdu — map render confirmed → clear GL safe-mode marker
             crate::logging::commands::report_issue_flow,           // Task 8 — Report Issue
             // tuxlink-hnkn P2 Task 4: FormDraftLibrary — save/reuse named form slots.
             crate::ui_commands::form_draft_library_list,
