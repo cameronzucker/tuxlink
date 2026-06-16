@@ -1,5 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+
+// The redesigned control fetches a live preview via the backend on mount /
+// change; mock the Tauri bridge so the command resolves a neutral preview.
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(async () => ({
+    gains_dbi: Array(91).fill(0),
+    peak_elevation_deg: 0,
+    snapped_height_m: 6,
+    height_variable: true,
+  })),
+}));
+
+import { invoke } from '@tauri-apps/api/core';
 import { AntennaControl } from './AntennaControl';
 import { DEFAULT_PROPAGATION_PREFS } from './propagationPrefs';
 
@@ -44,5 +57,42 @@ describe('AntennaControl', () => {
   it('shows an inline error when provided', () => {
     render(<AntennaControl prefs={DEFAULT_PROPAGATION_PREFS} onChange={() => {}} error="Could not save antenna settings." />);
     expect(screen.getByRole('alert').textContent).toMatch(/could not save/i);
+  });
+
+  // ---- Antenna picker (tuxlink-bl01 Group E) ----
+
+  it('hides the height slider and shows ground-mounted for a vertical', () => {
+    render(<AntennaControl prefs={{ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'base-vertical-radials' }} onChange={() => {}} />);
+    expect(screen.queryByTestId('antenna-height-slider')).toBeNull();
+    expect(screen.getByTestId('antenna-ground-mounted').textContent).toMatch(/ground-mounted/i);
+  });
+
+  it('shows a four-stop height slider for a horizontal', () => {
+    render(<AntennaControl prefs={{ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'efhw-sloper' }} onChange={() => {}} />);
+    const slider = screen.getByTestId('antenna-height-slider') as HTMLInputElement;
+    expect(slider.min).toBe('0');
+    expect(slider.max).toBe('3'); // 4 grid indices: 0..3
+    expect(slider.step).toBe('1');
+  });
+
+  it('snaps the slider index to a grid height when dragged', () => {
+    const onChange = vi.fn();
+    render(<AntennaControl prefs={{ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'efhw-sloper' }} onChange={onChange} />);
+    // index 0 → 2.5 m grid stop
+    fireEvent.change(screen.getByTestId('antenna-height-slider'), { target: { value: '0' } });
+    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'efhw-sloper', antennaHeightM: 2.5 });
+  });
+
+  it('fetches and renders the live polar preview', async () => {
+    render(<AntennaControl prefs={{ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'efhw-sloper' }} onChange={() => {}} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('antenna_pattern_preview', expect.objectContaining({ antennaPreset: 'efhw-sloper' })));
+    await waitFor(() => expect(screen.getByTestId('antenna-preview').querySelector('svg')).toBeTruthy());
+  });
+
+  it('labels the single-ground limitation without leaking an internal phase ref', () => {
+    render(<AntennaControl prefs={DEFAULT_PROPAGATION_PREFS} onChange={() => {}} />);
+    const note = screen.getByText(/poor \/ dry-desert ground/i);
+    expect(note.textContent).toMatch(/regardless of the ground selection/i);
+    expect(note.textContent).not.toMatch(/phase\s*1/i);
   });
 });

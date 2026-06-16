@@ -13,9 +13,7 @@ export type AntennaPreset =
   | 'nvis-wire-dipole'
   | 'base-vertical-radials'
   | 'mobile-hf-whip'
-  | 'random-wire-unun'
   | 'resonant-portable-dipole'
-  | 'magnetic-loop'
   | 'beam-yagi'
   | 'unknown';
 
@@ -61,9 +59,28 @@ export const DEFAULT_PROPAGATION_PREFS: PropagationPrefs = {
   reqSnrDb: 38,
   txPowerW: 100,
   antennaHeightM: 9,
-  groundType: 'average',
+  // Phase 1 models poor/dry-desert ground (ε 3, σ 0.001) for every precomputed
+  // pattern; the default reflects that. The Ground selector is retained but inert
+  // for the pattern (a known limitation, labeled in the UI).
+  groundType: 'poor-soil',
   noiseEnvironment: 'residential',
 };
+
+/// Apex-height grid stops (metres) for the height-variable antennas. Mirrors the
+/// Rust `patterns::HEIGHT_GRID_M`; the height slider snaps to these.
+export const HEIGHT_GRID_M = [2.5, 4, 6, 9] as const;
+
+/// Whether an antenna's elevation pattern varies with mast height (horizontal
+/// wires + the Yagi) or is fixed (ground-mounted verticals + the neutral model).
+/// Mirrors the Rust `patterns::is_height_variable`.
+export function isHeightVariable(preset: AntennaPreset): boolean {
+  return (
+    preset === 'efhw-sloper' ||
+    preset === 'nvis-wire-dipole' ||
+    preset === 'resonant-portable-dipole' ||
+    preset === 'beam-yagi'
+  );
+}
 
 /// Ground-type options with operator labels. Order is the UI order.
 export const GROUND_TYPE_OPTIONS: { value: GroundType; label: string; help: string }[] = [
@@ -90,8 +107,6 @@ export const ANTENNA_PRESET_OPTIONS: { value: AntennaPreset; label: string; help
   { value: 'efhw-sloper', label: 'End-fed half-wave (EFHW) / sloper', help: 'Horizontal or sloped wire. No overhead null — models regional and DX paths evenly. Default.' },
   { value: 'nvis-wire-dipole', label: 'Low NVIS wire dipole / OCFD', help: 'Low horizontal wire for regional short-skip. Favors high-angle paths.' },
   { value: 'resonant-portable-dipole', label: 'Portable dipole (linked / inverted-V)', help: 'Field horizontal dipole.' },
-  { value: 'random-wire-unun', label: 'Random wire + 9:1 unun', help: 'End-fed long wire; mixed takeoff angle.' },
-  { value: 'magnetic-loop', label: 'Magnetic loop', help: 'Small transmitting loop.' },
   { value: 'portable-vertical-whip', label: 'Portable vertical whip', help: 'Chameleon / Wolf River / MP1 class. Low-angle; weak overhead (NVIS).' },
   { value: 'base-vertical-radials', label: 'Base vertical + radials', help: 'Ground-mounted vertical. Low-angle DX; weak overhead (NVIS).' },
   { value: 'mobile-hf-whip', label: 'Mobile HF whip (screwdriver / Hamstick)', help: 'Short loaded vertical. Low-angle; weak overhead (NVIS).' },
@@ -122,4 +137,46 @@ export async function writePropagationPrefs(prefs: PropagationPrefs): Promise<vo
     groundType: prefs.groundType,
     noiseEnvironment: prefs.noiseEnvironment,
   });
+}
+
+/// A 91-point elevation slice of the selected antenna's pattern, for the polar
+/// preview. `gainsDbi[i]` = gain (dBi) at elevation `i`° (0 = horizon, 90 =
+/// zenith). Backed by the Rust `antenna_pattern_preview` command — a read-only
+/// projection of the same precomputed pattern the forecast uses.
+export interface AntennaPreview {
+  gainsDbi: number[];
+  /** Elevation (deg) of the peak gain — the main-lobe takeoff angle. */
+  peakElevationDeg: number;
+  /** Grid stop the requested height snapped to (metres). */
+  snappedHeightM: number;
+  /** Whether mast height varies the pattern (horizontal) or it is fixed. */
+  heightVariable: boolean;
+}
+
+/// The serde wire shape returned by `antenna_pattern_preview` (snake_case).
+interface AntennaPreviewWire {
+  gains_dbi: number[];
+  peak_elevation_deg: number;
+  snapped_height_m: number;
+  height_variable: boolean;
+}
+
+/** Fetch the elevation-pattern preview for an antenna at a height (+ optional
+ * frequency in kHz; defaults to ~14.1 MHz server-side). */
+export async function readAntennaPreview(
+  antennaPreset: AntennaPreset,
+  heightM: number,
+  freqKhz?: number,
+): Promise<AntennaPreview> {
+  const w = await invoke<AntennaPreviewWire>('antenna_pattern_preview', {
+    antennaPreset,
+    heightM,
+    freqKhz,
+  });
+  return {
+    gainsDbi: w.gains_dbi,
+    peakElevationDeg: w.peak_elevation_deg,
+    snappedHeightM: w.snapped_height_m,
+    heightVariable: w.height_variable,
+  };
 }

@@ -2,7 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 import { invoke } from '@tauri-apps/api/core';
-import { readPropagationPrefs, writePropagationPrefs, ANTENNA_PRESET_OPTIONS } from './propagationPrefs';
+import {
+  readPropagationPrefs,
+  writePropagationPrefs,
+  readAntennaPreview,
+  ANTENNA_PRESET_OPTIONS,
+  HEIGHT_GRID_M,
+  isHeightVariable,
+  DEFAULT_PROPAGATION_PREFS,
+} from './propagationPrefs';
 
 beforeEach(() => vi.mocked(invoke).mockReset());
 
@@ -26,11 +34,58 @@ describe('writePropagationPrefs', () => {
 });
 
 describe('ANTENNA_PRESET_OPTIONS', () => {
-  it('leads with the EFHW sloper default and covers all 10 presets', () => {
+  it('leads with the EFHW sloper default and covers the curated 8 presets', () => {
     expect(ANTENNA_PRESET_OPTIONS[0].value).toBe('efhw-sloper');
-    expect(ANTENNA_PRESET_OPTIONS).toHaveLength(10);
+    expect(ANTENNA_PRESET_OPTIONS).toHaveLength(8);
     // Every value is unique.
     const values = ANTENNA_PRESET_OPTIONS.map((o) => o.value);
-    expect(new Set(values).size).toBe(10);
+    expect(new Set(values).size).toBe(8);
+  });
+
+  it('drops the retired random-wire / magnetic-loop presets', () => {
+    const values = ANTENNA_PRESET_OPTIONS.map((o) => o.value);
+    expect(values).not.toContain('random-wire-unun');
+    expect(values).not.toContain('magnetic-loop');
+  });
+});
+
+describe('height grid + classification', () => {
+  it('exposes the four-stop grid', () => {
+    expect([...HEIGHT_GRID_M]).toEqual([2.5, 4, 6, 9]);
+  });
+
+  it('classifies horizontals as height-variable and verticals as fixed', () => {
+    expect(isHeightVariable('efhw-sloper')).toBe(true);
+    expect(isHeightVariable('beam-yagi')).toBe(true);
+    expect(isHeightVariable('base-vertical-radials')).toBe(false);
+    expect(isHeightVariable('mobile-hf-whip')).toBe(false);
+    expect(isHeightVariable('unknown')).toBe(false);
+  });
+});
+
+describe('DEFAULT_PROPAGATION_PREFS', () => {
+  it('defaults ground to poor-soil (the Phase 1 single-ground model)', () => {
+    expect(DEFAULT_PROPAGATION_PREFS.groundType).toBe('poor-soil');
+  });
+});
+
+describe('readAntennaPreview', () => {
+  it('maps the snake_case wire shape to camelCase', async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      gains_dbi: Array(91).fill(0),
+      peak_elevation_deg: 45,
+      snapped_height_m: 6,
+      height_variable: true,
+    } as unknown as never);
+    const got = await readAntennaPreview('efhw-sloper', 5.2, 14_100);
+    expect(invoke).toHaveBeenCalledWith('antenna_pattern_preview', {
+      antennaPreset: 'efhw-sloper',
+      heightM: 5.2,
+      freqKhz: 14_100,
+    });
+    expect(got.peakElevationDeg).toBe(45);
+    expect(got.snappedHeightM).toBe(6);
+    expect(got.heightVariable).toBe(true);
+    expect(got.gainsDbi).toHaveLength(91);
   });
 });
