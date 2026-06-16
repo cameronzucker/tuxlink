@@ -76,12 +76,27 @@
   border-bottom: 1px solid var(--border, #243a52);
   background: var(--panel, #0f1c28);
 }
+/* Row 1 (under the title): data-update actions left, live conditions right. */
+.station-finder__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 7px 14px;
+}
+.station-finder__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .station-finder__cond {
   display: flex;
   gap: 12px;
   align-items: center;
   flex-wrap: wrap;
-  padding: 3px 14px 7px;
+  justify-content: flex-end;
+  margin-left: auto;
   font-size: 10.5px;
   color: var(--dim, #9fb6cc);
   font-family: var(--mono, ui-monospace, monospace);
@@ -173,13 +188,13 @@
   font-family: var(--mono, ui-monospace, monospace);
 }
 
-/* filter row: callsign search + search radius (design §7) */
-.station-finder__filterbar {
-  display: flex;
+/* Search group — callsign search + radius (design §7), now merged onto the
+   band-bar row. Sits after the mode chips; `__modes` margin-left:auto already
+   pushes this cluster to the right of the bands. */
+.station-finder__searchgroup {
+  display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 14px;
-  border-top: 1px solid var(--border, #243a52);
   flex-wrap: wrap;
 }
 .station-finder__search {
