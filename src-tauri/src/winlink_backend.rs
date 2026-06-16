@@ -2617,10 +2617,15 @@ fn abort_aware_outcome(
     }
 }
 
-/// The grid locator advertised in the CMS handshake, reduced to the configured
-/// broadcast precision (tuxlink-882). Empty when no grid is set. This is the single
-/// on-air position surface today; it MUST go through `broadcast_grid` so a stored
-/// 6-char grid never leaks past a 4-char privacy setting.
+/// The static (config-grid-only) locator, reduced to broadcast precision.
+///
+/// tuxlink-uvi7: production now resolves the on-air locator via
+/// `crate::position::effective_broadcast_locator` (GPS-arbiter aware) on BOTH the
+/// telnet and packet paths. This static helper is retained as the no-arbiter
+/// reference the `resolve_locator` / `cms_locator_*` tests assert against, so it
+/// has no production caller — `allow(dead_code)` rather than `cfg(test)` to keep
+/// the shared `broadcast_grid` import live in non-test builds.
+#[allow(dead_code)]
 fn cms_locator(config: &Config) -> String {
     config
         .identity
