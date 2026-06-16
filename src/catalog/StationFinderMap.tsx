@@ -189,7 +189,13 @@ function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationF
   // station set or tiers change — NOT on every selection click (B9, tuxlink-vnk7).
   const fc = useMemo(() => buildStationFC(stations, tiers), [stations, tiers]);
 
-  useMapOverlay(map, STATIONS_SOURCE, { type: 'geojson', data: EMPTY_FC }, STATION_LAYERS);
+  // `promoteId` is REQUIRED for feature-state here: MapLibre only honors
+  // feature-state on a GeoJSON source whose feature ids are numeric OR promoted
+  // from a property — top-level STRING ids (our `CALL|GRID` station keys) are
+  // silently ignored, so setFeatureState was a no-op and the selected pin never
+  // got its emphasis (operator 2026-06-16, root cause). Promote the `key`
+  // property (= the station key) to the feature id so selection actually paints.
+  useMapOverlay(map, STATIONS_SOURCE, { type: 'geojson', data: EMPTY_FC, promoteId: 'key' }, STATION_LAYERS);
   usePushData(map, STATIONS_SOURCE, fc);
 
   // Drive selection via `setFeatureState` instead of rebuilding the FC: clear the

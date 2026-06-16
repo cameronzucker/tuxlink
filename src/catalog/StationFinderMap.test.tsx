@@ -80,6 +80,15 @@ describe('StationFinderMap', () => {
     expect(src.setData).not.toHaveBeenCalled();
   });
 
+  it('promotes the station key to the feature id (feature-state needs it on GeoJSON)', () => {
+    // MapLibre silently ignores feature-state on a GeoJSON source with top-level
+    // STRING ids unless promoteId is set — the root cause of "selection never
+    // showed" (operator 2026-06-16). The stations source must promote `key`.
+    render(<StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />);
+    const map = loadLast();
+    expect(map.addSource).toHaveBeenCalledWith('stations', expect.objectContaining({ promoteId: 'key' }));
+  });
+
   it('re-applies the selected feature-state after a data push (setData clears it)', () => {
     // Regression (operator 2026-06-16): GeoJSONSource.setData drops all
     // feature-state, and reachability tiers stream in (each a setData), so the
