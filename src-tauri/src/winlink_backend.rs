@@ -2003,6 +2003,10 @@ impl NativeBackend {
         let wire = self.wire.clone();
         let abort_handle = self.abort_handle.clone();
         let aborting = self.aborting.clone();
+        // tuxlink-uvi7: thread the shared PositionArbiter into the packet path so the
+        // B2F greeting broadcasts the live locator (Arc is Send + 'static, safe to move
+        // across spawn_blocking). Mirrors native_connect (telnet).
+        let position = self.position.clone();
         let allowlist_override = self.packet_allowlist_override.clone();
 
         self.set_status(initial_status);
@@ -2017,6 +2021,7 @@ impl NativeBackend {
                 &wire,
                 &abort_handle,
                 aborting,
+                position,
                 allowlist_override,
             )
         })
@@ -2234,10 +2239,16 @@ fn native_packet_connect(
     wire: &WireSink,
     abort_handle: &Mutex<Option<TcpStream>>,
     aborting: Arc<AtomicBool>,
+    position: Option<Arc<crate::position::PositionArbiter>>,
     allowlist_override: Option<crate::winlink::listener::AllowedStations>,
 ) -> Result<(), BackendError> {
     let params = config.packet.params.clone().into_params();
-    let locator = cms_locator(config);
+    // tuxlink-uvi7: resolve the on-air locator via the shared PositionArbiter (live GPS
+    // or manual grid, reduced to broadcast precision) — same path as native_connect
+    // (telnet). The packet path previously used the static cms_locator(config), which
+    // reads only config.identity.grid, so a GPS-derived grid never reached the B2F
+    // greeting and it went out as an empty `()` (on-air K7YCA-8 2026-06-16).
+    let locator = crate::position::effective_broadcast_locator(config, position.as_deref());
     let base = resolved.base_mycall.clone();
     // tuxlink-nfwv: trace every keyed/received AX.25 frame to the session log (`raw`
     // level → operator "Show Raw" / alpha-tester bug-report attachment). Reuses the
