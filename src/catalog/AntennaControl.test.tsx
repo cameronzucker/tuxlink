@@ -1,18 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
-// The redesigned control fetches a live preview via the backend on mount /
-// change; mock the Tauri bridge so the command resolves a neutral preview.
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(async () => ({
-    gains_dbi: Array(91).fill(0),
-    peak_elevation_deg: 0,
-    snapped_height_m: 6,
-    height_variable: true,
-  })),
-}));
-
-import { invoke } from '@tauri-apps/api/core';
 import { AntennaControl } from './AntennaControl';
 import { DEFAULT_PROPAGATION_PREFS } from './propagationPrefs';
 
@@ -89,12 +77,6 @@ describe('AntennaControl', () => {
     // index 0 → 2.5 m grid stop
     fireEvent.change(screen.getByTestId('antenna-height-slider'), { target: { value: '0' } });
     expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'efhw-sloper', antennaHeightM: 2.5 });
-  });
-
-  it('fetches and renders the live polar preview', async () => {
-    render(<AntennaControl prefs={{ ...DEFAULT_PROPAGATION_PREFS, antennaPreset: 'efhw-sloper' }} onChange={() => {}} />);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('antenna_pattern_preview', expect.objectContaining({ antennaPreset: 'efhw-sloper' })));
-    await waitFor(() => expect(screen.getByTestId('antenna-preview').querySelector('svg')).toBeTruthy());
   });
 
   it('labels the single-ground limitation without leaking an internal phase ref', () => {

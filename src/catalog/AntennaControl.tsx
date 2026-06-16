@@ -9,14 +9,10 @@
 // and TX power are the other two prediction knobs. All persist via
 // propagation_prefs_write; changing one re-runs the forecast once the write lands.
 //
-// The antenna + height resolve to a precomputed NEC pattern; the polar preview
-// shows that pattern's elevation lobe live (a read-only projection of the same
-// data the forecast uses). Horizontal antennas snap to a four-stop height grid;
-// ground-mounted verticals have a fixed pattern (no height control).
+// The antenna + height resolve to a precomputed NEC pattern. Horizontal antennas
+// snap to a four-stop height grid; ground-mounted verticals have a fixed pattern
+// (no height control).
 
-import { useEffect, useState } from 'react';
-
-import { PolarPattern } from './PolarPattern';
 import {
   ANTENNA_PRESET_OPTIONS,
   GROUND_TYPE_OPTIONS,
@@ -24,9 +20,7 @@ import {
   NOISE_ENVIRONMENT_OPTIONS,
   TX_POWER_OPTIONS_W,
   isHeightVariable,
-  readAntennaPreview,
   type AntennaPreset,
-  type AntennaPreview,
   type GroundType,
   type NoiseEnvironment,
   type PropagationPrefs,
@@ -55,27 +49,6 @@ function nearestGridIndex(heightM: number): number {
 
 export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) {
   const heightVariable = isHeightVariable(prefs.antennaPreset);
-  const [preview, setPreview] = useState<AntennaPreview | null>(null);
-
-  // Live elevation-pattern preview. Reads the committed precomputed library via
-  // the backend (no engine/network), debounced so dragging the slider does not
-  // spam the command. Failures degrade to no preview rather than an error.
-  useEffect(() => {
-    let active = true;
-    const handle = setTimeout(() => {
-      readAntennaPreview(prefs.antennaPreset, prefs.antennaHeightM)
-        .then((p) => {
-          if (active) setPreview(p);
-        })
-        .catch(() => {
-          if (active) setPreview(null);
-        });
-    }, 120);
-    return () => {
-      active = false;
-      clearTimeout(handle);
-    };
-  }, [prefs.antennaPreset, prefs.antennaHeightM]);
 
   return (
     <div className="station-finder__antenna" data-testid="antenna-control">
@@ -201,17 +174,6 @@ export function AntennaControl({ prefs, onChange, error }: AntennaControlProps) 
           ))}
         </select>
       </label>
-
-      <div className="station-finder__antenna-field station-finder__antenna-preview" data-testid="antenna-preview">
-        <span className="station-finder__antenna-lab">
-          Pattern{preview ? ` — peak ${preview.peakElevationDeg}°` : ''}
-        </span>
-        {preview ? (
-          <PolarPattern gainsDbi={preview.gainsDbi} peakElevationDeg={preview.peakElevationDeg} />
-        ) : (
-          <span className="station-finder__antenna-fixed">…</span>
-        )}
-      </div>
 
       <span className="station-finder__antenna-note">
         Patterns model poor / dry-desert ground regardless of the Ground selection.

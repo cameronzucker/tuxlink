@@ -5,7 +5,6 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   readPropagationPrefs,
   writePropagationPrefs,
-  readAntennaPreview,
   ANTENNA_PRESET_OPTIONS,
   HEIGHT_GRID_M,
   isHeightVariable,
@@ -69,23 +68,3 @@ describe('DEFAULT_PROPAGATION_PREFS', () => {
   });
 });
 
-describe('readAntennaPreview', () => {
-  it('maps the snake_case wire shape to camelCase', async () => {
-    vi.mocked(invoke).mockResolvedValue({
-      gains_dbi: Array(91).fill(0),
-      peak_elevation_deg: 45,
-      snapped_height_m: 6,
-      height_variable: true,
-    } as unknown as never);
-    const got = await readAntennaPreview('efhw-sloper', 5.2, 14_100);
-    expect(invoke).toHaveBeenCalledWith('antenna_pattern_preview', {
-      antennaPreset: 'efhw-sloper',
-      heightM: 5.2,
-      freqKhz: 14_100,
-    });
-    expect(got.peakElevationDeg).toBe(45);
-    expect(got.snappedHeightM).toBe(6);
-    expect(got.heightVariable).toBe(true);
-    expect(got.gainsDbi).toHaveLength(91);
-  });
-});

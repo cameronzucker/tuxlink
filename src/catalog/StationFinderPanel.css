@@ -718,32 +718,6 @@
   font-size: 11px;
   white-space: nowrap;
 }
-/* Live polar elevation-pattern preview. */
-.station-finder__antenna-preview .station-finder__polar {
-  border: 1px solid var(--border2, #34556f);
-  border-radius: 4px;
-  background: var(--panel, #0f1c28);
-}
-.station-finder__polar-axis,
-.station-finder__polar-arc {
-  stroke: var(--border2, #34556f);
-  stroke-width: 1;
-}
-.station-finder__polar-lobe {
-  fill: color-mix(in srgb, var(--accent, #4ea1d3) 28%, transparent);
-  stroke: var(--accent, #4ea1d3);
-  stroke-width: 1.25;
-  stroke-linejoin: round;
-}
-.station-finder__polar-peak {
-  fill: var(--reach-good, #5fd38a);
-}
-.station-finder__polar-flat {
-  fill: var(--faint, #6f8aa3);
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
 /* Single-ground-model limitation note — spans the row under the controls. */
 .station-finder__antenna-note {
   flex-basis: 100%;
