@@ -204,6 +204,53 @@ impl Type14Pattern {
     }
 }
 
+/// Parse block `block` (1..=[`N_BLOCKS`], i.e. `block` MHz) of a Type-14 `.voa`
+/// back into its 91 elevation gains (`gains[i]` = gain at elevation `i`°). This is
+/// the inverse of [`Type14Pattern::to_voa`]'s block layout: 5 header lines, then 10
+/// lines per block, with gains as 7-wide F7.3 fields starting at byte offset 9 on
+/// every line. Used by the antenna-pattern preview (a read-only projection of the
+/// same data that feeds voacapl). ASCII content, so byte offset == char offset.
+pub fn read_block_gains(voa: &str, block: usize) -> Result<Vec<f64>, String> {
+    if block < 1 || block > N_BLOCKS {
+        return Err(format!("block {block} out of range 1..={N_BLOCKS}"));
+    }
+    let lines: Vec<&str> = voa.lines().collect();
+    let start = 5 + (block - 1) * 10; // 5 header lines + 10 lines/block
+    let end = start + 10;
+    if lines.len() < end {
+        return Err(format!(
+            "truncated Type-14: need {end} lines for block {block}, have {}",
+            lines.len()
+        ));
+    }
+    let mut gains = Vec::with_capacity(N_GAINS);
+    for line in &lines[start..end] {
+        if line.len() < 9 {
+            continue; // shorter than the gain offset → no fields
+        }
+        let body = &line[9..];
+        let mut i = 0;
+        while i + 7 <= body.len() {
+            let field = body[i..i + 7].trim();
+            if !field.is_empty() {
+                gains.push(
+                    field
+                        .parse::<f64>()
+                        .map_err(|_| format!("bad gain field {field:?} in block {block}"))?,
+                );
+            }
+            i += 7;
+        }
+    }
+    if gains.len() != N_GAINS {
+        return Err(format!(
+            "block {block}: parsed {} gains, expected {N_GAINS}",
+            gains.len()
+        ));
+    }
+    Ok(gains)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,6 +273,35 @@ mod tests {
             title: "tuxlink-test high-angle  :synthetic Type-14 verification pattern".to_string(),
             blocks,
         }
+    }
+
+    #[test]
+    fn read_block_gains_round_trips_to_voa() {
+        // Per-block-distinct (constant b) so block indexing is verified, plus the
+        // clamped-floor edge (-99.999) and a positive value. Integers + -99.999 are
+        // their own 3-decimal round-trip, so assert_eq is exact.
+        let blocks: Vec<FreqBlock> = (0..N_BLOCKS)
+            .map(|b| {
+                let mut gains = vec![b as f64; N_GAINS];
+                gains[0] = -99.999; // elevation 0 (horizon) floor
+                gains[90] = 6.0; // elevation 90 (zenith)
+                FreqBlock {
+                    efficiency: 0.00,
+                    gains,
+                }
+            })
+            .collect();
+        let p = Type14Pattern {
+            title: "round-trip".to_string(),
+            blocks,
+        };
+        let voa = p.to_voa().unwrap();
+        for b in 1..=N_BLOCKS {
+            let got = read_block_gains(&voa, b).unwrap();
+            assert_eq!(got, p.blocks[b - 1].gains, "block {b} gains mismatch");
+        }
+        assert!(read_block_gains(&voa, 0).is_err());
+        assert!(read_block_gains(&voa, N_BLOCKS + 1).is_err());
     }
 
     #[test]
