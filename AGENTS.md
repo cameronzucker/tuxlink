@@ -12,23 +12,36 @@
 > or follow a referenced local skill/workflow, stop and diagnose that failure;
 > do not silently substitute an ad-hoc process.
 
-> **Project framing is pending.** This repo has just been initialized. The
-> project structure, commands, testing, and hardware sections below are
-> placeholders. The office-hours kickoff session will populate them. The ethos
-> + workflow + safety sections are in force from day 1 and should not wait for
-> framing.
-
 ## Project structure
 
-_TBD: populate after office-hours kickoff._
+One Tauri 2.x desktop app, single crate ([ADR 0002](docs/adr/0002-tauri-react-single-crate.md)):
+`src/` (React + TS frontend), `src-tauri/` (native Rust Winlink engine + AX.25 / ARDOP /
+VARA transports + Tauri commands; manifest at `src-tauri/Cargo.toml`, **not** a workspace
+root), `xtask/` (task-runner crate), `docs/` (`adr/` = canonical policy, `user-guide/`,
+`pitfalls/`), `scripts/` (operator tooling), `.beads/` (bd tracker, Dolt-backed). Full tree:
+[CLAUDE.md §Project structure](CLAUDE.md#project-structure).
 
 ## Commands
 
-_TBD: populate after office-hours kickoff._
+`pnpm install --frozen-lockfile`; dev `pnpm dev` / `pnpm tauri dev`; type-check
+`pnpm typecheck`; frontend tests `pnpm vitest run`; web build `pnpm build`. Rust needs
+`--manifest-path src-tauri/Cargo.toml`: clippy
+`cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings`,
+tests `cargo test --manifest-path src-tauri/Cargo.toml --locked`. First-run hooks:
+`bash scripts/install-githooks.sh`. A fresh worktree needs `pnpm install` before the
+pre-push `lint:docs` hook passes. Full table: [CLAUDE.md §Commands](CLAUDE.md#commands).
 
 ## Testing
 
-_TBD: populate after office-hours kickoff._
+CI (`.github/workflows/ci.yml`) gates every PR on two jobs, amd64 + arm64: **verify**
+(`pnpm typecheck` + `pnpm vitest run` + `pnpm build` + `cargo clippy … -D warnings` +
+`cargo test … --locked`) and **build-linux** (`pnpm tauri build` deb/rpm/appimage +
+`pnpm lint:docs`). **MSRV 1.75** — clippy `incompatible_msrv` is denied, so 1.76+ APIs
+(e.g. `Result::inspect_err`) fail the build; use the pre-1.76 idiom. This Pi does not
+finish a cold `cargo` build locally — write code + tests and let CI run them
+(`pnpm vitest run` is fine locally). On-air RF validation is operator-only (RADIO-1,
+[ADR 0018](docs/adr/0018-radio1-gates-operator-execution-not-agent-authorship.md)).
+Detail: [CLAUDE.md §Testing](CLAUDE.md#testing).
 
 ## Codex / non-Claude startup contract
 

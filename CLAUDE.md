@@ -1,22 +1,77 @@
 # Tuxlink
 
-> **Project framing is pending.** This repo has just been initialized. The
-> project structure, commands, testing, and hardware sections below are
-> placeholders that will be filled in during the office-hours kickoff
-> session. The ethos + workflow + safety sections are in force from day 1
-> and should not wait for framing.
+Native Linux Winlink client for amateur-radio emergency communications: one
+[Tauri](https://tauri.app/) 2.x desktop app with a native Rust Winlink engine and
+a React 18 + TypeScript frontend. Alpha. [README.md](README.md) carries the
+user-facing overview and the maturity matrix.
 
 ## Project structure
 
-_TBD — populate after office-hours kickoff._
+Single crate in the `v0.x` series ([ADR 0002](docs/adr/0002-tauri-react-single-crate.md)).
+
+- `src/` — React + TypeScript frontend (Vite), rendered by WebKitGTK 4.1: mailbox,
+  compose, the per-mode radio panels, settings, session log.
+- `src-tauri/` — Rust backend (`src-tauri/Cargo.toml`; **not** a workspace root). The
+  native Winlink B2F engine, CMS connection, mailbox persistence, the AX.25 / ARDOP /
+  VARA transports, and the Tauri commands. No external modem daemon or sidecar handles
+  CMS.
+- `xtask/` — Rust task-runner crate.
+- `tests/` — integration fixtures (e.g. `converge_build_fixtures/`).
+- `docs/` — `adr/` (architecture decisions; **canonical for project policy** per the
+  propagation contract below), `user-guide/` (in-app Help source), `design/`,
+  `pitfalls/`.
+- `dev/` — `handoffs/` (session-end docs) and `incidents/` are tracked; `scratch/` and
+  `adversarial/` are gitignored.
+- `scripts/` — operator tooling: `converge-build.sh`, `install-githooks.sh`,
+  `new_tuxlink_worktree.py`, `sync-version-sources.ts`.
+- `.claude/` — hooks + skills + session scripts; `.githooks/` — commit-msg +
+  branch-lifecycle hooks; `.beads/` — the bd issue tracker (Dolt-backed).
+- `version.txt` + `package.json` carry the version, kept in sync by
+  `scripts/sync-version-sources.ts`; release-please owns the value.
 
 ## Commands
 
-_TBD — populate after office-hours kickoff._
+Frontend uses `pnpm`. The Rust backend needs an explicit
+`--manifest-path src-tauri/Cargo.toml` (there is no workspace-root `Cargo.toml`).
+
+| Task | Command |
+|---|---|
+| Install deps | `pnpm install --frozen-lockfile` |
+| Dev (Vite in a browser) | `pnpm dev` |
+| Tauri dev (desktop window) | `pnpm tauri dev` |
+| Converged build + launch (operator) | `pnpm dev:converged` — runs `scripts/converge-build.sh`, which builds `origin/main` in a disposable worktree, **not** your branch |
+| Type-check | `pnpm typecheck` |
+| Frontend tests | `pnpm vitest run` |
+| Production web build | `pnpm build` (`tsc && vite build`) |
+| Package artifacts | `pnpm tauri build --bundles deb,rpm,appimage` |
+| Rust lint | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings` |
+| Rust tests | `cargo test --manifest-path src-tauri/Cargo.toml --locked` |
+| Docs-link lint (pre-push hook) | `pnpm lint:docs` |
+| Activate git hooks (first run) | `bash scripts/install-githooks.sh` |
+| Issue tracker | `bd ready` / `bd show <id>` / `bd update <id> --claim` / `bd close <id>` |
+
+A fresh worktree has no `node_modules`: run `pnpm install` before the pre-push
+`lint:docs` hook (`tsx`) can pass.
 
 ## Testing
 
-_TBD — populate after office-hours kickoff._
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) gates every PR on two
+jobs, each on amd64 + arm64:
+
+- **verify** — `pnpm typecheck`, `pnpm vitest run`, `pnpm build`, then
+  `cargo clippy … --all-targets --locked -- -D warnings` and
+  `cargo test … --locked`.
+- **build-linux** — `pnpm tauri build` (deb / rpm / appimage) + `pnpm lint:docs`.
+
+**MSRV is 1.75** (`src-tauri/Cargo.toml` `rust-version`); clippy's `incompatible_msrv`
+lint is denied, so an API stabilized in 1.76+ (e.g. `Result::inspect_err`) fails the
+build — use the pre-1.76 idiom.
+
+**This dev Pi does not finish a cold `cargo` build or test locally** (the target is
+contended). Write the Rust and its tests, open the PR (draft is fine), and let CI
+compile and run them; `pnpm vitest run` is fast enough to run locally on a single
+file. On-air RF validation is operator-only (RADIO-1, [ADR 0018](docs/adr/0018-radio1-gates-operator-execution-not-agent-authorship.md))
+— agents validate transmit-path code via mocks / loopback / CI, never a real radio.
 
 ## Skill routing
 
