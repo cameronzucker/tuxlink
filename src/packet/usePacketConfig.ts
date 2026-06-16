@@ -112,17 +112,22 @@ export function usePacketConfig(): UsePacketConfig {
   const setSsid = useCallback(
     (n: number) => {
       if (!config) return;
+      const prior = config;
       const next = { ...config, ssid: n };
       // Optimistic local update.
       setConfig(next);
       // Broadcast to peer hooks within the same window so they re-seed
-      // without waiting for the backend (which doesn't emit a change
-      // event today).
+      // without waiting for the backend.
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: next }));
       }
       void invoke('packet_config_set', { dto: next }).catch(() => {
-        /* persist errors surface via the session log */
+        // tuxlink-hoi1 B4: a rejected persist must not leave the UI showing an
+        // un-saved value — revert this hook AND its peers to the persisted truth.
+        setConfig(prior);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: prior }));
+        }
       });
     },
     [config],
@@ -131,6 +136,7 @@ export function usePacketConfig(): UsePacketConfig {
   const setLink = useCallback(
     (fields: ModemLinkFields): Promise<void> => {
       if (!config) return Promise.resolve();
+      const prior = config;
       // Merge the link field set into the persisted DTO. The ModemLinkFields
       // subset (linkKind + per-transport address fields) overrides; every other
       // AX.25 / SSID field is preserved.
@@ -138,16 +144,23 @@ export function usePacketConfig(): UsePacketConfig {
       // Optimistic local update.
       setConfig(next);
       // Broadcast to peer hooks within the same window so they re-seed without
-      // waiting for the backend (which doesn't emit a change event today).
+      // waiting for the backend.
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: next }));
       }
       // Return the persist promise so the connect flow can await it (P1 race);
-      // swallow the error so awaiting never throws (persist errors surface via
-      // the session log).
+      // swallow the error so awaiting never throws.
       return invoke('packet_config_set', { dto: next })
         .then(() => undefined)
-        .catch(() => undefined);
+        .catch(() => {
+          // tuxlink-hoi1 B4: revert the optimistic update (and peers) on a
+          // rejected persist so the UI never shows an un-saved link.
+          setConfig(prior);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: prior }));
+          }
+          return undefined;
+        });
     },
     [config],
   );

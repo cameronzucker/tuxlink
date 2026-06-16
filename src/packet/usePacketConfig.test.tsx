@@ -164,6 +164,50 @@ describe('usePacketConfig', () => {
     await expect(p).resolves.toBeUndefined();
   });
 
+  it('setLink rolls back the optimistic update when the persist rejects (B4)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'packet_config_get') return DEFAULT_CONFIG;
+      if (cmd === 'packet_config_set') throw new Error('write failed');
+      return undefined;
+    });
+    const { result } = renderHook(() => usePacketConfig());
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    let p!: Promise<void>;
+    act(() => {
+      p = result.current.setLink({
+        linkKind: 'Bluetooth',
+        tcpHost: null,
+        tcpPort: null,
+        serialDevice: null,
+        serialBaud: null,
+        btMac: 'AA:BB:CC:DD:EE:FF',
+      });
+    });
+    await act(async () => {
+      await p;
+    });
+    // A rejected persist must NOT leave the UI showing the un-saved Bluetooth
+    // link — it reverts to the persisted Tcp truth (tuxlink-hoi1 B4).
+    expect(result.current.config?.linkKind).toBe('Tcp');
+  });
+
+  it('setSsid rolls back the optimistic update when the persist rejects (B4)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'packet_config_get') return DEFAULT_CONFIG;
+      if (cmd === 'packet_config_set') throw new Error('write failed');
+      return undefined;
+    });
+    const { result } = renderHook(() => usePacketConfig());
+    await waitFor(() => expect(result.current.ssid).toBe(7));
+    act(() => {
+      result.current.setSsid(10);
+    });
+    // The optimistic 10 reverts to the persisted 7 once the persist rejects.
+    await waitFor(() => expect(result.current.ssid).toBe(7));
+  });
+
   it('setLink (unloaded config) still returns a resolved promise, not undefined', async () => {
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
