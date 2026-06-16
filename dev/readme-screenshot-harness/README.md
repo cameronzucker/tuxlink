@@ -72,3 +72,28 @@ The `shell` view accepts:
 - `&scheme=<id>` — applies a color scheme before render (e.g. `night-red`,
   `daylight`, `paper`, `high-contrast-light`, `grayscale`, `office-dark`,
   `repository-dark`). Composes with `dock`.
+
+For scripted interaction (the animated demo), the harness also exposes
+`window.__harness.emit(event, payload)` (inject a Tauri event, e.g. APRS chat
+traffic) and `window.__harness.scheme(id)` (flip the color scheme on cue).
+
+## Animated screencast
+
+`screencast.py` drives Chromium (Playwright) through a scripted flow — open a
+message, toggle the APRS dock with injected traffic, cycle color schemes — and
+records a WebM. Convert it to a looping animated WebP (what GitHub renders) with
+ffmpeg:
+
+```bash
+VITE_TUXLINK_FIXTURE=1 pnpm exec vite --host 127.0.0.1 --port 1420 --strictPort  # leave running
+python3 dev/readme-screenshot-harness/screencast.py /tmp/cast                     # -> /tmp/cast/<hash>.webm
+
+ffmpeg -ss 0.4 -i /tmp/cast/*.webm \
+  -vf "fps=10,scale=760:-1:flags=lanczos" \
+  -loop 0 -an -vcodec libwebp -lossless 0 -q:v 35 -compression_level 6 -preset picture \
+  docs/readme/images/tuxlink-demo.webp
+```
+
+Keep it small: GitHub renders animated WebP/GIF/APNG inline (no `<video>` for
+committed files; animated SVG is stripped by the camo image proxy). 10 fps /
+760 px / q35 lands ~2 MB for a ~13 s loop.

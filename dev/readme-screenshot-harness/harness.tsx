@@ -310,6 +310,20 @@ function installTauriShim() {
 async function main() {
   installTauriShim();
 
+  // Scripted-interaction hooks for the animated-screencast capture (Playwright
+  // drives these to inject APRS traffic and flip the color scheme on cue).
+  (window as unknown as { __harness: unknown }).__harness = {
+    emit: emitTauriEvent,
+    scheme: async (id: string) => {
+      try {
+        const { applyColorScheme } = await import('../../src/shell/colorScheme');
+        applyColorScheme(id as never);
+      } catch {
+        /* ignore */
+      }
+    },
+  };
+
   // Optional color scheme (e.g. ?scheme=night-red, ?scheme=daylight). Applied
   // before render so the whole shell paints in the chosen palette.
   const scheme = params.get('scheme');
