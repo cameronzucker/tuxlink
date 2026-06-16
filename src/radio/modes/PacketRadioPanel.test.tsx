@@ -133,11 +133,26 @@ describe('<PacketRadioPanel>', () => {
     });
   });
 
-  it('renders a Stop button and clicking it fires cms_abort (operator halt — tuxlink-9ym7)', async () => {
+  it('first Stop press fires a GRACEFUL cms_disconnect (DISC to remote — tuxlink-avu9)', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
     const stop = await screen.findByTestId('packet-stop-btn');
     fireEvent.click(stop);
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('cms_disconnect');
+    });
+    // First press must NOT have rudely hard-aborted.
+    expect(invoke).not.toHaveBeenCalledWith('cms_abort');
+    expect(screen.getByTestId('packet-stop-btn')).toHaveTextContent('Force stop');
+  });
+
+  it('second Stop press escalates to a hard cms_abort (force-kill — tuxlink-avu9)', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+    const stop = await screen.findByTestId('packet-stop-btn');
+    fireEvent.click(stop); // graceful
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('cms_disconnect'));
+    fireEvent.click(await screen.findByTestId('packet-stop-btn')); // force
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('cms_abort');
     });

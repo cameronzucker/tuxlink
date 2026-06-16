@@ -122,6 +122,50 @@ impl Write for AbortableByteLink {
     }
 }
 
+/// Wraps a link so a `disconnecting` flag UNWINDS the read — to break a blocked B2F
+/// loop on a graceful Stop — while leaving the WRITE path fully open. This is the
+/// inverse of [`AbortableByteLink`]'s hard gate (which blocks BOTH directions): a
+/// graceful disconnect must still be able to KEY one DISC so the remote isn't left
+/// half-open (tuxlink-avu9). Stacked OUTSIDE the abort wrapper, so on a graceful Stop
+/// the read unwinds here, the exchange returns, and `Ax25Stream::drop`'s `disconnect()`
+/// keys its DISC through this open write (the inner abort wrapper's `abort` flag is
+/// unset during a graceful stop, so it forwards too).
+struct DisconnectableByteLink {
+    inner: Box<dyn ByteLink>,
+    disconnecting: Arc<AtomicBool>,
+}
+
+impl Read for DisconnectableByteLink {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.disconnecting.load(Ordering::SeqCst) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "graceful disconnect requested",
+            ));
+        }
+        self.inner.read(buf)
+    }
+}
+
+impl Write for DisconnectableByteLink {
+    // Deliberately NOT gated on `disconnecting`: the teardown DISC must still go out.
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Stack a [`DisconnectableByteLink`] over an opened link so a graceful Stop
+/// (`disconnecting` set) unwinds the read while leaving the DISC-keying write open.
+pub fn wrap_disconnectable(
+    inner: Box<dyn ByteLink>,
+    disconnecting: Arc<AtomicBool>,
+) -> Box<dyn ByteLink> {
+    Box::new(DisconnectableByteLink { inner, disconnecting })
+}
+
 /// Open a KISS byte-pipe per `cfg`. The returned `Box<dyn ByteLink>` is handed to
 /// `datalink::connect` / `datalink::answer`.
 pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> {
@@ -318,6 +362,46 @@ mod link_serial_tests {
         assert!(
             written.lock().unwrap().is_empty(),
             "no bytes may reach the radio after abort"
+        );
+    }
+
+    // tuxlink-avu9: a graceful disconnect must UNWIND the read (to break the blocked
+    // B2F loop) yet leave the WRITE open so the teardown DISC still reaches the radio —
+    // the inverse of the abort gate. Without the open write, Stop orphans the remote.
+    #[test]
+    fn disconnectable_link_unwinds_read_but_keeps_write_open() {
+        use std::sync::Mutex;
+        struct Recording(Arc<Mutex<Vec<u8>>>);
+        impl Read for Recording {
+            fn read(&mut self, _b: &mut [u8]) -> std::io::Result<usize> {
+                Ok(0)
+            }
+        }
+        impl Write for Recording {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let mut link = DisconnectableByteLink {
+            inner: Box::new(Recording(written.clone())),
+            disconnecting: Arc::new(AtomicBool::new(true)), // graceful stop requested
+        };
+        // Read unwinds the blocked exchange...
+        assert_eq!(
+            link.read(&mut [0u8; 4]).unwrap_err().kind(),
+            std::io::ErrorKind::ConnectionAborted
+        );
+        // ...but the DISC write still reaches the radio (the whole point).
+        link.write_all(b"DISC").unwrap();
+        assert_eq!(
+            &*written.lock().unwrap(),
+            b"DISC",
+            "the teardown DISC must reach the radio during a graceful stop"
         );
     }
 }

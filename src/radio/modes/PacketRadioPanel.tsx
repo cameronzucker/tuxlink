@@ -74,6 +74,9 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
   // the operator gets a Stop affordance (RADIO-1 — the operator MUST be able to halt
   // the session). The backend `cms_abort` is mode-agnostic and a safe no-op when idle.
   const [connecting, setConnecting] = useState(false);
+  // tuxlink-avu9: true after the first Stop press (graceful DISC sent); a second press
+  // escalates to a hard force-kill.
+  const [stopRequested, setStopRequested] = useState(false);
   // listenDefault PREFERENCE (auto-arm on startup) — distinct from the
   // live `armed` state above. Synced from config on load + persisted via
   // packet_set_listen. Restored 2026-05-31 from legacy PacketConnectionPanel.
@@ -327,6 +330,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
     const path = relays.map((r) => r.trim()).filter(Boolean);
     const dial = buildRecordDial(call);
     setConnecting(true);
+    setStopRequested(false);
     try {
       await invoke('packet_connect', { call, path });
       void recordAttempt(dial, 'reached', tsLocal()); // blocking connect→B2F resolved = honest reach
@@ -334,13 +338,21 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
       void recordAttempt(dial, 'failed', tsLocal()); // record failed in the catch (NOT finally)
     } finally {
       setConnecting(false);
+      setStopRequested(false);
     }
   };
 
-  // tuxlink-9ym7: halt an in-flight packet session. `cms_abort` shuts the connecting
-  // socket / sets the abort flag, unwinding the blocking connect→B2F call promptly.
+  // tuxlink-avu9: Stop is a GRACEFUL disconnect — it tells the backend to key a DISC
+  // to the remote (cms_disconnect) so the far end isn't orphaned half-open. A SECOND
+  // press escalates to a hard force-kill (cms_abort) for a stuck/runaway session,
+  // preserving the RADIO-1 immediate-stop guarantee.
   const onStop = () => {
-    void invoke('cms_abort').catch(() => {});
+    if (stopRequested) {
+      void invoke('cms_abort').catch(() => {});
+      return;
+    }
+    setStopRequested(true);
+    void invoke('cms_disconnect').catch(() => {});
   };
 
   const headerSub = config
@@ -630,15 +642,16 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
             ? `Start (call ${target.trim()})`
             : 'Start'}
         </button>
-        {/* tuxlink-9ym7: operator stop. Always available (cms_abort is a safe no-op
-            when idle) so a runaway/blocked session can always be halted — RADIO-1. */}
+        {/* tuxlink-avu9: operator stop. First press = graceful DISC to the remote;
+            second press = hard force-kill. Always available (both are safe no-ops when
+            idle) so a runaway/blocked session can always be halted — RADIO-1. */}
         <button
           type="button"
           className="radio-panel-btn radio-panel-btn-bad"
           data-testid="packet-stop-btn"
           onClick={onStop}
         >
-          Stop
+          {stopRequested ? 'Force stop' : 'Stop'}
         </button>
       </section>
 
