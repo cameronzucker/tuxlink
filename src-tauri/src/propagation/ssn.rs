@@ -3,18 +3,61 @@
 //! writes in v1. A writable on-disk cache + opportunistic refresh is a deferred
 //! follow-up (spec §12) — not implemented here, must never add a network precondition.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use super::PropagationError;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SsnForecast {
     pub monthly: BTreeMap<String, f64>,
+}
+
+/// Writable on-disk forecast path. Mirrors `prefs::prefs_path` — the runtime
+/// forecast lives beside the operator's other prefs in the config dir, so an
+/// internet/RF propagation update persists across restarts (tuxlink-ot71).
+pub fn forecast_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("ssn-forecast.json")
 }
 
 impl SsnForecast {
     pub fn from_json(text: &str) -> Result<Self, PropagationError> {
         serde_json::from_str(text).map_err(|e| PropagationError::Ssn(e.to_string()))
+    }
+
+    /// Load the runtime forecast: prefer a writable on-disk forecast (written by
+    /// a prior internet/RF update), else fall back to the bundled table. Never
+    /// fails — a missing, empty, or corrupt writable file degrades silently to
+    /// the bundled forecast (offline-first; an update must never be able to
+    /// brick prediction). This is the runtime-mutable read side the
+    /// "Update propagation data" feature writes through.
+    pub fn load_writable_then_bundled(config_dir: &Path) -> Self {
+        let path = forecast_path(config_dir);
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Ok(f) = Self::from_json(&text) {
+                if !f.monthly.is_empty() {
+                    return f;
+                }
+            }
+            // Corrupt or empty writable file → ignore it, use bundled.
+        }
+        Self::from_json(BUNDLED_SSN_FORECAST).unwrap_or_default()
+    }
+
+    /// Persist this forecast to the writable path, atomically (write a temp file
+    /// then rename) so a crash mid-write can't leave a half-written forecast that
+    /// the next `load_writable_then_bundled` would reject.
+    pub fn persist(&self, config_dir: &Path) -> Result<(), PropagationError> {
+        let path = forecast_path(config_dir);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| PropagationError::Ssn(e.to_string()))?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json)?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
     }
 
     /// SSN for `year`-`month`; falls back to the nearest EARLIER month, else the
@@ -127,5 +170,60 @@ mod tests {
         let result = SsnForecast::from_json("{not json");
         assert!(matches!(result, Err(PropagationError::Ssn(_))),
             "malformed JSON must yield PropagationError::Ssn, got: {:?}", result);
+    }
+
+    // ---- runtime-mutable forecast (tuxlink-ot71 prerequisite) --------------
+
+    #[test]
+    fn load_falls_back_to_bundled_when_no_writable_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // No ssn-forecast.json on disk → bundled anchor (2026-06 = 100.0).
+        let f = SsnForecast::load_writable_then_bundled(dir.path());
+        assert_eq!(f.ssn_for(2026, 6), 100.0);
+    }
+
+    #[test]
+    fn persisted_forecast_is_preferred_over_bundled_on_reload() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut monthly = BTreeMap::new();
+        monthly.insert("2026-06".to_string(), 142.0); // differs from bundled 100.0
+        let updated = SsnForecast { monthly };
+        updated.persist(dir.path()).expect("persist should succeed");
+
+        let reloaded = SsnForecast::load_writable_then_bundled(dir.path());
+        assert_eq!(
+            reloaded.ssn_for(2026, 6),
+            142.0,
+            "a persisted runtime forecast must win over the bundled table"
+        );
+    }
+
+    #[test]
+    fn corrupt_writable_file_degrades_to_bundled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(forecast_path(dir.path()), "{garbage").expect("write");
+        let f = SsnForecast::load_writable_then_bundled(dir.path());
+        // Corrupt writable file is ignored → bundled anchor, never a panic/empty.
+        assert_eq!(f.ssn_for(2026, 6), 100.0);
+    }
+
+    #[test]
+    fn empty_writable_forecast_degrades_to_bundled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(forecast_path(dir.path()), r#"{"monthly":{}}"#).expect("write");
+        let f = SsnForecast::load_writable_then_bundled(dir.path());
+        assert_eq!(f.ssn_for(2026, 6), 100.0, "empty writable table is not 'usable'");
+    }
+
+    #[test]
+    fn persist_then_from_json_roundtrips() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut monthly = BTreeMap::new();
+        monthly.insert("2026-01".to_string(), 107.8);
+        let f = SsnForecast { monthly };
+        f.persist(dir.path()).expect("persist");
+        let text = std::fs::read_to_string(forecast_path(dir.path())).expect("read");
+        let back = SsnForecast::from_json(&text).expect("reparse");
+        assert_eq!(back.ssn_for(2026, 1), 107.8);
     }
 }

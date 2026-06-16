@@ -9,6 +9,7 @@ pub mod engine;
 pub mod parse;
 pub mod patterns;
 pub mod prefs;
+pub mod solar;
 pub mod ssn;
 pub mod type14;
 
