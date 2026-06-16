@@ -33,13 +33,22 @@
 }
 
 .station-finder {
+  /* Theme pass (2026-06-16): the panel was built against ad-hoc colour vars
+     (--panel/--border2/--dim/--faint) that were never defined, so every usage
+     fell back to an off-theme teal-navy palette. Alias them onto the canonical
+     Mock-D cool-slate tokens here (scoped to the panel) so the whole surface
+     inherits the app theme in one place. */
+  --panel: var(--surface-2);
+  --border2: var(--border-strong);
+  --dim: var(--text-dim);
+  --faint: var(--text-faint);
   width: min(1180px, 96vw);
   max-height: 92vh;
   display: flex;
   flex-direction: column;
-  background: var(--surface, #0c1620);
-  color: var(--text, #e8f1fa);
-  border: 1px solid var(--border2, #34556f);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
   overflow: hidden;
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6);
@@ -129,7 +138,7 @@
   border-radius: 7px;
   padding: 5px 10px;
   cursor: pointer;
-  background: #0b1722;
+  background: var(--surface-2);
 }
 .station-finder__bandtab.on {
   color: #08120b;
@@ -156,7 +165,7 @@
   border-radius: 20px;
   padding: 4px 10px;
   cursor: pointer;
-  background: #0b1722;
+  background: var(--surface-2);
 }
 .station-finder__chip.off {
   opacity: 0.5;
@@ -201,7 +210,7 @@
   font: inherit;
   font-size: 12px;
   color: var(--text, #e8f1fa);
-  background: #0b1722;
+  background: var(--surface-2);
   border: 1px solid var(--border2, #34556f);
   border-radius: 7px;
   padding: 5px 10px;
@@ -216,7 +225,7 @@
   font: inherit;
   font-size: 12px;
   color: var(--text, #e8f1fa);
-  background: #0b1722;
+  background: var(--surface-2);
   border: 1px solid var(--border2, #34556f);
   border-radius: 7px;
   padding: 5px 8px;
@@ -228,7 +237,7 @@
   font: inherit;
   font-size: 11.5px;
   color: var(--dim, #9fb6cc);
-  background: #0b1722;
+  background: var(--surface-2);
   border: 1px solid var(--border2, #34556f);
   border-radius: 7px;
   padding: 5px 10px;
@@ -423,7 +432,7 @@
   border: 1px solid var(--border2, #34556f);
   position: relative;
   flex: none;
-  background: #0b1722;
+  background: var(--surface-2);
 }
 .station-finder__needle {
   position: absolute;
@@ -493,7 +502,7 @@
 .station-finder__track {
   height: 9px;
   border-radius: 5px;
-  background: #0b1722;
+  background: var(--surface-2);
   border: 1px solid #1d3346;
   overflow: hidden;
 }
@@ -561,9 +570,12 @@
   font: inherit;
   font-size: 11.5px;
   font-weight: 600;
-  color: #fff;
-  background: var(--accent, #2f86f0);
-  border: 1px solid #3f93f5;
+  /* Use → arms the modem (a Connect-adjacent action), so it carries the
+     modem-accent (green) identity rather than the loud orange --accent it had
+     (which also clashed with a leftover blue border). Theme pass 2026-06-16. */
+  color: var(--modem-accent-fg, #0d1b14);
+  background: var(--modem-accent, #4ade80);
+  border: 1px solid var(--modem-accent, #4ade80);
   border-radius: 6px;
   padding: 4px 10px;
   cursor: pointer;
@@ -709,6 +721,20 @@
    unit span so each field is one compact column (matches the mock's .af). */
 .station-finder__antenna-unit {
   display: none;
+}
+/* Native <select> renders as solid GTK gray on WebKitGTK regardless of the CSS
+   background; strip the native appearance and supply a themed caret so every
+   dropdown matches the panel (theme pass 2026-06-16). Placed after the base
+   select rules so this background-image longhand survives their `background`
+   shorthand. */
+.station-finder__antenna-select,
+.station-finder__radius select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2394a0ad' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 22px;
 }
 .station-finder__antenna-err {
   flex-basis: 100%;
