@@ -30,6 +30,32 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.68.0](https://github.com/cameronzucker/tuxlink/compare/v0.67.0...v0.68.0) (2026-06-16)
+
+
+### Features
+
+* **aprs:** parse object (;) and item ()) reports ([47fee6d](https://github.com/cameronzucker/tuxlink/commit/47fee6d1e21546364410fcef9f27714115ad7d5e))
+* **aprs:** plot object/item reports on the Tac Chat map ([6f37502](https://github.com/cameronzucker/tuxlink/commit/6f37502607d072cc46d27795fb7f123241727d94))
+* **aprs:** symbol-table lookup + name heard stations in the map popup ([bb2938b](https://github.com/cameronzucker/tuxlink/commit/bb2938b123584376d7fbca3a9f6551d6b4975198))
+* **aprs:** telemetry parser — T# data reports + PARM/UNIT/EQNS/BITS ([32328e7](https://github.com/cameronzucker/tuxlink/commit/32328e7a668f6386623572af390be8a751e74714))
+* **theme:** high-contrast Daylight — bold stateful fills + punchier palette (colors only) ([bfdb240](https://github.com/cameronzucker/tuxlink/commit/bfdb240f248653c8a236e8dd2b2d2a4ae1af9026))
+
+
+### Bug Fixes
+
+* **aprs:** flatten the dock tabs so they're a rail, not rounded buttons ([8b8193a](https://github.com/cameronzucker/tuxlink/commit/8b8193a8ee96a2d2755897aad5a92d2ffb238c03))
+
+
+### Performance
+
+* **aprs:** port the vnk7 render pattern to the tac map (was missing it) ([9233ef1](https://github.com/cameronzucker/tuxlink/commit/9233ef1aadb67395341046cbfdb50495d49a74fa))
+
+
+### Refactors
+
+* **shell:** drop ribbon SSID picker + message-list identity filter (bd-tuxlink-y8tf) ([9ac6ead](https://github.com/cameronzucker/tuxlink/commit/9ac6ead97a8032090961658ce79bcf3005bb5ee1))
+
 ## [0.67.0](https://github.com/cameronzucker/tuxlink/compare/v0.66.0...v0.67.0) (2026-06-16)
 
 
