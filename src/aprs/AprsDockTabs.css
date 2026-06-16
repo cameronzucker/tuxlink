@@ -16,6 +16,20 @@
   align-items: stretch;
 }
 
+/* tuxlink-sdjd: the global `input,textarea,select,button { border-radius: 6px }`
+   rule in App.css forces a 6px radius onto these, so the active tab's surface
+   fill and the Map toggle's soft-green fill render as ROUNDED BUTTONS instead of
+   a flat tab rail — the long-standing "default buttons" complaint. (The earlier
+   appearance:none change in #760 was a no-op for this; computed styles confirmed
+   the tabs already had appearance:none + border:none + transparent bg — the radius
+   was the visible cause.) Flatten them so they read as a rail. Verified against
+   the REAL production bundle on WebKitGTK (dev/scratch/webkit-tabs-flat.png). */
+.aprs-dock-tab,
+.aprs-dock-maptoggle,
+.aprs-dock-close {
+  border-radius: 0;
+}
+
 /* Exclusive chat⇄modem tabs — content-sized, hairline-separated, accent
    underline (inset shadow) + surface fill on the active tab. */
 .aprs-dock-tab {
