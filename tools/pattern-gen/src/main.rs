@@ -53,27 +53,52 @@ fn run_nec2c(deck: &str) -> std::io::Result<String> {
     Ok(text)
 }
 
-/// Parse the RADIATION PATTERNS table; return THETA(deg) → TOTAL gain (dBi), raw (unclamped).
-/// Columns (whitespace-delimited): THETA PHI VERTC HORIZ TOTAL ... ; TOTAL is index 4 (0-based).
+/// nec2c's no-power sentinel; values at or below this are true nulls (no power
+/// computed), contributing zero to the azimuth-averaged power.
+const NEC_SENTINEL_DB: f64 = -300.0;
+
+/// Parse the RADIATION PATTERNS table and return THETA(deg) → **azimuth-averaged**
+/// TOTAL gain (dBi, unclamped). Columns (whitespace-delimited): THETA PHI VERTC
+/// HORIZ TOTAL ... ; TOTAL is index 4 (0-based).
+///
+/// The runtime has no antenna azimuth/orientation — one Type-14 elevation curve is
+/// applied to every station bearing — so a single phi cut of a directional wire
+/// would bake that arbitrary orientation's lobes into the model. We therefore
+/// average the TOTAL **power** (linear) across every phi cut present at each theta
+/// (the deck's RP card chooses how many phi). For a single-phi deck (Yagi
+/// boresight) this is the identity. Sentinel rows contribute zero power; a theta
+/// with no real power in any azimuth stays a null (`-999.99`, clamped downstream).
 fn parse_total_gains(out: &str) -> Result<BTreeMap<u32, f64>, String> {
     let start = out
         .find("RADIATION PATTERNS")
         .ok_or("no radiation-pattern block in nec2c output")?;
-    let mut map = BTreeMap::new();
+    // theta → (sum of linear power over phi cuts, count of phi cuts).
+    let mut acc: BTreeMap<u32, (f64, u32)> = BTreeMap::new();
     for line in out[start..].lines() {
         let cols: Vec<&str> = line.split_whitespace().collect();
         if cols.len() >= 5 {
             if let (Ok(theta), Ok(total)) = (cols[0].parse::<f64>(), cols[4].parse::<f64>()) {
                 if (0.0..=90.0).contains(&theta) {
-                    map.insert(theta.round() as u32, total);
+                    let lin = if total <= NEC_SENTINEL_DB { 0.0 } else { 10f64.powf(total / 10.0) };
+                    let e = acc.entry(theta.round() as u32).or_insert((0.0, 0));
+                    e.0 += lin;
+                    e.1 += 1;
                 }
             }
         }
     }
-    if map.is_empty() {
+    if acc.is_empty() {
         return Err("no data rows parsed from radiation-pattern block".into());
     }
-    Ok(map)
+    Ok(acc
+        .into_iter()
+        .map(|(theta, (sum, n))| {
+            let mean = sum / n as f64;
+            // All-sentinel (or zero-power) azimuths → preserve the null sentinel.
+            let db = if mean > 0.0 { 10.0 * mean.log10() } else { -999.99 };
+            (theta, db)
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +151,10 @@ fn build_pattern(title: &str, deck_at: impl Fn(f64) -> String) -> Result<Type14P
 // ---------------------------------------------------------------------------
 
 const GROUND_POOR: &str = "GN 2 0 0 0 3.0 0.001";
-const RP_ELEV: &str = "RP 0 91 1 1000 0.0 0.0 1.0 0.0"; // theta sweep, normalized power gain
+/// Theta sweep over 24 azimuth cuts (phi 0..345°, 15° steps). The parser averages
+/// TOTAL power across the cuts so a directional wire's arbitrary orientation does
+/// not bake a bearing-specific lobe into the bearing-neutral runtime model.
+const RP_ELEV_AZAVG: &str = "RP 0 91 24 1000 0.0 0.0 1.0 15.0";
 const RP_ELEV_BORESIGHT: &str = "RP 0 91 1 0 0.0 0.0 1.0 0.0"; // raw gain (yagi, phi=0 boresight)
 
 /// NVIS wire dipole / OCFD: flat center-fed 20 m horizontal wire at `apex_m`.
@@ -135,7 +163,7 @@ fn deck_nvis_dipole(freq_mhz: f64, apex_m: f64) -> String {
     format!(
         "CM tuxlink nvis-wire-dipole 20m flat @ {apex_m:.1}m, poor ground\nCE\n\
          GW 1 61 -10.0 0 {apex_m:.3} 10.0 0 {apex_m:.3} 0.001\nGE -1\n{GROUND_POOR}\n\
-         EX 0 1 31 0 1.0 0.0\nFR 0 1 0 0 {freq_mhz:.3} 0\n{RP_ELEV}\nEN\n"
+         EX 0 1 31 0 1.0 0.0\nFR 0 1 0 0 {freq_mhz:.3} 0\n{RP_ELEV_AZAVG}\nEN\n"
     )
 }
 
@@ -147,20 +175,27 @@ fn deck_efhw_sloper(freq_mhz: f64, apex_m: f64) -> String {
     format!(
         "CM tuxlink efhw-sloper 18m, apex {apex_m:.1}m -> 2m, end-fed, poor ground\nCE\n\
          GW 1 61 0.0 0 {apex_m:.3} 18.0 0 2.0 0.001\nGE -1\n{GROUND_POOR}\n\
-         EX 0 1 1 0 1.0 0.0\nFR 0 1 0 0 {freq_mhz:.3} 0\n{RP_ELEV}\nEN\n"
+         EX 0 1 1 0 1.0 0.0\nFR 0 1 0 0 {freq_mhz:.3} 0\n{RP_ELEV_AZAVG}\nEN\n"
     )
 }
 
-/// Portable dipole (linked / inverted-V): apex (center) at `apex_m`, legs drooping to
-/// `end_z`. Two wires meeting at the apex, fed at the junction. Compromise takeoff angle,
-/// near-omni azimuth — between the flat dipole and a vertical.
+/// Portable dipole (linked / inverted-V): a band-resonant inverted-V, **re-cut per
+/// frequency** (the defining trait of a linked / fan dipole — you clip leg sections
+/// in or out for each band). Each leg is a ~quarter-wave wire drooping ~30° from the
+/// apex at `apex_m`; legs meet at the apex, fed at the junction. Distinct from the
+/// fixed-20 m NVIS wire and the sloper by being resonant on the operating band.
 fn deck_portable_dipole(freq_mhz: f64, apex_m: f64) -> String {
-    let end_z = (apex_m - 3.0).max(2.0);
+    // Quarter-wave leg (wire length, m), ~30° droop → horizontal span 0.866·leg,
+    // vertical drop 0.5·leg. Floor the end height so a low apex stays above ground.
+    let leg = 0.25 * 300.0 / freq_mhz;
+    let hspan = leg * 0.866;
+    let end_z = (apex_m - leg * 0.5).max(1.0);
     format!(
-        "CM tuxlink portable inverted-V 20m, apex {apex_m:.1}m -> ends {end_z:.1}m, poor ground\nCE\n\
-         GW 1 31 -10.0 0 {end_z:.3} 0.0 0 {apex_m:.3} 0.001\n\
-         GW 2 31 0.0 0 {apex_m:.3} 10.0 0 {end_z:.3} 0.001\nGE -1\n{GROUND_POOR}\n\
-         EX 0 1 31 0 1.0 0.0\nFR 0 1 0 0 {freq_mhz:.3} 0\n{RP_ELEV}\nEN\n"
+        "CM tuxlink portable inverted-V (band-resonant) apex {apex_m:.1}m, poor ground\nCE\n\
+         GW 1 31 {nx:.3} 0 {end_z:.3} 0.0 0 {apex_m:.3} 0.001\n\
+         GW 2 31 0.0 0 {apex_m:.3} {hspan:.3} 0 {end_z:.3} 0.001\nGE -1\n{GROUND_POOR}\n\
+         EX 0 1 31 0 1.0 0.0\nFR 0 1 0 0 {freq_mhz:.3} 0\n{RP_ELEV_AZAVG}\nEN\n",
+        nx = -hspan
     )
 }
 
@@ -179,9 +214,11 @@ fn deck_yagi(freq_mhz: f64, apex_m: f64) -> String {
     )
 }
 
-/// Ground-mounted vertical monopole of `len_m` (base 0.1 m), with 4 radials (10 m, 0.05 m
-/// high) over poor soil. Fed at the base. Taller = lower takeoff angle. Used for all three
-/// verticals at different lengths; height is NOT an operator axis (ground-mounted geometry).
+/// Ground-mounted vertical monopole of `len_m` with 4 elevated radials (10 m long)
+/// over poor soil. The monopole base and the radial hub share the coordinate
+/// (0, 0, 0.1) so the radials are electrically connected as a counterpoise — NEC
+/// only joins wires at identical endpoints. Fed at the base junction. Taller =
+/// lower takeoff angle. Height is NOT an operator axis (ground-mounted geometry).
 fn deck_vertical(freq_mhz: f64, len_m: f64) -> String {
     let nseg = ((len_m * 6.0).round() as i32).max(9);
     let mut s = format!(
@@ -189,17 +226,18 @@ fn deck_vertical(freq_mhz: f64, len_m: f64) -> String {
          GW 1 {nseg} 0 0 0.1 0 0 {top:.3} 0.001\n",
         top = 0.1 + len_m
     );
+    // Radials fan out from the monopole base (0,0,0.1) so they connect to seg 1.
     for (i, (x, y)) in [(10.0_f64, 0.0_f64), (0.0, 10.0), (-10.0, 0.0), (0.0, -10.0)]
         .iter()
         .enumerate()
     {
         s.push_str(&format!(
-            "GW {tag} 9 0 0 0.05 {x:.3} {y:.3} 0.05 0.001\n",
+            "GW {tag} 9 0 0 0.1 {x:.3} {y:.3} 0.1 0.001\n",
             tag = i + 2
         ));
     }
     s.push_str(&format!(
-        "GE -1\n{GROUND_POOR}\nEX 0 1 1 0 1.0 0.0\nFR 0 1 0 0 {freq_mhz:.3} 0\n{RP_ELEV}\nEN\n"
+        "GE -1\n{GROUND_POOR}\nEX 0 1 1 0 1.0 0.0\nFR 0 1 0 0 {freq_mhz:.3} 0\n{RP_ELEV_AZAVG}\nEN\n"
     ));
     s
 }
@@ -300,9 +338,28 @@ mod tests {
     #[test]
     fn parses_total_gain_by_theta() {
         let gains = parse_total_gains(SAMPLE).unwrap();
-        assert_eq!(gains.get(&0).copied(), Some(3.68));
-        assert_eq!(gains.get(&89).copied(), Some(-8.20));
-        assert_eq!(gains.get(&90).copied(), Some(-999.99)); // sentinel preserved pre-clamp
+        // Single-phi rows round-trip through the linear-power average (within fp).
+        assert!((gains.get(&0).copied().unwrap() - 3.68).abs() < 1e-6);
+        assert!((gains.get(&89).copied().unwrap() - (-8.20)).abs() < 1e-6);
+        // A theta with only the no-power sentinel stays a null pre-clamp.
+        assert_eq!(gains.get(&90).copied(), Some(-999.99));
+    }
+
+    #[test]
+    fn averages_total_power_across_phi_cuts() {
+        // Two phi cuts at theta 60 (elevation 30): +0 dBi and a deep null. The
+        // azimuth average is the mean LINEAR power (1.0 + ~0)/2 → ~ -3.01 dBi,
+        // NOT the arithmetic mean of the dB values.
+        let sample = "\
+                             ---------- RADIATION PATTERNS -----------
+
+  THETA      PHI       VERTC    HORIZ    TOTAL       AXIAL      TILT  SENSE
+   60.00      0.00      0.00  -999.99     0.00      0.0000      0.00 LINEAR
+   60.00     90.00   -999.99  -999.99  -999.99      0.0000      0.00 LINEAR
+";
+        let g = parse_total_gains(sample).unwrap();
+        let v = g.get(&60).copied().unwrap();
+        assert!((v - (-3.0103)).abs() < 1e-3, "expected ~-3.01 dBi linear average, got {v}");
     }
 
     #[test]
