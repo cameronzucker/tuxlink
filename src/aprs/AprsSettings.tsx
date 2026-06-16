@@ -18,6 +18,18 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { AprsConfigDto } from './aprsTypes';
+import { usePacketConfig } from '../packet/usePacketConfig';
+import { ModemLinkSection } from '../radio/sections/ModemLinkSection';
+import type { PacketLinkKind } from '../packet/packetTypes';
+
+/** Default a null / unrepresentable (Managed) link to the USB segment so the
+ *  picker has a concrete starting kind — mirrors AprsConnectStrip's pickerKind. */
+function pickerKind(linkKind: PacketLinkKind | null | undefined): 'Tcp' | 'Serial' | 'Bluetooth' | 'UvproNative' {
+  if (linkKind === 'Tcp') return 'Tcp';
+  if (linkKind === 'Bluetooth') return 'Bluetooth';
+  if (linkKind === 'UvproNative') return 'UvproNative';
+  return 'Serial';
+}
 
 export function AprsSettings() {
   const [sourceSsid, setSourceSsid] = useState<number>(0);
@@ -25,6 +37,13 @@ export function AprsSettings() {
   const [path, setPath] = useState<string>('');
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // tuxlink-rypw #3: the radio LINK (transport/radio) used to be configurable
+  // only from the dock connect strip — a catch-22 (you had to open APRS + try to
+  // connect to set it up). Surface the same picker here, decoupled from connect.
+  // Reuses the shared usePacketConfig (same persist path as the connect strip, so
+  // the tuxlink-hoi1 preserve-link/rollback fixes apply) — changes save on edit.
+  const packet = usePacketConfig();
+  const link = packet.config;
 
   // Load the live config once on mount.
   useEffect(() => {
@@ -65,6 +84,20 @@ export function AprsSettings() {
           {error}
         </div>
       )}
+
+      {/* Radio link (#3): configure the APRS transport + radio here, without
+          opening the dock or attempting a connection. Edits save immediately
+          (the picker emits on blur / segment-switch), like the connect strip. */}
+      <ModemLinkSection
+        kind={pickerKind(link?.linkKind)}
+        host={link?.tcpHost ?? undefined}
+        port={link?.tcpPort ?? undefined}
+        serialDevice={link?.serialDevice ?? undefined}
+        serialBaud={link?.serialBaud ?? undefined}
+        btMac={link?.btMac ?? undefined}
+        allowUvproNative
+        onChange={packet.setLink}
+      />
 
       <label className="tux-settings-field">
         <span className="tux-settings-field-label">Source SSID</span>
