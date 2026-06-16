@@ -85,6 +85,26 @@ describe('useAprsPositions', () => {
     expect(result.current.positions[0].ambiguity).toBe(3);
   });
 
+  it('labels an object/item report by its name, not the reporting sender', async () => {
+    const { result } = renderHook(() => useAprsPositions());
+    await act(async () => {});
+    // DIGI1 reports object "LEADER" — the pin is labeled by the object name.
+    emitPos({ ...BASE, sender: 'DIGI1', name: 'LEADER' });
+    expect(result.current.positions).toHaveLength(1);
+    expect(result.current.positions[0].call).toBe('LEADER');
+  });
+
+  it('keeps distinct objects from the same sender as separate pins', async () => {
+    const { result } = renderHook(() => useAprsPositions());
+    await act(async () => {});
+    // One station reporting two named objects → two pins (keyed by name, not
+    // collapsed onto the single reporting callsign).
+    emitPos({ ...BASE, sender: 'DIGI1', name: 'LEADER', lat: 49 });
+    emitPos({ ...BASE, sender: 'DIGI1', name: 'AIDSTN', lat: 40, lon: -100 });
+    expect(result.current.positions).toHaveLength(2);
+    expect(result.current.positions.map((p) => p.call).sort()).toEqual(['AIDSTN', 'LEADER']);
+  });
+
   describe('staleness', () => {
     beforeEach(() => {
       vi.useFakeTimers();
