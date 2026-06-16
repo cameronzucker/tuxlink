@@ -140,10 +140,9 @@ export function AprsConnectStrip({
     <section className="aprs-connect-strip" data-testid="aprs-connect-strip" aria-label="APRS connection">
       <div className="aprs-connect-row">
         <span className="aprs-connect-id">
-          <span className="aprs-connect-label">APRS</span>
-          <span className="aprs-connect-sep" aria-hidden="true">
-            ·
-          </span>
+          {/* tuxlink-rypw #4a: the "APRS" label was the third stacked "APRS" in the
+              dock header (the tab "APRS Chat" + the panel "APRS Channel" already
+              name it), so it's dropped — the radio status is the useful info here. */}
           <span className="aprs-connect-radio" data-testid="aprs-connect-radio">
             {radioLabel ?? 'no link'}
           </span>
