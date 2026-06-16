@@ -13,12 +13,22 @@
 //! is correct physics for a whip but wrong for the dipoles / end-fed wires most
 //! Winlink gateways and operators actually run.
 //!
-//! ## v1 model
+//! ## Phase 1 model (TX): precomputed NEC Type-14 patterns
 //!
-//! Each preset maps to one of three *stock* VOACAP files (no invented HFANT
-//! patterns — antenna pattern numbers are exactly the amateur-radio specifics
-//! this project treats as structurally unreliable from an AI, and require
-//! on-air operator calibration):
+//! The operator's own (TX) antenna resolves to a **precomputed NEC Type-14
+//! pattern** via [`operator_voa_content`] → [`crate::propagation::patterns`].
+//! Those patterns are generated offline by `tools/pattern-gen/` (real `nec2c`
+//! geometry, never fabricated gain-vs-angle) and committed under
+//! `propagation/patterns/`. The catalog is curated to eight defensible models
+//! over a four-stop height grid; every preset, including `Unknown`, has an entry.
+//!
+//! ## RX / gateway model: stock VOACAP files
+//!
+//! The far/gateway (RX) end still maps to one of three *stock* VOACAP files via
+//! [`gateway_voa_file`] / [`AntennaPreset::voa_file`] (no invented HFANT patterns
+//! — antenna pattern numbers are exactly the amateur-radio specifics this project
+//! treats as structurally unreliable from an AI, and require on-air operator
+//! calibration):
 //!
 //! - `ccir.000` — the isotrope (0 dBi at every angle). The honest neutral model:
 //!   **no zenith null**, so short/NVIS paths predict reachable. Used for
@@ -58,15 +68,15 @@ pub enum AntennaPreset {
     BaseVerticalRadials,
     /// Mobile HF whip (screwdriver / hamstick). → whip.
     MobileHfWhip,
-    /// Random wire + 9:1 unun. → isotrope.
-    RandomWireUnun,
     /// Resonant portable dipole (linked / fan / inverted-V). → isotrope.
     ResonantPortableDipole,
-    /// Magnetic loop. → isotrope.
-    MagneticLoop,
     /// Directional beam / Yagi / hex beam (base). → 17 dBi constant-gain.
     BeamYagi,
-    /// Unknown / generic. → isotrope (NEVER a whip).
+    /// Unknown / generic. → neutral flat pattern (NEVER a whip). Also the
+    /// `#[serde(other)]` catch-all: any persisted value the build no longer
+    /// recognizes (e.g. the retired `random-wire-unun` / `magnetic-loop`)
+    /// deserializes to `Unknown` instead of failing the whole prefs load.
+    #[serde(other)]
     Unknown,
 }
 
@@ -79,9 +89,7 @@ impl AntennaPreset {
             // so NVIS and short regional paths are not artificially killed.
             AntennaPreset::EfhwSloper
             | AntennaPreset::NvisWireDipole
-            | AntennaPreset::RandomWireUnun
             | AntennaPreset::ResonantPortableDipole
-            | AntennaPreset::MagneticLoop
             | AntennaPreset::Unknown => "ccir.000",
             // Genuine verticals: the whip's zenith null is the right physics.
             AntennaPreset::PortableVerticalWhip
@@ -138,122 +146,30 @@ impl GroundType {
     }
 }
 
-/// The IONCAP parametric antenna a preset maps to. voacapl computes the
-/// height/ground/frequency-dependent elevation pattern internally from these —
-/// we supply *physical geometry*, never invented gain-vs-angle numbers (the
-/// pattern math is the validated Fortran's job, sidestepping the AI-unreliable
-/// pattern-number concern in the module docs).
-struct IoncapAntenna {
-    /// VOACAP antenna-type code: 22 vertical monopole, 23 horizontal dipole,
-    /// 24 horizontal Yagi (verified against the voacapl source + shipped samples).
-    type_code: u8,
-    /// Element length/height in wavelengths (negative = wavelengths per the
-    /// IONCAP sign convention). For type 22 this is the monopole element; for
-    /// 23/24 it is the dipole/boom length.
-    length_wl: f64,
-    /// Forward gain over a dipole (dB) for directional types; 0 for plain wires.
-    gain_over_dipole_db: f64,
-}
-
-impl AntennaPreset {
-    /// The IONCAP parametric antenna for this preset, or `None` to keep the stock
-    /// isotrope model (no height dependence) — used for `Unknown`.
-    fn ioncap(self) -> Option<IoncapAntenna> {
-        use AntennaPreset::*;
-        match self {
-            // Horizontal wires / loops → resonant half-wave horizontal dipole (23).
-            // Mag loop / random wire have no native VOACAP type; the low horizontal
-            // dipole is the documented proxy (see the recalibration design note).
-            EfhwSloper | NvisWireDipole | RandomWireUnun | ResonantPortableDipole
-            | MagneticLoop => Some(IoncapAntenna {
-                type_code: 23,
-                length_wl: -0.50,
-                gain_over_dipole_db: 0.0,
-            }),
-            // Verticals → quarter-wave vertical monopole (22), ground-mounted.
-            PortableVerticalWhip | BaseVerticalRadials | MobileHfWhip => Some(IoncapAntenna {
-                type_code: 22,
-                length_wl: -0.25,
-                gain_over_dipole_db: 0.0,
-            }),
-            // Beam → horizontal Yagi (24) with forward gain over a dipole.
-            BeamYagi => Some(IoncapAntenna {
-                type_code: 24,
-                length_wl: -0.50,
-                gain_over_dipole_db: 6.0,
-            }),
-            // Unknown → keep stock isotrope (height does not apply).
-            Unknown => None,
-        }
-    }
-
-    /// A short title line for the generated `.voa` (≤70 chars; informational).
-    fn voa_title(self) -> &'static str {
-        use AntennaPreset::*;
-        match self {
-            EfhwSloper => "tuxlink EFHW / sloper (horizontal dipole model)",
-            NvisWireDipole => "tuxlink low NVIS wire dipole",
-            RandomWireUnun => "tuxlink random wire (horizontal dipole model)",
-            ResonantPortableDipole => "tuxlink resonant portable dipole",
-            MagneticLoop => "tuxlink magnetic loop (horizontal dipole model)",
-            PortableVerticalWhip => "tuxlink portable vertical whip (monopole)",
-            BaseVerticalRadials => "tuxlink base vertical + radials (monopole)",
-            MobileHfWhip => "tuxlink mobile HF whip (monopole)",
-            BeamYagi => "tuxlink beam / Yagi (horizontal yagi)",
-            Unknown => "tuxlink generic",
-        }
-    }
-}
-
 /// The generated `.voa` filename written into the scratch `antennas/default/`
-/// for an operator preset that maps to a parametric IONCAP antenna.
+/// for the operator's selected preset. Every preset now resolves to a
+/// precomputed Type-14 pattern (see [`crate::propagation::patterns`]), so this
+/// file is always written.
 pub const OPERATOR_VOA_FILENAME: &str = "txgen.voa";
 
-/// Build the VOACAP pattern-file content for the operator's (TX) antenna, with
-/// the operator's `height_m` (metres, above ground) and `ground` plugged in.
+/// Build the VOACAP pattern-file content for the operator's (TX) antenna.
 ///
-/// Returns `None` when the preset has no parametric model (`Unknown`) — the
-/// caller then falls back to the stock isotrope file from [`AntennaPreset::voa_file`].
+/// Phase 1: returns the **precomputed NEC Type-14 pattern** for the selected
+/// preset and (snapped) height, generated offline by `tools/pattern-gen/` and
+/// committed under `propagation/patterns/`. Every preset has a library entry —
+/// including `Unknown` (a neutral flat pattern) — so this always returns `Some`.
 ///
-/// Height enters as a **positive metres** value (param [7] for the horizontal
-/// types), so voacapl recomputes the height-in-wavelengths pattern per band
-/// within a run — a 9 m dipole is ~0.1 λ on 80 m but ~0.4 λ on 20 m, with the
-/// correct per-band high-angle (NVIS) behaviour. Length stays −0.50 λ (resonant
-/// half-wave, assuming an ATU-matched amateur wire on each band). For verticals
-/// (type 22, ground-mounted) the height field does not apply; the −0.25 λ element
-/// drives the pattern. voacapl reads each line's leading number (list-directed),
-/// so exact column alignment is not required.
+/// `_ground` is accepted for forward-compatibility (a future ground × pattern
+/// matrix) but is **inert** in Phase 1: every pattern is modeled at poor/dry
+/// desert ground (ε 3, σ 0.001). The operator-facing UI labels this limitation;
+/// see the spec's "Single-ground limitation" section. The path's ground card,
+/// where ground still matters, is emitted separately in `deck.rs`.
 pub fn operator_voa_content(
     preset: AntennaPreset,
     height_m: f64,
-    ground: GroundType,
+    _ground: GroundType,
 ) -> Option<String> {
-    let ant = preset.ioncap()?;
-    let (eps, sig) = ground.constants();
-    // Clamp to a physically sane mast range so a junk height can't produce a
-    // pathological deck (voacapl would otherwise accept absurd values).
-    let h = if height_m.is_finite() {
-        height_m.clamp(0.5, 100.0)
-    } else {
-        9.0
-    };
-    let title = preset.voa_title();
-    let content = if ant.type_code == 22 {
-        // Vertical monopole: 7 params, element height/length at [6].
-        format!(
-            "{title}\n 7     7 parameters\n  0.00  [ 1] Max Gain dBi..:\n  22    [ 2] Antenna Type..:\n  {eps:.0}    [ 3] Dielectric....:\n {sig:.5} [ 4] Conductivity..:\n 14.000  [ 5] Operating Freq:\n {len:.2}  [ 6] Antenna Height:\n  0.0   [ 7] Gain ab dipole:\n",
-            len = ant.length_wl,
-        )
-    } else {
-        // Horizontal dipole (23) / Yagi (24): 8 params, height (metres) at [7].
-        format!(
-            "{title}\n 8     8 parameters\n  0.00  [ 1] Max Gain dBi..:\n  {tc}    [ 2] Antenna Type..:\n  {eps:.0}    [ 3] Dielectric....:\n {sig:.5} [ 4] Conductivity..:\n 14.000  [ 5] Operating Freq:\n {len:.2}  [ 6] Antenna Length:\n {h:.2}  [ 7] Antenna Height:\n  {gd:.1}   [ 8] Gain ab dipole:\n",
-            tc = ant.type_code,
-            len = ant.length_wl,
-            gd = ant.gain_over_dipole_db,
-        )
-    };
-    Some(content)
+    Some(crate::propagation::patterns::pattern_voa(preset, height_m).to_string())
 }
 
 #[cfg(test)]
@@ -270,9 +186,7 @@ mod tests {
         for p in [
             AntennaPreset::EfhwSloper,
             AntennaPreset::NvisWireDipole,
-            AntennaPreset::RandomWireUnun,
             AntennaPreset::ResonantPortableDipole,
-            AntennaPreset::MagneticLoop,
             AntennaPreset::Unknown,
         ] {
             assert_eq!(p.voa_file(), "ccir.000", "{p:?} must model as isotrope");
@@ -325,60 +239,48 @@ mod tests {
     }
 
     #[test]
-    fn horizontal_preset_generates_type23_voa_with_height_and_ground() {
-        let voa = operator_voa_content(AntennaPreset::NvisWireDipole, 9.0, GroundType::Average)
-            .expect("horizontal preset must produce a parametric pattern");
-        // Type 23 (horizontal dipole), 8 params, half-wave length, metres height,
-        // average-ground constants.
-        assert!(voa.contains("8     8 parameters"), "want 8-param file:\n{voa}");
-        assert!(voa.contains("23    [ 2] Antenna Type"), "want type 23:\n{voa}");
-        assert!(voa.contains("-0.50  [ 6] Antenna Length"), "want half-wave length:\n{voa}");
-        assert!(voa.contains("9.00  [ 7] Antenna Height"), "want 9 m height:\n{voa}");
-        assert!(voa.contains("13    [ 3] Dielectric"), "want average ε_r=13:\n{voa}");
-        assert!(voa.contains("0.00500 [ 4] Conductivity"), "want average σ=0.005:\n{voa}");
+    fn removed_presets_migrate_to_unknown() {
+        // A prefs file persisted before the catalog was curated still carries the
+        // retired `random-wire-unun` value. `#[serde(other)]` maps it to `Unknown`
+        // rather than failing the whole prefs load, and the OTHER fields survive.
+        let json = r#"{"antenna_preset":"random-wire-unun","req_snr_db":42.0,
+            "tx_power_w":50.0,"antenna_height_m":4.0,"ground_type":"poor-soil",
+            "noise_environment":"rural"}"#;
+        let p: crate::propagation::prefs::PropagationPrefs = serde_json::from_str(json).unwrap();
+        assert_eq!(p.antenna_preset, AntennaPreset::Unknown);
+        assert_eq!(p.req_snr_db, 42.0); // not nuked to default
+        // `magnetic-loop` (the other retired value) migrates the same way.
+        let back: AntennaPreset = serde_json::from_str("\"magnetic-loop\"").unwrap();
+        assert_eq!(back, AntennaPreset::Unknown);
     }
 
     #[test]
-    fn vertical_preset_generates_type22_monopole() {
-        let voa = operator_voa_content(AntennaPreset::BaseVerticalRadials, 9.0, GroundType::Average)
-            .expect("vertical preset must produce a parametric pattern");
-        // Type 22 (vertical monopole), 7 params, quarter-wave element; the height
-        // field does not apply (ground-mounted).
-        assert!(voa.contains("7     7 parameters"), "want 7-param file:\n{voa}");
-        assert!(voa.contains("22    [ 2] Antenna Type"), "want type 22:\n{voa}");
-        assert!(voa.contains("-0.25  [ 6] Antenna Height"), "want quarter-wave element:\n{voa}");
-        assert!(!voa.contains("[ 8]"), "type 22 has no 8th param:\n{voa}");
+    fn operator_voa_uses_precomputed_library() {
+        // Phase 1: every preset returns the precomputed Type-14 pattern, and a
+        // horizontal's pattern changes with height (the library is height-indexed).
+        let low = operator_voa_content(AntennaPreset::NvisWireDipole, 2.5, GroundType::PoorSoil).unwrap();
+        let high = operator_voa_content(AntennaPreset::NvisWireDipole, 9.0, GroundType::PoorSoil).unwrap();
+        assert_ne!(low, high, "height must change the emitted pattern for a horizontal");
+        // Unknown now has a (neutral) library entry, so it returns Some — not None.
+        let unk = operator_voa_content(AntennaPreset::Unknown, 9.0, GroundType::PoorSoil);
+        assert!(unk.is_some(), "Unknown resolves to the neutral library pattern");
     }
 
     #[test]
-    fn beam_generates_type24_yagi_with_gain_over_dipole() {
-        let voa = operator_voa_content(AntennaPreset::BeamYagi, 15.0, GroundType::Average)
-            .expect("beam must produce a parametric pattern");
-        assert!(voa.contains("24    [ 2] Antenna Type"), "want type 24:\n{voa}");
-        assert!(voa.contains("15.00  [ 7] Antenna Height"), "want 15 m boom height:\n{voa}");
-        assert!(voa.contains("6.0   [ 8] Gain ab dipole"), "want forward gain over dipole:\n{voa}");
+    fn ground_is_inert_for_the_precomputed_library() {
+        // Phase 1 models poor-desert ground regardless of the selector; the ground
+        // argument must not change the returned pattern. (The path ground card,
+        // where ground still matters, is emitted separately in deck.rs.)
+        let a = operator_voa_content(AntennaPreset::EfhwSloper, 9.0, GroundType::SeaWater).unwrap();
+        let b = operator_voa_content(AntennaPreset::EfhwSloper, 9.0, GroundType::Average).unwrap();
+        assert_eq!(a, b, "Phase 1 ground selector is inert under precomputed patterns");
     }
 
     #[test]
-    fn sea_water_ground_constants_appear_in_voa() {
-        let voa = operator_voa_content(AntennaPreset::EfhwSloper, 9.0, GroundType::SeaWater).unwrap();
-        assert!(voa.contains("80    [ 3] Dielectric"), "want sea ε_r=80:\n{voa}");
-        assert!(voa.contains("5.00000 [ 4] Conductivity"), "want sea σ=5.0:\n{voa}");
-    }
-
-    #[test]
-    fn unknown_preset_has_no_generated_pattern() {
-        assert!(
-            operator_voa_content(AntennaPreset::Unknown, 9.0, GroundType::Average).is_none(),
-            "Unknown keeps the stock isotrope file, not a generated pattern"
-        );
-    }
-
-    #[test]
-    fn nonfinite_or_extreme_height_is_clamped_not_propagated() {
-        let nan = operator_voa_content(AntennaPreset::NvisWireDipole, f64::NAN, GroundType::Average).unwrap();
-        assert!(nan.contains("9.00  [ 7] Antenna Height"), "NaN height → 9 m fallback:\n{nan}");
-        let huge = operator_voa_content(AntennaPreset::NvisWireDipole, 9999.0, GroundType::Average).unwrap();
-        assert!(huge.contains("100.00  [ 7] Antenna Height"), "height clamped to 100 m:\n{huge}");
+    fn vertical_pattern_is_height_independent() {
+        // Ground-mounted verticals carry a single pattern; height does not apply.
+        let v1 = operator_voa_content(AntennaPreset::BaseVerticalRadials, 2.0, GroundType::PoorSoil).unwrap();
+        let v2 = operator_voa_content(AntennaPreset::BaseVerticalRadials, 30.0, GroundType::PoorSoil).unwrap();
+        assert_eq!(v1, v2, "a vertical's pattern is fixed across heights");
     }
 }
