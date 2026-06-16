@@ -1437,6 +1437,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
@@ -1460,6 +1461,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: Some(500),
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(
@@ -1487,6 +1489,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(
@@ -1562,6 +1565,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: Some(9080),
+            listen_ttl_minutes: 0,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(

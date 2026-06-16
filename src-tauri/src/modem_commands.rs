@@ -1339,6 +1339,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         config_set_ardop(initial.clone()).expect("config_set_ardop must succeed");
         let read = config_get_ardop();
@@ -1470,6 +1471,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         }
     }
 
@@ -2213,6 +2215,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert_eq!(
@@ -2240,6 +2243,7 @@ mod tests {
             cmd_port: 9001,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
@@ -2262,6 +2266,7 @@ mod tests {
                 cmd_port: low_port,
                 bandwidth_hz: None,
                 webgui_port: None,
+                listen_ttl_minutes: 0,
             };
             let args = build_ardop_extra_args(&cfg);
             assert!(
@@ -2284,6 +2289,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert_eq!(
@@ -2315,6 +2321,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
@@ -2339,6 +2346,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: Some(9080),
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
@@ -2364,6 +2372,7 @@ mod tests {
             cmd_port: 0,
             bandwidth_hz: None,
             webgui_port: Some(8514),
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
