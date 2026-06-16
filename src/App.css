@@ -502,6 +502,14 @@ button:disabled {
 }
 
 button {
+  /* appearance:none is load-bearing on WebKitGTK (the production webview): a
+   * button without it renders NATIVE GTK chrome (a gray bordered box) on top of
+   * the CSS, so any transparent/borderless button (e.g. the APRS dock tabs)
+   * reads as a generic default button. Chromium does not show this, so it slips
+   * past browser checks. Same class PR #752 fixed for <select>. tuxlink-zvif. */
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
   padding: 6px 12px;
   font-weight: 500;
   background-color: var(--surface-2);

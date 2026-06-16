@@ -791,6 +791,49 @@ Code anchors: `src-tauri/src/tiles/coord.rs` (`TileCoord` type, `checked_shl` us
 
 ---
 
+## Section 9 — Frontend rendering on WebKitGTK
+
+The production webview is **WebKitGTK**, not Chromium. Form controls render their
+**native GTK theme** unless `appearance: none` is set — so a control can look
+correct in a Chromium/Playwright check and wrong in the actual app.
+
+### WEBKIT-1: Form controls need `appearance: none` or WebKitGTK paints native GTK chrome over the CSS
+
+**The trap:** a `<button>` / `<select>` styled only with `background`/`border`
+keeps its **native GTK appearance** on WebKitGTK. For a button given an explicit
+fill + border this is mostly masked; but a **transparent / borderless** button
+(e.g. an underline-style tab) falls back to a gray bordered native box — reading
+as a generic "default button." Chromium does **not** render native chrome, so
+every Playwright/dev-browser check looks fine while the shipped app is wrong.
+
+**Observed (tuxlink-zvif, recurred 4×):** the APRS dock tabs
+(`.aprs-dock-tab` / `.aprs-dock-maptoggle` / `.aprs-dock-close` —
+`background: transparent; border: none`) rendered as native GTK default buttons
+because `src/App.css`'s global `button {}` rule set `background-color` + `border`
++ `border-radius` but **not** `appearance: none`. Operator saw "Claude
+default-style buttons"; four CSS reviews "looked fine" because they reasoned
+about the cascade in Chromium terms. Same class as the `<select>` GTK-gray bug
+(PR #752 / `tuxlink-ytay`).
+
+**Fix:** set `appearance: none; -webkit-appearance: none; -moz-appearance: none;`
+on the global `button {}` rule (inert for already-styled buttons; only suppresses
+native chrome on under-styled ones). For `<select>` use it **with** a custom
+caret (an appearance-reset select loses its dropdown arrow — see RadioPanel.css /
+AppShell.css precedents).
+
+**Verify on the real engine, not Chromium:** WebKit2GTK 4.1 is available via
+python-gi. Render the suspect markup + CSS headless and snapshot:
+`LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 GALLIUM_DRIVER=llvmpipe python3 <gi-WebKit2-snapshot-script>`
+(a `Gtk.OffscreenWindow` + `WebKit2.WebView.get_snapshot(FULL_DOCUMENT)` →
+`write_to_png`). A Playwright/Chromium screenshot is **not** a proxy for
+WebKitGTK control rendering.
+
+### Section 9 Review Checklist
+
+- [ ] **Check derived from WEBKIT-1** — Any new `<button>`/`<select>` that is transparent or relies on CSS to remove its box sets `appearance: none` (global `button {}` already does for buttons; selects need it + a custom caret). Verify a control-rendering claim with a WebKit2GTK snapshot, never a Chromium one.
+
+---
+
 # Appendix A: Historical Changelog
 
 <!-- Format: -->
