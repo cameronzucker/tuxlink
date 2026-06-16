@@ -36,6 +36,12 @@ VHF and UHF with native control of the Benshi UV-Pro handheld.
 </p>
 <p align="center"><sub>The running Tuxlink mailbox with privacy-safe sample data: dashboard ribbon, folder sidebar, message list, reading pane, and status bar.</sub></p>
 
+<p align="center">
+  <img src="docs/readme/images/tuxlink-demo.webp" width="760"
+       alt="Tuxlink in action: opening a Winlink message into the reading pane, bringing up the APRS tactical-chat dock with live traffic, then cycling the color schemes from dark to night-tactical red to daylight">
+</p>
+<p align="center"><sub>Open a Winlink message, bring up APRS tactical chat alongside it, and re-skin the whole interface for the lighting at hand.</sub></p>
+
 ## What Tuxlink is
 
 [Winlink](https://winlink.org/) is the de-facto amateur radio email system used
