@@ -19,7 +19,9 @@ pub mod uvpro;
 pub use frame::Address;
 pub use link::KissLinkConfig;
 pub use params::Ax25Params;
-pub use datalink::{connect, answer, Ax25Stream};
+pub use datalink::{
+    answer, answer_with_logger, connect, connect_with_logger, Ax25Stream, FrameLogger,
+};
 pub use link::connect_link;
 pub use link::connect_link_with_abort;
 

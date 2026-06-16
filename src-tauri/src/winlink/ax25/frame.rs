@@ -180,6 +180,25 @@ impl Control {
     pub fn has_info(&self) -> bool {
         matches!(self, Control::I { .. } | Control::Ui { .. })
     }
+
+    /// AX.25 v2.2 command/response classification (§2.4.1.2, §6.1.2). The C-bit
+    /// pair in the dest/src SSID octets encodes this: a **command** sets dest C=1,
+    /// src C=0; a **response** sets dest C=0, src C=1. SABM/DISC/I are commands; UA/DM
+    /// and our supervisory acks (RR/RNR/REJ — we only ever send them to acknowledge
+    /// received I-frames, never as a standalone command poll) are responses. UI rides
+    /// connectionless as a command per APRS convention.
+    ///
+    /// This is load-bearing for connected-mode turn-taking: a gateway that polls with
+    /// an I-frame (P=1) waits for a RESPONSE with F=1. If our acknowledging RR goes out
+    /// command-framed, that bit reads as P (another poll) rather than F (the final the
+    /// gateway awaited) — the gateway never sees its turnaround, T1 expires, and it
+    /// retransmits indefinitely (tuxlink-bhx6: "pings us back indefinitely").
+    pub fn is_command(&self) -> bool {
+        matches!(
+            self,
+            Control::Sabm { .. } | Control::Disc { .. } | Control::I { .. } | Control::Ui { .. }
+        )
+    }
 }
 
 #[cfg(test)]
@@ -255,15 +274,18 @@ pub struct Path {
 }
 
 impl Path {
-    pub fn encode(&self) -> Result<Vec<u8>, FrameError> {
+    /// Encode the address path with the AX.25 v2.2 command/response C-bits set per
+    /// `command` (see [`Control::is_command`]): a command frame sets dest C=1, src C=0;
+    /// a response sets dest C=0, src C=1. The two are always inverse in v2.2.
+    pub fn encode(&self, command: bool) -> Result<Vec<u8>, FrameError> {
         if self.digis.len() > 2 {
             return Err(FrameError::BadAddressLength);
         }
         let mut out = Vec::with_capacity(7 * (2 + self.digis.len()));
-        // dest (cr=true for a command frame; refined in P2), src, digis.
-        out.extend_from_slice(&self.dest.encode(true, false));
+        // dest C-bit = command, src C-bit = !command (v2.2 §2.4.1.2).
+        out.extend_from_slice(&self.dest.encode(command, false));
         let src_last = self.digis.is_empty();
-        out.extend_from_slice(&self.src.encode(false, src_last));
+        out.extend_from_slice(&self.src.encode(!command, src_last));
         for (i, d) in self.digis.iter().enumerate() {
             let last = i == self.digis.len() - 1;
             out.extend_from_slice(&d.encode(false, last)); // H bit (cr) = 0 on TX
@@ -308,7 +330,7 @@ mod path_tests {
             src: Address { call: "N7CPZ".into(), ssid: 7 },
             digis: vec![],
         };
-        let bytes = p.encode().unwrap();
+        let bytes = p.encode(true).unwrap();
         assert_eq!(bytes.len(), 14); // 2 addresses * 7
         assert_eq!(bytes[6] & 0x01, 0x00, "dest is not last");
         assert_eq!(bytes[13] & 0x01, 0x01, "src is last (direct)");
@@ -320,7 +342,7 @@ mod path_tests {
             src: Address { call: "N7CPZ".into(), ssid: 7 },
             digis: vec![Address { call: "W7RPT".into(), ssid: 1 }],
         };
-        let bytes = p.encode().unwrap();
+        let bytes = p.encode(true).unwrap();
         assert_eq!(bytes.len(), 21);
         assert_eq!(bytes[13] & 0x01, 0x00, "src not last when a digi follows");
         assert_eq!(bytes[20] & 0x01, 0x01, "digi is last");
@@ -340,7 +362,68 @@ mod path_tests {
                 Address { call: "E".into(), ssid: 0 },
             ],
         };
-        assert!(p.encode().is_err());
+        assert!(p.encode(true).is_err());
+    }
+}
+
+#[cfg(test)]
+mod command_response_tests {
+    //! tuxlink-bhx6: AX.25 v2.2 command/response C-bit framing. A command sets dest
+    //! C=1 / src C=0; a response sets dest C=0 / src C=1. The C-bit is bit 7 (0x80) of
+    //! the SSID octet — dest = byte 6, src = byte 13 in a direct (no-digi) path.
+    use super::*;
+
+    fn direct() -> Path {
+        Path {
+            dest: Address { call: "W7AUX".into(), ssid: 10 },
+            src: Address { call: "N7CPZ".into(), ssid: 7 },
+            digis: vec![],
+        }
+    }
+
+    /// Returns (dest C-bit, src C-bit) for a directly-routed frame.
+    fn cbits(control: Control, info: Vec<u8>) -> (u8, u8) {
+        let f = Frame { path: direct(), control, info };
+        let b = f.encode().unwrap();
+        ((b[6] & 0x80) >> 7, (b[13] & 0x80) >> 7)
+    }
+
+    #[test]
+    fn commands_frame_dest_c1_src_c0() {
+        assert_eq!(cbits(Control::Sabm { pf: true }, vec![]), (1, 0), "SABM is a command");
+        assert_eq!(cbits(Control::Disc { pf: false }, vec![]), (1, 0), "DISC is a command");
+        assert_eq!(
+            cbits(Control::I { ns: 0, nr: 0, pf: false }, b"x".to_vec()),
+            (1, 0),
+            "I-frame is a command"
+        );
+    }
+
+    #[test]
+    fn responses_frame_dest_c0_src_c1() {
+        assert_eq!(cbits(Control::Ua { pf: true }, vec![]), (0, 1), "UA is a response");
+        assert_eq!(cbits(Control::Dm { pf: false }, vec![]), (0, 1), "DM is a response");
+        assert_eq!(cbits(Control::Rr { nr: 1, pf: false }, vec![]), (0, 1), "RR ack is a response");
+        assert_eq!(cbits(Control::Rnr { nr: 0, pf: false }, vec![]), (0, 1), "RNR ack is a response");
+        assert_eq!(cbits(Control::Rej { nr: 2, pf: true }, vec![]), (0, 1), "REJ ack is a response");
+    }
+
+    #[test]
+    fn ui_keeps_command_framing_for_aprs() {
+        // APRS UI frames are conventionally command-framed; this preserves the prior
+        // on-wire bytes for the APRS path (no regression).
+        assert_eq!(cbits(Control::Ui { pf: false }, b"!hi".to_vec()), (1, 0));
+    }
+
+    #[test]
+    fn poll_final_bit_survives_response_reframing() {
+        // A polled (P=1) inbound I-frame must be answered with an F=1 RESPONSE. The pf
+        // value rides the control byte (0x10) and must coexist with response C-bits.
+        let f = Frame { path: direct(), control: Control::Rr { nr: 3, pf: true }, info: vec![] };
+        let b = f.encode().unwrap();
+        assert_eq!(b[6] & 0x80, 0x00, "response: dest C=0");
+        assert_eq!(b[13] & 0x80, 0x80, "response: src C=1");
+        assert_eq!(b[14] & 0x10, 0x10, "F bit set on the control byte");
     }
 }
 
@@ -387,7 +470,7 @@ impl Frame {
         if !self.info.is_empty() && !self.control.has_info() {
             return Err(FrameError::InfoOnNonInfoFrame);
         }
-        let mut out = self.path.encode()?;
+        let mut out = self.path.encode(self.control.is_command())?;
         out.push(self.control.encode());
         if self.control.has_info() {
             out.push(PID_NO_L3);

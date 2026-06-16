@@ -70,6 +70,10 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
   const [target, setTarget] = useState('');
   const [relays, setRelays] = useState<string[]>([]);
   const [armed, setArmed] = useState(false);
+  // tuxlink-9ym7: true while a blocking packet_connect→B2F exchange is in flight, so
+  // the operator gets a Stop affordance (RADIO-1 — the operator MUST be able to halt
+  // the session). The backend `cms_abort` is mode-agnostic and a safe no-op when idle.
+  const [connecting, setConnecting] = useState(false);
   // listenDefault PREFERENCE (auto-arm on startup) — distinct from the
   // live `armed` state above. Synced from config on load + persisted via
   // packet_set_listen. Restored 2026-05-31 from legacy PacketConnectionPanel.
@@ -322,12 +326,21 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
     if (!call) return; // pre-air guard: precedes the dial/record, so an empty-target click records nothing
     const path = relays.map((r) => r.trim()).filter(Boolean);
     const dial = buildRecordDial(call);
+    setConnecting(true);
     try {
       await invoke('packet_connect', { call, path });
       void recordAttempt(dial, 'reached', tsLocal()); // blocking connect→B2F resolved = honest reach
     } catch {
       void recordAttempt(dial, 'failed', tsLocal()); // record failed in the catch (NOT finally)
+    } finally {
+      setConnecting(false);
     }
+  };
+
+  // tuxlink-9ym7: halt an in-flight packet session. `cms_abort` shuts the connecting
+  // socket / sets the abort flag, unwinding the blocking connect→B2F call promptly.
+  const onStop = () => {
+    void invoke('cms_abort').catch(() => {});
   };
 
   const headerSub = config
@@ -608,9 +621,24 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
           type="button"
           className="radio-panel-btn radio-panel-btn-primary"
           data-testid="packet-start-btn"
+          disabled={connecting}
           onClick={onConnect}
         >
-          {target.trim() ? `Start (call ${target.trim()})` : 'Start'}
+          {connecting
+            ? 'Connecting…'
+            : target.trim()
+            ? `Start (call ${target.trim()})`
+            : 'Start'}
+        </button>
+        {/* tuxlink-9ym7: operator stop. Always available (cms_abort is a safe no-op
+            when idle) so a runaway/blocked session can always be halted — RADIO-1. */}
+        <button
+          type="button"
+          className="radio-panel-btn radio-panel-btn-bad"
+          data-testid="packet-stop-btn"
+          onClick={onStop}
+        >
+          Stop
         </button>
       </section>
 

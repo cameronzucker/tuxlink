@@ -33,6 +33,44 @@ fn hex_preview(bytes: &[u8]) -> String {
         .join("")
 }
 
+/// A sink for human-readable AX.25 frame-trace lines (tuxlink-nfwv). The packet
+/// backend wires this to the session-log `WireSink`, so every keyed/received frame
+/// surfaces under the operator's "Show Raw" view — and an alpha tester can attach a
+/// full frame trace to a bug report. `Send + Sync` because the link runs on a
+/// `spawn_blocking` worker; cheap to clone (an `Arc`).
+pub type FrameLogger = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Format a callsign-SSID for a trace line (`N7CPZ` when SSID 0, else `N7CPZ-7`).
+fn fmt_addr(a: &Address) -> String {
+    if a.ssid == 0 {
+        a.call.clone()
+    } else {
+        format!("{}-{}", a.call, a.ssid)
+    }
+}
+
+/// One-line decoded summary of an AX.25 frame for the operator-facing frame trace,
+/// e.g. `SABM+P W7AUX-10<N7CPZ-7` or `I ns=0 nr=1 12B W7AUX-10<N7CPZ-7`. The `<`
+/// reads "from src to dest" (dest on the left, source on the right — AX.25 wire order).
+fn describe_frame(f: &Frame) -> String {
+    let route = format!("{}<{}", fmt_addr(&f.path.dest), fmt_addr(&f.path.src));
+    let pf = |b: bool, label: &str| if b { format!("+{label}") } else { String::new() };
+    let head = match f.control {
+        Control::Sabm { pf: p } => format!("SABM{}", pf(p, "P")),
+        Control::Disc { pf: p } => format!("DISC{}", pf(p, "P")),
+        Control::Ua { pf: p } => format!("UA{}", pf(p, "F")),
+        Control::Dm { pf: p } => format!("DM{}", pf(p, "F")),
+        Control::Rr { nr, pf: p } => format!("RR nr={nr}{}", pf(p, "PF")),
+        Control::Rnr { nr, pf: p } => format!("RNR nr={nr}{}", pf(p, "PF")),
+        Control::Rej { nr, pf: p } => format!("REJ nr={nr}{}", pf(p, "PF")),
+        Control::I { ns, nr, pf: p } => {
+            format!("I ns={ns} nr={nr} {}B{}", f.info.len(), pf(p, "P"))
+        }
+        Control::Ui { pf: p } => format!("UI {}B{}", f.info.len(), pf(p, "PF")),
+    };
+    format!("{head} {route}")
+}
+
 /// A connected AX.25 link presenting reliable in-order bytes.
 pub struct Ax25Stream {
     link: Box<dyn ByteLink>,
@@ -64,6 +102,10 @@ pub struct Ax25Stream {
     /// a connect that never reaches UA (timeout / DM / abort) must NOT key a DISC when
     /// its pre-UA stream is dropped. Explicit `disconnect()` is unaffected.
     established: bool,
+    /// Optional operator-facing frame-trace sink (tuxlink-nfwv). When set, every frame
+    /// keyed (`send_frame`) or received off the link (`recv_frame`) emits a decoded +
+    /// hex line. `None` in tests and when tracing is unwired.
+    frame_log: Option<FrameLogger>,
 }
 
 /// Open a connected-mode AX.25 link: push the KISS TNC params, send SABM (with the
@@ -75,6 +117,20 @@ pub fn connect(
     target: Address,
     digis: &[Address],
     params: &Ax25Params,
+) -> std::io::Result<Ax25Stream> {
+    connect_with_logger(link, mycall, target, digis, params, None)
+}
+
+/// As [`connect`], but with an optional [`FrameLogger`] that traces every keyed/received
+/// frame (handshake SABM/UA included). Production wires this to the session log; tests
+/// pass `None` via [`connect`].
+pub fn connect_with_logger(
+    link: Box<dyn ByteLink>,
+    mycall: Address,
+    target: Address,
+    digis: &[Address],
+    params: &Ax25Params,
+    frame_log: Option<FrameLogger>,
 ) -> std::io::Result<Ax25Stream> {
     tracing::info!(
         target: "tuxlink::winlink::ax25::link",
@@ -100,6 +156,7 @@ pub fn connect(
         remote_busy: false,
         closed: false,
         established: false,
+        frame_log,
     };
     // Push the KISS TNC params from the timing config. CSMA itself is the modem's job.
     // Abort-gated: `AbortableByteLink::write` refuses to key after a Cancel (tuxlink-2y4),
@@ -176,6 +233,25 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const CONNECT_MAX_SABMS: u32 = 2;
 
 impl Ax25Stream {
+    /// Emit one operator-facing frame-trace line to the wired [`FrameLogger`], if any
+    /// (tuxlink-nfwv). `ax25_bytes` is the bare AX.25 frame (address + control + info,
+    /// pre-KISS-wrap); `decoded` is `None` for an un-parseable body. No-op when unwired,
+    /// so the hot path pays only a branch when tracing is off.
+    fn log_frame(&self, dir: &str, ax25_bytes: &[u8], decoded: Option<&Frame>) {
+        if let Some(log) = &self.frame_log {
+            let hex: String = ax25_bytes
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let summary = match decoded {
+                Some(f) => describe_frame(f),
+                None => format!("undecodable {}B", ax25_bytes.len()),
+            };
+            log(&format!("AX.25 {dir} {summary} | {hex}"));
+        }
+    }
+
     /// KISS-wrap an AX.25 frame and write it to the link.
     fn send_frame(&mut self, frame: &Frame) -> std::io::Result<()> {
         let bytes = frame
@@ -189,7 +265,13 @@ impl Ax25Stream {
             direction = "tx",
             "kiss frame",
         );
-        self.link.write_all(&kiss_bytes)
+        // Write FIRST, then trace — only after the link accepts the bytes (Codex P2,
+        // 2026-06-16). An abort-gated or failing write must NOT emit "TX" evidence for a
+        // frame that was never handed to the link: this trace is keyed-frame provenance,
+        // so logging an unkeyed frame would mislead an operator/alpha-tester diagnosis.
+        self.link.write_all(&kiss_bytes)?;
+        self.log_frame("TX", &bytes, Some(frame));
+        Ok(())
     }
 
     /// Pull bytes from the link into the KISS decoder and return the next decoded,
@@ -234,7 +316,14 @@ impl Ax25Stream {
                 // Buffer all but the first (which we return immediately if addressed to us).
                 let mut result = None;
                 for body in completed.drain(..) {
-                    if let Ok(frame) = Frame::decode(&body) {
+                    let decoded = Frame::decode(&body).ok();
+                    // Trace EVERY received frame once, here on first read from the link —
+                    // including foreign-addressed and undecodable bodies, which are
+                    // otherwise dropped silently. (The pending_frames drain above must NOT
+                    // re-log; these bodies were already traced on the read that buffered
+                    // them.) This is the operator's on-air receive evidence (tuxlink-nfwv).
+                    self.log_frame("RX", &body, decoded.as_ref());
+                    if let Some(frame) = decoded {
                         if frame.path.dest.call == self.mycall.call
                             && frame.path.dest.ssid == self.mycall.ssid
                         {
@@ -330,6 +419,38 @@ mod connect_tests {
         assert!(matches!(sabm.control, Control::Sabm { pf: true }));
         assert_eq!(sabm.path.dest, target);
         assert_eq!(sabm.path.src, mine);
+    }
+
+    #[test]
+    fn connect_with_logger_traces_tx_sabm_and_rx_ua() {
+        // tuxlink-nfwv: a wired FrameLogger must capture the keyed SABM (TX) and the
+        // received UA (RX) — the operator's on-air evidence under "Show Raw".
+        use std::sync::{Arc, Mutex};
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        peer.feed(&peer_ua(&mine, &target));
+
+        let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let logger: FrameLogger = Arc::new(move |line: &str| sink.lock().unwrap().push(line.to_string()));
+
+        connect_with_logger(
+            Box::new(peer.clone()),
+            mine,
+            target,
+            &[],
+            &Ax25Params::default(),
+            Some(logger),
+        )
+        .unwrap();
+
+        let log = captured.lock().unwrap().join("\n");
+        assert!(log.contains("TX SABM"), "must trace the keyed SABM; got:\n{log}");
+        assert!(log.contains("RX UA"), "must trace the received UA; got:\n{log}");
+        // The decoded summary must carry the route + a hex dump for reconstruction.
+        assert!(log.contains("W7AUX-10<N7CPZ-7"), "TX SABM route in trace; got:\n{log}");
+        assert!(log.contains(" | "), "trace line includes a hex dump; got:\n{log}");
     }
 
     #[test]
@@ -488,6 +609,17 @@ pub fn answer(
     mycall: Address,
     params: &Ax25Params,
 ) -> std::io::Result<(Address, Ax25Stream)> {
+    answer_with_logger(link, mycall, params, None)
+}
+
+/// As [`answer`], but with an optional [`FrameLogger`] tracing every keyed/received
+/// frame (the inbound SABM and our UA reply included). Tests pass `None` via [`answer`].
+pub fn answer_with_logger(
+    link: Box<dyn ByteLink>,
+    mycall: Address,
+    params: &Ax25Params,
+    frame_log: Option<FrameLogger>,
+) -> std::io::Result<(Address, Ax25Stream)> {
     let mut stream = Ax25Stream {
         link,
         decoder: KissDecoder::new(),
@@ -504,6 +636,7 @@ pub fn answer(
         remote_busy: false,
         closed: false,
         established: false,
+        frame_log,
     };
     // Push the KISS TNC timing params so the answering station keys its modem with
     // the configured TXDELAY/persistence/slot, not stale defaults — matching connect()
@@ -1011,6 +1144,7 @@ mod disconnect_tests {
             unacked: std::collections::BTreeMap::new(),
             closed: false,
             established: true,
+            frame_log: None,
         }
     }
 
@@ -1091,6 +1225,7 @@ mod read_tests {
             unacked: std::collections::BTreeMap::new(),
             closed: false,
             established: true,
+            frame_log: None,
         }
     }
 
@@ -1175,6 +1310,7 @@ mod recovery_tests {
             unacked: std::collections::BTreeMap::new(),
             closed: false,
             established: true,
+            frame_log: None,
         }
     }
 
@@ -1259,6 +1395,7 @@ mod write_tests {
             unacked: std::collections::BTreeMap::new(),
             closed: false,
             established: true,
+            frame_log: None,
         }
     }
 
@@ -1359,6 +1496,7 @@ mod hardening_tests {
             unacked: std::collections::BTreeMap::new(),
             closed: false,
             established: true,
+            frame_log: None,
         }
     }
 

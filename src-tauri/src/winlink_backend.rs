@@ -2014,7 +2014,7 @@ impl NativeBackend {
                 link,
                 resolved,
                 &*progress,
-                &*wire,
+                &wire,
                 &abort_handle,
                 aborting,
                 allowlist_override,
@@ -2231,7 +2231,7 @@ fn native_packet_connect(
     link: KissLinkConfig,
     resolved: ResolvedPacket,
     progress: &dyn Fn(&str),
-    wire_log: &dyn Fn(&str),
+    wire: &WireSink,
     abort_handle: &Mutex<Option<TcpStream>>,
     aborting: Arc<AtomicBool>,
     allowlist_override: Option<crate::winlink::listener::AllowedStations>,
@@ -2239,6 +2239,11 @@ fn native_packet_connect(
     let params = config.packet.params.clone().into_params();
     let locator = cms_locator(config);
     let base = resolved.base_mycall.clone();
+    // tuxlink-nfwv: trace every keyed/received AX.25 frame to the session log (`raw`
+    // level → operator "Show Raw" / alpha-tester bug-report attachment). Reuses the
+    // wire sink; `&**wire` still serves the B2F text wire_log below.
+    let frame_log: Option<crate::winlink::ax25::FrameLogger> = Some(wire.clone());
+    let wire_log: &dyn Fn(&str) = &**wire;
 
     // ── P6: managed Dire Wolf interception (RADIO-1) ──────────────────────────
     //
@@ -2371,12 +2376,13 @@ fn native_packet_connect(
     match resolved.dial {
         Some((target, digis)) => {
             progress(&format!("Connecting to {}…", target.call));
-            let stream = crate::winlink::ax25::connect(
+            let stream = crate::winlink::ax25::connect_with_logger(
                 bytelink,
                 resolved.link_mycall,
                 target.clone(),
                 &digis,
                 &params,
+                frame_log.clone(),
             )
             .map_err(|e| BackendError::TransportFailed {
                 reason: format!("AX.25 connect: {e}"),
@@ -2472,10 +2478,11 @@ fn native_packet_connect(
             let arms = ListenerArmsRecord::arm_default(TransportKind::Packet);
 
             progress("Listening for an inbound peer…");
-            let (peer, stream) = crate::winlink::ax25::answer(
+            let (peer, stream) = crate::winlink::ax25::answer_with_logger(
                 bytelink,
                 resolved.link_mycall,
                 &params,
+                frame_log.clone(),
             )
             .map_err(|e| BackendError::TransportFailed {
                 reason: format!("AX.25 answer: {e}"),
