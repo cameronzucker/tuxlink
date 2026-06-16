@@ -780,6 +780,18 @@ pub struct ArdopUiConfig {
     /// port; do not access this field directly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webgui_port: Option<u16>,
+    /// How long the inbound listener stays armed, in MINUTES, before it
+    /// self-expires. `0` (the default) means **no expiry** — the listener
+    /// stays armed until the operator disarms it (WLE-parity; 2026-06-16
+    /// operator decision). Any positive value arms for that many minutes; the
+    /// arm path maps `0` to [`crate::winlink::listener::arms_record::NO_EXPIRY`]
+    /// and a positive `n` to `Duration::from_secs(n * 60)`.
+    ///
+    /// Replaces a prior hardcoded 1-hour auto-expiry that was framed as
+    /// "RADIO-1" — RADIO-1 governs agent behavior, not the app's UX, so the
+    /// listener no longer self-closes by default (tuxlink-5g5d).
+    #[serde(default)]
+    pub listen_ttl_minutes: u32,
 }
 
 impl ArdopUiConfig {
@@ -816,6 +828,9 @@ impl Default for ArdopUiConfig {
             // Operator can pin explicitly via the radio panel when ardopcf's
             // build/config has the WebGUI somewhere non-standard.
             webgui_port: None,
+            // 0 = no self-expiry (WLE-parity default; 2026-06-16 operator
+            // decision). Operator opts into a finite duration in minutes.
+            listen_ttl_minutes: 0,
         }
     }
 }

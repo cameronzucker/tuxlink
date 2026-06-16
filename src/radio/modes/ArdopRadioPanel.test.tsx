@@ -216,6 +216,25 @@ describe('<ArdopRadioPanel>', () => {
     expect(container.querySelector('.radio-panel-error')).toBeNull();
   });
 
+  it('listener arm-duration input defaults to blank (no expiry) and persists listen_ttl_minutes (tuxlink-5g5d)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+    const input = (await screen.findByTestId('ardop-listen-ttl-input')) as HTMLInputElement;
+    // WLE-parity default: blank input = no self-expiry.
+    expect(input.value).toBe('');
+    fireEvent.change(input, { target: { value: '30' } });
+    fireEvent.blur(input);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'config_set_ardop',
+        expect.objectContaining({
+          value: expect.objectContaining({ listen_ttl_minutes: 30 }),
+        }),
+      );
+    });
+  });
+
   it('Stop button fires modem_ardop_disconnect when modem is running', async () => {
     mockUseModemStatus.mockReturnValue({
       status: RUNNING,

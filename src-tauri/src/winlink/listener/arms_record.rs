@@ -43,6 +43,19 @@ use super::transport::TransportKind;
 /// Default TTL when the operator doesn't pick one.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(60 * 60); // 1 hour
 
+/// Sentinel TTL meaning "no expiry": the armed window never closes on its own;
+/// only an explicit disarm ends it.
+///
+/// This is the tuxlink default per the 2026-06-16 operator decision (WLE-parity
+/// no-self-expiry; the operator opts into a finite duration in minutes). It is
+/// `Duration::MAX` so the existing `is_expired` arithmetic (`elapsed >= ttl`)
+/// is never satisfied by a finite elapsed time, and so it is unambiguously NOT
+/// the `Duration::ZERO` the `disarm()` / `is_zero()` path uses to mean
+/// "disarmed". A prior 1-hour auto-expiry framed as "RADIO-1" was a
+/// tuxlink-added safeguard — RADIO-1 governs agent behavior, not the app's UX,
+/// so it is no longer the default.
+pub const NO_EXPIRY: Duration = Duration::MAX;
+
 // ──────────────────────────────────────────────────────────────
 // Errors
 // ──────────────────────────────────────────────────────────────
@@ -100,6 +113,20 @@ impl ListenerArmsRecord {
     /// Create a new arm event with [`DEFAULT_TTL`].
     pub fn arm_default(transport: TransportKind) -> Self {
         Self::arm(transport, DEFAULT_TTL)
+    }
+
+    /// Create a new arm event with [`NO_EXPIRY`] — the armed window never
+    /// closes on its own; only an explicit disarm ends it. The tuxlink default
+    /// per the 2026-06-16 operator decision.
+    pub fn arm_no_expiry(transport: TransportKind) -> Self {
+        Self::arm(transport, NO_EXPIRY)
+    }
+
+    /// True when this arm has no self-expiry ([`NO_EXPIRY`]) — armed until an
+    /// explicit disarm. Use to suppress an expiry countdown / "expires in N
+    /// min" message in the UI and forensics log.
+    pub fn is_no_expiry(&self) -> bool {
+        self.ttl == NO_EXPIRY
     }
 
     /// Returns TRUE if the arm window has elapsed (or was disarmed) OR the
@@ -239,6 +266,28 @@ mod tests {
         let r = ListenerArmsRecord::arm(TransportKind::Telnet, Duration::from_secs(3600));
         assert_eq!(r.transport, TransportKind::Telnet);
         assert_eq!(r.ttl.as_secs(), 3600);
+    }
+
+    #[test]
+    fn no_expiry_arm_never_self_expires_but_disarm_still_ends_it() {
+        // tuxlink-5g5d / 2026-06-16 operator decision: the default arm has NO
+        // self-expiry. is_no_expiry() is the distinct sentinel (NOT the
+        // Duration::ZERO "disarmed" value), and is_expired() must stay false for
+        // any finite elapsed time.
+        let mut r = ListenerArmsRecord::arm_no_expiry(TransportKind::Ardop);
+        assert!(r.is_no_expiry());
+        assert_eq!(r.ttl, NO_EXPIRY);
+        r.armed_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        // A year later: still armed.
+        let far_future = r.armed_at + Duration::from_secs(365 * 24 * 60 * 60);
+        assert!(
+            !r.is_expired(far_future),
+            "a no-expiry arm must never self-expire on a finite elapsed time",
+        );
+        // Explicit disarm (ttl → ZERO) still ends it — disarm overrides no-expiry.
+        r.disarm();
+        assert!(!r.is_no_expiry());
+        assert!(r.is_expired(far_future), "disarm must override no-expiry");
     }
 
     #[test]

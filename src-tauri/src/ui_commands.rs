@@ -4704,7 +4704,8 @@ pub(crate) async fn ardop_listen_inner(
     session: &std::sync::Arc<crate::modem_status::ModemSession>,
     listen_state: &std::sync::Arc<ArdopListenState>,
 ) -> Result<(), UiError> {
-    use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
+    use crate::winlink::listener::{ListenerArmsRecord, TransportKind};
+    use std::time::Duration;
 
     // Refuse a second arm while one is in flight.
     {
@@ -4729,7 +4730,21 @@ pub(crate) async fn ardop_listen_inner(
         })?;
 
     // Append arms record BEFORE flipping the modem (Codex 2026-06-03 P2).
-    let arms = ListenerArmsRecord::arm(TransportKind::Ardop, DEFAULT_TTL);
+    // tuxlink-5g5d: the arm-window TTL comes from operator config
+    // (modem_ardop.listen_ttl_minutes), NOT a hardcoded 1-hour default. `0`
+    // (the default) → NO_EXPIRY (armed until explicit disarm; WLE-parity per the
+    // 2026-06-16 operator decision); a positive N → N minutes.
+    let listen_ttl_minutes = config::read_config()
+        .ok()
+        .and_then(|c| c.modem_ardop)
+        .map(|a| a.listen_ttl_minutes)
+        .unwrap_or(0);
+    let ttl = if listen_ttl_minutes == 0 {
+        crate::winlink::listener::NO_EXPIRY
+    } else {
+        Duration::from_secs(listen_ttl_minutes as u64 * 60)
+    };
+    let arms = ListenerArmsRecord::arm(TransportKind::Ardop, ttl);
     let log_path = ardop_arms_log_path();
     arms.append_to_log(&log_path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
@@ -4864,13 +4879,17 @@ pub(crate) async fn ardop_listen_inner(
         );
     });
 
-    let mins = arms.ttl.as_secs() / 60;
+    let window_desc = if arms.is_no_expiry() {
+        "with no expiry".to_string()
+    } else {
+        format!("for {} min", arms.ttl.as_secs() / 60)
+    };
     emit_session_line(
         app,
         log,
         LogLevel::Info,
         format!(
-            "ARDOP listener armed for {mins} min (consent uuid {}). \
+            "ARDOP listener armed {window_desc} (consent uuid {}). \
              Modem is in LISTEN TRUE; waiting for inbound peers…",
             &arms.consent_uuid
         ),
