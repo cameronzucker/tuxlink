@@ -19,17 +19,27 @@ export interface SavedViewport {
 
 const DEBOUNCE_MS = 300;
 
-function hasStorage(): boolean {
-  return typeof window !== 'undefined' && !!window.localStorage;
+/** Safely resolve localStorage. The `window.localStorage` GETTER itself can
+ *  throw (storage disabled, opaque origin, strict privacy mode), so the access
+ *  is wrapped — a blocked-storage webview must degrade to first-run, never crash
+ *  the map render (Codex adrev P2). */
+function getStorage(): Storage | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    return window.localStorage ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Parse + VALIDATE a stored viewport. Returns null on absent / corrupt /
  *  out-of-range data — a cross-version or hand-edited value must degrade to the
  *  first-run fallback, never push a garbage camera into MapLibre. */
 function readSaved(key: string): SavedViewport | null {
-  if (!hasStorage()) return null;
+  const storage = getStorage();
+  if (!storage) return null;
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = storage.getItem(key);
     if (!raw) return null;
     const v = JSON.parse(raw) as { center?: { lat?: unknown; lon?: unknown }; zoom?: unknown };
     const lat = v?.center?.lat;
@@ -72,14 +82,15 @@ export function usePersistedViewport(key: string): UsePersistedViewport {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onViewportChange = useCallback(
     (center: LatLon, zoom: number) => {
-      if (!hasStorage()) return;
+      const storage = getStorage();
+      if (!storage) return;
       if (!Number.isFinite(center.lat) || !Number.isFinite(center.lon) || !Number.isFinite(zoom)) {
         return;
       }
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
         try {
-          window.localStorage.setItem(
+          storage.setItem(
             key,
             JSON.stringify({ center: { lat: center.lat, lon: center.lon }, zoom }),
           );

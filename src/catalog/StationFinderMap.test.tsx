@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, act } from '@testing-library/react';
+import { render, act, screen, fireEvent } from '@testing-library/react';
 import { getLastMap, type MapLibreMock } from '../map/testMapLibreMock';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { stationKey } from './useReachabilityMap';
@@ -183,5 +183,24 @@ describe('StationFinderMap viewport persistence (tuxlink-dwzu)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('recenters on the operator at OPERATOR_ZOOM when the recenter control is clicked', () => {
+    render(
+      <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    const map = getLastMap()!;
+    act(() => map.__emit('load')); // MapContext provides the live map after load
+    const me = gridToLatLon('DM43bp')!;
+    fireEvent.click(screen.getByTestId('map-recenter'));
+    expect(map.flyTo).toHaveBeenCalledWith({ center: [me.lon, me.lat], zoom: 6 });
+  });
+
+  it('hides the recenter control when no operator grid is known', () => {
+    render(
+      <StationFinderMap stations={[]} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    act(() => getLastMap()!.__emit('load'));
+    expect(screen.queryByTestId('map-recenter')).toBeNull();
   });
 });

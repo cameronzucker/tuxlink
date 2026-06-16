@@ -1432,7 +1432,12 @@ export function AppShell() {
           if (aprsOpen && aprsMapOpen) {
             return (
               <Suspense fallback={null}>
-                <AprsPositionsMap positions={aprsPositions.positions} />
+                {/* tuxlink-dwzu: the operator grid is the first-run center +
+                    recenter target for the positions map (null when unset). */}
+                <AprsPositionsMap
+                  positions={aprsPositions.positions}
+                  operatorGrid={statusData.grid ?? undefined}
+                />
               </Suspense>
             );
           }

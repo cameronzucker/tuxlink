@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, act } from '@testing-library/react';
+import { render, act, screen, fireEvent } from '@testing-library/react';
 import { getLastMap, type MapLibreMock } from '../map/testMapLibreMock';
+import { gridToLatLon } from '../forms/position/maidenhead';
 import { AprsPositionsMap, ambiguityRadiusMeters } from './AprsPositionsMap';
 import type { HeardPosition } from './aprsTypes';
 
@@ -148,11 +149,19 @@ describe('AprsPositionsMap viewport persistence (tuxlink-dwzu)', () => {
     expect(map.getZoom()).toBe(7);
   });
 
-  it('opens at the default world view on first run (no saved viewport)', () => {
-    render(<AprsPositionsMap positions={[]} />);
+  it('centers on the operator at Z6 on first run when an operator grid is known', () => {
+    render(<AprsPositionsMap positions={[]} operatorGrid="DM43bp" />);
+    const map = getLastMap()!;
+    const me = gridToLatLon('DM43bp')!;
+    expect(map.__state.options.center).toEqual([me.lon, me.lat]); // operator, not mid-Atlantic
+    expect(map.getZoom()).toBe(6);
+  });
+
+  it('falls back to the world view on first run only when no operator grid is known', () => {
+    render(<AprsPositionsMap positions={[]} operatorGrid="" />);
     const map = getLastMap()!;
     expect(map.__state.options.center).toEqual([0, 0]);
-    expect(map.getZoom()).toBe(2); // DEFAULT_ZOOM
+    expect(map.getZoom()).toBe(2);
   });
 
   it('persists the viewport after a pan (moveend, debounced)', () => {
@@ -172,5 +181,20 @@ describe('AprsPositionsMap viewport persistence (tuxlink-dwzu)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('recenters on the operator at OPERATOR_ZOOM when the recenter control is clicked', () => {
+    render(<AprsPositionsMap positions={[]} operatorGrid="DM43bp" />);
+    const map = getLastMap()!;
+    act(() => map.__emit('load'));
+    const me = gridToLatLon('DM43bp')!;
+    fireEvent.click(screen.getByTestId('map-recenter'));
+    expect(map.flyTo).toHaveBeenCalledWith({ center: [me.lon, me.lat], zoom: 6 });
+  });
+
+  it('hides the recenter control when no operator grid is known', () => {
+    render(<AprsPositionsMap positions={[]} operatorGrid="" />);
+    act(() => getLastMap()!.__emit('load'));
+    expect(screen.queryByTestId('map-recenter')).toBeNull();
   });
 });

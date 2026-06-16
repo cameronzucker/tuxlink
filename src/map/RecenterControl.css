@@ -1,0 +1,32 @@
+/* Recenter-on-operator control (tuxlink-dwzu). Anchored top-left of the map
+   container (maplibre's own NavigationControl sits top-right), styled to read as
+   a map control on the dark basemap. */
+.map-recenter-control {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  width: 29px;
+  height: 29px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  background: var(--surface, #1b2530);
+  color: var(--text, #eaf3fb);
+  border: 1px solid var(--border, #2c3a47);
+  border-radius: 4px;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.map-recenter-control:hover {
+  background: var(--surface-hover, #243240);
+}
+
+.map-recenter-control:focus-visible {
+  outline: 2px solid var(--accent, #2f86f0);
+  outline-offset: 1px;
+}

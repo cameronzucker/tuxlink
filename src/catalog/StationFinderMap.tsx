@@ -13,6 +13,7 @@ import { MapLibreMap } from '../map/MapLibreMap';
 import { useMapContext } from '../map/MapContext';
 import { useMapOverlay } from '../map/mapHooks';
 import { usePersistedViewport } from '../map/usePersistedViewport';
+import { RecenterControl } from '../map/RecenterControl';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { type ReachTier } from './reachability';
 import { stationKey } from './useReachabilityMap';
@@ -263,6 +264,7 @@ export function StationFinderMap(props: StationFinderMapProps) {
           onSelect={props.onSelect}
         />
         <OperatorPin location={me} />
+        <RecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </MapLibreMap>
       <div className="station-finder__reachkey" aria-hidden>
         <span className="k good" /> good

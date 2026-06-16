@@ -89,6 +89,28 @@ describe('usePersistedViewport', () => {
     expect(window.localStorage.getItem(KEY)).toBeNull();
   });
 
+  it('does not crash when the localStorage getter itself throws (blocked / opaque origin)', () => {
+    // Some webviews / privacy modes make `window.localStorage` THROW on access
+    // (not just on getItem). The hook must degrade to first-run, never crash the
+    // map render (Codex adrev P2).
+    const orig = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('localStorage is blocked');
+      },
+    });
+    try {
+      const { result } = renderHook(() => usePersistedViewport(KEY));
+      expect(result.current.saved).toBeNull();
+      expect(() =>
+        act(() => result.current.onViewportChange({ lat: 1, lon: 1 }, 3)),
+      ).not.toThrow();
+    } finally {
+      if (orig) Object.defineProperty(window, 'localStorage', orig);
+    }
+  });
+
   it('isolates distinct keys', () => {
     vi.useFakeTimers();
     const a = renderHook(() => usePersistedViewport('tuxlink:map-viewport:a'));
