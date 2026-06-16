@@ -91,6 +91,11 @@ function makeInvoke(overrides: Record<string, unknown> = {}) {
 
 describe('<VaraRadioPanel>', () => {
   beforeEach(async () => {
+    // tuxlink-ypz3 (3a): the panel restores its target from
+    // localStorage['tuxlink.lastTarget.vara-hf' | '...vara-fm'] on mount; prefill
+    // tests write that key — clear it so a persisted target can't leak across
+    // tests.
+    localStorage.clear();
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockReset();
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(makeInvoke());
@@ -491,6 +496,11 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
     invokeMock.mock.calls.filter(([cmd]) => cmd === 'favorite_record_attempt');
 
   beforeEach(async () => {
+    // tuxlink-ypz3 (3a): the panel restores its target from
+    // localStorage['tuxlink.lastTarget.vara-*'] on mount, and the prefill tests
+    // in this block write that key — clear it so a persisted target can't leak
+    // into the empty-target assertions.
+    localStorage.clear();
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockReset();
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
@@ -680,6 +690,12 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       expect((screen.getByTestId('vara-send-receive-btn') as HTMLButtonElement).disabled).toBe(true),
     );
     unmount();
+
+    // tuxlink-ypz3 (3a): phase 1's typed target persisted to
+    // localStorage['tuxlink.lastTarget.vara-hf'] (writeLastTarget on change), and
+    // the panel now RESTORES that on a fresh mount. Clear it so this phase
+    // genuinely exercises the empty-target case it intends to assert.
+    localStorage.clear();
 
     // Fresh mount, session OPEN but target empty → still disabled. (VARA loads
     // status via a one-time mount effect, so a fresh mount — not a rerender — is

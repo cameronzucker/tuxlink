@@ -28,7 +28,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { writeLastTarget } from '../../connections/connectDispatch';
+import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -68,6 +68,14 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
   const configRef = useRef<PacketConfigDto | null>(null);
   configRef.current = config;
   const [target, setTarget] = useState('');
+  // tuxlink-ypz3 (3a): restore the persisted packet target on mount so switching
+  // modes (panel remounts) doesn't blank the previously-dialed peer. Mirrors the
+  // localStorage key the ribbon Connect (connectDispatch) reads. Packet is a
+  // single fixed mode, so a mount-only effect suffices. Passive: seeds the input
+  // only — never auto-connects (RADIO-1: Start is the consent click).
+  useEffect(() => {
+    setTarget(readLastTarget('packet'));
+  }, []);
   const [relays, setRelays] = useState<string[]>([]);
   const [armed, setArmed] = useState(false);
   // tuxlink-9ym7: true while a blocking packet_connect→B2F exchange is in flight, so

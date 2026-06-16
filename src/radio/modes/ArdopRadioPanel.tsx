@@ -27,7 +27,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
-import { writeLastTarget } from '../../connections/connectDispatch';
+import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
 import { RadioPanel, type RadioPanelState } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -269,6 +269,15 @@ export function ArdopRadioPanel({
 }: ArdopRadioPanelProps) {
   const { status } = useModemStatus();
   const [target, setTarget] = useState('');
+  // tuxlink-ypz3 (3a): restore the persisted ARDOP target on mount so switching
+  // modes (panel remounts) doesn't blank the previously-dialed station. Mirrors
+  // the localStorage key the ribbon Connect (connectDispatch) reads. Keyed on
+  // mode.kind ('ardop-hf') for uniformity with the VARA panel. Passive: seeds
+  // the input only — never auto-connects (RADIO-1: Send/Receive is the consent
+  // click).
+  useEffect(() => {
+    setTarget(readLastTarget(mode.kind));
+  }, [mode.kind]);
   // ARQ bandwidth (restored 2026-05-31 — Codex P1). Loaded from
   // config_get_ardop on mount; persisted via config_set_ardop on change.
   // null = "leave at ardopcf default."

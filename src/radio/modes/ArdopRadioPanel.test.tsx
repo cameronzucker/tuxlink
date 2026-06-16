@@ -114,6 +114,10 @@ const RUNNING: ModemStatus = {
 
 describe('<ArdopRadioPanel>', () => {
   beforeEach(async () => {
+    // tuxlink-ypz3 (3a): the panel restores its target from
+    // localStorage['tuxlink.lastTarget.ardop-hf'] on mount; prefill tests write
+    // that key — clear it so a persisted target can't leak across tests.
+    localStorage.clear();
     mockUseModemStatus.mockReset();
     mockUseModemStatus.mockReturnValue({
       status: STOPPED,

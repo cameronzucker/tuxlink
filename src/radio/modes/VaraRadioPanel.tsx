@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { writeLastTarget } from '../../connections/connectDispatch';
+import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
 import { RadioPanel, type RadioPanelState } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -149,6 +149,18 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     // NOT transmit (the Start button says as much), so this preserves the
     // prefill-never-transmits rule: Send/Receive stays the explicit consent click.
     setAutoOpenPending(true);
+  }, [mode.kind]);
+
+  // tuxlink-ypz3 (3a): restore the per-mode persisted target so switching modes
+  // (or reopening the pane) doesn't blank the previously-dialed station. The
+  // ribbon Connect already reads this same localStorage key (connectDispatch);
+  // the panel now mirrors it on the visible input. Keyed on mode.kind so a
+  // vara-hf↔vara-fm switch (same component instance — AppShell applies no key,
+  // so React reuses it instead of remounting) ALSO re-restores from the right
+  // key. Passive: seeds the string only, never auto-opens the transport or
+  // transmits (RADIO-1: Send/Receive stays the explicit consent click).
+  useEffect(() => {
+    setTarget(readLastTarget(mode.kind));
   }, [mode.kind]);
 
   const { entries: logEntries, clear: clearLog } = useSessionLog();
