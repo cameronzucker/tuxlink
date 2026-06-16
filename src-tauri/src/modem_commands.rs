@@ -173,12 +173,16 @@ pub async fn modem_ardop_disconnect(
     // so it reaches any in-flight connect_arq running on its own
     // spawn_blocking worker.
     let session = Arc::clone(session.inner());
-    tokio::task::spawn_blocking(move || modem_ardop_disconnect_inner(&session))
+    let result = tokio::task::spawn_blocking(move || modem_ardop_disconnect_inner(&session))
         .await
-        .map_err(|e| format!("disconnect task panicked: {e}"))?
-        // tuxlink-nnjz: a disconnect error (best-effort path; rare) surfaces in
-        // the session log rather than an inline panel element.
-        .inspect_err(|e| emit_modem_error(&app, e))
+        .map_err(|e| format!("disconnect task panicked: {e}"))?;
+    // tuxlink-nnjz: a disconnect error (best-effort path; rare) surfaces in the
+    // session log rather than an inline panel element. (`Result::inspect_err` is
+    // MSRV 1.76; this match keeps the project's 1.75 floor.)
+    if let Err(ref e) = result {
+        emit_modem_error(&app, e);
+    }
+    result
 }
 
 /// Inner helper with a factory seam — ARDOP connect with in-process busy guard.
@@ -1006,7 +1010,7 @@ pub async fn modem_ardop_connect(
     let session = Arc::clone(session.inner());
     // tuxlink-ngsk: route this session's cmd-port traffic into the session log.
     let wire = ardop_wire_sink(&app);
-    tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         modem_ardop_connect_gated_with_factory(
             &session,
             &session_id,
@@ -1021,11 +1025,15 @@ pub async fn modem_ardop_connect(
         )
     })
     .await
-    .map_err(|e| format!("connect task panicked: {e}"))?
+    .map_err(|e| format!("connect task panicked: {e}"))?;
     // tuxlink-nnjz: surface a connect failure in the session log (where the
-    // operator is already looking) rather than an inline panel element. The
-    // Err still propagates so the panel clears its connecting spinner.
-    .inspect_err(|e| emit_modem_error(&app, e))
+    // operator is already looking) rather than an inline panel element. The Err
+    // still propagates so the panel clears its connecting spinner. (`inspect_err`
+    // is MSRV 1.76; this match keeps the project's 1.75 floor.)
+    if let Err(ref e) = result {
+        emit_modem_error(&app, e);
+    }
+    result
 }
 
 /// Run a B2F mail exchange over an open ARDOP session (tuxlink-ytg +
@@ -1122,7 +1130,7 @@ pub async fn modem_ardop_b2f_exchange(
     // `run_ardop_connect_b2f_with_transport`), so keep a clone for the
     // post-await error emit below.
     let app_for_emit = app.clone();
-    tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         // Snapshot the close-generation BEFORE the transport take
         // (tuxlink-pdnw, Codex Phase 3-4 P1 #1): if `ardop_close_session_inner`
         // runs during this exchange it bumps the generation; the guarded
@@ -1158,11 +1166,15 @@ pub async fn modem_ardop_b2f_exchange(
         outcome
     })
     .await
-    .map_err(|e| format!("b2f task panicked: {e}"))?
-    // tuxlink-nnjz: surface a send/receive failure in the session log instead
-    // of an inline panel element. Err still propagates (the panel clears its
-    // exchanging spinner + records the gateway `failed` attempt).
-    .inspect_err(|e| emit_modem_error(&app_for_emit, e))
+    .map_err(|e| format!("b2f task panicked: {e}"))?;
+    // tuxlink-nnjz: surface a send/receive failure in the session log instead of
+    // an inline panel element. Err still propagates (the panel clears its
+    // exchanging spinner + records the gateway `failed` attempt). (`inspect_err`
+    // is MSRV 1.76; this match keeps the project's 1.75 floor.)
+    if let Err(ref e) = result {
+        emit_modem_error(&app_for_emit, e);
+    }
+    result
 }
 
 /// Inner helper for [`modem_ardop_b2f_exchange`]: drives the full
