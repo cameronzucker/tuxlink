@@ -64,10 +64,10 @@ const STATION_LAYERS = (
       type: 'circle',
       source: STATIONS_SOURCE,
       paint: {
-        'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 18, 0],
+        'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 12, 0],
         'circle-color': '#ffffff',
-        'circle-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.35, 0],
-        'circle-blur': 0.4,
+        'circle-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.25, 0],
+        'circle-blur': 0.6,
       },
     },
     {
@@ -75,25 +75,24 @@ const STATION_LAYERS = (
       type: 'circle',
       source: STATIONS_SOURCE,
       paint: {
-        // The selected pin jumps markedly larger and gains a thick bright-white
-        // rim — the original +2px/thin-stroke cue was too subtle to tell which
-        // pin was selected (operator, 2026-06-16). Selection is `feature-state`-
-        // driven so a click flips one feature's state, not the whole FC.
+        // Selected pin gets a MODEST bump + a bright-white rim (a soft glow sits
+        // beneath) — enough to read clearly without ballooning (operator
+        // 2026-06-16: the prior +5/glow-18 looked huge). Selection is
+        // `feature-state`-driven so a click flips one feature's state, not the FC.
         'circle-radius': [
           'case',
           ['boolean', ['feature-state', 'selected'], false],
-          ['match', ['get', 'tier'], 'good', 15, 'fair', 13, 'marginal', 11.5, 'poor', 10.5, 'unlikely', 10, 'skip', 9.5, 12],
+          ['match', ['get', 'tier'], 'good', 12, 'fair', 10, 'marginal', 8.5, 'poor', 7.5, 'unlikely', 7, 'skip', 6.5, 9],
           ['match', ['get', 'tier'], 'good', 10, 'fair', 8, 'marginal', 6.5, 'poor', 5.5, 'unlikely', 5, 'skip', 4.5, 7],
         ],
         'circle-color': TIER_COLOR_MATCH,
         // The grey "not reachable" bottom tier sits back (dimmer) so the live
         // red/orange/green stations read first; red "unlikely" stays full.
         'circle-opacity': ['case', ['==', ['get', 'tier'], 'skip'], 0.7, 1],
-        // Selected → thick bright-white rim; others keep a thin white rim for
-        // basemap contrast. White renders reliably on this webview (the dark rim
-        // tried earlier was invisible against the map).
+        // Selected → bright-white rim; others keep a thin white rim for basemap
+        // contrast. White renders reliably on this webview.
         'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 3, 0.6],
+        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2, 0.6],
       },
     },
   ] as unknown[]
@@ -211,6 +210,7 @@ function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationF
     const m = map as unknown as {
       setFeatureState?: (t: { source: string; id: string | number }, s: Record<string, unknown>) => void;
       removeFeatureState?: (t: { source: string; id?: string | number }, key?: string) => void;
+      triggerRepaint?: () => void;
       on: (t: string, h: (...a: unknown[]) => void) => unknown;
       off: (t: string, h: (...a: unknown[]) => void) => unknown;
     };
@@ -224,6 +224,10 @@ function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationF
         m.setFeatureState?.({ source: STATIONS_SOURCE, id: cur }, { selected: true });
       }
       prevSelectedRef.current = cur;
+      // Force a frame: a feature-state change does not always schedule a repaint
+      // on its own, so the new emphasis wouldn't draw until the next map
+      // interaction — the "needs two clicks" bug (operator 2026-06-16).
+      m.triggerRepaint?.();
     };
     apply();
     // Re-apply after a style swap re-creates the source (clears feature-state).
