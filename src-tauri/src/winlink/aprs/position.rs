@@ -47,14 +47,94 @@ pub fn parse_position(info: &[u8]) -> Option<AprsPosition> {
         }
         rest = &rest[7..];
     }
-    // Compressed vs uncompressed: an uncompressed report opens with a latitude
-    // digit (or an ambiguity space); a compressed report opens with the
-    // symbol-table id. (aprslib heuristic. A compressed report with a numeric
-    // overlay table id is the one ambiguous case — rare; deferred.)
+    parse_position_body(rest)
+}
+
+/// Decode the position portion of a report (everything after the DTI and any
+/// leading timestamp): an uncompressed `DDMM.mmH<sym>DDDMM.mmH<code>` field or a
+/// Base-91-compressed field. Shared by [`parse_position`] and the object/item
+/// parser, whose embedded positions have the same two forms.
+///
+/// Compressed vs uncompressed: an uncompressed report opens with a latitude
+/// digit (or an ambiguity space); a compressed report opens with the symbol-
+/// table id. (aprslib heuristic. A compressed report with a numeric overlay
+/// table id is the one ambiguous case — rare; deferred.)
+fn parse_position_body(rest: &[u8]) -> Option<AprsPosition> {
     match rest.first()? {
         b'0'..=b'9' | b' ' => parse_uncompressed(rest),
         _ => parse_compressed(rest),
     }
+}
+
+/// An APRS OBJECT (`;`) or ITEM (`)`) report: a position another station reports
+/// on behalf of a *named entity* (a weather object, event marker, ARES asset,
+/// gateway, …) rather than its own beacon. The distinguishing fields are the
+/// entity `name` and its live/killed state; the position itself is an ordinary
+/// [`AprsPosition`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct AprsObject {
+    /// Entity name (object: a fixed 9-char field, trailing spaces trimmed; item:
+    /// a 3–9 char variable field).
+    pub name: String,
+    /// `false` when the report marks the object/item *killed* (`_` sentinel) —
+    /// a tombstone the map can use to remove a previously-plotted entity.
+    pub alive: bool,
+    /// The decoded position (lat/lon + symbol + comment + ambiguity).
+    pub position: AprsPosition,
+}
+
+/// Parse an APRS object (`;`) or item (`)`) report.
+///
+/// Object: `;NNNNNNNNN*ddhhmmz<position>` — a fixed 9-char name, a live (`*`) /
+/// killed (`_`) flag, a 7-char timestamp, then the position.
+/// Item: `)NAME!<position>` — a 3–9 char name terminated by live (`!`) /
+/// killed (`_`), then the position (no timestamp).
+///
+/// Returns `None` if the DTI is neither `;` nor `)`, the name/flags are
+/// malformed, or the embedded position does not decode.
+pub fn parse_object_or_item(info: &[u8]) -> Option<AprsObject> {
+    match info.first()? {
+        b';' => parse_object(&info[1..]),
+        b')' => parse_item(&info[1..]),
+        _ => None,
+    }
+}
+
+/// Object body (after the `;` DTI): 9-char name + `*`/`_` + 7-char timestamp +
+/// position.
+fn parse_object(b: &[u8]) -> Option<AprsObject> {
+    // 9 name + 1 flag + 7 timestamp = 17 bytes before the position.
+    if b.len() < 17 {
+        return None;
+    }
+    let name = std::str::from_utf8(&b[0..9]).ok()?.trim_end_matches(' ').to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let alive = match b[9] {
+        b'*' => true,
+        b'_' => false,
+        _ => return None,
+    };
+    // b[10..17] is the 7-char timestamp (DDHHMMz / etc.) — not surfaced here.
+    let position = parse_position_body(&b[17..])?;
+    Some(AprsObject { name, alive, position })
+}
+
+/// Item body (after the `)` DTI): 3–9 char name terminated by `!` (live) or `_`
+/// (killed), then the position.
+fn parse_item(b: &[u8]) -> Option<AprsObject> {
+    // The name is 3–9 chars; the terminator therefore sits at index 3..=9, so
+    // scan the first 10 bytes (a 9-char name puts the terminator at index 9).
+    // Per the APRS spec an item name may not itself contain `!` or `_`.
+    let end = b.iter().take(10).position(|&c| c == b'!' || c == b'_')?;
+    if !(3..=9).contains(&end) {
+        return None;
+    }
+    let name = std::str::from_utf8(&b[0..end]).ok()?.to_string();
+    let alive = b[end] == b'!';
+    let position = parse_position_body(&b[end + 1..])?;
+    Some(AprsObject { name, alive, position })
 }
 
 fn parse_uncompressed(b: &[u8]) -> Option<AprsPosition> {
@@ -457,5 +537,62 @@ mod tests {
         assert!(parse_mice("332UVT", b"\x60\x28\x60").is_none()); // body < 8
         assert!(parse_mice("332UV", MICE_INFO).is_none()); // dest not 6 chars
         assert!(parse_mice("33!UVT", MICE_INFO).is_none()); // invalid dest char
+    }
+
+    // ---- Object (`;`) and item (`)`) reports ----
+
+    #[test]
+    fn parses_a_live_object() {
+        // 9-char name field "LEADER   ", live `*`, 7-char timestamp, position.
+        let o = parse_object_or_item(b";LEADER   *092345z4903.50N/07201.75W>").unwrap();
+        assert_eq!(o.name, "LEADER");
+        assert!(o.alive);
+        approx(o.position.lat, 49.0583);
+        approx(o.position.lon, -72.0292);
+        assert_eq!(o.position.symbol_table, '/');
+        assert_eq!(o.position.symbol_code, '>');
+    }
+
+    #[test]
+    fn parses_a_killed_object() {
+        let o = parse_object_or_item(b";LEADER   _092345z4903.50N/07201.75W>").unwrap();
+        assert_eq!(o.name, "LEADER");
+        assert!(!o.alive);
+    }
+
+    #[test]
+    fn parses_a_live_item_with_spaces_in_name() {
+        // Item name "AID #2" (6 chars) terminated by `!`, then the position.
+        let o = parse_object_or_item(b")AID #2!4903.50N/07201.75WA").unwrap();
+        assert_eq!(o.name, "AID #2");
+        assert!(o.alive);
+        approx(o.position.lat, 49.0583);
+        assert_eq!(o.position.symbol_code, 'A');
+    }
+
+    #[test]
+    fn parses_a_killed_item() {
+        let o = parse_object_or_item(b")WX1_4903.50N/07201.75W_").unwrap();
+        assert_eq!(o.name, "WX1");
+        assert!(!o.alive);
+    }
+
+    #[test]
+    fn parses_a_compressed_object_position() {
+        // Compressed position body `/5L!!<*e7>  T` (the existing compressed test's
+        // 13-byte payload) embedded in an object report.
+        let o = parse_object_or_item(b";SOTA-123 *092345z/5L!!<*e7>  T").unwrap();
+        assert_eq!(o.name, "SOTA-123");
+        approx(o.position.lat, 49.5);
+        approx(o.position.lon, -72.75);
+    }
+
+    #[test]
+    fn rejects_non_object_item_and_malformed() {
+        assert!(parse_object_or_item(b"!4903.50N/07201.75W>").is_none()); // plain position DTI
+        assert!(parse_object_or_item(b";TOOSHORT").is_none()); // no position after prefix
+        assert!(parse_object_or_item(b";NAME     x092345z4903.50N/07201.75W>").is_none()); // bad live/killed flag
+        assert!(parse_object_or_item(b")XY!4903.50N/07201.75W>").is_none()); // item name < 3 chars
+        assert!(parse_object_or_item(b")NOTERMINATORHERE").is_none()); // no `!`/`_` terminator
     }
 }
