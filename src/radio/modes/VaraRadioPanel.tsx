@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { writeLastTarget } from '../../connections/connectDispatch';
 import { RadioPanel, type RadioPanelState } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -141,12 +142,14 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   const handlePrefill = useCallback((dial: FavoriteDial) => {
     setTarget(dial.gateway);
     pendingDialRef.current = dial;
+    // tuxlink-vu97: persist so the ribbon Connect can dial this target (pane closed).
+    writeLastTarget(mode.kind, dial.gateway);
     // tuxlink-p6iq: a "use this gateway" action lands the operator CONNECTABLE.
     // Request an auto-open of the transport — opening the cmd/data sockets does
     // NOT transmit (the Start button says as much), so this preserves the
     // prefill-never-transmits rule: Send/Receive stays the explicit consent click.
     setAutoOpenPending(true);
-  }, []);
+  }, [mode.kind]);
 
   const { entries: logEntries, clear: clearLog } = useSessionLog();
 
@@ -569,6 +572,9 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
                   // A hand-typed target is not the prefilled favorite — drop the
                   // association so the record doesn't carry stale metadata.
                   pendingDialRef.current = null;
+                  // tuxlink-vu97: persist the configured target so the ribbon
+                  // Connect can fire VARA's full send/receive with this pane closed.
+                  writeLastTarget(mode.kind, e.target.value);
                 }}
               />
             </label>

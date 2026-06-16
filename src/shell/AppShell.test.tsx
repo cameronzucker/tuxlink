@@ -504,7 +504,18 @@ describe('<AppShell> — Mock B topology', () => {
     expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent(/Packet/);
   });
 
-  it('closing Packet keeps Packet as the ribbon transport intent and Connect does not start Telnet', async () => {
+  // tuxlink-vu97: the ribbon Connect button now fires the LAST-SELECTED mode's
+  // full send/receive (connect + exchange) with the radio pane kept CLOSED —
+  // for Packet / ARDOP / VARA, not just Telnet-CMS. The prior navigate-only
+  // behavior (Connect re-opened the pane and dialed nothing) is replaced: with
+  // an operator-configured target persisted (which the panels do on
+  // target-input change), Connect dispatches the per-mode connect command,
+  // never cms_connect, and never re-opens the pane.
+  it('closing Packet then Connect fires packet_connect (not cms_connect) and keeps the pane closed', async () => {
+    // Simulate the operator having configured a target in the Packet panel —
+    // the panel persists it on target-input change; the ribbon reads it back.
+    globalThis.localStorage.setItem('tuxlink.lastTarget.packet', 'W7RMS-10');
+
     renderShell();
     selectConnection('sess-cms', 'proto-cms-packet');
     await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
@@ -516,12 +527,22 @@ describe('<AppShell> — Mock B topology', () => {
     vi.mocked(invoke).mockClear();
     fireEvent.click(screen.getByTestId('connect-button'));
 
+    // Connect dispatches the Packet connect→B2F with the persisted target …
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('packet_connect', {
+        call: 'W7RMS-10',
+        path: [],
+      }),
+    );
+    // … never the Telnet/CMS path …
     expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'cms_connect')).toBe(false);
-    expect(await screen.findByTestId('radio-panel-title', undefined, { timeout: 10000 }))
-      .toHaveTextContent(/Packet/);
+    // … and the radio pane stays CLOSED (no setSelectedConnection re-open).
+    expect(screen.queryByTestId('radio-panel-root')).toBeNull();
   });
 
-  it('closing an ARDOP panel keeps ARDOP as the ribbon transport intent (item 38 gap — radio, not just packet)', async () => {
+  it('closing ARDOP then Connect fires modem_ardop_connect (not cms_connect) and keeps the pane closed', async () => {
+    globalThis.localStorage.setItem('tuxlink.lastTarget.ardop-hf', 'W7RMS-10');
+
     renderShell();
     selectConnection('sess-cms', 'proto-cms-ardop-hf');
     await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
@@ -533,8 +554,43 @@ describe('<AppShell> — Mock B topology', () => {
 
     vi.mocked(invoke).mockClear();
     fireEvent.click(screen.getByTestId('connect-button'));
-    // And Connect must not start a Telnet/CMS session for the radio intent.
+
+    // Connect dials ARDOP with the persisted target — the RF path, not Telnet.
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('modem_ardop_connect', {
+        target: 'W7RMS-10',
+      }),
+    );
     expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'cms_connect')).toBe(false);
+    // The pane stays closed — Connect runs send/receive, it does not navigate.
+    expect(screen.queryByTestId('radio-panel-root')).toBeNull();
+  });
+
+  // tuxlink-vu97: an RF mode with NO persisted target must fail gracefully —
+  // no backend invoke at all (no half-open transport), no crash, pane stays
+  // closed. The operator's fix is to open the panel and set a target.
+  it('closing ARDOP then Connect with no saved target fires no backend command and does not crash', async () => {
+    renderShell();
+    selectConnection('sess-cms', 'proto-cms-ardop-hf');
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+
+    fireEvent.click(screen.getByTestId('radio-panel-close'));
+    await waitFor(() => expect(screen.queryByTestId('radio-panel-root')).toBeNull());
+
+    vi.mocked(invoke).mockClear();
+    fireEvent.click(screen.getByTestId('connect-button'));
+
+    // Missing target → MissingTargetError thrown BEFORE any invoke; neither the
+    // RF connect nor the CMS path runs, and the app survives.
+    await waitFor(() =>
+      expect(
+        vi.mocked(invoke).mock.calls.some(
+          ([cmd]) => cmd === 'modem_ardop_connect' || cmd === 'cms_connect',
+        ),
+      ).toBe(false),
+    );
+    expect(screen.getByTestId('app-shell-root')).toBeInTheDocument();
+    expect(screen.queryByTestId('radio-panel-root')).toBeNull();
   });
 
   it('renders the TelnetRadioPanel when cms+telnet is selected (P2: panel moved to right-hand radio panel)', async () => {
