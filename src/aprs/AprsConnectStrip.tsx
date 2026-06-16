@@ -46,6 +46,15 @@ export interface AprsConnectStripProps {
   radioLabel: string | null;
   /** Offer the native UV-Pro segment in the picker (VHF/packet context). */
   allowUvproNative?: boolean;
+  /** Persisted address fields, threaded into ModemLinkSection so the picker
+   *  seeds from the SAVED link instead of blanks. Without these, opening setup
+   *  on a configured link and tapping a segment emits a null address (e.g.
+   *  btMac: null), corrupting the live link (tuxlink-hoi1 B2). */
+  tcpHost?: string;
+  tcpPort?: number;
+  serialDevice?: string;
+  serialBaud?: number;
+  btMac?: string;
   /** Composed connect sequence. For UvproNative the parent does
    *  uvpro.connect() then aprs_listen_start; for KISS just aprs_listen_start.
    *  Reject ⇒ inline error, no optimistic listening flip. */
@@ -74,6 +83,11 @@ export function AprsConnectStrip({
   linkKind,
   radioLabel,
   allowUvproNative = false,
+  tcpHost,
+  tcpPort,
+  serialDevice,
+  serialBaud,
+  btMac,
   onConnect,
   onDisconnect,
   onLinkChange,
@@ -188,6 +202,11 @@ export function AprsConnectStrip({
         <div className="aprs-connect-setup" data-testid="aprs-connect-setup">
           <ModemLinkSection
             kind={pickerKind(linkKind)}
+            host={tcpHost}
+            port={tcpPort}
+            serialDevice={serialDevice}
+            serialBaud={serialBaud}
+            btMac={btMac}
             allowUvproNative={allowUvproNative}
             onChange={onLinkChange}
           />

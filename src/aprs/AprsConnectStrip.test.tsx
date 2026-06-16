@@ -125,4 +125,25 @@ describe('AprsConnectStrip', () => {
       expect.objectContaining({ linkKind: 'Bluetooth' }),
     );
   });
+
+  it('seeds the picker so a UV-Pro segment tap preserves the saved MAC (does not blank it)', () => {
+    // tuxlink-hoi1 B2: the strip mounted ModemLinkSection with NO address props,
+    // so opening setup on a configured UV-Pro and tapping the segment emitted
+    // btMac: null — corrupting the live link state (which a later persist makes
+    // permanent via B1). The persisted MAC must flow through to the picker.
+    const onLinkChange = vi.fn();
+    renderStrip({
+      linkKind: 'UvproNative',
+      radioLabel: 'UV-Pro AA:BB:CC:DD:EE:FF',
+      btMac: 'AA:BB:CC:DD:EE:FF',
+      onLinkChange,
+    });
+    // A configured link hides the picker; open it via the ⚙ caret.
+    fireEvent.click(screen.getByTestId('aprs-connect-setup-toggle'));
+    // Tap the (already-active) UV-Pro segment — this fires emit().
+    fireEvent.click(screen.getByTestId('modem-seg-uvpro'));
+    expect(onLinkChange).toHaveBeenCalledWith(
+      expect.objectContaining({ linkKind: 'UvproNative', btMac: 'AA:BB:CC:DD:EE:FF' }),
+    );
+  });
 });
