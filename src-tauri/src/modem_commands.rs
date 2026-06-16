@@ -1118,6 +1118,10 @@ pub async fn modem_ardop_b2f_exchange(
     // Send/Receive does not freeze the UI and the operator stays able to
     // abort. The transport-kind validation above stayed synchronous.
     let session = Arc::clone(session.inner());
+    // tuxlink-nnjz: the spawn_blocking closure moves `app` (it's borrowed by
+    // `run_ardop_connect_b2f_with_transport`), so keep a clone for the
+    // post-await error emit below.
+    let app_for_emit = app.clone();
     tokio::task::spawn_blocking(move || {
         // Snapshot the close-generation BEFORE the transport take
         // (tuxlink-pdnw, Codex Phase 3-4 P1 #1): if `ardop_close_session_inner`
@@ -1158,7 +1162,7 @@ pub async fn modem_ardop_b2f_exchange(
     // tuxlink-nnjz: surface a send/receive failure in the session log instead
     // of an inline panel element. Err still propagates (the panel clears its
     // exchanging spinner + records the gateway `failed` attempt).
-    .inspect_err(|e| emit_modem_error(&app, e))
+    .inspect_err(|e| emit_modem_error(&app_for_emit, e))
 }
 
 /// Inner helper for [`modem_ardop_b2f_exchange`]: drives the full
