@@ -4805,6 +4805,10 @@ pub(crate) async fn ardop_listen_inner(
         // closure and keep the original for the consumer task.
         let session_id_for_spawn = session_id.clone();
         let cfg_for_spawn = cfg.clone();
+        // tuxlink-ngsk: route the listener's cmd-port traffic into the session
+        // log so an inbound-session transcript (incl. REJ / NEWSTATE / FAULT)
+        // is captured for alpha troubleshooting.
+        let wire = crate::modem_commands::ardop_wire_sink(app);
         // Spawn the modem on a blocking thread (bind-wait + init can be slow).
         let res = tokio::task::spawn_blocking(move || {
             crate::modem_commands::start_modem_listen_only(
@@ -4814,7 +4818,7 @@ pub(crate) async fn ardop_listen_inner(
                 &ardop_ui,
                 |cfg, _target| {
                     crate::winlink::modem::ardop::transport::ArdopTransport::with_managed_modem(cfg)
-                        .map(|t| Box::new(t) as Box<dyn crate::winlink::modem::ModemTransport>)
+                        .map(|t| Box::new(t.with_wire_sink(wire.clone())) as Box<dyn crate::winlink::modem::ModemTransport>)
                         .map_err(|e| format!("{e:?}"))
                 },
             )

@@ -47,6 +47,22 @@ fn emit_modem_error(app: &AppHandle, message: &str) {
     );
 }
 
+/// Build the ARDOP raw-wire tap (tuxlink-ngsk): a sink that appends each
+/// cmd-port line to the session log as a `LogSource::Wire` / `LogLevel::Trace`
+/// line. Wire lines are captured in the durable snapshot — so the log an alpha
+/// tester uploads is the source of truth for a failed session — and surface
+/// live under the panel's "Show raw" toggle. A cloneable `AppHandle` + the
+/// managed `SessionLogState` `Arc` are moved into the closure so it can emit
+/// from the cmd-socket reader thread. Attached to the transport via
+/// [`ArdopTransport::with_wire_sink`] before `init`.
+pub(crate) fn ardop_wire_sink(app: &AppHandle) -> crate::winlink_backend::WireSink {
+    let app = app.clone();
+    let buffer = app.state::<Arc<SessionLogState>>().inner().clone();
+    std::sync::Arc::new(move |line: &str| {
+        crate::session_log_emit::emit(&app, &buffer, LogLevel::Trace, LogSource::Wire, line);
+    })
+}
+
 /// Return the persisted ARDOP configuration, or the struct default if nothing
 /// has been written yet (first run) or the config file is absent.
 #[tauri::command]
@@ -643,6 +659,8 @@ pub async fn ardop_open_session(
     let ardop_ui_clone = ardop_ui.clone();
     let cfg_clone = cfg.clone();
     let session_id_clone = session_id.clone();
+    // tuxlink-ngsk: route this session's cmd-port traffic into the session log.
+    let wire = ardop_wire_sink(&app);
     let res = tokio::task::spawn_blocking(move || {
         ardop_open_session_inner(
             &session_arc,
@@ -653,7 +671,7 @@ pub async fn ardop_open_session(
             transport_kind,
             |cfg, _target| {
                 ArdopTransport::with_managed_modem(cfg)
-                    .map(|t| Box::new(t) as Box<dyn ModemTransport>)
+                    .map(|t| Box::new(t.with_wire_sink(wire.clone())) as Box<dyn ModemTransport>)
                     .map_err(|e| format!("spawn failed: {e}"))
             },
         )
@@ -986,6 +1004,8 @@ pub async fn modem_ardop_connect(
     // TX. The fast identity + audio gates above stay synchronous (RADIO-1 /
     // fail-closed before any modem I/O).
     let session = Arc::clone(session.inner());
+    // tuxlink-ngsk: route this session's cmd-port traffic into the session log.
+    let wire = ardop_wire_sink(&app);
     tokio::task::spawn_blocking(move || {
         modem_ardop_connect_gated_with_factory(
             &session,
@@ -995,7 +1015,7 @@ pub async fn modem_ardop_connect(
             &ardop_ui,
             |cfg, _target| {
                 ArdopTransport::with_managed_modem(cfg)
-                    .map(|t| Box::new(t) as Box<dyn ModemTransport>)
+                    .map(|t| Box::new(t.with_wire_sink(wire.clone())) as Box<dyn ModemTransport>)
                     .map_err(|e| format!("spawn failed: {e}"))
             },
         )

@@ -24,6 +24,7 @@ use super::session::{arq_connect, arq_disconnect, init_tnc, CmdSocket, ConnectIn
 use super::ArdopConfig;
 use crate::modem_status::{ModemState, ModemStatus};
 use crate::winlink::modem::{ModemTransport, ReadWrite};
+use crate::winlink_backend::WireSink;
 use std::sync::mpsc::RecvTimeoutError;
 
 /// Width of the rolling throughput window (tuxlink-n2uz). 5 seconds matches
@@ -105,6 +106,15 @@ pub struct ArdopTransport {
     /// `Option<DataSocket>` (the data socket may be dropped during a clean
     /// shutdown while we still want to render the final session's totals).
     arq_state: Option<ArqState>,
+    /// Optional raw-wire tap (tuxlink-ngsk). When set, every cmd-port line —
+    /// inbound (ardopcf → tuxlink: NEWSTATE / REJ / FAULT / PTT …) and outbound
+    /// (tuxlink → ardopcf: ARQCALL / LISTEN / DISCONNECT …) — is handed to this
+    /// sink, which appends a `LogSource::Wire` line to the session log. This is
+    /// the alpha troubleshooting surface: uploaded logs must contain the
+    /// cmd-port transcript, since there is no low-level access at a tester's
+    /// machine. Installed via [`Self::with_wire_sink`] before `init` and cloned
+    /// into the [`CmdSocket`] there.
+    wire: Option<WireSink>,
 }
 
 impl ArdopTransport {
@@ -120,7 +130,18 @@ impl ArdopTransport {
             managed: None,
             accumulators: AccumulatorState::default(),
             arq_state: None,
+            wire: None,
         }
+    }
+
+    /// Attach a raw-wire tap (tuxlink-ngsk). Builder-style so existing
+    /// construction sites stay unchanged; the production paths call this right
+    /// after `with_managed_modem` to route cmd-port traffic into the session
+    /// log. Must be called BEFORE `init` (which opens the cmd socket and clones
+    /// the sink into it).
+    pub fn with_wire_sink(mut self, wire: WireSink) -> Self {
+        self.wire = Some(wire);
+        self
     }
 
     /// Spawn the ardopcf binary described by `cfg`, wait for both TCP ports to
@@ -232,6 +253,7 @@ impl ArdopTransport {
             managed: Some((modem, cfg.audio_device_path)),
             accumulators: AccumulatorState::default(),
             arq_state: None,
+            wire: None,
         })
     }
 
@@ -500,7 +522,13 @@ impl ModemTransport for ArdopTransport {
         // clean uninit state for an idempotent re-init — and avoiding an unwrap on
         // a just-stored Option. (Code review Phase 3.)
         let arq_state = ArqState::new();
-        let mut cmd = CmdSocket::connect_with_arq_state(self.cmd_addr, Some(arq_state.clone()))?;
+        // tuxlink-ngsk: clone the wire tap into the cmd socket so its reader
+        // thread (and send_line) route cmd-port traffic into the session log.
+        let mut cmd = CmdSocket::connect_with_arq_state_and_wire(
+            self.cmd_addr,
+            Some(arq_state.clone()),
+            self.wire.clone(),
+        )?;
         let data = DataSocket::connect_with_arq_state(self.data_addr, Some(arq_state.clone()))?;
         init_tnc(&mut cmd, cfg)?;
         self.cmd = Some(cmd);

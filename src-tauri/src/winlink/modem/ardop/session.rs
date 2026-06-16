@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use super::arq_state::ArqState;
 use super::command::{encode_setter, Command, CommandParseError, State};
 use super::wire::encode_cmd_line;
+use crate::winlink_backend::WireSink;
 
 /// Bound on a single cmd-socket write — pairs with the per-setter ack timeout so
 /// a wedged TNC can't block init indefinitely. (Code review Phase 2a.)
@@ -40,6 +41,10 @@ pub struct CmdSocket {
     rx: mpsc::Receiver<Command>,
     /// Control-loop reader thread; joined on drop after the socket is shut down.
     reader_thread: Option<thread::JoinHandle<()>>,
+    /// Optional raw-wire tap (tuxlink-ngsk). Used by [`send_line`] to log
+    /// outbound cmd-port lines; the reader thread holds its own clone for the
+    /// inbound side.
+    wire: Option<WireSink>,
 }
 
 impl CmdSocket {
@@ -61,6 +66,22 @@ impl CmdSocket {
         addr: SocketAddr,
         arq_state: Option<ArqState>,
     ) -> io::Result<Self> {
+        Self::connect_with_arq_state_and_wire(addr, arq_state, None)
+    }
+
+    /// Like [`connect_with_arq_state`] but also installs a raw-wire tap
+    /// (tuxlink-ngsk). Every inbound cmd-port line read from ardopcf — including
+    /// `REJ` / `NEWSTATE` / `FAULT` and any line that does NOT parse to a known
+    /// [`Command`] — is handed to `wire` BEFORE parsing, so the session log
+    /// captures the verbatim cmd-port transcript. This is the alpha
+    /// troubleshooting surface: uploaded logs are the source of truth, so the
+    /// raw frames must be in them. Outbound lines are tapped in [`send_line`].
+    /// `None` skips the tap (the existing tests + the no-wire `connect`).
+    pub fn connect_with_arq_state_and_wire(
+        addr: SocketAddr,
+        arq_state: Option<ArqState>,
+        wire: Option<WireSink>,
+    ) -> io::Result<Self> {
         let stream = TcpStream::connect(addr)?;
         // The reader and writer halves share the underlying socket; `try_clone`
         // gives us two independently-closeable handles — the same split pattern
@@ -73,6 +94,10 @@ impl CmdSocket {
 
         let (tx, rx) = mpsc::channel::<Command>();
 
+        // tuxlink-ngsk: the reader thread holds its own clone of the wire tap so
+        // it can log inbound cmd-port lines; the struct keeps the original for
+        // the outbound send_line tap.
+        let reader_wire = wire.clone();
         let reader_thread = thread::spawn(move || {
             let mut reader = BufReader::new(reader_stream);
             let mut buf = Vec::new();
@@ -93,6 +118,13 @@ impl CmdSocket {
                 };
                 if line.trim().is_empty() {
                     continue;
+                }
+                // tuxlink-ngsk: tap the raw inbound cmd-port line BEFORE parsing,
+                // so REJ / NEWSTATE / FAULT — and any line Command::parse does NOT
+                // recognize — still reach the session log. ardopcf is the sender,
+                // so prefix to make direction unambiguous in the transcript.
+                if let Some(ref w) = reader_wire {
+                    w(&format!("cmd« {line}"));
                 }
                 match Command::parse(&line) {
                     Ok(cmd) => {
@@ -143,11 +175,18 @@ impl CmdSocket {
             writer,
             rx,
             reader_thread: Some(reader_thread),
+            wire,
         })
     }
 
     /// Write `line` to the cmd socket, appending the required `\r` terminator.
     pub fn send_line(&mut self, line: &str) -> io::Result<()> {
+        // tuxlink-ngsk: tap the outbound cmd-port line so the session log shows
+        // what tuxlink SENT (ARQCALL / LISTEN / DISCONNECT / ABORT …) alongside
+        // ardopcf's replies — the two halves together tell the on-air story.
+        if let Some(ref w) = self.wire {
+            w(&format!("cmd» {line}"));
+        }
         self.writer.write_all(&encode_cmd_line(line))
     }
 
@@ -587,6 +626,46 @@ mod tests {
                 "GRIDSQUARE CN87",
             ],
             "init sequence must match wl2k-go's tnc.go::init() order"
+        );
+    }
+
+    #[test]
+    fn cmd_socket_wire_tap_captures_inbound_lines_verbatim() {
+        // tuxlink-ngsk: the wire tap must hand each raw inbound cmd-port line to
+        // the sink BEFORE parsing — so REJ / NEWSTATE / FAULT (the alpha
+        // troubleshooting signal an operator uploads in a log) reach the session
+        // log even when ardopcf emits a line we don't model as a Command. The
+        // line is prefixed `cmd« ` to mark direction (ardopcf → tuxlink).
+        let (addr, server) = spawn_mock_tnc(move |mut conn| {
+            // Unsolicited TNC chatter, as ardopcf emits during a session.
+            write_reply(&mut conn, "PTT TRUE");
+            write_reply(&mut conn, "NEWSTATE DISC");
+            // Hold briefly so the client drains both lines before EOF.
+            thread::sleep(Duration::from_millis(200));
+        });
+
+        let recorded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let rec = recorded.clone();
+        let wire: WireSink = Arc::new(move |line: &str| {
+            rec.lock().unwrap().push(line.to_string());
+        });
+
+        let sock =
+            CmdSocket::connect_with_arq_state_and_wire(addr, None, Some(wire)).unwrap();
+        // Drain parsed events until EOF/timeout — guarantees the reader thread
+        // has processed (and therefore tapped) every line the mock sent.
+        while sock.recv_event(Duration::from_millis(300)).is_ok() {}
+        drop(sock);
+        server.join().unwrap();
+
+        let lines = recorded.lock().unwrap().clone();
+        assert!(
+            lines.iter().any(|l| l == "cmd« PTT TRUE"),
+            "wire tap must capture the verbatim inbound line; got {lines:?}",
+        );
+        assert!(
+            lines.iter().any(|l| l == "cmd« NEWSTATE DISC"),
+            "wire tap must capture NEWSTATE DISC verbatim; got {lines:?}",
         );
     }
 
