@@ -88,6 +88,11 @@ APRS.
 > [file an issue](https://github.com/cameronzucker/tuxlink/issues) with a clear
 > repro and the exported logs (Help → Logging → Export logs).
 >
+> Specifically, Tuxlink needs validation with a wide variety of radios. It's
+> currently tested against a Digirig, Bluetooth KISS, and the Benshi UV Pro
+> protocol. Please report hardware successes/failures with specific radios
+> and interfaces using the Help menu in Tuxlink.
+>
 > Version tags are generated automatically from conventional-commit activity by
 > [release-please](https://github.com/googleapis/release-please) and track
 > repository velocity, not release readiness. The
