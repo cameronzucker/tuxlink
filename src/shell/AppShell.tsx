@@ -823,12 +823,19 @@ export function AppShell() {
       // A backend connect/exchange failure surfaces in the session log + the
       // connection-status ribbon (emitted by the backend) — nothing inline
       // beside the button. The one purely-frontend failure is MissingTargetError
-      // (no persisted target for an RF mode): there is no frontend session-log
-      // emit path, so warn to the console with its actionable message rather
-      // than crash. The operator's fix is to open the mode's panel and set a
-      // target, which persists it for the next ribbon Connect.
+      // (no persisted target for an RF mode). tuxlink-nnjz: route it through the
+      // session_log_append command so it lands in the log window (a visible
+      // 'warn' row with the actionable message) instead of a console-only warn
+      // that left the operator seeing Connect silently "do nothing." The fix is
+      // to open the mode's panel and set a target, which persists it for the
+      // next ribbon Connect.
       if (e instanceof MissingTargetError) {
         console.warn(`Connect: ${e.message}`);
+        void invoke('session_log_append', { level: 'warn', message: e.message }).catch(
+          () => {
+            /* backend absent (pre-bootstrap) — console.warn above is the fallback */
+          },
+        );
       }
     } finally {
       setConnecting(false);
@@ -1481,10 +1488,15 @@ export function AppShell() {
             // as Telnet (P2) and ARDOP (P4)).
             return readingPane;
           }
-          if (sessionType === 'cms' && protocol === 'ardop-hf') {
-            // P4: the ArdopRadioPanel owns the ARDOP HF dial UI; the
-            // reading pane falls back to mail (same pattern as Telnet,
-            // P2). Eliminates the P1 dual-mount of placeholder + ArdopDock.
+          if (protocol === 'ardop-hf') {
+            // The ArdopRadioPanel owns the ARDOP HF dial UI for EVERY intent
+            // (cms / radio-only / p2p) — computePanelMode threads the intent in
+            // and the panel's b2f exchange routes on it. The reading pane falls
+            // back to mail (same pattern as Telnet P2 and VARA below). Matching
+            // on protocol alone — not sessionType==='cms' — keeps radio-only
+            // (tuxlink-picr) and any future p2p ARDOP off the defensive stub;
+            // radio-only+ardop-hf is a BUILT combo (isBuilt=true), so a
+            // "coming soon" stub there was a routing gap, not a real one.
             return readingPane;
           }
           if (sessionType === 'p2p' && protocol === 'packet') {

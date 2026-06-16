@@ -49,7 +49,7 @@ pub mod transport;
 // ──────────────────────────────────────────────────────────────
 
 pub use allowed_stations::AllowedStations;
-pub use arms_record::{ListenerArmsRecord, DEFAULT_TTL};
+pub use arms_record::{ListenerArmsRecord, DEFAULT_TTL, NO_EXPIRY};
 pub use decide::{listener_decide, listener_decide_at, ListenerDecision};
 pub use peer::PeerId;
 pub use station_password::StationPassword;

@@ -190,6 +190,51 @@ describe('<ArdopRadioPanel>', () => {
     expect(invokeMock).not.toHaveBeenCalledWith('modem_mint_consent');
   });
 
+  it('a modem_ardop_connect failure does NOT render an inline panel error — it goes to the session log (tuxlink-nnjz)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'modem_ardop_connect') {
+        throw new Error('spawn failed: ardopcf not found');
+      }
+      return defaultInvokeImpl(cmd, args);
+    });
+    const { container } = renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+    await switchToManualTab();
+    const target = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
+    fireEvent.change(target, { target: { value: 'W7RMS-10' } });
+    fireEvent.click(screen.getByTestId('ardop-start-btn'));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'modem_ardop_connect',
+        expect.objectContaining({ target: 'W7RMS-10' }),
+      );
+    });
+    // Modem errors belong in the log window (the backend emits them on
+    // session_log:line), NOT in an inline element wedged beside the buttons.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.querySelector('.radio-panel-error')).toBeNull();
+  });
+
+  it('listener arm-duration input defaults to blank (no expiry) and persists listen_ttl_minutes (tuxlink-5g5d)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+    const input = (await screen.findByTestId('ardop-listen-ttl-input')) as HTMLInputElement;
+    // WLE-parity default: blank input = no self-expiry.
+    expect(input.value).toBe('');
+    fireEvent.change(input, { target: { value: '30' } });
+    fireEvent.blur(input);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'config_set_ardop',
+        expect.objectContaining({
+          value: expect.objectContaining({ listen_ttl_minutes: 30 }),
+        }),
+      );
+    });
+  });
+
   it('Stop button fires modem_ardop_disconnect when modem is running', async () => {
     mockUseModemStatus.mockReturnValue({
       status: RUNNING,

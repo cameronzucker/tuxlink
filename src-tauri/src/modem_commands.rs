@@ -13,16 +13,55 @@ use tauri::{AppHandle, Manager, State};
 use crate::config::{self, ArdopUiConfig, Config};
 use crate::modem_status::{ModemSession, ModemState, ModemStatus};
 use crate::native_mailbox::Mailbox;
+use crate::session_log::SessionLogState;
 use crate::winlink::modem::ardop::transport::ArdopTransport;
 use crate::winlink::modem::ardop::ArdopConfig;
 use crate::winlink::modem::{InitConfig, ModemTransport};
 use crate::winlink::session::SessionIntent;
+use crate::winlink_backend::{LogLevel, LogSource};
 
 /// Number of ARQ retries packed into the `ARQCALL` setter.
 const CONNECT_REPEAT: u32 = 3;
 
 /// ARQ-link idle timeout passed to the TNC via `ARQTIMEOUT` during init.
 const ARQ_TIMEOUT_SECS: u32 = 30;
+
+/// Surface a modem-operation failure in the operator session log (tuxlink-nnjz).
+///
+/// Modem/transport errors belong in the session-log window the operator is
+/// already watching — NOT in an inline panel element wedged next to the
+/// buttons. Emitting at `LogLevel::Error` / `LogSource::Transport` lands the
+/// line live on `session_log:line` (projected to a visible `alert` row, not the
+/// `raw`/Wire bucket) AND in the durable snapshot, so it survives a panel
+/// re-mount. Best-effort: a missing `SessionLogState` or emit failure is
+/// swallowed — the command still returns its `Err` so the caller can clear its
+/// in-flight spinner.
+fn emit_modem_error(app: &AppHandle, message: &str) {
+    let buffer = app.state::<Arc<SessionLogState>>();
+    crate::session_log_emit::emit(
+        app,
+        &buffer,
+        LogLevel::Error,
+        LogSource::Transport,
+        message,
+    );
+}
+
+/// Build the ARDOP raw-wire tap (tuxlink-ngsk): a sink that appends each
+/// cmd-port line to the session log as a `LogSource::Wire` / `LogLevel::Trace`
+/// line. Wire lines are captured in the durable snapshot — so the log an alpha
+/// tester uploads is the source of truth for a failed session — and surface
+/// live under the panel's "Show raw" toggle. A cloneable `AppHandle` + the
+/// managed `SessionLogState` `Arc` are moved into the closure so it can emit
+/// from the cmd-socket reader thread. Attached to the transport via
+/// [`ArdopTransport::with_wire_sink`] before `init`.
+pub(crate) fn ardop_wire_sink(app: &AppHandle) -> crate::winlink_backend::WireSink {
+    let app = app.clone();
+    let buffer = app.state::<Arc<SessionLogState>>().inner().clone();
+    std::sync::Arc::new(move |line: &str| {
+        crate::session_log_emit::emit(&app, &buffer, LogLevel::Trace, LogSource::Wire, line);
+    })
+}
 
 /// Return the persisted ARDOP configuration, or the struct default if nothing
 /// has been written yet (first run) or the config file is absent.
@@ -81,13 +120,30 @@ pub fn modem_ardop_disconnect_inner(session: &Arc<ModemSession>) -> Result<(), S
     // ABORT on an idle TNC is a no-op, so it's safe to call unconditionally.
     let _ = session.abort_in_flight();
 
+    // tuxlink-vyby: bump the close generation BEFORE reclaiming the transport.
+    // When an in-flight worker holds the transport (a b2f exchange mid-run, or
+    // an armed listener consumer), `reset_to_stopped()` below finds nothing to
+    // drop. Those workers re-install on their way out via
+    // `install_transport_if_generation_matches(transport, snapshot)` where the
+    // snapshot was taken BEFORE this Stop. Bumping the generation invalidates
+    // that snapshot, so the guarded install rejects the handle and the worker
+    // DROPS it — the transport's `ManagedModem::Drop` (SIGINT→SIGKILL) then
+    // kills ardopcf. Without this bump the worker re-installs the LIVE transport
+    // into the just-stopped session, so ardopcf keeps running and REJ frames
+    // scroll until a SECOND Stop click reclaims it — the operator-reported
+    // two-click teardown. Mirrors the close-path bump in
+    // `ardop_close_session_inner` (tuxlink-pdnw); a double-bump on the close
+    // path is harmless because the guard compares snapshot-vs-live by equality.
+    let _ = session.bump_close_generation();
+
     if let Some(mut transport) = session.reset_to_stopped() {
-        // Best-effort: even if disconnect errors, the session is already
-        // marked Stopped so reconnects are possible. The TNC process (when
-        // managed) is torn down separately via ArdopTransport::shutdown —
-        // disconnect() here only sends the DISCONNECT command on the cmd
-        // socket. Process teardown lands when the full shutdown wiring
-        // arrives in a follow-up.
+        // The session directly held the transport (no in-flight worker). Send a
+        // best-effort link DISCONNECT, then drop: `ManagedModem::Drop` reaps the
+        // ardopcf process (SIGINT, 200 ms grace, then SIGKILL), and
+        // `CmdSocket::Drop` shuts down + joins the cmd reader thread. Even if
+        // disconnect errors, the session is already Stopped so a reconnect can
+        // proceed. The in-flight-owner case is handled by the generation bump
+        // above (the worker drops the handle, killing the process the same way).
         let _ = transport.disconnect(Duration::from_secs(5));
         drop(transport);
     }
@@ -106,6 +162,7 @@ pub fn modem_get_status(session: State<'_, Arc<ModemSession>>) -> ModemStatus {
 /// cmd socket).
 #[tauri::command]
 pub async fn modem_ardop_disconnect(
+    app: AppHandle,
     session: State<'_, Arc<ModemSession>>,
 ) -> Result<(), String> {
     // tuxlink-ab9h: run the abort + link-disconnect (bounded 5 s) OFF the
@@ -116,9 +173,16 @@ pub async fn modem_ardop_disconnect(
     // so it reaches any in-flight connect_arq running on its own
     // spawn_blocking worker.
     let session = Arc::clone(session.inner());
-    tokio::task::spawn_blocking(move || modem_ardop_disconnect_inner(&session))
+    let result = tokio::task::spawn_blocking(move || modem_ardop_disconnect_inner(&session))
         .await
-        .map_err(|e| format!("disconnect task panicked: {e}"))?
+        .map_err(|e| format!("disconnect task panicked: {e}"))?;
+    // tuxlink-nnjz: a disconnect error (best-effort path; rare) surfaces in the
+    // session log rather than an inline panel element. (`Result::inspect_err` is
+    // MSRV 1.76; this match keeps the project's 1.75 floor.)
+    if let Err(ref e) = result {
+        emit_modem_error(&app, e);
+    }
+    result
 }
 
 /// Inner helper with a factory seam — ARDOP connect with in-process busy guard.
@@ -599,6 +663,8 @@ pub async fn ardop_open_session(
     let ardop_ui_clone = ardop_ui.clone();
     let cfg_clone = cfg.clone();
     let session_id_clone = session_id.clone();
+    // tuxlink-ngsk: route this session's cmd-port traffic into the session log.
+    let wire = ardop_wire_sink(&app);
     let res = tokio::task::spawn_blocking(move || {
         ardop_open_session_inner(
             &session_arc,
@@ -609,7 +675,7 @@ pub async fn ardop_open_session(
             transport_kind,
             |cfg, _target| {
                 ArdopTransport::with_managed_modem(cfg)
-                    .map(|t| Box::new(t) as Box<dyn ModemTransport>)
+                    .map(|t| Box::new(t.with_wire_sink(wire.clone())) as Box<dyn ModemTransport>)
                     .map_err(|e| format!("spawn failed: {e}"))
             },
         )
@@ -942,7 +1008,9 @@ pub async fn modem_ardop_connect(
     // TX. The fast identity + audio gates above stay synchronous (RADIO-1 /
     // fail-closed before any modem I/O).
     let session = Arc::clone(session.inner());
-    tokio::task::spawn_blocking(move || {
+    // tuxlink-ngsk: route this session's cmd-port traffic into the session log.
+    let wire = ardop_wire_sink(&app);
+    let result = tokio::task::spawn_blocking(move || {
         modem_ardop_connect_gated_with_factory(
             &session,
             &session_id,
@@ -951,13 +1019,21 @@ pub async fn modem_ardop_connect(
             &ardop_ui,
             |cfg, _target| {
                 ArdopTransport::with_managed_modem(cfg)
-                    .map(|t| Box::new(t) as Box<dyn ModemTransport>)
+                    .map(|t| Box::new(t.with_wire_sink(wire.clone())) as Box<dyn ModemTransport>)
                     .map_err(|e| format!("spawn failed: {e}"))
             },
         )
     })
     .await
-    .map_err(|e| format!("connect task panicked: {e}"))?
+    .map_err(|e| format!("connect task panicked: {e}"))?;
+    // tuxlink-nnjz: surface a connect failure in the session log (where the
+    // operator is already looking) rather than an inline panel element. The Err
+    // still propagates so the panel clears its connecting spinner. (`inspect_err`
+    // is MSRV 1.76; this match keeps the project's 1.75 floor.)
+    if let Err(ref e) = result {
+        emit_modem_error(&app, e);
+    }
+    result
 }
 
 /// Run a B2F mail exchange over an open ARDOP session (tuxlink-ytg +
@@ -1050,7 +1126,11 @@ pub async fn modem_ardop_b2f_exchange(
     // Send/Receive does not freeze the UI and the operator stays able to
     // abort. The transport-kind validation above stayed synchronous.
     let session = Arc::clone(session.inner());
-    tokio::task::spawn_blocking(move || {
+    // tuxlink-nnjz: the spawn_blocking closure moves `app` (it's borrowed by
+    // `run_ardop_connect_b2f_with_transport`), so keep a clone for the
+    // post-await error emit below.
+    let app_for_emit = app.clone();
+    let result = tokio::task::spawn_blocking(move || {
         // Snapshot the close-generation BEFORE the transport take
         // (tuxlink-pdnw, Codex Phase 3-4 P1 #1): if `ardop_close_session_inner`
         // runs during this exchange it bumps the generation; the guarded
@@ -1086,7 +1166,15 @@ pub async fn modem_ardop_b2f_exchange(
         outcome
     })
     .await
-    .map_err(|e| format!("b2f task panicked: {e}"))?
+    .map_err(|e| format!("b2f task panicked: {e}"))?;
+    // tuxlink-nnjz: surface a send/receive failure in the session log instead of
+    // an inline panel element. Err still propagates (the panel clears its
+    // exchanging spinner + records the gateway `failed` attempt). (`inspect_err`
+    // is MSRV 1.76; this match keeps the project's 1.75 floor.)
+    if let Err(ref e) = result {
+        emit_modem_error(&app_for_emit, e);
+    }
+    result
 }
 
 /// Inner helper for [`modem_ardop_b2f_exchange`]: drives the full
@@ -1287,6 +1375,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         config_set_ardop(initial.clone()).expect("config_set_ardop must succeed");
         let read = config_get_ardop();
@@ -1319,6 +1408,39 @@ mod tests {
         modem_ardop_disconnect_inner(&session).unwrap();
 
         assert_eq!(session.status_snapshot().state, ModemState::Stopped);
+    }
+
+    #[test]
+    fn modem_ardop_disconnect_bumps_close_generation_to_defeat_in_flight_reinstall() {
+        // tuxlink-vyby: the Stop button (modem_ardop_disconnect) must fully
+        // tear down even when an in-flight b2f exchange or an armed listener
+        // currently HOLDS the transport — so `reset_to_stopped` finds none to
+        // drop. Those workers re-install via
+        // `install_transport_if_generation_matches(transport, snapshot)` with a
+        // `snapshot` captured BEFORE Stop. Bumping the close generation in the
+        // disconnect path invalidates that snapshot, so the guarded install
+        // rejects the handle — the worker drops it and the transport's
+        // `ManagedModem::Drop` kills ardopcf. Without the bump the worker
+        // re-installs the LIVE transport into the just-stopped session, so
+        // ardopcf keeps running and REJ frames scroll until a SECOND Stop click
+        // reclaims it (the operator-reported two-click teardown).
+        let session = Arc::new(ModemSession::new());
+
+        // A worker snapshots the generation before taking the transport.
+        let snapshot = session.current_close_generation();
+
+        // Operator clicks Stop while the worker holds the transport.
+        modem_ardop_disconnect_inner(&session).expect("disconnect must succeed");
+
+        // The worker unwinds and tries to re-install with its pre-Stop
+        // snapshot. The guard MUST reject it (hand the transport back to drop).
+        let reinstall =
+            session.install_transport_if_generation_matches(stub_transport(), snapshot);
+        assert!(
+            reinstall.is_err(),
+            "Stop must bump the close generation so an in-flight worker's \
+             pre-Stop re-install is rejected and ardopcf is torn down in ONE click",
+        );
     }
 
     // ── Task 3.3 tests — consent-gated connect via factory seam ─────────
@@ -1385,6 +1507,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         }
     }
 
@@ -2128,6 +2251,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert_eq!(
@@ -2155,6 +2279,7 @@ mod tests {
             cmd_port: 9001,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
@@ -2177,6 +2302,7 @@ mod tests {
                 cmd_port: low_port,
                 bandwidth_hz: None,
                 webgui_port: None,
+                listen_ttl_minutes: 0,
             };
             let args = build_ardop_extra_args(&cfg);
             assert!(
@@ -2199,6 +2325,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert_eq!(
@@ -2230,6 +2357,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
@@ -2254,6 +2382,7 @@ mod tests {
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: Some(9080),
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
@@ -2279,6 +2408,7 @@ mod tests {
             cmd_port: 0,
             bandwidth_hz: None,
             webgui_port: Some(8514),
+            listen_ttl_minutes: 0,
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(

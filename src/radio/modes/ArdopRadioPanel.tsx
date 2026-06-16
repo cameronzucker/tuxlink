@@ -242,6 +242,11 @@ interface ArdopFullConfig {
    *  from where ardopcf is actually listening (operator smoke
    *  2026-05-31 round 3 — "Open WebGUI returns connection refused"). */
   webgui_port: number | null;
+  /** How long the inbound listener stays armed, in MINUTES, before it
+   *  self-expires. `0` (the default) means NO EXPIRY — armed until the
+   *  operator disarms it (WLE-parity; 2026-06-16 operator decision). A
+   *  positive value arms for that many minutes (tuxlink-5g5d). */
+  listen_ttl_minutes: number;
 }
 
 /** Mirror of Rust's `ArdopUiConfig::resolved_webgui_port`. Single source
@@ -297,6 +302,11 @@ export function ArdopRadioPanel({
   // backend on blur after a non-empty numeric parse. Empty input → null
   // (revert to "derive from cmd_port - 1" — the default).
   const [webguiPortInput, setWebguiPortInput] = useState<string>('');
+  // tuxlink-5g5d: inbound-listener arm-window TTL in MINUTES. Empty or 0 means
+  // NO EXPIRY (the WLE-parity default; 2026-06-16 operator decision) — armed
+  // until the operator disarms it. Stored as a string so the operator can type
+  // freely; commits on blur after a non-negative integer parse.
+  const [listenTtlInput, setListenTtlInput] = useState<string>('');
   // tuxlink-y7x7: device-enumeration state for the Radio section pickers.
   // Captures + playbacks come from `ardop_list_audio_devices` (which shells
   // to `arecord -L` / `aplay -L`); PTT comes from `packet_list_serial_devices`
@@ -401,6 +411,8 @@ export function ArdopRadioPanel({
         // override pinned yet, so the input shows the derived default as
         // a placeholder rather than a value.
         setWebguiPortInput(c.webgui_port !== null && c.webgui_port !== undefined ? String(c.webgui_port) : '');
+        // tuxlink-5g5d: blank input represents "no expiry" (stored as 0).
+        setListenTtlInput(c.listen_ttl_minutes > 0 ? String(c.listen_ttl_minutes) : '');
       })
       .catch(() => {
         /* pre-wizard / config absent — keep null default */
@@ -494,6 +506,26 @@ export function ArdopRadioPanel({
     }
     if (trimmed === ardopConfig.binary) return;
     persistArdop({ binary: trimmed });
+  };
+
+  // tuxlink-5g5d: arm-window TTL in minutes. Empty or 0 → NO EXPIRY (the
+  // WLE-parity default). Reject negatives / non-integers, reverting the field
+  // to the persisted value (mirrors commitCmdPort's revert-on-invalid pattern).
+  const commitListenTtl = () => {
+    if (!ardopConfig) return;
+    const trimmed = listenTtlInput.trim();
+    const minutes = trimmed === '' ? 0 : Number(trimmed);
+    if (!Number.isInteger(minutes) || minutes < 0) {
+      setListenTtlInput(
+        ardopConfig.listen_ttl_minutes > 0 ? String(ardopConfig.listen_ttl_minutes) : '',
+      );
+      setConnectError(
+        `Invalid listener duration "${trimmed}" — enter a whole number of minutes (0 or blank = no expiry). Reverted.`,
+      );
+      return;
+    }
+    if (minutes === ardopConfig.listen_ttl_minutes) return;
+    persistArdop({ listen_ttl_minutes: minutes });
   };
 
   const onBandwidthChange = (e: ChangeEvent<HTMLSelectElement>) => {
@@ -596,7 +628,11 @@ export function ArdopRadioPanel({
         target: target.trim(),
       });
     } catch (e) {
-      setConnectError(String(e));
+      // tuxlink-nnjz: modem errors are surfaced in the session log (the backend
+      // emits an Error line on failure) — not in an inline panel element wedged
+      // next to the buttons. Keep a dev-console trace; the operator-facing
+      // report is the log row right there in the panel.
+      console.debug('ARDOP connect failed (surfaced in session log):', e);
     } finally {
       setConnecting(false);
     }
@@ -621,7 +657,10 @@ export function ArdopRadioPanel({
         transportKind: 'ardop',
       });
     } catch (e) {
-      setConnectError(`Send/Receive failed: ${e}`);
+      // tuxlink-nnjz: the send/receive failure is surfaced in the session log
+      // by the backend (Error line), not an inline panel element. The gateway
+      // `failed` record below is a separate, deliberate empirical fact.
+      console.debug('ARDOP send/receive failed (surfaced in session log):', e);
       // Record a gateway `failed` (C3) — in the CATCH, never the FINALLY, so a
       // pre-air busy-guard rejection or the local connect never logs a spurious
       // gateway failure. The guard at the top (isExchangeReady / effectiveTarget
@@ -643,7 +682,8 @@ export function ArdopRadioPanel({
     try {
       await invoke('modem_ardop_disconnect');
     } catch (e) {
-      setConnectError(String(e));
+      // tuxlink-nnjz: surfaced in the session log by the backend, not inline.
+      console.debug('ARDOP disconnect failed (surfaced in session log):', e);
     } finally {
       setDisconnecting(false);
     }
@@ -1065,6 +1105,32 @@ Up     ${fmtUptime(status.uptimeSec)}`}
           onDisarm={ardopListener.disarm}
           testIdPrefix="ardop-listen"
         />
+        {/* tuxlink-5g5d: operator-configurable arm duration. Blank/0 = no
+            expiry (the default). Disabled while armed — the window is fixed at
+            arm time. */}
+        <label
+          className="radio-panel-radio-help"
+          data-testid="ardop-listen-ttl-field"
+          style={{ display: 'block', marginTop: '0.5rem' }}
+        >
+          Arm duration (minutes){' '}
+          <input
+            type="number"
+            min={0}
+            inputMode="numeric"
+            value={listenTtlInput}
+            placeholder="no expiry"
+            onChange={(e) => setListenTtlInput(e.target.value)}
+            onBlur={commitListenTtl}
+            disabled={ardopListener.armed}
+            data-testid="ardop-listen-ttl-input"
+            style={{ width: '6rem' }}
+          />
+          <span style={{ display: 'block', opacity: 0.8 }}>
+            Blank or 0 keeps the listener armed until you disarm it. Enter a number
+            of minutes to auto-expire.
+          </span>
+        </label>
         {ardopListener.error && (
           <p
             className="radio-panel-radio-help"

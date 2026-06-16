@@ -3497,6 +3497,34 @@ pub fn session_log_clear(
     Ok(())
 }
 
+/// Append an operator-facing line to the session log from the frontend
+/// (tuxlink-nnjz).
+///
+/// For purely-frontend failures that never reach a backend command — notably
+/// the ribbon Connect's `MissingTargetError` (no persisted target for an RF
+/// mode), which previously only `console.warn`'d and so was invisible to the
+/// operator (AppShell `onConnect`). Routes through the same append + broadcast
+/// path as backend lines so the message lands live in the session-log window
+/// the operator is already watching, plus the durable snapshot. `level` is one
+/// of `"error" | "warn" | "info"` (anything else maps to `info`). Source is
+/// `Backend` so the line is operator-visible — never the hidden `Wire`/raw
+/// bucket the default Show-raw=off filter suppresses.
+#[tauri::command]
+pub fn session_log_append(
+    app: AppHandle,
+    state: State<'_, std::sync::Arc<SessionLogState>>,
+    level: String,
+    message: String,
+) -> Result<(), UiError> {
+    let lvl = match level.as_str() {
+        "error" => LogLevel::Error,
+        "warn" => LogLevel::Warn,
+        _ => LogLevel::Info,
+    };
+    emit_session_line_with_source(&app, state.inner(), lvl, LogSource::Backend, message);
+    Ok(())
+}
+
 // ============================================================================
 // tuxlink-ng3 — app_quit (HTML chrome File→Quit / Ctrl+Q)
 // ============================================================================
@@ -4676,7 +4704,8 @@ pub(crate) async fn ardop_listen_inner(
     session: &std::sync::Arc<crate::modem_status::ModemSession>,
     listen_state: &std::sync::Arc<ArdopListenState>,
 ) -> Result<(), UiError> {
-    use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
+    use crate::winlink::listener::{ListenerArmsRecord, TransportKind};
+    use std::time::Duration;
 
     // Refuse a second arm while one is in flight.
     {
@@ -4701,7 +4730,21 @@ pub(crate) async fn ardop_listen_inner(
         })?;
 
     // Append arms record BEFORE flipping the modem (Codex 2026-06-03 P2).
-    let arms = ListenerArmsRecord::arm(TransportKind::Ardop, DEFAULT_TTL);
+    // tuxlink-5g5d: the arm-window TTL comes from operator config
+    // (modem_ardop.listen_ttl_minutes), NOT a hardcoded 1-hour default. `0`
+    // (the default) → NO_EXPIRY (armed until explicit disarm; WLE-parity per the
+    // 2026-06-16 operator decision); a positive N → N minutes.
+    let listen_ttl_minutes = config::read_config()
+        .ok()
+        .and_then(|c| c.modem_ardop)
+        .map(|a| a.listen_ttl_minutes)
+        .unwrap_or(0);
+    let ttl = if listen_ttl_minutes == 0 {
+        crate::winlink::listener::NO_EXPIRY
+    } else {
+        Duration::from_secs(listen_ttl_minutes as u64 * 60)
+    };
+    let arms = ListenerArmsRecord::arm(TransportKind::Ardop, ttl);
     let log_path = ardop_arms_log_path();
     arms.append_to_log(&log_path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
@@ -4762,6 +4805,10 @@ pub(crate) async fn ardop_listen_inner(
         // closure and keep the original for the consumer task.
         let session_id_for_spawn = session_id.clone();
         let cfg_for_spawn = cfg.clone();
+        // tuxlink-ngsk: route the listener's cmd-port traffic into the session
+        // log so an inbound-session transcript (incl. REJ / NEWSTATE / FAULT)
+        // is captured for alpha troubleshooting.
+        let wire = crate::modem_commands::ardop_wire_sink(app);
         // Spawn the modem on a blocking thread (bind-wait + init can be slow).
         let res = tokio::task::spawn_blocking(move || {
             crate::modem_commands::start_modem_listen_only(
@@ -4771,7 +4818,7 @@ pub(crate) async fn ardop_listen_inner(
                 &ardop_ui,
                 |cfg, _target| {
                     crate::winlink::modem::ardop::transport::ArdopTransport::with_managed_modem(cfg)
-                        .map(|t| Box::new(t) as Box<dyn crate::winlink::modem::ModemTransport>)
+                        .map(|t| Box::new(t.with_wire_sink(wire.clone())) as Box<dyn crate::winlink::modem::ModemTransport>)
                         .map_err(|e| format!("{e:?}"))
                 },
             )
@@ -4836,13 +4883,17 @@ pub(crate) async fn ardop_listen_inner(
         );
     });
 
-    let mins = arms.ttl.as_secs() / 60;
+    let window_desc = if arms.is_no_expiry() {
+        "with no expiry".to_string()
+    } else {
+        format!("for {} min", arms.ttl.as_secs() / 60)
+    };
     emit_session_line(
         app,
         log,
         LogLevel::Info,
         format!(
-            "ARDOP listener armed for {mins} min (consent uuid {}). \
+            "ARDOP listener armed {window_desc} (consent uuid {}). \
              Modem is in LISTEN TRUE; waiting for inbound peers…",
             &arms.consent_uuid
         ),
