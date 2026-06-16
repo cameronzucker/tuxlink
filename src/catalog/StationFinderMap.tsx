@@ -31,7 +31,7 @@ const OPERATOR_ZOOM = 6;
 const STATIONS_SOURCE = 'stations';
 const OPERATOR_SOURCE = 'operator';
 const STATION_PINS_LAYER = 'station-pins';
-const STATION_SEL_HALO_LAYER = 'station-sel-halo';
+const STATION_SEL_GLOW_LAYER = 'station-sel-glow';
 
 type FeatureCollection = { type: 'FeatureCollection'; features: unknown[] };
 const EMPTY_FC: FeatureCollection = { type: 'FeatureCollection', features: [] };
@@ -55,25 +55,19 @@ const TIER_COLOR_MATCH = [
 const STATION_LAYERS = (
   [
     {
-      // Selection HALO — a bright ring drawn BENEATH the pins, visible only for
-      // the selected feature (feature-state). The prior in-place +2px/white-stroke
-      // cue was too subtle to tell which pin was selected (operator, 2026-06-16);
-      // a detached ring with a clear map gap is unambiguous. Radius 0 when not
-      // selected so it paints nothing.
-      id: STATION_SEL_HALO_LAYER,
+      // Soft selection GLOW — a filled (non-transparent) white disc drawn BENEATH
+      // the pins, sized larger than the selected pin so a halo shows around it.
+      // Filled (not a transparent-fill ring) so the GL path never culls it. Radius
+      // 0 / opacity 0 when not selected → paints nothing. Selection is driven by
+      // `feature-state` (B9, tuxlink-vnk7).
+      id: STATION_SEL_GLOW_LAYER,
       type: 'circle',
       source: STATIONS_SOURCE,
       paint: {
-        'circle-radius': [
-          'case',
-          ['boolean', ['feature-state', 'selected'], false],
-          ['match', ['get', 'tier'], 'good', 20, 'fair', 18, 'marginal', 16.5, 'poor', 15.5, 'unlikely', 15, 'skip', 14.5, 17],
-          0,
-        ],
-        'circle-color': 'rgba(255,255,255,0)', // ring only — transparent fill
-        'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2.5, 0],
-        'circle-stroke-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.95, 0],
+        'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 18, 0],
+        'circle-color': '#ffffff',
+        'circle-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.35, 0],
+        'circle-blur': 0.4,
       },
     },
     {
@@ -81,23 +75,25 @@ const STATION_LAYERS = (
       type: 'circle',
       source: STATIONS_SOURCE,
       paint: {
-        // Selected pin grows +3px; the halo ring above carries the main cue.
-        // Selection is driven by `feature-state` (B9, tuxlink-vnk7) so clicking a
-        // pin flips one feature's state instead of rebuilding the whole FC.
+        // The selected pin jumps markedly larger and gains a thick bright-white
+        // rim — the original +2px/thin-stroke cue was too subtle to tell which
+        // pin was selected (operator, 2026-06-16). Selection is `feature-state`-
+        // driven so a click flips one feature's state, not the whole FC.
         'circle-radius': [
           'case',
           ['boolean', ['feature-state', 'selected'], false],
-          ['match', ['get', 'tier'], 'good', 13, 'fair', 11, 'marginal', 9.5, 'poor', 8.5, 'unlikely', 8, 'skip', 7.5, 10],
+          ['match', ['get', 'tier'], 'good', 15, 'fair', 13, 'marginal', 11.5, 'poor', 10.5, 'unlikely', 10, 'skip', 9.5, 12],
           ['match', ['get', 'tier'], 'good', 10, 'fair', 8, 'marginal', 6.5, 'poor', 5.5, 'unlikely', 5, 'skip', 4.5, 7],
         ],
         'circle-color': TIER_COLOR_MATCH,
-        // The grey "not reachable" bottom tier sits back (smaller, dimmer) so the
-        // live red/orange/green stations read first; red "unlikely" stays full.
+        // The grey "not reachable" bottom tier sits back (dimmer) so the live
+        // red/orange/green stations read first; red "unlikely" stays full.
         'circle-opacity': ['case', ['==', ['get', 'tier'], 'skip'], 0.7, 1],
-        // A dark rim separates the selected pin from the white halo ring; other
-        // pins keep a thin white rim for contrast against the basemap.
-        'circle-stroke-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#0b1622', '#ffffff'],
-        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2, 0.5],
+        // Selected → thick bright-white rim; others keep a thin white rim for
+        // basemap contrast. White renders reliably on this webview (the dark rim
+        // tried earlier was invisible against the map).
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 3, 0.6],
       },
     },
   ] as unknown[]

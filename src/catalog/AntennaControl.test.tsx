@@ -32,22 +32,19 @@ describe('AntennaControl', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('offers exactly the named power steps and persists a selection', () => {
+  it('persists an arbitrary positive power (not just common levels)', () => {
     const onChange = vi.fn();
     render(<AntennaControl prefs={DEFAULT_PROPAGATION_PREFS} onChange={onChange} />);
-    const power = screen.getByTestId('tx-power-input') as HTMLSelectElement;
-    const values = Array.from(power.options).map((o) => Number(o.value));
-    expect(values).toEqual([100, 50, 20, 10, 5, 2]);
-    // The lowest step (2 W) is selectable in one action.
-    fireEvent.change(power, { target: { value: '2' } });
-    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_PROPAGATION_PREFS, txPowerW: 2 });
+    // 73 W is not a "round" preset — freeform entry must still take it.
+    fireEvent.change(screen.getByTestId('tx-power-input'), { target: { value: '73' } });
+    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_PROPAGATION_PREFS, txPowerW: 73 });
   });
 
-  it('preserves a persisted off-list power as a one-off option', () => {
-    render(<AntennaControl prefs={{ ...DEFAULT_PROPAGATION_PREFS, txPowerW: 73 }} onChange={() => {}} />);
-    const power = screen.getByTestId('tx-power-input') as HTMLSelectElement;
-    expect(power.value).toBe('73');
-    expect(Array.from(power.options).map((o) => Number(o.value))).toContain(73);
+  it('rejects a non-positive power', () => {
+    const onChange = vi.fn();
+    render(<AntennaControl prefs={DEFAULT_PROPAGATION_PREFS} onChange={onChange} />);
+    fireEvent.change(screen.getByTestId('tx-power-input'), { target: { value: '0' } });
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it('shows an inline error when provided', () => {

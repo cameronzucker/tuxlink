@@ -70,11 +70,6 @@ export const DEFAULT_PROPAGATION_PREFS: PropagationPrefs = {
 /// Rust `patterns::HEIGHT_GRID_M`; the height slider snaps to these.
 export const HEIGHT_GRID_M = [2.5, 4, 6, 9] as const;
 
-/// Selectable TX power steps (watts), highest → lowest. These are the discrete
-/// powers the radios can be set to exactly; the picker exposes them directly so
-/// the operator hits any of them in one action rather than spinning a field.
-export const TX_POWER_OPTIONS_W = [100, 50, 20, 10, 5, 2] as const;
-
 /// Whether an antenna's elevation pattern varies with mast height (horizontal
 /// wires + the Yagi) or is fixed (ground-mounted verticals + the neutral model).
 /// Mirrors the Rust `patterns::is_height_variable`.
