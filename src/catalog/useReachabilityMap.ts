@@ -45,6 +45,13 @@ export function useReachabilityMap(
   stations: Station[],
   bands: Set<Band>,
   utcHour: number,
+  // Bumped by the caller after the operator's propagation prefs (own antenna /
+  // height / ground / noise / SNR / power) persist, to recompute every station's
+  // tier with the new TX model. The backend reads those prefs fresh each call, so
+  // a changed key is the re-predict signal; the write must land BEFORE the bump.
+  // Without this the map only refreshed when the station set changed (e.g. a
+  // radius change) — operator-found stale-tier bug, 2026-06-16.
+  reloadKey: number = 0,
 ): ReachabilityMap {
   const grid = operatorGrid.trim();
   const keys = stations.map(stationKey).join(',');
@@ -136,7 +143,7 @@ export function useReachabilityMap(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grid, bandsKey, utcHour, keys]);
+  }, [grid, bandsKey, utcHour, keys, reloadKey]);
 
   return { tiers: data.tiers, distances, available: data.available, loading: data.loading };
 }
