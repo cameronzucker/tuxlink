@@ -155,4 +155,75 @@ mod tests {
             );
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Group F1: physically-grounded distinctness + height-sensitivity.
+    //
+    // These assert RELATIONSHIPS the committed NEC patterns must hold at 14 MHz
+    // (block 14 on the corrected table). A failure is a real signal the
+    // geometries regressed — do NOT weaken the bound to pass; fix the deck and
+    // regenerate (see the Codex RF round, Task F2).
+    // -------------------------------------------------------------------------
+
+    use super::super::type14::read_block_gains;
+
+    /// Elevation (deg, 0..=90) of the peak gain in a 91-point slice.
+    fn peak_elev(gains: &[f64]) -> usize {
+        (0..gains.len())
+            .max_by(|a, b| gains[*a].partial_cmp(&gains[*b]).unwrap())
+            .unwrap()
+    }
+
+    #[test]
+    fn low_nvis_wire_beats_high_nvis_wire_at_zenith() {
+        // Index 90 = zenith (elevation 90°). A lower NVIS wire concentrates more
+        // power overhead than a higher one — the whole point of NVIS.
+        let low = read_block_gains(pattern_voa(AntennaPreset::NvisWireDipole, 2.5), 14).unwrap();
+        let high = read_block_gains(pattern_voa(AntennaPreset::NvisWireDipole, 9.0), 14).unwrap();
+        assert!(
+            low[90] > high[90],
+            "low NVIS wire must favor the zenith over a high one (low {} vs high {})",
+            low[90],
+            high[90]
+        );
+        assert_ne!(low, high, "height must change the pattern");
+    }
+
+    #[test]
+    fn vertical_nulls_overhead_where_low_wire_peaks() {
+        let wire = read_block_gains(pattern_voa(AntennaPreset::NvisWireDipole, 2.5), 14).unwrap();
+        let vert = read_block_gains(pattern_voa(AntennaPreset::BaseVerticalRadials, 9.0), 14).unwrap();
+        // The low wire peaks overhead; the ground-mounted vertical nulls overhead.
+        assert!(
+            wire[90] > vert[90] + 20.0,
+            "low wire zenith {} must dominate the vertical's zenith null {}",
+            wire[90],
+            vert[90]
+        );
+        // The vertical's main lobe is low-angle, not overhead.
+        assert!(
+            peak_elev(&vert) < 60,
+            "vertical main lobe should be low-angle (peak at {}°)",
+            peak_elev(&vert)
+        );
+    }
+
+    #[test]
+    fn each_horizontal_height_yields_a_distinct_pattern() {
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for h in HEIGHT_GRID_M {
+            assert!(
+                seen.insert(pattern_voa(AntennaPreset::EfhwSloper, h)),
+                "efhw-sloper pattern at {h} m duplicates another height stop"
+            );
+        }
+    }
+
+    #[test]
+    fn yagi_is_directional_with_high_forward_gain() {
+        let yagi = read_block_gains(pattern_voa(AntennaPreset::BeamYagi, 9.0), 14).unwrap();
+        let peak = yagi.iter().cloned().fold(f64::MIN, f64::max);
+        assert!(peak > 6.0, "yagi forward gain should exceed +6 dBi (got {peak})");
+    }
 }
