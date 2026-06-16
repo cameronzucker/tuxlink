@@ -109,13 +109,14 @@ const POSITION_LAYERS = (
           'case',
           ['>', ['get', 'ambiguity'], 0],
           '#f0c24a',
-          ['case', ['get', 'stale'], '#7d8794', '#2f86f0'],
+          // tuxlink-gq0d: staleness is feature-state, not a baked property.
+          ['case', ['boolean', ['feature-state', 'stale'], false], '#7d8794', '#2f86f0'],
         ],
         'circle-opacity': [
           'case',
           ['>', ['get', 'ambiguity'], 0],
           0.35,
-          ['case', ['get', 'stale'], 0.5, 0.9],
+          ['case', ['boolean', ['feature-state', 'stale'], false], 0.5, 0.9],
         ],
         'circle-stroke-color': ['case', ['>', ['get', 'ambiguity'], 0], '#f0c24a', '#ffffff'],
         'circle-stroke-width': 1.5,
@@ -198,18 +199,22 @@ function circlePolygon(lon: number, lat: number, radiusM: number, steps = 48): n
   return ring;
 }
 
-function buildPositionFC(positions: HeardPosition[], now: number): FeatureCollection {
+// tuxlink-gq0d: the FC depends ONLY on `positions` now — `stale` moved to
+// feature-state (set on the NOW_TICK without rebuilding/re-pushing the whole FC).
+// Each feature carries a stable top-level `id` (the callsign) so feature-state
+// can target it, mirroring StationFinderMap's stationKey id.
+function buildPositionFC(positions: HeardPosition[]): FeatureCollection {
   const features: unknown[] = positions.map((p) => {
     // Ambiguous fixes plot at the cell CENTRE as a deliberately soft, small
     // marker — never a sharp pin claiming a coordinate the packet did not carry.
     const c = cellCenter(p);
     return {
       type: 'Feature',
+      id: p.call,
       properties: {
         call: p.call,
         comment: p.comment,
         ambiguity: p.ambiguity,
-        stale: now - p.at > STALE_MS,
       },
       geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
     };
@@ -252,23 +257,41 @@ function ambiguityNote(level: number): string {
   return `approximate position (±${approx})`;
 }
 
-/** Pushes GeoJSON to the source on change, re-pushing on styledata (style swap). */
+/**
+ * Pushes GeoJSON to a source on change, re-pushing on styledata (style swap).
+ *
+ * tuxlink-gq0d / tuxlink-vnk7 (B9): subscribe `styledata` ONCE (deps
+ * `[map, sourceId]`, re-pushing the latest from a ref) and push-on-change in a
+ * SEPARATE effect. The old single-effect form re-subscribed `styledata` AND
+ * full-replaced the source on EVERY data change — the perf anti-pattern that made
+ * this map churn vs StationFinderMap (which already uses this two-effect form).
+ */
 function usePushData(
   map: ReturnType<typeof useMapContext>,
   sourceId: string,
   data: FeatureCollection,
 ) {
+  const dataRef = useRef(data);
+  dataRef.current = data;
+
+  // Subscribe `styledata` once; re-push the latest data after a style swap.
   useEffect(() => {
     if (!map) return;
     const push = () => {
       const src = map.getSource(sourceId) as { setData?: (d: unknown) => void } | undefined;
-      src?.setData?.(data);
+      src?.setData?.(dataRef.current);
     };
-    push();
     map.on('styledata', push);
     return () => {
       map.off('styledata', push);
     };
+  }, [map, sourceId]);
+
+  // Push imperatively whenever the data actually changes.
+  useEffect(() => {
+    if (!map) return;
+    const src = map.getSource(sourceId) as { setData?: (d: unknown) => void } | undefined;
+    src?.setData?.(data);
   }, [map, sourceId, data]);
 }
 
@@ -295,7 +318,9 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
   const byCallRef = useRef(byCall);
   byCallRef.current = byCall;
 
-  const fc = useMemo(() => buildPositionFC(positions, now), [positions, now]);
+  // tuxlink-gq0d: the FC no longer depends on `now` — it rebuilds only when the
+  // positions actually change, not every NOW_TICK. Staleness rides feature-state.
+  const fc = useMemo(() => buildPositionFC(positions), [positions]);
   const uncertaintyFc = useMemo(() => buildUncertaintyFC(positions), [positions]);
 
   // Uncertainty regions register first so the pins + labels draw on top of them.
@@ -303,6 +328,29 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
   useMapOverlay(map, POSITIONS_SOURCE, { type: 'geojson', data: EMPTY_FC }, POSITION_LAYERS);
   usePushData(map, UNCERTAINTY_SOURCE, uncertaintyFc);
   usePushData(map, POSITIONS_SOURCE, fc);
+
+  // tuxlink-gq0d: drive pin staleness via feature-state (mirrors StationFinderMap's
+  // selection) instead of rebuilding + re-pushing the whole FeatureCollection on
+  // every NOW_TICK. Cheap: one setFeatureState per heard station. Re-applied on
+  // styledata because a style swap (flavor/pack change) clears feature-state.
+  useEffect(() => {
+    if (!map) return;
+    const m = map as unknown as {
+      setFeatureState?: (t: { source: string; id: string | number }, s: Record<string, unknown>) => void;
+      on: (t: string, h: (...a: unknown[]) => void) => unknown;
+      off: (t: string, h: (...a: unknown[]) => void) => unknown;
+    };
+    const apply = () => {
+      for (const p of positions) {
+        m.setFeatureState?.({ source: POSITIONS_SOURCE, id: p.call }, { stale: now - p.at > STALE_MS });
+      }
+    };
+    apply();
+    m.on('styledata', apply as (...a: unknown[]) => void);
+    return () => {
+      m.off('styledata', apply as (...a: unknown[]) => void);
+    };
+  }, [map, positions, now]);
 
   // Click a pin → show its callsign + comment + last-heard age in an inline popup.
   useEffect(() => {

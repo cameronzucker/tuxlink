@@ -62,6 +62,37 @@ describe('AprsPositionsMap', () => {
     expect(sourceData(map, 'aprs-positions').features).toHaveLength(0);
   });
 
+  // tuxlink-gq0d: the APRS map missed the tuxlink-vnk7 render-perf pattern that
+  // StationFinderMap has. Lock the ported behavior so it can't regress.
+  it('drives pin staleness via feature-state + a stable id, not a per-tick FC rebuild (gq0d)', () => {
+    const now = Date.now();
+    const fixes: HeardPosition[] = [
+      { call: 'OLD', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: now - 20 * 60 * 1000, ambiguity: 0 },
+      { call: 'NEW', lat: 41, lon: -101, symbolTable: '/', symbolCode: '>', comment: '', at: now, ambiguity: 0 },
+    ];
+    render(<AprsPositionsMap positions={fixes} />);
+    const map = loadLast();
+    const feats = sourceData(map, 'aprs-positions').features;
+    const old = feats.find((f) => f.properties.call === 'OLD')! as PinFeature & { id?: string };
+    // The pin carries a STABLE feature id (call) so feature-state can target it,
+    // and staleness is NO LONGER a baked feature PROPERTY (which forced a full FC
+    // rebuild every NOW_TICK) — it rides feature-state instead.
+    expect(old.id).toBe('OLD');
+    expect('stale' in old.properties).toBe(false);
+    expect(map.__state.featureStates.get('aprs-positions')?.get('OLD')?.stale).toBe(true);
+    expect(map.__state.featureStates.get('aprs-positions')?.get('NEW')?.stale).toBe(false);
+  });
+
+  it('re-pushes source data after a style swap (styledata) — two-effect usePushData (gq0d)', () => {
+    render(<AprsPositionsMap positions={positions} />);
+    const map = loadLast();
+    expect(sourceData(map, 'aprs-positions').features).toHaveLength(2);
+    // A flavor/pack change drops sources; the hooks re-add + re-push on styledata.
+    act(() => map.setStyle({}));
+    act(() => map.__emit('styledata'));
+    expect(sourceData(map, 'aprs-positions').features).toHaveLength(2);
+  });
+
   it('carries the ambiguity level onto each pin feature', () => {
     const amb: HeardPosition[] = [
       { call: 'FUZZY', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: 1, ambiguity: 2 },
