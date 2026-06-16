@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
 import type { FavoriteDial } from '../../favorites/types';
 import { emitGatewayPrefill } from '../../favorites/prefillEvent';
+import { writeLastTarget } from '../../connections/connectDispatch';
 import { PacketRadioPanel } from './PacketRadioPanel';
 
 // The panel now mounts FavoritesTabs/useFavorites (react-query), so every
@@ -84,9 +85,25 @@ const defaultInvokeImpl = async (cmd: string, _args?: unknown) => {
 
 describe('<PacketRadioPanel>', () => {
   beforeEach(async () => {
+    // tuxlink-ypz3 (3a): the panel now restores its target from
+    // localStorage['tuxlink.lastTarget.packet'] on mount, and prefill tests
+    // write that key — clear it so a persisted target can't leak across tests.
+    localStorage.clear();
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockReset();
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(defaultInvokeImpl);
+  });
+
+  it('tuxlink-ypz3 (3a): restores the persisted target on mount', async () => {
+    // Simulate a prior session that dialed N0CALL-7 (ribbon Connect / panel edit
+    // both persist here). A fresh mount must repopulate the visible input rather
+    // than blanking it — the "previously called station cleared on mode switch"
+    // regression.
+    writeLastTarget('packet', 'N0CALL-7');
+    renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+    await switchToManualTab();
+    const input = (await screen.findByTestId('packet-target-input')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe('N0CALL-7'));
   });
 
   it('renders the Packet Winlink panel title for intent=cms', () => {
@@ -133,11 +150,26 @@ describe('<PacketRadioPanel>', () => {
     });
   });
 
-  it('renders a Stop button and clicking it fires cms_abort (operator halt — tuxlink-9ym7)', async () => {
+  it('first Stop press fires a GRACEFUL cms_disconnect (DISC to remote — tuxlink-avu9)', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
     const stop = await screen.findByTestId('packet-stop-btn');
     fireEvent.click(stop);
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('cms_disconnect');
+    });
+    // First press must NOT have rudely hard-aborted.
+    expect(invoke).not.toHaveBeenCalledWith('cms_abort');
+    expect(screen.getByTestId('packet-stop-btn')).toHaveTextContent('Force stop');
+  });
+
+  it('second Stop press escalates to a hard cms_abort (force-kill — tuxlink-avu9)', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+    const stop = await screen.findByTestId('packet-stop-btn');
+    fireEvent.click(stop); // graceful
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('cms_disconnect'));
+    fireEvent.click(await screen.findByTestId('packet-stop-btn')); // force
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('cms_abort');
     });

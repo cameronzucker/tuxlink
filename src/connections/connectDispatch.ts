@@ -21,6 +21,42 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { ConnectionKey, ProtocolId, SessionTypeId } from './sessionTypes';
+import type { FavoriteDial, RadioMode } from '../favorites/types';
+import { tsLocal } from '../favorites/ts-local';
+
+/**
+ * tuxlink-ypz3 (3b): record a ribbon Connect's empirical outcome into the per-mode
+ * Recent list, mirroring the in-panel `recordAttempt` (useFavorites) so a
+ * ribbon-driven dial appears in the mode's Recent tab exactly like an in-panel
+ * dial. Without this the status-bar Connect — the PRIMARY connect surface since
+ * vu97 (pane closed) — left Recent permanently empty.
+ *
+ * - RF modes only. Telnet-CMS has NO Recent surface (FavoritesTabs.isManualOnly
+ *   ('telnet')) and connectFor carries no host/transport to build its dial, so
+ *   the telnet branch records nothing — parity with the hidden surface.
+ * - Fire-and-forget + swallow errors (Cross-cutting §1): a recording failure must
+ *   never mask or delay the connect outcome.
+ * - The ribbon runs with the pane CLOSED (vu97), so there is no live QueryClient
+ *   to invalidate; the recents query refetches when the operator next opens the
+ *   mode's panel (useFavorites mounts fresh), which is exactly the pane-closed
+ *   workflow vu97 designed for.
+ * - One outcome per click: `reached` iff the full per-mode connect+exchange
+ *   sequence resolves; `failed` iff it throws at an ON-AIR step. Pre-air bails
+ *   (missing target — guarded before any invoke; VARA transport-open failure)
+ *   record nothing, matching the panels' honest-outcome rule.
+ */
+function recordRibbonAttempt(
+  mode: RadioMode,
+  gateway: string,
+  outcome: 'reached' | 'failed',
+): void {
+  const dial: FavoriteDial = { mode, gateway };
+  // Rust `ts_local: String` → Tauri camelCases the wire key to `tsLocal`
+  // (matches useFavorites.recordAttempt).
+  void invoke('favorite_record_attempt', { dial, outcome, tsLocal: tsLocal() }).catch(
+    () => {},
+  );
+}
 
 /** localStorage key for a mode's last-configured dial target. The RF panels
  *  write it on target-input change; connectFor reads it. */
@@ -101,12 +137,30 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
     // time; the ribbon one-click awaits the connect, then exchanges with the
     // SAME target it dialed (panel uses status.peer once connected — identical
     // callsign). transportKind:'ardop' mirrors ArdopRadioPanel.onSendReceiveClick.
+    //
+    // Honest-outcome recording (tuxlink-ypz3 3b, Codex P2): modem_ardop_connect
+    // can reject PRE-AIR — missing identity/backend, unconfigured audio devices,
+    // a busy-channel guard, or ardopcf spawn/init failure — before any RF dial.
+    // The ARDOP panel records NOTHING for those Start failures (it records
+    // `reached` only on the connected-* status transition and `failed` only in
+    // the later B2F catch), so the ribbon must not either: otherwise a
+    // saved-target Connect with no audio config would pollute Recent with a
+    // bogus `failed`. A connect RESOLVE means the link reached connected-* — an
+    // honest on-air `reached`; a B2F throw after that is an honest `failed`
+    // (reached-at-link-up + failed-at-exchange are distinct empirical facts, as
+    // ArdopRadioPanel records them).
     await invoke('modem_ardop_connect', { target });
-    await invoke('modem_ardop_b2f_exchange', {
-      target,
-      intent,
-      transportKind: 'ardop',
-    });
+    recordRibbonAttempt('ardop-hf', target, 'reached');
+    try {
+      await invoke('modem_ardop_b2f_exchange', {
+        target,
+        intent,
+        transportKind: 'ardop',
+      });
+    } catch (e) {
+      recordRibbonAttempt('ardop-hf', target, 'failed');
+      throw e;
+    }
     return;
   }
 
@@ -116,12 +170,26 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
     // Open the TCP transport (no transmit), then the SINGLE blocking
     // connect→B2F→disconnect exchange. transportKind is the panel's mode.kind
     // ('vara-hf' / 'vara-fm') — mirrors VaraRadioPanel.openSession + onSendReceive.
+    // vara_open_session installs the TCP transport — PRE-AIR. A failure here
+    // never transmitted, so it is NOT recorded (it propagates as-is). Only the
+    // on-air exchange records an outcome (tuxlink-ypz3 3b).
     await invoke('vara_open_session', { intent, transportKind: protocol });
-    await invoke('modem_vara_b2f_exchange', {
-      target,
-      intent,
-      transportKind: protocol,
-    });
+    try {
+      await invoke('modem_vara_b2f_exchange', {
+        target,
+        intent,
+        transportKind: protocol,
+      });
+    } catch (e) {
+      // A "session not open" bail (transport vanished between open and exchange)
+      // never went on-air — skip it, matching VaraRadioPanel.onSendReceive's
+      // pre-air exclusion. Any other throw is an honest on-air `failed`.
+      if (!/session not open/i.test(String(e))) {
+        recordRibbonAttempt(protocol, target, 'failed');
+      }
+      throw e;
+    }
+    recordRibbonAttempt(protocol, target, 'reached');
     return;
   }
 
@@ -132,7 +200,15 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
     // 0–2 relay path; the ribbon dials a direct path (no relays) since relays
     // are panel-local transient state, not a persisted per-target attribute.
     // Mirrors PacketRadioPanel.onConnect's invoke shape (path defaults to []).
-    await invoke('packet_connect', { call: target, path: [] });
+    // packet_connect is a single blocking connect→B2F: resolve = honest reach,
+    // reject = honest fail (tuxlink-ypz3 3b).
+    try {
+      await invoke('packet_connect', { call: target, path: [] });
+    } catch (e) {
+      recordRibbonAttempt('packet', target, 'failed');
+      throw e;
+    }
+    recordRibbonAttempt('packet', target, 'reached');
     return;
   }
 

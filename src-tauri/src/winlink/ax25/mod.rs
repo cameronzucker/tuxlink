@@ -24,6 +24,7 @@ pub use datalink::{
 };
 pub use link::connect_link;
 pub use link::connect_link_with_abort;
+pub use link::wrap_disconnectable;
 
 // Managed-Dire-Wolf device discovery (Slice B, Phase 1): stable audio-device
 // identity + same-USB-parent PTT resolution.

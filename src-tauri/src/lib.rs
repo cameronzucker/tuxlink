@@ -1146,6 +1146,7 @@ pub fn run() {
             crate::ui_commands::forms_sequence_reset,   // tuxlink-2tom / G12-C (reset a form's next serial)
             crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
             crate::ui_commands::cms_abort,             // tuxlink-9z2 (abort in-flight connect)
+            crate::ui_commands::cms_disconnect,        // tuxlink-avu9 (graceful packet DISC)
             crate::ui_commands::cms_resolve_inbound_selection,    // tuxlink-bsiy (inbound message selection resolve)
             crate::ui_commands::config_read,           // Task 16 (tuxlink-hvv)
             crate::ui_commands::backend_status,        // Task 16 (tuxlink-hvv)

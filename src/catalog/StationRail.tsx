@@ -32,6 +32,14 @@ export interface StationRailProps {
    * for an already-open panel.
    */
   onUse?: (dial: FavoriteDial) => void;
+  /**
+   * Save / unsave a discovered channel as a starred favorite (tuxlink-5016).
+   * The parent finds-or-creates the per-mode favorite and toggles its star;
+   * omitting the prop hides the affordance (e.g. a standalone harness).
+   */
+  onSaveFavorite?: (dial: FavoriteDial) => void;
+  /** Whether a channel's dial is already a STARRED favorite (drives the ★ fill). */
+  isSaved?: (dial: FavoriteDial) => boolean;
 }
 
 const mhz = (khz: number): string => (khz / 1000).toFixed(3);
@@ -76,6 +84,12 @@ export function StationRail(props: StationRailProps) {
     // that don't supply the handler (e.g. tests/standalone harness).
     if (props.onUse) props.onUse(dial);
     else emitGatewayPrefill(dial);
+  };
+
+  const onSave = (channel: Channel) => {
+    const dial = channelToDial(station, channel);
+    if (!dial || !props.onSaveFavorite) return;
+    props.onSaveFavorite(dial);
   };
 
   return (
@@ -185,6 +199,32 @@ export function StationRail(props: StationRailProps) {
                   <span className="station-finder__q">
                     {rel ? `${Math.round(rel.rel * 100)}%` : ch.band === 'vhf-uhf' ? 'LoS?' : '—'}
                   </span>
+                  {props.onSaveFavorite && (() => {
+                    // Save / unsave this channel as a starred favorite (tuxlink-5016).
+                    // Only meaningful for dialable channels (a non-tuxlink mode has
+                    // no per-mode favorite to hold). The dial is non-null here
+                    // because dialable === (channelToDial != null).
+                    const saved = dialable && props.isSaved ? props.isSaved(channelToDial(station, ch)!) : false;
+                    return (
+                      <button
+                        type="button"
+                        data-testid={`save-${ch.mode}-${ch.frequencyKhz}`}
+                        className={`station-finder__save${saved ? ' is-saved' : ''}`}
+                        disabled={!dialable}
+                        aria-pressed={saved}
+                        title={
+                          !dialable
+                            ? 'No tuxlink modem for this mode'
+                            : saved
+                              ? 'Remove from favorites'
+                              : 'Save to favorites'
+                        }
+                        onClick={() => onSave(ch)}
+                      >
+                        {saved ? '★' : '☆'}
+                      </button>
+                    );
+                  })()}
                   <button
                     type="button"
                     data-testid={`use-${ch.mode}-${ch.frequencyKhz}`}

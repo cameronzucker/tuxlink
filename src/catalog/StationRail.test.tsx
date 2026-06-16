@@ -108,4 +108,59 @@ describe('StationRail', () => {
     fireEvent.click(ardop);
     expect(onUse).toHaveBeenCalledWith({ mode: 'ardop-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' });
   });
+
+  // tuxlink-5016 — save-to-favorites affordance.
+  it('renders NO save (★) button when onSaveFavorite is not provided', () => {
+    render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+    expect(screen.queryByTestId('save-vara-hf-7103')).toBeNull();
+  });
+
+  it('★ Save calls onSaveFavorite with the channel dial', () => {
+    const onSaveFavorite = vi.fn();
+    render(
+      <StationRail
+        station={station} prediction={prediction} predictionStatus="ok"
+        operatorGrid="DM43bp" utcHour={21}
+        onSaveFavorite={onSaveFavorite} isSaved={() => false}
+      />,
+    );
+    const star = screen.getByTestId('save-vara-hf-7103');
+    expect(star.textContent).toBe('☆'); // not yet saved
+    expect(star.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(star);
+    expect(onSaveFavorite).toHaveBeenCalledWith({ mode: 'vara-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' });
+  });
+
+  it('★ shows the saved (filled) state when isSaved returns true for that dial', () => {
+    // Saved only for the ARDOP 40m channel; the VARA channels stay unsaved.
+    const isSaved = (d: { mode: string; gateway: string }) => d.mode === 'ardop-hf' && d.gateway === 'N0DAJ';
+    render(
+      <StationRail
+        station={station} prediction={prediction} predictionStatus="ok"
+        operatorGrid="DM43bp" utcHour={21}
+        onSaveFavorite={vi.fn()} isSaved={isSaved}
+      />,
+    );
+    const ardopStar = screen.getByTestId('save-ardop-hf-7103');
+    expect(ardopStar.textContent).toBe('★');
+    expect(ardopStar.getAttribute('aria-pressed')).toBe('true');
+    expect(ardopStar.className).toMatch(/is-saved/);
+    // A different channel is not saved.
+    expect(screen.getByTestId('save-vara-hf-7103').textContent).toBe('☆');
+  });
+
+  it('uses the SSID as the gateway when saving a packet channel', () => {
+    const onSaveFavorite = vi.fn();
+    render(
+      <StationRail
+        station={station} prediction={prediction} predictionStatus="ok"
+        operatorGrid="DM43bp" utcHour={21}
+        onSaveFavorite={onSaveFavorite} isSaved={() => false}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('save-packet-145710'));
+    expect(onSaveFavorite).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'packet', gateway: 'N0DAJ-10' }),
+    );
+  });
 });

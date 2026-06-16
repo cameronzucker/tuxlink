@@ -1048,6 +1048,16 @@ pub trait WinlinkBackend: Send + Sync {
         Ok(())
     }
 
+    /// Gracefully end an in-flight ESTABLISHED session by letting the link key a DISC
+    /// to the remote (tuxlink-avu9), rather than the rude socket-kill of [`abort`].
+    /// Unlike `abort`, it unwinds the read loop but leaves the transmit path open, so
+    /// `Ax25Stream::drop`'s teardown can send its DISC and the remote isn't left
+    /// half-open. Falls back to `abort` semantics if pressed again (force-kill). Default
+    /// is a no-op `Ok`; only the packet path implements it meaningfully.
+    async fn graceful_disconnect(&self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
     /// Auth-only credential test per spec §4.3 (iii): connect to the CMS over
     /// the configured TCP/TLS path, complete the B2F handshake, emit the full
     /// [`crate::winlink::b2f_events::B2fEvent`] stream (including
@@ -1189,6 +1199,12 @@ pub struct NativeBackend {
     /// Set by `abort` so the connect's resulting error maps to `Cancelled` (status
     /// `Disconnected`) rather than `Error`.
     aborting: Arc<AtomicBool>,
+    /// Set by `graceful_disconnect` (tuxlink-avu9): like `aborting` it unwinds the
+    /// in-flight exchange and maps the error to `Cancelled`, but it does NOT block the
+    /// transmit path or shut the socket — so the link's Drop teardown still keys its
+    /// DISC to the remote (no half-open orphan). The packet path stacks a
+    /// `DisconnectableByteLink` keyed on this flag.
+    disconnecting: Arc<AtomicBool>,
     /// Single-flight guard (Codex #1): true while a `connect` is running. A second
     /// concurrent `connect` is rejected rather than racing on the shared abort
     /// state and re-sending the outbox. Cleared by a connect-scoped RAII guard so
@@ -1268,6 +1284,7 @@ impl NativeBackend {
             mailbox_change: Arc::new(|| {}),
             abort_handle: Arc::new(Mutex::new(None)),
             aborting: Arc::new(AtomicBool::new(false)),
+            disconnecting: Arc::new(AtomicBool::new(false)),
             connect_in_progress: Arc::new(AtomicBool::new(false)),
             position: None,
             packet_allowlist_override: None,
@@ -1774,6 +1791,18 @@ impl WinlinkBackend for NativeBackend {
         Ok(())
     }
 
+    /// Graceful packet teardown (tuxlink-avu9). Sets `disconnecting` (NOT `aborting`)
+    /// and does NOT shut the socket: the in-flight exchange's read unwinds via the
+    /// stacked `DisconnectableByteLink`, the exchange returns, and `Ax25Stream::drop`
+    /// keys its DISC over the still-open write — so the remote sees a clean session end
+    /// instead of being orphaned half-open. A subsequent `abort()` still hard-kills
+    /// (force path), preserving the RADIO-1 runaway stop.
+    async fn graceful_disconnect(&self) -> Result<(), BackendError> {
+        self.disconnecting.store(true, Ordering::SeqCst);
+        self.set_status(BackendStatus::Disconnected);
+        Ok(())
+    }
+
     /// Auth-only credential test per spec §4.3 (iii). Shares the single-flight
     /// guard with `connect` so a concurrent `cms_connect` or `cms_connect_test`
     /// returns `BackendUnavailable`.  Mirrors `native_connect`'s TCP/TLS dial
@@ -1980,6 +2009,8 @@ impl NativeBackend {
         };
 
         self.aborting.store(false, Ordering::SeqCst);
+        // tuxlink-avu9: fresh graceful-disconnect epoch alongside the abort epoch.
+        self.disconnecting.store(false, Ordering::SeqCst);
         if let Ok(mut slot) = self.abort_handle.lock() {
             *slot = None;
         }
@@ -2003,6 +2034,7 @@ impl NativeBackend {
         let wire = self.wire.clone();
         let abort_handle = self.abort_handle.clone();
         let aborting = self.aborting.clone();
+        let disconnecting = self.disconnecting.clone();
         // tuxlink-uvi7: thread the shared PositionArbiter into the packet path so the
         // B2F greeting broadcasts the live locator (Arc is Send + 'static, safe to move
         // across spawn_blocking). Mirrors native_connect (telnet).
@@ -2021,6 +2053,7 @@ impl NativeBackend {
                 &wire,
                 &abort_handle,
                 aborting,
+                disconnecting,
                 position,
                 allowlist_override,
             )
@@ -2031,7 +2064,11 @@ impl NativeBackend {
             source: None,
         })?;
 
-        match abort_aware_outcome(outcome, self.aborting.load(Ordering::SeqCst)) {
+        // tuxlink-avu9: a graceful disconnect unwinds the exchange too — treat its
+        // error as a clean cancel (Disconnected), not a transport failure.
+        let stopped =
+            self.aborting.load(Ordering::SeqCst) || self.disconnecting.load(Ordering::SeqCst);
+        match abort_aware_outcome(outcome, stopped) {
             Ok(()) => {
                 self.set_status(BackendStatus::Connected {
                     transport: format!("Packet-{ssid}"),
@@ -2239,6 +2276,7 @@ fn native_packet_connect(
     wire: &WireSink,
     abort_handle: &Mutex<Option<TcpStream>>,
     aborting: Arc<AtomicBool>,
+    disconnecting: Arc<AtomicBool>,
     position: Option<Arc<crate::position::PositionArbiter>>,
     allowlist_override: Option<crate::winlink::listener::AllowedStations>,
 ) -> Result<(), BackendError> {
@@ -2372,6 +2410,11 @@ fn native_packet_connect(
             }
         }
     }
+
+    // tuxlink-avu9: stack the graceful-disconnect wrapper OUTSIDE the abort wrapper.
+    // A graceful Stop sets `disconnecting`, which unwinds the exchange read here but
+    // leaves the write open, so the link's Drop teardown keys its DISC to the remote.
+    let bytelink = crate::winlink::ax25::wrap_disconnectable(bytelink, disconnecting.clone());
 
     // Controller directive L: push KISS TNC params before connect/answer.
     // The straightforward approach is to call kiss_param inside the link before
