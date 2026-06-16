@@ -30,6 +30,41 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpip
     docs/readme/images/tuxlink-request-center.png 1366 820 8000
 ```
 
-Supported views: `shell`, `wizard`, `request`. The `shell` view accepts
-`&dock=vara` to open the VARA HF radio modem dock (selects the connection, pins
-the panel via Ctrl+Shift+M, and opens the top message so all panes have content).
+Feature images (radio docks, APRS chat, color schemes):
+
+```bash
+# ARDOP HF / Packet radio docks
+for d in ardop packet; do
+  WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
+    python3 dev/render-harness/snapshot.py \
+      "http://127.0.0.1:1420/dev/readme-screenshot-harness/harness.html?view=shell&dock=$d" \
+      "docs/readme/images/tuxlink-$d.png" 1920 920 13000
+done
+
+# APRS tactical chat (simultaneous HF/VHF workspace — injects heard traffic)
+WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
+  python3 dev/render-harness/snapshot.py \
+    "http://127.0.0.1:1420/dev/readme-screenshot-harness/harness.html?view=shell&dock=aprs" \
+    docs/readme/images/tuxlink-aprs-chat.png 1920 920 13000
+
+# Color schemes (re-skins the whole shell)
+for s in night-red daylight; do
+  WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
+    python3 dev/render-harness/snapshot.py \
+      "http://127.0.0.1:1420/dev/readme-screenshot-harness/harness.html?view=shell&dock=vara&scheme=$s" \
+      "docs/readme/images/tuxlink-color-$s.png" 1920 920 13000
+done
+```
+
+Supported views: `shell`, `wizard`, `request`.
+
+The `shell` view accepts:
+
+- `&dock=vara|ardop|packet` — opens that transport's radio modem dock (selects the
+  connection, pins the panel via Ctrl+Shift+M, opens the top message so all panes
+  have content).
+- `&dock=aprs` — toggles the APRS tactical-chat dock open and injects a few heard
+  messages over the `aprs-message:new` event so the channel shows live traffic.
+- `&scheme=<id>` — applies a color scheme before render (e.g. `night-red`,
+  `daylight`, `paper`, `high-contrast-light`, `grayscale`, `office-dark`,
+  `repository-dark`). Composes with `dock`.

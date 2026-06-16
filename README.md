@@ -122,6 +122,20 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
   operator-supplied VARA instance, surfaces connect and error state, and edits
   the persisted VARA configuration. Over-the-air peer sessions are pending.
 
+Each transport has a dedicated in-window radio panel — pre-flight, dial, abort,
+device and PTT configuration, live signal telemetry, and a session log:
+
+<table>
+<tr>
+<td width="50%"><img src="docs/readme/images/tuxlink-ardop-hf.png" alt="Tuxlink mailbox with the ARDOP HF radio panel docked: connect target, bandwidth, audio-device and PTT configuration, a quality meter and frame ribbon, and a session log"></td>
+<td width="50%"><img src="docs/readme/images/tuxlink-packet.png" alt="Tuxlink mailbox with the Packet (AX.25) radio panel docked: TCP / USB / Bluetooth modem link, station call and SSID, a connect target with digipeater relay path, and a session log"></td>
+</tr>
+<tr>
+<td align="center"><sub><b>ARDOP HF</b> — drives a local <code>ardopcf</code>, with audio/PTT setup, a live quality meter, and an ARDOP frame ribbon.</sub></td>
+<td align="center"><sub><b>Packet (AX.25)</b> — connected-mode 1200-baud over a KISS TNC: USB serial, Bluetooth RFCOMM, or KISS-over-TCP.</sub></td>
+</tr>
+</table>
+
 ### Tactical and local operations
 
 - **APRS tactical chat.** Per-callsign message threads over APRS on VHF and UHF
@@ -136,6 +150,18 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
   strategic-and-tactical station.
 - **FULL and tactical identities.** A licensed FULL identity for Winlink and
   tactical identities for local operation, managed under Settings → Identities.
+
+**Simultaneous HF/VHF workspace.** Strategic and tactical layers run at the same
+time in one window: an HF Winlink session — launched from the status-bar Connect
+control with saved session details — alongside a live VHF APRS tactical-chat
+channel over sustained Bluetooth KISS. One operator works store-and-forward email
+on HF and real-time tactical chat on VHF without the two contending.
+
+<p align="center">
+  <img src="docs/readme/images/tuxlink-aprs-chat.png" width="860"
+       alt="Tuxlink showing an HF Winlink ICS-213 in the reading pane while the APRS tactical-chat dock on the right carries live VHF traffic from K4ARC, WX4MTL, and N4SAR">
+</p>
+<p align="center"><sub>HF Winlink and VHF APRS tactical chat in one workspace: an ICS-213 in the reading pane while the APRS channel carries live tactical traffic.</sub></p>
 
 ### Mailbox and messaging
 
@@ -201,6 +227,20 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 - **OS keyring credentials.** The OS keyring (secret-service on Linux) holds
   the Winlink CMS password. Tuxlink never persists it to a config file on disk.
 
+Emergency operating happens in a tent at noon and an EOC at 3 a.m. Color schemes
+re-skin the whole interface for the lighting at hand:
+
+<table>
+<tr>
+<td width="50%"><img src="docs/readme/images/tuxlink-color-night-red.png" alt="Tuxlink in the Night / tactical red color scheme: red-on-black to preserve night vision"></td>
+<td width="50%"><img src="docs/readme/images/tuxlink-color-daylight.png" alt="Tuxlink in the Daylight color scheme: a light, high-contrast palette for bright-sun LCD readability"></td>
+</tr>
+<tr>
+<td align="center"><sub><b>Night / tactical (red)</b> — preserves night vision in a darkened EOC or shelter.</sub></td>
+<td align="center"><sub><b>Daylight</b> — a light, high-contrast palette for reading an LCD in direct sun.</sub></td>
+</tr>
+</table>
+
 ## Install
 
 Download the `.deb`, `.rpm`, or `.AppImage` for your distribution and
@@ -236,19 +276,25 @@ Winlink catalog, and collects selected items in a unified send basket:
 
 Where each path stands:
 
-- **On-air validated (RF path end-to-end):** AX.25 1200-baud packet and ARDOP HF
-  both connect over a real radio, and the transmit path to the Winlink network is
-  proven end-to-end — a production Winlink CMS protocol response was received over
-  the air. That response was a rejection pending the client registration noted
-  below, which is precisely what confirms the chain (transmit, RF link, gateway,
-  CMS) is intact; the gap is an account, not a path. Peer-to-peer sessions on both
-  modes work today. Transmission always requires explicit, per-invocation operator
-  consent (see [Amateur radio and Part 97](#amateur-radio-and-part-97)).
+- **On-air validated (RF path end-to-end):** three modes are vetted on the air —
+  AX.25 1200-baud packet, ARDOP HF, and APRS tactical chat over Bluetooth KISS.
+  Packet and ARDOP both connect over a real radio, and the transmit path to the
+  Winlink network is proven end-to-end — a production Winlink CMS protocol response
+  was received over the air. That response was a rejection pending the client
+  registration noted below, which is precisely what confirms the chain (transmit,
+  RF link, gateway, CMS) is intact; the gap is an account, not a path. Peer-to-peer
+  sessions on both modes work today. APRS tactical chat has run continuously over a
+  sustained Bluetooth KISS link **at the same time as** an HF Winlink session — the
+  simultaneous HF/VHF workspace is functional today. Transmission always requires
+  explicit, per-invocation operator consent (see
+  [Amateur radio and Part 97](#amateur-radio-and-part-97)).
 - **Validated (internet):** native CMS connection over telnet and real Winlink
   message receive and render, against the Winlink CMS test server.
-- **Operator-pending (Part 97):** APRS tactical chat and native UV-Pro Bluetooth
-  control are built and pass backend validation. On-air RF validation over a real
-  radio, including clean abort and de-key, is the operator's to perform.
+- **Operator-pending (Part 97):** APRS beacon transmit (own-position beaconing)
+  is built and pending operator on-air verification; the APRS receive and chat
+  paths and native UV-Pro Bluetooth control are vetted on the air (above). On-air
+  validation of any new transmit path, including clean abort and de-key, is the
+  operator's to perform.
 - **Production CMS registration:** message exchange with the production Winlink
   CMS requires Winlink's prior registration of the Tuxlink client. The
   over-the-air rejection above confirms the RF path already reaches the production
