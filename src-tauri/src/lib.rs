@@ -235,7 +235,7 @@ mod panic_payload_tests {
 mod linux_gl_env_tests {
     use super::{decide_gl_mode, gl_env_vars, model_is_raspberry_pi, GlMode};
 
-    fn has(vars: &[(&str, &str)], key: &str) -> Option<&'static str> {
+    fn has(vars: &[(&'static str, &'static str)], key: &str) -> Option<&'static str> {
         vars.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
     }
 
