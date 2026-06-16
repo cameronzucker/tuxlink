@@ -1569,6 +1569,13 @@ export function AppShell() {
                   linkKind={aprsLinkKind}
                   radioLabel={aprsRadioLabel}
                   allowUvproNative
+                  // tuxlink-hoi1 B2: seed the picker from the SAVED link so a
+                  // segment tap can't blank the address (e.g. btMac -> null).
+                  tcpHost={packetConfig.config?.tcpHost ?? undefined}
+                  tcpPort={packetConfig.config?.tcpPort ?? undefined}
+                  serialDevice={packetConfig.config?.serialDevice ?? undefined}
+                  serialBaud={packetConfig.config?.serialBaud ?? undefined}
+                  btMac={packetConfig.config?.btMac ?? undefined}
                   onConnect={onAprsConnect}
                   onDisconnect={onAprsDisconnect}
                   onLinkChange={onAprsLinkChange}

@@ -27,6 +27,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { writeLastTarget } from '../../connections/connectDispatch';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
@@ -60,6 +61,12 @@ export interface PacketRadioPanelProps {
 
 export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: PacketRadioPanelProps) {
   const [config, setConfig] = useState<PacketConfigDto | null>(null);
+  // Latest committed config, readable from the persist-rejection rollback so it
+  // only reverts when its optimistic value is STILL current — a newer write (a
+  // peer broadcast, the backend echo, or another panel edit) must not be
+  // clobbered by a stale rollback (Codex + Claude adrev, tuxlink-hoi1 B4 race).
+  const configRef = useRef<PacketConfigDto | null>(null);
+  configRef.current = config;
   const [target, setTarget] = useState('');
   const [relays, setRelays] = useState<string[]>([]);
   const [armed, setArmed] = useState(false);
@@ -152,6 +159,45 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
     };
   }, []);
 
+  // tuxlink-hoi1 B3: re-seed when the packet config changes elsewhere (the APRS
+  // connect strip, the ribbon, or any peer writer). Without this the panel held
+  // a frozen snapshot loaded once on mount and never re-synced, so a later panel
+  // write full-replaced `[packet]` from stale state and clobbered a link set
+  // elsewhere. Mirrors usePacketConfig: same-window CustomEvent + the backend
+  // `packet_config:change` event (emitted by packet_config_set since B5).
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    const onLocalChange = (e: Event) => {
+      if (cancelled) return;
+      const detail = (e as CustomEvent<PacketConfigDto>).detail;
+      if (detail) setConfig(detail);
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('tuxlink:packet-config:change', onLocalChange);
+    }
+    void listen<PacketConfigDto>('packet_config:change', (event) => {
+      if (!cancelled && event.payload) setConfig(event.payload);
+    })
+      .then((u) => {
+        if (cancelled) {
+          u();
+          return;
+        }
+        unlisten = u;
+      })
+      .catch(() => {
+        /* listen unavailable (test env) — the same-window path still works */
+      });
+    return () => {
+      cancelled = true;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('tuxlink:packet-config:change', onLocalChange);
+      }
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   const onToggleListenDefault = () => {
     const next = !listenDefault;
     setListenDefault(next);
@@ -168,6 +214,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
   // shared usePacketConfig hook sees SSID changes immediately (operator
   // smoke 2026-05-31 — the ribbon callsign was stuck at `<base>-0`).
   const persistDto = (next: PacketConfigDto) => {
+    const prior = config;
     setConfig(next);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
@@ -175,7 +222,18 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
       );
     }
     void invoke('packet_config_set', { dto: next }).catch(() => {
-      // Persist errors surface in the session log via the backend.
+      // tuxlink-hoi1 B4: a rejected persist must not leave the panel showing an
+      // un-saved value — revert the optimistic update (and peers) to the prior
+      // persisted truth. Only if `next` is still current: a newer write (this
+      // panel, a peer, or the backend echo) must not be reverted to stale state.
+      if (prior && configRef.current === next) {
+        setConfig(prior);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('tuxlink:packet-config:change', { detail: prior }),
+          );
+        }
+      }
     });
   };
 

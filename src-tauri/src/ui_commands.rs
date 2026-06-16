@@ -3682,6 +3682,26 @@ impl PacketConfigDto {
     }
 }
 
+/// Apply a packet DTO over the existing config's link: an absent `link_kind`
+/// PRESERVES the existing link (tuxlink-hoi1 B1) rather than clearing it, so an
+/// SSID/timing-only write never erases the configured radio link. A DTO that
+/// DOES carry a `link_kind` replaces the link as before. Pure (no fs / no State)
+/// so the merge logic is unit-testable in isolation.
+fn apply_packet_dto(
+    existing_link: Option<crate::winlink::ax25::KissLinkConfig>,
+    dto: PacketConfigDto,
+) -> Result<config::PacketConfig, UiError> {
+    // Capture intent BEFORE the DTO is consumed by `into_packet_config`.
+    let had_link_kind = dto.link_kind.is_some();
+    let mut packet = dto.into_packet_config()?;
+    if !had_link_kind {
+        // No link_kind means "leave the saved link unchanged", NOT "clear it":
+        // the UI has no clear-link path, so absent == preserve (tuxlink-hoi1 B1).
+        packet.link = existing_link;
+    }
+    Ok(packet)
+}
+
 /// Read the `[packet]` config section as a flat DTO. Reads `config.rs` directly
 /// (no BackendState), like `config_read`.
 #[tauri::command]
@@ -3694,20 +3714,32 @@ pub async fn packet_config_get() -> Result<PacketConfigDto, UiError> {
 /// the new packet section, validate (SSID range), and write atomically.
 #[tauri::command]
 pub async fn packet_config_set(
+    app: AppHandle,
     state: State<'_, BackendState>,
     dto: PacketConfigDto,
 ) -> Result<(), UiError> {
     let mut cfg =
         config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
-    cfg.packet = dto.into_packet_config()?;
+    // tuxlink-hoi1 B1: an absent link_kind preserves the saved link instead of
+    // erasing it. `apply_packet_dto` reads `cfg.packet.link` BEFORE the DTO is
+    // consumed, so an SSID/timing-only write can never blank a configured radio.
+    cfg.packet = apply_packet_dto(cfg.packet.link.clone(), dto)?;
     cfg.validate().map_err(|e| UiError::Internal { detail: e.to_string() })?;
     config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    // Project the persisted packet section for the change event BEFORE the
+    // backend refresh consumes `cfg` (no whole-config clone needed).
+    let changed = PacketConfigDto::from(&cfg.packet);
     // tuxlink-p5u: refresh the LIVE backend so a packet link/SSID/timing change
     // applies on the NEXT connect without an app restart (the packet connect path
     // reads the backend's live config for the callsign + Ax25 params).
     if let Some(backend) = state.current() {
         backend.set_config(cfg);
     }
+    // tuxlink-hoi1 B5: emit `packet_config:change` so every packet-config reader
+    // (usePacketConfig's listener at usePacketConfig.ts:88, PacketRadioPanel)
+    // re-syncs after a persist. The frontend listener already existed but was
+    // dead — no backend emitter had been wired. Emit is best-effort.
+    let _ = app.emit("packet_config:change", changed);
     Ok(())
 }
 
@@ -9890,6 +9922,111 @@ hw:CARD=Device,DEV=0
             "expected camelCase listenDefault"
         );
         assert!(v.get("ssid").is_some());
+    }
+
+    // ========================================================================
+    // tuxlink-hoi1 B1 — apply_packet_dto preserve-on-absent merge logic
+    // ========================================================================
+
+    /// A no-link DTO with the given ssid (paclen set so params survival is
+    /// observable). Per-test overrides set link_kind + address fields.
+    fn make_packet_dto(ssid: u8, link_kind: Option<String>) -> PacketConfigDto {
+        PacketConfigDto {
+            ssid,
+            listen_default: true,
+            link_kind,
+            tcp_host: None,
+            tcp_port: None,
+            serial_device: None,
+            serial_baud: None,
+            bt_mac: None,
+            managed_audio_device: None,
+            managed_ptt: None,
+            txdelay: 0,
+            persistence: 0,
+            slot_time: 0,
+            paclen: 128,
+            maxframe: 0,
+            t1_ms: 0,
+            n2_retries: 0,
+        }
+    }
+
+    #[test]
+    fn apply_packet_dto_absent_link_kind_preserves_existing_link() {
+        use crate::winlink::ax25::KissLinkConfig;
+        // An SSID/timing-only write (no link_kind) over a configured UV-Pro link
+        // must NOT erase the link — this is the tuxlink-hoi1 B1 data-loss bug.
+        // Fails against the old full-replace (which mapped None -> link: None).
+        let existing = Some(KissLinkConfig::UvproNative {
+            mac: "38:D2:00:01:55:5C".into(),
+        });
+        let dto = make_packet_dto(9, None);
+        let out = apply_packet_dto(existing.clone(), dto).unwrap();
+        assert_eq!(out.link, existing, "absent link_kind must preserve the saved link");
+        assert_eq!(out.ssid, 9, "the SSID change from the DTO still applies");
+        assert_eq!(out.params.paclen, 128, "params from the DTO still apply");
+    }
+
+    #[test]
+    fn apply_packet_dto_absent_link_kind_preserves_managed_link() {
+        // The Managed (Dire Wolf) link rides structured fields, not a scalar, and
+        // must survive an SSID-only write exactly like the scalar variants — a
+        // regression here would silently strip a configured managed modem (B1).
+        use crate::winlink::ax25::devices::{PttChoice, StableAudioId, StableIdKind};
+        use crate::winlink::ax25::KissLinkConfig;
+        let existing = Some(KissLinkConfig::ManagedDireWolf {
+            audio_device: StableAudioId {
+                kind: StableIdKind::ByIdSymlink,
+                value: "usb-C-Media_DigiRig_Audio-00".into(),
+            },
+            ptt: PttChoice::Cm108Hid {
+                hidraw_path: "/dev/hidraw3".into(),
+            },
+        });
+        let dto = make_packet_dto(9, None);
+        let out = apply_packet_dto(existing.clone(), dto).unwrap();
+        assert_eq!(out.link, existing, "a Managed link must survive an absent link_kind");
+        assert_eq!(out.ssid, 9);
+    }
+
+    #[test]
+    fn apply_packet_dto_present_link_kind_sets_link_from_none() {
+        use crate::winlink::ax25::KissLinkConfig;
+        // A real link write (link_kind present) over no prior link sets it — this
+        // is how `config.linkKind` first comes to exist on a fresh install.
+        let mut dto = make_packet_dto(7, Some("UvproNative".into()));
+        dto.bt_mac = Some("38:D2:00:01:55:5C".into());
+        let out = apply_packet_dto(None, dto).unwrap();
+        assert_eq!(
+            out.link,
+            Some(KissLinkConfig::UvproNative {
+                mac: "38:D2:00:01:55:5C".into()
+            }),
+        );
+        assert_eq!(out.ssid, 7);
+    }
+
+    #[test]
+    fn apply_packet_dto_present_link_kind_replaces_existing_link() {
+        use crate::winlink::ax25::KissLinkConfig;
+        // A present link_kind REPLACES the existing link (the preserve guard must
+        // not block a deliberate transport change UvproNative -> Tcp).
+        let existing = Some(KissLinkConfig::UvproNative {
+            mac: "38:D2:00:01:55:5C".into(),
+        });
+        let mut dto = make_packet_dto(3, Some("Tcp".into()));
+        dto.tcp_host = Some("127.0.0.1".into());
+        dto.tcp_port = Some(8001);
+        let out = apply_packet_dto(existing, dto).unwrap();
+        assert_eq!(
+            out.link,
+            Some(KissLinkConfig::Tcp {
+                host: "127.0.0.1".into(),
+                port: 8001
+            }),
+        );
+        assert_eq!(out.ssid, 3, "ssid/params from the DTO still apply on replace");
     }
 
     // ========================================================================

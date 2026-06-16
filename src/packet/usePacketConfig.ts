@@ -21,7 +21,7 @@
  *  the event detail, so a write in one panel propagates to others. */
 const PACKET_CONFIG_LOCAL_EVENT = 'tuxlink:packet-config:change';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { PacketConfigDto } from './packetTypes';
@@ -58,6 +58,13 @@ export interface UsePacketConfig {
  */
 export function usePacketConfig(): UsePacketConfig {
   const [config, setConfig] = useState<PacketConfigDto | null>(null);
+  // Latest committed config, readable from async callbacks. Kept in sync each
+  // render so a persist-rejection rollback can tell whether the optimistic value
+  // it set is STILL current (vs. superseded by a newer write — this hook, a peer
+  // broadcast, or the backend echo). Reverting a superseded value would clobber
+  // the newer write (Codex + 2x Claude adrev: stale-rollback race, tuxlink-hoi1).
+  const configRef = useRef<PacketConfigDto | null>(null);
+  configRef.current = config;
 
   useEffect(() => {
     let cancelled = false;
@@ -112,17 +119,25 @@ export function usePacketConfig(): UsePacketConfig {
   const setSsid = useCallback(
     (n: number) => {
       if (!config) return;
+      const prior = config;
       const next = { ...config, ssid: n };
       // Optimistic local update.
       setConfig(next);
       // Broadcast to peer hooks within the same window so they re-seed
-      // without waiting for the backend (which doesn't emit a change
-      // event today).
+      // without waiting for the backend.
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: next }));
       }
       void invoke('packet_config_set', { dto: next }).catch(() => {
-        /* persist errors surface via the session log */
+        // tuxlink-hoi1 B4: a rejected persist must not leave the UI showing an
+        // un-saved value — revert this hook AND its peers to the persisted truth.
+        // BUT only if our optimistic `next` is still current: a newer write would
+        // have replaced it, and reverting then would clobber that newer value.
+        if (configRef.current !== next) return;
+        setConfig(prior);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: prior }));
+        }
       });
     },
     [config],
@@ -131,6 +146,7 @@ export function usePacketConfig(): UsePacketConfig {
   const setLink = useCallback(
     (fields: ModemLinkFields): Promise<void> => {
       if (!config) return Promise.resolve();
+      const prior = config;
       // Merge the link field set into the persisted DTO. The ModemLinkFields
       // subset (linkKind + per-transport address fields) overrides; every other
       // AX.25 / SSID field is preserved.
@@ -138,16 +154,25 @@ export function usePacketConfig(): UsePacketConfig {
       // Optimistic local update.
       setConfig(next);
       // Broadcast to peer hooks within the same window so they re-seed without
-      // waiting for the backend (which doesn't emit a change event today).
+      // waiting for the backend.
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: next }));
       }
       // Return the persist promise so the connect flow can await it (P1 race);
-      // swallow the error so awaiting never throws (persist errors surface via
-      // the session log).
+      // swallow the error so awaiting never throws.
       return invoke('packet_config_set', { dto: next })
         .then(() => undefined)
-        .catch(() => undefined);
+        .catch(() => {
+          // tuxlink-hoi1 B4: revert the optimistic update (and peers) on a
+          // rejected persist so the UI never shows an un-saved link — but only if
+          // `next` is still current (a newer write must not be clobbered).
+          if (configRef.current !== next) return undefined;
+          setConfig(prior);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent(PACKET_CONFIG_LOCAL_EVENT, { detail: prior }));
+          }
+          return undefined;
+        });
     },
     [config],
   );

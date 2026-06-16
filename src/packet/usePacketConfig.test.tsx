@@ -164,6 +164,99 @@ describe('usePacketConfig', () => {
     await expect(p).resolves.toBeUndefined();
   });
 
+  it('setLink rolls back the optimistic update when the persist rejects (B4)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'packet_config_get') return DEFAULT_CONFIG;
+      if (cmd === 'packet_config_set') throw new Error('write failed');
+      return undefined;
+    });
+    const { result } = renderHook(() => usePacketConfig());
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    let p!: Promise<void>;
+    act(() => {
+      p = result.current.setLink({
+        linkKind: 'Bluetooth',
+        tcpHost: null,
+        tcpPort: null,
+        serialDevice: null,
+        serialBaud: null,
+        btMac: 'AA:BB:CC:DD:EE:FF',
+      });
+    });
+    await act(async () => {
+      await p;
+    });
+    // A rejected persist must NOT leave the UI showing the un-saved Bluetooth
+    // link — it reverts to the persisted Tcp truth (tuxlink-hoi1 B4).
+    expect(result.current.config?.linkKind).toBe('Tcp');
+  });
+
+  it('setSsid rolls back the optimistic update when the persist rejects (B4)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'packet_config_get') return DEFAULT_CONFIG;
+      if (cmd === 'packet_config_set') throw new Error('write failed');
+      return undefined;
+    });
+    const { result } = renderHook(() => usePacketConfig());
+    await waitFor(() => expect(result.current.ssid).toBe(7));
+    act(() => {
+      result.current.setSsid(10);
+    });
+    // The optimistic 10 reverts to the persisted 7 once the persist rejects.
+    await waitFor(() => expect(result.current.ssid).toBe(7));
+  });
+
+  it('does NOT roll back a newer successful write when an older write rejects (B4 race guard)', async () => {
+    // Codex + Claude adrev: an older rejected persist must not revert the UI to
+    // its stale pre-write snapshot once a NEWER write has already landed —
+    // otherwise the rollback re-opens the multi-writer clobber this fix targets.
+    const core = await import('@tauri-apps/api/core');
+    let rejectFirst!: () => void;
+    let calls = 0;
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'packet_config_get') return DEFAULT_CONFIG;
+      if (cmd === 'packet_config_set') {
+        calls += 1;
+        if (calls === 1) {
+          // Write A (link): stays pending until we reject it explicitly, AFTER B.
+          return new Promise((_res, rej) => {
+            rejectFirst = () => rej(new Error('write A failed'));
+          });
+        }
+        return undefined; // Write B (ssid): succeeds.
+      }
+      return undefined;
+    });
+    const { result } = renderHook(() => usePacketConfig());
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    // Write A — change the link (in flight, not yet rejected).
+    act(() => {
+      void result.current.setLink({
+        linkKind: 'Bluetooth',
+        tcpHost: null,
+        tcpPort: null,
+        serialDevice: null,
+        serialBaud: null,
+        btMac: 'AA:BB:CC:DD:EE:FF',
+      });
+    });
+    // Write B — change the SSID; this persist succeeds.
+    act(() => {
+      result.current.setSsid(11);
+    });
+    await waitFor(() => expect(result.current.ssid).toBe(11));
+    // Now A rejects: its rollback must be SUPPRESSED — reverting to the pre-A
+    // snapshot would clobber B's ssid=11 and the Bluetooth link.
+    await act(async () => {
+      rejectFirst();
+      await Promise.resolve();
+    });
+    expect(result.current.ssid).toBe(11);
+    expect(result.current.config?.linkKind).toBe('Bluetooth');
+  });
+
   it('setLink (unloaded config) still returns a resolved promise, not undefined', async () => {
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {

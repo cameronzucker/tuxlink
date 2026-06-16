@@ -730,5 +730,23 @@ describe('<PacketRadioPanel>', () => {
       expect(await screen.findByTestId('managed-modem-section')).toBeInTheDocument();
       expect(screen.queryByTestId('modem-link-section')).not.toBeInTheDocument();
     });
+
+    it('re-seeds its config when a same-window packet-config change is broadcast (B3)', async () => {
+      // tuxlink-hoi1 B3: the panel held a private snapshot loaded once and never
+      // re-synced, so a link/SSID change made elsewhere (the APRS strip) left it
+      // stale — a later panel write then clobbered the link from the frozen
+      // snapshot. It must re-seed from the same-window broadcast.
+      renderPanel(<PacketRadioPanel intent="p2p" baseCall="W7ABC" onClose={() => {}} />);
+      const select = (await screen.findByTestId('packet-ssid-select')) as HTMLSelectElement;
+      await waitFor(() => expect(select.value).toBe('7'));
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent('tuxlink:packet-config:change', {
+            detail: { ...DEFAULT_CONFIG, ssid: 3 },
+          }),
+        );
+      });
+      await waitFor(() => expect(select.value).toBe('3'));
+    });
   });
 });
