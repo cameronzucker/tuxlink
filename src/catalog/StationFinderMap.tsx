@@ -222,8 +222,19 @@ function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationF
     apply();
     // Re-apply after a style swap re-creates the source (clears feature-state).
     m.on('styledata', apply as (...a: unknown[]) => void);
+    // Re-apply after a data push. `GeoJSONSource.setData` drops ALL feature-state
+    // for the source, and reachability tiers stream in (one setData per update,
+    // plus a full re-push on every prefs change), so without this the selected
+    // pin loses its glow/emphasis the instant a tier updates — the "selection
+    // doesn't show" bug (operator, 2026-06-16). `sourcedata` fires when the
+    // source finishes (re)loading; re-applying then survives the async clear.
+    const onSourceData = (e: { sourceId?: string; isSourceLoaded?: boolean }) => {
+      if (e.sourceId === STATIONS_SOURCE && e.isSourceLoaded) apply();
+    };
+    m.on('sourcedata', onSourceData as (...a: unknown[]) => void);
     return () => {
       m.off('styledata', apply as (...a: unknown[]) => void);
+      m.off('sourcedata', onSourceData as (...a: unknown[]) => void);
     };
   }, [map, selectedKey]);
 

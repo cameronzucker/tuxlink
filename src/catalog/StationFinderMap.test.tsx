@@ -80,6 +80,28 @@ describe('StationFinderMap', () => {
     expect(src.setData).not.toHaveBeenCalled();
   });
 
+  it('re-applies the selected feature-state after a data push (setData clears it)', () => {
+    // Regression (operator 2026-06-16): GeoJSONSource.setData drops all
+    // feature-state, and reachability tiers stream in (each a setData), so the
+    // selected pin lost its emphasis the instant a tier updated. The map must
+    // re-apply feature-state when the source finishes (re)loading.
+    const key0 = stationKey(stations[0]);
+    render(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={key0} onSelect={() => {}} />,
+    );
+    const map = loadLast();
+    (map.setFeatureState as ReturnType<typeof vi.fn>).mockClear();
+
+    // Simulate a tier-driven setData reload completing.
+    act(() => map.__emit('sourcedata', { sourceId: 'stations', isSourceLoaded: true }));
+
+    expect(map.setFeatureState).toHaveBeenCalledWith({ source: 'stations', id: key0 }, { selected: true });
+    // An unrelated source's load must NOT trigger a re-apply.
+    (map.setFeatureState as ReturnType<typeof vi.fn>).mockClear();
+    act(() => map.__emit('sourcedata', { sourceId: 'operator', isSourceLoaded: true }));
+    expect(map.setFeatureState).not.toHaveBeenCalled();
+  });
+
   it('changing the selection clears the previous feature-state then sets the new one', () => {
     const key0 = stationKey(stations[0]);
     const key1 = stationKey(stations[1]);
