@@ -44,7 +44,7 @@ use super::dedupe::{DedupeCache, DedupeKey};
 use super::framebuild::{build_ui_frame, extract_inbound, fmt_callsign, to_tnc2};
 use super::identity::AprsIdentity;
 use super::message::{encode_ack, encode_message, parse_info, AprsPayload};
-use super::position::{parse_mice, parse_position};
+use super::position::{parse_mice, parse_object_or_item, parse_position};
 use super::tx::TxQueue;
 
 /// Dev-only raw-frame capture (tuxlink-iehg). When the env var
@@ -131,6 +131,13 @@ pub struct StateChange {
 #[serde(rename_all = "camelCase")]
 pub struct InboundPos {
     pub sender: String,
+    /// For an OBJECT (`;`) / ITEM (`)`) report, the named entity this position
+    /// describes — the map labels the pin by this, not by the reporting
+    /// `sender`. `None` for a station's own beacon (the pin is labeled by
+    /// `sender`). Skipped on the wire when absent so a beacon payload is
+    /// unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub lat: f64,
     pub lon: f64,
     pub symbol_table: char,
@@ -479,15 +486,34 @@ impl AprsEngine {
     /// re-beacon of an unchanged fix (or a digipeated duplicate) is suppressed
     /// while a MOVE (new coordinates) emits immediately — latest-position-wins.
     fn try_emit_position(&mut self, sender: &str, dest: &str, info: &[u8], now_ms: u64) {
-        let pos = match parse_position(info) {
-            Some(p) => p,
-            None => match parse_mice(dest, info) {
-                Some(p) => p,
-                None => return,
-            },
+        // An OBJECT (`;`) / ITEM (`)`) report carries the position of a NAMED
+        // entity (a weather object, event marker, ARES asset, …), not the
+        // sender's own location. A killed (`_`) object/item is a tombstone — not
+        // plotted; the map's TTL sweep retires any prior pin. Otherwise fall back
+        // to the station-own beacon DTIs (uncompressed/compressed/Mic-E).
+        let (pos, name) = match parse_object_or_item(info) {
+            Some(obj) => {
+                if !obj.alive {
+                    return;
+                }
+                (obj.position, Some(obj.name))
+            }
+            None => {
+                let pos = match parse_position(info) {
+                    Some(p) => p,
+                    None => match parse_mice(dest, info) {
+                        Some(p) => p,
+                        None => return,
+                    },
+                };
+                (pos, None)
+            }
         };
+        // Dedupe + map identity is the ENTITY: an object's name, else the sender.
+        // Two distinct objects reported by the same sender must each get a pin.
+        let identity = name.clone().unwrap_or_else(|| sender.to_string());
         let key = DedupeKey {
-            src: sender.to_string(),
+            src: identity,
             kind: "pos".into(),
             // Round to ~1e-4 deg (~11 m) so float jitter does not defeat dedupe,
             // while a genuine move still produces a distinct key. The comment
@@ -509,6 +535,7 @@ impl AprsEngine {
         }
         self.sink.emit_position(InboundPos {
             sender: sender.to_string(),
+            name,
             lat: pos.lat,
             lon: pos.lon,
             symbol_table: pos.symbol_table,
@@ -1113,6 +1140,36 @@ mod tests {
             info: info.to_vec(),
         };
         kiss_data_frame(&f.encode().unwrap())
+    }
+
+    #[test]
+    fn heard_object_emits_position_labeled_by_object_name() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // A digi (DIGI1) reports an OBJECT "LEADER" at 49.058,-72.029. The map
+        // pin must be labeled by the object NAME, not the reporting station.
+        engine.handle_inbound_bytes(
+            &inbound_with("DIGI1", b";LEADER   *092345z4903.50N/07201.75W>"),
+            1000,
+        );
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 1);
+        assert_eq!(pos[0].sender, "DIGI1");
+        assert_eq!(pos[0].name.as_deref(), Some("LEADER"));
+        assert!((pos[0].lat - 49.058333).abs() < 1e-3);
+        assert_eq!(pos[0].symbol_code, '>');
+    }
+
+    #[test]
+    fn killed_object_is_not_plotted() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // A KILLED object ('_') is a tombstone — it must not emit a pin.
+        engine.handle_inbound_bytes(
+            &inbound_with("DIGI1", b";LEADER   _092345z4903.50N/07201.75W>"),
+            1000,
+        );
+        assert_eq!(sink.positions.lock().unwrap().len(), 0);
     }
 
     #[test]

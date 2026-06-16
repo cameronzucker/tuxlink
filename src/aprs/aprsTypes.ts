@@ -75,6 +75,11 @@ export interface HeardStation {
 /// what was decoded off the wire (RF-honesty — no estimated location).
 export interface InboundPosDto {
   sender: string;
+  /// For an OBJECT (`;`) / ITEM (`)`) report, the named entity this position
+  /// describes (a weather object, event marker, ARES asset, …). The map labels
+  /// the pin by this rather than the reporting `sender`. Absent for a station's
+  /// own beacon (the backend omits it when `None`).
+  name?: string | null;
   lat: number;
   lon: number;
   symbolTable: string;

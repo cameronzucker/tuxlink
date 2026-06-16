@@ -58,8 +58,13 @@ export function useAprsPositions(): UseAprsPositions {
       const p = event.payload;
       setByCall((prev) => {
         const next = new Map(prev);
-        next.set(p.sender, {
-          call: p.sender,
+        // The map identity (and pin label) is the ENTITY: an OBJECT/ITEM report
+        // is keyed by its name, a station beacon by its callsign. Keying objects
+        // by name (not the reporting sender) lets one station report several
+        // distinct objects, each getting its own pin / latest-position-wins slot.
+        const identity = p.name ?? p.sender;
+        next.set(identity, {
+          call: identity,
           lat: p.lat,
           lon: p.lon,
           symbolTable: p.symbolTable,
