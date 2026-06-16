@@ -50,13 +50,11 @@ const LIST: IdentityListDto = {
 // TASK 7 — closed chip (footprint unchanged)
 // ---------------------------------------------------------------------------
 
-test('closed_chip shows ribbon-callsign + text + ssid select; dropdown absent', () => {
+test('closed_chip shows ribbon-callsign + text; dropdown absent', () => {
   render(
     <IdentitySwitcher
       active={FULL_ACTIVE}
       list={LIST}
-      ssid={5}
-      onSsidChange={vi.fn()}
       onSwitch={vi.fn()}
     />,
   );
@@ -64,7 +62,8 @@ test('closed_chip shows ribbon-callsign + text + ssid select; dropdown absent', 
   expect(row).toBeInTheDocument();
   expect(screen.getByTestId('ribbon-callsign-text')).toHaveTextContent('W7XYZ');
   expect(screen.getByTestId('identity-switcher-trigger')).toBeInTheDocument();
-  expect(screen.getByTestId('ribbon-ssid-select')).toBeInTheDocument();
+  // bd-tuxlink-y8tf: the SSID select was removed from the ribbon chip.
+  expect(screen.queryByTestId('ribbon-ssid-select')).not.toBeInTheDocument();
   // Dropdown not in DOM when closed.
   expect(screen.queryByTestId('identity-switcher-list')).not.toBeInTheDocument();
 });
@@ -74,8 +73,6 @@ test('tactical_active shows address_as as primary label + parent indicator', () 
     <IdentitySwitcher
       active={TACTICAL_ACTIVE}
       list={LIST}
-      ssid={0}
-      onSsidChange={vi.fn()}
       onSwitch={vi.fn()}
     />,
   );
@@ -85,13 +82,11 @@ test('tactical_active shows address_as as primary label + parent indicator', () 
   expect(parent).toHaveTextContent('W1ABC');
 });
 
-test('null_active renders fallback (no stale SSID-bound call)', () => {
+test('null_active renders fallback (list.last_selected)', () => {
   render(
     <IdentitySwitcher
       active={null}
       list={LIST}
-      ssid={3}
-      onSsidChange={vi.fn()}
       onSwitch={vi.fn()}
     />,
   );
@@ -109,22 +104,7 @@ test('null_active with no last_selected renders an em-dash', () => {
   expect(screen.getByTestId('ribbon-callsign-text')).toHaveTextContent('—');
 });
 
-test('SSID select does not open the dropdown', () => {
-  render(
-    <IdentitySwitcher
-      active={FULL_ACTIVE}
-      list={LIST}
-      ssid={5}
-      onSsidChange={vi.fn()}
-      onSwitch={vi.fn()}
-    />,
-  );
-  fireEvent.mouseDown(screen.getByTestId('ribbon-ssid-select'));
-  fireEvent.click(screen.getByTestId('ribbon-ssid-select'));
-  expect(screen.queryByTestId('identity-switcher-list')).not.toBeInTheDocument();
-});
-
-test('no onSsidChange falls back to a plain text span (no select)', () => {
+test('never renders an SSID select (bd-tuxlink-y8tf — SSID is per-transport)', () => {
   render(
     <IdentitySwitcher active={FULL_ACTIVE} list={LIST} onSwitch={vi.fn()} />,
   );

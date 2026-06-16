@@ -15,7 +15,6 @@ import { GridEdit } from './GridEdit';
 import { formatGridClock } from './gridClock';
 import { DEV_FIXTURE, DEV_POSITION, DEV_CONNECTION_DASH } from '../mailbox/devFixture';
 import { formatPacketConnection, type PacketUiState } from '../packet/packetStatus';
-import { effectiveCall as renderEffectiveCall, ssidOptions } from '../packet/packetConfig';
 import { IdentitySwitcher } from './IdentitySwitcher';
 import type { ActiveIdentityDto, IdentityListDto } from './identityTypes';
 
@@ -77,13 +76,6 @@ export interface DashboardRibbonProps {
    *  label, supplied by AppShell when the last-active transport is a radio modem
    *  in the idle/disconnected window. Lower precedence than `packet`. */
   radioConn?: { label: string; tone: StatusTone } | null;
-  /** Effective AX.25 SSID (0..15) for the callsign chip. Undefined when no
-   *  packet config has loaded — the callsign renders without a -N suffix. */
-  ssid?: number;
-  /** Persist a new SSID. Operator smoke 2026-05-31: SSID is editable inline
-   *  from the dashboard ribbon (not just the PacketRadioPanel) so the operator
-   *  doesn't need to open the radio panel to switch. */
-  onSsidChange?: (n: number) => void;
   /** Current "review pending inbound before download" preference (tuxlink-pmp5),
    *  or null before config_read resolves. Drives the inline "On connect" control:
    *  null/true ⇒ Review is active (the default); false ⇒ Download all. */
@@ -124,7 +116,7 @@ export interface DashboardRibbonProps {
 // via useStatusData's useMemo) and other shell-level renders skip the ribbon
 // when its props haven't changed. The 1s clock tick already lives inside the
 // scoped ClockCell subtree, so a memo'd ribbon stays still while time advances.
-export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, ssid, onSsidChange, reviewInbound, onReviewInboundChange, aprs, identities, activeIdentity, onSwitchIdentity }: DashboardRibbonProps) {
+export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, reviewInbound, onReviewInboundChange, aprs, identities, activeIdentity, onSwitchIdentity }: DashboardRibbonProps) {
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Task 14 (tuxlink-c79g, spec §4.3 + Codex P1 #4): after a grid commit or a
   // source flip resolves, invalidate the config_read query so the source chip
@@ -132,13 +124,9 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
   // for the next config poll. Local optimistic state via useState was rejected
   // because two sources of truth risk divergence on error paths.
   const queryClient = useQueryClient();
-  // Non-editable fallback (no onSsidChange handler — pre-wizard / external
-  // consumers): show the effective `<base>-<N>` so the operator still sees
-  // their AX.25 call. The editable path below splits callsign + SSID into
-  // two surfaces; the picker owns the `-N` display in that case.
-  const displayCall = ssid !== undefined && callsign
-    ? renderEffectiveCall(callsign, ssid)
-    : callsign;
+  // bd-tuxlink-y8tf: the ribbon shows the bare callsign only. AX.25 SSID is set
+  // per-transport in the Packet/APRS panes, not on the ribbon identity chip.
+  const displayCall = callsign;
   // Position (GPS coords) is a deferred data source; the dev fixture shows the mock
   // value, and the real app omits the item until GPS exists.
   const position = DEV_FIXTURE ? DEV_POSITION : null;
@@ -162,60 +150,26 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
         {/* Phase 7 (tuxlink-noa0): when the identity-switch handler is wired
             (production AppShell path), render the IdentitySwitcher AS the
             callsign cell. It already renders the `.dash-callsign-row` +
-            `data-testid="ribbon-callsign"` container AND the `ribbon-ssid-select`,
-            so it must NOT be wrapped in another `ribbon-callsign` (that would
-            duplicate the testid). The SAME `ssid` / `onSsidChange` the ribbon
-            already threads pass straight through. When the handler is omitted
-            (prop-free consumers / unit tests), the legacy bare markup below
-            renders byte-for-byte as before. */}
+            `data-testid="ribbon-callsign"` container, so it must NOT be wrapped
+            in another `ribbon-callsign` (that would duplicate the testid). When
+            the handler is omitted (prop-free consumers / unit tests), the legacy
+            bare markup below renders the callsign. (bd-tuxlink-y8tf: the SSID
+            select was removed from this chip — SSID is per-transport now.) */}
         {onSwitchIdentity ? (
           <IdentitySwitcher
             active={activeIdentity ?? null}
             list={identities ?? null}
-            ssid={ssid}
-            onSsidChange={onSsidChange}
             onSwitch={onSwitchIdentity}
           />
         ) : (
         <div className="dash-value callsign dash-callsign-row" data-testid="ribbon-callsign">
-          {/* Operator smoke 2026-05-31 (round 4 — tuxlink-i63g): the round-3
-              "one select with full `<base>-<N>` option labels" approach was
-              rejected. Two issues with it: (a) operator wanted the picker to
-              be just the SSID (`-N`), not the whole call; (b) at 2-digit
-              SSIDs (`-10` .. `-15`) the OS scroll bar in the open popup
-              visually covered the second digit so the operator could only
-              read `-1` for `-10`. Restored pattern: bare callsign text chip
-              + adjacent narrow picker whose options are just `-N`. The
-              picker has an explicit min-width (AppShell.css) wide enough
-              that the popup gutter does not overlap option text. The
-              callsign chip itself NEVER carries an SSID suffix in the
-              editable branch — that would put `-N` on two surfaces again.
-
-              Fallback (no callsign yet, pre-wizard / pre-identity): render
-              empty string, matching the prior "no dangling dash" behavior.
-              Fallback (no onSsidChange handler): plain text span showing
-              the effective call so external consumers still see `<base>-<N>`. */}
-          {callsign && onSsidChange ? (
-            <>
-              <span className="dash-callsign-text" data-testid="ribbon-callsign-text">
-                {callsign}
-              </span>
-              <select
-                className="dash-callsign-select dash-ssid-select"
-                data-testid="ribbon-ssid-select"
-                aria-label="AX.25 SSID"
-                title="Click to switch AX.25 SSID"
-                value={ssid ?? 0}
-                onChange={(e) => onSsidChange(Number(e.target.value))}
-              >
-                {ssidOptions().map((n) => (
-                  <option key={n} value={n}>{`-${n}`}</option>
-                ))}
-              </select>
-            </>
-          ) : (
-            <span className="dash-callsign-text">{displayCall}</span>
-          )}
+          {/* Legacy bare markup (prop-free consumers / unit tests with no
+              onSwitchIdentity handler): plain callsign text, no SSID. Empty
+              string before a callsign exists keeps the "no dangling dash"
+              behavior. */}
+          <span className="dash-callsign-text" data-testid="ribbon-callsign-text">
+            {displayCall}
+          </span>
         </div>
         )}
       </div>

@@ -649,105 +649,34 @@ describe('<MessageList> — sort wiring (tuxlink-2x0l)', () => {
   });
 });
 
-describe('<MessageList> — identity filter (Task 11, tuxlink-noa0)', () => {
-  const IDENTITY_OPTIONS = [
-    { value: null, label: 'All identities' },
-    { value: 'W1ABC', label: 'W1ABC' },
-    { value: 'W7XYZ', label: 'W7XYZ' },
-  ];
+// bd-tuxlink-y8tf: the "Filter by identity" select was removed from the
+// message-list toolbar (it was the gray, unstyled dropdown). The toolbar now
+// carries only the sort control / bulk bar; no identity filtering is applied.
+describe('<MessageList> — no identity filter (bd-tuxlink-y8tf)', () => {
   const MIXED = [
     meta({ id: 'IA', date: '2026-06-03T10:00:00Z', identity: 'W1ABC', subject: 'from-w1abc' }),
     meta({ id: 'IB', date: '2026-06-02T10:00:00Z', identity: 'W7XYZ', subject: 'from-w7xyz' }),
     meta({ id: 'IC', date: '2026-06-01T10:00:00Z', subject: 'untagged' }),
   ];
 
-  it('does not render the identity select when identityFilterOptions is absent (back-compat)', () => {
-    render(<MessageList folder="inbox" messages={[meta()]} selectedId={null} onSelect={() => {}} />);
+  it('never renders the identity select', () => {
+    render(
+      <MessageList
+        folder="inbox"
+        messages={MIXED}
+        selectedId={null}
+        onSelect={() => {}}
+        onSortStateChange={() => {}}
+      />,
+    );
     expect(screen.queryByTestId('mailbox-identity-filter')).toBeNull();
   });
 
-  it('renders the identity select in the header when options are provided', () => {
-    render(
-      <MessageList
-        folder="inbox"
-        messages={MIXED}
-        selectedId={null}
-        onSelect={() => {}}
-        identityFilter={null}
-        onIdentityFilterChange={() => {}}
-        identityFilterOptions={IDENTITY_OPTIONS}
-      />,
-    );
-    expect(screen.getByTestId('rows-pane-header')).toBeInTheDocument();
-    expect(screen.getByTestId('mailbox-identity-filter')).toBeInTheDocument();
-  });
-
-  it('shows all rows (tagged + untagged) when the filter is All (null)', () => {
-    render(
-      <MessageList
-        folder="inbox"
-        messages={MIXED}
-        selectedId={null}
-        onSelect={() => {}}
-        identityFilter={null}
-        onIdentityFilterChange={() => {}}
-        identityFilterOptions={IDENTITY_OPTIONS}
-      />,
-    );
+  it('shows every message regardless of its identity tag (no filtering)', () => {
+    render(<MessageList folder="inbox" messages={MIXED} selectedId={null} onSelect={() => {}} />);
     expect(screen.getByTestId('message-row-IA')).toBeInTheDocument();
     expect(screen.getByTestId('message-row-IB')).toBeInTheDocument();
     expect(screen.getByTestId('message-row-IC')).toBeInTheDocument();
-  });
-
-  it('selecting W7XYZ hides W1ABC-tagged and untagged rows', () => {
-    render(
-      <MessageList
-        folder="inbox"
-        messages={MIXED}
-        selectedId={null}
-        onSelect={() => {}}
-        identityFilter="W7XYZ"
-        onIdentityFilterChange={() => {}}
-        identityFilterOptions={IDENTITY_OPTIONS}
-      />,
-    );
-    expect(screen.queryByTestId('message-row-IA')).toBeNull(); // W1ABC hidden
-    expect(screen.getByTestId('message-row-IB')).toBeInTheDocument(); // W7XYZ shown
-    expect(screen.queryByTestId('message-row-IC')).toBeNull(); // untagged hidden
-  });
-
-  it('maps the empty-string sentinel back to null when All is chosen', () => {
-    const onIdentityFilterChange = vi.fn();
-    render(
-      <MessageList
-        folder="inbox"
-        messages={MIXED}
-        selectedId={null}
-        onSelect={() => {}}
-        identityFilter="W7XYZ"
-        onIdentityFilterChange={onIdentityFilterChange}
-        identityFilterOptions={IDENTITY_OPTIONS}
-      />,
-    );
-    fireEvent.change(screen.getByTestId('mailbox-identity-filter'), { target: { value: '' } });
-    expect(onIdentityFilterChange).toHaveBeenCalledWith(null);
-  });
-
-  it('emits the chosen value when a concrete identity is picked', () => {
-    const onIdentityFilterChange = vi.fn();
-    render(
-      <MessageList
-        folder="inbox"
-        messages={MIXED}
-        selectedId={null}
-        onSelect={() => {}}
-        identityFilter={null}
-        onIdentityFilterChange={onIdentityFilterChange}
-        identityFilterOptions={IDENTITY_OPTIONS}
-      />,
-    );
-    fireEvent.change(screen.getByTestId('mailbox-identity-filter'), { target: { value: 'W1ABC' } });
-    expect(onIdentityFilterChange).toHaveBeenCalledWith('W1ABC');
   });
 });
 
