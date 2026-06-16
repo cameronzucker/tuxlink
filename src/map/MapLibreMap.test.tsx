@@ -70,6 +70,27 @@ describe('MapLibreMap', () => {
     expect(onZoomChange).toHaveBeenLastCalledWith(8);
   });
 
+  it('fires onViewportChange on moveend with the clamped center + zoom (tuxlink-dwzu)', () => {
+    const onViewportChange = vi.fn();
+    render(<MapLibreMap initialZoom={5} onViewportChange={onViewportChange} />);
+    const map = getLastMap()!;
+    loadMap(map);
+    map.__setCenter(-122.3, 47.6);
+    map.__setZoom(9);
+    act(() => map.__emit('moveend'));
+    expect(onViewportChange).toHaveBeenLastCalledWith({ lat: 47.6, lon: -122.3 }, 9);
+  });
+
+  it('does NOT call onViewportChange for a non-finite center on moveend', () => {
+    const onViewportChange = vi.fn();
+    render(<MapLibreMap onViewportChange={onViewportChange} />);
+    const map = getLastMap()!;
+    loadMap(map);
+    map.__setCenter(Number.NaN, Number.NaN);
+    act(() => map.__emit('moveend'));
+    expect(onViewportChange).not.toHaveBeenCalled();
+  });
+
   it('does NOT re-fire onZoomChange on a moveend that leaves zoom unchanged (B8)', () => {
     const onZoomChange = vi.fn();
     render(<MapLibreMap initialZoom={5} onZoomChange={onZoomChange} />);

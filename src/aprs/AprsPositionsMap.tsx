@@ -22,13 +22,22 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapLibreMap } from '../map/MapLibreMap';
 import { useMapContext } from '../map/MapContext';
 import { useMapOverlay } from '../map/mapHooks';
+import { usePersistedViewport } from '../map/usePersistedViewport';
+import { RecenterControl } from '../map/RecenterControl';
+import { gridToLatLon } from '../forms/position/maidenhead';
 import type { HeardPosition } from './aprsTypes';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
   /// Heard stations' latest positions (one per callsign), from useAprsPositions.
   positions: HeardPosition[];
+  /// Operator Maidenhead grid (statusData.ui_grid). First-run map center; the
+  /// recenter control flies here. Empty / absent = no known position.
+  operatorGrid?: string;
 }
+
+/// First-run / recenter zoom on the operator (matches StationFinderMap).
+const OPERATOR_ZOOM = 6;
 
 const POSITIONS_SOURCE = 'aprs-positions';
 const POSITION_PINS_LAYER = 'aprs-position-pins';
@@ -312,11 +321,24 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
   );
 }
 
-export function AprsPositionsMap({ positions }: AprsPositionsMapProps) {
+export function AprsPositionsMap({ positions, operatorGrid }: AprsPositionsMapProps) {
+  const me = operatorGrid ? gridToLatLon(operatorGrid) : null;
+  // tuxlink-dwzu: remember + restore the operator's last viewport so the map
+  // opens where it was left. First run (no saved view) centers on the operator
+  // at Z6 — never the mid-Atlantic world view — falling back to the world view
+  // only when no operator grid is known.
+  const { saved, onViewportChange } = usePersistedViewport('tuxlink:map-viewport:aprs');
+  const initialCenter = saved ? saved.center : (me ?? undefined);
+  const initialZoom = saved ? saved.zoom : me ? OPERATOR_ZOOM : 2;
   return (
     <div className="aprs-positions-map" data-testid="aprs-positions-map">
-      <MapLibreMap>
+      <MapLibreMap
+        initialCenter={initialCenter}
+        initialZoom={initialZoom}
+        onViewportChange={onViewportChange}
+      >
         <PositionLayers positions={positions} />
+        <RecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </MapLibreMap>
     </div>
   );
