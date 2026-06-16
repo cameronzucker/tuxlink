@@ -1,0 +1,19 @@
+FROZEN 2026-06-16 (tuxlink-2agv): automated releases paused while stabilizing — recent cuts kept surfacing fairly broken. Unfreeze only when the next cut gets operators ON THE AIR with AX.25 (packet) and ARDOP. Remove this file to resume.
+
+Why
+  Several recent pre-releases shipped with reachability/UX defects (e.g. the
+  GPS/Location Settings regressions). Pausing the nightly pre-release +
+  release-please tagging + promotion until the next cut clears the bar below.
+
+What this governs (per CLAUDE.md "Releases are two-channel"):
+  - release-merge.yml (nightly cron) — skipped while this file exists.
+  - release-please.yml (tag/version) — skipped while this file exists.
+  - promote-release.yml (stable/Latest) — operator-only regardless.
+  Feature-branch PRs still merge to main as normal; only the release path is held.
+
+Unfreeze condition (operator call):
+  The next release must get an operator on the air, validated on-air per RADIO-1:
+    1. AX.25 / packet — connect + exchange.
+    2. ARDOP — connect + exchange.
+  Remove .github/RELEASE_FREEZE (and, for an off-cadence cut,
+  `gh workflow run release-merge.yml`).
