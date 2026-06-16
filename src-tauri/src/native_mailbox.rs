@@ -19,6 +19,30 @@ use crate::user_folders::{self, UserFolder};
 use crate::winlink::message::Message;
 use crate::winlink_backend::{BackendError, MailboxFolder, MessageBody, MessageId, MessageMeta};
 
+/// Validate a message id (`Mid`) before it is ever used to build a filesystem
+/// path. SECURITY (pre-public review 2026-06-16, tuxlink-5lbm): an INBOUND
+/// Winlink message's `Mid` header is attacker-controlled, and the store/read/
+/// move paths interpolate it into `dir.join(format!("{mid}.b2f"))`. Without this
+/// guard a crafted `Mid` such as `../../../x` — or an ABSOLUTE path like
+/// `/home/user/.config/autostart/x`, which `Path::join` substitutes for the base
+/// entirely — escapes the mailbox directory, yielding an arbitrary-file-write
+/// primitive (the message body `raw` is attacker-controlled too). Real Winlink
+/// ids are short alphanumeric tokens (our `generate_mid` emits 12 base32 chars),
+/// so a strict allowlist costs nothing legitimate while making a path separator,
+/// `..`, NUL, or any other traversal byte impossible.
+fn validate_mid(mid: &str) -> Result<(), String> {
+    if mid.is_empty() || mid.len() > 64 {
+        return Err(format!("message id length {} out of range (1..=64)", mid.len()));
+    }
+    if !mid
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(format!("message id {mid:?} contains a disallowed character"));
+    }
+    Ok(())
+}
+
 /// A native message store rooted at a directory.
 pub struct Mailbox {
     root: PathBuf,
@@ -107,6 +131,10 @@ impl Mailbox {
             .header("Mid")
             .ok_or_else(|| BackendError::MessageRejected("message has no Mid".into()))?
             .to_string();
+        // SECURITY (tuxlink-5lbm): reject an attacker-controlled inbound `Mid`
+        // before it is used as a filename — see `validate_mid`. This is the
+        // remotely-reachable sink (a received message → arbitrary file write).
+        validate_mid(&mid).map_err(BackendError::MessageRejected)?;
 
         let dir = self.folder_dir_ns(ns, folder);
         fs::create_dir_all(&dir)?;
@@ -257,6 +285,7 @@ impl Mailbox {
         folder: MailboxFolder,
         id: &MessageId,
     ) -> Result<MessageBody, BackendError> {
+        validate_mid(&id.0).map_err(BackendError::MessageRejected)?;
         let path = self.folder_dir_ns(ns, folder).join(format!("{}.b2f", id.0));
         let raw = fs::read(&path).map_err(|_| BackendError::NotFound(id.clone()))?;
         Ok(MessageBody {
@@ -271,6 +300,9 @@ impl Mailbox {
     /// identity drain filter. Sent/Outbox resolve to the shared root; the tag
     /// lives next to the `<mid>.b2f` there.
     pub fn read_identity_tag(&self, folder: MailboxFolder, id: &MessageId) -> Option<String> {
+        if validate_mid(&id.0).is_err() {
+            return None;
+        }
         let p = self.folder_dir(folder).join(format!("{}.identity", id.0));
         std::fs::read_to_string(p)
             .ok()
@@ -286,6 +318,7 @@ impl Mailbox {
         to: MailboxFolder,
         id: &MessageId,
     ) -> Result<(), BackendError> {
+        validate_mid(&id.0).map_err(BackendError::MessageRejected)?;
         let src = self.folder_dir(from).join(format!("{}.b2f", id.0));
         let raw = match fs::read(&src) {
             Ok(raw) => raw,
@@ -897,6 +930,7 @@ impl Mailbox {
     /// Read a raw message from a user folder. Returns `NotFound` if the slug
     /// or mid is unknown.
     pub fn read_user(&self, slug: &str, id: &MessageId) -> Result<MessageBody, BackendError> {
+        validate_mid(&id.0).map_err(BackendError::MessageRejected)?;
         // Phase 4 (tuxlink-2ns7): user folders live under `received_root`; the
         // default path resolves to the `_default` namespace.
         let path =
@@ -939,6 +973,7 @@ impl Mailbox {
         if from == to {
             return Ok(());
         }
+        validate_mid(&id.0).map_err(BackendError::MessageRejected)?;
         let src_dir = self.resolve_dir_ns(ns, &from);
         let dst_dir = self.resolve_dir_ns(ns, &to);
         let src = src_dir.join(format!("{}.b2f", id.0));
@@ -1272,6 +1307,74 @@ mod tests {
 
     fn raw(subject: &str, body: &str) -> Vec<u8> {
         compose_message("N7CPZ", &["W1AW"], &[], subject, body, 1_716_200_000).to_bytes()
+    }
+
+    /// An inbound message with an attacker-chosen `Mid` (the path-traversal vector).
+    fn raw_with_mid(subject: &str, mid: &str) -> Vec<u8> {
+        let mut msg = compose_message("N7CPZ", &["W1AW"], &[], subject, "x", 1_716_200_000);
+        msg.set_header("Mid", mid);
+        msg.to_bytes()
+    }
+
+    // ---- SECURITY: inbound `Mid` path-traversal guard (tuxlink-5lbm) ----
+
+    #[test]
+    fn validate_mid_accepts_real_ids_and_rejects_traversal() {
+        assert!(validate_mid("LIHHQU663POB").is_ok()); // our generate_mid form
+        assert!(validate_mid("INMID000001").is_ok());
+        assert!(validate_mid("a-b_C9").is_ok());
+        assert!(validate_mid("").is_err());
+        assert!(validate_mid("../../etc/passwd").is_err());
+        assert!(validate_mid("/abs/path").is_err());
+        assert!(validate_mid("a/b").is_err());
+        assert!(validate_mid("a..b").is_err()); // '.' is disallowed outright
+        assert!(validate_mid(&"x".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn store_rejects_a_traversal_mid_and_writes_nothing_outside() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+
+        // Relative `..` escape: a crafted received message must be rejected.
+        let r = mbox.store(MailboxFolder::Inbox, &raw_with_mid("Evil", "../../../../pwned"));
+        assert!(matches!(r, Err(BackendError::MessageRejected(_))));
+        assert!(!dir.path().parent().unwrap().join("pwned.b2f").exists());
+
+        // Absolute-path Mid: `Path::join` replaces the base dir entirely.
+        let abs = dir.path().join("ABSPWNED");
+        let r2 = mbox.store(MailboxFolder::Inbox, &raw_with_mid("Evil2", abs.to_str().unwrap()));
+        assert!(matches!(r2, Err(BackendError::MessageRejected(_))));
+        assert!(!dir.path().join("ABSPWNED.b2f").exists());
+
+        // And nothing legitimately landed in the inbox.
+        assert!(mbox.list(MailboxFolder::Inbox).unwrap().is_empty());
+    }
+
+    #[test]
+    fn store_still_accepts_a_normal_inbound_message() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let id = mbox.store(MailboxFolder::Inbox, &raw("Hello", "Body")).unwrap();
+        assert!(validate_mid(&id.0).is_ok());
+        assert_eq!(mbox.list(MailboxFolder::Inbox).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn read_and_move_reject_a_traversal_message_id() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        // A traversal id arriving via the frontend IPC boundary must be rejected.
+        let evil_id = MessageId("../../../../etc/shadow".to_string());
+        assert!(matches!(
+            mbox.read(MailboxFolder::Inbox, &evil_id),
+            Err(BackendError::MessageRejected(_))
+        ));
+        assert!(matches!(
+            mbox.move_to(MailboxFolder::Inbox, MailboxFolder::Archive, &evil_id),
+            Err(BackendError::MessageRejected(_))
+        ));
+        assert!(mbox.read_identity_tag(MailboxFolder::Inbox, &evil_id).is_none());
     }
 
     fn raw_at(subject: &str, body: &str, ts: u64) -> Vec<u8> {
