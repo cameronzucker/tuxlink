@@ -1,0 +1,97 @@
+name: .deb install test
+
+# Validates the DOCUMENTED end-user install path (docs/install.md) on a CLEAN
+# Debian image (no dev toolchain, fresh apt state):
+#     sudo apt-get update && sudo apt-get install -y ./tuxlink_<ver>_<arch>.deb
+# asserting apt resolves every Depends (WebKitGTK 4.1 + libayatana-appindicator
+# are auto-injected by the Tauri bundler) and the installed binary's shared libs
+# all resolve. Class-prevention for GH #786 (tuxlink-w636).
+#
+# Two entry points share one matrix (Debian Trixie + Bookworm, amd64 + arm64):
+#   - workflow_call  — release.yml invokes this after build-linux, against the
+#     freshly-built .deb artifact. The regression gate; runs on PRs that touch
+#     the build (release.yml's pull_request paths).
+#   - workflow_dispatch — on-demand test of a PUBLISHED release's .deb assets.
+#     Default = latest non-draft release; set `tag` to reproduce a specific
+#     version (e.g. v0.67.0, the version in the #786 report). Available once this
+#     file is on the default branch.
+
+on:
+  workflow_call:
+    inputs:
+      deb_artifact_prefix:
+        description: 'Name prefix of the linux-bundles-<arch> artifact(s) to test'
+        type: string
+        default: linux-bundles
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to test (blank = latest non-draft release)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  install-test:
+    name: install on debian:${{ matrix.distro }} (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    arch: amd64, distro: trixie }
+          - { runner: ubuntu-latest,    arch: amd64, distro: bookworm }
+          - { runner: ubuntu-24.04-arm, arch: arm64, distro: trixie }
+          - { runner: ubuntu-24.04-arm, arch: arm64, distro: bookworm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      # Branch on the input, not github.event_name: when release.yml is run
+      # manually (workflow_dispatch) and CALLS this workflow, the event name is
+      # still 'workflow_dispatch', so event_name can't tell "called" from
+      # "dispatched directly". deb_artifact_prefix is only set on the
+      # workflow_call path (undeclared → empty on a direct dispatch).
+      - name: Download freshly-built .deb (CI gate)
+        if: inputs.deb_artifact_prefix != ''
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.deb_artifact_prefix }}-${{ matrix.arch }}
+          path: debs
+
+      - name: Download released .deb (on-demand)
+        if: inputs.deb_artifact_prefix == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Routed through env (not inline ${{ }}) so a crafted tag can't inject
+          # shell. Validated below before use.
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euxo pipefail
+          tag="$INPUT_TAG"
+          # Allow only release-tag-shaped values (or blank = latest).
+          if [ -n "$tag" ] && ! printf '%s' "$tag" | grep -qE '^v?[0-9A-Za-z.._-]+$'; then
+            echo "Refusing suspicious tag: $tag"; exit 1
+          fi
+          if [ -z "$tag" ]; then
+            tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName -q '.[0].tagName')"
+          fi
+          echo "Testing release assets from: $tag"
+          mkdir -p debs
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern "tuxlink_*_${{ matrix.arch }}.deb" --dir debs
+
+      - name: Install on clean debian:${{ matrix.distro }} and assert deps resolve
+        run: |
+          set -euxo pipefail
+          deb="$(ls debs/tuxlink_*_${{ matrix.arch }}.deb | head -1)"
+          test -n "$deb"
+          # The host runner holds the .deb + the smoke script; the install itself
+          # runs in a pristine debian:<distro>-slim container (the system under
+          # test). The container arch follows the runner arch (amd64 / arm64).
+          docker run --rm \
+            -v "$PWD:/work" -w /work \
+            "debian:${{ matrix.distro }}-slim" \
+            bash scripts/ci/deb-install-smoke.sh "$deb"

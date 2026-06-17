@@ -223,3 +223,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release edit "$TAG" --prerelease
+
+  # tuxlink-w636: validate the freshly-built .deb installs cleanly via the
+  # documented `apt install ./tuxlink.deb` path on stock Debian Trixie + Bookworm
+  # (amd64 + arm64), so a dependency regression fails CI instead of a tester
+  # (class-prevention for GH #786). Runs only when build-linux uploaded the
+  # linux-bundles artifact (PR / manual run); tag releases publish to the GitHub
+  # Release instead — validate those on demand via deb-install-test.yml's
+  # workflow_dispatch.
+  deb-install-test:
+    needs: build-linux
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/deb-install-test.yml
+    with:
+      deb_artifact_prefix: linux-bundles
