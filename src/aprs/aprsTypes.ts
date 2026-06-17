@@ -107,6 +107,38 @@ export interface HeardPosition {
   ambiguity: number;
 }
 
+/// One analog telemetry channel from a heard `aprs-telemetry:new` frame.
+export interface TelemetryChannelDto {
+  name: string;
+  unit: string;
+  raw: number;
+  value: number;
+  /// True when `value` was EQNS-scaled to an engineering unit; false when no
+  /// EQNS is known and `value` is the raw count (so the UI labels it honestly).
+  scaled: boolean;
+}
+
+/// One binary telemetry channel.
+export interface TelemetryBitDto {
+  name: string;
+  value: boolean;
+  /// The channel's defined active sense from `BITS.` (default true).
+  sense: boolean;
+}
+
+/// A heard APRS telemetry frame, enriched with the station's known PARM/UNIT/
+/// EQNS/BITS definitions. Backend event: `aprs-telemetry:new`. RF-honesty: only
+/// channels present on the wire are included; an unscaled channel reports its raw
+/// count with `scaled: false`. Consumed by the telemetry panel (fast-follow).
+export interface InboundTelemetryDto {
+  station: string;
+  seq: number | null;
+  analog: TelemetryChannelDto[];
+  digital: TelemetryBitDto[];
+  project: string;
+  comment: string;
+}
+
 /// Current APRS station configuration, returned by `aprs_config_get`.
 export interface AprsConfigDto {
   sourceSsid: number;

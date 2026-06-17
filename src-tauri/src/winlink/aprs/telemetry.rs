@@ -11,16 +11,17 @@
 //!
 //! Raw analog counts are scaled to engineering units by the per-channel EQNS
 //! coefficients: `value = a·raw² + b·raw + c` (see [`apply_eqns`]). Scaling and
-//! the per-station accumulation of definitions are a stateful/UI concern handled
-//! by the engine + the telemetry panel (tracked follow-up) — this module is a
-//! pure, fully-unit-testable decoder. RF-honesty: it reports only the fields
-//! present on the wire; absent analog channels are `None`, never a fabricated 0.
+//! the per-station accumulation of definitions are a stateful concern handled by
+//! [`super::telemetry_store`] (per-station defs) + the engine emit + the
+//! telemetry panel — this module is a pure, fully-unit-testable decoder.
+//! RF-honesty: it reports only the fields present on the wire; absent analog
+//! channels are `None`, never a fabricated 0.
 //!
-//! Engine emit + the telemetry-graph UI are a deliberate fast-follow; until they
-//! land nothing in the normal build calls this module, hence the module-level
-//! `allow(dead_code)`. Heard telemetry frames remain visible meanwhile via the
-//! engine's raw-feed path (tuxlink-8tz1).
-#![allow(dead_code)]
+//! Engine wiring (tuxlink-2phz): `parse_telemetry_data` is called on the raw-feed
+//! path for `T#` reports and `parse_telemetry_definition` on the message path for
+//! `PARM/UNIT/EQNS/BITS`, both feeding `TelemetryStore` which emits the enriched
+//! `aprs-telemetry:new` DTO. The telemetry-graph panel is the remaining
+//! fast-follow.
 
 /// A decoded APRS telemetry data report (`T#…`).
 #[derive(Debug, Clone, PartialEq)]

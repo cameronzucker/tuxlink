@@ -45,6 +45,8 @@ use super::framebuild::{build_ui_frame, extract_inbound, fmt_callsign, to_tnc2};
 use super::identity::AprsIdentity;
 use super::message::{encode_ack, encode_message, parse_info, AprsPayload};
 use super::position::{parse_mice, parse_object_or_item, parse_position};
+use super::telemetry::{parse_telemetry_data, parse_telemetry_definition};
+use super::telemetry_store::{InboundTelemetry, TelemetryStore};
 use super::tx::TxQueue;
 
 /// Dev-only raw-frame capture (tuxlink-iehg). When the env var
@@ -157,6 +159,9 @@ pub trait EventSink: Send {
     fn emit_listening(&self, on: bool);
     /// Emit a position report decoded from a heard frame (`aprs-position:new`).
     fn emit_position(&self, ev: InboundPos);
+    /// Emit a decoded telemetry frame, enriched with the station's known
+    /// definitions (`aprs-telemetry:new`).
+    fn emit_telemetry(&self, ev: InboundTelemetry);
 }
 
 /// Display dedupe window (ms): suppress re-showing ANY retransmitted/digipeated copy.
@@ -178,6 +183,8 @@ pub struct AprsEngine {
     ack_throttle: DedupeCache,
     pos_dedupe: DedupeCache,
     tx: TxQueue,
+    /// Per-station APRS telemetry accumulation (definitions + latest reading).
+    telemetry: TelemetryStore,
 }
 
 impl AprsEngine {
@@ -190,6 +197,7 @@ impl AprsEngine {
             ack_throttle: DedupeCache::new(ACK_THROTTLE_MS),
             pos_dedupe: DedupeCache::new(POS_DEDUPE_WINDOW_MS),
             tx: TxQueue::new(),
+            telemetry: TelemetryStore::new(),
         }
     }
 
@@ -253,6 +261,13 @@ impl AprsEngine {
         let payload = match parse_info(&info) {
             Some(p) => p,
             None => {
+                // Telemetry data reports (DTI 'T') are not messages, so they land
+                // here. Decode + accumulate + emit a structured telemetry DTO for
+                // the panel, then still surface the raw frame in the feed below.
+                if let Some(td) = parse_telemetry_data(&info) {
+                    let tlm = self.telemetry.ingest_data(sender.trim(), td);
+                    self.sink.emit_telemetry(tlm);
+                }
                 // tuxlink-8tz1 (operator-directed diagnostic slice): the feed used
                 // to DROP every non-message frame here — positions, status,
                 // telemetry, objects, weather, bulletins. On a live channel
@@ -291,6 +306,14 @@ impl AprsEngine {
                 text,
                 msgid,
             } => {
+                // A telemetry DEFINITION (PARM/UNIT/EQNS/BITS) is an addressed
+                // message whose body names/scales the ADDRESSEE's telemetry.
+                // Accumulate it; re-emit a now-named DTO if data was already heard.
+                if let Some(def) = parse_telemetry_definition(&text) {
+                    if let Some(tlm) = self.telemetry.ingest_definition(addressee.trim(), def) {
+                        self.sink.emit_telemetry(tlm);
+                    }
+                }
                 // APRS is a party line: EMIT every heard message (deduped),
                 // regardless of addressee, so the channel feed shows all traffic
                 // — directed-to-anyone plus blank-addressee broadcasts. The
@@ -840,6 +863,9 @@ impl EventSink for TauriEventSink {
     fn emit_position(&self, ev: InboundPos) {
         let _ = self.app.emit("aprs-position:new", &ev);
     }
+    fn emit_telemetry(&self, ev: InboundTelemetry) {
+        let _ = self.app.emit("aprs-telemetry:new", &ev);
+    }
 }
 
 #[cfg(test)]
@@ -854,6 +880,7 @@ mod tests {
         msgs: Arc<Mutex<Vec<InboundMsg>>>,
         states: Arc<Mutex<Vec<StateChange>>>,
         positions: Arc<Mutex<Vec<InboundPos>>>,
+        telemetry: Arc<Mutex<Vec<InboundTelemetry>>>,
     }
     impl EventSink for RecSink {
         fn emit_message(&self, ev: InboundMsg) {
@@ -865,6 +892,9 @@ mod tests {
         fn emit_listening(&self, _on: bool) {}
         fn emit_position(&self, ev: InboundPos) {
             self.positions.lock().unwrap().push(ev);
+        }
+        fn emit_telemetry(&self, ev: InboundTelemetry) {
+            self.telemetry.lock().unwrap().push(ev);
         }
     }
 
@@ -927,6 +957,43 @@ mod tests {
             info: info.to_vec(),
         };
         kiss_data_frame(&f.encode().unwrap())
+    }
+
+    #[test]
+    fn telemetry_definitions_then_data_emit_a_named_scaled_frame() {
+        // Definitions (addressed to the telemetry station) accumulate but do not
+        // emit on their own; the subsequent T# data report emits one enriched,
+        // named + EQNS-scaled telemetry frame.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.handle_inbound_bytes(&inbound_with("N0CALL", b":N0CALL   :PARM.Vbat,Temp"), 1000);
+        engine.handle_inbound_bytes(&inbound_with("N0CALL", b":N0CALL   :EQNS.0,0.075,0,0,1,-100"), 1100);
+        engine.handle_inbound_bytes(&inbound_with("N0CALL", b"T#005,200,125,0,0,0,00000000"), 1200);
+
+        let tlm = sink.telemetry.lock().unwrap();
+        assert_eq!(tlm.len(), 1, "only the T# data report emits telemetry; definitions do not");
+        assert_eq!(tlm[0].station, "N0CALL");
+        assert_eq!(tlm[0].seq, Some(5));
+        assert_eq!(tlm[0].analog[0].name, "Vbat");
+        assert!(tlm[0].analog[0].scaled);
+        assert!((tlm[0].analog[0].value - 15.0).abs() < 1e-9); // 0.075 * 200
+        assert_eq!(tlm[0].analog[1].name, "Temp");
+        assert!((tlm[0].analog[1].value - 25.0).abs() < 1e-9); // 1 * 125 - 100
+    }
+
+    #[test]
+    fn telemetry_data_before_definitions_reemits_when_parm_arrives() {
+        // A listener tuning in mid-stream hears data first (positional names),
+        // then the late PARM definition re-labels the already-heard reading.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.handle_inbound_bytes(&inbound_with("N0CALL", b"T#010,42,0,0,0,0,00000000"), 1000);
+        engine.handle_inbound_bytes(&inbound_with("N0CALL", b":N0CALL   :PARM.Battery"), 1100);
+
+        let tlm = sink.telemetry.lock().unwrap();
+        assert_eq!(tlm.len(), 2, "data emits once; the late PARM re-emits the now-named frame");
+        assert_eq!(tlm[0].analog[0].name, "A1");
+        assert_eq!(tlm[1].analog[0].name, "Battery");
     }
 
     #[test]
