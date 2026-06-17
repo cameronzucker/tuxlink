@@ -6,4 +6,5 @@ pub mod message;
 pub mod native_driver;
 pub mod position;
 pub mod telemetry;
+pub mod telemetry_store;
 pub mod tx;

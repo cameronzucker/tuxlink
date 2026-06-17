@@ -137,6 +137,7 @@ pub fn run_native(
 mod tests {
     use super::*;
     use crate::winlink::aprs::engine::{EventSink, InboundMsg, InboundPos, StateChange};
+    use crate::winlink::aprs::telemetry_store::InboundTelemetry;
     use crate::winlink::aprs::identity::AprsIdentity;
     use crate::winlink::ax25::frame::{Address, Control, Frame, Path};
     use std::sync::Mutex;
@@ -158,6 +159,7 @@ mod tests {
         fn emit_position(&self, ev: InboundPos) {
             self.positions.lock().unwrap().push(ev);
         }
+        fn emit_telemetry(&self, _ev: InboundTelemetry) {}
     }
 
     /// Recording frame tx — the in-memory stand-in for `UvproSession::send_aprs_frame`.
