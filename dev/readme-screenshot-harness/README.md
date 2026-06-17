@@ -91,13 +91,13 @@ WebM. Convert it to a looping animated WebP (what GitHub renders) with ffmpeg:
 cp src-tauri/resources/basemap/world-z0-6.pmtiles public/basemap/
 
 VITE_TUXLINK_FIXTURE=1 pnpm exec vite --host 127.0.0.1 --port 1420 --strictPort  # leave running
-python3 dev/readme-screenshot-harness/screencast.py /tmp/cast                     # -> /tmp/cast/<hash>.webm (2560x1600, 2x)
+python3 dev/readme-screenshot-harness/screencast.py /tmp/cast                     # -> /tmp/cast/<hash>.webm (full-frame, 1280x800)
 
-# screencast.py records at device_scale_factor=2 (retina text) into a 2x video.
-# Downscale to the README display width (860) for crisp text; trim the cold
-# front load (~5 s) to a ~15 s window. q:v is 0-100 (HIGHER = crisper) — keep it
-# high; the 2x source downsamples cleanly, so a crisp 860px lands ~1.3 MB.
-ffmpeg -ss 5.0 -t 15.5 -i /tmp/cast/*.webm \
+# Downscale the full-frame capture to the README display width (860) and trim the
+# cold front load (~9 s) to a ~15 s window. Crispness comes from `q:v` (0-100,
+# HIGHER = crisper) — NOT from a bigger capture. (device_scale_factor=2 does not
+# raise the video resolution; it just letterboxes the frame grey — don't.)
+ffmpeg -ss 8.8 -t 15 -i /tmp/cast/*.webm \
   -vf "fps=10,scale=860:-1:flags=lanczos" \
   -loop 0 -an -vcodec libwebp -q:v 74 -compression_level 6 -preset picture \
   docs/readme/images/tuxlink-demo.webp
@@ -107,5 +107,5 @@ rm public/basemap/world-z0-6.pmtiles
 
 Keep it small: GitHub renders animated WebP/GIF/APNG inline (no `<video>` for
 committed files; animated SVG is stripped by the camo image proxy). Crispness
-comes from the 2x capture + a high `q:v`; the clean downsample keeps the file
-~1.3 MB even at 860 px / 10 fps / q74.
+comes from a high `q:v` (74); a full-frame ~15 s loop at 860 px / 10 fps lands
+~3.4 MB. Drop `q:v` toward ~60 or fps to ~8 if you need it smaller.

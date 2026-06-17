@@ -51,13 +51,15 @@ def main():
         wp.wait_for_timeout(2500)
         warm.close()
 
-        # device_scale_factor=2 renders text at retina; record at 2x pixels so
-        # the downscale to the README display width stays crisp.
+        # record_video_size MUST equal the viewport. A larger size (e.g. a
+        # device_scale_factor=2 + 2x record_video_size attempt) does NOT capture
+        # at higher resolution — Playwright renders the page in the top-left and
+        # letterboxes the rest grey. Crispness comes from a high `q:v` on encode,
+        # not from the capture size.
         ctx = b.new_context(
             viewport=VW,
-            device_scale_factor=2,
             record_video_dir=OUT_DIR,
-            record_video_size={"width": VW["width"] * 2, "height": VW["height"] * 2},
+            record_video_size=VW,
             color_scheme="dark",
         )
         page = ctx.new_page()
