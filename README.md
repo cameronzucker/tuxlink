@@ -37,7 +37,7 @@ VHF and UHF with native control of the Benshi UV-Pro handheld.
 <p align="center"><sub>The running Tuxlink mailbox with privacy-safe sample data: dashboard ribbon, folder sidebar, message list, reading pane, and status bar.</sub></p>
 
 <p align="center">
-  <img src="docs/readme/images/tuxlink-demo.webp" width="760"
+  <img src="docs/readme/images/tuxlink-demo.webp" width="860"
        alt="Tuxlink in action: reading Winlink messages, then bringing up the APRS tactical-chat dock and the heard-station map alongside the mailbox, and moving between the strategic and tactical views">
 </p>
 <p align="center"><sub>The adaptable emcomm workspace: work Winlink email, then bring up APRS tactical chat and the heard-station map alongside it — and move between strategic and tactical without leaving the window.</sub></p>
