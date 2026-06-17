@@ -51,7 +51,15 @@ def main():
         wp.wait_for_timeout(2500)
         warm.close()
 
-        ctx = b.new_context(viewport=VW, record_video_dir=OUT_DIR, record_video_size=VW, color_scheme="dark")
+        # device_scale_factor=2 renders text at retina; record at 2x pixels so
+        # the downscale to the README display width stays crisp.
+        ctx = b.new_context(
+            viewport=VW,
+            device_scale_factor=2,
+            record_video_dir=OUT_DIR,
+            record_video_size={"width": VW["width"] * 2, "height": VW["height"] * 2},
+            color_scheme="dark",
+        )
         page = ctx.new_page()
         page.goto(URL, wait_until="networkidle", timeout=60000)
         page.wait_for_selector("[data-testid=folder-sidebar]", timeout=20000)
