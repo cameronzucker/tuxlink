@@ -3,6 +3,7 @@ import { WizardProvider, useWizard } from './wizardContext';
 import './wizard.css';
 import { Step1Welcome } from './Step1Welcome';
 import { Step2Credentials } from './Step2Credentials';
+import { AccountCreate } from './AccountCreate';
 import { Step2OfflineIdentity } from './Step2OfflineIdentity';
 import { Step3TestSend } from './Step3TestSend';
 import { StepLocation } from './StepLocation';
@@ -27,6 +28,8 @@ export function WizardInner({ onComplete }: WizardInnerProps) {
     <div data-testid="wizard-root" className="wizard-root">
       {state.step === 'account' && <Step1Welcome />}
       {state.step === 'credentials' && <Step2Credentials />}
+      {/* tuxlink-vfb3 sub-project 1: in-app account creation (reached from credentials). */}
+      {state.step === 'account_create' && <AccountCreate />}
       {/* Task 11.5 (tuxlink-d76): offline identity path. */}
       {state.step === 'offline_identity' && <Step2OfflineIdentity />}
       {/* Task 5.4 (tuxlink-9phd): connect-only CMS verification (no transmission). */}

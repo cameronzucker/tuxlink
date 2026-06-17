@@ -10,7 +10,7 @@
 // Buttons disabled during inFlight (spec §3.1).
 // Register link opens in system browser via tauri-plugin-shell (spec §3.7).
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import { useWizard } from './wizardContext';
@@ -120,6 +120,24 @@ export function Step2Credentials() {
   const [submitError, setSubmitError] = useState<WizardError | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string | null>>({});
 
+  // Whether in-app account creation is available on this build (same access-key gate as
+  // the password-change feature — tuxlink-vfb3). When false, the "create account"
+  // affordance degrades to external web registration.
+  const [createAvailable, setCreateAvailable] = useState(false);
+  useEffect(() => {
+    let active = true;
+    invoke<boolean>('cms_password_change_available')
+      .then((v) => {
+        if (active) setCreateAvailable(Boolean(v));
+      })
+      .catch(() => {
+        if (active) setCreateAvailable(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // ── Field handlers ─────────────────────────────────────────────────────
 
   const handleCallsignChange = useCallback((value: string) => {
@@ -206,13 +224,7 @@ export function Step2Credentials() {
   return (
     <div className="wizard-step wizard-step-credentials">
       <h1>Your Winlink CMS credentials</h1>
-      <p>
-        Enter the callsign and password for your{' '}
-        <a href={WINLINK_REGISTER_URL} onClick={handleRegisterClick} role="link" aria-label="Register a Winlink account">
-          Winlink account
-        </a>
-        . Don't have one? Click "Register" above to create one first.
-      </p>
+      <p>Enter the callsign and password for your Winlink account.</p>
 
       <form noValidate onSubmit={e => e.preventDefault()}>
         {/* Shared callsign + password fields (tuxlink-vfb3). The wizard's ids
@@ -276,6 +288,36 @@ export function Step2Credentials() {
             Save credentials and skip verification
           </button>
         </div>
+
+        {/* Create-account affordance (tuxlink-vfb3). In-app when the CMS account API is
+         *  configured; otherwise degrades to today's external web registration. */}
+        <p className="wizard-create-line">
+          New to Winlink?{' '}
+          {createAvailable ? (
+            <button
+              type="button"
+              className="wizard-linklike"
+              data-testid="cred-create-account"
+              onClick={() => dispatch({ type: 'GO_TO_ACCOUNT_CREATE' })}
+              disabled={state.inFlight}
+            >
+              Create a Winlink account
+            </button>
+          ) : (
+            <>
+              <a
+                href={WINLINK_REGISTER_URL}
+                onClick={handleRegisterClick}
+                role="link"
+                data-testid="cred-register-external"
+                aria-label="Register a Winlink account"
+              >
+                Register on winlink.org
+              </a>{' '}
+              <span className="wizard-field-hint wizard-inline-hint">(opens your browser)</span>
+            </>
+          )}
+        </p>
       </form>
     </div>
   );

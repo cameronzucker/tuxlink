@@ -1,6 +1,7 @@
 // Step2Credentials.test.tsx — Task 3.3 / tuxlink-1r5
 // Spec: §3.3 (Step 2-CMS behavior), §3.5 (error UX), §3.7 (shell-open for Register link)
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { useEffect } from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { WizardProvider, useWizard } from './wizardContext';
 import { Step2Credentials } from './Step2Credentials';
@@ -40,6 +41,10 @@ function StepWithProbe() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: invoke resolves undefined. Covers the on-mount cms_password_change_available
+  // availability probe (tuxlink-vfb3); when it resolves falsy the create affordance shows
+  // the external "Register on winlink.org" link. Tests override per-case.
+  (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -250,5 +255,44 @@ describe('<Step2Credentials>', () => {
 
     // Resolve the hanging promise to let teardown proceed cleanly.
     act(() => { resolveInvoke!(); });
+  });
+
+  // ── Create-account affordance (tuxlink-vfb3 sub-project 1) ──────────────
+  it('shows the in-app "Create a Winlink account" button when the feature is available', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(true); // cms_password_change_available → true
+    renderStep2();
+    await waitFor(() => expect(screen.getByTestId('cred-create-account')).toBeInTheDocument());
+    // The external register fallback is absent in this mode.
+    expect(screen.queryByTestId('cred-register-external')).not.toBeInTheDocument();
+  });
+
+  it('clicking "Create a Winlink account" advances to the account_create step', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    // In production Step2Credentials only renders on the `credentials` step (and
+    // GO_TO_ACCOUNT_CREATE is a strict no-op elsewhere), so seed the wizard there.
+    function SeedCreds() {
+      const { dispatch } = useWizard();
+      useEffect(() => {
+        dispatch({ type: 'SET_CONNECT_TO_CMS', payload: true });
+        dispatch({ type: 'ADVANCE_FROM_ACCOUNT' });
+      }, [dispatch]);
+      return null;
+    }
+    render(
+      <WizardProvider>
+        <SeedCreds />
+        <StepWithProbe />
+      </WizardProvider>
+    );
+    const btn = await screen.findByTestId('cred-create-account');
+    act(() => { fireEvent.click(btn); });
+    await waitFor(() => expect(screen.getByTestId('probe-step')).toHaveTextContent('account_create'));
+  });
+
+  it('degrades to the external winlink.org register link when the feature is unavailable', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(false); // not configured on this build
+    renderStep2();
+    await waitFor(() => expect(screen.getByTestId('cred-register-external')).toBeInTheDocument());
+    expect(screen.queryByTestId('cred-create-account')).not.toBeInTheDocument();
   });
 });

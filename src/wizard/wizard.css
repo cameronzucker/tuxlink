@@ -513,3 +513,27 @@
     color: var(--text-dim);
   }
 }
+
+/* Create-account affordance + the create step (tuxlink-vfb3 sub-project 1). */
+.wizard-root .wizard-create-line {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border-strong);
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+/* A <button> that reads as an inline link (keeps keyboard/focus semantics while
+ * matching the wizard's anchor styling). */
+.wizard-root .wizard-linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-2);
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 186, 110, 0.35);
+}
+.wizard-root .wizard-linklike:hover { color: var(--accent); }
+.wizard-root .wizard-linklike:disabled { opacity: 0.55; cursor: not-allowed; }
+.wizard-root .wizard-inline-hint { display: inline; margin: 0; }
