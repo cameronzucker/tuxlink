@@ -318,6 +318,22 @@ pub fn write_password(callsign: &str, password: &str) -> Result<(), KeyringError
     Ok(())
 }
 
+/// Delete the Winlink password for `callsign` from the OS keyring.
+///
+/// Used when a CMS account is removed at the server (tuxlink-vfb3 `account_remove`)
+/// so the now-dead stored credential is dropped. Idempotent: a missing entry
+/// (`NoEntry`) is success. Any other backend error is surfaced so the caller can
+/// report a keyring/CMS desync rather than a false success.
+pub fn delete_password(callsign: &str) -> Result<(), KeyringError> {
+    let entry = keyring::Entry::new(SERVICE, callsign)
+        .expect("keyring::Entry::new should not fail for valid service/account strings");
+    let entry = RealEntry(entry);
+    match entry.delete_password() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(other) => Err(KeyringError::Backend(format!("{other}"))),
+    }
+}
+
 // ──────────────────────────────────────────────────────────────
 // Winlink station-listing service codes (tuxlink-6j14)
 // ──────────────────────────────────────────────────────────────
