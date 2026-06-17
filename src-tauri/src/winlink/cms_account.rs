@@ -278,7 +278,9 @@ fn looks_like_amateur_callsign(s: &str) -> bool {
     if suffix.is_empty() || suffix.len() > 4 || !suffix.bytes().all(|b| b.is_ascii_uppercase()) {
         return false;
     }
-    let prefix = s[..area].as_bytes();
+    // Slice the byte view directly (not the str then `.as_bytes()`); `area` is the
+    // index of an ASCII digit and the whole string is ASCII-guarded above.
+    let prefix = &s.as_bytes()[..area];
     match prefix.len() {
         1 => prefix[0].is_ascii_uppercase(),
         2 => {
