@@ -95,23 +95,27 @@ pub fn password_change_form(
     ]
 }
 
-/// The common Winlink JSON response envelope. Unknown fields are ignored;
-/// missing fields default (a bare `{}` parses as success-shaped, so we treat a
-/// response lacking an explicit error as success only when `HasError` is false
-/// AND `ErrorCode` is empty).
-#[derive(Debug, Default, Deserialize)]
+/// The common Winlink JSON response envelope. `HasError`, `ResponseStatus`, and
+/// `ErrorCode` are REQUIRED — a body missing any of them fails to parse and is
+/// surfaced as a transport/parse error, NEVER as success. This is a
+/// credential-safety guard (Codex adrev 2026-06-17 P1): a bare `{}`, an upstream
+/// proxy error page, or a future API shape change must not be read as a
+/// confirmed change and trigger a keyring write the CMS never authorized. Only
+/// `ErrorMessage` is optional (a clean success legitimately omits it). Unknown
+/// fields are ignored.
+#[derive(Debug, Deserialize)]
 struct ResponseStatus {
-    #[serde(rename = "ErrorCode", default)]
+    #[serde(rename = "ErrorCode")]
     error_code: String,
     #[serde(rename = "ErrorMessage", default)]
     error_message: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct AccountPasswordSetResponse {
-    #[serde(rename = "ResponseStatus", default)]
+    #[serde(rename = "ResponseStatus")]
     response_status: ResponseStatus,
-    #[serde(rename = "HasError", default)]
+    #[serde(rename = "HasError")]
     has_error: bool,
 }
 
@@ -294,6 +298,28 @@ mod tests {
             parse_password_change_response(body),
             Err(PasswordChangeError::Network { .. })
         ));
+    }
+
+    #[test]
+    fn parse_partial_or_empty_body_is_error_never_success() {
+        // Credential-safety (Codex adrev 2026-06-17 P1): a body missing HasError /
+        // ResponseStatus / ErrorCode must NOT parse as success — otherwise a bare
+        // `{}` or an upstream proxy/error JSON would trigger a keyring write the
+        // CMS never confirmed and corrupt the stored credential.
+        for body in [
+            "{}",
+            r#"{"HasError":false}"#,                          // missing ResponseStatus
+            r#"{"ResponseStatus":{"ErrorCode":""}}"#,          // missing HasError
+            r#"{"ResponseStatus":{},"HasError":false}"#,        // missing ErrorCode
+        ] {
+            assert!(
+                matches!(
+                    parse_password_change_response(body),
+                    Err(PasswordChangeError::Network { .. })
+                ),
+                "partial body must be a parse error, not success: {body}"
+            );
+        }
     }
 
     #[test]
