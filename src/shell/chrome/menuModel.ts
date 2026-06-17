@@ -103,6 +103,9 @@ export const MENU_TREE: TopMenu[] = [
     { id: 'menu:tools:templates', label: 'Templates', disabled: true },
     { separator: true },
     { label: 'Settings', submenu: [
+      // tuxlink-vfb3: Winlink Account — opens the inline Settings panel directly
+      // on the Winlink Account section (CMS password change + keyring re-enter).
+      { id: 'menu:tools:settings_account', label: 'Winlink Account…' },
       // tuxlink-lqw2: the disabled "Connection" leaf was removed (no settings
       // panel behind it). GPS & Privacy is the reachable Settings surface.
       // tuxlink-39b: one entry opens the GPS/privacy settings panel (gps_state +

@@ -10,6 +10,9 @@ vi.mock('./IdentitiesSettings', () => ({
 vi.mock('../location/LocationSettingsPane', () => ({
   LocationSettingsPane: () => <div data-testid="location-settings" />,
 }));
+vi.mock('./WinlinkAccountSettings', () => ({
+  WinlinkAccountSettings: () => <div data-testid="winlink-account-settings" />,
+}));
 import { invoke } from '@tauri-apps/api/core';
 import { SettingsPanel } from './SettingsPanel';
 
@@ -54,6 +57,22 @@ describe('SettingsPanel', () => {
     fireEvent.click(screen.getByTestId('settings-nav-identities'));
     expect(await screen.findByTestId('settings-pane-identities')).toBeInTheDocument();
     expect(screen.getByTestId('identities-settings')).toBeInTheDocument();
+  });
+
+  // tuxlink-vfb3: the Winlink Account section hosts CMS password change + the
+  // keyring-only re-enter recovery.
+  it('renders the Winlink Account section (nav + inline pane)', async () => {
+    render(<SettingsPanel open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('settings-nav-account'));
+    expect(await screen.findByTestId('settings-pane-account')).toBeInTheDocument();
+    expect(screen.getByTestId('winlink-account-settings')).toBeInTheDocument();
+  });
+
+  // tuxlink-vfb3: opening directly on the account section (the menu entry point).
+  it('honors initialSection=account', async () => {
+    render(<SettingsPanel open onClose={vi.fn()} initialSection="account" />);
+    expect(await screen.findByTestId('settings-pane-account')).toBeInTheDocument();
+    expect(screen.getByTestId('winlink-account-settings')).toBeInTheDocument();
   });
 
   it('loads current config and checks the matching radios (GPS state section)', async () => {

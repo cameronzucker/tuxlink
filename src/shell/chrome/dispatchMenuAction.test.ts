@@ -14,6 +14,7 @@ function handlers(): MenuHandlers {
     verifyCms: vi.fn(),
     setScheme: vi.fn(),
     openSettings: vi.fn(),
+    openWinlinkAccount: vi.fn(),
     openThemeDesigner: vi.fn(),
     openAbout: vi.fn(),
     openHelp: vi.fn(),
@@ -176,6 +177,15 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:tools:settings_privacy', h);
     expect(h.openSettings).toHaveBeenCalledOnce();
+  });
+
+  // tuxlink-vfb3: Winlink Account opens the Settings panel on the account section.
+  it('routes the Winlink Account settings item to openWinlinkAccount', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:tools:settings_account', h);
+    expect(h.openWinlinkAccount).toHaveBeenCalledOnce();
+    // Must NOT also fire the GPS/privacy entry point.
+    expect(h.openSettings).not.toHaveBeenCalled();
   });
 
   // tuxlink-eymu: the Request Center replaces the standalone Catalog Request

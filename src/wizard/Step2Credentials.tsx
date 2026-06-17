@@ -15,6 +15,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import { useWizard } from './wizardContext';
 import { validateCallsign, validatePassword } from './validators';
+import { CredentialFields } from './CredentialFields';
 import type { WizardError } from './types';
 
 // Winlink account registration URL — opened in system browser, never in webview (spec §3.7).
@@ -116,7 +117,6 @@ export function Step2Credentials() {
   // Tracks the last auto-filled MBO value so we know when it's still auto-filled.
   const [lastAutoMbo, setLastAutoMbo] = useState<string>(state.mboAddress);
 
-  const [showPassword, setShowPassword] = useState(false);
   const [submitError, setSubmitError] = useState<WizardError | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string | null>>({});
 
@@ -215,48 +215,17 @@ export function Step2Credentials() {
       </p>
 
       <form noValidate onSubmit={e => e.preventDefault()}>
-        {/* Callsign field */}
-        <div className="wizard-field">
-          <label htmlFor="w-callsign">Callsign *</label>
-          <input
-            id="w-callsign"
-            type="text"
-            autoCapitalize="characters"
-            autoComplete="username"
-            value={callsign}
-            onChange={e => handleCallsignChange(e.target.value)}
-            onBlur={handleCallsignBlur}
-            disabled={state.inFlight}
-            aria-describedby={fieldErrors.callsign ? 'callsign-error' : undefined}
-          />
-          {fieldErrors.callsign && (
-            <span id="callsign-error" role="alert" className="wizard-field-error">
-              {fieldErrors.callsign}
-            </span>
-          )}
-        </div>
-
-        {/* Password field with show/hide toggle */}
-        <div className="wizard-field">
-          <label htmlFor="w-password">CMS password *</label>
-          <div className="wizard-password-row">
-            <input
-              id="w-password"
-              type={showPassword ? 'text' : 'password'}
-              autoComplete="current-password"
-              value={password}
-              onChange={e => handlePasswordChange(e.target.value)}
-              disabled={state.inFlight}
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(v => !v)}
-              aria-label={showPassword ? 'Conceal password field' : 'Reveal password field'}
-            >
-              {showPassword ? 'Hide' : 'Show'}
-            </button>
-          </div>
-        </div>
+        {/* Shared callsign + password fields (tuxlink-vfb3). The wizard's ids
+         *  ('w-callsign' / 'w-password') are preserved via the default idPrefix. */}
+        <CredentialFields
+          callsign={callsign}
+          password={password}
+          onCallsignChange={handleCallsignChange}
+          onPasswordChange={handlePasswordChange}
+          onCallsignBlur={handleCallsignBlur}
+          callsignError={fieldErrors.callsign}
+          disabled={state.inFlight}
+        />
 
         {/* Grid moved to the dedicated Location step (tuxlink-9xy1). */}
 
