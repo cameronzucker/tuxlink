@@ -30,11 +30,15 @@
    * child out of flow (the original grid-implosion root cause). `.sidebar` (the
    * rail, column 1) and the absolute `.radio-drawer` overlay are intentionally
    * unpinned. MessageList's ROOT element is `.rows-pane`; the reading pane and
-   * StubPanel both carry `.reading-pane`. Both are DIRECT `.panes` children. */
+   * StubPanel both carry `.reading-pane`. The APRS positions map
+   * (`.aprs-positions-map`, tuxlink-6vgt) is the OTHER reading-pane-slot child;
+   * it does NOT carry `.reading-pane`, so it needs its own pin here or it
+   * auto-flows (tuxlink-kkr5). All are DIRECT `.panes` children. */
   .layout-b .panes > .rows-pane {
     grid-column: 2;
   }
-  .layout-b .panes > .reading-pane {
+  .layout-b .panes > .reading-pane,
+  .layout-b .panes > .aprs-positions-map {
     grid-column: 3;
   }
 
