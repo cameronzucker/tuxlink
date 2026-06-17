@@ -46,6 +46,12 @@ jobs:
       # linuxdeploy / appimagetool need FUSE, which isn't available in a
       # container; run them extracted instead of mounting a FUSE image.
       APPIMAGE_EXTRACT_AND_RUN: "1"
+    defaults:
+      run:
+        # Container jobs default `run:` to `sh` (dash), which rejects the
+        # `set -o pipefail` the staging steps use. buildpack-deps:bookworm ships
+        # bash; pin it so the steps behave as on the host runner.
+        shell: bash
     steps:
       - uses: actions/checkout@v6
 
