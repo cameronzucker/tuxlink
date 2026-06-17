@@ -38,9 +38,9 @@ VHF and UHF with native control of the Benshi UV-Pro handheld.
 
 <p align="center">
   <img src="docs/readme/images/tuxlink-demo.webp" width="760"
-       alt="Tuxlink in action: opening a Winlink message into the reading pane, bringing up the APRS tactical-chat dock with live traffic, then cycling the color schemes from dark to night-tactical red to daylight">
+       alt="Tuxlink in action: reading Winlink messages, then bringing up the APRS tactical-chat dock and the heard-station map alongside the mailbox, and moving between the strategic and tactical views">
 </p>
-<p align="center"><sub>Open a Winlink message, bring up APRS tactical chat alongside it, and re-skin the whole interface for the lighting at hand.</sub></p>
+<p align="center"><sub>The adaptable emcomm workspace: work Winlink email, then bring up APRS tactical chat and the heard-station map alongside it — and move between strategic and tactical without leaving the window.</sub></p>
 
 ## What Tuxlink is
 

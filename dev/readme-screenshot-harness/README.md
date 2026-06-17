@@ -79,21 +79,29 @@ traffic) and `window.__harness.scheme(id)` (flip the color scheme on cue).
 
 ## Animated screencast
 
-`screencast.py` drives Chromium (Playwright) through a scripted flow — open a
-message, toggle the APRS dock with injected traffic, cycle color schemes — and
-records a WebM. Convert it to a looping animated WebP (what GitHub renders) with
-ffmpeg:
+`screencast.py` drives Chromium (Playwright) through a scripted flow — read
+Winlink messages, toggle the APRS dock (with injected chat traffic + heard
+positions), open the heard-station map, and move between the two — and records a
+WebM. Convert it to a looping animated WebP (what GitHub renders) with ffmpeg:
 
 ```bash
+# The map renders from the bundled basemap. Glyphs+sprites are already served
+# from public/basemap/; copy the 43 MB vector archive there too (NOT committed),
+# and the harness redirects its tile:// fetches to it. Remove it after.
+cp src-tauri/resources/basemap/world-z0-6.pmtiles public/basemap/
+
 VITE_TUXLINK_FIXTURE=1 pnpm exec vite --host 127.0.0.1 --port 1420 --strictPort  # leave running
 python3 dev/readme-screenshot-harness/screencast.py /tmp/cast                     # -> /tmp/cast/<hash>.webm
 
-ffmpeg -ss 0.4 -i /tmp/cast/*.webm \
-  -vf "fps=10,scale=760:-1:flags=lanczos" \
-  -loop 0 -an -vcodec libwebp -lossless 0 -q:v 35 -compression_level 6 -preset picture \
+# Trim the front load (the recorded context reloads cold ~9 s), ~15 s window:
+ffmpeg -ss 8.8 -t 15 -i /tmp/cast/*.webm \
+  -vf "fps=9,scale=720:-1:flags=lanczos" \
+  -loop 0 -an -vcodec libwebp -lossless 0 -q:v 34 -compression_level 6 -preset picture \
   docs/readme/images/tuxlink-demo.webp
+
+rm public/basemap/world-z0-6.pmtiles
 ```
 
 Keep it small: GitHub renders animated WebP/GIF/APNG inline (no `<video>` for
-committed files; animated SVG is stripped by the camo image proxy). 10 fps /
-760 px / q35 lands ~2 MB for a ~13 s loop.
+committed files; animated SVG is stripped by the camo image proxy). 9 fps /
+720 px / q34 lands ~1.6 MB for a ~15 s loop.
