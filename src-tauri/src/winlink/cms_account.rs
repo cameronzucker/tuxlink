@@ -8,16 +8,18 @@
 //! [`crate::winlink::credentials::write_password`]); any failure leaves the
 //! prior credential untouched.
 //!
-//! ## Access code (injected — never a committed literal)
+//! ## Access key (injected — never a committed literal)
 //!
-//! These account ops are gated by a client-shared `WebServiceAccesscode` (the
-//! same one every Winlink-family client uses). It is NOT a per-user secret, but
-//! tuxlink does not republish another application's key into open source, and a
-//! tuxlink-issued key is the sanctioned path (keys are issued per-application by
-//! a Winlink administrator). The code is therefore read at runtime from the
-//! `TUXLINK_WINLINK_ACCESS_CODE` environment variable; when it is absent the
-//! feature reports itself unavailable and the wizard control is gated off, so
-//! the open source ships no literal and source-builders never hit a dead form.
+//! Every op authenticates with a single `Key` form param (the live ServiceStack
+//! contract; the decompile's per-endpoint `WebServiceAccesscode`/`Requester` is
+//! stale and unused). tuxlink does not republish another application's key into
+//! open source, and a tuxlink-issued key is the sanctioned path (keys are issued
+//! per-application by a Winlink administrator). The key is therefore read at
+//! runtime from the `TUXLINK_WINLINK_ACCESS_CODE` environment variable; when it is
+//! absent the feature reports itself unavailable and the wizard control is gated
+//! off, so the open source ships no literal and source-builders never hit a dead
+//! form. (The shared WLE 1.8.2.0 key is rejected by the current server with
+//! `InvalidAccessKey`; a Tuxlink-issued key is required for any live call.)
 //!
 //! ## Testing
 //!
@@ -68,9 +70,12 @@ pub enum AccountApiError {
     /// problem. (Verified against the live API 2026-06-17: the shared WLE code is
     /// rejected; a Tuxlink-issued key is required — see the account-API spec.)
     InvalidKey,
-    /// The CMS rejected the request. `message` is the server's
-    /// `ResponseStatus.Message`, surfaced verbatim.
-    Rejected { message: String },
+    /// The CMS rejected the request. `code` is the server's
+    /// `ResponseStatus.ErrorCode` (machine-readable, lets a caller branch on the
+    /// specific rejection — e.g. a bad password vs. an unknown account on
+    /// `validate`); `message` is its `ResponseStatus.Message`, surfaced verbatim
+    /// (a coded fallback is used when the server gives none).
+    Rejected { code: String, message: String },
     /// A mutating op succeeded at the CMS but the keyring write/delete failed.
     /// The server state and the local keyring are out of sync — the UI must tell
     /// the operator (e.g. re-enter the credential to resync).
@@ -79,10 +84,13 @@ pub enum AccountApiError {
     /// tactical/hyphenated identifier on a full-account-only op, or a missing
     /// required field). `field` names what was rejected.
     InvalidInput { field: String },
-    /// A mutating call's outcome is indeterminate — the request was sent but the
-    /// response was lost (timeout/transport drop after send), so whether the
-    /// server committed the change is unknown. The caller must reconcile (e.g.
-    /// `account_exists`) before assuming success or failure.
+    /// The call's outcome is indeterminate — the request may already have reached
+    /// the server (a timeout, or a response whose body was lost) but the result was
+    /// not observed. It matters most for MUTATING ops: the server may have committed
+    /// the create/change/remove, so the caller must reconcile (e.g. `account_exists`)
+    /// before assuming success/failure or touching the keyring. For read ops it is
+    /// simply a retryable "couldn't confirm". Distinct from `Network`, which is a
+    /// failure that definitely happened before the request was sent.
     UnknownOutcome,
 }
 
@@ -132,6 +140,16 @@ fn account_create_form(account: &str, password: &str, recovery_email: &str) -> V
     ]
 }
 
+/// Op-specific form params for `/account/password/validate`. Verified live: the
+/// op takes `Callsign` + `Password` and the response is envelope-only — the result
+/// is conveyed by ServiceStack success/error, not a payload field.
+fn password_validate_form(account: &str, password: &str) -> Vec<(&'static str, String)> {
+    vec![
+        ("Callsign", account.to_string()),
+        ("Password", password.to_string()),
+    ]
+}
+
 /// Op-specific form params for `/account/password/recovery/email/set`.
 fn account_set_recovery_form(account: &str, password: &str, recovery_email: &str) -> Vec<(&'static str, String)> {
     vec![
@@ -141,34 +159,90 @@ fn account_set_recovery_form(account: &str, password: &str, recovery_email: &str
     ]
 }
 
-/// Classify a parsed ServiceStack response (live contract, verified 2026-06-17).
-/// Success ⇔ no error (`ResponseStatus` absent or its `ErrorCode` empty). Failure
-/// ⇔ a non-empty `ResponseStatus.ErrorCode`; `InvalidAccessKey` maps to
-/// `InvalidKey`, anything else to `Rejected` with the server's `Message` verbatim
-/// (coded fallback when the server gives none). The error text is `Message`, NOT
-/// the decompile's `ErrorMessage`; there is no `HasError` field.
-fn account_error_from_value(v: &serde_json::Value) -> Result<(), AccountApiError> {
-    let rs = v.get("ResponseStatus");
-    let code = rs
-        .and_then(|r| r.get("ErrorCode"))
-        .and_then(|c| c.as_str())
-        .unwrap_or("");
-    if code.trim().is_empty() {
-        return Ok(());
-    }
+/// Map a ServiceStack error `code` (+ optional `message`) to the right variant:
+/// `InvalidAccessKey` is special-cased to `InvalidKey` (the operator's access key
+/// is the problem, not the request); everything else is `Rejected` carrying the
+/// code plus the server's `Message` verbatim (a coded fallback when none is given).
+fn classify_error_code(code: &str, message: Option<&str>) -> AccountApiError {
     if code == "InvalidAccessKey" {
-        return Err(AccountApiError::InvalidKey);
+        return AccountApiError::InvalidKey;
     }
-    let msg = rs
-        .and_then(|r| r.get("Message"))
-        .and_then(|m| m.as_str())
-        .unwrap_or("");
-    let message = if msg.trim().is_empty() {
-        format!("request rejected (code {code})")
-    } else {
-        msg.to_string()
+    let message = match message {
+        Some(m) if !m.trim().is_empty() => m.to_string(),
+        _ => format!("request rejected (code {code})"),
     };
-    Err(AccountApiError::Rejected { message })
+    AccountApiError::Rejected { code: code.to_string(), message }
+}
+
+/// Classify a parsed ServiceStack response (live contract, verified 2026-06-17).
+/// Success ⇔ no error: `ResponseStatus` absent/null, or present-and-well-formed
+/// with an empty `ErrorCode` and no `Errors[]`. Failure ⇔ a non-empty
+/// `ErrorCode` (or a nested `Errors[]` carrying one). The error text is `Message`,
+/// NOT the decompile's `ErrorMessage`; there is no `HasError` field.
+///
+/// **Fail closed (Codex adrev 2026-06-17 P2):** a *present but malformed*
+/// `ResponseStatus` — a non-object value, a non-string `ErrorCode`, or a non-empty
+/// `Errors[]` whose first entry has no usable code — is a transport error, NEVER a
+/// silent `Ok`. Otherwise a HTTP-200 body in one of those shapes could be read as a
+/// confirmed mutation and trigger an unwanted keyring write/delete.
+fn account_error_from_value(v: &serde_json::Value) -> Result<(), AccountApiError> {
+    let rs = match v.get("ResponseStatus") {
+        None | Some(serde_json::Value::Null) => return Ok(()),
+        Some(rs) => rs,
+    };
+    let obj = match rs.as_object() {
+        Some(o) => o,
+        None => {
+            return Err(AccountApiError::Network {
+                reason: "malformed account API response: ResponseStatus is not an object"
+                    .to_string(),
+            })
+        }
+    };
+    let code = match obj.get("ErrorCode") {
+        None | Some(serde_json::Value::Null) => "",
+        Some(serde_json::Value::String(s)) => s.as_str(),
+        Some(_) => {
+            return Err(AccountApiError::Network {
+                reason: "malformed account API response: ResponseStatus.ErrorCode is not a string"
+                    .to_string(),
+            })
+        }
+    };
+    if !code.trim().is_empty() {
+        return Err(classify_error_code(code, obj.get("Message").and_then(|m| m.as_str())));
+    }
+    // Empty top-level ErrorCode, but a non-empty Errors[] still signals a real
+    // error — never read it as success. Classify from the first entry; if that
+    // entry has no usable code, fail closed rather than guess.
+    if let Some(first) = obj.get("Errors").and_then(|e| e.as_array()).and_then(|a| a.first()) {
+        let nested_code = first.get("ErrorCode").and_then(|c| c.as_str());
+        return match nested_code {
+            Some(c) if !c.trim().is_empty() => {
+                Err(classify_error_code(c, first.get("Message").and_then(|m| m.as_str())))
+            }
+            _ => Err(AccountApiError::Network {
+                reason: "malformed account API response: ResponseStatus.Errors entry without a usable ErrorCode"
+                    .to_string(),
+            }),
+        };
+    }
+    Ok(())
+}
+
+/// Classify a transport-layer failure for an account-API call. `maybe_after_send`
+/// is true when the request may already have reached the server (a timeout, or a
+/// response whose body could not be read): for a MUTATING op the server may have
+/// committed the change, so the outcome is indeterminate (`UnknownOutcome`) and the
+/// caller must reconcile before touching the keyring. A failure that is definitely
+/// before send (connection refused, DNS, TLS handshake) is a retryable `Network`
+/// error. (Codex adrev 2026-06-17 P1.)
+fn classify_transport_error(maybe_after_send: bool, reason: String) -> AccountApiError {
+    if maybe_after_send {
+        AccountApiError::UnknownOutcome
+    } else {
+        AccountApiError::Network { reason }
+    }
 }
 
 /// Parse a Winlink account-API response body. A body that is not valid JSON (a
@@ -182,19 +256,46 @@ pub fn parse_password_change_response(body: &str) -> Result<(), AccountApiError>
     account_error_from_value(&v)
 }
 
+/// Whether `s` (already uppercased + SSID-stripped) is structurally a real amateur
+/// callsign rather than a tactical/word label (`RELAY1`, `EOC1`, `TEST123`,
+/// `ARES`). Grammar: a 1–2 char prefix — `[A-Z]{1,2}` or a digit-led `[0-9][A-Z]`
+/// for calls like `2E0AAA` / `9A1AA` — then the single call-area digit, then a 1–4
+/// letter suffix. The tactical labels fail because their digits trail the letters
+/// with no letter suffix after the area digit. A too-loose check is the dangerous
+/// direction here (the string is sent verbatim as `Callsign` on create/remove), so
+/// the grammar is strict; a rejected real call is a recoverable input error.
+/// (Replaces the has-a-digit heuristic flagged by Codex adrev 2026-06-17 P2.)
+fn looks_like_amateur_callsign(s: &str) -> bool {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()) {
+        return false;
+    }
+    // The call-area digit is the LAST digit; the suffix after it must be 1–4 letters.
+    let area = match s.rfind(|c: char| c.is_ascii_digit()) {
+        Some(i) => i,
+        None => return false,
+    };
+    let suffix = &s[area + 1..];
+    if suffix.is_empty() || suffix.len() > 4 || !suffix.bytes().all(|b| b.is_ascii_uppercase()) {
+        return false;
+    }
+    let prefix = s[..area].as_bytes();
+    match prefix.len() {
+        1 => prefix[0].is_ascii_uppercase(),
+        2 => {
+            (prefix[0].is_ascii_uppercase() && prefix[1].is_ascii_uppercase())
+                || (prefix[0].is_ascii_digit() && prefix[1].is_ascii_uppercase())
+        }
+        _ => false,
+    }
+}
+
 /// Reject tactical/hyphenated identifiers on these full-account-only ops, and
 /// return the base account callsign (SSID-stripped, uppercased) otherwise. The
 /// base-callsign strip is destructive for tactical addresses (`EOC-1` -> `EOC`),
-/// so these commands accept only real callsigns. Heuristic: ASCII-alphanumeric,
-/// 3–10 chars, with at least one letter AND one digit (catches the common
-/// tactical/word identifiers; tactical account ops are a non-goal of this layer).
+/// so these commands accept only real callsigns (see `looks_like_amateur_callsign`).
 fn normalize_account_callsign(raw: &str) -> Result<String, AccountApiError> {
     let base = account_callsign(raw);
-    let looks_like_callsign = (3..=10).contains(&base.len())
-        && base.chars().all(|c| c.is_ascii_alphanumeric())
-        && base.chars().any(|c| c.is_ascii_digit())
-        && base.chars().any(|c| c.is_ascii_alphabetic());
-    if looks_like_callsign {
+    if looks_like_amateur_callsign(&base) {
         Ok(base)
     } else {
         Err(AccountApiError::InvalidInput {
@@ -226,18 +327,24 @@ async fn post_account_form(
     params.push(("Key", code));
 
     let url = format!("{API_BASE}{path}?format=json");
+    // A connection-level failure (refused / DNS / TLS) happened before the request
+    // was sent ⇒ Network. A timeout (or any other send failure) may have reached the
+    // server ⇒ UnknownOutcome, so a mutation never reports a false "nothing happened".
     let resp = account_client()?
         .post(&url)
         .form(&params)
         .send()
         .await
-        .map_err(|e| AccountApiError::Network { reason: e.to_string() })?;
+        .map_err(|e| classify_transport_error(!e.is_connect(), e.to_string()))?;
 
     let status = resp.status();
+    // The response header arrived (we have a status) but the body was lost — the
+    // server processed the request, so the outcome is indeterminate, not a clean
+    // pre-send failure.
     let body = resp
         .text()
         .await
-        .map_err(|e| AccountApiError::Network { reason: e.to_string() })?;
+        .map_err(|e| classify_transport_error(true, e.to_string()))?;
 
     let value: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| AccountApiError::Network {
@@ -264,6 +371,38 @@ async fn post_account_form(
 pub struct AccountExistsResult {
     pub exists: bool,
     pub blocked: bool,
+}
+
+/// Result of [`account_validate_password`]. The live `/account/password/validate`
+/// response is envelope-only (no payload field), so a server *success* means the
+/// password is correct and a server *rejection* (HTTP 400 + `ResponseStatus`) means
+/// it is not. `Invalid` carries the server's `code`+`message` so the UI can both
+/// branch on the machine code (e.g. unknown account vs. wrong password) and show the
+/// message verbatim — without conflating either with a transport error.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind")]
+pub enum PasswordValidation {
+    /// The supplied password is correct for the account.
+    Valid,
+    /// The server rejected the password (wrong password, unknown account, …).
+    Invalid { code: String, message: String },
+}
+
+/// Map a `post_account_form` result into a [`PasswordValidation`]. A server-level
+/// `Rejected` IS the answer for a validate (the password is wrong / no such
+/// account), so it becomes `Invalid` — NOT an error. Genuine transport / config /
+/// access-key failures still propagate as `Err`, so the UI never shows "password
+/// invalid" when it actually failed to reach the server.
+fn validation_from_result(
+    r: Result<serde_json::Value, AccountApiError>,
+) -> Result<PasswordValidation, AccountApiError> {
+    match r {
+        Ok(_) => Ok(PasswordValidation::Valid),
+        Err(AccountApiError::Rejected { code, message }) => {
+            Ok(PasswordValidation::Invalid { code, message })
+        }
+        Err(other) => Err(other),
+    }
 }
 
 /// Change the CMS account password (current -> new). The caller supplies the
@@ -308,6 +447,23 @@ pub async fn account_exists(raw_callsign: &str) -> Result<AccountExistsResult, A
         })?;
     let blocked = v.get("Blocked").and_then(|x| x.as_bool()).unwrap_or(false);
     Ok(AccountExistsResult { exists, blocked })
+}
+
+/// Verify that `password` is the current CMS password for `raw_callsign`. Read-only
+/// (no keyring, no mutation lock). A correct password yields `Valid`; a server
+/// rejection yields `Invalid` with the server's code+message; transport/config
+/// errors are `Err`. The op-level route is verified `POST`-only.
+pub async fn account_validate_password(
+    raw_callsign: &str,
+    password: &str,
+) -> Result<PasswordValidation, AccountApiError> {
+    let account = normalize_account_callsign(raw_callsign)?;
+    let r = post_account_form(
+        "/account/password/validate",
+        password_validate_form(&account, password),
+    )
+    .await;
+    validation_from_result(r)
 }
 
 /// Create a CMS account (callsign + password + MANDATORY recovery email). On a
@@ -418,6 +574,16 @@ pub async fn cms_account_exists(raw_callsign: String) -> Result<AccountExistsRes
     account_exists(&raw_callsign).await
 }
 
+/// Verify a password against the CMS account (returns Valid/Invalid). Read-only;
+/// no keyring effect.
+#[tauri::command]
+pub async fn cms_account_validate_password(
+    raw_callsign: String,
+    password: String,
+) -> Result<PasswordValidation, AccountApiError> {
+    account_validate_password(&raw_callsign, &password).await
+}
+
 /// Set/replace the account's recovery email (current password required as proof).
 #[tauri::command]
 pub async fn cms_account_set_recovery_email(
@@ -499,13 +665,33 @@ mod tests {
 
     #[test]
     fn normalize_rejects_tactical_and_word_identifiers() {
-        // No digit (word-like) or otherwise non-callsign → InvalidInput, never a
-        // silently-mangled base callsign.
-        for raw in ["EOC-1", "ARES", "EOC", "BAOFENG-FM"] {
+        // Tactical/word labels → InvalidInput, never a silently-mangled callsign sent
+        // to a full-account op. RELAY1/EOC1/TEST123 are the cases the old has-a-digit
+        // heuristic wrongly accepted (Codex adrev 2026-06-17 P2): their digits trail
+        // the letters with no letter suffix after the area digit.
+        for raw in [
+            "EOC-1", "ARES", "EOC", "BAOFENG-FM", "RELAY1", "EOC1", "TEST123", "RELAY-1",
+        ] {
             assert!(
                 matches!(normalize_account_callsign(raw), Err(AccountApiError::InvalidInput { .. })),
                 "should reject tactical/word input: {raw}"
             );
+        }
+    }
+
+    #[test]
+    fn normalize_accepts_standard_and_digit_led_callsigns() {
+        // Standard US forms (1x2/1x3/2x2/2x3) plus digit-led international prefixes
+        // (2E0AAA, 9A1AA) the grammar must allow.
+        for (raw, want) in [
+            ("w1aw", "W1AW"),
+            ("k1abc", "K1ABC"),
+            ("aa7bc", "AA7BC"),
+            ("kh6abc", "KH6ABC"),
+            ("2e0aaa", "2E0AAA"),
+            ("9a1aa", "9A1AA"),
+        ] {
+            assert_eq!(normalize_account_callsign(raw), Ok(want.to_string()), "raw={raw}");
         }
     }
 
@@ -522,11 +708,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_with_verbatim_message_from_response_status() {
+    fn parse_rejects_with_verbatim_message_and_code_from_response_status() {
         let body = r#"{"ResponseStatus":{"ErrorCode":"AUTH","Message":"Old password is incorrect"}}"#;
         assert_eq!(
             parse_password_change_response(body),
             Err(AccountApiError::Rejected {
+                code: "AUTH".to_string(),
                 message: "Old password is incorrect".to_string()
             })
         );
@@ -546,7 +733,8 @@ mod tests {
     fn parse_rejection_without_message_uses_code_fallback() {
         let body = r#"{"ResponseStatus":{"ErrorCode":"X1","Message":""}}"#;
         match parse_password_change_response(body) {
-            Err(AccountApiError::Rejected { message }) => {
+            Err(AccountApiError::Rejected { code, message }) => {
+                assert_eq!(code, "X1");
                 assert!(message.contains("X1"), "fallback should cite the code: {message}");
             }
             other => panic!("expected Rejected, got {other:?}"),
@@ -566,6 +754,99 @@ mod tests {
                 "unparseable body must be a transport error: {body:?}"
             );
         }
+    }
+
+    #[test]
+    fn parse_fails_closed_on_malformed_response_status() {
+        // A present-but-malformed ResponseStatus must be a transport error, never a
+        // silent success that could trigger a keyring mutation (Codex adrev P2).
+        for body in [
+            // ResponseStatus is not an object.
+            r#"{"ResponseStatus":"boom"}"#,
+            r#"{"ResponseStatus":42}"#,
+            r#"{"ResponseStatus":[]}"#,
+            // ErrorCode is present but not a string.
+            r#"{"ResponseStatus":{"ErrorCode":500}}"#,
+            r#"{"ResponseStatus":{"ErrorCode":true}}"#,
+            // Empty top-level code, but a nested error entry with no usable code.
+            r#"{"ResponseStatus":{"ErrorCode":"","Errors":[{"FieldName":"Key"}]}}"#,
+        ] {
+            assert!(
+                matches!(parse_password_change_response(body), Err(AccountApiError::Network { .. })),
+                "malformed ResponseStatus must fail closed: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_classifies_nested_error_when_top_level_code_empty() {
+        // Top-level ErrorCode empty but Errors[] carries the real rejection → not a
+        // success. The nested code+message drive the classification.
+        let body = r#"{"ResponseStatus":{"ErrorCode":"","Errors":[{"ErrorCode":"BadPassword","Message":"nope"}]}}"#;
+        assert_eq!(
+            parse_password_change_response(body),
+            Err(AccountApiError::Rejected { code: "BadPassword".to_string(), message: "nope".to_string() })
+        );
+        // A nested InvalidAccessKey still maps to InvalidKey.
+        let body = r#"{"ResponseStatus":{"ErrorCode":"","Errors":[{"ErrorCode":"InvalidAccessKey","Message":"x"}]}}"#;
+        assert_eq!(parse_password_change_response(body), Err(AccountApiError::InvalidKey));
+    }
+
+    #[test]
+    fn parse_empty_errors_array_is_still_success() {
+        // An explicit empty Errors[] with no code is a success shape, not an error.
+        let body = r#"{"ResponseStatus":{"ErrorCode":"","Errors":[]}}"#;
+        assert_eq!(parse_password_change_response(body), Ok(()));
+    }
+
+    #[test]
+    fn classify_transport_error_maps_after_send_to_unknown_outcome() {
+        // A maybe-after-send failure (timeout / lost body) is indeterminate so a
+        // mutation can reconcile; a definitely-before-send failure is plain Network.
+        assert_eq!(
+            classify_transport_error(true, "timed out".to_string()),
+            AccountApiError::UnknownOutcome
+        );
+        assert_eq!(
+            classify_transport_error(false, "connection refused".to_string()),
+            AccountApiError::Network { reason: "connection refused".to_string() }
+        );
+    }
+
+    #[test]
+    fn validate_form_carries_callsign_and_password_only() {
+        let form = password_validate_form("W4PHS", "secretpw");
+        assert_eq!(get(&form, "Callsign"), Some("W4PHS"));
+        assert_eq!(get(&form, "Password"), Some("secretpw"));
+        assert_eq!(get(&form, "Key"), None); // appended by post_account_form
+        assert_eq!(form.len(), 2);
+    }
+
+    #[test]
+    fn validation_from_result_maps_success_rejection_and_transport() {
+        // Server success ⇒ Valid.
+        assert_eq!(
+            validation_from_result(Ok(serde_json::json!({}))),
+            Ok(PasswordValidation::Valid)
+        );
+        // A server Rejected IS the validate answer (not an error) ⇒ Invalid w/ code+msg.
+        assert_eq!(
+            validation_from_result(Err(AccountApiError::Rejected {
+                code: "BadPassword".to_string(),
+                message: "wrong".to_string(),
+            })),
+            Ok(PasswordValidation::Invalid { code: "BadPassword".to_string(), message: "wrong".to_string() })
+        );
+        // A transport failure must NOT be reported as "password invalid".
+        assert_eq!(
+            validation_from_result(Err(AccountApiError::Network { reason: "down".to_string() })),
+            Err(AccountApiError::Network { reason: "down".to_string() })
+        );
+        // InvalidKey likewise propagates as an error, not a validation verdict.
+        assert_eq!(
+            validation_from_result(Err(AccountApiError::InvalidKey)),
+            Err(AccountApiError::InvalidKey)
+        );
     }
 
     #[test]

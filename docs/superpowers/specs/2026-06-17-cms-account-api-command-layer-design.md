@@ -4,6 +4,45 @@
 **Status:** approved (design, v2); implementation pending a valid access key for LIVE use
 **Scope:** sub-project 0 of the CMS account-lifecycle expansion (tuxlink-vfb3 follow-on).
 
+## Revision note (v2.1)
+
+Second Codex adversarial round (2026-06-17, agent `tamarack-slate-fern`) on the
+corrected wire encoding, plus a read-only metadata probe of the live ServiceStack
+DTOs (`api.winlink.org/types/typescript`, no auth required). Folded in:
+
+1. **`account_validate_password` contract verified + built.** `AccountPasswordValidate`
+   (route `/account/password/validate`, POST-only) takes `Callsign`+`Password` and its
+   response is **envelope-only** (`AccountPasswordValidateResponse` extends the bare
+   `WebServiceResponse` — no payload field). The earlier "validation code" payload
+   assumption was wrong: the result is the ServiceStack verdict (success = correct;
+   HTTP-400 `ResponseStatus` = incorrect/no-account). Implemented as a typed
+   `PasswordValidation { Valid | Invalid{code,message} }`; a server rejection is the
+   *answer* (Invalid), while transport/config/access-key failures stay `Err` so the UI
+   never shows "password invalid" for an unreachable server.
+2. **Fail closed on malformed `ResponseStatus` (Codex P2).** A present-but-malformed
+   `ResponseStatus` (non-object, non-string `ErrorCode`, or a non-empty `Errors[]` whose
+   first entry lacks a usable code) is now a transport error, never a silent success —
+   closing a path where an odd HTTP-200 body could trigger an unwanted keyring write.
+   A nested `Errors[]` carrying the real code (top-level empty) is classified, not dropped.
+3. **`UnknownOutcome` for in-flight mutation failures (Codex P1).** A timeout (or a lost
+   response body) now maps to `UnknownOutcome` rather than `Network`, so a mutation —
+   `account_remove` especially — never falsely reports "nothing happened"; a connection
+   refused / DNS / TLS failure (definitely pre-send) stays `Network`. `Rejected` gained a
+   `code` field to carry the machine-readable `ResponseStatus.ErrorCode`.
+4. **Callsign grammar tightened (Codex P2).** The has-a-digit heuristic accepted tactical
+   labels (`RELAY1`, `EOC1`, `TEST123`); replaced with a real amateur-callsign grammar
+   (1–2 char prefix incl. digit-led, area digit, 1–4 letter suffix) so a tactical/garbage
+   string is never sent as `Callsign` to a full-account mutation.
+5. **No public `/account/remove` route** in the live metadata (only `/account/tactical/remove`),
+   consistent with the decompile's plain-remove being privilege-gated/hidden — reinforces
+   keeping delete UNWIRED until the issued key proves it invocable. Also confirmed: "blocked"
+   is a separate op (`/account/lockedOut/get`), and the API enforces **password length 6–12**
+   (a client-side validation rule for the wizard). `{}` on HTTP-200 is a legitimate VOID-op
+   success (Codex confirmed the spec's earlier "bare `{}` = transport error" wording was the
+   wrong part, not the code).
+
+The raw round-2 transcript is local-only (`dev/adversarial/`, gitignored).
+
 ## Revision note (v2)
 
 v1 derived the wire contract from the Winlink Express 1.8.2.0 decompile. A Codex
@@ -105,7 +144,7 @@ full-account ops; see normalization below), normalize to the base callsign
 |---|---|---|---|---|
 | `account_create` | `/account/add` | `Callsign`, `Password`, `RecoveryEmail` | `()` | write password (atomic) |
 | `account_exists` | `/account/exists` | `Callsign` | `{ exists, blocked }` | none |
-| `account_validate_password` | `/account/password/validate` | `Callsign`, `Password` | validation code | none |
+| `account_validate_password` | `/account/password/validate` (POST) | `Callsign`, `Password` | `Valid` / `Invalid{code,message}` (envelope-only; no payload field) | none |
 | `account_set_recovery_email` | `/account/password/recovery/email/set` | `Callsign`, `Password`, `RecoveryEmail` | `()` | none |
 | `account_send_recovery` | `/account/password/send` | `Callsign` | `()` | none |
 | `account_remove` | `/account/remove` | `Callsign` | `()` | **delete** the keyring entry |

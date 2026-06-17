@@ -1084,6 +1084,7 @@ pub fn run() {
             crate::winlink::cms_account::cms_password_change_available,
             crate::winlink::cms_account::cms_account_create,
             crate::winlink::cms_account::cms_account_exists,
+            crate::winlink::cms_account::cms_account_validate_password,
             crate::winlink::cms_account::cms_account_set_recovery_email,
             crate::winlink::cms_account::cms_account_send_recovery,
             crate::winlink::cms_account::cms_account_remove,

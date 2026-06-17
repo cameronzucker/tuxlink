@@ -167,6 +167,8 @@ function errorForKind(kind?: string): string {
       return 'The CMS password was changed, but saving it to your keyring failed — re-enter your credentials to resync.';
     case 'Network':
       return 'Could not reach the Winlink account service. Check your connection and try again.';
+    case 'UnknownOutcome':
+      return 'The request timed out before we could confirm the result. Your password may or may not have changed — verify before trying again.';
     default:
       return 'Password change failed.';
   }
