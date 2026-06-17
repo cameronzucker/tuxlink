@@ -1,8 +1,46 @@
 # CMS account-API command layer — design
 
 **Date:** 2026-06-17
-**Status:** approved (design); implementation pending
+**Status:** approved (design, v2); implementation pending a valid access key for LIVE use
 **Scope:** sub-project 0 of the CMS account-lifecycle expansion (tuxlink-vfb3 follow-on).
+
+## Revision note (v2)
+
+v1 derived the wire contract from the Winlink Express 1.8.2.0 decompile. A Codex
+adversarial round plus a live probe of `api.winlink.org` (CMS v5.0.9649) proved the
+decompile contract is **stale** in three ways, all corrected here:
+
+1. The auth parameter is **`Key`** (uniform across every op), not the decompile's
+   per-endpoint `WebServiceAccesscode`/`WebServiceAccessCode`. The per-endpoint
+   casing complication is gone.
+2. The success/error envelope is **ServiceStack-style**: payload fields are
+   top-level; errors live in `ResponseStatus { ErrorCode, Message, Errors[] }`;
+   there is **no `HasError` field** and the error text is **`Message`**, not
+   `ErrorMessage`. Success ⇔ empty/absent `ResponseStatus.ErrorCode` (HTTP 200);
+   errors return HTTP 400.
+3. **The shared WLE 1.8.2.0 access code is REJECTED by the current server**
+   (`InvalidAccessKey`, HTTP 400) — verified with the real code value. The whole
+   account API is therefore auth-blocked until Tuxlink holds a **Tuxlink-issued
+   access key** (the sanctioned path: keys are issued per-application by a Winlink
+   administrator — the same CMS team gating prod approval). Republishing WLE's key
+   was never the plan and is now doubly invalid (stale + rejected).
+
+**Consequence for the already-shipped `cms_password_change`:** it is built to the
+v1 (decompile) contract and would fail live on BOTH the wrong auth param and the
+wrong response parse. It is corrected to the v2 contract as part of this work
+(see "Shipped-path correction" below). Nothing is user-visible-broken today (the
+feature is access-key-gated and was never live-exercised).
+
+**Build posture (operator decision 2026-06-17):** fix the contract now and build
+sub-project 0 **offline-correct** with full unit-test coverage; it stays
+access-key-gated via the `TUXLINK_WINLINK_ACCESS_CODE` env var. LIVE validation is
+deferred until a valid Tuxlink-issued key exists. The offline tests need no real
+key; only the operator's live integration check does.
+
+**Open assumption:** the issued key is treated as a **static per-application code**
+(env-injectable, matching this architecture), per the design-note framing. If it
+turns out to be a **per-session token** obtained via a login handshake, sub-project
+0's command shape changes and this spec is revisited before live use.
 
 ## Context
 
@@ -16,11 +54,7 @@ lifecycle, which does not yet exist.
 The Winlink account lifecycle is a separate HTTPS REST/JSON API at
 `https://api.winlink.org` — **not** the telnet CMS (`:8772`/`:8773`) and not the
 secure-login challenge. Every operation is one `application/x-www-form-urlencoded`
-POST to `/<path>?format=json` returning the common JSON envelope
-(`{ "ResponseStatus": { "ErrorCode": "", "ErrorMessage": "" }, "HasError": false, … }`;
-success ⇔ `HasError == false` **and** `ResponseStatus.ErrorCode == ""`). The
-existing `cms_password_change` already implements this shape; this layer extends
-it with the remaining operations.
+POST to `/<path>?format=json`.
 
 ### The full expansion (for context; only sub-project 0 is specified here)
 
@@ -32,142 +66,189 @@ it with the remaining operations.
 Build order 0 → 1 → 2 → 3; the backend foundation unblocks every UI surface and
 needs no mockups. Sub-projects 1–3 each get their own mockup-driven design pass.
 
-## Goals
+## The verified wire contract (live, CMS v5.0.9649)
 
-- Expose the complete client account API as native Tauri commands: create, read
-  (exists / validate-password), update (set recovery email; password change
-  already shipped), delete, and recovery (send recovery email).
-- One shared POST/parse path with the credential-safety guard already proven for
-  password change (a partial/empty/proxy-error body is a transport error, never a
-  silent success).
-- Atomic keyring coupling: create writes the new credential; delete removes the
-  stored credential; read/recovery ops never touch the keyring.
-- No committed secret: every gated op reads the shared access code from
-  `TUXLINK_WINLINK_ACCESS_CODE` at runtime; absent ⇒ the op reports unavailable.
+**Request:** form-encoded POST to `https://api.winlink.org/<path>?format=json`.
+Every op carries **`Key=<access key>`** plus its op-specific params. TLS cert
+validation stays on. (The decompile's `Requester`/`WebServiceAccesscode` params are
+not part of the current contract; `Key` is the sole auth param.)
 
-## Non-goals
+**Response envelope (ServiceStack):**
 
-- No UI in this sub-project (the three UI surfaces are separate sub-projects).
-- No gateway-sysop registration (`/sysop/add`) — out of scope for Tuxlink; it is
-  the only path that collects name/address PII, which Tuxlink does not handle.
-- No tactical-account create (`/account/tactical/*`) in this pass; revisit if a
-  UI surface needs it.
+```jsonc
+// success (HTTP 200): payload fields top-level, ResponseStatus empty or absent
+{ "CallsignExists": true, "Blocked": false }                 // e.g. AccountExists
+// error (HTTP 400):
+{ "ResponseStatus": { "ErrorCode": "InvalidAccessKey",
+                      "Message": "Invalid access key for this operation",
+                      "Errors": [ { "ErrorCode": "...", "FieldName": "Key",
+                                    "Message": "...", "Meta": { } } ] } }
+```
+
+- **Success ⇔** `ResponseStatus` absent OR `ResponseStatus.ErrorCode` empty.
+- **Error ⇔** `ResponseStatus.ErrorCode` non-empty; surface `ResponseStatus.Message`
+  verbatim; HTTP status is 400.
+- **There is no `HasError` field.** Any parser requiring one is wrong.
+- **Safety guard (preserved from the shipped P1):** a body that is not valid JSON,
+  or that on an HTTP-200 lacks BOTH a recognized payload field AND a well-formed
+  (even if empty) `ResponseStatus`, is a **transport error, never a silent
+  success** — so a bare `{}`, a proxy error page, or a future shape change can
+  never be read as a confirmed mutation that triggers a keyring write.
 
 ## Commands
 
-All commands take a raw callsign and normalize it to the **base** callsign
-(uppercase, drop `.`-qualifier, strip SSID) via the existing `account_callsign()`
-before sending, matching WLE's `BaseCallsign`. All form-POST to
-`https://api.winlink.org/<path>?format=json`. The transport auto-adds
-`Requester=<callsign>` (mirroring WLE's `JsonCommand`). TLS cert validation stays
-on for every call.
+All commands take a raw callsign, **reject tactical/hyphenated inputs** (these are
+full-account ops; see normalization below), normalize to the base callsign
+(uppercase), and form-POST with `Key` + op params.
 
-| Command | Path | Form params | Returns | Keyring on success |
+| Command | Path | Op params (+ `Key`) | Returns | Keyring on success |
 |---|---|---|---|---|
-| `account_create` | `/account/add` | `Callsign`, `Password`, `WebServiceAccessCode` | `()` | write password (atomic) |
-| `account_exists` | `/account/exists` | `Callsign` | validation code | none |
-| `account_validate_password` | `/account/password/validate` | `Callsign`, `Password`, `WebServiceAccesscode` | validation code | none |
-| `account_set_recovery_email` | `/account/password/recovery/email/set` | `Callsign`, `Password`, `RecoveryEmail`, `WebServiceAccessCode` | `()` | none |
+| `account_create` | `/account/add` | `Callsign`, `Password`, `RecoveryEmail` | `()` | write password (atomic) |
+| `account_exists` | `/account/exists` | `Callsign` | `{ exists, blocked }` | none |
+| `account_validate_password` | `/account/password/validate` | `Callsign`, `Password` | validation code | none |
+| `account_set_recovery_email` | `/account/password/recovery/email/set` | `Callsign`, `Password`, `RecoveryEmail` | `()` | none |
 | `account_send_recovery` | `/account/password/send` | `Callsign` | `()` | none |
-| `account_remove` | `/account/remove` | `Callsign`, `WebServiceAccessCode` | `()` | **delete** the keyring entry |
-| `cms_password_change` *(shipped)* | `/account/password/change` | `Callsign`, `OldPassword`, `NewPassword`, `WebServiceAccesscode` | `()` | write new password (atomic) |
+| `account_remove` | `/account/remove` | `Callsign` | `()` | **delete** the keyring entry |
+| `cms_password_change` *(shipped; corrected)* | `/account/password/change` | `Callsign`, `OldPassword`, `NewPassword` | `()` | write new password (atomic) |
 
-### Load-bearing wire detail — access-code parameter casing varies per endpoint
+**`RecoveryEmail` is a direct param of `/account/add`** (confirmed against live
+metadata), so account creation is a **single atomic call** — no create-then-set
+two-step with a bad partial state. The wizard's mandatory-recovery-email rule (a
+hamexandria support-burden decision: missing recovery email → manual reset = a
+large fraction of support posts) is satisfied by requiring `RecoveryEmail`
+non-empty at the `account_create` boundary.
 
-The parameter NAME carrying the access code differs by endpoint and MUST be sent
-verbatim:
+### `account_remove` is privilege-gated — do not ship delete until live-proven
 
-- `WebServiceAccessCode` (capital `C`): `add`, `remove`, `recovery/email/set`.
-- `WebServiceAccesscode` (lowercase `c`): `password/validate`, `password/change`.
-- **No access-code parameter at all:** `exists`, `password/send`.
+`/account/remove` exists in the WLE decompile, but its live metadata returns **403
+(privileged)** while `AccountTacticalRemove` returns 200. The client access key may
+**not** be authorized to invoke it. Therefore:
 
-A single env var (`TUXLINK_WINLINK_ACCESS_CODE`) supplies the value for every
-gated op; only the parameter NAME's casing changes. The casing is the kind of
-detail that silently fails the live call while passing every offline test, so it
-is a primary target for the adversarial review round.
+- The command is implemented + unit-tested, but **delete must not be wired into any
+  UI (sub-project 3) until an operator live-test proves the issued key can actually
+  invoke `/account/remove`.**
+- Partial-state handling: after a server-confirmed removal, a keyring-delete failure
+  is `KeyringDesync` (the account is gone; the stale local secret is the lesser,
+  recoverable problem). A network timeout *after* the request is an **`UnknownOutcome`**
+  — the caller reconciles via `account_exists` before deciding whether to delete the
+  local credential, rather than assuming either result.
 
-## Shared infrastructure (refactor)
+## Shared infrastructure
 
-Extract from the existing `change_password` body a single helper:
+Extract from the existing `change_password` body a single helper used by every op:
 
 ```
-post_account_form(path: &str, params: Vec<(&str, String)>) -> Result<AccountEnvelope, AccountApiError>
+post_account_form(path: &str, params: Vec<(&str, String)>) -> Result<Value, AccountApiError>
 ```
 
-- Builds the form body, POSTs with the existing reqwest client + the 30s timeout,
-  TLS on.
-- Parses the common envelope with the **required-fields guard** (HasError,
-  ResponseStatus, ErrorCode all required; a body missing any ⇒ `Network`
-  transport error, never success). This is the Codex-adrev-2026-06-17 P1
-  invariant, now shared by all ops instead of living only in the change path.
-- Maps `HasError == true || ErrorCode != ""` ⇒ `Rejected{ message = ErrorMessage
-  verbatim }` (with a coded fallback when the server gives no message).
+- Builds the form body (auto-appends `Key` from `access_code()`), POSTs with the
+  existing reqwest client + 30s timeout, TLS on.
+- Parses the ServiceStack envelope: maps a non-empty `ResponseStatus.ErrorCode` to
+  `Rejected{ code, message }` (message = `ResponseStatus.Message`), with
+  `InvalidAccessKey` mapped to a distinct `AccountApiError::InvalidKey` so the UI
+  can tell the operator the access key is missing/invalid (vs a normal rejection).
+- Applies the safety guard above (unparseable / payload-less-and-ResponseStatus-less
+  body ⇒ `Network` transport error, never success).
+- Returns the parsed `Value` (or a typed payload struct) so read ops read their
+  top-level fields **through** the guard, never by reparsing the raw body. Read-op
+  unit tests include a "ResponseStatus-only / payload-missing" case that must fail
+  closed.
 
-`change_password` is refactored to call `post_account_form` so there is one
-parse/guard implementation. Read ops (`exists`, `validate_password`) additionally
-deserialize the `AccountValidationCodes` result field and return it.
+`cms_password_change` is refactored to call `post_account_form`, giving one
+parse/guard implementation for all ops.
+
+### Per-base-callsign serialization (mutating ops)
+
+Server-confirm-before-keyring is necessary but not sufficient: interleaved
+mutations on the same callsign can desync (e.g. `remove(N0CALL)` server-succeeds →
+`create(N0CALL)` server-succeeds + writes keyring → `remove` resumes and deletes
+the keyring ⇒ account exists, credential gone). All mutating ops
+(`account_create`, `cms_password_change`, `account_remove`,
+`account_set_recovery_email`) take a **per-base-callsign async mutex** spanning the
+server call + the keyring mutation, so operations on one account serialize.
 
 ### Error type
 
-Generalize the existing `PasswordChangeError` into `AccountApiError` with the same
-variants — `NotConfigured`, `Network{reason}`, `Rejected{message}`, and
-`KeyringDesync{reason}` (for the create/change/remove paths that touch the
-keyring) — serialized to the frontend with the `kind` tag the UI already switches
-on. `change_password` returns this generalized type; the existing frontend error
-mapping is unaffected (same variant names).
+Generalize `PasswordChangeError` → `AccountApiError`:
 
-### Keyring coupling rules
+- `NotConfigured` — no access key in env (feature unavailable).
+- `InvalidKey` — server returned `InvalidAccessKey` (the issued key is missing/wrong).
+- `Network{reason}` — transport / unparseable-or-shapeless body.
+- `Rejected{ code, message }` — server `ResponseStatus.ErrorCode` + `Message` verbatim.
+- `KeyringDesync{reason}` — server mutation confirmed but the local keyring write/delete failed.
+- `UnknownOutcome` — a mutating call's outcome is indeterminate (timeout after send);
+  caller reconciles.
 
-- `account_create`: on confirmed success, write the new password to the keyring
-  (service `tuxlink`, account `<base callsign>`) atomically, identical to the
-  change path's snapshot-and-restore discipline. A keyring failure after a
-  confirmed server create surfaces `KeyringDesync` (account exists at the CMS;
-  local store out of sync) — never a silent success.
-- `account_remove`: on confirmed success, delete the keyring entry for that
-  callsign (the account no longer exists, so the stored credential is dead).
-  A keyring-delete failure after a confirmed server remove is logged and surfaced
-  as `KeyringDesync` — the account is gone regardless; the stale local secret is
-  the lesser, recoverable problem.
-- `account_exists`, `account_validate_password`, `account_set_recovery_email`,
-  `account_send_recovery`: read/auxiliary ops; never touch the keyring.
+Variant names that the shipped frontend already switches on
+(`NotConfigured`/`Network`/`Rejected`/`KeyringDesync`) are preserved, so the
+existing `CmsPasswordChange` mapping keeps working; new variants are additive.
+
+### Read-op typed outcomes (frontend contract)
+
+Read ops do NOT route through generic `Rejected`. They return typed results the UI
+can branch on without reusing password-change copy:
+
+- `account_exists` → `{ exists: bool, blocked: bool }`.
+- `account_validate_password` → a validation code (`Valid` / `BadPassword` /
+  `NoAccount` / …) mirroring `AccountValidationCodes`.
+- `account_send_recovery` → `Ok` vs a distinct "no recovery address on file" outcome
+  (the server returns an error when no recovery email is set; surface it as its own
+  case so the UI can guide the user to set one).
+
+### Callsign normalization
+
+The existing `account_callsign()` reuses `base_callsign_for_post_office` (RMS
+post-office login behavior; strips on `-`). For these full-account ops that is the
+correct base form for a licensed callsign, but it is **destructive for
+tactical/hyphenated identifiers**. Since tactical account create/remove is a
+non-goal here, these commands **reject** a tactical/hyphenated input with
+`InvalidInput` rather than silently stripping it.
+
+## Shipped-path correction (`cms_password_change`)
+
+In the same change, the merged `cms_password_change` is corrected to the v2
+contract: send `Key` (not `WebServiceAccesscode`), drop `Requester`, and parse the
+ServiceStack envelope (success ⇔ empty `ResponseStatus.ErrorCode`; no `HasError`;
+error text from `Message`). Its existing tests are updated to the live shapes
+(including an `InvalidAccessKey` case) and it adopts the shared `post_account_form`
++ the per-callsign mutex. This is a correctness fix to never-live-exercised code,
+not a behavior change users have seen.
 
 ## Security & safety
 
-- **No committed access-code literal.** Same posture as the shipped change path:
-  the value is read from `TUXLINK_WINLINK_ACCESS_CODE` at runtime; when absent,
-  every gated command returns `NotConfigured` and the layer reports unavailable.
-  Source builds ship no literal.
-- **TLS mandatory.** This API path is genuinely TLS; cert validation stays on for
-  every call (no `danger_accept_invalid_certs`).
-- **RADIO-1:** these are internet HTTPS calls to the account API, not
-  transmissions — no on-air consent gate. They DO mutate real accounts, so live
-  exercise is operator-run, never CI.
-- **Destructive `account_remove`** irreversibly deletes a Winlink account. The
-  backend command performs no extra confirmation (that is the UI's job — the
-  Settings surface gates it behind typed confirmation in sub-project 3). The
-  command itself simply must not fire except on an explicit caller request.
+- **No committed access-key literal.** Read from `TUXLINK_WINLINK_ACCESS_CODE` at
+  runtime; absent ⇒ every gated command returns `NotConfigured` and the layer
+  reports unavailable. Source builds ship no key. (The issued Tuxlink key is an
+  operator-managed secret; the agent never handles it.)
+- **TLS mandatory** on every call (no `danger_accept_invalid_certs`).
+- **RADIO-1:** internet HTTPS to the account API, not a transmission — no on-air
+  consent gate. Mutating ops change real accounts, so live exercise is operator-run,
+  never CI.
+- **Destructive `account_remove`** does no extra backend confirmation (the UI gates
+  it, sub-project 3) and must not fire except on an explicit caller request — and is
+  not wired to UI until live-proven invocable.
 
 ## Testing
 
-- **Unit (TDD, CI):** for each command, the pure form-encode (exact parameter
-  names + per-endpoint access-code casing + base-callsign normalization) and the
-  response-parse (representative success, server rejection with `ErrorMessage`,
-  and the malformed/partial-body guard returning a transport error). Read ops
-  additionally test the validation-code mapping.
-- **Live (operator-run, never CI):** there is **no dev instance** for
-  `api.winlink.org` (unlike the telnet CMS at cms-z). Create/remove mutate a real
-  account, so the live lifecycle (create → validate → set recovery → change →
-  remove) is exercised by the operator against a throwaway test callsign. Agents
-  do not run it.
-- **Adversarial:** ≥1 Codex round on the wire encoding (per-endpoint param-name
-  casing, base-callsign edge cases) and the `account_remove` keyring-delete
-  ordering, before the layer is considered done.
+- **Unit (TDD, CI; needs NO real key):** per command, the pure form-encode (`Key`
+  present, op params, base-callsign normalization, tactical-input rejection) and the
+  response-parse against **live-shaped** JSON: success (top-level payload, empty/absent
+  `ResponseStatus`), rejection (`ResponseStatus.ErrorCode`+`Message`, HTTP 400),
+  `InvalidAccessKey` → `InvalidKey`, and the malformed/shapeless-body guard ⇒
+  transport error. Read ops test their typed outcomes incl. a fail-closed
+  payload-missing case.
+- **Live (operator-run, deferred):** blocked until a valid Tuxlink-issued key
+  exists; there is no dev instance for `api.winlink.org`. Lifecycle
+  (create → validate → set-recovery → change → remove) is exercised by the operator
+  against a throwaway test callsign. `account_remove` live-invocability is a
+  prerequisite for wiring delete into the UI.
+- **Adversarial:** a Codex round on the corrected wire-encoding + the
+  per-callsign-mutex / remove-reconciliation logic before the layer is "done."
 
 ## Source of truth
 
-The wire contracts are mirrored from the legally-possessed Winlink Express
-decompile via the private design note
-(`library-of-hamexandria/.../2026-06-16-tuxlink-vfb3-cms-account-api.md`); the
-Tuxlink implementation is clean-room forward code. The access-code value and the
-raw decompile remain private (not in this public repo), consistent with the
-existing `cms_password_change` posture.
+The wire contract is the **live `api.winlink.org` server** (verified via metadata +
+a read-only probe, 2026-06-17), which supersedes the legally-possessed WLE 1.8.2.0
+decompile where they differ. The decompile remains a useful cross-reference for op
+existence (e.g. it proves `/account/remove` is a real route). The access-key value
+and the raw decompile stay private (not in this public repo).
