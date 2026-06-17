@@ -1079,6 +1079,9 @@ pub fn run() {
             crate::wizard::wizard_persist_cms,
             crate::wizard::wizard_persist_offline,
             crate::wizard::verify_cms_connection,   // Task 5.4 (tuxlink-9phd): replaces wizard_run_test_send
+            // tuxlink-vfb3: CMS account password change (in-app credential rotation).
+            crate::winlink::cms_account::cms_password_change,
+            crate::winlink::cms_account::cms_password_change_available,
             // tuxlink-ndi4 (phase 4): offline region-pack manager (Tools→Offline maps).
             crate::basemap::commands::basemap_get_manifest,
             crate::basemap::commands::basemap_refresh_manifest,
