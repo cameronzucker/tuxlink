@@ -30,6 +30,18 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.69.0](https://github.com/cameronzucker/tuxlink/compare/v0.68.0...v0.69.0) (2026-06-17)
+
+
+### Features
+
+* **aprs:** telemetry engine emit — accumulate PARM/UNIT/EQNS/BITS + scale T# readings ([0eab488](https://github.com/cameronzucker/tuxlink/commit/0eab48810aac98618e05d955d6c918766b89fcc9))
+
+
+### Bug Fixes
+
+* **readme:** full-frame demo animation — revert the device_scale_factor gray-box regression ([2b22dc1](https://github.com/cameronzucker/tuxlink/commit/2b22dc190e1dc54097325f2deb709a146cb52049))
+
 ## [0.68.0](https://github.com/cameronzucker/tuxlink/compare/v0.67.0...v0.68.0) (2026-06-16)
 
 
