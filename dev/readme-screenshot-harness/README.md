@@ -5,6 +5,14 @@ components rendered in WebKitGTK. It uses canned, privacy-safe Tauri IPC
 responses so screenshots do not expose an operator's real callsign, mailbox, or
 station configuration.
 
+> **Animated demo status (2026-06-17):** the screencast mechanism in
+> [§ Animated screencast](#animated-screencast) works end-to-end and is kept for
+> future use, but the animated demo is **intentionally not embedded in the
+> README** while the product is pre-alpha — the APRS map open/load reads as buggy
+> (because it currently is), which undersells the app. Regenerate and re-embed it
+> in the README hero block once those surfaces are polished. The static feature
+> screenshots stay.
+
 ```bash
 # Bind IPv4 explicitly: `pnpm dev -- --host 127.0.0.1` mangles the flag and vite
 # binds [::1] only, which the snapshot (127.0.0.1) cannot reach.
@@ -109,3 +117,41 @@ Keep it small: GitHub renders animated WebP/GIF/APNG inline (no `<video>` for
 committed files; animated SVG is stripped by the camo image proxy). Crispness
 comes from a high `q:v` (74); a full-frame ~15 s loop at 860 px / 10 fps lands
 ~3.4 MB. Drop `q:v` toward ~60 or fps to ~8 if you need it smaller.
+
+## How the pieces fit
+
+- **`harness.tsx`** mounts the real `AppShell` / `Wizard` / `RequestCenter` with a
+  `window.__TAURI_INTERNALS__` shim that answers `invoke()` from canned, privacy-safe
+  fixtures, so the UI renders without a Rust/Tauri build. Query params (`view`,
+  `dock`, `scheme`) select the scene; `window.__harness.emit/.scheme` let a driver
+  inject events (APRS traffic) and flip the palette mid-capture.
+- **`snapshot.py`** renders a URL in headless WebKitGTK (the same engine Tauri uses)
+  to a PNG, optionally cropped to a CSS selector or `clip:` region — the still
+  screenshots.
+- **`screencast.py`** drives the same scenes in Chromium (Playwright) and records a
+  WebM — the animation. (Chromium, because Playwright can script clicks + record;
+  WebKitGTK can't be driven the same way.)
+- **`ffmpeg`** turns the WebM into a looping animated WebP.
+
+## Gotchas & learnings (hard-won)
+
+- **GitHub README animation = WebP / GIF / APNG via `<img>` only.** A committed
+  `.mp4` + `<video>` is flaky (video works when *uploaded* as a GitHub attachment,
+  not from the repo); animated SVG is rasterized/stripped by GitHub's camo image
+  proxy and shows frozen. WebP is the crisp, small, reliable choice.
+- **`device_scale_factor=2` does NOT give a higher-resolution screencast.** Playwright
+  records at `record_video_size`; a 2× size just renders the page in the top-left and
+  letterboxes the rest grey. Keep `record_video_size == viewport`. Crispness comes
+  from the encode (`q:v`, 0–100, higher = crisper), not the capture size.
+- **The APRS map needs the PMTiles vector archive.** Glyphs + sprites already serve
+  from `public/basemap/`; the basemap data is served via the Rust `tile://` seam,
+  which 404s in the harness. Copy `world-z0-6.pmtiles` into `public/basemap/` (range
+  requests work via vite) and the harness rewrites `tile://pmtiles/world` to it.
+- **The map open/load is currently slow** (~2 s of empty land-color before tiles
+  paint) — the main reason the demo isn't README-ready. A future cut should pre-warm
+  the map so it's drawn before it slides in.
+- **The recorded context reloads cold** (~5–9 s) even after a warm pass — separate
+  Playwright contexts don't share cache. Trim that front load in ffmpeg.
+- **Verify the whole frame, not just one detail.** A demo that looked crisp shipped
+  with a grey letterbox filling half the frame because the check fixated on text
+  sharpness. Sample frames across the loop and check the corners.
