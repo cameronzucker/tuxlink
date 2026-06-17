@@ -49,7 +49,14 @@ pub enum PasswordChangeError {
     NotConfigured,
     /// The HTTPS request itself failed (DNS, TLS, timeout, transport).
     Network { reason: String },
-    /// The CMS rejected the change. `message` is the server's `ErrorMessage`.
+    /// The access key in `TUXLINK_WINLINK_ACCESS_CODE` is missing/invalid for this
+    /// operation — the server returned `InvalidAccessKey`. Distinct from a normal
+    /// `Rejected` so the UI can tell the operator the key (not the password) is the
+    /// problem. (Verified against the live API 2026-06-17: the shared WLE code is
+    /// rejected; a Tuxlink-issued key is required — see the account-API spec.)
+    InvalidKey,
+    /// The CMS rejected the request. `message` is the server's
+    /// `ResponseStatus.Message`, surfaced verbatim.
     Rejected { message: String },
     /// The change succeeded at the CMS but the keyring write failed. The CMS now
     /// holds the NEW password while the keyring may still hold the OLD — the
@@ -77,9 +84,11 @@ pub fn account_callsign(raw: &str) -> String {
     crate::winlink::telnet::base_callsign_for_post_office(raw, false)
 }
 
-/// Build the form-encoded body for the change POST. Field names + casing match
-/// the WLE wire contract exactly (note `WebServiceAccesscode` — lowercase `c` in
-/// `code`). `Requester` is sent explicitly (WLE auto-adds it; we mirror that).
+/// Build the form-encoded body for the change POST, matching the LIVE
+/// `api.winlink.org` contract (verified 2026-06-17): the auth parameter is `Key`
+/// (uniform across every account op), and there is no `Requester` param. The
+/// decompile's `WebServiceAccesscode`/`Requester` shape is stale and rejected by
+/// the current server.
 pub fn password_change_form(
     account_callsign: &str,
     old_password: &str,
@@ -90,60 +99,63 @@ pub fn password_change_form(
         ("Callsign", account_callsign.to_string()),
         ("OldPassword", old_password.to_string()),
         ("NewPassword", new_password.to_string()),
-        ("WebServiceAccesscode", access_code.to_string()),
-        ("Requester", account_callsign.to_string()),
+        ("Key", access_code.to_string()),
     ]
 }
 
-/// The common Winlink JSON response envelope. `HasError`, `ResponseStatus`, and
-/// `ErrorCode` are REQUIRED — a body missing any of them fails to parse and is
-/// surfaced as a transport/parse error, NEVER as success. This is a
-/// credential-safety guard (Codex adrev 2026-06-17 P1): a bare `{}`, an upstream
-/// proxy error page, or a future API shape change must not be read as a
-/// confirmed change and trigger a keyring write the CMS never authorized. Only
-/// `ErrorMessage` is optional (a clean success legitimately omits it). Unknown
-/// fields are ignored.
+/// The ServiceStack error block. Present (with a non-empty `ErrorCode`) only on
+/// failure; on a clean success the live API omits `ResponseStatus` entirely or
+/// leaves `ErrorCode` empty. The human-readable text is `Message` (NOT the
+/// decompile's `ErrorMessage`). Unknown fields (StackTrace, Errors, Meta) ignored.
 #[derive(Debug, Deserialize)]
 struct ResponseStatus {
-    #[serde(rename = "ErrorCode")]
+    #[serde(rename = "ErrorCode", default)]
     error_code: String,
-    #[serde(rename = "ErrorMessage", default)]
-    error_message: String,
+    #[serde(rename = "Message", default)]
+    message: String,
 }
 
+/// The common Winlink (ServiceStack) JSON envelope. Payload fields are top-level
+/// and op-specific; the only field this layer needs for a write op is the
+/// optional `ResponseStatus`. There is no `HasError` field in the live contract.
 #[derive(Debug, Deserialize)]
-struct AccountPasswordSetResponse {
-    #[serde(rename = "ResponseStatus")]
-    response_status: ResponseStatus,
-    #[serde(rename = "HasError")]
-    has_error: bool,
+struct AccountEnvelope {
+    #[serde(rename = "ResponseStatus", default)]
+    response_status: Option<ResponseStatus>,
 }
 
-/// Parse the change response. Success ⇔ `HasError == false` AND
-/// `ResponseStatus.ErrorCode == ""`. On failure the CMS `ErrorMessage` is
-/// surfaced verbatim (with a fallback when the server gave no message).
+/// Parse a Winlink account-API response (live ServiceStack contract, verified
+/// 2026-06-17). Success ⇔ the body is a JSON object with no error
+/// (`ResponseStatus` absent or its `ErrorCode` empty). Failure ⇔ a non-empty
+/// `ResponseStatus.ErrorCode`; `InvalidAccessKey` maps to `InvalidKey`, anything
+/// else to `Rejected` with the server's `Message` verbatim (coded fallback when
+/// the server gives none).
+///
+/// Credential-safety guard: a body that is not valid JSON (a proxy HTML error
+/// page, garbage, a truncated stream) is a transport error, NEVER a success — so
+/// it can never trigger a keyring write the CMS did not confirm. (A bare `{}` on
+/// an HTTP-200 is a legitimate empty success for write ops, so the HTTP status
+/// check in the caller is the second half of this guard.)
 pub fn parse_password_change_response(body: &str) -> Result<(), PasswordChangeError> {
-    let resp: AccountPasswordSetResponse = serde_json::from_str(body).map_err(|e| {
+    let env: AccountEnvelope = serde_json::from_str(body).map_err(|e| {
         PasswordChangeError::Network {
             reason: format!("unparseable account API response: {e}"),
         }
     })?;
-    if resp.has_error || !resp.response_status.error_code.is_empty() {
-        let message = if resp.response_status.error_message.trim().is_empty() {
-            format!(
-                "password change rejected (code {})",
-                if resp.response_status.error_code.is_empty() {
-                    "unknown"
-                } else {
-                    resp.response_status.error_code.as_str()
-                }
-            )
-        } else {
-            resp.response_status.error_message.clone()
-        };
-        return Err(PasswordChangeError::Rejected { message });
+    match env.response_status {
+        Some(rs) if !rs.error_code.trim().is_empty() => {
+            if rs.error_code == "InvalidAccessKey" {
+                return Err(PasswordChangeError::InvalidKey);
+            }
+            let message = if rs.message.trim().is_empty() {
+                format!("request rejected (code {})", rs.error_code)
+            } else {
+                rs.message
+            };
+            Err(PasswordChangeError::Rejected { message })
+        }
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 /// Perform the password change against the live account API.
@@ -180,19 +192,28 @@ pub async fn change_password(
         .await
         .map_err(|e| PasswordChangeError::Network { reason: e.to_string() })?;
 
-    if !resp.status().is_success() {
-        return Err(PasswordChangeError::Network {
-            reason: format!("account API returned HTTP {}", resp.status()),
-        });
-    }
-
+    // ServiceStack returns errors as HTTP 400 with a JSON body carrying
+    // ResponseStatus.Message — so read + parse the body REGARDLESS of status, or
+    // the server's actual error (e.g. InvalidAccessKey, "Old password incorrect")
+    // is discarded. The parse maps any ResponseStatus error to Rejected/InvalidKey.
+    let status = resp.status();
     let body = resp
         .text()
         .await
         .map_err(|e| PasswordChangeError::Network { reason: e.to_string() })?;
 
-    // Parse FIRST — only a confirmed success may touch the keyring.
+    // Parse FIRST — only a confirmed success may touch the keyring. A parsed
+    // rejection (incl. on HTTP 400) returns here with the server's message.
     parse_password_change_response(&body)?;
+
+    // Parse said "no error", but if the HTTP status was itself unsuccessful the
+    // outcome is ambiguous (a 4xx/5xx whose body lacked a ResponseStatus error) —
+    // treat as a transport error, never a confirmed success that writes the keyring.
+    if !status.is_success() {
+        return Err(PasswordChangeError::Network {
+            reason: format!("account API returned HTTP {status} with no error detail"),
+        });
+    }
 
     // CMS accepted the new password; bring the keyring into lockstep. A failure
     // here means the CMS holds NEW while the keyring holds OLD — surfaced as a
@@ -238,28 +259,35 @@ mod tests {
     }
 
     #[test]
-    fn form_carries_exact_field_names_and_base_callsign() {
-        let form = password_change_form("N7CPZ", "oldpw", "newpw", "ACCESSCODE");
+    fn form_carries_live_contract_fields_and_base_callsign() {
+        let form = password_change_form("N7CPZ", "oldpw", "newpw", "ACCESSKEY");
         let get = |k: &str| form.iter().find(|(name, _)| *name == k).map(|(_, v)| v.as_str());
         assert_eq!(get("Callsign"), Some("N7CPZ"));
         assert_eq!(get("OldPassword"), Some("oldpw"));
         assert_eq!(get("NewPassword"), Some("newpw"));
-        // Exact casing: lowercase `c` in `code` (matches the WLE wire contract).
-        assert_eq!(get("WebServiceAccesscode"), Some("ACCESSCODE"));
-        assert_eq!(get("Requester"), Some("N7CPZ"));
-        // No stray fields.
-        assert_eq!(form.len(), 5);
+        // Live API auth param is `Key` (verified 2026-06-17), not the decompile's
+        // `WebServiceAccesscode`; there is no `Requester`.
+        assert_eq!(get("Key"), Some("ACCESSKEY"));
+        assert_eq!(get("WebServiceAccesscode"), None);
+        assert_eq!(get("Requester"), None);
+        assert_eq!(form.len(), 4);
     }
 
     #[test]
-    fn parse_accepts_clean_success() {
-        let body = r#"{"ResponseStatus":{"ErrorCode":"","ErrorMessage":""},"HasError":false}"#;
-        assert_eq!(parse_password_change_response(body), Ok(()));
+    fn parse_accepts_live_success_shapes() {
+        // ServiceStack success: ResponseStatus absent, or present with empty ErrorCode.
+        for body in [
+            "{}",
+            r#"{"ResponseStatus":{}}"#,
+            r#"{"ResponseStatus":{"ErrorCode":""}}"#,
+        ] {
+            assert_eq!(parse_password_change_response(body), Ok(()), "should be success: {body}");
+        }
     }
 
     #[test]
-    fn parse_rejects_on_has_error_true_with_verbatim_message() {
-        let body = r#"{"ResponseStatus":{"ErrorCode":"AUTH","ErrorMessage":"Old password is incorrect"},"HasError":true}"#;
+    fn parse_rejects_with_verbatim_message_from_response_status() {
+        let body = r#"{"ResponseStatus":{"ErrorCode":"AUTH","Message":"Old password is incorrect"}}"#;
         assert_eq!(
             parse_password_change_response(body),
             Err(PasswordChangeError::Rejected {
@@ -269,20 +297,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_when_error_code_set_even_if_has_error_false() {
-        // Defensive: a non-empty ErrorCode is a rejection regardless of HasError.
-        let body = r#"{"ResponseStatus":{"ErrorCode":"LOCKED","ErrorMessage":"Account locked"},"HasError":false}"#;
+    fn parse_maps_invalid_access_key_to_invalid_key() {
+        // The live shape observed 2026-06-17 when the access key is missing/wrong.
+        let body = r#"{"CallsignExists":false,"Blocked":false,"ResponseStatus":{"ErrorCode":"InvalidAccessKey","Message":"Invalid access key for this operation"}}"#;
         assert_eq!(
             parse_password_change_response(body),
-            Err(PasswordChangeError::Rejected {
-                message: "Account locked".to_string()
-            })
+            Err(PasswordChangeError::InvalidKey)
         );
     }
 
     #[test]
     fn parse_rejection_without_message_uses_code_fallback() {
-        let body = r#"{"ResponseStatus":{"ErrorCode":"X1","ErrorMessage":""},"HasError":true}"#;
+        let body = r#"{"ResponseStatus":{"ErrorCode":"X1","Message":""}}"#;
         match parse_password_change_response(body) {
             Err(PasswordChangeError::Rejected { message }) => {
                 assert!(message.contains("X1"), "fallback should cite the code: {message}");
@@ -293,31 +319,15 @@ mod tests {
 
     #[test]
     fn parse_unparseable_body_is_network_error_not_success() {
-        let body = "<html>502 Bad Gateway</html>";
-        assert!(matches!(
-            parse_password_change_response(body),
-            Err(PasswordChangeError::Network { .. })
-        ));
-    }
-
-    #[test]
-    fn parse_partial_or_empty_body_is_error_never_success() {
-        // Credential-safety (Codex adrev 2026-06-17 P1): a body missing HasError /
-        // ResponseStatus / ErrorCode must NOT parse as success — otherwise a bare
-        // `{}` or an upstream proxy/error JSON would trigger a keyring write the
-        // CMS never confirmed and corrupt the stored credential.
-        for body in [
-            "{}",
-            r#"{"HasError":false}"#,                          // missing ResponseStatus
-            r#"{"ResponseStatus":{"ErrorCode":""}}"#,          // missing HasError
-            r#"{"ResponseStatus":{},"HasError":false}"#,        // missing ErrorCode
-        ] {
+        // A proxy HTML error page / garbage must be a transport error, never a
+        // confirmed success that writes the keyring (credential-safety guard).
+        for body in ["<html>502 Bad Gateway</html>", "not json", ""] {
             assert!(
                 matches!(
                     parse_password_change_response(body),
                     Err(PasswordChangeError::Network { .. })
                 ),
-                "partial body must be a parse error, not success: {body}"
+                "unparseable body must be a transport error: {body:?}"
             );
         }
     }

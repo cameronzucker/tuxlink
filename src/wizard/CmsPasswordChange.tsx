@@ -161,6 +161,8 @@ function errorForKind(kind?: string): string {
   switch (kind) {
     case 'NotConfigured':
       return 'Password change is not available on this build.';
+    case 'InvalidKey':
+      return 'The Winlink access key is missing or not valid for this operation. Password change is not available until a valid key is configured.';
     case 'KeyringDesync':
       return 'The CMS password was changed, but saving it to your keyring failed — re-enter your credentials to resync.';
     case 'Network':
