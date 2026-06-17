@@ -12,25 +12,37 @@ and `arm64`, with `SHA256SUMS` for verification, on the
 [Releases page](https://github.com/cameronzucker/tuxlink/releases/latest).
 
 ```bash
-# Debian / Ubuntu (amd64 shown; arm64 bundles are also published)
-sudo dpkg -i tuxlink_*_amd64.deb
+# Debian / Ubuntu / Raspberry Pi OS (amd64 shown; arm64 bundles are also published)
+sudo apt update
+sudo apt install ./tuxlink_*_amd64.deb
 
 # Fedora / RHEL
-sudo rpm -i tuxlink-*.x86_64.rpm
+sudo dnf install ./tuxlink-*.x86_64.rpm
 
 # Distribution-agnostic
 chmod +x tuxlink_*_amd64.AppImage && ./tuxlink_*_amd64.AppImage
 ```
 
-No build toolchain required. **System dependency:** Tuxlink requires WebKitGTK 4.1;
-distributions that ship only WebKitGTK 4.0 (older Debian stable, older RHEL /
-CentOS) need a backport. The AppImage also cannot bundle the keyring daemon; see
-[Runtime prerequisite](#runtime-prerequisite-secret-service-keyring) below.
+**Install through the package manager (`apt` / `dnf`), not `dpkg -i` / `rpm -i`.**
+`apt install ./file.deb` (note the leading `./`) and `dnf install ./file.rpm` resolve
+and download the system dependencies (WebKitGTK 4.1, libayatana-appindicator)
+automatically. The low-level `dpkg -i` and `rpm -i` do **not** — they fail with
+unmet-dependency errors. Run `sudo apt update` first so the package lists are current;
+a stale index is the most common cause of "dependencies … not going to be installed."
 
-### Option 2: build from source
+No build toolchain required. **System dependency:** Tuxlink requires WebKitGTK 4.1,
+which ships on Debian 12 (Bookworm) and newer, current Raspberry Pi OS, and current
+Fedora / RHEL. Distributions that ship only WebKitGTK 4.0 (older Debian stable, older
+RHEL / CentOS) need a backport. The AppImage also cannot bundle the keyring daemon;
+see [Runtime prerequisite](#runtime-prerequisite-secret-service-keyring) below.
 
-See [development.md](development.md) for the full toolchain table, system package
-commands, and build invocation. The short version:
+### Option 2: build from source (developers only)
+
+End users should use Option 1 — the prebuilt package is the supported install path.
+Building from source is for developers and needs the full Rust + Tauri toolchain
+(`cargo` and the system `-dev` packages); it is **not** a fallback when a package
+install fails. See [development.md](development.md) for the full toolchain table,
+system package commands, and build invocation. The short version:
 
 ```bash
 git clone https://github.com/cameronzucker/tuxlink.git
@@ -238,6 +250,25 @@ The first CMS sync populates the Inbox. Trigger a sync by sending a message, or
 use **Session → Sync** once that menu item is available. If no messages arrive
 after a successful sync, the Winlink account may have no pending mail; send a
 message to `SERVICE@winlink.org` and sync again to confirm the round-trip works.
+
+### `apt` / `dnf` reports dependencies "not going to be installed"
+
+The package manager could not resolve a system dependency (often WebKitGTK). This is
+almost always a stale or inconsistent package index on the machine, not a tuxlink
+packaging fault — confirm it by checking whether `sudo apt install <any-other-package>`
+fails the same way. Refresh the lists, repair any broken state, then reinstall through
+the package manager:
+
+```bash
+sudo apt update
+sudo apt --fix-broken install
+sudo apt install ./tuxlink_*_amd64.deb
+```
+
+Do **not** fall back to `sudo dpkg -i` (it cannot download dependencies) or to a
+from-source build (that needs the full Rust / Tauri toolchain). Confirm the system is
+Debian 12 (Bookworm) or newer, or a current Raspberry Pi OS / Fedora, which ship
+WebKitGTK 4.1. Background: [tuxlink issue #786](https://github.com/cameronzucker/tuxlink/issues/786).
 
 ### Build errors
 
