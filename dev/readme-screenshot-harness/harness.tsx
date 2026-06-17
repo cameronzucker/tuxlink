@@ -310,6 +310,21 @@ function installTauriShim() {
 async function main() {
   installTauriShim();
 
+  // Basemap vector tiles normally come from the Rust `tile://pmtiles/world`
+  // seam (HTTP-206 range), which 404s without a Tauri backend. Glyphs + sprites
+  // already live under the vite-served `/basemap/` origin; redirect just the
+  // pmtiles byte-range fetches to a copy served from `public/basemap/` so the
+  // APRS map renders real geography in the screencast. (Copy the archive there
+  // first — see the harness README; it is 43 MB and not committed to public/.)
+  const _fetch = window.fetch.bind(window);
+  window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : (input as Request).url ?? String(input);
+    if (url.startsWith('tile://pmtiles/world')) {
+      return _fetch(`${location.origin}/basemap/world-z0-6.pmtiles`, init);
+    }
+    return _fetch(input as never, init);
+  }) as typeof window.fetch;
+
   // Scripted-interaction hooks for the animated-screencast capture (Playwright
   // drives these to inject APRS traffic and flip the color scheme on cue).
   (window as unknown as { __harness: unknown }).__harness = {
