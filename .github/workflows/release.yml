@@ -50,13 +50,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libax25-dev libudev-dev libwebkit2gtk-4.1-dev \
-            build-essential curl wget file libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev \
-            libheif-dev libde265-dev libwebp-dev
+      - name: Harden apt against mirror flakiness
+        run: echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99retries
+
+      - name: Install system dependencies (cached)
+        # tuxlink-4est: same webkit/gtk dev closure as ci.yml's verify job,
+        # cached so a slow Ubuntu mirror can't stall the release build. gfortran
+        # (the voacapl Fortran toolchain) stays in its own later step.
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev
+          version: tuxlink-release-${{ matrix.arch }}-v1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6

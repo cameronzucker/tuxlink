@@ -29,24 +29,31 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     # The amd64 cold clippy --all-targets + test sits right at 30 min on
-    # ubuntu-latest and flaky-times-out (arm64 finishes in ~14). 45 gives headroom.
-    timeout-minutes: 45
+    # ubuntu-latest (arm64 finishes in ~14). With the system-dep apt closure now
+    # cached (tuxlink-4est), the common run spends seconds on deps; 55 leaves the
+    # rare cold-cache run headroom for the re-download plus a cold compile.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install system dependencies
-        # libsecret-1-dev intentionally omitted: src-tauri/Cargo.toml
-        # configures keyring 3.6.3 with default-features = false and
-        # features = ["sync-secret-service", "crypto-rust"] — both
-        # pure-Rust, no build-time link against libsecret. Runtime
-        # secret-service is a user-session daemon (declared as a
-        # Depends on the .deb produced by release.yml).
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libax25-dev libudev-dev libwebkit2gtk-4.1-dev \
-            build-essential curl wget file libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev \
-            libheif-dev libde265-dev libwebp-dev
+      - name: Harden apt against mirror flakiness
+        run: echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99retries
+
+      # libsecret-1-dev intentionally omitted: src-tauri/Cargo.toml configures
+      # keyring 3.6.3 with default-features = false and features =
+      # ["sync-secret-service", "crypto-rust"] — both pure-Rust, no build-time
+      # link against libsecret. Runtime secret-service is a user-session daemon
+      # (declared as a Depends on the .deb produced by release.yml).
+      - name: Install system dependencies (cached)
+        # tuxlink-4est: cache the ~100-package webkit/gtk dev closure so a slow
+        # Ubuntu mirror can't re-eat the job timeout downloading it every run
+        # (PR #816's verify amd64 was cancelled mid-apt at 45m16s). Restores in
+        # ~10s on a cache hit; the arch-scoped version salt keeps amd64/arm64
+        # caches separate and lets a bump force a refresh.
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev
+          version: tuxlink-ci-${{ matrix.arch }}-v1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
