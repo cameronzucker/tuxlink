@@ -7,8 +7,7 @@
 Tuxlink is a native Linux desktop [Winlink](https://winlink.org/) client for
 amateur radio (ham radio) emergency communications. It implements the Winlink
 B2F protocol directly in Rust and presents the mailbox, compose pane, and live
-session log inside one desktop window. No Windows, no WINE, no browser tab, no
-external CMS sidecar.
+session log inside one self-contained desktop window.
 
 Beyond Winlink, Tuxlink fuses strategic and tactical emergency communications in
 one workspace: long-haul Winlink email over HF, and tactical APRS messaging over
@@ -55,23 +54,21 @@ browser-served web UI.
 | ARM / Raspberry Pi | No | Yes | Yes |
 | Native desktop GUI | Windows only | No (CLI + web UI) | Yes |
 | Winlink Standard Forms catalog | Yes | No | Yes |
-| Credential storage | Local file | Config file | OS keyring |
 | Native UV-Pro Bluetooth control | No | No | Yes |
 
 Tuxlink takes a third path: it implements the Winlink B2F protocol itself,
 natively in Rust. The mailbox, the CMS connection, and the wire-protocol exchange
-are one application, not a desktop GUI wrapped around a separate modem daemon or a
-Windows binary under emulation. The same build-it-natively approach reaches the
-radio link: Tuxlink is developing Sonde, a clean-room HF modem, rather than
-depending on closed Windows modem software.
+are one self-contained application. The same build-it-natively approach reaches
+the radio link: Tuxlink is developing Sonde, a clean-room native HF modem of its
+own.
 
 On that native engine it ships a single [Tauri](https://tauri.app/) desktop
 application. The complete Winlink Express Standard Forms catalog, an address book,
 station finding, location-aware request workflows, full-text search, and an
-offline map all ship in the box, and first run needs no README and no video
-tutorial. The OS keyring holds the Winlink CMS password; Tuxlink never writes it
-to a config file on disk. The mailbox, compose pane, address book, and session
-log all render inside one desktop window.
+offline map all ship in the box, and first run is a guided wizard. The OS keyring
+holds the Winlink CMS password; Tuxlink never writes it to a config file on disk.
+The mailbox, compose pane, address book, and session log all render inside one
+desktop window.
 
 Tuxlink unifies two layers of emergency communication that operators have
 historically run on separate devices. The strategic layer carries Winlink email
@@ -247,9 +244,8 @@ secret-service keyring daemon.
 
 ## Interface
 
-The first-run wizard takes a new operator from install to first message with no
-README and no tutorial, on a CMS-connected path or an offline / radio-only
-path:
+The first-run wizard guides a new operator from install to first message, on a
+CMS-connected path or an offline / radio-only path:
 
 <p align="center">
   <img src="docs/readme/images/tuxlink-first-run-wizard.png" width="820"
