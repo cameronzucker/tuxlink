@@ -28,7 +28,9 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # The amd64 cold clippy --all-targets + test sits right at 30 min on
+    # ubuntu-latest and flaky-times-out (arm64 finishes in ~14). 45 gives headroom.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
@@ -97,10 +99,7 @@ jobs:
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --verbose
-
-      # tuxlink-iuop / ADR 0020: the low-floor (EmComm Tools / Ubuntu 22.10)
-      # build compiles with the `heif` feature off. Guard that the heif-off path
-      # (the decode_heic stub) still type-checks, so the ETC build can't silently
-      # break on a mainline change. Cheap `check`, not a full bundle.
-      - name: Rust check (heif feature off — ETC/low-floor build path)
-        run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --locked
+        # NB: the heif-off (ETC/low-floor) compile path is covered end-to-end by
+        # etc-build.yml (a full --no-default-features tauri build + install-test),
+        # so it is intentionally NOT re-checked here — that extra cargo check
+        # pushed the already-tight amd64 verify past its timeout (tuxlink-iuop).
