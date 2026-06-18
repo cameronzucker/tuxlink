@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { spriteIdFor, greyIdOf, cellIndex, FALLBACK_ID, BRAND_LOGO_CELLS } from './aprsSprites';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  spriteIdFor,
+  greyIdOf,
+  cellIndex,
+  ensureSymbolImage,
+  FALLBACK_ID,
+  BRAND_LOGO_CELLS,
+} from './aprsSprites';
+import { createMapLibreMock } from './testMapLibreMock';
 
 describe('cellIndex', () => {
   it("maps '!' (0x21) to the top-left cell", () => {
@@ -41,5 +49,50 @@ describe('greyIdOf', () => {
   it('suffixes :grey', () => {
     expect(greyIdOf('aprs:p:>')).toBe('aprs:p:>:grey');
     expect(greyIdOf(FALLBACK_ID)).toBe('aprs:fallback:grey');
+  });
+});
+
+describe('ensureSymbolImage', () => {
+  // jsdom has no 2D canvas context; stub it so the bake runs without real canvas.
+  // Pixel correctness is grim-verified, not asserted here.
+  beforeEach(() => {
+    const ctx = {
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(64 * 64 * 4) })),
+      putImageData: vi.fn(),
+      beginPath: vi.fn(),
+      arc: vi.fn(),
+      fill: vi.fn(),
+      stroke: vi.fn(),
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 0,
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+      ctx as unknown as CanvasRenderingContext2D,
+    );
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('registers a colour id and a grey id once, idempotently', () => {
+    const map = createMapLibreMock();
+    const id = ensureSymbolImage(map, '/', '>', null);
+    expect(id).toBe('aprs:p:>');
+    expect(map.hasImage('aprs:p:>')).toBe(true);
+    expect(map.hasImage('aprs:p:>:grey')).toBe(true);
+    // addImage carries pixelRatio:2 for crisp 32px display from 64px cells.
+    expect(map.addImage).toHaveBeenCalledWith('aprs:p:>', expect.anything(), { pixelRatio: 2 });
+
+    const before = (map.addImage as ReturnType<typeof vi.fn>).mock.calls.length;
+    ensureSymbolImage(map, '/', '>', null); // second call is a no-op
+    expect((map.addImage as ReturnType<typeof vi.fn>).mock.calls.length).toBe(before);
+  });
+
+  it('registers the neutral fallback pair for a brand-logo cell', () => {
+    const map = createMapLibreMock();
+    const id = ensureSymbolImage(map, '/', 'M', null);
+    expect(id).toBe(FALLBACK_ID);
+    expect(map.hasImage(FALLBACK_ID)).toBe(true);
+    expect(map.hasImage(`${FALLBACK_ID}:grey`)).toBe(true);
   });
 });
