@@ -33,6 +33,13 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    env:
+      # tuxlink-kcf0: harden against transient crates.io download failures.
+      # v0.69.0's amd64 leg lost the `axum` download to an SSL "unexpected eof"
+      # on a cold cache and the release half-published (arm64 only). More retries
+      # + disabling HTTP/2 multiplexing is the standard crates.io-flake mitigation.
+      CARGO_NET_RETRY: "10"
+      CARGO_HTTP_MULTIPLEXING: "false"
     # Built on the Ubuntu 24.04 runners (glibc 2.39, libheif 1.17.6). That is the
     # effective minimum-OS floor for the published artifacts: Debian 13 Trixie+,
     # Ubuntu 24.04+, current Fedora/RHEL. Debian 12 Bookworm (glibc 2.36, libheif
@@ -244,3 +251,42 @@ jobs:
     uses: ./.github/workflows/deb-install-test.yml
     with:
       deb_artifact_prefix: linux-bundles
+
+  # tuxlink-kcf0: a release is "all arches present, or it's incomplete". A
+  # transient crates.io failure in one matrix leg (v0.69.0 amd64) half-published
+  # silently — arm64 assets up, amd64 missing, no loud signal. This gate runs
+  # after build-linux on tag releases REGARDLESS of its outcome (always()) and
+  # fails the run unless BOTH arches' assets are on the release, turning a
+  # half-publish into a red X with a clear "re-run the failed leg" message. The
+  # per-arch SHA256SUMS is the strongest signal: each leg computes + uploads its
+  # own only after its deb/rpm/appimage succeed.
+  release-assets-complete:
+    needs: build-linux
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert both arches' release assets are present
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          names="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')"
+          echo "Published assets for $TAG:"; printf '%s\n' "$names"
+          missing=0
+          require () {
+            if ! printf '%s\n' "$names" | grep -qE "$1"; then
+              echo "MISSING: $1"; missing=1
+            fi
+          }
+          # Per-arch SHA256SUMS => that leg built AND uploaded its deb/rpm/appimage.
+          require '^SHA256SUMS-amd64$'
+          require '^SHA256SUMS-arm64$'
+          # Primary artifact present for each arch (stable .deb arch naming).
+          require '^tuxlink_.*_amd64\.deb$'
+          require '^tuxlink_.*_arm64\.deb$'
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Release $TAG is half-published — a build-linux leg failed to upload. Re-run the failed job to complete it."
+            exit 1
+          fi
+          echo "OK: both amd64 and arm64 assets present on $TAG."
