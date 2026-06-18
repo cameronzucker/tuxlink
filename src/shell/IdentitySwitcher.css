@@ -177,3 +177,26 @@
   color: var(--error, #ee6b6b);
   font-size: 12px;
 }
+
+/* "Forgot password?" affordance in the unlock form (tuxlink-vfb3 sub-project 2). */
+.identity-forgot {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 4px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent-2, #ffba6e);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.identity-forgot:disabled {
+  opacity: 0.6;
+  cursor: default;
+  text-decoration: none;
+}
+.identity-recovery-ok {
+  color: var(--success, #5dd6a0);
+  font-size: 12px;
+  margin-top: 4px;
+}
