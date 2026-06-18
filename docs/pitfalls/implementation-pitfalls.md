@@ -28,6 +28,7 @@ This document serves three audiences. Start here, then go directly to the sectio
 | 1 | [Scope and Audience Boundaries](#1-scope-and-audience-boundaries) | Any feature, doc, or design decision touching what tuxlink does vs. what is out of scope | SCOPE-1 | §1.C |
 | 2 | [Safety-Stack Coordination and Cross-Component Parity](#2-safety-stack-coordination-and-cross-component-parity) | Any time a project hook denies a write op, OR you're tempted to add additional "session liveness" signals, OR you're writing a script that reads/writes the same state a hook does | HOOK-1, LEASE-1, PARITY-1 | §2.C |
 | 3 | [Plan and Documentation Discipline](#3-plan-and-documentation-discipline) | Any plan / spec amendment, especially when an AMENDMENT marker (AMD-N) lands in a previously-shipped task's plan body | DRIFT-1 | §3.C |
+| 4 | [Frontend Shell Layout](#section-4-frontend-shell-layout) | Adding or changing a direct child of the `.panes` shell grid (a pseudo-folder panel or a reading-pane-slot surface) | LAYOUT-1 | §4.C |
 | — | [Tool Integration](#tool-integration) | Conflicts between project commitments and tool-installed defaults; Vite frontend testing patterns; reference material discovery; schema versioning | TEST-1, DISCOVERY-1, SCHEMA-1, BD-1 | §Tool-Integration.C |
 | — | [Orchestration](#orchestration) | Parallel subagent dispatch and output persistence | ORCH-1 | §Orchestration.C |
 | 8 | [Network and Filesystem Egress Security](#8-network-and-filesystem-egress-security) | Any code path that fetches an operator- or webview-supplied URL, OR any code path that builds a cache path or upstream URL segment from webview-supplied tile coordinates | SSRF-1, TRAVERSAL-1 | §8.C |
@@ -549,6 +550,37 @@ The discipline question is asked at amendment time, not delegated to a future pl
 
 ---
 
+# Section 4: Frontend Shell Layout
+
+The main shell renders inside one CSS grid, `.layout-b .panes` (desktop columns `200px 380px 1fr 400px`; compact `52px 380px 1fr`). Direct children of that grid are positioned either by an explicit `grid-column` rule or, failing that, by CSS grid auto-flow. Auto-flow is silent and almost always wrong for a content panel.
+
+### LAYOUT-1: Every direct `.panes` child needs an explicit grid placement
+
+**The Flaw:** A new direct child of `.panes` ships without an explicit `grid-column`. CSS grid auto-flow drops it into whatever single track is free, so a full-content panel collapses into the 380px message-list track (rendering cramped, narrower than the list) and the radio dock spills into the 1fr reader track.
+
+**Examples in the wild — this is a recurring family, not a one-off:**
+
+- **tuxlink-813d:** `.rows-pane` / `.reading-pane` / StubPanel were pinned to explicit columns in `compactShell.css` after a child dropped out of flow and imploded the whole grid.
+- **tuxlink-kkr5:** `.aprs-positions-map` (the heard-positions map, which occupies the reading-pane slot) shipped unpinned; it auto-flowed and the panel mis-placed on open. Fixed by adding it to the `grid-column: 3` pin beside `.reading-pane`.
+- **tuxlink-mkfj:** `.favorites-panel` (a pseudo-folder panel that REPLACES the MessageList + reading-pane pair, exactly like `.contacts-panel`) shipped without `grid-column: 2 / 4`; it collapsed into the 380px list track and shoved the dock into the reader track. An alpha tester saw it directly. Fixed by mirroring the `.contacts-panel` span.
+
+**Why It Matters:** Auto-flow placement produces no error and no warning — the panel just renders wrong. The trap recurs every time a panel is added to `.panes`, because the invariant ("every child declares its column") lives only in scattered per-class rules with nothing enforcing it. Three instances and counting.
+
+**The Fix:** Every direct child of `.panes` MUST declare an explicit grid placement. Two patterns, by what the child occupies:
+
+- **Reading-pane slot** (renders alongside the MessageList, in the reader area): carry the `.reading-pane` class — or, if it cannot, add its selector to the `grid-column: 3` pin in `compactShell.css` next to `.reading-pane` / `.aprs-positions-map`.
+- **Replaces the MessageList + reading-pane pair** (a full-content pseudo-folder panel — ContactsPanel, FavoritesPanel): add `grid-column: 2 / 4` in `AppShell.css` (spans the 380px list + 1fr reader; leaves column 4 for the dock), mirroring `.layout-b .panes > .contacts-panel`.
+
+When adding any panel under `.panes`, grep `AppShell.css` + `compactShell.css` for `.contacts-panel` and `.reading-pane` and copy the matching pattern.
+
+**The Lesson:** A grid that depends on each child *remembering* to declare its placement has no backstop — the invariant is implicit and scattered, so the next new child silently breaks it. Treat "added a direct `.panes` child" as a hard checklist trigger (§4.C), and prefer giving such panels a shared wrapper that carries the placement so the rule can't be forgotten.
+
+### Section 4 Review Checklist
+
+- [ ] **Check derived from LAYOUT-1** — Any PR that adds or changes a direct child of `.panes` (a new pseudo-folder panel, a reading-pane-slot surface) gives that child an explicit `grid-column`: `.reading-pane` / the col-3 pin for reading-pane-slot children, or `grid-column: 2 / 4` (mirroring `.contacts-panel`) for panels that replace the MessageList + reading-pane pair. Verify by grepping the diff for the new panel's root class and confirming a matching rule in `AppShell.css` or `compactShell.css`.
+
+---
+
 ## Tool Integration
 
 > **Reader context:** Pitfalls that arise when a third-party tool (e.g., `bd`/Beads) installs opinionated defaults into project files (`CLAUDE.md`, `AGENTS.md`, `.claude/settings.json`) that conflict with existing project commitments. The hazard is silent drift — an agent reads a tool-installed directive without noticing the override.
@@ -913,6 +945,7 @@ Companion artifacts:
 | LEASE-1 | Adding additional "session liveness" signals beyond the lease | HIGH | VALIDATED | §2 Safety-Stack Coordination and Cross-Component Parity |
 | PARITY-1 | Script/Hook Path-Resolution Parity | HIGH | VALIDATED | §2 Safety-Stack Coordination and Cross-Component Parity |
 | DRIFT-1 | Plan-text amendments don't auto-cascade to code | HIGH | VALIDATED | §3 Plan and Documentation Discipline |
+| LAYOUT-1 | Every direct `.panes` child needs an explicit grid placement | HIGH | VALIDATED | §4 Frontend Shell Layout |
 | TEST-1 | Filesystem-scan tests in Vite must use import.meta.glob, not Node fs | HIGH | VALIDATED | Tool Integration |
 | DISCOVERY-1 | Gitignored references live in `.claude/worktree-archives/`, not just disk | HIGH | VALIDATED | Tool Integration |
 | SCHEMA-1 | SCHEMA_VERSION bump triggers operator-driven rebuild, not silent ALTER TABLE | HIGH | VALIDATED | Tool Integration |
