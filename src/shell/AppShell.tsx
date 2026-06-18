@@ -1465,7 +1465,18 @@ export function AppShell() {
           // pop-out window — this in-pane render does not preclude that.
           if (aprsOpen && aprsMapOpen) {
             return (
-              <Suspense fallback={null}>
+              // tuxlink-kkr5: the fallback MUST occupy the reading-pane grid
+              // slot. AprsPositionsMap is lazy() and pulls the maplibre-gl
+              // chunk, so a `fallback={null}` left column 3 empty during the
+              // load — CSS grid auto-flow then reflowed the 400px dock LEFT
+              // into the 1fr reader track (measured: 400px → 877px), and it
+              // snapped back when the map mounted. That right→left reflow was
+              // the visible "bounce". An empty `.aprs-positions-map` placeholder
+              // holds the slot (same class = same grid placement + surface bg),
+              // so the layout is stable across the chunk load.
+              <Suspense
+                fallback={<div className="aprs-positions-map" aria-hidden="true" />}
+              >
                 {/* tuxlink-dwzu: the operator grid is the first-run center +
                     recenter target for the positions map (null when unset). */}
                 <AprsPositionsMap
