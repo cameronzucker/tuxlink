@@ -298,6 +298,55 @@
   color: var(--success, #4ade80);
   background: color-mix(in srgb, var(--success, #4ade80) 12%, transparent);
 }
+/* Directed-send target (tuxlink-hzwc bug #3) — a removable chip on its own row
+   above the field, so the callsign appears ONCE (not duplicated into the field)
+   and the message input reclaims the full width. */
+.aprs-composer-chiprow {
+  display: flex;
+  margin-bottom: 6px;
+}
+.aprs-compose-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 4px 2px 8px;
+  border-radius: 12px;
+  color: var(--success, #4ade80);
+  background: color-mix(in srgb, var(--success, #4ade80) 14%, transparent);
+}
+.aprs-compose-chip-arrow {
+  opacity: 0.7;
+}
+.aprs-compose-chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.aprs-compose-chip-x:hover {
+  background: color-mix(in srgb, var(--success, #4ade80) 25%, transparent);
+}
+/* Quiet broadcast hint when no target is set — small, recedes; the field is the
+   focus. */
+.aprs-compose-target-broadcast {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  color: var(--accent-2, #fbbf24);
+}
 .aprs-composer-text {
   flex: 1;
   display: flex;

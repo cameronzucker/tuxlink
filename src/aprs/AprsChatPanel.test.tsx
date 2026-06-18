@@ -168,12 +168,14 @@ describe('AprsChatPanel (open channel)', () => {
     expect(screen.queryByTestId('aprs-delivery-chip')).not.toBeInTheDocument();
   });
 
-  it('shows a live → target indicator derived from the compose field', () => {
+  it('lifts an inline leading callsign into a target chip and keeps the field clean (bug #3)', () => {
     renderPanel();
-    const target = screen.getByTestId('aprs-compose-target');
-    expect(target).toHaveTextContent(/all/i);
-    fireEvent.change(screen.getByTestId('aprs-composer-text'), { target: { value: 'W7RPT-9: hi' } });
-    expect(target).toHaveTextContent(/W7RPT-9/);
+    expect(screen.getByTestId('aprs-compose-target')).toHaveTextContent(/all/i);
+    const input = screen.getByTestId('aprs-composer-text') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'W7RPT-9: hi' } });
+    // The callsign moves into the chip; the field holds only the body (not both).
+    expect(screen.getByTestId('aprs-compose-target')).toHaveTextContent(/W7RPT-9/);
+    expect(input.value).toBe('hi');
   });
 
   it('sends a directed message parsed from the inline leading callsign token', async () => {
@@ -207,15 +209,38 @@ describe('AprsChatPanel (open channel)', () => {
     expect(screen.getByTestId('aprs-char-count')).toHaveTextContent('5 / 67');
   });
 
-  it('seeds the compose field with a callsign token when an inbound feed row is tapped', () => {
+  it('sets a target chip (not field text) when an inbound feed row is tapped (bug #3)', () => {
     const messages: ChannelMessage[] = [
       { id: 'm1', direction: 'in', from: 'KK6XYZ', to: null, text: 'hi all', kind: 'message', msgid: null, at: Date.now() },
     ];
     renderPanel({ messages });
-    const rows = screen.getAllByTestId('aprs-feed-row');
-    fireEvent.click(rows[0]);
-    const input = screen.getByTestId('aprs-composer-text') as HTMLInputElement;
-    expect(input.value).toBe('KK6XYZ: ');
+    fireEvent.click(screen.getAllByTestId('aprs-feed-row')[0]);
+    // Callsign goes into the chip; the message field stays clean (not duplicated).
+    expect(screen.getByTestId('aprs-compose-target')).toHaveTextContent('KK6XYZ');
+    expect((screen.getByTestId('aprs-composer-text') as HTMLInputElement).value).toBe('');
+  });
+
+  it('clears the target chip back to broadcast via its ✕ (bug #3)', () => {
+    const messages: ChannelMessage[] = [
+      { id: 'm1', direction: 'in', from: 'KK6XYZ', to: null, text: 'hi all', kind: 'message', msgid: null, at: Date.now() },
+    ];
+    renderPanel({ messages });
+    fireEvent.click(screen.getAllByTestId('aprs-feed-row')[0]);
+    expect(screen.getByTestId('aprs-compose-target')).toHaveTextContent('KK6XYZ');
+    fireEvent.click(screen.getByTestId('aprs-compose-target-clear'));
+    expect(screen.getByTestId('aprs-compose-target')).toHaveTextContent(/all/i);
+  });
+
+  it('sends to the tapped station via the target chip (bug #3)', async () => {
+    send.mockClear();
+    const messages: ChannelMessage[] = [
+      { id: 'm1', direction: 'in', from: 'KK6XYZ', to: null, text: 'hi all', kind: 'message', msgid: null, at: Date.now() },
+    ];
+    renderPanel({ messages });
+    fireEvent.click(screen.getAllByTestId('aprs-feed-row')[0]);
+    fireEvent.change(screen.getByTestId('aprs-composer-text'), { target: { value: 'roger' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    await waitFor(() => expect(send).toHaveBeenCalledWith('KK6XYZ', 'roger'));
   });
 
   it('does NOT seed from tapping an outbound row', () => {
