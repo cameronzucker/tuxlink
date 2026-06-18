@@ -116,8 +116,8 @@ describe('AprsChatPanel (open channel)', () => {
 
   it('renders every heard message in one flat feed with from → to', () => {
     const messages: ChannelMessage[] = [
-      { id: 'm1', direction: 'in', from: 'KK6XYZ', to: 'NN7LE-9', text: 'directed ping', msgid: '04', at: Date.now() },
-      { id: 'm2', direction: 'in', from: 'W7RPT-9', to: null, text: 'broadcast hi', msgid: null, at: Date.now() },
+      { id: 'm1', direction: 'in', from: 'KK6XYZ', to: 'NN7LE-9', text: 'directed ping', kind: 'message', msgid: '04', at: Date.now() },
+      { id: 'm2', direction: 'in', from: 'W7RPT-9', to: null, text: 'broadcast hi', kind: 'message', msgid: null, at: Date.now() },
     ];
     renderPanel({ messages });
     expect(screen.getByText('directed ping')).toBeInTheDocument();
@@ -127,10 +127,33 @@ describe('AprsChatPanel (open channel)', () => {
     expect(addrs.some((t) => /→.*all/.test(t ?? ''))).toBe(true);
   });
 
+  it('decodes a raw non-message frame into a readable monitor row (bug #2)', () => {
+    const messages: ChannelMessage[] = [
+      {
+        id: 'r1',
+        direction: 'in',
+        from: 'WX7FGZ-7',
+        to: null,
+        text: '@182019z3608.17N/11114.52W_311/004g014t097r000p000P000h12b10174.DsVP',
+        kind: 'raw',
+        msgid: null,
+        at: Date.now(),
+      },
+    ];
+    renderPanel({ messages });
+    // Readable WX summary, never the raw packet text.
+    expect(screen.getByText(/97°F/)).toBeInTheDocument();
+    expect(screen.queryByText(/3608\.17N/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('aprs-msg-cat')).toHaveTextContent('WX');
+    // The raw packet is preserved on the text node's title as a show-raw affordance.
+    const textNode = screen.getByTestId('aprs-feed-row').querySelector('.aprs-msg-text');
+    expect(textNode?.getAttribute('title')).toContain('3608.17N');
+  });
+
   it('shows a delivery chip with ACK time on an acked directed outbound message', () => {
     const ackedAt = new Date(2026, 5, 12, 14, 8).getTime();
     const messages: ChannelMessage[] = [
-      { id: 'm1', direction: 'out', from: 'me', to: 'KK6XYZ', text: 'hello', msgid: 'A1', state: 'acked', at: ackedAt - 3000, ackedAt },
+      { id: 'm1', direction: 'out', from: 'me', to: 'KK6XYZ', text: 'hello', kind: 'message', msgid: 'A1', state: 'acked', at: ackedAt - 3000, ackedAt },
     ];
     renderPanel({ messages });
     expect(screen.getByText(/^Acked \d{1,2}:\d{2}$/)).toBeInTheDocument();
@@ -138,7 +161,7 @@ describe('AprsChatPanel (open channel)', () => {
 
   it('shows "broadcast · sent" and NO delivery chip for a broadcast outbound', () => {
     const messages: ChannelMessage[] = [
-      { id: 'b1', direction: 'out', from: 'me', to: null, text: 'CQ', msgid: 'b1', state: 'sent', at: Date.now() },
+      { id: 'b1', direction: 'out', from: 'me', to: null, text: 'CQ', kind: 'message', msgid: 'b1', state: 'sent', at: Date.now() },
     ];
     renderPanel({ messages });
     expect(screen.getByTestId('aprs-broadcast-chip')).toHaveTextContent(/broadcast/i);
@@ -186,7 +209,7 @@ describe('AprsChatPanel (open channel)', () => {
 
   it('seeds the compose field with a callsign token when an inbound feed row is tapped', () => {
     const messages: ChannelMessage[] = [
-      { id: 'm1', direction: 'in', from: 'KK6XYZ', to: null, text: 'hi all', msgid: null, at: Date.now() },
+      { id: 'm1', direction: 'in', from: 'KK6XYZ', to: null, text: 'hi all', kind: 'message', msgid: null, at: Date.now() },
     ];
     renderPanel({ messages });
     const rows = screen.getAllByTestId('aprs-feed-row');
@@ -197,7 +220,7 @@ describe('AprsChatPanel (open channel)', () => {
 
   it('does NOT seed from tapping an outbound row', () => {
     const messages: ChannelMessage[] = [
-      { id: 'o1', direction: 'out', from: 'me', to: 'KK6XYZ', text: 'hi', msgid: 'o1', state: 'sent', at: Date.now() },
+      { id: 'o1', direction: 'out', from: 'me', to: 'KK6XYZ', text: 'hi', kind: 'message', msgid: 'o1', state: 'sent', at: Date.now() },
     ];
     renderPanel({ messages });
     const rows = screen.getAllByTestId('aprs-feed-row');

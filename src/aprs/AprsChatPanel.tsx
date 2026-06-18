@@ -49,7 +49,22 @@ import type {
   ChannelMessage,
   DeliveryState,
 } from './aprsTypes';
+import { decodeAprsInfo, type AprsPacketCategory } from './aprsDecode';
 import './AprsChatPanel.css';
+
+/// Short monitor-style tag per decoded packet category (tuxlink-hzwc bug #2),
+/// shown ahead of the readable summary so the operator can scan traffic types.
+const CATEGORY_TAG: Record<AprsPacketCategory, string> = {
+  position: 'POS',
+  weather: 'WX',
+  telemetry: 'TLM',
+  status: 'STATUS',
+  object: 'OBJ',
+  item: 'ITEM',
+  mice: 'MIC-E',
+  message: 'MSG',
+  unknown: 'RAW',
+};
 
 /// APRS message text budget — the per-message character cap that makes bounded
 /// airtime real (matches the backend codec's ≤67 text limit).
@@ -134,12 +149,17 @@ function DeliveryChip({ state, msg }: { state: DeliveryState; msg: ChannelMessag
 function FeedRow({ msg, onReplyTo }: { msg: ChannelMessage; onReplyTo?: (call: string) => void }) {
   const broadcast = msg.to === null;
   const replyable = msg.direction === 'in' && Boolean(onReplyTo);
+  // A raw non-message frame is decoded into a readable monitor line; the raw
+  // info field is preserved on the row's `title` as a "show raw" affordance
+  // (tuxlink-hzwc bug #2).
+  const decoded = msg.kind === 'raw' ? decodeAprsInfo(msg.text) : null;
   return (
     <li
-      className={`aprs-msg aprs-msg-${msg.direction}${replyable ? ' aprs-msg-replyable' : ''}`}
+      className={`aprs-msg aprs-msg-${msg.direction}${replyable ? ' aprs-msg-replyable' : ''}${decoded ? ' aprs-msg-monitor' : ''}`}
       data-testid="aprs-feed-row"
       data-direction={msg.direction}
       data-broadcast={broadcast}
+      data-kind={msg.kind}
       role={replyable ? 'button' : undefined}
       tabIndex={replyable ? 0 : undefined}
       onClick={replyable ? () => onReplyTo?.(msg.from) : undefined}
@@ -161,13 +181,26 @@ function FeedRow({ msg, onReplyTo }: { msg: ChannelMessage; onReplyTo?: (call: s
           ) : (
             <span className="aprs-msg-from">{msg.from}</span>
           )}
-          <span className="aprs-msg-arrow" aria-hidden="true">
-            {' → '}
-          </span>
-          {broadcast ? (
-            <span className="aprs-msg-to aprs-msg-to-all">all</span>
+          {decoded ? (
+            // Monitor rows are beacons heard on the channel, not directed
+            // messages — tag the traffic type instead of a "→ all" addressee.
+            <span
+              className={`aprs-msg-cat aprs-msg-cat-${decoded.category}`}
+              data-testid="aprs-msg-cat"
+            >
+              {CATEGORY_TAG[decoded.category]}
+            </span>
           ) : (
-            <span className="aprs-msg-to">{msg.to}</span>
+            <>
+              <span className="aprs-msg-arrow" aria-hidden="true">
+                {' → '}
+              </span>
+              {broadcast ? (
+                <span className="aprs-msg-to aprs-msg-to-all">all</span>
+              ) : (
+                <span className="aprs-msg-to">{msg.to}</span>
+              )}
+            </>
           )}
         </span>
         <span className="aprs-msg-time" data-testid="aprs-msg-time">
@@ -175,7 +208,9 @@ function FeedRow({ msg, onReplyTo }: { msg: ChannelMessage; onReplyTo?: (call: s
         </span>
       </div>
       <div className="aprs-msg-body">
-        <span className="aprs-msg-text">{msg.text}</span>
+        <span className="aprs-msg-text" title={decoded ? msg.text : undefined}>
+          {decoded ? decoded.summary : msg.text}
+        </span>
         {msg.direction === 'out' && (
           <span className="aprs-msg-state">
             {broadcast ? (

@@ -110,6 +110,9 @@ export function useAprsChat(): UseAprsChat {
         // Blank addressee ⇒ broadcast (`→ all`).
         to: payload.addressee === '' ? null : payload.addressee,
         text: payload.text,
+        // Raw non-message frames are decoded into a monitor line by the panel;
+        // legacy payloads without `kind` are treated as text messages.
+        kind: payload.kind ?? 'message',
         msgid: payload.msgid,
         at: Date.now(),
       };
@@ -159,6 +162,7 @@ export function useAprsChat(): UseAprsChat {
         from: 'me',
         to: call,
         text,
+        kind: 'message',
         msgid: id,
         state: 'sent',
         at: Date.now(),

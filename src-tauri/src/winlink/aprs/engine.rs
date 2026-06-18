@@ -81,6 +81,19 @@ fn hex_bytes(b: &[u8]) -> String {
 /// engine emits EVERY heard message because APRS is a party line; the UI renders
 /// `sender → addressee` (or `→ all` when blank). Auto-ACK is a separate concern
 /// and fires only for our own exact call (see `ingest_ax25`).
+/// Which feed-row kind an [`InboundMsg`] carries. `Message` is a true APRS text
+/// message (chat). `Raw` is the verbatim info field of a NON-message frame
+/// (position / status / object / Mic-E / weather / telemetry) surfaced for the
+/// monitor feed — the UI decodes it into a readable line (tuxlink-hzwc bug #2).
+/// The backend knows which it parsed, so the UI never guesses whether a
+/// `>`-leading broadcast is a status packet or ordinary text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MsgKind {
+    Message,
+    Raw,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboundMsg {
@@ -88,6 +101,8 @@ pub struct InboundMsg {
     pub addressee: String,
     pub text: String,
     pub msgid: Option<String>,
+    /// Discriminates a true text message from a raw non-message info dump.
+    pub kind: MsgKind,
 }
 
 /// Delivery lifecycle of one of OUR outgoing messages.
@@ -306,6 +321,8 @@ impl AprsEngine {
                             addressee: String::new(),
                             text: raw_text,
                             msgid: None,
+                            // Raw info dump: the UI decodes it to a monitor line.
+                            kind: MsgKind::Raw,
                         });
                     }
                 }
@@ -343,6 +360,7 @@ impl AprsEngine {
                         addressee,
                         text,
                         msgid: msgid.clone(),
+                        kind: MsgKind::Message,
                     });
                 }
                 // Auto-ACK ONLY a message addressed to our exact call that carries
@@ -1060,6 +1078,23 @@ mod tests {
         assert_eq!(msgs[0].addressee, "", "blank addressee == broadcast");
         assert_eq!(msgs[0].text, "net up");
         assert!(tx.is_empty(), "a broadcast is never auto-ACKed");
+    }
+
+    #[test]
+    fn message_and_raw_frames_carry_distinct_kinds() {
+        // tuxlink-hzwc bug #2: the feed must distinguish a true text message
+        // from a non-message frame surfaced raw, so the UI decodes only the raw
+        // ones (and never mis-decodes a `>`-leading broadcast as a status packet).
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b":W7OTHER  :hi{05"), 1000);
+        engine.handle_inbound_bytes(&inbound_with("KD7ABC", b">Net control, Phoenix"), 2000);
+        let msgs = sink.msgs.lock().unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].kind, MsgKind::Message);
+        assert_eq!(msgs[0].text, "hi");
+        assert_eq!(msgs[1].kind, MsgKind::Raw);
+        assert_eq!(msgs[1].text, ">Net control, Phoenix");
     }
 
     #[test]

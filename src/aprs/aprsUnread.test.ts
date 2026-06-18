@@ -9,6 +9,7 @@ const feed = (msgs: Array<{ dir: 'in' | 'out'; at: number }>): ChannelMessage[] 
     from: m.dir === 'out' ? 'me' : 'W7RPT-9',
     to: null,
     text: 'x',
+    kind: 'message',
     msgid: null,
     at: m.at,
   }));

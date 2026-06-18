@@ -180,6 +180,36 @@
   flex-shrink: 0;
 }
 
+/* Decoded monitor rows (tuxlink-hzwc bug #2): a non-message frame rendered as a
+   readable line. Subtly recessed from chat messages — it's heard traffic, not a
+   conversation. The category tag is a small monospace pill ahead of the sender. */
+.aprs-msg-monitor .aprs-msg-text {
+  color: var(--text-faint, #94a3b8);
+  font-size: 12px;
+}
+.aprs-msg-cat {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+  background: var(--surface-3, #1b232c);
+  color: var(--text-faint, #94a3b8);
+}
+.aprs-msg-cat-weather {
+  color: var(--accent-2, #fbbf24);
+}
+.aprs-msg-cat-position,
+.aprs-msg-cat-mice {
+  color: var(--modem-accent, #4ade80);
+}
+.aprs-msg-cat-status {
+  color: #7fb4f0;
+}
+
 /* Delivery-state chips — honest backend states only. */
 .aprs-chip {
   display: inline-block;

@@ -22,6 +22,11 @@ export interface InboundMsgDto {
   addressee: string;
   text: string;
   msgid: string | null;
+  /// `'message'` for a true APRS text message; `'raw'` for a non-message frame's
+  /// verbatim info field surfaced for the monitor feed (the UI decodes raw rows
+  /// into a readable line — see `aprsDecode`). Absent on legacy payloads ⇒
+  /// treated as `'message'`.
+  kind?: 'message' | 'raw';
 }
 
 /// Payload of `aprs-message:state` — a delivery-state transition for a
@@ -49,6 +54,9 @@ export interface ChannelMessage {
   /// Addressee callsign, or `null` for a broadcast (`→ all`).
   to: string | null;
   text: string;
+  /// `'message'` (chat) vs `'raw'` (a decoded monitor row for a non-message
+  /// frame). Outbound is always `'message'`. Defaults to `'message'`.
+  kind: 'message' | 'raw';
   /// APRS message number (null when none). For outbound this matches the
   /// backend tracking id used to reconcile `aprs-message:state`.
   msgid: string | null;
