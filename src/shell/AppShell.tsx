@@ -170,11 +170,18 @@ const AprsChatPanel = lazy(loadAprsChatPanel);
 const loadAprsPositionsMap = () =>
   import('../aprs/AprsPositionsMap').then((m) => ({ default: m.AprsPositionsMap }));
 const AprsPositionsMap = lazy(loadAprsPositionsMap);
+// tuxlink-2phz: the source-reactive environmental panel (weather + telemetry)
+// is the dock's third tenant. Lazy so its (small) chunk stays off the cold-start
+// path — same discipline as the chat/map panels.
+const loadEnvPanel = () => import('../aprs/EnvPanel').then((m) => ({ default: m.EnvPanel }));
+const EnvPanel = lazy(loadEnvPanel);
 // tuxlink-2f2n Plan 2: APRS chat is re-homed from the sidebar pseudo-folder into
 // the shared right dock (chat ⇄ modem). AppShell lifts one useAprsChat instance
 // so the status-strip control (unread/listening) + the dock panel share state.
 import { useAprsChat } from '../aprs/useAprsChat';
 import { useAprsPositions } from '../aprs/useAprsPositions';
+import { useEnvStations } from '../aprs/useEnvStations';
+import { openStationsWindow } from '../aprs/stationsWindow';
 import { countUnread } from '../aprs/aprsUnread';
 import { AprsDockTabs } from '../aprs/AprsDockTabs';
 // The always-live UV-Pro device control strip (tuxlink-ve3j). Capability-gated:
@@ -336,10 +343,15 @@ export function AppShell() {
   // tuxlink-6vgt: heard-station positions, lifted alongside the chat so the
   // reading-pane map and the dock share one subscription.
   const aprsPositions = useAprsPositions();
+  // tuxlink-2phz: heard weather + telemetry, merged by callsign. Lifted to the
+  // shell (like positions) so the per-channel history ring buffers from launch —
+  // opening the Station Data tab later shows the buffered series, not an empty
+  // graph that only starts filling on first view.
+  const envStations = useEnvStations();
   const [aprsOpen, setAprsOpen] = useState(false);
   // Whether the heard-positions map is expanded into the reading-pane region.
   const [aprsMapOpen, setAprsMapOpen] = useState(false);
-  const [dockTab, setDockTab] = useState<'aprs' | 'modem'>('aprs');
+  const [dockTab, setDockTab] = useState<'aprs' | 'modem' | 'stations'>('aprs');
   const [aprsSeenAt, setAprsSeenAt] = useState(0);
   const aprsUnread = countUnread(aprs.messages, aprsSeenAt);
   const openAprsChat = useCallback(() => {
@@ -1610,6 +1622,8 @@ export function AppShell() {
               active={dockTab}
               unread={aprsUnread}
               modemEnabled={radioPanelMode !== null}
+              stationCount={envStations.stations.length}
+              onPopOut={dockTab === 'stations' ? () => void openStationsWindow() : undefined}
               onSelect={(tab) => {
                 setDockTab(tab);
                 if (tab === 'aprs') setAprsSeenAt(Date.now());
@@ -1622,7 +1636,11 @@ export function AppShell() {
               mapOpen={aprsMapOpen}
               onToggleMap={() => setAprsMapOpen((o) => !o)}
             />
-            {dockTab === 'aprs' ? (
+            {dockTab === 'stations' ? (
+              <Suspense fallback={null}>
+                <EnvPanel stations={envStations.stations} />
+              </Suspense>
+            ) : dockTab === 'aprs' ? (
               <>
                 {/* bd-tuxlink-ckmb: the connect surface lives in the dock-header
                     band, ABOVE the chat, for ALL transports (the fresh-install

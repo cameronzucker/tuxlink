@@ -5,7 +5,7 @@
 // that keeps compose windows from listening for menu:file:new.
 
 import { describe, it, expect } from 'vitest';
-import { parseComposeRoute, parseHelpRoute, parseLoggingRoute } from './routing';
+import { parseComposeRoute, parseHelpRoute, parseLoggingRoute, parseStationsRoute } from './routing';
 
 describe('parseComposeRoute', () => {
   it('matches /compose/<draftId> and returns the draftId', () => {
@@ -92,5 +92,25 @@ describe('parseLoggingRoute', () => {
   });
   it('returns false for /logging/extra', () => {
     expect(parseLoggingRoute('/logging/extra')).toBe(false);
+  });
+});
+
+// tuxlink-2phz: the Station Data pop-out is single-instance, no parameters, so
+// parseStationsRoute returns boolean (same shape as parseHelpRoute).
+describe('parseStationsRoute', () => {
+  it('returns true for /stations', () => {
+    expect(parseStationsRoute('/stations')).toBe(true);
+  });
+  it('returns true for /stations/', () => {
+    expect(parseStationsRoute('/stations/')).toBe(true);
+  });
+  it('returns false for /', () => {
+    expect(parseStationsRoute('/')).toBe(false);
+  });
+  it('returns false for /help', () => {
+    expect(parseStationsRoute('/help')).toBe(false);
+  });
+  it('returns false for /stations/extra', () => {
+    expect(parseStationsRoute('/stations/extra')).toBe(false);
   });
 });

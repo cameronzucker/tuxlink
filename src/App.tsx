@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { AppShell } from './shell/AppShell';
 import { ErrorBoundary } from './ErrorBoundary';
-import { parseComposeRoute, parseHelpRoute, parseLoggingRoute } from './routing';
+import { parseComposeRoute, parseHelpRoute, parseLoggingRoute, parseStationsRoute } from './routing';
 import './App.css';
 
 // tuxlink-perf-coldstart: lazy-load the first-run wizard and the compose-webview
@@ -25,6 +25,11 @@ const HelpView = lazy(() =>
 // tuxlink-qjgx: separate Tauri webview for Help → Logging. Same lazy pattern.
 const LoggingView = lazy(() =>
   import('./help/LoggingView').then((m) => ({ default: m.LoggingView })),
+);
+// tuxlink-2phz: separate Tauri webview for the popped-out Station Data panel.
+// Same lazy pattern — off the main window's cold-start critical path.
+const StationsView = lazy(() =>
+  import('./aprs/StationsView').then((m) => ({ default: m.StationsView })),
 );
 
 // One QueryClient for the app lifetime. Mailbox/status queries live under it
@@ -49,6 +54,8 @@ export default function App() {
   const isHelpWindow = parseHelpRoute(window.location.pathname);
   // tuxlink-qjgx: logging webview branch — single-instance, no params (spec §8.1).
   const isLoggingWindow = parseLoggingRoute(window.location.pathname);
+  // tuxlink-2phz: Station Data pop-out webview branch — single-instance, no params.
+  const isStationsWindow = parseStationsRoute(window.location.pathname);
 
   // Amendment E.7.7: signal the backend that the main window's first paint is
   // complete so env-probe-runner can start its "after first paint" probes.
@@ -56,7 +63,7 @@ export default function App() {
   // are not the target. Deferred via queueMicrotask so React's commit phase
   // finishes before the IPC call.
   useEffect(() => {
-    if (isComposeWindow || isHelpWindow || isLoggingWindow) return;
+    if (isComposeWindow || isHelpWindow || isLoggingWindow || isStationsWindow) return;
     queueMicrotask(() => {
       invoke('emit_first_paint_complete').catch(() => {
         /* silently no-op if backend unavailable (e.g., logging in Degraded mode) */
@@ -68,11 +75,11 @@ export default function App() {
   // compose windows (which render <Compose> below regardless), help windows
   // (which render <HelpView> below regardless), and logging windows.
   useEffect(() => {
-    if (isComposeWindow || isHelpWindow || isLoggingWindow) return;
+    if (isComposeWindow || isHelpWindow || isLoggingWindow || isStationsWindow) return;
     invoke<boolean>('get_wizard_completed')
       .then(setWizardCompleted)
       .catch(() => setWizardCompleted(false));
-  }, [isComposeWindow, isHelpWindow, isLoggingWindow]);
+  }, [isComposeWindow, isHelpWindow, isLoggingWindow, isStationsWindow]);
 
   // Select the branch's content first; QueryClientProvider wraps the whole
   // tree below so every branch has access to react-query context (tuxlink-n4hz:
@@ -104,6 +111,14 @@ export default function App() {
     content = (
       <Suspense fallback={<div data-testid="app-loading" />}>
         <LoggingView />
+      </Suspense>
+    );
+  } else if (isStationsWindow) {
+    // Station Data pop-out webview: render <StationsView> for /stations
+    // (tuxlink-2phz). Same lazy + Suspense pattern.
+    content = (
+      <Suspense fallback={<div data-testid="app-loading" />}>
+        <StationsView />
       </Suspense>
     );
   } else if (wizardCompleted === null) {

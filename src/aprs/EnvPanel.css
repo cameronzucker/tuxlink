@@ -1,0 +1,349 @@
+/* src/aprs/EnvPanel.css
+ *
+ * Source-reactive environmental panel (tuxlink-2phz). Built on the shared dark
+ * tokens from App.css (--surface, --text, --accent, …). The chart-specific tints
+ * (--env-grid, --env-sky, --env-down) are panel-local so the graded charts read
+ * the way the locked mock (2026-06-17-telemetry-panel-mock-wx) does without
+ * polluting the global token set. Layout mirrors the chat/modem dock tenants:
+ * the panel fills the one dock column and scrolls internally.
+ */
+
+.env-panel {
+  --env-grid: color-mix(in srgb, var(--border) 70%, transparent);
+  --env-sky: #5eb3f5;
+  --env-sky-fill: rgba(94, 179, 245, 0.08);
+  --env-down: #ff6b6b;
+  --env-up: var(--success, #4ade80);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.env-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  overflow: auto;
+  min-height: 0;
+}
+
+/* ── empty state ───────────────────────────────────────────────────────── */
+.env-empty {
+  margin: auto;
+  max-width: 360px;
+  padding: 32px 20px;
+  text-align: center;
+}
+.env-empty-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin: 0 0 6px;
+}
+.env-empty-sub {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-faint);
+  margin: 0;
+}
+
+/* ── station card ──────────────────────────────────────────────────────── */
+.env-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 11px 13px;
+}
+.env-card.is-stale {
+  opacity: 0.55;
+}
+
+.env-chead {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+.env-call {
+  font-weight: 700;
+  font-size: 13.5px;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+.env-proj {
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.env-meta {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.env-seq {
+  font-family: var(--mono);
+}
+.env-chip {
+  padding: 1.5px 7px;
+  border-radius: 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.env-chip.is-fresh {
+  background: color-mix(in srgb, var(--success, #4ade80) 14%, transparent);
+  color: var(--success, #4ade80);
+}
+.env-chip.is-stale {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
+.env-chip.is-raw {
+  background: var(--surface-2);
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+}
+
+/* ── wind compass + stats ──────────────────────────────────────────────── */
+.env-wind {
+  display: grid;
+  grid-template-columns: 116px 1fr;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.env-compass {
+  width: 104px;
+  height: 104px;
+  margin: 0 auto;
+}
+.env-compass-face {
+  fill: var(--bg);
+  stroke: var(--border-soft);
+}
+.env-compass-ring {
+  stroke: var(--border-soft);
+}
+.env-compass-arrow {
+  stroke: var(--env-sky);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+.env-compass-head {
+  fill: var(--env-sky);
+}
+.env-compass-card {
+  font-size: 9px;
+  fill: var(--text-faint);
+  font-family: var(--mono);
+}
+.env-compass-speed {
+  font-size: 15px;
+  font-weight: 700;
+  fill: var(--text);
+  font-family: var(--mono);
+}
+.env-compass-unit {
+  font-size: 8px;
+  fill: var(--text-faint);
+}
+.env-wind-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px 16px;
+}
+.env-stat-k {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.env-stat-v {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.env-stat-v small {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-weight: 500;
+  margin-left: 2px;
+}
+
+/* ── graded charts (shared time axis) ──────────────────────────────────── */
+.env-chan {
+  display: grid;
+  grid-template-columns: 84px 1fr 86px;
+  gap: 12px;
+  align-items: center;
+  padding: 7px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.env-chan:first-child {
+  border-top: none;
+}
+.env-cn {
+  font-size: 12px;
+  min-width: 0;
+}
+.env-cn b {
+  display: block;
+  color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.env-cn span {
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+.env-plot {
+  position: relative;
+  height: 46px;
+}
+.env-grid {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--env-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--env-grid) 1px, transparent 1px);
+  background-size: 100% 15px, 52px 100%;
+}
+.env-plot svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.env-area {
+  fill: var(--env-sky-fill);
+}
+.env-line {
+  stroke: var(--env-sky);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.env-dot {
+  fill: var(--env-sky);
+}
+.env-yhi,
+.env-ylo {
+  position: absolute;
+  right: 4px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.env-yhi {
+  top: 2px;
+}
+.env-ylo {
+  bottom: 2px;
+}
+.env-cval {
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.env-cval span {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-left: 2px;
+}
+.env-trend {
+  font-weight: 600;
+}
+.env-trend.is-rising {
+  color: var(--env-up);
+}
+.env-trend.is-falling {
+  color: var(--env-down);
+}
+.env-xaxis {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  padding: 5px 86px 0 96px;
+  border-top: 1px solid var(--border-soft);
+  margin-top: 6px;
+}
+
+/* ── rain totals ───────────────────────────────────────────────────────── */
+.env-rain {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.env-rain-label {
+  min-width: 38px;
+}
+.env-rainbar {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.env-rainbar i {
+  display: block;
+  height: 100%;
+  background: var(--env-sky);
+  border-radius: 4px;
+}
+.env-rain-vals {
+  font-family: var(--mono);
+}
+.env-rain-vals b {
+  color: var(--text);
+}
+
+/* ── digital bits (LED pills) ──────────────────────────────────────────── */
+.env-bits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-soft);
+}
+.env-bit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.env-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.env-bit.is-on {
+  color: var(--text);
+}
+.env-bit.is-on .env-led {
+  background: var(--success, #4ade80);
+  box-shadow: 0 0 6px var(--success, #4ade80);
+}

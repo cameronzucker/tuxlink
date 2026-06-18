@@ -24,4 +24,33 @@ describe('AprsDockTabs', () => {
     fireEvent.click(screen.getByTestId('aprs-dock-close'));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('renders a Station Data tab with a live station count and routes selection', () => {
+    const onSelect = vi.fn();
+    render(
+      <AprsDockTabs active="aprs" unread={0} modemEnabled onSelect={onSelect} onClose={() => {}} stationCount={3} />,
+    );
+    const tab = screen.getByTestId('aprs-dock-tab-stations');
+    expect(tab).toHaveTextContent('3');
+    fireEvent.click(tab);
+    expect(onSelect).toHaveBeenCalledWith('stations');
+  });
+
+  it('omits the station count when zero heard', () => {
+    render(<AprsDockTabs active="aprs" unread={0} modemEnabled onSelect={() => {}} onClose={() => {}} stationCount={0} />);
+    expect(screen.queryByTestId('aprs-dock-tab-stations-count')).not.toBeInTheDocument();
+  });
+
+  it('shows a pop-out control only when onPopOut is provided, and invokes it', () => {
+    const onPopOut = vi.fn();
+    const { rerender } = render(
+      <AprsDockTabs active="stations" unread={0} modemEnabled onSelect={() => {}} onClose={() => {}} stationCount={1} />,
+    );
+    expect(screen.queryByTestId('aprs-dock-popout')).not.toBeInTheDocument();
+    rerender(
+      <AprsDockTabs active="stations" unread={0} modemEnabled onSelect={() => {}} onClose={() => {}} stationCount={1} onPopOut={onPopOut} />,
+    );
+    fireEvent.click(screen.getByTestId('aprs-dock-popout'));
+    expect(onPopOut).toHaveBeenCalledTimes(1);
+  });
 });

@@ -15,13 +15,19 @@
 
 import './AprsDockTabs.css';
 
-export type DockTab = 'aprs' | 'modem';
+export type DockTab = 'aprs' | 'modem' | 'stations';
 
 export interface AprsDockTabsProps {
   active: DockTab;
   unread: number;
   /// Whether the Modem tab can be selected (a radio panel mode is available).
   modemEnabled: boolean;
+  /// Count of stations currently heard emitting weather/telemetry — shown as a
+  /// live count on the Station Data tab (tuxlink-2phz). Omit/0 ⇒ no count shown.
+  stationCount?: number;
+  /// Pop the Station Data panel out into its own window (the second-window
+  /// pattern shared with compose/help). Renders a pop-out control when provided.
+  onPopOut?: () => void;
   onSelect: (tab: DockTab) => void;
   /// Dismiss the APRS dock surface (sets `aprsOpen=false` in AppShell). With no
   /// radio session active this collapses the dock and frees the reading pane.
@@ -38,6 +44,8 @@ export function AprsDockTabs({
   active,
   unread,
   modemEnabled,
+  stationCount = 0,
+  onPopOut,
   onSelect,
   onClose,
   mapOpen,
@@ -87,7 +95,32 @@ export function AprsDockTabs({
         >
           Modem
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={active === 'stations'}
+          className={`aprs-dock-tab ${active === 'stations' ? 'is-active' : ''}`}
+          data-testid="aprs-dock-tab-stations"
+          onClick={() => onSelect('stations')}
+        >
+          Station Data
+          {stationCount > 0 && (
+            <span className="aprs-dock-tab-count" data-testid="aprs-dock-tab-stations-count">{stationCount}</span>
+          )}
+        </button>
       </div>
+      {onPopOut && (
+        <button
+          type="button"
+          className="aprs-dock-popout"
+          data-testid="aprs-dock-popout"
+          aria-label="Open station data in its own window"
+          title="Open station data in its own window"
+          onClick={onPopOut}
+        >
+          <span className="aprs-dock-popout-glyph" aria-hidden="true">⤢</span>
+        </button>
+      )}
       <button
         type="button"
         className="aprs-dock-close"
