@@ -15,6 +15,7 @@ pub mod help_window;
 pub mod logging;
 pub mod logging_window;
 pub mod media;
+pub mod stations_window;
 pub mod theme_state;
 pub mod native_mailbox;
 pub mod position;
@@ -1165,6 +1166,7 @@ pub fn run() {
             crate::compose_window::compose_window_open, // Task 14 (tuxlink-dm8)
             crate::compose_window::compose_close_self,  // tuxlink-h2y (self-only close)
             crate::help_window::help_window_open,       // tuxlink-0gsy (spec §3)
+            crate::stations_window::stations_window_open, // tuxlink-2phz (env panel pop-out)
             crate::theme_state::theme_get_scheme,       // tuxlink-0gsy (spec §8.2)
             crate::theme_state::theme_broadcast_scheme, // tuxlink-0gsy (spec §8.2)
             crate::search::commands::docs_search,       // tuxlink-0gsy (spec §9.3)

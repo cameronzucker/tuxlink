@@ -69,6 +69,42 @@
   padding: 0 5px;
 }
 
+/* Live station count on the Station Data tab — a quiet count (not an alert
+   badge): environmental data is informational, not unread-style attention. */
+.aprs-dock-tab-count {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-faint, #5d6975);
+}
+.aprs-dock-tab.is-active .aprs-dock-tab-count {
+  color: inherit;
+}
+
+/* Pop the Station Data panel into its own window. Sits just left of the close
+   control; same rhythm as the map toggle. */
+.aprs-dock-popout {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 32px;
+  padding: 8px 0;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border, #2a3140);
+  color: var(--text-faint, #94a3b8);
+  cursor: pointer;
+}
+.aprs-dock-popout:hover {
+  color: var(--text, #cbd5e1);
+}
+/* When the pop-out is present it carries the margin-left:auto, so the close
+   button must not also push — they sit together at the right end. */
+.aprs-dock-popout + .aprs-dock-close {
+  margin-left: 0;
+}
+
 /* Map companion toggle — pinned LEFT, pairs WITH a tab rather than replacing one
    (tuxlink-6vgt + operator decision 2026-06-15). Same height/rhythm as a tab;
    accent text + soft fill when the map is expanded. */

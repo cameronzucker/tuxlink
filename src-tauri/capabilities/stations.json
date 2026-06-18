@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "stations",
+  "description": "Station Data pop-out window (label 'stations', tuxlink-2phz). Least-privilege grant: event listen/unlisten only, so the popped-out source-reactive environmental panel can subscribe to the broadcast aprs-weather:new / aprs-telemetry:new streams. It issues no invoke commands and uses OS-native window decorations, so no window-manipulation or shell grants are needed.",
+  "windows": ["stations"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

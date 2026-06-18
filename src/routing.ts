@@ -59,3 +59,12 @@ export function parseHelpRoute(pathname: string): boolean {
 export function parseLoggingRoute(pathname: string): boolean {
   return /^\/logging\/?$/.test(pathname);
 }
+
+/**
+ * If `pathname` is the Station Data route (`/stations` or `/stations/`), return
+ * true. The popped-out environmental panel is single-instance with no
+ * parameters (tuxlink-2phz); boolean suffices.
+ */
+export function parseStationsRoute(pathname: string): boolean {
+  return /^\/stations\/?$/.test(pathname);
+}

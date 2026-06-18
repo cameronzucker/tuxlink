@@ -1,0 +1,15 @@
+/* src/aprs/StationsView.css — full-window host for the popped-out Station Data
+ * panel (tuxlink-2phz). Fills the webview with the shared dark background so the
+ * panel's cards sit on the same surface they do in the dock. */
+.stations-view {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+}
+.stations-view .env-panel {
+  flex: 1;
+  min-height: 0;
+}
