@@ -30,6 +30,24 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.70.0](https://github.com/cameronzucker/tuxlink/compare/v0.69.0...v0.70.0) (2026-06-18)
+
+
+### Features
+
+* **aprs:** weather (WX) parse + engine emit — fixed-field reports → aprs-weather:new ([dd78ff7](https://github.com/cameronzucker/tuxlink/commit/dd78ff79417ffa57e6c02cfcd04fdd5331be84e3))
+* **vfb3:** finish account-API sub-project 0 (validate + round-2 adrev fixes) ([95471f8](https://github.com/cameronzucker/tuxlink/commit/95471f888d4104a87bf4815abd6479307fd7a259))
+* **vfb3:** forgot-password recovery from the status-bar identity dialog (sub-project 2) ([57be195](https://github.com/cameronzucker/tuxlink/commit/57be195c77e3428563b0965cddf7b75978047f33))
+* **vfb3:** in-app Winlink account creation in the setup wizard (sub-project 1) ([f2ce9a6](https://github.com/cameronzucker/tuxlink/commit/f2ce9a6615938f00b218a32abdb636a3a9d7a96c))
+* **vfb3:** Settings account management — set recovery email + WIRED delete (sub-project 3) ([63ef38b](https://github.com/cameronzucker/tuxlink/commit/63ef38b2453bea5630e013dfd9e19e2c0023fa76))
+
+
+### Bug Fixes
+
+* **aprs:** address Codex adrev on the WX parser — panic-safety, snow unit, object keying ([c6989fc](https://github.com/cameronzucker/tuxlink/commit/c6989fcb25b37cc094257e2ffadba8a2421b9f73))
+* **aprs:** clippy doc_lazy_continuation in weather.rs module doc ([2966f91](https://github.com/cameronzucker/tuxlink/commit/2966f915587a79e5f73010f98758af018caa8c07))
+* **vfb3:** satisfy clippy::sliced_string_as_bytes in callsign grammar ([944e19c](https://github.com/cameronzucker/tuxlink/commit/944e19cac35ef2ebb473162b3da1a83850850714))
+
 ## [0.69.0](https://github.com/cameronzucker/tuxlink/compare/v0.68.0...v0.69.0) (2026-06-17)
 
 
