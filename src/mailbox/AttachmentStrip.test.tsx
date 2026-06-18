@@ -1,28 +1,29 @@
-// Tests for the AttachmentStrip subcomponent (tuxlink-0fyj).
+// Tests for the AttachmentStrip subcomponent (tuxlink-0fyj; save-grant
+// hardening tuxlink-hyfo).
 //
 // Covers the click-to-save and click-to-preview flows:
-//   - clicking Save opens the native dialog, then invokes message_attachment_save
-//   - a cancelled dialog leaves no IPC call and no status change
+//   - clicking Save invokes message_attachment_save with NO renderer path; the
+//     BACKEND owns the save dialog + write (tuxlink-hyfo). The command returns
+//     the saved path, or null when the operator cancels the backend dialog.
+//   - a cancelled save (command resolves null) leaves no status change
 //   - a successful save shows "✓ Saved"
 //   - an IPC error shows "✗ Failed" (with the detail on the title attribute)
 //   - image attachments can be previewed on demand without saving to disk
 //   - the Save button is suppressed when the parent passes no `folder`
 //
-// Mocks the dialog plugin + invoke to avoid touching Tauri. The component
-// only needs the call-shape contract, which these mocks pin.
+// Mocks invoke to avoid touching Tauri. The frontend no longer imports the
+// dialog plugin at all — the renderer no longer supplies (or sees) a path until
+// the backend reports the one the operator chose.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AttachmentStrip } from './MessageView';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
-vi.mock('@tauri-apps/plugin-dialog', () => ({ save: vi.fn() }));
 import { invoke } from '@tauri-apps/api/core';
-import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 
 beforeEach(() => {
   vi.mocked(invoke).mockReset();
-  vi.mocked(saveDialog).mockReset();
 });
 
 const SAMPLE = [
@@ -76,9 +77,9 @@ describe('AttachmentStrip', () => {
     expect(screen.getByText('map.jpg')).toBeInTheDocument();
   });
 
-  it('routes through saveDialog → invoke and shows "✓ Saved" on success', async () => {
-    vi.mocked(saveDialog).mockResolvedValue('/tmp/forecast.grb');
-    vi.mocked(invoke).mockResolvedValue(undefined);
+  it('invokes the backend save (no renderer path) and shows "✓ Saved" on success', async () => {
+    // The backend now owns the dialog + write; it returns the chosen path.
+    vi.mocked(invoke).mockResolvedValue('/tmp/forecast.grb');
 
     render(
       <AttachmentStrip
@@ -90,16 +91,11 @@ describe('AttachmentStrip', () => {
     fireEvent.click(screen.getByTestId('attachment-save-0'));
 
     await waitFor(() => {
-      expect(saveDialog).toHaveBeenCalledWith(
-        expect.objectContaining({ defaultPath: 'forecast.grb' })
-      );
-    });
-    await waitFor(() => {
+      // No destPath — the renderer never supplies (or sees) a path beforehand.
       expect(invoke).toHaveBeenCalledWith('message_attachment_save', {
         folder: 'inbox',
         id: 'MID-7',
         filename: 'forecast.grb',
-        destPath: '/tmp/forecast.grb',
       });
     });
     await waitFor(() => {
@@ -107,8 +103,8 @@ describe('AttachmentStrip', () => {
     });
   });
 
-  it('no-ops when the user cancels the Save As dialog', async () => {
-    vi.mocked(saveDialog).mockResolvedValue(null);
+  it('no-ops when the operator cancels the backend save dialog (command resolves null)', async () => {
+    vi.mocked(invoke).mockResolvedValue(null);
 
     render(
       <AttachmentStrip
@@ -119,14 +115,14 @@ describe('AttachmentStrip', () => {
     );
     fireEvent.click(screen.getByTestId('attachment-save-0'));
 
-    await waitFor(() => expect(saveDialog).toHaveBeenCalled());
-    expect(invoke).not.toHaveBeenCalled();
-    // No status badge — the row returns to idle.
-    expect(screen.queryByTestId('attachment-status-0')).toBeNull();
+    await waitFor(() => expect(invoke).toHaveBeenCalled());
+    // Cancellation is not an error and not a save — the row returns to idle.
+    await waitFor(() => {
+      expect(screen.queryByTestId('attachment-status-0')).toBeNull();
+    });
   });
 
   it('shows "✗ Failed" when the backend invoke rejects', async () => {
-    vi.mocked(saveDialog).mockResolvedValue('/tmp/forecast.grb');
     vi.mocked(invoke).mockRejectedValue(new Error('write /tmp/forecast.grb: permission denied'));
 
     render(
@@ -146,8 +142,7 @@ describe('AttachmentStrip', () => {
   });
 
   it('routes the second attachment with its own filename + index', async () => {
-    vi.mocked(saveDialog).mockResolvedValue('/tmp/README.txt');
-    vi.mocked(invoke).mockResolvedValue(undefined);
+    vi.mocked(invoke).mockResolvedValue('/tmp/README.txt');
 
     render(
       <AttachmentStrip
@@ -163,7 +158,6 @@ describe('AttachmentStrip', () => {
         folder: 'sent',
         id: 'MID-2',
         filename: 'README.txt',
-        destPath: '/tmp/README.txt',
       });
     });
   });

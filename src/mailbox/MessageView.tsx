@@ -24,7 +24,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { ContactEditor, emptyContact } from '../contacts/ContactEditor';
 import { useContacts } from '../contacts/useContacts';
 import type { Contact } from '../contacts/types';
-import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { MessageViewEmpty } from './MessageViewEmpty';
 import type {
   ParsedMessage,
@@ -776,9 +775,10 @@ type PreviewStatus =
   | { kind: 'error'; detail: string };
 
 /**
- * Click-to-save attachment strip. Each item is a button that opens the
- * native Save As dialog, then routes through `message_attachment_save`
- * to write the decoded bytes to the chosen path. Common image files also
+ * Click-to-save attachment strip. Each item is a button that invokes
+ * `message_attachment_save`; the BACKEND owns the native Save As dialog and the
+ * write (tuxlink-hyfo — the renderer never supplies a destination path), then
+ * returns the operator-chosen path (or null on cancel). Common image files also
  * expose an on-demand preview that fetches bytes through
  * `message_attachment_preview` only after the operator asks for them.
  *
@@ -802,21 +802,21 @@ export function AttachmentStrip({
     if (!folder) return;
     setStatus((s) => ({ ...s, [index]: { kind: 'saving' } }));
     try {
-      const destPath = await saveDialog({
-        defaultPath: sanitizeAttachmentName(a.filename),
-        title: `Save ${a.filename}`,
-      });
-      if (!destPath) {
-        setStatus((s) => ({ ...s, [index]: { kind: 'idle' } }));
-        return;
-      }
-      await invoke('message_attachment_save', {
+      // tuxlink-hyfo: the BACKEND owns the save dialog + write. The renderer no
+      // longer supplies (or sees) a destination path — eliminating the
+      // renderer-controlled `fs::write` path under Tauri's untrusted-renderer
+      // model. The command returns the operator-chosen path, or null on cancel.
+      const savedPath = await invoke<string | null>('message_attachment_save', {
         folder,
         id: messageId,
         filename: a.filename,
-        destPath,
       });
-      setStatus((s) => ({ ...s, [index]: { kind: 'saved', path: destPath } }));
+      if (!savedPath) {
+        // Operator cancelled the backend dialog — not an error, not a save.
+        setStatus((s) => ({ ...s, [index]: { kind: 'idle' } }));
+        return;
+      }
+      setStatus((s) => ({ ...s, [index]: { kind: 'saved', path: savedPath } }));
       // Auto-clear after 4s so the row returns to the actionable state.
       setTimeout(() => {
         setStatus((s) => {
