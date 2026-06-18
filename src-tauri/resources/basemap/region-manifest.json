@@ -17,9 +17,9 @@
     ]
   },
   "tiers": [
-    { "id": "local", "label": "Local", "half_deg": [1.0, 0.75], "typical_bytes": 17000000 },
-    { "id": "regional", "label": "Regional", "half_deg": [3.0, 2.5], "typical_bytes": 203000000 },
-    { "id": "wide", "label": "Wide", "half_deg": [7.5, 6.0], "typical_bytes": 1000000000, "default": true }
+    { "id": "local", "label": "Local", "half_deg": [1.0, 0.75], "maxzoom": 8, "typical_bytes": 17000000 },
+    { "id": "regional", "label": "Regional", "half_deg": [3.0, 2.5], "maxzoom": 11, "typical_bytes": 203000000 },
+    { "id": "wide", "label": "Wide", "half_deg": [7.5, 6.0], "maxzoom": 13, "typical_bytes": 1000000000, "default": true }
   ],
   "continents": [
     { "id": "af", "label": "Africa", "bbox": [-20.0, -38.0, 55.0, 38.0], "typical_bytes": 25000000000 },

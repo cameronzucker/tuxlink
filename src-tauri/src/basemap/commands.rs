@@ -31,9 +31,29 @@ use super::PmtilesRegistry;
 const MANIFEST_URL: &str =
     "https://raw.githubusercontent.com/cameronzucker/tuxlink/main/src-tauri/resources/basemap/region-manifest.json";
 
-/// `--maxzoom` for every on-demand pack (z0–14, D1). App constant — never from
-/// the manifest, so it can't be turned into an oversized extract.
+/// `--maxzoom` for the AREA (operator-grid tier) pack path: a small box at full
+/// detail (z0–14, D1). App constant on that path — never from the manifest. The
+/// CONTINENT path is detail-tiered (tuxlink-8g28) and uses the selected tier's
+/// `maxzoom` instead, which `RegionManifest::parse` bounds to `MAX_TIER_MAXZOOM`
+/// (== this value), so it likewise can't be turned into an oversized extract.
 const PACK_MAXZOOM: u8 = 14;
+
+/// Per-zoom shrink factor for the continent size model ([`continent_estimate`]).
+/// A continent extract one zoom below z14 is estimated at ~1/this the bytes. Vector
+/// tiles grow ~2–3× per added zoom; we use the GENTLE end (2) so the estimate biases
+/// HIGH — a too-low estimate would make `validate` (`size_budget = estimate * 3`)
+/// reject a legitimate extract, whereas a high estimate only over-reserves free
+/// space (the safe direction). The model is unmeasured; calibrate against a real
+/// `pmtiles extract` if the progress bar / free-space gate proves off.
+const CONTINENT_ZOOM_SHRINK: u64 = 2;
+
+/// Stall watchdog: if the in-flight `.part` has not grown for this long, the
+/// go-pmtiles sidecar is treated as hung (dead connection mid-extract) and killed,
+/// so the blocking download thread unwinds and its in-flight guard clears. Without
+/// this, a hung sidecar leaves the guard set forever and every Retry bounces with
+/// "already in progress" (tuxlink-8g28). Generous so a slow-but-alive transfer —
+/// which writes *something* well within this window — is never false-aborted.
+const STALL_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// How often the sidecar poll loop wakes to check cancel + sample the temp size.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -169,8 +189,15 @@ impl Extractor for SidecarExtractor {
         enum Outcome {
             Exited(std::process::ExitStatus),
             Cancelled,
+            Stalled,
             WaitErr(std::io::Error),
         }
+        // Stall watchdog state (tuxlink-8g28): the last `.part` size we saw grow and
+        // when. A hung sidecar (dead connection) stops growing the file but
+        // try_wait() never returns Some — without this the loop spins forever, the
+        // in-flight guard never clears, and Retry bounces with "already in progress".
+        let mut last_size: u64 = 0;
+        let mut last_growth = Instant::now();
         let outcome = loop {
             if cancel.load(Ordering::SeqCst) {
                 let _ = child.kill();
@@ -181,6 +208,17 @@ impl Extractor for SidecarExtractor {
             // on just yields 0 — not an error.
             let written = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
             on_progress(written);
+
+            // Reset the watchdog on any growth; trip it if the file has been static
+            // for STALL_TIMEOUT while the child is still (apparently) running.
+            if written > last_size {
+                last_size = written;
+                last_growth = Instant::now();
+            } else if download::is_stalled(last_growth.elapsed(), STALL_TIMEOUT) {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Outcome::Stalled;
+            }
 
             match child.try_wait() {
                 Ok(Some(status)) => {
@@ -204,6 +242,10 @@ impl Extractor for SidecarExtractor {
 
         match outcome {
             Outcome::Cancelled => Err(DownloadError::Cancelled),
+            Outcome::Stalled => Err(DownloadError::ExtractFailed(format!(
+                "download stalled: no data received for {}s — check your connection and retry",
+                STALL_TIMEOUT.as_secs()
+            ))),
             Outcome::WaitErr(e) => Err(DownloadError::ExtractFailed(format!("wait go-pmtiles: {e}"))),
             Outcome::Exited(status) => {
                 if status.success() {
@@ -290,12 +332,15 @@ fn available_bytes(path: &Path) -> Option<u64> {
 }
 
 /// What the webview sends to download a pack: a preset tier centered on the
-/// operator grid centroid, or a named continent.
+/// operator grid centroid (full detail), or a named continent at a chosen detail
+/// tier. The continent carries `tier_id` (tuxlink-8g28) so the backend can apply
+/// that tier's `maxzoom` to the continent-scale bbox — without it, a continent
+/// always extracted at full z14 (a 17–30 GB runaway that never finished).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum DownloadArgs {
     Tier { tier_id: String, lon0: f64, lat0: f64 },
-    Continent { continent_id: String },
+    Continent { continent_id: String, tier_id: String },
 }
 
 /// The pack list + total disk used (for the manager's disk-used display).
@@ -625,6 +670,24 @@ fn needed_bytes_for(typical: u64) -> u64 {
     margin.max(budget)
 }
 
+/// Estimated bytes for a continent-scale extract clipped to `maxzoom`, given the
+/// manifest's z14 `baseline_z14` (the `Continent.typical_bytes`). Each zoom below
+/// z14 divides the estimate by [`CONTINENT_ZOOM_SHRINK`] (ceil-div, so it biases
+/// HIGH and never rounds to 0). A `maxzoom >= PACK_MAXZOOM` returns the baseline
+/// unchanged. Saturating throughout. Pure → unit-tested (tuxlink-8g28).
+///
+/// Why this matters: the free-space gate reserves `typical_bytes * 3` and `validate`
+/// rejects above `typical_bytes * 3`. Reusing the flat z14 baseline (30 GB) for a
+/// shallow (z8, ~hundreds of MB) extract would demand 90 GB free — rejecting on
+/// exactly the disks where an operator picks low detail *because* space is tight.
+fn continent_estimate(baseline_z14: u64, maxzoom: u8) -> u64 {
+    let levels_below = PACK_MAXZOOM.saturating_sub(maxzoom) as u32;
+    let divisor = CONTINENT_ZOOM_SHRINK.saturating_pow(levels_below).max(1);
+    // ceil-div biases high; `.max(1)` so an extreme shrink never yields 0 (which
+    // would make needed_bytes / size_budget degenerate).
+    (baseline_z14.saturating_add(divisor - 1) / divisor).max(1)
+}
+
 /// Build a validated [`PackRequest`] from the manifest + the webview's args.
 fn build_request(manifest: &RegionManifest, args: &DownloadArgs) -> Result<PackRequest, DownloadError> {
     let now = chrono::Utc::now().to_rfc3339();
@@ -650,7 +713,7 @@ fn build_request(manifest: &RegionManifest, args: &DownloadArgs) -> Result<PackR
                 installed_at: now,
             })
         }
-        DownloadArgs::Continent { continent_id } => {
+        DownloadArgs::Continent { continent_id, tier_id } => {
             let c = manifest
                 .continents
                 .iter()
@@ -658,18 +721,31 @@ fn build_request(manifest: &RegionManifest, args: &DownloadArgs) -> Result<PackR
                 .ok_or_else(|| {
                     DownloadError::ExtractFailed(format!("unknown continent {continent_id:?}"))
                 })?;
+            // tuxlink-8g28: the chosen detail tier supplies the maxzoom for the
+            // continent-scale bbox (the size lever at continent scale), replacing the
+            // flat PACK_MAXZOOM that always produced a full-detail 17–30 GB runaway.
+            // `tier.maxzoom` is bounded `1..=MAX_TIER_MAXZOOM` by manifest validation.
+            let tier = manifest
+                .tiers
+                .iter()
+                .find(|t| &t.id == tier_id)
+                .ok_or_else(|| DownloadError::ExtractFailed(format!("unknown tier {tier_id:?}")))?;
             let bbox = packs::continent_bbox(c.bbox)
                 .map_err(|e| DownloadError::ExtractFailed(e.to_string()))?;
+            // Size estimate scales with the tier's maxzoom so the free-space gate +
+            // validation budget + progress denominator track the actual (smaller)
+            // shallow-detail extract rather than the flat z14 baseline.
+            let estimate = continent_estimate(c.typical_bytes, tier.maxzoom);
             Ok(PackRequest {
                 id: packs::continent_pack_id(continent_id),
-                label: c.label.clone(),
+                label: format!("{} — {}", c.label, tier.label),
                 planet_url: manifest.planet_url.clone(),
                 bbox,
-                maxzoom: PACK_MAXZOOM,
+                maxzoom: tier.maxzoom,
                 source_build: manifest.planet_build.clone(),
-                typical_bytes: c.typical_bytes,
-                needed_bytes: needed_bytes_for(c.typical_bytes),
-                size_budget: c.typical_bytes.saturating_mul(BUDGET_MULT),
+                typical_bytes: estimate,
+                needed_bytes: needed_bytes_for(estimate),
+                size_budget: estimate.saturating_mul(BUDGET_MULT),
                 installed_at: now,
             })
         }
@@ -685,7 +761,10 @@ fn build_request(manifest: &RegionManifest, args: &DownloadArgs) -> Result<PackR
 fn pack_id_for_args(args: &DownloadArgs) -> String {
     match args {
         DownloadArgs::Tier { tier_id, lon0, lat0 } => packs::tier_pack_id(tier_id, *lon0, *lat0),
-        DownloadArgs::Continent { continent_id } => packs::continent_pack_id(continent_id),
+        // The continent pack id is detail-independent (one pack per continent;
+        // re-downloading at a different detail tier overwrites it), so `tier_id`
+        // is not part of the id.
+        DownloadArgs::Continent { continent_id, .. } => packs::continent_pack_id(continent_id),
     }
 }
 
@@ -734,7 +813,7 @@ mod tests {
             serde_json::from_str(r#"{"kind":"tier","tier_id":"wide","lon0":-112.0,"lat0":33.5}"#).unwrap();
         assert!(matches!(tier, DownloadArgs::Tier { .. }));
         let cont: DownloadArgs =
-            serde_json::from_str(r#"{"kind":"continent","continent_id":"na"}"#).unwrap();
+            serde_json::from_str(r#"{"kind":"continent","continent_id":"na","tier_id":"local"}"#).unwrap();
         assert!(matches!(cont, DownloadArgs::Continent { .. }));
     }
 
@@ -777,9 +856,73 @@ mod tests {
     #[test]
     fn build_request_for_continent() {
         let m = RegionManifest::bundled_default();
-        let req = build_request(&m, &DownloadArgs::Continent { continent_id: "na".into() }).unwrap();
+        let req = build_request(
+            &m,
+            &DownloadArgs::Continent { continent_id: "na".into(), tier_id: "local".into() },
+        )
+        .unwrap();
         assert_eq!(req.id, "continent-na");
         assert!(packs::is_safe_pack_id(&req.id));
+        let local = m.tiers.iter().find(|t| t.id == "local").unwrap();
+        let na = m.continents.iter().find(|c| c.id == "na").unwrap();
+        // tuxlink-8g28: the chosen detail tier drives the continent extract's maxzoom
+        // (was the flat full-detail PACK_MAXZOOM that produced the 17–30 GB runaway).
+        assert_eq!(req.maxzoom, local.maxzoom);
+        assert!(req.maxzoom < PACK_MAXZOOM, "low-detail continent must be shallower than z14");
+        // The size estimate scales DOWN with the shallower maxzoom so the free-space
+        // gate doesn't demand the full z14 baseline for a small extract.
+        assert!(req.typical_bytes < na.typical_bytes);
+        assert_eq!(req.typical_bytes, continent_estimate(na.typical_bytes, local.maxzoom));
+        // The label carries the detail tier so the installed-pack list is honest.
+        assert!(req.label.contains(&na.label) && req.label.contains(&local.label));
+        // C7 invariant preserved on the continent path too.
+        assert!(req.needed_bytes >= req.size_budget);
+    }
+
+    #[test]
+    fn build_request_continent_wide_is_deeper_and_larger_than_local() {
+        // Picking a bigger detail tier means a deeper (larger) continent extract.
+        let m = RegionManifest::bundled_default();
+        let local = build_request(
+            &m,
+            &DownloadArgs::Continent { continent_id: "na".into(), tier_id: "local".into() },
+        )
+        .unwrap();
+        let wide = build_request(
+            &m,
+            &DownloadArgs::Continent { continent_id: "na".into(), tier_id: "wide".into() },
+        )
+        .unwrap();
+        assert!(wide.maxzoom > local.maxzoom);
+        assert!(wide.typical_bytes > local.typical_bytes);
+    }
+
+    #[test]
+    fn build_request_rejects_unknown_continent_tier() {
+        let m = RegionManifest::bundled_default();
+        let err = build_request(
+            &m,
+            &DownloadArgs::Continent { continent_id: "na".into(), tier_id: "nope".into() },
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn continent_estimate_scales_with_maxzoom() {
+        let baseline = 30_000_000_000u64; // ~30 GB z14 continent
+        // z14 (== PACK_MAXZOOM) and any maxzoom at/above it return the baseline.
+        assert_eq!(continent_estimate(baseline, PACK_MAXZOOM), baseline);
+        assert_eq!(continent_estimate(baseline, 20), baseline);
+        // Each zoom below z14 shrinks by CONTINENT_ZOOM_SHRINK (ceil-div).
+        assert_eq!(continent_estimate(baseline, 13), baseline.div_ceil(CONTINENT_ZOOM_SHRINK));
+        assert_eq!(
+            continent_estimate(baseline, 11),
+            baseline.div_ceil(CONTINENT_ZOOM_SHRINK.pow(3))
+        );
+        // Strictly decreasing as detail drops, and never zero even at extreme shrink.
+        assert!(continent_estimate(baseline, 8) < continent_estimate(baseline, 11));
+        assert!(continent_estimate(baseline, 1) >= 1);
+        assert!(continent_estimate(0, 8) >= 1);
     }
 
     // ── C1(a): the free-space gate must FAIL CLOSED on a stat error ──────────────

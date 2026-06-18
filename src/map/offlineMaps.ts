@@ -42,12 +42,16 @@ export interface DownloadResult extends InstalledPack {
   requiresRestart: boolean;
 }
 
-/** A coverage tier preset (mirrors Rust `region_manifest::Tier`). */
+/** A coverage tier preset (mirrors Rust `region_manifest::Tier`). Doubles as the
+ * detail-level selector for a continent download (tuxlink-8g28): `maxzoom` is the
+ * continent-path detail ceiling; the area path always uses full detail. */
 export interface Tier {
   id: string;
   label: string;
-  /** [half-width-lon, half-width-lat] degrees. */
+  /** [half-width-lon, half-width-lat] degrees. Area path only. */
   half_deg: [number, number];
+  /** Detail ceiling (1..=14) applied to a continent-scale extract at this tier. */
+  maxzoom: number;
   typical_bytes: number;
   default?: boolean;
 }
@@ -70,10 +74,31 @@ export interface RegionManifest {
   continents: Continent[];
 }
 
-/** Download request: a tier centered on the operator grid, or a named continent. */
+/** Download request: a tier centered on the operator grid (full detail), or a named
+ * continent at a chosen detail tier (tuxlink-8g28 — `tier_id` supplies the maxzoom
+ * the backend applies to the continent bbox). */
 export type DownloadArgs =
   | { kind: 'tier'; tier_id: string; lon0: number; lat0: number }
-  | { kind: 'continent'; continent_id: string };
+  | { kind: 'continent'; continent_id: string; tier_id: string };
+
+/** Per-zoom shrink for the continent size model — mirrors Rust
+ * `commands::CONTINENT_ZOOM_SHRINK`. Keep in sync with the backend. */
+const CONTINENT_ZOOM_SHRINK = 2;
+/** Full-detail ceiling — mirrors Rust `commands::PACK_MAXZOOM`. */
+const PACK_MAXZOOM = 14;
+
+/**
+ * Estimated bytes for a continent extract at `maxzoom`, given the continent's z14
+ * `baselineZ14` (`Continent.typical_bytes`). Mirrors Rust
+ * `commands::continent_estimate` so the detail-picker can show honest per-tier sizes
+ * that match what the backend's free-space gate will reserve. Biases high (ceil-div),
+ * never zero.
+ */
+export function continentEstimateBytes(baselineZ14: number, maxzoom: number): number {
+  const levelsBelow = Math.max(0, PACK_MAXZOOM - maxzoom);
+  const divisor = CONTINENT_ZOOM_SHRINK ** levelsBelow;
+  return Math.max(1, Math.ceil(baselineZ14 / divisor));
+}
 
 /** `basemap:download-progress` event payload (mirrors Rust `DownloadProgress`). */
 export interface DownloadProgress {

@@ -20,6 +20,7 @@ import {
   cancelDownload,
   emitPacksChanged,
   packIdForArgs,
+  continentEstimateBytes,
   type Continent,
   type DownloadArgs,
   type InstalledPack,
@@ -78,6 +79,10 @@ export function OfflineMapsSettings() {
   // Codex #5). Distinct from `error` so it renders in a neutral, not alarming, row.
   const [notice, setNotice] = useState<string | null>(null);
   const [continentId, setContinentId] = useState('');
+  // The detail tier applied to a continent download (tuxlink-8g28). Defaults to the
+  // first (smallest-detail) tier so a continent download never silently defaults to
+  // the full-detail, multi-GB extract that was the bug. Set once the manifest loads.
+  const [continentTierId, setContinentTierId] = useState('');
   // The active *download* busy key (tier-*/continent-*, not delete-*) drives the
   // inline progress row. A failed download stays here so the row shows the error
   // + Retry until the operator retries or starts something else. The hook key
@@ -121,7 +126,13 @@ export function OfflineMapsSettings() {
       .catch(() => {})
       .finally(() => {
         getManifest()
-          .then(setManifest)
+          .then((m) => {
+            setManifest(m);
+            // Default the continent detail to the smallest tier (first listed) so a
+            // continent download starts at a manageable size, not the full-detail
+            // extract (tuxlink-8g28). Only seed if unset, so it survives re-mounts.
+            setContinentTierId((prev) => prev || m?.tiers[0]?.id || '');
+          })
           .catch(() => setManifest(null));
       });
     void refresh();
@@ -202,10 +213,10 @@ export function OfflineMapsSettings() {
     );
   }
 
-  function onDownloadContinent(c: Continent) {
+  function onDownloadContinent(c: Continent, t: Tier) {
     void runDownloadOp(
-      `Download ${c.label}`,
-      { kind: 'continent', continent_id: c.id },
+      `Download ${c.label} (${t.label})`,
+      { kind: 'continent', continent_id: c.id, tier_id: t.id },
       `continent-${c.id}`,
     );
   }
@@ -226,6 +237,10 @@ export function OfflineMapsSettings() {
 
   const downloading = busy != null;
   const continent = manifest?.continents.find((c) => c.id === continentId);
+  // The detail tier applied to a continent download (tuxlink-8g28). Falls back to
+  // the first tier if the saved id no longer resolves (e.g. manifest changed).
+  const continentTier =
+    manifest?.tiers.find((t) => t.id === continentTierId) ?? manifest?.tiers[0];
   // The inline progress row renders for an active download (or a failed one
   // awaiting Retry) — never for a delete. An active download is in flight when
   // `busy` is a download key (the hook key drops a `#N` attempt suffix, so
@@ -268,7 +283,10 @@ export function OfflineMapsSettings() {
         )}
       </div>
 
-      {/* Named continents. */}
+      {/* Named continents, at a chosen detail level (tuxlink-8g28). Detail is the
+          size lever at continent scale: Local pulls a small low-zoom extract, Wide a
+          large high-zoom one. The estimate updates with both the continent and the
+          detail tier so the operator sees the real download size before committing. */}
       {manifest && manifest.continents.length > 0 && (
         <div className="tux-offlinemaps-group">
           <div className="tux-offlinemaps-group-head">A whole continent</div>
@@ -282,14 +300,27 @@ export function OfflineMapsSettings() {
               <option value="">Choose a continent…</option>
               {manifest.continents.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.label} (~{formatBytes(c.typical_bytes)})
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Detail level"
+              value={continentTier?.id ?? ''}
+              disabled={downloading || !continent}
+              onChange={(e) => setContinentTierId(e.target.value)}
+            >
+              {manifest.tiers.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                  {continent ? ` · ~${formatBytes(continentEstimateBytes(continent.typical_bytes, t.maxzoom))}` : ''}
                 </option>
               ))}
             </select>
             <button
               type="button"
-              disabled={downloading || !continent}
-              onClick={() => continent && onDownloadContinent(continent)}
+              disabled={downloading || !continent || !continentTier}
+              onClick={() => continent && continentTier && onDownloadContinent(continent, continentTier)}
             >
               {busy === `continent-${continentId}` ? 'Downloading…' : 'Download'}
             </button>

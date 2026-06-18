@@ -68,8 +68,8 @@ vi.mock('./offlineMaps', () => ({
       planet_url: 'https://build.protomaps.com/20260608.pmtiles',
       pmtiles_schema: { planetiler_version: 4, vector_layers: [] },
       tiers: [
-        { id: 'local', label: 'Local', half_deg: [1, 0.75], typical_bytes: 17_000_000 },
-        { id: 'wide', label: 'Wide', half_deg: [7.5, 6], typical_bytes: 1_000_000_000, default: true },
+        { id: 'local', label: 'Local', half_deg: [1, 0.75], maxzoom: 8, typical_bytes: 17_000_000 },
+        { id: 'wide', label: 'Wide', half_deg: [7.5, 6], maxzoom: 13, typical_bytes: 1_000_000_000, default: true },
       ],
       continents: [
         { id: 'na', label: 'North America', bbox: [-170, 5, -50, 84], typical_bytes: 30_000_000_000 },
@@ -94,6 +94,10 @@ vi.mock('./offlineMaps', () => ({
     }
     return `continent-${args.continent_id}`;
   },
+  // Real mirror of the Rust continent_estimate so the detail-picker option labels
+  // render honest sizes in tests (tuxlink-8g28).
+  continentEstimateBytes: (baselineZ14: number, maxzoom: number) =>
+    Math.max(1, Math.ceil(baselineZ14 / 2 ** Math.max(0, 14 - maxzoom))),
 }));
 
 import { OfflineMapsSettings, formatBytes, formatRate, formatEta } from './OfflineMapsSettings';
@@ -204,13 +208,33 @@ describe('OfflineMapsSettings', () => {
     expect(h.emitPacksChanged).toHaveBeenCalled();
   });
 
-  it('downloads a named continent', async () => {
+  it('downloads a named continent at the default (smallest) detail tier', async () => {
     render(<OfflineMapsSettings />);
     const select = await screen.findByLabelText('Continent');
     fireEvent.change(select, { target: { value: 'na' } });
     fireEvent.click(screen.getByText('Download'));
     await waitFor(() => expect(h.downloadPack).toHaveBeenCalledTimes(1));
-    expect(h.downloadPack.mock.calls[0][0]).toMatchObject({ kind: 'continent', continent_id: 'na' });
+    // tuxlink-8g28: the continent download carries the chosen detail tier, and the
+    // default is the smallest (first) tier — never the full-detail runaway.
+    expect(h.downloadPack.mock.calls[0][0]).toMatchObject({
+      kind: 'continent',
+      continent_id: 'na',
+      tier_id: 'local',
+    });
+  });
+
+  it('passes the selected detail tier through to the continent download', async () => {
+    render(<OfflineMapsSettings />);
+    const continentSel = await screen.findByLabelText('Continent');
+    fireEvent.change(continentSel, { target: { value: 'na' } });
+    fireEvent.change(screen.getByLabelText('Detail level'), { target: { value: 'wide' } });
+    fireEvent.click(screen.getByText('Download'));
+    await waitFor(() => expect(h.downloadPack).toHaveBeenCalledTimes(1));
+    expect(h.downloadPack.mock.calls[0][0]).toMatchObject({
+      kind: 'continent',
+      continent_id: 'na',
+      tier_id: 'wide',
+    });
   });
 
   it('shows an inline progress row with bar, percent, rate, eta, and Cancel while downloading', async () => {
