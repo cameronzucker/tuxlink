@@ -27,6 +27,7 @@
 
 import { memo } from 'react';
 import { DEV_FIXTURE } from '../mailbox/devFixture';
+import { useActiveDownload } from '../map/useActiveDownload';
 import './StatusBar.css';
 
 // Injected at build time from version.txt (release-please's canonical bump
@@ -48,6 +49,13 @@ export interface StatusBarProps {
 // re-render the status bar when its inputs are unchanged (primitive props
 // shallow-compare cleanly).
 export const StatusBar = memo(function StatusBar({ show, unread, outboxQueued }: StatusBarProps) {
+  // tuxlink-8g28: ambient offline-map download progress. Subscribed here (not via
+  // an AppShell prop) so the indicator is app-level and stays visible after the
+  // operator leaves the Offline-maps panel — the panel's own row owns rate/eta;
+  // this is just "a map download is running, NN%". Hook runs before the `!show`
+  // early return (rules of hooks). Returns null when nothing is downloading.
+  const download = useActiveDownload();
+
   if (!show) return null;
 
   // Dev fixture hard-codes a recognizable queue depth for the Mock-B
@@ -56,6 +64,16 @@ export const StatusBar = memo(function StatusBar({ show, unread, outboxQueued }:
 
   return (
     <div className="statusbar" data-testid="status-bar" role="status" aria-live="polite">
+      {download && (
+        <>
+          <div className="status-item status-item-download" data-testid="status-bar-download">
+            {download.finishing
+              ? 'Downloading map…'
+              : `Downloading map ${Math.round(download.percent * 100)}%`}
+          </div>
+          <span className="status-divider" aria-hidden="true">·</span>
+        </>
+      )}
       {queued > 0 && (
         <>
           <div className="status-item" data-testid="status-bar-outbox">

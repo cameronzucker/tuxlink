@@ -37,6 +37,18 @@ pub const MANIFEST_SCHEMA: &str = "tuxlink-basemap-manifest/1";
 /// The only host a pack may be extracted from. See the module SECURITY note.
 pub const ALLOWED_PLANET_HOST: &str = "build.protomaps.com";
 
+/// Hard ceiling on a tier's `maxzoom`. A tier's detail level flows into the
+/// go-pmtiles `--maxzoom` argv (the continent path, tuxlink-8g28), so — exactly
+/// like `planet_url` and the bbox degrees — it is an *attacker-influenceable*
+/// manifest value and MUST be bounded by an app constant: a hostile manifest
+/// setting `maxzoom: 30` would otherwise turn a continent extract into a
+/// planet-scale runaway download. [`RegionManifest::parse`] rejects any tier
+/// outside `1..=MAX_TIER_MAXZOOM`, so the "manifest can't request an oversized
+/// extract" property survives moving maxzoom from a code constant into the
+/// manifest. This is the same z14 ceiling the on-demand pack path enforces
+/// (`commands.rs::PACK_MAXZOOM`); kept here because `parse` is the gate.
+pub const MAX_TIER_MAXZOOM: u8 = 14;
+
 /// Compiled-in default manifest — guarantees a usable manifest even if the bundled
 /// resource file is absent, and is the fallback when a refresh yields garbage.
 const DEFAULT_MANIFEST_JSON: &str = include_str!("../../resources/basemap/region-manifest.json");
@@ -62,13 +74,24 @@ pub struct PmtilesSchema {
     pub vector_layers: Vec<String>,
 }
 
-/// A fixed coverage box centered on the operator grid, expressed as half-widths.
+/// A coverage tier — two roles, one struct (tuxlink-8g28):
+///   1. *area* download (`DownloadArgs::Tier`): a fixed box centered on the operator
+///      grid, sized by `half_deg`, always extracted at full detail (z14) since the
+///      box is small. `maxzoom` is ignored on this path.
+///   2. *continent detail* (`DownloadArgs::Continent`): the operator picks a tier as
+///      a DETAIL level for a continent-scale bbox, where the size lever is `maxzoom`
+///      (not bbox). Local/Regional/Wide map to escalating `maxzoom` ceilings; the
+///      continent path uses `maxzoom` and ignores `half_deg`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Tier {
     pub id: String,
     pub label: String,
-    /// `[half-width-longitude-degrees, half-width-latitude-degrees]`.
+    /// `[half-width-longitude-degrees, half-width-latitude-degrees]`. Area path only.
     pub half_deg: [f64; 2],
+    /// Detail ceiling for a continent-scale extract at this tier (`1..=MAX_TIER_MAXZOOM`,
+    /// validated by [`RegionManifest::parse`]). The area path always uses z14 (a small
+    /// box at full detail); this drives only the continent path's `--maxzoom`.
+    pub maxzoom: u8,
     pub typical_bytes: u64,
     /// The tier offered by default at location-set (exactly one should set this).
     #[serde(default)]
@@ -164,10 +187,15 @@ impl RegionManifest {
         }
         for t in &m.tiers {
             // half_deg[0] = longitude half-width (≤180), [1] = latitude (≤85, the
-            // web-mercator clamp).
+            // web-mercator clamp). maxzoom is bounded 1..=MAX_TIER_MAXZOOM — it
+            // reaches the `--maxzoom` argv on the continent path, so an unbounded
+            // value from a hostile manifest could force a planet-scale extract
+            // (tuxlink-8g28; see MAX_TIER_MAXZOOM).
             if t.id.trim().is_empty()
                 || !half_deg_ok(t.half_deg[0], 180.0)
                 || !half_deg_ok(t.half_deg[1], 85.0)
+                || t.maxzoom < 1
+                || t.maxzoom > MAX_TIER_MAXZOOM
             {
                 return Err(ManifestError::BadTier(t.id.clone()));
             }
@@ -223,6 +251,53 @@ mod tests {
     fn default_tier_is_the_flagged_one() {
         let m = RegionManifest::bundled_default();
         assert_eq!(m.default_tier().id, "wide");
+    }
+
+    #[test]
+    fn bundled_tiers_carry_bounded_escalating_maxzoom() {
+        // tuxlink-8g28: every tier carries a continent-detail maxzoom, each within
+        // the security ceiling, and they escalate Local→Regional→Wide so picking a
+        // bigger detail tier means a deeper (larger) continent extract.
+        let m = RegionManifest::bundled_default();
+        for t in &m.tiers {
+            assert!(t.maxzoom >= 1 && t.maxzoom <= MAX_TIER_MAXZOOM, "tier {} maxzoom out of bounds", t.id);
+        }
+        let z = |id: &str| m.tiers.iter().find(|t| t.id == id).unwrap().maxzoom;
+        assert!(z("local") < z("regional"), "local detail must be shallower than regional");
+        assert!(z("regional") < z("wide"), "regional detail must be shallower than wide");
+    }
+
+    #[test]
+    fn parse_rejects_tier_maxzoom_over_ceiling() {
+        // SECURITY: a hostile/rotated manifest must not be able to request a
+        // planet-scale extract by naming an oversized maxzoom — parse rejects it and
+        // the caller falls back to the bundled default.
+        let json = valid_json().replace("\"maxzoom\": 8", "\"maxzoom\": 30");
+        assert!(matches!(
+            RegionManifest::parse(&json),
+            Err(ManifestError::BadTier(_))
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_tier_maxzoom_zero() {
+        let json = valid_json().replace("\"maxzoom\": 8", "\"maxzoom\": 0");
+        assert!(matches!(
+            RegionManifest::parse(&json),
+            Err(ManifestError::BadTier(_))
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_tier_missing_maxzoom() {
+        // maxzoom is required (no serde default): a manifest lacking it is rejected
+        // so the app falls back to the bundled default rather than silently treating
+        // a continent download as full-detail (the tuxlink-8g28 bug).
+        let json = valid_json().replace(", \"maxzoom\": 8", "");
+        assert!(matches!(
+            RegionManifest::parse(&json),
+            Err(ManifestError::Json(_))
+        ));
     }
 
     #[test]

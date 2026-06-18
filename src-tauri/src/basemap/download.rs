@@ -348,6 +348,16 @@ pub fn should_emit(
     }
 }
 
+/// Stall-watchdog predicate (tuxlink-8g28): the in-flight download is considered
+/// hung when it has made no progress (its `.part` has not grown) for at least
+/// `timeout`. The caller resets `since_last_growth` to zero whenever the file
+/// grows, so this only fires on a genuinely static transfer — at which point the
+/// sidecar is killed so the blocking thread unwinds and its in-flight guard clears.
+/// Pure so the stall policy is unit-tested without spawning a process.
+pub fn is_stalled(since_last_growth: std::time::Duration, timeout: std::time::Duration) -> bool {
+    since_last_growth >= timeout
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -709,5 +719,16 @@ mod tests {
         assert!(should_emit(Some(t0), later, interval));
         let much_later = t0 + Duration::from_secs(2);
         assert!(should_emit(Some(t0), much_later, interval));
+    }
+
+    #[test]
+    fn is_stalled_trips_only_after_timeout() {
+        let timeout = Duration::from_secs(180);
+        // Just-grew / recently-grew → not stalled.
+        assert!(!is_stalled(Duration::ZERO, timeout));
+        assert!(!is_stalled(Duration::from_secs(179), timeout));
+        // At/after the timeout with no growth → stalled (boundary is inclusive).
+        assert!(is_stalled(Duration::from_secs(180), timeout));
+        assert!(is_stalled(Duration::from_secs(600), timeout));
     }
 }
