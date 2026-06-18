@@ -47,13 +47,13 @@ systems either; it also cannot bundle the keyring daemon (see
 EmComm Tools Community (ECT) is frozen on an older base (glibc 2.36), as is
 Debian 12 (Bookworm). The mainline package above refuses to install there. Every
 release also publishes a dedicated low-floor build for these systems, named
-`tuxlink_<version>_<arch>_etc.deb` on the same
+`tuxlink_<version>_<arch>_ect.deb` on the same
 [Releases page](https://github.com/cameronzucker/tuxlink/releases/latest):
 
 ```bash
-# ECT / Debian 12 Bookworm (amd64 shown; an arm64 _etc.deb is also published)
+# ECT / Debian 12 Bookworm (amd64 shown; an arm64 _ect.deb is also published)
 sudo apt update
-sudo apt install ./tuxlink_*_amd64_etc.deb
+sudo apt install ./tuxlink_*_amd64_ect.deb
 ```
 
 The low-floor build is identical to the mainline package except that Apple HEIC

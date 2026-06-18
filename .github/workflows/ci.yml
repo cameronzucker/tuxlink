@@ -99,7 +99,7 @@ jobs:
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --verbose
-        # NB: the heif-off (ETC/low-floor) compile path is covered end-to-end by
-        # etc-build.yml (a full --no-default-features tauri build + install-test),
+        # NB: the heif-off (ECT/low-floor) compile path is covered end-to-end by
+        # ect-build.yml (a full --no-default-features tauri build + install-test),
         # so it is intentionally NOT re-checked here — that extra cargo check
         # pushed the already-tight amd64 verify past its timeout (tuxlink-iuop).
