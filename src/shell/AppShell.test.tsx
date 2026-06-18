@@ -839,17 +839,24 @@ describe('<AppShell> — find-messages wiring (Task 17)', () => {
 // reading-pane. These tests pin the grid-template-columns declaration so
 // the layout doesn't quietly walk back. Rule applies to both the 4-col
 // (`panes--with-dock`) and 5-col (`.panes--with-legacy-dock`) variants.
+//
+// tuxlink-be2q: the columns are now minmax() so a non-maximized desktop window
+// degrades gracefully (shrink) instead of overflowing+clipping. The minmax MAXES
+// preserve the original wide-width contract — list maxes at 380, the radio-panel
+// column maxes at 400, the reader (1fr) absorbs the 400 first — so the
+// tuxlink-8rng/40u8 intent still holds at desktop width. The tests assert the 400
+// (and 380) appear as the radio-panel/list column maxes.
 // ---------------------------------------------------------------------------
 describe('AppShell.css radio-panel chrome width (tuxlink-8rng + tuxlink-40u8)', () => {
-  it('declares the radio-panel column at 400px in .panes--with-dock', () => {
+  it('declares the radio-panel column max at 400px (list 380) in .panes--with-dock', () => {
     expect(appShellCss).toMatch(
-      /\.layout-b \.panes--with-dock\s*\{[^}]*200px\s+380px\s+1fr\s+400px/,
+      /\.layout-b \.panes--with-dock\s*\{[^}]*minmax\(220px, 380px\)\s+minmax\(240px, 1fr\)\s+minmax\(300px, 400px\)/,
     );
   });
 
-  it('declares the radio-panel column at 400px in .panes--with-legacy-dock', () => {
+  it('declares the radio-panel column max at 400px in .panes--with-legacy-dock', () => {
     expect(appShellCss).toMatch(
-      /\.layout-b \.panes--with-dock\.panes--with-legacy-dock\s*\{[^}]*200px\s+380px\s+1fr\s+400px\s+290px/,
+      /\.layout-b \.panes--with-dock\.panes--with-legacy-dock\s*\{[^}]*minmax\(260px, 400px\)\s+minmax\(220px, 290px\)/,
     );
   });
 });

@@ -28,9 +28,12 @@ describe('AppShell desktop regression guard (tuxlink-h7q7)', () => {
   it('keeps the desktop panes grid templates in AppShell.css, unscoped (no compact @media)', () => {
     // The desktop file must NOT contain any non-print compact media query.
     expect(desktopCss).not.toContain('max-width: 1365px');
-    // The three desktop templates exist as bare (un-media-scoped) rules.
-    expect(desktopCss).toContain('grid-template-columns: 200px 380px 1fr');
-    expect(desktopCss).toContain('grid-template-columns: 200px 380px 1fr 400px');
+    // The desktop templates exist as bare (un-media-scoped) rules. tuxlink-be2q made
+    // the columns minmax() so a non-maximized desktop window degrades gracefully
+    // instead of overflowing+clipping; the minmax MAXES preserve the wide-width layout
+    // (list 380 / dock 400), so this is still the DESKTOP layout, not compact.
+    expect(desktopCss).toContain('grid-template-columns: minmax(120px, 200px) minmax(220px, 380px) minmax(0, 1fr)');
+    expect(desktopCss).toContain('minmax(220px, 380px) minmax(240px, 1fr) minmax(300px, 400px)');
   });
 
   it('gives the Connection ribbon cell a stable slot while ellipsizing only its text (tuxlink-a8x6)', () => {
