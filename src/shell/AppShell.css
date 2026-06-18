@@ -117,6 +117,15 @@
   grid-column: 2 / 4;
 }
 
+/* tuxlink-mkfj: the Favorites pseudo-folder (FavoritesPanel) mounts the same way
+ * as Contacts — a single direct `.panes` child that replaces the MessageList +
+ * reading-pane pair (AppShell.tsx) — but was missing this span, so it collapsed
+ * into the 380px list track alone (rendering cramped, narrower than the list)
+ * and shoved the dock into the 1fr reader track. Same fix as .contacts-panel. */
+.layout-b .panes > .favorites-panel {
+  grid-column: 2 / 4;
+}
+
 /* ============================================================================
  * Ribbon + search row wrapper — contains the search-zone (left) and the
  * DashboardRibbon (right). The DashboardRibbon's .dashboard uses flex and
