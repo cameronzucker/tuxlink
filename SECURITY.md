@@ -33,14 +33,13 @@ Pre-1.0 releases are explicitly experimental. Use in production amateur-radio op
 In-scope:
 
 - The Tauri application binary and its bundled dependencies.
-- The HTTP client communicating with the bundled Pat process.
-- Configuration handling (`$XDG_CONFIG_HOME/tuxlink/config.json`).
-- AppImage distribution: signing, checksum publication, supply-chain integrity.
+- The native Winlink B2F engine and CMS connection (telnet / TLS), and the AX.25 / VARA / ARDOP transports and rig-control paths.
+- Credential handling: the CMS password is stored in the OS keyring via the secret-service interface and is never written to disk; `$XDG_CONFIG_HOME/tuxlink/` holds non-secret settings only.
+- Package distribution (`.deb` / `.rpm` / `.AppImage`): signing, checksum publication, supply-chain integrity.
 - Live-CMS testing policy enforcement (see [docs/live-cms-testing-policy.md](docs/live-cms-testing-policy.md)). Bypassing the consent gate is a security-relevant defect.
 
 Out of scope (report upstream):
 
-- Vulnerabilities in [Pat](https://github.com/la5nta/pat) itself — report to la5nta/pat.
 - Vulnerabilities in [Tauri](https://github.com/tauri-apps/tauri) — report to tauri-apps.
 - Vulnerabilities in upstream Rust / Node dependencies — report to the respective project, then notify Tuxlink so we can pin a patched version.
 
