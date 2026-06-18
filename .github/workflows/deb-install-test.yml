@@ -35,15 +35,20 @@ permissions:
 
 jobs:
   install-test:
-    name: install on debian:${{ matrix.distro }} (${{ matrix.arch }})
+    name: deb ${{ matrix.expect }} on debian:${{ matrix.distro }} (${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
+        # expect=install: SUPPORTED distro — apt resolves + binary's libs all
+        # resolve. expect=refuse: UNSUPPORTED distro (Bookworm, glibc 2.36 < the
+        # binary's 2.39 floor) — apt must refuse cleanly via libc6 (>= 2.39),
+        # NOT install a binary that dies at ld.so. See tuxlink-iuop for the work
+        # real Bookworm support would take.
         include:
-          - { runner: ubuntu-latest,    arch: amd64, distro: trixie }
-          - { runner: ubuntu-latest,    arch: amd64, distro: bookworm }
-          - { runner: ubuntu-24.04-arm, arch: arm64, distro: trixie }
-          - { runner: ubuntu-24.04-arm, arch: arm64, distro: bookworm }
+          - { runner: ubuntu-latest,    arch: amd64, distro: trixie,   expect: install }
+          - { runner: ubuntu-latest,    arch: amd64, distro: bookworm, expect: refuse }
+          - { runner: ubuntu-24.04-arm, arch: arm64, distro: trixie,   expect: install }
+          - { runner: ubuntu-24.04-arm, arch: arm64, distro: bookworm, expect: refuse }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
@@ -83,7 +88,9 @@ jobs:
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
             --pattern "tuxlink_*_${{ matrix.arch }}.deb" --dir debs
 
-      - name: Install on clean debian:${{ matrix.distro }} and assert deps resolve
+      - name: deb ${{ matrix.expect }} on clean debian:${{ matrix.distro }} (${{ matrix.arch }})
+        env:
+          EXPECT: ${{ matrix.expect }}
         run: |
           set -euxo pipefail
           deb="$(ls debs/tuxlink_*_${{ matrix.arch }}.deb | head -1)"
@@ -91,7 +98,8 @@ jobs:
           # The host runner holds the .deb + the smoke script; the install itself
           # runs in a pristine debian:<distro>-slim container (the system under
           # test). The container arch follows the runner arch (amd64 / arm64).
+          # EXPECT (install|refuse) is a controlled matrix value, passed as argv.
           docker run --rm \
             -v "$PWD:/work" -w /work \
             "debian:${{ matrix.distro }}-slim" \
-            bash scripts/ci/deb-install-smoke.sh "$deb"
+            bash scripts/ci/deb-install-smoke.sh "$deb" "$EXPECT"

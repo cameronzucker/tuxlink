@@ -33,37 +33,23 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
-    # tuxlink-iuop: build inside a Debian Bookworm container so the binary's
-    # glibc floor is Bookworm's 2.36 (not the Ubuntu-24.04 runner's 2.39). That
-    # floor is the real minimum-OS contract — building on the runner directly
-    # silently dropped Debian 12 + Bookworm-based Raspberry Pi OS (the .deb
-    # installed, then died at ld.so with `GLIBC_2.39 not found`). Bookworm ships
-    # BOTH glibc 2.36 and libwebkit2gtk-4.1, so it can build the 4.1 client at
-    # the lower floor. buildpack-deps:bookworm carries git + build-essential +
-    # curl so actions/checkout can bootstrap inside the container.
-    container: buildpack-deps:bookworm
-    env:
-      # linuxdeploy / appimagetool need FUSE, which isn't available in a
-      # container; run them extracted instead of mounting a FUSE image.
-      APPIMAGE_EXTRACT_AND_RUN: "1"
-    defaults:
-      run:
-        # Container jobs default `run:` to `sh` (dash), which rejects the
-        # `set -o pipefail` the staging steps use. buildpack-deps:bookworm ships
-        # bash; pin it so the steps behave as on the host runner.
-        shell: bash
+    # Built on the Ubuntu 24.04 runners (glibc 2.39, libheif 1.17.6). That is the
+    # effective minimum-OS floor for the published artifacts: Debian 13 Trixie+,
+    # Ubuntu 24.04+, current Fedora/RHEL. Debian 12 Bookworm (glibc 2.36, libheif
+    # 1.15) is below the floor on both axes — see tuxlink-iuop for the static-link
+    # work real Bookworm support would need. The deb-install-test gate asserts a
+    # clean apt refusal on Bookworm (via the libc6 (>= 2.39) Depends) rather than
+    # a silently broken install.
     steps:
       - uses: actions/checkout@v6
 
       - name: Install system dependencies
-        # Runs as root in the container (no sudo). buildpack-deps:bookworm already
-        # provides git/build-essential/curl/wget/file/pkg-config/ca-certificates;
-        # add the Tauri/WebKitGTK -dev libs plus gfortran (voacapl), rsync, jq.
         run: |
-          apt-get update
-          apt-get install -y libax25-dev libudev-dev libwebkit2gtk-4.1-dev \
-            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
-            libheif-dev libde265-dev libwebp-dev gfortran rsync jq
+          sudo apt-get update
+          sudo apt-get install -y libax25-dev libudev-dev libwebkit2gtk-4.1-dev \
+            build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            libheif-dev libde265-dev libwebp-dev
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -103,6 +89,7 @@ jobs:
       - name: Build + stage voacapl (offline HF prediction engine)
         run: |
           set -euxo pipefail
+          sudo apt-get install -y gfortran
           git clone --depth=1 https://github.com/jawatson/voacapl.git /tmp/voacapl-src
           cd /tmp/voacapl-src
           # A fresh clone gives every file the same mtime, so make's autotools
