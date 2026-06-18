@@ -238,6 +238,13 @@ Download the `.deb`, `.rpm`, or `.AppImage` for your distribution and
 architecture (`x86_64` or `arm64`, with `SHA256SUMS`) from the
 **[latest release](https://github.com/cameronzucker/tuxlink/releases/latest)**.
 
+**EmComm Tools Community (ECT)** and Debian 12 Bookworm run an older system base
+than the mainline packages target, so every release also publishes a dedicated
+low-floor `tuxlink_<version>_<arch>_etc.deb` for them — identical to the mainline
+build except that Apple HEIC image decoding is compiled out. Install it with
+`apt install ./tuxlink_*_etc.deb`; details in
+[docs/install.md](docs/install.md#emcomm-tools-community-and-debian-12-bookworm).
+
 Install, first-run, uninstall, and build-from-source steps live in
 **[docs/install.md](docs/install.md)**. Tuxlink requires WebKitGTK 4.1 and a
 secret-service keyring daemon.

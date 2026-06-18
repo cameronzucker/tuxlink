@@ -30,16 +30,38 @@ automatically. The low-level `dpkg -i` and `rpm -i` do **not** — they fail wit
 unmet-dependency errors. Run `sudo apt update` first so the package lists are current;
 a stale index is the most common cause of "dependencies … not going to be installed."
 
-No build toolchain required. **Minimum OS:** the prebuilt packages target
+No build toolchain required. **Minimum OS:** the mainline prebuilt packages target
 **Debian 13 (Trixie) or newer, Ubuntu 24.04 or newer, current Raspberry Pi OS
-(Trixie-based), and current Fedora / RHEL.** They are built against glibc 2.39
-and libheif 1.17, so **Debian 12 (Bookworm) and Bookworm-based Raspberry Pi OS
-are not supported** — their glibc 2.36 / libheif 1.15 are below that floor. On
-an unsupported release `apt` reports an unmet `libc6 (>= 2.39)` dependency and
-declines to install (it does not install a binary that would fail to launch);
-upgrade the OS, or build from source against the older libraries. The AppImage
-also cannot bundle the keyring daemon; see
-[Runtime prerequisite](#runtime-prerequisite-secret-service-keyring) below.
+(Trixie-based), and current Fedora / RHEL.** They are built against glibc 2.39 and
+libheif 1.17, so on **Debian 12 (Bookworm), Bookworm-based Raspberry Pi OS, and
+EmComm Tools Community (ECT)** the mainline `.deb` declines to install — `apt`
+reports an unmet `libc6 (>= 2.39)` dependency rather than installing a binary that
+would fail to launch. Those lower-floor systems have a dedicated build; see
+[EmComm Tools Community and Debian 12 Bookworm](#emcomm-tools-community-and-debian-12-bookworm)
+below. The AppImage shares the same glibc 2.39 floor, so it does not help on those
+systems either; it also cannot bundle the keyring daemon (see
+[Runtime prerequisite](#runtime-prerequisite-secret-service-keyring) below).
+
+### EmComm Tools Community and Debian 12 Bookworm
+
+EmComm Tools Community (ECT) is frozen on an older base (glibc 2.36), as is
+Debian 12 (Bookworm). The mainline package above refuses to install there. Every
+release also publishes a dedicated low-floor build for these systems, named
+`tuxlink_<version>_<arch>_etc.deb` on the same
+[Releases page](https://github.com/cameronzucker/tuxlink/releases/latest):
+
+```bash
+# ECT / Debian 12 Bookworm (amd64 shown; an arm64 _etc.deb is also published)
+sudo apt update
+sudo apt install ./tuxlink_*_amd64_etc.deb
+```
+
+The low-floor build is identical to the mainline package except that Apple HEIC
+image decoding is compiled out: HEIC attachments degrade to a "convert to
+JPEG/PNG" message, while every other capability (CMS, all transports, mailbox,
+forms, APRS, maps, SSTV, GPS, and every other image format including WebP) is
+unchanged. See [ADR 0020](adr/0020-linux-support-matrix-and-build-floor.md) for
+the full support matrix and build-floor policy.
 
 ### Option 2: build from source (developers only)
 

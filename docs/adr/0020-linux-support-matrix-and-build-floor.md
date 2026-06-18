@@ -54,7 +54,14 @@ core.** It is built on Ubuntu 22.04 LTS (glibc 2.35 — covers ETC's 2.36 and
 Debian 12 Bookworm) with the `heif` feature **off**. HEIC/HEIF attachments
 degrade to a clear "convert to JPEG/PNG" message; every other capability
 (Winlink CMS, all transports, mailbox, forms, APRS, maps, SSTV, GPS, and every
-other image format including WebP) is unchanged.
+other image format including WebP) is unchanged. The low-floor `.deb` is
+**published as a release asset** on every release: `etc-build.yml` runs on the
+same `v*` tag as `release.yml`, validates the build installs on the low floor
+(clean Bookworm container), then attaches a labeled `tuxlink_<ver>_<arch>_etc.deb`
+to that release via the same `softprops` upsert (so it co-publishes race-free
+with the core assets). Publishing was wired in tuxlink-b4ga; before that the
+low-floor build existed only as a PR/`workflow_dispatch` guard, so no release
+actually shipped an ETC-installable artifact.
 
 **3. Build-floor policy (the durable precedent).** The build-floor distro is the
 project's **system-library budget**. Any dependency that requires a system

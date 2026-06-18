@@ -15,6 +15,12 @@ name: ETC (low-floor) build
 # stock Debian Bookworm container (glibc 2.36, the same floor as ETC).
 
 on:
+  # tuxlink-b4ga: also run on release tags so the validated low-floor .deb is
+  # published as a release asset (see the publish-etc job). Mirrors release.yml's
+  # 'v*' tag trigger so both fire on the same release-please tag.
+  push:
+    tags:
+      - 'v*'
   pull_request:
     branches: [main]
     paths:
@@ -214,3 +220,40 @@ jobs:
             -v "$PWD:/work" -w /work \
             "debian:bookworm-slim" \
             bash scripts/ci/deb-install-smoke.sh "$deb" install
+
+  # tuxlink-b4ga / ADR 0020: publish the validated low-floor .deb as a release
+  # asset so EmComm Tools Community (Ubuntu 22.10 EOL, glibc 2.36) and Debian 12
+  # Bookworm users have a downloadable install — the core release .deb refuses on
+  # that floor (libc6 >= 2.39). Runs ONLY on a release tag, and ONLY after
+  # etc-install-test proves the .deb installs on the low floor, so a broken
+  # low-floor build never reaches a release. Uses the same softprops upsert as
+  # release.yml, so it attaches to the same tag's release no matter which
+  # workflow creates it first (no cross-workflow race). A failure here leaves the
+  # core release.yml assets untouched — the ETC .deb just won't be attached.
+  publish-etc:
+    name: Publish ETC .deb to the release
+    needs: [build-etc, etc-install-test]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the ETC .debs (all arches)
+        uses: actions/download-artifact@v7
+        with:
+          pattern: tuxlink-etc-*
+          path: dist-etc
+          merge-multiple: true
+
+      - name: List collected ETC .debs
+        run: ls -lh dist-etc
+
+      - name: Attach ETC .deb(s) to the release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist-etc/*_etc.deb
+          fail_on_unmatched_files: true
+          # Match release.yml: a tag this workflow reaches first creates the
+          # release as a pre-release; promote-release.yml flips stable later.
+          prerelease: true
