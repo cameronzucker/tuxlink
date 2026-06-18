@@ -1326,26 +1326,34 @@ pub async fn message_attachment_preview(
 
 // ---- message_attachment_save command (tuxlink-0fyj) ------------------------
 
-/// Save a named attachment from a stored message to a destination path on disk.
+/// Save a named attachment from a stored message to a disk path the OPERATOR
+/// chooses through a backend-owned native save dialog.
 ///
 /// Reads the message's raw RFC5322 from the storage layer, parses MIME via
 /// `mail_parser`, extracts the bytes of the part whose `attachment_name()`
-/// matches `filename`, and writes them to `dest_path`. The frontend's flow is
-/// `@tauri-apps/plugin-dialog`'s `save()` → invoke this command with the chosen
-/// path → toast 'Saved'. The attachment body never crosses the IPC boundary —
-/// only the destination path does.
+/// matches `filename`, then opens the native Save dialog **on the backend** and
+/// writes the bytes to the operator-selected path. Returns the chosen path on
+/// success, or `None` when the operator cancels the dialog.
+///
+/// tuxlink-hyfo (SECURITY, defense-in-depth): the destination path is no longer
+/// supplied by the renderer. Under Tauri's untrusted-renderer threat model, a
+/// compromised webview previously could have driven `fs::write` to an arbitrary
+/// path with attacker-influenced (received-message) bytes. The backend now owns
+/// the dialog, so the ONLY path written is the one the operator confirmed; the
+/// suggested file name is reduced to its basename so a hostile attachment
+/// filename cannot pre-seed path separators.
 ///
 /// Errors map to UiError as: missing folder/message → NotFound (propagated from
-/// the backend); attachment-name not in the message → NotFound; filesystem
-/// failure → Internal { detail: <io error> }.
+/// the backend); attachment-name not in the message → NotFound; dialog/task or
+/// filesystem failure → Internal { detail: <error> }.
 #[tauri::command]
 pub async fn message_attachment_save(
+    app: AppHandle,
     folder: String,
     id: String,
     filename: String,
-    dest_path: String,
     state: State<'_, BackendState>,
-) -> Result<(), UiError> {
+) -> Result<Option<String>, UiError> {
     use crate::native_mailbox::FolderRef;
     let parsed = parse_folder_ref(&folder)?;
     let mid = MessageId::new(&id);
@@ -1365,10 +1373,40 @@ pub async fn message_attachment_save(
         .ok_or_else(|| {
             UiError::NotFound(format!("attachment '{filename}' not in message {id}"))
         })?;
-    std::fs::write(&dest_path, &bytes).map_err(|e| UiError::Internal {
-        detail: format!("write {dest_path}: {e}"),
-    })?;
-    Ok(())
+
+    // Reduce the suggested name to its basename: a received-message attachment
+    // filename is attacker-influenced and must not seed path separators.
+    let suggested = std::path::Path::new(&filename)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("attachment")
+        .to_string();
+
+    // The native dialog blocks; run it off the async runtime. `blocking_save_file`
+    // must not run on the main thread — a spawn_blocking worker is the safe home.
+    let saved = tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
+        use tauri_plugin_dialog::DialogExt;
+        let chosen = app
+            .dialog()
+            .file()
+            .set_file_name(&suggested)
+            .blocking_save_file();
+        let Some(fp) = chosen else {
+            return Ok(None); // operator cancelled — not an error
+        };
+        let path = fp
+            .into_path()
+            .map_err(|e| format!("resolve chosen save path: {e}"))?;
+        std::fs::write(&path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
+        Ok(Some(path.display().to_string()))
+    })
+    .await
+    .map_err(|e| UiError::Internal {
+        detail: format!("save dialog task failed: {e}"),
+    })?
+    .map_err(|detail| UiError::Internal { detail })?;
+
+    Ok(saved)
 }
 
 // ---- mailbox_move command (tuxlink-ca5x) -----------------------------------
