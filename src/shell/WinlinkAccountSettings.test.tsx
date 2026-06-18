@@ -44,6 +44,27 @@ describe('<WinlinkAccountSettings>', () => {
     expect(await screen.findByTestId('account-current-callsign')).toHaveTextContent('N7CPZ');
   });
 
+  it('when the account API is available, renders the recovery + delete controls and hides the management controls after a delete', async () => {
+    // availability true → CmsRecoveryEmail + CmsAccountDelete render; cms_account_remove resolves.
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'identity_active') return Promise.resolve({ mycall: 'N7CPZ', address_as: 'N7CPZ', is_tactical: false });
+      if (cmd === 'cms_password_change_available') return Promise.resolve(true);
+      return Promise.resolve(undefined); // cms_account_remove, etc.
+    });
+    render(<WinlinkAccountSettings />);
+    expect(await screen.findByTestId('account-recovery-email')).toBeInTheDocument();
+    expect(screen.getByTestId('account-delete')).toBeInTheDocument();
+    expect(screen.getByTestId('account-reenter')).toBeInTheDocument();
+    // Delete the account.
+    fireEvent.change(screen.getByTestId('account-delete-confirm'), { target: { value: 'N7CPZ' } });
+    fireEvent.click(screen.getByTestId('account-delete-submit'));
+    // After deletion: the management controls (recovery + re-enter) are hidden; the
+    // delete section keeps its own success.
+    await waitFor(() => expect(screen.getByTestId('account-delete-success')).toBeInTheDocument());
+    expect(screen.queryByTestId('account-recovery-email')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('account-reenter')).not.toBeInTheDocument();
+  });
+
   it('forwards the active callsign to the password-change control', async () => {
     route({ active: { mycall: 'K7ABC', address_as: 'K7ABC', is_tactical: false } });
     render(<WinlinkAccountSettings />);

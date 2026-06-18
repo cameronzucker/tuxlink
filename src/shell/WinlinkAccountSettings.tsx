@@ -16,6 +16,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { CmsPasswordChange } from '../wizard/CmsPasswordChange';
+import { CmsRecoveryEmail } from './CmsRecoveryEmail';
+import { CmsAccountDelete } from './CmsAccountDelete';
 import { validatePassword } from '../wizard/validators';
 
 /** Mirrors the Rust ActiveIdentityDto returned by identity_active. */
@@ -34,6 +36,10 @@ export function WinlinkAccountSettings() {
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  // Once the account is deleted, the password/recovery/re-enter controls operate on
+  // a now-gone account, so they are hidden; the delete section keeps its own success.
+  const [accountDeleted, setAccountDeleted] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -92,9 +98,14 @@ export function WinlinkAccountSettings() {
         <strong data-testid="account-current-callsign">{callsign}</strong>
       </p>
 
-      {/* Rotate the CMS server password (gated on the access code; renders
-       *  nothing in the open build). */}
-      <CmsPasswordChange callsign={callsign} />
+      {!accountDeleted && (
+        <>
+          {/* Rotate the CMS server password (gated on the access code; renders
+           *  nothing in the open build). */}
+          <CmsPasswordChange callsign={callsign} />
+
+          {/* Set/replace the recovery email (gated; renders nothing without a key). */}
+          <CmsRecoveryEmail callsign={callsign} />
 
       {/* Keyring-only recovery: re-save the existing password to the OS keyring
        *  for this account. Use when Tuxlink can't authenticate after the CMS
@@ -145,6 +156,12 @@ export function WinlinkAccountSettings() {
           {inFlight ? 'Saving…' : 'Save password'}
         </button>
       </section>
+        </>
+      )}
+
+      {/* Destructive: delete the account on the CMS + clear the keyring. Gated +
+       *  behind a typed-confirmation; renders nothing in the open build. */}
+      <CmsAccountDelete callsign={callsign} onDeleted={() => setAccountDeleted(true)} />
     </div>
   );
 }

@@ -350,3 +350,32 @@
   }
 }
 
+/* Winlink Account — destructive "delete account" section (tuxlink-vfb3). */
+.tux-account-danger {
+  margin-top: 22px;
+  padding: 16px 18px;
+  border: 1px solid var(--tux-danger, #ee6b6b);
+  border-radius: 10px;
+  background: var(--tux-danger-surface, rgba(238, 107, 107, 0.12));
+}
+.tux-account-danger h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  color: var(--tux-danger, #ee6b6b);
+}
+.tux-danger-button {
+  margin-top: 12px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-family: var(--sans);
+  cursor: pointer;
+  color: var(--tux-danger-fg, #1a0e02);
+  background: var(--tux-danger, #ee6b6b);
+  border: 1px solid var(--tux-danger, #ee6b6b);
+}
+.tux-danger-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
