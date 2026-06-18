@@ -50,6 +50,7 @@
         "section": "hamradio",
         "priority": "optional",
         "depends": [
+          "libc6 (>= 2.39)",
           "libsecret-1-0",
           "libheif1",
           "libde265-0",

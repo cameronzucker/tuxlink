@@ -30,11 +30,16 @@ automatically. The low-level `dpkg -i` and `rpm -i` do **not** — they fail wit
 unmet-dependency errors. Run `sudo apt update` first so the package lists are current;
 a stale index is the most common cause of "dependencies … not going to be installed."
 
-No build toolchain required. **System dependency:** Tuxlink requires WebKitGTK 4.1,
-which ships on Debian 12 (Bookworm) and newer, current Raspberry Pi OS, and current
-Fedora / RHEL. Distributions that ship only WebKitGTK 4.0 (older Debian stable, older
-RHEL / CentOS) need a backport. The AppImage also cannot bundle the keyring daemon;
-see [Runtime prerequisite](#runtime-prerequisite-secret-service-keyring) below.
+No build toolchain required. **Minimum OS:** the prebuilt packages target
+**Debian 13 (Trixie) or newer, Ubuntu 24.04 or newer, current Raspberry Pi OS
+(Trixie-based), and current Fedora / RHEL.** They are built against glibc 2.39
+and libheif 1.17, so **Debian 12 (Bookworm) and Bookworm-based Raspberry Pi OS
+are not supported** — their glibc 2.36 / libheif 1.15 are below that floor. On
+an unsupported release `apt` reports an unmet `libc6 (>= 2.39)` dependency and
+declines to install (it does not install a binary that would fail to launch);
+upgrade the OS, or build from source against the older libraries. The AppImage
+also cannot bundle the keyring daemon; see
+[Runtime prerequisite](#runtime-prerequisite-secret-service-keyring) below.
 
 ### Option 2: build from source (developers only)
 
@@ -266,9 +271,11 @@ sudo apt install ./tuxlink_*_amd64.deb
 ```
 
 Do **not** fall back to `sudo dpkg -i` (it cannot download dependencies) or to a
-from-source build (that needs the full Rust / Tauri toolchain). Confirm the system is
-Debian 12 (Bookworm) or newer, or a current Raspberry Pi OS / Fedora, which ship
-WebKitGTK 4.1. Background: [tuxlink issue #786](https://github.com/cameronzucker/tuxlink/issues/786).
+from-source build (that needs the full Rust / Tauri toolchain). Confirm the system meets
+the minimum OS above (Debian 13 Trixie+ / Ubuntu 24.04+ / current Raspberry Pi OS /
+current Fedora). An unmet `libc6 (>= 2.39)` error means the release is too old (e.g.
+Debian 12 Bookworm) — upgrade the OS rather than force the install. Background:
+[tuxlink issue #786](https://github.com/cameronzucker/tuxlink/issues/786).
 
 ### Build errors
 

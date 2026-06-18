@@ -33,6 +33,13 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    # Built on the Ubuntu 24.04 runners (glibc 2.39, libheif 1.17.6). That is the
+    # effective minimum-OS floor for the published artifacts: Debian 13 Trixie+,
+    # Ubuntu 24.04+, current Fedora/RHEL. Debian 12 Bookworm (glibc 2.36, libheif
+    # 1.15) is below the floor on both axes — see tuxlink-iuop for the static-link
+    # work real Bookworm support would need. The deb-install-test gate asserts a
+    # clean apt refusal on Bookworm (via the libc6 (>= 2.39) Depends) rather than
+    # a silently broken install.
     steps:
       - uses: actions/checkout@v6
 
@@ -223,3 +230,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release edit "$TAG" --prerelease
+
+  # tuxlink-w636: validate the freshly-built .deb installs cleanly via the
+  # documented `apt install ./tuxlink.deb` path on stock Debian Trixie + Bookworm
+  # (amd64 + arm64), so a dependency regression fails CI instead of a tester
+  # (class-prevention for GH #786). Runs only when build-linux uploaded the
+  # linux-bundles artifact (PR / manual run); tag releases publish to the GitHub
+  # Release instead — validate those on demand via deb-install-test.yml's
+  # workflow_dispatch.
+  deb-install-test:
+    needs: build-linux
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/deb-install-test.yml
+    with:
+      deb_artifact_prefix: linux-bundles

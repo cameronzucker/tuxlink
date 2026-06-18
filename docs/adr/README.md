@@ -71,6 +71,8 @@ Deciders: <names or session monikers of people involved>
 - [0016 — Native B2F outbound with attachments](0016-native-b2f-outbound-with-attachments.md)
 - [0017 — Branch lifecycle state machine + pre-commit/pre-push hook enforcement](0017-branch-state-machine.md)
 - [0018 — RADIO-1 gates operator execution of transmitting software, not agent authorship of RF-path code](0018-radio1-gates-operator-execution-not-agent-authorship.md)
+- [0019 — Sonde rebrand and repo extraction](0019-sonde-rebrand-and-extraction.md)
+- [0020 — Linux support matrix and the build-floor policy](0020-linux-support-matrix-and-build-floor.md) — *core targets a modern floor (Trixie+/24.04+, full HEIC); a separate feature-gated low-floor build serves the EmComm Tools (Ubuntu 22.10) audience; the build-floor distro is the system-library budget*
 
 ## References
 

@@ -148,6 +148,12 @@ fn encode(img: &DynamicImage, format: OutFormat) -> Result<Vec<u8>, TranscodeErr
 
 /// Decode an HEIC/HEIF image to a `DynamicImage` via libheif. Reads the
 /// primary image, converts to interleaved RGB, copies into an `RgbImage`.
+///
+/// Gated on the `heif` feature (default-on), which links libheif-rs / system
+/// libheif >= 1.17. Builds for distros below that floor (EmComm Tools / Ubuntu
+/// 22.10, Debian 12 Bookworm) compile without it and use the stub below. See
+/// docs/adr/0020-linux-support-matrix-and-build-floor.md.
+#[cfg(feature = "heif")]
 fn decode_heic(bytes: &[u8]) -> Result<DynamicImage, TranscodeError> {
     use libheif_rs::{ColorSpace, HeifContext, LibHeif, RgbChroma};
     let lib = LibHeif::new();
@@ -176,6 +182,18 @@ fn decode_heic(bytes: &[u8]) -> Result<DynamicImage, TranscodeError> {
     let buf = image::RgbImage::from_raw(w, h, rgb)
         .ok_or_else(|| TranscodeError::Decode("heif: buffer size mismatch".into()))?;
     Ok(DynamicImage::ImageRgb8(buf))
+}
+
+/// Stub used when the `heif` feature is off (builds for distros below the
+/// libheif 1.17 floor — see ADR 0020). Same signature as the real decoder so
+/// `transcode_image_bytes`' call site is unchanged; an HEIC attachment surfaces
+/// a clear, actionable error instead of decoding.
+#[cfg(not(feature = "heif"))]
+fn decode_heic(_bytes: &[u8]) -> Result<DynamicImage, TranscodeError> {
+    Err(TranscodeError::Decode(
+        "HEIC/HEIF images aren't supported in this build; ask the sender to send JPEG or PNG"
+            .into(),
+    ))
 }
 
 #[cfg(test)]
