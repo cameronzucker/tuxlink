@@ -45,6 +45,18 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
         inFlight: false,
       };
 
+    case 'GO_TO_ACCOUNT_CREATE':
+      // The "Create a Winlink account" affordance (tuxlink-vfb3). Only meaningful from
+      // the sign-in step; a strict no-op elsewhere.
+      if (state.step !== 'credentials') return state;
+      return { ...state, step: 'account_create' };
+
+    case 'ACCOUNT_CREATE_SUCCESS':
+      // Account created + identity persisted. Clear the password and join the existing
+      // verify tail (mirrors the non-skip SUBMIT_CREDENTIALS_SUCCESS). The callsign is
+      // preserved so cms_verify / the shell know the identity.
+      return { ...state, password: '', step: 'cms_verify', inFlight: false };
+
     case 'SUBMIT_OFFLINE_SUCCESS':
       // Offline path: identity persisted → Location step → complete (tuxlink-9xy1).
       return { ...state, step: 'location', inFlight: false };

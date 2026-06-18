@@ -4,7 +4,15 @@
 //        grid (4/6-char Maidenhead, optional),
 //        normalizeGrid.
 import { describe, it, expect } from 'vitest';
-import { validateCallsign, validatePassword, validateGrid, normalizeGrid } from './validators';
+import {
+  validateCallsign,
+  validatePassword,
+  validateGrid,
+  normalizeGrid,
+  validateAccountPassword,
+  validateAmateurCallsign,
+  validateRecoveryEmail,
+} from './validators';
 
 describe('validators', () => {
   describe('validateCallsign', () => {
@@ -78,6 +86,62 @@ describe('validators', () => {
     });
     it('accepts empty (optional field)', () => {
       expect(validateGrid('')).toBeNull();
+    });
+  });
+
+  // tuxlink-vfb3 sub-project 1 — account-creation validators.
+
+  describe('validateAccountPassword (6–12, create only)', () => {
+    it('rejects empty', () => {
+      expect(validateAccountPassword('')).toMatch(/required/i);
+    });
+    it('rejects < 6 chars', () => {
+      expect(validateAccountPassword('12345')).toMatch(/6 to 12/);
+    });
+    it('rejects > 12 chars (the live API upper bound)', () => {
+      expect(validateAccountPassword('1234567890123')).toMatch(/6 to 12/);
+    });
+    it('accepts the 6 and 12 boundaries', () => {
+      expect(validateAccountPassword('123456')).toBeNull();
+      expect(validateAccountPassword('123456789012')).toBeNull();
+    });
+  });
+
+  describe('validateAmateurCallsign (strict, create only)', () => {
+    it('accepts standard US forms (case-insensitive, SSID stripped)', () => {
+      expect(validateAmateurCallsign('KK7ABC')).toBeNull();
+      expect(validateAmateurCallsign('kk7abc')).toBeNull();
+      expect(validateAmateurCallsign('W1AW')).toBeNull();
+      expect(validateAmateurCallsign('AA7BC')).toBeNull();
+      expect(validateAmateurCallsign('KH6ABC')).toBeNull();
+      expect(validateAmateurCallsign('KK7ABC-7')).toBeNull(); // SSID stripped to base
+    });
+    it('accepts digit-led international prefixes', () => {
+      expect(validateAmateurCallsign('2E0AAA')).toBeNull();
+      expect(validateAmateurCallsign('9A1AA')).toBeNull();
+    });
+    it('rejects tactical / word labels (the dangerous direction)', () => {
+      for (const raw of ['RELAY1', 'EOC1', 'TEST123', 'ARES', 'EOC']) {
+        expect(validateAmateurCallsign(raw)).toMatch(/callsign/i);
+      }
+    });
+    it('rejects empty', () => {
+      expect(validateAmateurCallsign('')).toMatch(/required/i);
+    });
+  });
+
+  describe('validateRecoveryEmail (mandatory)', () => {
+    it('rejects empty / whitespace', () => {
+      expect(validateRecoveryEmail('')).toMatch(/required/i);
+      expect(validateRecoveryEmail('   ')).toMatch(/required/i);
+    });
+    it('rejects malformed addresses', () => {
+      expect(validateRecoveryEmail('notanemail')).toMatch(/valid email/i);
+      expect(validateRecoveryEmail('no@domain')).toMatch(/valid email/i);
+      expect(validateRecoveryEmail('a b@c.com')).toMatch(/valid email/i);
+    });
+    it('accepts a normal address', () => {
+      expect(validateRecoveryEmail('kk7abc.ops@gmail.com')).toBeNull();
     });
   });
 

@@ -171,4 +171,41 @@ describe('wizardReducer', () => {
     const s2 = wizardReducer(s, { type: 'CMS_VERIFY_LOG_LINE', line: 'stale' });
     expect(s2).toBe(s);
   });
+
+  // tuxlink-vfb3 sub-project 1 — in-app account creation.
+
+  it('GO_TO_ACCOUNT_CREATE routes credentials → account_create', () => {
+    const s = { ...initialWizardState(), step: 'credentials' as const };
+    const s2 = wizardReducer(s, { type: 'GO_TO_ACCOUNT_CREATE' });
+    expect(s2.step).toBe('account_create');
+  });
+
+  it('GO_TO_ACCOUNT_CREATE is a no-op from any step other than credentials', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const };
+    const s2 = wizardReducer(s, { type: 'GO_TO_ACCOUNT_CREATE' });
+    expect(s2).toBe(s);
+  });
+
+  it('ACCOUNT_CREATE_SUCCESS clears password and routes account_create → cms_verify', () => {
+    const base = {
+      ...initialWizardState(),
+      step: 'account_create' as const,
+      callsign: 'KK7ABC',
+      password: 'r7-Granite',
+      inFlight: true,
+    };
+    const s = wizardReducer(base, { type: 'ACCOUNT_CREATE_SUCCESS' });
+    expect(s.step).toBe('cms_verify');
+    expect(s.password).toBe('');
+    expect(s.callsign).toBe('KK7ABC'); // identity preserved for verify/persist
+    expect(s.inFlight).toBe(false);
+  });
+
+  it('RETURN_TO_CREDENTIALS works from account_create (Back to sign in / sign-in offer)', () => {
+    const base = { ...initialWizardState(), step: 'account_create' as const, callsign: 'KK7ABC', password: 'x' };
+    const s = wizardReducer(base, { type: 'RETURN_TO_CREDENTIALS' });
+    expect(s.step).toBe('credentials');
+    expect(s.password).toBe('');
+    expect(s.callsign).toBe('KK7ABC'); // prefill the callsign on the sign-in form
+  });
 });

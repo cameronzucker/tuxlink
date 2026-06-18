@@ -10,11 +10,12 @@
 // Buttons disabled during inFlight (spec §3.1).
 // Register link opens in system browser via tauri-plugin-shell (spec §3.7).
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import { useWizard } from './wizardContext';
 import { validateCallsign, validatePassword } from './validators';
+import { CredentialFields } from './CredentialFields';
 import type { WizardError } from './types';
 
 // Winlink account registration URL — opened in system browser, never in webview (spec §3.7).
@@ -116,9 +117,26 @@ export function Step2Credentials() {
   // Tracks the last auto-filled MBO value so we know when it's still auto-filled.
   const [lastAutoMbo, setLastAutoMbo] = useState<string>(state.mboAddress);
 
-  const [showPassword, setShowPassword] = useState(false);
   const [submitError, setSubmitError] = useState<WizardError | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string | null>>({});
+
+  // Whether in-app account creation is available on this build (same access-key gate as
+  // the password-change feature — tuxlink-vfb3). When false, the "create account"
+  // affordance degrades to external web registration.
+  const [createAvailable, setCreateAvailable] = useState(false);
+  useEffect(() => {
+    let active = true;
+    invoke<boolean>('cms_password_change_available')
+      .then((v) => {
+        if (active) setCreateAvailable(Boolean(v));
+      })
+      .catch(() => {
+        if (active) setCreateAvailable(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // ── Field handlers ─────────────────────────────────────────────────────
 
@@ -206,57 +224,20 @@ export function Step2Credentials() {
   return (
     <div className="wizard-step wizard-step-credentials">
       <h1>Your Winlink CMS credentials</h1>
-      <p>
-        Enter the callsign and password for your{' '}
-        <a href={WINLINK_REGISTER_URL} onClick={handleRegisterClick} role="link" aria-label="Register a Winlink account">
-          Winlink account
-        </a>
-        . Don't have one? Click "Register" above to create one first.
-      </p>
+      <p>Enter the callsign and password for your Winlink account.</p>
 
       <form noValidate onSubmit={e => e.preventDefault()}>
-        {/* Callsign field */}
-        <div className="wizard-field">
-          <label htmlFor="w-callsign">Callsign *</label>
-          <input
-            id="w-callsign"
-            type="text"
-            autoCapitalize="characters"
-            autoComplete="username"
-            value={callsign}
-            onChange={e => handleCallsignChange(e.target.value)}
-            onBlur={handleCallsignBlur}
-            disabled={state.inFlight}
-            aria-describedby={fieldErrors.callsign ? 'callsign-error' : undefined}
-          />
-          {fieldErrors.callsign && (
-            <span id="callsign-error" role="alert" className="wizard-field-error">
-              {fieldErrors.callsign}
-            </span>
-          )}
-        </div>
-
-        {/* Password field with show/hide toggle */}
-        <div className="wizard-field">
-          <label htmlFor="w-password">CMS password *</label>
-          <div className="wizard-password-row">
-            <input
-              id="w-password"
-              type={showPassword ? 'text' : 'password'}
-              autoComplete="current-password"
-              value={password}
-              onChange={e => handlePasswordChange(e.target.value)}
-              disabled={state.inFlight}
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(v => !v)}
-              aria-label={showPassword ? 'Conceal password field' : 'Reveal password field'}
-            >
-              {showPassword ? 'Hide' : 'Show'}
-            </button>
-          </div>
-        </div>
+        {/* Shared callsign + password fields (tuxlink-vfb3). The wizard's ids
+         *  ('w-callsign' / 'w-password') are preserved via the default idPrefix. */}
+        <CredentialFields
+          callsign={callsign}
+          password={password}
+          onCallsignChange={handleCallsignChange}
+          onPasswordChange={handlePasswordChange}
+          onCallsignBlur={handleCallsignBlur}
+          callsignError={fieldErrors.callsign}
+          disabled={state.inFlight}
+        />
 
         {/* Grid moved to the dedicated Location step (tuxlink-9xy1). */}
 
@@ -307,6 +288,36 @@ export function Step2Credentials() {
             Save credentials and skip verification
           </button>
         </div>
+
+        {/* Create-account affordance (tuxlink-vfb3). In-app when the CMS account API is
+         *  configured; otherwise degrades to today's external web registration. */}
+        <p className="wizard-create-line">
+          New to Winlink?{' '}
+          {createAvailable ? (
+            <button
+              type="button"
+              className="wizard-linklike"
+              data-testid="cred-create-account"
+              onClick={() => dispatch({ type: 'GO_TO_ACCOUNT_CREATE' })}
+              disabled={state.inFlight}
+            >
+              Create a Winlink account
+            </button>
+          ) : (
+            <>
+              <a
+                href={WINLINK_REGISTER_URL}
+                onClick={handleRegisterClick}
+                role="link"
+                data-testid="cred-register-external"
+                aria-label="Register a Winlink account"
+              >
+                Register on winlink.org
+              </a>{' '}
+              <span className="wizard-field-hint wizard-inline-hint">(opens your browser)</span>
+            </>
+          )}
+        </p>
       </form>
     </div>
   );

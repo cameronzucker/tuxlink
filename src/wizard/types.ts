@@ -16,6 +16,10 @@ export type WizardError =
 export type WizardStep =
   | 'account'
   | 'credentials'
+  // In-app Winlink account creation (tuxlink-vfb3 sub-project 1). Reached from
+  // `credentials` via the "Create a Winlink account" affordance; on success it joins
+  // the existing cms_verify → location → complete tail. NOT an up-front fork.
+  | 'account_create'
   | 'offline_identity'
   | 'cms_verify'
   // Location / GPS-source setup (tuxlink-9xy1). Every identity path threads through
@@ -47,6 +51,12 @@ export type WizardAction =
   | { type: 'SET_OFFLINE_FIELD'; field: 'identifier' | 'grid'; value: string }
   | { type: 'SUBMIT_BEGIN' }
   | { type: 'SUBMIT_CREDENTIALS_SUCCESS'; skipCmsVerify: boolean }
+  // GO_TO_ACCOUNT_CREATE: the "Create a Winlink account" affordance on the credentials
+  // step (tuxlink-vfb3). Only meaningful from `credentials`.
+  | { type: 'GO_TO_ACCOUNT_CREATE' }
+  // ACCOUNT_CREATE_SUCCESS: the CMS account was created + identity persisted; clear the
+  // password and join the verify tail (mirrors the non-skip SUBMIT_CREDENTIALS_SUCCESS).
+  | { type: 'ACCOUNT_CREATE_SUCCESS' }
   | { type: 'SUBMIT_OFFLINE_SUCCESS' }
   | { type: 'SUBMIT_FAILURE'; error: WizardError }
   | { type: 'BEGIN_CMS_VERIFY' }

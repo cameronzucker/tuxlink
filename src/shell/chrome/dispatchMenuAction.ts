@@ -27,6 +27,9 @@ export interface MenuHandlers {
   verifyCms: () => void;
   /** Open the inline Settings panel (GPS state + position precision), tuxlink-39b. */
   openSettings: () => void;
+  /** Open the inline Settings panel on the Winlink Account section (CMS password
+   *  change + keyring re-enter), tuxlink-vfb3. */
+  openWinlinkAccount: () => void;
   /** Open the inline Theme Designer (View → Color Scheme → Customize…), tuxlink-vgth. */
   openThemeDesigner: () => void;
   /** Open the inline About Tuxlink dialog (tuxlink-35g0). */
@@ -81,6 +84,9 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     // post-merge smoke of #113).
     case 'menu:tools:settings_privacy':
       h.openSettings(); return;
+    // tuxlink-vfb3: Winlink Account opens the Settings panel on the account section.
+    case 'menu:tools:settings_account':
+      h.openWinlinkAccount(); return;
     // tuxlink-vgth: opens the inline Theme Designer panel.
     case 'menu:view:customize_theme':
       h.openThemeDesigner(); return;

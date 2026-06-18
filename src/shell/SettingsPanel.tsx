@@ -19,6 +19,7 @@ import { AprsSettings } from '../aprs/AprsSettings';
 import { FormSequenceSettings } from '../forms/FormSequenceSettings';
 import { OfflineMapsSettings } from '../map/OfflineMapsSettings';
 import { IdentitiesSettings } from './IdentitiesSettings';
+import { WinlinkAccountSettings } from './WinlinkAccountSettings';
 import './SettingsPanel.css';
 
 const GPS_STATE_OPTIONS: { value: GpsState; label: string; help: string }[] = [
@@ -58,13 +59,23 @@ interface SettingsView {
   review_inbound_before_download: boolean;
 }
 
-type SectionId = 'identities' | 'location' | 'gpsstate' | 'aprs' | 'forms' | 'maps';
+export type SectionId =
+  | 'identities'
+  | 'account'
+  | 'location'
+  | 'gpsstate'
+  | 'aprs'
+  | 'forms'
+  | 'maps';
 
 const NAV: { group: string; items: { id: SectionId; label: string }[] }[] = [
   {
     group: 'Profile',
     items: [
       { id: 'identities', label: 'Identities' },
+      // tuxlink-vfb3: CMS account credential management (password change + the
+      // keyring-only re-enter recovery).
+      { id: 'account', label: 'Winlink Account' },
       { id: 'location', label: 'Location & GPS' },
       { id: 'gpsstate', label: 'GPS state & privacy' },
     ],
@@ -198,6 +209,8 @@ export function SettingsPanel({ open, onClose, initialSection = 'location' }: Se
             )}
 
             {active === 'identities' && <IdentitiesSettings />}
+
+            {active === 'account' && <WinlinkAccountSettings />}
 
             {active === 'location' && <LocationSettingsPane />}
 

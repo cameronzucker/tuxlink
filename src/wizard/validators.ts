@@ -41,6 +41,66 @@ export function validatePassword(input: string): string | null {
 }
 
 /**
+ * Validate a CMS password being CREATED (tuxlink-vfb3 sub-project 1).
+ * Returns null if valid; a human-readable error string if invalid.
+ *
+ * Unlike {@link validatePassword} (sign-in: ≥6, no upper bound), account *creation*
+ * enforces the live API rule of 6–12 characters, verified from the ServiceStack
+ * metadata (`AccountAdd`: "no less than 6 and no more than 12 characters long"). The
+ * server rejects out-of-range passwords, so bounding here gives immediate feedback
+ * instead of a round-trip rejection.
+ */
+export function validateAccountPassword(input: string): string | null {
+  if (!input) return 'Password is required.';
+  if (input.length < 6 || input.length > 12) {
+    return 'Password must be 6 to 12 characters.';
+  }
+  return null;
+}
+
+/**
+ * Validate a callsign being used to CREATE a CMS account (tuxlink-vfb3 sub-project 1).
+ * Returns null if valid; a human-readable error string if invalid.
+ *
+ * STRICTER than {@link validateCallsign} (which is loose and accepts tactical
+ * addresses): account creation requires a real amateur callsign, mirroring the backend
+ * `looks_like_amateur_callsign` grammar so the user gets early feedback rather than a
+ * backend `InvalidInput`. A too-loose check is the dangerous direction — the string is
+ * sent verbatim as `Callsign` to a full-account mutation. Grammar: a 1–2 char prefix
+ * (`[A-Z]{1,2}` or digit-led `[0-9][A-Z]` for `2E0AAA`/`9A1AA`), the single call-area
+ * digit, then a 1–4 letter suffix. The SSID/qualifier is stripped first (matching the
+ * backend's base-callsign normalization).
+ */
+export function validateAmateurCallsign(input: string): string | null {
+  if (!input.trim()) return 'Callsign is required.';
+  // Mirror the backend: strip the SSID/qualifier, then uppercase, then grammar-check.
+  const base = input.trim().split(/[-.]/)[0].toUpperCase();
+  if (!/^([A-Z]{1,2}|[0-9][A-Z])[0-9][A-Z]{1,4}$/.test(base)) {
+    return 'Enter your licensed amateur callsign (e.g. KK7ABC). A tactical address cannot hold a CMS account.';
+  }
+  return null;
+}
+
+/**
+ * Validate a MANDATORY recovery email (tuxlink-vfb3 sub-project 1).
+ * Returns null if valid; a human-readable error string if invalid.
+ *
+ * Required (empty/whitespace rejected) plus a light shape check — `local@domain.tld`
+ * with no whitespace. The CMS is authoritative for exact acceptance; this catches the
+ * obvious typos before the round trip. Recovery email is mandatory at creation per the
+ * locked support-burden decision (a missing recovery address is a large fraction of
+ * Winlink support requests).
+ */
+export function validateRecoveryEmail(input: string): string | null {
+  const v = input.trim();
+  if (!v) return 'A recovery email is required.';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+    return 'Enter a valid email address (e.g. you@example.com).';
+  }
+  return null;
+}
+
+/**
  * Validate a Maidenhead grid locator.
  * Returns null if valid or empty (field is optional); a human-readable error string if invalid.
  *

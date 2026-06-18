@@ -54,6 +54,7 @@ import { applyColorScheme, saveColorScheme } from './colorScheme';
 const SettingsPanel = lazy(() =>
   import('./SettingsPanel').then((m) => ({ default: m.SettingsPanel })),
 );
+import type { SectionId as SettingsSectionId } from './SettingsPanel';
 const ThemeDesigner = lazy(() =>
   import('./ThemeDesigner').then((m) => ({ default: m.ThemeDesigner })),
 );
@@ -348,6 +349,11 @@ export function AppShell() {
   }, []);
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // tuxlink-vfb3: which Settings section to open on. undefined → SettingsPanel's
+  // own default (Location & GPS). The Tools→Settings→Winlink Account entry opens
+  // directly on the 'account' section. Read at mount (the panel remounts on each
+  // open, so each entry point lands on the right section).
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId | undefined>(undefined);
   // Inline theme designer overlay (tuxlink-vgth), opened from View → Color
   // Scheme → Customize…. Same backdrop pattern as SettingsPanel.
   const [themeDesignerOpen, setThemeDesignerOpen] = useState(false);
@@ -1076,7 +1082,9 @@ export function AppShell() {
     toggleStatusBar: () => setShowStatusBar((s) => !s),
     toggleRadioPanel: () => setPinRadioPanel((s) => !s),
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
-    openSettings: () => setSettingsOpen(true),
+    openSettings: () => { setSettingsSection(undefined); setSettingsOpen(true); },
+    // tuxlink-vfb3: open Settings directly on the Winlink Account section.
+    openWinlinkAccount: () => { setSettingsSection('account'); setSettingsOpen(true); },
     openThemeDesigner: () => setThemeDesignerOpen(true),
     openAbout: () => setAboutOpen(true),
     // tuxlink-0gsy / spec §4.1: Help → Documentation opens the separate
@@ -1677,7 +1685,7 @@ export function AppShell() {
        *  network/disk wait is effectively the JS evaluate phase. */}
       {settingsOpen && (
         <Suspense fallback={null}>
-          <SettingsPanel open={true} onClose={() => setSettingsOpen(false)} />
+          <SettingsPanel open={true} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />
         </Suspense>
       )}
 
