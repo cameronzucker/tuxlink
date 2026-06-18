@@ -28,7 +28,9 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # The amd64 cold clippy --all-targets + test sits right at 30 min on
+    # ubuntu-latest and flaky-times-out (arm64 finishes in ~14). 45 gives headroom.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
