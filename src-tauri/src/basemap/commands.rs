@@ -38,6 +38,15 @@ const MANIFEST_URL: &str =
 /// (== this value), so it likewise can't be turned into an oversized extract.
 const PACK_MAXZOOM: u8 = 14;
 
+/// App-owned ceiling on the maxzoom a CONTINENT extract may use (tuxlink-8g28),
+/// independent of the manifest. The whole point of detail-tiering continents is to
+/// eliminate the full-detail z14 continent extract (the 17–30 GB runaway), so even
+/// though the area path legitimately uses z14 and the manifest validator accepts
+/// tiers up to z14, the continent path clamps to this lower ceiling. Defense in
+/// depth: a rotated/compromised manifest setting a tier to z14 cannot turn a
+/// continent download back into the runaway it replaced.
+const CONTINENT_MAX_MAXZOOM: u8 = 13;
+
 /// Per-zoom shrink factor for the continent size model ([`continent_estimate`]).
 /// A continent extract one zoom below z14 is estimated at ~1/this the bytes. Vector
 /// tiles grow ~2–3× per added zoom; we use the GENTLE end (2) so the estimate biases
@@ -51,9 +60,12 @@ const CONTINENT_ZOOM_SHRINK: u64 = 2;
 /// go-pmtiles sidecar is treated as hung (dead connection mid-extract) and killed,
 /// so the blocking download thread unwinds and its in-flight guard clears. Without
 /// this, a hung sidecar leaves the guard set forever and every Retry bounces with
-/// "already in progress" (tuxlink-8g28). Generous so a slow-but-alive transfer —
-/// which writes *something* well within this window — is never false-aborted.
-const STALL_TIMEOUT: Duration = Duration::from_secs(180);
+/// "already in progress" (tuxlink-8g28). Deliberately a GENEROUS backstop (10 min):
+/// go-pmtiles can spend a while computing tile ranges or finalizing the directory
+/// without the `.part` length changing, so a tight window would false-abort a
+/// healthy transfer (Codex P2). The operator's Cancel handles anything they notice
+/// sooner; this only catches a download nobody is watching that has truly died.
+const STALL_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// How often the sidecar poll loop wakes to check cancel + sample the temp size.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -208,18 +220,16 @@ impl Extractor for SidecarExtractor {
             // on just yields 0 — not an error.
             let written = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
             on_progress(written);
-
-            // Reset the watchdog on any growth; trip it if the file has been static
-            // for STALL_TIMEOUT while the child is still (apparently) running.
+            // Reset the watchdog clock on any growth.
             if written > last_size {
                 last_size = written;
                 last_growth = Instant::now();
-            } else if download::is_stalled(last_growth.elapsed(), STALL_TIMEOUT) {
-                let _ = child.kill();
-                let _ = child.wait();
-                break Outcome::Stalled;
             }
 
+            // Check exit BEFORE the stall watchdog (Codex P2): a child that has
+            // already finished — even after a static-size period — must be reported as
+            // Exited, never Stalled. The watchdog only fires for a child we've just
+            // confirmed is still running.
             match child.try_wait() {
                 Ok(Some(status)) => {
                     // Final size sample before reporting completion.
@@ -227,7 +237,19 @@ impl Extractor for SidecarExtractor {
                     on_progress(written);
                     break Outcome::Exited(status);
                 }
-                Ok(None) => std::thread::sleep(POLL_INTERVAL),
+                Ok(None) => {
+                    // Still running: trip the watchdog only if the .part has been
+                    // static past STALL_TIMEOUT (a genuinely hung sidecar). The
+                    // timeout is a generous backstop so a slow-but-alive transfer is
+                    // never false-aborted; the operator's Cancel handles anything they
+                    // notice sooner.
+                    if download::is_stalled(last_growth.elapsed(), STALL_TIMEOUT) {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break Outcome::Stalled;
+                    }
+                    std::thread::sleep(POLL_INTERVAL);
+                }
                 Err(e) => {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -683,9 +705,10 @@ fn needed_bytes_for(typical: u64) -> u64 {
 fn continent_estimate(baseline_z14: u64, maxzoom: u8) -> u64 {
     let levels_below = PACK_MAXZOOM.saturating_sub(maxzoom) as u32;
     let divisor = CONTINENT_ZOOM_SHRINK.saturating_pow(levels_below).max(1);
-    // ceil-div biases high; `.max(1)` so an extreme shrink never yields 0 (which
-    // would make needed_bytes / size_budget degenerate).
-    (baseline_z14.saturating_add(divisor - 1) / divisor).max(1)
+    // div_ceil biases high (overshoot is safe — it only over-reserves disk);
+    // `.max(1)` so an extreme shrink never yields 0, which would make
+    // needed_bytes / size_budget degenerate.
+    baseline_z14.div_ceil(divisor).max(1)
 }
 
 /// Build a validated [`PackRequest`] from the manifest + the webview's args.
@@ -732,16 +755,19 @@ fn build_request(manifest: &RegionManifest, args: &DownloadArgs) -> Result<PackR
                 .ok_or_else(|| DownloadError::ExtractFailed(format!("unknown tier {tier_id:?}")))?;
             let bbox = packs::continent_bbox(c.bbox)
                 .map_err(|e| DownloadError::ExtractFailed(e.to_string()))?;
-            // Size estimate scales with the tier's maxzoom so the free-space gate +
+            // Clamp to the app-owned continent ceiling so a manifest tier can never
+            // drive a continent back to the full-detail z14 runaway (Codex P2).
+            let maxzoom = tier.maxzoom.min(CONTINENT_MAX_MAXZOOM);
+            // Size estimate scales with the (clamped) maxzoom so the free-space gate +
             // validation budget + progress denominator track the actual (smaller)
             // shallow-detail extract rather than the flat z14 baseline.
-            let estimate = continent_estimate(c.typical_bytes, tier.maxzoom);
+            let estimate = continent_estimate(c.typical_bytes, maxzoom);
             Ok(PackRequest {
                 id: packs::continent_pack_id(continent_id),
                 label: format!("{} — {}", c.label, tier.label),
                 planet_url: manifest.planet_url.clone(),
                 bbox,
-                maxzoom: tier.maxzoom,
+                maxzoom,
                 source_build: manifest.planet_build.clone(),
                 typical_bytes: estimate,
                 needed_bytes: needed_bytes_for(estimate),
@@ -898,6 +924,33 @@ mod tests {
     }
 
     #[test]
+    fn build_request_continent_clamps_maxzoom_to_app_ceiling() {
+        // Codex P2: a manifest tier at full z14 (rotated/hostile manifest) must NOT
+        // produce a z14 continent extract — the continent path clamps to the app-owned
+        // CONTINENT_MAX_MAXZOOM regardless of the manifest, and the size estimate
+        // tracks the clamped value.
+        use crate::basemap::region_manifest::Tier;
+        let mut m = RegionManifest::bundled_default();
+        m.tiers.push(Tier {
+            id: "fulldetail".into(),
+            label: "Full".into(),
+            half_deg: [1.0, 1.0],
+            maxzoom: 14,
+            typical_bytes: 17_000_000,
+            default: false,
+        });
+        let na = m.continents.iter().find(|c| c.id == "na").unwrap().clone();
+        let req = build_request(
+            &m,
+            &DownloadArgs::Continent { continent_id: "na".into(), tier_id: "fulldetail".into() },
+        )
+        .unwrap();
+        assert_eq!(req.maxzoom, CONTINENT_MAX_MAXZOOM);
+        assert!(req.maxzoom < PACK_MAXZOOM);
+        assert_eq!(req.typical_bytes, continent_estimate(na.typical_bytes, CONTINENT_MAX_MAXZOOM));
+    }
+
+    #[test]
     fn build_request_rejects_unknown_continent_tier() {
         let m = RegionManifest::bundled_default();
         let err = build_request(
@@ -1014,7 +1067,8 @@ mod tests {
         let req = build_request(&m, &tier_args).unwrap();
         assert_eq!(pack_id_for_args(&tier_args), req.id);
 
-        let cont_args = DownloadArgs::Continent { continent_id: "na".into() };
+        let cont_args =
+            DownloadArgs::Continent { continent_id: "na".into(), tier_id: "local".into() };
         let creq = build_request(&m, &cont_args).unwrap();
         assert_eq!(pack_id_for_args(&cont_args), creq.id);
     }

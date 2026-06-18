@@ -93,6 +93,11 @@ const PACK_MAXZOOM = 14;
  * `commands::continent_estimate` so the detail-picker can show honest per-tier sizes
  * that match what the backend's free-space gate will reserve. Biases high (ceil-div),
  * never zero.
+ *
+ * Note: the backend additionally clamps the continent maxzoom to an app ceiling
+ * (`CONTINENT_MAX_MAXZOOM` = 13). All shipping tiers are ≤13, so the displayed size
+ * matches the backend exactly; a manifest tier above the ceiling would make this an
+ * upper bound (the backend extracts less) — a harmless conservative over-estimate.
  */
 export function continentEstimateBytes(baselineZ14: number, maxzoom: number): number {
   const levelsBelow = Math.max(0, PACK_MAXZOOM - maxzoom);
