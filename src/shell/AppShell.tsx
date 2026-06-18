@@ -347,7 +347,9 @@ export function AppShell() {
   // shell (like positions) so the per-channel history ring buffers from launch —
   // opening the Station Data tab later shows the buffered series, not an empty
   // graph that only starts filling on first view.
-  const envStations = useEnvStations();
+  // Host role: the main shell accumulates env stations from launch and answers
+  // snapshot requests from pop-out windows (tuxlink-hzwc bug #4).
+  const envStations = useEnvStations({ snapshotRole: 'host' });
   const [aprsOpen, setAprsOpen] = useState(false);
   // Whether the heard-positions map is expanded into the reading-pane region.
   const [aprsMapOpen, setAprsMapOpen] = useState(false);

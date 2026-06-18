@@ -7,8 +7,10 @@ import type { WeatherReportDto, InboundTelemetryDto } from './aprsTypes';
 // test can drive `aprs-weather:new` / `aprs-telemetry:new` independently.
 const handlers: Record<string, (e: { payload: unknown }) => void> = {};
 const listenMock = vi.fn();
+const emitMock = vi.fn();
 vi.mock('@tauri-apps/api/event', () => ({
   listen: (event: string, cb: (e: { payload: unknown }) => void) => listenMock(event, cb),
+  emit: (event: string, payload?: unknown) => emitMock(event, payload),
 }));
 
 function wx(partial: Partial<WeatherReportDto>): WeatherReportDto {
@@ -37,6 +39,7 @@ describe('useEnvStations', () => {
       handlers[event] = cb;
       return Promise.resolve(() => {});
     });
+    emitMock.mockResolvedValue(undefined);
   });
 
   it('subscribes to both the weather and telemetry events', async () => {
@@ -68,6 +71,29 @@ describe('useEnvStations', () => {
     expect(result.current.stations).toHaveLength(1);
     const kinds = result.current.stations[0].channels.map((c) => c.kind).sort();
     expect(kinds).toEqual(['generic', 'temperature']);
+  });
+
+  it('host answers a snapshot request with its current roster (bug #4)', async () => {
+    const { result } = renderHook(() => useEnvStations({ snapshotRole: 'host' }));
+    await waitFor(() => expect(handlers['aprs-weather:new']).toBeDefined());
+    act(() => handlers['aprs-weather:new']({ payload: wx({ station: 'KE7ABC-13', temperatureF: 52 }) }));
+    expect(result.current.stations).toHaveLength(1);
+    await waitFor(() => expect(handlers['aprs-env:request-snapshot']).toBeDefined());
+    emitMock.mockClear();
+    act(() => handlers['aprs-env:request-snapshot']({ payload: undefined }));
+    expect(emitMock).toHaveBeenCalledWith('aprs-env:snapshot', expect.arrayContaining([
+      expect.objectContaining({ call: 'KE7ABC-13' }),
+    ]));
+  });
+
+  it('client requests a snapshot on mount and seeds from the reply (bug #4)', async () => {
+    const { result } = renderHook(() => useEnvStations({ snapshotRole: 'client' }));
+    // Requests only AFTER its reply listener is registered.
+    await waitFor(() => expect(emitMock).toHaveBeenCalledWith('aprs-env:request-snapshot', undefined));
+    await waitFor(() => expect(handlers['aprs-env:snapshot']).toBeDefined());
+    const snap = [{ call: 'WX7FGZ-7', project: '', seq: null, channels: [], bits: [], rain: null, lastHeard: 500 }];
+    act(() => handlers['aprs-env:snapshot']({ payload: snap }));
+    expect(result.current.stations.map((s) => s.call)).toContain('WX7FGZ-7');
   });
 
   it('orders stations most-recently-heard first', async () => {

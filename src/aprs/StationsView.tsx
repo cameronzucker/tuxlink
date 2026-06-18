@@ -15,7 +15,10 @@ import { EnvPanel } from './EnvPanel';
 import './StationsView.css';
 
 export function StationsView() {
-  const { stations } = useEnvStations();
+  // Client role: seed from the main shell's snapshot on open so this window
+  // shows the live roster immediately rather than an empty "no station data"
+  // state until the next beacon (tuxlink-hzwc bug #4).
+  const { stations } = useEnvStations({ snapshotRole: 'client' });
   return (
     <div className="stations-view" data-testid="stations-view">
       <EnvPanel stations={stations} />
