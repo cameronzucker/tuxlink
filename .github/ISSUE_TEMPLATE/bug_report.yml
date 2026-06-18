@@ -6,7 +6,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to file a bug report. Before submitting, please confirm:
+        Thanks for taking the time to file a bug report.
+
+        Before submitting, please confirm:
         - This is **not** a security vulnerability (those go to the [security advisories](https://github.com/cameronzucker/tuxlink/security/advisories/new) page).
         - This is **not** a question about how to use Tuxlink (those go to [Discussions](https://github.com/cameronzucker/tuxlink/discussions)).
         - **Do not include your Winlink CMS password** anywhere in this report.
@@ -15,8 +17,19 @@ body:
     id: version
     attributes:
       label: Tuxlink version
-      description: Output of `tuxlink --version` or the AppImage filename
-      placeholder: "v0.0.1"
+      description: Help → About Tuxlink (or the AppImage filename).
+      placeholder: "v0.69.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      options:
+        - x86_64 (Intel/AMD)
+        - arm64 (Raspberry Pi and similar)
+        - Other (describe below)
     validations:
       required: true
 
@@ -28,10 +41,12 @@ body:
         - Ubuntu 24.04
         - Ubuntu 22.04
         - Debian 12
-        - Fedora 39
+        - Debian 13
+        - Raspberry Pi OS
         - Fedora 40
+        - Fedora 41
         - Arch
-        - Other (describe in details)
+        - Other (describe below)
     validations:
       required: true
 
@@ -39,7 +54,33 @@ body:
     id: webkitgtk
     attributes:
       label: WebKitGTK version
-      description: Output of `dpkg -l libwebkit2gtk-4.1-0 2>/dev/null | tail -1` or distro equivalent
+      description: Output of `dpkg -l libwebkit2gtk-4.1-0 2>/dev/null | tail -1` or distro equivalent. Helps with rendering/blank-screen bugs.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport / mode involved
+      description: Which path were you using when it broke? Pick the closest.
+      options:
+        - ARDOP HF
+        - AX.25 packet (1200)
+        - VARA HF
+        - VARA FM
+        - Telnet CMS
+        - APRS tactical
+        - UV-Pro (Bluetooth)
+        - Not transport-specific / unsure
+    validations:
+      required: true
+
+  - type: input
+    id: radio
+    attributes:
+      label: Radio + interface
+      description: For an on-air bug, the rig and how it's connected. Leave as n/a otherwise.
+      placeholder: "Xiegu G90 + Digirig (CM108 PTT)"
     validations:
       required: false
 
@@ -55,11 +96,10 @@ body:
     id: reproduction
     attributes:
       label: Steps to reproduce
-      description: |
-        Numbered steps. Start from a fresh AppImage launch if possible.
+      description: Numbered steps. Start from a fresh launch if possible.
       placeholder: |
-        1. Launch tuxlink AppImage
-        2. Open Mailbox tab
+        1. Launch Tuxlink
+        2. Open the ARDOP HF panel
         3. ...
     validations:
       required: true
@@ -76,8 +116,16 @@ body:
     attributes:
       label: Logs
       description: |
-        Tuxlink writes logs to `$XDG_STATE_HOME/tuxlink/` (default `~/.local/state/tuxlink/`). Pat logs are at `$XDG_STATE_HOME/pat/`. Attach relevant excerpts. **Redact your callsign and password before pasting.**
-      render: shell
+        In the app: **Help → Logging → Export logs**, then drag the exported file into this box. The export includes the radio cmd-port trace (the fastest path to a fix) and never contains your CMS password. Or paste relevant excerpts below (redact your callsign).
+    validations:
+      required: false
+
+  - type: textarea
+    id: recording
+    attributes:
+      label: Screen recording (optional)
+      description: |
+        A short clip often explains a UI bug faster than words. Drag the file straight into this box — GitHub accepts video up to ~100 MB. Keep it short (20–30s is plenty). Bigger than that? Trim it, or upload it unlisted (e.g. YouTube) and paste the link.
     validations:
       required: false
 
