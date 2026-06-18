@@ -145,22 +145,35 @@ pub fn parse_weather_data(body: &str) -> Option<WeatherReport> {
     //     speed. Here the LEADING `s` (immediately following the `c` group) is the
     //     wind SPEED; consuming it now is what frees a later `sNNN` to be snow.
     // Either form may mask the direction (`...`, blank) → None.
-    if i + 3 <= bytes.len() && bytes[i + 3] == b'/' {
-        // `ddd/sss` form.
-        wx.wind_direction_deg = parse_u16_field(&bytes[i..i + 3]);
-        i += 4; // skip the 3 direction digits + the '/'
-        if i + 3 <= bytes.len() {
-            wx.wind_speed_mph = parse_u16_field(&bytes[i..i + 3]);
-            i += 3;
+    // A bare direction with no speed is NOT a weather report — the full wind
+    // group must be present for the direction/speed to be recorded. `c<ddd>`
+    // with no `s<sss>` (e.g. `c123status`) parses to no measurements → None.
+    if bytes.get(i + 3) == Some(&b'/') {
+        // `ddd/sss` form. The `get(i+3) == Some('/')` guard implies i+3 < len,
+        // so the `&bytes[i..i+3]` direction slice is in bounds.
+        let dir = parse_u16_field(&bytes[i..i + 3]);
+        // The 3-digit speed group must be present AND parse for this to be a wind
+        // group; a bare direction (`123/` or `123/xxx` with non-digit speed) is
+        // not weather. The direction is recorded only alongside a real speed.
+        if i + 4 + 3 <= bytes.len() {
+            if let Some(spd) = parse_u16_field(&bytes[i + 4..i + 4 + 3]) {
+                wx.wind_speed_mph = Some(spd);
+                wx.wind_direction_deg = dir;
+                i += 7; // 3 direction digits + '/' + 3 speed digits
+            }
         }
-    } else if i < bytes.len() && bytes[i] == b'c' && i + 4 <= bytes.len() {
-        // `c<ddd>` course/direction form (positionless). Then an immediately
-        // following `s<sss>` is the wind SPEED (not snow — that comes later).
-        wx.wind_direction_deg = parse_u16_field(&bytes[i + 1..i + 4]);
-        i += 4;
-        if i + 4 <= bytes.len() && bytes[i] == b's' {
-            wx.wind_speed_mph = parse_u16_field(&bytes[i + 1..i + 4]);
-            i += 4;
+    } else if bytes.get(i) == Some(&b'c') && i + 4 <= bytes.len() {
+        // `c<ddd>` course/direction form (positionless). The wind SPEED must
+        // follow as `s<sss>` AND parse (not snow — that comes later); a lone
+        // `c<ddd>` with no parsable speed (e.g. `c123status`, where the `s` is the
+        // 's' of "status") is not a wind group and records nothing.
+        let dir = parse_u16_field(&bytes[i + 1..i + 4]);
+        if i + 4 + 4 <= bytes.len() && bytes[i + 4] == b's' {
+            if let Some(spd) = parse_u16_field(&bytes[i + 5..i + 4 + 4]) {
+                wx.wind_speed_mph = Some(spd);
+                wx.wind_direction_deg = dir;
+                i += 8; // c + 3 dir digits + s + 3 speed digits
+            }
         }
     }
 
@@ -211,7 +224,7 @@ pub fn parse_weather_data(body: &str) -> Option<WeatherReport> {
             'P' => wx.rain_since_midnight_in = val.map(|v| v as f64 / 100.0),
             'l' => wx.luminosity_wm2 = val.map(|v| v + 1000), // 'l' carries +1000
             'L' => wx.luminosity_wm2 = val,
-            's' => wx.snow_in = val.map(|v| v as f64 / 10.0),
+            's' => wx.snow_in = val.map(|v| v as f64),
             '#' => { /* raw rain counter — consumed but not surfaced as a channel */ }
             _ => unreachable!("width matched above implies a known letter"),
         }
@@ -219,8 +232,10 @@ pub fn parse_weather_data(body: &str) -> Option<WeatherReport> {
     }
 
     // Anything left is the trailing comment (station/software identifier, etc.).
+    // `i` is a byte cursor that may land mid-char on hostile multibyte input;
+    // `get(i..)` yields None (→ "") rather than panicking on a non-char-boundary.
     if i < bytes.len() {
-        wx.comment = body[i..].trim().to_string();
+        wx.comment = body.get(i..).unwrap_or("").trim().to_string();
     }
 
     if wx.has_no_measurements() {
@@ -238,11 +253,10 @@ pub fn parse_positionless_weather(info: &[u8]) -> Option<WeatherReport> {
     let s = std::str::from_utf8(info).ok()?;
     let rest = s.strip_prefix('_')?;
     // 8-char MDHM timestamp; we don't surface it (the panel client-stamps), but
-    // it must be skipped before the WX run begins.
-    if rest.len() < 8 {
-        return None;
-    }
-    let (_ts, wx_run) = rest.split_at(8);
+    // it must be skipped before the WX run begins. `get(8..)` returns None when
+    // `rest` is too short OR byte 8 is not a char boundary (hostile multibyte
+    // input) — never panics, unlike `split_at(8)`.
+    let wx_run = rest.get(8..)?;
     parse_weather_data(wx_run)
 }
 
@@ -302,12 +316,13 @@ mod tests {
     #[test]
     fn snow_after_wind_is_not_stolen_by_the_speed_letter() {
         // The trap: the wind group already consumed `/004` as SPEED, so the later
-        // `s050` MUST parse as 5.0 in of snow — not be mis-read as another speed.
+        // `s050` MUST parse as 50.0 in of snow — not be mis-read as another speed.
+        // APRS101 §12 snow is inches directly (no ÷10).
         let wx = parse_weather_data("050/004g010t030s050").unwrap();
         assert_eq!(wx.wind_speed_mph, Some(4), "wind speed comes from the wind group");
         assert_eq!(wx.wind_gust_mph, Some(10));
         assert_eq!(wx.temperature_f, Some(30));
-        assert_eq!(wx.snow_in, Some(5.0), "s after the wind group is snowfall");
+        assert_eq!(wx.snow_in, Some(50.0), "s after the wind group is snowfall, inches direct");
     }
 
     #[test]
@@ -371,13 +386,13 @@ mod tests {
     #[test]
     fn positionless_c_s_form_disambiguates_a_later_snow_field() {
         // The hard case: c<dir>, leading s<spd> = WIND SPEED, then a SECOND s = SNOW.
-        // `_` ts(8) c180 s006 g012 t028 s100 → dir 180, spd 6, gust 12, 28°F, 10.0in snow.
+        // `_` ts(8) c180 s006 g012 t028 s100 → dir 180, spd 6, gust 12, 28°F, 100.0in snow.
         let wx = parse_positionless_weather(b"_01011200c180s006g012t028s100").unwrap();
         assert_eq!(wx.wind_direction_deg, Some(180));
         assert_eq!(wx.wind_speed_mph, Some(6), "first s (after c) is wind speed");
         assert_eq!(wx.wind_gust_mph, Some(12));
         assert_eq!(wx.temperature_f, Some(28));
-        assert_eq!(wx.snow_in, Some(10.0), "the SECOND s is snowfall");
+        assert_eq!(wx.snow_in, Some(100.0), "the SECOND s is snowfall, inches direct (no ÷10)");
     }
 
     #[test]
@@ -432,5 +447,73 @@ mod tests {
         assert_eq!(wx.rain_1h_in, Some(1.23));
         assert_eq!(wx.rain_24h_in, Some(0.45));
         assert_eq!(wx.rain_since_midnight_in, Some(2.0));
+    }
+
+    #[test]
+    fn snow_field_is_inches_directly_no_divide_by_ten() {
+        // APRS101 §12: the snow field value is inches directly (not tenths).
+        // `s050` → 50.0 in, NOT 5.0.
+        let wx = parse_weather_data("000/000t030s050").unwrap();
+        assert_eq!(wx.snow_in, Some(50.0), "snow is inches direct, no ÷10");
+    }
+
+    #[test]
+    fn short_body_does_not_panic_and_returns_none() {
+        // Hostile RF: a 3-byte body would index bytes[i+3] (== len) under the old
+        // `bytes[i + 3]` check. The bounds-safe `get(i + 3)` must not panic, and
+        // with no measurable wind/field, the parse returns None.
+        assert!(parse_weather_data("abc").is_none());
+        // 1- and 2-byte bodies too.
+        assert!(parse_weather_data("a").is_none());
+        assert!(parse_weather_data("").is_none());
+        // A bare 3-digit-plus-slash with no speed (`123/`) must not panic and,
+        // lacking the speed group, records no wind → None.
+        assert!(parse_weather_data("123/").is_none());
+    }
+
+    #[test]
+    fn lone_wind_direction_without_speed_is_not_weather() {
+        // A `_`-symbol comment like `c123status`: the `c<ddd>` course form with NO
+        // following `s<sss>` speed group is a lone direction, not a wind group. It
+        // must NOT set wind_direction and must parse to no measurements → None.
+        assert!(
+            parse_weather_data("c123status").is_none(),
+            "a bare direction with no speed is not a weather report"
+        );
+        // The `ddd/` form with no speed group is likewise not weather.
+        assert!(parse_weather_data("123/status").is_none());
+    }
+
+    #[test]
+    fn multibyte_trailing_comment_does_not_panic() {
+        // Hostile RF: a valid wind group then a multibyte UTF-8 trailing comment.
+        // The byte cursor `i` lands on the start of the comment; `body.get(i..)`
+        // must yield the comment without panicking on the multibyte char.
+        let wx = parse_weather_data("000/000t030€uro").unwrap();
+        assert_eq!(wx.temperature_f, Some(30));
+        // The '€' is 3 bytes; the comment slice must be char-boundary-safe.
+        assert_eq!(wx.comment, "€uro");
+    }
+
+    #[test]
+    fn positionless_multibyte_at_timestamp_boundary_does_not_panic() {
+        // Hostile RF: `_` then fewer than 8 ASCII bytes before a multibyte char so
+        // byte 8 falls mid-char. `rest.get(8..)` must return None (not panic on a
+        // non-char-boundary as `split_at(8)` would). "€" (3 bytes) starting at
+        // byte 6 of `rest` makes byte 8 land inside it.
+        let info = "_123456€7".as_bytes();
+        assert!(
+            parse_positionless_weather(info).is_none(),
+            "a mid-char timestamp boundary must return None, not panic"
+        );
+    }
+
+    #[test]
+    fn positionless_with_multibyte_in_first_eight_does_not_panic() {
+        // The first 8 post-`_` bytes contain a multibyte char (byte 8 mid-char).
+        // Must not panic; returns None.
+        let info = "_€€€xx".as_bytes(); // '_' + three 3-byte chars (9 bytes) + 'xx'
+        let _ = parse_positionless_weather(info); // must not panic
+        assert!(parse_positionless_weather(info).is_none());
     }
 }

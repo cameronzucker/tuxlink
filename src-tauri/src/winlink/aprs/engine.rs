@@ -575,7 +575,12 @@ impl AprsEngine {
         // moved into `InboundPos` below.
         if is_weather_symbol(pos.symbol_table, pos.symbol_code) {
             if let Some(mut wx) = parse_weather_data(&pos.comment) {
-                wx.station = sender.to_string();
+                // Key the report by the ENTITY, mirroring the position path: a
+                // named weather OBJECT/ITEM (`;`/`)`) reports about the named
+                // entity, so the report's `station` is the object NAME, not the
+                // reporting sender. A station's own `_`-symbol beacon has no name
+                // → keyed by the sender.
+                wx.station = name.clone().unwrap_or_else(|| sender.to_string());
                 self.sink.emit_weather(wx);
             }
         }
@@ -1457,6 +1462,37 @@ mod tests {
         assert_eq!(wx[0].temperature_f, Some(68));
         assert_eq!(wx[0].humidity_pct, Some(53));
         assert_eq!(wx[0].pressure_hpa, Some(1013.8));
+    }
+
+    #[test]
+    fn named_weather_object_keys_report_by_object_name() {
+        // A weather OBJECT (`;`) carries a `_`-symbol position whose comment is the
+        // WX run. The WeatherReport.station must be the object NAME (mirroring how
+        // the position pin is labeled by the object), NOT the reporting sender.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // sender DIGI1 reports object "STORM1" with weather symbol '_' + WX comment.
+        engine.handle_inbound_bytes(
+            &inbound_with(
+                "DIGI1",
+                b";STORM1   *092345z4903.50N/07201.75W_220/004g005t068h53b10138",
+            ),
+            1000,
+        );
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 1, "the weather object still plots a pin");
+        assert_eq!(pos[0].sender, "DIGI1");
+        assert_eq!(pos[0].name.as_deref(), Some("STORM1"));
+        assert_eq!(pos[0].symbol_code, '_');
+        let wx = sink.weather.lock().unwrap();
+        assert_eq!(wx.len(), 1, "the WX comment emits a weather report");
+        assert_eq!(
+            wx[0].station, "STORM1",
+            "a named weather object keys the report by its NAME, not the reporter"
+        );
+        assert_eq!(wx[0].wind_direction_deg, Some(220));
+        assert_eq!(wx[0].wind_speed_mph, Some(4));
+        assert_eq!(wx[0].temperature_f, Some(68));
     }
 
     #[test]
