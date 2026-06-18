@@ -139,6 +139,39 @@ export interface InboundTelemetryDto {
   comment: string;
 }
 
+/// A heard APRS weather report, decoded from either a positionless weather
+/// report (DTI `_`) or a `_`-symbol position report's comment. Backend event:
+/// `aprs-weather:new`, mirroring the Rust `WeatherReport` (serde camelCase).
+///
+/// RF-honesty: every measurement is optional — a field absent from the wire is
+/// `null`, never a fabricated 0. `humidityPct` of 100 may arrive on the wire as
+/// `h00` (already decoded to 100 by the backend). Units are ham-conventional
+/// (mph / °F / inches / hPa / W·m⁻²); a metric toggle is a panel concern.
+///
+/// The source-reactive panel (tuxlink-2phz fast-follow) derives its display
+/// channels from these fields: wind direction (`windDirectionDeg`), wind speed
+/// (`windSpeedMph`), wind gust (`windGustMph`), temperature (`temperatureF`),
+/// humidity (`humidityPct`), pressure (`pressureHpa`), rain (`rain1hIn` /
+/// `rain24hIn` / `rainSinceMidnightIn`), luminosity (`luminosityWm2`), and snow
+/// (`snowIn`) — rendering only the channels actually present.
+export interface WeatherReportDto {
+  /// Reporting station callsign-SSID.
+  station: string;
+  windDirectionDeg: number | null;
+  windSpeedMph: number | null;
+  windGustMph: number | null;
+  temperatureF: number | null;
+  humidityPct: number | null;
+  pressureHpa: number | null;
+  rain1hIn: number | null;
+  rain24hIn: number | null;
+  rainSinceMidnightIn: number | null;
+  luminosityWm2: number | null;
+  snowIn: number | null;
+  /// Free-text comment trailing the parsable WX run (station/software id), or "".
+  comment: string;
+}
+
 /// Current APRS station configuration, returned by `aprs_config_get`.
 export interface AprsConfigDto {
   sourceSsid: number;
