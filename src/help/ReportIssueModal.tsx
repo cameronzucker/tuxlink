@@ -2,14 +2,19 @@
  * ReportIssueModal — inline overlay for Help → Report Issue (tuxlink-qjgx).
  *
  * State machine:
- *   idle → choosing-path (Save As opens) → exporting → success | canceled | error
+ *   idle → intro → choosing-path (Save As opens) → exporting → success | canceled | error
+ *
+ * tuxlink-uxvn: the menu opens the modal in `intro` (an explanation + a "Create
+ * report" button) FIRST, so clicking Help → Report Issue no longer drops the
+ * operator straight into a bare OS Save As dialog with no context. The Save As
+ * only opens once they confirm.
  *
  * Spec §8.5: each failure path (Save As canceled, export error, no-browser) is
  * explicitly handled with copy-to-clipboard fallbacks.
  *
- * The modal is controller-driven: the parent passes `open` + `onClose`, and calls
- * `controller.start()` (via the exported `useReportIssueController` hook) to trigger
- * the Save As dialog and begin the flow.
+ * The modal is controller-driven: the parent opens it in `intro` and passes
+ * `onProceed` (wired to the exported `useReportIssueController` hook's `start`),
+ * which triggers the Save As dialog and begins the export flow.
  *
  * NOT a separate OS window — inline overlay per feedback_inline_ui_no_window_clutter.
  */
@@ -17,12 +22,17 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+// tuxlink-uxvn: open external URLs through the Tauri shell plugin (the project's
+// established external-open mechanism — AboutDialog/Step2Credentials), NOT
+// window.open, which in WebKitGTK navigates/embeds the page INSIDE the app.
+import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import type { Dispatch, SetStateAction } from 'react';
 
 // ── State machine ──────────────────────────────────────────────────────────────
 
 export type ReportIssueState =
   | { kind: 'idle' }
+  | { kind: 'intro' }
   | { kind: 'choosing-path' }
   | { kind: 'exporting'; path: string }
   | { kind: 'success'; archivePath: string; archiveSizeBytes: number; githubUrl: string; browserOpened: boolean; diagnostics: string }
@@ -54,9 +64,12 @@ export interface ReportIssueController {
 export interface ReportIssueModalProps {
   state: ReportIssueState;
   onClose: () => void;
+  /// Confirm from the `intro` state → begin the export flow (wired to the
+  /// controller's `start`). Required for the intro "Create report" button.
+  onProceed: () => void;
 }
 
-export function ReportIssueModal({ state, onClose }: ReportIssueModalProps) {
+export function ReportIssueModal({ state, onClose, onProceed }: ReportIssueModalProps) {
   // Esc closes (matches SettingsPanel, ThemeDesigner, AboutDialog).
   useEffect(() => {
     if (state.kind === 'idle') return;
@@ -78,10 +91,14 @@ export function ReportIssueModal({ state, onClose }: ReportIssueModalProps) {
   }
 
   function openBrowserFallback(url: string) {
-    // webview open — same mechanism as the backend's ShellExt::open but from
-    // the frontend. Fire-and-forget; if the webview blocks this, the operator
-    // can use the Copy URL button.
-    window.open(url, '_blank');
+    // tuxlink-uxvn: open in the operator's real browser via the Tauri shell
+    // plugin (same external-open mechanism as AboutDialog). window.open in a
+    // WebKitGTK webview navigates/embeds the page inside the app — the exact
+    // "GitHub opens below the main app" defect this fixes. Fire-and-forget; the
+    // Copy URL button remains as a manual fallback.
+    void shellOpen(url).catch(() => {
+      /* shell-open unavailable — operator can use Copy URL */
+    });
   }
 
   return (
@@ -115,6 +132,35 @@ export function ReportIssueModal({ state, onClose }: ReportIssueModalProps) {
 
         {/* Body */}
         <div className="tux-about-body" style={{ minHeight: 80 }}>
+          {state.kind === 'intro' && (
+            <div data-testid="report-issue-intro">
+              <p style={{ margin: '0 0 12px', fontSize: 13, lineHeight: 1.5 }}>
+                This packages your recent logs into an archive you choose where to
+                save, then opens a pre-filled GitHub issue in your browser. No logs
+                are sent automatically — you attach the archive to the issue
+                yourself.
+              </p>
+              <div className="tux-about-actions">
+                <button
+                  type="button"
+                  className="tux-about-button"
+                  data-testid="report-issue-cancel-intro"
+                  onClick={onClose}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="tux-about-button"
+                  data-testid="report-issue-proceed"
+                  onClick={onProceed}
+                >
+                  Create report
+                </button>
+              </div>
+            </div>
+          )}
+
           {state.kind === 'choosing-path' && (
             <p style={{ margin: 0, fontSize: 13, color: 'var(--text-dim)' }}>
               Opening Save As dialog…
