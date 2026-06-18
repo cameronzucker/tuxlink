@@ -353,7 +353,18 @@ export function AppShell() {
   const [aprsMapOpen, setAprsMapOpen] = useState(false);
   const [dockTab, setDockTab] = useState<'aprs' | 'modem' | 'stations'>('aprs');
   const [aprsSeenAt, setAprsSeenAt] = useState(0);
-  const aprsUnread = countUnread(aprs.messages, aprsSeenAt);
+  // tuxlink-hzwc bug #11: "unread" must count traffic heard WHILE AWAY from the
+  // APRS Chat tab (a sense of channel volume), and clear as the operator reads.
+  // While the Chat tab is the active, open view, every arriving message is seen
+  // in the live feed, so advance the watermark on each new message — the count
+  // stays 0 here and only accrues once the operator clicks away. Previously the
+  // watermark advanced ONLY on tab-select, so the always-visible status-strip
+  // count climbed indefinitely while the operator sat on the open Chat tab.
+  const viewingAprsChat = aprsOpen && dockTab === 'aprs';
+  useEffect(() => {
+    if (viewingAprsChat) setAprsSeenAt(Date.now());
+  }, [viewingAprsChat, aprs.messages.length]);
+  const aprsUnread = viewingAprsChat ? 0 : countUnread(aprs.messages, aprsSeenAt);
   const openAprsChat = useCallback(() => {
     setAprsOpen(true);
     setDockTab('aprs');
