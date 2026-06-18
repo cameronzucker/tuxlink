@@ -1,10 +1,10 @@
-name: ETC (low-floor) build
+name: ECT (low-floor) build
 
 # tuxlink-iuop / ADR 0020: a SEPARATE low-floor .deb for the EmComm Tools
-# Community audience (ETC is frozen on Ubuntu 22.10, EOL, glibc 2.36) and Debian
+# Community audience (ECT is frozen on Ubuntu 22.10, EOL, glibc 2.36) and Debian
 # 12 Bookworm. The core release (release.yml) is unchanged and stays on the
 # modern floor. This build:
-#   - runs on Ubuntu 22.04 LTS (glibc 2.35 — covers ETC's 2.36 and Bookworm),
+#   - runs on Ubuntu 22.04 LTS (glibc 2.35 — covers ECT's 2.36 and Bookworm),
 #   - compiles with `--no-default-features` so the `heif` feature is OFF (system
 #     libheif >= 1.17 isn't on those distros; HEIC degrades to a clear message),
 #   - overrides the .deb Depends to the low floor (libc6 >= 2.35, and drops
@@ -12,11 +12,11 @@ name: ETC (low-floor) build
 #     use), so the package actually installs on the target instead of being
 #     refused by the core build's libc6 (>= 2.39).
 # It uploads a labeled .deb artifact and asserts it installs cleanly on a
-# stock Debian Bookworm container (glibc 2.36, the same floor as ETC).
+# stock Debian Bookworm container (glibc 2.36, the same floor as ECT).
 
 on:
   # tuxlink-b4ga: also run on release tags so the validated low-floor .deb is
-  # published as a release asset (see the publish-etc job). Mirrors release.yml's
+  # published as a release asset (see the publish-ect job). Mirrors release.yml's
   # 'v*' tag trigger so both fire on the same release-please tag.
   push:
     tags:
@@ -28,7 +28,7 @@ on:
       - 'scripts/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
-      - '.github/workflows/etc-build.yml'
+      - '.github/workflows/ect-build.yml'
       - 'scripts/ci/deb-install-smoke.sh'
   workflow_dispatch:
 
@@ -36,8 +36,8 @@ permissions:
   contents: read
 
 jobs:
-  build-etc:
-    name: build ETC .deb (${{ matrix.arch }}, heif off)
+  build-ect:
+    name: build ECT .deb (${{ matrix.arch }}, heif off)
     strategy:
       fail-fast: false
       matrix:
@@ -85,7 +85,7 @@ jobs:
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
-      # Identical voacapl staging to release.yml (the ETC build is feature-
+      # Identical voacapl staging to release.yml (the ECT build is feature-
       # complete apart from HEIC; HF prediction must still work).
       - name: Build + stage voacapl (offline HF prediction engine)
         run: |
@@ -128,7 +128,7 @@ jobs:
       # Depends override: libc6 (>= 2.35) for the jammy build, and drop
       # libheif1/libde265-0 (heif off) and libwebp7 (webp vendored) which the
       # core list carries. Without this the .deb would inherit libc6 (>= 2.39)
-      # and be refused on the exact ETC/Bookworm target it is built for.
+      # and be refused on the exact ECT/Bookworm target it is built for.
       - name: Inject bundle config + low-floor Depends (CI-only)
         run: |
           set -euxo pipefail
@@ -138,7 +138,7 @@ jobs:
               | .bundle.linux.deb.depends = ["libc6 (>= 2.35)", "libsecret-1-0"]' \
              tauri.conf.json > tauri.conf.json.tmp
           mv tauri.conf.json.tmp tauri.conf.json
-          echo "ETC bundle config:"; jq '{externalBin: .bundle.externalBin, depends: .bundle.linux.deb.depends}' tauri.conf.json
+          echo "ECT bundle config:"; jq '{externalBin: .bundle.externalBin, depends: .bundle.linux.deb.depends}' tauri.conf.json
 
       - name: Lint docs links
         run: pnpm lint:docs
@@ -170,28 +170,28 @@ jobs:
           find /tmp/deb-extract -path '*resources/itshfbc/database/version.w32' | grep -q version.w32
           find /tmp/deb-extract -path '*resources/basemap/world-z0-6.pmtiles' | grep -q world-z0-6.pmtiles
 
-      - name: Label + collect the ETC .deb
+      - name: Label + collect the ECT .deb
         run: |
           set -euxo pipefail
           deb="$(find src-tauri/target/release/bundle/deb -name '*.deb' | head -1)"
           test -n "$deb"
-          mkdir -p dist-etc
+          mkdir -p dist-ect
           # Mark the variant so it can't be confused with the core .deb. The
           # internal package name/version are unchanged; only the filename differs.
           base="$(basename "$deb" .deb)"
-          cp "$deb" "dist-etc/${base}_etc.deb"
-          ls -lh dist-etc
+          cp "$deb" "dist-ect/${base}_ect.deb"
+          ls -lh dist-ect
 
-      - name: Upload ETC .deb
+      - name: Upload ECT .deb
         uses: actions/upload-artifact@v7
         with:
-          name: tuxlink-etc-${{ matrix.arch }}
-          path: dist-etc/*
+          name: tuxlink-ect-${{ matrix.arch }}
+          path: dist-ect/*
           retention-days: 14
 
-  etc-install-test:
-    name: ETC .deb installs on clean debian:bookworm (${{ matrix.arch }})
-    needs: build-etc
+  ect-install-test:
+    name: ECT .deb installs on clean debian:bookworm (${{ matrix.arch }})
+    needs: build-ect
     strategy:
       fail-fast: false
       matrix:
@@ -202,19 +202,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download the ETC .deb
+      - name: Download the ECT .deb
         uses: actions/download-artifact@v7
         with:
-          name: tuxlink-etc-${{ matrix.arch }}
+          name: tuxlink-ect-${{ matrix.arch }}
           path: debs
 
-      - name: Install on clean debian:bookworm (glibc 2.36 — ETC's floor) and assert
+      - name: Install on clean debian:bookworm (glibc 2.36 — ECT's floor) and assert
         run: |
           set -euxo pipefail
-          deb="$(ls debs/tuxlink_*_${{ matrix.arch }}_etc.deb | head -1)"
+          deb="$(ls debs/tuxlink_*_${{ matrix.arch }}_ect.deb | head -1)"
           test -n "$deb"
-          # Bookworm shares ETC's glibc 2.36 floor and has webkit2gtk-4.1, so it
-          # is the clean, available proxy for "does the ETC build install + its
+          # Bookworm shares ECT's glibc 2.36 floor and has webkit2gtk-4.1, so it
+          # is the clean, available proxy for "does the ECT build install + its
           # libs resolve on the low floor". (install mode: expect success.)
           docker run --rm \
             -v "$PWD:/work" -w /work \
@@ -225,34 +225,34 @@ jobs:
   # asset so EmComm Tools Community (Ubuntu 22.10 EOL, glibc 2.36) and Debian 12
   # Bookworm users have a downloadable install — the core release .deb refuses on
   # that floor (libc6 >= 2.39). Runs ONLY on a release tag, and ONLY after
-  # etc-install-test proves the .deb installs on the low floor, so a broken
+  # ect-install-test proves the .deb installs on the low floor, so a broken
   # low-floor build never reaches a release. Uses the same softprops upsert as
   # release.yml, so it attaches to the same tag's release no matter which
   # workflow creates it first (no cross-workflow race). A failure here leaves the
-  # core release.yml assets untouched — the ETC .deb just won't be attached.
-  publish-etc:
-    name: Publish ETC .deb to the release
-    needs: [build-etc, etc-install-test]
+  # core release.yml assets untouched — the ECT .deb just won't be attached.
+  publish-ect:
+    name: Publish ECT .deb to the release
+    needs: [build-ect, ect-install-test]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download the ETC .debs (all arches)
+      - name: Download the ECT .debs (all arches)
         uses: actions/download-artifact@v7
         with:
-          pattern: tuxlink-etc-*
-          path: dist-etc
+          pattern: tuxlink-ect-*
+          path: dist-ect
           merge-multiple: true
 
-      - name: List collected ETC .debs
-        run: ls -lh dist-etc
+      - name: List collected ECT .debs
+        run: ls -lh dist-ect
 
-      - name: Attach ETC .deb(s) to the release
+      - name: Attach ECT .deb(s) to the release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
-          files: dist-etc/*_etc.deb
+          files: dist-ect/*_ect.deb
           fail_on_unmatched_files: true
           # Match release.yml: a tag this workflow reaches first creates the
           # release as a pre-release; promote-release.yml flips stable later.

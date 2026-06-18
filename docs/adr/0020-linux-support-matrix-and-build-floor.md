@@ -26,7 +26,7 @@ GitHub Ubuntu 24.04 runners):
    1.15; building there fails at the `libheif-sys` build script.
 
 The audience makes this concrete. The stated target user runs **EmComm Tools
-Community (ETC)**, the Tech Prepper's appliance, which is deliberately frozen on
+Community (ECT)**, the Tech Prepper's appliance, which is deliberately frozen on
 **Ubuntu 22.10** (glibc 2.36, libheif ~1.12) and
 [will not move](https://community.emcommtools.com/faq/operating-system-and-platform.html)
 ("This will be an appliance"). So the modern floor excludes the primary
@@ -49,25 +49,25 @@ release (a clear unmet-dependency error) rather than installing a binary that
 cannot launch. Supported: Debian 13 Trixie+, Ubuntu 24.04+, current Raspberry Pi
 OS, current Fedora/RHEL. (Implemented in PR #794.)
 
-**2. A separate low-floor build caters to the ETC audience without touching the
-core.** It is built on Ubuntu 22.04 LTS (glibc 2.35 — covers ETC's 2.36 and
+**2. A separate low-floor build caters to the ECT audience without touching the
+core.** It is built on Ubuntu 22.04 LTS (glibc 2.35 — covers ECT's 2.36 and
 Debian 12 Bookworm) with the `heif` feature **off**. HEIC/HEIF attachments
 degrade to a clear "convert to JPEG/PNG" message; every other capability
 (Winlink CMS, all transports, mailbox, forms, APRS, maps, SSTV, GPS, and every
 other image format including WebP) is unchanged. The low-floor `.deb` is
-**published as a release asset** on every release: `etc-build.yml` runs on the
+**published as a release asset** on every release: `ect-build.yml` runs on the
 same `v*` tag as `release.yml`, validates the build installs on the low floor
-(clean Bookworm container), then attaches a labeled `tuxlink_<ver>_<arch>_etc.deb`
+(clean Bookworm container), then attaches a labeled `tuxlink_<ver>_<arch>_ect.deb`
 to that release via the same `softprops` upsert (so it co-publishes race-free
 with the core assets). Publishing was wired in tuxlink-b4ga; before that the
 low-floor build existed only as a PR/`workflow_dispatch` guard, so no release
-actually shipped an ETC-installable artifact.
+actually shipped an ECT-installable artifact.
 
 **3. Build-floor policy (the durable precedent).** The build-floor distro is the
 project's **system-library budget**. Any dependency that requires a system
 library newer than the floor distro provides must be **vendored** (build the C
 lib from source) or **feature-gated** (default-on, compiled out of the low-floor
-build) — or it silently raises the floor and drops the ETC audience. HEIC is the
+build) — or it silently raises the floor and drops the ECT audience. HEIC is the
 first application of this rule: `libheif-rs` is an optional `heif` feature
 (default-on); the low-floor build omits it.
 
@@ -77,16 +77,16 @@ pulling GPL encoders (x265/aom) — no licensing entanglement either way.
 ## Consequences
 
 - One codebase, two build configurations — no fork. `#[cfg(feature = "heif")]`
-  includes the HEIC decoder in mainline and compiles it out of the ETC build.
+  includes the HEIC decoder in mainline and compiles it out of the ECT build.
 - Mainline users are unaffected: full features, modern floor, clean refusal on
   unsupported systems.
-- ETC / Bookworm users get an installable build missing only Apple HEIC decode.
+- ECT / Bookworm users get an installable build missing only Apple HEIC decode.
 - New dependencies must be checked against the floor distro. A dep needing a
   newer system lib forces a choice: vendor it, feature-gate it, or accept that it
   raises the floor (an explicit decision, not an accident of runner choice).
-- The ETC build targets an EOL base (22.10, no security updates) — a deliberate
+- The ECT build targets an EOL base (22.10, no security updates) — a deliberate
   accommodation of the audience's frozen-appliance choice, not an endorsement.
-- Truly lowering the *core* floor (e.g. to ship HEIC on Bookworm/ETC) would mean
+- Truly lowering the *core* floor (e.g. to ship HEIC on Bookworm/ECT) would mean
   static-linking libheif 1.17 + libde265; out of scope here, revisit only if the
   audience warrants it.
 
@@ -98,8 +98,8 @@ pulling GPL encoders (x265/aom) — no licensing entanglement either way.
   *everyone*), compromising the core for an EOL minority.
 - **Static-link libheif 1.17 + libde265 into the core.** Rejected for now:
   real build/packaging complexity and binary-size cost imposed on every user to
-  serve an EOL base. Kept open as the path if first-class ETC HEIC is ever wanted.
-- **Drop sub-Trixie support entirely (no ETC build).** Rejected: the ETC crowd
+  serve an EOL base. Kept open as the path if first-class ECT HEIC is ever wanted.
+- **Drop sub-Trixie support entirely (no ECT build).** Rejected: the ECT crowd
   *is* the target audience; a feature-gated low-floor build is nearly free once
   `heif` is optional.
 - **Two divergent branches (one per audience).** Rejected: a default-on cargo
