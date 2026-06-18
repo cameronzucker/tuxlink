@@ -28,7 +28,8 @@
  * mirrors GridEdit.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import type {
   ActiveIdentityDto,
@@ -100,6 +101,12 @@ export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherPro
   const [credential, setCredential] = useState('');
   const [error, setError] = useState<string | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
+  // tuxlink-ru32: the dropdown is portaled to <body> with position:fixed, so it
+  // escapes the ribbon's stacking context (was rendered under z-index-higher
+  // shell regions). `listRef` lets click-outside still recognise clicks inside
+  // the portaled panel; `coords` anchors it to the chip.
+  const listRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number; width: number } | null>(null);
 
   // Forgot-password recovery (tuxlink-vfb3 sub-project 2). The "Forgot password?"
   // affordance in the unlock form asks the CMS to email the account password to the
@@ -138,11 +145,32 @@ export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherPro
     setRecovering(false);
   }
 
-  // Esc (anywhere in the open dropdown) + click-outside close the dropdown.
+  // Measure the chip and anchor the portaled panel just below it. Recompute on
+  // open and on resize so the fixed-position panel tracks the chip.
+  useLayoutEffect(() => {
+    if (!open) {
+      setCoords(null);
+      return;
+    }
+    function measure() {
+      const r = rowRef.current?.getBoundingClientRect();
+      if (r) setCoords({ top: r.bottom + 6, left: r.left, width: r.width });
+    }
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [open]);
+
+  // Esc (anywhere in the open dropdown) + click-outside close the dropdown. The
+  // panel is portaled out of `rowRef`, so a click inside it is "outside" the row
+  // — check `listRef` too or interacting with the dropdown would close it.
   useEffect(() => {
     if (!open) return;
     function onDocMouseDown(e: MouseEvent) {
-      if (rowRef.current && !rowRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const inRow = rowRef.current?.contains(target);
+      const inList = listRef.current?.contains(target);
+      if (!inRow && !inList) {
         closeDropdown();
       }
     }
@@ -354,12 +382,14 @@ export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherPro
         )}
       </button>
 
-      {open && (
+      {open && coords && createPortal(
         <div
+          ref={listRef}
           className="identity-switcher-list"
           data-testid="identity-switcher-list"
           role="listbox"
           tabIndex={-1}
+          style={{ top: coords.top, left: coords.left, minWidth: coords.width }}
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
               closeDropdown();
@@ -428,7 +458,8 @@ export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherPro
               );
             })
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

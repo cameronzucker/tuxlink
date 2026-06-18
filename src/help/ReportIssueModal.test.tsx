@@ -11,7 +11,8 @@
  *   - Esc key closes the modal
  *   - Copy archive path calls navigator.clipboard.writeText
  *   - Copy URL calls navigator.clipboard.writeText
- *   - Open in browser calls window.open
+ *   - Open in browser opens via the Tauri shell plugin (NOT window.open) — tuxlink-uxvn
+ *   - intro state: explanation gates the OS Save As (tuxlink-uxvn)
  *   - useReportIssueController.start() → full flow: saveDialog → report_issue_flow → success state
  *   - useReportIssueController.start() → saveDialog cancel → canceled state
  *   - useReportIssueController.start() → invoke error → error state
@@ -28,13 +29,15 @@ import {
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
-const { mockInvoke, mockSaveDialog } = vi.hoisted(() => ({
+const { mockInvoke, mockSaveDialog, mockShellOpen } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockSaveDialog: vi.fn(),
+  mockShellOpen: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mockInvoke }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ save: mockSaveDialog }));
+vi.mock('@tauri-apps/plugin-shell', () => ({ open: mockShellOpen }));
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -43,7 +46,7 @@ beforeEach(() => {
     configurable: true,
     writable: true,
   });
-  vi.spyOn(window, 'open').mockReturnValue(null);
+  mockShellOpen.mockResolvedValue(undefined);
 });
 
 // ── Render helpers ────────────────────────────────────────────────────────────
@@ -51,15 +54,16 @@ beforeEach(() => {
 function renderModal(initialState: ReportIssueState) {
   let externalSetState: React.Dispatch<React.SetStateAction<ReportIssueState>>;
   const onClose = vi.fn();
+  const onProceed = vi.fn();
 
   function Wrapper() {
     const [state, setState] = useState<ReportIssueState>(initialState);
     externalSetState = setState;
-    return <ReportIssueModal state={state} onClose={onClose} />;
+    return <ReportIssueModal state={state} onClose={onClose} onProceed={onProceed} />;
   }
 
   const utils = render(<Wrapper />);
-  return { ...utils, onClose, getState: () => undefined, setState: (s: ReportIssueState) => externalSetState(s) };
+  return { ...utils, onClose, onProceed, getState: () => undefined, setState: (s: ReportIssueState) => externalSetState(s) };
 }
 
 // ── Idle state ────────────────────────────────────────────────────────────────
@@ -68,6 +72,30 @@ describe('ReportIssueModal — idle', () => {
   it('renders nothing when state is idle', () => {
     renderModal({ kind: 'idle' });
     expect(screen.queryByTestId('report-issue-backdrop')).toBeNull();
+  });
+});
+
+// ── intro state (tuxlink-uxvn: context before the OS Save As) ────────────────────
+
+describe('ReportIssueModal — intro', () => {
+  it('shows an explanation and does NOT open any OS dialog until confirmed', () => {
+    renderModal({ kind: 'intro' });
+    expect(screen.getByTestId('report-issue-intro')).toBeInTheDocument();
+    // The OS Save As must NOT have fired just from opening the modal.
+    expect(mockSaveDialog).not.toHaveBeenCalled();
+  });
+
+  it('"Create report" calls onProceed (begins the export flow)', () => {
+    const { onProceed } = renderModal({ kind: 'intro' });
+    fireEvent.click(screen.getByTestId('report-issue-proceed'));
+    expect(onProceed).toHaveBeenCalledOnce();
+  });
+
+  it('"Cancel" closes without proceeding', () => {
+    const { onClose, onProceed } = renderModal({ kind: 'intro' });
+    fireEvent.click(screen.getByTestId('report-issue-cancel-intro'));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onProceed).not.toHaveBeenCalled();
   });
 });
 
@@ -188,10 +216,14 @@ describe('ReportIssueModal — success (no browser)', () => {
     expect(screen.getByTestId('report-issue-open-browser-btn')).toBeInTheDocument();
   });
 
-  it('Open in browser calls window.open with the URL', () => {
+  it('Open in browser opens the URL via the Tauri shell plugin, NOT window.open (tuxlink-uxvn)', () => {
+    const windowOpenSpy = vi.spyOn(window, 'open');
     renderModal(successState);
     fireEvent.click(screen.getByTestId('report-issue-open-browser-btn'));
-    expect(window.open).toHaveBeenCalledWith(successState.githubUrl, '_blank');
+    // The external open must go through the shell plugin (real browser), never
+    // window.open (which embeds the page inside the WebKitGTK app).
+    expect(mockShellOpen).toHaveBeenCalledWith(successState.githubUrl);
+    expect(windowOpenSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -272,7 +304,7 @@ describe('useReportIssueController — full flow', () => {
     return (
       <div>
         <button data-testid="start-btn" onClick={() => controller.start()}>Start</button>
-        <ReportIssueModal state={state} onClose={() => setState({ kind: 'idle' })} />
+        <ReportIssueModal state={state} onClose={() => setState({ kind: 'idle' })} onProceed={() => controller.start()} />
       </div>
     );
   }

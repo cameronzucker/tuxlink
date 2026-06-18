@@ -1120,10 +1120,11 @@ export function AppShell() {
     // tuxlink-lqw2: Tools → Verify CMS Connection opens the inline probe overlay.
     verifyCms: () => setVerifyCmsOpen(true),
     reportIssue: () => {
-      // tuxlink-qjgx Task 8: Report Issue flow — auto-export + pre-filled
-      // GitHub URL. The controller handles Save As → export → browser open
-      // and drives the ReportIssueModal state machine (spec §8.5).
-      reportIssueController.start();
+      // tuxlink-uxvn: open the modal in `intro` (explanation + Create report)
+      // FIRST, instead of dropping straight into a bare OS Save As. The intro's
+      // "Create report" button calls controller.start() (Save As → export →
+      // browser open, spec §8.5).
+      setReportIssueState({ kind: 'intro' });
     },
     openCatalogBuilder: () => setCatalogBuilderOpen(true),
     openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
@@ -1832,6 +1833,7 @@ export function AppShell() {
       <ReportIssueModal
         state={reportIssueState}
         onClose={() => setReportIssueState({ kind: 'idle' })}
+        onProceed={() => reportIssueController.start()}
       />
 
       {/* tuxlink-bsiy: inline pending-message selection ("Review Pending
