@@ -29,6 +29,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import type {
   ActiveIdentityDto,
   CmsBadge,
@@ -100,6 +101,28 @@ export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherPro
   const [error, setError] = useState<string | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
 
+  // Forgot-password recovery (tuxlink-vfb3 sub-project 2). The "Forgot password?"
+  // affordance in the unlock form asks the CMS to email the account password to the
+  // recovery address on file (account_send_recovery). Gated on the account-API key
+  // (cms_password_change_available): without it the affordance is hidden. Recovering
+  // a FULL account's password; tacticals ride their parent FULL.
+  const [recoveryAvailable, setRecoveryAvailable] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryMsg, setRecoveryMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    let active = true;
+    invoke<boolean>('cms_password_change_available')
+      .then((v) => {
+        if (active) setRecoveryAvailable(Boolean(v));
+      })
+      .catch(() => {
+        if (active) setRecoveryAvailable(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Closed-chip label: prefer the active session; pre-auth fall back to
   // last_selected, then an em-dash. Never a stale SSID-bound call.
   const primaryLabel = active?.address_as ?? list?.last_selected ?? '—';
@@ -111,6 +134,8 @@ export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherPro
     setUnlockTarget(null);
     setCredential('');
     setError(null);
+    setRecoveryMsg(null);
+    setRecovering(false);
   }
 
   // Esc (anywhere in the open dropdown) + click-outside close the dropdown.
@@ -152,12 +177,40 @@ export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherPro
     setUnlockTarget(target);
     setCredential('');
     setError(null);
+    setRecoveryMsg(null);
   }
 
   function cancelUnlock() {
     setUnlockTarget(null);
     setCredential('');
     setError(null);
+    setRecoveryMsg(null);
+  }
+
+  // "Forgot password?" — ask the CMS to email the account password to its recovery
+  // address. The account is the FULL (a tactical rides its parent FULL).
+  function sendRecovery() {
+    if (!unlockTarget || recovering) return;
+    const callsign = unlockTarget.kind === 'full' ? unlockTarget.callsign : unlockTarget.parent;
+    setRecovering(true);
+    setRecoveryMsg(null);
+    invoke('cms_account_send_recovery', { rawCallsign: callsign })
+      .then(() => {
+        setRecoveryMsg({
+          ok: true,
+          text: `Your password was emailed to the recovery address on file for ${callsign}.`,
+        });
+      })
+      .catch((e: { kind?: string; message?: string }) => {
+        // The server errors when no recovery address is on file — surface its message
+        // and point the user at where to set one.
+        const text =
+          e?.kind === 'Rejected'
+            ? `${e.message ?? 'No recovery email is on file.'} Set one in Settings → Winlink Account.`
+            : 'Could not send the recovery email. Check your connection and try again.';
+        setRecoveryMsg({ ok: false, text });
+      })
+      .finally(() => setRecovering(false));
   }
 
   function handleFullRowClick(full: FullIdentityDto) {
@@ -247,10 +300,30 @@ export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherPro
           >
             Unlock
           </button>
+          {recoveryAvailable && (
+            <button
+              type="button"
+              className="identity-forgot"
+              data-testid="identity-forgot"
+              onClick={sendRecovery}
+              disabled={recovering}
+            >
+              {recovering ? 'Sending…' : 'Forgot password?'}
+            </button>
+          )}
         </div>
         {error && (
           <div className="identity-unlock-error" data-testid="identity-unlock-error" role="alert">
             {error}
+          </div>
+        )}
+        {recoveryMsg && (
+          <div
+            className={recoveryMsg.ok ? 'identity-recovery-ok' : 'identity-unlock-error'}
+            data-testid="identity-recovery-msg"
+            role="status"
+          >
+            {recoveryMsg.text}
           </div>
         )}
       </div>
