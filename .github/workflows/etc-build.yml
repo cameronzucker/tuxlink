@@ -138,9 +138,18 @@ jobs:
         run: pnpm lint:docs
 
       - name: Build + bundle .deb (heif feature OFF)
-        # --no-default-features drops the crate's only default feature, `heif`,
-        # so libheif-rs is not compiled and no system libheif >= 1.17 is needed.
-        run: pnpm tauri build --no-default-features --bundles deb
+        # `tauri build` has NO --no-default-features flag (only -f/--features,
+        # which is additive), so disable the crate's default `heif` feature with
+        # a CI-only edit of Cargo.toml. Mainline keeps `default = ["heif"]` (HEIC
+        # on for devs + the core release); this edit is never committed. With
+        # default = [], `pnpm tauri build` compiles cargo with no default
+        # features → libheif-rs is not built and no system libheif >= 1.17 needed.
+        run: |
+          set -euxo pipefail
+          sed -i 's/^default = \["heif"\]/default = []/' src-tauri/Cargo.toml
+          grep -qE '^default = \[\]' src-tauri/Cargo.toml \
+            || { echo "ERROR: heif feature-flip did not take"; exit 1; }
+          pnpm tauri build --bundles deb
 
       - name: Verify voacapl + pmtiles + itshfbc + basemap bundled
         run: |
