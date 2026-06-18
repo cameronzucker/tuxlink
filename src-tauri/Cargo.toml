@@ -11,6 +11,14 @@ license = "GPL-3.0-or-later"
 default-run = "tuxlink"
 
 [features]
+# `heif` (default-on) compiles HEIC/HEIF decode via libheif-rs, which pkg-configs
+# system libheif >= 1.17. Builds for older distros below that floor (EmComm Tools
+# / Ubuntu 22.10, Debian 12 Bookworm) build with `--no-default-features` (re-add
+# the others); a HEIC attachment then returns a clear unsupported error instead
+# of failing to compile. See docs/adr/0020-linux-support-matrix-and-build-floor.md.
+default = ["heif"]
+heif = ["dep:libheif-rs"]
+
 # test-support exposes test-only seams (e.g. IdentityHandle::for_test) to
 # integration tests under tests/ + examples/benches, which link the non-test
 # lib build and therefore cannot see #[cfg(test)] items. The [dev-dependencies]
@@ -45,7 +53,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # libheif-sys ^3.1, so caret is unsafe — exact pin. The decode API
 # (LibHeif::new + ctx.read_from_bytes + lib.decode + planes().interleaved) is
 # identical in 1.0.2, so transcode.rs is unchanged.
-libheif-rs = "=1.0.2"
+libheif-rs = { version = "=1.0.2", optional = true }
 webp = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

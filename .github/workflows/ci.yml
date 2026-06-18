@@ -97,3 +97,10 @@ jobs:
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --verbose
+
+      # tuxlink-iuop / ADR 0020: the low-floor (EmComm Tools / Ubuntu 22.10)
+      # build compiles with the `heif` feature off. Guard that the heif-off path
+      # (the decode_heic stub) still type-checks, so the ETC build can't silently
+      # break on a mainline change. Cheap `check`, not a full bundle.
+      - name: Rust check (heif feature off — ETC/low-floor build path)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --locked
