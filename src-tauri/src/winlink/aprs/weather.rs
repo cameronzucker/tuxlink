@@ -35,6 +35,7 @@
 //!      timestamp, then the WX data) → [`parse_positionless_weather`].
 //!   2. A **position** report whose symbol code is the weather `_` → the WX data
 //!      lives in the position COMMENT, parsed by [`parse_weather_data`].
+//!
 //! Both emit the `aprs-weather:new` DTO. The source-reactive panel is the
 //! tuxlink-2phz fast-follow.
 
