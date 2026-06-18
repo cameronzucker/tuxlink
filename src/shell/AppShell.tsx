@@ -811,6 +811,9 @@ export function AppShell() {
     setSelectedConnection(null);
     setPinRadioPanel(false);
     setDrawerOpen(false);
+    // tuxlink-hzwc bug #6: closing the console from the dock's Modem tab returns
+    // to APRS Chat rather than leaving an empty Modem tab selected.
+    setDockTab((t) => (t === 'modem' ? 'aprs' : t));
   }, []);
 
   // radioPanelMode is DERIVED — it can go null when a modem session ends on its
@@ -1103,7 +1106,22 @@ export function AppShell() {
     // "save this message" use case.
     print: () => { if (openMessage) window.print(); },
     toggleStatusBar: () => setShowStatusBar((s) => !s),
-    toggleRadioPanel: () => setPinRadioPanel((s) => !s),
+    // tuxlink-hzwc bug #6: Ctrl+Shift+M (Toggle Radio Panel). When the APRS dock
+    // is open the radio panel IS the Modem tab, so toggle the tab (pinning so the
+    // console always has content) rather than flipping a pin that left the Modem
+    // tab disabled with the keystroke as the only way back. Standalone (no dock),
+    // it keeps the plain show/hide pin toggle.
+    toggleRadioPanel: () => {
+      if (aprsOpen) {
+        if (dockTab === 'modem') setDockTab('aprs');
+        else {
+          setPinRadioPanel(true);
+          setDockTab('modem');
+        }
+      } else {
+        setPinRadioPanel((s) => !s);
+      }
+    },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => { setSettingsSection(undefined); setSettingsOpen(true); },
     // tuxlink-vfb3: open Settings directly on the Winlink Account section.
@@ -1139,7 +1157,7 @@ export function AppShell() {
     openCatalogBuilder: () => setCatalogBuilderOpen(true),
     openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
     quit: () => { void invoke('app_quit'); },
-  }), [openMessage, archiveOpen, reportIssueController]);
+  }), [openMessage, archiveOpen, reportIssueController, aprsOpen, dockTab]);
 
   const editDraft = useCallback((draftId: string) => {
     void invoke('compose_window_open', { draftId });
@@ -1632,12 +1650,19 @@ export function AppShell() {
             <AprsDockTabs
               active={dockTab}
               unread={aprsUnread}
-              modemEnabled={radioPanelMode !== null}
+              // tuxlink-hzwc bug #6: the dock's Modem tab is always reachable —
+              // selecting it brings up the radio console (Telnet Winlink by
+              // default), so the keystroke is never the only way to enable it.
+              modemEnabled
               stationCount={envStations.stations.length}
               onPopOut={dockTab === 'stations' ? () => void openStationsWindow() : undefined}
               onSelect={(tab) => {
                 setDockTab(tab);
                 if (tab === 'aprs') setAprsSeenAt(Date.now());
+                // Ensure the Modem console has content when selected from the dock
+                // (pin is OR'd with an active modem / sidebar selection, so this is
+                // a no-op when one is already live).
+                if (tab === 'modem') setPinRadioPanel(true);
               }}
               onClose={() => {
                 setAprsOpen(false);
