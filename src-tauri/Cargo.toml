@@ -154,3 +154,20 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [[bin]]
 name = "tuxlink"
 path = "src/main.rs"
+
+# tuxlink-1n3n: the amd64 CI `verify` runner intermittently SIGBUSes inside
+# `rust-lld` while LINKING the test binaries (lib test + wizard_integration_test).
+# Cargo's default dev/test debuginfo is `2` (full), and the test-binary link
+# pulls in ~250 dependency rlibs' debug sections — enough debug data that lld
+# exhausts the runner's memory and crashes ("ld terminated with signal 7 [Bus
+# error]"). `line-tables-only` keeps backtrace line numbers (so panics/tests stay
+# debuggable) while dropping the heavy variable/type debug info the linker chokes
+# on. Set on `dev` because `cargo test` builds the library + dependencies under
+# the dev profile (only the test/bench TARGETS use the test profile); `test`
+# inherits `dev`, and the explicit `[profile.test]` below makes the intent
+# obvious for the test targets too. Release artifacts are unaffected.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"
