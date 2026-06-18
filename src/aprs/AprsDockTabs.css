@@ -26,6 +26,7 @@
    the REAL production bundle on WebKitGTK (dev/scratch/webkit-tabs-flat.png). */
 .aprs-dock-tab,
 .aprs-dock-maptoggle,
+.aprs-dock-popout,
 .aprs-dock-close {
   border-radius: 0;
 }
@@ -98,6 +99,10 @@
 }
 .aprs-dock-popout:hover {
   color: var(--text, #cbd5e1);
+  /* Match the close control's hover fill; without this the global
+     `button:hover` rule (App.css) paints --elevated, reading as a default
+     button rather than dock chrome (tuxlink-hzwc bug #9). */
+  background: var(--surface-3, #11171d);
 }
 /* When the pop-out is present it carries the margin-left:auto, so the close
    button must not also push — they sit together at the right end. */

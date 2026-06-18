@@ -49,7 +49,22 @@ import type {
   ChannelMessage,
   DeliveryState,
 } from './aprsTypes';
+import { decodeAprsInfo, type AprsPacketCategory } from './aprsDecode';
 import './AprsChatPanel.css';
+
+/// Short monitor-style tag per decoded packet category (tuxlink-hzwc bug #2),
+/// shown ahead of the readable summary so the operator can scan traffic types.
+const CATEGORY_TAG: Record<AprsPacketCategory, string> = {
+  position: 'POS',
+  weather: 'WX',
+  telemetry: 'TLM',
+  status: 'STATUS',
+  object: 'OBJ',
+  item: 'ITEM',
+  mice: 'MIC-E',
+  message: 'MSG',
+  unknown: 'RAW',
+};
 
 /// APRS message text budget — the per-message character cap that makes bounded
 /// airtime real (matches the backend codec's ≤67 text limit).
@@ -134,12 +149,17 @@ function DeliveryChip({ state, msg }: { state: DeliveryState; msg: ChannelMessag
 function FeedRow({ msg, onReplyTo }: { msg: ChannelMessage; onReplyTo?: (call: string) => void }) {
   const broadcast = msg.to === null;
   const replyable = msg.direction === 'in' && Boolean(onReplyTo);
+  // A raw non-message frame is decoded into a readable monitor line; the raw
+  // info field is preserved on the row's `title` as a "show raw" affordance
+  // (tuxlink-hzwc bug #2).
+  const decoded = msg.kind === 'raw' ? decodeAprsInfo(msg.text) : null;
   return (
     <li
-      className={`aprs-msg aprs-msg-${msg.direction}${replyable ? ' aprs-msg-replyable' : ''}`}
+      className={`aprs-msg aprs-msg-${msg.direction}${replyable ? ' aprs-msg-replyable' : ''}${decoded ? ' aprs-msg-monitor' : ''}`}
       data-testid="aprs-feed-row"
       data-direction={msg.direction}
       data-broadcast={broadcast}
+      data-kind={msg.kind}
       role={replyable ? 'button' : undefined}
       tabIndex={replyable ? 0 : undefined}
       onClick={replyable ? () => onReplyTo?.(msg.from) : undefined}
@@ -161,13 +181,26 @@ function FeedRow({ msg, onReplyTo }: { msg: ChannelMessage; onReplyTo?: (call: s
           ) : (
             <span className="aprs-msg-from">{msg.from}</span>
           )}
-          <span className="aprs-msg-arrow" aria-hidden="true">
-            {' → '}
-          </span>
-          {broadcast ? (
-            <span className="aprs-msg-to aprs-msg-to-all">all</span>
+          {decoded ? (
+            // Monitor rows are beacons heard on the channel, not directed
+            // messages — tag the traffic type instead of a "→ all" addressee.
+            <span
+              className={`aprs-msg-cat aprs-msg-cat-${decoded.category}`}
+              data-testid="aprs-msg-cat"
+            >
+              {CATEGORY_TAG[decoded.category]}
+            </span>
           ) : (
-            <span className="aprs-msg-to">{msg.to}</span>
+            <>
+              <span className="aprs-msg-arrow" aria-hidden="true">
+                {' → '}
+              </span>
+              {broadcast ? (
+                <span className="aprs-msg-to aprs-msg-to-all">all</span>
+              ) : (
+                <span className="aprs-msg-to">{msg.to}</span>
+              )}
+            </>
           )}
         </span>
         <span className="aprs-msg-time" data-testid="aprs-msg-time">
@@ -175,7 +208,9 @@ function FeedRow({ msg, onReplyTo }: { msg: ChannelMessage; onReplyTo?: (call: s
         </span>
       </div>
       <div className="aprs-msg-body">
-        <span className="aprs-msg-text">{msg.text}</span>
+        <span className="aprs-msg-text" title={decoded ? msg.text : undefined}>
+          {decoded ? decoded.summary : msg.text}
+        </span>
         {msg.direction === 'out' && (
           <span className="aprs-msg-state">
             {broadcast ? (
@@ -221,6 +256,11 @@ export function AprsChatPanel({
   controlStrip,
 }: AprsChatPanelProps) {
   const [text, setText] = useState('');
+  // Directed-send target (tuxlink-hzwc bug #3). `null` ⇒ broadcast (APRS
+  // default). Set by tapping a heard station OR by typing a leading `CALL:`
+  // token (auto-lifted into the chip). The message field then holds ONLY the
+  // body — the callsign lives in the chip, not duplicated into the text.
+  const [target, setTarget] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
@@ -257,29 +297,43 @@ export function AprsChatPanel({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length]);
 
-  // Live parse of the compose field for the → target indicator and Send. A
-  // leading callsign token directs; otherwise broadcast (recipient null).
-  const parsed = parseCompose(text);
-
-  // Tap-to-reply (mechanic B): seed the compose field with the sender's
-  // callsign token, then focus the field so the operator types straight into the
-  // body. Still ONE field, still editable.
+  // Tap-to-reply (mechanic B): set the directed target to the heard station and
+  // focus the field. The callsign goes into the CHIP, not the message text —
+  // the field stays clean for the body (bug #3).
   const onReplyTo = (call: string) => {
-    setText(`${call.toUpperCase()}: `);
-    // Defer focus to after the controlled value lands.
+    setTarget(call.toUpperCase());
     requestAnimationFrame(() => composeRef.current?.focus());
+  };
+
+  // Field onChange with inline-addressing convenience: when no target is set
+  // and the operator types a leading `CALL:` token, lift it into the chip and
+  // keep only the remainder as the body. This preserves manual directing
+  // without a separate "To" field, and agrees with tap-to-reply (both end in a
+  // chip + clean field).
+  const onChangeText = (val: string) => {
+    if (target === null) {
+      const lead = val.replace(/^\s+/, '');
+      const m = parseCompose(lead);
+      if (m.recipient) {
+        setTarget(m.recipient);
+        setText(m.body);
+        return;
+      }
+    }
+    setText(val);
   };
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    const body = parsed.body.trim();
+    const body = text.trim();
     if (!body || sending) return;
-    // Inline-parsed addressee: null ⇒ broadcast (send normalizes anyway).
-    const to = parsed.recipient;
     setSendError(null);
     setSending(true);
     try {
-      await send(to, body);
+      // `target` null ⇒ broadcast (send normalizes anyway). The chip persists
+      // after a directed send (chat-style follow-ups); the operator clears it
+      // via the chip's ✕ to return to broadcast.
+      await send(target, body);
       setText('');
     } catch (err) {
       // RF-honesty: the hook appends NO message on a rejected send. Surface the
@@ -346,26 +400,56 @@ export function AprsChatPanel({
       {controlStrip}
 
       <form className="aprs-composer" onSubmit={onSubmit}>
+        {target && (
+          // Directed-send chip on its own row, so the message field reclaims the
+          // full width (bug #3 — the callsign is no longer duplicated into the
+          // field AND a separate indicator).
+          <div className="aprs-composer-chiprow">
+            <span
+              className="aprs-compose-chip"
+              data-testid="aprs-compose-target"
+              data-recipient={target}
+            >
+              <span className="aprs-compose-chip-arrow" aria-hidden="true">→ </span>
+              {target}
+              <button
+                type="button"
+                className="aprs-compose-chip-x"
+                data-testid="aprs-compose-target-clear"
+                aria-label={`Clear ${target} — broadcast to all instead`}
+                title="Clear target (broadcast to all)"
+                onClick={() => {
+                  setTarget(null);
+                  requestAnimationFrame(() => composeRef.current?.focus());
+                }}
+              >
+                ×
+              </button>
+            </span>
+          </div>
+        )}
         <div className="aprs-composer-row">
-          <span
-            className={`aprs-compose-target ${parsed.recipient ? 'aprs-compose-target-directed' : 'aprs-compose-target-broadcast'}`}
-            data-testid="aprs-compose-target"
-            data-recipient={parsed.recipient ?? ''}
-            aria-live="polite"
-            title="Type a leading callsign (e.g. W1AW: ...) to direct; otherwise it goes to all."
-          >
-            {parsed.recipient ? `→ ${parsed.recipient}` : '→ all'}
-          </span>
+          {!target && (
+            <span
+              className="aprs-compose-target aprs-compose-target-broadcast"
+              data-testid="aprs-compose-target"
+              data-recipient=""
+              aria-live="polite"
+              title="Tap a heard station (or type W1AW: ) to direct; otherwise it goes to all."
+            >
+              → all
+            </span>
+          )}
           <label className="aprs-composer-text">
-            <span className="aprs-visually-hidden">Message (start with a callsign to direct)</span>
+            <span className="aprs-visually-hidden">Message (tap a station or type a callsign to direct)</span>
             <input
               ref={composeRef}
               type="text"
               className="aprs-input"
               data-testid="aprs-composer-text"
-              placeholder="Message — start with W1AW: to direct"
+              placeholder={target ? `Message to ${target}` : 'Message — tap a station to direct'}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => onChangeText(e.target.value)}
             />
           </label>
           <span
@@ -379,7 +463,7 @@ export function AprsChatPanel({
             type="submit"
             className="aprs-send-btn"
             data-testid="aprs-send-btn"
-            disabled={sending || !parsed.body.trim()}
+            disabled={sending || !text.trim()}
           >
             Send
           </button>

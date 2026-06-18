@@ -26,6 +26,19 @@ describe('buildBasemapStyle (light)', () => {
     });
   });
 
+  it('gates minor/residential road classes to a neighborhood zoom (bug #8 density)', () => {
+    const style = buildBasemapStyle('light');
+    const minor = style.layers.filter((l) =>
+      /^roads_(minor|minor_service|link|other)(_casing|_early|_late)?$/.test(l.id),
+    );
+    expect(minor.length).toBeGreaterThan(0);
+    // None of the dense minor classes draws before z13 (the spaghetti fix).
+    expect(minor.every((l) => (l.minzoom ?? 0) >= 13)).toBe(true);
+    // Arterials + highways are NOT gated — they give mid-zoom context.
+    const major = style.layers.find((l) => l.id === 'roads_major');
+    expect((major?.minzoom ?? 0)).toBeLessThan(13);
+  });
+
   it('resolves glyphs + sprite to bundled self-origin paths (fully offline)', () => {
     const style = buildBasemapStyle('light');
     // Glyphs are {fontstack}/{range}-keyed whole-file fetches served from 'self',

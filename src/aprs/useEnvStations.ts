@@ -13,8 +13,8 @@
 // open — opening the tab later then shows the buffered series, not an empty
 // graph that only starts filling on first view.
 
-import { useEffect, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { useEffect, useRef, useState } from 'react';
+import { listen, emit } from '@tauri-apps/api/event';
 import type { WeatherReportDto, InboundTelemetryDto } from './aprsTypes';
 import {
   applyWeather,
@@ -28,15 +28,37 @@ import {
 /// the per-frame prune.
 const PRUNE_INTERVAL_MS = 60 * 1000;
 
+/// Cross-window snapshot handshake events (tuxlink-hzwc bug #4). A freshly
+/// opened window — notably the Station Data pop-out — starts with an empty
+/// accumulator and would otherwise read "no station data" until the next beacon
+/// (minutes, on a sparse channel). The pop-out (client) requests a snapshot on
+/// mount; the main shell (host) answers with its current per-station view-models
+/// (including the from-launch history rings), so the new window shows the live
+/// roster immediately and keeps updating from the shared event stream.
+const SNAPSHOT_REQUEST = 'aprs-env:request-snapshot';
+const SNAPSHOT_REPLY = 'aprs-env:snapshot';
+
+export interface UseEnvStationsOptions {
+  /// `'host'` (the main shell, mounted from launch) answers snapshot requests.
+  /// `'client'` (a pop-out window) requests + seeds from a snapshot on mount.
+  /// Omitted ⇒ neither (a standalone instance, e.g. a unit test).
+  snapshotRole?: 'host' | 'client';
+}
+
 export interface UseEnvStations {
   /// Heard stations, most-recently-heard first (a live feed reads top-down).
   stations: EnvStation[];
 }
 
-export function useEnvStations(): UseEnvStations {
+export function useEnvStations(opts?: UseEnvStationsOptions): UseEnvStations {
+  const role = opts?.snapshotRole;
   // Keyed by callsign so weather and telemetry from one station merge, and a
   // re-beacon updates the same view-model (appending to its history rings).
   const [byCall, setByCall] = useState<Map<string, EnvStation>>(new Map());
+  // Latest accumulator, read by the host's snapshot responder without making the
+  // subscription effect depend on `byCall`.
+  const byCallRef = useRef(byCall);
+  byCallRef.current = byCall;
 
   useEffect(() => {
     let mounted = true;
@@ -68,6 +90,46 @@ export function useEnvStations(): UseEnvStations {
     subscribe<WeatherReportDto>('aprs-weather:new', applyWeather);
     subscribe<InboundTelemetryDto>('aprs-telemetry:new', applyTelemetry);
 
+    if (role === 'host') {
+      // Answer a new window's request with the current roster.
+      listen(SNAPSHOT_REQUEST, () => {
+        if (!mounted) return;
+        void emit(SNAPSHOT_REPLY, [...byCallRef.current.values()]).catch(() => {});
+      })
+        .then((un) => {
+          if (!mounted) un();
+          else unlisteners.push(un);
+        })
+        .catch(() => {});
+    }
+
+    if (role === 'client') {
+      // Register the reply listener FIRST, then request — so the host's answer
+      // can't arrive before we're listening.
+      listen<EnvStation[]>(SNAPSHOT_REPLY, (e) => {
+        if (!mounted) return;
+        const incoming = e.payload ?? [];
+        setByCall((prev) => {
+          const next = new Map(prev);
+          for (const s of incoming) {
+            const existing = next.get(s.call);
+            // Don't clobber a fresher locally-heard frame with an older snapshot.
+            if (!existing || existing.lastHeard < s.lastHeard) next.set(s.call, s);
+          }
+          return pruneStations(next, Date.now());
+        });
+      })
+        .then((un) => {
+          if (!mounted) {
+            un();
+            return;
+          }
+          unlisteners.push(un);
+          void emit(SNAPSHOT_REQUEST).catch(() => {});
+        })
+        .catch(() => {});
+    }
+
     const sweep = setInterval(() => {
       if (!mounted) return;
       setByCall((prev) => pruneStations(prev, Date.now()));
@@ -78,7 +140,7 @@ export function useEnvStations(): UseEnvStations {
       for (const un of unlisteners) un();
       clearInterval(sweep);
     };
-  }, []);
+  }, [role]);
 
   const stations = [...byCall.values()].sort((a, b) => b.lastHeard - a.lastHeard);
   return { stations };

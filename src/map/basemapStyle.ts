@@ -120,10 +120,29 @@ const baseLayerCache = new Map<BasemapFlavor, ReturnType<typeof layers>>();
 function baseLayers(flavor: BasemapFlavor): ReturnType<typeof layers> {
   const hit = baseLayerCache.get(flavor);
   if (hit) return hit;
-  const built = layers(BASEMAP_SOURCE_ID, tuxlinkFlavor(), { lang: 'en' });
+  const built = generalizeRoadDensity(layers(BASEMAP_SOURCE_ID, tuxlinkFlavor(), { lang: 'en' }));
   const baked = flavor === 'dark' ? bakeDarkColors(built) : built;
   baseLayerCache.set(flavor, baked);
   return baked;
+}
+
+/// tuxlink-hzwc bug #8: minor / residential / service / link / unclassified road
+/// classes carry NO minzoom in the stock flavor, so the whole metro street grid
+/// draws at mid zooms — a dense "spaghetti" of streets. Gate those classes to a
+/// neighborhood zoom so mid-zoom shows arterials + highways only and the
+/// residential grid fills in once the operator zooms in close (the cartographic
+/// generalization MeshMap-style maps use). Arterials (`major`) and `highway`
+/// keep their defaults — they give context without the clutter. Tunable floor;
+/// operator-smoke the level on the converged build.
+const MINOR_ROAD_MINZOOM = 13;
+const MINOR_ROAD_RE =
+  /^roads_(minor|minor_service|link|other)(_casing|_early|_late)?$|^roads_(tunnels|bridges)_(minor|link|other)/;
+function generalizeRoadDensity(ls: ReturnType<typeof layers>): ReturnType<typeof layers> {
+  return ls.map((layer) =>
+    MINOR_ROAD_RE.test(layer.id)
+      ? { ...layer, minzoom: Math.max(layer.minzoom ?? 0, MINOR_ROAD_MINZOOM) }
+      : layer,
+  ) as ReturnType<typeof layers>;
 }
 
 export function buildBasemapStyle(
@@ -174,7 +193,7 @@ export function buildBasemapStyle(
     // (glyph shaping + collision, run globally) for the SAME OSM names, no visual
     // gain (B1, tuxlink-vnk7). So drop `symbol` alongside the existing sourceless
     // `background` drop. Look-preserving: labels still render, from the base.
-    const packBuilt = layers(sid, tuxlinkFlavor(), { lang: 'en' });
+    const packBuilt = generalizeRoadDensity(layers(sid, tuxlinkFlavor(), { lang: 'en' }));
     const packLayers = (flavor === 'dark' ? bakeDarkColors(packBuilt) : packBuilt)
       .filter((layer) => layer.type !== 'background' && layer.type !== 'symbol')
       .map((layer) => ({

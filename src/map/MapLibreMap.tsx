@@ -181,6 +181,11 @@ export function MapLibreMap({
       });
       instance.addControl(new maplibregl.AttributionControl({ compact: false }));
       instance.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+      // Distance scale (tuxlink-hzwc bug #7). The ham audience is mixed-unit, so
+      // show both an imperial and a metric bar, stacked bottom-left. `maxWidth`
+      // keeps the bar compact in the narrow APRS map pane.
+      instance.addControl(new maplibregl.ScaleControl({ maxWidth: 110, unit: 'imperial' }), 'bottom-left');
+      instance.addControl(new maplibregl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-left');
 
       // Set in the cleanup BEFORE instance.remove() so a moveend fired
       // synchronously during teardown can't touch the dying map (tuxlink-dvfh).

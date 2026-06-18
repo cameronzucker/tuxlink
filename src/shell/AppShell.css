@@ -102,10 +102,20 @@
   height: 100%;
   overflow: hidden;
 }
-/* The active body (chat panel or the selected per-mode radio panel) fills the
- * remaining height below the fixed-height tab row. min-height:0 lets the inner
- * scroll regions (thread list / message log) own their overflow. */
+/* The tab row is a fixed-height header: it must never grow or shrink with the
+ * active body, so switching tabs (e.g. to Station Data) cannot resize it
+ * (tuxlink-hzwc bug #10). */
+.layout-b .aprs-dock-surface > .aprs-dock-tabs {
+  flex: 0 0 auto;
+}
+/* The active body (chat panel, the selected per-mode radio panel, OR the
+ * Station Data env panel) fills the remaining height below the fixed-height tab
+ * row. min-height:0 lets the inner scroll regions (thread list / message log /
+ * station list) own their overflow. `.env-panel` was previously omitted, so the
+ * Station Data body sized to content instead of filling the column — the dock
+ * reflow the operator saw on opening Station Data (tuxlink-hzwc bug #10). */
 .layout-b .aprs-dock-surface > .aprs-chat,
+.layout-b .aprs-dock-surface > .env-panel,
 .layout-b .aprs-dock-surface > .radio-panel {
   flex: 1 1 auto;
   min-height: 0;

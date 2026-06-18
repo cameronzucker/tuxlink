@@ -8,6 +8,15 @@ describe('AprsDockTabs', () => {
     expect(screen.getByTestId('aprs-dock-tab-modem')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('aprs-dock-tab-aprs-unread')).toHaveTextContent('2');
   });
+  it('orders tabs APRS Chat, Station Data, then Modem (Modem far right)', () => {
+    render(<AprsDockTabs active="aprs" unread={0} modemEnabled onSelect={() => {}} onClose={() => {}} />);
+    const tabs = screen.getAllByRole('tab').map((t) => t.getAttribute('data-testid'));
+    expect(tabs).toEqual([
+      'aprs-dock-tab-aprs',
+      'aprs-dock-tab-stations',
+      'aprs-dock-tab-modem',
+    ]);
+  });
   it('calls onSelect with the clicked tab', () => {
     const onSelect = vi.fn();
     render(<AprsDockTabs active="aprs" unread={0} modemEnabled onSelect={onSelect} onClose={() => {}} />);

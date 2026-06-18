@@ -84,17 +84,9 @@ export function AprsDockTabs({
             <span className="aprs-dock-tab-badge" data-testid="aprs-dock-tab-aprs-unread">{unread}</span>
           )}
         </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={active === 'modem'}
-          className={`aprs-dock-tab ${active === 'modem' ? 'is-active' : ''}`}
-          data-testid="aprs-dock-tab-modem"
-          disabled={!modemEnabled}
-          onClick={() => onSelect('modem')}
-        >
-          Modem
-        </button>
+        {/* Station Data is associated with the APRS channel, so it sits adjacent
+            to APRS Chat. Modem is an unrelated console and lives at the far right
+            (operator decision 2026-06-18). */}
         <button
           type="button"
           role="tab"
@@ -107,6 +99,17 @@ export function AprsDockTabs({
           {stationCount > 0 && (
             <span className="aprs-dock-tab-count" data-testid="aprs-dock-tab-stations-count">{stationCount}</span>
           )}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={active === 'modem'}
+          className={`aprs-dock-tab ${active === 'modem' ? 'is-active' : ''}`}
+          data-testid="aprs-dock-tab-modem"
+          disabled={!modemEnabled}
+          onClick={() => onSelect('modem')}
+        >
+          Modem
         </button>
       </div>
       {onPopOut && (
