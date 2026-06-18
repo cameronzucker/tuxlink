@@ -97,7 +97,8 @@ export function renderSymbolBitmap(
   const canvas = document.createElement('canvas');
   canvas.width = CELL;
   canvas.height = CELL;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas; // no 2D context (headless / jsdom) — register an empty image
   // Primary `/` draws the primary sheet; everything else (alternate `\` and any
   // overlay table char) draws the alternate base, then the overlay char on top.
   const baseSheet = table === '/' ? sheetFor('p') : sheetFor('a');
@@ -116,7 +117,8 @@ function renderFallbackBitmap(): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = CELL;
   canvas.height = CELL;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas; // no 2D context (headless / jsdom) — register an empty image
   ctx.beginPath();
   ctx.arc(CELL / 2, CELL / 2, CELL * 0.28, 0, 2 * Math.PI);
   ctx.fillStyle = '#5b6b7a';
