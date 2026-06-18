@@ -38,33 +38,26 @@ export const TUXLINK_FLAVOR_OVERRIDES: Record<string, string> = {
   glacier: '#e8f0f5',
   sand: '#efe2c0',
   beach: '#f0e1bd',
-  // Road network — the legibility carrier. tuxlink-hzwc bug #8: the prior ramp
-  // (highway #e85d3a, major #f2933a, minor_a #f7c948) rendered a "bright
-  // yellow/orange spaghetti" of streets at city zooms. These are ~50%
-  // desaturated toward each color's own luminance — chroma drops (no longer
-  // garish) while LIGHTNESS is preserved, which is load-bearing: dark mode is
-  // this flavor inverted (darkStyle), so lightening residential roads would make
-  // them vanish on dark. Muted, MeshMap-like, both modes safe. Operator-smoke on
-  // the converged build to confirm the level of mute.
-  highway: '#b5705e',
-  highway_casing_early: '#784435',
-  highway_casing_late: '#784435',
-  major: '#cb9c6f',
-  major_casing_early: '#9b724b',
-  major_casing_late: '#9b724b',
-  minor_a: '#dfc888',
+  // Road network — the legibility carrier. OSM-style warm ramp with darker casings.
+  highway: '#e85d3a',
+  highway_casing_early: '#9e3618',
+  highway_casing_late: '#9e3618',
+  major: '#f2933a',
+  major_casing_early: '#bd6a1c',
+  major_casing_late: '#bd6a1c',
+  minor_a: '#f7c948',
   minor_b: '#ffffff',
   minor_casing: '#9a8f80',
   minor_service: '#ffffff',
   minor_service_casing: '#b0a596',
-  link: '#cb9c6f',
-  link_casing: '#9b724b',
+  link: '#f2933a',
+  link_casing: '#bd6a1c',
   other: '#ffffff',
-  tunnel_highway: '#d6b2a5',
-  tunnel_major: '#e3c9b4',
+  tunnel_highway: '#f0a98f',
+  tunnel_major: '#f7c39a',
   tunnel_minor: '#eeeeee',
-  bridges_highway: '#b5705e',
-  bridges_major: '#cb9c6f',
+  bridges_highway: '#e85d3a',
+  bridges_major: '#f2933a',
   bridges_minor: '#ffffff',
   railway: '#8a7f70',
   boundaries: '#9a5fa6',

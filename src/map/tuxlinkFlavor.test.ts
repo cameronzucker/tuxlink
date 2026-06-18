@@ -8,14 +8,11 @@ import { namedFlavor } from '@protomaps/basemaps';
 import { tuxlinkFlavor, TUXLINK_FLAVOR_OVERRIDES } from './tuxlinkFlavor';
 
 describe('tuxlinkFlavor', () => {
-  it('applies the muted warm road ramp (tuxlink-hzwc bug #8)', () => {
+  it('applies the bold contrast overrides', () => {
     const f = tuxlinkFlavor() as unknown as Record<string, unknown>;
-    // Roads carry legibility — a MUTED warm ramp (saturation cut, lightness
-    // preserved for dark-mode inversion), not the prior garish orange/yellow
-    // nor stock light-gray/white.
-    expect(f.major).toBe('#cb9c6f');
-    expect(f.highway).toBe('#b5705e');
-    expect(f.minor_a).toBe('#dfc888');
+    // Roads carry legibility — bold warm ramp, not stock light-gray/white.
+    expect(f.major).toBe('#f2933a');
+    expect(f.highway).toBe('#e85d3a');
     expect(f.water).toBe('#2f7fc4');
     // Differs from stock light (which has white/near-white roads).
     expect(f.major).not.toBe((namedFlavor('light') as unknown as Record<string, unknown>).major);
