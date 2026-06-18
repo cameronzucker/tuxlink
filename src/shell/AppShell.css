@@ -45,7 +45,11 @@
 
 .layout-b .panes {
   display: grid;
-  grid-template-columns: 200px 380px 1fr;
+  /* Columns shrink to sane desktop minimums so a non-maximized window never
+   * overflows + clips the right edge (tuxlink-be2q). Minimums sum (120+220) well
+   * under the 900px window minWidth; the reader (1fr) absorbs/gives first. This is
+   * the DESKTOP layout giving gracefully — NOT the touch compact mode. */
+  grid-template-columns: minmax(120px, 200px) minmax(220px, 380px) minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
   /* Keep Virtuoso/native scrollbar painting in the content layer; top-app
@@ -73,10 +77,14 @@
  * panel via a fifth column. P4 removed the dock; the second class is
  * dead code today but kept for reference if a future dual-mount returns. */
 .layout-b .panes--with-dock {
-  grid-template-columns: 200px 380px 1fr 400px;
+  /* With the radio/APRS dock open, the dock is the biggest overflow driver. All
+   * columns shrink to desktop minimums (120+220+240+300 = 880 < 900px minWidth) so
+   * the dock + a readable reader (≥240px) always fit a non-maximized window without
+   * clipping (tuxlink-be2q). */
+  grid-template-columns: minmax(120px, 200px) minmax(220px, 380px) minmax(240px, 1fr) minmax(300px, 400px);
 }
 .layout-b .panes--with-dock.panes--with-legacy-dock {
-  grid-template-columns: 200px 380px 1fr 400px 290px;
+  grid-template-columns: minmax(110px, 200px) minmax(200px, 380px) minmax(200px, 1fr) minmax(260px, 400px) minmax(220px, 290px);
 }
 /* tuxlink-iehg: the shared APRS dock surface. When the operator opens APRS chat,
  * the dock holds the tab switcher PLUS an active body (chat or modem). The drawer
@@ -141,7 +149,13 @@
  * pushback 2026-06-02. */
 .layout-b .search-zone {
   position: relative;
-  flex: 0 0 560px;
+  /* Was `flex: 0 0 560px` (fixed) — that starved the dashboard at narrow widths and
+   * pushed the right-pinned Connect button off-screen (tuxlink-be2q). Keep the 560px
+   * basis when there's room, but allow it to shrink to 240px so the dashboard always
+   * has room for the connection cell. The fixed basis still prevents content-driven
+   * reflow (the tuxlink-z5l0 concern was saved-search badge changes, not resize). */
+  flex: 0 1 560px;
+  min-width: 240px;
   display: flex;
   align-items: center;
   padding: 0 16px;
