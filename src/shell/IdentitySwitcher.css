@@ -6,13 +6,19 @@
  * `.dash-callsign-text` / `.dash-callsign-select` so the switcher is
  * pixel-identical to the prior ribbon callsign cell when closed. The trigger
  * <button> is CSS-reset to read as plain text (matching the de-buttoned SSID
- * select). The dropdown panel is absolutely positioned within the
- * `.dash-callsign-row` (its `position: relative` anchor) so it floats below the
- * chip without disturbing ribbon layout; it is NOT a portal / position:fixed
- * popup (the inline-unlock form lives inside it, per the no-popup-window rule). */
+ * select).
+ *
+ * tuxlink-ru32: the dropdown panel is rendered in a PORTAL to <body> with
+ * `position: fixed` (coords measured from the chip, applied inline). The prior
+ * in-flow `position: absolute` anchored it inside the ribbon's stacking context
+ * (z-index 80), so shell regions in higher contexts (e.g. the message list at
+ * z-index 200) painted OVER it and the dropdown was invisible. A portal escapes
+ * the ribbon's stacking context entirely. (The earlier "NOT a portal" choice in
+ * tuxlink-noa0 is exactly what broke; the inline-unlock form still lives inside
+ * the panel — portaling moves WHERE it renders, not the no-extra-OS-window rule.) */
 
 .identity-switcher-row {
-  position: relative; /* positioning context for the absolute dropdown */
+  position: relative; /* anchor reference for measuring the portal coords */
 }
 
 /* Trigger reset to plain text — matches the callsign-text color/weight. */
@@ -47,14 +53,16 @@
   letter-spacing: 0;
 }
 
-/* Dropdown panel — anchored below the chip, above the ribbon, dark surface. */
+/* Dropdown panel — portaled to <body>, fixed-positioned from the chip's rect
+ * (top/left set inline). z-index above every shell region (ribbon 80, message
+ * list 200, dialogs 100, settings/grid 1000-class) so it is never covered. */
 .identity-switcher-list {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 40; /* above the ribbon controls */
+  position: fixed;
+  z-index: 1100;
   min-width: 220px;
   max-width: 320px;
+  max-height: min(70vh, 480px);
+  overflow-y: auto;
   background: var(--surface, #141c23);
   border: 1px solid var(--border-strong, #2c3744);
   border-radius: 6px;

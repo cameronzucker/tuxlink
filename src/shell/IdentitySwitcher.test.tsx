@@ -407,3 +407,20 @@ test('empty store shows an actionable empty-state, not a blank dropdown (tuxlink
   expect(empty).toBeInTheDocument();
   expect(empty).toHaveTextContent(/Settings/i);
 });
+
+// ---------------------------------------------------------------------------
+// tuxlink-ru32 — dropdown portals to <body> so it escapes the ribbon's
+// stacking context (was rendered UNDER higher-z shell regions, invisible).
+// ---------------------------------------------------------------------------
+
+test('ru32: open dropdown renders in a portal at document.body (not trapped in the ribbon)', () => {
+  render(<IdentitySwitcher active={FULL_ACTIVE} list={LIST} onSwitch={vi.fn()} />);
+  fireEvent.click(screen.getByTestId('identity-switcher-trigger'));
+
+  const listEl = screen.getByTestId('identity-switcher-list');
+  // The panel is a direct child of <body> — proof it escaped the ribbon's
+  // (lower) stacking context. A trapped absolute child would be nested under
+  // the ribbon-callsign row instead.
+  expect(listEl.parentElement).toBe(document.body);
+  expect(screen.getByTestId('ribbon-callsign').contains(listEl)).toBe(false);
+});
