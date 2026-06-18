@@ -48,6 +48,7 @@ use super::position::{parse_mice, parse_object_or_item, parse_position};
 use super::telemetry::{parse_telemetry_data, parse_telemetry_definition};
 use super::telemetry_store::{InboundTelemetry, TelemetryStore};
 use super::tx::TxQueue;
+use super::weather::{is_weather_symbol, parse_positionless_weather, parse_weather_data, WeatherReport};
 
 /// Dev-only raw-frame capture (tuxlink-iehg). When the env var
 /// `TUXLINK_APRS_RAW_CAPTURE` is set to a writable file path, append each
@@ -162,6 +163,9 @@ pub trait EventSink: Send {
     /// Emit a decoded telemetry frame, enriched with the station's known
     /// definitions (`aprs-telemetry:new`).
     fn emit_telemetry(&self, ev: InboundTelemetry);
+    /// Emit a decoded weather report (`aprs-weather:new`), from either a
+    /// positionless WX report or a `_`-symbol position report's comment.
+    fn emit_weather(&self, ev: WeatherReport);
 }
 
 /// Display dedupe window (ms): suppress re-showing ANY retransmitted/digipeated copy.
@@ -267,6 +271,14 @@ impl AprsEngine {
                 if let Some(td) = parse_telemetry_data(&info) {
                     let tlm = self.telemetry.ingest_data(sender.trim(), td);
                     self.sink.emit_telemetry(tlm);
+                }
+                // A positionless weather report (DTI `_` + MDHM timestamp + WX
+                // run) is likewise not a message; decode + emit the structured
+                // WX DTO, then still surface the raw frame in the feed below
+                // (mirrors the telemetry seam above). `station` is the sender.
+                if let Some(mut wx) = parse_positionless_weather(&info) {
+                    wx.station = sender.trim().to_string();
+                    self.sink.emit_weather(wx);
                 }
                 // tuxlink-8tz1 (operator-directed diagnostic slice): the feed used
                 // to DROP every non-message frame here — positions, status,
@@ -555,6 +567,22 @@ impl AprsEngine {
         };
         if self.pos_dedupe.seen(key, now_ms) {
             return;
+        }
+        // A `_`-symbol position is a WEATHER station: the WX data run lives in the
+        // position COMMENT (after lat/lon/symbol). Decode + emit the structured WX
+        // DTO alongside (not instead of) the position emit — the map still plots
+        // the pin; the weather panel gets the reading. Captured before `pos` is
+        // moved into `InboundPos` below.
+        if is_weather_symbol(pos.symbol_table, pos.symbol_code) {
+            if let Some(mut wx) = parse_weather_data(&pos.comment) {
+                // Key the report by the ENTITY, mirroring the position path: a
+                // named weather OBJECT/ITEM (`;`/`)`) reports about the named
+                // entity, so the report's `station` is the object NAME, not the
+                // reporting sender. A station's own `_`-symbol beacon has no name
+                // → keyed by the sender.
+                wx.station = name.clone().unwrap_or_else(|| sender.to_string());
+                self.sink.emit_weather(wx);
+            }
         }
         self.sink.emit_position(InboundPos {
             sender: sender.to_string(),
@@ -866,6 +894,9 @@ impl EventSink for TauriEventSink {
     fn emit_telemetry(&self, ev: InboundTelemetry) {
         let _ = self.app.emit("aprs-telemetry:new", &ev);
     }
+    fn emit_weather(&self, ev: WeatherReport) {
+        let _ = self.app.emit("aprs-weather:new", &ev);
+    }
 }
 
 #[cfg(test)]
@@ -881,6 +912,7 @@ mod tests {
         states: Arc<Mutex<Vec<StateChange>>>,
         positions: Arc<Mutex<Vec<InboundPos>>>,
         telemetry: Arc<Mutex<Vec<InboundTelemetry>>>,
+        weather: Arc<Mutex<Vec<WeatherReport>>>,
     }
     impl EventSink for RecSink {
         fn emit_message(&self, ev: InboundMsg) {
@@ -895,6 +927,9 @@ mod tests {
         }
         fn emit_telemetry(&self, ev: InboundTelemetry) {
             self.telemetry.lock().unwrap().push(ev);
+        }
+        fn emit_weather(&self, ev: WeatherReport) {
+            self.weather.lock().unwrap().push(ev);
         }
     }
 
@@ -1376,6 +1411,88 @@ mod tests {
         let pos = sink.positions.lock().unwrap();
         assert_eq!(pos.len(), 2, "a changed comment at the same spot must re-emit");
         assert_eq!(pos[1].comment, "QRT");
+    }
+
+    // -- Weather RX (tuxlink-wu2x) ------------------------------------------
+
+    #[test]
+    fn positionless_weather_frame_emits_a_weather_report() {
+        // A positionless WX report (DTI `_` + MDHM ts + c/s wind + fields) routes
+        // through the None arm, emits a structured WeatherReport keyed to the
+        // sender, and ALSO surfaces as a raw feed row (tuxlink-8tz1 diagnostic).
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.handle_inbound_bytes(
+            &inbound_with("KK6WX", b"_10090556c220s004g005t068r000p000P000h53b10138"),
+            1000,
+        );
+        let wx = sink.weather.lock().unwrap();
+        assert_eq!(wx.len(), 1, "a positionless WX frame must emit one report");
+        assert_eq!(wx[0].station, "KK6WX");
+        assert_eq!(wx[0].wind_direction_deg, Some(220));
+        assert_eq!(wx[0].wind_speed_mph, Some(4));
+        assert_eq!(wx[0].wind_gust_mph, Some(5));
+        assert_eq!(wx[0].temperature_f, Some(68));
+        assert_eq!(wx[0].humidity_pct, Some(53));
+        assert_eq!(wx[0].pressure_hpa, Some(1013.8));
+        // It is not a message/position, so it also surfaces as a raw feed row.
+        assert_eq!(sink.msgs.lock().unwrap().len(), 1, "raw feed row too");
+        assert!(sink.positions.lock().unwrap().is_empty(), "positionless = no map pin");
+    }
+
+    #[test]
+    fn weather_symbol_position_frame_emits_position_and_weather() {
+        // A position report whose symbol is the weather `_`: the WX run is in the
+        // COMMENT. Both a map position AND a weather report must be emitted.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // table '/', code '_', comment carries the WX run.
+        engine.handle_inbound_bytes(
+            &inbound_with("KK6WX", b"!4903.50N/07201.75W_220/004g005t068h53b10138"),
+            1000,
+        );
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 1, "a `_`-symbol frame still plots a pin");
+        assert_eq!(pos[0].symbol_code, '_');
+        let wx = sink.weather.lock().unwrap();
+        assert_eq!(wx.len(), 1, "the WX comment must emit a weather report");
+        assert_eq!(wx[0].station, "KK6WX");
+        assert_eq!(wx[0].wind_direction_deg, Some(220));
+        assert_eq!(wx[0].wind_speed_mph, Some(4));
+        assert_eq!(wx[0].temperature_f, Some(68));
+        assert_eq!(wx[0].humidity_pct, Some(53));
+        assert_eq!(wx[0].pressure_hpa, Some(1013.8));
+    }
+
+    #[test]
+    fn named_weather_object_keys_report_by_object_name() {
+        // A weather OBJECT (`;`) carries a `_`-symbol position whose comment is the
+        // WX run. The WeatherReport.station must be the object NAME (mirroring how
+        // the position pin is labeled by the object), NOT the reporting sender.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // sender DIGI1 reports object "STORM1" with weather symbol '_' + WX comment.
+        engine.handle_inbound_bytes(
+            &inbound_with(
+                "DIGI1",
+                b";STORM1   *092345z4903.50N/07201.75W_220/004g005t068h53b10138",
+            ),
+            1000,
+        );
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 1, "the weather object still plots a pin");
+        assert_eq!(pos[0].sender, "DIGI1");
+        assert_eq!(pos[0].name.as_deref(), Some("STORM1"));
+        assert_eq!(pos[0].symbol_code, '_');
+        let wx = sink.weather.lock().unwrap();
+        assert_eq!(wx.len(), 1, "the WX comment emits a weather report");
+        assert_eq!(
+            wx[0].station, "STORM1",
+            "a named weather object keys the report by its NAME, not the reporter"
+        );
+        assert_eq!(wx[0].wind_direction_deg, Some(220));
+        assert_eq!(wx[0].wind_speed_mph, Some(4));
+        assert_eq!(wx[0].temperature_f, Some(68));
     }
 
     #[test]
