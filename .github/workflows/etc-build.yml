@@ -1,0 +1,207 @@
+name: ETC (low-floor) build
+
+# tuxlink-iuop / ADR 0020: a SEPARATE low-floor .deb for the EmComm Tools
+# Community audience (ETC is frozen on Ubuntu 22.10, EOL, glibc 2.36) and Debian
+# 12 Bookworm. The core release (release.yml) is unchanged and stays on the
+# modern floor. This build:
+#   - runs on Ubuntu 22.04 LTS (glibc 2.35 — covers ETC's 2.36 and Bookworm),
+#   - compiles with `--no-default-features` so the `heif` feature is OFF (system
+#     libheif >= 1.17 isn't on those distros; HEIC degrades to a clear message),
+#   - overrides the .deb Depends to the low floor (libc6 >= 2.35, and drops
+#     libheif/libde265/libwebp which the heif-off / vendored-webp build doesn't
+#     use), so the package actually installs on the target instead of being
+#     refused by the core build's libc6 (>= 2.39).
+# It uploads a labeled .deb artifact and asserts it installs cleanly on a
+# stock Debian Bookworm container (glibc 2.36, the same floor as ETC).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/etc-build.yml'
+      - 'scripts/ci/deb-install-smoke.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-etc:
+    name: build ETC .deb (${{ matrix.arch }}, heif off)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: amd64 }
+          - { runner: ubuntu-22.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        # heif OFF → no libheif-dev/libde265-dev; webp is vendored (libwebp-sys
+        # builds from source) → no libwebp-dev. Everything else matches release.yml.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libax25-dev libudev-dev libwebkit2gtk-4.1-dev \
+            build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev gfortran rsync jq
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: etc-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            etc-${{ runner.os }}-${{ matrix.arch }}-
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Identical voacapl staging to release.yml (the ETC build is feature-
+      # complete apart from HEIC; HF prediction must still work).
+      - name: Build + stage voacapl (offline HF prediction engine)
+        run: |
+          set -euxo pipefail
+          git clone --depth=1 https://github.com/jawatson/voacapl.git /tmp/voacapl-src
+          cd /tmp/voacapl-src
+          find . -type f -exec touch {} +
+          sleep 1; find . -name 'aclocal.m4' -exec touch {} +
+          sleep 1; find . \( -name 'configure' -o -name 'config.h.in' \) -exec touch {} +
+          sleep 1; find . -name 'Makefile.in' -exec touch {} +
+          ./configure --prefix=/tmp/voacapl-install
+          make
+          make install
+          /tmp/voacapl-install/bin/makeitshfbc
+          test -f "$HOME/itshfbc/database/version.w32"
+          cd "$GITHUB_WORKSPACE"
+          TRIPLE="$(rustc -vV | awk '/^host:/{print $2}')"
+          mkdir -p src-tauri/binaries
+          cp /tmp/voacapl-install/bin/voacapl "src-tauri/binaries/voacapl-${TRIPLE}"
+          chmod +x "src-tauri/binaries/voacapl-${TRIPLE}"
+          mkdir -p src-tauri/resources/itshfbc
+          rsync -a "$HOME/itshfbc/" src-tauri/resources/itshfbc/
+
+      - name: Stage go-pmtiles sidecar (region-pack extractor)
+        run: |
+          set -euxo pipefail
+          GP_VER=1.30.3
+          case "${{ matrix.arch }}" in
+            amd64) GP_ARCH=x86_64 ;;
+            arm64) GP_ARCH=arm64 ;;
+            *) echo "unknown arch ${{ matrix.arch }}"; exit 1 ;;
+          esac
+          TRIPLE="$(rustc -vV | awk '/^host:/{print $2}')"
+          mkdir -p src-tauri/binaries
+          curl -fSL "https://github.com/protomaps/go-pmtiles/releases/download/v${GP_VER}/go-pmtiles_${GP_VER}_Linux_${GP_ARCH}.tar.gz" -o /tmp/gp.tgz
+          tar xzf /tmp/gp.tgz -C /tmp pmtiles
+          install -m 0755 /tmp/pmtiles "src-tauri/binaries/pmtiles-${TRIPLE}"
+
+      # Same externalBin + resources inject as release.yml, PLUS a low-floor
+      # Depends override: libc6 (>= 2.35) for the jammy build, and drop
+      # libheif1/libde265-0 (heif off) and libwebp7 (webp vendored) which the
+      # core list carries. Without this the .deb would inherit libc6 (>= 2.39)
+      # and be refused on the exact ETC/Bookworm target it is built for.
+      - name: Inject bundle config + low-floor Depends (CI-only)
+        run: |
+          set -euxo pipefail
+          cd src-tauri
+          jq '.bundle.externalBin = ["binaries/voacapl", "binaries/pmtiles"]
+              | .bundle.resources = ["resources/wle-forms/**/*", "resources/itshfbc/**/*", "resources/propagation/ssn-forecast.json", "resources/basemap/**/*"]
+              | .bundle.linux.deb.depends = ["libc6 (>= 2.35)", "libsecret-1-0"]' \
+             tauri.conf.json > tauri.conf.json.tmp
+          mv tauri.conf.json.tmp tauri.conf.json
+          echo "ETC bundle config:"; jq '{externalBin: .bundle.externalBin, depends: .bundle.linux.deb.depends}' tauri.conf.json
+
+      - name: Lint docs links
+        run: pnpm lint:docs
+
+      - name: Build + bundle .deb (heif feature OFF)
+        # --no-default-features drops the crate's only default feature, `heif`,
+        # so libheif-rs is not compiled and no system libheif >= 1.17 is needed.
+        run: pnpm tauri build --no-default-features --bundles deb
+
+      - name: Verify voacapl + pmtiles + itshfbc + basemap bundled
+        run: |
+          set -euxo pipefail
+          deb="$(find src-tauri/target/release/bundle/deb -name '*.deb' | head -1)"
+          test -n "$deb"
+          rm -rf /tmp/deb-extract && mkdir -p /tmp/deb-extract
+          dpkg-deb -x "$deb" /tmp/deb-extract
+          main="$(find /tmp/deb-extract -type f -name tuxlink | head -1)"
+          test -x "$(dirname "$main")/voacapl"
+          test -x "$(dirname "$main")/pmtiles"
+          find /tmp/deb-extract -path '*resources/itshfbc/database/version.w32' | grep -q version.w32
+          find /tmp/deb-extract -path '*resources/basemap/world-z0-6.pmtiles' | grep -q world-z0-6.pmtiles
+
+      - name: Label + collect the ETC .deb
+        run: |
+          set -euxo pipefail
+          deb="$(find src-tauri/target/release/bundle/deb -name '*.deb' | head -1)"
+          test -n "$deb"
+          mkdir -p dist-etc
+          # Mark the variant so it can't be confused with the core .deb. The
+          # internal package name/version are unchanged; only the filename differs.
+          base="$(basename "$deb" .deb)"
+          cp "$deb" "dist-etc/${base}_etc.deb"
+          ls -lh dist-etc
+
+      - name: Upload ETC .deb
+        uses: actions/upload-artifact@v7
+        with:
+          name: tuxlink-etc-${{ matrix.arch }}
+          path: dist-etc/*
+          retention-days: 14
+
+  etc-install-test:
+    name: ETC .deb installs on clean debian:bookworm (${{ matrix.arch }})
+    needs: build-etc
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: amd64 }
+          - { runner: ubuntu-22.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download the ETC .deb
+        uses: actions/download-artifact@v7
+        with:
+          name: tuxlink-etc-${{ matrix.arch }}
+          path: debs
+
+      - name: Install on clean debian:bookworm (glibc 2.36 — ETC's floor) and assert
+        run: |
+          set -euxo pipefail
+          deb="$(ls debs/tuxlink_*_${{ matrix.arch }}_etc.deb | head -1)"
+          test -n "$deb"
+          # Bookworm shares ETC's glibc 2.36 floor and has webkit2gtk-4.1, so it
+          # is the clean, available proxy for "does the ETC build install + its
+          # libs resolve on the low floor". (install mode: expect success.)
+          docker run --rm \
+            -v "$PWD:/work" -w /work \
+            "debian:bookworm-slim" \
+            bash scripts/ci/deb-install-smoke.sh "$deb" install
