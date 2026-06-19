@@ -125,8 +125,9 @@ export interface HeardPosition {
   /// map can plot an uncertainty region for masked fixes instead of a sharp pin.
   ambiguity: number;
   /// The latest heard frame's digipeater via-chain for this station (latest-
-  /// position-wins, like the coordinates). `[]` for a directly-heard / legacy fix.
-  via: ViaHop[];
+  /// position-wins, like the coordinates). The store always sets it (`[]` for a
+  /// directly-heard fix); optional so test fixtures and legacy callers can omit it.
+  via?: ViaHop[];
 }
 
 /// One analog telemetry channel from a heard `aprs-telemetry:new` frame.
