@@ -38,6 +38,10 @@ export interface AprsConnectStripProps {
    *  aprs-listening:change event the parent subscribes to). Drives the
    *  listening/not-listening state + the Connect⇄Disconnect button. */
   listening: boolean;
+  /** A connect is in flight that was initiated OUTSIDE this strip (e.g. the
+   *  status-bar control), so the strip shows "Connecting…" in sync instead of a
+   *  stale "Connect" until the backend `listening` event lands (tuxlink-28o0). */
+  externalConnecting?: boolean;
   /** Current persisted link kind, or null when no link is configured (fresh
    *  install). null auto-expands the setup picker. */
   linkKind: PacketLinkKind | null;
@@ -80,6 +84,7 @@ function pickerKind(
 
 export function AprsConnectStrip({
   listening,
+  externalConnecting = false,
   linkKind,
   radioLabel,
   allowUvproNative = false,
@@ -100,7 +105,12 @@ export function AprsConnectStrip({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const state: 'off' | 'connecting' | 'listening' = connecting
+  // A connect is "in flight" if THIS strip started it (local `connecting`) or one
+  // was started elsewhere (`externalConnecting`, e.g. the status-bar control) —
+  // tuxlink-28o0. Both surfaces share `listening` (backend truth) already; this
+  // shares the in-flight window so they never disagree mid-connect.
+  const showConnecting = connecting || externalConnecting;
+  const state: 'off' | 'connecting' | 'listening' = showConnecting
     ? 'connecting'
     : listening
       ? 'listening'
@@ -109,7 +119,7 @@ export function AprsConnectStrip({
     state === 'listening' ? 'Listening' : state === 'connecting' ? 'Connecting…' : 'Not listening';
 
   const handleConnect = async () => {
-    if (connecting || busy) return;
+    if (showConnecting || busy) return;
     setError(null);
     setConnecting(true);
     try {
@@ -172,10 +182,10 @@ export function AprsConnectStrip({
             type="button"
             className="aprs-connect-btn"
             data-testid="aprs-connect-btn"
-            disabled={connecting || noLink}
+            disabled={showConnecting || noLink}
             onClick={handleConnect}
           >
-            {connecting ? 'Connecting…' : 'Connect'}
+            {showConnecting ? 'Connecting…' : 'Connect'}
           </button>
         )}
 
