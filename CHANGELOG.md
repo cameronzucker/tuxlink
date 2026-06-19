@@ -30,6 +30,41 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.71.0](https://github.com/cameronzucker/tuxlink/compare/v0.70.0...v0.71.0) (2026-06-19)
+
+
+### Features
+
+* **aprs:** compose target as a removable chip, not a duplicated prefix ([b0664ef](https://github.com/cameronzucker/tuxlink/commit/b0664eff88d57d527cebd4f0bfbe4df5257e7f01))
+* **aprs:** decode non-message packets into readable feed monitor rows ([2f69584](https://github.com/cameronzucker/tuxlink/commit/2f695845d57dc23dcb36364ccd4d9f9bc55da7d1))
+* **aprs:** render authentic symbol sprites on Tac Chat map pins ([e77c596](https://github.com/cameronzucker/tuxlink/commit/e77c596e4cc107720974a754e5c9e60e919575d3))
+* **aprs:** source-reactive environmental panel — weather + telemetry by callsign (tuxlink-2phz) ([2498f48](https://github.com/cameronzucker/tuxlink/commit/2498f482cb78200feb9dd33bd5fa5ab5da725c76))
+* **aprs:** vendor hessu APRS symbol sheets + CC BY-SA attribution ([4d8298a](https://github.com/cameronzucker/tuxlink/commit/4d8298a43f145ac3fdb9cc72cc6bc86715ac4900))
+* **basemap:** ambient map-download progress on the status bar (tuxlink-8g28) ([6b237d0](https://github.com/cameronzucker/tuxlink/commit/6b237d02c745dfc859983ea60f49b78905177624))
+* **map:** add distance scale control; mute garish road ramp ([2bceae1](https://github.com/cameronzucker/tuxlink/commit/2bceae17b209745c276d840153036ec749817ee8))
+* **map:** APRS sprite id computation (tuxlink-90xb) ([7c89898](https://github.com/cameronzucker/tuxlink/commit/7c89898d38d00ab89c8971d82eb773f06b4df179))
+* **map:** lazy APRS sprite registration + greyscale/overlay bake ([25b411c](https://github.com/cameronzucker/tuxlink/commit/25b411c423001fd2b76a8fcd4cef5056b5a4087e))
+* **reporting:** structure the bug-report issue form for gh-queryable triage ([c14d758](https://github.com/cameronzucker/tuxlink/commit/c14d7583a81c5532a61262057dad38fbead97cb5))
+
+
+### Bug Fixes
+
+* **aprs:** dock-tab order, pop-out chrome, Station Data layout ([a1ac1b8](https://github.com/cameronzucker/tuxlink/commit/a1ac1b8cb516b213ccb25a484c3e9ce9b0b12c50))
+* **aprs:** seed the Station Data pop-out from a live snapshot ([dedcc57](https://github.com/cameronzucker/tuxlink/commit/dedcc5783566ad6cfa50732cc3d72b1dd9483a20))
+* **aprs:** unread count clears while viewing chat, accrues only when away ([12eb547](https://github.com/cameronzucker/tuxlink/commit/12eb547bc16ea2a7c7b7ecc624bbee4ff899049d))
+* **basemap:** address Codex adrev findings on continent detail tiers (tuxlink-8g28) ([6eca3dc](https://github.com/cameronzucker/tuxlink/commit/6eca3dc6d49158de1a7c59e9b842cc560f26d9ac))
+* **basemap:** wire detail tiers to continent downloads (tuxlink-8g28) ([19fb1db](https://github.com/cameronzucker/tuxlink/commit/19fb1dbf7411151b6866f69396a14d0df418dcaa))
+* **ci:** cut test-build debuginfo to stop rust-lld Bus error linking on amd64 ([791832d](https://github.com/cameronzucker/tuxlink/commit/791832d0b8ad6fd47dcda6912d8e9fbbe8188686))
+* **ci:** cut test-build debuginfo to stop rust-lld Bus error linking on amd64 ([c2be5b0](https://github.com/cameronzucker/tuxlink/commit/c2be5b00119063a0eeb8fa7973c7ddd352f972e4))
+* **help:** Report Issue opens GitHub in the real browser + adds an intro step (tuxlink-uxvn) ([eaa21ee](https://github.com/cameronzucker/tuxlink/commit/eaa21ee836582564657377f5a9410874b78243af))
+* **map:** gate minor road classes to reduce mid-zoom street clutter ([f667d45](https://github.com/cameronzucker/tuxlink/commit/f667d4505436a42462780952521a6772b3c8d1a6))
+* **reporting:** trim inaccurate intro + un-codeblock Logs field ([ac1e125](https://github.com/cameronzucker/tuxlink/commit/ac1e12505bdab4d4833689054c007fb39f04e210))
+* **security:** backend owns attachment save dialog + write (tuxlink-hyfo) ([caabbaf](https://github.com/cameronzucker/tuxlink/commit/caabbaf4281d22e7f9152f5bdec857783da17e77))
+* **shell:** Ctrl+Shift+M no longer strands a disabled Modem tab ([2ca109e](https://github.com/cameronzucker/tuxlink/commit/2ca109e8c14506921ca555e087944589195c4a0b))
+* **shell:** keep window controls + Connect reachable at narrow desktop widths ([457e4db](https://github.com/cameronzucker/tuxlink/commit/457e4dbcf021ff702a2b24816714e888a61fe8fc))
+* **shell:** portal the callsign identity dropdown so it isn't hidden under the shell (tuxlink-ru32) ([ad4a774](https://github.com/cameronzucker/tuxlink/commit/ad4a774e14a9e4fc3b8a17705a2da2091abab9c9))
+* **shell:** span Favorites panel across the content tracks (was cramped) ([c05fde3](https://github.com/cameronzucker/tuxlink/commit/c05fde33c20116b598c78dbc0ad0f45f50ec3517))
+
 ## [0.70.0](https://github.com/cameronzucker/tuxlink/compare/v0.69.0...v0.70.0) (2026-06-18)
 
 
