@@ -1077,6 +1077,23 @@ bd close tuxlink-cn84
 
 ---
 
+## Implementation deviations (recorded during execution)
+
+- **Tasks 1–2 took the zero-churn route.** The plan's draft added a `repeated:
+  Vec<bool>` field to `ax25::frame::Path`. In practice ~34 `Path { … }` literals
+  across 4 files construct it (several `digis:`-bearing lines belong to *other*
+  structs), so adding a required field with no local compiler was high-risk.
+  Instead: a standalone `decode_digi_hbits(bytes) -> Vec<bool>` helper recovers
+  the H-bits from the raw frame, and the engine builds `via` at the inbound site
+  from `frame.path.digis` + those H-bits. No `Path` shape change, no literal
+  churn. Same DTO outcome (`InboundPos.via`).
+- **Hover paints synchronously; only the live trace animates.** The plan ran one
+  rAF loop for both triggers. Hovering now paints the full path immediately
+  (held until mouse-out) — better UX (you hovered to inspect) and directly
+  testable without a clock. The rAF draw-in is reserved for the live auto-trace.
+- **`HeardPosition.via` is optional** (`via?`), not required, so the ~15 existing
+  `HeardPosition` test fixtures need no edits; the store always sets `[]`.
+
 ## Notes for the executor
 
 - **Backend tests may not finish locally on this Pi** — push and let CI compile/run the Rust (Tasks 1–2). Frontend vitest runs locally fine.
