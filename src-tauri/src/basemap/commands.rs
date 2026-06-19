@@ -56,16 +56,17 @@ const CONTINENT_MAX_MAXZOOM: u8 = 13;
 /// `pmtiles extract` if the progress bar / free-space gate proves off.
 const CONTINENT_ZOOM_SHRINK: u64 = 2;
 
-/// Stall watchdog: if the in-flight `.part` has not grown for this long, the
-/// go-pmtiles sidecar is treated as hung (dead connection mid-extract) and killed,
-/// so the blocking download thread unwinds and its in-flight guard clears. Without
-/// this, a hung sidecar leaves the guard set forever and every Retry bounces with
-/// "already in progress" (tuxlink-8g28). Deliberately a GENEROUS backstop (10 min):
-/// go-pmtiles can spend a while computing tile ranges or finalizing the directory
-/// without the `.part` length changing, so a tight window would false-abort a
-/// healthy transfer (Codex P2). The operator's Cancel handles anything they notice
-/// sooner; this only catches a download nobody is watching that has truly died.
-const STALL_TIMEOUT: Duration = Duration::from_secs(600);
+/// Liveness watchdog (tuxlink-k9pg): if the go-pmtiles sidecar emits NO stdout for
+/// this long, it is treated as hung (dead connection) and killed, so the blocking
+/// download thread unwinds and its in-flight guard clears (otherwise Retry bounces
+/// with "already in progress" forever). go-pmtiles streams a `\r`-updated progress
+/// bar (~15 updates/sec) plus setup log lines, so any healthy extract produces a
+/// near-continuous stdout; only a truly silent sidecar trips this. 3 min is generous
+/// enough to cover the initial tile-plan computation (seconds to tens of seconds)
+/// without false-aborting. (Replaces the tuxlink-8g28 file-GROWTH watchdog, which
+/// killed healthy long extracts because go-pmtiles pre-sizes the output file — see
+/// [`super::download::is_stalled`].)
+const STALL_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// How often the sidecar poll loop wakes to check cancel + sample the temp size.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -151,17 +152,22 @@ impl Extractor for SidecarExtractor {
         cancel: &Arc<AtomicBool>,
         on_progress: &dyn Fn(u64),
     ) -> Result<(), DownloadError> {
+        use std::io::{BufReader, Read};
         use std::process::{Command, Stdio};
 
-        // No shell — argv tokens are passed directly to execvp. planet_url/bbox
-        // are pre-validated; maxzoom/dest are app-controlled. We `.spawn()` (not
-        // `.output()`) so the loop below can poll the cancel flag + the temp's
-        // size for progress. BOTH stdout and stderr are captured for the error
-        // message on a non-zero exit — go-pmtiles writes its real failure (e.g.
-        // "Failed to create range reader ... HTTP error: 404" when the planet
-        // build URL has rotated) to STDOUT, so dropping stdout left the user with
-        // an empty, useless error. Progress still comes from polling `dest` size,
-        // never from parsing sidecar output (robust + sidecar-agnostic).
+        // No shell — argv tokens go straight to execvp. planet_url/bbox are
+        // pre-validated; maxzoom/dest are app-controlled. `.spawn()` (not `.output()`)
+        // so the loop below can poll the cancel flag and stream progress while it runs.
+        //
+        // PROGRESS comes from PARSING go-pmtiles' STDOUT, not the output file size
+        // (tuxlink-k9pg). go-pmtiles `extract` pre-allocates the output file to its
+        // FINAL size within ~2s and fills it in place, so the file size never tracks
+        // the download — polling it pinned the bar and (via the old file-growth
+        // watchdog) killed every extract longer than the timeout. go-pmtiles writes
+        // BOTH its logs and its `\r`-updated progress bar ("fetching chunks NN% |
+        // (X/Y, rate) [t:eta]") to STDOUT, which survives being piped, so we parse the
+        // transferred-byte count from it. The real error on failure (e.g. an HTTP 404
+        // when the planet build rotated) is also on stdout — kept in `captured`.
         let mut child = Command::new(&self.bin)
             .arg("extract")
             .arg(planet_url)
@@ -174,76 +180,103 @@ impl Extractor for SidecarExtractor {
             .spawn()
             .map_err(|e| DownloadError::ExtractFailed(format!("spawn go-pmtiles: {e}")))?;
 
-        // Drain stdout + stderr on their own threads so a chatty sidecar can't
-        // deadlock on a full pipe while we poll; joined after exit for the error
-        // message. go-pmtiles emits its real error on stdout, diagnostics on
-        // stderr — capture both and surface whichever is non-empty.
-        fn drain(
-            pipe: Option<impl std::io::Read + Send + 'static>,
-        ) -> Option<std::thread::JoinHandle<String>> {
-            pipe.map(|mut s| {
-                std::thread::spawn(move || {
-                    let mut buf = String::new();
-                    let _ = s.read_to_string(&mut buf);
-                    buf
-                })
-            })
-        }
-        let stdout_handle = drain(child.stdout.take());
-        let stderr_handle = drain(child.stderr.take());
+        // Shared, thread-updated state: (latest transferred-bytes parsed from the
+        // progress line, instant of the sidecar's last stdout output). Any output =
+        // liveness; silence past STALL_TIMEOUT = a dead connection.
+        let state = Arc::new(Mutex::new((0u64, Instant::now())));
+        // Non-progress stdout lines, kept for the failure message.
+        let captured = Arc::new(Mutex::new(String::new()));
 
-        // What the poll loop resolved to. The loop only decides the outcome and
-        // breaks; the drain threads are joined ONCE after the loop on EVERY path
-        // (Codex #3) — the prior code joined them only on a non-zero exit, leaking
-        // both threads on success / cancel / try_wait-error. After a natural exit
-        // or a kill+wait, the child's pipe write ends are closed, so the reads hit
-        // EOF and the joins return promptly.
+        // Apply one `\r`/`\n`-delimited stdout segment: bump liveness, and either
+        // record the transferred-bytes (progress line) or keep it as error text.
+        fn apply_segment(seg: &[u8], state: &Mutex<(u64, Instant)>, captured: &Mutex<String>) {
+            let Ok(text) = std::str::from_utf8(seg) else { return };
+            let now = Instant::now();
+            if let Some((bytes, _total)) = download::parse_pmtiles_progress(text) {
+                let mut g = state.lock().expect("download state lock poisoned");
+                g.0 = bytes;
+                g.1 = now;
+            } else {
+                state.lock().expect("download state lock poisoned").1 = now;
+                if !text.trim().is_empty() {
+                    let mut c = captured.lock().expect("captured lock poisoned");
+                    c.push_str(text);
+                    c.push('\n');
+                }
+            }
+        }
+
+        // stdout drain: read incrementally, split on \r AND \n (the progress bar uses
+        // \r to overwrite in place). BufReader so the byte-at-a-time split doesn't
+        // syscall per byte; a chatty sidecar can't deadlock us since we drain it.
+        let stdout_handle = child.stdout.take().map(|s| {
+            let state = state.clone();
+            let captured = captured.clone();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(s);
+                let mut buf: Vec<u8> = Vec::with_capacity(256);
+                let mut byte = [0u8; 1];
+                loop {
+                    match reader.read(&mut byte) {
+                        Ok(0) => break,
+                        Ok(_) => {
+                            if byte[0] == b'\r' || byte[0] == b'\n' {
+                                if !buf.is_empty() {
+                                    apply_segment(&buf, &state, &captured);
+                                    buf.clear();
+                                }
+                            } else {
+                                buf.push(byte[0]);
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if !buf.is_empty() {
+                    apply_segment(&buf, &state, &captured);
+                }
+            })
+        });
+
+        // stderr drain (empty for go-pmtiles — it puts everything on stdout — but
+        // captured so a future sidecar diagnostic isn't silently dropped).
+        let stderr_handle = child.stderr.take().map(|mut s| {
+            std::thread::spawn(move || {
+                let mut buf = String::new();
+                let _ = s.read_to_string(&mut buf);
+                buf
+            })
+        });
+
         enum Outcome {
             Exited(std::process::ExitStatus),
             Cancelled,
             Stalled,
             WaitErr(std::io::Error),
         }
-        // Stall watchdog state (tuxlink-8g28): the last `.part` size we saw grow and
-        // when. A hung sidecar (dead connection) stops growing the file but
-        // try_wait() never returns Some — without this the loop spins forever, the
-        // in-flight guard never clears, and Retry bounces with "already in progress".
-        let mut last_size: u64 = 0;
-        let mut last_growth = Instant::now();
         let outcome = loop {
             if cancel.load(Ordering::SeqCst) {
                 let _ = child.kill();
                 let _ = child.wait();
                 break Outcome::Cancelled;
             }
-            // Poll the temp size for the progress bar. A missing/locked file early
-            // on just yields 0 — not an error.
-            let written = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
-            on_progress(written);
-            // Reset the watchdog clock on any growth.
-            if written > last_size {
-                last_size = written;
-                last_growth = Instant::now();
-            }
+            // Emit the latest parsed transferred-bytes (lock released before the call).
+            let bytes = state.lock().expect("download state lock poisoned").0;
+            on_progress(bytes);
 
-            // Check exit BEFORE the stall watchdog (Codex P2): a child that has
-            // already finished — even after a static-size period — must be reported as
-            // Exited, never Stalled. The watchdog only fires for a child we've just
-            // confirmed is still running.
+            // Check exit BEFORE the watchdog: a finished child is always Exited.
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    // Final size sample before reporting completion.
-                    let written = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(written);
-                    on_progress(written);
+                    let bytes = state.lock().expect("download state lock poisoned").0;
+                    on_progress(bytes);
                     break Outcome::Exited(status);
                 }
                 Ok(None) => {
-                    // Still running: trip the watchdog only if the .part has been
-                    // static past STALL_TIMEOUT (a genuinely hung sidecar). The
-                    // timeout is a generous backstop so a slow-but-alive transfer is
-                    // never false-aborted; the operator's Cancel handles anything they
-                    // notice sooner.
-                    if download::is_stalled(last_growth.elapsed(), STALL_TIMEOUT) {
+                    // Liveness on OUTPUT recency, not file growth: a healthy extract
+                    // streams stdout continuously, so silence past STALL_TIMEOUT means
+                    // a dead connection — kill so the in-flight guard clears.
+                    let since = state.lock().expect("download state lock poisoned").1.elapsed();
+                    if download::is_stalled(since, STALL_TIMEOUT) {
                         let _ = child.kill();
                         let _ = child.wait();
                         break Outcome::Stalled;
@@ -258,14 +291,16 @@ impl Extractor for SidecarExtractor {
             }
         };
 
-        // Join both drains now, on every exit path, so neither thread leaks.
-        let stdout = stdout_handle.and_then(|h| h.join().ok()).unwrap_or_default();
+        // Join both drains so neither thread leaks (after exit/kill the child's pipe
+        // write ends close, the reads hit EOF, and the joins return promptly).
+        let _ = stdout_handle.map(|h| h.join());
         let stderr = stderr_handle.and_then(|h| h.join().ok()).unwrap_or_default();
+        let stdout = captured.lock().map(|c| c.clone()).unwrap_or_default();
 
         match outcome {
             Outcome::Cancelled => Err(DownloadError::Cancelled),
             Outcome::Stalled => Err(DownloadError::ExtractFailed(format!(
-                "download stalled: no data received for {}s — check your connection and retry",
+                "download stalled: no data from go-pmtiles for {}s — check your connection and retry",
                 STALL_TIMEOUT.as_secs()
             ))),
             Outcome::WaitErr(e) => Err(DownloadError::ExtractFailed(format!("wait go-pmtiles: {e}"))),

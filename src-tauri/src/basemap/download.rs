@@ -348,14 +348,63 @@ pub fn should_emit(
     }
 }
 
-/// Stall-watchdog predicate (tuxlink-8g28): the in-flight download is considered
-/// hung when it has made no progress (its `.part` has not grown) for at least
-/// `timeout`. The caller resets `since_last_growth` to zero whenever the file
-/// grows, so this only fires on a genuinely static transfer — at which point the
-/// sidecar is killed so the blocking thread unwinds and its in-flight guard clears.
-/// Pure so the stall policy is unit-tested without spawning a process.
-pub fn is_stalled(since_last_growth: std::time::Duration, timeout: std::time::Duration) -> bool {
-    since_last_growth >= timeout
+/// Stall-watchdog predicate (tuxlink-k9pg): the in-flight download is considered
+/// hung when the sidecar has emitted NO output for at least `timeout`. The caller
+/// resets the clock whenever go-pmtiles writes any stdout (a log line or a progress
+/// update), so this fires only on a genuinely silent (dead-connection) sidecar — at
+/// which point it is killed so the blocking thread unwinds and its in-flight guard
+/// clears. This replaces the tuxlink-8g28 file-growth watchdog, which was FATALLY
+/// WRONG: go-pmtiles pre-allocates the output file to its final size within ~2s and
+/// fills it in place, so the file never "grows" during the real multi-minute
+/// download — the old watchdog killed every extract longer than its timeout. Pure so
+/// the policy is unit-tested without spawning a process.
+pub fn is_stalled(since_last_output: std::time::Duration, timeout: std::time::Duration) -> bool {
+    since_last_output >= timeout
+}
+
+/// Parse a human-readable byte count as emitted by go-pmtiles' progress output,
+/// which uses `dustin/go-humanize` `Bytes` (decimal SI: `B`, `kB`, `MB`, `GB`,
+/// `TB`, `PB`, `EB`). e.g. `"76 MB"` → `76_000_000`, `"2.0 GB"` → `2_000_000_000`,
+/// `"149 B"` → `149`. Returns `None` for anything that is not `<number> <unit>`.
+/// Pure → unit-tested (tuxlink-k9pg).
+pub fn parse_humanize_bytes(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let split = s.find(|c: char| c.is_ascii_alphabetic())?;
+    let (num, unit) = s.split_at(split);
+    let num: f64 = num.trim().parse().ok()?;
+    if !num.is_finite() || num < 0.0 {
+        return None;
+    }
+    let mult: f64 = match unit.trim() {
+        "B" => 1.0,
+        "kB" => 1e3,
+        "MB" => 1e6,
+        "GB" => 1e9,
+        "TB" => 1e12,
+        "PB" => 1e15,
+        "EB" => 1e18,
+        _ => return None,
+    };
+    Some((num * mult) as u64)
+}
+
+/// Extract `(transferred_bytes, total_bytes)` from a single go-pmtiles `extract`
+/// progress line (written to STDOUT, `\r`-updated in place), e.g.
+/// `"fetching chunks   3% |…| (76 MB/2.0 GB, 38 MB/s) [1s:51s]"` →
+/// `Some((76_000_000, 2_000_000_000))`. The pair lives inside `(…/…` before the
+/// rate. Returns `None` for every non-progress line (log lines, blanks), so the
+/// caller can feed the whole stdout stream and keep only the matches. This is the
+/// REAL progress signal — the output file size is not (go-pmtiles pre-sizes it).
+/// Pure → unit-tested (tuxlink-k9pg).
+pub fn parse_pmtiles_progress(line: &str) -> Option<(u64, u64)> {
+    let open = line.find('(')?;
+    let close = line[open..].find(')').map(|i| i + open)?;
+    let inner = &line[open + 1..close]; // e.g. "76 MB/2.0 GB, 38 MB/s"
+    let pair = inner.split(',').next()?; // "76 MB/2.0 GB"
+    let mut halves = pair.split('/');
+    let transferred = parse_humanize_bytes(halves.next()?)?;
+    let total = parse_humanize_bytes(halves.next()?)?;
+    Some((transferred, total))
 }
 
 #[cfg(test)]
@@ -723,12 +772,58 @@ mod tests {
 
     #[test]
     fn is_stalled_trips_only_after_timeout() {
-        let timeout = Duration::from_secs(180);
-        // Just-grew / recently-grew → not stalled.
+        let timeout = Duration::from_secs(120);
+        // Recent output → not stalled.
         assert!(!is_stalled(Duration::ZERO, timeout));
-        assert!(!is_stalled(Duration::from_secs(179), timeout));
-        // At/after the timeout with no growth → stalled (boundary is inclusive).
-        assert!(is_stalled(Duration::from_secs(180), timeout));
+        assert!(!is_stalled(Duration::from_secs(119), timeout));
+        // At/after the timeout with no output → stalled (boundary is inclusive).
+        assert!(is_stalled(Duration::from_secs(120), timeout));
         assert!(is_stalled(Duration::from_secs(600), timeout));
+    }
+
+    #[test]
+    fn parse_humanize_bytes_handles_go_humanize_units() {
+        assert_eq!(parse_humanize_bytes("0 B"), Some(0));
+        assert_eq!(parse_humanize_bytes("149 B"), Some(149));
+        assert_eq!(parse_humanize_bytes("14 kB"), Some(14_000));
+        assert_eq!(parse_humanize_bytes("2.3 MB"), Some(2_300_000));
+        assert_eq!(parse_humanize_bytes("76 MB"), Some(76_000_000));
+        assert_eq!(parse_humanize_bytes("2.0 GB"), Some(2_000_000_000));
+        assert_eq!(parse_humanize_bytes(" 17 GB "), Some(17_000_000_000));
+        // Not a byte count.
+        assert_eq!(parse_humanize_bytes("8236 tiles"), None);
+        assert_eq!(parse_humanize_bytes("38 MB/s"), None); // unit "MB/s" not allowed
+        assert_eq!(parse_humanize_bytes(""), None);
+        assert_eq!(parse_humanize_bytes("garbage"), None);
+    }
+
+    #[test]
+    fn parse_pmtiles_progress_extracts_transferred_and_total() {
+        // Real go-pmtiles `extract` progress lines (observed on pmtiles 1.30.3).
+        assert_eq!(
+            parse_pmtiles_progress("fetching chunks   3% |   | (76 MB/2.0 GB, 38 MB/s) [1s:51s]"),
+            Some((76_000_000, 2_000_000_000))
+        );
+        assert_eq!(
+            parse_pmtiles_progress("fetching chunks   0% |   | ( 0 B/13 MB) [0s:0s]"),
+            Some((0, 13_000_000))
+        );
+        assert_eq!(
+            parse_pmtiles_progress("fetching chunks  47% |   | (4.3 GB/9.3 GB, 24 MB/s) [3m:4m]"),
+            Some((4_300_000_000, 9_300_000_000))
+        );
+    }
+
+    #[test]
+    fn parse_pmtiles_progress_ignores_non_progress_lines() {
+        // Log lines + the completion line must NOT be mistaken for progress.
+        assert_eq!(parse_pmtiles_progress("extract.go:373: fetching 14 dirs, 14 chunks, 2 requests"), None);
+        assert_eq!(parse_pmtiles_progress("Region tiles 852343, result tile entries 418331"), None);
+        assert_eq!(
+            parse_pmtiles_progress("Completed in 50.45s with 4 download threads (8236.56 tiles/s)."),
+            None
+        );
+        assert_eq!(parse_pmtiles_progress(""), None);
+        assert_eq!(parse_pmtiles_progress("                    "), None);
     }
 }
