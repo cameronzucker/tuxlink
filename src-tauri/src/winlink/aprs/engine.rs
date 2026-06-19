@@ -904,6 +904,10 @@ impl EventSink for TauriEventSink {
         let _ = self.app.emit("aprs-message:state", &ev);
     }
     fn emit_listening(&self, on: bool) {
+        // tuxlink-xyi7: log every listening transition so a frontend listening-state
+        // desync (UI shows Off while the engine is still listening) can be correlated
+        // against backend truth in the structured log.
+        tracing::info!(target: "tuxlink::aprs", on, "APRS listening state changed");
         let _ = self.app.emit("aprs-listening:change", on);
     }
     fn emit_position(&self, ev: InboundPos) {
