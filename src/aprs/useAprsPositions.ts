@@ -71,6 +71,7 @@ export function useAprsPositions(): UseAprsPositions {
           symbolCode: p.symbolCode,
           comment: p.comment,
           ambiguity: p.ambiguity,
+          via: p.via ?? [],
           at: Date.now(),
         });
         // Sweep on every fix too, so a busy channel keeps the set trimmed

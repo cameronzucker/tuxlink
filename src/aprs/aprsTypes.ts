@@ -77,6 +77,15 @@ export interface HeardStation {
   lastHeard: number;
 }
 
+/// One hop in a heard frame's digipeater via-chain, mirroring the Rust `ViaHop`
+/// (serde camelCase). `repeated` is the AX.25 H-bit: true means this digipeater
+/// actually relayed the frame (vs. a requested-but-unused alias). Used to animate
+/// the honest digipeat path on the map (cn84).
+export interface ViaHop {
+  call: string;
+  repeated: boolean;
+}
+
 /// Payload of `aprs-position:new` — a position report decoded from a frame heard
 /// on the channel (RX-only). Mirrors the Rust `InboundPos` (serde camelCase):
 /// `sender` is the transmitting callsign; lat/lon/symbol/comment are exactly
@@ -97,6 +106,8 @@ export interface InboundPosDto {
   /// full-precision fix; higher means the sender masked low-order minute digits,
   /// so the map must plot a region of uncertainty, not a false-exact pin.
   ambiguity: number;
+  /// Digipeater via-chain in on-wire order. Absent on legacy payloads ⇒ `[]`.
+  via?: ViaHop[];
 }
 
 /// A heard station's most-recent decoded position, accumulated by
@@ -113,6 +124,9 @@ export interface HeardPosition {
   /// APRS position-ambiguity level (0–4) carried from the decoded report, so the
   /// map can plot an uncertainty region for masked fixes instead of a sharp pin.
   ambiguity: number;
+  /// The latest heard frame's digipeater via-chain for this station (latest-
+  /// position-wins, like the coordinates). `[]` for a directly-heard / legacy fix.
+  via: ViaHop[];
 }
 
 /// One analog telemetry channel from a heard `aprs-telemetry:new` frame.
