@@ -84,4 +84,16 @@ describe('badgeContent (RF-honesty)', () => {
       glyph: null,
     });
   });
+  it('never shows a telemetry channel as the badge primary (mixed station)', () => {
+    // A rain-only weather station that also emits telemetry (battery voltage).
+    const e = env(
+      'W',
+      [{ key: 'tlm:Vbat', kind: 'generic', value: 13, unit: 'V' }],
+      { in1h: 0.3, in24h: null, sinceMidnight: null },
+    );
+    const b = badgeContent(e);
+    expect(b.primary).not.toContain('13');
+    expect(b.primary).toContain('rain');
+    expect(b.glyph).toBe('🌧');
+  });
 });

@@ -19,6 +19,10 @@ export interface WxStation {
   call: string;
   lat: number;
   lon: number;
+  /// APRS position-ambiguity level (0–4) carried from the heard position, so the
+  /// badge plots at the SAME honest cell-centre as the pin (never the false-exact
+  /// low corner of a masked fix).
+  ambiguity: number;
   env: EnvStation;
   /// Local epoch-ms of the latest frame (from EnvStation.lastHeard).
   at: number;
@@ -33,7 +37,7 @@ export function joinWxStations(env: EnvStation[], positions: HeardPosition[]): W
     if (!hasWeather(e)) continue;
     const p = posByCall.get(e.call);
     if (!p) continue;
-    out.push({ call: e.call, lat: p.lat, lon: p.lon, env: e, at: e.lastHeard });
+    out.push({ call: e.call, lat: p.lat, lon: p.lon, ambiguity: p.ambiguity, env: e, at: e.lastHeard });
   }
   return out;
 }
@@ -49,8 +53,13 @@ export function badgeContent(env: EnvStation): { primary: string; glyph: string 
   if (temp) primary = `${Math.round(temp.value)}°F`;
   else if (wind) primary = `${Math.round(wind.value)} mph`;
   else {
-    const first = env.channels[0];
-    primary = first ? `${Math.round(first.value)} ${first.unit}`.trim() : '—';
+    // Fallback must stay WEATHER-only: a mixed station's `channels` can carry
+    // `tlm:` channels (e.g. battery voltage) ahead of the weather data, so pick a
+    // present `wx:` channel — never the first merged channel regardless of source.
+    const firstWx = env.channels.find((c) => c.key.startsWith('wx:'));
+    if (firstWx) primary = `${Math.round(firstWx.value)} ${firstWx.unit}`.trim();
+    else if (rain1h != null) primary = `${rain1h}" rain`;
+    else primary = '—';
   }
 
   let glyph: string | null = null;

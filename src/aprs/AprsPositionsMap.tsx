@@ -102,8 +102,16 @@ const WX_BADGE_LAYERS = (
     },
   ] as unknown[]
 ).map((l) => l as Record<string, unknown> & { id: string });
-// The pin layers a category filter hides when a non-"all" category is active.
-const FILTERABLE_PIN_LAYERS = [POSITION_PINS_COLOR_LAYER, POSITION_PINS_GREY_LAYER, POSITION_LABELS_LAYER];
+// The layers a category filter hides when a non-"all" category is active. Includes
+// the uncertainty halo layers (also keyed by `call`) so a filtered-out ambiguous
+// station leaves no orphan disc behind (Codex ni5b review).
+const FILTERABLE_LAYERS = [
+  POSITION_PINS_COLOR_LAYER,
+  POSITION_PINS_GREY_LAYER,
+  POSITION_LABELS_LAYER,
+  UNCERTAINTY_FILL_LAYER,
+  UNCERTAINTY_LINE_LAYER,
+];
 
 /// A fix not re-heard within this long is shown dimmed (and its age is surfaced
 /// in the popup). The hook drops it entirely after a longer TTL.
@@ -128,7 +136,7 @@ export function ambiguityRadiusMeters(level: number): number {
 /// zero-fills masked minute digits), so plot the cell CENTRE — half a cell
 /// toward increasing magnitude on each axis — and let the region circumscribe
 /// the box. A full-precision fix is returned unchanged.
-function cellCenter(p: HeardPosition): { lon: number; lat: number } {
+function cellCenter(p: { lat: number; lon: number; ambiguity: number }): { lon: number; lat: number } {
   const l = Math.max(0, Math.min(4, Math.floor(p.ambiguity)));
   const offDeg = AMBIGUITY_HALF_MINUTES[l] / 60;
   if (offDeg === 0) return { lon: p.lon, lat: p.lat };
@@ -502,17 +510,20 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
   );
 }
 
-/// One badge feature per weather station: a temperature-led label at its fix.
+/// One badge feature per weather station: a temperature-led label at the SAME
+/// honest location as the pin — `cellCenter` for an ambiguous fix, not the
+/// false-exact low corner (Codex ni5b review).
 function wxBadgeFC(wx: WxStation[]): FeatureCollection {
   return {
     type: 'FeatureCollection',
     features: wx.map((w) => {
       const b = badgeContent(w.env);
+      const c = cellCenter({ lat: w.lat, lon: w.lon, ambiguity: w.ambiguity });
       return {
         type: 'Feature',
         id: w.call,
         properties: { call: w.call, badge: b.glyph ? `${b.primary} ${b.glyph}` : b.primary },
-        geometry: { type: 'Point', coordinates: [w.lon, w.lat] },
+        geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
       };
     }),
   };
@@ -572,18 +583,31 @@ function WxOverlay({
     };
   }, [map]);
 
-  // Category filter: hide non-matching pins when a non-"all" category is active.
-  // (`setFilter` is absent on the test double — guarded; verified by smoke.)
+  // Category filter: hide non-matching stations when a non-"all" category is
+  // active. Reapplied on `styledata` because a flavor/pack change drops + re-adds
+  // the layers (losing their filter) — mirrors usePushData's re-push (Codex
+  // review). (`setFilter` is absent on the test double — guarded; verified by smoke.)
   useEffect(() => {
     if (!map) return;
-    const m = map as unknown as { setFilter?: (layer: string, filter: unknown) => void };
+    const m = map as unknown as {
+      setFilter?: (layer: string, filter: unknown) => void;
+      on: (t: string, h: (...a: unknown[]) => void) => unknown;
+      off: (t: string, h: (...a: unknown[]) => void) => unknown;
+    };
     if (!m.setFilter) return;
-    const cat = categoryByKey(category);
-    const weatherCalls = wx.map((w) => w.call);
-    for (const layer of FILTERABLE_PIN_LAYERS) {
-      if (cat.key === 'all') m.setFilter(layer, null);
-      else m.setFilter(layer, ['in', ['get', 'call'], ['literal', weatherCalls]]);
-    }
+    const apply = () => {
+      const cat = categoryByKey(category);
+      const weatherCalls = wx.map((w) => w.call);
+      for (const layer of FILTERABLE_LAYERS) {
+        if (cat.key === 'all') m.setFilter?.(layer, null);
+        else m.setFilter?.(layer, ['in', ['get', 'call'], ['literal', weatherCalls]]);
+      }
+    };
+    apply();
+    m.on('styledata', apply as (...a: unknown[]) => void);
+    return () => {
+      m.off('styledata', apply as (...a: unknown[]) => void);
+    };
   }, [map, category, wx]);
 
   const hovered = hoverCall ? wxByCall.get(hoverCall) : undefined;

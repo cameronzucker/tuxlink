@@ -19,15 +19,19 @@ export interface EnvPanelProps {
   /// When set, scroll this station's card into view + briefly highlight it.
   /// Threaded from a map WX-badge click (ni5b). Unset = unchanged behaviour.
   focusCall?: string | null;
+  /// Bumped per focus request so re-clicking the SAME station re-runs the scroll
+  /// (a bare `focusCall` wouldn't change between identical clicks) (Codex review).
+  focusNonce?: number;
 }
 
-export function EnvPanel({ stations, now = Date.now(), focusCall = null }: EnvPanelProps) {
+export function EnvPanel({ stations, now = Date.now(), focusCall = null, focusNonce = 0 }: EnvPanelProps) {
   const focusRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (focusCall && focusRef.current) {
       focusRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-  }, [focusCall]);
+    // focusNonce in deps: re-run on each click even if focusCall is unchanged.
+  }, [focusCall, focusNonce]);
 
   if (stations.length === 0) {
     return (
