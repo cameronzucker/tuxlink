@@ -124,3 +124,19 @@
 }
 .aprs-wx-card__call { color: #8cc4ff; font-weight: 600; }
 .aprs-wx-card__list { margin: 4px 0 0; padding-left: 16px; }
+
+/* ni5b: weather snapshot export button. */
+.aprs-wx-export {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 2;
+  background: #11283b;
+  color: #dcebf6;
+  border: 1px solid #2c4a63;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.aprs-wx-export:hover { background: #163448; }

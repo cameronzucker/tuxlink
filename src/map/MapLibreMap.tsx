@@ -157,6 +157,11 @@ export function MapLibreMap({
     try {
       const instance = new maplibregl.Map({
         container: containerRef.current,
+        // ni5b: keep the GL drawing buffer readable so the weather-map PNG
+        // snapshot can capture the canvas (getCanvas().toDataURL()). Small memory
+        // cost; safe on this target. Cast: valid maplibre runtime option missing
+        // from this version's MapOptions typings.
+        preserveDrawingBuffer: true,
         // Construct WITH the packs known at mount (B2) — the module cache makes a
         // remount carry packs so the async fetchPacks resolution is a no-op.
         style: buildBasemapStyle(flavorRef.current, constructPacksRef.current),
@@ -178,7 +183,7 @@ export function MapLibreMap({
         // We add the AttributionControl explicitly so "© OpenStreetMap
         // contributors" (ODbL) renders from the source attribution.
         attributionControl: false,
-      });
+      } as maplibregl.MapOptions);
       instance.addControl(new maplibregl.AttributionControl({ compact: false }));
       instance.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
       // Distance scale (tuxlink-hzwc bug #7). The ham audience is mixed-unit, so

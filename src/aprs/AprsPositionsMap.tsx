@@ -36,6 +36,7 @@ import {
 import type { HeardPosition } from './aprsTypes';
 import { joinWxStations, badgeContent, type WxStation } from './wxStations';
 import { CATEGORIES, categoryByKey } from './stationCategories';
+import { composeSnapshotHeader } from './wxSnapshot';
 import type { EnvStation } from './envStations';
 import './AprsPositionsMap.css';
 
@@ -603,6 +604,48 @@ function WxOverlay({
   );
 }
 
+/// Composite the live map canvas + a SITREP header strip into a PNG and download
+/// it (ni5b). Optional/on-demand — images are large; the Winlink text report is
+/// hepq's job. `preserveDrawingBuffer` (set on the map) makes the canvas readable.
+function exportWxSnapshot(map: NonNullable<ReturnType<typeof useMapContext>>, grid: string | undefined, stationCount: number) {
+  const src = map.getCanvas();
+  const header = composeSnapshotHeader({ grid, utcMs: Date.now(), stationCount });
+  const HEADER_H = 28;
+  const out = document.createElement('canvas');
+  out.width = src.width;
+  out.height = src.height + HEADER_H;
+  const ctx = out.getContext('2d');
+  if (!ctx) return;
+  ctx.fillStyle = '#0b1218';
+  ctx.fillRect(0, 0, out.width, HEADER_H);
+  ctx.fillStyle = '#ffe0a3';
+  ctx.font = '14px sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(header, 10, HEADER_H / 2);
+  ctx.drawImage(src, 0, HEADER_H);
+  const a = document.createElement('a');
+  a.href = out.toDataURL('image/png');
+  a.download = `tuxlink-wx-${Date.now()}.png`;
+  a.click();
+}
+
+/// The "Export PNG" snapshot button (ni5b). A child of the map so it can read the
+/// GL canvas; positioned in the map corner.
+function WxExportControl({ grid, stationCount }: { grid?: string; stationCount: number }) {
+  const map = useMapContext();
+  if (!map) return null;
+  return (
+    <button
+      type="button"
+      className="aprs-wx-export"
+      data-testid="aprs-wx-export"
+      onClick={() => exportWxSnapshot(map, grid, stationCount)}
+    >
+      Export PNG
+    </button>
+  );
+}
+
 /// The category filter control ("weather mode"): a small select in the map corner.
 function WxFilterControl({ category, onChange }: { category: string; onChange: (key: string) => void }) {
   return (
@@ -668,6 +711,7 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
       >
         <PositionLayers positions={positions} />
         <WxOverlay wx={wx} category={category} onFocusStation={onFocusStation} />
+        <WxExportControl grid={operatorGrid || undefined} stationCount={wx.length} />
         <OperatorPin location={me} />
         <RecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </MapLibreMap>

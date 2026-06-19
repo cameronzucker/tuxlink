@@ -354,6 +354,8 @@ export function AppShell() {
   // Whether the heard-positions map is expanded into the reading-pane region.
   const [aprsMapOpen, setAprsMapOpen] = useState(false);
   const [dockTab, setDockTab] = useState<'aprs' | 'modem' | 'stations'>('aprs');
+  // ni5b: a WX-badge click on the map focuses this station's Station Data card.
+  const [focusCall, setFocusCall] = useState<string | null>(null);
   const [aprsSeenAt, setAprsSeenAt] = useState(0);
   // tuxlink-hzwc bug #11: "unread" must count traffic heard WHILE AWAY from the
   // APRS Chat tab (a sense of channel volume), and clear as the operator reads.
@@ -1544,6 +1546,11 @@ export function AppShell() {
                 <AprsPositionsMap
                   positions={aprsPositions.positions}
                   operatorGrid={statusData.grid ?? undefined}
+                  envStations={envStations.stations}
+                  onFocusStation={(call) => {
+                    setDockTab('stations');
+                    setFocusCall(call);
+                  }}
                 />
               </Suspense>
             );
@@ -1687,7 +1694,7 @@ export function AppShell() {
             />
             {dockTab === 'stations' ? (
               <Suspense fallback={null}>
-                <EnvPanel stations={envStations.stations} />
+                <EnvPanel stations={envStations.stations} focusCall={focusCall} />
               </Suspense>
             ) : dockTab === 'aprs' ? (
               <>
