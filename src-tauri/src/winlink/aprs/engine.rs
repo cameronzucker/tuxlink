@@ -37,7 +37,7 @@ use std::sync::Arc;
 
 use tauri::Emitter;
 
-use crate::winlink::ax25::frame::Frame;
+use crate::winlink::ax25::frame::{decode_digi_hbits, Frame};
 use crate::winlink::ax25::kiss::{kiss_data_frame, KissDecoder};
 
 use super::dedupe::{DedupeCache, DedupeKey};
@@ -145,6 +145,17 @@ pub struct StateChange {
 /// `symbolTable` / `symbolCode`. Emitted whenever a heard frame carries a
 /// well-formed (uncompressed / compressed / Mic-E) position report — separate
 /// from, and in addition to, any message decode of the same frame.
+/// One hop in a heard frame's digipeater via-chain, in on-wire order. `repeated`
+/// is the AX.25 H-bit: true means this digipeater actually relayed the frame (vs.
+/// a requested-but-unused alias). Mirrors the frontend `ViaHop`; serializes
+/// camelCase so the `aprs-position:new` payload reads `{ call, repeated }`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViaHop {
+    pub call: String,
+    pub repeated: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboundPos {
@@ -165,6 +176,11 @@ pub struct InboundPos {
     /// full-precision fix; higher means the sender masked low-order minute
     /// digits, so the UI must plot a region, not a false-exact pin (RF-honesty).
     pub ambiguity: u8,
+    /// The frame's digipeater via-chain (callsign-SSID, in on-wire order) with
+    /// each hop's has-been-repeated flag. Empty for a directly-heard frame. Lets
+    /// the map animate the honest digipeat path (cn84). Always serialized; the TS
+    /// DTO treats it as optional so an older payload degrades to an empty chain.
+    pub via: Vec<ViaHop>,
 }
 
 /// Side-effect sink the engine emits into. The async driver implements this with
@@ -275,7 +291,22 @@ impl AprsEngine {
         // (`parse_info` returns None for it), so this must precede the message
         // early-return. The AX.25 destination callsign (base call, SSID
         // stripped) carries Mic-E latitude, so it is passed to `parse_mice`.
-        self.try_emit_position(&sender, &frame.path.dest.call, &info, now_ms);
+        // The traversed via-chain: each requested digi (callsign-SSID) paired
+        // with its on-wire H-bit, recovered from the raw frame (Path::decode
+        // discards the H-bit). `hbits` is index-parallel to `digis`; a malformed
+        // address field yields an empty `hbits`, so an absent flag reads false.
+        let hbits = decode_digi_hbits(body);
+        let via: Vec<ViaHop> = frame
+            .path
+            .digis
+            .iter()
+            .enumerate()
+            .map(|(i, d)| ViaHop {
+                call: fmt_callsign(d),
+                repeated: hbits.get(i).copied().unwrap_or(false),
+            })
+            .collect();
+        self.try_emit_position(&sender, &frame.path.dest.call, via, &info, now_ms);
 
         let payload = match parse_info(&info) {
             Some(p) => p,
@@ -538,7 +569,7 @@ impl AprsEngine {
     /// Dedupe is keyed by `sender` + the decoded coordinates+symbol, so a
     /// re-beacon of an unchanged fix (or a digipeated duplicate) is suppressed
     /// while a MOVE (new coordinates) emits immediately — latest-position-wins.
-    fn try_emit_position(&mut self, sender: &str, dest: &str, info: &[u8], now_ms: u64) {
+    fn try_emit_position(&mut self, sender: &str, dest: &str, via: Vec<ViaHop>, info: &[u8], now_ms: u64) {
         // An OBJECT (`;`) / ITEM (`)`) report carries the position of a NAMED
         // entity (a weather object, event marker, ARES asset, …), not the
         // sender's own location. A killed (`_`) object/item is a tombstone — not
@@ -611,6 +642,7 @@ impl AprsEngine {
             symbol_code: pos.symbol_code,
             comment: pos.comment,
             ambiguity: pos.ambiguity,
+            via,
         });
     }
 }
@@ -1014,6 +1046,60 @@ mod tests {
             info: info.to_vec(),
         };
         kiss_data_frame(&f.encode().unwrap())
+    }
+
+    /// Build a KISS-wrapped UI frame with a hand-laid address field so each
+    /// digipeater's H-bit is controllable (`Path::encode` always writes H=0 on
+    /// TX, so `inbound_with` can't exercise the via-chain). `digis` entries are
+    /// `(call, ssid, repeated)`. UI frame = address ++ 0x03 (UI) ++ 0xF0 (PID).
+    fn inbound_via(src: &str, digis: &[(&str, u8, bool)], info: &[u8]) -> Vec<u8> {
+        let dest = Address { call: "APZTUX".into(), ssid: 0 };
+        let source = Address { call: src.into(), ssid: 0 };
+        let mut ax25 = Vec::new();
+        ax25.extend_from_slice(&dest.encode(true, false));
+        ax25.extend_from_slice(&source.encode(false, digis.is_empty()));
+        for (i, (call, ssid, h)) in digis.iter().enumerate() {
+            let last = i == digis.len() - 1;
+            ax25.extend_from_slice(&Address { call: (*call).into(), ssid: *ssid }.encode(*h, last));
+        }
+        ax25.push(0x03); // Control::Ui
+        ax25.push(0xF0); // PID: no layer 3
+        ax25.extend_from_slice(info);
+        kiss_data_frame(&ax25)
+    }
+
+    #[test]
+    fn heard_position_surfaces_traversed_via_chain() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        // KE7XYZ-9 beacon digipeated by W7RPT-1 (H=1), requested WIDE2-1 (H=0).
+        engine.handle_inbound_bytes(
+            &inbound_via(
+                "KE7XYZ",
+                &[("W7RPT", 1, true), ("WIDE2", 1, false)],
+                b"!4903.50N/07201.75W-mobile",
+            ),
+            1000,
+        );
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 1);
+        assert_eq!(
+            pos[0].via,
+            vec![
+                ViaHop { call: "W7RPT-1".into(), repeated: true },
+                ViaHop { call: "WIDE2-1".into(), repeated: false },
+            ],
+        );
+    }
+
+    #[test]
+    fn heard_direct_position_has_empty_via_chain() {
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.handle_inbound_bytes(&inbound_with("KK6XYZ", b"!4903.50N/07201.75W-direct"), 1000);
+        let pos = sink.positions.lock().unwrap();
+        assert_eq!(pos.len(), 1);
+        assert!(pos[0].via.is_empty(), "a directly-heard frame carries no via-chain");
     }
 
     #[test]
