@@ -34,6 +34,9 @@ import {
   type SpriteMap,
 } from '../map/aprsSprites';
 import type { HeardPosition } from './aprsTypes';
+import { joinWxStations, badgeContent, type WxStation } from './wxStations';
+import { CATEGORIES, categoryByKey } from './stationCategories';
+import type { EnvStation } from './envStations';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
@@ -42,6 +45,12 @@ export interface AprsPositionsMapProps {
   /// Operator Maidenhead grid (statusData.ui_grid). First-run map center; the
   /// recenter control flies here. Empty / absent = no known position.
   operatorGrid?: string;
+  /// Heard environmental view-models (weather/telemetry), from useEnvStations.
+  /// Joined with positions to render WX badges (ni5b). Absent = no WX overlay.
+  envStations?: EnvStation[];
+  /// Click a WX badge → focus that station's Station Data card (ni5b). Wired by
+  /// AppShell to switch the dock to the stations tab + scroll to the call.
+  onFocusStation?: (call: string) => void;
 }
 
 /// First-run / recenter zoom on the operator. APRS is local VHF, so this is a
@@ -65,6 +74,35 @@ const UNCERTAINTY_LINE_LAYER = 'aprs-position-uncertainty-outline';
 // a received fix).
 const OPERATOR_SOURCE = 'aprs-operator';
 const OPERATOR_PIN_LAYER = 'aprs-operator-pin';
+
+// ni5b: weather stations render a temperature-led badge above their pin (the
+// previously information-less WX marker). One amber text symbol per heard
+// weather station with a position. Click → Station Data card; hover → full card.
+const WX_BADGE_SOURCE = 'aprs-wx-badge';
+const WX_BADGE_LAYER = 'aprs-wx-badge';
+const WX_BADGE_LAYERS = (
+  [
+    {
+      id: WX_BADGE_LAYER,
+      type: 'symbol',
+      source: WX_BADGE_SOURCE,
+      layout: {
+        'text-field': ['get', 'badge'],
+        'text-size': 12,
+        'text-offset': [0, -1.7],
+        'text-anchor': 'bottom',
+        'text-allow-overlap': true,
+      },
+      paint: {
+        'text-color': '#ffe0a3',
+        'text-halo-color': '#0c1620',
+        'text-halo-width': 1.4,
+      },
+    },
+  ] as unknown[]
+).map((l) => l as Record<string, unknown> & { id: string });
+// The pin layers a category filter hides when a non-"all" category is active.
+const FILTERABLE_PIN_LAYERS = [POSITION_PINS_COLOR_LAYER, POSITION_PINS_GREY_LAYER, POSITION_LABELS_LAYER];
 
 /// A fix not re-heard within this long is shown dimmed (and its age is surfaced
 /// in the popup). The hook drops it entirely after a longer TTL.
@@ -463,6 +501,130 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
   );
 }
 
+/// One badge feature per weather station: a temperature-led label at its fix.
+function wxBadgeFC(wx: WxStation[]): FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: wx.map((w) => {
+      const b = badgeContent(w.env);
+      return {
+        type: 'Feature',
+        id: w.call,
+        properties: { call: w.call, badge: b.glyph ? `${b.primary} ${b.glyph}` : b.primary },
+        geometry: { type: 'Point', coordinates: [w.lon, w.lat] },
+      };
+    }),
+  };
+}
+
+/// Weather overlay (ni5b): temperature badges, a hover card with the full reading,
+/// click → Station Data, and the category filter that hides non-matching pins.
+function WxOverlay({
+  wx,
+  category,
+  onFocusStation,
+}: {
+  wx: WxStation[];
+  category: string;
+  onFocusStation?: (call: string) => void;
+}) {
+  const map = useMapContext();
+  useMapOverlay(map, WX_BADGE_SOURCE, { type: 'geojson', data: EMPTY_FC }, WX_BADGE_LAYERS);
+  const fc = useMemo(() => wxBadgeFC(wx), [wx]);
+  usePushData(map, WX_BADGE_SOURCE, fc);
+
+  const onFocusRef = useRef(onFocusStation);
+  onFocusRef.current = onFocusStation;
+  const wxByCall = useMemo(() => {
+    const m = new Map<string, WxStation>();
+    for (const w of wx) m.set(w.call, w);
+    return m;
+  }, [wx]);
+  const [hoverCall, setHoverCall] = useState<string | null>(null);
+
+  // Click a badge → focus its Station Data card.
+  useEffect(() => {
+    if (!map) return;
+    const onClick = (e: { features?: Array<{ properties?: { call?: unknown } }> }) => {
+      const call = e.features?.[0]?.properties?.call;
+      if (call != null) onFocusRef.current?.(String(call));
+    };
+    map.on('click', WX_BADGE_LAYER, onClick as (...a: unknown[]) => void);
+    return () => {
+      map.off('click', WX_BADGE_LAYER, onClick as (...a: unknown[]) => void);
+    };
+  }, [map]);
+
+  // Hover a badge → show the full WX card (B).
+  useEffect(() => {
+    if (!map) return;
+    const enter = (e: { features?: Array<{ properties?: { call?: unknown } }> }) => {
+      const call = e.features?.[0]?.properties?.call;
+      if (call != null) setHoverCall(String(call));
+    };
+    const leave = () => setHoverCall(null);
+    map.on('mouseenter', WX_BADGE_LAYER, enter as (...a: unknown[]) => void);
+    map.on('mouseleave', WX_BADGE_LAYER, leave as (...a: unknown[]) => void);
+    return () => {
+      map.off('mouseenter', WX_BADGE_LAYER, enter as (...a: unknown[]) => void);
+      map.off('mouseleave', WX_BADGE_LAYER, leave as (...a: unknown[]) => void);
+    };
+  }, [map]);
+
+  // Category filter: hide non-matching pins when a non-"all" category is active.
+  // (`setFilter` is absent on the test double — guarded; verified by smoke.)
+  useEffect(() => {
+    if (!map) return;
+    const m = map as unknown as { setFilter?: (layer: string, filter: unknown) => void };
+    if (!m.setFilter) return;
+    const cat = categoryByKey(category);
+    const weatherCalls = wx.map((w) => w.call);
+    for (const layer of FILTERABLE_PIN_LAYERS) {
+      if (cat.key === 'all') m.setFilter(layer, null);
+      else m.setFilter(layer, ['in', ['get', 'call'], ['literal', weatherCalls]]);
+    }
+  }, [map, category, wx]);
+
+  const hovered = hoverCall ? wxByCall.get(hoverCall) : undefined;
+  if (!hovered) return null;
+  return (
+    <div className="aprs-wx-card" role="status" data-testid="aprs-wx-card">
+      <span className="aprs-wx-card__call">{hovered.call}</span>
+      <ul className="aprs-wx-card__list">
+        {hovered.env.channels.map((c) => (
+          <li key={c.key}>
+            {c.label}: {Math.round(c.value)}
+            {c.unit ? ` ${c.unit}` : ''}
+          </li>
+        ))}
+        {hovered.env.rain?.in1h != null && <li>Rain 1h: {hovered.env.rain.in1h}&quot;</li>}
+      </ul>
+    </div>
+  );
+}
+
+/// The category filter control ("weather mode"): a small select in the map corner.
+function WxFilterControl({ category, onChange }: { category: string; onChange: (key: string) => void }) {
+  return (
+    <div className="aprs-wx-filter" data-testid="aprs-wx-filter">
+      <label className="aprs-wx-filter__label">
+        Show{' '}
+        <select
+          value={category}
+          onChange={(e) => onChange(e.target.value)}
+          data-testid="aprs-wx-filter-select"
+        >
+          {CATEGORIES.map((c) => (
+            <option key={c.key} value={c.key}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
 /// The operator's own position pin ("you"). Sourced from the operator grid, not a
 /// decoded beacon — drawn distinctly so it never reads as a heard station.
 function OperatorPin({ location }: { location: { lat: number; lon: number } | null }) {
@@ -484,7 +646,7 @@ function OperatorPin({ location }: { location: { lat: number; lon: number } | nu
   return null;
 }
 
-export function AprsPositionsMap({ positions, operatorGrid }: AprsPositionsMapProps) {
+export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocusStation }: AprsPositionsMapProps) {
   const me = operatorGrid ? gridToLatLon(operatorGrid) : null;
   // tuxlink-dwzu: remember + restore the operator's last viewport so the map
   // opens where it was left. First run (no saved view) centers on the operator
@@ -493,14 +655,19 @@ export function AprsPositionsMap({ positions, operatorGrid }: AprsPositionsMapPr
   const { saved, onViewportChange } = usePersistedViewport('tuxlink:map-viewport:aprs');
   const initialCenter = saved ? saved.center : (me ?? undefined);
   const initialZoom = saved ? saved.zoom : me ? OPERATOR_ZOOM : 2;
+  // ni5b: the station-category filter ("weather mode"). 'all' by default.
+  const [category, setCategory] = useState('all');
+  const wx = useMemo(() => joinWxStations(envStations ?? [], positions), [envStations, positions]);
   return (
     <div className="aprs-positions-map" data-testid="aprs-positions-map">
+      <WxFilterControl category={category} onChange={setCategory} />
       <MapLibreMap
         initialCenter={initialCenter}
         initialZoom={initialZoom}
         onViewportChange={onViewportChange}
       >
         <PositionLayers positions={positions} />
+        <WxOverlay wx={wx} category={category} onFocusStation={onFocusStation} />
         <OperatorPin location={me} />
         <RecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </MapLibreMap>

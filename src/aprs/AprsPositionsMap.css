@@ -86,3 +86,41 @@
   color: var(--muted, #9fb6cc);
   word-break: break-word;
 }
+
+/* ni5b: weather overlay — category filter control + hover WX card. */
+.aprs-wx-filter {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  background: #0e1a24ee;
+  border: 1px solid #2c4a63;
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #c7d4df;
+}
+.aprs-wx-filter__label { display: inline-flex; align-items: center; gap: 6px; }
+.aprs-wx-filter select {
+  background: #11283b;
+  color: #dcebf6;
+  border: 1px solid #2c4a63;
+  border-radius: 6px;
+  padding: 1px 4px;
+}
+.aprs-wx-card {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  background: #0e1a24f2;
+  border: 1px solid #2c4a63;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #c7d4df;
+  max-width: 200px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+}
+.aprs-wx-card__call { color: #8cc4ff; font-weight: 600; }
+.aprs-wx-card__list { margin: 4px 0 0; padding-left: 16px; }
