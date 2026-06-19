@@ -270,15 +270,23 @@ mod ui_frame_tests {
 pub struct Path {
     pub dest: Address,
     pub src: Address,
-    pub digis: Vec<Address>, // 0..=2
+    pub digis: Vec<Address>, // 0..=8 (AX.25 v2.2 §2.2.13)
 }
+
+/// Max digipeater addresses in an AX.25 address field (v2.2 §2.2.13). Real APRS
+/// frames commonly carry 3+ (a fill-in digi + WIDEn-N expansions); capping at 2
+/// silently discarded every long-path station — notably mountaintop weather
+/// assets heard via a relay chain (tuxlink-j5cj).
+const MAX_DIGIS: usize = 8;
+/// Total address fields = destination + source + up to [`MAX_DIGIS`] digipeaters.
+const MAX_ADDRS: usize = 2 + MAX_DIGIS;
 
 impl Path {
     /// Encode the address path with the AX.25 v2.2 command/response C-bits set per
     /// `command` (see [`Control::is_command`]): a command frame sets dest C=1, src C=0;
     /// a response sets dest C=0, src C=1. The two are always inverse in v2.2.
     pub fn encode(&self, command: bool) -> Result<Vec<u8>, FrameError> {
-        if self.digis.len() > 2 {
+        if self.digis.len() > MAX_DIGIS {
             return Err(FrameError::BadAddressLength);
         }
         let mut out = Vec::with_capacity(7 * (2 + self.digis.len()));
@@ -306,8 +314,9 @@ impl Path {
             if last {
                 break;
             }
-            if addrs.len() >= 4 {
-                // dest + src + 2 digis max
+            if addrs.len() >= MAX_ADDRS {
+                // dest + src + up to MAX_DIGIS digipeaters; a frame whose
+                // last-address bit never arrives by here is malformed.
                 return Err(FrameError::BadAddressLength);
             }
         }
@@ -348,9 +357,9 @@ pub fn decode_digi_hbits(bytes: &[u8]) -> Vec<bool> {
         if last {
             break;
         }
-        if idx >= 4 {
-            // dest + src + 2 digis is the AX.25 maximum; stop even if a malformed
-            // frame never set the last-address bit.
+        if idx >= MAX_ADDRS {
+            // dest + src + MAX_DIGIS digipeaters is the AX.25 maximum; stop even
+            // if a malformed frame never set the last-address bit.
             break;
         }
     }
@@ -420,17 +429,65 @@ mod path_tests {
         assert_eq!(used, 21);
     }
     #[test]
-    fn rejects_more_than_two_digis() {
+    fn accepts_three_digi_path_roundtrip() {
+        // tuxlink-j5cj: a 3-digipeater path is valid AX.25 (the old cap of 2 wrongly
+        // rejected it). Encode + decode must round-trip.
+        let p = Path {
+            dest: Address { call: "APRS".into(), ssid: 0 },
+            src: Address { call: "KG7KID".into(), ssid: 7 },
+            digis: vec![
+                Address { call: "MINGUS".into(), ssid: 0 },
+                Address { call: "W7MOT".into(), ssid: 3 },
+                Address { call: "WIDE2".into(), ssid: 0 },
+            ],
+        };
+        let bytes = p.encode(true).expect("3 digis is within the AX.25 limit");
+        let (decoded, used) = Path::decode(&bytes).unwrap();
+        assert_eq!(decoded, p);
+        assert_eq!(used, 7 * 5); // dest + src + 3 digis
+    }
+
+    #[test]
+    fn rejects_more_than_eight_digis() {
+        // AX.25 v2.2 §2.2.13 caps the path at 8 digipeaters.
+        let digis = (0..9)
+            .map(|i| Address { call: format!("D{i}"), ssid: 0 })
+            .collect();
         let p = Path {
             dest: Address { call: "A".into(), ssid: 0 },
             src: Address { call: "B".into(), ssid: 0 },
-            digis: vec![
-                Address { call: "C".into(), ssid: 0 },
-                Address { call: "D".into(), ssid: 0 },
-                Address { call: "E".into(), ssid: 0 },
-            ],
+            digis,
         };
         assert!(p.encode(true).is_err());
+    }
+
+    #[test]
+    fn decodes_real_three_digi_weather_frame_from_capture() {
+        // Ground truth: a KA7WSB-2-class NPS mountaintop weather report captured
+        // on-air (TUXLINK_APRS_RAW_CAPTURE, tuxlink-j5cj) —
+        //   KG7KID-7>APRS,MINGUS,W7MOT-3,WIDE2:@102021z3439.08N/11145.17W_223/001g018t097...
+        // a 3-digipeater path the old 2-digi cap dropped as "undecodable", taking
+        // the whole weather report with it.
+        let mut frame = vec![
+            0x82, 0xa0, 0xa4, 0xa6, 0x40, 0x40, 0x60, // APRS    (dest)
+            0x96, 0x8e, 0x6e, 0x96, 0x92, 0x88, 0x6e, // KG7KID-7 (src)
+            0x9a, 0x92, 0x9c, 0x8e, 0xaa, 0xa6, 0xe0, // MINGUS  (digi 1)
+            0xae, 0x6e, 0x9a, 0x9e, 0xa8, 0x40, 0xe6, // W7MOT-3 (digi 2)
+            0xae, 0x92, 0x88, 0x8a, 0x64, 0x40, 0x61, // WIDE2   (digi 3, last)
+            0x03, 0xf0, // UI control + no-layer-3 PID
+        ];
+        frame.extend_from_slice(
+            b"@102021z3439.08N/11145.17W_223/001g018t097r000p000P000h10b09775.DsVP",
+        );
+        let f = Frame::decode(&frame).expect("a real 3-digi weather frame must decode");
+        assert_eq!(f.path.src.call, "KG7KID");
+        assert_eq!(f.path.src.ssid, 7);
+        assert_eq!(f.path.digis.len(), 3, "all three digipeaters preserved");
+        assert_eq!(f.path.digis[0].call, "MINGUS");
+        assert_eq!(f.path.digis[1].call, "W7MOT");
+        assert_eq!(f.path.digis[1].ssid, 3);
+        assert_eq!(f.path.digis[2].call, "WIDE2");
+        assert!(f.info.starts_with(b"@102021z"), "weather info recovered intact");
     }
 }
 
