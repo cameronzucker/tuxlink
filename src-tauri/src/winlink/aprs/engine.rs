@@ -295,6 +295,13 @@ impl AprsEngine {
         // with its on-wire H-bit, recovered from the raw frame (Path::decode
         // discards the H-bit). `hbits` is index-parallel to `digis`; a malformed
         // address field yields an empty `hbits`, so an absent flag reads false.
+        //
+        // The position dedupe below keys on lat/lon/symbol/comment, NOT the via —
+        // so the via shown is the FIRST copy heard for a given fix within the
+        // window (a later digipeated copy of the SAME beacon is suppressed by
+        // design, to keep the map from churning on every retransmit). This is an
+        // honest, deliberate v1 choice: the displayed path is a real path the
+        // packet took to reach us, not necessarily the most recent copy's.
         let hbits = decode_digi_hbits(body);
         let via: Vec<ViaHop> = frame
             .path

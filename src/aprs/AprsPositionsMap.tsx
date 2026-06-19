@@ -76,6 +76,10 @@ const PATH_SOLID_LAYER = 'aprs-digipeat-path-solid';
 const PATH_DASHED_LAYER = 'aprs-digipeat-path-dashed';
 const PATH_DOT_SOURCE = 'aprs-digipeat-packet';
 const PATH_DOT_LAYER = 'aprs-digipeat-packet-dot';
+// `pos?` markers: the honest cue for a hop we can't locate (WIDE aliases, unheard
+// digis). One amber text label at the midpoint of each dashed connector.
+const PATH_LABEL_SOURCE = 'aprs-digipeat-path-labels';
+const PATH_LABEL_LAYER = 'aprs-digipeat-path-label';
 
 const PATH_LAYERS = (
   [
@@ -118,6 +122,29 @@ const PATH_DOT_LAYERS = (
         'circle-color': '#ffffff',
         'circle-stroke-color': '#0b1218',
         'circle-stroke-width': 1,
+      },
+    },
+  ] as unknown[]
+).map((l) => l as Record<string, unknown> & { id: string });
+
+const PATH_LABEL_LAYERS = (
+  [
+    {
+      id: PATH_LABEL_LAYER,
+      type: 'symbol',
+      source: PATH_LABEL_SOURCE,
+      layout: {
+        'text-field': ['get', 'label'],
+        'text-size': 10,
+        'text-offset': [0, -0.8],
+        'text-anchor': 'bottom',
+        'text-allow-overlap': true,
+      },
+      paint: {
+        'text-color': '#f0c987',
+        'text-halo-color': '#0c1620',
+        'text-halo-width': 1.2,
+        'text-opacity': ['coalesce', ['get', 'opacity'], 1],
       },
     },
   ] as unknown[]
@@ -556,6 +583,28 @@ function pointFC(p: LatLon): FeatureCollection {
   };
 }
 
+/// `pos?` markers for unlocatable hops: one amber text label at the midpoint of
+/// each dashed connector, shown once that segment has finished drawing. This is
+/// the honest cue the hybrid-path design (cn84) promised — the unknown hop's
+/// callsign with a `?`, never a fabricated pin.
+function labelFC(segments: PathSegment[], progress: number, opacity: number): FeatureCollection {
+  const total = segments.length;
+  const features: unknown[] = [];
+  segments.forEach((s, i) => {
+    if (s.kind !== 'dashed' || !s.unknownLabels?.length) return;
+    if (progress < (i + 1) / total) return; // wait until this segment is fully drawn
+    features.push({
+      type: 'Feature',
+      properties: { label: `${s.unknownLabels.join('/')} ?`, opacity },
+      geometry: {
+        type: 'Point',
+        coordinates: [(s.from.lon + s.to.lon) / 2, (s.from.lat + s.to.lat) / 2],
+      },
+    });
+  });
+  return { type: 'FeatureCollection', features };
+}
+
 /// Animated digipeat path (cn84). Two triggers, one honest resolution:
 ///   - HOVER a pin → paint the full path immediately (held until mouse-out).
 ///   - a newly-HEARD fix → animate that path once (draw-in → linger → fade),
@@ -572,6 +621,7 @@ function DigipeatPathLayer({
   const map = useMapContext();
   useMapOverlay(map, PATH_SOURCE, { type: 'geojson', data: EMPTY_FC }, PATH_LAYERS);
   useMapOverlay(map, PATH_DOT_SOURCE, { type: 'geojson', data: EMPTY_FC }, PATH_DOT_LAYERS);
+  useMapOverlay(map, PATH_LABEL_SOURCE, { type: 'geojson', data: EMPTY_FC }, PATH_LABEL_LAYERS);
 
   // Long-lived handlers read current data through refs (no re-subscribe per render).
   const byCallRef = useRef<Map<string, HeardPosition>>(new Map());
@@ -601,10 +651,15 @@ function DigipeatPathLayer({
   const clearPath = () => {
     setSrc(PATH_SOURCE, EMPTY_FC);
     setSrc(PATH_DOT_SOURCE, EMPTY_FC);
+    setSrc(PATH_LABEL_SOURCE, EMPTY_FC);
   };
   const segmentsFor = (call: string): PathSegment[] | null => {
     const p = byCallRef.current.get(call);
     if (!p) return null;
+    // An object/item pin plots the object, not the transmitter — its via-chain
+    // belongs to a station at a different location, so tracing from here would
+    // fabricate the RF source. Skip (Codex cn84 review, RF-honesty).
+    if (p.isObject) return null;
     const segs = resolveDigipeatPath({
       src: { call: p.call, lat: p.lat, lon: p.lon },
       via: p.via ?? [],
@@ -625,6 +680,7 @@ function DigipeatPathLayer({
       hoverActiveRef.current = true;
       setSrc(PATH_SOURCE, pathFC(segs, 1, 1));
       setSrc(PATH_DOT_SOURCE, EMPTY_FC);
+      setSrc(PATH_LABEL_SOURCE, labelFC(segs, 1, 1));
     };
     const leave = () => {
       hoverActiveRef.current = false;
@@ -659,6 +715,7 @@ function DigipeatPathLayer({
       }
       setSrc(PATH_SOURCE, pathFC(f.segments, f.progress, f.opacity));
       setSrc(PATH_DOT_SOURCE, f.packet ? pointFC(f.packet) : EMPTY_FC);
+      setSrc(PATH_LABEL_SOURCE, labelFC(f.segments, f.progress, f.opacity));
       rafRef.current = requestAnimationFrame(loop);
     };
     rafRef.current = requestAnimationFrame(loop);

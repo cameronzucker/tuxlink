@@ -397,10 +397,6 @@ mod path_tests {
             dest: Address { call: "W7AUX".into(), ssid: 10 },
             src: Address { call: "N7CPZ".into(), ssid: 7 },
             digis: vec![],
-        let p = Path {
-            dest: Address { call: "W7AUX".into(), ssid: 10 },
-            src: Address { call: "N7CPZ".into(), ssid: 7 },
-            digis: vec![],
         };
         let bytes = p.encode(true).unwrap();
         assert_eq!(bytes.len(), 14); // 2 addresses * 7

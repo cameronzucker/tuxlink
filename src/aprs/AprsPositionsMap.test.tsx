@@ -289,6 +289,52 @@ describe('AprsPositionsMap digipeat path (cn84)', () => {
     expect(data.features.length).toBeGreaterThan(0);
     expect(data.features.every((f) => f.properties.kind === 'dashed')).toBe(true);
   });
+
+  it('marks the unlocatable hop with a pos? label', () => {
+    render(<AprsPositionsMap positions={viaPositions} operatorGrid="CN87" />);
+    const map = loadLast();
+    act(() =>
+      map.__emit('mouseenter:aprs-position-pins-color', {
+        features: [{ properties: { call: 'KE7XYZ-9' } }],
+      }),
+    );
+    const labels = (
+      map.getSource('aprs-digipeat-path-labels') as {
+        data: { features: Array<{ properties: { label: string } }> };
+      }
+    ).data;
+    expect(labels.features.length).toBeGreaterThan(0);
+    expect(labels.features[0].properties.label).toContain('WIDE2-1');
+    expect(labels.features[0].properties.label).toContain('?');
+  });
+
+  it('does not trace a path from an object/item report (honest RF source)', () => {
+    // An object pin plots the object's location with the SENDER's via-chain; the
+    // path would fabricate the RF source, so it must not draw.
+    const objPositions: HeardPosition[] = [
+      {
+        call: 'LEADER',
+        lat: 48.1,
+        lon: -122.6,
+        symbolTable: '\\',
+        symbolCode: '!',
+        comment: '',
+        at: 3,
+        ambiguity: 0,
+        isObject: true,
+        via: [{ call: 'W7RPT-1', repeated: true }],
+      },
+    ];
+    render(<AprsPositionsMap positions={objPositions} operatorGrid="CN87" />);
+    const map = loadLast();
+    act(() =>
+      map.__emit('mouseenter:aprs-position-pins-color', {
+        features: [{ properties: { call: 'LEADER' } }],
+      }),
+    );
+    const data = (map.getSource('aprs-digipeat-path') as { data: { features: unknown[] } }).data;
+    expect(data.features).toHaveLength(0);
+  });
 });
 
 describe('AprsPositionsMap viewport persistence (tuxlink-dwzu)', () => {

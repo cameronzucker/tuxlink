@@ -128,6 +128,12 @@ export interface HeardPosition {
   /// position-wins, like the coordinates). The store always sets it (`[]` for a
   /// directly-heard fix); optional so test fixtures and legacy callers can omit it.
   via?: ViaHop[];
+  /// True when this pin is an OBJECT/ITEM report (keyed by object name, plotting
+  /// the OBJECT's location), not the transmitting station's own beacon. The
+  /// digipeat path belongs to the transmitting station — which is neither this
+  /// pin's callsign nor its coordinate — so the map must NOT trace a path from an
+  /// object pin (it would fabricate the RF source). Set by the store.
+  isObject?: boolean;
 }
 
 /// One analog telemetry channel from a heard `aprs-telemetry:new` frame.
