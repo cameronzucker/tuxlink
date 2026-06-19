@@ -679,11 +679,12 @@ export function AppShell() {
     }
   }, []);
 
-  // Status-bar APRS slider (tuxlink-l0z5): the ribbon's on/off switch starts/stops
-  // the listener via the SAME composed sequences the dock connect-strip uses, so
-  // both surfaces drive one backend state. Turning ON also opens the dock so the
-  // operator lands on the live chat (and, on failure, on the connect-strip that
-  // surfaces why + offers the transport picker). `listening` stays backend-truth:
+  // Status-bar APRS control (tuxlink-l0z5; tuxlink-a1j3): the ribbon's on/off
+  // switch starts/stops the listener via the SAME composed sequences the dock
+  // connect-strip uses, so both surfaces drive one backend state. It is a PURE
+  // on/off switch — it does NOT open/close the dock, with ONE exception: the very
+  // first time, when no radio is configured yet (nothing to start), it opens the
+  // dock to the connect strip's picker for setup. `listening` stays backend-truth:
   // a reject never optimistically flips the switch — the aprs-listening:change
   // event is the only thing that does.
   const [aprsToggling, setAprsToggling] = useState(false);
@@ -693,6 +694,7 @@ export function AppShell() {
     // fire a connect that fails silently (the tuxlink-ube7 "does nothing" report),
     // just open the APRS panel — its connect strip auto-expands the radio picker
     // when there's no link, so the operator lands exactly where they set one up.
+    // This first-run setup is the ONLY case where the control touches the dock.
     if (!aprs.listening && aprsLinkKind == null) {
       openAprsChat();
       return;
@@ -702,12 +704,15 @@ export function AppShell() {
       if (aprs.listening) {
         await onAprsDisconnect();
       } else {
-        openAprsChat();
+        // tuxlink-a1j3: pure on/off — start listening with the last-configured
+        // radio WITHOUT opening the dock (only the no-config first run above does).
         await onAprsConnect();
       }
     } catch {
-      // Backend truth: a failed start leaves the indicator Off; the dock (opened
-      // above) shows the connect strip + its inline error for retry.
+      // Backend truth: a failed start leaves the indicator Off (the
+      // aprs-listening:change event drives `listening`), and the reason is now in
+      // the structured log (tuxlink-xyi7). The operator can open the dock to retry
+      // via the connect strip's inline error.
     } finally {
       setAprsToggling(false);
     }
@@ -1108,20 +1113,25 @@ export function AppShell() {
     // "save this message" use case.
     print: () => { if (openMessage) window.print(); },
     toggleStatusBar: () => setShowStatusBar((s) => !s),
-    // tuxlink-hzwc bug #6: Ctrl+Shift+M (Toggle Radio Panel). When the APRS dock
-    // is open the radio panel IS the Modem tab, so toggle the tab (pinning so the
-    // console always has content) rather than flipping a pin that left the Modem
-    // tab disabled with the keystroke as the only way back. Standalone (no dock),
-    // it keeps the plain show/hide pin toggle.
+    // tuxlink-a1j3: Ctrl+Shift+M (Toggle Radio Panel) always brings up the ONE
+    // consolidated dock focused on the Modem tab — keeping APRS Chat / Station
+    // Data tabs + the Map toggle present alongside it. No flip-to-Chat, and no
+    // tab-less standalone panel via this shortcut. Pressing it while already on
+    // the open Modem tab closes the dock (the toggle-off), mirroring the dock
+    // close control. Pinning the radio panel gives the Modem tab content when no
+    // session is otherwise active.
     toggleRadioPanel: () => {
-      if (aprsOpen) {
-        if (dockTab === 'modem') setDockTab('aprs');
-        else {
-          setPinRadioPanel(true);
-          setDockTab('modem');
-        }
+      if (aprsOpen && dockTab === 'modem') {
+        // Toggle-off: close the dock AND unpin, so the radio panel doesn't linger
+        // as a standalone surface (the pin would otherwise keep radioPanelMode
+        // non-null). An active sidebar-selected session stays visible on its own.
+        setAprsOpen(false);
+        setAprsMapOpen(false);
+        setPinRadioPanel(false);
       } else {
-        setPinRadioPanel((s) => !s);
+        setAprsOpen(true);
+        setPinRadioPanel(true);
+        setDockTab('modem');
       }
     },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
