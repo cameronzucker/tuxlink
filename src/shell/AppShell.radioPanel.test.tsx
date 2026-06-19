@@ -366,6 +366,29 @@ describe('<AppShell> radio panel', () => {
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
   });
 
+  // tuxlink-a1j3: Ctrl+Shift+M brings up the ONE consolidated dock focused on the
+  // Modem tab — APRS Chat / Station Data tabs (+ Map toggle) are present alongside
+  // it, never a tab-less standalone panel. (Old behavior: the shortcut showed a
+  // bare radio panel with no APRS tabs when the dock was closed.)
+  it('Ctrl+Shift+M opens the consolidated dock with all tabs, focused on Modem', async () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShell();
+    expect(screen.queryByTestId('aprs-dock-tabs')).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'm', ctrlKey: true, shiftKey: true });
+
+    // The tabbed dock surface appears (not a bare standalone panel).
+    expect(
+      await screen.findByTestId('aprs-dock-tabs', undefined, { timeout: 10000 }),
+    ).toBeInTheDocument();
+    // All peer tabs are present...
+    expect(screen.getByTestId('aprs-dock-tab-aprs')).toBeInTheDocument();
+    expect(screen.getByTestId('aprs-dock-tab-stations')).toBeInTheDocument();
+    expect(screen.getByTestId('aprs-dock-tab-modem')).toBeInTheDocument();
+    // ...and the shortcut lands on Modem.
+    expect(screen.getByTestId('aprs-dock-tab-modem')).toHaveAttribute('aria-selected', 'true');
+  });
+
   // ── Task B7: App-level (production-provider-stack) mount test for Favorites ──
   //
   // The B6 tests wrapped ArdopRadioPanel in a bare QueryClient scaffold. B7
