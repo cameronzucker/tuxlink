@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { EnvPanel } from './EnvPanel';
 import { applyWeather, applyTelemetry, STALE_AFTER_MS, type EnvStation } from './envStations';
@@ -34,6 +34,16 @@ describe('EnvPanel — empty + populated', () => {
     expect(screen.getByTestId('env-card-KE7ABC-13')).toBeInTheDocument();
     expect(screen.getByTestId('env-card-W7DIGI-2')).toBeInTheDocument();
     expect(screen.getByText('KE7ABC-13')).toBeInTheDocument();
+  });
+
+  it('scrolls the focused station card into view (ni5b)', () => {
+    const scroll = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { value: scroll, writable: true, configurable: true });
+    const s1 = applyWeather(undefined, wx({ station: 'W7AAA', temperatureF: 50 }), NOW);
+    const s2 = applyWeather(undefined, wx({ station: 'W7BBB', temperatureF: 60 }), NOW);
+    render(<EnvPanel stations={[s1, s2]} focusCall="W7BBB" now={NOW} />);
+    expect(screen.getByTestId('env-card-W7BBB')).toBeInTheDocument();
+    expect(scroll).toHaveBeenCalled();
   });
 });
 

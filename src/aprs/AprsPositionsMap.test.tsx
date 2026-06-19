@@ -230,6 +230,49 @@ describe('AprsPositionsMap', () => {
   });
 });
 
+describe('AprsPositionsMap WX overlay (ni5b)', () => {
+  const wxPositions: HeardPosition[] = [
+    { call: 'W7WX', lat: 47, lon: -122, symbolTable: '/', symbolCode: '_', comment: '', at: 1, ambiguity: 0 },
+  ];
+  const wxEnv = [
+    {
+      call: 'W7WX',
+      project: '',
+      seq: null,
+      bits: [],
+      rain: null,
+      lastHeard: 1,
+      channels: [
+        { key: 'wx:temperature', label: 'Temp', unit: '°F', kind: 'temperature', value: 72, scaled: true, history: [] },
+      ],
+    },
+  ];
+
+  it('renders a WX badge layer + feature for a heard weather station', () => {
+    render(<AprsPositionsMap positions={wxPositions} envStations={wxEnv as never} operatorGrid="CN87" />);
+    const map = loadLast();
+    expect(map.__state.layers.some((l) => l.id === 'aprs-wx-badge')).toBe(true);
+    const feats = (map.getSource('aprs-wx-badge') as { data: { features: Array<{ properties: { badge: string } }> } }).data.features;
+    expect(feats).toHaveLength(1);
+    expect(feats[0].properties.badge).toContain('72°F');
+  });
+
+  it('invokes onFocusStation when a WX badge is clicked', () => {
+    const onFocus = vi.fn();
+    render(<AprsPositionsMap positions={wxPositions} envStations={wxEnv as never} onFocusStation={onFocus} operatorGrid="CN87" />);
+    const map = loadLast();
+    act(() => map.__emit('click:aprs-wx-badge', { features: [{ properties: { call: 'W7WX' } }] }));
+    expect(onFocus).toHaveBeenCalledWith('W7WX');
+  });
+
+  it('renders no WX badge for a station with no heard weather', () => {
+    render(<AprsPositionsMap positions={positions} envStations={[] as never} operatorGrid="CN87" />);
+    const map = loadLast();
+    const feats = (map.getSource('aprs-wx-badge') as { data: { features: unknown[] } }).data.features;
+    expect(feats).toHaveLength(0);
+  });
+});
+
 describe('AprsPositionsMap digipeat path (cn84)', () => {
   // KE7XYZ-9 heard via WIDE2-1 (repeated). WIDE2-1 has no heard position, so the
   // honest path is a single dashed src→you connector (the unlocatable-hop case).
@@ -336,6 +379,7 @@ describe('AprsPositionsMap digipeat path (cn84)', () => {
     expect(data.features).toHaveLength(0);
   });
 });
+
 
 describe('AprsPositionsMap viewport persistence (tuxlink-dwzu)', () => {
   const KEY = 'tuxlink:map-viewport:aprs';
