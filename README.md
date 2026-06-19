@@ -53,7 +53,7 @@ browser-served web UI.
 | Native Linux, no WINE | No (Windows) | Yes | Yes |
 | ARM / Raspberry Pi | No | Yes | Yes |
 | Native desktop GUI | Windows only | No (CLI + web UI) | Yes |
-| Winlink Standard Forms catalog | Yes | No | Yes |
+| Winlink forms | Yes | Yes (fetched) | Yes (bundled + native composers) |
 | Native UV-Pro Bluetooth control | No | No | Yes |
 
 Tuxlink takes a third path: it implements the Winlink B2F protocol itself,
