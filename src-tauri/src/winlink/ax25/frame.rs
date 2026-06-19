@@ -320,11 +320,83 @@ impl Path {
     }
 }
 
+/// Decode just the per-digipeater has-been-repeated (H) bits from a raw AX.25
+/// frame's address field, in on-wire order (parallel to [`Path::digis`]). The
+/// H-bit is bit 7 of a digipeater address's SSID octet: set means that
+/// digipeater actually relayed this frame (vs. a requested-but-unused alias).
+///
+/// Returns an empty vec for a truncated / malformed / digi-less address field —
+/// callers treat "unknown" as not-repeated. Kept separate from [`Path::decode`]
+/// (which discards the bit) so RX consumers can recover the traversed path
+/// without changing the `Path` shape every TX/test site constructs.
+pub fn decode_digi_hbits(bytes: &[u8]) -> Vec<bool> {
+    let mut hbits = Vec::new();
+    let mut idx = 0usize; // address ordinal: 0 = dest, 1 = src, 2.. = digipeaters
+    let mut off = 0usize;
+    loop {
+        if bytes.len() < off + 7 {
+            return Vec::new(); // truncated → make no claim about the path
+        }
+        let ssid_octet = bytes[off + 6];
+        let h = ssid_octet & 0x80 != 0;
+        let last = ssid_octet & 0x01 != 0;
+        if idx >= 2 {
+            hbits.push(h);
+        }
+        idx += 1;
+        off += 7;
+        if last {
+            break;
+        }
+        if idx >= 4 {
+            // dest + src + 2 digis is the AX.25 maximum; stop even if a malformed
+            // frame never set the last-address bit.
+            break;
+        }
+    }
+    hbits
+}
+
 #[cfg(test)]
 mod path_tests {
     use super::*;
+
+    #[test]
+    fn decode_digi_hbits_extracts_per_digi_h_flags() {
+        // SRC>DEST,W7RPT-1*,WIDE2-1 — digi1 repeated (H=1), digi2 not (H=0).
+        let dest = Address { call: "APZTUX".into(), ssid: 0 };
+        let src = Address { call: "KE7XYZ".into(), ssid: 9 };
+        let d1 = Address { call: "W7RPT".into(), ssid: 1 };
+        let d2 = Address { call: "WIDE2".into(), ssid: 1 };
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&dest.encode(true, false));
+        bytes.extend_from_slice(&src.encode(false, false));
+        bytes.extend_from_slice(&d1.encode(true, false)); // H=1, not last
+        bytes.extend_from_slice(&d2.encode(false, true)); // H=0, last
+        assert_eq!(decode_digi_hbits(&bytes), vec![true, false]);
+    }
+
+    #[test]
+    fn decode_digi_hbits_empty_for_no_digis() {
+        let dest = Address { call: "APZTUX".into(), ssid: 0 };
+        let src = Address { call: "N0CALL".into(), ssid: 0 };
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&dest.encode(true, false));
+        bytes.extend_from_slice(&src.encode(false, true)); // src last → no digis
+        assert_eq!(decode_digi_hbits(&bytes), Vec::<bool>::new());
+    }
+
+    #[test]
+    fn decode_digi_hbits_empty_for_truncated() {
+        assert_eq!(decode_digi_hbits(&[0u8; 5]), Vec::<bool>::new());
+    }
+
     #[test]
     fn encodes_direct_path_sets_last_bit_on_src() {
+        let p = Path {
+            dest: Address { call: "W7AUX".into(), ssid: 10 },
+            src: Address { call: "N7CPZ".into(), ssid: 7 },
+            digis: vec![],
         let p = Path {
             dest: Address { call: "W7AUX".into(), ssid: 10 },
             src: Address { call: "N7CPZ".into(), ssid: 7 },
