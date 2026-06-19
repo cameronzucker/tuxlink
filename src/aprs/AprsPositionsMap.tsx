@@ -26,7 +26,13 @@ import { usePersistedViewport } from '../map/usePersistedViewport';
 import { RecenterControl } from '../map/RecenterControl';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { lookupAprsSymbol } from './aprsSymbols';
-import { spriteIdFor, greyIdOf, ensureSymbolImage, type SpriteMap } from '../map/aprsSprites';
+import {
+  spriteIdFor,
+  greyIdOf,
+  ensureSymbolImage,
+  whenSheetsReady,
+  type SpriteMap,
+} from '../map/aprsSprites';
 import type { HeardPosition } from './aprsTypes';
 import './AprsPositionsMap.css';
 
@@ -352,20 +358,28 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
       on: (t: string, h: (...a: unknown[]) => void) => unknown;
       off: (t: string, h: (...a: unknown[]) => void) => unknown;
     };
-    const apply = () => {
+    const apply = (force = false) => {
       for (const p of positions) {
         ensureSymbolImage(
           m,
           p.symbolTable,
           p.symbolCode,
           lookupAprsSymbol(p.symbolTable, p.symbolCode).overlay,
+          force,
         );
       }
     };
     apply();
-    m.on('styledata', apply as (...a: unknown[]) => void);
+    // tuxlink-r8sm: the sprite sheets decode asynchronously, but this first bake
+    // runs synchronously on mount (positions are already accumulated by the time
+    // the map opens) — before the PNGs decode, so those sprites bake transparent.
+    // Re-bake (force) once the sheets are ready so pins actually show their icon.
+    const stopWhenReady = whenSheetsReady(() => apply(true));
+    const onStyle = () => apply();
+    m.on('styledata', onStyle as (...a: unknown[]) => void);
     return () => {
-      m.off('styledata', apply as (...a: unknown[]) => void);
+      stopWhenReady();
+      m.off('styledata', onStyle as (...a: unknown[]) => void);
     };
   }, [map, positions]);
 

@@ -52,24 +52,91 @@ export function greyIdOf(id: string): string {
   return `${id}:grey`;
 }
 
-/** The minimal MapLibre image surface this module drives. */
+/** The minimal MapLibre image surface this module drives. `updateImage` /
+ *  `removeImage` are optional because the test double and headless paths may not
+ *  provide them; the live `maplibregl.Map` has both. They back the re-bake that
+ *  replaces the transparent first-paint sprites once the sheets decode (r8sm). */
 export interface SpriteMap {
   hasImage(id: string): boolean;
   addImage(id: string, image: unknown, options?: Record<string, unknown>): void;
+  updateImage?(id: string, image: unknown): void;
+  removeImage?(id: string): void;
 }
 
 /** Source cell size in the vendored sheets. */
 const CELL = 64;
 
+type SheetKey = 'p' | 'a' | 'o';
+const SHEET_SRC: Record<SheetKey, string> = { p: sheetPrimary, a: sheetAlternate, o: sheetOverlay };
+
 /** Sheet image elements, loaded once. Browser-only; tests stub the 2D context. */
-const sheetEls: Record<'p' | 'a' | 'o', HTMLImageElement | null> = { p: null, a: null, o: null };
-function sheetFor(which: 'p' | 'a' | 'o'): HTMLImageElement {
-  if (!sheetEls[which]) {
-    const img = new Image();
-    img.src = which === 'p' ? sheetPrimary : which === 'a' ? sheetAlternate : sheetOverlay;
+const sheetEls: Record<SheetKey, HTMLImageElement | null> = { p: null, a: null, o: null };
+/** Callbacks waiting for all sheets to finish decoding (see `whenSheetsReady`). */
+const readyWaiters = new Set<() => void>();
+
+function flushIfReady(): void {
+  if (!sheetsReady()) return;
+  const pending = [...readyWaiters];
+  readyWaiters.clear();
+  for (const cb of pending) cb();
+}
+
+function sheetFor(which: SheetKey): HTMLImageElement {
+  let img = sheetEls[which];
+  if (!img) {
+    img = new Image();
+    // Re-bake transparent first-paint sprites once a sheet decodes (r8sm): the
+    // first bake runs synchronously on map mount, before the PNGs are decoded.
+    img.onload = flushIfReady;
+    img.src = SHEET_SRC[which];
     sheetEls[which] = img;
   }
-  return sheetEls[which]!;
+  return img;
+}
+
+/** True once all three sheets have decoded (browser). False in jsdom, where
+ *  images never load — bakes there draw nothing and pixel correctness is
+ *  grim-verified, not unit-asserted. */
+export function sheetsReady(): boolean {
+  return (['p', 'a', 'o'] as const).every((k) => {
+    const s = sheetEls[k];
+    return !!s && s.complete && s.naturalWidth > 0;
+  });
+}
+
+/**
+ * Run `cb` once all three sprite sheets have decoded — immediately if they
+ * already have. Returns an unsubscribe. The map uses this to re-bake (with
+ * `force`) the sprites it registered transparent on the first synchronous paint,
+ * before the sheets had decoded (tuxlink-r8sm). Touches all three sheets so their
+ * decode starts even if only one table's symbols have been heard so far.
+ */
+export function whenSheetsReady(cb: () => void): () => void {
+  sheetFor('p');
+  sheetFor('a');
+  sheetFor('o');
+  if (sheetsReady()) {
+    cb();
+    return () => {};
+  }
+  readyWaiters.add(cb);
+  return () => {
+    readyWaiters.delete(cb);
+  };
+}
+
+/**
+ * A blank (transparent) image MapLibre accepts, for the no-2D-context path
+ * (headless / jsdom). A plain `{width,height,data}` object — NOT `new
+ * ImageData()`, which is undefined in jsdom — with a correctly-sized buffer so
+ * `addImage` never sees the zero-length mismatch that crashed the map (r8sm).
+ */
+function blankImage(): ImageData {
+  return {
+    width: CELL,
+    height: CELL,
+    data: new Uint8ClampedArray(CELL * CELL * 4),
+  } as ImageData;
 }
 
 /** Desaturate a 64×64 canvas in place (luma) for the stale variant. */
@@ -85,20 +152,26 @@ function desaturate(ctx: CanvasRenderingContext2D): void {
 
 /**
  * Slice the cell for (table, code), composite the overlay character when present,
- * and optionally desaturate. Returns a canvas MapLibre registers via addImage.
- * Canvas-based; pixel correctness is grim-verified (jsdom has no 2D context).
+ * and optionally desaturate. Returns the baked pixels as `ImageData`.
+ *
+ * MUST return `ImageData`, not the `<canvas>` — MapLibre's `addImage` accepts only
+ * `HTMLImageElement | ImageData | ImageBitmap | {width,height,data}`; a raw canvas
+ * has no `.data`, so MapLibre reads a zero-length buffer and throws
+ * `RangeError: mismatched image size. expected: 0 but got: <w*h*4>`, crashing the
+ * map render (tuxlink-r8sm / PR #819). Pixel correctness is grim-verified
+ * (jsdom has no real 2D context).
  */
 export function renderSymbolBitmap(
   table: string,
   code: string,
   overlay: string | null,
   grey: boolean,
-): HTMLCanvasElement {
+): ImageData {
   const canvas = document.createElement('canvas');
   canvas.width = CELL;
   canvas.height = CELL;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return canvas; // no 2D context (headless / jsdom) — register an empty image
+  if (!ctx) return blankImage(); // no 2D context (headless / jsdom)
   // Primary `/` draws the primary sheet; everything else (alternate `\` and any
   // overlay table char) draws the alternate base, then the overlay char on top.
   const baseSheet = table === '/' ? sheetFor('p') : sheetFor('a');
@@ -109,16 +182,18 @@ export function renderSymbolBitmap(
     if (ov) ctx.drawImage(sheetFor('o'), ov.col * CELL, ov.row * CELL, CELL, CELL, 0, 0, CELL, CELL);
   }
   if (grey) desaturate(ctx);
-  return canvas;
+  return ctx.getImageData(0, 0, CELL, CELL);
 }
 
-/** A neutral slate dot for unresolved / suppressed symbols — never a tofu box. */
-function renderFallbackBitmap(): HTMLCanvasElement {
+/** A neutral slate dot for unresolved / suppressed symbols — never a tofu box.
+ *  Returns `ImageData` for the same MapLibre-contract reason as
+ *  [`renderSymbolBitmap`] (tuxlink-r8sm). */
+function renderFallbackBitmap(): ImageData {
   const canvas = document.createElement('canvas');
   canvas.width = CELL;
   canvas.height = CELL;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return canvas; // no 2D context (headless / jsdom) — register an empty image
+  if (!ctx) return blankImage(); // no 2D context (headless / jsdom)
   ctx.beginPath();
   ctx.arc(CELL / 2, CELL / 2, CELL * 0.28, 0, 2 * Math.PI);
   ctx.fillStyle = '#5b6b7a';
@@ -126,26 +201,45 @@ function renderFallbackBitmap(): HTMLCanvasElement {
   ctx.lineWidth = 4;
   ctx.strokeStyle = '#cfe0ee';
   ctx.stroke();
-  return canvas;
+  return ctx.getImageData(0, 0, CELL, CELL);
 }
 
 /**
  * Idempotently register the colour + greyscale images for a symbol and return the
  * colour id. Brand-logo / unresolved symbols register the neutral fallback pair.
- * Skips the bake entirely when both ids are already present (the lazy fast path).
+ *
+ * Fast path: skips the bake when both ids are already present. `force` re-bakes an
+ * already-registered pair — used after the sprite sheets decode to replace the
+ * transparent sprites the first synchronous paint registered (tuxlink-r8sm). The
+ * re-bake prefers `updateImage` (in-place, same dimensions); if the map lacks it,
+ * it falls back to remove+add, then to a plain add.
  */
 export function ensureSymbolImage(
   map: SpriteMap,
   table: string,
   code: string,
   overlay: string | null,
+  force = false,
 ): string {
   const id = spriteIdFor(table, code, overlay);
   const greyId = greyIdOf(id);
-  if (map.hasImage(id) && map.hasImage(greyId)) return id;
-  const make = (grey: boolean): HTMLCanvasElement =>
+  if (!force && map.hasImage(id) && map.hasImage(greyId)) return id;
+  const make = (grey: boolean): ImageData =>
     id === FALLBACK_ID ? renderFallbackBitmap() : renderSymbolBitmap(table, code, overlay, grey);
-  if (!map.hasImage(id)) map.addImage(id, make(false), { pixelRatio: 2 });
-  if (!map.hasImage(greyId)) map.addImage(greyId, make(true), { pixelRatio: 2 });
+  const put = (imgId: string, grey: boolean): void => {
+    if (!map.hasImage(imgId)) {
+      map.addImage(imgId, make(grey), { pixelRatio: 2 });
+      return;
+    }
+    if (!force) return;
+    if (map.updateImage) {
+      map.updateImage(imgId, make(grey));
+      return;
+    }
+    map.removeImage?.(imgId);
+    map.addImage(imgId, make(grey), { pixelRatio: 2 });
+  };
+  put(id, false);
+  put(greyId, true);
   return id;
 }
