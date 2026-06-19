@@ -30,6 +30,15 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.71.1](https://github.com/cameronzucker/tuxlink/compare/v0.71.0...v0.71.1) (2026-06-19)
+
+
+### Bug Fixes
+
+* **basemap:** derive download progress from go-pmtiles stdout, not output-file size (tuxlink-k9pg) ([995037a](https://github.com/cameronzucker/tuxlink/commit/995037adede146b5847c49003deefd9338882270))
+* **basemap:** parse go-pmtiles shared-unit progress counters (Codex P2, tuxlink-k9pg) ([8d310ef](https://github.com/cameronzucker/tuxlink/commit/8d310efaa96658455e48e27d89dfe2a5dc80d16f))
+* **shell:** track the window not the screen — real fix for clipped narrow-window controls ([538a50f](https://github.com/cameronzucker/tuxlink/commit/538a50fb7fd0763f8ec7a7a76f284683f9addae6))
+
 ## [0.71.0](https://github.com/cameronzucker/tuxlink/compare/v0.70.0...v0.71.0) (2026-06-19)
 
 
