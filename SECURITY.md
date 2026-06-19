@@ -7,7 +7,7 @@ Security issues affecting Tuxlink should be reported **privately**, not via publ
 Two private channels are accepted:
 
 1. **GitHub private security advisory** (preferred) — <https://github.com/cameronzucker/tuxlink/security/advisories/new>. This creates a draft advisory visible only to the reporter and the maintainer until disclosure.
-2. **Email** — <cameronzucker@gmail.com> with the subject prefix `[tuxlink security]`.
+2. **Email** — <security@tuxlink.org> with the subject prefix `[tuxlink security]`.
 
 Please include:
 

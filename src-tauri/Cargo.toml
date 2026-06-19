@@ -2,7 +2,7 @@
 name = "tuxlink"
 version = "0.70.0"
 description = "Linux-native full-capability Winlink client"
-authors = ["Cameron Zucker <cameronzucker@gmail.com>"]
+authors = ["Cameron Zucker"]
 edition = "2021"
 rust-version = "1.75"
 license = "GPL-3.0-or-later"

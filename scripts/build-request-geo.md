@@ -68,4 +68,4 @@ dataset version.
 
 NWS data is produced by the US National Weather Service (NOAA) and is in the
 public domain. The `User-Agent` header identifies tuxlink per NWS API policy:
-`tuxlink-dev (cameronzucker@gmail.com)`.
+`tuxlink-dev (https://tuxlink.org)`.

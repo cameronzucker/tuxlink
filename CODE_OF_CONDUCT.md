@@ -7,7 +7,7 @@ The full text is available at:
 
 ## Reporting
 
-Conduct concerns should be reported privately to the project maintainer at <cameronzucker@gmail.com>. Reports are reviewed promptly and kept confidential to the extent possible while resolving the concern. The reporter is informed of the outcome.
+Conduct concerns should be reported privately to the project maintainer at <conduct@tuxlink.org>. Reports are reviewed promptly and kept confidential to the extent possible while resolving the concern. The reporter is informed of the outcome.
 
 ## Scope
 
