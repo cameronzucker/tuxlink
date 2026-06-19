@@ -34,6 +34,8 @@ export interface MapLibreMockState {
   zoom: number;
   /** Feature-state by source id → feature id → state object (setFeatureState). */
   featureStates: Map<string, Map<string | number, Record<string, unknown>>>;
+  /** Registered images by id (addImage), with the options object. */
+  images: Map<string, { image: unknown; options?: Record<string, unknown> }>;
   /** Current map center (lng/lat), seeded from the constructor `center` option;
    * mutated by `setCenter` and the `__setCenter` test control. */
   center: { lng: number; lat: number };
@@ -108,6 +110,10 @@ export interface MapLibreMock {
   getCanvas: () => HTMLCanvasElement;
   addControl: (control: unknown, position?: string) => void;
   removeControl: (control: unknown) => void;
+  /** Register a sprite image (icon-image source). */
+  addImage: (id: string, image: unknown, options?: Record<string, unknown>) => void;
+  /** Whether an image id is already registered. */
+  hasImage: (id: string) => boolean;
   remove: () => void;
 }
 
@@ -135,6 +141,7 @@ export function createMapLibreMock(
     center: seedCenter,
     bounds: { west: -180, south: -85, east: 180, north: 85 },
     featureStates: new Map(),
+    images: new Map(),
     removed: false,
   };
 
@@ -289,6 +296,10 @@ export function createMapLibreMock(
     getCanvas: vi.fn(() => document.createElement('canvas')),
     addControl: vi.fn(),
     removeControl: vi.fn(),
+    addImage: vi.fn((id: string, image: unknown, options?: Record<string, unknown>) => {
+      state.images.set(id, { image, options });
+    }),
+    hasImage: vi.fn((id: string) => state.images.has(id)),
     remove: vi.fn(() => {
       state.removed = true;
       state.handlers.clear();

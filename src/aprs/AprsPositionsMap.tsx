@@ -26,6 +26,7 @@ import { usePersistedViewport } from '../map/usePersistedViewport';
 import { RecenterControl } from '../map/RecenterControl';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { lookupAprsSymbol } from './aprsSymbols';
+import { spriteIdFor, greyIdOf, ensureSymbolImage, type SpriteMap } from '../map/aprsSprites';
 import type { HeardPosition } from './aprsTypes';
 import './AprsPositionsMap.css';
 
@@ -43,7 +44,11 @@ export interface AprsPositionsMapProps {
 const OPERATOR_ZOOM = 10;
 
 const POSITIONS_SOURCE = 'aprs-positions';
-const POSITION_PINS_LAYER = 'aprs-position-pins';
+// tuxlink-90xb: pins are now authentic symbol SPRITES on two stacked icon layers
+// (colour + greyscale) that cross-fade on the `stale` feature-state, replacing the
+// single circle layer. Identity (the sprite) + honesty (stale/ambiguous) coexist.
+const POSITION_PINS_COLOR_LAYER = 'aprs-position-pins-color';
+const POSITION_PINS_GREY_LAYER = 'aprs-position-pins-grey';
 const POSITION_LABELS_LAYER = 'aprs-position-labels';
 const UNCERTAINTY_SOURCE = 'aprs-position-uncertainty';
 const UNCERTAINTY_FILL_LAYER = 'aprs-position-uncertainty-fill';
@@ -91,35 +96,38 @@ function cellCenter(p: HeardPosition): { lon: number; lat: number } {
 type FeatureCollection = { type: 'FeatureCollection'; features: unknown[] };
 const EMPTY_FC: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
-// One circle layer paints every pin; one symbol layer draws the callsign label
-// offset above the pin. Data-driven so a single layer pair covers all stations:
-// stale pins dim; ambiguous pins get an amber ring marking them as approximate.
+// tuxlink-90xb: two stacked symbol layers draw the authentic sprite. The GREY
+// layer sits under the COLOUR layer; their `icon-opacity` (a PAINT prop, so it
+// can read feature-state) cross-fades colour->greyscale when `stale` flips —
+// keeping staleness a feature-state toggle with NO FeatureCollection rebuild
+// (tuxlink-gq0d). Ambiguous fixes shrink via the data-driven icon-size; the amber
+// uncertainty disc beneath them (tuxlink-f717) is unchanged. A third symbol layer
+// draws the callsign label above the pin.
+const ICON_LAYOUT: Record<string, unknown> = {
+  'icon-allow-overlap': true,
+  'icon-ignore-placement': true,
+  // 32px display from 64px cells at pixelRatio 2 => icon-size 1; ambiguous shrink.
+  'icon-size': ['case', ['>', ['get', 'ambiguity'], 0], 0.7, 1],
+  'icon-anchor': 'center',
+};
 const POSITION_LAYERS = (
   [
     {
-      id: POSITION_PINS_LAYER,
-      type: 'circle',
+      id: POSITION_PINS_GREY_LAYER,
+      type: 'symbol',
       source: POSITIONS_SOURCE,
+      layout: { ...ICON_LAYOUT, 'icon-image': ['get', 'spriteIdGrey'] },
       paint: {
-        // Ambiguous fixes render as a small, soft amber centroid (the region
-        // carries the real information); exact fixes are a solid blue pin,
-        // greyed when stale.
-        'circle-radius': ['case', ['>', ['get', 'ambiguity'], 0], 4, 7],
-        'circle-color': [
-          'case',
-          ['>', ['get', 'ambiguity'], 0],
-          '#f0c24a',
-          // tuxlink-gq0d: staleness is feature-state, not a baked property.
-          ['case', ['boolean', ['feature-state', 'stale'], false], '#7d8794', '#2f86f0'],
-        ],
-        'circle-opacity': [
-          'case',
-          ['>', ['get', 'ambiguity'], 0],
-          0.35,
-          ['case', ['boolean', ['feature-state', 'stale'], false], 0.5, 0.9],
-        ],
-        'circle-stroke-color': ['case', ['>', ['get', 'ambiguity'], 0], '#f0c24a', '#ffffff'],
-        'circle-stroke-width': 1.5,
+        'icon-opacity': ['case', ['boolean', ['feature-state', 'stale'], false], 0.55, 0],
+      },
+    },
+    {
+      id: POSITION_PINS_COLOR_LAYER,
+      type: 'symbol',
+      source: POSITIONS_SOURCE,
+      layout: { ...ICON_LAYOUT, 'icon-image': ['get', 'spriteId'] },
+      paint: {
+        'icon-opacity': ['case', ['boolean', ['feature-state', 'stale'], false], 0, 0.95],
       },
     },
     {
@@ -129,7 +137,7 @@ const POSITION_LAYERS = (
       layout: {
         'text-field': ['get', 'call'],
         'text-size': 11,
-        'text-offset': [0, -1.2],
+        'text-offset': [0, -1.4],
         'text-anchor': 'bottom',
       },
       paint: {
@@ -208,6 +216,13 @@ function buildPositionFC(positions: HeardPosition[]): FeatureCollection {
     // Ambiguous fixes plot at the cell CENTRE as a deliberately soft, small
     // marker — never a sharp pin claiming a coordinate the packet did not carry.
     const c = cellCenter(p);
+    // Stable per-station sprite ids (overlay folded in) — they never change as a
+    // station goes stale, so the FC is not rebuilt on the staleness tick (gq0d).
+    const spriteId = spriteIdFor(
+      p.symbolTable,
+      p.symbolCode,
+      lookupAprsSymbol(p.symbolTable, p.symbolCode).overlay,
+    );
     return {
       type: 'Feature',
       id: p.call,
@@ -215,6 +230,8 @@ function buildPositionFC(positions: HeardPosition[]): FeatureCollection {
         call: p.call,
         comment: p.comment,
         ambiguity: p.ambiguity,
+        spriteId,
+        spriteIdGrey: greyIdOf(spriteId),
       },
       geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
     };
@@ -326,6 +343,32 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
   // Uncertainty regions register first so the pins + labels draw on top of them.
   useMapOverlay(map, UNCERTAINTY_SOURCE, { type: 'geojson', data: EMPTY_FC }, UNCERTAINTY_LAYERS);
   useMapOverlay(map, POSITIONS_SOURCE, { type: 'geojson', data: EMPTY_FC }, POSITION_LAYERS);
+  // tuxlink-90xb: register the colour + grey image for every heard symbol before
+  // the source data references it (a symbol layer silently skips an unregistered
+  // icon-image). Re-applied on styledata — a style swap clears registered images.
+  useEffect(() => {
+    if (!map) return;
+    const m = map as unknown as SpriteMap & {
+      on: (t: string, h: (...a: unknown[]) => void) => unknown;
+      off: (t: string, h: (...a: unknown[]) => void) => unknown;
+    };
+    const apply = () => {
+      for (const p of positions) {
+        ensureSymbolImage(
+          m,
+          p.symbolTable,
+          p.symbolCode,
+          lookupAprsSymbol(p.symbolTable, p.symbolCode).overlay,
+        );
+      }
+    };
+    apply();
+    m.on('styledata', apply as (...a: unknown[]) => void);
+    return () => {
+      m.off('styledata', apply as (...a: unknown[]) => void);
+    };
+  }, [map, positions]);
+
   usePushData(map, UNCERTAINTY_SOURCE, uncertaintyFc);
   usePushData(map, POSITIONS_SOURCE, fc);
 
@@ -360,9 +403,9 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
       if (call == null) return;
       if (byCallRef.current.has(String(call))) setPopupCall(String(call));
     };
-    map.on('click', POSITION_PINS_LAYER, onClick as (...a: unknown[]) => void);
+    map.on('click', POSITION_PINS_COLOR_LAYER, onClick as (...a: unknown[]) => void);
     return () => {
-      map.off('click', POSITION_PINS_LAYER, onClick as (...a: unknown[]) => void);
+      map.off('click', POSITION_PINS_COLOR_LAYER, onClick as (...a: unknown[]) => void);
     };
   }, [map]);
 

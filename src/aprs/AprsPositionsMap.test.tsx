@@ -162,7 +162,7 @@ describe('AprsPositionsMap', () => {
     ];
     const { getByTestId } = render(<AprsPositionsMap positions={fuzzy} />);
     const map = loadLast();
-    act(() => map.__emit('click:aprs-position-pins', { features: [{ properties: { call: 'FUZZY' } }] }));
+    act(() => map.__emit('click:aprs-position-pins-color', { features: [{ properties: { call: 'FUZZY' } }] }));
     expect(getByTestId('aprs-position-age').textContent).toContain('min ago');
     expect(getByTestId('aprs-position-ambiguity').textContent).toContain('approximate');
   });
@@ -176,10 +176,57 @@ describe('AprsPositionsMap', () => {
     ];
     const { getByTestId } = render(<AprsPositionsMap positions={stations} />);
     const map = loadLast();
-    act(() => map.__emit('click:aprs-position-pins', { features: [{ properties: { call: 'WX1AA' } }] }));
+    act(() => map.__emit('click:aprs-position-pins-color', { features: [{ properties: { call: 'WX1AA' } }] }));
     expect(getByTestId('aprs-position-symbol').textContent).toContain('Weather station');
-    act(() => map.__emit('click:aprs-position-pins', { features: [{ properties: { call: 'MOBILE' } }] }));
+    act(() => map.__emit('click:aprs-position-pins-color', { features: [{ properties: { call: 'MOBILE' } }] }));
     expect(getByTestId('aprs-position-symbol').textContent).toContain('Car');
+  });
+
+  // tuxlink-90xb: authentic symbol sprites on pins.
+  it('builds features carrying stable colour + grey sprite ids', () => {
+    const car: HeardPosition[] = [
+      { call: 'W7RPT-9', lat: 45, lon: -73, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 0 },
+    ];
+    render(<AprsPositionsMap positions={car} />);
+    const map = loadLast();
+    const props = sourceData(map, 'aprs-positions').features[0].properties as unknown as Record<string, unknown>;
+    expect(props.spriteId).toBe('aprs:p:>');
+    expect(props.spriteIdGrey).toBe('aprs:p:>:grey');
+  });
+
+  it('adds two icon layers that cross-fade colour->grey on the stale feature-state', () => {
+    render(<AprsPositionsMap positions={positions} />);
+    const map = loadLast();
+    const color = map.__state.layers.find((l) => l.id === 'aprs-position-pins-color')!;
+    const grey = map.__state.layers.find((l) => l.id === 'aprs-position-pins-grey')!;
+    expect(color.spec.type).toBe('symbol');
+    expect(grey.spec.type).toBe('symbol');
+    expect((color.spec.layout as Record<string, unknown>)['icon-image']).toEqual(['get', 'spriteId']);
+    expect((grey.spec.layout as Record<string, unknown>)['icon-image']).toEqual(['get', 'spriteIdGrey']);
+    // icon-opacity (paint, so it can read feature-state) is the no-FC-churn channel.
+    expect(JSON.stringify(color.spec.paint)).toContain('feature-state');
+    expect(JSON.stringify(grey.spec.paint)).toContain('feature-state');
+  });
+
+  it('shrinks ambiguous pins via icon-size and keeps the uncertainty disc (f717)', () => {
+    const amb: HeardPosition[] = [
+      { call: 'N7CPZ', lat: 45, lon: -73, symbolTable: '/', symbolCode: '-', comment: '', at: Date.now(), ambiguity: 2 },
+    ];
+    render(<AprsPositionsMap positions={amb} />);
+    const map = loadLast();
+    const color = map.__state.layers.find((l) => l.id === 'aprs-position-pins-color')!;
+    expect(JSON.stringify((color.spec.layout as Record<string, unknown>)['icon-size'])).toContain('ambiguity');
+    expect(map.__state.layers.some((l) => l.id === 'aprs-position-uncertainty-fill')).toBe(true);
+  });
+
+  it('registers a colour + grey image for each heard symbol', () => {
+    const car: HeardPosition[] = [
+      { call: 'W7RPT-9', lat: 45, lon: -73, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 0 },
+    ];
+    render(<AprsPositionsMap positions={car} />);
+    const map = loadLast();
+    expect(map.hasImage('aprs:p:>')).toBe(true);
+    expect(map.hasImage('aprs:p:>:grey')).toBe(true);
   });
 });
 

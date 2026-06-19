@@ -1,0 +1,12 @@
+Tuxlink — third-party notices
+==============================
+
+APRS symbol artwork
+-------------------
+This product bundles APRS symbol artwork from hessu/aprs-symbols
+(https://github.com/hessu/aprs-symbols), used under CC BY-SA 2.0
+(https://creativecommons.org/licenses/by-sa/2.0/). Per-symbol provenance is
+preserved in src/assets/aprs-symbols/COPYRIGHT.md.
+
+Brand-logo cells (Apple `/M`, Microsoft `/Z`, Kenwood `\K`) are not used by this
+product; they render as a neutral fallback marker.
