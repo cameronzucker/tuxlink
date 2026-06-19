@@ -692,9 +692,24 @@ export function AppShell() {
   // dock to the connect strip's picker for setup. `listening` stays backend-truth:
   // a reject never optimistically flips the switch — the aprs-listening:change
   // event is the only thing that does.
+  // tuxlink-28o0: a SINGLE in-flight "connecting" flag, shared by every surface
+  // that can start the listener (the status-bar control + the dock connect strip),
+  // so they show "Connecting…" together. `listening` was already shared backend
+  // truth; this closes the in-flight gap the operator hit (status-bar connect, but
+  // the dock strip still read "Connect"). Routed through one wrapper so a connect
+  // from EITHER surface flips it.
+  const [aprsConnecting, setAprsConnecting] = useState(false);
+  const runAprsConnect = useCallback(async () => {
+    setAprsConnecting(true);
+    try {
+      await onAprsConnect();
+    } finally {
+      setAprsConnecting(false);
+    }
+  }, [onAprsConnect]);
   const [aprsToggling, setAprsToggling] = useState(false);
   const onToggleAprsListening = useCallback(async () => {
-    if (aprsToggling) return;
+    if (aprsToggling || aprsConnecting) return;
     // Not listening + NO radio configured: there is nothing to start. Rather than
     // fire a connect that fails silently (the tuxlink-ube7 "does nothing" report),
     // just open the APRS panel — its connect strip auto-expands the radio picker
@@ -704,24 +719,27 @@ export function AppShell() {
       openAprsChat();
       return;
     }
-    setAprsToggling(true);
-    try {
-      if (aprs.listening) {
+    if (aprs.listening) {
+      setAprsToggling(true);
+      try {
         await onAprsDisconnect();
-      } else {
-        // tuxlink-a1j3: pure on/off — start listening with the last-configured
-        // radio WITHOUT opening the dock (only the no-config first run above does).
-        await onAprsConnect();
+      } catch {
+        // Backend truth: a failed stop leaves `listening` as-is.
+      } finally {
+        setAprsToggling(false);
       }
-    } catch {
-      // Backend truth: a failed start leaves the indicator Off (the
-      // aprs-listening:change event drives `listening`), and the reason is now in
-      // the structured log (tuxlink-xyi7). The operator can open the dock to retry
-      // via the connect strip's inline error.
-    } finally {
-      setAprsToggling(false);
+    } else {
+      // tuxlink-a1j3: pure on/off — start listening with the last-configured radio
+      // WITHOUT opening the dock (only the no-config first run above does).
+      // tuxlink-28o0: via the shared wrapper so the dock strip shows Connecting… too.
+      try {
+        await runAprsConnect();
+      } catch {
+        // Backend truth: a failed start leaves the indicator Off; the reason is in
+        // the structured log (tuxlink-xyi7). Open the dock to retry via the strip.
+      }
     }
-  }, [aprsToggling, aprs.listening, aprsLinkKind, onAprsConnect, onAprsDisconnect, openAprsChat]);
+  }, [aprsToggling, aprsConnecting, aprs.listening, aprsLinkKind, runAprsConnect, onAprsDisconnect, openAprsChat]);
 
   // Phase 7 (tuxlink-noa0): identity list + active session + switch mutation for
   // the dashboard's inline IdentitySwitcher. The list/active queries feed the
@@ -1461,7 +1479,7 @@ export function AppShell() {
             unread: aprsUnread,
             onOpen: openAprsChat,
             onToggleListening: onToggleAprsListening,
-            toggleBusy: aprsToggling,
+            toggleBusy: aprsToggling || aprsConnecting,
           }}
           identities={identityList.data ?? null}
           activeIdentity={activeIdentity.data ?? null}
@@ -1707,6 +1725,7 @@ export function AppShell() {
                     path the old in-panel Start/Stop toggle couldn't satisfy). */}
                 <AprsConnectStrip
                   listening={aprs.listening}
+                  externalConnecting={aprsConnecting}
                   linkKind={aprsLinkKind}
                   radioLabel={aprsRadioLabel}
                   allowUvproNative
@@ -1717,7 +1736,7 @@ export function AppShell() {
                   serialDevice={packetConfig.config?.serialDevice ?? undefined}
                   serialBaud={packetConfig.config?.serialBaud ?? undefined}
                   btMac={packetConfig.config?.btMac ?? undefined}
-                  onConnect={onAprsConnect}
+                  onConnect={runAprsConnect}
                   onDisconnect={onAprsDisconnect}
                   onLinkChange={onAprsLinkChange}
                 />

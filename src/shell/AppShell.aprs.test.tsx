@@ -30,9 +30,14 @@ vi.mock('@tauri-apps/api/core', () => ({
       };
     }
     if (cmd === 'packet_config_get') {
+      // No link configured (linkKind: null) so clicking the status-strip control
+      // deterministically opens the dock via the first-run setup path. Post-a1j3
+      // the control is pure on/off and only opens the dock when nothing is
+      // configured yet; with a configured link these tests would race the config
+      // query (dock-open vs start-listening) — tuxlink-28o0.
       return {
-        ssid: 7, listenDefault: true, linkKind: 'Tcp', tcpHost: '127.0.0.1',
-        tcpPort: 8001, serialDevice: null, serialBaud: null, txdelay: 30,
+        ssid: 7, listenDefault: true, linkKind: null, tcpHost: null,
+        tcpPort: null, serialDevice: null, serialBaud: null, txdelay: 30,
         persistence: 63, slotTime: 10, paclen: 128, maxframe: 4,
         t1Ms: 3000, n2Retries: 10,
       };

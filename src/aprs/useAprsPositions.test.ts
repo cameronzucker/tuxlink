@@ -85,6 +85,30 @@ describe('useAprsPositions', () => {
     expect(result.current.positions[0].ambiguity).toBe(3);
   });
 
+  it('carries the via-chain from the inbound DTO onto the heard position', async () => {
+    const { result } = renderHook(() => useAprsPositions());
+    await act(async () => {});
+    emitPos({
+      ...BASE,
+      sender: 'KE7XYZ-9',
+      via: [
+        { call: 'W7RPT-1', repeated: true },
+        { call: 'WIDE2-1', repeated: false },
+      ],
+    });
+    expect(result.current.positions[0].via).toEqual([
+      { call: 'W7RPT-1', repeated: true },
+      { call: 'WIDE2-1', repeated: false },
+    ]);
+  });
+
+  it('defaults via to an empty array when the payload omits it (legacy)', async () => {
+    const { result } = renderHook(() => useAprsPositions());
+    await act(async () => {});
+    emitPos(BASE); // no via field on the payload
+    expect(result.current.positions[0].via).toEqual([]);
+  });
+
   it('labels an object/item report by its name, not the reporting sender', async () => {
     const { result } = renderHook(() => useAprsPositions());
     await act(async () => {});

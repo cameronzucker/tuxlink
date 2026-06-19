@@ -273,6 +273,114 @@ describe('AprsPositionsMap WX overlay (ni5b)', () => {
   });
 });
 
+describe('AprsPositionsMap digipeat path (cn84)', () => {
+  // KE7XYZ-9 heard via WIDE2-1 (repeated). WIDE2-1 has no heard position, so the
+  // honest path is a single dashed src→you connector (the unlocatable-hop case).
+  const viaPositions: HeardPosition[] = [
+    {
+      call: 'KE7XYZ-9',
+      lat: 48.1,
+      lon: -122.6,
+      symbolTable: '/',
+      symbolCode: '>',
+      comment: '',
+      at: 3,
+      ambiguity: 0,
+      via: [{ call: 'WIDE2-1', repeated: true }],
+    },
+  ];
+
+  it('registers the path + packet-dot layers', () => {
+    render(<AprsPositionsMap positions={viaPositions} operatorGrid="CN87" />);
+    const map = loadLast();
+    const ids = map.__state.layers.map((l) => l.id);
+    expect(ids).toContain('aprs-digipeat-path-solid');
+    expect(ids).toContain('aprs-digipeat-path-dashed');
+    expect(ids).toContain('aprs-digipeat-packet-dot');
+  });
+
+  it('paints the honest path on pin hover and clears it on mouse-out', () => {
+    render(<AprsPositionsMap positions={viaPositions} operatorGrid="CN87" />);
+    const map = loadLast();
+    act(() =>
+      map.__emit('mouseenter:aprs-position-pins-color', {
+        features: [{ properties: { call: 'KE7XYZ-9' } }],
+      }),
+    );
+    const data = (map.getSource('aprs-digipeat-path') as { data: { features: unknown[] } }).data;
+    expect(data.features.length).toBeGreaterThan(0);
+    act(() => map.__emit('mouseleave:aprs-position-pins-color'));
+    const cleared = (map.getSource('aprs-digipeat-path') as { data: { features: unknown[] } }).data;
+    expect(cleared.features).toHaveLength(0);
+  });
+
+  it('renders a dashed segment for an unlocatable WIDE alias hop (RF-honesty)', () => {
+    render(<AprsPositionsMap positions={viaPositions} operatorGrid="CN87" />);
+    const map = loadLast();
+    act(() =>
+      map.__emit('mouseenter:aprs-position-pins-color', {
+        features: [{ properties: { call: 'KE7XYZ-9' } }],
+      }),
+    );
+    const data = (
+      map.getSource('aprs-digipeat-path') as {
+        data: { features: Array<{ properties: { kind: string } }> };
+      }
+    ).data;
+    // WIDE2-1 has no heard position → no false-exact intermediate pin; the whole
+    // src→you path is dashed, not solid.
+    expect(data.features.length).toBeGreaterThan(0);
+    expect(data.features.every((f) => f.properties.kind === 'dashed')).toBe(true);
+  });
+
+  it('marks the unlocatable hop with a pos? label', () => {
+    render(<AprsPositionsMap positions={viaPositions} operatorGrid="CN87" />);
+    const map = loadLast();
+    act(() =>
+      map.__emit('mouseenter:aprs-position-pins-color', {
+        features: [{ properties: { call: 'KE7XYZ-9' } }],
+      }),
+    );
+    const labels = (
+      map.getSource('aprs-digipeat-path-labels') as {
+        data: { features: Array<{ properties: { label: string } }> };
+      }
+    ).data;
+    expect(labels.features.length).toBeGreaterThan(0);
+    expect(labels.features[0].properties.label).toContain('WIDE2-1');
+    expect(labels.features[0].properties.label).toContain('?');
+  });
+
+  it('does not trace a path from an object/item report (honest RF source)', () => {
+    // An object pin plots the object's location with the SENDER's via-chain; the
+    // path would fabricate the RF source, so it must not draw.
+    const objPositions: HeardPosition[] = [
+      {
+        call: 'LEADER',
+        lat: 48.1,
+        lon: -122.6,
+        symbolTable: '\\',
+        symbolCode: '!',
+        comment: '',
+        at: 3,
+        ambiguity: 0,
+        isObject: true,
+        via: [{ call: 'W7RPT-1', repeated: true }],
+      },
+    ];
+    render(<AprsPositionsMap positions={objPositions} operatorGrid="CN87" />);
+    const map = loadLast();
+    act(() =>
+      map.__emit('mouseenter:aprs-position-pins-color', {
+        features: [{ properties: { call: 'LEADER' } }],
+      }),
+    );
+    const data = (map.getSource('aprs-digipeat-path') as { data: { features: unknown[] } }).data;
+    expect(data.features).toHaveLength(0);
+  });
+});
+
+
 describe('AprsPositionsMap viewport persistence (tuxlink-dwzu)', () => {
   const KEY = 'tuxlink:map-viewport:aprs';
   beforeEach(() => window.localStorage.clear());

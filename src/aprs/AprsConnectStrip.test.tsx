@@ -146,4 +146,24 @@ describe('AprsConnectStrip', () => {
       expect.objectContaining({ linkKind: 'UvproNative', btMac: 'AA:BB:CC:DD:EE:FF' }),
     );
   });
+
+  // tuxlink-28o0: a connect started OUTSIDE the strip (e.g. the status-bar
+  // control) must show "Connecting…" here too — not a stale "Connect" — until the
+  // backend `listening` event lands. `externalConnecting` drives the shared
+  // in-flight state even though this strip's own button was never clicked.
+  it('shows Connecting… when a connect is in flight from another surface (externalConnecting)', () => {
+    renderStrip({ listening: false, externalConnecting: true });
+    expect(screen.getByTestId('aprs-connect-state')).toHaveTextContent(/connecting/i);
+    expect(screen.getByTestId('aprs-connect-state')).toHaveAttribute('data-state', 'connecting');
+    const btn = screen.getByTestId('aprs-connect-btn');
+    expect(btn).toHaveTextContent(/connecting/i);
+    expect(btn).toBeDisabled();
+  });
+
+  it('does not start a second connect while an external connect is in flight', () => {
+    const onConnect = vi.fn().mockResolvedValue(undefined);
+    renderStrip({ listening: false, externalConnecting: true, onConnect });
+    fireEvent.click(screen.getByTestId('aprs-connect-btn'));
+    expect(onConnect).not.toHaveBeenCalled();
+  });
 });

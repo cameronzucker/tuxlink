@@ -38,6 +38,8 @@ import { joinWxStations, badgeContent, type WxStation } from './wxStations';
 import { CATEGORIES, categoryByKey } from './stationCategories';
 import { composeSnapshotHeader } from './wxSnapshot';
 import type { EnvStation } from './envStations';
+import { resolveDigipeatPath, type LatLon, type PathSegment } from './digipeatPath';
+import { computeTraceFrame, DEFAULT_TIMINGS, type ActiveTrace } from './pathTrace';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
@@ -112,6 +114,88 @@ const FILTERABLE_LAYERS = [
   UNCERTAINTY_FILL_LAYER,
   UNCERTAINTY_LINE_LAYER,
 ];
+
+// cn84: the animated digipeat path. One line source (solid green for located
+// hops, dashed amber across unknown ones — see resolveDigipeatPath) plus a
+// one-point source for the riding "packet" dot.
+const PATH_SOURCE = 'aprs-digipeat-path';
+const PATH_SOLID_LAYER = 'aprs-digipeat-path-solid';
+const PATH_DASHED_LAYER = 'aprs-digipeat-path-dashed';
+const PATH_DOT_SOURCE = 'aprs-digipeat-packet';
+const PATH_DOT_LAYER = 'aprs-digipeat-packet-dot';
+// `pos?` markers: the honest cue for a hop we can't locate (WIDE aliases, unheard
+// digis). One amber text label at the midpoint of each dashed connector.
+const PATH_LABEL_SOURCE = 'aprs-digipeat-path-labels';
+const PATH_LABEL_LAYER = 'aprs-digipeat-path-label';
+
+const PATH_LAYERS = (
+  [
+    {
+      id: PATH_SOLID_LAYER,
+      type: 'line',
+      source: PATH_SOURCE,
+      filter: ['==', ['get', 'kind'], 'solid'],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': '#7fe6a3',
+        'line-width': 2.5,
+        'line-opacity': ['coalesce', ['get', 'opacity'], 1],
+      },
+    },
+    {
+      id: PATH_DASHED_LAYER,
+      type: 'line',
+      source: PATH_SOURCE,
+      filter: ['==', ['get', 'kind'], 'dashed'],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': '#f0c987',
+        'line-width': 2,
+        'line-dasharray': [1.5, 1.5],
+        'line-opacity': ['coalesce', ['get', 'opacity'], 1],
+      },
+    },
+  ] as unknown[]
+).map((l) => l as Record<string, unknown> & { id: string });
+
+const PATH_DOT_LAYERS = (
+  [
+    {
+      id: PATH_DOT_LAYER,
+      type: 'circle',
+      source: PATH_DOT_SOURCE,
+      paint: {
+        'circle-radius': 4,
+        'circle-color': '#ffffff',
+        'circle-stroke-color': '#0b1218',
+        'circle-stroke-width': 1,
+      },
+    },
+  ] as unknown[]
+).map((l) => l as Record<string, unknown> & { id: string });
+
+const PATH_LABEL_LAYERS = (
+  [
+    {
+      id: PATH_LABEL_LAYER,
+      type: 'symbol',
+      source: PATH_LABEL_SOURCE,
+      layout: {
+        'text-field': ['get', 'label'],
+        'text-size': 10,
+        'text-offset': [0, -0.8],
+        'text-anchor': 'bottom',
+        'text-allow-overlap': true,
+      },
+      paint: {
+        'text-color': '#f0c987',
+        'text-halo-color': '#0c1620',
+        'text-halo-width': 1.2,
+        'text-opacity': ['coalesce', ['get', 'opacity'], 1],
+      },
+    },
+  ] as unknown[]
+).map((l) => l as Record<string, unknown> & { id: string });
 
 /// A fix not re-heard within this long is shown dimmed (and its age is surfaced
 /// in the popup). The hook drops it entirely after a longer TTL.
@@ -692,6 +776,185 @@ function WxFilterControl({ category, onChange }: { category: string; onChange: (
   );
 }
 
+/// One LineString feature per resolved segment, carrying its kind + the path
+/// opacity. `progress` (0..1) trims the polyline to the drawn fraction so the
+/// live trace draws in hop-by-hop; at progress 1 every segment is full.
+function pathFC(segments: PathSegment[], progress: number, opacity: number): FeatureCollection {
+  const total = segments.length;
+  const features: unknown[] = [];
+  segments.forEach((s, i) => {
+    const segStart = i / total;
+    const segEnd = (i + 1) / total;
+    if (progress <= segStart) return; // this segment not reached yet
+    let to = s.to;
+    if (progress < segEnd) {
+      // Partially-drawn final segment: interpolate the visible endpoint.
+      const frac = (progress - segStart) / (segEnd - segStart);
+      to = {
+        lat: s.from.lat + (s.to.lat - s.from.lat) * frac,
+        lon: s.from.lon + (s.to.lon - s.from.lon) * frac,
+      };
+    }
+    features.push({
+      type: 'Feature',
+      properties: { kind: s.kind, opacity },
+      geometry: { type: 'LineString', coordinates: [[s.from.lon, s.from.lat], [to.lon, to.lat]] },
+    });
+  });
+  return { type: 'FeatureCollection', features };
+}
+
+/// A one-point FeatureCollection for the riding "packet" dot.
+function pointFC(p: LatLon): FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [p.lon, p.lat] } }],
+  };
+}
+
+/// `pos?` markers for unlocatable hops: one amber text label at the midpoint of
+/// each dashed connector, shown once that segment has finished drawing. This is
+/// the honest cue the hybrid-path design (cn84) promised — the unknown hop's
+/// callsign with a `?`, never a fabricated pin.
+function labelFC(segments: PathSegment[], progress: number, opacity: number): FeatureCollection {
+  const total = segments.length;
+  const features: unknown[] = [];
+  segments.forEach((s, i) => {
+    if (s.kind !== 'dashed' || !s.unknownLabels?.length) return;
+    if (progress < (i + 1) / total) return; // wait until this segment is fully drawn
+    features.push({
+      type: 'Feature',
+      properties: { label: `${s.unknownLabels.join('/')} ?`, opacity },
+      geometry: {
+        type: 'Point',
+        coordinates: [(s.from.lon + s.to.lon) / 2, (s.from.lat + s.to.lat) / 2],
+      },
+    });
+  });
+  return { type: 'FeatureCollection', features };
+}
+
+/// Animated digipeat path (cn84). Two triggers, one honest resolution:
+///   - HOVER a pin → paint the full path immediately (held until mouse-out).
+///   - a newly-HEARD fix → animate that path once (draw-in → linger → fade),
+///     aprs.fi-style, unless the operator is hovering (hover wins).
+/// The animation timeline math lives in `pathTrace` (unit-tested); this component
+/// is the thin maplibre shell that applies each frame to the line + dot sources.
+function DigipeatPathLayer({
+  positions,
+  operator,
+}: {
+  positions: HeardPosition[];
+  operator: LatLon | null;
+}) {
+  const map = useMapContext();
+  useMapOverlay(map, PATH_SOURCE, { type: 'geojson', data: EMPTY_FC }, PATH_LAYERS);
+  useMapOverlay(map, PATH_DOT_SOURCE, { type: 'geojson', data: EMPTY_FC }, PATH_DOT_LAYERS);
+  useMapOverlay(map, PATH_LABEL_SOURCE, { type: 'geojson', data: EMPTY_FC }, PATH_LABEL_LAYERS);
+
+  // Long-lived handlers read current data through refs (no re-subscribe per render).
+  const byCallRef = useRef<Map<string, HeardPosition>>(new Map());
+  const locatedRef = useRef<Map<string, LatLon>>(new Map());
+  const operatorRef = useRef<LatLon | null>(operator);
+  operatorRef.current = operator;
+  useMemo(() => {
+    const by = new Map<string, HeardPosition>();
+    const loc = new Map<string, LatLon>();
+    for (const p of positions) {
+      by.set(p.call, p);
+      loc.set(p.call, { lat: p.lat, lon: p.lon });
+    }
+    byCallRef.current = by;
+    locatedRef.current = loc;
+  }, [positions]);
+
+  const hoverActiveRef = useRef(false);
+  const liveRef = useRef<ActiveTrace | null>(null);
+  const rafRef = useRef(0);
+
+  const setSrc = (id: string, fc: FeatureCollection) => {
+    if (!map) return;
+    const s = map.getSource(id) as { setData?: (d: unknown) => void } | undefined;
+    s?.setData?.(fc);
+  };
+  const clearPath = () => {
+    setSrc(PATH_SOURCE, EMPTY_FC);
+    setSrc(PATH_DOT_SOURCE, EMPTY_FC);
+    setSrc(PATH_LABEL_SOURCE, EMPTY_FC);
+  };
+  const segmentsFor = (call: string): PathSegment[] | null => {
+    const p = byCallRef.current.get(call);
+    if (!p) return null;
+    // An object/item pin plots the object, not the transmitter — its via-chain
+    // belongs to a station at a different location, so tracing from here would
+    // fabricate the RF source. Skip (Codex cn84 review, RF-honesty).
+    if (p.isObject) return null;
+    const segs = resolveDigipeatPath({
+      src: { call: p.call, lat: p.lat, lon: p.lon },
+      via: p.via ?? [],
+      located: locatedRef.current,
+      operator: operatorRef.current,
+    });
+    return segs.length ? segs : null;
+  };
+
+  // Hover: paint the full honest path immediately, held until mouse-out.
+  useEffect(() => {
+    if (!map) return;
+    const enter = (e: { features?: Array<{ properties?: { call?: unknown } }> }) => {
+      const call = e.features?.[0]?.properties?.call;
+      if (call == null) return;
+      const segs = segmentsFor(String(call));
+      if (!segs) return;
+      hoverActiveRef.current = true;
+      setSrc(PATH_SOURCE, pathFC(segs, 1, 1));
+      setSrc(PATH_DOT_SOURCE, EMPTY_FC);
+      setSrc(PATH_LABEL_SOURCE, labelFC(segs, 1, 1));
+    };
+    const leave = () => {
+      hoverActiveRef.current = false;
+      clearPath();
+    };
+    map.on('mouseenter', POSITION_PINS_COLOR_LAYER, enter as (...a: unknown[]) => void);
+    map.on('mouseleave', POSITION_PINS_COLOR_LAYER, leave as (...a: unknown[]) => void);
+    return () => {
+      map.off('mouseenter', POSITION_PINS_COLOR_LAYER, enter as (...a: unknown[]) => void);
+      map.off('mouseleave', POSITION_PINS_COLOR_LAYER, leave as (...a: unknown[]) => void);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+
+  // Live auto-trace: animate the newest fix's path once (unless hovering).
+  const newest = positions.length ? positions.reduce((a, b) => (b.at > a.at ? b : a)) : null;
+  const newestKey = newest ? `${newest.call}:${newest.at}` : '';
+  useEffect(() => {
+    if (!map || !newest || hoverActiveRef.current) return;
+    const segs = segmentsFor(newest.call);
+    if (!segs) return;
+    liveRef.current = { segments: segs, startMs: performance.now(), mode: 'live', timings: DEFAULT_TIMINGS };
+    cancelAnimationFrame(rafRef.current);
+    const loop = () => {
+      const active = liveRef.current;
+      if (!active || hoverActiveRef.current) return; // hover owns the paint
+      const f = computeTraceFrame(active, performance.now());
+      if (f.phase === 'idle') {
+        liveRef.current = null;
+        clearPath();
+        return;
+      }
+      setSrc(PATH_SOURCE, pathFC(f.segments, f.progress, f.opacity));
+      setSrc(PATH_DOT_SOURCE, f.packet ? pointFC(f.packet) : EMPTY_FC);
+      setSrc(PATH_LABEL_SOURCE, labelFC(f.segments, f.progress, f.opacity));
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, newestKey]);
+
+  return null;
+}
+
 /// The operator's own position pin ("you"). Sourced from the operator grid, not a
 /// decoded beacon — drawn distinctly so it never reads as a heard station.
 function OperatorPin({ location }: { location: { lat: number; lon: number } | null }) {
@@ -736,6 +999,7 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
         <PositionLayers positions={positions} />
         <WxOverlay wx={wx} category={category} onFocusStation={onFocusStation} />
         <WxExportControl grid={operatorGrid || undefined} stationCount={wx.length} />
+        <DigipeatPathLayer positions={positions} operator={me} />
         <OperatorPin location={me} />
         <RecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </MapLibreMap>

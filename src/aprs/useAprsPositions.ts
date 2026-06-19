@@ -71,6 +71,10 @@ export function useAprsPositions(): UseAprsPositions {
           symbolCode: p.symbolCode,
           comment: p.comment,
           ambiguity: p.ambiguity,
+          via: p.via ?? [],
+          // An OBJECT/ITEM report (carries `name`) plots the object's location,
+          // not the transmitter's — so its via-chain must not be traced (cn84).
+          isObject: p.name != null,
           at: Date.now(),
         });
         // Sweep on every fix too, so a busy channel keeps the set trimmed
