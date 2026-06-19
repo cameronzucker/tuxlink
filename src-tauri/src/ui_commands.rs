@@ -3969,36 +3969,50 @@ pub async fn aprs_listen_start(
     uvpro: State<'_, std::sync::Arc<crate::winlink::ax25::uvpro::session::UvproSession>>,
 ) -> Result<(), UiError> {
     let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
-    // The operator's declared link kind selects the transport (before any identity
-    // resolution so a misconfigured link fails fast with a clear message).
-    let transport = aprs_transport_from_link(cfg.packet.link.as_ref())?;
-    // Active base call — REAL inline mechanism, mirroring packet_listen
-    // (ui_commands.rs ~3940-3968): resolve the active SessionIdentity off the
-    // live backend, then uppercase its base callsign. `active_identity()` returns
-    // Result<SessionIdentity, BackendError>; `?` maps via From<BackendError> for
-    // UiError (fail-closed NoActiveIdentity -> NotConfigured before any hardware).
-    let backend = state
-        .current()
-        .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
-    let session_id = backend.active_identity()?;
-    let base = session_id.mycall().as_str().to_uppercase();
-    let identity = crate::winlink::aprs::identity::AprsIdentity {
-        source: crate::winlink::ax25::frame::Address {
-            call: base,
-            ssid: cfg.aprs.source_ssid,
-        },
-        tocall: crate::winlink::ax25::frame::Address {
-            call: cfg.aprs.tocall.clone(),
-            ssid: 0,
-        },
-        path: crate::winlink::aprs::identity::parse_path(&cfg.aprs.path)
-            .map_err(|detail| UiError::Internal { detail })?,
-    };
-    match transport {
-        AprsTransportKind::Kiss(link) => aprs.start(app, link, identity),
-        AprsTransportKind::Native => aprs.start_native(app, uvpro.inner().clone(), identity),
+    // tuxlink-xyi7: instrument the connect path. Every error below returns a UiError
+    // straight to the frontend (shown inline in the connect strip) but used to write
+    // nothing to the structured log, so "can't connect" was undiagnosable from logs.
+    // Log the request (with the resolved link kind) and the single outcome/reason.
+    // The body has no `.await` (read_config / transport / identity / engine start are
+    // all sync), so a sync closure can wrap it to capture the outcome in one place.
+    tracing::info!(target: "tuxlink::aprs", link = ?cfg.packet.link, "APRS listen start requested");
+    let result = (|| -> Result<(), UiError> {
+        // The operator's declared link kind selects the transport (before any identity
+        // resolution so a misconfigured link fails fast with a clear message).
+        let transport = aprs_transport_from_link(cfg.packet.link.as_ref())?;
+        // Active base call — REAL inline mechanism, mirroring packet_listen
+        // (ui_commands.rs ~3940-3968): resolve the active SessionIdentity off the
+        // live backend, then uppercase its base callsign. `active_identity()` returns
+        // Result<SessionIdentity, BackendError>; `?` maps via From<BackendError> for
+        // UiError (fail-closed NoActiveIdentity -> NotConfigured before any hardware).
+        let backend = state
+            .current()
+            .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
+        let session_id = backend.active_identity()?;
+        let base = session_id.mycall().as_str().to_uppercase();
+        let identity = crate::winlink::aprs::identity::AprsIdentity {
+            source: crate::winlink::ax25::frame::Address {
+                call: base,
+                ssid: cfg.aprs.source_ssid,
+            },
+            tocall: crate::winlink::ax25::frame::Address {
+                call: cfg.aprs.tocall.clone(),
+                ssid: 0,
+            },
+            path: crate::winlink::aprs::identity::parse_path(&cfg.aprs.path)
+                .map_err(|detail| UiError::Internal { detail })?,
+        };
+        match transport {
+            AprsTransportKind::Kiss(link) => aprs.start(app, link, identity),
+            AprsTransportKind::Native => aprs.start_native(app, uvpro.inner().clone(), identity),
+        }
+        .map_err(|detail| UiError::Internal { detail })
+    })();
+    match &result {
+        Ok(()) => tracing::info!(target: "tuxlink::aprs", "APRS listen started"),
+        Err(e) => tracing::warn!(target: "tuxlink::aprs", error = ?e, "APRS listen start failed"),
     }
-    .map_err(|detail| UiError::Internal { detail })
+    result
 }
 
 /// Stop the APRS engine and close the link.
@@ -4006,6 +4020,8 @@ pub async fn aprs_listen_start(
 pub async fn aprs_listen_stop(
     aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
 ) -> Result<(), UiError> {
+    // tuxlink-xyi7: log stop requests so an unexpected/duplicate stop is visible.
+    tracing::info!(target: "tuxlink::aprs", "APRS listen stop requested");
     aprs.stop();
     Ok(())
 }
