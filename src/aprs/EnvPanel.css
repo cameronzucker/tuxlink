@@ -347,3 +347,13 @@
   background: var(--success, #4ade80);
   box-shadow: 0 0 6px var(--success, #4ade80);
 }
+
+/* ni5b: transient highlight when a map WX-badge click focuses a station card. */
+.env-card-focus {
+  animation: env-focus-flash 1.6s ease-out 1;
+  border-radius: 8px;
+}
+@keyframes env-focus-flash {
+  0% { box-shadow: 0 0 0 2px #4ea1ff; }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}

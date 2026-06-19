@@ -6,6 +6,7 @@
 // data is sparse on the air, so an honest empty state is the common first view —
 // it says nothing has been heard rather than implying a fault.
 
+import { useEffect, useRef } from 'react';
 import './EnvPanel.css';
 import { EnvStationCard } from './EnvStationCard';
 import type { EnvStation } from './envStations';
@@ -15,9 +16,19 @@ export interface EnvPanelProps {
   /// Local epoch-ms reference for staleness + relative times. Injectable so the
   /// card's stale/age rendering is deterministic under test.
   now?: number;
+  /// When set, scroll this station's card into view + briefly highlight it.
+  /// Threaded from a map WX-badge click (ni5b). Unset = unchanged behaviour.
+  focusCall?: string | null;
 }
 
-export function EnvPanel({ stations, now = Date.now() }: EnvPanelProps) {
+export function EnvPanel({ stations, now = Date.now(), focusCall = null }: EnvPanelProps) {
+  const focusRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (focusCall && focusRef.current) {
+      focusRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [focusCall]);
+
   if (stations.length === 0) {
     return (
       <div className="env-panel" data-testid="env-panel">
@@ -35,7 +46,13 @@ export function EnvPanel({ stations, now = Date.now() }: EnvPanelProps) {
     <div className="env-panel" data-testid="env-panel">
       <div className="env-list">
         {stations.map((s) => (
-          <EnvStationCard key={s.call} station={s} now={now} />
+          <div
+            key={s.call}
+            ref={s.call === focusCall ? focusRef : undefined}
+            className={s.call === focusCall ? 'env-card-focus' : undefined}
+          >
+            <EnvStationCard station={s} now={now} />
+          </div>
         ))}
       </div>
     </div>
