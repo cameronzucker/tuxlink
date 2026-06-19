@@ -57,7 +57,7 @@ const UNRESOLVED_PATH = resolve(REPO_ROOT, 'dev/scratch/request-geo/unresolved.t
 const RADAR_REGIONS_PATH = resolve(REPO_ROOT, 'src/request/radar-regions.json');
 const US_STATES_GEO_PATH = resolve(REPO_ROOT, 'src/request/us-states.geo.json');
 
-const UA = 'tuxlink-dev (cameronzucker@gmail.com)';
+const UA = 'tuxlink-dev (https://tuxlink.org)';
 
 // ---------------------------------------------------------------------------
 // CLI flags
