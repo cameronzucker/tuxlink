@@ -399,11 +399,21 @@ pub fn parse_humanize_bytes(s: &str) -> Option<u64> {
 pub fn parse_pmtiles_progress(line: &str) -> Option<(u64, u64)> {
     let open = line.find('(')?;
     let close = line[open..].find(')').map(|i| i + open)?;
-    let inner = &line[open + 1..close]; // e.g. "76 MB/2.0 GB, 38 MB/s"
-    let pair = inner.split(',').next()?; // "76 MB/2.0 GB"
-    let mut halves = pair.split('/');
-    let transferred = parse_humanize_bytes(halves.next()?)?;
-    let total = parse_humanize_bytes(halves.next()?)?;
+    let inner = &line[open + 1..close]; // e.g. "76 MB/2.0 GB, 38 MB/s" or "42/42 MB, …"
+    let pair = inner.split(',').next()?; // "76 MB/2.0 GB" or "42/42 MB"
+    let (left, right) = pair.split_once('/')?;
+    let total = parse_humanize_bytes(right)?;
+    // The transferred half may SHARE the total's unit (go-pmtiles 1.30.3 prints e.g.
+    // "(42/42 MB, …)" / "(4.3/9.3 GB, …)" once both values are the same magnitude).
+    // If the left half is unitless, borrow the unit from the right (Codex P2 — else
+    // the bar freezes exactly when transferred catches up to total, near the end).
+    let transferred = parse_humanize_bytes(left).or_else(|| {
+        let unit: String = right.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+        if unit.is_empty() {
+            return None;
+        }
+        parse_humanize_bytes(&format!("{} {}", left.trim(), unit))
+    })?;
     Some((transferred, total))
 }
 
@@ -810,6 +820,16 @@ mod tests {
         );
         assert_eq!(
             parse_pmtiles_progress("fetching chunks  47% |   | (4.3 GB/9.3 GB, 24 MB/s) [3m:4m]"),
+            Some((4_300_000_000, 9_300_000_000))
+        );
+        // SHARED-UNIT form (go-pmtiles 1.30.3 once both values are the same
+        // magnitude): the left half is unitless and borrows the right's unit.
+        assert_eq!(
+            parse_pmtiles_progress("fetching chunks 100% |   | (42/42 MB, 327 MB/s) [0s:0s]"),
+            Some((42_000_000, 42_000_000))
+        );
+        assert_eq!(
+            parse_pmtiles_progress("fetching chunks  46% |   | (4.3/9.3 GB, 24 MB/s) [3m:4m]"),
             Some((4_300_000_000, 9_300_000_000))
         );
     }

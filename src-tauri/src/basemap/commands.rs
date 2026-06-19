@@ -198,7 +198,11 @@ impl Extractor for SidecarExtractor {
                 g.1 = now;
             } else {
                 state.lock().expect("download state lock poisoned").1 = now;
-                if !text.trim().is_empty() {
+                // Keep only genuine log / error text for the failure message. Never
+                // append progress-bar lines (defensive: even a progress variant the
+                // parser doesn't recognize must not pollute the error — Codex P2).
+                let t = text.trim();
+                if !t.is_empty() && !t.starts_with("fetching chunks") {
                     let mut c = captured.lock().expect("captured lock poisoned");
                     c.push_str(text);
                     c.push('\n');
