@@ -37,7 +37,11 @@ import type { HeardPosition } from './aprsTypes';
 import { joinWxStations, badgeContent, type WxStation } from './wxStations';
 import { CATEGORIES, categoryByKey } from './stationCategories';
 import { composeSnapshotHeader } from './wxSnapshot';
+import { composeWxSitrep } from './wxSitrep';
 import type { EnvStation } from './envStations';
+import { saveDraft } from '../compose/useDraft';
+import { newDraftId } from '../routing';
+import { invoke } from '@tauri-apps/api/core';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
@@ -710,6 +714,36 @@ function WxExportControl({ grid, stationCount }: { grid?: string; stationCount: 
   );
 }
 
+/// "Weather SITREP" (tuxlink-hepq): aggregate the heard WX stations into a
+/// Winlink-ready local-area situation report and open a compose window pre-filled
+/// with it (subject + body), via the same draft + `compose_window_open` path as
+/// "New Message". Disabled until at least one WX station is heard — there is
+/// nothing honest to report from zero stations.
+function WxSitrepControl({ wx, operatorGrid }: { wx: WxStation[]; operatorGrid?: string }) {
+  const compose = () => {
+    const { subject, body } = composeWxSitrep(wx, { nowMs: Date.now(), operatorGrid });
+    const draftId = newDraftId();
+    saveDraft({ draftId, to: '', subject, body, requestAck: false });
+    void invoke('compose_window_open', { draftId });
+  };
+  return (
+    <button
+      type="button"
+      className="aprs-wx-sitrep"
+      data-testid="aprs-wx-sitrep"
+      disabled={wx.length === 0}
+      title={
+        wx.length === 0
+          ? 'No weather stations heard yet'
+          : 'Compose a Winlink weather situation report from heard stations'
+      }
+      onClick={compose}
+    >
+      Weather SITREP
+    </button>
+  );
+}
+
 /// The category filter control ("weather mode"): a small select in the map corner.
 function WxFilterControl({ category, onChange }: { category: string; onChange: (key: string) => void }) {
   return (
@@ -775,6 +809,7 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
       >
         <PositionLayers positions={positions} />
         <WxOverlay wx={wx} category={category} onFocusStation={onFocusStation} />
+        <WxSitrepControl wx={wx} operatorGrid={operatorGrid || undefined} />
         <WxExportControl grid={operatorGrid || undefined} stationCount={wx.length} />
         <OperatorPin location={me} />
         <RecenterControl target={me} zoom={OPERATOR_ZOOM} />
