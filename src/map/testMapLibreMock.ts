@@ -36,6 +36,13 @@ export interface MapLibreMockState {
   featureStates: Map<string, Map<string | number, Record<string, unknown>>>;
   /** Registered images by id (addImage), with the options object. */
   images: Map<string, { image: unknown; options?: Record<string, unknown> }>;
+  /** Current layer filter by layer id (setFilter); a cleared filter is stored as
+   * `undefined`, mirroring MapLibre (which is why clearing with `null` !==
+   * clearing with `undefined` — see tuxlink-xsv5). */
+  filters: Map<string, unknown>;
+  /** Full setFilter call log (layer + the exact filter arg) for assertions —
+   * the tuxlink-xsv5 regression guard checks the `null`-vs-`undefined` clear arg. */
+  setFilterCalls: Array<{ layer: string; filter: unknown }>;
   /** Current map center (lng/lat), seeded from the constructor `center` option;
    * mutated by `setCenter` and the `__setCenter` test control. */
   center: { lng: number; lat: number };
@@ -81,6 +88,10 @@ export interface MapLibreMock {
   getLayer: (id: string) => { id: string } | undefined;
   removeLayer: (id: string) => void;
   setStyle: (style: unknown) => void;
+  /** Set/clear a layer filter. Records the call (tuxlink-xsv5 guard) and stores a
+   * cleared filter as `undefined` regardless of whether `null` or `undefined` was
+   * passed. */
+  setFilter: (layer: string, filter: unknown) => void;
   isStyleLoaded: () => boolean;
   // Supports both `on(type, handler)` and the layer-scoped `on(type, layerId,
   // handler)` form (the latter keyed internally as `type:layerId`; fire it with
@@ -142,6 +153,8 @@ export function createMapLibreMock(
     bounds: { west: -180, south: -85, east: 180, north: 85 },
     featureStates: new Map(),
     images: new Map(),
+    filters: new Map(),
+    setFilterCalls: [],
     removed: false,
   };
 
@@ -244,6 +257,18 @@ export function createMapLibreMock(
       // auto-emit — tests drive `__emit('styledata')` for determinism.
       state.sources.clear();
       state.layers = [];
+    }),
+    setFilter: vi.fn((layer: string, filter: unknown) => {
+      // Record every call so the tuxlink-xsv5 regression guard can assert the
+      // CLEAR arg (`undefined`, never `null`). A cleared filter is stored as
+      // `undefined` regardless of the arg — mirroring MapLibre — but the arg
+      // itself is preserved in the call log, because MapLibre's no-op guard is
+      // `deepEqual(current, incoming)` and `deepEqual(undefined, null) === false`:
+      // clearing with `null` never early-returns, which drove the per-frame
+      // source-reload loop (the "drunk map"). Do NOT auto-emit `styledata` (the
+      // mock leaves event timing to the test, per setStyle above).
+      state.setFilterCalls.push({ layer, filter });
+      state.filters.set(layer, filter == null ? undefined : filter);
     }),
     isStyleLoaded: vi.fn(() => state.styleLoaded),
     on: vi.fn(

@@ -93,6 +93,34 @@ describe('AprsPositionsMap', () => {
     expect(sourceData(map, 'aprs-positions').features).toHaveLength(2);
   });
 
+  // tuxlink-xsv5 (the "drunk map"): the WX category filter re-applies on every
+  // `styledata`. In the default 'all' state it MUST clear filters with `undefined`,
+  // never `null`. MapLibre stores a cleared filter as `undefined` and its setFilter
+  // no-op guard is `deepEqual(current, incoming)`; `deepEqual(undefined, null)` is
+  // `false`, so `setFilter(layer, null)` on an unfiltered layer never early-returns
+  // — it marks the source for reload and re-fires `styledata`, re-running this very
+  // handler: a self-clocking, per-frame source-reload loop that saturated the
+  // worker pool so even 1-feature in-memory tiles took 5–20s to load. Passing
+  // `undefined` short-circuits the guard to a true no-op. Guard the clear arg so
+  // the loop can't return. (The effect runs under test only now that the mock has
+  // `setFilter` — the missing-double guard had hidden this whole path.)
+  it('clears WX category filters with undefined (never null) so styledata cannot loop (xsv5)', () => {
+    render(<AprsPositionsMap positions={positions} />);
+    const map = loadLast();
+    // Re-applies happen on styledata (flavor/pack swap). Drive a few; each must
+    // stay a no-op-eligible clear, never a null that forces a reload.
+    act(() => map.__emit('styledata'));
+    act(() => map.__emit('styledata'));
+    const calls = map.__state.setFilterCalls;
+    // The default 'all' category clears the filterable layers...
+    expect(calls.length).toBeGreaterThan(0);
+    // ...and EVERY clear uses `undefined`, never `null` (the loop trigger).
+    expect(calls.every((c) => c.filter !== null)).toBe(true);
+    for (const layer of map.__state.filters.keys()) {
+      expect(map.__state.filters.get(layer)).toBeUndefined();
+    }
+  });
+
   it('carries the ambiguity level onto each pin feature', () => {
     const amb: HeardPosition[] = [
       { call: 'FUZZY', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: 1, ambiguity: 2 },
