@@ -59,6 +59,22 @@ describe('DigipeatFadeLayer', () => {
     expect(anySlotHasGeometry(map)).toBe(true);
   });
 
+  it('emits a pos? label for the unlocatable hop (W7RPT-1 is not located)', () => {
+    render(<AprsPositionsMap positions={viaStation} operatorGrid="CN87" />);
+    const map = loadLast();
+    hover(map, 'W7WX');
+    let label = '';
+    for (let i = 0; i < 6; i++) {
+      const src = map.getSource(`aprs-trace-slot-${i}-labels`) as
+        | { data?: { features?: Array<{ properties?: { label?: string } }> } }
+        | undefined;
+      const f = src?.data?.features?.[0];
+      if (f?.properties?.label) label = f.properties.label;
+    }
+    expect(label).toContain('W7RPT-1');
+    expect(label).toContain('?');
+  });
+
   it('does not trace from an object/item pin (honest RF source)', () => {
     const obj: HeardPosition[] = [{ ...viaStation[0], call: 'LEADER', isObject: true }];
     render(<AprsPositionsMap positions={obj} operatorGrid="CN87" />);

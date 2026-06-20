@@ -5,17 +5,18 @@
 // FADES it in/out via maplibre's built-in paint-property transitions — NO
 // requestAnimationFrame loop, NO per-frame setData, NO re-tessellation, NO
 // preserveDrawingBuffer. Each path's geometry is uploaded ONCE; the fade is a
-// bounded `line-opacity` transition the renderer drives and that STOPS when
-// done — the per-frame CPU cost that broke the map on llvmpipe is gone.
+// bounded `line-opacity` / `text-opacity` transition the renderer drives and
+// that STOPS when done — the per-frame CPU cost that broke the map on llvmpipe
+// is gone.
 //
-// Independent concurrent dwell: a small POOL of path slots (source + solid +
-// dashed layer each), one per active trace, with its own opacity transition +
-// dwell timers — so a station heard in quick succession gets its own fade and
-// never clobbers another's timeline.
+// Independent concurrent dwell: a small POOL of path slots (line source + solid
+// + dashed + pos?-label layer each), one per active trace, with its own
+// transition + dwell timers — so a station heard in quick succession gets its
+// own fade and never clobbers another's timeline.
 //
 // Triggers: hover a pin (fade in, hold, fade out on mouse-out) + a newly-heard
 // frame (fade in, dwell, fade out). RF-honesty: solid through located hops,
-// dashed `pos?` across hops we can't locate (see resolveDigipeatPath).
+// dashed `pos?` (with the unknown hop's callsign) across hops we can't locate.
 
 import { useEffect, useMemo, useRef } from 'react';
 import { useMapContext } from '../map/MapContext';
@@ -29,25 +30,30 @@ const FADE_OUT_MS = 700;
 const DWELL_MS = 2500; // live trace holds this long before fading out
 const SOLID_COLOR = '#7fe6a3';
 const DASHED_COLOR = '#f0c987';
-// The heard-station pin layer hover is bound to (defined in AprsPositionsMap).
 const PIN_LAYER = 'aprs-position-pins-color';
 
 const EMPTY_FC = { type: 'FeatureCollection', features: [] as unknown[] };
 
-function slotSource(i: number) {
+function lineSource(i: number) {
   return `aprs-trace-slot-${i}`;
 }
-function slotSolid(i: number) {
+function labelSource(i: number) {
+  return `aprs-trace-slot-${i}-labels`;
+}
+function solidLayer(i: number) {
   return `aprs-trace-slot-${i}-solid`;
 }
-function slotDashed(i: number) {
+function dashedLayer(i: number) {
   return `aprs-trace-slot-${i}-dashed`;
+}
+function labelLayer(i: number) {
+  return `aprs-trace-slot-${i}-label`;
 }
 
 /// One LineString feature per resolved segment, tagged by kind so the slot's two
 /// line layers (solid / dashed) each draw their own. Geometry only — uploaded
 /// once per trace, never per frame.
-function pathSegmentsFC(segments: PathSegment[]) {
+function lineFC(segments: PathSegment[]) {
   return {
     type: 'FeatureCollection',
     features: segments.map((s) => ({
@@ -64,18 +70,31 @@ function pathSegmentsFC(segments: PathSegment[]) {
   };
 }
 
-/// The two line layers for one pool slot. `line-opacity` starts at 0 and is
-/// transitioned to 1 / back to 0 via `line-opacity-transition` — the bounded
-/// fade. No other animation.
-function slotLayers(i: number): Array<Record<string, unknown> & { id: string }> {
-  const common = {
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-  };
+/// `pos?` markers: one amber label at the midpoint of each dashed connector,
+/// naming the unlocatable hop(s) — the honesty cue (Codex k0zz review).
+function labelFC(segments: PathSegment[]) {
+  const features: unknown[] = [];
+  for (const s of segments) {
+    if (s.kind !== 'dashed' || !s.unknownLabels?.length) continue;
+    features.push({
+      type: 'Feature',
+      properties: { label: `${s.unknownLabels.join('/')} ?` },
+      geometry: {
+        type: 'Point',
+        coordinates: [(s.from.lon + s.to.lon) / 2, (s.from.lat + s.to.lat) / 2],
+      },
+    });
+  }
+  return { type: 'FeatureCollection', features };
+}
+
+function slotLineLayers(i: number): Array<Record<string, unknown> & { id: string }> {
+  const common = { layout: { 'line-cap': 'round', 'line-join': 'round' } };
   return [
     {
-      id: slotSolid(i),
+      id: solidLayer(i),
       type: 'line',
-      source: slotSource(i),
+      source: lineSource(i),
       filter: ['==', ['get', 'kind'], 'solid'],
       ...common,
       paint: {
@@ -86,9 +105,9 @@ function slotLayers(i: number): Array<Record<string, unknown> & { id: string }> 
       },
     },
     {
-      id: slotDashed(i),
+      id: dashedLayer(i),
       type: 'line',
-      source: slotSource(i),
+      source: lineSource(i),
       filter: ['==', ['get', 'kind'], 'dashed'],
       ...common,
       paint: {
@@ -102,30 +121,56 @@ function slotLayers(i: number): Array<Record<string, unknown> & { id: string }> 
   ] as unknown as Array<Record<string, unknown> & { id: string }>;
 }
 
+function slotLabelLayers(i: number): Array<Record<string, unknown> & { id: string }> {
+  return [
+    {
+      id: labelLayer(i),
+      type: 'symbol',
+      source: labelSource(i),
+      layout: {
+        'text-field': ['get', 'label'],
+        'text-size': 10,
+        'text-offset': [0, -0.8],
+        'text-anchor': 'bottom',
+        'text-allow-overlap': true,
+      },
+      paint: {
+        'text-color': DASHED_COLOR,
+        'text-halo-color': '#0c1620',
+        'text-halo-width': 1.2,
+        'text-opacity': 0,
+        'text-opacity-transition': { duration: FADE_IN_MS },
+      },
+    },
+  ] as unknown as Array<Record<string, unknown> & { id: string }>;
+}
+
 type Mode = 'hover' | 'live';
 interface ActiveTrace {
   slot: number;
   mode: Mode;
   key: string;
   startedAt: number;
+  fadingOut: boolean;
   timers: ReturnType<typeof setTimeout>[];
 }
 
-/// The structural subset of the maplibre map this layer drives imperatively.
 interface MapFace {
   getSource(id: string): { setData?: (d: unknown) => void } | undefined;
-  // Optional + guarded: the maplibre test double omits it, and a fade timer must
-  // never throw there. The real map always provides it.
+  // Optional + guarded: the maplibre test double omits these, and a fade timer
+  // must never throw there or when the style was rebuilt out from under a layer.
+  getLayer?(id: string): unknown;
   setPaintProperty?(layer: string, prop: string, value: unknown): void;
   on(type: string, layer: string, h: (...a: unknown[]) => void): unknown;
   off(type: string, layer: string, h: (...a: unknown[]) => void): unknown;
 }
 
-/// One pool slot's source + layers, registered via the owned overlay hook (which
-/// handles styledata re-add). One component per slot keeps the hooks rules clean.
+/// One pool slot's sources + layers, via the owned overlay hook (handles styledata
+/// re-add). One component per slot keeps the hooks rules clean.
 function TraceSlot({ index }: { index: number }) {
   const map = useMapContext();
-  useMapOverlay(map, slotSource(index), { type: 'geojson', data: EMPTY_FC }, slotLayers(index));
+  useMapOverlay(map, lineSource(index), { type: 'geojson', data: EMPTY_FC }, slotLineLayers(index));
+  useMapOverlay(map, labelSource(index), { type: 'geojson', data: EMPTY_FC }, slotLabelLayers(index));
   return null;
 }
 
@@ -137,8 +182,7 @@ export interface DigipeatFadeLayerProps {
 export function DigipeatFadeLayer({ positions, operator }: DigipeatFadeLayerProps) {
   const map = useMapContext();
 
-  // Current data, read by the long-lived hover/live handlers through refs.
-  const byCall = useMemo(() => {
+  const lookup = useMemo(() => {
     const m = new Map<string, HeardPosition>();
     const located = new Map<string, LatLon>();
     for (const p of positions) {
@@ -147,15 +191,14 @@ export function DigipeatFadeLayer({ positions, operator }: DigipeatFadeLayerProp
     }
     return { m, located };
   }, [positions]);
-  const dataRef = useRef(byCall);
-  dataRef.current = byCall;
+  const dataRef = useRef(lookup);
+  dataRef.current = lookup;
   const operatorRef = useRef(operator);
   operatorRef.current = operator;
 
   const activeRef = useRef<Map<string, ActiveTrace>>(new Map());
   const freeSlotsRef = useRef<number[]>(Array.from({ length: POOL_SIZE }, (_, i) => i));
 
-  // Resolve a station's honest path segments, or null if nothing to draw.
   const segmentsFor = (call: string): PathSegment[] | null => {
     const p = dataRef.current.m.get(call);
     if (!p || p.isObject) return null; // object pins aren't the transmitter
@@ -168,23 +211,35 @@ export function DigipeatFadeLayer({ positions, operator }: DigipeatFadeLayerProp
     return segs.length ? segs : null;
   };
 
+  // Set the slot's three layers' opacity (line + label) with the given transition
+  // duration. Guards each layer in case a style rebuild removed it (Codex review).
   const setOpacity = (m: MapFace, slot: number, value: number, durationMs: number) => {
     if (!m.setPaintProperty) return;
-    for (const layer of [slotSolid(slot), slotDashed(slot)]) {
-      m.setPaintProperty(layer, 'line-opacity-transition', { duration: durationMs });
-      m.setPaintProperty(layer, 'line-opacity', value);
-    }
+    const apply = (layer: string, prop: string) => {
+      if (m.getLayer && !m.getLayer(layer)) return; // layer gone (style swap)
+      m.setPaintProperty!(layer, `${prop}-transition`, { duration: durationMs });
+      m.setPaintProperty!(layer, prop, value);
+    };
+    apply(solidLayer(slot), 'line-opacity');
+    apply(dashedLayer(slot), 'line-opacity');
+    apply(labelLayer(slot), 'text-opacity');
+  };
+
+  const clearSlotData = (m: MapFace, slot: number) => {
+    m.getSource(lineSource(slot))?.setData?.(EMPTY_FC);
+    m.getSource(labelSource(slot))?.setData?.(EMPTY_FC);
   };
 
   const releaseSlot = (m: MapFace, t: ActiveTrace) => {
     for (const timer of t.timers) clearTimeout(timer);
-    m.getSource(slotSource(t.slot))?.setData?.(EMPTY_FC);
+    clearSlotData(m, t.slot);
+    setOpacity(m, t.slot, 0, 0); // INSTANT reset so the next reuse fades from 0 (Codex)
     activeRef.current.delete(t.key);
     if (!freeSlotsRef.current.includes(t.slot)) freeSlotsRef.current.push(t.slot);
   };
 
-  // Allocate a slot: a free one, else evict the oldest LIVE trace (never evict a
-  // hover — the operator is looking at it).
+  // Allocate a slot: a free one, else evict the oldest LIVE trace (never a hover —
+  // the operator is looking at it). releaseSlot resets the evicted slot to opacity 0.
   const allocate = (m: MapFace): number | null => {
     if (freeSlotsRef.current.length) return freeSlotsRef.current.shift()!;
     let oldest: ActiveTrace | null = null;
@@ -196,35 +251,60 @@ export function DigipeatFadeLayer({ positions, operator }: DigipeatFadeLayerProp
     return freeSlotsRef.current.shift() ?? null;
   };
 
+  const fadeIn = (m: MapFace, t: ActiveTrace) => {
+    // Fade in on the next tick so maplibre sees the 0 → 1 transition.
+    t.timers.push(setTimeout(() => setOpacity(m, t.slot, 1, FADE_IN_MS), 16));
+  };
+
+  const scheduleFadeOut = (m: MapFace, t: ActiveTrace, afterMs: number) => {
+    t.timers.push(
+      setTimeout(() => {
+        t.fadingOut = true;
+        setOpacity(m, t.slot, 0, FADE_OUT_MS);
+        t.timers.push(setTimeout(() => releaseSlot(m, t), FADE_OUT_MS + 50));
+      }, afterMs),
+    );
+  };
+
   const startTrace = (m: MapFace, key: string, call: string, mode: Mode) => {
-    if (activeRef.current.has(key)) return; // already showing this trace
+    const existing = activeRef.current.get(key);
+    if (existing) {
+      // Re-trigger (e.g. hover re-enters during fade-out): cancel the pending
+      // fade-out and fade back in; do not start a second slot (Codex review).
+      if (existing.fadingOut) {
+        for (const timer of existing.timers) clearTimeout(timer);
+        existing.timers = [];
+        existing.fadingOut = false;
+        fadeIn(m, existing);
+        if (mode === 'live') scheduleFadeOut(m, existing, FADE_IN_MS + DWELL_MS);
+      }
+      return;
+    }
     const segments = segmentsFor(call);
     if (!segments) return;
     const slot = allocate(m);
     if (slot == null) return;
-    m.getSource(slotSource(slot))?.setData?.(pathSegmentsFC(segments));
-    const t: ActiveTrace = { slot, mode, key, startedAt: Date.now(), timers: [] };
-    activeRef.current.set(key, t);
-    // Fade in on the next tick so maplibre sees the 0 → 1 change (transition).
-    t.timers.push(
-      setTimeout(() => setOpacity(m, slot, 1, FADE_IN_MS), 16),
-    );
-    if (mode === 'live') {
-      // Hold for the dwell, then fade out, then release the slot.
-      t.timers.push(
-        setTimeout(() => {
-          setOpacity(m, slot, 0, FADE_OUT_MS);
-          t.timers.push(setTimeout(() => releaseSlot(m, t), FADE_OUT_MS + 50));
-        }, FADE_IN_MS + DWELL_MS),
-      );
+    const src = m.getSource(lineSource(slot));
+    if (!src?.setData) {
+      // Sources not added yet (pre-load / style-rebuild window): do NOT record an
+      // active trace or it would occupy a slot showing nothing (Codex review).
+      freeSlotsRef.current.push(slot);
+      return;
     }
+    src.setData(lineFC(segments));
+    m.getSource(labelSource(slot))?.setData?.(labelFC(segments));
+    const t: ActiveTrace = { slot, mode, key, startedAt: Date.now(), fadingOut: false, timers: [] };
+    activeRef.current.set(key, t);
+    fadeIn(m, t);
+    if (mode === 'live') scheduleFadeOut(m, t, FADE_IN_MS + DWELL_MS);
   };
 
   const endHover = (m: MapFace, key: string) => {
     const t = activeRef.current.get(key);
-    if (!t) return;
+    if (!t || t.fadingOut) return;
     for (const timer of t.timers) clearTimeout(timer);
     t.timers = [];
+    t.fadingOut = true;
     setOpacity(m, t.slot, 0, FADE_OUT_MS);
     t.timers.push(setTimeout(() => releaseSlot(m, t), FADE_OUT_MS + 50));
   };
@@ -238,7 +318,6 @@ export function DigipeatFadeLayer({ positions, operator }: DigipeatFadeLayerProp
       if (call != null) startTrace(m, `hover:${String(call)}`, String(call), 'hover');
     };
     const leave = () => {
-      // Fade out whichever hover is active (only one at a time in practice).
       for (const key of activeRef.current.keys()) {
         if (key.startsWith('hover:')) endHover(m, key);
       }
