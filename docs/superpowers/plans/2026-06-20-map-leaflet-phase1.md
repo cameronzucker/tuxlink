@@ -31,7 +31,7 @@ Round 1 (Codex, broad) findings were folded in earlier (PNG deferral, `{url}` fo
 - **P0 [SEAM BROKEN] — string `url` does not use PMTiles.** protomaps-leaflet picks `PmtilesSource` only when the URL pathname ends `.pmtiles`; `tile://pmtiles/world` → `ZxySource` (no Range; parses the whole archive as one MVT tile) → blank. → **Task 2 redesigned: pass a `new PMTiles('tile://pmtiles/<id>')` INSTANCE** (the `.d.ts` types `url: PMTiles | string`), bypassing the pathname heuristic.
 - **P0 [OVERZOOM] — no `maxDataZoom` → requests z7+ the z0–6 overview lacks → blank above ~z8.** → pass `maxDataZoom: 6` for the overview; thread each pack's real maxzoom.
 - **P0 [PACK BG MASK] — a flavored pack layer paints its `backgroundColor` per tile; a pack's empty tiles outside coverage mask the overview.** (MapLibre dropped pack backgrounds for this exact reason — `basemapStyle.ts:176–198`.) → packs use explicit `paintRules` + `labelRules:[]` + NO `backgroundColor`/`flavor`; only the overview carries the flavor (one global background).
-- **P1 [ETag] — length-only ETag → stale JS tile cache on same-size pack re-download.** Out of frontend scope → filed **bd `tuxlink-jrXX`** (ETag fingerprint). Mitigation in-plan: if the backend later exposes a pack generation, incorporate it into the base-layer rebuild key.
+- **P1 [ETag] — length-only ETag → stale JS tile cache on same-size pack re-download.** Out of frontend scope → filed **bd `tuxlink-ox2y`** (ETag fingerprint). Mitigation in-plan: if the backend later exposes a pack generation, incorporate it into the base-layer rebuild key.
 - **P2 — seam unit test is mocked (cannot prove real fetch).** Accepted: real seam proven in Task 7 (grim + observe a real `tile://` Range request in the WebKit network panel — not just "a grid appears").
 
 **Round 3 — Claude, RF-honesty + parity (5 P0s; the hard-won fixes the one-line idiom table endangered):**
@@ -80,6 +80,8 @@ Untouched (listed to make the boundary explicit): everything under "Do NOT touch
 ---
 
 ### Task 1: Dependencies + vendor protomaps-leaflet
+
+> **STATUS: DONE** (committed `7b3896ec`). Vendored protomaps-leaflet **5.1.0** (license is **BSD-3-Clause**, not MIT — the template below is stale). Six transitive deps were promoted to direct deps so pnpm's strict store resolves the vendored bundle: `@mapbox/point-geometry`, `@mapbox/vector-tile`, `pbf`, `potpack`, `rbush`, `color2k` (plus the pre-existing `@protomaps/basemaps` + `pmtiles`). A fresh executor should NOT redo this task; it is recorded here for provenance. **`@protomaps/basemaps` MUST be pinned EXACTLY** (the vendored layer hard-imports its `namedFlavor`; R4 P2) — verify the pin when revisiting.
 
 **Files:**
 - Modify: `package.json`
@@ -170,13 +172,18 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Create: `src/map/basemapLeaflet.ts`
 - Test: `src/map/basemapLeaflet.test.ts`
 
+> **STATUS: first cut committed `4a4327a3` but KNOWN-BROKEN (3 P0s from R2). RE-IMPLEMENT per the corrected design below.**
+
 **Interfaces:**
-- Consumes: vendored `leafletLayer`; `pmtiles` package (`PMTiles`, `FetchSource`); `PackSource` (re-declare locally as `{ id: string }` — do NOT import from `basemapStyle.ts`, keep the substrates independent).
+- Consumes: vendored `leafletLayer`, `paintRules as pmPaintRules`, `labelRules as pmLabelRules` (from `../vendor/protomaps-leaflet`); `PMTiles` (from `'pmtiles'` — NO `FetchSource`; `new PMTiles(urlString)` builds its own source); `namedFlavor` (from `'@protomaps/basemaps'`).
 - Produces:
   - `export const PMTILES_TILE_URL = (id: string) => \`tile://pmtiles/${id}\`;`
-  - `export function buildBaseLayers(flavor: 'light' | 'dark', packs: { id: string }[]): L.Layer[];`
-    - Returns protomaps-leaflet layer(s): the world overview (id `'world'`) as the always-present base, plus one protomaps-leaflet layer per installed pack (clamped `minZoom: 6`), drawn on top.
   - `export const OSM_ATTRIBUTION = '© OpenStreetMap contributors';`
+  - `export const REGION_MINZOOM = 6;`
+  - `export type BasemapFlavor = 'light' | 'dark';`
+  - `export interface PackSource { id: string; maxZoom?: number }` (declared LOCALLY — do NOT import from `basemapStyle.ts`; keep substrates independent).
+  - `export function buildBaseLayers(flavor: BasemapFlavor, packs: PackSource[]): L.Layer[];`
+    - Returns `[overview, ...packLayers]`: the world overview (flavored, `maxDataZoom: 6`, `zIndex: 1`) as the always-present base, plus one protomaps-leaflet layer per installed pack (explicit paint rules, NO flavor/background, `minZoom: 6`, `maxDataZoom: pack.maxZoom ?? 14`, `zIndex: 2+i`), drawn on top.
 
 **Design notes (CORRECTED by Codex adrev R2 — the first cut shipped a blank map; this is the validated design):**
 
@@ -190,9 +197,7 @@ THREE seam rules, each fixing a proven-P0:
 
 Composite ordering (R4 P2): set explicit `zIndex` — overview `zIndex: 1`, packs `zIndex: 2+i` — so packs paint above the overview regardless of add order. Each pack also gets `minZoom: REGION_MINZOOM` (6).
 
-Record the confirmed signature + these three rules in a top-of-file comment.
-- Dark mode: pass `flavor: 'dark'` (and `lang: 'en'`). Do NOT bake colors.
-- Pack compositing mirrors `basemapStyle.ts`'s intent: overview overzooms past z6 (never blank); each pack is a separate protomaps-leaflet layer clamped to `minZoom >= 6` drawn above the overview, so detail wins inside coverage and the overview shows outside it. protomaps-leaflet layers accept Leaflet `minZoom`/`maxZoom`/`pane` options; set the pack `pane`/zIndex above the overview.
+Record the confirmed signature + these three rules in a top-of-file comment. Dark mode = `flavor:'dark'` on the OVERVIEW only (paint-rule colors; do NOT bake). Overview overzooms past z6 (never blank, capped by `maxDataZoom:6`); packs (no flavor/background) draw detail on top inside their coverage and are transparent outside it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -399,7 +404,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 **Behaviors to preserve (current MapLibreMap → desired LeafletMap):**
 - Construct once: `L.map(container, { preferCanvas: true, zoomControl: true, minZoom: 0, maxZoom: 14, center: clampMapCenter(initialCenter)→[lat,lon], zoom: initialZoom ?? 2, worldCopyJump: false })`. NOTE Leaflet uses `[lat, lon]`; `clampMapCenter` returns `[lng, lat]` — swap accordingly.
 - Base layers: add `buildBaseLayers(effectiveFlavor, packs)` to the map. On flavor change OR pack change, REMOVE the old base layers and ADD freshly built ones (Leaflet has no `setStyle`; swap the layers). Dedupe so a redundant render does not rebuild (track a `flavor|packIds` key like MapLibreMap's `styleKeyRef`).
-- Packs: fetch via `invoke('basemap_list_packs')` after mount, re-fetch on `BASEMAP_PACKS_CHANGED_EVENT`, cache last-known at module scope (mirror `lastKnownPacks`). Same try/catch → `[]` fallback.
+- Packs: fetch via `invoke('basemap_list_packs')` after mount, re-fetch on `BASEMAP_PACKS_CHANGED_EVENT`, cache last-known at module scope (mirror `lastKnownPacks`). **Map each pack to `{ id: p.id, maxZoom: p.maxzoom }`** so `buildBaseLayers` can cap `maxDataZoom` per pack (read the `PacksList`/pack type in `offlineMaps.ts`; if it has no maxzoom field, pass `{ id }` and let `buildBaseLayers` default to 14, and add a `// TODO(tuxlink-6kdw): thread real pack maxzoom` note). Same try/catch → `[]` fallback. NOTE the known latent bug (bd `tuxlink-kepz`): the catch zeroes `lastKnownPacks` — faithful port; do not "fix" it here without coordinating that issue.
 - `onMapClick`: `map.on('click', e => onClick(clampLatLon(e.latlng.lat, e.latlng.lng)))`.
 - `onZoomChange`: emit on `load`-equivalent (after construct) AND on `moveend`, deduped against last emitted zoom (Leaflet `map.getZoom()` is integer-by-default; still dedupe).
 - `onViewportChange`: on `moveend`, emit `{ clamped center, zoom }`; skip non-finite transients (teardown).
@@ -428,7 +433,9 @@ Test list (write each as a `vitest` case in `LeafletMap.test.tsx`, using the siz
 3. `emits zoom on load and dedupes repeated moveend at same zoom` — assert `onZoomChange` called once on ready, not again on a `moveend` at unchanged zoom.
 4. `emits clamped viewport on moveend` — assert `onViewportChange` shape.
 5. `renders the unavailable panel when construction throws` — force `L.map` to throw (mock) and assert `data-testid="map-unavailable"`.
-6. `rebuilds base layers on flavor change but not on a redundant rerender` — spy `buildBaseLayers` call count.
+6. `rebuilds base layers on flavor change but not on a redundant rerender` — mock `./basemapLeaflet`; spy `buildBaseLayers` call count (initial + one per real flavor/pack-key change, none on a redundant rerender).
+7. `sets native maxBounds` — assert `map.options.maxBounds` is the world rectangle (R4 P1; no moveend snap-back handler is registered).
+8. `converges under StrictMode double-invoke` — render under `<StrictMode>` (or simulate effect setup→cleanup→setup); assert exactly one live map and no "Map container is already initialized" throw.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -440,7 +447,7 @@ Expected: FAIL — `LeafletMap` not defined.
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `pnpm vitest run src/map/LeafletMap.test.tsx`
-Expected: PASS (6 tests). If a Leaflet-in-jsdom internal throws, prefer shimming the container/size over weakening the assertion; document any jsdom-specific guard in a comment.
+Expected: PASS (8 tests). If a Leaflet-in-jsdom internal throws, prefer shimming the container/size over weakening the assertion; document any jsdom-specific guard in a comment.
 
 - [ ] **Step 5: Commit**
 
@@ -465,19 +472,19 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Public surface UNCHANGED: `export interface AprsPositionsMapProps { positions; operatorGrid?; envStations?; onFocusStation? }`, `export function AprsPositionsMap(props)`, `export function ambiguityRadiusMeters(level)`.
 - Consumes: `LeafletMap` (Task 4), `useLeafletMap` (Task 3), `useLeafletLayerGroup` (Task 3); reused unchanged: `usePersistedViewport`, `RecenterControl` (NOTE: `RecenterControl` calls `map.flyTo` via `useMapContext` → it currently reads the MapLibre context. It must instead read the Leaflet context. To avoid touching the shared `RecenterControl` used by un-migrated consumers, create a LOCAL recenter control inside AprsPositionsMap OR a `LeafletRecenterControl`. Decision: add `src/map/LeafletRecenterControl.tsx` (a Leaflet-context twin) this task; the MapLibre `RecenterControl` stays for the other consumers.), `gridToLatLon`, `lookupAprsSymbol`, `aprsSprites` helpers, `joinWxStations`/`badgeContent`, `stationCategories`, `wxSnapshot`/`wxSitrep`, `saveDraft`/`newDraftId`/`invoke`.
 
-**Behavior mapping (MapLibre idiom → Leaflet implementation). Each must preserve the documented RF-honesty behavior:**
+**Behavior mapping (MapLibre idiom → Leaflet implementation). Each must preserve the documented RF-honesty behavior. WHERE A CELL DIFFERS FROM THE "Adrev hardening" BLOCK BELOW, THE HARDENING BLOCK WINS.**
 
 | Feature | Current (MapLibre) | Leaflet implementation |
 |---|---|---|
-| Station pins | symbol layers w/ `icon-image` sprite, two stacked (colour+grey) cross-faded by `feature-state.stale` | one `L.marker` per station in a `LayerGroup`; icon = `L.icon`/`L.divIcon` built from the SAME `aprsSprites` canvas `ImageData` (convert ImageData→`canvas.toDataURL()`→`iconUrl`). Staleness: swap to the grey icon (or set marker element opacity 0.55) — NO FC rebuild; update marker icon in place on the NOW_TICK. |
+| Station pins | symbol layers w/ `icon-image` sprite, two stacked (colour+grey) cross-faded by `feature-state.stale` | one `L.marker` per station in its per-station bundle; icon = **`L.divIcon`** with `<img src=spriteDataUrl>` (NOT `L.icon`+canvas — hollow in jsdom; see hardening). Staleness: swap the pin's divIcon between colour and pre-baked GREY (desaturate) `spriteDataUrl` on the NOW_TICK — in place, no rebuild. |
 | Callsign label | `symbol` text layer | `L.divIcon` (text) marker or `marker.bindTooltip(call, {permanent:true, direction:'top'})`. |
-| Ambiguity region | GeoJSON fill+line `circlePolygon` | `L.circle([lat,lon], { radius: ambiguityRadiusMeters(level)*√2, color:'#f0c24a', weight:1, dashArray:'2 2', fillColor:'#f0c24a', fillOpacity:0.12 })`. Reuse `cellCenter`. (Leaflet `L.circle` takes a METERS radius directly — drop `circlePolygon` math.) |
+| Ambiguity region | GeoJSON fill+line `circlePolygon` | `L.circle([lat,lon], { radius: ambiguityRadiusMeters(level)*Math.SQRT2, color:'#f0c24a', weight:1, dashArray:'2 2', fillColor:'#f0c24a', fillOpacity:0.12 })` centred on `cellCenter`. The `×√2` is LOAD-BEARING (see hardening) — drop only `circlePolygon`, NOT the √2. |
 | Operator "you" pin | circle layer | `L.circleMarker([lat,lon], { radius:7, color:'#2f86f0', weight:3, fillColor:'#eaf3fb', fillOpacity:1 })`. |
-| WX badge | `symbol` text layer (amber) | `L.marker` w/ `L.divIcon` rendering the badge text (the spike's `.wx-chip` pattern); offset above the pin. |
-| Pin click → popup | `map.on('click', LAYER, ...)` + React popup div reading MapContext | per-marker `marker.on('click', () => setPopupCall(call))`; keep the existing React popup div (it reads selected fix from `byCall`). OR use `marker.bindPopup` — but keep the existing styled popup component for parity; wire its open/close to marker clicks. |
-| WX badge click/hover | layer-scoped `click`/`mouseenter`/`mouseleave` | per-badge-marker `.on('click'|'mouseover'|'mouseout')`. |
-| Category filter | `setFilter` on layers (the drunk-map bug origin) | **Per-station layer bundle (Codex adrev P1):** each heard station owns MULTIPLE Leaflet layers (pin marker, label, WX badge, uncertainty circle, click handlers). Group each station's layers into one keyed `L.featureGroup` (or a `Map<call, L.Layer[]>`), and filter by adding/removing the WHOLE bundle from the parent `LayerGroup` when `category` changes — never filter "markers" alone (that orphans the uncertainty disc / badge). This ELIMINATES the `setFilter`-on-`styledata` self-loop failure class — do NOT reintroduce any per-frame style mutation. Test MUST assert ALL of a filtered-out station's layers disappear. |
-| Staleness tick | `setFeatureState({stale})` on NOW_TICK | iterate per-station bundles, swap icon/opacity per `now - p.at > STALE_MS`. |
+| WX badge | `symbol` text layer (amber) | `L.marker` w/ `L.divIcon` rendering the badge text (the spike's `.wx-chip` pattern), positioned at `cellCenter` (NOT the raw low corner; see hardening), offset above the pin. |
+| Pin click → popup | `map.on('click', LAYER, ...)` + React popup div reading MapContext | per-marker `marker.on('click', () => setPopupCall(call))`; keep the existing React popup div, body derived from a LIVE `byCall` ref (see hardening — updates on re-beacon, closes on prune). |
+| WX badge click/hover | layer-scoped `click`/`mouseenter`/`mouseleave` | per-badge-marker `.on('click'|'mouseover'|'mouseout')`. Hover shows `aprs-wx-card`; leave hides it. |
+| Category filter | `setFilter` on layers (the drunk-map bug origin) | **Per-station conditional bundle (see hardening):** each station owns one keyed `L.featureGroup` = pin + label + (uncertainty circle IF ambiguity>0) + (badge IF a WxStation). Filter adds/removes the WHOLE bundle from the parent group when `category` changes. ELIMINATES the `setFilter`-on-`styledata` self-loop class — NO per-frame style mutation. Test asserts ALL of a filtered-out station's layers disappear (count delta === bundle size). |
+| Staleness tick | `setFeatureState({stale})` on NOW_TICK | iterate per-station bundles, swap ONLY the pin icon to its grey (desaturated) variant per `now - p.at > STALE_MS` (label + disc unchanged; see hardening). |
 | PNG export | `map.getCanvas()` (WebGL) + `preserveDrawingBuffer` saga | **DEFERRED this phase (Codex adrev P0 → bd `tuxlink-a7qt`).** Naive canvas compositing is broken: protomaps-leaflet renders per-tile positioned `<canvas>` elements (not one canvas) requiring leaflet pane/tile transforms, and pins are DOM markers a canvas copy omits. Do NOT ship a broken Export PNG. For Phase 1, remove the `WxExportControl` button from `AprsPositionsMap` (and drop `exportWxSnapshot`/its tests) and leave a code comment pointing at `tuxlink-a7qt`. The Winlink-text Weather SITREP (`WxSitrepControl`) — the actually-load-bearing report path — STAYS. Note the temporary Export-PNG regression in the handoff for operator awareness. |
 
 **Adrev hardening (MANDATORY — these are hard-won RF-honesty/identity fixes the one-line table endangers; each needs a targeted test):**
@@ -555,8 +562,8 @@ This is the CRITICAL GATE from the kickoff and the handoff: PROVE the overview (
 - [ ] Open the APRS Tac Chat positions map. Capture `grim`. Confirm: dark vector street grid renders (overview), pins/badges/uncertainty/operator-pin draw, pan/zoom is smooth, no CSP violation in the WebKit console (check `connect-src tile:` / `worker-src blob:` are sufficient — if a CSP error appears, STOP and escalate; do NOT loosen CSP unilaterally).
 - [ ] **Observe a REAL `tile://` Range request** in the WebKit network panel (R2 P2 / R5 P1) — a cached/overview-only render could mask a broken pack fetch. Confirm a 206 (or pmtiles' Range GET) to `tile://pmtiles/world` AND, with a pack installed, to `tile://pmtiles/<pack>`. "A grid appears" is NOT sufficient proof of the seam.
 - [ ] **Layout (R5 P2):** confirm the Leaflet `.leaflet-container` FILLS the reading-pane grid slot (no 0-height flex/grid collapse — a classic Leaflet-in-flex bug) and that the React popup/controls (`.aprs-positions-map__popup`, `.aprs-wx-filter`, recenter) stack ABOVE Leaflet's panes (Leaflet uses z-index 200–700; controls must clear that). Adjust `AprsPositionsMap.css` minimally if needed.
-- [ ] Install/enable the `continent-na` pack (or a region pack) and confirm z6–14 detail renders over the seam.
-- [ ] Test the Export PNG path; if multi-canvas compositing fails under WebKitGTK, file a follow-up bd issue and note it (do not ship a broken button silently).
+- [ ] Install/enable the `continent-na` pack (or a region pack) and confirm z6–14 detail renders over the seam, AND that the overview still shows OUTSIDE the pack's coverage (no solid-colour mask — proves the pack-background fix).
+- [ ] (Export PNG is REMOVED this phase → bd `tuxlink-a7qt`; nothing to test here. Confirm the button is gone and the Weather SITREP text path still works.)
 - [ ] **wire-walk gate:** invoke the `wire-walk` skill (`.claude/skills/wire-walk/`). The OPERATOR supplies the key user flows greenfield (do NOT draft them). Trace each flow verbatim to code (`file:line`). Any broken primary flow ⇒ the surface is NOT shipped. Capture flows as the definition-of-done.
 - [ ] Record verification provenance (worktree path, branch, commit SHA, dev vs converged, what was exercised) per the CLAUDE.md verification-provenance rule.
 
@@ -567,5 +574,6 @@ This is the CRITICAL GATE from the kickoff and the handoff: PROVE the overview (
 - **Spec coverage:** Task 1 = vendoring + deps; Task 2 = tile:// seam (the issue's "render overview+pack against the real tile:// seam"); Tasks 3–4 = substrate ("replace MapLibreMap/mapHooks"); Task 5 = AprsPositionsMap FIRST; Task 6 = review loop; Task 7 = packaged-CSP + Tauri render proof + wire-walk + adrev gate. RELEASE_FREEZE already set (pre-plan). Vendoring posture decided (Task 1). Covered.
 - **Strangler-fig boundary:** Global Constraints forbid touching the four un-migrated consumers and the MapLibre substrate; the LeafletRecenterControl twin (Task 5) exists specifically to avoid editing the shared `RecenterControl`. No dual-context collision.
 - **Type consistency:** `buildBaseLayers(flavor, packs)` (Task 2) consumed by `LeafletMap` (Task 4); `useLeafletMap`/`useLeafletLayerGroup` (Task 3) consumed by Tasks 4–5; `LeafletMapProps` mirrors `MapLibreMapProps`.
-- **Highest residual risk:** protomaps-leaflet reading the `tile://` custom protocol (Task 2 design notes give two wirings + a STOP if neither works) and PNG multi-canvas compositing (Task 5/7 gate it behind a follow-up if it fails). Both are flagged for the Codex adrev.
-- **Pitfalls:** no per-frame style mutation (the drunk-map class is designed OUT by using LayerGroup membership instead of `setFilter`); CSP not loosened; build-provenance check before on-device debugging; one `:1420` at a time.
+- **Highest residual risk (post-adrev):** the `tile://` seam (Task 2) — the design is now grounded (PMTiles instance + maxDataZoom + no-pack-background), but only proven at unit level with mocks; Task 7 grim + a REAL `tile://` Range-fetch observation is the true gate. PNG export is removed this phase (bd `tuxlink-a7qt`), not a risk.
+- **Pitfalls:** no per-frame style mutation (the drunk-map class is designed OUT by per-station bundle add/remove, not `setFilter`); CSP not loosened; build-provenance check before on-device debugging; one `:1420` at a time; jsdom canvas is null (pins are divIcon; sprite identity asserted via the pure helper); composed-seam testing-pitfall acknowledged (the mocked base hides the real seam → Task 7 observes the Range fetch).
+- **Plan-review cycle (≥3 rounds) — done:** R1 fixed contradictions between the appended hardening blocks and the original task bodies (Task 2 Interfaces/trailing bullets, the Task 5 table cells, the Task 7 PNG line, Task 4 pack-maxZoom threading, the stale MIT/`jrXX` references). R2 verified type consistency (`PackSource{id,maxZoom?}` flows Task 2→4; `buildBaseLayers`/`useLeafletMap`/`useLeafletLayerGroup` signatures match across tasks; `spriteDataUrl` defined in Task 5 hardening and consumed in the table + tests). R3 scanned for placeholders/interpretation latitude — none remain; every "do NOT" boundary is explicit and the hardening block is declared authoritative over the mapping table.
