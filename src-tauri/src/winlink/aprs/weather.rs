@@ -42,14 +42,11 @@
 /// What a heard weather-symbol station is actually reporting (tuxlink-vnm5). A
 /// station beaconing the `_` symbol is rostered in Station Data regardless, with
 /// an HONEST state instead of silently rendering nothing (the "looks broken"
-/// report) or garbage:
-///   - `Readings`       — at least one valid, in-range measurement.
-///   - `SensorsOffline` — a WX run was sent but it carries physically-impossible
-///                        values (e.g. wind 767°, 200 °F, 0 hPa); no reading is
-///                        trustworthy, but `raw_wx` preserves the wire bytes.
-///   - `PositionOnly`   — a `_`-symbol position/name beacon with no WX run at all
-///                        (e.g. KA7WSB-2 `_NPS_003_Chiminea`): a weather-site
-///                        marker, not a data feed.
+/// report) or garbage. `Readings` = at least one valid, in-range measurement.
+/// `SensorsOffline` = a WX run carrying physically-impossible values (e.g. wind
+/// 767°, 200 °F, 0 hPa); no reading is trustworthy, but `raw_wx` keeps the wire
+/// bytes. `PositionOnly` = a `_`-symbol name beacon with no WX run at all (e.g.
+/// KA7WSB-2 `_NPS_003_Chiminea`): a weather-site marker, not a data feed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum WeatherStatus {
