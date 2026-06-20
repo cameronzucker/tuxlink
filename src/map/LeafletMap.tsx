@@ -20,12 +20,11 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { invoke } from '@tauri-apps/api/core';
-import { buildBaseLayers, type PackSource } from './basemapLeaflet';
+import { buildBaseLayers, type PackSource, type BasemapFlavor } from './basemapLeaflet';
 import { useBasemapFlavor } from './useBasemapFlavor';
 import { clampLatLon, clampMapCenter, MERCATOR_MAX_LAT, type LatLon } from './projection';
 import { LeafletMapProvider } from './LeafletMapContext';
 import { BASEMAP_PACKS_CHANGED_EVENT, type PacksList } from './offlineMaps';
-import type { BasemapFlavor } from './basemapStyle';
 
 /** Last-known installed packs, cached at module scope across mounts (mirrors
  * MapLibreMap's B2 cache): the map remounts on navigation; carrying the packs

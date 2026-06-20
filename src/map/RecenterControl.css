@@ -5,7 +5,10 @@
   position: absolute;
   top: 10px;
   left: 10px;
-  z-index: 2;
+  /* 800 keeps the control above Leaflet's panes (z-index 200-700) on the migrated
+     APRS map (tuxlink-6kdw); harmless for the MapLibre consumers (still above the
+     GL canvas). */
+  z-index: 800;
   width: 29px;
   height: 29px;
   display: flex;

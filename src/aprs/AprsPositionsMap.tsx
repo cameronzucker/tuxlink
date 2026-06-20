@@ -148,8 +148,17 @@ interface Bundle {
   pin: L.Marker;
   circle: L.Circle | null;
   badge: L.Marker | null;
-  staleApplied: boolean;
+  /// Cache key of the inputs that determine the pin icon (sprite + stale + amb
+  /// scale), so the icon is re-baked only when one actually changes.
+  iconKey: string;
   visible: boolean;
+}
+
+/// Key for the pin icon: sprite identity + stale + ambiguous-shrink. Re-bake only
+/// when this changes (not every NOW_TICK / reconcile).
+function pinIconKey(p: HeardPosition, stale: boolean): string {
+  const sym = lookupAprsSymbol(p.symbolTable, p.symbolCode);
+  return `${spriteIdFor(p.symbolTable, p.symbolCode, sym.overlay)}|${stale ? 's' : 'f'}|${p.ambiguity > 0 ? 'a' : 'e'}`;
 }
 
 /// Manages the per-station bundles + the click/hover-driven popup and WX card.
@@ -199,6 +208,24 @@ function MapOverlays({
     const wxCalls = new Set(wx.map((w) => w.call));
     const live = new Set(positions.map((p) => p.call));
 
+    const makeCircle = (p: HeardPosition, c: { lat: number; lon: number }): L.Circle =>
+      L.circle([c.lat, c.lon], {
+        radius: ambiguityRadiusMeters(p.ambiguity) * Math.SQRT2,
+        renderer: rendererRef.current ?? undefined,
+        color: '#f0c24a',
+        weight: 1,
+        dashArray: '2 2',
+        fillColor: '#f0c24a',
+        fillOpacity: 0.12,
+      });
+    const makeBadge = (call: string, w: WxStation, c: { lat: number; lon: number }): L.Marker => {
+      const m = L.marker([c.lat, c.lon], { icon: badgeIcon(w) });
+      m.on('click', () => onFocusStation?.(call));
+      m.on('mouseover', () => setHoverCall(call));
+      m.on('mouseout', () => setHoverCall(null));
+      return m;
+    };
+
     // Remove dropped stations entirely.
     for (const [call, b] of bundles) {
       if (!live.has(call)) {
@@ -221,49 +248,48 @@ function MapOverlays({
         pin.on('click', () => {
           if (byCallRef.current.has(p.call)) setPopupCall(p.call);
         });
-        const circle =
-          p.ambiguity > 0
-            ? L.circle([c.lat, c.lon], {
-                radius: ambiguityRadiusMeters(p.ambiguity) * Math.SQRT2,
-                renderer: rendererRef.current ?? undefined,
-                color: '#f0c24a',
-                weight: 1,
-                dashArray: '2 2',
-                fillColor: '#f0c24a',
-                fillOpacity: 0.12,
-              })
-            : null;
-        let badge: L.Marker | null = null;
-        if (w) {
-          badge = L.marker([c.lat, c.lon], { icon: badgeIcon(w) });
-          badge.on('click', () => onFocusStation?.(p.call));
-          badge.on('mouseover', () => setHoverCall(p.call));
-          badge.on('mouseout', () => setHoverCall(null));
-        }
-        const layers: L.Layer[] = [pin];
-        if (circle) layers.push(circle);
-        if (badge) layers.push(badge);
-        // Pin draws above the uncertainty disc: add circle first, pin last.
+        const circle = p.ambiguity > 0 ? makeCircle(p, c) : null;
+        const badge = w ? makeBadge(p.call, w, c) : null;
+        // Pin draws above the uncertainty disc: add circle first, then pin, then badge.
         const groupLayers: L.Layer[] = circle ? [circle, pin] : [pin];
         if (badge) groupLayers.push(badge);
-        b = {
-          group: L.featureGroup(groupLayers),
-          pin,
-          circle,
-          badge,
-          staleApplied: stale,
-          visible: true,
-        };
+        b = { group: L.featureGroup(groupLayers), pin, circle, badge, iconKey: pinIconKey(p, stale), visible: true };
         bundles.set(p.call, b);
       } else {
-        // Update in place. Position can shift (new fix); staleness can flip.
+        // FULL reconcile of every sub-layer (a re-beacon can change position,
+        // staleness, symbol, ambiguity level, or weather readings — Codex impl P1).
         b.pin.setLatLng([c.lat, c.lon]);
-        if (b.staleApplied !== stale) {
-          b.pin.setIcon(pinIcon(p, c, stale));
-          b.staleApplied = stale;
+        const key = pinIconKey(p, stale);
+        if (key !== b.iconKey) {
+          b.pin.setIcon(pinIcon(p, c, stale)); // sprite / stale / ambiguous-shrink changed
+          b.iconKey = key;
         }
-        if (b.circle) b.circle.setLatLng([c.lat, c.lon]);
-        if (b.badge && w) b.badge.setLatLng([c.lat, c.lon]);
+        // Uncertainty disc: create / update radius+centre / remove as ambiguity changes.
+        if (p.ambiguity > 0) {
+          if (!b.circle) {
+            b.circle = makeCircle(p, c);
+            b.group.addLayer(b.circle);
+          } else {
+            b.circle.setLatLng([c.lat, c.lon]);
+            b.circle.setRadius(ambiguityRadiusMeters(p.ambiguity) * Math.SQRT2);
+          }
+        } else if (b.circle) {
+          b.group.removeLayer(b.circle);
+          b.circle = null;
+        }
+        // WX badge: create / refresh reading text / remove as weather appears/changes/clears.
+        if (w) {
+          if (!b.badge) {
+            b.badge = makeBadge(p.call, w, c);
+            b.group.addLayer(b.badge);
+          } else {
+            b.badge.setLatLng([c.lat, c.lon]);
+            b.badge.setIcon(badgeIcon(w)); // refresh the reading (chip text)
+          }
+        } else if (b.badge) {
+          b.group.removeLayer(b.badge);
+          b.badge = null;
+        }
       }
 
       // Visibility per the active category (no orphan — the whole bundle moves).
@@ -284,7 +310,9 @@ function MapOverlays({
       for (const [call, b] of bundlesRef.current) {
         const p = byCallRef.current.get(call);
         if (!p) continue;
-        b.pin.setIcon(pinIcon(p, cellCenter(p), b.staleApplied));
+        const stale = Date.now() - p.at > STALE_MS;
+        b.pin.setIcon(pinIcon(p, cellCenter(p), stale));
+        b.iconKey = pinIconKey(p, stale);
       }
     });
     return stop;

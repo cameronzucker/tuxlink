@@ -344,3 +344,72 @@ describe('AprsPositionsMap viewport + operator pin (tuxlink-dwzu)', () => {
     expect(screen.queryByTestId('map-recenter')).toBeNull();
   });
 });
+
+// Codex impl-review P1: a re-beacon can change ambiguity / weather readings on an
+// EXISTING station; the bundle must fully reconcile, not only move sub-layers.
+describe('AprsPositionsMap re-beacon reconciliation (impl P1)', () => {
+  const wxEnvAt = (call: string, temp: number) => [
+    {
+      call,
+      project: '',
+      seq: null,
+      bits: [],
+      rain: null,
+      lastHeard: Date.now(),
+      channels: [
+        { key: 'wx:temperature', label: 'Temp', unit: '°F', kind: 'temperature', value: temp, scaled: true, history: [] },
+      ],
+    },
+  ];
+  const chips = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLElement>('.aprs-wx-chip'));
+
+  it('adds an uncertainty disc when a station goes exact → ambiguous, and removes it on ambiguous → exact', async () => {
+    const exact: HeardPosition[] = [
+      { call: 'MOVER', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 0 },
+    ];
+    const { rerender } = await renderMap(<AprsPositionsMap positions={exact} />);
+    expect(circles()).toHaveLength(0);
+    // Re-beacon: same call, now ambiguous.
+    await act(async () => {
+      rerender(<AprsPositionsMap positions={[{ ...exact[0], ambiguity: 2 }]} />);
+      await Promise.resolve();
+    });
+    expect(circles()).toHaveLength(1);
+    expect(circles()[0].getRadius()).toBeCloseTo(ambiguityRadiusMeters(2) * Math.SQRT2, 3);
+    // Re-beacon back to exact → the stale disc is removed.
+    await act(async () => {
+      rerender(<AprsPositionsMap positions={[{ ...exact[0], ambiguity: 0 }]} />);
+      await Promise.resolve();
+    });
+    expect(circles()).toHaveLength(0);
+  });
+
+  it('refreshes the WX badge reading when a weather station re-beacons a new value', async () => {
+    const pos: HeardPosition[] = [
+      { call: 'W7WX', lat: 47, lon: -122, symbolTable: '/', symbolCode: '_', comment: '', at: Date.now(), ambiguity: 0 },
+    ];
+    const { container, rerender } = await renderMap(
+      <AprsPositionsMap positions={pos} envStations={wxEnvAt('W7WX', 72) as never} operatorGrid="CN87" />,
+    );
+    expect(chips(container)[0].textContent).toContain('72°F');
+    await act(async () => {
+      rerender(<AprsPositionsMap positions={pos} envStations={wxEnvAt('W7WX', 81) as never} operatorGrid="CN87" />);
+      await Promise.resolve();
+    });
+    expect(chips(container)[0].textContent).toContain('81°F'); // refreshed, not stuck at 72
+  });
+
+  it('adds a badge when a station becomes a weather station (non-WX → WX)', async () => {
+    const pos: HeardPosition[] = [
+      { call: 'W7WX', lat: 47, lon: -122, symbolTable: '/', symbolCode: '_', comment: '', at: Date.now(), ambiguity: 0 },
+    ];
+    const { container, rerender } = await renderMap(<AprsPositionsMap positions={pos} envStations={[] as never} />);
+    expect(chips(container)).toHaveLength(0);
+    await act(async () => {
+      rerender(<AprsPositionsMap positions={pos} envStations={wxEnvAt('W7WX', 64) as never} />);
+      await Promise.resolve();
+    });
+    expect(chips(container)).toHaveLength(1);
+    expect(chips(container)[0].textContent).toContain('64°F');
+  });
+});

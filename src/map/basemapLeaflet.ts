@@ -109,6 +109,10 @@ export function buildBaseLayers(flavor: BasemapFlavor, packs: PackSource[] = [])
         // elsewhere, so its empty tiles never mask the overview (R2 P0#3).
         paintRules: pmPaintRules(namedFlavor(flavor)),
         labelRules: [],
+        // Same OSM/ODbL credit as the overview (Leaflet refcounts identical strings
+        // → shows once). Without it the vendored layer injects its own default
+        // "Protomaps © OSM" credit, defeating the single attribution source (impl P2).
+        attribution: OSM_ATTRIBUTION,
         lang: 'en',
         maxDataZoom: pack.maxZoom ?? DEFAULT_PACK_MAX_DATA_ZOOM,
         minZoom: REGION_MINZOOM,
