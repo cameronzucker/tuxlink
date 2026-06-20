@@ -158,12 +158,20 @@ export function MapLibreMap({
     try {
       const instance = new maplibregl.Map({
         container: containerRef.current,
-        // NOTE (tuxlink-xezm): do NOT set `preserveDrawingBuffer: true` here. On
-        // this Pi's software renderer (llvmpipe) preserving the framebuffer every
-        // frame throttles ALL map rendering to a crawl (the "drunk map" / tiles
-        // blank-for-seconds regression). The WX PNG export reads the canvas during
-        // a render event instead (exportWxSnapshot), so the buffer is readable
-        // without this global penalty.
+        // preserveDrawingBuffer (tuxlink-xsv5): REQUIRED for the WX PNG snapshot —
+        // reading a WebGL canvas after the fact (toDataURL / drawImage) yields a
+        // blank image without it, which is why "Export PNG" did nothing. #836
+        // removed it on the theory it caused the "drunk map", but that diagnosis
+        // was WRONG: the drunk map was a per-frame
+        // setFilter(null)→styledata→source-reload loop in the WX overlay filter
+        // effect (root-caused + fixed, PR #839). With that loop gone this flag's
+        // real steady-state cost on llvmpipe is now cleanly measurable via the
+        // #835 tile trace; re-enabled so the export works. Back it out only if the
+        // trace shows a genuine render regression attributable to THIS flag alone.
+        // v5 nests WebGL context attributes under `canvasContextAttributes` (a v5
+        // breaking change) — a top-level `preserveDrawingBuffer` is silently
+        // ignored, so the export could never have worked via the old form.
+        canvasContextAttributes: { preserveDrawingBuffer: true },
         // Construct WITH the packs known at mount (B2) — the module cache makes a
         // remount carry packs so the async fetchPacks resolution is a no-op.
         style: buildBasemapStyle(flavorRef.current, constructPacksRef.current),
