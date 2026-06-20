@@ -615,7 +615,20 @@ function WxOverlay({
       const cat = categoryByKey(category);
       const weatherCalls = wx.map((w) => w.call);
       for (const layer of FILTERABLE_LAYERS) {
-        if (cat.key === 'all') m.setFilter?.(layer, null);
+        // tuxlink-xsv5: clear with `undefined`, NOT `null`. MapLibre stores a
+        // cleared filter as `undefined`, but `setFilter`'s no-op guard is
+        // `deepEqual(layer.filter, filter)` and `deepEqual(undefined, null)` is
+        // `false` — so `setFilter(layer, null)` on an already-unfiltered layer
+        // never early-returns. Each call runs `_updateLayer` (marks the source
+        // for reload, sets `_changed`), and the per-frame `Style.update()` then
+        // re-fires `styledata` → this handler re-runs → `setFilter` again: an
+        // infinite, self-clocking, per-frame source-reload loop. In the default
+        // 'all' state that saturated MapLibre's worker pool so EVERY tile load —
+        // even a 1-feature in-memory GeoJSON tile — took 5–20s (the "drunk map",
+        // tuxlink-xsv5). `undefined` short-circuits the guard
+        // (`deepEqual(undefined, undefined) === true`) to a true no-op when no
+        // filter is set, while still clearing a previously-set category filter.
+        if (cat.key === 'all') m.setFilter?.(layer, undefined);
         else m.setFilter?.(layer, ['in', ['get', 'call'], ['literal', weatherCalls]]);
       }
     };
