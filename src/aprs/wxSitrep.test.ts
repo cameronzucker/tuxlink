@@ -51,6 +51,8 @@ function station(
     rain: fields.rain
       ? { in1h: fields.rain.in1h ?? null, in24h: fields.rain.in24h ?? null, sinceMidnight: fields.rain.sinceMidnight ?? null }
       : null,
+    wxStatus: 'readings',
+    rawWx: '',
     lastHeard: NOW - ageMin * 60000,
   };
   return { call, lat: fields.lat ?? 35.6, lon: fields.lon ?? -82.5, ambiguity: 0, env, at: env.lastHeard };
