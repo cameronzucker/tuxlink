@@ -38,6 +38,7 @@ import { joinWxStations, badgeContent, type WxStation } from './wxStations';
 import { CATEGORIES, categoryByKey } from './stationCategories';
 import { composeSnapshotHeader } from './wxSnapshot';
 import type { EnvStation } from './envStations';
+import { DigipeatFadeLayer } from './DigipeatFadeLayer';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
@@ -761,6 +762,7 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
         onViewportChange={onViewportChange}
       >
         <PositionLayers positions={positions} />
+        <DigipeatFadeLayer positions={positions} operator={me} />
         <WxOverlay wx={wx} category={category} onFocusStation={onFocusStation} />
         <WxExportControl grid={operatorGrid || undefined} stationCount={wx.length} />
         <OperatorPin location={me} />
