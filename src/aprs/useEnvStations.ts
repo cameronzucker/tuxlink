@@ -13,7 +13,7 @@
 // open — opening the tab later then shows the buffered series, not an empty
 // graph that only starts filling on first view.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
 import type { WeatherReportDto, InboundTelemetryDto } from './aprsTypes';
 import {
@@ -142,6 +142,14 @@ export function useEnvStations(opts?: UseEnvStationsOptions): UseEnvStations {
     };
   }, [role]);
 
-  const stations = [...byCall.values()].sort((a, b) => b.lastHeard - a.lastHeard);
+  // tuxlink-xsv5: stable reference across renders (see useAprsPositions). A fresh
+  // sorted array every render made `wx = joinWxStations(envStations, positions)`
+  // change identity every render → the WX-badge GeoJSON `setData` re-fired every
+  // render, part of the "drunk map" re-tile storm. Memoized ⇒ recomputes only
+  // when `byCall` changes.
+  const stations = useMemo(
+    () => [...byCall.values()].sort((a, b) => b.lastHeard - a.lastHeard),
+    [byCall],
+  );
   return { stations };
 }

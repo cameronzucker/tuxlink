@@ -4,6 +4,13 @@ import { getLastMap, type MapLibreMock } from '../map/testMapLibreMock';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { AprsPositionsMap, ambiguityRadiusMeters } from './AprsPositionsMap';
 import type { HeardPosition } from './aprsTypes';
+import { listDraftIds, loadDraft } from '../compose/useDraft';
+
+// The Weather SITREP button opens a compose window via the Tauri invoke seam.
+// Resolve to [] by default: MapLibreMap awaits invoke('…basemap packs…') and
+// expects an array; compose_window_open ignores the return.
+const invokeMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 
 // MapLibre re-expression (mirrors StationFinderMap.test.tsx): pins are GeoJSON
 // circle-layer features driven through the global maplibre-gl test double, not
@@ -298,6 +305,32 @@ describe('AprsPositionsMap WX overlay (ni5b)', () => {
     const map = loadLast();
     const feats = (map.getSource('aprs-wx-badge') as { data: { features: unknown[] } }).data.features;
     expect(feats).toHaveLength(0);
+  });
+
+  // tuxlink-hepq: the Weather SITREP button must actually wire through to a
+  // prefilled Winlink compose window (not just render). Guards the integration
+  // seam: compose the report → save a draft → open compose for THAT draft.
+  it('Weather SITREP button composes a prefilled draft and opens compose (hepq)', () => {
+    window.localStorage.clear();
+    invokeMock.mockClear();
+    render(<AprsPositionsMap positions={wxPositions} envStations={wxEnv as never} operatorGrid="CN87" />);
+    loadLast();
+    const btn = screen.getByTestId('aprs-wx-sitrep');
+    expect(btn).not.toBeDisabled();
+    fireEvent.click(btn);
+    const ids = listDraftIds();
+    expect(ids.length).toBe(1);
+    const draft = loadDraft(ids[0])!;
+    expect(draft.subject).toContain('WX SITREP');
+    expect(draft.body).toContain('LOCAL WX GROUND TRUTH');
+    expect(draft.body).toContain('72°F'); // the heard reading, in the report
+    expect(invokeMock).toHaveBeenCalledWith('compose_window_open', { draftId: draft.draftId });
+  });
+
+  it('Weather SITREP button is disabled with no WX stations heard', () => {
+    render(<AprsPositionsMap positions={[]} />);
+    loadLast();
+    expect(screen.getByTestId('aprs-wx-sitrep')).toBeDisabled();
   });
 });
 

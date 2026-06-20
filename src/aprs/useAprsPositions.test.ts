@@ -129,6 +129,30 @@ describe('useAprsPositions', () => {
     expect(result.current.positions.map((p) => p.call).sort()).toEqual(['AIDSTN', 'LEADER']);
   });
 
+  // tuxlink-xsv5 (the "drunk map"): the positions array reference MUST be stable
+  // across re-renders that don't change the data. A fresh `[...byCall.values()]`
+  // every render made every `[map, positions]`-keyed map effect (sprite force-
+  // rebake, GeoJSON setData re-push, feature-state) re-run on EVERY parent render
+  // (1s clock, 2s drafts poll, pans) → continuous re-tile + sprite re-bake storm.
+  it('returns a STABLE positions reference across re-renders with no new fix (xsv5)', async () => {
+    const { result, rerender } = renderHook(() => useAprsPositions());
+    await act(async () => {});
+    emitPos(BASE);
+    const first = result.current.positions;
+    rerender();
+    rerender();
+    expect(result.current.positions).toBe(first); // same REFERENCE, not just equal
+  });
+
+  it('returns a NEW reference only when the heard set actually changes (xsv5)', async () => {
+    const { result } = renderHook(() => useAprsPositions());
+    await act(async () => {});
+    emitPos(BASE);
+    const first = result.current.positions;
+    emitPos({ ...BASE, sender: 'W7ABC', lat: 40, lon: -100 });
+    expect(result.current.positions).not.toBe(first);
+  });
+
   describe('staleness', () => {
     beforeEach(() => {
       vi.useFakeTimers();
