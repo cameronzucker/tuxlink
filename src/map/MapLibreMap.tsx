@@ -24,6 +24,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import maplibregl from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
 import { invoke } from '@tauri-apps/api/core';
+import { reportFrontendError } from '../frontendErrorLog';
 import { clampLatLon, clampMapCenter, type LatLon } from './projection';
 import { buildBasemapStyle, type BasemapFlavor, type PackSource } from './basemapStyle';
 import { BASEMAP_PACKS_CHANGED_EVENT, type PacksList } from './offlineMaps';
@@ -198,6 +199,50 @@ export function MapLibreMap({
 
       instance.on('click', (e: maplibregl.MapMouseEvent) => {
         onClickRef.current?.(clampLatLon(e.lngLat.lat, e.lngLat.lng));
+      });
+
+      // tuxlink-xezm: trace the tile pipeline into the structured log. MapLibre's
+      // own tile/source/glyph load failures were invisible (only the unusable
+      // WebKitGTK console saw them), and per-tile latency was never captured — so a
+      // "tiles stutter / blank for seconds" report could only be guessed at. Forward
+      // every error, and log any tile whose request→load exceeds a visible threshold
+      // with its source + z/x/y + duration, so the structured log shows where the
+      // seconds actually go.
+      instance.on('error', (e) => {
+        const err = (e as unknown as { error?: unknown }).error;
+        const msg = err instanceof Error ? err.message : String(err ?? 'maplibre error');
+        const sid = (e as unknown as { sourceId?: string }).sourceId;
+        reportFrontendError(
+          'maplibre',
+          sid ? `${msg} [source=${sid}]` : msg,
+          err instanceof Error ? err.stack : undefined,
+        );
+      });
+      const tileStart = new Map<string, number>();
+      const tileKey = (e: unknown): string | null => {
+        const ev = e as {
+          sourceId?: string;
+          tile?: { tileID?: { canonical?: { z: number; x: number; y: number } } };
+        };
+        const c = ev.tile?.tileID?.canonical;
+        return c ? `${ev.sourceId}@${c.z}/${c.x}/${c.y}` : null;
+      };
+      instance.on('dataloading', (e) => {
+        const ev = e as unknown as { dataType?: string; tile?: unknown };
+        if (ev.dataType !== 'source' || !ev.tile) return;
+        const k = tileKey(e);
+        if (k) tileStart.set(k, performance.now());
+      });
+      instance.on('data', (e) => {
+        const ev = e as unknown as { dataType?: string; tile?: unknown };
+        if (ev.dataType !== 'source' || !ev.tile) return;
+        const k = tileKey(e);
+        if (!k) return;
+        const t0 = tileStart.get(k);
+        if (t0 == null) return;
+        tileStart.delete(k);
+        const ms = Math.round(performance.now() - t0);
+        if (ms >= 1500) reportFrontendError('maplibre-tile-slow', `${k} took ${ms}ms`);
       });
       // Emit only on a REAL zoom change (B8, tuxlink-vnk7). `moveend` fires after
       // pans too, so emitting unconditionally re-rendered the consumer subtree
