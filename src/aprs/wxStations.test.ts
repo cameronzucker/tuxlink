@@ -14,6 +14,8 @@ function env(
     seq: null,
     bits: [],
     rain,
+    wxStatus: null,
+    rawWx: '',
     lastHeard: 100,
     channels: ch.map((c) => ({
       key: c.key,

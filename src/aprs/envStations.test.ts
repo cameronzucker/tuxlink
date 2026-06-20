@@ -24,6 +24,8 @@ function wx(partial: Partial<WeatherReportDto>): WeatherReportDto {
     luminosityWm2: null,
     snowIn: null,
     comment: '',
+    status: 'readings',
+    rawWx: '',
     ...partial,
   };
 }
@@ -153,6 +155,38 @@ describe('merge by callsign — one station, two sources auto-composed', () => {
     expect(pressure).toBeDefined();
     expect(pressure!.value).toBe(1013);
     expect(s.channels.find((c) => c.kind === 'temperature')!.value).toBe(53);
+  });
+});
+
+describe('applyWeather — honest no-data state (tuxlink-vnm5)', () => {
+  it('carries the readings status + raw run for a valid report', () => {
+    const s = applyWeather(undefined, wx({ temperatureF: 55, status: 'readings', rawWx: '180/010t055' }), 1000);
+    expect(s.wxStatus).toBe('readings');
+    expect(s.rawWx).toBe('180/010t055');
+  });
+
+  it('rosters a sensors-offline station: no channels, but the raw run preserved', () => {
+    // Backend dropped the impossible readings (767deg/200F/0hPa); the DTO arrives
+    // all-null with status sensorsOffline and the raw run kept for inspection.
+    const s = applyWeather(
+      undefined,
+      wx({ status: 'sensorsOffline', rawWx: '767/255g255t200r000p000P000h00b00000' }),
+      1000,
+    );
+    expect(s.wxStatus).toBe('sensorsOffline');
+    expect(s.channels).toHaveLength(0); // nothing rendered as a real reading
+    expect(s.rawWx).toContain('767/255'); // …but the raw is there to inspect
+  });
+
+  it('rosters a position-only weather-symbol beacon (name, no readings)', () => {
+    const s = applyWeather(
+      undefined,
+      wx({ station: 'KA7WSB-2', status: 'positionOnly', comment: 'NPS_003_Chiminea' }),
+      1000,
+    );
+    expect(s.wxStatus).toBe('positionOnly');
+    expect(s.channels).toHaveLength(0);
+    expect(s.project).toBe('NPS_003_Chiminea');
   });
 });
 
