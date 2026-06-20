@@ -392,6 +392,10 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
   // positions actually change, not every NOW_TICK. Staleness rides feature-state.
   const fc = useMemo(() => buildPositionFC(positions), [positions]);
   const uncertaintyFc = useMemo(() => buildUncertaintyFC(positions), [positions]);
+  // Latest FC for the sheets-ready re-push below — the async sheet-decode callback
+  // can fire after `positions` (and thus `fc`) has advanced.
+  const fcRef = useRef(fc);
+  fcRef.current = fc;
 
   // Uncertainty regions register first so the pins + labels draw on top of them.
   useMapOverlay(map, UNCERTAINTY_SOURCE, { type: 'geojson', data: EMPTY_FC }, UNCERTAINTY_LAYERS);
@@ -404,6 +408,7 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
     const m = map as unknown as SpriteMap & {
       on: (t: string, h: (...a: unknown[]) => void) => unknown;
       off: (t: string, h: (...a: unknown[]) => void) => unknown;
+      getSource?: (id: string) => { setData?: (data: unknown) => void } | undefined;
     };
     const apply = (force = false) => {
       for (const p of positions) {
@@ -421,7 +426,18 @@ function PositionLayers({ positions }: AprsPositionsMapProps) {
     // runs synchronously on mount (positions are already accumulated by the time
     // the map opens) — before the PNGs decode, so those sprites bake transparent.
     // Re-bake (force) once the sheets are ready so pins actually show their icon.
-    const stopWhenReady = whenSheetsReady(() => apply(true));
+    //
+    // tuxlink-xezm: `updateImage` swaps the sprite TEXTURE but does NOT re-run the
+    // symbol layer's icon LAYOUT, so pins baked transparent on first paint stayed
+    // invisible even after the re-bake — they only appeared once an unrelated
+    // `styledata` event (e.g. toggling the category filter) forced a re-layout, so
+    // on load every station was missing except the non-sprite operator pin. Re-push
+    // the source data here so the icon layout re-runs the instant the sheets are
+    // ready, and the pins paint on load with no user interaction.
+    const stopWhenReady = whenSheetsReady(() => {
+      apply(true);
+      m.getSource?.(POSITIONS_SOURCE)?.setData?.(fcRef.current);
+    });
     const onStyle = () => apply();
     m.on('styledata', onStyle as (...a: unknown[]) => void);
     return () => {
