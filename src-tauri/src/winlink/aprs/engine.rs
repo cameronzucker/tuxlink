@@ -630,15 +630,19 @@ impl AprsEngine {
         // the pin; the weather panel gets the reading. Captured before `pos` is
         // moved into `InboundPos` below.
         if is_weather_symbol(pos.symbol_table, pos.symbol_code) {
-            if let Some(mut wx) = parse_weather_data(&pos.comment) {
-                // Key the report by the ENTITY, mirroring the position path: a
-                // named weather OBJECT/ITEM (`;`/`)`) reports about the named
-                // entity, so the report's `station` is the object NAME, not the
-                // reporting sender. A station's own `_`-symbol beacon has no name
-                // → keyed by the sender.
-                wx.station = name.clone().unwrap_or_else(|| sender.to_string());
-                self.sink.emit_weather(wx);
-            }
+            // tuxlink-vnm5: emit a report for EVERY heard weather-symbol station so
+            // it rosters in Station Data with an honest state — `Readings` /
+            // `SensorsOffline` (sentinel garbage) from parse_weather_data, or
+            // `PositionOnly` for a name beacon with no WX run (e.g. KA7WSB-2
+            // `_NPS_003_Chiminea`). Never silently nothing, never garbage.
+            let mut wx =
+                parse_weather_data(&pos.comment).unwrap_or_else(|| WeatherReport::position_only(&pos.comment));
+            // Key the report by the ENTITY, mirroring the position path: a named
+            // weather OBJECT/ITEM (`;`/`)`) reports about the named entity, so the
+            // report's `station` is the object NAME, not the reporting sender. A
+            // station's own `_`-symbol beacon has no name → keyed by the sender.
+            wx.station = name.clone().unwrap_or_else(|| sender.to_string());
+            self.sink.emit_weather(wx);
         }
         self.sink.emit_position(InboundPos {
             sender: sender.to_string(),

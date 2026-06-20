@@ -199,6 +199,13 @@ export interface WeatherReportDto {
   snowIn: number | null;
   /// Free-text comment trailing the parsable WX run (station/software id), or "".
   comment: string;
+  /// Honest report state (tuxlink-vnm5): `readings` (has valid measurements),
+  /// `sensorsOffline` (a WX run with physically-impossible sentinels — readings
+  /// dropped, raw kept), `positionOnly` (a `_`-symbol name beacon, no WX run).
+  status: 'readings' | 'sensorsOffline' | 'positionOnly';
+  /// Raw WX-run text as received (before validation), preserved so an offline /
+  /// garbage report is transparently inspectable. Empty for `positionOnly`.
+  rawWx: string;
 }
 
 /// Current APRS station configuration, returned by `aprs_config_get`.

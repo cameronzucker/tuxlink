@@ -178,9 +178,40 @@ export function EnvStationCard({ station, now }: { station: EnvStation; now: num
           <span className={`env-chip ${stale ? 'is-stale' : 'is-fresh'}`}>
             {stale ? `stale · ${fmtAgo(now - station.lastHeard).replace('−', '')}` : 'live'}
           </span>
+          {/* tuxlink-vnm5: honest weather state so a no-readings station never
+              looks broken. */}
+          {station.wxStatus === 'sensorsOffline' && (
+            <span className="env-chip is-offline" data-testid={`env-wx-offline-${station.call}`}>
+              sensors offline
+            </span>
+          )}
+          {station.wxStatus === 'positionOnly' && (
+            <span className="env-chip is-positiononly" data-testid={`env-wx-positiononly-${station.call}`}>
+              position-only
+            </span>
+          )}
           {station.seq !== null && <span className="env-seq">#{station.seq}</span>}
         </span>
       </div>
+
+      {(station.wxStatus === 'sensorsOffline' || station.wxStatus === 'positionOnly') && (
+        <div className="env-wxnote" data-testid={`env-wxnote-${station.call}`}>
+          <p className="env-wxnote-msg">
+            {station.wxStatus === 'positionOnly'
+              ? 'Weather-station marker — no measurements transmitted.'
+              : 'Sensors offline — station is transmitting, but its readings are invalid and were not plotted.'}
+          </p>
+          {station.rawWx && (
+            <code
+              className="env-wxraw"
+              data-testid={`env-wxraw-${station.call}`}
+              title="Raw weather data as received (kept for inspection)"
+            >
+              {station.rawWx}
+            </code>
+          )}
+        </div>
+      )}
 
       {windDir && (
         <div className="env-wind">

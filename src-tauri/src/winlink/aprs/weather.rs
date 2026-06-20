@@ -39,11 +39,28 @@
 //! Both emit the `aprs-weather:new` DTO. The source-reactive panel is the
 //! tuxlink-2phz fast-follow.
 
+/// What a heard weather-symbol station is actually reporting (tuxlink-vnm5). A
+/// station beaconing the `_` symbol is rostered in Station Data regardless, with
+/// an HONEST state instead of silently rendering nothing (the "looks broken"
+/// report) or garbage. `Readings` = at least one valid, in-range measurement.
+/// `SensorsOffline` = a WX run carrying physically-impossible values (e.g. wind
+/// 767°, 200 °F, 0 hPa); no reading is trustworthy, but `raw_wx` keeps the wire
+/// bytes. `PositionOnly` = a `_`-symbol name beacon with no WX run at all (e.g.
+/// KA7WSB-2 `_NPS_003_Chiminea`): a weather-site marker, not a data feed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WeatherStatus {
+    Readings,
+    SensorsOffline,
+    PositionOnly,
+}
+
 /// A decoded APRS weather report. Serializes camelCase as `aprs-weather:new`.
 ///
-/// Every measurement is `Option` — only fields actually present on the wire are
-/// `Some`. Units are ham-conventional (mph / °F / inches / hPa / W·m⁻²); a metric
-/// toggle is a panel concern, deferred.
+/// Every measurement is `Option` — only fields actually present AND in-range are
+/// `Some` (out-of-range sentinels are dropped; see `status`). Units are
+/// ham-conventional (mph / °F / inches / hPa / W·m⁻²); a metric toggle is a panel
+/// concern, deferred.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WeatherReport {
@@ -76,6 +93,13 @@ pub struct WeatherReport {
     /// Free-text comment trailing the parsable WX run (station/equipment type,
     /// e.g. a Davis/`dvs`/`wRSW` software identifier), if any.
     pub comment: String,
+    /// Honest report state for Station Data (tuxlink-vnm5).
+    pub status: WeatherStatus,
+    /// The raw WX-run text exactly as received (before range validation), so an
+    /// offline/garbage report is transparently inspectable rather than discarded
+    /// — operator requirement: "the data must still be available, not thrown out."
+    /// Empty for a `PositionOnly` beacon.
+    pub raw_wx: String,
 }
 
 impl WeatherReport {
@@ -95,7 +119,48 @@ impl WeatherReport {
             luminosity_wm2: None,
             snow_in: None,
             comment: String::new(),
+            status: WeatherStatus::Readings,
+            raw_wx: String::new(),
         }
+    }
+
+    /// A `PositionOnly` report for a `_`-symbol beacon that carries no WX run —
+    /// the comment is its name/label (e.g. `NPS_003_Chiminea`). Rosters the
+    /// station in Station Data with no readings rather than dropping it.
+    pub fn position_only(comment: &str) -> Self {
+        let mut wx = Self::empty();
+        wx.status = WeatherStatus::PositionOnly;
+        wx.comment = comment.trim().to_string();
+        wx
+    }
+
+    /// True if any decoded field is physically implausible (a sensors-offline /
+    /// sentinel beacon). Bounds are generous real-world maxima, not tight QC.
+    fn has_out_of_range(&self) -> bool {
+        self.wind_direction_deg.is_some_and(|v| v > 360)
+            || self.wind_speed_mph.is_some_and(|v| v > 199)
+            || self.wind_gust_mph.is_some_and(|v| v > 199)
+            || self.temperature_f.is_some_and(|v| !(-60..=140).contains(&v))
+            || self.humidity_pct.is_some_and(|v| v > 100)
+            || self.pressure_hpa.is_some_and(|v| !(800.0..=1100.0).contains(&v))
+            || self.rain_1h_in.is_some_and(|v| !(0.0..=100.0).contains(&v))
+            || self.rain_24h_in.is_some_and(|v| !(0.0..=100.0).contains(&v))
+            || self.rain_since_midnight_in.is_some_and(|v| !(0.0..=100.0).contains(&v))
+            || self.snow_in.is_some_and(|v| !(0.0..=120.0).contains(&v))
+    }
+
+    /// Drop every measurement (keeps station/comment/raw_wx/status). Used when a
+    /// report is flagged `SensorsOffline` so no garbage value renders as real.
+    fn clear_measurements(&mut self) {
+        let raw = std::mem::take(&mut self.raw_wx);
+        let station = std::mem::take(&mut self.station);
+        let comment = std::mem::take(&mut self.comment);
+        let status = self.status;
+        *self = Self::empty();
+        self.raw_wx = raw;
+        self.station = station;
+        self.comment = comment;
+        self.status = status;
     }
 
     /// True when no measurement field was decoded — used to reject a body that
@@ -235,13 +300,28 @@ pub fn parse_weather_data(body: &str) -> Option<WeatherReport> {
     // Anything left is the trailing comment (station/software identifier, etc.).
     // `i` is a byte cursor that may land mid-char on hostile multibyte input;
     // `get(i..)` yields None (→ "") rather than panicking on a non-char-boundary.
+    // raw_wx = the WX-run text as received (up to the trailing comment), kept for
+    // transparent inspection even when validation drops the values (tuxlink-vnm5).
+    wx.raw_wx = body.get(..i).unwrap_or("").trim().to_string();
     if i < bytes.len() {
         wx.comment = body.get(i..).unwrap_or("").trim().to_string();
     }
 
+    // No WX run parsed at all → a plain comment / name beacon, not a report. The
+    // engine emits a PositionOnly report for it so the station still rosters.
     if wx.has_no_measurements() {
         return None;
     }
+    // Honesty (tuxlink-vnm5): any physically-impossible field means a
+    // sensors-offline / sentinel beacon (e.g. WX7FGZ-2 `767/255g255t200…b00000`).
+    // Flag it and drop ALL readings — don't present the incidentally-in-range
+    // fields as trustworthy — but keep raw_wx so the operator sees what was sent.
+    wx.status = if wx.has_out_of_range() {
+        wx.clear_measurements();
+        WeatherStatus::SensorsOffline
+    } else {
+        WeatherStatus::Readings
+    };
     Some(wx)
 }
 
@@ -516,5 +596,40 @@ mod tests {
         let info = "_€€€xx".as_bytes(); // '_' + three 3-byte chars (9 bytes) + 'xx'
         let _ = parse_positionless_weather(info); // must not panic
         assert!(parse_positionless_weather(info).is_none());
+    }
+
+    // ── tuxlink-vnm5: honest status + range validation + raw transparency ──────
+    #[test]
+    fn valid_report_has_readings_status() {
+        let wx = parse_weather_data("180/010g015t055h68b09900").unwrap();
+        assert_eq!(wx.status, WeatherStatus::Readings);
+        assert_eq!(wx.temperature_f, Some(55));
+        assert_eq!(wx.raw_wx, "180/010g015t055h68b09900");
+    }
+
+    #[test]
+    fn sentinel_offline_report_drops_all_readings_but_keeps_raw() {
+        // WX7FGZ-2's real on-air sensors-offline beacon: wind 767° (>360), temp
+        // 200 °F, pressure 0 hPa — physically impossible. Must NOT render as real.
+        let run = "767/255g255t200r000p000P000h00b00000";
+        let wx = parse_weather_data(run).unwrap();
+        assert_eq!(wx.status, WeatherStatus::SensorsOffline);
+        // Every reading dropped — no garbage shown as genuine.
+        assert!(wx.has_no_measurements(), "no measurement survives a sentinel report");
+        assert_eq!(wx.wind_direction_deg, None);
+        assert_eq!(wx.temperature_f, None);
+        // …but the raw run is preserved for transparent inspection (operator req).
+        assert_eq!(wx.raw_wx, run);
+    }
+
+    #[test]
+    fn name_beacon_is_not_a_report_engine_makes_it_position_only() {
+        // KA7WSB-2 `_NPS_003_Chiminea`: the comment after the `_` symbol is a name,
+        // no WX run → parse returns None; the engine wraps it as PositionOnly.
+        assert!(parse_weather_data("NPS_003_Chiminea").is_none());
+        let wx = WeatherReport::position_only("NPS_003_Chiminea");
+        assert_eq!(wx.status, WeatherStatus::PositionOnly);
+        assert_eq!(wx.comment, "NPS_003_Chiminea");
+        assert!(wx.has_no_measurements());
     }
 }

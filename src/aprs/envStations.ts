@@ -87,6 +87,14 @@ export interface EnvStation {
   channels: EnvChannel[];
   bits: EnvBit[];
   rain: RainTotals | null;
+  /// Honest weather state for a heard `_`-symbol station (tuxlink-vnm5): null when
+  /// no weather frame has been heard (e.g. a telemetry-only station); otherwise
+  /// `readings` / `sensorsOffline` / `positionOnly`. Drives the card's honest
+  /// empty/offline state instead of rendering nothing or garbage.
+  wxStatus: 'readings' | 'sensorsOffline' | 'positionOnly' | null;
+  /// Raw WX-run text from the latest weather frame, for transparent inspection
+  /// (kept even when readings were dropped as sentinels). Empty/"" when none.
+  rawWx: string;
   /// Local epoch-ms of the most recent frame from this station (either source).
   lastHeard: number;
 }
@@ -155,7 +163,17 @@ const WX_FIELDS: WxFieldSpec[] = [
 ];
 
 function blankStation(call: string): EnvStation {
-  return { call, project: '', seq: null, channels: [], bits: [], rain: null, lastHeard: 0 };
+  return {
+    call,
+    project: '',
+    seq: null,
+    channels: [],
+    bits: [],
+    rain: null,
+    wxStatus: null,
+    rawWx: '',
+    lastHeard: 0,
+  };
 }
 
 /// Pick the best human descriptor, preferring a non-empty new value but keeping
@@ -192,6 +210,10 @@ export function applyWeather(
     channels,
     rain,
     project: pickProject(base.project, dto.comment),
+    // tuxlink-vnm5: carry the honest weather state + raw run so the card shows
+    // "sensors offline" / "position-only" / readings instead of nothing/garbage.
+    wxStatus: dto.status,
+    rawWx: dto.rawWx || base.rawWx,
     lastHeard: at,
   };
 }

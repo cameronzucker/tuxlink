@@ -11,6 +11,7 @@ function wx(p: Partial<WeatherReportDto>): WeatherReportDto {
     temperatureF: null, humidityPct: null, pressureHpa: null,
     rain1hIn: null, rain24hIn: null, rainSinceMidnightIn: null,
     luminosityWm2: null, snowIn: null, comment: '',
+    status: 'readings', rawWx: '',
     ...p,
   };
 }
