@@ -90,8 +90,10 @@
 /* ni5b: weather overlay — category filter control + hover WX card. */
 .aprs-wx-filter {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  /* Top-left column, BELOW the 29px "center on me" recenter control (top:10 + 29),
+     not stacked on top of it (tuxlink-wb4c). */
+  top: 46px;
+  left: 10px;
   z-index: 2;
   background: #0e1a24ee;
   border: 1px solid #2c4a63;
@@ -110,8 +112,9 @@
 }
 .aprs-wx-card {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  /* Below the top-right NavigationControl (~58px tall), not over it (tuxlink-wb4c). */
+  top: 66px;
+  right: 10px;
   z-index: 2;
   background: #0e1a24f2;
   border: 1px solid #2c4a63;
@@ -128,8 +131,10 @@
 /* ni5b: weather snapshot export button. */
 .aprs-wx-export {
   position: absolute;
-  bottom: 8px;
-  left: 8px;
+  /* Top-left column, below the filter — off the bottom-left ScaleControl +
+     position popup it used to cover (tuxlink-wb4c). */
+  top: 82px;
+  left: 10px;
   z-index: 2;
   background: #11283b;
   color: #dcebf6;
