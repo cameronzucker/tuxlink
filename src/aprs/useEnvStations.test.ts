@@ -60,6 +60,20 @@ describe('useEnvStations', () => {
     expect(result.current.stations[0].channels.find((c) => c.kind === 'temperature')?.value).toBe(52);
   });
 
+  // tuxlink-xsv5: the stations array reference MUST be stable across re-renders
+  // with no new frame — a fresh sorted array every render made `wx =
+  // joinWxStations(...)` change identity every render, re-firing the WX-badge
+  // GeoJSON setData every frame (part of the "drunk map" storm).
+  it('returns a STABLE stations reference across re-renders with no new frame (xsv5)', async () => {
+    const { result, rerender } = renderHook(() => useEnvStations());
+    await waitFor(() => expect(handlers['aprs-weather:new']).toBeDefined());
+    act(() => handlers['aprs-weather:new']({ payload: wx({ station: 'KE7ABC-13', temperatureF: 52 }) }));
+    const first = result.current.stations;
+    rerender();
+    rerender();
+    expect(result.current.stations).toBe(first);
+  });
+
   it('merges a weather and a telemetry frame from the same callsign into one station', async () => {
     const { result } = renderHook(() => useEnvStations());
     await waitFor(() => expect(handlers['aprs-weather:new']).toBeDefined());
