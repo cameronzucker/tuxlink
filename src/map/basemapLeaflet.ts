@@ -2,39 +2,47 @@
  * protomaps-leaflet base layer builder over the `tile://` PMTiles seam
  * (tuxlink-6kdw, plan phase 1 / Task 2 — THE SEAM CRUX).
  *
- * The Leaflet twin of `basemapStyle.ts`. Where the MapLibre path assembles a GL
- * style and registers a `pmtiles` Protocol, the Leaflet path hands
- * protomaps-leaflet's `leafletLayer` a plain `tile://pmtiles/<id>` URL and lets
- * it build its own PMTiles "view" internally. Its internal `new PMTiles(url)`
- * issues `fetch('tile://pmtiles/world', { headers: { Range } })` — the SAME
- * fetch path the MapLibre `pmtiles` Protocol already proves works against the
- * Rust HTTP-206 seam, and which CSP `connect-src tile:` permits. NO
- * `addProtocol`/Protocol registration is needed (that is a MapLibre-only
- * mechanism).
+ * The Leaflet twin of `basemapStyle.ts`. Three rules, each fixing a P0 the
+ * cross-provider adversarial review caught (the first cut shipped a blank map):
  *
- * ── Confirmed vendored API (protomaps-leaflet 5.1.0, inspected in
- *    `src/vendor/protomaps-leaflet/index.d.ts`; see PROVENANCE.md) ──
- *   export `leafletLayer(options?: LeafletLayerOptions)` → an `L.GridLayer`.
- *   `LeafletLayerOptions extends L.GridLayerOptions`. Option names used here:
- *     - `url: PMTiles | string`  — the tile source; we pass the `tile://` string.
- *     - `flavor: string`         — `'light' | 'dark'`; protomaps-leaflet picks
- *                                  paint-rule colors (NOT a CSS filter / bake).
- *     - `lang: string`           — label language; `'en'`.
- *     - `attribution: string`    — ODbL/OSM credit string.
- *     - `minZoom` / `maxZoom` / `pane` — inherited from `L.GridLayerOptions`;
- *                                  `minZoom` clamps pack layers to z6+.
- *   NOTE: `SourceOptions` (the `{ sources }` form) is
- *   `{ levelDiff?; maxDataZoom?; url?; sources? }` — it carries NO top-level
- *   `maxzoom`. So an explicit overview maxzoom cap is NOT expressible via
- *   `sources`; the plain `{ url }` form is used and overzoom relies on the
- *   PMTiles archive header's own maxzoom (the bundled overview is z0–6),
- *   exactly like the MapLibre path (see basemapStyle.ts §"never blank").
+ *  1. PMTiles INSTANCE, not a string URL. protomaps-leaflet picks `PmtilesSource`
+ *     ONLY when a string url's pathname ends `.pmtiles`; `tile://pmtiles/world`
+ *     (pathname `/world`) would fall through to `ZxySource` — no Range request, it
+ *     parses the whole archive as one MVT tile → blank. Passing
+ *     `new PMTiles('tile://pmtiles/<id>')` (the `.d.ts` types `url: PMTiles |
+ *     string`) forces `PmtilesSource`, whose internal Range-fetch of the Rust
+ *     206 seam is the SAME path the MapLibre `pmtiles` Protocol already proves.
+ *     NO `addProtocol` (that is a MapLibre-only mechanism).
+ *  2. Cap `maxDataZoom` per source. protomaps-leaflet defaults `maxDataZoom:15`
+ *     and requests data at z=displayZ−1; the bundled overview is z0–6, so above
+ *     ~z8 it would request z7+ data the archive lacks → blank. The overview is
+ *     capped at 6; each pack carries its real maxzoom (continent-na is z0–14).
+ *  3. Packs carry NO flavor/background/labels. A flavored layer paints its
+ *     `backgroundColor` on EVERY rendered tile, so a pack's empty tiles outside
+ *     its coverage would mask the overview. Only the OVERVIEW is flavored (one
+ *     global background + labels); each PACK passes explicit `paintRules`
+ *     (from the same flavor) + `labelRules: []` + no background, so it draws only
+ *     its detail geometry and is transparent elsewhere. Mirrors
+ *     `basemapStyle.ts` dropping `background` + `symbol` from pack layer sets.
+ *
+ * Composite ordering: explicit `zIndex` (overview 1, packs 2+) so packs paint
+ * above the overview regardless of add order; packs clamp to `minZoom: 6`.
+ *
+ * ── Confirmed vendored API (protomaps-leaflet 5.1.0, `index.d.ts`) ──
+ *   `leafletLayer(opts)` → `L.GridLayer`. `LeafletLayerOptions extends
+ *   L.GridLayerOptions` with `url?: PMTiles | string`, `paintRules?`,
+ *   `labelRules?`, `maxDataZoom?`, `flavor?`, `backgroundColor?`, `attribution?`,
+ *   `lang?`, inherited `minZoom`/`maxZoom`/`zIndex`/`pane`. Exported helpers:
+ *   `paintRules(flavor)`, `labelRules(flavor, lang)`. The flavor object comes
+ *   from `@protomaps/basemaps`' `namedFlavor(name)`.
  *
  * Serving (fully offline): the Rust 206 seam serves both the bundled world
  * overview (`tile://pmtiles/world`, z0–6) and each downloaded region pack
  * (`tile://pmtiles/<id>`, z0–14).
  */
-import { leafletLayer } from '../vendor/protomaps-leaflet';
+import { leafletLayer, paintRules as pmPaintRules } from '../vendor/protomaps-leaflet';
+import { PMTiles } from 'pmtiles';
+import { namedFlavor } from '@protomaps/basemaps';
 import type { Layer as LeafletLayer } from 'leaflet';
 
 /** Supported base-layer flavors. `dark` is protomaps-leaflet's paint-rule dark
@@ -42,11 +50,13 @@ import type { Layer as LeafletLayer } from 'leaflet';
 export type BasemapFlavor = 'light' | 'dark';
 
 /** An installed region pack to composite over the world overview (R7).
- * `id` is the registered archive id served at `tile://pmtiles/<id>`. Declared
- * locally (NOT imported from `basemapStyle.ts`) to keep the Leaflet and
- * MapLibre substrates independent. */
+ * `id` is the registered archive id served at `tile://pmtiles/<id>`; `maxZoom`
+ * is its real archive max (caps `maxDataZoom` so overzoom never requests absent
+ * tiles). Declared LOCALLY (NOT imported from `basemapStyle.ts`) to keep the
+ * Leaflet and MapLibre substrates independent. */
 export interface PackSource {
   id: string;
+  maxZoom?: number;
 }
 
 /** PMTiles seam URL for an archive id → the Rust HTTP-206 custom protocol. */
@@ -55,48 +65,54 @@ export const PMTILES_TILE_URL = (id: string): string => `tile://pmtiles/${id}`;
 /** ODbL attribution required for OSM-derived vector tiles. */
 export const OSM_ATTRIBUTION = '© OpenStreetMap contributors';
 
+/** Zoom at and above which a downloaded region pack's detail takes over (R7;
+ * mirrors `basemapStyle.REGION_MINZOOM`). The overview overzooms past z6 so the
+ * viewport is never blank; packs clamp to z6+ and draw on top. */
+export const REGION_MINZOOM = 6;
+
 /** Archive id of the always-present bundled world overview (z0–6). */
 const WORLD_OVERVIEW_ID = 'world';
-
-/** Zoom at and above which a downloaded region pack's detailed layers take over
- * (R7; mirrors `basemapStyle.REGION_MINZOOM`). The bundled overview overzooms
- * past z6 so the viewport is never blank; packs clamp to z6+ and draw on top. */
-export const REGION_MINZOOM = 6;
+/** The bundled overview is z0–6; cap data requests so overzoom does not ask for
+ * absent z7+ tiles (R2 P0#2). */
+const OVERVIEW_MAX_DATA_ZOOM = 6;
+/** Fallback pack data-zoom cap when a pack's real maxzoom is not known yet. */
+const DEFAULT_PACK_MAX_DATA_ZOOM = 14;
 
 /**
  * Build the protomaps-leaflet base layer(s) for the given flavor over the
- * `tile://` PMTiles seam.
+ * `tile://` PMTiles seam. Returns `[overview, ...packLayers]`:
+ *  - overview: flavored (background + labels), `maxDataZoom: 6`, `zIndex: 1`,
+ *    left to overzoom past z6 (never blank outside pack coverage).
+ *  - each pack: explicit `paintRules` from the same flavor, `labelRules: []`,
+ *    NO flavor/background (so empty pack tiles never mask the overview),
+ *    `maxDataZoom: pack.maxZoom ?? 14`, `minZoom: 6`, `zIndex: 2+i`.
  *
- * Returns `[overview, ...packLayers]`:
- *  - The world overview (`tile://pmtiles/world`) is the always-present base. It
- *    is left UNCLAMPED so Leaflet overzooms its z6 tiles for z7–14 (never blank
- *    outside pack coverage), matching the MapLibre overzoom behavior.
- *  - One protomaps-leaflet layer per installed pack
- *    (`tile://pmtiles/<id>`), clamped to `minZoom: REGION_MINZOOM` and drawn on
- *    top of the overview, so inside a downloaded pack's coverage the detailed
- *    z6–14 tiles win while outside it the overzoomed overview still shows.
- *
- * The caller (LeafletMap, Task 4) adds these to the map in array order; later
- * entries paint above earlier ones, so packs naturally layer above the overview.
+ * The caller (LeafletMap, Task 4) adds these to the map; the explicit zIndex
+ * makes compositing independent of add order.
  */
 export function buildBaseLayers(flavor: BasemapFlavor, packs: PackSource[] = []): LeafletLayer[] {
   const overview = leafletLayer({
-    url: PMTILES_TILE_URL(WORLD_OVERVIEW_ID),
+    url: new PMTiles(PMTILES_TILE_URL(WORLD_OVERVIEW_ID)),
     flavor,
     lang: 'en',
     attribution: OSM_ATTRIBUTION,
+    maxDataZoom: OVERVIEW_MAX_DATA_ZOOM,
+    zIndex: 1,
   }) as unknown as LeafletLayer;
 
   const packLayers = packs.map(
-    (pack) =>
+    (pack, i) =>
       leafletLayer({
-        url: PMTILES_TILE_URL(pack.id),
-        flavor,
+        url: new PMTiles(PMTILES_TILE_URL(pack.id)),
+        // Explicit paint rules from the SAME flavor, but NO `flavor`/`backgroundColor`
+        // and NO labels — the pack draws only its detail geometry, transparent
+        // elsewhere, so its empty tiles never mask the overview (R2 P0#3).
+        paintRules: pmPaintRules(namedFlavor(flavor)),
+        labelRules: [],
         lang: 'en',
-        attribution: OSM_ATTRIBUTION,
-        // Clamp to z6+ so the pack's detail only takes over where the overview
-        // runs out, and never competes with the overview at low zooms.
+        maxDataZoom: pack.maxZoom ?? DEFAULT_PACK_MAX_DATA_ZOOM,
         minZoom: REGION_MINZOOM,
+        zIndex: 2 + i,
       }) as unknown as LeafletLayer,
   );
 

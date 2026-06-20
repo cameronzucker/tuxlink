@@ -1,54 +1,81 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock the vendored protomaps-leaflet so the test asserts WIRING, not render.
-// (A real `leafletLayer` returns a Leaflet GridLayer that tries to load/decode
-// PMTiles to canvas — impossible in jsdom. The seam contract under test is the
-// OPTIONS object passed to `leafletLayer`, not the render.)
-// `vi.mock` is hoisted above imports, so the spy it references must also be
-// hoisted (a plain top-level `const` is in the temporal-dead-zone at mock-eval
-// time → "Cannot access before initialization"). `vi.hoisted` lifts it.
-const { leafletLayerSpy } = vi.hoisted(() => ({
-  leafletLayerSpy: vi.fn((opts: unknown) => ({ __pm: true, opts })),
+// Mock the seam libs so the test asserts WIRING, not render. (A real
+// `leafletLayer` returns a Leaflet GridLayer that tries to load/decode PMTiles to
+// canvas — impossible in jsdom. The seam contract under test is the OPTIONS object
+// passed to `leafletLayer`, not the render — the real seam is proven via grim in
+// Task 7.) `vi.mock` is hoisted above imports, so the spies it references must be
+// hoisted too (`vi.hoisted`) or they are in the temporal-dead-zone at mock-eval.
+const { leafletLayerSpy, pmPaintRulesSpy, pmLabelRulesSpy, namedFlavorSpy, pmtilesCtor } =
+  vi.hoisted(() => ({
+    leafletLayerSpy: vi.fn((opts: Record<string, unknown>) => ({ __pm: true, opts })),
+    pmPaintRulesSpy: vi.fn(() => [{ dataLayer: 'roads', symbolizer: {} }]),
+    pmLabelRulesSpy: vi.fn(() => []),
+    namedFlavorSpy: vi.fn((n: string) => ({ __flavor: n })),
+    pmtilesCtor: vi.fn().mockImplementation((url: string) => ({ __pmtiles: true, url })),
+  }));
+vi.mock('../vendor/protomaps-leaflet', () => ({
+  leafletLayer: leafletLayerSpy,
+  paintRules: pmPaintRulesSpy,
+  labelRules: pmLabelRulesSpy,
 }));
-vi.mock('../vendor/protomaps-leaflet', () => ({ leafletLayer: leafletLayerSpy }));
+vi.mock('pmtiles', () => ({ PMTiles: pmtilesCtor }));
+vi.mock('@protomaps/basemaps', () => ({ namedFlavor: namedFlavorSpy }));
 
 import { buildBaseLayers, PMTILES_TILE_URL, OSM_ATTRIBUTION } from './basemapLeaflet';
 
+const optsOf = (i: number) => leafletLayerSpy.mock.calls[i][0] as Record<string, any>;
+
+beforeEach(() => {
+  leafletLayerSpy.mockClear();
+  pmPaintRulesSpy.mockClear();
+  namedFlavorSpy.mockClear();
+});
+
 describe('basemapLeaflet', () => {
-  it('builds a single overview layer (dark) over the tile:// world seam when no packs', () => {
-    leafletLayerSpy.mockClear();
+  it('overview: one flavored layer over a PMTiles INSTANCE of the world seam, maxDataZoom 6, zIndex 1', () => {
     const layers = buildBaseLayers('dark', []);
     expect(layers).toHaveLength(1);
     expect(leafletLayerSpy).toHaveBeenCalledTimes(1);
-    const opts = leafletLayerSpy.mock.calls[0][0] as Record<string, unknown>;
-    expect(opts.flavor).toBe('dark');
-    // overview is wired to the world seam (via source or url; assert the URL text appears)
-    expect(JSON.stringify(opts)).toContain('tile://pmtiles/world');
+    const o = optsOf(0);
+    expect(o.flavor).toBe('dark'); // overview carries the flavor (background + labels)
+    expect(o.url.__pmtiles).toBe(true); // a PMTiles INSTANCE, not a string (R2 P0#1)
+    expect(o.url.url).toBe('tile://pmtiles/world');
+    expect(o.maxDataZoom).toBe(6); // overzoom cap so it never requests z7+ the z0-6 archive lacks (R2 P0#2)
+    expect(o.zIndex).toBe(1);
+    expect(o.attribution).toBe(OSM_ATTRIBUTION);
   });
 
-  it('appends one pack layer per installed pack, clamped to minZoom 6, above the overview', () => {
-    leafletLayerSpy.mockClear();
-    const layers = buildBaseLayers('light', [{ id: 'continent-na' }]);
+  it('pack: NO flavor, NO backgroundColor, explicit paintRules + empty labelRules, maxDataZoom, minZoom 6, higher zIndex (R2 P0#3)', () => {
+    const layers = buildBaseLayers('dark', [{ id: 'continent-na', maxZoom: 14 }]);
     expect(layers).toHaveLength(2);
-    const packOpts = leafletLayerSpy.mock.calls.at(-1)![0] as Record<string, unknown>;
-    expect((packOpts.minZoom ?? packOpts.minzoom) as number).toBe(6);
-    expect(JSON.stringify(packOpts)).toContain('tile://pmtiles/continent-na');
+    const p = optsOf(1);
+    expect(p.url.__pmtiles).toBe(true);
+    expect(p.url.url).toBe('tile://pmtiles/continent-na');
+    expect(p.flavor).toBeUndefined(); // packs are NOT flavored (empty pack tiles would mask the overview)
+    expect(p.backgroundColor).toBeUndefined();
+    expect(Array.isArray(p.paintRules)).toBe(true); // explicit paint rules from namedFlavor(flavor)
+    expect(p.labelRules).toEqual([]); // labels owned by the overview (no duplicate glyph cost)
+    expect(p.maxDataZoom).toBe(14);
+    expect(p.minZoom).toBe(6);
+    expect(p.zIndex).toBeGreaterThan(optsOf(0).zIndex); // packs paint above the overview
+    // pack paint rules are derived from the SAME flavor as the overview
+    expect(namedFlavorSpy).toHaveBeenCalledWith('dark');
   });
 
-  it('passes the light flavor through and wires the overview to the world seam', () => {
-    leafletLayerSpy.mockClear();
+  it('pack maxDataZoom defaults to 14 when the pack has no maxZoom', () => {
+    buildBaseLayers('light', [{ id: 'continent-na' }]);
+    expect(optsOf(1).maxDataZoom).toBe(14);
+  });
+
+  it('passes the light flavor through to the overview', () => {
     buildBaseLayers('light', []);
-    const opts = leafletLayerSpy.mock.calls[0][0] as Record<string, unknown>;
-    expect(opts.flavor).toBe('light');
-    expect(JSON.stringify(opts)).toContain('tile://pmtiles/world');
+    expect(optsOf(0).flavor).toBe('light');
   });
 
-  it('exposes the tile:// URL helper', () => {
+  it('exposes the tile:// URL helper and the OSM attribution', () => {
     expect(PMTILES_TILE_URL('world')).toBe('tile://pmtiles/world');
     expect(PMTILES_TILE_URL('continent-na')).toBe('tile://pmtiles/continent-na');
-  });
-
-  it('exposes the OSM attribution string', () => {
     expect(OSM_ATTRIBUTION).toBe('© OpenStreetMap contributors');
   });
 });
