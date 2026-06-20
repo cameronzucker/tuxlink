@@ -23,6 +23,41 @@
 
 ---
 
+## Adversarial review dispositions (5 rounds, cross-provider — 2 Codex + 3 Claude)
+
+Round 1 (Codex, broad) findings were folded in earlier (PNG deferral, `{url}` form [SUPERSEDED by R2], test isolation, per-station filter, attribution). Rounds 2–5 below; **all accepted**. The seam-breaking P0s (R2) are why this plan was NOT executed past Task 2.
+
+**Round 2 — Codex, seam under packaged CSP (the EmComm-critical path):**
+- **P0 [SEAM BROKEN] — string `url` does not use PMTiles.** protomaps-leaflet picks `PmtilesSource` only when the URL pathname ends `.pmtiles`; `tile://pmtiles/world` → `ZxySource` (no Range; parses the whole archive as one MVT tile) → blank. → **Task 2 redesigned: pass a `new PMTiles('tile://pmtiles/<id>')` INSTANCE** (the `.d.ts` types `url: PMTiles | string`), bypassing the pathname heuristic.
+- **P0 [OVERZOOM] — no `maxDataZoom` → requests z7+ the z0–6 overview lacks → blank above ~z8.** → pass `maxDataZoom: 6` for the overview; thread each pack's real maxzoom.
+- **P0 [PACK BG MASK] — a flavored pack layer paints its `backgroundColor` per tile; a pack's empty tiles outside coverage mask the overview.** (MapLibre dropped pack backgrounds for this exact reason — `basemapStyle.ts:176–198`.) → packs use explicit `paintRules` + `labelRules:[]` + NO `backgroundColor`/`flavor`; only the overview carries the flavor (one global background).
+- **P1 [ETag] — length-only ETag → stale JS tile cache on same-size pack re-download.** Out of frontend scope → filed **bd `tuxlink-jrXX`** (ETag fingerprint). Mitigation in-plan: if the backend later exposes a pack generation, incorporate it into the base-layer rebuild key.
+- **P2 — seam unit test is mocked (cannot prove real fetch).** Accepted: real seam proven in Task 7 (grim + observe a real `tile://` Range request in the WebKit network panel — not just "a grid appears").
+
+**Round 3 — Claude, RF-honesty + parity (5 P0s; the hard-won fixes the one-line idiom table endangered):**
+- **P0 — uncertainty radius `×√2` is LOAD-BEARING** (circumscribes the ambiguity box; the inscribed circle under-claims). Plan must forbid the "drop the √2" reading; test asserts radius `= ambiguityRadiusMeters(level)*Math.SQRT2`.
+- **P0 — no `whenSheetsReady` re-bake → pins render BLANK on load forever** (a data-URL icon never re-decodes; worse than MapLibre, which recovered on `styledata`). Add a sheets-ready re-bake that recomputes each marker's icon and `setIcon`s it; test it.
+- **P0 — `renderSymbolBitmap` returns `ImageData`, not a canvas; `ImageData.toDataURL` does not exist.** Add an explicit `spriteDataUrl(table,code,overlay,grey): string` helper in `aprsSprites.ts` (putImageData→toDataURL; returns `''` in jsdom). Keep sprite-IDENTITY assertions at the pure-helper level.
+- **P0 — WX badge must plot at `cellCenter` (ni5b), not the raw low corner** for ambiguous WX stations. Badge position `= cellCenter({lat,lon,ambiguity})`, identical to the pin; test it.
+- **P0 — per-station filter bundle must conditionally include the uncertainty circle (ambiguity>0 only) + badge**; filter removes the WHOLE bundle atomically. Test an AMBIGUOUS WEATHER station: pin+label+circle+badge all leave together.
+- **P1s** — popup body derived from live `byCall` (not a stale closure); diff-based marker reconciliation (stable marker identity across `positions` re-renders — do NOT rebuild all markers each render); staleness affects ONLY the pin icon (grey **desaturate** variant, NOT bundle-opacity — that would dim label+disc, a semantic change); pre-bake BOTH colour + grey data-URLs.
+- **P2s** — route icons through the `ensureSymbolImage` fallback/brand-logo branch (`FALLBACK_ID`→`renderFallbackBitmap`); keep identity tests pure (jsdom `toDataURL` is blank).
+
+**Round 4 — Claude, strangler-fig + lifecycle:**
+- **P1 — use Leaflet NATIVE `maxBounds` + `maxBoundsViscosity`, NOT a ported moveend snap-back clamp.** The maplibre-5.24.0 maxBounds crash (tuxlink-rwo6) that forced the manual clamp DOES NOT apply to Leaflet; the moveend clamp is also weaker (Leaflet CRS wraps `getCenter()`). → Task 4 sets `maxBounds` to the world rectangle; drop the moveend pan-clamp port.
+- **P1 — base-layer-swap effect must gate on the `map` STATE, not an `instanceRef`,** so it can never act on a torn-down instance (StrictMode).
+- **P2s** — single attribution source of truth (confirm whether Protomaps credit is license-required — see open question); pin `@protomaps/basemaps` EXACTLY (the vendored layer hard-imports its `namedFlavor`); set explicit `zIndex` per base layer (overview low, packs high) so compositing is not add-order-fragile; `whenReady` fires synchronously (overlays get a non-null map a render earlier — Task 5 overlays must not assume null-first); persisted fractional zoom is snapped by Leaflet `zoomSnap:1` (cosmetic). Cleared concerns: no leaflet/maplibre CSS collision; the `maplibregl.addProtocol('pmtiles')` global never runs on a Leaflet path; `tuxlink:map-viewport:aprs` format is read-compatible. **lastKnownPacks transient-failure latent bug → filed bd `tuxlink-kepz`.**
+
+**Round 5 — Claude, testability + pitfalls + completeness (empirically validated Leaflet-in-jsdom):**
+- **P0 — canvas-rasterized `L.icon({iconUrl})` is HOLLOW in jsdom** (`getContext('2d')`→null, `toDataURL` unimplemented; no `canvas` pkg). → **Build pins as `L.divIcon` (HTML/DOM, fully jsdom-inspectable)** so sprite identity is assertable, OR explicitly move identity to grim. Decision: use `L.divIcon` with an `<img src=spriteDataUrl>` (DOM-inspectable; real raster proven in grim). Sprite-identity asserted via the pure `spriteDataUrl`/`spriteIdFor` helper.
+- **P0 — the 10-case rewrite DROPS ~6 negative/empty RF-honesty cases** the current 30-case suite protects: WX hover card; plots-nothing-when-empty; exact-fix-no-centre-shift; operator-pin-ABSENT when no grid; WX-badge-ABSENT when no weather; recenter-hidden when no grid. → restore all as explicit cases.
+- **P1s** — `flyTo({animate:false})` leaves `getZoom()===NaN` in jsdom → test the recenter via `vi.spyOn(map,'flyTo')` on args, not by reading zoom after; tighten the filter test to assert the count delta equals the FULL bundle size (not merely "shrinks"); name the composed-seam testing-pitfall (the mocked base hides the one integration that is Phase 1's point → Task 7 must observe a real `tile://` Range fetch).
+- **P2s** — mandate the proven `Object.defineProperty(HTMLElement.prototype, clientWidth/Height)` shim + `afterEach` restore in every Leaflet test; Task 7 wire-walk must verify the map fills the reading-pane grid slot (no 0-height flex collapse) and that the React popup/controls stack ABOVE Leaflet's panes (z-index 200–700); `grep` for other `composeSnapshotHeader`/`exportWxSnapshot` consumers before deleting the PNG path.
+
+**Open question for the operator (does not block planning):** is the Protomaps default credit (`Protomaps © OpenStreetMap`) required by the tile license, or is `© OpenStreetMap contributors` (the current ODbL string) sufficient? Default to the current ODbL string; revisit if the vendored license requires the Protomaps credit.
+
+---
+
 ## File Structure
 
 New files (the parallel Leaflet substrate):
@@ -143,10 +178,19 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
     - Returns protomaps-leaflet layer(s): the world overview (id `'world'`) as the always-present base, plus one protomaps-leaflet layer per installed pack (clamped `minZoom: 6`), drawn on top.
   - `export const OSM_ATTRIBUTION = '© OpenStreetMap contributors';`
 
-**Design notes (read before writing):**
-- The spike fed protomaps-leaflet a plain http URL (`location.origin + '/phoenix.pmtiles'`). tuxlink must instead point it at the Tauri `tile://pmtiles/world` custom protocol so the Rust 206 seam serves the bytes.
-- **Wiring (settled by Codex adrev — do NOT use a pre-built PMTiles instance):** protomaps-leaflet's `leafletLayer` accepts `{ url }` or `{ sources }` and builds its PMTiles "view" internally — it does NOT take a `source: new PMTiles(...)` option (that path is unvalidated and may silently type-fail). Use the URL form: `leafletLayer({ url: 'tile://pmtiles/world', flavor, lang: 'en' })`. Its internal `new PMTiles(url)` issues a `fetch('tile://pmtiles/world', { headers: { Range } })` — the SAME fetch path the MapLibre `pmtiles` Protocol already proves works against the Rust 206 seam, and which CSP `connect-src tile:` permits. NO `addProtocol`/Protocol registration is needed (that is a MapLibre-only mechanism). For per-source maxzoom control (overview maxzoom=6) prefer the `{ sources: { world: { url: 'tile://pmtiles/world', maxzoom: 6 } } }` form if the overview overzoom needs an explicit cap; otherwise the plain `{ url }` form relies on the PMTiles header's own maxzoom (z6) for overzoom, exactly like the MapLibre path.
-- Inspect the vendored entry's exported `leafletLayer` signature (the `.d.ts` or the source) to confirm the option names (`url`/`sources`/`flavor`/`lang`/`minZoom`/`maxZoom`/`pane`). Record the confirmed signature in a top-of-file comment.
+**Design notes (CORRECTED by Codex adrev R2 — the first cut shipped a blank map; this is the validated design):**
+
+Confirmed vendored API (`src/vendor/protomaps-leaflet/index.d.ts`, protomaps-leaflet 5.1.0):
+`leafletLayer(opts)` where `LeafletLayerOptions extends L.GridLayerOptions` has: `url?: PMTiles | string`, `sources?: Record<string, SourceOptions>`, `paintRules?: PaintRule[]`, `labelRules?: LabelRule[]`, `maxDataZoom?: number`, `flavor?: string`, `backgroundColor?: string`, `attribution?`, `lang?`, plus inherited `minZoom`/`maxZoom`/`zIndex`/`pane`. Also EXPORTED: `paintRules(flavor): PaintRule[]`, `labelRules(flavor, lang): LabelRule[]`, `PmtilesSource`. The flavor object comes from `@protomaps/basemaps`' `namedFlavor(name)`.
+
+THREE seam rules, each fixing a proven-P0:
+1. **PMTiles INSTANCE, not a string** (R2 P0#1). protomaps-leaflet chooses `PmtilesSource` ONLY when a string URL pathname ends `.pmtiles`; `tile://pmtiles/world` (pathname `/world`) would fall through to `ZxySource` (no Range, parses the archive as one MVT tile → blank). Passing `url: new PMTiles('tile://pmtiles/world')` (an instance — the `.d.ts` allows `PMTiles | string`) forces `PmtilesSource`. Import `{ PMTiles }` from `'pmtiles'` (resolves to the repo's pmtiles@4, the same lib the MapLibre path proves can Range-fetch `tile://`). NO `addProtocol` (MapLibre-only).
+2. **Cap `maxDataZoom` per source** (R2 P0#2). protomaps-leaflet defaults `maxDataZoom:15` and requests data at z=displayZ−1; the overview archive is z0–6, so above ~z8 it requests z7+ data the archive lacks → blank. Pass `maxDataZoom: 6` for the overview. Each pack carries its real maxzoom (continent-na is z0–14 → `maxDataZoom: 14`); thread the pack maxzoom from `offlineMaps.ts`'s pack metadata if available, else default to 14 for now and note it.
+3. **Packs carry NO background and NO labels** (R2 P0#3). A flavored layer paints its `backgroundColor` on EVERY rendered tile; a pack's empty tiles outside its coverage would mask the overview. So the OVERVIEW is the only flavored layer (one global background + labels); each PACK layer passes explicit `paintRules: pmPaintRules(namedFlavor(flavor))`, `labelRules: []` (labels owned by the overview — no duplicate glyph cost), NO `flavor`, NO `backgroundColor` → it draws only its detail geometry, transparent elsewhere. This mirrors `basemapStyle.ts:176–205` (which drops `background` + `symbol` from pack layer sets).
+
+Composite ordering (R4 P2): set explicit `zIndex` — overview `zIndex: 1`, packs `zIndex: 2+i` — so packs paint above the overview regardless of add order. Each pack also gets `minZoom: REGION_MINZOOM` (6).
+
+Record the confirmed signature + these three rules in a top-of-file comment.
 - Dark mode: pass `flavor: 'dark'` (and `lang: 'en'`). Do NOT bake colors.
 - Pack compositing mirrors `basemapStyle.ts`'s intent: overview overzooms past z6 (never blank); each pack is a separate protomaps-leaflet layer clamped to `minZoom >= 6` drawn above the overview, so detail wins inside coverage and the overview shows outside it. protomaps-leaflet layers accept Leaflet `minZoom`/`maxZoom`/`pane` options; set the pack `pane`/zIndex above the overview.
 
@@ -154,31 +198,54 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ```ts
 // src/map/basemapLeaflet.test.ts
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock the vendored protomaps-leaflet so the test asserts WIRING, not render.
-const leafletLayerSpy = vi.fn((opts: unknown) => ({ __pm: true, opts }));
-vi.mock('../vendor/protomaps-leaflet', () => ({ leafletLayer: leafletLayerSpy }));
+// Mock the seam libs so the test asserts WIRING, not render. Capture each
+// leafletLayer({...}) opts object; make PMTiles instances identifiable by url.
+const { leafletLayerSpy, pmPaintRulesSpy } = vi.hoisted(() => ({
+  leafletLayerSpy: vi.fn((opts: Record<string, unknown>) => ({ __pm: true, opts })),
+  pmPaintRulesSpy: vi.fn(() => [{ dataLayer: 'roads', symbolizer: {} }]),
+}));
+vi.mock('../vendor/protomaps-leaflet', () => ({
+  leafletLayer: leafletLayerSpy,
+  paintRules: pmPaintRulesSpy,
+  labelRules: vi.fn(() => []),
+}));
+vi.mock('pmtiles', () => ({
+  PMTiles: vi.fn().mockImplementation((url: string) => ({ __pmtiles: true, url })),
+}));
+vi.mock('@protomaps/basemaps', () => ({ namedFlavor: vi.fn((n: string) => ({ __flavor: n })) }));
 
 import { buildBaseLayers, PMTILES_TILE_URL } from './basemapLeaflet';
 
+const optsOf = (i: number) => leafletLayerSpy.mock.calls[i][0] as Record<string, any>;
+
+beforeEach(() => { leafletLayerSpy.mockClear(); });
+
 describe('basemapLeaflet', () => {
-  it('builds a single overview layer (dark) over the tile:// world seam when no packs', () => {
+  it('overview: one flavored layer over a PMTiles INSTANCE of the world seam, maxDataZoom 6, zIndex 1', () => {
     const layers = buildBaseLayers('dark', []);
     expect(layers).toHaveLength(1);
-    expect(leafletLayerSpy).toHaveBeenCalledTimes(1);
-    const opts = leafletLayerSpy.mock.calls[0][0] as Record<string, unknown>;
-    expect(opts.flavor).toBe('dark');
-    // overview is wired to the world seam (via source or url; assert the URL text appears)
-    expect(JSON.stringify(opts)).toContain('tile://pmtiles/world');
+    const o = optsOf(0);
+    expect(o.flavor).toBe('dark');                       // overview carries the flavor (background+labels)
+    expect(o.url.__pmtiles).toBe(true);                  // a PMTiles INSTANCE, not a string (R2 P0#1)
+    expect(o.url.url).toBe('tile://pmtiles/world');
+    expect(o.maxDataZoom).toBe(6);                       // overzoom cap (R2 P0#2)
+    expect(o.zIndex).toBe(1);
   });
 
-  it('appends one pack layer per installed pack, clamped to minZoom 6, above the overview', () => {
-    const layers = buildBaseLayers('light', [{ id: 'continent-na' }]);
+  it('pack: NO flavor, NO backgroundColor, explicit paintRules + empty labelRules, maxDataZoom 14, minZoom 6, higher zIndex (R2 P0#3)', () => {
+    const layers = buildBaseLayers('dark', [{ id: 'continent-na' }]);
     expect(layers).toHaveLength(2);
-    const packOpts = leafletLayerSpy.mock.calls.at(-1)![0] as Record<string, unknown>;
-    expect(packOpts.minZoom ?? packOpts.minzoom).toBe(6);
-    expect(JSON.stringify(packOpts)).toContain('tile://pmtiles/continent-na');
+    const p = optsOf(1);
+    expect(p.url.url).toBe('tile://pmtiles/continent-na');
+    expect(p.flavor).toBeUndefined();                    // packs are NOT flavored (no background mask)
+    expect(p.backgroundColor).toBeUndefined();
+    expect(Array.isArray(p.paintRules)).toBe(true);      // explicit paint rules from namedFlavor(flavor)
+    expect(p.labelRules).toEqual([]);                    // labels owned by overview
+    expect(p.maxDataZoom).toBe(14);
+    expect(p.minZoom).toBe(6);
+    expect(p.zIndex).toBeGreaterThan(optsOf(0).zIndex);  // packs paint above the overview
   });
 
   it('exposes the tile:// URL helper', () => {
@@ -190,26 +257,31 @@ describe('basemapLeaflet', () => {
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `pnpm vitest run src/map/basemapLeaflet.test.ts`
-Expected: FAIL — `buildBaseLayers` not defined.
+Expected: FAIL — the current committed `basemapLeaflet.ts` (string `url`, per-pack flavor) does not satisfy the corrected assertions.
 
-- [ ] **Step 3: Implement `basemapLeaflet.ts`**
-
-Write the module per the design notes. Use whichever pmtiles-source wiring the vendored API supports (document it). Clamp pack layers `minZoom: 6`. Each `leafletLayer(...)` call returns an `L.Layer`. Return `[overview, ...packLayers]`.
+- [ ] **Step 3: Re-implement `basemapLeaflet.ts`** per the corrected design notes. Overview: `leafletLayer({ url: new PMTiles(PMTILES_TILE_URL('world')), flavor, lang:'en', attribution: OSM_ATTRIBUTION, maxDataZoom: 6, zIndex: 1 })`. Each pack: `leafletLayer({ url: new PMTiles(PMTILES_TILE_URL(pack.id)), paintRules: pmPaintRules(namedFlavor(flavor)), labelRules: [], lang:'en', maxDataZoom: pack.maxZoom ?? 14, minZoom: REGION_MINZOOM, zIndex: 2 + i })`. Import `PMTiles` from `'pmtiles'`, `paintRules as pmPaintRules` from the vendored lib, `namedFlavor` from `'@protomaps/basemaps'`. Keep `PMTILES_TILE_URL`, `OSM_ATTRIBUTION`, `REGION_MINZOOM`, `BasemapFlavor`, `PackSource` (extend `PackSource` with optional `maxZoom?: number`). Return `[overview, ...packLayers]`.
 
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `pnpm vitest run src/map/basemapLeaflet.test.ts`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Commit** (amends nothing — a new commit superseding the broken seam; the prior commit stays in history)
 
 ```bash
 git add src/map/basemapLeaflet.ts src/map/basemapLeaflet.test.ts
-git commit -m "feat(map): protomaps-leaflet base layer over the tile:// seam (tuxlink-6kdw)
+git commit -m "fix(map): correct protomaps-leaflet tile:// seam wiring (tuxlink-6kdw)
+
+PMTiles instance (not string url) so PmtilesSource is chosen and bytes are
+Range-fetched; maxDataZoom caps per source so overzoom does not request absent
+tiles; packs drop flavor/background/labels so empty pack tiles never mask the
+overview. Fixes three P0s from the cross-provider adrev.
 
 Agent: sage-fox-mesa
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
+
+**Note:** also verify under the REAL vendored module (no mock) that `new PMTiles('tile://pmtiles/world')` constructs and that `buildBaseLayers` returns objects — a thin non-mocked smoke (`pnpm typecheck` + a `it.skip`-able construction probe). The true seam (real Range fetch + render) is proven in Task 7.
 
 ---
 
@@ -331,10 +403,15 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - `onMapClick`: `map.on('click', e => onClick(clampLatLon(e.latlng.lat, e.latlng.lng)))`.
 - `onZoomChange`: emit on `load`-equivalent (after construct) AND on `moveend`, deduped against last emitted zoom (Leaflet `map.getZoom()` is integer-by-default; still dedupe).
 - `onViewportChange`: on `moveend`, emit `{ clamped center, zoom }`; skip non-finite transients (teardown).
-- Pan-clamp: on `moveend`, `clampMapCenter(center)`; if changed, `map.panTo([lat,lon], { animate:false })`. Guard the re-fire (clamped center clamps to itself → no loop).
+- Pan-clamp: **use Leaflet NATIVE `maxBounds` + `maxBoundsViscosity: 1.0`** set at construction to the world rectangle (`[[-MERCATOR_MAX_LAT, -180], [MERCATOR_MAX_LAT, 180]]` from `projection.ts`). Do NOT port MapLibreMap's moveend snap-back clamp (R4 P1): the maplibre-5.24.0 `maxBounds` constructor crash (tuxlink-rwo6) that forced the manual clamp DOES NOT exist in Leaflet, and the ported clamp is weaker (Leaflet's CRS wraps `getCenter()` so the raw-vs-clamped diff misfires). Native `maxBounds` is the correct, simpler tool here.
 - `flyTo` on a post-construct `initialCenter` change (the async-arrival recenter): `map.flyTo([lat,lon])`; skip the construct-time center exactly like `skipConstructCenter`.
 - Attribution: construct the map with `attributionControl: false` (Leaflet adds one by default → would duplicate), then add exactly one `L.control.attribution({ prefix: false })` and set `OSM_ATTRIBUTION` (Codex adrev P2). Scale: `L.control.scale({ imperial: true, metric: true })`.
-- **Test isolation (Codex adrev P1):** `LeafletMap.test.tsx` MUST mock `./basemapLeaflet` so `buildBaseLayers` returns an inert layer (`L.layerGroup()`), NOT a real protomaps-leaflet `GridLayer` — a real GridLayer tries to load/render tiles to canvas, which jsdom cannot do (it will throw or hang). The real vector render is proven only in Task 7 (Tauri/grim). Tests exercise the substrate's lifecycle/props/event wiring against the inert base.
+- **Test isolation (Codex adrev P1):** `LeafletMap.test.tsx` MUST mock `./basemapLeaflet` so `buildBaseLayers` returns an inert layer (`L.layerGroup()`), NOT a real protomaps-leaflet `GridLayer` — a real GridLayer tries to load/render tiles to canvas, which jsdom cannot do (it will throw or hang). The real vector render is proven only in Task 7 (Tauri/grim). Tests exercise the substrate's lifecycle/props/event wiring against the inert base. Use the prototype-wide shim `Object.defineProperty(HTMLElement.prototype, 'clientWidth'/'clientHeight', { configurable:true, value })` with an `afterEach` restore (R5 P2).
+- **Adrev hardening (MANDATORY):**
+  - The flavor/pack base-layer swap effect MUST gate on the `map` STATE (`if (!map) return;`), not an `instanceRef`, so it never mutates a torn-down/replaced instance under StrictMode (R4 P1). Dedupe on `flavor|packIds` to skip redundant rebuilds; remove the old base layers then add `buildBaseLayers(...)` (the zIndex on each base layer comes from `basemapLeaflet`, so add-order is not load-bearing).
+  - `whenReady` fires SYNCHRONOUSLY when the map is constructed with center+zoom (R4 P2) — `setMap(instance)` runs inside the construct effect before its cleanup returns. Benign, but overlays get a non-null map one render earlier than under MapLibre; do not rely on a null-first render. Keep a `removed` flag set in cleanup before `map.remove()` so a `moveend`/`whenReady` during teardown is ignored.
+  - StrictMode double-invoke: construct→cleanup→construct must converge to ONE map with no "Map container is already initialized" error — null the container's `_leaflet_id` is NOT needed if `map.remove()` runs in cleanup; verify the second construct succeeds (test: mount under `<StrictMode>` or simulate double-invoke).
+  - Persisted fractional zoom is snapped by Leaflet's default `zoomSnap:1` (R4 P2) — acceptable; do not change `zoomSnap` (it affects feel) unless the operator asks.
 - Error fallback: wrap construction in try/catch; on throw, render the SAME `data-testid="map-unavailable"` panel with text "The map could not be displayed on this system." (consumers/tests may assert it).
 - Teardown: `map.remove()` in cleanup; set a `removed` flag first so a `moveend` during teardown is ignored.
 - Render: `<div ref={container} style={{height:'100%',width:'100%'}}><LeafletMapProvider value={map}>{children}</LeafletMapProvider></div>`. Import `'leaflet/dist/leaflet.css'` at top.
@@ -403,21 +480,38 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 | Staleness tick | `setFeatureState({stale})` on NOW_TICK | iterate per-station bundles, swap icon/opacity per `now - p.at > STALE_MS`. |
 | PNG export | `map.getCanvas()` (WebGL) + `preserveDrawingBuffer` saga | **DEFERRED this phase (Codex adrev P0 → bd `tuxlink-a7qt`).** Naive canvas compositing is broken: protomaps-leaflet renders per-tile positioned `<canvas>` elements (not one canvas) requiring leaflet pane/tile transforms, and pins are DOM markers a canvas copy omits. Do NOT ship a broken Export PNG. For Phase 1, remove the `WxExportControl` button from `AprsPositionsMap` (and drop `exportWxSnapshot`/its tests) and leave a code comment pointing at `tuxlink-a7qt`. The Winlink-text Weather SITREP (`WxSitrepControl`) — the actually-load-bearing report path — STAYS. Note the temporary Export-PNG regression in the handoff for operator awareness. |
 
-**Do NOT** add features, change copy, or alter the RF-honesty semantics. This is a faithful re-expression on a new engine.
+**Adrev hardening (MANDATORY — these are hard-won RF-honesty/identity fixes the one-line table endangers; each needs a targeted test):**
+- **Pins are `L.divIcon`, NOT `L.icon`+canvas (R5 P0).** jsdom has no canvas (`getContext('2d')`→null, `toDataURL` unimplemented), so a canvas-rasterized `iconUrl` is hollow and untestable. Render the pin as a `divIcon` whose HTML is `<img class="aprs-pin" src="${spriteDataUrl}">` (DOM-inspectable; real raster proven in grim). Sprite IDENTITY is asserted via the pure helper, not the rendered pixels.
+- **Add `spriteDataUrl(table, code, overlay, grey): string` to `aprsSprites.ts` (R3 P0).** `renderSymbolBitmap`/`renderFallbackBitmap` return `ImageData` (no `.toDataURL`). The helper: new canvas → `putImageData` → `toDataURL('image/png')`; returns `''` in jsdom (null ctx). It MUST route through the SAME fallback/brand-logo branch `ensureSymbolImage` uses (`id===FALLBACK_ID ? renderFallbackBitmap() : renderSymbolBitmap(...)`) so unresolved/brand symbols get the neutral dot, not a broken image (R3 P2).
+- **`whenSheetsReady` re-bake is REQUIRED (R3 P0) — without it pins are BLANK forever.** Sprite sheets decode async; the first bake on mount is transparent; a data-URL icon never re-decodes (worse than MapLibre, which recovered on `styledata`). On `whenSheetsReady`, recompute each station's `spriteDataUrl` and `marker.setIcon(newDivIcon)`. Test: drive `whenSheetsReady`, assert the marker icon HTML/src changes.
+- **Uncertainty circle radius keeps the `×√2` (R3 P0 — LOAD-BEARING).** `L.circle([lat,lon], { radius: ambiguityRadiusMeters(level) * Math.SQRT2, ... })`. The √2 circumscribes the ambiguity BOX; dropping it under-claims uncertainty (operator trusts precision the wire didn't carry). The note "L.circle takes meters directly" means drop `circlePolygon` ONLY — NOT the √2. Test asserts `getRadius() === ambiguityRadiusMeters(level)*Math.SQRT2`. Center on `cellCenter`.
+- **WX badge plots at `cellCenter` (R3 P0 / ni5b)** — `cellCenter({lat:w.lat, lon:w.lon, ambiguity:w.ambiguity})`, identical to the pin. Test an ambiguous WX station: badge latlng === pin latlng === cellCenter (not the raw low corner).
+- **Per-station bundle = conditional (R3 P0).** Build one keyed `L.featureGroup` per call containing `[pinMarker, labelMarker, uncertaintyCircle (ONLY if ambiguity>0), wxBadge (ONLY if a WxStation)]` + click handlers. Category filter adds/removes the WHOLE bundle atomically. Test an AMBIGUOUS WEATHER station: assert the filtered-out bundle's pin+label+circle+badge ALL leave the parent group together (count delta === full bundle size, not merely "shrinks").
+- **Diff-based reconciliation, stable marker identity (R3 P1).** Keep a `Map<call, bundle>` across renders; on `positions` change, ADD new calls, UPDATE existing markers in place (`setLatLng`/`setIcon`), REMOVE dropped calls — do NOT rebuild all bundles each render (churn/leak/flicker; re-attaches 100s of handlers). Test: re-render with identical positions → marker instances are identity-stable. Click/hover handlers close over `call` only; popup/card body derives from a live `byCall` ref (R3 P1) so a re-beacon updates and a pruned station closes it.
+- **Staleness affects ONLY the pin icon (R3 P1) — grey DESATURATE variant, not opacity.** On the NOW_TICK, swap the pin's divIcon between the colour and pre-baked grey `spriteDataUrl` (grey=true → `desaturate`). Do NOT dim the whole bundle (would change label/disc opacity — a semantic change from current, which greys only the pin). Pre-bake BOTH colour and grey data-URLs per station. Test: a stale station's pin uses the grey src; its label/disc opacity is unchanged.
+- **PNG export removal is self-contained (R5 P2).** Before deleting `exportWxSnapshot`/`WxExportControl`, `grep -rn 'composeSnapshotHeader\|exportWxSnapshot' src/` — if `composeSnapshotHeader`/`wxSnapshot` has no other consumer, leave the module but drop the control + its tests; if shared, keep the module. Leave a code comment pointing at `tuxlink-a7qt`. Record the temporary Export-PNG regression in the handoff for operator awareness.
+
+**Do NOT** add features, change copy, or alter the RF-honesty semantics. This is a faithful re-expression on a new engine. The ONLY intentional scope change this phase is the temporary removal of Export PNG (deferred to `tuxlink-a7qt`); everything else is behavior-preserving.
 
 - [ ] **Step 1: Rewrite the test file first (TDD)** — `AprsPositionsMap.test.tsx`
 
-Port each existing assertion to the Leaflet rendering. Minimum cases (keep every behavior the old tests covered):
+Port EVERY assertion the current 30-case suite makes (R5 P0 — do not drop the negative/empty cases; they ARE the RF-honesty "never draw what wasn't heard" guarantees). Cases:
 1. renders the map container (`data-testid="aprs-positions-map"`).
-2. a heard station produces a marker at its decoded lat/lon (assert a marker exists in the positions layer group at the expected latlng).
-3. an ambiguous fix renders an uncertainty circle (not a sharp pin) sized to `ambiguityRadiusMeters(level)*√2`.
-4. clicking a pin opens the popup with callsign, symbol name, last-heard age; ambiguous adds the ±note.
-5. operator grid renders the distinct "you" `circleMarker`.
-6. WX station renders a temperature badge; clicking it calls `onFocusStation(call)`.
-7. category filter hides non-matching markers (assert layer-group membership shrinks).
-8. stale station (now - at > STALE_MS) renders dimmed/grey (assert icon/opacity).
-9. `ambiguityRadiusMeters` unit cases unchanged.
-10. WX SITREP button disabled with zero WX stations; enabled with ≥1.
+2. a heard station produces a marker at its decoded lat/lon (assert a marker in the positions group at the expected latlng) AND its sprite identity via the pure `spriteIdFor`/`spriteDataUrl` helper (NOT the rendered pixel — jsdom toDataURL is blank).
+3. **exact (non-ambiguous) fix plots at the decoded coord with NO centre-shift** (the RF-honesty twin of case 4).
+4. an ambiguous fix renders an uncertainty circle (not a sharp pin) with `getRadius() === ambiguityRadiusMeters(level)*Math.SQRT2`, centred on `cellCenter`.
+5. clicking a pin opens the popup with callsign, symbol name, last-heard age; ambiguous adds the ±note; re-render with an updated fix → popup updates; re-render with the station pruned → popup closes.
+6. operator grid renders the distinct "you" `circleMarker`; **AND: no operator grid → no "you" pin** (negative case).
+7. WX station renders a temperature badge at `cellCenter`; clicking it calls `onFocusStation(call)`; **AND: hovering it shows the `aprs-wx-card` full reading, leaving hides it** (R5 P0 — the hover card was dropped); **AND: station with no heard weather → no badge** (negative case).
+8. category filter: filtering out an AMBIGUOUS WEATHER station removes its FULL bundle (pin+label+circle+badge) — assert the parent group's layer-count delta equals the bundle size, not merely "shrinks" (R5 P1).
+9. stale station (now-at > STALE_MS) → pin uses the grey (desaturated) `spriteDataUrl`; its label + uncertainty disc opacity are UNCHANGED (R3 P1 — staleness is pin-only).
+10. `whenSheetsReady` re-bake: after sheets ready, the pin's icon src/HTML changes from the blank/initial bake (R3 P0).
+11. diff reconciliation: re-render with identical `positions` → the same marker instances persist (identity-stable, R3 P1).
+12. `ambiguityRadiusMeters` unit cases unchanged.
+13. WX SITREP button disabled with zero WX stations; enabled with ≥1.
+14. **plots nothing when `positions` is empty** (negative case).
+15. `LeafletRecenterControl`: clicking it calls `flyTo` with the operator latlng — assert via `vi.spyOn(map,'flyTo')` on the ARGS (do NOT read `getZoom()` after — `flyTo({animate:false})` leaves zoom NaN in jsdom, R5 P1); **AND: recenter control hidden when no operator grid** (negative case).
+16. viewport restore (tuxlink-dwzu): a saved viewport restores center+zoom (assert `captured.getCenter()`/`getZoom()` after `whenReady`); first-run with operator grid centers on the operator at `OPERATOR_ZOOM`; no grid + no saved view → world view.
 
 Use the sized-container shim + `@tauri-apps/api/core` invoke mock. **Mock `../map/basemapLeaflet` so `buildBaseLayers` returns an inert `L.layerGroup()` (Codex adrev P1)** — do NOT let a real protomaps-leaflet GridLayer load tiles in jsdom. Where the old test used a MapLibre test double, replace with real Leaflet + the shim (Leaflet markers/layers are inspectable: `layerGroup.getLayers()`, `marker.getLatLng()`, `marker.getIcon()`). Drop the old `exportWxSnapshot` / Export-PNG test cases (feature deferred to `tuxlink-a7qt`).
 
@@ -459,6 +553,8 @@ This is the CRITICAL GATE from the kickoff and the handoff: PROVE the overview (
 
 - [ ] **Build provenance first.** Confirm which build is running (`/proc/<pid>/cwd`, the `:1420` strictPort collision — only one `tauri dev` runs machine-wide). Launch THIS worktree's build. Always `WEBKIT_DISABLE_DMABUF_RENDERER=1` (else "TV static"); `get_snapshot`/idle-event CANNOT verify a render — use `grim` of the live foreground window (or operator eyes).
 - [ ] Open the APRS Tac Chat positions map. Capture `grim`. Confirm: dark vector street grid renders (overview), pins/badges/uncertainty/operator-pin draw, pan/zoom is smooth, no CSP violation in the WebKit console (check `connect-src tile:` / `worker-src blob:` are sufficient — if a CSP error appears, STOP and escalate; do NOT loosen CSP unilaterally).
+- [ ] **Observe a REAL `tile://` Range request** in the WebKit network panel (R2 P2 / R5 P1) — a cached/overview-only render could mask a broken pack fetch. Confirm a 206 (or pmtiles' Range GET) to `tile://pmtiles/world` AND, with a pack installed, to `tile://pmtiles/<pack>`. "A grid appears" is NOT sufficient proof of the seam.
+- [ ] **Layout (R5 P2):** confirm the Leaflet `.leaflet-container` FILLS the reading-pane grid slot (no 0-height flex/grid collapse — a classic Leaflet-in-flex bug) and that the React popup/controls (`.aprs-positions-map__popup`, `.aprs-wx-filter`, recenter) stack ABOVE Leaflet's panes (Leaflet uses z-index 200–700; controls must clear that). Adjust `AprsPositionsMap.css` minimally if needed.
 - [ ] Install/enable the `continent-na` pack (or a region pack) and confirm z6–14 detail renders over the seam.
 - [ ] Test the Export PNG path; if multi-canvas compositing fails under WebKitGTK, file a follow-up bd issue and note it (do not ship a broken button silently).
 - [ ] **wire-walk gate:** invoke the `wire-walk` skill (`.claude/skills/wire-walk/`). The OPERATOR supplies the key user flows greenfield (do NOT draft them). Trace each flow verbatim to code (`file:line`). Any broken primary flow ⇒ the surface is NOT shipped. Capture flows as the definition-of-done.
