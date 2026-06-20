@@ -1,0 +1,10 @@
+Map engine migration in progress (MapLibre -> Leaflet + protomaps-leaflet, tuxlink-6kdw).
+
+Strangler-fig migration across five map surfaces lands incrementally on main. A
+release cut mid-migration would ship a half-migrated map (some surfaces Leaflet,
+some MapLibre, both engines bundled). release-please and the nightly
+release-merge cron are paused until every surface is migrated and validated.
+
+Lift this freeze (delete this file) only when tuxlink-6kdw and its downstream
+surface issues are all closed and the full migration is operator-validated.
+See docs/design/2026-06-20-map-engine-leaflet-decision.md.
