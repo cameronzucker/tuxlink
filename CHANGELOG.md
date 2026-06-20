@@ -30,6 +30,37 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.72.0](https://github.com/cameronzucker/tuxlink/compare/v0.71.1...v0.72.0) (2026-06-20)
+
+
+### Features
+
+* **aprs:** animated digipeat path layer on the Tac Chat map (cn84) ([9bfd1c8](https://github.com/cameronzucker/tuxlink/commit/9bfd1c84113ffac1e735ec2cabe3083f1d9309b2))
+* **aprs:** carry via-chain through the position store ([c450e9c](https://github.com/cameronzucker/tuxlink/commit/c450e9cb48a6d43fe7fe9d052d3fdca27cf2bffe))
+* **aprs:** decode_digi_hbits — recover per-digi H-bits from a raw frame ([5c63546](https://github.com/cameronzucker/tuxlink/commit/5c63546dceb2954498f2d2f5a98179b518c18ff7))
+* **aprs:** EnvPanel focusCall scroll+highlight seam (ni5b) ([4c60fab](https://github.com/cameronzucker/tuxlink/commit/4c60fabcb7eaf6f77c77824b683bb9ca88d3cdb1))
+* **aprs:** instrument the connect/listen path so failures are diagnosable from logs (tuxlink-xyi7) ([304a6db](https://github.com/cameronzucker/tuxlink/commit/304a6dbffbd32e52529adad0f135be2a0c50d09d))
+* **aprs:** ni5b pure core — wxStations join, categories, snapshot header ([f3b5aa9](https://github.com/cameronzucker/tuxlink/commit/f3b5aa9656bb4b5888ffb9e92f9fbddb97ced047))
+* **aprs:** on-map WX badges + category filter + hover card + click (ni5b) ([6383fbc](https://github.com/cameronzucker/tuxlink/commit/6383fbcdbba18717ec7da933009be1781636fd2d))
+* **aprs:** pathTrace timeline math for the digipeat trace (cn84) ([d10c405](https://github.com/cameronzucker/tuxlink/commit/d10c40523338a0b849d08e96754b7208672f056a))
+* **aprs:** resolveDigipeatPath honest-path resolution (cn84) ([85f3925](https://github.com/cameronzucker/tuxlink/commit/85f392566af9825fcc9006097497f0757135b22f))
+* **aprs:** surface heard via-chain on aprs-position:new ([b1d4291](https://github.com/cameronzucker/tuxlink/commit/b1d42918a4ebf27e57234d6c53ab870212efa2f4))
+* **aprs:** wire WX overlay into AppShell + PNG snapshot export (ni5b) ([403ceae](https://github.com/cameronzucker/tuxlink/commit/403ceaec19d12eabb310f78148c944c987f0e1a6))
+* **map:** restrain tuxlinkFlavor to OSM-Carto-class palette (MeshMap fidelity) ([f839ca4](https://github.com/cameronzucker/tuxlink/commit/f839ca46127bc30514c2892adf26d4006384559e))
+* **map:** trace tile pipeline (errors + slow-tile latency) to the structured log ([d08d4f6](https://github.com/cameronzucker/tuxlink/commit/d08d4f6279ff760c6248bff5af1c999a672b3417))
+* **shell:** APRS status-bar control is pure on/off; Ctrl+Shift+M focuses Modem in the consolidated dock (tuxlink-a1j3) ([1d9c32e](https://github.com/cameronzucker/tuxlink/commit/1d9c32e6dbc1f64edd1ee96766a409279e9c0018))
+
+
+### Bug Fixes
+
+* **aprs:** address Codex cn84 review (CI parse error + RF-honesty) ([88fdec2](https://github.com/cameronzucker/tuxlink/commit/88fdec22f97a01f6b9e6b3e209c1b201ec2aca6b))
+* **aprs:** address Codex ni5b review (RF-honesty + filter persistence) ([14d7fd4](https://github.com/cameronzucker/tuxlink/commit/14d7fd4b8edf4e94a2a1df488ea78ddff7876fe7))
+* **aprs:** move WX map controls off the existing map controls (tuxlink-wb4c) ([a51139b](https://github.com/cameronzucker/tuxlink/commit/a51139ba436a9cca44e1c7b139db1cbbca98719a))
+* **aprs:** repaint station pins when sprite sheets finish decoding ([1a0f5a5](https://github.com/cameronzucker/tuxlink/commit/1a0f5a5c0e1b39c59d70b57db6bf70c8f3b5ff93))
+* **aprs:** share in-flight connect state so status bar + dock strip don't desync (tuxlink-28o0) ([38919ed](https://github.com/cameronzucker/tuxlink/commit/38919edadbf880b5a888a9e1beaefc646876e0a1))
+* **ax25:** accept up to 8 digipeaters, not 2 — stop dropping long-path stations (tuxlink-j5cj) ([8f0a73c](https://github.com/cameronzucker/tuxlink/commit/8f0a73c7f9e4fde3aa544256c249904d5f67121d))
+* **map:** drop preserveDrawingBuffer — it throttled software-GL rendering (drunk map) ([fdbc1f5](https://github.com/cameronzucker/tuxlink/commit/fdbc1f55bbd7bffe888c7ec22e5b7ee2c832c731))
+
 ## [0.71.1](https://github.com/cameronzucker/tuxlink/compare/v0.71.0...v0.71.1) (2026-06-19)
 
 
