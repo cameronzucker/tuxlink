@@ -10,7 +10,7 @@
 // Mirrors useAprsChat.ts's listen pattern (mounted-guarded subscribe, jsdom
 // catch). This hook is RX-only — there is no send/config surface.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import type { HeardPosition, InboundPosDto } from './aprsTypes';
 
@@ -107,5 +107,13 @@ export function useAprsPositions(): UseAprsPositions {
     };
   }, []);
 
-  return { positions: [...byCall.values()] };
+  // tuxlink-xsv5: memoize the array so its REFERENCE is stable across renders
+  // (it changes only when `byCall` actually changes). Returning a fresh
+  // `[...byCall.values()]` every render made every `[map, positions]`-keyed map
+  // effect (sprite bake, feature-state, the GeoJSON `setData` re-push) re-run on
+  // EVERY parent render — including the 1s dashboard clock + 2s drafts poll — so
+  // the map re-tiled + force-re-baked every sprite continuously (the "drunk map"
+  // CPU storm). Stable ref ⇒ those effects re-run only on a real position change.
+  const positions = useMemo(() => [...byCall.values()], [byCall]);
+  return { positions };
 }
