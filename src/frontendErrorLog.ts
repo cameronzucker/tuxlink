@@ -47,4 +47,25 @@ export function installGlobalErrorForwarding(): void {
     const stack = reason instanceof Error ? reason.stack : undefined;
     reportFrontendError('unhandledrejection', message, stack);
   });
+
+  // Main-thread stall detector (tuxlink-xsv5). The "drunk map" is slow tile LOADS
+  // (fetch+parse), and even a 1-point in-memory geojson tile is slow — so the
+  // bottleneck is the client tile-processing pipeline, not serving or render.
+  // This splits the two remaining sub-mechanisms: a heartbeat that SHOULD tick
+  // every HEARTBEAT_MS; when the real gap blows past it, the JS main thread was
+  // blocked that long by a synchronous op → main-thread block (find the op). If
+  // the map is slow but NO large stalls log, the main thread is responsive and
+  // the bottleneck is the web-worker parse queue → reduce per-tile parse cost.
+  // WebKit-safe (no PerformanceObserver('longtask'), which WebKitGTK lacks).
+  const HEARTBEAT_MS = 250;
+  const STALL_THRESHOLD_MS = 750;
+  let lastBeat = performance.now();
+  setInterval(() => {
+    const now = performance.now();
+    const blockedMs = now - lastBeat - HEARTBEAT_MS;
+    lastBeat = now;
+    if (blockedMs >= STALL_THRESHOLD_MS) {
+      reportFrontendError('main-thread-stall', `main thread blocked ~${Math.round(blockedMs)}ms`);
+    }
+  }, HEARTBEAT_MS);
 }
