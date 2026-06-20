@@ -646,27 +646,38 @@ function WxOverlay({
 
 /// Composite the live map canvas + a SITREP header strip into a PNG and download
 /// it (ni5b). Optional/on-demand — images are large; the Winlink text report is
-/// hepq's job. `preserveDrawingBuffer` (set on the map) makes the canvas readable.
+/// hepq's job.
+///
+/// tuxlink-xezm: capture the GL canvas DURING the next render frame (`map.once
+/// ('render')` + `triggerRepaint`) so the drawing buffer is readable WITHOUT
+/// `preserveDrawingBuffer`. That option had been set on the map for this export,
+/// but on the Pi's software renderer (llvmpipe) preserving the framebuffer every
+/// frame throttled ALL map rendering to a crawl (the "drunk map" regression).
+/// Capturing in the render event keeps the export working at zero steady-state cost.
 function exportWxSnapshot(map: NonNullable<ReturnType<typeof useMapContext>>, grid: string | undefined, stationCount: number) {
-  const src = map.getCanvas();
-  const header = composeSnapshotHeader({ grid, utcMs: Date.now(), stationCount });
-  const HEADER_H = 28;
-  const out = document.createElement('canvas');
-  out.width = src.width;
-  out.height = src.height + HEADER_H;
-  const ctx = out.getContext('2d');
-  if (!ctx) return;
-  ctx.fillStyle = '#0b1218';
-  ctx.fillRect(0, 0, out.width, HEADER_H);
-  ctx.fillStyle = '#ffe0a3';
-  ctx.font = '14px sans-serif';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(header, 10, HEADER_H / 2);
-  ctx.drawImage(src, 0, HEADER_H);
-  const a = document.createElement('a');
-  a.href = out.toDataURL('image/png');
-  a.download = `tuxlink-wx-${Date.now()}.png`;
-  a.click();
+  const capture = () => {
+    const src = map.getCanvas();
+    const header = composeSnapshotHeader({ grid, utcMs: Date.now(), stationCount });
+    const HEADER_H = 28;
+    const out = document.createElement('canvas');
+    out.width = src.width;
+    out.height = src.height + HEADER_H;
+    const ctx = out.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#0b1218';
+    ctx.fillRect(0, 0, out.width, HEADER_H);
+    ctx.fillStyle = '#ffe0a3';
+    ctx.font = '14px sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(header, 10, HEADER_H / 2);
+    ctx.drawImage(src, 0, HEADER_H);
+    const a = document.createElement('a');
+    a.href = out.toDataURL('image/png');
+    a.download = `tuxlink-wx-${Date.now()}.png`;
+    a.click();
+  };
+  map.once('render', capture);
+  map.triggerRepaint();
 }
 
 /// The "Export PNG" snapshot button (ni5b). A child of the map so it can read the
