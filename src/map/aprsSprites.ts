@@ -205,6 +205,34 @@ function renderFallbackBitmap(): ImageData {
 }
 
 /**
+ * Bake a symbol to a PNG `data:` URL for a Leaflet `divIcon` `<img src>`
+ * (tuxlink-6kdw). The Leaflet substrate has no MapLibre `addImage` sprite atlas;
+ * each pin is a DOM `divIcon` whose `<img>` carries this URL. `grey=true` bakes
+ * the desaturated stale variant. Routes through the SAME fallback/brand-logo
+ * branch as [`ensureSymbolImage`] so unresolved/brand cells get the neutral dot,
+ * not a broken image.
+ *
+ * Returns `''` in jsdom (no 2D context / `toDataURL` unimplemented) — callers must
+ * NOT rely on the URL for identity in unit tests (assert via [`spriteIdFor`]
+ * instead); real pixels are grim-verified. `''` is a harmless empty `<img src>`.
+ */
+export function spriteDataUrl(table: string, code: string, overlay: string | null, grey: boolean): string {
+  const id = spriteIdFor(table, code, overlay);
+  const img = id === FALLBACK_ID ? renderFallbackBitmap() : renderSymbolBitmap(table, code, overlay, grey);
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL;
+  canvas.height = CELL;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return ''; // headless / jsdom — no real raster
+  try {
+    ctx.putImageData(img, 0, 0);
+    return canvas.toDataURL('image/png');
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Idempotently register the colour + greyscale images for a symbol and return the
  * colour id. Brand-logo / unresolved symbols register the neutral fallback pair.
  *

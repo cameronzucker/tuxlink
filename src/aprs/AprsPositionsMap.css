@@ -128,11 +128,10 @@
 .aprs-wx-card__call { color: #8cc4ff; font-weight: 600; }
 .aprs-wx-card__list { margin: 4px 0 0; padding-left: 16px; }
 
-/* ni5b: weather snapshot export button. */
-.aprs-wx-export {
+/* tuxlink-hepq: Weather SITREP compose button (top-left column, below the filter).
+   Export PNG was removed this phase — its slot is reused (tuxlink-a7qt). */
+.aprs-wx-sitrep {
   position: absolute;
-  /* Top-left column, below the filter — off the bottom-left ScaleControl +
-     position popup it used to cover (tuxlink-wb4c). */
   top: 82px;
   left: 10px;
   z-index: 2;
@@ -144,4 +143,67 @@
   font-size: 12px;
   cursor: pointer;
 }
-.aprs-wx-export:hover { background: #163448; }
+.aprs-wx-sitrep:hover:not(:disabled) { background: #163448; }
+.aprs-wx-sitrep:disabled { opacity: 0.5; cursor: default; }
+
+/* tuxlink-6kdw: Leaflet divIcon markers. Neutralize Leaflet's default
+   `.leaflet-div-icon` white box so the sprite/chip/dot draws cleanly. */
+.aprs-pin-icon,
+.aprs-wx-badge-icon,
+.aprs-you-pin-icon {
+  background: transparent;
+  border: none;
+  overflow: visible;
+}
+
+/* Station pin: the authentic APRS sprite + a callsign label beneath it. */
+.aprs-pin {
+  display: block;
+  image-rendering: -webkit-optimize-contrast;
+}
+.aprs-pin--stale {
+  opacity: 0.6;
+}
+.aprs-pin-label {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 1px;
+  font: 600 11px/1 ui-sans-serif, system-ui, sans-serif;
+  white-space: nowrap;
+  color: #eaf3fb;
+  text-shadow:
+    0 0 2px #0c1620,
+    0 0 2px #0c1620,
+    0 0 3px #0c1620;
+  pointer-events: none;
+}
+
+/* Weather badge chip above the pin (temperature-led). */
+.aprs-wx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid #3a4866;
+  border-radius: 7px;
+  background: #141a26;
+  color: #ffd479;
+  font: 600 12px/1 ui-monospace, monospace;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+
+/* Operator "you" pin: a blue-ringed white dot, distinct from heard-station pins. */
+.aprs-you-pin {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #eaf3fb;
+  border: 3px solid #2f86f0;
+  box-shadow: 0 0 0 1px rgba(12, 22, 32, 0.8);
+}
