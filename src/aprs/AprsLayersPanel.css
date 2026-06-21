@@ -1,12 +1,15 @@
 /* AprsLayersPanel (tuxlink-8fjx) — collapsible map-corner layers filter.
-   Dark/tactical, matching the APRS map surface. Anchored top-right by the map
-   container's positioning context (see AprsPositionsMap.css). */
+   Dark/tactical, matching the APRS map surface. Anchored top-right BELOW the
+   Leaflet zoom (+/-) control, which is placed top-right (LeafletMap.tsx), so the
+   panel sits under it rather than on top of it. z-index 1100 matches the app's
+   other map overlay controls (recenter / SITREP) so it renders ABOVE Leaflet's
+   ~1000 control container, never behind the zoom buttons (tuxlink-8kki). */
 
 .aprs-layers-toggle {
   position: absolute;
-  top: 10px;
+  top: 82px;
   right: 10px;
-  z-index: 1000;
+  z-index: 1100;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -23,9 +26,9 @@
 
 .aprs-layers-panel {
   position: absolute;
-  top: 10px;
+  top: 82px;
   right: 10px;
-  z-index: 1000;
+  z-index: 1100;
   width: 210px;
   padding: 9px 11px 11px;
   font-size: 12px;
