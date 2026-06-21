@@ -6,15 +6,26 @@
 use crate::winlink::ax25::KissLinkConfig;
 use serde::{Deserialize, Deserializer, Serialize};
 
-pub const CONFIG_SCHEMA_VERSION: u32 = 2;
+/// Bumped 2 → 3 (tuxlink-ulrz): `trash_auto_purge` was added under
+/// `deny_unknown_fields` WITHOUT a version bump, so an older binary rejected the
+/// whole config (and the write guard, which probes only `schema_version`, would
+/// then clobber it). EVERY additive field MUST bump this — enforced by the
+/// `config_schema_version_tracks_field_set` test below.
+pub const CONFIG_SCHEMA_VERSION: u32 = 3;
 
 /// What to do with an on-disk config of a given `schema_version` (Phase 2,
-/// tuxlink-7iy2). A v1 file is a migration candidate, not an error; the current
-/// version loads normally; anything else is unsupported.
+/// tuxlink-7iy2). A v1 file is a breaking migration candidate; a version ≥2 but
+/// below current is additively loadable (new fields default via serde, file is
+/// re-stamped on next write); the current version loads normally; anything ABOVE
+/// current (a newer build wrote it) is unsupported — refused on write so a
+/// downgrade never clobbers it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaAction {
     Current,
     MigrateFromV1,
+    /// Older than current but additively loadable (≥2): read it (defaults fill the
+    /// new fields), re-stamp to current on the next write. tuxlink-ulrz.
+    MigrateAdditive,
     Unsupported { found: u32 },
 }
 
@@ -23,6 +34,7 @@ pub fn detect_schema_action(found: u32) -> SchemaAction {
     match found {
         v if v == CONFIG_SCHEMA_VERSION => SchemaAction::Current,
         1 => SchemaAction::MigrateFromV1,
+        v if v > 1 && v < CONFIG_SCHEMA_VERSION => SchemaAction::MigrateAdditive,
         other => SchemaAction::Unsupported { found: other },
     }
 }
@@ -529,13 +541,23 @@ where
     D: Deserializer<'de>,
 {
     let v = u32::deserialize(d)?;
-    if v != CONFIG_SCHEMA_VERSION {
-        return Err(serde::de::Error::custom(format!(
-            "unsupported config schema_version {} (expected {})",
-            v, CONFIG_SCHEMA_VERSION
-        )));
+    match detect_schema_action(v) {
+        // Current, or an additively-loadable older version (tuxlink-ulrz): accept and
+        // NORMALIZE the in-memory marker to current so the next write re-stamps the
+        // file forward. New fields fill via their serde defaults.
+        SchemaAction::Current | SchemaAction::MigrateAdditive => Ok(CONFIG_SCHEMA_VERSION),
+        // v1 is a breaking migration handled at startup (migrate_identity_if_v1)
+        // BEFORE read_config; reaching here means it was not migrated.
+        SchemaAction::MigrateFromV1 => Err(serde::de::Error::custom(
+            "config schema_version 1 requires the startup v1→v2 migration",
+        )),
+        // Above current: a newer build wrote it. Refuse rather than mis-load a
+        // forward-incompatible config (the downgrade case).
+        SchemaAction::Unsupported { found } => Err(serde::de::Error::custom(format!(
+            "unsupported config schema_version {} (this binary supports up to {})",
+            found, CONFIG_SCHEMA_VERSION
+        ))),
     }
-    Ok(v)
 }
 
 fn deserialize_optional_nonempty_string<'de, D>(d: D) -> Result<Option<String>, D::Error>
@@ -693,6 +715,10 @@ pub enum ConfigWriteError {
     SchemaVersionMismatch { existing: u32, ours: u32 },
     #[error("refuse to overwrite existing config at {path:?}: file is a symlink (target: {target:?})")]
     ExistingFileIsSymlink { path: std::path::PathBuf, target: Option<std::path::PathBuf> },
+    #[error("refuse to overwrite existing config at {path:?}: this binary cannot fully parse it \
+             (a newer build likely added a field without bumping CONFIG_SCHEMA_VERSION, or the \
+             file is corrupt). Preserving it rather than clobbering with defaults. Source: {source}")]
+    ExistingConfigUnreadable { path: std::path::PathBuf, source: serde_json::Error },
     #[error("config path {path:?} cannot be probed: {source}")]
     ProbeReadFailed { path: std::path::PathBuf, #[source] source: std::io::Error },
     #[error("config path {path:?} has no parent directory")]
@@ -732,12 +758,23 @@ pub fn write_config_atomic(config: &Config) -> Result<(), ConfigWriteError> {
         Ok(bytes) => {
             if let Ok(probe) = serde_json::from_slice::<SchemaVersionProbe>(&bytes) {
                 // Refuse only versions we can neither load nor migrate (future /
-                // unknown); a MigrateFromV1 file is a legitimate overwrite target so
-                // the Phase-2 migration can rewrite config.json at v2.
+                // unknown); a MigrateFromV1/MigrateAdditive file is a legitimate
+                // overwrite target so migration can rewrite it at the current version.
                 if let SchemaAction::Unsupported { found } = detect_schema_action(probe.schema_version) {
                     return Err(ConfigWriteError::SchemaVersionMismatch {
                         existing: found,
                         ours: CONFIG_SCHEMA_VERSION,
+                    });
+                }
+                // Defense-in-depth (tuxlink-ulrz): the probe reads ONLY schema_version,
+                // so a config at a known version but with an UNKNOWN field (a field
+                // added by a newer build without bumping the version — the exact bug
+                // that motivated this) passes the check above yet cannot be loaded by
+                // this binary. Refuse to clobber it with defaults; preserve it instead.
+                if let Err(source) = serde_json::from_slice::<Config>(&bytes) {
+                    return Err(ConfigWriteError::ExistingConfigUnreadable {
+                        path: path.clone(),
+                        source,
                     });
                 }
             }
@@ -983,6 +1020,106 @@ mod tests {
         assert_eq!(super::detect_schema_action(1), super::SchemaAction::MigrateFromV1);
         assert_eq!(super::detect_schema_action(CONFIG_SCHEMA_VERSION), super::SchemaAction::Current);
         assert_eq!(super::detect_schema_action(999), super::SchemaAction::Unsupported { found: 999 });
+    }
+
+    // tuxlink-ulrz: a version ≥2 but below current is additively loadable (not
+    // unsupported), so the write guard treats it as a legitimate overwrite target
+    // and read_config can self-heal it forward.
+    #[test]
+    fn older_additive_versions_are_migratable_not_unsupported() {
+        // current is 3; 2 is additively loadable.
+        assert_eq!(super::detect_schema_action(2), super::SchemaAction::MigrateAdditive);
+        // strictly-above-current (a newer build's config) is unsupported → refused on write.
+        assert_eq!(
+            super::detect_schema_action(CONFIG_SCHEMA_VERSION + 1),
+            super::SchemaAction::Unsupported { found: CONFIG_SCHEMA_VERSION + 1 }
+        );
+    }
+
+    // A valid minimal config body at `schema_version`, with an optional trailing
+    // `extra` JSON fragment (e.g. `, "some_future_field": true`). Mirrors the
+    // working fixture in position_source_defaults_to_gps_when_absent_from_config.
+    fn config_json(schema_version: u32, extra: &str) -> String {
+        format!(
+            r#"{{
+                "schema_version": {schema_version},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "BroadcastAtPrecision", "position_precision": "FourCharGrid" }}{extra}
+            }}"#
+        )
+    }
+
+    // tuxlink-ulrz: a v2 config (e.g. one written before trash_auto_purge bumped the
+    // version to 3) deserializes — new fields default, schema_version normalizes to
+    // current so the next write re-stamps it. This is the forward-compat that the
+    // unconditional `v != CURRENT` reject used to break.
+    #[test]
+    fn v2_config_loads_and_normalizes_to_current() {
+        let cfg: Config = serde_json::from_str(&config_json(2, ""))
+            .expect("a v2 config must load under the current binary (additive forward-compat)");
+        assert_eq!(cfg.schema_version, CONFIG_SCHEMA_VERSION, "marker normalizes to current");
+        assert!(cfg.trash_auto_purge, "the field added in v3 defaults to true when absent");
+    }
+
+    // tuxlink-ulrz: a config from a NEWER build (schema_version above current) is
+    // refused on READ — the downgrade case. The write guard separately refuses to
+    // overwrite it.
+    #[test]
+    fn future_schema_version_is_rejected_on_read() {
+        assert!(serde_json::from_str::<Config>(&config_json(CONFIG_SCHEMA_VERSION + 1, "")).is_err());
+    }
+
+    // tuxlink-ulrz REGRESSION: the exact failure mode. A config at the CURRENT
+    // schema_version but carrying an unknown field (a field a newer build added
+    // without bumping the version) must NOT be silently loadable, and the bare
+    // schema_version probe must still 'pass' — which is precisely why the write
+    // guard now does a full parse before overwriting.
+    #[test]
+    fn unknown_field_at_current_version_fails_full_parse_but_passes_probe() {
+        let json = config_json(CONFIG_SCHEMA_VERSION, r#", "some_future_field": true"#);
+        assert!(
+            serde_json::from_str::<Config>(&json).is_err(),
+            "unknown field must fail deserialize (deny_unknown_fields)"
+        );
+        let probe: SchemaVersionProbe =
+            serde_json::from_str(&json).expect("probe reads only schema_version");
+        assert_eq!(detect_schema_action(probe.schema_version), SchemaAction::Current);
+    }
+
+    // tuxlink-ulrz DISCIPLINE: lock the ALWAYS-serialized top-level Config field set
+    // to CONFIG_SCHEMA_VERSION. Adding/removing such a field (the trash_auto_purge
+    // class — a non-Option additive field, the kind that broke compat) changes this
+    // set and fails the test, forcing the author to bump CONFIG_SCHEMA_VERSION and
+    // update this golden list. (Option fields with skip_serializing_if=None are
+    // absent here when None and are forward-compat by construction.)
+    #[test]
+    fn config_schema_version_tracks_field_set() {
+        let cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, ""))
+            .expect("minimal config deserializes");
+        let value = serde_json::to_value(&cfg).expect("config serializes to JSON");
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .expect("config serializes to a JSON object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        let mut expected = vec![
+            "schema_version", "wizard_completed", "connect", "identity", "privacy",
+            "packet", "telnet_listen", "network_po_favorites",
+            "review_inbound_before_download", "aprs",
+            "trash_auto_purge", "trash_retention_days",
+        ];
+        expected.sort_unstable();
+        assert_eq!(
+            keys, expected,
+            "Config's always-serialized field set changed without bumping \
+             CONFIG_SCHEMA_VERSION (now {}). Bump it (+ add a migration if non-additive) \
+             and update this golden set (tuxlink-ulrz).",
+            CONFIG_SCHEMA_VERSION
+        );
     }
 
     #[test]

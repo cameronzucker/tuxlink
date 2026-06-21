@@ -99,6 +99,10 @@ pub fn migration_step(action: crate::config::SchemaAction) -> MigrationStep {
     match action {
         crate::config::SchemaAction::MigrateFromV1 => MigrationStep::MigrateThenContinue,
         crate::config::SchemaAction::Current => MigrationStep::ContinueNoMigration,
+        // tuxlink-ulrz: additive forward-migration is transparent — read_config loads
+        // the older-but-compatible file (new fields default) and the next write
+        // re-stamps it to current. No dedicated startup step needed.
+        crate::config::SchemaAction::MigrateAdditive => MigrationStep::ContinueNoMigration,
         crate::config::SchemaAction::Unsupported { .. } => MigrationStep::AbortUnsupported,
     }
 }
