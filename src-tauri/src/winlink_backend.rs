@@ -31,7 +31,7 @@ use tokio_stream::wrappers::BroadcastStream;
 /// `pat_client` module in tuxlink-9phd Phase 9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum MailboxFolder { Inbox, Sent, Outbox, Archive }
+pub enum MailboxFolder { Inbox, Sent, Outbox, Archive, Deleted }
 
 impl MailboxFolder {
     #[allow(dead_code)]
@@ -41,7 +41,18 @@ impl MailboxFolder {
             MailboxFolder::Sent => "sent",
             MailboxFolder::Outbox => "out",
             MailboxFolder::Archive => "archive",
+            MailboxFolder::Deleted => "deleted",
         }
+    }
+}
+
+#[cfg(test)]
+mod mailbox_folder_tests {
+    use super::*;
+
+    #[test]
+    fn deleted_folder_maps_to_deleted_path() {
+        assert_eq!(MailboxFolder::Deleted.as_path(), "deleted");
     }
 }
 

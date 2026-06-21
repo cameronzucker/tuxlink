@@ -369,6 +369,32 @@ impl Mailbox {
         Ok(())
     }
 
+    /// Delete a message: move it into the shared `Deleted` (Trash) folder and
+    /// record where it came from in a `<mid>.trash` sidecar so Restore can
+    /// return it and auto-purge can expire it (tuxlink-wl7n).
+    ///
+    /// `from` is the origin folder; `origin_full` is the origin identity FULL
+    /// for per-identity origins (Inbox/Archive/user folders) and `None` for the
+    /// shared folders (Sent/Outbox). `now_rfc3339` is injected (not read from
+    /// `chrono::Utc::now()` here) so unit tests are deterministic; the command
+    /// layer passes `chrono::Utc::now().to_rfc3339()`.
+    pub fn delete_message(
+        &self,
+        from: MailboxFolder,
+        id: &MessageId,
+        origin_full: Option<&str>,
+        now_rfc3339: &str,
+    ) -> Result<(), BackendError> {
+        self.move_to(from, MailboxFolder::Deleted, id)?;
+        let meta = TrashMeta {
+            origin: from.as_path().to_string(),
+            origin_full: origin_full.map(str::to_string),
+            deleted_at: now_rfc3339.to_string(),
+        };
+        write_trash_sidecar(&self.folder_dir(MailboxFolder::Deleted), &id.0, &meta)?;
+        Ok(())
+    }
+
     /// Set a message's read-state by adding (`read = true`) or removing
     /// (`read = false`) the `<mid>.read` sidecar next to its `<mid>.b2f`.
     /// Folder-ref aware: works for system folders AND user-folder slugs via
@@ -589,6 +615,11 @@ impl Mailbox {
             // Shared, never namespaced.
             MailboxFolder::Sent => self.root.join("sent"),
             MailboxFolder::Outbox => self.root.join("outbox"),
+            // Trash is a single shared folder (like Sent/Outbox), NOT per-FULL:
+            // a delete from any identity's Inbox/Archive lands in one common
+            // bin, and Empty Trash / auto-purge operate on the whole store
+            // (tuxlink-wl7n).
+            MailboxFolder::Deleted => self.root.join("deleted"),
             // Per-FULL received mail.
             MailboxFolder::Inbox => self.received_root(ns).join("inbox"),
             MailboxFolder::Archive => self.received_root(ns).join("archive"),
@@ -1218,6 +1249,7 @@ fn folder_str(f: MailboxFolder) -> &'static str {
         MailboxFolder::Outbox => "outbox",
         MailboxFolder::Sent => "sent",
         MailboxFolder::Archive => "archive",
+        MailboxFolder::Deleted => "deleted",
     }
 }
 
@@ -1299,11 +1331,123 @@ fn winlink_date_to_rfc3339(winlink: &str) -> String {
     }
 }
 
+// ============================================================================
+// Trash (Deleted folder) sidecar — origin + identity + deletion timestamp.
+//
+// A delete moves the `<mid>.b2f` into the shared `Deleted` folder and writes a
+// `<mid>.trash` sidecar recording where it came from (so Restore can return it)
+// and when it was deleted (so auto-purge can expire it). tuxlink-wl7n.
+// ============================================================================
+
+/// Sidecar recording a deleted message's origin folder, origin identity, and
+/// deletion time, written as `<mid>.trash` alongside the message in the shared
+/// `Deleted` folder.
+///
+/// - `origin` — the origin folder's [`MailboxFolder::as_path`] value
+///   (`"in"|"sent"|"out"|"archive"`) or a user-folder slug.
+/// - `origin_full` — the origin identity FULL when the origin was per-identity
+///   (Inbox/Archive/user folder); `None` for shared origins (Sent/Outbox).
+/// - `deleted_at` — RFC 3339 UTC timestamp of the deletion.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TrashMeta {
+    pub origin: String,
+    #[serde(default)]
+    pub origin_full: Option<String>,
+    pub deleted_at: String,
+}
+
+/// Write a `<mid>.trash` sidecar (pretty JSON) into `dir` (the `Deleted` folder).
+fn write_trash_sidecar(dir: &Path, mid: &str, m: &TrashMeta) -> std::io::Result<()> {
+    let json = serde_json::to_vec_pretty(m)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    fs::write(dir.join(format!("{mid}.trash")), json)
+}
+
+/// Read a `<mid>.trash` sidecar from `dir`. `None` on a missing file or
+/// unparseable JSON (a corrupt sidecar must never strand a recovery flow).
+// Consumed by the tests here and by `restore_message`/`purge_expired` in the
+// following tasks (tuxlink-wl7n); `allow(dead_code)` until that lands so the
+// lib-only build does not trip clippy's `-D warnings`.
+#[allow(dead_code)]
+fn read_trash_sidecar(dir: &Path, mid: &str) -> Option<TrashMeta> {
+    let raw = fs::read(dir.join(format!("{mid}.trash"))).ok()?;
+    serde_json::from_slice(&raw).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::winlink::compose::compose_message;
     use tempfile::tempdir;
+
+    /// A `Mailbox` over a fresh temp directory for the delete/trash tests. The
+    /// directory is intentionally leaked (`TempDir::keep`) so the path outlives
+    /// this helper — `Mailbox` does not own the `TempDir` guard, so returning a
+    /// bare `Mailbox` over a `tempdir()` would delete the dir on drop. Mirrors
+    /// the `Mailbox::new(dir.path())` construction the other tests use, minus
+    /// the in-scope guard.
+    fn test_mailbox() -> Mailbox {
+        let path = tempdir().unwrap().keep();
+        Mailbox::new(path)
+    }
+
+    /// Place a bare `<mid>.b2f` directly in `folder`'s directory under the
+    /// chosen `id`. Writes raw bytes (the trash/delete tests assert on file
+    /// presence + the `.trash` sidecar, never parse the body), so this can use
+    /// a caller-controlled MID instead of one derived from message content the
+    /// way `store` does.
+    fn store_test_message(mb: &Mailbox, folder: MailboxFolder, id: &MessageId) {
+        let dir = mb.folder_dir(folder);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{}.b2f", id.0)), b"raw test message").unwrap();
+    }
+
+    #[test]
+    fn trash_meta_round_trips_through_sidecar() {
+        let dir = tempdir().unwrap();
+        let m = TrashMeta {
+            origin: "inbox".into(),
+            origin_full: Some("N0CALL".into()),
+            deleted_at: "2026-06-20T18:30:00Z".into(),
+        };
+        write_trash_sidecar(dir.path(), "ABCD1234", &m).unwrap();
+        assert_eq!(read_trash_sidecar(dir.path(), "ABCD1234"), Some(m));
+        // Shared-folder origin: no identity.
+        let m2 = TrashMeta {
+            origin: "sent".into(),
+            origin_full: None,
+            deleted_at: "2026-06-20T18:31:00Z".into(),
+        };
+        write_trash_sidecar(dir.path(), "EF", &m2).unwrap();
+        assert_eq!(read_trash_sidecar(dir.path(), "EF"), Some(m2));
+        // Missing / garbage → None.
+        assert_eq!(read_trash_sidecar(dir.path(), "NOPE"), None);
+        fs::write(dir.path().join("BAD.trash"), b"{not json").unwrap();
+        assert_eq!(read_trash_sidecar(dir.path(), "BAD"), None);
+    }
+
+    #[test]
+    fn delete_message_moves_to_trash_and_writes_sidecar() {
+        let mb = test_mailbox();
+        let id = MessageId::new("MID01");
+        store_test_message(&mb, MailboxFolder::Inbox, &id);
+        mb.delete_message(MailboxFolder::Inbox, &id, Some("N0CALL"), "2026-06-20T00:00:00Z")
+            .unwrap();
+        // Gone from Inbox, present in Deleted.
+        assert!(!mb
+            .folder_dir(MailboxFolder::Inbox)
+            .join("MID01.b2f")
+            .exists());
+        assert!(mb
+            .folder_dir(MailboxFolder::Deleted)
+            .join("MID01.b2f")
+            .exists());
+        // Sidecar records origin.
+        let meta = read_trash_sidecar(&mb.folder_dir(MailboxFolder::Deleted), "MID01").unwrap();
+        assert_eq!(meta.origin, "in");
+        assert_eq!(meta.origin_full.as_deref(), Some("N0CALL"));
+        assert_eq!(meta.deleted_at, "2026-06-20T00:00:00Z");
+    }
 
     fn raw(subject: &str, body: &str) -> Vec<u8> {
         compose_message("N7CPZ", &["W1AW"], &[], subject, body, 1_716_200_000).to_bytes()

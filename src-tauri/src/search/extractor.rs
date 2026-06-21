@@ -87,6 +87,7 @@ pub fn extract(
         MailboxFolder::Outbox => "outbox",
         MailboxFolder::Sent => "sent",
         MailboxFolder::Archive => "archive",
+        MailboxFolder::Deleted => "deleted",
     }
     .to_string();
 
