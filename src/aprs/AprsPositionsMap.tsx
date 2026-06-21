@@ -42,6 +42,7 @@ import type { EnvStation } from './envStations';
 import { saveDraft } from '../compose/useDraft';
 import { newDraftId } from '../routing';
 import { invoke } from '@tauri-apps/api/core';
+import { reportFrontendError } from '../frontendErrorLog';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
@@ -177,7 +178,10 @@ function MapOverlays({
   const group = useLeafletLayerGroup(map);
 
   const [popupCall, setPopupCall] = useState<string | null>(null);
-  const [hoverCall, setHoverCall] = useState<string | null>(null);
+  // The WX station whose info card is open. Click-pinned + dismissed via the card's
+  // × button — NOT hover: hover-dismiss (mouseout) proved unreliable in WebKitGTK
+  // with the 0-size divIcon badge, leaving the card stuck open (operator smoke).
+  const [wxCardCall, setWxCardCall] = useState<string | null>(null);
 
   // Re-tick "now" so pins age (grey) and the popup age stays roughly current.
   const [now, setNow] = useState(() => Date.now());
@@ -190,6 +194,20 @@ function MapOverlays({
   const byCallRef = useRef(byCall);
   byCallRef.current = byCall;
   const wxByCall = useMemo(() => new Map(wx.map((w) => [w.call, w])), [wx]);
+
+  // Hold interaction state + callbacks in refs so the reconcile effect does NOT
+  // depend on them. A pin/badge click (popupCall/wxCardCall) or a fresh
+  // onFocusStation identity (AppShell passes an inline arrow → new every parent
+  // render) must NOT re-run the whole layer reconcile: reconciling on every
+  // click/parent-render churned layers and could mutate them mid Leaflet zoom/pan
+  // animation → an intermittent throw that tripped the app ErrorBoundary (operator
+  // soft-crash). Reconcile now runs ONLY on data changes (positions/wx/category/now).
+  const onFocusRef = useRef(onFocusStation);
+  onFocusRef.current = onFocusStation;
+  const popupCallRef = useRef(popupCall);
+  popupCallRef.current = popupCall;
+  const wxCardCallRef = useRef(wxCardCall);
+  wxCardCallRef.current = wxCardCall;
 
   const bundlesRef = useRef<Map<string, Bundle>>(new Map());
   // Uncertainty discs use an SVG renderer (not the map's canvas): they are few
@@ -220,85 +238,105 @@ function MapOverlays({
       });
     const makeBadge = (call: string, w: WxStation, c: { lat: number; lon: number }): L.Marker => {
       const m = L.marker([c.lat, c.lon], { icon: badgeIcon(w) });
-      m.on('click', () => onFocusStation?.(call));
-      m.on('mouseover', () => setHoverCall(call));
-      m.on('mouseout', () => setHoverCall(null));
+      // Click opens the on-map WX card (dismissed via its × button) AND focuses the
+      // station's dock card. No hover handlers — hover-dismiss is unreliable here.
+      m.on('click', () => {
+        onFocusRef.current?.(call);
+        setWxCardCall(call);
+      });
       return m;
+    };
+
+    // Guard every Leaflet layer mutation: a transient throw (e.g. add/remove that
+    // lands mid zoom/pan animation) is logged + skipped, never crashed to the app
+    // ErrorBoundary (operator soft-crash). Mirrors mapHooks' safeEnsure/safeTeardown.
+    const safe = (what: string, fn: () => void): void => {
+      try {
+        fn();
+      } catch (e) {
+        reportFrontendError(
+          'aprs-map-reconcile',
+          `${what}: ${e instanceof Error ? e.message : String(e)}`,
+          e instanceof Error ? e.stack : undefined,
+        );
+      }
     };
 
     // Remove dropped stations entirely.
     for (const [call, b] of bundles) {
       if (!live.has(call)) {
-        group.removeLayer(b.group);
+        safe(`drop ${call}`, () => group.removeLayer(b.group));
         bundles.delete(call);
-        if (popupCall === call) setPopupCall(null);
-        if (hoverCall === call) setHoverCall(null);
+        if (popupCallRef.current === call) setPopupCall(null);
+        if (wxCardCallRef.current === call) setWxCardCall(null);
       }
     }
 
     for (const p of positions) {
-      const c = cellCenter(p);
-      const stale = now - p.at > STALE_MS;
-      const isWeather = wxCalls.has(p.call);
-      const w = wxByCall.get(p.call);
-      let b = bundles.get(p.call);
+      safe(`reconcile ${p.call}`, () => {
+        const c = cellCenter(p);
+        const stale = now - p.at > STALE_MS;
+        const isWeather = wxCalls.has(p.call);
+        const w = wxByCall.get(p.call);
+        let b = bundles.get(p.call);
 
-      if (!b) {
-        const pin = L.marker([c.lat, c.lon], { icon: pinIcon(p, c, stale) });
-        pin.on('click', () => {
-          if (byCallRef.current.has(p.call)) setPopupCall(p.call);
-        });
-        const circle = p.ambiguity > 0 ? makeCircle(p, c) : null;
-        const badge = w ? makeBadge(p.call, w, c) : null;
-        // Pin draws above the uncertainty disc: add circle first, then pin, then badge.
-        const groupLayers: L.Layer[] = circle ? [circle, pin] : [pin];
-        if (badge) groupLayers.push(badge);
-        b = { group: L.featureGroup(groupLayers), pin, circle, badge, iconKey: pinIconKey(p, stale), visible: true };
-        bundles.set(p.call, b);
-      } else {
-        // FULL reconcile of every sub-layer (a re-beacon can change position,
-        // staleness, symbol, ambiguity level, or weather readings — Codex impl P1).
-        b.pin.setLatLng([c.lat, c.lon]);
-        const key = pinIconKey(p, stale);
-        if (key !== b.iconKey) {
-          b.pin.setIcon(pinIcon(p, c, stale)); // sprite / stale / ambiguous-shrink changed
-          b.iconKey = key;
-        }
-        // Uncertainty disc: create / update radius+centre / remove as ambiguity changes.
-        if (p.ambiguity > 0) {
-          if (!b.circle) {
-            b.circle = makeCircle(p, c);
-            b.group.addLayer(b.circle);
-          } else {
-            b.circle.setLatLng([c.lat, c.lon]);
-            b.circle.setRadius(ambiguityRadiusMeters(p.ambiguity) * Math.SQRT2);
+        if (!b) {
+          const pin = L.marker([c.lat, c.lon], { icon: pinIcon(p, c, stale) });
+          pin.on('click', () => {
+            if (byCallRef.current.has(p.call)) setPopupCall(p.call);
+          });
+          const circle = p.ambiguity > 0 ? makeCircle(p, c) : null;
+          const badge = w ? makeBadge(p.call, w, c) : null;
+          // Pin draws above the uncertainty disc: add circle first, then pin, then badge.
+          const groupLayers: L.Layer[] = circle ? [circle, pin] : [pin];
+          if (badge) groupLayers.push(badge);
+          b = { group: L.featureGroup(groupLayers), pin, circle, badge, iconKey: pinIconKey(p, stale), visible: true };
+          bundles.set(p.call, b);
+        } else {
+          // FULL reconcile of every sub-layer (a re-beacon can change position,
+          // staleness, symbol, ambiguity level, or weather readings — Codex impl P1).
+          b.pin.setLatLng([c.lat, c.lon]);
+          const key = pinIconKey(p, stale);
+          if (key !== b.iconKey) {
+            b.pin.setIcon(pinIcon(p, c, stale)); // sprite / stale / ambiguous-shrink changed
+            b.iconKey = key;
           }
-        } else if (b.circle) {
-          b.group.removeLayer(b.circle);
-          b.circle = null;
-        }
-        // WX badge: create / refresh reading text / remove as weather appears/changes/clears.
-        if (w) {
-          if (!b.badge) {
-            b.badge = makeBadge(p.call, w, c);
-            b.group.addLayer(b.badge);
-          } else {
-            b.badge.setLatLng([c.lat, c.lon]);
-            b.badge.setIcon(badgeIcon(w)); // refresh the reading (chip text)
+          // Uncertainty disc: create / update radius+centre / remove as ambiguity changes.
+          if (p.ambiguity > 0) {
+            if (!b.circle) {
+              b.circle = makeCircle(p, c);
+              b.group.addLayer(b.circle);
+            } else {
+              b.circle.setLatLng([c.lat, c.lon]);
+              b.circle.setRadius(ambiguityRadiusMeters(p.ambiguity) * Math.SQRT2);
+            }
+          } else if (b.circle) {
+            b.group.removeLayer(b.circle);
+            b.circle = null;
           }
-        } else if (b.badge) {
-          b.group.removeLayer(b.badge);
-          b.badge = null;
+          // WX badge: create / refresh reading text / remove as weather appears/changes/clears.
+          if (w) {
+            if (!b.badge) {
+              b.badge = makeBadge(p.call, w, c);
+              b.group.addLayer(b.badge);
+            } else {
+              b.badge.setLatLng([c.lat, c.lon]);
+              b.badge.setIcon(badgeIcon(w)); // refresh the reading (chip text)
+            }
+          } else if (b.badge) {
+            b.group.removeLayer(b.badge);
+            b.badge = null;
+          }
         }
-      }
 
-      // Visibility per the active category (no orphan — the whole bundle moves).
-      const visible = categoryByKey(category).matches({ call: p.call, isWeather });
-      if (visible && !group.hasLayer(b.group)) group.addLayer(b.group);
-      else if (!visible && group.hasLayer(b.group)) group.removeLayer(b.group);
-      b.visible = visible;
+        // Visibility per the active category (no orphan — the whole bundle moves).
+        const visible = categoryByKey(category).matches({ call: p.call, isWeather });
+        if (visible && !group.hasLayer(b.group)) group.addLayer(b.group);
+        else if (!visible && group.hasLayer(b.group)) group.removeLayer(b.group);
+        b.visible = visible;
+      });
     }
-  }, [map, group, positions, wx, wxByCall, category, now, popupCall, hoverCall, onFocusStation]);
+  }, [map, group, positions, wx, wxByCall, category, now]);
 
   // whenSheetsReady re-bake (tuxlink-r8sm / R3 P0): the sprite sheets decode
   // asynchronously; the first synchronous bake on mount yields transparent icons.
@@ -318,14 +356,14 @@ function MapOverlays({
     return stop;
   }, [map]);
 
-  // Live-derived popup body: a re-beacon updates it; a pruned station closes it.
+  // Live-derived bodies: a re-beacon updates them; a pruned station closes them.
   const selected = popupCall ? byCall.get(popupCall) : undefined;
-  const hovered = hoverCall ? wxByCall.get(hoverCall) : undefined;
+  const wxSelected = wxCardCall ? wxByCall.get(wxCardCall) : undefined;
 
   return (
     <>
       {selected && <PositionPopup fix={selected} now={now} onClose={() => setPopupCall(null)} />}
-      {hovered && <WxCard wx={hovered} />}
+      {wxSelected && <WxCard wx={wxSelected} onClose={() => setWxCardCall(null)} />}
     </>
   );
 }
@@ -362,9 +400,18 @@ function PositionPopup({ fix, now, onClose }: { fix: HeardPosition; now: number;
   );
 }
 
-function WxCard({ wx }: { wx: WxStation }) {
+function WxCard({ wx, onClose }: { wx: WxStation; onClose: () => void }) {
   return (
     <div className="aprs-wx-card" role="status" data-testid="aprs-wx-card">
+      <button
+        type="button"
+        className="aprs-wx-card__close"
+        aria-label="Dismiss"
+        data-testid="aprs-wx-card-close"
+        onClick={onClose}
+      >
+        ×
+      </button>
       <span className="aprs-wx-card__call">{wx.call}</span>
       <ul className="aprs-wx-card__list">
         {wx.env.channels.map((c) => (

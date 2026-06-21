@@ -213,17 +213,18 @@ describe('AprsPositionsMap WX overlay + filter (ni5b)', () => {
     expect(b[0].textContent).toContain('72°F');
   });
 
-  it('invokes onFocusStation when a WX badge is clicked; shows the card on hover', async () => {
+  it('opens the WX card on badge click (+ focuses the station) and closes it via the × button', async () => {
     const onFocus = vi.fn();
     const { container, getByTestId, queryByTestId } = await renderMap(
       <AprsPositionsMap positions={wxPositions} envStations={wxEnv as never} onFocusStation={onFocus} operatorGrid="CN87" />,
     );
     const chip = badges(container)[0].closest('.leaflet-marker-icon')!;
+    // Click the badge → focus the dock station AND open the on-map card.
     act(() => chip.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(onFocus).toHaveBeenCalledWith('W7WX');
-    act(() => chip.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })));
     expect(getByTestId('aprs-wx-card').textContent).toContain('W7WX');
-    act(() => chip.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })));
+    // The card is dismissible via its × (operator-reported: hover-dismiss got stuck).
+    fireEvent.click(getByTestId('aprs-wx-card-close'));
     expect(queryByTestId('aprs-wx-card')).toBeNull();
   });
 

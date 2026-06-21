@@ -21,7 +21,7 @@
   position: absolute;
   left: 12px;
   bottom: 12px;
-  z-index: 800; /* above Leaflet panes (200-700) so controls are never covered (impl P1) */
+  z-index: 1100; /* above Leaflet panes (200-700) AND its control container (1000) so app controls/popups are never covered (impl review) */
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -94,7 +94,7 @@
      not stacked on top of it (tuxlink-wb4c). */
   top: 46px;
   left: 10px;
-  z-index: 800; /* above Leaflet panes (200-700) so controls are never covered (impl P1) */
+  z-index: 1100; /* above Leaflet panes (200-700) AND its control container (1000) so app controls/popups are never covered (impl review) */
   background: #0e1a24ee;
   border: 1px solid #2c4a63;
   border-radius: 8px;
@@ -115,7 +115,7 @@
   /* Below the top-right NavigationControl (~58px tall), not over it (tuxlink-wb4c). */
   top: 66px;
   right: 10px;
-  z-index: 800; /* above Leaflet panes (200-700) so controls are never covered (impl P1) */
+  z-index: 1100; /* above Leaflet panes (200-700) AND its control container (1000) so app controls/popups are never covered (impl review) */
   background: #0e1a24f2;
   border: 1px solid #2c4a63;
   border-radius: 8px;
@@ -127,6 +127,20 @@
 }
 .aprs-wx-card__call { color: #8cc4ff; font-weight: 600; }
 .aprs-wx-card__list { margin: 4px 0 0; padding-left: 16px; }
+.aprs-wx-card { padding-right: 26px; } /* room for the close button */
+.aprs-wx-card__close {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  border: none;
+  background: transparent;
+  color: #6f8aa3;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.aprs-wx-card__close:hover { color: #dcebf6; }
 
 /* tuxlink-hepq: Weather SITREP compose button (top-left column, below the filter).
    Export PNG was removed this phase — its slot is reused (tuxlink-a7qt). */
@@ -134,7 +148,7 @@
   position: absolute;
   top: 82px;
   left: 10px;
-  z-index: 800; /* above Leaflet panes (200-700) so controls are never covered (impl P1) */
+  z-index: 1100; /* above Leaflet panes (200-700) AND its control container (1000) so app controls/popups are never covered (impl review) */
   background: #11283b;
   color: #dcebf6;
   border: 1px solid #2c4a63;

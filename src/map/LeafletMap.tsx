@@ -112,7 +112,10 @@ export function LeafletMap({
       const [clLng, clLat] = clampMapCenter(initialCenter?.lon ?? 0, initialCenter?.lat ?? 0);
       const instance = L.map(containerRef.current, {
         preferCanvas: true,
-        zoomControl: true,
+        // Zoom control added explicitly top-RIGHT below (matching the old MapLibre
+        // nav placement) so it does not collide with the app's top-left controls
+        // (recenter/filter/SITREP) — Leaflet's default zoom is top-left (impl review).
+        zoomControl: false,
         attributionControl: true,
         center: [clLat, clLng],
         zoom: initialZoom ?? DEFAULT_ZOOM,
@@ -131,6 +134,7 @@ export function LeafletMap({
       // prefix; the OSM/ODbL credit comes from the overview layer's `attribution`
       // (set in basemapLeaflet) — no separate addAttribution to avoid duplicates.
       instance.attributionControl.setPrefix(false);
+      L.control.zoom({ position: 'topright' }).addTo(instance);
       L.control.scale({ imperial: true, metric: true }).addTo(instance);
 
       instance.on('click', (e: L.LeafletMouseEvent) => {
