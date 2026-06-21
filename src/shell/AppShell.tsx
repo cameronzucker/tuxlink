@@ -27,7 +27,7 @@ import { type SortState, loadSortState, saveSortState } from '../mailbox/message
 import { useMailbox, useMailboxChangeEvents } from '../mailbox/useMailbox';
 import { DRAFTS_CHANGED_EVENT, listDraftMessages } from '../mailbox/draftMailbox';
 import { isNotConfigured } from '../mailbox/types';
-import { deleteMessages, restoreMessages, purgeMessage } from '../mailbox/mailboxCommands';
+import { deleteMessages, restoreMessages, purgeMessage, emptyTrash } from '../mailbox/mailboxCommands';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
 import { useUserFolders, useMoveUserFolder } from '../mailbox/useUserFolders';
 import { useContacts } from '../contacts/useContacts';
@@ -96,6 +96,9 @@ const RenameFolderDialog = lazy(() =>
 );
 const DeleteFolderDialog = lazy(() =>
   import('../mailbox/DeleteFolderDialog').then((m) => ({ default: m.DeleteFolderDialog })),
+);
+const ConfirmPurgeDialog = lazy(() =>
+  import('../mailbox/ConfirmPurgeDialog').then((m) => ({ default: m.ConfirmPurgeDialog })),
 );
 
 // tuxlink-djnl: lazy-load MessageView so the cold-start path doesn't pull
@@ -311,6 +314,16 @@ export function AppShell() {
   // is open, null when closed. The context menu carries position + slug.
   const [renameFolder, setRenameFolder] = useState<UserFolder | null>(null);
   const [deleteFolder, setDeleteFolder] = useState<UserFolder | null>(null);
+  // tuxlink-wl7n Task 14: pending permanent-delete action waiting for the
+  // ConfirmPurgeDialog. null = no dialog open. The `kind` distinguishes the
+  // three permanent actions (per-item, bulk, empty-trash) so onConfirm can
+  // dispatch to the right handler.
+  const [pendingPurge, setPendingPurge] = useState<
+    | { kind: 'single'; id: string }
+    | { kind: 'bulk'; ids: Set<string> }
+    | { kind: 'empty' }
+    | null
+  >(null);
   const [folderCtxMenu, setFolderCtxMenu] = useState<{
     folder: UserFolder;
     x: number;
@@ -1087,18 +1100,10 @@ export function AppShell() {
   }, [queryClient]);
 
   /// Permanently delete a single message from the Deleted folder (no recovery).
-  /// TODO(tuxlink-wl7n Task 14): replace window.confirm with DeleteFolderDialog-style modal.
-  const purgeById = useCallback(async (id: string) => {
-    if (!window.confirm('Permanently delete this message? This cannot be undone.')) return;
-    try {
-      await purgeMessage(id);
-      void queryClient.invalidateQueries({ queryKey: ['mailbox', 'deleted'] });
-      setSelectedMessage((cur) => (cur?.id === id ? null : cur));
-      setSelectedIds((cur) => dropId(cur, id));
-    } catch {
-      /* surfaced via Rust logs; next refetch resyncs */
-    }
-  }, [queryClient]);
+  /// Opens ConfirmPurgeDialog; the actual purge + invalidation runs in onConfirm.
+  const purgeById = useCallback((id: string) => {
+    setPendingPurge({ kind: 'single', id });
+  }, []);
 
   // tuxlink-etxt Task 12+13: single-message read/unread toggle — wired from the
   // context-menu (T12) and the U key (T13). Mirrors the invoke + invalidate
@@ -1214,22 +1219,57 @@ export function AppShell() {
   }, [visibleMessages, selectedFolder, queryClient]);
 
   /// Permanently delete the selected messages from the Deleted folder (no recovery).
-  /// Gated behind window.confirm. TODO(tuxlink-wl7n Task 14): replace with modal.
-  const bulkPurge = useCallback(async (ids: Set<string>) => {
-    if (!window.confirm(`Permanently delete ${ids.size} message(s)? This cannot be undone.`)) return;
-    const items = selectionToFolderItems(ids, visibleMessages, selectedFolder);
-    if (items.length === 0) return;
-    try {
+  /// Opens ConfirmPurgeDialog; the actual purge loop + invalidation runs in onConfirm.
+  const bulkPurge = useCallback((ids: Set<string>) => {
+    setPendingPurge({ kind: 'bulk', ids });
+  }, []);
+
+  /// Open the ConfirmPurgeDialog for the Empty Trash action.
+  const emptyTrashFlow = useCallback(() => {
+    setPendingPurge({ kind: 'empty' });
+  }, []);
+
+  /// Count of messages that will be permanently deleted, used to drive the
+  /// ConfirmPurgeDialog body copy. For 'single' = 1; for 'bulk' = ids.size;
+  /// for 'empty' = the visible deleted-folder message count (best available
+  /// local count — emptyTrash() returns the real server count after the fact).
+  const pendingPurgeCount =
+    pendingPurge === null
+      ? 0
+      : pendingPurge.kind === 'single'
+        ? 1
+        : pendingPurge.kind === 'bulk'
+          ? pendingPurge.ids.size
+          : visibleMessages.length; // 'empty' — use loaded trash size
+
+  /// Execute the confirmed permanent-delete action, then close the dialog.
+  const handlePurgeConfirm = useCallback(async () => {
+    if (!pendingPurge) return;
+    if (pendingPurge.kind === 'single') {
+      await purgeMessage(pendingPurge.id);
+      void queryClient.invalidateQueries({ queryKey: ['mailbox', 'deleted'] });
+      setSelectedMessage((cur) => (cur?.id === pendingPurge.id ? null : cur));
+      setSelectedIds((cur) => dropId(cur, pendingPurge.id));
+    } else if (pendingPurge.kind === 'bulk') {
+      const { ids } = pendingPurge;
+      const items = selectionToFolderItems(ids, visibleMessages, selectedFolder);
       for (const it of items) {
         await purgeMessage(it.id);
       }
       void queryClient.invalidateQueries({ queryKey: ['mailbox', 'deleted'] });
       setSelectedIds((cur) => dropIds(cur, ids));
       setSelectedMessage((cur) => (cur && ids.has(cur.id) ? null : cur));
-    } catch {
-      /* surfaced via Rust logs; next refetch resyncs */
+    } else {
+      // 'empty'
+      await emptyTrash();
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox', 'deleted'] });
+      setSelectedIds(new Set());
+      // Clear the reading pane if the open message was in Deleted.
+      setSelectedMessage((cur) => (cur?.folder === 'deleted' ? null : cur));
     }
-  }, [visibleMessages, selectedFolder, queryClient]);
+    setPendingPurge(null);
+  }, [pendingPurge, visibleMessages, selectedFolder, queryClient]);
 
   const handlers: MenuHandlers = useMemo(() => ({
     openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
@@ -1619,6 +1659,7 @@ export function AppShell() {
           onReparentFolder={(slug, parentSlug) => moveFolder.mutate({ slug, parentSlug })}
           selectedConnection={selectedConnection}
           onSelectConnection={onSelectConnection}
+          onEmptyTrash={emptyTrashFlow}
         />
         {/* M8 (tuxlink-raez / A8): the Contacts pseudo-folder replaces BOTH the
             MessageList column AND the reading pane with the inline ContactsPanel
@@ -2066,6 +2107,18 @@ export function AppShell() {
           />
         </Suspense>
       )}
+
+      {/* tuxlink-wl7n Task 14: permanent-delete confirm modal. Replaces the
+       *  prior window.confirm stopgaps for purgeById + bulkPurge, and gates
+       *  the new Empty Trash action. Three permanent actions share one modal. */}
+      <Suspense fallback={null}>
+        <ConfirmPurgeDialog
+          open={pendingPurge !== null}
+          count={pendingPurgeCount}
+          onConfirm={handlePurgeConfirm}
+          onCancel={() => setPendingPurge(null)}
+        />
+      </Suspense>
     </div>
   );
 }
