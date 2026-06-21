@@ -68,7 +68,11 @@ vi.mock('@tauri-apps/api/window', () => ({
 // render is grim-verified (Task 7), not unit-tested here.
 vi.mock('../map/basemapLeaflet', async () => {
   const L = (await import('leaflet')).default;
-  return { buildBaseLayers: () => [L.layerGroup()], OSM_ATTRIBUTION: '© OpenStreetMap contributors' };
+  return {
+    buildBaseLayers: () => [L.layerGroup()],
+    OSM_ATTRIBUTION: '© OpenStreetMap contributors',
+    flavorBackground: () => '#34373d',
+  };
 });
 
 import { AppShell } from './AppShell';

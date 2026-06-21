@@ -62,6 +62,14 @@ export interface PackSource {
 /** PMTiles seam URL for an archive id → the Rust HTTP-206 custom protocol. */
 export const PMTILES_TILE_URL = (id: string): string => `tile://pmtiles/${id}`;
 
+/** The flavor's own background color (dark `#34373d` / light `#cccccc`). Used as
+ * the MAP CONTAINER background so a blank-until-painted tile shows this instead of
+ * Leaflet's default light `#ddd` — i.e. load/zoom gaps blend into the map rather
+ * than flashing white on the software renderer (operator smoke, tuxlink-6kdw). */
+export function flavorBackground(flavor: BasemapFlavor): string {
+  return (namedFlavor(flavor) as { background: string }).background;
+}
+
 /** ODbL attribution required for OSM-derived vector tiles. */
 export const OSM_ATTRIBUTION = '© OpenStreetMap contributors';
 

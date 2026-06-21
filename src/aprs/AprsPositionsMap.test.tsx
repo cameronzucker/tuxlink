@@ -19,6 +19,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('../map/basemapLeaflet', () => ({
   buildBaseLayers: vi.fn(() => [L.layerGroup()]),
   OSM_ATTRIBUTION: '© OpenStreetMap contributors',
+  flavorBackground: () => '#34373d',
 }));
 
 // Spy whenSheetsReady so we can assert the re-bake wiring exists (R3 P0) and drive

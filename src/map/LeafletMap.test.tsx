@@ -9,6 +9,7 @@ const buildBaseLayersSpy = vi.hoisted(() => vi.fn(() => [L.layerGroup()]));
 vi.mock('./basemapLeaflet', () => ({
   buildBaseLayers: buildBaseLayersSpy,
   OSM_ATTRIBUTION: '© OpenStreetMap contributors',
+  flavorBackground: (f: string) => (f === 'dark' ? '#34373d' : '#cccccc'),
 }));
 // No backend in jsdom → invoke resolves to an empty pack list.
 const invokeMock = vi.hoisted(() => vi.fn(async () => ({ packs: [] })));

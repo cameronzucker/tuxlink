@@ -20,7 +20,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { invoke } from '@tauri-apps/api/core';
-import { buildBaseLayers, type PackSource, type BasemapFlavor } from './basemapLeaflet';
+import { buildBaseLayers, flavorBackground, type PackSource, type BasemapFlavor } from './basemapLeaflet';
 import { useBasemapFlavor } from './useBasemapFlavor';
 import { clampLatLon, clampMapCenter, MERCATOR_MAX_LAT, type LatLon } from './projection';
 import { LeafletMapProvider } from './LeafletMapContext';
@@ -247,7 +247,13 @@ export function LeafletMap({
   }
 
   return (
-    <div ref={containerRef} style={{ height: '100%', width: '100%' }}>
+    <div
+      ref={containerRef}
+      // Flavor background overrides Leaflet's default light `.leaflet-container`
+      // `#ddd` (inline style wins over the class) so tile-load/zoom gaps blend into
+      // the map instead of flashing white (operator smoke). Reactive to flavor.
+      style={{ height: '100%', width: '100%', background: flavorBackground(effectiveFlavor) }}
+    >
       <LeafletMapProvider value={map}>{children}</LeafletMapProvider>
     </div>
   );
