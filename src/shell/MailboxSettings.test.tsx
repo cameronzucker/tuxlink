@@ -116,6 +116,23 @@ describe('MailboxSettings', () => {
     });
   });
 
+  it('does NOT persist when the days input is cleared (Number(\'\')===0 guard, review I1)', async () => {
+    render(<MailboxSettings />);
+    const toggle = await screen.findByTestId<HTMLInputElement>('auto-purge-toggle');
+    await waitFor(() => expect(toggle.checked).toBe(true));
+    const daysInput = screen.getByTestId<HTMLInputElement>('retention-days-input');
+    await waitFor(() => expect(daysInput).not.toBeDisabled());
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+    // Clearing the field yields Number('') === 0 — out of range; must be ignored,
+    // not persisted as retentionDays: 0 (which would desync local state).
+    fireEvent.change(daysInput, { target: { value: '' } });
+    fireEvent.change(daysInput, { target: { value: '0' } });
+    fireEvent.change(daysInput, { target: { value: '400' } });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it('shows an error when config_read fails', async () => {
     invokeMock.mockReset();
     invokeMock.mockRejectedValue(new Error('backend error'));

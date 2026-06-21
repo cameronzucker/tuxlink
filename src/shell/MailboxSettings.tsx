@@ -57,6 +57,11 @@ export function MailboxSettings() {
 
   function onDaysChange(e: React.ChangeEvent<HTMLInputElement>) {
     const next = Number(e.target.value);
+    // Ignore an empty or out-of-range entry (Number('') === 0): the backend
+    // rejects retention < 1, and persisting it here would desync local state
+    // from the persisted value (Task-15 review I1). The input's min/max bound
+    // the keyboard path; this guards the cleared-field case.
+    if (!Number.isFinite(next) || next < 1 || next > 365) return;
     setRetentionDays(next);
     void persist(autoPurge, next);
   }
