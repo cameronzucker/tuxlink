@@ -1052,20 +1052,26 @@ export function AppShell() {
 
   /// Move a message to the Deleted folder (recoverable). No confirm.
   /// Invalidates the source folder and the 'deleted' folder.
+  /// Looks up the message's owning identity from visibleMessages so the backend
+  /// targets the correct per-identity namespace (Codex #2 fix, tuxlink-wl7n Task 13).
   const deleteByIdAndFolder = useCallback(async (
     id: string,
     fromFolder: MailboxFolderRef,
   ) => {
     if (fromFolder === 'deleted') return; // already in Deleted — no-op
+    // Resolve the owning identity from the visible list (includes cross-folder
+    // search hits). ParsedMessage lacks identity, so visibleMessages is the sole source.
+    const identity = visibleMessages.find((m) => m.id === id)?.identity;
     try {
-      await deleteMessages([{ id, folder: fromFolder }]);
+      await deleteMessages([{ id, folder: fromFolder, identity }]);
       void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
       setSelectedMessage((cur) => (cur?.id === id ? null : cur));
       setSelectedIds((cur) => dropId(cur, id));
     } catch {
       /* surfaced via Rust logs; next refetch resyncs */
     }
-  }, [queryClient]);
+  }, [visibleMessages, queryClient]);
 
   /// Restore a message from the Deleted folder to its origin folder.
   /// Invalidates the 'deleted' folder and the origin folder (covered by ['mailbox']).
@@ -1167,6 +1173,61 @@ export function AppShell() {
     (ids: Set<string>) => bulkMoveToFolder(ids, 'archive'),
     [bulkMoveToFolder],
   );
+
+  // tuxlink-wl7n Task 13 (Part B2): bulk Delete, Restore, and Delete-permanently
+  // handlers. Mirror bulkMoveToFolder / bulkArchive: build delete items carrying
+  // identity, call the mailboxCommands façade, invalidate, drop selection.
+
+  /// Move the selected messages to the Deleted folder (recoverable). No confirm —
+  /// delete is like Archive per the approved design. Skips items already in 'deleted'.
+  const bulkDelete = useCallback(async (ids: Set<string>) => {
+    const items = selectionToFolderItems(ids, visibleMessages, selectedFolder)
+      .filter((it) => it.folder !== 'deleted');
+    if (items.length === 0) return;
+    try {
+      await deleteMessages(items.map(({ id, folder, identity }) => ({ id, folder, identity })));
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+      const deletedIds = new Set(items.map((it) => it.id));
+      setSelectedIds((cur) => dropIds(cur, ids));
+      setSelectedMessage((cur) => (cur && deletedIds.has(cur.id) ? null : cur));
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [visibleMessages, selectedFolder, queryClient]);
+
+  /// Restore the selected messages from the Deleted folder to their origin folders.
+  const bulkRestore = useCallback(async (ids: Set<string>) => {
+    const items = selectionToFolderItems(ids, visibleMessages, selectedFolder);
+    if (items.length === 0) return;
+    try {
+      await restoreMessages(items.map((it) => it.id));
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+      setSelectedIds((cur) => dropIds(cur, ids));
+      setSelectedMessage((cur) => (cur && ids.has(cur.id) ? null : cur));
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [visibleMessages, selectedFolder, queryClient]);
+
+  /// Permanently delete the selected messages from the Deleted folder (no recovery).
+  /// Gated behind window.confirm. TODO(tuxlink-wl7n Task 14): replace with modal.
+  const bulkPurge = useCallback(async (ids: Set<string>) => {
+    if (!window.confirm(`Permanently delete ${ids.size} message(s)? This cannot be undone.`)) return;
+    const items = selectionToFolderItems(ids, visibleMessages, selectedFolder);
+    if (items.length === 0) return;
+    try {
+      for (const it of items) {
+        await purgeMessage(it.id);
+      }
+      void queryClient.invalidateQueries({ queryKey: ['mailbox', 'deleted'] });
+      setSelectedIds((cur) => dropIds(cur, ids));
+      setSelectedMessage((cur) => (cur && ids.has(cur.id) ? null : cur));
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [visibleMessages, selectedFolder, queryClient]);
 
   const handlers: MenuHandlers = useMemo(() => ({
     openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
@@ -1592,6 +1653,9 @@ export function AppShell() {
           onBulkSetReadState={bulkSetReadState}
           onBulkMove={bulkMoveToFolder}
           onBulkArchive={bulkArchive}
+          onBulkDelete={bulkDelete}
+          onBulkRestore={bulkRestore}
+          onBulkPurge={bulkPurge}
           onSetReadState={setMessageReadState}
         />
         {(() => {

@@ -18,29 +18,37 @@ describe('mailboxCommands — delete/restore/trash invoke wrappers', () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
   });
 
-  it('deleteMessages calls message_delete_bulk with id+folder pairs', async () => {
+  it('deleteMessages calls message_delete_bulk with id+folder+identity', async () => {
     await deleteMessages([{ id: 'MID1', folder: 'inbox' }]);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith('message_delete_bulk', {
-      items: [{ id: 'MID1', folder: 'inbox' }],
+      items: [{ id: 'MID1', folder: 'inbox', identity: undefined }],
     });
   });
 
-  it('deleteMessages strips identity from the wire call', async () => {
+  it('deleteMessages forwards identity to the wire call when present', async () => {
     await deleteMessages([{ id: 'MID2', folder: 'sent', identity: 'N0CALL' }]);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith('message_delete_bulk', {
-      items: [{ id: 'MID2', folder: 'sent' }],
+      items: [{ id: 'MID2', folder: 'sent', identity: 'N0CALL' }],
     });
   });
 
-  it('deleteMessages handles multiple items', async () => {
+  it('deleteMessages passes identity as undefined when absent', async () => {
+    await deleteMessages([{ id: 'MID4', folder: 'inbox' }]);
+    // identity is destructured and forwarded; absent from source → undefined in the object
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('message_delete_bulk', {
+      items: [{ id: 'MID4', folder: 'inbox', identity: undefined }],
+    });
+  });
+
+  it('deleteMessages handles multiple items with mixed identity presence', async () => {
     await deleteMessages([
-      { id: 'MID1', folder: 'inbox' },
+      { id: 'MID1', folder: 'inbox', identity: 'W1ABC' },
       { id: 'MID2', folder: 'archive' },
     ]);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith('message_delete_bulk', {
       items: [
-        { id: 'MID1', folder: 'inbox' },
-        { id: 'MID2', folder: 'archive' },
+        { id: 'MID1', folder: 'inbox', identity: 'W1ABC' },
+        { id: 'MID2', folder: 'archive', identity: undefined },
       ],
     });
   });

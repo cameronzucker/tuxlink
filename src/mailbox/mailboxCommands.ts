@@ -18,11 +18,11 @@ export interface DeleteItem {
 
 /// Bulk delete — moves each listed message to the Deleted folder.
 /// For the single-message case, pass a one-element array.
-/// `identity` is optional and ignored by the backend for bulk ops; included
-/// for forward-compat (the single-message command accepts it).
+/// `identity` is forwarded to the backend so delete/restore target the correct
+/// per-identity namespace when a message belongs to a non-default identity.
 export async function deleteMessages(items: DeleteItem[]): Promise<void> {
   await invoke<void>('message_delete_bulk', {
-    items: items.map(({ id, folder }) => ({ id, folder })),
+    items: items.map(({ id, folder, identity }) => ({ id, folder, identity })),
   });
 }
 

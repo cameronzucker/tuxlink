@@ -1464,10 +1464,16 @@ pub async fn message_set_read_state(
 
 /// One message reference for a bulk operation. Each carries its own folder so a
 /// cross-folder search-results selection (which mixes folders) stays correct.
+/// `identity` is the owning identity FULL (e.g. "W1ABC") for per-identity
+/// namespace resolution in delete/restore; absent for move/mark-read callers
+/// (they use the shared namespace). `#[serde(default)]` keeps existing payloads
+/// without the field (move/mark-read bulk commands) deserializing correctly.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MessageRefDto {
     pub folder: String,
     pub id: String,
+    #[serde(default)]
+    pub identity: Option<String>,
 }
 
 /// Set the read-state of every listed message. Best-effort per item: a missing
@@ -1576,7 +1582,8 @@ pub async fn message_delete_bulk(
 
 /// Backend-facing core of [`message_delete_bulk`], split out so it is
 /// unit-testable against a real `NativeBackend` without a Tauri `State` (the
-/// same seam as [`move_bulk_with_backend`]).
+/// same seam as [`move_bulk_with_backend`]). Passes each item's `identity`
+/// (if present) so delete/restore resolve to the correct per-identity namespace.
 pub(crate) async fn delete_bulk_with_backend(
     backend: &dyn crate::winlink_backend::WinlinkBackend,
     items: Vec<MessageRefDto>,
@@ -1584,7 +1591,7 @@ pub(crate) async fn delete_bulk_with_backend(
     for item in items {
         let from_ref = parse_folder_ref(&item.folder)?;
         let mid = MessageId::new(&item.id);
-        backend.delete_message_in(from_ref, &mid, None).await?;
+        backend.delete_message_in(from_ref, &mid, item.identity.as_deref()).await?;
     }
     Ok(())
 }
@@ -12176,6 +12183,83 @@ hw:CARD=Device,DEV=0
             backend.list_messages(MailboxFolder::Deleted).await.unwrap().len(),
             3,
             "all three messages landed in the Deleted (Trash) folder"
+        );
+    }
+
+    // tuxlink-wl7n Task 13 (Part A — Codex #2): bulk delete must thread the
+    // per-item identity through to the backend so delete/restore target the
+    // correct per-identity namespace. Without the fix, `origin_full` was always
+    // `None`, so a message stored under "W1ABC"'s Inbox would look in the
+    // `_default` namespace (miss) and restore would re-home to `_default` Inbox.
+    #[tokio::test]
+    async fn message_delete_bulk_with_identity_restores_to_correct_namespace() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::compose::compose_message;
+        use crate::winlink_backend::{MailboxFolder, NativeBackend, WinlinkBackend};
+
+        let dir = tempfile::tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+
+        // Store a message in W1ABC's identity-namespaced Inbox via for_identity.
+        // The message lives at {dir}/mailbox/W1ABC/inbox/<mid>.b2f (Phase-4 ns layout).
+        let mid = seed
+            .for_identity("W1ABC")
+            .store(
+                MailboxFolder::Inbox,
+                &compose_message("W1ABC", &["W1AW"], &[], "ID test", "body", 1_716_200_000)
+                    .to_bytes(),
+            )
+            .unwrap();
+
+        let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
+
+        // Bulk-delete with identity threaded through.
+        let items = vec![MessageRefDto {
+            folder: "inbox".into(),
+            id: mid.0.clone(),
+            identity: Some("W1ABC".into()),
+        }];
+        delete_bulk_with_backend(&backend, items)
+            .await
+            .expect("bulk delete with identity succeeds");
+
+        // Message is now in Deleted; W1ABC's namespaced Inbox is empty.
+        assert_eq!(
+            backend.list_messages(MailboxFolder::Deleted).await.unwrap().len(),
+            1,
+            "message moved to Deleted folder"
+        );
+        assert!(
+            seed.for_identity("W1ABC").list(MailboxFolder::Inbox).unwrap().is_empty(),
+            "W1ABC's Inbox must be empty after delete"
+        );
+
+        // The .trash sidecar must record origin_full = "W1ABC".
+        // Deleted folder is at {dir}/deleted/ (shared, not namespaced).
+        let sidecar_path = dir.path().join("deleted").join(format!("{}.trash", mid.0));
+        assert!(sidecar_path.exists(), ".trash sidecar must exist");
+        let sidecar_raw = std::fs::read_to_string(&sidecar_path).unwrap();
+        let sidecar: serde_json::Value = serde_json::from_str(&sidecar_raw).unwrap();
+        assert_eq!(
+            sidecar["origin_full"].as_str(),
+            Some("W1ABC"),
+            "sidecar must record origin_full = W1ABC"
+        );
+
+        // Restore must return the message to W1ABC's Inbox (not _default Inbox).
+        let mid_id = crate::winlink_backend::MessageId::new(&mid.0);
+        backend
+            .restore_message(&mid_id)
+            .await
+            .expect("restore succeeds");
+        assert_eq!(
+            seed.for_identity("W1ABC").list(MailboxFolder::Inbox).unwrap().len(),
+            1,
+            "restored message must be in W1ABC's namespaced Inbox"
+        );
+        assert!(
+            seed.list(MailboxFolder::Inbox).unwrap().is_empty(),
+            "restored message must NOT be in the _default Inbox"
         );
     }
 }

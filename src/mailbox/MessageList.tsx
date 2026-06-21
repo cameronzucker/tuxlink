@@ -333,6 +333,15 @@ export interface MessageListProps {
   /// Archive the given set of messages (tuxlink-l80q). Drives the bulk bar's
   /// Archive button and the selection-mode context menu's Archive item.
   onBulkArchive?: (ids: Set<string>) => void;
+  /// Move the given set of messages to Trash (tuxlink-wl7n Task 13). Drives the
+  /// bulk bar's Delete button and the selection-mode context menu's Delete item.
+  onBulkDelete?: (ids: Set<string>) => void;
+  /// Restore the given set of messages from Trash (tuxlink-wl7n Task 13). Drives
+  /// the bulk bar's Restore button and the selection-mode context menu's Restore item.
+  onBulkRestore?: (ids: Set<string>) => void;
+  /// Permanently delete the given set of messages (tuxlink-wl7n Task 13). Drives
+  /// the bulk bar's Delete-permanently button and the selection-mode context-menu item.
+  onBulkPurge?: (ids: Set<string>) => void;
   /// Single-message read/unread toggle — context-menu and U-key (tuxlink-etxt
   /// Tasks 12 + 13). Optional so existing callers compile without change.
   onSetReadState?: (id: string, folder: MailboxFolderRef, read: boolean) => void;
@@ -365,6 +374,9 @@ export function MessageList({
   onBulkSetReadState,
   onBulkMove,
   onBulkArchive,
+  onBulkDelete,
+  onBulkRestore,
+  onBulkPurge,
   onSetReadState,
 }: MessageListProps) {
   // Sort client-side so changing modes doesn't require a backend re-fetch.
@@ -483,6 +495,9 @@ export function MessageList({
               onMarkUnread={() => onBulkSetReadState?.(new Set(selectedIds), false)}
               onArchive={() => onBulkArchive?.(new Set(selectedIds))}
               onMove={(to) => onBulkMove?.(new Set(selectedIds), to)}
+              onBulkDelete={onBulkDelete ? () => onBulkDelete(new Set(selectedIds)) : undefined}
+              onBulkRestore={onBulkRestore ? () => onBulkRestore(new Set(selectedIds)) : undefined}
+              onBulkPurge={onBulkPurge ? () => onBulkPurge(new Set(selectedIds)) : undefined}
               onClear={() => onSelectionChange(new Set())}
             />
           ) : (
@@ -537,15 +552,21 @@ export function MessageList({
             if (ctxMenu.selectionMode) onBulkArchive?.(new Set(selectedIds));
             else onArchiveMessage?.(ctxMenu.message.id, ctxSourceFolder);
           }}
-          onDelete={onDeleteMessage
-            ? () => onDeleteMessage(ctxMenu.message.id, ctxSourceFolder)
-            : undefined}
-          onRestore={onRestoreMessage
-            ? () => onRestoreMessage(ctxMenu.message.id)
-            : undefined}
-          onDeletePermanently={onPurgeMessage
-            ? () => onPurgeMessage(ctxMenu.message.id)
-            : undefined}
+          onDelete={
+            ctxMenu.selectionMode
+              ? (onBulkDelete ? () => onBulkDelete(new Set(selectedIds)) : undefined)
+              : (onDeleteMessage ? () => onDeleteMessage(ctxMenu.message.id, ctxSourceFolder) : undefined)
+          }
+          onRestore={
+            ctxMenu.selectionMode
+              ? (onBulkRestore ? () => onBulkRestore(new Set(selectedIds)) : undefined)
+              : (onRestoreMessage ? () => onRestoreMessage(ctxMenu.message.id) : undefined)
+          }
+          onDeletePermanently={
+            ctxMenu.selectionMode
+              ? (onBulkPurge ? () => onBulkPurge(new Set(selectedIds)) : undefined)
+              : (onPurgeMessage ? () => onPurgeMessage(ctxMenu.message.id) : undefined)
+          }
           onClose={() => setCtxMenu(null)}
         />
       )}
