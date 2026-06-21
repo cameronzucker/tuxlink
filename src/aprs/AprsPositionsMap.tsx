@@ -232,9 +232,12 @@ function MapOverlays({
   const resolveRef = useRef(resolve);
   resolveRef.current = resolve;
 
-  // Live trigger: when the newest frame (highest `at`) changes to a different
-  // station, fire the trace for that station once. The layer's bounded animation
-  // fades and stops on its own; no loop needed here.
+  // Live trigger: when the newest frame (highest `at`) advances, fire the trace
+  // for that station once. The layer's bounded animation fades and stops on its
+  // own; no loop needed here. The two triggers are hover + a genuinely-new frame
+  // — so on first mount we SEED the high-water mark from the existing backlog
+  // WITHOUT firing (a cached frame that may be hours old is not "new"); only
+  // frames that arrive after mount animate.
   const newestSeenRef = useRef<{ at: number; call: string } | null>(null);
   useEffect(() => {
     if (positions.length === 0) return;
@@ -243,7 +246,12 @@ function MapOverlays({
       if (p.at > newest.at) newest = p;
     }
     const prev = newestSeenRef.current;
-    if (!prev || newest.at > prev.at) {
+    if (!prev) {
+      // First mount: seed the backlog's high-water mark, do not auto-play.
+      newestSeenRef.current = { at: newest.at, call: newest.call };
+      return;
+    }
+    if (newest.at > prev.at) {
       newestSeenRef.current = { at: newest.at, call: newest.call };
       setTracePath(resolveRef.current(newest.call));
     }
