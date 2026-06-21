@@ -30,6 +30,74 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.73.0](https://github.com/cameronzucker/tuxlink/compare/v0.72.0...v0.73.0) (2026-06-21)
+
+
+### Features
+
+* **aprs:** APRS→Winlink local-area weather SITREP export (hepq) ([c9a8b52](https://github.com/cameronzucker/tuxlink/commit/c9a8b5206dbe93d89e88896595d79d0757618384))
+* **aprs:** Canvas2D digipeat-path overlay layer (render) (tuxlink-qnu6) ([f3d521e](https://github.com/cameronzucker/tuxlink/commit/f3d521e4117fceeffb1666f29a55b64b2b669ae0))
+* **aprs:** collapsible layers panel (tuxlink-8fjx) ([695e674](https://github.com/cameronzucker/tuxlink/commit/695e6744cc197130e99e40801036f2ae523fb1ca))
+* **aprs:** concurrent coexisting digipeat-path traces (tuxlink-qnu6) ([8b1c34b](https://github.com/cameronzucker/tuxlink/commit/8b1c34b502750b973819a17d3188c675e1fdf349))
+* **aprs:** curated symbol→bucket station classifier (tuxlink-8fjx) ([296c7c8](https://github.com/cameronzucker/tuxlink/commit/296c7c8f09a5e8f079c65438b7e390b103ce6df4))
+* **aprs:** honest weather-station states + range validation + raw transparency (tuxlink-vnm5) ([da4a37a](https://github.com/cameronzucker/tuxlink/commit/da4a37a2cd985d262af031638e2480a07cd2b877))
+* **aprs:** migrate AprsPositionsMap to the Leaflet substrate (tuxlink-6kdw) ([d9807d1](https://github.com/cameronzucker/tuxlink/commit/d9807d10a74c426cea445b75af9ac89c47f91b1b))
+* **aprs:** persisted bucket-filter hook (tuxlink-8fjx) ([6e04307](https://github.com/cameronzucker/tuxlink/commit/6e0430727b0eaa5c17522102aa28a2a1739fa983))
+* **aprs:** port pure digipeat-path resolver from [#838](https://github.com/cameronzucker/tuxlink/issues/838) (tuxlink-qnu6) ([e36772d](https://github.com/cameronzucker/tuxlink/commit/e36772d7ec74ada34bab1829b3503f05dcbbca5f))
+* **aprs:** pure trace schedule + path-trim geometry (tuxlink-qnu6) ([67dc181](https://github.com/cameronzucker/tuxlink/commit/67dc1815260d8d04cc58422b19605a4bca7475fd))
+* **aprs:** speed up the cn84 path animation ~2x (tuxlink-qnu6) ([bf090b0](https://github.com/cameronzucker/tuxlink/commit/bf090b09ccb80869121fe769e65892c8c0298877))
+* **aprs:** wire digipeat-path animation triggers (hover + live) (tuxlink-qnu6) ([9fc23df](https://github.com/cameronzucker/tuxlink/commit/9fc23dffde70037805e3e8a264aee9ac93b926d6))
+* **aprs:** wire layers panel into the map; retire single-select filter (tuxlink-8fjx) ([53faa73](https://github.com/cameronzucker/tuxlink/commit/53faa73b0775420f80d7db492f23cbc5f86f97ac))
+* **backend:** delete/restore/empty/purge on WinlinkBackend + Tauri commands (tuxlink-wl7n) ([a3b2fd5](https://github.com/cameronzucker/tuxlink/commit/a3b2fd5075b2e581b4b2301de1a180e948951e54))
+* **mailbox:** bulk Delete/Restore/Delete-permanently + identity-correct delete (tuxlink-wl7n Task 13) ([6982d53](https://github.com/cameronzucker/tuxlink/commit/6982d5320216b5299962d736cec171043390b863))
+* **mailbox:** Delete bindings + context-menu/message-view actions (tuxlink-wl7n) ([c771313](https://github.com/cameronzucker/tuxlink/commit/c77131373adced8d132d4008b126be37f67b90dd))
+* **mailbox:** Deleted folder + TrashMeta sidecar + delete_message (tuxlink-wl7n) ([34f7d98](https://github.com/cameronzucker/tuxlink/commit/34f7d986698f2c9d861a6cf1b9bcea39a6498a8f))
+* **mailbox:** Empty Trash + permanent-delete confirm modal (tuxlink-wl7n Task 14) ([5e06e77](https://github.com/cameronzucker/tuxlink/commit/5e06e77218f7b95bc9904a23748560822df79c6d))
+* **mailbox:** exclude Trash from default search + block Outbox delete during a live session (tuxlink-wl7n F2/F3) ([9f62c0b](https://github.com/cameronzucker/tuxlink/commit/9f62c0bc080495985e858ed3f023e7d73161d275))
+* **mailbox:** restore + permanent purge + auto-purge selector (tuxlink-wl7n) ([8a73f70](https://github.com/cameronzucker/tuxlink/commit/8a73f705f99659e768c1bbfbf6fe1b81a2de22fb))
+* **mailbox:** user-folder-origin delete + Task 9 auto-purge (tuxlink-wl7n) ([124b0c7](https://github.com/cameronzucker/tuxlink/commit/124b0c7905b7aadc1b93e7079ed2be597e9a7482))
+* **mailbox:** wire Delete/Restore/Delete-permanently through AppShell (tuxlink-wl7n) ([6b8766e](https://github.com/cameronzucker/tuxlink/commit/6b8766ef68b380e7a0c2ac06402fc5beac97dcc2))
+* **map:** Leaflet map context + layer-group lifecycle hook (tuxlink-6kdw) ([06c5e8b](https://github.com/cameronzucker/tuxlink/commit/06c5e8b71104bc0b4920f14cd194f708bbcbc1c9))
+* **map:** Leaflet substrate preserving the MapLibreMap contract (tuxlink-6kdw) ([e65ad03](https://github.com/cameronzucker/tuxlink/commit/e65ad03fae257fa372fa5ec502983f746467357c))
+* **map:** protomaps-leaflet base layer over the tile:// seam (tuxlink-6kdw) ([4a4327a](https://github.com/cameronzucker/tuxlink/commit/4a4327a30c95fa808575ca4a68aa2406d684915b))
+* **map:** region packs render their own placenames on Leaflet (tuxlink-c973) ([436b41a](https://github.com/cameronzucker/tuxlink/commit/436b41a91087876f77558031a5a76b52812e3ca1))
+* **settings:** Trash auto-purge toggle + retention days (tuxlink-wl7n Task 15) ([808fc79](https://github.com/cameronzucker/tuxlink/commit/808fc79ceec35e570d78ecac192f2c1660e8ab85))
+
+
+### Bug Fixes
+
+* **aprs:** de-list the WeatherStatus doc comment to satisfy clippy (tuxlink-vnm5) ([e57b550](https://github.com/cameronzucker/tuxlink/commit/e57b550e3b648342eeee8249dca7bfcae4213151))
+* **aprs:** full per-station reconciliation + control z-index + attribution (tuxlink-6kdw) ([15683bf](https://github.com/cameronzucker/tuxlink/commit/15683bf509263f086af3bf4effc16867f92ba1d5))
+* **aprs:** lengthen map stale grey-out to 1h and drop TTL to 3h (tuxlink-uhd7) ([44764b0](https://github.com/cameronzucker/tuxlink/commit/44764b0db7bdb36bf126e2fb26d93af44be16f00))
+* **aprs:** move layers panel below the top-right zoom control (tuxlink-8kki) ([098351d](https://github.com/cameronzucker/tuxlink/commit/098351d04bc5a74e10ca83279e9060e4e3afb7ef))
+* **aprs:** never trace a digipeat path from an object/item pin (tuxlink-qnu6) ([529d439](https://github.com/cameronzucker/tuxlink/commit/529d439d44409f30ae45b271b25072f26c1cb408))
+* **aprs:** operator map-control layout + dark Leaflet built-ins (tuxlink-8kki) ([3b667c2](https://github.com/cameronzucker/tuxlink/commit/3b667c2e1bce4fea65af44aec58f8ea552b8a3f5))
+* **aprs:** seed live-trace high-water mark on mount, don't auto-play (tuxlink-qnu6) ([404d5b6](https://github.com/cameronzucker/tuxlink/commit/404d5b68a570d7a7a3a28eebe9c7e28b8ae229dd))
+* **aprs:** stabilize heard-station hook refs to stop drunk-map re-tile storm (xsv5) ([1d076f2](https://github.com/cameronzucker/tuxlink/commit/1d076f2fde6ff068f4a409cad3fab79c2e646cd5))
+* **aprs:** WX card dismissal, control z-order, and reconcile soft-crash (tuxlink-6kdw) ([287c959](https://github.com/cameronzucker/tuxlink/commit/287c9590ca938f6be3ee1ba65d2e347f1d2782a8))
+* **basemap:** resolve current Protomaps build at download time (tuxlink-fv31) ([ad63e8e](https://github.com/cameronzucker/tuxlink/commit/ad63e8edc83b60baf07883eb47695a9f998115a2))
+* **mailbox:** address Codex backend adrev — Trash IPC reachability, purge path-safety, indexed sweep, restore fallback (tuxlink-wl7n) ([9f8a770](https://github.com/cameronzucker/tuxlink/commit/9f8a770b8debec1c69b0bc40924dd127ea94ecf5))
+* **mailbox:** exhaustive MessageRefDto literals + drop redundant map (tuxlink-wl7n Task 13 review) ([244d2ed](https://github.com/cameronzucker/tuxlink/commit/244d2ed39398850fe2c18f1c05f086c6504bb93c))
+* **mailbox:** is_some_and over map_or(false) in trash enum (clippy -D warnings) ([13168e2](https://github.com/cameronzucker/tuxlink/commit/13168e2ac002e7a72b1b7c327b8b26491cedd89a))
+* **mailbox:** Task-14 review — define nav-item--danger CSS + resync trash on partial purge failure (tuxlink-wl7n) ([3585337](https://github.com/cameronzucker/tuxlink/commit/3585337f83c3a59ce79c2d8f8c348a720afeebca))
+* **mailbox:** use io::Error::other in write_trash_sidecar (clippy -D warnings) ([689877c](https://github.com/cameronzucker/tuxlink/commit/689877cddf3f342424a326a500a6970b23b8e21c))
+* **mailbox:** wire Message → Delete menubar item through the dispatcher (tuxlink-wl7n final-review F1) ([9944fbb](https://github.com/cameronzucker/tuxlink/commit/9944fbba7a2d3652800875789aa70108bc826dc9))
+* **map:** correct protomaps-leaflet tile:// seam wiring (tuxlink-6kdw) ([414e0da](https://github.com/cameronzucker/tuxlink/commit/414e0da0e742d44cefa7c87be5d6fb09a36b3480))
+* **map:** dark map-container background so load gaps don't flash white (tuxlink-6kdw) ([3443c82](https://github.com/cameronzucker/tuxlink/commit/3443c82694288061f6873c9a48beef44548cf182))
+* **map:** re-enable preserveDrawingBuffer (v5 form) so WX PNG export works ([96e4019](https://github.com/cameronzucker/tuxlink/commit/96e401979ace8bfa4e9642b751d6d57a619d8c34))
+* **map:** stop base-map placenames erasing on zoom-out (tuxlink-c973) ([b7998bb](https://github.com/cameronzucker/tuxlink/commit/b7998bbaefdb2232b0dc8151915b53ae920147fc))
+* **settings:** guard cleared/out-of-range retention-days input (tuxlink-wl7n Task 15 review I1) ([c524cc0](https://github.com/cameronzucker/tuxlink/commit/c524cc011688669f5fcd96925d3c79b9fce31ea3))
+* **shell:** close APRS map when a message is selected ([7123536](https://github.com/cameronzucker/tuxlink/commit/71235363d5a5b856b397a6166a9e036a9822e5a8))
+* **test:** add trash_auto_purge/retention to integration-test Config literals (tuxlink-wl7n) ([00d8a48](https://github.com/cameronzucker/tuxlink/commit/00d8a4821b397e1e5b66e7500d119d5abdb6a6ea))
+* **test:** integration test parse_folder("deleted") now parses (tuxlink-wl7n) ([4324e13](https://github.com/cameronzucker/tuxlink/commit/4324e13570567a9b87155790b3894366461f1129))
+* **test:** native_backend_delete_message_moves_to_trash uses default-ns origin (tuxlink-wl7n) ([1cddb7f](https://github.com/cameronzucker/tuxlink/commit/1cddb7f34164c2fae53c68c4536d26cb8f8c1fa7))
+
+
+### Performance
+
+* **map:** disable Leaflet tile fade-in to stop "loading from white" (tuxlink-6kdw) ([5ecbf95](https://github.com/cameronzucker/tuxlink/commit/5ecbf957d1ff6488f0c1125595223ce17310aa1b))
+* **map:** smoother pan/zoom on the Canvas2D GridLayer (tuxlink-6kdw) ([76fc829](https://github.com/cameronzucker/tuxlink/commit/76fc8295341ac452e53abf3774fa646f0f75dc2e))
+
 ## [0.72.0](https://github.com/cameronzucker/tuxlink/compare/v0.71.1...v0.72.0) (2026-06-20)
 
 
