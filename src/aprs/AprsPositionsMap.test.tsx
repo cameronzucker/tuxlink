@@ -242,23 +242,31 @@ describe('AprsPositionsMap WX overlay + filter (ni5b)', () => {
       { call: 'N7CAR-9', lat: 40, lon: -111, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 0, via: [] },
       { call: 'WX7AB', lat: 41, lon: -112, symbolTable: '/', symbolCode: '_', comment: '', at: Date.now(), ambiguity: 0, via: [] },
     ];
-    const { getByTestId, queryByTestId } = await renderMap(
+    const { getByTestId, container } = await renderMap(
       <AprsPositionsMap positions={positions} operatorGrid="DN40" />,
     );
+    // Default all-on: both pins drawn.
+    expect(pinByCall(container, 'N7CAR-9')).toBeDefined();
+    expect(pinByCall(container, 'WX7AB')).toBeDefined();
+
     // Open the panel (default collapsed), then uncheck Vehicles.
     fireEvent.click(getByTestId('aprs-layers-toggle'));
     await act(async () => {
       fireEvent.click(getByTestId('aprs-layers-check-vehicles'));
     });
-    // The car's bucket is now hidden; assert via the panel's live count or a
-    // marker query. Counts: vehicles shows 1, weather shows 1 regardless of toggle.
+    // The car's WHOLE bundle leaves the map; the weather station stays. This is the
+    // real invariant — the count is filter-independent (still reads 1), so the
+    // marker's absence, not the count, proves the filter actually hides the pin.
+    expect(pinByCall(container, 'N7CAR-9')).toBeUndefined();
+    expect(pinByCall(container, 'WX7AB')).toBeDefined();
     expect(getByTestId('aprs-layers-count-vehicles')).toHaveTextContent('1');
-    // Re-check Vehicles restores it.
+
+    // Re-check Vehicles restores the car pin.
     await act(async () => {
       fireEvent.click(getByTestId('aprs-layers-check-vehicles'));
     });
     expect(getByTestId('aprs-layers-check-vehicles')).toBeChecked();
-    void queryByTestId;
+    expect(pinByCall(container, 'N7CAR-9')).toBeDefined();
   });
 
   it('Weather SITREP composes a prefilled draft and opens compose (hepq)', async () => {
