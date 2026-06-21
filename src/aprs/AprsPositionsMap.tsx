@@ -223,6 +223,11 @@ function MapOverlays({
   const resolve = (call: string): PathSegment[] | null => {
     const p = byCallRef.current.get(call);
     if (!p) return null;
+    // Object/item reports carry the RELAYING station's via-chain, not the
+    // object's own — tracing a path from an object pin would fabricate its RF
+    // source. The store tags these `isObject` (it does not drop them); honor the
+    // HeardPosition invariant and never trace one.
+    if (p.isObject) return null;
     const src = { ...cellCenter(p), call: p.call };
     const via = p.via ?? [];
     const located = new Map(positions.map((q) => [q.call, cellCenter(q)]));
@@ -240,9 +245,12 @@ function MapOverlays({
   // frames that arrive after mount animate.
   const newestSeenRef = useRef<{ at: number; call: string } | null>(null);
   useEffect(() => {
-    if (positions.length === 0) return;
-    let newest = positions[0];
-    for (const p of positions) {
+    // Only real stations can drive a path trace — object/item reports carry the
+    // relayer's via-chain (see `resolve`), so they never become the trigger frame.
+    const traceable = positions.filter((p) => !p.isObject);
+    if (traceable.length === 0) return;
+    let newest = traceable[0];
+    for (const p of traceable) {
       if (p.at > newest.at) newest = p;
     }
     const prev = newestSeenRef.current;
