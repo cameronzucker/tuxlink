@@ -1,177 +1,132 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, act, screen, fireEvent } from '@testing-library/react';
-import { getLastMap, type MapLibreMock } from '../map/testMapLibreMock';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, act, screen, fireEvent, waitFor } from '@testing-library/react';
+import L from 'leaflet';
 import { gridToLatLon } from '../forms/position/maidenhead';
-import { AprsPositionsMap, ambiguityRadiusMeters } from './AprsPositionsMap';
+import { ambiguityRadiusMeters } from './AprsPositionsMap';
 import type { HeardPosition } from './aprsTypes';
 import { listDraftIds, loadDraft } from '../compose/useDraft';
 
-// The Weather SITREP button opens a compose window via the Tauri invoke seam.
-// Resolve to [] by default: MapLibreMap awaits invoke('…basemap packs…') and
-// expects an array; compose_window_open ignores the return.
-const invokeMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+// LeafletMap fetches packs via invoke('basemap_list_packs') (wants {packs}); the
+// SITREP button calls invoke('compose_window_open').
+const invokeMock = vi.hoisted(() =>
+  vi.fn(async (cmd: string) => (cmd === 'basemap_list_packs' ? { packs: [] } : undefined)),
+);
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 
-// MapLibre re-expression (mirrors StationFinderMap.test.tsx): pins are GeoJSON
-// circle-layer features driven through the global maplibre-gl test double, not
-// Leaflet markers. These tests prove the source/feature wiring (one feature per
-// heard station, callsign label property). Render fidelity is grim-only.
+// Mock the base-layer builder → inert layer (R5 P1): a real protomaps-leaflet
+// GridLayer would try to fetch/decode PMTiles to canvas in jsdom (AbortSignal /
+// no-canvas noise). The base render is grim-verified (Task 7), not unit-tested.
+vi.mock('../map/basemapLeaflet', () => ({
+  buildBaseLayers: vi.fn(() => [L.layerGroup()]),
+  OSM_ATTRIBUTION: '© OpenStreetMap contributors',
+  flavorBackground: () => '#34373d',
+}));
+
+// Spy whenSheetsReady so we can assert the re-bake wiring exists (R3 P0) and drive
+// it; keep every other aprsSprites export real (identity assertions need them).
+const sheetsReadyCbs = vi.hoisted(() => [] as Array<() => void>);
+vi.mock('../map/aprsSprites', async (orig) => {
+  const actual = await orig<typeof import('../map/aprsSprites')>();
+  return {
+    ...actual,
+    whenSheetsReady: vi.fn((cb: () => void) => {
+      sheetsReadyCbs.push(cb);
+      return () => {};
+    }),
+  };
+});
+
+import { AprsPositionsMap } from './AprsPositionsMap';
+
+// Leaflet sizes from clientWidth/Height; jsdom reports 0. Shim the prototype.
+const origW = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+const origH = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+
+// Capture the real L.Map the component constructs (no prod test-registry needed).
+const realLMap = L.map.bind(L);
+let captured: L.Map | null = null;
+
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 800 });
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, value: 600 });
+  captured = null;
+  sheetsReadyCbs.length = 0;
+  vi.spyOn(L, 'map').mockImplementation(((el: HTMLElement | string, opts?: L.MapOptions) => {
+    const m = realLMap(el as HTMLElement, opts);
+    captured = m;
+    return m;
+  }) as typeof L.map);
+  window.localStorage.clear();
+  invokeMock.mockClear();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  if (origW) Object.defineProperty(HTMLElement.prototype, 'clientWidth', origW);
+  if (origH) Object.defineProperty(HTMLElement.prototype, 'clientHeight', origH);
+});
+
+/** Render and flush LeafletMap's whenReady (sync) + async pack fetch. */
+async function renderMap(ui: React.ReactElement) {
+  const result = render(ui);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(captured).not.toBeNull());
+  return result;
+}
+
+const pins = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLElement>('img.aprs-pin'));
+const pinByCall = (c: HTMLElement, call: string) =>
+  pins(c).find((el) => el.dataset.call === call);
+const circles = () => {
+  const out: L.Circle[] = [];
+  captured!.eachLayer((l) => {
+    if (l instanceof L.Circle) out.push(l);
+  });
+  return out;
+};
 
 const positions: HeardPosition[] = [
-  { call: 'KK6XYZ', lat: 49.05, lon: -72.03, symbolTable: '/', symbolCode: '-', comment: 'Hello', at: 1, ambiguity: 0 },
-  { call: 'W7ABC', lat: 40.0, lon: -100.0, symbolTable: '/', symbolCode: '>', comment: 'Mobile', at: 2, ambiguity: 0 },
+  { call: 'KK6XYZ', lat: 49.05, lon: -72.03, symbolTable: '/', symbolCode: '-', comment: 'Hello', at: Date.now(), ambiguity: 0 },
+  { call: 'W7ABC', lat: 40.0, lon: -100.0, symbolTable: '/', symbolCode: '>', comment: 'Mobile', at: Date.now(), ambiguity: 0 },
 ];
 
-interface PinFeature {
-  properties: { call: string; comment: string; ambiguity: number };
-  geometry: { coordinates: [number, number] };
-}
-
-interface CircleFeature {
-  properties: { call: string; ambiguity: number };
-  geometry: { type: string };
-}
-
-function loadLast(): MapLibreMock {
-  const map = getLastMap()!;
-  act(() => map.__emit('load'));
-  return map;
-}
-
-function sourceData(map: MapLibreMock, id: string): { features: PinFeature[] } {
-  return (map.getSource(id) as { data: { features: PinFeature[] } }).data;
-}
-
-function circleData(map: MapLibreMock, id: string): { features: CircleFeature[] } {
-  return (map.getSource(id) as { data: { features: CircleFeature[] } }).data;
-}
-
-describe('AprsPositionsMap', () => {
-  it('renders a testid container', () => {
-    const { getByTestId } = render(<AprsPositionsMap positions={[]} />);
+describe('AprsPositionsMap (Leaflet)', () => {
+  it('renders a testid container', async () => {
+    const { getByTestId } = await renderMap(<AprsPositionsMap positions={[]} />);
     expect(getByTestId('aprs-positions-map')).toBeInTheDocument();
   });
 
-  it('builds one feature per heard position with callsign + comment + coords', () => {
-    render(<AprsPositionsMap positions={positions} />);
-    const map = loadLast();
-    const feats = sourceData(map, 'aprs-positions').features;
-    expect(feats).toHaveLength(2);
-    const xyz = feats.find((f) => f.properties.call === 'KK6XYZ')!;
-    expect(xyz.properties.comment).toBe('Hello');
-    // GeoJSON coordinate order is [lon, lat].
-    expect(xyz.geometry.coordinates).toEqual([-72.03, 49.05]);
+  it('renders one pin per heard position with callsign + sprite identity + decoded coords', async () => {
+    const { container } = await renderMap(<AprsPositionsMap positions={positions} />);
+    expect(pins(container)).toHaveLength(2);
+    const xyz = pinByCall(container, 'KK6XYZ')!;
+    expect(xyz.nextElementSibling?.textContent).toBe('KK6XYZ'); // the label span
+    const mobile = pinByCall(container, 'W7ABC')!;
+    expect(mobile.dataset.sprite).toBe('aprs:p:>'); // stable identity (pure helper id)
+    // exact (non-ambiguous) fix plots at the decoded coord — no centre shift.
+    expect(parseFloat(mobile.dataset.lat!)).toBe(40);
+    expect(parseFloat(mobile.dataset.lon!)).toBe(-100);
   });
 
-  it('plots nothing when no positions are heard', () => {
-    render(<AprsPositionsMap positions={[]} />);
-    const map = loadLast();
-    expect(sourceData(map, 'aprs-positions').features).toHaveLength(0);
+  it('plots nothing when no positions are heard', async () => {
+    const { container } = await renderMap(<AprsPositionsMap positions={[]} />);
+    expect(pins(container)).toHaveLength(0);
   });
 
-  // tuxlink-gq0d: the APRS map missed the tuxlink-vnk7 render-perf pattern that
-  // StationFinderMap has. Lock the ported behavior so it can't regress.
-  it('drives pin staleness via feature-state + a stable id, not a per-tick FC rebuild (gq0d)', () => {
-    const now = Date.now();
-    const fixes: HeardPosition[] = [
-      { call: 'OLD', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: now - 20 * 60 * 1000, ambiguity: 0 },
-      { call: 'NEW', lat: 41, lon: -101, symbolTable: '/', symbolCode: '>', comment: '', at: now, ambiguity: 0 },
-    ];
-    render(<AprsPositionsMap positions={fixes} />);
-    const map = loadLast();
-    const feats = sourceData(map, 'aprs-positions').features;
-    const old = feats.find((f) => f.properties.call === 'OLD')! as PinFeature & { id?: string };
-    // The pin carries a STABLE feature id (call) so feature-state can target it,
-    // and staleness is NO LONGER a baked feature PROPERTY (which forced a full FC
-    // rebuild every NOW_TICK) — it rides feature-state instead.
-    expect(old.id).toBe('OLD');
-    expect('stale' in old.properties).toBe(false);
-    expect(map.__state.featureStates.get('aprs-positions')?.get('OLD')?.stale).toBe(true);
-    expect(map.__state.featureStates.get('aprs-positions')?.get('NEW')?.stale).toBe(false);
-  });
-
-  it('re-pushes source data after a style swap (styledata) — two-effect usePushData (gq0d)', () => {
-    render(<AprsPositionsMap positions={positions} />);
-    const map = loadLast();
-    expect(sourceData(map, 'aprs-positions').features).toHaveLength(2);
-    // A flavor/pack change drops sources; the hooks re-add + re-push on styledata.
-    act(() => map.setStyle({}));
-    act(() => map.__emit('styledata'));
-    expect(sourceData(map, 'aprs-positions').features).toHaveLength(2);
-  });
-
-  // tuxlink-xsv5 (the "drunk map"): the WX category filter re-applies on every
-  // `styledata`. In the default 'all' state it MUST clear filters with `undefined`,
-  // never `null`. MapLibre stores a cleared filter as `undefined` and its setFilter
-  // no-op guard is `deepEqual(current, incoming)`; `deepEqual(undefined, null)` is
-  // `false`, so `setFilter(layer, null)` on an unfiltered layer never early-returns
-  // — it marks the source for reload and re-fires `styledata`, re-running this very
-  // handler: a self-clocking, per-frame source-reload loop that saturated the
-  // worker pool so even 1-feature in-memory tiles took 5–20s to load. Passing
-  // `undefined` short-circuits the guard to a true no-op. Guard the clear arg so
-  // the loop can't return. (The effect runs under test only now that the mock has
-  // `setFilter` — the missing-double guard had hidden this whole path.)
-  it('clears WX category filters with undefined (never null) so styledata cannot loop (xsv5)', () => {
-    render(<AprsPositionsMap positions={positions} />);
-    const map = loadLast();
-    // Re-applies happen on styledata (flavor/pack swap). Drive a few; each must
-    // stay a no-op-eligible clear, never a null that forces a reload.
-    act(() => map.__emit('styledata'));
-    act(() => map.__emit('styledata'));
-    const calls = map.__state.setFilterCalls;
-    // The default 'all' category clears the filterable layers...
-    expect(calls.length).toBeGreaterThan(0);
-    // ...and EVERY clear uses `undefined`, never `null` (the loop trigger).
-    expect(calls.every((c) => c.filter !== null)).toBe(true);
-    for (const layer of map.__state.filters.keys()) {
-      expect(map.__state.filters.get(layer)).toBeUndefined();
-    }
-  });
-
-  it('carries the ambiguity level onto each pin feature', () => {
+  it('renders an uncertainty circle ONLY for ambiguous fixes, sized radius = ambiguityRadiusMeters×√2, centred on the cell centre', async () => {
     const amb: HeardPosition[] = [
-      { call: 'FUZZY', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: 1, ambiguity: 2 },
-    ];
-    render(<AprsPositionsMap positions={amb} />);
-    const map = loadLast();
-    expect(sourceData(map, 'aprs-positions').features[0].properties.ambiguity).toBe(2);
-  });
-
-  it('renders an uncertainty region only for ambiguous fixes (RF-honesty)', () => {
-    const amb: HeardPosition[] = [
-      { call: 'EXACT', lat: 49, lon: -72, symbolTable: '/', symbolCode: '-', comment: '', at: 1, ambiguity: 0 },
-      { call: 'FUZZY', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: 2, ambiguity: 2 },
-    ];
-    render(<AprsPositionsMap positions={amb} />);
-    const map = loadLast();
-    const circles = circleData(map, 'aprs-position-uncertainty').features;
-    // Only the masked fix gets a region; the exact fix does not (no false halo).
-    expect(circles).toHaveLength(1);
-    expect(circles[0].properties.call).toBe('FUZZY');
-    // It is a region (polygon), not a point — honest about the uncertainty.
-    expect(circles[0].geometry.type).toBe('Polygon');
-  });
-
-  it('plots an ambiguous fix at the cell centre, not the decoded low corner', () => {
-    const amb: HeardPosition[] = [
+      { call: 'EXACT', lat: 49, lon: -72, symbolTable: '/', symbolCode: '-', comment: '', at: Date.now(), ambiguity: 0 },
       { call: 'FUZZY', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 2 },
     ];
-    render(<AprsPositionsMap positions={amb} />);
-    const map = loadLast();
-    const [lon, lat] = sourceData(map, 'aprs-positions').features[0].geometry.coordinates;
-    // Centre is shifted toward increasing magnitude on each axis (N => +lat,
-    // W => more-negative lon), so it is NOT the raw decoded [-100, 40].
-    expect(lat).toBeGreaterThan(40);
-    expect(lon).toBeLessThan(-100);
-  });
-
-  it('plots an exact fix at its decoded coordinate (no centre shift)', () => {
-    const exact: HeardPosition[] = [
-      { call: 'EXACT', lat: 40, lon: -100, symbolTable: '/', symbolCode: '-', comment: '', at: Date.now(), ambiguity: 0 },
-    ];
-    render(<AprsPositionsMap positions={exact} />);
-    const map = loadLast();
-    expect(sourceData(map, 'aprs-positions').features[0].geometry.coordinates).toEqual([-100, 40]);
+    const { container } = await renderMap(<AprsPositionsMap positions={amb} />);
+    const cs = circles();
+    expect(cs).toHaveLength(1); // only the masked fix gets a region (no false halo)
+    expect(cs[0].getRadius()).toBeCloseTo(ambiguityRadiusMeters(2) * Math.SQRT2, 3); // √2 is load-bearing
+    // ambiguous pin plots at the cell CENTRE (shifted toward increasing magnitude), not the low corner.
+    const fuzzy = pinByCall(container, 'FUZZY')!;
+    expect(parseFloat(fuzzy.dataset.lat!)).toBeGreaterThan(40);
+    expect(parseFloat(fuzzy.dataset.lon!)).toBeLessThan(-100);
   });
 
   it('maps ambiguity level to a growing uncertainty radius; 0 = none', () => {
@@ -181,93 +136,59 @@ describe('AprsPositionsMap', () => {
     expect(ambiguityRadiusMeters(4)).toBeGreaterThan(ambiguityRadiusMeters(3));
   });
 
-  it('popup discloses last-heard age and approximate-position note on click', () => {
+  it('popup discloses symbol, last-heard age, and approximate-position note on pin click; updates and closes', async () => {
     const fuzzy: HeardPosition[] = [
-      {
-        call: 'FUZZY',
-        lat: 40,
-        lon: -100,
-        symbolTable: '/',
-        symbolCode: '>',
-        comment: 'mobile',
-        // Heard ~20 min ago so the age is non-trivial and the pin is stale.
-        at: Date.now() - 20 * 60 * 1000,
-        ambiguity: 2,
-      },
+      { call: 'FUZZY', lat: 40, lon: -100, symbolTable: '/', symbolCode: '_', comment: 'mobile', at: Date.now() - 20 * 60 * 1000, ambiguity: 2 },
     ];
-    const { getByTestId } = render(<AprsPositionsMap positions={fuzzy} />);
-    const map = loadLast();
-    act(() => map.__emit('click:aprs-position-pins-color', { features: [{ properties: { call: 'FUZZY' } }] }));
+    const { container, getByTestId, queryByTestId, rerender } = await renderMap(<AprsPositionsMap positions={fuzzy} />);
+    act(() => {
+      pinByCall(container, 'FUZZY')!.closest('.leaflet-marker-icon')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(getByTestId('aprs-position-symbol').textContent).toContain('Weather station');
     expect(getByTestId('aprs-position-age').textContent).toContain('min ago');
     expect(getByTestId('aprs-position-ambiguity').textContent).toContain('approximate');
+    // pruned station → popup closes on its own (live byCall derivation).
+    await act(async () => {
+      rerender(<AprsPositionsMap positions={[]} />);
+      await Promise.resolve();
+    });
+    expect(queryByTestId('aprs-position-popup')).toBeNull();
   });
 
-  it('popup names the decoded APRS symbol on click', () => {
-    const stations: HeardPosition[] = [
-      // "/_" = primary table, code '_' → Weather station.
-      { call: 'WX1AA', lat: 41, lon: -72, symbolTable: '/', symbolCode: '_', comment: '', at: Date.now(), ambiguity: 0 },
-      // "/>" = primary table, code '>' → Car.
-      { call: 'MOBILE', lat: 42, lon: -71, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 0 },
+  it('greys a stale pin (only the pin) and keeps a fresh pin in colour', async () => {
+    const now = Date.now();
+    const fixes: HeardPosition[] = [
+      { call: 'OLD', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: now - 20 * 60 * 1000, ambiguity: 0 },
+      { call: 'NEW', lat: 41, lon: -101, symbolTable: '/', symbolCode: '>', comment: '', at: now, ambiguity: 0 },
     ];
-    const { getByTestId } = render(<AprsPositionsMap positions={stations} />);
-    const map = loadLast();
-    act(() => map.__emit('click:aprs-position-pins-color', { features: [{ properties: { call: 'WX1AA' } }] }));
-    expect(getByTestId('aprs-position-symbol').textContent).toContain('Weather station');
-    act(() => map.__emit('click:aprs-position-pins-color', { features: [{ properties: { call: 'MOBILE' } }] }));
-    expect(getByTestId('aprs-position-symbol').textContent).toContain('Car');
+    const { container } = await renderMap(<AprsPositionsMap positions={fixes} />);
+    expect(pinByCall(container, 'OLD')!.dataset.sprite).toBe('aprs:p:>:grey');
+    expect(pinByCall(container, 'OLD')!.classList.contains('aprs-pin--stale')).toBe(true);
+    expect(pinByCall(container, 'NEW')!.dataset.sprite).toBe('aprs:p:>');
   });
 
-  // tuxlink-90xb: authentic symbol sprites on pins.
-  it('builds features carrying stable colour + grey sprite ids', () => {
-    const car: HeardPosition[] = [
-      { call: 'W7RPT-9', lat: 45, lon: -73, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 0 },
-    ];
-    render(<AprsPositionsMap positions={car} />);
-    const map = loadLast();
-    const props = sourceData(map, 'aprs-positions').features[0].properties as unknown as Record<string, unknown>;
-    expect(props.spriteId).toBe('aprs:p:>');
-    expect(props.spriteIdGrey).toBe('aprs:p:>:grey');
+  it('subscribes to whenSheetsReady so pins re-bake when sheets decode (R3 P0)', async () => {
+    const { aprsSpritesWhenReady } = { aprsSpritesWhenReady: (await import('../map/aprsSprites')).whenSheetsReady };
+    await renderMap(<AprsPositionsMap positions={positions} />);
+    expect(aprsSpritesWhenReady).toHaveBeenCalled();
+    // firing the callback re-bakes without error
+    expect(() => act(() => sheetsReadyCbs.forEach((cb) => cb()))).not.toThrow();
   });
 
-  it('adds two icon layers that cross-fade colour->grey on the stale feature-state', () => {
-    render(<AprsPositionsMap positions={positions} />);
-    const map = loadLast();
-    const color = map.__state.layers.find((l) => l.id === 'aprs-position-pins-color')!;
-    const grey = map.__state.layers.find((l) => l.id === 'aprs-position-pins-grey')!;
-    expect(color.spec.type).toBe('symbol');
-    expect(grey.spec.type).toBe('symbol');
-    expect((color.spec.layout as Record<string, unknown>)['icon-image']).toEqual(['get', 'spriteId']);
-    expect((grey.spec.layout as Record<string, unknown>)['icon-image']).toEqual(['get', 'spriteIdGrey']);
-    // icon-opacity (paint, so it can read feature-state) is the no-FC-churn channel.
-    expect(JSON.stringify(color.spec.paint)).toContain('feature-state');
-    expect(JSON.stringify(grey.spec.paint)).toContain('feature-state');
-  });
-
-  it('shrinks ambiguous pins via icon-size and keeps the uncertainty disc (f717)', () => {
-    const amb: HeardPosition[] = [
-      { call: 'N7CPZ', lat: 45, lon: -73, symbolTable: '/', symbolCode: '-', comment: '', at: Date.now(), ambiguity: 2 },
-    ];
-    render(<AprsPositionsMap positions={amb} />);
-    const map = loadLast();
-    const color = map.__state.layers.find((l) => l.id === 'aprs-position-pins-color')!;
-    expect(JSON.stringify((color.spec.layout as Record<string, unknown>)['icon-size'])).toContain('ambiguity');
-    expect(map.__state.layers.some((l) => l.id === 'aprs-position-uncertainty-fill')).toBe(true);
-  });
-
-  it('registers a colour + grey image for each heard symbol', () => {
-    const car: HeardPosition[] = [
-      { call: 'W7RPT-9', lat: 45, lon: -73, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 0 },
-    ];
-    render(<AprsPositionsMap positions={car} />);
-    const map = loadLast();
-    expect(map.hasImage('aprs:p:>')).toBe(true);
-    expect(map.hasImage('aprs:p:>:grey')).toBe(true);
+  it('keeps marker identity stable across a re-render with identical positions (no churn)', async () => {
+    const { container, rerender } = await renderMap(<AprsPositionsMap positions={positions} />);
+    const before = pinByCall(container, 'W7ABC');
+    await act(async () => {
+      rerender(<AprsPositionsMap positions={[...positions]} />);
+      await Promise.resolve();
+    });
+    expect(pinByCall(container, 'W7ABC')).toBe(before); // same DOM node → same marker instance
   });
 });
 
-describe('AprsPositionsMap WX overlay (ni5b)', () => {
+describe('AprsPositionsMap WX overlay + filter (ni5b)', () => {
   const wxPositions: HeardPosition[] = [
-    { call: 'W7WX', lat: 47, lon: -122, symbolTable: '/', symbolCode: '_', comment: '', at: 1, ambiguity: 0 },
+    { call: 'W7WX', lat: 47, lon: -122, symbolTable: '/', symbolCode: '_', comment: '', at: Date.now(), ambiguity: 0 },
   ];
   const wxEnv = [
     {
@@ -276,45 +197,68 @@ describe('AprsPositionsMap WX overlay (ni5b)', () => {
       seq: null,
       bits: [],
       rain: null,
-      lastHeard: 1,
+      lastHeard: Date.now(),
       channels: [
         { key: 'wx:temperature', label: 'Temp', unit: '°F', kind: 'temperature', value: 72, scaled: true, history: [] },
       ],
     },
   ];
+  const badges = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLElement>('.aprs-wx-chip'));
 
-  it('renders a WX badge layer + feature for a heard weather station', () => {
-    render(<AprsPositionsMap positions={wxPositions} envStations={wxEnv as never} operatorGrid="CN87" />);
-    const map = loadLast();
-    expect(map.__state.layers.some((l) => l.id === 'aprs-wx-badge')).toBe(true);
-    const feats = (map.getSource('aprs-wx-badge') as { data: { features: Array<{ properties: { badge: string } }> } }).data.features;
-    expect(feats).toHaveLength(1);
-    expect(feats[0].properties.badge).toContain('72°F');
+  it('renders a temperature badge for a heard weather station', async () => {
+    const { container } = await renderMap(
+      <AprsPositionsMap positions={wxPositions} envStations={wxEnv as never} operatorGrid="CN87" />,
+    );
+    const b = badges(container);
+    expect(b).toHaveLength(1);
+    expect(b[0].textContent).toContain('72°F');
   });
 
-  it('invokes onFocusStation when a WX badge is clicked', () => {
+  it('opens the WX card on badge click (+ focuses the station) and closes it via the × button', async () => {
     const onFocus = vi.fn();
-    render(<AprsPositionsMap positions={wxPositions} envStations={wxEnv as never} onFocusStation={onFocus} operatorGrid="CN87" />);
-    const map = loadLast();
-    act(() => map.__emit('click:aprs-wx-badge', { features: [{ properties: { call: 'W7WX' } }] }));
+    const { container, getByTestId, queryByTestId } = await renderMap(
+      <AprsPositionsMap positions={wxPositions} envStations={wxEnv as never} onFocusStation={onFocus} operatorGrid="CN87" />,
+    );
+    const chip = badges(container)[0].closest('.leaflet-marker-icon')!;
+    // Click the badge → focus the dock station AND open the on-map card.
+    act(() => chip.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(onFocus).toHaveBeenCalledWith('W7WX');
+    expect(getByTestId('aprs-wx-card').textContent).toContain('W7WX');
+    // The card is dismissible via its × (operator-reported: hover-dismiss got stuck).
+    fireEvent.click(getByTestId('aprs-wx-card-close'));
+    expect(queryByTestId('aprs-wx-card')).toBeNull();
   });
 
-  it('renders no WX badge for a station with no heard weather', () => {
-    render(<AprsPositionsMap positions={positions} envStations={[] as never} operatorGrid="CN87" />);
-    const map = loadLast();
-    const feats = (map.getSource('aprs-wx-badge') as { data: { features: unknown[] } }).data.features;
-    expect(feats).toHaveLength(0);
+  it('renders no WX badge for a station with no heard weather', async () => {
+    const { container } = await renderMap(
+      <AprsPositionsMap positions={positions} envStations={[] as never} operatorGrid="CN87" />,
+    );
+    expect(container.querySelectorAll('.aprs-wx-chip')).toHaveLength(0);
   });
 
-  // tuxlink-hepq: the Weather SITREP button must actually wire through to a
-  // prefilled Winlink compose window (not just render). Guards the integration
-  // seam: compose the report → save a draft → open compose for THAT draft.
-  it('Weather SITREP button composes a prefilled draft and opens compose (hepq)', () => {
-    window.localStorage.clear();
-    invokeMock.mockClear();
-    render(<AprsPositionsMap positions={wxPositions} envStations={wxEnv as never} operatorGrid="CN87" />);
-    loadLast();
+  it('category filter removes a non-matching station as a WHOLE bundle (no orphan disc) (R3 P0)', async () => {
+    // One weather station (W7WX) + one ambiguous NON-weather station (FUZZY) with a
+    // pin + uncertainty circle. Filtering to "weather" removes FUZZY's whole bundle.
+    const pos: HeardPosition[] = [
+      ...wxPositions,
+      { call: 'FUZZY', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 2 },
+    ];
+    const { container, getByTestId } = await renderMap(
+      <AprsPositionsMap positions={pos} envStations={wxEnv as never} operatorGrid="CN87" />,
+    );
+    expect(pinByCall(container, 'FUZZY')).toBeTruthy();
+    expect(circles()).toHaveLength(1); // FUZZY's uncertainty disc present
+    await act(async () => {
+      fireEvent.change(getByTestId('aprs-wx-filter-select'), { target: { value: 'weather' } });
+      await Promise.resolve();
+    });
+    expect(pinByCall(container, 'FUZZY')).toBeUndefined(); // pin gone
+    expect(circles()).toHaveLength(0); // ...and its disc gone too — no orphan
+    expect(pinByCall(container, 'W7WX')).toBeTruthy(); // weather station stays
+  });
+
+  it('Weather SITREP composes a prefilled draft and opens compose (hepq)', async () => {
+    await renderMap(<AprsPositionsMap positions={wxPositions} envStations={wxEnv as never} operatorGrid="CN87" />);
     const btn = screen.getByTestId('aprs-wx-sitrep');
     expect(btn).not.toBeDisabled();
     fireEvent.click(btn);
@@ -322,55 +266,54 @@ describe('AprsPositionsMap WX overlay (ni5b)', () => {
     expect(ids.length).toBe(1);
     const draft = loadDraft(ids[0])!;
     expect(draft.subject).toContain('WX SITREP');
-    expect(draft.body).toContain('LOCAL WX GROUND TRUTH');
-    expect(draft.body).toContain('72°F'); // the heard reading, in the report
+    expect(draft.body).toContain('72°F');
     expect(invokeMock).toHaveBeenCalledWith('compose_window_open', { draftId: draft.draftId });
   });
 
-  it('Weather SITREP button is disabled with no WX stations heard', () => {
-    render(<AprsPositionsMap positions={[]} />);
-    loadLast();
+  it('Weather SITREP is disabled with no WX stations heard', async () => {
+    await renderMap(<AprsPositionsMap positions={[]} />);
     expect(screen.getByTestId('aprs-wx-sitrep')).toBeDisabled();
   });
 });
 
-describe('AprsPositionsMap viewport persistence (tuxlink-dwzu)', () => {
+describe('AprsPositionsMap viewport + operator pin (tuxlink-dwzu)', () => {
   const KEY = 'tuxlink:map-viewport:aprs';
-  beforeEach(() => window.localStorage.clear());
 
-  it('opens at the saved viewport when one is stored', () => {
+  it('opens at the saved viewport when one is stored', async () => {
     window.localStorage.setItem(KEY, JSON.stringify({ center: { lat: 45, lon: -73 }, zoom: 7 }));
-    render(<AprsPositionsMap positions={[]} />);
-    const map = getLastMap()!;
-    expect(map.__state.options.center).toEqual([-73, 45]);
-    expect(map.getZoom()).toBe(7);
+    await renderMap(<AprsPositionsMap positions={[]} />);
+    expect(captured!.getCenter().lat).toBeCloseTo(45, 3);
+    expect(captured!.getCenter().lng).toBeCloseTo(-73, 3);
+    expect(captured!.getZoom()).toBe(7);
   });
 
-  it('centers on the operator at the local zoom on first run when an operator grid is known', () => {
-    render(<AprsPositionsMap positions={[]} operatorGrid="DM43bp" />);
-    const map = getLastMap()!;
+  it('centers on the operator at the local zoom on first run when an operator grid is known', async () => {
+    await renderMap(<AprsPositionsMap positions={[]} operatorGrid="DM43bp" />);
     const me = gridToLatLon('DM43bp')!;
-    expect(map.__state.options.center).toEqual([me.lon, me.lat]); // operator, not mid-Atlantic
-    expect(map.getZoom()).toBe(10); // local area, not the continental Z6
+    expect(captured!.getCenter().lat).toBeCloseTo(me.lat, 2);
+    expect(captured!.getCenter().lng).toBeCloseTo(me.lon, 2);
+    expect(captured!.getZoom()).toBe(10);
   });
 
-  it('falls back to the world view on first run only when no operator grid is known', () => {
-    render(<AprsPositionsMap positions={[]} operatorGrid="" />);
-    const map = getLastMap()!;
-    expect(map.__state.options.center).toEqual([0, 0]);
-    expect(map.getZoom()).toBe(2);
+  it('falls back to the world view on first run only when no operator grid is known', async () => {
+    await renderMap(<AprsPositionsMap positions={[]} operatorGrid="" />);
+    expect(captured!.getCenter().lat).toBeCloseTo(0, 3);
+    expect(captured!.getCenter().lng).toBeCloseTo(0, 3);
+    expect(captured!.getZoom()).toBe(2);
   });
 
-  it('persists the viewport after a pan (moveend, debounced)', () => {
+  it('persists the viewport after a pan (debounced)', async () => {
     vi.useFakeTimers();
     try {
       render(<AprsPositionsMap positions={[]} />);
-      const map = getLastMap()!;
-      act(() => map.__emit('load'));
-      map.__setCenter(-122.3, 47.6);
-      map.__setZoom(9);
-      act(() => map.__emit('moveend'));
-      act(() => vi.advanceTimersByTime(400));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(captured).not.toBeNull();
+      act(() => captured!.setView([47.6, -122.3], 9, { animate: false }));
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
       expect(JSON.parse(window.localStorage.getItem(KEY)!)).toEqual({
         center: { lat: 47.6, lon: -122.3 },
         zoom: 9,
@@ -380,27 +323,95 @@ describe('AprsPositionsMap viewport persistence (tuxlink-dwzu)', () => {
     }
   });
 
-  it('recenters on the operator at OPERATOR_ZOOM when the recenter control is clicked', () => {
-    render(<AprsPositionsMap positions={[]} operatorGrid="DM43bp" />);
-    const map = getLastMap()!;
-    act(() => map.__emit('load'));
+  it('recenters on the operator at OPERATOR_ZOOM when the recenter control is clicked', async () => {
+    await renderMap(<AprsPositionsMap positions={[]} operatorGrid="DM43bp" />);
     const me = gridToLatLon('DM43bp')!;
+    const flySpy = vi.spyOn(captured!, 'flyTo');
     fireEvent.click(screen.getByTestId('map-recenter'));
-    expect(map.flyTo).toHaveBeenCalledWith({ center: [me.lon, me.lat], zoom: 10 });
+    expect(flySpy).toHaveBeenCalledWith([me.lat, me.lon], 10);
   });
 
-  it('renders an operator "you" pin at the operator grid (none when no grid is set)', () => {
-    const { rerender } = render(<AprsPositionsMap positions={[]} operatorGrid="" />);
-    const map = getLastMap()!;
-    act(() => map.__emit('load'));
-    expect(sourceData(map, 'aprs-operator').features).toHaveLength(0);
-    act(() => rerender(<AprsPositionsMap positions={[]} operatorGrid="DM43bp" />));
-    expect(sourceData(map, 'aprs-operator').features).toHaveLength(1);
+  it('renders an operator "you" pin only when an operator grid is set', async () => {
+    const { container, rerender } = await renderMap(<AprsPositionsMap positions={[]} operatorGrid="" />);
+    expect(container.querySelector('.aprs-you-pin')).toBeNull();
+    await act(async () => {
+      rerender(<AprsPositionsMap positions={[]} operatorGrid="DM43bp" />);
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.aprs-you-pin')).not.toBeNull();
   });
 
-  it('hides the recenter control when no operator grid is known', () => {
-    render(<AprsPositionsMap positions={[]} operatorGrid="" />);
-    act(() => getLastMap()!.__emit('load'));
+  it('hides the recenter control when no operator grid is known', async () => {
+    await renderMap(<AprsPositionsMap positions={[]} operatorGrid="" />);
     expect(screen.queryByTestId('map-recenter')).toBeNull();
+  });
+});
+
+// Codex impl-review P1: a re-beacon can change ambiguity / weather readings on an
+// EXISTING station; the bundle must fully reconcile, not only move sub-layers.
+describe('AprsPositionsMap re-beacon reconciliation (impl P1)', () => {
+  const wxEnvAt = (call: string, temp: number) => [
+    {
+      call,
+      project: '',
+      seq: null,
+      bits: [],
+      rain: null,
+      lastHeard: Date.now(),
+      channels: [
+        { key: 'wx:temperature', label: 'Temp', unit: '°F', kind: 'temperature', value: temp, scaled: true, history: [] },
+      ],
+    },
+  ];
+  const chips = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLElement>('.aprs-wx-chip'));
+
+  it('adds an uncertainty disc when a station goes exact → ambiguous, and removes it on ambiguous → exact', async () => {
+    const exact: HeardPosition[] = [
+      { call: 'MOVER', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 0 },
+    ];
+    const { rerender } = await renderMap(<AprsPositionsMap positions={exact} />);
+    expect(circles()).toHaveLength(0);
+    // Re-beacon: same call, now ambiguous.
+    await act(async () => {
+      rerender(<AprsPositionsMap positions={[{ ...exact[0], ambiguity: 2 }]} />);
+      await Promise.resolve();
+    });
+    expect(circles()).toHaveLength(1);
+    expect(circles()[0].getRadius()).toBeCloseTo(ambiguityRadiusMeters(2) * Math.SQRT2, 3);
+    // Re-beacon back to exact → the stale disc is removed.
+    await act(async () => {
+      rerender(<AprsPositionsMap positions={[{ ...exact[0], ambiguity: 0 }]} />);
+      await Promise.resolve();
+    });
+    expect(circles()).toHaveLength(0);
+  });
+
+  it('refreshes the WX badge reading when a weather station re-beacons a new value', async () => {
+    const pos: HeardPosition[] = [
+      { call: 'W7WX', lat: 47, lon: -122, symbolTable: '/', symbolCode: '_', comment: '', at: Date.now(), ambiguity: 0 },
+    ];
+    const { container, rerender } = await renderMap(
+      <AprsPositionsMap positions={pos} envStations={wxEnvAt('W7WX', 72) as never} operatorGrid="CN87" />,
+    );
+    expect(chips(container)[0].textContent).toContain('72°F');
+    await act(async () => {
+      rerender(<AprsPositionsMap positions={pos} envStations={wxEnvAt('W7WX', 81) as never} operatorGrid="CN87" />);
+      await Promise.resolve();
+    });
+    expect(chips(container)[0].textContent).toContain('81°F'); // refreshed, not stuck at 72
+  });
+
+  it('adds a badge when a station becomes a weather station (non-WX → WX)', async () => {
+    const pos: HeardPosition[] = [
+      { call: 'W7WX', lat: 47, lon: -122, symbolTable: '/', symbolCode: '_', comment: '', at: Date.now(), ambiguity: 0 },
+    ];
+    const { container, rerender } = await renderMap(<AprsPositionsMap positions={pos} envStations={[] as never} />);
+    expect(chips(container)).toHaveLength(0);
+    await act(async () => {
+      rerender(<AprsPositionsMap positions={pos} envStations={wxEnvAt('W7WX', 64) as never} />);
+      await Promise.resolve();
+    });
+    expect(chips(container)).toHaveLength(1);
+    expect(chips(container)[0].textContent).toContain('64°F');
   });
 });

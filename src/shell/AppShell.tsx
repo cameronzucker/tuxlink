@@ -1551,8 +1551,9 @@ export function AppShell() {
           if (aprsOpen && aprsMapOpen) {
             return (
               // tuxlink-kkr5: the fallback MUST occupy the reading-pane grid
-              // slot. AprsPositionsMap is lazy() and pulls the maplibre-gl
-              // chunk, so a `fallback={null}` left column 3 empty during the
+              // slot. AprsPositionsMap is lazy() and pulls the leaflet +
+              // protomaps-leaflet chunk (tuxlink-6kdw), so a `fallback={null}`
+              // left column 3 empty during the
               // load — CSS grid auto-flow then reflowed the 400px dock LEFT
               // into the 1fr reader track (measured: 400px → 877px), and it
               // snapped back when the map mounted. That right→left reflow was
