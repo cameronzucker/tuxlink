@@ -23,13 +23,21 @@ use tauri::{AppHandle, Emitter, State};
 
 use super::download::{self, DownloadError, Extractor, PackRequest};
 use super::packs::{self, Bbox, InstalledPack};
-use super::region_manifest::RegionManifest;
+use super::region_manifest::{self, RegionManifest};
 use super::PmtilesRegistry;
 
 /// Canonical manifest refresh source — see D1 §"manifest hosting". Fetched in
 /// Rust (this command), never the webview, so the CSP stays closed.
 const MANIFEST_URL: &str =
     "https://raw.githubusercontent.com/cameronzucker/tuxlink/main/src-tauri/resources/basemap/region-manifest.json";
+
+/// How many days back from today the pre-download build resolver probes
+/// `build.protomaps.com/<YYYYMMDD>.pmtiles` for the newest available planet
+/// build. Protomaps keeps only a ~6-day rolling window with no `latest` alias, so
+/// a static manifest pin 404s within a week; the resolver carves the operator's
+/// region out of whatever build Protomaps still serves. 14 gives comfortable
+/// margin over the observed ~6-day window without an unbounded probe fan-out.
+const PLANET_BUILD_MAX_DAYS_BACK: u32 = 14;
 
 /// `--maxzoom` for the AREA (operator-grid tier) pack path: a small box at full
 /// detail (z0–14, D1). App constant on that path — never from the manifest. The
@@ -463,6 +471,57 @@ async fn refresh_manifest_into(state: &BasemapState) -> Result<RegionManifest, S
     Ok(manifest)
 }
 
+/// Probe `build.protomaps.com` for the most-recent available planet build.
+/// `candidates` is newest-first `(build_id, url)` (from
+/// [`region_manifest::planet_build_candidates`]); returns the first one that
+/// responds 200/206 to a `Range: bytes=0-0` GET. Returns `Err` if none in range
+/// respond (offline, or Protomaps fully down) — the caller then falls back to the
+/// static manifest pin rather than failing the download outright.
+///
+/// Why a range GET rather than HEAD: go-pmtiles itself opens the build with a
+/// range reader, so a `bytes=0-0` GET exercises the exact capability the
+/// downstream extract needs (and some CDNs answer HEAD differently from GET). A
+/// 206 is the normal answer to an honored range; a 200 means the server ignored
+/// the range but the object exists — both prove the build is fetchable.
+async fn resolve_current_planet_build(
+    client: &reqwest::Client,
+    candidates: &[(String, String)],
+) -> Result<(String, String), String> {
+    use reqwest::header::RANGE;
+    let mut statuses: Vec<Option<u16>> = Vec::with_capacity(candidates.len());
+    for (_build, url) in candidates {
+        let status = match client.get(url).header(RANGE, "bytes=0-0").send().await {
+            // The object exists/is fetchable iff the server answers 200 (ignored the
+            // range) or 206 (honored it). 404 = rotated-out build; any other status
+            // = not usable. A transport error (DNS/TLS/timeout) is `None`.
+            Ok(resp) => Some(resp.status().as_u16()),
+            Err(_) => None,
+        };
+        statuses.push(status);
+    }
+    select_available_build(candidates, &statuses)
+}
+
+/// Pure selection over a probed status per candidate: return the first
+/// (newest-first) candidate whose probe was `Some(200)` / `Some(206)`. `None` (a
+/// transport error) and any other status are skipped. Split out from the async
+/// probe so the selection rule is unit-tested without network. `statuses` is
+/// index-aligned with `candidates`.
+fn select_available_build(
+    candidates: &[(String, String)],
+    statuses: &[Option<u16>],
+) -> Result<(String, String), String> {
+    for ((build, url), status) in candidates.iter().zip(statuses.iter()) {
+        if matches!(status, Some(200) | Some(206)) {
+            return Ok((build.clone(), url.clone()));
+        }
+    }
+    Err(format!(
+        "no available Protomaps planet build in the last {} days",
+        candidates.len()
+    ))
+}
+
 /// Refresh the manifest from the canonical raw URL (Rust egress; CSP closed). On
 /// any failure the cached manifest is kept and an error is returned — the UI
 /// keeps working with the previous/bundled manifest.
@@ -520,6 +579,59 @@ pub async fn basemap_download_pack(
             error = %e,
             "pre-download manifest refresh failed; using cached manifest"
         );
+    }
+
+    // Resolve the CURRENT Protomaps planet build at download time. The manifest's
+    // `planet_build`/`planet_url` is only a fallback pin: Protomaps keeps a ~6-day
+    // rolling window with no `latest` alias, so any committed pin 404s within a
+    // week (the go-pmtiles "HTTP error: 404" failure). Probe today backward and
+    // overwrite the cached manifest's planet build with the newest one Protomaps
+    // still serves, so `download_pack_blocking` → `build_request` reads a live URL.
+    // Best-effort: on no-resolution (offline / Protomaps down) keep the static pin
+    // and proceed — the download then fails downstream with its own error, which
+    // is the same behavior as before this resolver existed.
+    match reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+    {
+        Ok(client) => {
+            let today = chrono::Utc::now().date_naive();
+            let candidates =
+                region_manifest::planet_build_candidates(today, PLANET_BUILD_MAX_DAYS_BACK);
+            match resolve_current_planet_build(&client, &candidates).await {
+                Ok((build, url)) => {
+                    // Defense in depth: the generated url already passes the allowlist,
+                    // but re-validate the value before it reaches the cached manifest →
+                    // the go-pmtiles argv. A failure here is treated like no-resolution.
+                    if let Err(e) = region_manifest::validate_planet_url(&url) {
+                        tracing::warn!(
+                            target: "tuxlink::basemap",
+                            error = %e,
+                            url = %url,
+                            "resolved planet url failed validation; using cached manifest pin"
+                        );
+                    } else {
+                        let mut m = state.manifest.write().expect("manifest lock");
+                        m.planet_build = build;
+                        m.planet_url = url;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "tuxlink::basemap",
+                        error = %e,
+                        "could not resolve a current Protomaps build; using cached manifest pin"
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "tuxlink::basemap",
+                error = %e,
+                "planet-build probe client init failed; using cached manifest pin"
+            );
+        }
     }
 
     tokio::task::spawn_blocking(move || download_pack_blocking(app, registry, state, args))
@@ -1110,5 +1222,65 @@ mod tests {
             DownloadArgs::Continent { continent_id: "na".into(), tier_id: "local".into() };
         let creq = build_request(&m, &cont_args).unwrap();
         assert_eq!(pack_id_for_args(&cont_args), creq.id);
+    }
+
+    // ── dynamic planet-build selection (the network-free core of the probe) ──────
+
+    fn candidates_for(today: (i32, u32, u32), back: u32) -> Vec<(String, String)> {
+        let d = chrono::NaiveDate::from_ymd_opt(today.0, today.1, today.2).unwrap();
+        region_manifest::planet_build_candidates(d, back)
+    }
+
+    #[test]
+    fn select_picks_newest_available_when_today_is_live() {
+        let c = candidates_for((2026, 6, 20), 14);
+        // Today (index 0) responds 206 → it is chosen.
+        let mut statuses = vec![None; c.len()];
+        statuses[0] = Some(206);
+        let (build, url) = select_available_build(&c, &statuses).unwrap();
+        assert_eq!(build, "20260620");
+        assert_eq!(url, "https://build.protomaps.com/20260620.pmtiles");
+    }
+
+    #[test]
+    fn select_skips_404_days_to_first_available() {
+        let c = candidates_for((2026, 6, 20), 14);
+        // The pinned-build scenario: the two newest days 404 (rotated out / not yet
+        // published), the third (20260618) is the first to respond — and a 200 (range
+        // ignored) counts as available, not just 206.
+        let mut statuses = vec![Some(404); c.len()];
+        statuses[2] = Some(200);
+        let (build, _url) = select_available_build(&c, &statuses).unwrap();
+        assert_eq!(build, "20260618");
+    }
+
+    #[test]
+    fn select_skips_transport_errors() {
+        let c = candidates_for((2026, 6, 20), 14);
+        // First candidate errored at the transport layer (None), second is live.
+        let mut statuses = vec![None; c.len()];
+        statuses[1] = Some(206);
+        let (build, _url) = select_available_build(&c, &statuses).unwrap();
+        assert_eq!(build, "20260619");
+    }
+
+    #[test]
+    fn select_errors_when_none_available() {
+        let c = candidates_for((2026, 6, 20), 14);
+        // Whole window 404 (or offline): no resolution → Err, caller keeps the pin.
+        let statuses = vec![Some(404); c.len()];
+        assert!(select_available_build(&c, &statuses).is_err());
+        let offline = vec![None; c.len()];
+        assert!(select_available_build(&c, &offline).is_err());
+    }
+
+    #[test]
+    fn select_ignores_non_2xx_partial_statuses() {
+        let c = candidates_for((2026, 6, 20), 2);
+        // A redirect/forbidden (302/403) is NOT treated as available; only the later
+        // 206 day is selected.
+        let statuses = vec![Some(302), Some(403), Some(206)];
+        let (build, _url) = select_available_build(&c, &statuses).unwrap();
+        assert_eq!(build, "20260618");
     }
 }
