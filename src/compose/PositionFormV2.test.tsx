@@ -1,12 +1,24 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
+import L from 'leaflet';
 
 // The "Pick on map…" affordance opens PositionPickerOverlay → PositionMapWidget →
-// MapLibreMap (globally mocked via test-setup). A pin is simulated by driving the
-// constructed map's click on the test double.
-import { getLastMap } from '../map/testMapLibreMock';
-
+// LeafletMap (runs REAL in jsdom). A pin is simulated by capturing the live L.Map
+// and firing a click on it.
 import { PositionFormV2 } from './PositionFormV2';
+
+// Mock the base-layer builder → inert layer (PMTiles fetch/decode is grim-verified).
+vi.mock('../map/basemapLeaflet', () => ({
+  buildBaseLayers: vi.fn(() => [L.layerGroup()]),
+  OSM_ATTRIBUTION: '© OpenStreetMap contributors',
+  flavorBackground: () => '#34373d',
+}));
+
+// Capture the live Leaflet map the picker constructs.
+const origW = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+const origH = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+const realLMap = L.map.bind(L);
+let capturedMap: L.Map | null = null;
 
 // Default mock: fresh GPS fix with a valid grid.
 // "Gps" is PascalCase — matches format!("{:?}", PositionSource::Gps) from the
@@ -20,6 +32,7 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (cmd === 'tile_source_status') {
       return { kind: 'bundled', zoom: 2, label: null, cachedAt: null };
     }
+    if (cmd === 'basemap_list_packs') return { packs: [] };
     if (cmd === 'send_form') return 'MID-MOCK-123';
     if (cmd === 'form_draft_library_list') return [];
     if (cmd === 'form_draft_library_upsert') {
@@ -48,6 +61,7 @@ beforeEach(async () => {
     if (cmd === 'tile_source_status') {
       return { kind: 'bundled', zoom: 2, label: null, cachedAt: null };
     }
+    if (cmd === 'basemap_list_packs') return { packs: [] };
     if (cmd === 'send_form') return 'MID-MOCK-123';
     if (cmd === 'form_draft_library_list') return [];
     if (cmd === 'form_draft_library_upsert') {
@@ -63,6 +77,20 @@ beforeEach(async () => {
     if (cmd === 'form_draft_library_delete') return undefined;
     return null;
   });
+  // Leaflet sizes from clientWidth/Height; jsdom reports 0. Shim + capture L.map.
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 800 });
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, value: 600 });
+  capturedMap = null;
+  vi.spyOn(L, 'map').mockImplementation(((el: HTMLElement | string, opts?: L.MapOptions) => {
+    const m = realLMap(el as HTMLElement, opts);
+    capturedMap = m;
+    return m;
+  }) as typeof L.map);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  if (origW) Object.defineProperty(HTMLElement.prototype, 'clientWidth', origW);
+  if (origH) Object.defineProperty(HTMLElement.prototype, 'clientHeight', origH);
 });
 
 describe('<PositionFormV2>', () => {
@@ -107,11 +135,16 @@ describe('<PositionFormV2>', () => {
     fireEvent.click(screen.getByTestId('position-pick-on-map'));
     expect(screen.getByTestId('position-picker-overlay')).toBeInTheDocument();
 
-    // Drive a click on the constructed MapLibre map, far from CN87us, so the
-    // picked grid is genuinely distinct (not just the CN87US→CN87 trim).
-    const map = getLastMap()!;
-    act(() => map.__emit('load'));
-    act(() => map.__emit('click', { lngLat: { lng: 8.5, lat: 47.4 } }));
+    // Drive a click on the constructed Leaflet map, far from CN87us, so the picked
+    // grid is genuinely distinct (not just the CN87US→CN87 trim). Flush the
+    // LeafletMap pack fetch / whenReady first.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(capturedMap).not.toBeNull());
+    act(() => {
+      capturedMap!.fire('click', { latlng: L.latLng(47.4, 8.5) } as L.LeafletMouseEvent);
+    });
     fireEvent.click(screen.getByTestId('position-picker-confirm'));
 
     // Overlay closed; grid input now holds the picked 4-char locator.
