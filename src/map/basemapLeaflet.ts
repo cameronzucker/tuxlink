@@ -17,13 +17,14 @@
  *     and requests data at z=displayZ−1; the bundled overview is z0–6, so above
  *     ~z8 it would request z7+ data the archive lacks → blank. The overview is
  *     capped at 6; each pack carries its real maxzoom (continent-na is z0–14).
- *  3. Packs carry NO flavor/background/labels. A flavored layer paints its
- *     `backgroundColor` on EVERY rendered tile, so a pack's empty tiles outside
- *     its coverage would mask the overview. Only the OVERVIEW is flavored (one
- *     global background + labels); each PACK passes explicit `paintRules`
- *     (from the same flavor) + `labelRules: []` + no background, so it draws only
- *     its detail geometry and is transparent elsewhere. Mirrors
- *     `basemapStyle.ts` dropping `background` + `symbol` from pack layer sets.
+ *  3. Packs carry NO flavor/background, but DO carry the flavor's labels. A
+ *     flavored layer paints its `backgroundColor` on EVERY rendered tile, so a
+ *     pack's empty tiles outside its coverage would mask the overview — hence no
+ *     `flavor`/`backgroundColor` on packs. Each PACK passes explicit `paintRules`
+ *     AND `labelRules` (both from the same flavor): within coverage it draws its
+ *     detail geometry + its own placenames (its opaque `earth` occludes the
+ *     overview's labels beneath → no double-labeling), and is transparent
+ *     elsewhere. The pack is the detailed local map in coverage (tuxlink-c973).
  *
  * Composite ordering: explicit `zIndex` (overview 1, packs 2+) so packs paint
  * above the overview regardless of add order; packs clamp to `minZoom: 6`.
@@ -40,7 +41,7 @@
  * overview (`tile://pmtiles/world`, z0–6) and each downloaded region pack
  * (`tile://pmtiles/<id>`, z0–14).
  */
-import { leafletLayer, paintRules as pmPaintRules } from '../vendor/protomaps-leaflet';
+import { leafletLayer, paintRules as pmPaintRules, labelRules as pmLabelRules } from '../vendor/protomaps-leaflet';
 import { PMTiles } from 'pmtiles';
 import { namedFlavor } from '@protomaps/basemaps';
 import type { Layer as LeafletLayer } from 'leaflet';
@@ -110,7 +111,7 @@ const SMOOTH_RENDER = {
  * `tile://` PMTiles seam. Returns `[overview, ...packLayers]`:
  *  - overview: flavored (background + labels), `maxDataZoom: 6`, `zIndex: 1`,
  *    left to overzoom past z6 (never blank outside pack coverage).
- *  - each pack: explicit `paintRules` from the same flavor, `labelRules: []`,
+ *  - each pack: explicit `paintRules` + `labelRules` from the same flavor,
  *    NO flavor/background (so empty pack tiles never mask the overview),
  *    `maxDataZoom: pack.maxZoom ?? 14`, `minZoom: 6`, `zIndex: 2+i`.
  *
@@ -134,10 +135,13 @@ export function buildBaseLayers(flavor: BasemapFlavor, packs: PackSource[] = [])
         ...SMOOTH_RENDER,
         url: new PMTiles(PMTILES_TILE_URL(pack.id)),
         // Explicit paint rules from the SAME flavor, but NO `flavor`/`backgroundColor`
-        // and NO labels — the pack draws only its detail geometry, transparent
-        // elsewhere, so its empty tiles never mask the overview (R2 P0#3).
+        // (so empty pack tiles never mask the overview, R2 P0#3). The pack DOES carry
+        // the flavor's label rules: within coverage its opaque `earth` occludes the
+        // overview's labels beneath it, so the pack's own z6-13 placenames are the
+        // only land labels — the pack is the detailed local map, with no double-labeling
+        // and no clipping logic (tuxlink-c973; 2026-06-20-leaflet-pack-placenames-design.md).
         paintRules: pmPaintRules(namedFlavor(flavor)),
-        labelRules: [],
+        labelRules: pmLabelRules(namedFlavor(flavor), 'en'),
         // Same OSM/ODbL credit as the overview (Leaflet refcounts identical strings
         // → shows once). Without it the vendored layer injects its own default
         // "Protomaps © OSM" credit, defeating the single attribution source (impl P2).
