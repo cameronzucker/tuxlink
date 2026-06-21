@@ -120,11 +120,11 @@
 }
 .aprs-wx-card__close:hover { color: #dcebf6; }
 
-/* tuxlink-hepq: Weather SITREP compose button (top-left column, below the filter).
-   Export PNG was removed this phase — its slot is reused (tuxlink-a7qt). */
+/* tuxlink-hepq: Weather SITREP compose button. Operator layout (tuxlink-8kki):
+   top-LEFT corner (topmost), with the Layers panel directly beneath it. */
 .aprs-wx-sitrep {
   position: absolute;
-  top: 82px;
+  top: 10px;
   left: 10px;
   z-index: 1100; /* above Leaflet panes (200-700) AND its control container (1000) so app controls/popups are never covered (impl review) */
   background: #11283b;
@@ -198,4 +198,51 @@
   background: #eaf3fb;
   border: 3px solid #2f86f0;
   box-shadow: 0 0 0 1px rgba(12, 22, 32, 0.8);
+}
+
+/* Operator control layout (tuxlink-8kki). The recenter (⌖) button moves from the
+   top-left to the top-RIGHT, immediately left of the Leaflet zoom (+/-) control
+   (~30px wide at right:10px). Scoped to the APRS map so the SHARED
+   .map-recenter-control on MapLibre surfaces keeps its top-left placement. */
+.aprs-positions-map .map-recenter-control {
+  top: 10px;
+  left: auto;
+  right: 48px;
+}
+
+/* Dark theme for Leaflet's built-in controls (tuxlink-8kki). Leaflet ships a
+   light theme (white zoom buttons, light attribution/scale) that clashes with the
+   dark basemap and our custom controls. Re-skin the zoom (+/-), attribution, and
+   scale to match the recenter control's palette. Scoped to .aprs-positions-map so
+   only the APRS Leaflet map is affected. */
+.aprs-positions-map .leaflet-bar {
+  border-color: var(--border, #2c3a47);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+.aprs-positions-map .leaflet-bar a,
+.aprs-positions-map .leaflet-bar a:link,
+.aprs-positions-map .leaflet-bar a:visited {
+  background: var(--surface, #1b2530);
+  color: var(--text, #eaf3fb);
+  border-bottom-color: var(--border, #2c3a47);
+}
+.aprs-positions-map .leaflet-bar a:hover {
+  background: var(--surface-hover, #243240);
+  color: var(--text, #eaf3fb);
+}
+.aprs-positions-map .leaflet-bar a.leaflet-disabled {
+  background: #131c25;
+  color: #4b5b6a;
+}
+.aprs-positions-map .leaflet-control-attribution {
+  background: rgba(15, 24, 34, 0.8);
+  color: var(--muted, #9fb6cc);
+}
+.aprs-positions-map .leaflet-control-attribution a {
+  color: #6fb0e0;
+}
+.aprs-positions-map .leaflet-control-scale-line {
+  background: rgba(15, 24, 34, 0.7);
+  color: var(--text, #eaf3fb);
+  border-color: var(--border, #2c3a47);
 }

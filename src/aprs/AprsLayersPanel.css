@@ -1,12 +1,16 @@
 /* AprsLayersPanel (tuxlink-8fjx) — collapsible map-corner layers filter.
-   Dark/tactical, matching the APRS map surface. Anchored top-right by the map
-   container's positioning context (see AprsPositionsMap.css). */
+   Dark/tactical, matching the APRS map surface. Anchored top-LEFT, directly under
+   the Weather SITREP button (operator layout, tuxlink-8kki): SITREP sits in the
+   top-left corner (top:10px), Layers under it (top:44px). The Leaflet zoom (+/-)
+   control and the recenter (⌖) button live in the top-RIGHT corner, clear of this
+   panel. z-index 1100 matches the app's other map overlay controls so it renders
+   ABOVE Leaflet's ~1000 control container. */
 
 .aprs-layers-toggle {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 1000;
+  top: 44px;
+  left: 10px;
+  z-index: 1100;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -23,9 +27,9 @@
 
 .aprs-layers-panel {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 1000;
+  top: 44px;
+  left: 10px;
+  z-index: 1100;
   width: 210px;
   padding: 9px 11px 11px;
   font-size: 12px;
