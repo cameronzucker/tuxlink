@@ -13,7 +13,7 @@
 | `src/compose/PositionMapWidget.tsx` | tuxlink-kkd3 | **#857** | e0566cf |
 | `src/location/LocationMap.tsx` + new `src/map/LeafletMaidenheadGridLayer.tsx` | tuxlink-4hol | **#858** | 67ebd09 |
 | `src/map/GridPicker.tsx` | tuxlink-rqvk | **#861** | 80d5b0f |
-| Substrate teardown (delete MapLibre + drop `maplibre-gl`) | tuxlink-lru7 | **#<LRU7_PR>** | `<pending merge>` |
+| Substrate teardown (delete MapLibre + drop `maplibre-gl`) | tuxlink-lru7 | **#862** | `<pending merge>` |
 
 All four surface bd issues are **closed**; their worktrees disposed (ADR 0009). Each PR merged with a merge commit (no squash, ADR 0010) and CI-green on all four jobs (verify ×2 arch + build-linux ×2 arch + deb-install-test).
 
@@ -54,7 +54,7 @@ Confirm: dark basemap follows the theme (toggle light/dark), pins/labels render,
 
 ## State at handoff
 - **main** advanced by 5 merges this session (#855, #857, #858, #861, + lru7). Local `main` ref in the main checkout is the operator's; I worked entirely in `worktrees/` off `origin/main`.
-- **In-flight worktrees:** the lru7 worktree (`worktrees/bd-tuxlink-lru7-maplibre-teardown`) is the only one of mine left at handoff time; dispose it (ADR 0009) once #<LRU7_PR> merges. No untracked/gitignored-stateful content beyond `node_modules`/`dist`.
+- **In-flight worktrees:** the lru7 worktree (`worktrees/bd-tuxlink-lru7-maplibre-teardown`) is the only one of mine left at handoff time; dispose it (ADR 0009) once #862 merges. No untracked/gitignored-stateful content beyond `node_modules`/`dist`.
 - **Stale local branches:** `gh pr merge --delete-branch` couldn't delete the *local* merged branches (their worktrees held them at merge time) — `bd-tuxlink-{mncq,kkd3,4hol,rqvk}/...` may linger as local refs in the shared repo. Remotes ARE deleted. Harmless; `git branch -d` them from a worktree cwd when convenient (the main-checkout hook blocks branch ops from the main checkout while other sessions are live).
 - **Shared repo stashes (NOT mine):** 7 pre-existing stashes (dates 2026-05-31…06-03) from prior sessions remain — left untouched.
 - `.github/RELEASE_FREEZE` unchanged (still frozen).
