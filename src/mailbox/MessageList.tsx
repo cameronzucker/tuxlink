@@ -306,6 +306,15 @@ export interface MessageListProps {
   /// so callers can stash Archive shortcuts (e.g. for telemetry) without
   /// instrumenting the generic move path.
   onArchiveMessage?: (id: string, fromFolder: MailboxFolderRef) => void;
+  /// Right-click → Delete (move-to-trash) handler (tuxlink-wl7n). Shown for
+  /// folders ≠ 'deleted'. No confirm — delete is recoverable via Restore.
+  onDeleteMessage?: (id: string, fromFolder: MailboxFolderRef) => void;
+  /// Right-click → Restore handler (tuxlink-wl7n). Shown instead of Delete
+  /// when folder === 'deleted'.
+  onRestoreMessage?: (id: string) => void;
+  /// Right-click → Delete permanently handler (tuxlink-wl7n). Shown alongside
+  /// Restore when folder === 'deleted'. The parent wires the confirm dialog.
+  onPurgeMessage?: (id: string) => void;
   /// The multi-select selection set (tuxlink-etxt Task 8). Optional; defaults
   /// to an empty set so AppShell compiles without change until Task 11 wires
   /// the real state. ReadonlySet allows the module-level EMPTY_SELECTION
@@ -348,6 +357,9 @@ export function MessageList({
   userFolders,
   onMoveMessage,
   onArchiveMessage,
+  onDeleteMessage,
+  onRestoreMessage,
+  onPurgeMessage,
   selectedIds = EMPTY_SELECTION,
   onSelectionChange = () => {},
   onBulkSetReadState,
@@ -434,7 +446,7 @@ export function MessageList({
   } | null>(null);
   // tuxlink-sndh: stabilize the callback so the memoized MessageRow can
   // skip re-render when nothing else about the row's props changed.
-  const ctxAvailable = Boolean(onMoveMessage || onArchiveMessage);
+  const ctxAvailable = Boolean(onMoveMessage || onArchiveMessage || onDeleteMessage || onRestoreMessage || onPurgeMessage);
   // tuxlink-l80q: OS convention — right-clicking a row already in the selection
   // acts on the whole selection; right-clicking a row OUTSIDE the selection
   // resets the selection to that single row and acts single-target.
@@ -525,6 +537,15 @@ export function MessageList({
             if (ctxMenu.selectionMode) onBulkArchive?.(new Set(selectedIds));
             else onArchiveMessage?.(ctxMenu.message.id, ctxSourceFolder);
           }}
+          onDelete={onDeleteMessage
+            ? () => onDeleteMessage(ctxMenu.message.id, ctxSourceFolder)
+            : undefined}
+          onRestore={onRestoreMessage
+            ? () => onRestoreMessage(ctxMenu.message.id)
+            : undefined}
+          onDeletePermanently={onPurgeMessage
+            ? () => onPurgeMessage(ctxMenu.message.id)
+            : undefined}
           onClose={() => setCtxMenu(null)}
         />
       )}

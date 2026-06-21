@@ -27,6 +27,7 @@ import { type SortState, loadSortState, saveSortState } from '../mailbox/message
 import { useMailbox, useMailboxChangeEvents } from '../mailbox/useMailbox';
 import { DRAFTS_CHANGED_EVENT, listDraftMessages } from '../mailbox/draftMailbox';
 import { isNotConfigured } from '../mailbox/types';
+import { deleteMessages, restoreMessages, purgeMessage } from '../mailbox/mailboxCommands';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
 import { useUserFolders, useMoveUserFolder } from '../mailbox/useUserFolders';
 import { useContacts } from '../contacts/useContacts';
@@ -1044,6 +1045,55 @@ export function AppShell() {
     }
   }, [queryClient]);
 
+  // tuxlink-wl7n: Delete-to-trash, Restore, and Permanently-delete handlers.
+  // Mirror the moveByIdToFolder / archiveByIdAndFolder pattern: call the
+  // mailboxCommands façade, then invalidate the affected queries so the UI
+  // re-fetches without waiting for the next mailbox:changed event.
+
+  /// Move a message to the Deleted folder (recoverable). No confirm.
+  /// Invalidates the source folder and the 'deleted' folder.
+  const deleteByIdAndFolder = useCallback(async (
+    id: string,
+    fromFolder: MailboxFolderRef,
+  ) => {
+    if (fromFolder === 'deleted') return; // already in Deleted — no-op
+    try {
+      await deleteMessages([{ id, folder: fromFolder }]);
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      setSelectedMessage((cur) => (cur?.id === id ? null : cur));
+      setSelectedIds((cur) => dropId(cur, id));
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [queryClient]);
+
+  /// Restore a message from the Deleted folder to its origin folder.
+  /// Invalidates the 'deleted' folder and the origin folder (covered by ['mailbox']).
+  const restoreById = useCallback(async (id: string) => {
+    try {
+      await restoreMessages([id]);
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      setSelectedMessage((cur) => (cur?.id === id ? null : cur));
+      setSelectedIds((cur) => dropId(cur, id));
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [queryClient]);
+
+  /// Permanently delete a single message from the Deleted folder (no recovery).
+  /// TODO(tuxlink-wl7n Task 14): replace window.confirm with DeleteFolderDialog-style modal.
+  const purgeById = useCallback(async (id: string) => {
+    if (!window.confirm('Permanently delete this message? This cannot be undone.')) return;
+    try {
+      await purgeMessage(id);
+      void queryClient.invalidateQueries({ queryKey: ['mailbox', 'deleted'] });
+      setSelectedMessage((cur) => (cur?.id === id ? null : cur));
+      setSelectedIds((cur) => dropId(cur, id));
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [queryClient]);
+
   // tuxlink-etxt Task 12+13: single-message read/unread toggle — wired from the
   // context-menu (T12) and the U key (T13). Mirrors the invoke + invalidate
   // pattern of the other per-message handlers; the try/catch keeps an unhandled
@@ -1534,6 +1584,9 @@ export function AppShell() {
           userFolders={userFolders}
           onMoveMessage={moveByIdToFolder}
           onArchiveMessage={archiveByIdAndFolder}
+          onDeleteMessage={deleteByIdAndFolder}
+          onRestoreMessage={restoreById}
+          onPurgeMessage={purgeById}
           selectedIds={selectedIds}
           onSelectionChange={setSelectedIds}
           onBulkSetReadState={bulkSetReadState}
@@ -1584,6 +1637,23 @@ export function AppShell() {
           // loading-specific fallback (tuxlink-268k Codex P3: previously
           // used MessageViewEmpty, which flashed the "Select a message"
           // copy under a highlighted row during the brief chunk fetch).
+          // tuxlink-wl7n: derive single-message delete/restore/purge closures
+          // from selectedMessage so MessageView doesn't need to know the folder.
+          const onDeleteMessage = (
+            selectedMessage && selectedMessage.folder !== 'deleted' && selectedMessage.folder !== 'drafts'
+          )
+            ? () => deleteByIdAndFolder(selectedMessage.id, selectedMessage.folder)
+            : undefined;
+          const onRestoreMessage = (
+            selectedMessage && selectedMessage.folder === 'deleted'
+          )
+            ? () => restoreById(selectedMessage.id)
+            : undefined;
+          const onPurgeMessage = (
+            selectedMessage && selectedMessage.folder === 'deleted'
+          )
+            ? () => purgeById(selectedMessage.id)
+            : undefined;
           const readingPane = selectedMessage
             ? (
                 <Suspense fallback={<MessageViewLoading />}>
@@ -1594,6 +1664,9 @@ export function AppShell() {
                     onMove={selectedMessage.folder === 'drafts' ? undefined : moveOpen}
                     onEditDraft={editDraft}
                     radioDrawerOpen={isCompact && drawerOpen}
+                    onDelete={onDeleteMessage}
+                    onRestore={onRestoreMessage}
+                    onDeletePermanently={onPurgeMessage}
                   />
                 </Suspense>
               )
