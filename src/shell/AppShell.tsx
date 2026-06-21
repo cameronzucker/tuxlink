@@ -1463,6 +1463,13 @@ export function AppShell() {
       const hit = searchResultMessages?.find((m) => m.id === id);
       const folder = (hit?.folder as MailboxFolder | undefined) ?? selectedFolder;
       setSelectedMessage({ folder, id });
+      // tuxlink-jvtu: the heard-positions map shares the reading-pane grid slot
+      // (rendered when aprsOpen && aprsMapOpen). With the map open, the
+      // MessageList column stays visible but the reader is covered, so a click
+      // only highlighted the row. Close the map so the selected message shows;
+      // the operator reopens the map via the dock Map toggle. No-op when the
+      // map is already closed (React bails on an unchanged state value).
+      setAprsMapOpen(false);
     },
     [selectedFolder, searchResultMessages],
   );
