@@ -8921,6 +8921,8 @@ hw:CARD=Device,DEV=0
             map_tile_source: None,
             aredn_master_node_host: None,
             aprs: crate::config::AprsConfig::default(),
+            trash_auto_purge: true,
+            trash_retention_days: 30,
         }
     }
 
@@ -9178,6 +9180,8 @@ hw:CARD=Device,DEV=0
             map_tile_source: None,
             aredn_master_node_host: None,
             aprs: crate::config::AprsConfig::default(),
+            trash_auto_purge: true,
+            trash_retention_days: 30,
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -10576,6 +10580,8 @@ hw:CARD=Device,DEV=0
             map_tile_source: None,
             aredn_master_node_host: None,
             aprs: crate::config::AprsConfig::default(),
+            trash_auto_purge: true,
+            trash_retention_days: 30,
         }
     }
 

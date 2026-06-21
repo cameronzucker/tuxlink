@@ -1666,27 +1666,13 @@ impl WinlinkBackend for NativeBackend {
         id: &MessageId,
         origin_full: Option<&str>,
     ) -> Result<(), BackendError> {
-        use crate::native_mailbox::FolderRef;
+        // `Mailbox::delete_message` accepts a `FolderRef`, so both a system
+        // folder and a user folder write a `<mid>.trash` sidecar recording the
+        // origin (the system `as_path()` name or the user-folder slug) plus the
+        // origin identity. Restore reads that sidecar to return the message to
+        // its source folder — including back into a user folder (tuxlink-wl7n).
         let now = chrono::Utc::now().to_rfc3339();
-        match from {
-            // System-folder origin: the sidecar-bearing delete path records the
-            // origin folder + identity for restore (tuxlink-wl7n Task 3).
-            FolderRef::System(folder) => {
-                self.mailbox.delete_message(folder, id, origin_full, &now)?;
-            }
-            // User-folder origin: `Mailbox::delete_message` only accepts a system
-            // `MailboxFolder`, so route the move through the FolderRef-aware
-            // `move_between` (User → Deleted) instead. No `.trash` sidecar is
-            // written for this path, so Restore falls back to the active
-            // identity's Inbox per the design's missing-sidecar rule.
-            FolderRef::User(slug) => {
-                self.mailbox.move_between(
-                    FolderRef::User(slug),
-                    FolderRef::System(MailboxFolder::Deleted),
-                    id,
-                )?;
-            }
-        }
+        self.mailbox.delete_message(from, id, origin_full, &now)?;
         (self.mailbox_change)();
         Ok(())
     }
@@ -4116,6 +4102,8 @@ mod native_read_state_tests {
             map_tile_source: None,
             aredn_master_node_host: None,
             aprs: crate::config::AprsConfig::default(),
+            trash_auto_purge: true,
+            trash_retention_days: 30,
         }
     }
 
@@ -5688,6 +5676,8 @@ mod native_read_state_tests {
             map_tile_source: None,
             aredn_master_node_host: None,
             aprs: crate::config::AprsConfig::default(),
+            trash_auto_purge: true,
+            trash_retention_days: 30,
         }
     }
 

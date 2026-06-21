@@ -2058,6 +2058,8 @@ mod tests {
             map_tile_source: None,
             aredn_master_node_host: None,
             aprs: crate::config::AprsConfig::default(),
+            trash_auto_purge: true,
+            trash_retention_days: 30,
         };
         assert!(check_identity_present(&cfg).is_err());
     }
@@ -2556,6 +2558,8 @@ mod tests {
             map_tile_source: None,
             aredn_master_node_host: None,
             aprs: crate::config::AprsConfig::default(),
+            trash_auto_purge: true,
+            trash_retention_days: 30,
         }
     }
 

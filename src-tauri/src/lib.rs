@@ -910,6 +910,61 @@ pub fn run() {
             // pane (BackendPhase::Failed), not a silent empty state (spec §2).
             crate::bootstrap::run(app.handle().clone());
 
+            // tuxlink-wl7n Task 9: scheduled Trash auto-purge. When the operator
+            // has `trash_auto_purge` enabled (the default), permanently remove
+            // Trash items older than `trash_retention_days` — once at startup,
+            // then every 6h. The mailbox's Deleted folder is a single shared
+            // `<app_data>/native-mbox/deleted` dir (NOT per-identity), so a bare
+            // `Mailbox::new` over the mbox root is sufficient; no identity
+            // namespace is needed for the sweep. Best-effort: any failure logs a
+            // warning and the loop continues — never panics, never blocks launch.
+            // The config is RE-READ each tick so toggling the setting at runtime
+            // takes effect without a restart (disabled → the tick is a no-op).
+            if let Ok(data_dir) = app.path().app_data_dir() {
+                let mbox_dir = data_dir.join("native-mbox");
+                tauri::async_runtime::spawn(async move {
+                    // Six hours between sweeps; the first tick fires immediately
+                    // (tokio's interval yields at t=0), giving the startup sweep.
+                    let mut ticker =
+                        tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
+                    loop {
+                        ticker.tick().await;
+                        // Re-read config each tick so a runtime toggle of the
+                        // setting (or a changed retention window) is honored.
+                        let (enabled, retention_days) = match crate::config::read_config() {
+                            Ok(cfg) => (cfg.trash_auto_purge, cfg.trash_retention_days),
+                            // Unreadable/absent config: fall back to the defaults
+                            // (auto-purge on, 30 days) so a pre-wizard install
+                            // still self-tidies rather than hoarding deleted mail.
+                            Err(_) => (true, 30),
+                        };
+                        if !enabled {
+                            continue;
+                        }
+                        let mailbox = crate::native_mailbox::Mailbox::new(&mbox_dir);
+                        match mailbox
+                            .purge_expired(chrono::Utc::now(), i64::from(retention_days))
+                        {
+                            Ok(n) if n > 0 => {
+                                tracing::info!(
+                                    target: "tuxlink::trash",
+                                    purged = n,
+                                    retention_days,
+                                    "trash auto-purge removed expired items"
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                tracing::warn!(
+                                    target: "tuxlink::trash",
+                                    "trash auto-purge sweep failed: {e}"
+                                );
+                            }
+                        }
+                    }
+                });
+            }
+
             // tuxlink-686 Task 11 / Codex P1-A defense-in-depth: only spawn the
             // gpsd reader when GPS is permitted. gps_state=Off means the operator
             // has disabled GPS entirely — we must not even open the gpsd socket.
