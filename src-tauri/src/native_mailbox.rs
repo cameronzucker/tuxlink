@@ -1708,7 +1708,7 @@ mod tests {
         let remaining = std::fs::read_dir(mb.folder_dir(MailboxFolder::Deleted))
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |x| x == "b2f"))
+            .filter(|e| e.path().extension().is_some_and(|x| x == "b2f"))
             .count();
         assert_eq!(remaining, 0);
     }
