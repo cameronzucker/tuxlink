@@ -10,6 +10,11 @@ export interface MenuHandlers {
   /** Move the open message to Archive (tuxlink-ca5x). No-op when nothing is
    *  open or when the open message is already in Archive. */
   archive: () => void;
+  /** Move the open message to the Deleted folder (Trash) (tuxlink-wl7n). No-op
+   *  when nothing is open or when the open message is already in Trash. Services
+   *  the Message → Delete menubar item; the Del KEY is handled by the reading
+   *  pane (MessageViewLoaded). */
+  delete: () => void;
   /** Print the open message via the webview's native print dialog
    *  (tuxlink-j0m3). No-op when nothing is open — Ctrl+P with no
    *  selection shouldn't open the system print dialog on an empty
@@ -67,6 +72,7 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:message:reply_all': h.replyAll(); return;
     case 'menu:message:forward': h.forward(); return;
     case 'menu:message:archive': h.archive(); return;
+    case 'menu:message:delete': h.delete(); return;
     case 'menu:message:print': h.print(); return;
     // tuxlink-eymu: the Request Center replaces the standalone Catalog Request
     // menu item. GRIB File Request… opens it directly on its 'grib' view.

@@ -431,22 +431,21 @@ impl From<MessageMeta> for MessageMetaDto {
 
 /// Parse a sidebar folder string into a backend [`MailboxFolder`].
 ///
-/// `"drafts"` and `"deleted"` never reach a backend command — Drafts is a
-/// local (`localStorage`) store handled frontend-side (spec §2.2), and
-/// Deleted is a disabled placeholder. Either string → `Err(UiError)` so a
-/// stray invocation fails loudly rather than silently querying the wrong
-/// folder. Spec §3.2 + Task-12 test (2).
+/// `"drafts"` never reaches a backend command — Drafts is a local
+/// (`localStorage`) store handled frontend-side (spec §2.2) → `Err(UiError)` so
+/// a stray invocation fails loudly rather than silently querying the wrong
+/// folder. `"deleted"` IS a live backend folder (tuxlink-wl7n) and parses to
+/// `MailboxFolder::Deleted`, consistent with [`parse_folder_ref`]. Spec §3.2.
 pub fn parse_folder(folder: &str) -> Result<MailboxFolder, UiError> {
     match folder {
         "inbox" => Ok(MailboxFolder::Inbox),
         "outbox" => Ok(MailboxFolder::Outbox),
         "sent" => Ok(MailboxFolder::Sent),
         "archive" => Ok(MailboxFolder::Archive),
+        // tuxlink-wl7n: the Deleted (Trash) folder is a live backend folder.
+        "deleted" => Ok(MailboxFolder::Deleted),
         "drafts" => Err(UiError::Internal {
             detail: "drafts is a local folder, not a backend folder".to_string(),
-        }),
-        "deleted" => Err(UiError::Unavailable {
-            reason: "the Deleted folder is not available in v0.0.1".to_string(),
         }),
         other => Err(UiError::Internal {
             detail: format!("unknown folder: {other}"),
@@ -471,9 +470,13 @@ pub fn parse_folder_ref(folder: &str) -> Result<crate::native_mailbox::FolderRef
         "drafts" => Err(UiError::Internal {
             detail: "drafts is a local folder, not a backend folder".to_string(),
         }),
-        "deleted" => Err(UiError::Unavailable {
-            reason: "the Deleted folder is not available in v0.0.1".to_string(),
-        }),
+        // tuxlink-wl7n: the Deleted (Trash) folder is now a live backend folder.
+        // `mailbox_list` / `message_read` route through here, so the Trash view
+        // (and opening/restoring a row from it) requires `"deleted"` to resolve
+        // rather than be rejected as unavailable. Moving INTO Trash still goes
+        // through `message_delete` (which writes the `.trash` sidecar), not the
+        // generic `message_move`; the UI does not offer Trash as a move target.
+        "deleted" => Ok(FolderRef::System(MailboxFolder::Deleted)),
         other => {
             crate::user_folders::validate_slug(other)
                 .map_err(|e| UiError::Internal { detail: format!("invalid folder slug: {e}") })?;
@@ -1461,10 +1464,16 @@ pub async fn message_set_read_state(
 
 /// One message reference for a bulk operation. Each carries its own folder so a
 /// cross-folder search-results selection (which mixes folders) stays correct.
+/// `identity` is the owning identity FULL (e.g. "W1ABC") for per-identity
+/// namespace resolution in delete/restore; absent for move/mark-read callers
+/// (they use the shared namespace). `#[serde(default)]` keeps existing payloads
+/// without the field (move/mark-read bulk commands) deserializing correctly.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MessageRefDto {
     pub folder: String,
     pub id: String,
+    #[serde(default)]
+    pub identity: Option<String>,
 }
 
 /// Set the read-state of every listed message. Best-effort per item: a missing
@@ -1527,6 +1536,124 @@ pub(crate) async fn move_bulk_with_backend(
             .move_between_folders(from_ref, to_ref.clone(), &mid)
             .await?;
     }
+    Ok(())
+}
+
+// ---- delete / trash commands (tuxlink-wl7n) --------------------------------
+
+/// Delete one message: move it from its current folder `from` into the shared
+/// Deleted (Trash) folder and record its origin for Restore. `origin_full` is
+/// the message's source identity (FULL) for per-identity origins; `None` when
+/// absent. Recoverable — no confirm (the design treats delete like Archive).
+/// Mirrors [`mailbox_move`].
+#[tauri::command]
+pub async fn message_delete(
+    from: String,
+    id: String,
+    origin_full: Option<String>,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let from_ref = parse_folder_ref(&from)?;
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    backend
+        .delete_message_in(from_ref, &mid, origin_full.as_deref())
+        .await?;
+    Ok(())
+}
+
+/// Delete every listed message to Trash (tuxlink-wl7n). Each item carries its
+/// OWN source folder, so a cross-folder search-results selection lands correctly
+/// in one command call. The per-item `folder` is the origin; bulk delete records
+/// no `origin_full` (so a restored bulk-deleted message re-homes per the
+/// missing-identity fallback). Mirrors [`message_move_bulk`].
+#[tauri::command]
+pub async fn message_delete_bulk(
+    items: Vec<MessageRefDto>,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    delete_bulk_with_backend(backend.as_ref(), items).await
+}
+
+/// Backend-facing core of [`message_delete_bulk`], split out so it is
+/// unit-testable against a real `NativeBackend` without a Tauri `State` (the
+/// same seam as [`move_bulk_with_backend`]). Passes each item's `identity`
+/// (if present) so delete/restore resolve to the correct per-identity namespace.
+pub(crate) async fn delete_bulk_with_backend(
+    backend: &dyn crate::winlink_backend::WinlinkBackend,
+    items: Vec<MessageRefDto>,
+) -> Result<(), UiError> {
+    for item in items {
+        let from_ref = parse_folder_ref(&item.folder)?;
+        let mid = MessageId::new(&item.id);
+        backend.delete_message_in(from_ref, &mid, item.identity.as_deref()).await?;
+    }
+    Ok(())
+}
+
+/// Restore one message from Trash back to its recorded origin (tuxlink-wl7n).
+/// Recoverable action — no confirm. A missing/stale sidecar falls back to the
+/// active identity's Inbox at the storage layer.
+#[tauri::command]
+pub async fn message_restore(
+    id: String,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    backend.restore_message(&mid).await?;
+    Ok(())
+}
+
+/// Restore every listed message from Trash (tuxlink-wl7n). Restore needs only
+/// the MID — the `.trash` sidecar carries each message's origin — so the bulk
+/// shape is a flat `Vec<String>` of MIDs, not the folder-bearing DTO.
+#[tauri::command]
+pub async fn message_restore_bulk(
+    ids: Vec<String>,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    for id in ids {
+        let mid = MessageId::new(&id);
+        backend.restore_message(&mid).await?;
+    }
+    Ok(())
+}
+
+/// Permanently purge every message in Trash, returning the count purged
+/// (tuxlink-wl7n). Irreversible — the frontend gates this behind a confirm.
+#[tauri::command]
+pub async fn trash_empty(state: State<'_, BackendState>) -> Result<usize, UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let n = backend.empty_trash().await?;
+    Ok(n)
+}
+
+/// Permanently purge one message from Trash (tuxlink-wl7n). Irreversible — the
+/// frontend gates this behind a confirm. Only valid for a message already in
+/// Trash.
+#[tauri::command]
+pub async fn trash_purge_one(
+    id: String,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    backend.purge_message(&mid).await?;
     Ok(())
 }
 
@@ -3268,6 +3395,14 @@ pub struct ConfigViewDto {
     /// matching the TS `config.map_tile_source` read; the inner `TileSource`
     /// stays camelCase per its own `rename_all`.
     pub map_tile_source: Option<crate::tiles::TileSource>,
+    /// Auto-purge expired Trash on a schedule (tuxlink-wl7n). When `true`
+    /// (the default) the app sweeps Trash at startup and every 6h, permanently
+    /// removing messages whose `deleted_at` is at least `trash_retention_days`
+    /// old. Mirrors `Config.trash_auto_purge`.
+    pub trash_auto_purge: bool,
+    /// Retention window in days before a Trash item is eligible for auto-purge
+    /// (tuxlink-wl7n). Default 30. Mirrors `Config.trash_retention_days`.
+    pub trash_retention_days: u32,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -3287,6 +3422,8 @@ impl From<&config::Config> for ConfigViewDto {
             review_inbound_before_download: c.review_inbound_before_download,
             aredn_master_node_host: c.aredn_master_node_host.clone(),
             map_tile_source: c.map_tile_source.clone(),
+            trash_auto_purge: c.trash_auto_purge,
+            trash_retention_days: c.trash_retention_days,
         }
     }
 }
@@ -6529,6 +6666,47 @@ pub async fn config_set_review_inbound(
     Ok(())
 }
 
+// ============================================================================
+// tuxlink-wl7n — config_set_trash_auto_purge (Trash auto-purge + retention)
+// ============================================================================
+
+/// Validate and clamp `retention_days` for `config_set_trash_auto_purge`.
+/// Returns `Err(UiError::Rejected)` when `days == 0`; otherwise clamps to
+/// `365` and returns the effective value. Pure; no I/O. Testable in isolation.
+fn validate_trash_retention_days(days: u32) -> Result<u32, UiError> {
+    if days == 0 {
+        return Err(UiError::Rejected("retention_days must be at least 1".to_string()));
+    }
+    Ok(days.min(365))
+}
+
+/// Persist the Trash auto-purge preference and retention window (tuxlink-wl7n).
+/// `enabled` enables or disables the scheduled purge sweep. `retention_days`
+/// is the number of days before a trashed message is eligible for permanent
+/// removal; rejected when `0`, clamped to a maximum of `365`.
+///
+/// Mirrors `config_set_review_inbound`'s read → mutate → `write_config_atomic`
+/// → `backend.set_config` live-refresh shape. The live-refresh is load-bearing:
+/// the purge scheduler reads the backend's live config, so persisting alone is
+/// not enough without a restart.
+#[tauri::command]
+pub async fn config_set_trash_auto_purge(
+    state: State<'_, BackendState>,
+    enabled: bool,
+    retention_days: u32,
+) -> Result<(), UiError> {
+    let clamped = validate_trash_retention_days(retention_days)?;
+    let mut cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.trash_auto_purge = enabled;
+    cfg.trash_retention_days = clamped;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg);
+    }
+    Ok(())
+}
+
 /// Validate a user-supplied CMS host. Returns `Some(message)` for the FIRST rule
 /// violated, `None` when valid. Rules (most-actionable first, mirroring
 /// `config::validate_identity_describe`): nonempty → no whitespace. A hostname's
@@ -8740,14 +8918,30 @@ hw:CARD=Device,DEV=0
         assert_eq!(parsed, MailboxFolder::Archive);
     }
 
-    // tuxlink-ca5x: drafts + deleted remain non-backend even after Archive
-    // joined the wire vocabulary. Regression-pin: a future careless union of
-    // "any string is a folder slug" (Phase 2 work) must not silently flip
-    // these to Ok.
+    // tuxlink-ca5x: drafts remains a frontend-local folder and must never parse
+    // to a backend folder. Regression-pin against a careless "any string is a
+    // folder slug" union. (Deleted USED to be rejected here too; tuxlink-wl7n
+    // made it a live backend folder — see `parse_folder_accepts_deleted`.)
     #[test]
-    fn parse_folder_still_rejects_drafts_and_deleted() {
+    fn parse_folder_still_rejects_drafts() {
         assert!(parse_folder("drafts").is_err());
-        assert!(parse_folder("deleted").is_err());
+    }
+
+    // tuxlink-wl7n: the Deleted (Trash) folder is a live backend folder. Both
+    // folder parsers must resolve "deleted" so `mailbox_list` / `message_read`
+    // can browse Trash and open/restore rows from it. (Codex P1: adding the
+    // enum variant alone left `parse_folder_ref` rejecting "deleted", so the
+    // Trash view failed at IPC before reaching the new backend methods.)
+    #[test]
+    fn parse_folder_accepts_deleted() {
+        assert_eq!(
+            parse_folder("deleted").expect("deleted must parse"),
+            MailboxFolder::Deleted
+        );
+        match parse_folder_ref("deleted").expect("deleted must parse as FolderRef") {
+            crate::native_mailbox::FolderRef::System(MailboxFolder::Deleted) => {}
+            other => panic!("expected System(Deleted), got {other:?}"),
+        }
     }
 
     #[test]
@@ -8804,6 +8998,8 @@ hw:CARD=Device,DEV=0
             map_tile_source: None,
             aredn_master_node_host: None,
             aprs: crate::config::AprsConfig::default(),
+            trash_auto_purge: true,
+            trash_retention_days: 30,
         }
     }
 
@@ -8910,6 +9106,70 @@ hw:CARD=Device,DEV=0
         assert_eq!(v["position_precision"], "SixCharGrid");
         // tuxlink-686 Task 7: position_source key is snake_case; value is PascalCase.
         assert_eq!(v["position_source"], "Gps");
+    }
+
+    // ========================================================================
+    // tuxlink-wl7n — ConfigViewDto projects trash_auto_purge / trash_retention_days
+    // ========================================================================
+
+    // The DTO must surface the fixture defaults (true / 30) through the From impl.
+    #[test]
+    fn config_view_dto_maps_trash_fields_defaults() {
+        let cfg = cms_config_fixture();
+        let dto = ConfigViewDto::from(&cfg);
+        assert!(dto.trash_auto_purge, "trash_auto_purge default true must project to DTO");
+        assert_eq!(dto.trash_retention_days, 30, "trash_retention_days default 30 must project to DTO");
+    }
+
+    // Flipping to non-default values confirms the From impl reads the live config
+    // rather than a hardcoded constant.
+    #[test]
+    fn config_view_dto_maps_trash_fields_custom() {
+        let mut cfg = cms_config_fixture();
+        cfg.trash_auto_purge = false;
+        cfg.trash_retention_days = 14;
+        let dto = ConfigViewDto::from(&cfg);
+        assert!(!dto.trash_auto_purge, "trash_auto_purge = false must project through");
+        assert_eq!(dto.trash_retention_days, 14, "trash_retention_days = 14 must project through");
+    }
+
+    // ========================================================================
+    // tuxlink-wl7n — config_set_trash_auto_purge validation
+    //
+    // NOTE: the full read→write round-trip is NOT unit-tested here because
+    // `config::config_path()` resolves via the process-global `TUXLINK_CONFIG_DIR`
+    // env var and races under parallel `cargo test` (same caveat as
+    // `config_set_review_inbound`). The validation path does not touch the
+    // filesystem and is safe to test in isolation. The persist path is identical
+    // in shape to `config_set_connect` / `config_set_review_inbound` and is
+    // operator-smoke-covered.
+    // ========================================================================
+
+    // retention_days = 0 must be rejected before any config I/O.
+    #[test]
+    fn config_set_trash_auto_purge_rejects_zero_days() {
+        let result = validate_trash_retention_days(0);
+        assert!(result.is_err(), "retention_days = 0 must be rejected");
+        match result.unwrap_err() {
+            UiError::Rejected(_) => {}
+            other => panic!("expected UiError::Rejected, got {other:?}"),
+        }
+    }
+
+    // retention_days > 365 must be clamped to 365 (not rejected).
+    #[test]
+    fn config_set_trash_auto_purge_clamps_above_max() {
+        let result = validate_trash_retention_days(400);
+        assert!(result.is_ok(), "retention_days > 365 must clamp, not reject; got {result:?}");
+        assert_eq!(result.unwrap(), 365, "must clamp to 365");
+    }
+
+    // Valid in-range value passes through unchanged.
+    #[test]
+    fn config_set_trash_auto_purge_accepts_valid_days() {
+        let result = validate_trash_retention_days(14);
+        assert!(result.is_ok(), "retention_days = 14 must be accepted; got {result:?}");
+        assert_eq!(result.unwrap(), 14, "must not alter a valid value");
     }
 
     // ========================================================================
@@ -9061,6 +9321,8 @@ hw:CARD=Device,DEV=0
             map_tile_source: None,
             aredn_master_node_host: None,
             aprs: crate::config::AprsConfig::default(),
+            trash_auto_purge: true,
+            trash_retention_days: 30,
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -10459,6 +10721,8 @@ hw:CARD=Device,DEV=0
             map_tile_source: None,
             aredn_master_node_host: None,
             aprs: crate::config::AprsConfig::default(),
+            trash_auto_purge: true,
+            trash_retention_days: 30,
         }
     }
 
@@ -11938,9 +12202,9 @@ hw:CARD=Device,DEV=0
         let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
 
         let items = vec![
-            MessageRefDto { folder: "inbox".into(), id: a.0.clone() },
-            MessageRefDto { folder: "inbox".into(), id: b.0.clone() },
-            MessageRefDto { folder: "sent".into(), id: c.0.clone() },
+            MessageRefDto { folder: "inbox".into(), id: a.0.clone(), identity: None },
+            MessageRefDto { folder: "inbox".into(), id: b.0.clone(), identity: None },
+            MessageRefDto { folder: "sent".into(), id: c.0.clone(), identity: None },
         ];
         move_bulk_with_backend(&backend, items, "archive")
             .await
@@ -11977,7 +12241,7 @@ hw:CARD=Device,DEV=0
             .unwrap();
         let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
 
-        let items = vec![MessageRefDto { folder: "inbox".into(), id: a.0.clone() }];
+        let items = vec![MessageRefDto { folder: "inbox".into(), id: a.0.clone(), identity: None }];
         move_bulk_with_backend(&backend, items, "inbox")
             .await
             .expect("self-move is accepted as a no-op");
@@ -11986,6 +12250,131 @@ hw:CARD=Device,DEV=0
             backend.list_messages(MailboxFolder::Inbox).await.unwrap().len(),
             1,
             "a self-move must not delete the message"
+        );
+    }
+
+    // tuxlink-wl7n Task 8: message_delete_bulk moves every listed message to the
+    // shared Deleted (Trash) folder, honoring each item's own source folder so a
+    // cross-folder selection (inbox + sent) lands in Trash in one command call.
+    // Mirrors message_move_bulk_moves_all_listed_messages_across_source_folders.
+    #[tokio::test]
+    async fn message_delete_bulk_moves_all_listed_messages_to_trash() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::compose::compose_message;
+        use crate::winlink_backend::{MailboxFolder, NativeBackend, WinlinkBackend};
+
+        let dir = tempfile::tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+        let a = seed
+            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "A", "a", 1_716_200_000).to_bytes())
+            .unwrap();
+        let b = seed
+            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "B", "b", 1_716_200_001).to_bytes())
+            .unwrap();
+        let c = seed
+            .store(MailboxFolder::Sent, &compose_message("N7CPZ", &["W1AW"], &[], "C", "c", 1_716_200_002).to_bytes())
+            .unwrap();
+
+        let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
+
+        let items = vec![
+            MessageRefDto { folder: "inbox".into(), id: a.0.clone(), identity: None },
+            MessageRefDto { folder: "inbox".into(), id: b.0.clone(), identity: None },
+            MessageRefDto { folder: "sent".into(), id: c.0.clone(), identity: None },
+        ];
+        delete_bulk_with_backend(&backend, items)
+            .await
+            .expect("bulk delete succeeds");
+
+        assert!(
+            backend.list_messages(MailboxFolder::Inbox).await.unwrap().is_empty(),
+            "both inbox messages left the source folder"
+        );
+        assert!(
+            backend.list_messages(MailboxFolder::Sent).await.unwrap().is_empty(),
+            "the sent message left the source folder"
+        );
+        assert_eq!(
+            backend.list_messages(MailboxFolder::Deleted).await.unwrap().len(),
+            3,
+            "all three messages landed in the Deleted (Trash) folder"
+        );
+    }
+
+    // tuxlink-wl7n Task 13 (Part A — Codex #2): bulk delete must thread the
+    // per-item identity through to the backend so delete/restore target the
+    // correct per-identity namespace. Without the fix, `origin_full` was always
+    // `None`, so a message stored under "W1ABC"'s Inbox would look in the
+    // `_default` namespace (miss) and restore would re-home to `_default` Inbox.
+    #[tokio::test]
+    async fn message_delete_bulk_with_identity_restores_to_correct_namespace() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::compose::compose_message;
+        use crate::winlink_backend::{MailboxFolder, NativeBackend, WinlinkBackend};
+
+        let dir = tempfile::tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+
+        // Store a message in W1ABC's identity-namespaced Inbox via for_identity.
+        // The message lives at {dir}/mailbox/W1ABC/inbox/<mid>.b2f (Phase-4 ns layout).
+        let mid = seed
+            .for_identity("W1ABC")
+            .store(
+                MailboxFolder::Inbox,
+                &compose_message("W1ABC", &["W1AW"], &[], "ID test", "body", 1_716_200_000)
+                    .to_bytes(),
+            )
+            .unwrap();
+
+        let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
+
+        // Bulk-delete with identity threaded through.
+        let items = vec![MessageRefDto {
+            folder: "inbox".into(),
+            id: mid.0.clone(),
+            identity: Some("W1ABC".into()),
+        }];
+        delete_bulk_with_backend(&backend, items)
+            .await
+            .expect("bulk delete with identity succeeds");
+
+        // Message is now in Deleted; W1ABC's namespaced Inbox is empty.
+        assert_eq!(
+            backend.list_messages(MailboxFolder::Deleted).await.unwrap().len(),
+            1,
+            "message moved to Deleted folder"
+        );
+        assert!(
+            seed.for_identity("W1ABC").list(MailboxFolder::Inbox).unwrap().is_empty(),
+            "W1ABC's Inbox must be empty after delete"
+        );
+
+        // The .trash sidecar must record origin_full = "W1ABC".
+        // Deleted folder is at {dir}/deleted/ (shared, not namespaced).
+        let sidecar_path = dir.path().join("deleted").join(format!("{}.trash", mid.0));
+        assert!(sidecar_path.exists(), ".trash sidecar must exist");
+        let sidecar_raw = std::fs::read_to_string(&sidecar_path).unwrap();
+        let sidecar: serde_json::Value = serde_json::from_str(&sidecar_raw).unwrap();
+        assert_eq!(
+            sidecar["origin_full"].as_str(),
+            Some("W1ABC"),
+            "sidecar must record origin_full = W1ABC"
+        );
+
+        // Restore must return the message to W1ABC's Inbox (not _default Inbox).
+        let mid_id = crate::winlink_backend::MessageId::new(&mid.0);
+        backend
+            .restore_message(&mid_id)
+            .await
+            .expect("restore succeeds");
+        assert_eq!(
+            seed.for_identity("W1ABC").list(MailboxFolder::Inbox).unwrap().len(),
+            1,
+            "restored message must be in W1ABC's namespaced Inbox"
+        );
+        assert!(
+            seed.list(MailboxFolder::Inbox).unwrap().is_empty(),
+            "restored message must NOT be in the _default Inbox"
         );
     }
 }

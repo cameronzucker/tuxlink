@@ -671,6 +671,15 @@
 .layout-b .sidebar .nav-item:hover:not(.active):not(.disabled) {
   background: var(--surface-2);
 }
+/* Destructive sidebar action (Empty Trash, tuxlink-wl7n). Restrained per the
+   project's danger pattern (`.tux-ctx-item-danger`): error-colored label, subtle
+   tinted hover — no loud fill. */
+.layout-b .sidebar .nav-item--danger {
+  color: var(--error);
+}
+.layout-b .sidebar .nav-item--danger:hover:not(.active):not(.disabled) {
+  background: rgba(238, 107, 107, 0.12);
+}
 .layout-b .sidebar .nav-item .icon {
   width: 14px;
   text-align: center;

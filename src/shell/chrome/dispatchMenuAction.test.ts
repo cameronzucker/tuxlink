@@ -8,6 +8,7 @@ function handlers(): MenuHandlers {
     replyAll: vi.fn(),
     forward: vi.fn(),
     archive: vi.fn(),
+    delete: vi.fn(),
     print: vi.fn(),
     toggleStatusBar: vi.fn(),
     toggleRadioPanel: vi.fn(),
@@ -114,6 +115,15 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:message:archive', h);
     expect(h.archive).toHaveBeenCalledOnce();
+  });
+
+  // tuxlink-wl7n: Message → Delete moves the open message to Trash. Regression
+  // pin for the final-review finding where the menu item + accelerator were
+  // registered in menuModel but had no `dispatchMenuAction` case (silent no-op).
+  it('routes message:delete to delete', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:message:delete', h);
+    expect(h.delete).toHaveBeenCalledOnce();
   });
 
   // tuxlink-j0m3: Print fires the webview's native print dialog via the

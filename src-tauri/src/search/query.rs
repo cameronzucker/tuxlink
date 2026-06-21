@@ -27,11 +27,18 @@ pub fn compose(spec: &QuerySpec) -> (String, Vec<SqlParam>) {
         where_clauses.push(c);
     }
 
+    // tuxlink-wl7n: track whether the query pins a SPECIFIC folder. A default /
+    // cross-folder ("all", or no folder filter) search must NOT surface trashed
+    // messages — Delete is a discard, so the Deleted folder is excluded unless
+    // the operator explicitly browses it (FOLDER:deleted). See the append below.
+    let mut has_specific_folder = false;
+
     for (key, value) in &spec.filters {
         match (key, value) {
             (FilterKey::Folder, FilterValue::Folder(f)) if f != "all" => {
                 params.push(SqlParam::Text(f.clone()));
                 where_clauses.push(format!("m.folder = ?{}", params.len()));
+                has_specific_folder = true;
             }
             (FilterKey::From, FilterValue::Addr(a)) => {
                 params.push(SqlParam::Text(format!("%{}%", a)));
@@ -84,6 +91,13 @@ pub fn compose(spec: &QuerySpec) -> (String, Vec<SqlParam>) {
         }
     }
 
+    // tuxlink-wl7n: exclude the Deleted (Trash) folder from any non-folder-pinned
+    // search. `'deleted'` is a hardcoded constant (not user input), so embedding it
+    // as a literal is safe and keeps `params` to genuine filter values.
+    if !has_specific_folder {
+        where_clauses.push("m.folder != 'deleted'".into());
+    }
+
     let where_sql = if where_clauses.is_empty() {
         String::new()
     } else {
@@ -128,11 +142,14 @@ mod tests {
     }
 
     #[test]
-    fn compose_no_filters_no_freetext_lists_all() {
+    fn compose_no_filters_no_freetext_lists_all_except_trash() {
         let spec = empty_spec();
         let (sql, params) = compose(&spec);
         assert!(sql.contains("FROM messages_meta"), "got: {sql}");
         assert!(!sql.contains("MATCH"), "got: {sql}");
+        // tuxlink-wl7n: an unfiltered search excludes the Deleted folder — and the
+        // exclusion is a literal, so it adds no bound param.
+        assert!(sql.contains("m.folder != 'deleted'"), "got: {sql}");
         assert!(params.is_empty());
         assert!(sql.contains("ORDER BY"));
     }
@@ -166,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn compose_folder_all_does_not_filter() {
+    fn compose_folder_all_pins_no_folder_but_excludes_trash() {
         let mut filters = BTreeMap::new();
         filters.insert(FilterKey::Folder, FilterValue::Folder("all".into()));
         let spec = QuerySpec {
@@ -174,10 +191,38 @@ mod tests {
             ..QuerySpec::default()
         };
         let (sql, _params) = compose(&spec);
+        // FOLDER:all does not pin a specific folder (no equality constraint)...
         assert!(
             !sql.contains("m.folder ="),
-            "FOLDER:all should not constrain: {sql}"
+            "FOLDER:all should not pin a folder: {sql}"
         );
+        // ...but tuxlink-wl7n still excludes the Deleted folder from the results.
+        assert!(
+            sql.contains("m.folder != 'deleted'"),
+            "FOLDER:all should still exclude Trash: {sql}"
+        );
+    }
+
+    // tuxlink-wl7n: explicitly browsing the Deleted folder (FOLDER:deleted) pins
+    // it and must NOT also apply the default Trash-exclusion — otherwise an
+    // in-Trash search would always return nothing.
+    #[test]
+    fn compose_folder_deleted_includes_trash() {
+        let mut filters = BTreeMap::new();
+        filters.insert(FilterKey::Folder, FilterValue::Folder("deleted".into()));
+        let spec = QuerySpec {
+            filters,
+            ..QuerySpec::default()
+        };
+        let (sql, params) = compose(&spec);
+        assert!(sql.contains("m.folder = ?"), "got: {sql}");
+        assert!(
+            !sql.contains("m.folder != 'deleted'"),
+            "FOLDER:deleted must not self-exclude: {sql}"
+        );
+        assert!(params
+            .iter()
+            .any(|p| matches!(p, SqlParam::Text(s) if s == "deleted")));
     }
 
     #[test]

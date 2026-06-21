@@ -5,7 +5,7 @@ import { MENU_ACTION_IDS, ACCELERATORS } from './menuModel';
 // is the stable contract regardless of producer. Order matches the menu layout.
 const EXPECTED_IDS = [
   'menu:message:print', 'menu:file:quit',
-  'menu:message:new', 'menu:message:reply', 'menu:message:reply_all', 'menu:message:forward', 'menu:message:archive', 'menu:message:request_center', 'menu:message:grib_request',
+  'menu:message:new', 'menu:message:reply', 'menu:message:reply_all', 'menu:message:forward', 'menu:message:archive', 'menu:message:delete', 'menu:message:request_center', 'menu:message:grib_request',
   // tuxlink-lqw2: the Session + Mailbox top menus were removed in the pre-Alpha
   // declutter; the surviving Verify CMS Connection moved into Tools (below).
   'menu:view:status_bar', 'menu:view:radio_panel',

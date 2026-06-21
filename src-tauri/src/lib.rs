@@ -910,6 +910,75 @@ pub fn run() {
             // pane (BackendPhase::Failed), not a silent empty state (spec §2).
             crate::bootstrap::run(app.handle().clone());
 
+            // tuxlink-wl7n Task 9: scheduled Trash auto-purge. When the operator
+            // has `trash_auto_purge` enabled (the default), permanently remove
+            // Trash items older than `trash_retention_days` — once startup has
+            // installed the backend, then every 6h. Best-effort: any failure
+            // logs a warning and the loop continues — never panics, never blocks
+            // launch. The config is RE-READ each tick so toggling the setting at
+            // runtime takes effect without a restart (disabled → the tick is a
+            // no-op).
+            //
+            // Codex P2 fix: the sweep routes through the MANAGED `BackendState`
+            // backend (`purge_expired_trash`), NOT a bare `Mailbox`. The managed
+            // backend carries the attached search index and the `mailbox:changed`
+            // sink, so an auto-purge drops the `search.db` rows and refreshes the
+            // UI — a bare `Mailbox` unlinked the files but left stale index rows
+            // and never invalidated the folder queries. Until bootstrap installs
+            // the backend there is no indexed Trash to sweep, so a tick with no
+            // current backend simply waits for the next one.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    // Six hours between sweeps; the first tick fires immediately
+                    // (tokio's interval yields at t=0), giving the startup sweep
+                    // (once the backend is present).
+                    let mut ticker =
+                        tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
+                    loop {
+                        ticker.tick().await;
+                        // Re-read config each tick so a runtime toggle of the
+                        // setting (or a changed retention window) is honored.
+                        let (enabled, retention_days) = match crate::config::read_config() {
+                            Ok(cfg) => (cfg.trash_auto_purge, cfg.trash_retention_days),
+                            // Unreadable/absent config: fall back to the defaults
+                            // (auto-purge on, 30 days) so a pre-wizard install
+                            // still self-tidies rather than hoarding deleted mail.
+                            Err(_) => (true, 30),
+                        };
+                        if !enabled {
+                            continue;
+                        }
+                        // No installed backend yet (pre-wizard / mid-bootstrap):
+                        // nothing indexed to sweep — retry on the next tick.
+                        let backend = match handle
+                            .state::<crate::app_backend::BackendState>()
+                            .current()
+                        {
+                            Some(b) => b,
+                            None => continue,
+                        };
+                        match backend.purge_expired_trash(i64::from(retention_days)).await {
+                            Ok(n) if n > 0 => {
+                                tracing::info!(
+                                    target: "tuxlink::trash",
+                                    purged = n,
+                                    retention_days,
+                                    "trash auto-purge removed expired items"
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                tracing::warn!(
+                                    target: "tuxlink::trash",
+                                    "trash auto-purge sweep failed: {e}"
+                                );
+                            }
+                        }
+                    }
+                });
+            }
+
             // tuxlink-686 Task 11 / Codex P1-A defense-in-depth: only spawn the
             // gpsd reader when GPS is permitted. gps_state=Off means the operator
             // has disabled GPS entirely — we must not even open the gpsd socket.
@@ -1112,6 +1181,12 @@ pub fn run() {
             crate::ui_commands::message_set_read_state, // tuxlink-etxt (read/unread)
             crate::ui_commands::message_set_read_state_bulk, // tuxlink-etxt (bulk read/unread)
             crate::ui_commands::message_move_bulk,     // tuxlink-l80q (bulk move/archive)
+            crate::ui_commands::message_delete,        // tuxlink-wl7n (delete to Trash)
+            crate::ui_commands::message_delete_bulk,   // tuxlink-wl7n (bulk delete to Trash)
+            crate::ui_commands::message_restore,       // tuxlink-wl7n (restore from Trash)
+            crate::ui_commands::message_restore_bulk,  // tuxlink-wl7n (bulk restore from Trash)
+            crate::ui_commands::trash_empty,           // tuxlink-wl7n (empty Trash)
+            crate::ui_commands::trash_purge_one,       // tuxlink-wl7n (purge one from Trash)
             crate::ui_commands::message_attachment_preview, // tuxlink-ewtb (image attachment preview)
             crate::ui_commands::message_attachment_save, // tuxlink-0fyj (Save As attachment)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
@@ -1228,6 +1303,7 @@ pub fn run() {
             crate::ui_commands::network_po_favorites_remove,
             crate::ui_commands::network_po_favorites_set,
             crate::ui_commands::config_set_review_inbound, // tuxlink-bsiy (review-pending-messages preference)
+            crate::ui_commands::config_set_trash_auto_purge, // tuxlink-wl7n (trash auto-purge + retention)
             // Task 10 (tuxlink-1hu): find-messages search commands
             crate::search::commands::tauri_search_run,
             crate::search::commands::tauri_search_list_saved,

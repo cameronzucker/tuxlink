@@ -346,6 +346,9 @@ export function MessageViewLoaded({
   contacts,
   onAddContact,
   radioDrawerOpen = false,
+  onDelete,
+  onRestore,
+  onDeletePermanently,
 }: {
   message: ParsedMessage;
   onArchive?: () => void;
@@ -373,6 +376,15 @@ export function MessageViewLoaded({
   /// When true, any open form-viewer webview is hidden while the radio
   /// drawer is open. Threaded from AppShell via MessageView (tuxlink-813d).
   radioDrawerOpen?: boolean;
+  /// tuxlink-wl7n: Delete-to-trash handler. Shown next to Archive for
+  /// folder ≠ 'deleted'. The Del key also fires this. No confirm.
+  onDelete?: () => void;
+  /// tuxlink-wl7n: Restore-from-trash handler. Shown instead of Delete when
+  /// folder === 'deleted'. No confirm.
+  onRestore?: () => void;
+  /// tuxlink-wl7n: Permanently-delete handler. Shown alongside Restore when
+  /// folder === 'deleted'. The PARENT wires confirm; the button just calls this.
+  onDeletePermanently?: () => void;
 }) {
   const paneRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
@@ -393,6 +405,8 @@ export function MessageViewLoaded({
   const formMeta = message.isForm ? devFormMeta(message.id) : null;
   const [formCode, ...formRest] = (formMeta?.formKind ?? '').split(' · ');
   const isDraft = currentFolder === 'drafts';
+  // tuxlink-wl7n: Deleted folder switches action bar to Restore + Delete-permanently.
+  const isDeleted = currentFolder === 'deleted';
   const findNeedle = findQuery.trim();
   const findMatches = useMemo(
     () => findTextMatches(message.body, findNeedle),
@@ -445,6 +459,25 @@ export function MessageViewLoaded({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  // tuxlink-wl7n: Del/Delete key — fires onDelete when the open message is NOT
+  // in the Deleted folder. Gated on text-input focus (same discipline as the
+  // Archive `A` accelerator) so Del in the Find bar or any input doesn't fire.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Delete' && e.key !== 'Del') return;
+      // Suppress inside text inputs / textareas / contenteditables.
+      const tag = (e.target as HTMLElement).tagName;
+      const editable = (e.target as HTMLElement).isContentEditable;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return;
+      if (!isDeleted && onDelete) {
+        e.preventDefault();
+        onDelete();
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isDeleted, onDelete]);
 
   return (
     <div className="reading-pane" data-testid="message-view-loaded" ref={paneRef}>
@@ -528,7 +561,7 @@ export function MessageViewLoaded({
         >
           Find
         </button>
-        {!isDraft && onArchive && (
+        {!isDraft && !isDeleted && onArchive && (
           <button
             type="button"
             className="action-btn"
@@ -539,7 +572,42 @@ export function MessageViewLoaded({
             Archive
           </button>
         )}
-        {!isDraft && onMove && currentFolder && (
+        {/* tuxlink-wl7n: Delete button — shown next to Archive for non-Deleted folders */}
+        {!isDraft && !isDeleted && onDelete && (
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="delete-btn"
+            title="Delete (Del)"
+            onClick={onDelete}
+          >
+            Delete
+          </button>
+        )}
+        {/* tuxlink-wl7n: Restore + Delete-permanently for the Deleted folder */}
+        {!isDraft && isDeleted && onRestore && (
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="restore-btn"
+            title="Restore"
+            onClick={onRestore}
+          >
+            Restore
+          </button>
+        )}
+        {!isDraft && isDeleted && onDeletePermanently && (
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="delete-permanently-btn"
+            title="Delete permanently"
+            onClick={onDeletePermanently}
+          >
+            Delete permanently
+          </button>
+        )}
+        {!isDraft && !isDeleted && onMove && currentFolder && (
           <MoveToButton
             currentFolder={currentFolder}
             userFolders={userFolders ?? []}
@@ -978,6 +1046,15 @@ export interface MessageViewProps {
    *  radio drawer is open (compact-mode overlay coexistence, tuxlink-813d).
    *  Defaults to false so existing call sites that omit it keep working. */
   radioDrawerOpen?: boolean;
+  /** tuxlink-wl7n: Delete-to-trash callback. Renders a Delete button + Del key
+   *  handler when supplied and folder ≠ 'deleted'. */
+  onDelete?: () => void;
+  /** tuxlink-wl7n: Restore-from-trash callback. Shown instead of Delete when
+   *  folder === 'deleted'. */
+  onRestore?: () => void;
+  /** tuxlink-wl7n: Permanently-delete callback. Shown alongside Restore in
+   *  the Deleted folder. Parent wires the confirm dialog. */
+  onDeletePermanently?: () => void;
 }
 
 /**
@@ -1005,6 +1082,9 @@ export default function MessageView({
   onMove,
   onEditDraft,
   radioDrawerOpen = false,
+  onDelete,
+  onRestore,
+  onDeletePermanently,
 }: MessageViewProps) {
   const { data, isLoading, isError, error } = useMessage(selectedMessage);
   // G1 (Task A8) — wire the real contacts state so a sender that isn't already
@@ -1060,6 +1140,9 @@ export default function MessageView({
       contacts={contacts}
       onAddContact={upsertContact}
       radioDrawerOpen={radioDrawerOpen}
+      onDelete={onDelete}
+      onRestore={onRestore}
+      onDeletePermanently={onDeletePermanently}
     />
   );
 }

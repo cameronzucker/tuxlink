@@ -57,6 +57,13 @@ export interface ConfigViewDto {
    * parity), instead of auto-downloading all. Default false. The inline
    * SettingsPanel loads this into its checkbox on open. */
   review_inbound_before_download: boolean;
+  /** Auto-purge expired Trash on a schedule (tuxlink-wl7n). When true (the
+   * default) the app sweeps Trash at startup and every 6h, permanently
+   * removing messages whose deleted_at is at least trash_retention_days old. */
+  trash_auto_purge: boolean;
+  /** Retention window in days before a Trash item is eligible for auto-purge
+   * (tuxlink-wl7n). Default 30. */
+  trash_retention_days: number;
 }
 
 /** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-va1i: amended for the

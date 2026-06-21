@@ -14,6 +14,7 @@ set of semantic refinements covered below.
 | **Sent** | Copies of messages successfully delivered | Persists indefinitely until archived or deleted |
 | **Drafts** | Messages saved by the compose window without a Send | Persists until the operator opens and Sends, or discards |
 | **Archive** | Manual long-term storage | The operator's responsibility to organise |
+| **Deleted** | Trash — messages deleted from any folder | Recoverable with Restore; cleared by Empty Trash or the auto-purge sweep |
 | **User folders** | Operator-created folders for organisation | See [User folders](22-user-folders.md) |
 
 The folder semantics are deliberate. The Outbox is the **queue** — anything
@@ -21,6 +22,33 @@ in the Outbox is what the next Connect will attempt to send. The Sent
 folder is **post-delivery confirmation** — a message moves there only after
 the B2F session reports the CMS accepted it. A message that fails delivery
 stays in the Outbox; the session log explains why.
+
+## Deleting messages
+
+Delete moves a message to the **Deleted** folder from any folder it sits in.
+Delete is recoverable and takes no confirmation — it behaves like Archive, not
+a permanent erase. The action is available on a single message and on a
+multi-message selection.
+
+A message in the Deleted folder offers two actions:
+
+- **Restore** returns the message to the folder it was deleted from. An Inbox
+  message returns to the Inbox, a user-folder message returns to that user
+  folder. If the origin folder no longer exists, the message returns to the
+  Inbox.
+- **Delete permanently** removes the single message for good. It confirms
+  first, because the message cannot be recovered afterward.
+
+**Empty Trash**, on the Deleted folder, removes every message it holds in one
+step and also confirms first. The Deleted folder is the only place a permanent
+erase is offered; deleting from any other folder always routes through it.
+
+The Deleted folder is distinct from Archive. Archive is long-term storage the
+operator curates by hand; the Deleted folder is a holding area for messages on
+their way out, cleared on a schedule. By default, the Deleted folder empties
+messages older than 30 days on a recurring sweep. The retention window and the
+sweep itself are configurable under Settings → Mailbox; turning the sweep off
+leaves deleted messages in the Deleted folder until the operator empties it.
 
 ## The two-pass model
 
@@ -110,9 +138,13 @@ A message moves through a small set of states:
 - **Delivered** — CMS acknowledged. Lives in Sent.
 - **Received** — pulled from CMS during Inbox pull. Lives in Inbox.
 - **Archived** — explicitly moved by the operator. Lives in Archive.
+- **Deleted** — moved to the Deleted folder from any folder. Recoverable with
+  Restore; removed for good by Delete permanently, Empty Trash, or the
+  auto-purge sweep.
 
-The transitions are one-way except for Archive (the operator can move out
-of Archive into any other folder).
+The transitions are one-way except for Archive and the Deleted folder: the
+operator can move out of Archive into any other folder, and Restore returns a
+deleted message to the folder it came from.
 
 ## Search and the local archive
 
