@@ -1185,7 +1185,9 @@ export function AppShell() {
       .filter((it) => it.folder !== 'deleted');
     if (items.length === 0) return;
     try {
-      await deleteMessages(items.map(({ id, folder, identity }) => ({ id, folder, identity })));
+      // `items` (BulkMessageRef[]) already matches DeleteItem[] structurally —
+      // {id, folder, identity?} — so pass it straight through, like bulkMoveToFolder.
+      await deleteMessages(items);
       void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
       void queryClient.invalidateQueries({ queryKey: ['search'] });
       const deletedIds = new Set(items.map((it) => it.id));

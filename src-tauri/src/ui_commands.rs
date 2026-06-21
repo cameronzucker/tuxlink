@@ -12087,9 +12087,9 @@ hw:CARD=Device,DEV=0
         let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
 
         let items = vec![
-            MessageRefDto { folder: "inbox".into(), id: a.0.clone() },
-            MessageRefDto { folder: "inbox".into(), id: b.0.clone() },
-            MessageRefDto { folder: "sent".into(), id: c.0.clone() },
+            MessageRefDto { folder: "inbox".into(), id: a.0.clone(), identity: None },
+            MessageRefDto { folder: "inbox".into(), id: b.0.clone(), identity: None },
+            MessageRefDto { folder: "sent".into(), id: c.0.clone(), identity: None },
         ];
         move_bulk_with_backend(&backend, items, "archive")
             .await
@@ -12126,7 +12126,7 @@ hw:CARD=Device,DEV=0
             .unwrap();
         let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
 
-        let items = vec![MessageRefDto { folder: "inbox".into(), id: a.0.clone() }];
+        let items = vec![MessageRefDto { folder: "inbox".into(), id: a.0.clone(), identity: None }];
         move_bulk_with_backend(&backend, items, "inbox")
             .await
             .expect("self-move is accepted as a no-op");
@@ -12163,9 +12163,9 @@ hw:CARD=Device,DEV=0
         let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
 
         let items = vec![
-            MessageRefDto { folder: "inbox".into(), id: a.0.clone() },
-            MessageRefDto { folder: "inbox".into(), id: b.0.clone() },
-            MessageRefDto { folder: "sent".into(), id: c.0.clone() },
+            MessageRefDto { folder: "inbox".into(), id: a.0.clone(), identity: None },
+            MessageRefDto { folder: "inbox".into(), id: b.0.clone(), identity: None },
+            MessageRefDto { folder: "sent".into(), id: c.0.clone(), identity: None },
         ];
         delete_bulk_with_backend(&backend, items)
             .await
