@@ -158,7 +158,7 @@ describe('AprsPositionsMap (Leaflet)', () => {
   it('greys a stale pin (only the pin) and keeps a fresh pin in colour', async () => {
     const now = Date.now();
     const fixes: HeardPosition[] = [
-      { call: 'OLD', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: now - 20 * 60 * 1000, ambiguity: 0 },
+      { call: 'OLD', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: now - 90 * 60 * 1000, ambiguity: 0 },
       { call: 'NEW', lat: 41, lon: -101, symbolTable: '/', symbolCode: '>', comment: '', at: now, ambiguity: 0 },
     ];
     const { container } = await renderMap(<AprsPositionsMap positions={fixes} />);

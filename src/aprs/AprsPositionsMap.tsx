@@ -67,8 +67,11 @@ export interface AprsPositionsMapProps {
 const OPERATOR_ZOOM = 10;
 
 /// A fix not re-heard within this long is shown dimmed (and its age surfaced in
-/// the popup). The hook drops it entirely after a longer TTL.
-const STALE_MS = 15 * 60 * 1000;
+/// the popup). The hook drops it entirely after a longer TTL (POSITION_TTL_MS).
+/// Default 1 h: many real digis/stations beacon only ~hourly (e.g. mountaintop
+/// big guns), so a shorter window greyed them out while they were still current.
+/// User-configurable timings are a follow-up (tuxlink-uhd7 note).
+const STALE_MS = 60 * 60 * 1000;
 /// Cadence for recomputing "now" so staleness updates without new traffic.
 const NOW_TICK_MS = 30 * 1000;
 
