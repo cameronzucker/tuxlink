@@ -12,12 +12,6 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 import { invoke } from '@tauri-apps/api/core';
 
-// ── Mock tauri-plugin-shell opener (for Register link) ────────────────────
-vi.mock('@tauri-apps/plugin-shell', () => ({
-  open: vi.fn(),
-}));
-import { open as shellOpen } from '@tauri-apps/plugin-shell';
-
 // ── Helper: render Step2Credentials inside WizardProvider ────────────────
 function renderStep2() {
   render(
@@ -41,9 +35,9 @@ function StepWithProbe() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Default: invoke resolves undefined. Covers the on-mount cms_password_change_available
-  // availability probe (tuxlink-vfb3); when it resolves falsy the create affordance shows
-  // the external "Register on winlink.org" link. Tests override per-case.
+  // Default: invoke resolves undefined (the submit paths' wizard_persist_cms). Tests
+  // override per-case. Step2 no longer probes cms_password_change_available — the
+  // create affordance is ungated and always routes to AccountCreate (tuxlink-6afw).
   (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 });
 
@@ -67,10 +61,6 @@ describe('<Step2Credentials>', () => {
     expect(screen.getByRole('button', { name: /save.*skip/i })).toBeInTheDocument();
   });
 
-  it('renders a Register link', () => {
-    renderStep2();
-    expect(screen.getByRole('link', { name: /register/i })).toBeInTheDocument();
-  });
 
   it('password field is initially type="password" (masked)', () => {
     renderStep2();
@@ -219,20 +209,6 @@ describe('<Step2Credentials>', () => {
     });
   });
 
-  // ── Register link opens system browser ─────────────────────────────────
-
-  it('Register link click calls tauri-plugin-shell open() instead of navigating', async () => {
-    (shellOpen as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    renderStep2();
-
-    const link = screen.getByRole('link', { name: /register/i });
-    fireEvent.click(link);
-
-    await waitFor(() => {
-      expect(shellOpen).toHaveBeenCalledWith(expect.stringContaining('winlink.org'));
-    });
-  });
-
   // ── Buttons disabled during inFlight ──────────────────────────────────
 
   it('buttons are disabled while inFlight=true', async () => {
@@ -257,17 +233,16 @@ describe('<Step2Credentials>', () => {
     act(() => { resolveInvoke!(); });
   });
 
-  // ── Create-account affordance (tuxlink-vfb3 sub-project 1) ──────────────
-  it('shows the in-app "Create a Winlink account" button when the feature is available', async () => {
-    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(true); // cms_password_change_available → true
+  // ── Create-account affordance (tuxlink-6afw): ungated, always in-app ────
+  it('always shows the in-app "Create a Winlink account" button (ungated)', () => {
     renderStep2();
-    await waitFor(() => expect(screen.getByTestId('cred-create-account')).toBeInTheDocument());
-    // The external register fallback is absent in this mode.
+    expect(screen.getByTestId('cred-create-account')).toBeInTheDocument();
+    // The external winlink.org link no longer lives on this step; AccountCreate owns
+    // the keyless degraded note + link.
     expect(screen.queryByTestId('cred-register-external')).not.toBeInTheDocument();
   });
 
   it('clicking "Create a Winlink account" advances to the account_create step', async () => {
-    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     // In production Step2Credentials only renders on the `credentials` step (and
     // GO_TO_ACCOUNT_CREATE is a strict no-op elsewhere), so seed the wizard there.
     function SeedCreds() {
@@ -287,12 +262,5 @@ describe('<Step2Credentials>', () => {
     const btn = await screen.findByTestId('cred-create-account');
     act(() => { fireEvent.click(btn); });
     await waitFor(() => expect(screen.getByTestId('probe-step')).toHaveTextContent('account_create'));
-  });
-
-  it('degrades to the external winlink.org register link when the feature is unavailable', async () => {
-    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(false); // not configured on this build
-    renderStep2();
-    await waitFor(() => expect(screen.getByTestId('cred-register-external')).toBeInTheDocument());
-    expect(screen.queryByTestId('cred-create-account')).not.toBeInTheDocument();
   });
 });

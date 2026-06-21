@@ -8,18 +8,15 @@
 //
 // Password is cleared from WizardState on success (spec §3.1 invariant 1).
 // Buttons disabled during inFlight (spec §3.1).
-// Register link opens in system browser via tauri-plugin-shell (spec §3.7).
+// The "Create a Winlink account" affordance always routes to the in-app AccountCreate
+// step (tuxlink-6afw); AccountCreate owns the keyless degraded note + winlink.org link.
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import { useWizard } from './wizardContext';
 import { validateCallsign, validatePassword } from './validators';
 import { CredentialFields } from './CredentialFields';
 import type { WizardError } from './types';
-
-// Winlink account registration URL — opened in system browser, never in webview (spec §3.7).
-const WINLINK_REGISTER_URL = 'https://www.winlink.org/user/register';
 
 // Auto-fill the MBO address when the callsign changes, BUT only when:
 // - The MBO field is empty, OR
@@ -120,24 +117,6 @@ export function Step2Credentials() {
   const [submitError, setSubmitError] = useState<WizardError | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string | null>>({});
 
-  // Whether in-app account creation is available on this build (same access-key gate as
-  // the password-change feature — tuxlink-vfb3). When false, the "create account"
-  // affordance degrades to external web registration.
-  const [createAvailable, setCreateAvailable] = useState(false);
-  useEffect(() => {
-    let active = true;
-    invoke<boolean>('cms_password_change_available')
-      .then((v) => {
-        if (active) setCreateAvailable(Boolean(v));
-      })
-      .catch(() => {
-        if (active) setCreateAvailable(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
   // ── Field handlers ─────────────────────────────────────────────────────
 
   const handleCallsignChange = useCallback((value: string) => {
@@ -207,13 +186,6 @@ export function Step2Credentials() {
       setSubmitError(wizErr);
       dispatch({ type: 'SUBMIT_FAILURE', error: wizErr });
     }
-  }
-
-  // ── Register link ─────────────────────────────────────────────────────
-
-  function handleRegisterClick(e: React.MouseEvent<HTMLAnchorElement>) {
-    e.preventDefault();
-    shellOpen(WINLINK_REGISTER_URL).catch(console.error);
   }
 
   // ── Render ────────────────────────────────────────────────────────────
@@ -289,34 +261,20 @@ export function Step2Credentials() {
           </button>
         </div>
 
-        {/* Create-account affordance (tuxlink-vfb3). In-app when the CMS account API is
-         *  configured; otherwise degrades to today's external web registration. */}
+        {/* Create-account affordance (tuxlink-6afw). Always routes to the in-app
+         *  AccountCreate step; that step shows the working form when the CMS access key
+         *  is present, else an honest note + the external winlink.org register link. */}
         <p className="wizard-create-line">
           New to Winlink?{' '}
-          {createAvailable ? (
-            <button
-              type="button"
-              className="wizard-linklike"
-              data-testid="cred-create-account"
-              onClick={() => dispatch({ type: 'GO_TO_ACCOUNT_CREATE' })}
-              disabled={state.inFlight}
-            >
-              Create a Winlink account
-            </button>
-          ) : (
-            <>
-              <a
-                href={WINLINK_REGISTER_URL}
-                onClick={handleRegisterClick}
-                role="link"
-                data-testid="cred-register-external"
-                aria-label="Register a Winlink account"
-              >
-                Register on winlink.org
-              </a>{' '}
-              <span className="wizard-field-hint wizard-inline-hint">(opens your browser)</span>
-            </>
-          )}
+          <button
+            type="button"
+            className="wizard-linklike"
+            data-testid="cred-create-account"
+            onClick={() => dispatch({ type: 'GO_TO_ACCOUNT_CREATE' })}
+            disabled={state.inFlight}
+          >
+            Create a Winlink account
+          </button>
         </p>
       </form>
     </div>

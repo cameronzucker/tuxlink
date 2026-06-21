@@ -12,8 +12,9 @@
 // command is wired and offline-correct. RADIO-1: this is internet HTTPS to the account
 // API, not a transmission.
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import { useWizard } from './wizardContext';
 import { CredentialFields } from './CredentialFields';
 import {
@@ -22,6 +23,12 @@ import {
   validateRecoveryEmail,
 } from './validators';
 import type { WizardError } from './types';
+
+// Winlink account registration URL — opened in the system browser (never a webview,
+// spec §3.7). The keyless degraded state (no TUXLINK_WINLINK_ACCESS_CODE) routes real
+// users here, since the in-app create call cannot authenticate to the CMS without the
+// Tuxlink-issued Key (tuxlink-lu7t).
+const WINLINK_REGISTER_URL = 'https://www.winlink.org/user/register';
 
 // AccountApiError (the cms_account command error), serialized #[serde(tag = "kind")].
 interface BackendError {
@@ -80,6 +87,30 @@ export function AccountCreate() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [existsCallsign, setExistsCallsign] = useState<string | null>(null);
 
+  // Is in-app account creation usable on this build? It needs the injected CMS access
+  // key (TUXLINK_WINLINK_ACCESS_CODE); without it the create call cannot authenticate,
+  // so the dialog degrades to an honest note + the external winlink.org register link
+  // rather than a form that fails on submit (tuxlink-6afw). null = probe pending.
+  const [available, setAvailable] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    invoke<boolean>('cms_password_change_available')
+      .then((v) => {
+        if (active) setAvailable(Boolean(v));
+      })
+      .catch(() => {
+        if (active) setAvailable(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleRegisterClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    shellOpen(WINLINK_REGISTER_URL).catch(console.error);
+  }, []);
+
   const callsignError = validateAmateurCallsign(callsign);
   const passwordError = validateAccountPassword(password);
   const matchError = confirm !== password ? 'Passwords do not match.' : null;
@@ -137,6 +168,54 @@ export function AccountCreate() {
     // state.callsign is already current (kept in sync on change); just return.
     dispatch({ type: 'RETURN_TO_CREDENTIALS' });
   }, [dispatch]);
+
+  // Availability probe still in flight — hold the step frame without flashing either
+  // the form or the degraded note.
+  if (available === null) {
+    return (
+      <div className="wizard-step wizard-step-account-create" data-testid="wc-loading">
+        <h1>Create a Winlink account</h1>
+      </div>
+    );
+  }
+
+  // Keyless build: the create call cannot authenticate to the CMS, so present an honest
+  // note + the external winlink.org register link instead of a form that fails on submit
+  // (tuxlink-6afw).
+  if (!available) {
+    return (
+      <div className="wizard-step wizard-step-account-create">
+        <h1>Create a Winlink account</h1>
+        <p data-testid="wc-unavailable">
+          In-app account creation requires a Winlink CMS access key this build does not
+          include. To create a Winlink account, register on winlink.org, then return here
+          and sign in.
+        </p>
+        <p className="wizard-create-line">
+          <a
+            href={WINLINK_REGISTER_URL}
+            onClick={handleRegisterClick}
+            role="link"
+            data-testid="wc-register-external"
+            aria-label="Register a Winlink account"
+          >
+            Register on winlink.org
+          </a>{' '}
+          <span className="wizard-field-hint wizard-inline-hint">(opens your browser)</span>
+        </p>
+        <div className="wizard-submit-row">
+          <button
+            type="button"
+            className="wizard-btn-secondary"
+            data-testid="wc-back-to-signin"
+            onClick={() => dispatch({ type: 'RETURN_TO_CREDENTIALS' })}
+          >
+            Back to sign in
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="wizard-step wizard-step-account-create">
