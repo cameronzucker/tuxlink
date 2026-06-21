@@ -43,6 +43,8 @@ import { saveDraft } from '../compose/useDraft';
 import { newDraftId } from '../routing';
 import { invoke } from '@tauri-apps/api/core';
 import { reportFrontendError } from '../frontendErrorLog';
+import { resolveDigipeatPath, type PathSegment } from './digipeatPath';
+import { DigipeatPathLayer } from './DigipeatPathLayer';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
@@ -168,11 +170,13 @@ function MapOverlays({
   wx,
   category,
   onFocusStation,
+  operator,
 }: {
   positions: HeardPosition[];
   wx: WxStation[];
   category: string;
   onFocusStation?: (call: string) => void;
+  operator: { lat: number; lon: number } | null;
 }) {
   const map = useLeafletMap();
   const group = useLeafletLayerGroup(map);
@@ -208,6 +212,42 @@ function MapOverlays({
   popupCallRef.current = popupCall;
   const wxCardCallRef = useRef(wxCardCall);
   wxCardCallRef.current = wxCardCall;
+
+  // Path state for the digipeat-path animation layer (tuxlink-qnu6 / cn84).
+  const [tracePath, setTracePath] = useState<PathSegment[] | null>(null);
+
+  // Resolve a callsign's digipeat path to drawable segments. Kept in a ref so
+  // the reconcile effect (which creates pin hover handlers) does NOT depend on
+  // it and does not re-run when positions/operator change after mount. The ref
+  // is updated every render so the handlers always see current data.
+  const resolve = (call: string): PathSegment[] | null => {
+    const p = byCallRef.current.get(call);
+    if (!p) return null;
+    const src = { ...cellCenter(p), call: p.call };
+    const via = p.via ?? [];
+    const located = new Map(positions.map((q) => [q.call, cellCenter(q)]));
+    const segs = resolveDigipeatPath({ src, via, located, operator });
+    return segs.length ? segs : null;
+  };
+  const resolveRef = useRef(resolve);
+  resolveRef.current = resolve;
+
+  // Live trigger: when the newest frame (highest `at`) changes to a different
+  // station, fire the trace for that station once. The layer's bounded animation
+  // fades and stops on its own; no loop needed here.
+  const newestSeenRef = useRef<{ at: number; call: string } | null>(null);
+  useEffect(() => {
+    if (positions.length === 0) return;
+    let newest = positions[0];
+    for (const p of positions) {
+      if (p.at > newest.at) newest = p;
+    }
+    const prev = newestSeenRef.current;
+    if (!prev || newest.at > prev.at) {
+      newestSeenRef.current = { at: newest.at, call: newest.call };
+      setTracePath(resolveRef.current(newest.call));
+    }
+  }, [positions]);
 
   const bundlesRef = useRef<Map<string, Bundle>>(new Map());
   // Uncertainty discs use an SVG renderer (not the map's canvas): they are few
@@ -285,6 +325,8 @@ function MapOverlays({
           pin.on('click', () => {
             if (byCallRef.current.has(p.call)) setPopupCall(p.call);
           });
+          pin.on('mouseover', () => setTracePath(resolveRef.current(p.call)));
+          pin.on('mouseout', () => setTracePath(null));
           const circle = p.ambiguity > 0 ? makeCircle(p, c) : null;
           const badge = w ? makeBadge(p.call, w, c) : null;
           // Pin draws above the uncertainty disc: add circle first, then pin, then badge.
@@ -364,6 +406,7 @@ function MapOverlays({
     <>
       {selected && <PositionPopup fix={selected} now={now} onClose={() => setPopupCall(null)} />}
       {wxSelected && <WxCard wx={wxSelected} onClose={() => setWxCardCall(null)} />}
+      <DigipeatPathLayer path={tracePath} />
     </>
   );
 }
@@ -517,7 +560,7 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
     <div className="aprs-positions-map" data-testid="aprs-positions-map">
       <WxFilterControl category={category} onChange={setCategory} />
       <LeafletMap initialCenter={initialCenter} initialZoom={initialZoom} onViewportChange={onViewportChange}>
-        <MapOverlays positions={positions} wx={wx} category={category} onFocusStation={onFocusStation} />
+        <MapOverlays positions={positions} wx={wx} category={category} onFocusStation={onFocusStation} operator={me} />
         <OperatorPin location={me} />
         <WxSitrepControl wx={wx} operatorGrid={operatorGrid || undefined} />
         <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />
