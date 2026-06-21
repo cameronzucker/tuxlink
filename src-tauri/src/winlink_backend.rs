@@ -4400,7 +4400,12 @@ mod native_read_state_tests {
     // tuxlink-wl7n Task 7: delete_message_in moves a message out of its source
     // folder and into the shared Deleted (Trash) folder, recoverable via the
     // sidecar. Mirrors the seed-via-sibling-Mailbox seam used by the read-state
-    // and bulk-move NativeBackend tests.
+    // and bulk-move NativeBackend tests. This covers the default-identity path:
+    // the seed stores under the default namespace and the delete passes
+    // `origin_full = None`, so source resolution stays in that namespace. The
+    // per-identity origin path (origin_full selects the source/restore namespace)
+    // is covered by `native_mailbox`'s `delete_from_user_folder_*` test and the
+    // bulk-identity `delete_bulk` test (tuxlink-wl7n Codex #2).
     #[tokio::test]
     async fn native_backend_delete_message_moves_to_trash() {
         use crate::native_mailbox::FolderRef;
@@ -4412,7 +4417,7 @@ mod native_read_state_tests {
 
         let backend = NativeBackend::new(offline_config(), dir.path());
         backend
-            .delete_message_in(FolderRef::System(MailboxFolder::Inbox), &id, Some("N7CPZ"))
+            .delete_message_in(FolderRef::System(MailboxFolder::Inbox), &id, None)
             .await
             .unwrap();
 
