@@ -12,8 +12,9 @@ export interface TraceTiming {
   fadeMs: number;
 }
 
-/** cn84 aprs.fi-classic feel. Tunable. */
-export const DEFAULT_TIMING: TraceTiming = { drawMs: 2000, lingerMs: 2000, fadeMs: 600 };
+/** cn84 aprs.fi-classic feel, brisk variant (operator-tuned ~2× the original
+ * 2000/2000/600). Tunable. */
+export const DEFAULT_TIMING: TraceTiming = { drawMs: 1000, lingerMs: 1000, fadeMs: 300 };
 
 export interface TraceState {
   phase: 'draw' | 'linger' | 'fade' | 'done';

@@ -3,24 +3,32 @@ import { traceProgress, trimPath, DEFAULT_TIMING } from './digipeatAnim';
 import type { PathSegment } from './digipeatPath';
 
 describe('traceProgress', () => {
-  it('uses the cn84 aprs.fi-classic default timing the boundaries below assume', () => {
-    // The elapsed-time boundaries in the next test (1000=½ draw, 2000=draw end,
-    // 4000=linger end, 4600=fade end) are derived from these values; assert them
-    // so a retune of DEFAULT_TIMING surfaces here instead of as silent drift.
-    expect(DEFAULT_TIMING).toEqual({ drawMs: 2000, lingerMs: 2000, fadeMs: 600 });
+  it('uses the brisk cn84 default timing (operator-tuned ~2× the original)', () => {
+    // The single place the concrete feel is pinned. The boundary test below
+    // derives all its elapsed values from DEFAULT_TIMING, so a future retune
+    // only needs to change this assertion — not the boundary checks.
+    expect(DEFAULT_TIMING).toEqual({ drawMs: 1000, lingerMs: 1000, fadeMs: 300 });
   });
 
   it('draws 0→1 over drawMs, then lingers full, then fades, then done', () => {
+    const { drawMs, lingerMs, fadeMs } = DEFAULT_TIMING;
+    const lingerEnd = drawMs + lingerMs;
+    const fadeEnd = lingerEnd + fadeMs;
+
     expect(traceProgress(0)).toMatchObject({ phase: 'draw', drawProgress: 0, opacity: 1 });
-    expect(traceProgress(1000)).toMatchObject({ phase: 'draw', opacity: 1 });
-    expect(traceProgress(1000).drawProgress).toBeCloseTo(0.5, 2);
-    expect(traceProgress(2000)).toMatchObject({ phase: 'linger', drawProgress: 1, opacity: 1 });
-    expect(traceProgress(3000)).toMatchObject({ phase: 'linger', drawProgress: 1 });
-    // fade window is [draw+linger, draw+linger+fade] = [4000, 4600]
-    expect(traceProgress(4300).phase).toBe('fade');
-    expect(traceProgress(4300).opacity).toBeGreaterThan(0);
-    expect(traceProgress(4300).opacity).toBeLessThan(1);
-    expect(traceProgress(5000)).toMatchObject({ phase: 'done', opacity: 0 });
+    // Half-way through the draw phase.
+    expect(traceProgress(drawMs / 2)).toMatchObject({ phase: 'draw', opacity: 1 });
+    expect(traceProgress(drawMs / 2).drawProgress).toBeCloseTo(0.5, 2);
+    // Draw complete → linger begins exactly at drawMs.
+    expect(traceProgress(drawMs)).toMatchObject({ phase: 'linger', drawProgress: 1, opacity: 1 });
+    expect(traceProgress(drawMs + lingerMs / 2)).toMatchObject({ phase: 'linger', drawProgress: 1 });
+    // Fade window is [drawMs+lingerMs, drawMs+lingerMs+fadeMs); sample its midpoint.
+    const midFade = lingerEnd + fadeMs / 2;
+    expect(traceProgress(midFade).phase).toBe('fade');
+    expect(traceProgress(midFade).opacity).toBeGreaterThan(0);
+    expect(traceProgress(midFade).opacity).toBeLessThan(1);
+    // Past the fade window → done, fully transparent.
+    expect(traceProgress(fadeEnd + 100)).toMatchObject({ phase: 'done', opacity: 0 });
   });
 });
 
