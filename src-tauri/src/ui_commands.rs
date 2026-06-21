@@ -1530,6 +1530,123 @@ pub(crate) async fn move_bulk_with_backend(
     Ok(())
 }
 
+// ---- delete / trash commands (tuxlink-wl7n) --------------------------------
+
+/// Delete one message: move it from its current folder `from` into the shared
+/// Deleted (Trash) folder and record its origin for Restore. `origin_full` is
+/// the message's source identity (FULL) for per-identity origins; `None` when
+/// absent. Recoverable — no confirm (the design treats delete like Archive).
+/// Mirrors [`mailbox_move`].
+#[tauri::command]
+pub async fn message_delete(
+    from: String,
+    id: String,
+    origin_full: Option<String>,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let from_ref = parse_folder_ref(&from)?;
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    backend
+        .delete_message_in(from_ref, &mid, origin_full.as_deref())
+        .await?;
+    Ok(())
+}
+
+/// Delete every listed message to Trash (tuxlink-wl7n). Each item carries its
+/// OWN source folder, so a cross-folder search-results selection lands correctly
+/// in one command call. The per-item `folder` is the origin; bulk delete records
+/// no `origin_full` (so a restored bulk-deleted message re-homes per the
+/// missing-identity fallback). Mirrors [`message_move_bulk`].
+#[tauri::command]
+pub async fn message_delete_bulk(
+    items: Vec<MessageRefDto>,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    delete_bulk_with_backend(backend.as_ref(), items).await
+}
+
+/// Backend-facing core of [`message_delete_bulk`], split out so it is
+/// unit-testable against a real `NativeBackend` without a Tauri `State` (the
+/// same seam as [`move_bulk_with_backend`]).
+pub(crate) async fn delete_bulk_with_backend(
+    backend: &dyn crate::winlink_backend::WinlinkBackend,
+    items: Vec<MessageRefDto>,
+) -> Result<(), UiError> {
+    for item in items {
+        let from_ref = parse_folder_ref(&item.folder)?;
+        let mid = MessageId::new(&item.id);
+        backend.delete_message_in(from_ref, &mid, None).await?;
+    }
+    Ok(())
+}
+
+/// Restore one message from Trash back to its recorded origin (tuxlink-wl7n).
+/// Recoverable action — no confirm. A missing/stale sidecar falls back to the
+/// active identity's Inbox at the storage layer.
+#[tauri::command]
+pub async fn message_restore(
+    id: String,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    backend.restore_message(&mid).await?;
+    Ok(())
+}
+
+/// Restore every listed message from Trash (tuxlink-wl7n). Restore needs only
+/// the MID — the `.trash` sidecar carries each message's origin — so the bulk
+/// shape is a flat `Vec<String>` of MIDs, not the folder-bearing DTO.
+#[tauri::command]
+pub async fn message_restore_bulk(
+    ids: Vec<String>,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    for id in ids {
+        let mid = MessageId::new(&id);
+        backend.restore_message(&mid).await?;
+    }
+    Ok(())
+}
+
+/// Permanently purge every message in Trash, returning the count purged
+/// (tuxlink-wl7n). Irreversible — the frontend gates this behind a confirm.
+#[tauri::command]
+pub async fn trash_empty(state: State<'_, BackendState>) -> Result<usize, UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let n = backend.empty_trash().await?;
+    Ok(n)
+}
+
+/// Permanently purge one message from Trash (tuxlink-wl7n). Irreversible — the
+/// frontend gates this behind a confirm. Only valid for a message already in
+/// Trash.
+#[tauri::command]
+pub async fn trash_purge_one(
+    id: String,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    backend.purge_message(&mid).await?;
+    Ok(())
+}
+
 // ---- user-folder commands (tuxlink-f62f) -----------------------------------
 
 /// DTO mirror of [`crate::user_folders::UserFolder`] over Tauri's camelCase
@@ -11986,6 +12103,54 @@ hw:CARD=Device,DEV=0
             backend.list_messages(MailboxFolder::Inbox).await.unwrap().len(),
             1,
             "a self-move must not delete the message"
+        );
+    }
+
+    // tuxlink-wl7n Task 8: message_delete_bulk moves every listed message to the
+    // shared Deleted (Trash) folder, honoring each item's own source folder so a
+    // cross-folder selection (inbox + sent) lands in Trash in one command call.
+    // Mirrors message_move_bulk_moves_all_listed_messages_across_source_folders.
+    #[tokio::test]
+    async fn message_delete_bulk_moves_all_listed_messages_to_trash() {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink::compose::compose_message;
+        use crate::winlink_backend::{MailboxFolder, NativeBackend, WinlinkBackend};
+
+        let dir = tempfile::tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+        let a = seed
+            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "A", "a", 1_716_200_000).to_bytes())
+            .unwrap();
+        let b = seed
+            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "B", "b", 1_716_200_001).to_bytes())
+            .unwrap();
+        let c = seed
+            .store(MailboxFolder::Sent, &compose_message("N7CPZ", &["W1AW"], &[], "C", "c", 1_716_200_002).to_bytes())
+            .unwrap();
+
+        let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
+
+        let items = vec![
+            MessageRefDto { folder: "inbox".into(), id: a.0.clone() },
+            MessageRefDto { folder: "inbox".into(), id: b.0.clone() },
+            MessageRefDto { folder: "sent".into(), id: c.0.clone() },
+        ];
+        delete_bulk_with_backend(&backend, items)
+            .await
+            .expect("bulk delete succeeds");
+
+        assert!(
+            backend.list_messages(MailboxFolder::Inbox).await.unwrap().is_empty(),
+            "both inbox messages left the source folder"
+        );
+        assert!(
+            backend.list_messages(MailboxFolder::Sent).await.unwrap().is_empty(),
+            "the sent message left the source folder"
+        );
+        assert_eq!(
+            backend.list_messages(MailboxFolder::Deleted).await.unwrap().len(),
+            3,
+            "all three messages landed in the Deleted (Trash) folder"
         );
     }
 }

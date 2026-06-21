@@ -1032,6 +1032,50 @@ pub trait WinlinkBackend: Send + Sync {
         Err(BackendError::NotImplemented)
     }
 
+    /// Delete a message: move it from `from` into the shared `Deleted` (Trash)
+    /// folder and record its origin in a `<mid>.trash` sidecar so Restore can
+    /// return it (tuxlink-wl7n). `origin_full` is the source identity FULL for
+    /// per-identity origins (Inbox/Archive/user folders); `None` for the shared
+    /// Sent/Outbox. `NativeBackend` delegates to [`Mailbox::delete_message`];
+    /// default `NotImplemented`.
+    async fn delete_message_in(
+        &self,
+        _from: crate::native_mailbox::FolderRef,
+        _id: &MessageId,
+        _origin_full: Option<&str>,
+    ) -> Result<(), BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
+    /// Restore a deleted message from Trash back to its recorded origin
+    /// (tuxlink-wl7n). `NativeBackend` delegates to [`Mailbox::restore_message`];
+    /// default `NotImplemented`.
+    async fn restore_message(&self, _id: &MessageId) -> Result<(), BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
+    /// Permanently purge every message in Trash, returning the count purged
+    /// (tuxlink-wl7n). `NativeBackend` delegates to [`Mailbox::empty_trash`];
+    /// default `NotImplemented`.
+    async fn empty_trash(&self) -> Result<usize, BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
+    /// Permanently purge one message from Trash, returning `1` if it was present
+    /// and `0` otherwise (tuxlink-wl7n). `NativeBackend` delegates to
+    /// [`Mailbox::purge_message`]; default `NotImplemented`.
+    async fn purge_message(&self, _id: &MessageId) -> Result<usize, BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
+    /// Auto-purge sweep: permanently purge every Trash message older than
+    /// `retention_days`, returning the count purged (tuxlink-wl7n).
+    /// `NativeBackend` delegates to [`Mailbox::purge_expired`] with
+    /// `chrono::Utc::now()`; default `NotImplemented`.
+    async fn purge_expired_trash(&self, _retention_days: i64) -> Result<usize, BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
     /// Returns `Ok(id)` with the MID assigned at queue time.
     ///
     /// `NativeBackend` assigns a real filesystem-derived MID at queue time.
@@ -1614,6 +1658,73 @@ impl WinlinkBackend for NativeBackend {
         self.mailbox.move_between(from, to, id)?;
         (self.mailbox_change)();
         Ok(())
+    }
+
+    async fn delete_message_in(
+        &self,
+        from: crate::native_mailbox::FolderRef,
+        id: &MessageId,
+        origin_full: Option<&str>,
+    ) -> Result<(), BackendError> {
+        use crate::native_mailbox::FolderRef;
+        let now = chrono::Utc::now().to_rfc3339();
+        match from {
+            // System-folder origin: the sidecar-bearing delete path records the
+            // origin folder + identity for restore (tuxlink-wl7n Task 3).
+            FolderRef::System(folder) => {
+                self.mailbox.delete_message(folder, id, origin_full, &now)?;
+            }
+            // User-folder origin: `Mailbox::delete_message` only accepts a system
+            // `MailboxFolder`, so route the move through the FolderRef-aware
+            // `move_between` (User → Deleted) instead. No `.trash` sidecar is
+            // written for this path, so Restore falls back to the active
+            // identity's Inbox per the design's missing-sidecar rule.
+            FolderRef::User(slug) => {
+                self.mailbox.move_between(
+                    FolderRef::User(slug),
+                    FolderRef::System(MailboxFolder::Deleted),
+                    id,
+                )?;
+            }
+        }
+        (self.mailbox_change)();
+        Ok(())
+    }
+
+    async fn restore_message(&self, id: &MessageId) -> Result<(), BackendError> {
+        self.mailbox.restore_message(id)?;
+        (self.mailbox_change)();
+        Ok(())
+    }
+
+    async fn empty_trash(&self) -> Result<usize, BackendError> {
+        let n = self.mailbox.empty_trash()?;
+        (self.mailbox_change)();
+        Ok(n)
+    }
+
+    async fn purge_message(&self, id: &MessageId) -> Result<usize, BackendError> {
+        // `Mailbox::purge_message` unlinks ignore-NotFound, so it cannot itself
+        // report whether the message was present. Probe the Trash listing first
+        // so the trait's 0/1 contract is honored.
+        let present = self
+            .mailbox
+            .list(MailboxFolder::Deleted)?
+            .iter()
+            .any(|m| m.id == *id);
+        self.mailbox.purge_message(id)?;
+        (self.mailbox_change)();
+        Ok(usize::from(present))
+    }
+
+    async fn purge_expired_trash(&self, retention_days: i64) -> Result<usize, BackendError> {
+        let n = self
+            .mailbox
+            .purge_expired(chrono::Utc::now(), retention_days)?;
+        if n > 0 {
+            (self.mailbox_change)();
+        }
+        Ok(n)
     }
 
     async fn send_message(
@@ -4296,6 +4407,38 @@ mod native_read_state_tests {
             backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
             "after set_read_state(false) the message should be unread again"
         );
+    }
+
+    // tuxlink-wl7n Task 7: delete_message_in moves a message out of its source
+    // folder and into the shared Deleted (Trash) folder, recoverable via the
+    // sidecar. Mirrors the seed-via-sibling-Mailbox seam used by the read-state
+    // and bulk-move NativeBackend tests.
+    #[tokio::test]
+    async fn native_backend_delete_message_moves_to_trash() {
+        use crate::native_mailbox::FolderRef;
+        let dir = tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+        let raw =
+            compose_message("N7CPZ", &["W1AW"], &[], "Bye", "body", 1_716_200_000).to_bytes();
+        let id = seed.store(MailboxFolder::Inbox, &raw).unwrap();
+
+        let backend = NativeBackend::new(offline_config(), dir.path());
+        backend
+            .delete_message_in(FolderRef::System(MailboxFolder::Inbox), &id, Some("N7CPZ"))
+            .await
+            .unwrap();
+
+        assert!(
+            backend
+                .list_messages(MailboxFolder::Inbox)
+                .await
+                .unwrap()
+                .is_empty(),
+            "the deleted message left its source folder"
+        );
+        let trash = backend.list_messages(MailboxFolder::Deleted).await.unwrap();
+        assert_eq!(trash.len(), 1, "the deleted message is present in Trash");
+        assert_eq!(trash[0].id, id, "the same message is now in Trash");
     }
 
     // tuxlink-gqo: the dev transport resolver. With no env overrides the configured
