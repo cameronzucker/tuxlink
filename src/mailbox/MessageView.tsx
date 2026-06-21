@@ -812,7 +812,12 @@ export function MessageViewLoaded({
 
       {/* 5 — attachment strip — names + sizes + Save / image Preview */}
       {message.attachments.length > 0 && (
+        // key by message id (tuxlink-unq9): the strip holds per-attachment-index
+        // preview/save state; remount on message switch so an open image preview
+        // never carries the previous message's bytes into the new message. Mirrors
+        // the form viewer's key={message.id} above.
         <AttachmentStrip
+          key={message.id}
           attachments={message.attachments}
           messageId={message.id}
           folder={currentFolder}
