@@ -45,6 +45,8 @@ import { saveDraft } from '../compose/useDraft';
 import { newDraftId } from '../routing';
 import { invoke } from '@tauri-apps/api/core';
 import { reportFrontendError } from '../frontendErrorLog';
+import { resolveDigipeatPath, type PathSegment } from './digipeatPath';
+import { DigipeatPathLayer, type TraceTrigger } from './DigipeatPathLayer';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
@@ -170,11 +172,13 @@ function MapOverlays({
   wx,
   enabledBuckets,
   onFocusStation,
+  operator,
 }: {
   positions: HeardPosition[];
   wx: WxStation[];
   enabledBuckets: Set<BucketKey>;
   onFocusStation?: (call: string) => void;
+  operator: { lat: number; lon: number } | null;
 }) {
   const map = useLeafletMap();
   const group = useLeafletLayerGroup(map);
@@ -210,6 +214,72 @@ function MapOverlays({
   popupCallRef.current = popupCall;
   const wxCardCallRef = useRef(wxCardCall);
   wxCardCallRef.current = wxCardCall;
+
+  // The latest digipeat-path trace request for the animation layer (tuxlink-qnu6
+  // / cn84). Each fire bumps `key` so the layer sees a new identity; the layer
+  // keys concurrent traces by `call`, so a new request ADDS (or restarts that
+  // station's) trace without canceling the others.
+  const [traceReq, setTraceReq] = useState<TraceTrigger | null>(null);
+  const traceKeyRef = useRef(0);
+
+  // Resolve a callsign's digipeat path to drawable segments. Kept in a ref so
+  // the reconcile effect (which creates pin hover handlers) does NOT depend on
+  // it and does not re-run when positions/operator change after mount. The ref
+  // is updated every render so the handlers always see current data.
+  const resolve = (call: string): PathSegment[] | null => {
+    const p = byCallRef.current.get(call);
+    if (!p) return null;
+    // Object/item reports carry the RELAYING station's via-chain, not the
+    // object's own — tracing a path from an object pin would fabricate its RF
+    // source. The store tags these `isObject` (it does not drop them); honor the
+    // HeardPosition invariant and never trace one.
+    if (p.isObject) return null;
+    const src = { ...cellCenter(p), call: p.call };
+    const via = p.via ?? [];
+    const located = new Map(positions.map((q) => [q.call, cellCenter(q)]));
+    const segs = resolveDigipeatPath({ src, via, located, operator });
+    return segs.length ? segs : null;
+  };
+  const resolveRef = useRef(resolve);
+  resolveRef.current = resolve;
+
+  // Fire a trace for `call` (resolve → add a concurrent trace). No-op when the
+  // station has no drawable path (e.g. an object pin, or nothing locatable).
+  const fireTrace = (call: string): void => {
+    const segments = resolveRef.current(call);
+    if (!segments) return;
+    setTraceReq({ key: (traceKeyRef.current += 1), call, segments });
+  };
+  const fireTraceRef = useRef(fireTrace);
+  fireTraceRef.current = fireTrace;
+
+  // Live trigger: when the newest frame (highest `at`) advances, fire the trace
+  // for that station once. The layer's bounded animation fades and stops on its
+  // own; no loop needed here. The two triggers are hover + a genuinely-new frame
+  // — so on first mount we SEED the high-water mark from the existing backlog
+  // WITHOUT firing (a cached frame that may be hours old is not "new"); only
+  // frames that arrive after mount animate.
+  const newestSeenRef = useRef<{ at: number; call: string } | null>(null);
+  useEffect(() => {
+    // Only real stations can drive a path trace — object/item reports carry the
+    // relayer's via-chain (see `resolve`), so they never become the trigger frame.
+    const traceable = positions.filter((p) => !p.isObject);
+    if (traceable.length === 0) return;
+    let newest = traceable[0];
+    for (const p of traceable) {
+      if (p.at > newest.at) newest = p;
+    }
+    const prev = newestSeenRef.current;
+    if (!prev) {
+      // First mount: seed the backlog's high-water mark, do not auto-play.
+      newestSeenRef.current = { at: newest.at, call: newest.call };
+      return;
+    }
+    if (newest.at > prev.at) {
+      newestSeenRef.current = { at: newest.at, call: newest.call };
+      fireTraceRef.current(newest.call);
+    }
+  }, [positions]);
 
   const bundlesRef = useRef<Map<string, Bundle>>(new Map());
   // Uncertainty discs use an SVG renderer (not the map's canvas): they are few
@@ -287,6 +357,9 @@ function MapOverlays({
           pin.on('click', () => {
             if (byCallRef.current.has(p.call)) setPopupCall(p.call);
           });
+          // Hover adds a concurrent trace (it fades on its own); no mouseout
+          // cancel — canceling is the "interrupt" we deliberately removed.
+          pin.on('mouseover', () => fireTraceRef.current(p.call));
           const circle = p.ambiguity > 0 ? makeCircle(p, c) : null;
           const badge = w ? makeBadge(p.call, w, c) : null;
           // Pin draws above the uncertainty disc: add circle first, then pin, then badge.
@@ -368,6 +441,7 @@ function MapOverlays({
     <>
       {selected && <PositionPopup fix={selected} now={now} onClose={() => setPopupCall(null)} />}
       {wxSelected && <WxCard wx={wxSelected} onClose={() => setWxCardCall(null)} />}
+      <DigipeatPathLayer trigger={traceReq} />
     </>
   );
 }
@@ -521,7 +595,7 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
         onToggleCollapsed={filter.toggleCollapsed}
       />
       <LeafletMap initialCenter={initialCenter} initialZoom={initialZoom} onViewportChange={onViewportChange}>
-        <MapOverlays positions={positions} wx={wx} enabledBuckets={filter.enabled} onFocusStation={onFocusStation} />
+        <MapOverlays positions={positions} wx={wx} enabledBuckets={filter.enabled} onFocusStation={onFocusStation} operator={me} />
         <OperatorPin location={me} />
         <WxSitrepControl wx={wx} operatorGrid={operatorGrid || undefined} />
         <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />
