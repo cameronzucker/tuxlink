@@ -1473,8 +1473,7 @@ pub struct TrashMeta {
 
 /// Write a `<mid>.trash` sidecar (pretty JSON) into `dir` (the `Deleted` folder).
 fn write_trash_sidecar(dir: &Path, mid: &str, m: &TrashMeta) -> std::io::Result<()> {
-    let json = serde_json::to_vec_pretty(m)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_vec_pretty(m).map_err(std::io::Error::other)?;
     fs::write(dir.join(format!("{mid}.trash")), json)
 }
 
