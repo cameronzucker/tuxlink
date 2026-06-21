@@ -107,6 +107,8 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         map_tile_source: None,
         aredn_master_node_host: None,
         aprs: tuxlink_lib::config::AprsConfig::default(),
+        trash_auto_purge: true,
+        trash_retention_days: 30,
     }
 }
 

@@ -36,7 +36,9 @@ import { lookupAprsSymbol } from './aprsSymbols';
 import { spriteDataUrl, spriteIdFor, greyIdOf, whenSheetsReady } from '../map/aprsSprites';
 import type { HeardPosition } from './aprsTypes';
 import { joinWxStations, badgeContent, type WxStation } from './wxStations';
-import { CATEGORIES, categoryByKey } from './stationCategories';
+import { bucketForStation, type BucketKey, emptyCounts } from './stationBuckets';
+import { usePersistedBucketFilter } from '../map/usePersistedBucketFilter';
+import { AprsLayersPanel } from './AprsLayersPanel';
 import { composeWxSitrep } from './wxSitrep';
 import type { EnvStation } from './envStations';
 import { saveDraft } from '../compose/useDraft';
@@ -168,13 +170,13 @@ function pinIconKey(p: HeardPosition, stale: boolean): string {
 function MapOverlays({
   positions,
   wx,
-  category,
+  enabledBuckets,
   onFocusStation,
   operator,
 }: {
   positions: HeardPosition[];
   wx: WxStation[];
-  category: string;
+  enabledBuckets: Set<BucketKey>;
   onFocusStation?: (call: string) => void;
   operator: { lat: number; lon: number } | null;
 }) {
@@ -388,13 +390,15 @@ function MapOverlays({
         }
 
         // Visibility per the active category (no orphan — the whole bundle moves).
-        const visible = categoryByKey(category).matches({ call: p.call, isWeather });
+        const visible = enabledBuckets.has(
+          bucketForStation({ symbolTable: p.symbolTable, symbolCode: p.symbolCode, isWeather }),
+        );
         if (visible && !group.hasLayer(b.group)) group.addLayer(b.group);
         else if (!visible && group.hasLayer(b.group)) group.removeLayer(b.group);
         b.visible = visible;
       });
     }
-  }, [map, group, positions, wx, wxByCall, category, now]);
+  }, [map, group, positions, wx, wxByCall, enabledBuckets, now]);
 
   // whenSheetsReady re-bake (tuxlink-r8sm / R3 P0): the sprite sheets decode
   // asynchronously; the first synchronous bake on mount yields transparent icons.
@@ -539,24 +543,6 @@ function WxSitrepControl({ wx, operatorGrid }: { wx: WxStation[]; operatorGrid?:
   );
 }
 
-/// The category filter control ("weather mode"): a small select in the map corner.
-function WxFilterControl({ category, onChange }: { category: string; onChange: (key: string) => void }) {
-  return (
-    <div className="aprs-wx-filter" data-testid="aprs-wx-filter">
-      <label className="aprs-wx-filter__label">
-        Show{' '}
-        <select value={category} onChange={(e) => onChange(e.target.value)} data-testid="aprs-wx-filter-select">
-          {CATEGORIES.map((c) => (
-            <option key={c.key} value={c.key}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-      </label>
-    </div>
-  );
-}
-
 export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocusStation }: AprsPositionsMapProps) {
   const me = operatorGrid ? gridToLatLon(operatorGrid) : null;
   // tuxlink-dwzu: remember + restore the operator's last viewport. First run (no
@@ -565,8 +551,18 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
   const { saved, onViewportChange } = usePersistedViewport('tuxlink:map-viewport:aprs');
   const initialCenter = saved ? saved.center : (me ?? undefined);
   const initialZoom = saved ? saved.zoom : me ? OPERATOR_ZOOM : 2;
-  const [category, setCategory] = useState('all');
+  const filter = usePersistedBucketFilter('tuxlink:map-filter:aprs');
   const wx = useMemo(() => joinWxStations(envStations ?? [], positions), [envStations, positions]);
+
+  // Live per-bucket counts over heard stations (wx drives the weather override).
+  const { counts, total } = useMemo(() => {
+    const wxCalls = new Set(wx.map((w) => w.call));
+    const c = emptyCounts();
+    for (const p of positions) {
+      c[bucketForStation({ symbolTable: p.symbolTable, symbolCode: p.symbolCode, isWeather: wxCalls.has(p.call) })] += 1;
+    }
+    return { counts: c, total: positions.length };
+  }, [positions, wx]);
 
   // Export PNG is removed this phase (tuxlink-a7qt): naive Leaflet canvas
   // compositing omits DOM markers + per-tile pane transforms; a proper DOM-aware
@@ -574,9 +570,17 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
 
   return (
     <div className="aprs-positions-map" data-testid="aprs-positions-map">
-      <WxFilterControl category={category} onChange={setCategory} />
+      <AprsLayersPanel
+        enabled={filter.enabled}
+        counts={counts}
+        total={total}
+        collapsed={filter.collapsed}
+        onToggleBucket={filter.toggleBucket}
+        onToggleAll={filter.setAll}
+        onToggleCollapsed={filter.toggleCollapsed}
+      />
       <LeafletMap initialCenter={initialCenter} initialZoom={initialZoom} onViewportChange={onViewportChange}>
-        <MapOverlays positions={positions} wx={wx} category={category} onFocusStation={onFocusStation} operator={me} />
+        <MapOverlays positions={positions} wx={wx} enabledBuckets={filter.enabled} onFocusStation={onFocusStation} operator={me} />
         <OperatorPin location={me} />
         <WxSitrepControl wx={wx} operatorGrid={operatorGrid || undefined} />
         <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />

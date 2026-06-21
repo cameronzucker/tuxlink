@@ -10,16 +10,21 @@
 import type { MailboxFolderRef, MessageMeta } from './types';
 
 /// One message reference for a bulk command: the message's own folder + id.
-/// Matches the Rust `MessageRefDto` wire shape (`{ folder, id }`).
+/// `identity` is optional — forwarded by delete/restore to resolve the correct
+/// per-identity namespace; ignored by move/mark-read callers (they use the
+/// shared namespace). Matches the Rust `MessageRefDto` wire shape.
 export interface BulkMessageRef {
   folder: MailboxFolderRef;
   id: string;
+  identity?: string;
 }
 
-/// Map a selection set to per-message `{ folder, id }` refs.
+/// Map a selection set to per-message `{ folder, id, identity }` refs.
 ///
 /// - Each id resolves to its row's own `message.folder` when present
 ///   (cross-folder search hits) and falls back to `fallbackFolder` otherwise.
+/// - `identity` is taken from `message.identity` when present (for per-identity
+///   namespace resolution in delete/restore).
 /// - Ids NOT present in `visible` are dropped (Fix-3, #499): a stale selection
 ///   (row removed between select and act) must never fall back to the active
 ///   folder for an unknown message — that could target the wrong folder in a
@@ -32,10 +37,14 @@ export function selectionToFolderItems(
   const byId = new Map(visible.map((m) => [m.id, m] as const));
   return [...ids]
     .filter((id) => byId.has(id))
-    .map((id) => ({
-      folder: (byId.get(id)!.folder as MailboxFolderRef | undefined) ?? fallbackFolder,
-      id,
-    }));
+    .map((id) => {
+      const m = byId.get(id)!;
+      return {
+        folder: (m.folder as MailboxFolderRef | undefined) ?? fallbackFolder,
+        id,
+        identity: m.identity,
+      };
+    });
 }
 
 /// Return a copy of `set` with `id` removed, or the original set unchanged when

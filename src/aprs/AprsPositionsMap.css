@@ -87,29 +87,7 @@
   word-break: break-word;
 }
 
-/* ni5b: weather overlay — category filter control + hover WX card. */
-.aprs-wx-filter {
-  position: absolute;
-  /* Top-left column, BELOW the 29px "center on me" recenter control (top:10 + 29),
-     not stacked on top of it (tuxlink-wb4c). */
-  top: 46px;
-  left: 10px;
-  z-index: 1100; /* above Leaflet panes (200-700) AND its control container (1000) so app controls/popups are never covered (impl review) */
-  background: #0e1a24ee;
-  border: 1px solid #2c4a63;
-  border-radius: 8px;
-  padding: 3px 8px;
-  font-size: 12px;
-  color: #c7d4df;
-}
-.aprs-wx-filter__label { display: inline-flex; align-items: center; gap: 6px; }
-.aprs-wx-filter select {
-  background: #11283b;
-  color: #dcebf6;
-  border: 1px solid #2c4a63;
-  border-radius: 6px;
-  padding: 1px 4px;
-}
+/* ni5b: weather overlay — WX card. */
 .aprs-wx-card {
   position: absolute;
   /* Below the top-right NavigationControl (~58px tall), not over it (tuxlink-wb4c). */

@@ -44,5 +44,7 @@ pub fn native_test_config() -> Config {
         map_tile_source: None,
         aredn_master_node_host: None,
         aprs: crate::config::AprsConfig::default(),
+        trash_auto_purge: true,
+        trash_retention_days: 30,
     }
 }

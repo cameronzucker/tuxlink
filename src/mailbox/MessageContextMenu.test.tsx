@@ -1,5 +1,6 @@
 /**
- * Tests for MessageContextMenu — read/unread affordance (tuxlink-etxt Task 12).
+ * Tests for MessageContextMenu — read/unread affordance (tuxlink-etxt Task 12)
+ * and Delete/Restore/Delete-permanently (tuxlink-wl7n Task 11).
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -141,5 +142,118 @@ describe('<MessageContextMenu> — selection mode (tuxlink-l80q)', () => {
     // Single toggle, not two separate items.
     expect(screen.getByRole('menuitem', { name: /mark as read/i })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /mark as unread/i })).toBeNull();
+  });
+});
+
+describe('<MessageContextMenu> — Delete / Restore / Delete-permanently (tuxlink-wl7n Task 11)', () => {
+  it('shows a Delete item below Archive for folder !== deleted and calls onDelete', () => {
+    const onDelete = vi.fn();
+    render(
+      <MessageContextMenu
+        message={baseMsg}
+        folder="inbox"
+        x={0}
+        y={0}
+        userFolders={[]}
+        onSetReadState={vi.fn()}
+        onMoveTo={vi.fn()}
+        onArchive={vi.fn()}
+        onDelete={onDelete}
+        onClose={vi.fn()}
+      />,
+    );
+    const btn = screen.getByTestId('ctx-delete');
+    expect(btn).toBeInTheDocument();
+    // Archive should also be present when not in Deleted
+    expect(screen.getByTestId('ctx-archive')).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(onDelete).toHaveBeenCalledOnce();
+  });
+
+  it('does not render Delete when onDelete is absent', () => {
+    render(
+      <MessageContextMenu
+        message={baseMsg}
+        folder="inbox"
+        x={0}
+        y={0}
+        userFolders={[]}
+        onMoveTo={vi.fn()}
+        onArchive={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('ctx-delete')).toBeNull();
+  });
+
+  it('renders Restore + Delete-permanently in Deleted folder; omits Delete/Archive/Move', () => {
+    const onRestore = vi.fn();
+    const onDeletePermanently = vi.fn();
+    render(
+      <MessageContextMenu
+        message={baseMsg}
+        folder="deleted"
+        x={0}
+        y={0}
+        userFolders={[]}
+        onSetReadState={vi.fn()}
+        onMoveTo={vi.fn()}
+        onArchive={vi.fn()}
+        onDelete={vi.fn()}
+        onRestore={onRestore}
+        onDeletePermanently={onDeletePermanently}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('ctx-restore')).toBeInTheDocument();
+    expect(screen.getByTestId('ctx-delete-permanently')).toBeInTheDocument();
+    // Normal actions must not appear in Deleted
+    expect(screen.queryByTestId('ctx-delete')).toBeNull();
+    expect(screen.queryByTestId('ctx-archive')).toBeNull();
+    expect(screen.queryByTestId('ctx-msg-header')).toBeNull(); // "Move to" label
+  });
+
+  it('Restore calls onRestore + closes the menu', () => {
+    const onRestore = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <MessageContextMenu
+        message={baseMsg}
+        folder="deleted"
+        x={0}
+        y={0}
+        userFolders={[]}
+        onMoveTo={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={onRestore}
+        onDeletePermanently={vi.fn()}
+        onClose={onClose}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('ctx-restore'));
+    expect(onRestore).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('Delete-permanently calls onDeletePermanently (parent is responsible for confirm)', () => {
+    const onDeletePermanently = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <MessageContextMenu
+        message={baseMsg}
+        folder="deleted"
+        x={0}
+        y={0}
+        userFolders={[]}
+        onMoveTo={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onDeletePermanently={onDeletePermanently}
+        onClose={onClose}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('ctx-delete-permanently'));
+    expect(onDeletePermanently).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });

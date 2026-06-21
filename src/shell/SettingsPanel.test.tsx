@@ -13,6 +13,9 @@ vi.mock('../location/LocationSettingsPane', () => ({
 vi.mock('./WinlinkAccountSettings', () => ({
   WinlinkAccountSettings: () => <div data-testid="winlink-account-settings" />,
 }));
+vi.mock('./MailboxSettings', () => ({
+  MailboxSettings: () => <div data-testid="mailbox-settings" />,
+}));
 import { invoke } from '@tauri-apps/api/core';
 import { SettingsPanel } from './SettingsPanel';
 
@@ -26,6 +29,8 @@ beforeEach(() => {
         gps_state: 'BroadcastAtPrecision',
         position_precision: 'FourCharGrid',
         review_inbound_before_download: false,
+        trash_auto_purge: true,
+        trash_retention_days: 30,
       };
     }
     return undefined;
@@ -116,6 +121,14 @@ describe('SettingsPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  // tuxlink-wl7n: Mailbox section renders via the nav + pane wiring.
+  it('renders the Mailbox section when the nav item is clicked', async () => {
+    render(<SettingsPanel open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('settings-nav-mailbox'));
+    expect(await screen.findByTestId('settings-pane-mailbox')).toBeInTheDocument();
+    expect(screen.getByTestId('mailbox-settings')).toBeInTheDocument();
   });
 
   it('does NOT render the ARDOP HF fieldset (tuxlink-jmfm)', async () => {

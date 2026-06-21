@@ -17,6 +17,9 @@ function renderBar(over: Partial<Parameters<typeof MessageBulkBar>[0]> = {}) {
     onArchive: vi.fn(),
     onMove: vi.fn(),
     onClear: vi.fn(),
+    onBulkDelete: vi.fn(),
+    onBulkRestore: vi.fn(),
+    onBulkPurge: vi.fn(),
     ...over,
   };
   render(<MessageBulkBar {...props} />);
@@ -58,5 +61,47 @@ describe('MessageBulkBar', () => {
     renderBar({ currentFolder: 'inbox' });
     fireEvent.pointerDown(screen.getByTestId('move-to-btn'), { button: 0 });
     expect(screen.getByTestId('move-to-inbox')).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  // tuxlink-wl7n Task 13 (Part B3): Delete button in non-Deleted folders.
+  it('shows a Delete button in non-Deleted folders and fires onBulkDelete', () => {
+    const props = renderBar({ currentFolder: 'inbox' });
+    const btn = screen.getByRole('button', { name: /^delete$/i });
+    expect(btn).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(props.onBulkDelete).toHaveBeenCalled();
+  });
+
+  it('shows Archive and Move buttons in non-Deleted folders', () => {
+    renderBar({ currentFolder: 'inbox' });
+    expect(screen.getByRole('button', { name: /^archive$/i })).toBeInTheDocument();
+    expect(screen.getByTestId('move-to-btn')).toBeInTheDocument();
+  });
+
+  // tuxlink-wl7n Task 13 (Part B3): Deleted folder shows Restore + Delete-permanently; hides Archive/Move.
+  it('shows Restore and Delete-permanently buttons in the Deleted folder', () => {
+    const props = renderBar({ currentFolder: 'deleted' });
+    const restoreBtn = screen.getByRole('button', { name: /^restore$/i });
+    const purgeBtn = screen.getByRole('button', { name: /^delete permanently$/i });
+    expect(restoreBtn).toBeInTheDocument();
+    expect(purgeBtn).toBeInTheDocument();
+    fireEvent.click(restoreBtn);
+    expect(props.onBulkRestore).toHaveBeenCalled();
+    fireEvent.click(purgeBtn);
+    expect(props.onBulkPurge).toHaveBeenCalled();
+  });
+
+  it('hides Archive and Move buttons in the Deleted folder', () => {
+    renderBar({ currentFolder: 'deleted' });
+    expect(screen.queryByRole('button', { name: /^archive$/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('move-to-btn')).not.toBeInTheDocument();
+  });
+
+  it('keeps Mark read/unread available in the Deleted folder', () => {
+    const props = renderBar({ currentFolder: 'deleted' });
+    fireEvent.click(screen.getByRole('button', { name: /mark read/i }));
+    expect(props.onMarkRead).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /mark unread/i }));
+    expect(props.onMarkUnread).toHaveBeenCalled();
   });
 });

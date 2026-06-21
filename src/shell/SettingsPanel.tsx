@@ -20,6 +20,7 @@ import { FormSequenceSettings } from '../forms/FormSequenceSettings';
 import { OfflineMapsSettings } from '../map/OfflineMapsSettings';
 import { IdentitiesSettings } from './IdentitiesSettings';
 import { WinlinkAccountSettings } from './WinlinkAccountSettings';
+import { MailboxSettings } from './MailboxSettings';
 import './SettingsPanel.css';
 
 const GPS_STATE_OPTIONS: { value: GpsState; label: string; help: string }[] = [
@@ -66,7 +67,8 @@ export type SectionId =
   | 'gpsstate'
   | 'aprs'
   | 'forms'
-  | 'maps';
+  | 'maps'
+  | 'mailbox';
 
 const NAV: { group: string; items: { id: SectionId; label: string }[] }[] = [
   {
@@ -89,7 +91,10 @@ const NAV: { group: string; items: { id: SectionId; label: string }[] }[] = [
   },
   {
     group: 'App',
-    items: [{ id: 'maps', label: 'Offline maps' }],
+    items: [
+      { id: 'maps', label: 'Offline maps' },
+      { id: 'mailbox', label: 'Mailbox' },
+    ],
   },
 ];
 
@@ -261,6 +266,8 @@ export function SettingsPanel({ open, onClose, initialSection = 'location' }: Se
             {active === 'forms' && <FormSequenceSettings />}
 
             {active === 'maps' && <OfflineMapsSettings />}
+
+            {active === 'mailbox' && <MailboxSettings />}
           </section>
         </div>
       </div>

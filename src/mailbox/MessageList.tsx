@@ -306,6 +306,15 @@ export interface MessageListProps {
   /// so callers can stash Archive shortcuts (e.g. for telemetry) without
   /// instrumenting the generic move path.
   onArchiveMessage?: (id: string, fromFolder: MailboxFolderRef) => void;
+  /// Right-click → Delete (move-to-trash) handler (tuxlink-wl7n). Shown for
+  /// folders ≠ 'deleted'. No confirm — delete is recoverable via Restore.
+  onDeleteMessage?: (id: string, fromFolder: MailboxFolderRef) => void;
+  /// Right-click → Restore handler (tuxlink-wl7n). Shown instead of Delete
+  /// when folder === 'deleted'.
+  onRestoreMessage?: (id: string) => void;
+  /// Right-click → Delete permanently handler (tuxlink-wl7n). Shown alongside
+  /// Restore when folder === 'deleted'. The parent wires the confirm dialog.
+  onPurgeMessage?: (id: string) => void;
   /// The multi-select selection set (tuxlink-etxt Task 8). Optional; defaults
   /// to an empty set so AppShell compiles without change until Task 11 wires
   /// the real state. ReadonlySet allows the module-level EMPTY_SELECTION
@@ -324,6 +333,15 @@ export interface MessageListProps {
   /// Archive the given set of messages (tuxlink-l80q). Drives the bulk bar's
   /// Archive button and the selection-mode context menu's Archive item.
   onBulkArchive?: (ids: Set<string>) => void;
+  /// Move the given set of messages to Trash (tuxlink-wl7n Task 13). Drives the
+  /// bulk bar's Delete button and the selection-mode context menu's Delete item.
+  onBulkDelete?: (ids: Set<string>) => void;
+  /// Restore the given set of messages from Trash (tuxlink-wl7n Task 13). Drives
+  /// the bulk bar's Restore button and the selection-mode context menu's Restore item.
+  onBulkRestore?: (ids: Set<string>) => void;
+  /// Permanently delete the given set of messages (tuxlink-wl7n Task 13). Drives
+  /// the bulk bar's Delete-permanently button and the selection-mode context-menu item.
+  onBulkPurge?: (ids: Set<string>) => void;
   /// Single-message read/unread toggle — context-menu and U-key (tuxlink-etxt
   /// Tasks 12 + 13). Optional so existing callers compile without change.
   onSetReadState?: (id: string, folder: MailboxFolderRef, read: boolean) => void;
@@ -348,11 +366,17 @@ export function MessageList({
   userFolders,
   onMoveMessage,
   onArchiveMessage,
+  onDeleteMessage,
+  onRestoreMessage,
+  onPurgeMessage,
   selectedIds = EMPTY_SELECTION,
   onSelectionChange = () => {},
   onBulkSetReadState,
   onBulkMove,
   onBulkArchive,
+  onBulkDelete,
+  onBulkRestore,
+  onBulkPurge,
   onSetReadState,
 }: MessageListProps) {
   // Sort client-side so changing modes doesn't require a backend re-fetch.
@@ -434,7 +458,7 @@ export function MessageList({
   } | null>(null);
   // tuxlink-sndh: stabilize the callback so the memoized MessageRow can
   // skip re-render when nothing else about the row's props changed.
-  const ctxAvailable = Boolean(onMoveMessage || onArchiveMessage);
+  const ctxAvailable = Boolean(onMoveMessage || onArchiveMessage || onDeleteMessage || onRestoreMessage || onPurgeMessage);
   // tuxlink-l80q: OS convention — right-clicking a row already in the selection
   // acts on the whole selection; right-clicking a row OUTSIDE the selection
   // resets the selection to that single row and acts single-target.
@@ -471,6 +495,9 @@ export function MessageList({
               onMarkUnread={() => onBulkSetReadState?.(new Set(selectedIds), false)}
               onArchive={() => onBulkArchive?.(new Set(selectedIds))}
               onMove={(to) => onBulkMove?.(new Set(selectedIds), to)}
+              onBulkDelete={onBulkDelete ? () => onBulkDelete(new Set(selectedIds)) : undefined}
+              onBulkRestore={onBulkRestore ? () => onBulkRestore(new Set(selectedIds)) : undefined}
+              onBulkPurge={onBulkPurge ? () => onBulkPurge(new Set(selectedIds)) : undefined}
               onClear={() => onSelectionChange(new Set())}
             />
           ) : (
@@ -525,6 +552,21 @@ export function MessageList({
             if (ctxMenu.selectionMode) onBulkArchive?.(new Set(selectedIds));
             else onArchiveMessage?.(ctxMenu.message.id, ctxSourceFolder);
           }}
+          onDelete={
+            ctxMenu.selectionMode
+              ? (onBulkDelete ? () => onBulkDelete(new Set(selectedIds)) : undefined)
+              : (onDeleteMessage ? () => onDeleteMessage(ctxMenu.message.id, ctxSourceFolder) : undefined)
+          }
+          onRestore={
+            ctxMenu.selectionMode
+              ? (onBulkRestore ? () => onBulkRestore(new Set(selectedIds)) : undefined)
+              : (onRestoreMessage ? () => onRestoreMessage(ctxMenu.message.id) : undefined)
+          }
+          onDeletePermanently={
+            ctxMenu.selectionMode
+              ? (onBulkPurge ? () => onBulkPurge(new Set(selectedIds)) : undefined)
+              : (onPurgeMessage ? () => onPurgeMessage(ctxMenu.message.id) : undefined)
+          }
           onClose={() => setCtxMenu(null)}
         />
       )}

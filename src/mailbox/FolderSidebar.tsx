@@ -70,6 +70,8 @@ const MAILBOX_ITEMS: readonly MailboxItem[] = [
   { id: 'outbox', label: 'Outbox', enabled: true },
   { id: 'drafts', label: 'Drafts', enabled: true },
   { id: 'archive', label: 'Archive', enabled: true },
+  // tuxlink-wl7n: Deleted folder is now a live backend folder.
+  { id: 'deleted', label: 'Deleted', enabled: true },
 ];
 
 export interface FolderSidebarProps {
@@ -121,6 +123,10 @@ export interface FolderSidebarProps {
    *  promotes the dragged folder to top level (dropped on the Folders header);
    *  a slug nests it under that top-level folder. Client-side D4 guards apply. */
   onReparentFolder?: (slug: string, parentSlug: string | undefined) => void;
+  /** Empty Trash action (tuxlink-wl7n Task 14). When provided, an "Empty Trash"
+   *  control renders only when `selectedFolder === 'deleted'`. Calls `emptyTrash()`
+   *  (via AppShell's `emptyTrashFlow`) after the ConfirmPurgeDialog confirms. */
+  onEmptyTrash?: () => void;
   /** Currently selected connection (drives the reading-pane connection panel). */
   selectedConnection?: ConnectionKey | null;
   /** Select a connection (opens its reading-pane panel). */
@@ -257,6 +263,7 @@ export const FolderSidebar = memo(function FolderSidebar({
   selectedConnection = null,
   onSelectConnection,
   compact = false,
+  onEmptyTrash,
 }: FolderSidebarProps) {
   // Drag-over visual state — which folder slug currently has the drag hovering.
   // null when nothing is being dragged or the drag is outside a folder.
@@ -596,6 +603,19 @@ export const FolderSidebar = memo(function FolderSidebar({
         );
       })}
 
+      {/* Empty Trash action (tuxlink-wl7n Task 14). Inline affordance visible
+          only when the Deleted folder is selected and the handler is wired. */}
+      {onEmptyTrash && selectedFolder === 'deleted' && (
+        <button
+          type="button"
+          data-testid="empty-trash-btn"
+          className="nav-item nav-item--danger"
+          onClick={() => { onEmptyTrash(); selectFolderAndCollapse('deleted'); }}
+        >
+          <span className="nav-label">Empty Trash</span>
+        </button>
+      )}
+
       {/* User folders (tuxlink-f62f). The Folders section header carries a
           `+` button that fires onCreateFolder; the section is rendered even
           when empty so the operator's path to creating a first folder is
@@ -781,6 +801,19 @@ export const FolderSidebar = memo(function FolderSidebar({
           </button>
         );
       })}
+
+      {/* Empty Trash action (tuxlink-wl7n Task 14). Inline affordance visible
+          only when the Deleted folder is selected and the handler is wired. */}
+      {onEmptyTrash && selectedFolder === 'deleted' && (
+        <button
+          type="button"
+          data-testid="empty-trash-btn"
+          className="nav-item nav-item--danger"
+          onClick={onEmptyTrash}
+        >
+          <span className="nav-label">Empty Trash</span>
+        </button>
+      )}
 
       {/* User folders (tuxlink-f62f). The Folders section header carries a
           `+` button that fires onCreateFolder; the section is rendered even

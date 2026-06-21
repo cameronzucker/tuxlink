@@ -189,6 +189,8 @@ pub async fn persist_cms_impl(
         map_tile_source: None,
         aredn_master_node_host: None,
         aprs: crate::config::AprsConfig::default(),
+        trash_auto_purge: true,
+        trash_retention_days: 30,
     };
 
     // Step 4: Create keyring entry handle (needed for rollback in step 7).
@@ -424,6 +426,8 @@ pub async fn persist_offline_impl(
         map_tile_source: None,
         aredn_master_node_host: None,
         aprs: crate::config::AprsConfig::default(),
+        trash_auto_purge: true,
+        trash_retention_days: 30,
     };
 
     // Single atomic write to config.json. No keyring involved.

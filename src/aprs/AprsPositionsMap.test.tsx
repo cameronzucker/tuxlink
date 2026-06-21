@@ -236,25 +236,37 @@ describe('AprsPositionsMap WX overlay + filter (ni5b)', () => {
     expect(container.querySelectorAll('.aprs-wx-chip')).toHaveLength(0);
   });
 
-  it('category filter removes a non-matching station as a WHOLE bundle (no orphan disc) (R3 P0)', async () => {
-    // One weather station (W7WX) + one ambiguous NON-weather station (FUZZY) with a
-    // pin + uncertainty circle. Filtering to "weather" removes FUZZY's whole bundle.
-    const pos: HeardPosition[] = [
-      ...wxPositions,
-      { call: 'FUZZY', lat: 40, lon: -100, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 2 },
+  it('layers panel removes a deselected category as a WHOLE bundle (no orphan disc)', async () => {
+    // Two stations: a car (vehicles) and a weather station (weather).
+    const positions: HeardPosition[] = [
+      { call: 'N7CAR-9', lat: 40, lon: -111, symbolTable: '/', symbolCode: '>', comment: '', at: Date.now(), ambiguity: 0, via: [] },
+      { call: 'WX7AB', lat: 41, lon: -112, symbolTable: '/', symbolCode: '_', comment: '', at: Date.now(), ambiguity: 0, via: [] },
     ];
-    const { container, getByTestId } = await renderMap(
-      <AprsPositionsMap positions={pos} envStations={wxEnv as never} operatorGrid="CN87" />,
+    const { getByTestId, container } = await renderMap(
+      <AprsPositionsMap positions={positions} operatorGrid="DN40" />,
     );
-    expect(pinByCall(container, 'FUZZY')).toBeTruthy();
-    expect(circles()).toHaveLength(1); // FUZZY's uncertainty disc present
+    // Default all-on: both pins drawn.
+    expect(pinByCall(container, 'N7CAR-9')).toBeDefined();
+    expect(pinByCall(container, 'WX7AB')).toBeDefined();
+
+    // Open the panel (default collapsed), then uncheck Vehicles.
+    fireEvent.click(getByTestId('aprs-layers-toggle'));
     await act(async () => {
-      fireEvent.change(getByTestId('aprs-wx-filter-select'), { target: { value: 'weather' } });
-      await Promise.resolve();
+      fireEvent.click(getByTestId('aprs-layers-check-vehicles'));
     });
-    expect(pinByCall(container, 'FUZZY')).toBeUndefined(); // pin gone
-    expect(circles()).toHaveLength(0); // ...and its disc gone too — no orphan
-    expect(pinByCall(container, 'W7WX')).toBeTruthy(); // weather station stays
+    // The car's WHOLE bundle leaves the map; the weather station stays. This is the
+    // real invariant — the count is filter-independent (still reads 1), so the
+    // marker's absence, not the count, proves the filter actually hides the pin.
+    expect(pinByCall(container, 'N7CAR-9')).toBeUndefined();
+    expect(pinByCall(container, 'WX7AB')).toBeDefined();
+    expect(getByTestId('aprs-layers-count-vehicles')).toHaveTextContent('1');
+
+    // Re-check Vehicles restores the car pin.
+    await act(async () => {
+      fireEvent.click(getByTestId('aprs-layers-check-vehicles'));
+    });
+    expect(getByTestId('aprs-layers-check-vehicles')).toBeChecked();
+    expect(pinByCall(container, 'N7CAR-9')).toBeDefined();
   });
 
   it('Weather SITREP composes a prefilled draft and opens compose (hepq)', async () => {

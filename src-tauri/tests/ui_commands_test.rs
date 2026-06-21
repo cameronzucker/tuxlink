@@ -44,11 +44,10 @@ fn test_parse_folder_rejects_local_and_disabled_folders() {
         Err(UiError::Internal { detail }) => assert!(detail.contains("local")),
         other => panic!("expected Internal for drafts, got {other:?}"),
     }
-    // Deleted is a disabled placeholder in v0.0.1.
-    match parse_folder("deleted") {
-        Err(UiError::Unavailable { reason }) => assert!(reason.contains("Deleted")),
-        other => panic!("expected Unavailable for deleted, got {other:?}"),
-    }
+    // tuxlink-wl7n: Deleted (Trash) is now a live backend folder — it parses
+    // rather than being rejected as unavailable, so `mailbox_list`/`message_read`
+    // can browse Trash and open/restore rows from it.
+    assert!(matches!(parse_folder("deleted"), Ok(MailboxFolder::Deleted)));
     // Unknown folder string.
     match parse_folder("garbage") {
         Err(UiError::Internal { detail }) => assert!(detail.contains("unknown")),
