@@ -112,6 +112,13 @@ export function LeafletMap({
       const [clLng, clLat] = clampMapCenter(initialCenter?.lon ?? 0, initialCenter?.lat ?? 0);
       const instance = L.map(containerRef.current, {
         preferCanvas: true,
+        // Disable Leaflet's per-tile fade-in (opacity 0→1). On the Pi's software
+        // renderer each freshly-painted tile otherwise fades from transparent —
+        // reading as "loading from white space," worst on zoom (a whole new tile
+        // set fades at once). This is the Leaflet analog of the old MapLibre
+        // `fadeDuration: 0` llvmpipe mitigation (operator smoke, tuxlink-6kdw):
+        // painted tiles snap in instead of fading.
+        fadeAnimation: false,
         // Zoom control added explicitly top-RIGHT below (matching the old MapLibre
         // nav placement) so it does not collide with the app's top-left controls
         // (recenter/filter/SITREP) — Leaflet's default zoom is top-left (impl review).

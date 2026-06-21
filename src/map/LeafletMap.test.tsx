@@ -151,6 +151,10 @@ describe('LeafletMap', () => {
     expect(b).toBeTruthy();
     expect(b.getNorth()).toBeCloseTo(85.0511, 3);
     expect(b.getSouth()).toBeCloseTo(-85.0511, 3);
+    // Tile fade-in disabled (MapLibre fadeDuration:0 parity) so painted tiles snap
+    // in instead of fading from transparent ("loading from white") on the software
+    // renderer (operator smoke).
+    expect(captured!.options.fadeAnimation).toBe(false);
   });
 
   it('converges to one map under StrictMode double-invoke', async () => {
