@@ -1,0 +1,76 @@
+/* AprsLayersPanel (tuxlink-8fjx) — collapsible map-corner layers filter.
+   Dark/tactical, matching the APRS map surface. Anchored top-right by the map
+   container's positioning context (see AprsPositionsMap.css). */
+
+.aprs-layers-toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  font-size: 12px;
+  color: #c2cfdb;
+  background: rgba(15, 24, 34, 0.9);
+  border: 1px solid #283744;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+.aprs-layers-toggle:hover { border-color: #3f8fc4; }
+
+.aprs-layers-panel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+  width: 210px;
+  padding: 9px 11px 11px;
+  font-size: 12px;
+  color: #c2cfdb;
+  background: rgba(15, 24, 34, 0.95);
+  border: 1px solid #283744;
+  border-radius: 9px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55);
+}
+.aprs-layers-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+.aprs-layers-panel__title {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #6f8295;
+}
+.aprs-layers-panel__collapse {
+  background: none;
+  border: none;
+  color: #6f8295;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+.aprs-layers-panel__collapse:hover { color: #c2cfdb; }
+.aprs-layers-panel__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3.5px 0;
+  cursor: pointer;
+}
+.aprs-layers-panel__row--all {
+  border-bottom: 1px solid #22303d;
+  padding-bottom: 7px;
+  margin-bottom: 3px;
+  font-weight: 600;
+}
+.aprs-layers-panel__name { flex: 1; display: inline-flex; align-items: center; gap: 6px; }
+.aprs-layers-panel__glyph { font-size: 14px; }
+.aprs-layers-panel__count { font-size: 10px; color: #7f93a4; font-variant-numeric: tabular-nums; }
+.aprs-layers-panel__count--zero { opacity: 0.45; }
