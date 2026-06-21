@@ -912,19 +912,27 @@ pub fn run() {
 
             // tuxlink-wl7n Task 9: scheduled Trash auto-purge. When the operator
             // has `trash_auto_purge` enabled (the default), permanently remove
-            // Trash items older than `trash_retention_days` — once at startup,
-            // then every 6h. The mailbox's Deleted folder is a single shared
-            // `<app_data>/native-mbox/deleted` dir (NOT per-identity), so a bare
-            // `Mailbox::new` over the mbox root is sufficient; no identity
-            // namespace is needed for the sweep. Best-effort: any failure logs a
-            // warning and the loop continues — never panics, never blocks launch.
-            // The config is RE-READ each tick so toggling the setting at runtime
-            // takes effect without a restart (disabled → the tick is a no-op).
-            if let Ok(data_dir) = app.path().app_data_dir() {
-                let mbox_dir = data_dir.join("native-mbox");
+            // Trash items older than `trash_retention_days` — once startup has
+            // installed the backend, then every 6h. Best-effort: any failure
+            // logs a warning and the loop continues — never panics, never blocks
+            // launch. The config is RE-READ each tick so toggling the setting at
+            // runtime takes effect without a restart (disabled → the tick is a
+            // no-op).
+            //
+            // Codex P2 fix: the sweep routes through the MANAGED `BackendState`
+            // backend (`purge_expired_trash`), NOT a bare `Mailbox`. The managed
+            // backend carries the attached search index and the `mailbox:changed`
+            // sink, so an auto-purge drops the `search.db` rows and refreshes the
+            // UI — a bare `Mailbox` unlinked the files but left stale index rows
+            // and never invalidated the folder queries. Until bootstrap installs
+            // the backend there is no indexed Trash to sweep, so a tick with no
+            // current backend simply waits for the next one.
+            {
+                let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     // Six hours between sweeps; the first tick fires immediately
-                    // (tokio's interval yields at t=0), giving the startup sweep.
+                    // (tokio's interval yields at t=0), giving the startup sweep
+                    // (once the backend is present).
                     let mut ticker =
                         tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
                     loop {
@@ -941,10 +949,16 @@ pub fn run() {
                         if !enabled {
                             continue;
                         }
-                        let mailbox = crate::native_mailbox::Mailbox::new(&mbox_dir);
-                        match mailbox
-                            .purge_expired(chrono::Utc::now(), i64::from(retention_days))
+                        // No installed backend yet (pre-wizard / mid-bootstrap):
+                        // nothing indexed to sweep — retry on the next tick.
+                        let backend = match handle
+                            .state::<crate::app_backend::BackendState>()
+                            .current()
                         {
+                            Some(b) => b,
+                            None => continue,
+                        };
+                        match backend.purge_expired_trash(i64::from(retention_days)).await {
                             Ok(n) if n > 0 => {
                                 tracing::info!(
                                     target: "tuxlink::trash",

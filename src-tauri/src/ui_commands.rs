@@ -431,22 +431,21 @@ impl From<MessageMeta> for MessageMetaDto {
 
 /// Parse a sidebar folder string into a backend [`MailboxFolder`].
 ///
-/// `"drafts"` and `"deleted"` never reach a backend command — Drafts is a
-/// local (`localStorage`) store handled frontend-side (spec §2.2), and
-/// Deleted is a disabled placeholder. Either string → `Err(UiError)` so a
-/// stray invocation fails loudly rather than silently querying the wrong
-/// folder. Spec §3.2 + Task-12 test (2).
+/// `"drafts"` never reaches a backend command — Drafts is a local
+/// (`localStorage`) store handled frontend-side (spec §2.2) → `Err(UiError)` so
+/// a stray invocation fails loudly rather than silently querying the wrong
+/// folder. `"deleted"` IS a live backend folder (tuxlink-wl7n) and parses to
+/// `MailboxFolder::Deleted`, consistent with [`parse_folder_ref`]. Spec §3.2.
 pub fn parse_folder(folder: &str) -> Result<MailboxFolder, UiError> {
     match folder {
         "inbox" => Ok(MailboxFolder::Inbox),
         "outbox" => Ok(MailboxFolder::Outbox),
         "sent" => Ok(MailboxFolder::Sent),
         "archive" => Ok(MailboxFolder::Archive),
+        // tuxlink-wl7n: the Deleted (Trash) folder is a live backend folder.
+        "deleted" => Ok(MailboxFolder::Deleted),
         "drafts" => Err(UiError::Internal {
             detail: "drafts is a local folder, not a backend folder".to_string(),
-        }),
-        "deleted" => Err(UiError::Unavailable {
-            reason: "the Deleted folder is not available in v0.0.1".to_string(),
         }),
         other => Err(UiError::Internal {
             detail: format!("unknown folder: {other}"),
@@ -471,9 +470,13 @@ pub fn parse_folder_ref(folder: &str) -> Result<crate::native_mailbox::FolderRef
         "drafts" => Err(UiError::Internal {
             detail: "drafts is a local folder, not a backend folder".to_string(),
         }),
-        "deleted" => Err(UiError::Unavailable {
-            reason: "the Deleted folder is not available in v0.0.1".to_string(),
-        }),
+        // tuxlink-wl7n: the Deleted (Trash) folder is now a live backend folder.
+        // `mailbox_list` / `message_read` route through here, so the Trash view
+        // (and opening/restoring a row from it) requires `"deleted"` to resolve
+        // rather than be rejected as unavailable. Moving INTO Trash still goes
+        // through `message_delete` (which writes the `.trash` sidecar), not the
+        // generic `message_move`; the UI does not offer Trash as a move target.
+        "deleted" => Ok(FolderRef::System(MailboxFolder::Deleted)),
         other => {
             crate::user_folders::validate_slug(other)
                 .map_err(|e| UiError::Internal { detail: format!("invalid folder slug: {e}") })?;
@@ -8857,14 +8860,30 @@ hw:CARD=Device,DEV=0
         assert_eq!(parsed, MailboxFolder::Archive);
     }
 
-    // tuxlink-ca5x: drafts + deleted remain non-backend even after Archive
-    // joined the wire vocabulary. Regression-pin: a future careless union of
-    // "any string is a folder slug" (Phase 2 work) must not silently flip
-    // these to Ok.
+    // tuxlink-ca5x: drafts remains a frontend-local folder and must never parse
+    // to a backend folder. Regression-pin against a careless "any string is a
+    // folder slug" union. (Deleted USED to be rejected here too; tuxlink-wl7n
+    // made it a live backend folder — see `parse_folder_accepts_deleted`.)
     #[test]
-    fn parse_folder_still_rejects_drafts_and_deleted() {
+    fn parse_folder_still_rejects_drafts() {
         assert!(parse_folder("drafts").is_err());
-        assert!(parse_folder("deleted").is_err());
+    }
+
+    // tuxlink-wl7n: the Deleted (Trash) folder is a live backend folder. Both
+    // folder parsers must resolve "deleted" so `mailbox_list` / `message_read`
+    // can browse Trash and open/restore rows from it. (Codex P1: adding the
+    // enum variant alone left `parse_folder_ref` rejecting "deleted", so the
+    // Trash view failed at IPC before reaching the new backend methods.)
+    #[test]
+    fn parse_folder_accepts_deleted() {
+        assert_eq!(
+            parse_folder("deleted").expect("deleted must parse"),
+            MailboxFolder::Deleted
+        );
+        match parse_folder_ref("deleted").expect("deleted must parse as FolderRef") {
+            crate::native_mailbox::FolderRef::System(MailboxFolder::Deleted) => {}
+            other => panic!("expected System(Deleted), got {other:?}"),
+        }
     }
 
     #[test]

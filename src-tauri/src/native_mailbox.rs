@@ -440,6 +440,10 @@ impl Mailbox {
     /// per-FULL subtree. Shared origins (Sent/Outbox) carry no `origin_full`
     /// and resolve to their shared paths.
     pub fn restore_message(&self, id: &MessageId) -> Result<(), BackendError> {
+        // tuxlink-wl7n (Codex P1): the id is renderer-supplied. Reject a
+        // traversal/invalid MID before it reaches `format!("{}.trash", id.0)`
+        // path joins, matching the guard on read/move/store/delete.
+        validate_mid(&id.0).map_err(BackendError::MessageRejected)?;
         let deleted_dir = self.folder_dir(MailboxFolder::Deleted);
         let meta = read_trash_sidecar(&deleted_dir, &id.0);
 
@@ -465,7 +469,20 @@ impl Mailbox {
                 None if m.origin.is_empty() || m.origin == "deleted" => {
                     FolderRef::System(MailboxFolder::Inbox)
                 }
-                None => FolderRef::User(m.origin.clone()),
+                // tuxlink-wl7n (Codex P2): only restore to a user folder that
+                // STILL EXISTS in this identity's registry. If the operator
+                // deleted or renamed the folder while the message sat in Trash,
+                // the slug no longer resolves; restoring into the unregistered
+                // directory would drop the message somewhere the sidebar never
+                // lists. Fall back to Inbox so it returns somewhere reachable.
+                None if user_folders::load_registry(&self.received_root(ns.as_ref()))
+                    .folders
+                    .iter()
+                    .any(|f| f.slug == m.origin) =>
+                {
+                    FolderRef::User(m.origin.clone())
+                }
+                None => FolderRef::System(MailboxFolder::Inbox),
             },
             None => FolderRef::System(MailboxFolder::Inbox),
         };
@@ -488,6 +505,11 @@ impl Mailbox {
     /// search-index row. Irreversible; the command layer gates it behind a
     /// confirm.
     pub fn purge_message(&self, id: &MessageId) -> Result<(), BackendError> {
+        // tuxlink-wl7n (Codex P1): the id is renderer-supplied (trash_purge_one).
+        // Reject a traversal/invalid MID before it reaches the `format!("{}.{ext}",
+        // id.0)` path joins — an id like `../../victim` would otherwise unlink
+        // sibling `.b2f`/`.read`/`.identity`/`.trash` files outside the Trash dir.
+        validate_mid(&id.0).map_err(BackendError::MessageRejected)?;
         let dir = self.folder_dir(MailboxFolder::Deleted);
         for ext in ["b2f", "read", "identity", "trash"] {
             match fs::remove_file(dir.join(format!("{}.{ext}", id.0))) {
@@ -1764,6 +1786,73 @@ mod tests {
             .join(format!("{}.b2f", id.0))
             .exists());
         assert!(!deleted.join(format!("{}.b2f", id.0)).exists());
+    }
+
+    #[test]
+    fn purge_message_rejects_traversal_mid_and_spares_siblings() {
+        // Codex P1: `trash_purge_one` forwards a renderer-supplied id. A
+        // traversal id must be rejected by `validate_mid` BEFORE any path join,
+        // so a sibling file outside the Trash dir survives.
+        let mb = test_mailbox();
+        let deleted = mb.folder_dir(MailboxFolder::Deleted);
+        std::fs::create_dir_all(&deleted).unwrap();
+        // `deleted/../victim.b2f` resolves to a sibling of the Trash dir.
+        let victim = deleted.parent().unwrap().join("victim.b2f");
+        std::fs::write(&victim, b"keepme").unwrap();
+        assert!(mb.purge_message(&MessageId::new("../victim")).is_err());
+        assert!(
+            victim.exists(),
+            "a traversal MID must not unlink files outside the Trash dir"
+        );
+    }
+
+    #[test]
+    fn restore_message_rejects_traversal_mid() {
+        // Codex P1: same guard on the restore unlink path.
+        let mb = test_mailbox();
+        assert!(mb.restore_message(&MessageId::new("../../victim")).is_err());
+    }
+
+    #[test]
+    fn restore_falls_back_to_inbox_when_origin_user_folder_is_gone() {
+        // Codex P2: a message deleted from a user folder whose slug no longer
+        // exists in the registry at restore time (operator deleted/renamed it
+        // while the message sat in Trash) must restore to Inbox, not into an
+        // unregistered directory the sidebar never lists.
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let uf = mbox.create_user_folder("Disappearing", None).unwrap();
+        let id = mbox.store(MailboxFolder::Inbox, &raw("X", "y")).unwrap();
+        mbox.move_between(
+            FolderRef::System(MailboxFolder::Inbox),
+            FolderRef::User(uf.slug.clone()),
+            &id,
+        )
+        .unwrap();
+        mbox.delete_message(
+            FolderRef::User(uf.slug.clone()),
+            &id,
+            None,
+            "2026-06-20T00:00:00Z",
+        )
+        .unwrap();
+
+        // The folder vanishes from the registry while the message is in Trash.
+        crate::user_folders::save_registry(
+            &default_root(dir.path()),
+            &crate::user_folders::Registry::default(),
+        )
+        .unwrap();
+
+        mbox.restore_message(&id).unwrap();
+
+        // Landed in Inbox; NOT in the now-unregistered user-folder directory.
+        assert!(default_root(dir.path())
+            .join("inbox")
+            .join(format!("{}.b2f", id.0))
+            .exists());
+        let uf_dir = crate::user_folders::folder_dir(&default_root(dir.path()), &uf.slug);
+        assert!(!uf_dir.join(format!("{}.b2f", id.0)).exists());
     }
 
     #[test]
