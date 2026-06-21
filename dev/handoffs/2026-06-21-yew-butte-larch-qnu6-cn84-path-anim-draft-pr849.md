@@ -31,6 +31,9 @@ Build the branch, open the APRS Tac Chat positions map, and verify:
 
 Only mark PR #849 ready + merge once the operator confirms smoothness. (Worktree dev-port note: all worktree `tauri dev` builds bind Vite :1420 strictPort — only one runs machine-wide at a time; verify the running build is THIS branch.)
 
+## Post-open: merge conflict resolved (branch current with main)
+PR #849 reported CONFLICTING right after open — main had advanced by `53faa73b` (tuxlink-8fjx: retire the single-select category filter, wire `AprsLayersPanel`), which touched `AprsPositionsMap.tsx`. Merged `origin/main` into the branch (`d507cf71`); the sole conflict was the `<MapOverlays>` call site — kept main's `enabledBuckets={filter.enabled}` and re-applied this branch's `operator={me}`. MapOverlays' bucket-visibility + reconcile deps are main's; the digipeat additions are preserved (ref-decoupled). typecheck clean, 447/447 aprs+map tests pass. PR #849 is now **MERGEABLE / CLEAN** (still draft, still grim-smoke-gated). Branch HEAD: `d507cf71`.
+
 ## Worktree state
 - `worktrees/bd-tuxlink-c973-placenames-packs` is on `bd-tuxlink-qnu6/digipeat-path-anim`, **clean** (all work committed + pushed). Keep alive for the grim-smoke build + any PR-feedback iteration. Dispose (ADR 0009 ritual) after qnu6 lands. Note the dir-name vs branch mismatch (repurposed from c973).
 - Untracked/gitignored-stateful: standard `node_modules/`, `target/`, `.beads/embeddeddolt/`, `.superpowers/sdd/`. No session stashes.
