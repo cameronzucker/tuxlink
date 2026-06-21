@@ -87,10 +87,14 @@ on restore/purge.
 Delete is available from every folder and always targets Trash. Two cases differ:
 
 - **Outbox (queued, unsent):** Delete → Trash like any folder; `origin: "outbox"`,
-  so **Restore re-queues** the message to the Outbox send queue. **Guard:** Delete
-  is blocked for a message that is *actively transmitting* in a live send session
-  (distinct from merely sitting queued). A queued-but-not-sending message deletes
-  normally.
+  so **Restore re-queues** the message to the Outbox send queue. Delete is **always
+  permitted**, including during a live session — it is the operator's "cancel this
+  queued send" control. (An earlier draft of this design proposed blocking delete
+  for a message *actively transmitting* in a live session; that guard was **struck**
+  per operator 2026-06-21. Sessions are long and the Outbox is an awaiting-send
+  holding area, so blocking or greying delete there reads as a broken client; and
+  the send loop snapshots messages at connect time, so deleting the file does not
+  corrupt an in-flight transfer.)
 - **Inside the Trash (Deleted) folder:** the per-message actions are **Restore** and
   **Delete permanently** — there is no "delete to Trash" on a message already in
   Trash. The folder-level action is **Empty Trash**.

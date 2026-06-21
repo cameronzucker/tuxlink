@@ -1666,30 +1666,15 @@ impl WinlinkBackend for NativeBackend {
         id: &MessageId,
         origin_full: Option<&str>,
     ) -> Result<(), BackendError> {
-        // tuxlink-wl7n (design "Outbox" per-folder rule + final-review F3):
-        // refuse to delete an Outbox message while a send session is LIVE. During
-        // a Connecting/Connected B2F exchange the Outbox is being flushed, so the
-        // message may be mid-transfer; deleting it then would yank a file out from
-        // under the session. A queued message with NO live session
-        // (Disconnected / Listening / Error) deletes normally. The backend tracks
-        // the session at BackendStatus granularity (not a single in-flight MID),
-        // so the guard blocks Outbox deletes for the duration of any live session.
-        // This is the authoritative safety net; the UI may additionally disable
-        // the Delete affordance while connected.
-        if matches!(from, crate::native_mailbox::FolderRef::System(MailboxFolder::Outbox)) {
-            let session_live = self.status.read().is_ok_and(|s| {
-                matches!(
-                    *s,
-                    BackendStatus::Connecting { .. } | BackendStatus::Connected { .. }
-                )
-            });
-            if session_live {
-                return Err(BackendError::MessageRejected(
-                    "cannot delete a queued message while a send session is in progress".to_string(),
-                ));
-            }
-        }
-
+        // tuxlink-wl7n: deleting an Outbox message is ALWAYS permitted, including
+        // during a live session — it is the operator's "cancel this queued send"
+        // control. No actively-transmitting guard (the design's original Outbox
+        // guard was struck per operator 2026-06-21): sessions are long and the
+        // Outbox is an awaiting-send holding area, so blocking/greying delete
+        // there reads as a broken client; and the send loop snapshots messages at
+        // connect time, so deleting the file does not corrupt an in-flight
+        // transfer.
+        //
         // `Mailbox::delete_message` accepts a `FolderRef`, so both a system
         // folder and a user folder write a `<mid>.trash` sidecar recording the
         // origin (the system `as_path()` name or the user-folder slug) plus the
@@ -4458,51 +4443,11 @@ mod native_read_state_tests {
         assert_eq!(trash[0].id, id, "the same message is now in Trash");
     }
 
-    // tuxlink-wl7n (final-review F3): deleting an Outbox message is blocked while
-    // a send session is LIVE (Connecting/Connected) — the Outbox is being flushed
-    // — but allowed once the session is Disconnected. A queued message with no
-    // live session deletes normally.
-    #[tokio::test]
-    async fn native_backend_delete_from_outbox_blocked_during_live_session() {
-        use crate::native_mailbox::FolderRef;
-        let dir = tempdir().unwrap();
-        let seed = Mailbox::new(dir.path());
-        let raw =
-            compose_message("N7CPZ", &["W1AW"], &[], "Queued", "body", 1_716_200_000).to_bytes();
-        let id = seed.store(MailboxFolder::Outbox, &raw).unwrap();
-        let backend = NativeBackend::new(offline_config(), dir.path());
-
-        // Live session → delete refused.
-        backend.set_status(BackendStatus::Connected {
-            transport: "cms".into(),
-            peer: "CMS".into(),
-            since_iso: "2026-06-21T00:00:00Z".into(),
-        });
-        let err = backend
-            .delete_message_in(FolderRef::System(MailboxFolder::Outbox), &id, None)
-            .await
-            .expect_err("Outbox delete must be refused during a live session");
-        assert!(matches!(err, BackendError::MessageRejected(_)), "got {err:?}");
-        // Still queued in the Outbox, not moved to Trash.
-        assert_eq!(backend.list_messages(MailboxFolder::Outbox).await.unwrap().len(), 1);
-        assert!(backend.list_messages(MailboxFolder::Deleted).await.unwrap().is_empty());
-
-        // Connecting also counts as live.
-        backend.set_status(BackendStatus::Connecting { transport: "cms".into() });
-        assert!(backend
-            .delete_message_in(FolderRef::System(MailboxFolder::Outbox), &id, None)
-            .await
-            .is_err());
-
-        // Session ended → delete proceeds.
-        backend.set_status(BackendStatus::Disconnected);
-        backend
-            .delete_message_in(FolderRef::System(MailboxFolder::Outbox), &id, None)
-            .await
-            .expect("Outbox delete proceeds once the session is disconnected");
-        assert!(backend.list_messages(MailboxFolder::Outbox).await.unwrap().is_empty());
-        assert_eq!(backend.list_messages(MailboxFolder::Deleted).await.unwrap().len(), 1);
-    }
+    // tuxlink-wl7n: deleting an Outbox message is always permitted (the operator's
+    // "cancel this queued send"), including during a live session — no
+    // actively-transmitting guard (struck per operator 2026-06-21). The basic
+    // Outbox-delete-to-Trash path is covered by the default-identity test above
+    // and the native_mailbox layer.
 
     // tuxlink-gqo: the dev transport resolver. With no env overrides the configured
     // transport stands (production keeps CmsSsl/8773); TUXLINK_CMS_PLAINTEXT forces
