@@ -1,30 +1,30 @@
 /**
- * LocationMap — the offline location-setup map (tuxlink-yy1m), MapLibre edition.
+ * LocationMap — the offline location-setup map (tuxlink-yy1m), Leaflet edition.
  *
- * Ported from the retired Leaflet BaseMap to the MapLibre stack (tuxlink-ndi4):
- * composes MapLibreMap + MaidenheadGridLayer and draws its own overlay (grid
- * square + a single marker) as GeoJSON circle/fill/line layers via useMapOverlay
- * — markers are GeoJSON, not maplibregl.Marker (CSP-safe, per the map subsystem).
+ * Leaflet re-expression (tuxlink-4hol; strangler-fig twin): composes LeafletMap +
+ * LeafletMaidenheadGridLayer and draws its own overlay (grid square + a single
+ * marker) as an L.rectangle + a draggable L.marker on an explicit L.svg()
+ * renderer. Props + the GpsSourcePicker call site are unchanged.
  *
- * Behaviors (operator wire-walk flows):
+ * Behaviors (operator wire-walk flows), preserved 1:1:
  *  - GPS source selected + a live fix → marker sits at the PRECISE fix lat/lon
  *    ("you are here"); the live fix coords are local-display only, never broadcast.
  *  - Manual (or no fix) → marker at the grid-square center.
  *  - Click the map OR drag the marker → sets the location by hand (→ Manual),
- *    which is how the operator overrides a GPS fix (flow 3). Drag is the MapLibre
- *    draggable-point recipe (mousedown on the marker → dragPan.disable → mousemove
- *    updates the source → mouseup commits onGridChange).
+ *    which is how the operator overrides a GPS fix (flow 3). Drag uses Leaflet's
+ *    NATIVE draggable marker (no manual mousedown/move/up recipe needed): the
+ *    marker commits its dropped lat/lon on `dragend`.
  *
- * Real render/drag smoothness is grim-verified (the map subsystem's C1
- * convention); the tests prove wiring only via the global maplibre mock.
+ * Real render/drag smoothness is grim-verified; the tests prove wiring only.
  */
-import { useEffect, useMemo, useRef } from 'react';
-import type { MapMouseEvent } from 'maplibre-gl';
-import { MapLibreMap } from '../map/MapLibreMap';
-import { MaidenheadGridLayer } from '../map/MaidenheadGridLayer';
-import { useMapContext } from '../map/MapContext';
-import { useMapOverlay } from '../map/mapHooks';
+import { useEffect, useRef } from 'react';
+import L from 'leaflet';
+import { LeafletMap } from '../map/LeafletMap';
+import { LeafletMaidenheadGridLayer } from '../map/LeafletMaidenheadGridLayer';
+import { useLeafletMap } from '../map/LeafletMapContext';
+import { useLeafletLayerGroup } from '../map/leafletHooks';
 import { gridToLatLon, latLonToGrid } from '../forms/position/maidenhead';
+import { reportFrontendError } from '../frontendErrorLog';
 import type { LatLon } from '../map/projection';
 
 export interface LocationMapProps {
@@ -39,184 +39,81 @@ export interface LocationMapProps {
   onGridChange: (grid: string) => void;
 }
 
-const SOURCE_ID = 'location-pin';
-const MARKER_LAYER_ID = 'loc-pin-dot';
-
 /** Grid-square half-widths (deg): 4-char = 2°×1°; 6-char = 5′×2.5′. */
 const RECT_HALF = { lat6: 1.25 / 60, lon6: 2.5 / 60, lat4: 0.5, lon4: 1.0 };
 
-type FeatureCollection = { type: 'FeatureCollection'; features: unknown[] };
-const EMPTY_FC: FeatureCollection = { type: 'FeatureCollection', features: [] };
-
-function squareFeature(grid: string, ll: LatLon): unknown {
+/** Grid-square bounds [[south,west],[north,east]] for a grid + its centre. */
+function squareBounds(grid: string, ll: LatLon): L.LatLngBoundsExpression {
   const is6 = grid.toUpperCase().length === 6;
   const halfLat = is6 ? RECT_HALF.lat6 : RECT_HALF.lat4;
   const halfLon = is6 ? RECT_HALF.lon6 : RECT_HALF.lon4;
-  const s = ll.lat - halfLat;
-  const n = ll.lat + halfLat;
-  const w = ll.lon - halfLon;
-  const e = ll.lon + halfLon;
-  return {
-    type: 'Feature',
-    properties: { kind: 'square' },
-    geometry: { type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] },
-  };
+  return [
+    [ll.lat - halfLat, ll.lon - halfLon],
+    [ll.lat + halfLat, ll.lon + halfLon],
+  ];
 }
 
-/** Build the source data: the grid square (if a grid is set) + the marker point. */
-function buildFC(grid: string, ll: LatLon | null, markerLngLat: [number, number] | null): FeatureCollection {
-  const features: unknown[] = [];
-  if (grid && ll) features.push(squareFeature(grid, ll));
-  if (markerLngLat) {
-    features.push({
-      type: 'Feature',
-      properties: { kind: 'marker' },
-      geometry: { type: 'Point', coordinates: markerLngLat },
-    });
-  }
-  return { type: 'FeatureCollection', features };
+/** A green "you are here" marker (matches the MapLibre #5fd39a dot). */
+function markerIcon(): L.DivIcon {
+  const html =
+    '<span class="location-pin" data-testid="location-pin" style="display:block;width:14px;height:14px;' +
+    'border-radius:50%;background:#5fd39a;border:2px solid #0a1a2a;box-sizing:border-box"></span>';
+  return L.divIcon({ className: 'location-pin-icon', html, iconSize: [14, 14], iconAnchor: [7, 7] });
 }
-
-const LAYERS = (
-  [
-    {
-      id: 'loc-square-fill',
-      type: 'fill',
-      source: SOURCE_ID,
-      filter: ['==', ['get', 'kind'], 'square'],
-      paint: { 'fill-color': '#5fd39a', 'fill-opacity': 0.1 },
-    },
-    {
-      id: 'loc-square-line',
-      type: 'line',
-      source: SOURCE_ID,
-      filter: ['==', ['get', 'kind'], 'square'],
-      paint: { 'line-color': '#5fd39a', 'line-width': 2 },
-    },
-    {
-      id: MARKER_LAYER_ID,
-      type: 'circle',
-      source: SOURCE_ID,
-      filter: ['==', ['get', 'kind'], 'marker'],
-      paint: { 'circle-radius': 7, 'circle-color': '#5fd39a', 'circle-stroke-color': '#0a1a2a', 'circle-stroke-width': 2 },
-    },
-  ] as unknown[]
-).map((l) => l as Record<string, unknown> & { id: string });
 
 function LocationOverlay({ grid, fixLatLon, selectedSource, onGridChange }: LocationMapProps) {
-  const map = useMapContext();
+  const map = useLeafletMap();
+  const group = useLeafletLayerGroup(map);
+  const rendererRef = useRef<L.Renderer | null>(null);
+  if (!rendererRef.current) rendererRef.current = L.svg({ padding: 2 });
+
+  const onGridChangeRef = useRef(onGridChange);
+  onGridChangeRef.current = onGridChange;
+
   const ll = grid ? gridToLatLon(grid) : null;
   const showFix = selectedSource !== 'manual' && fixLatLon != null;
-  const markerLngLat: [number, number] | null = showFix
-    ? [fixLatLon!.lon, fixLatLon!.lat]
-    : ll
-      ? [ll.lon, ll.lat]
-      : null;
+  // The marker sits at the precise fix when a GPS source is active, else the grid
+  // centre. Primitive lat/lon so a fresh object with the same coords doesn't churn.
+  const markerLat = showFix ? fixLatLon!.lat : ll?.lat ?? null;
+  const markerLon = showFix ? fixLatLon!.lon : ll?.lon ?? null;
 
-  const fc = useMemo(
-    () => buildFC(grid, ll, markerLngLat),
-    [grid, ll?.lat, ll?.lon, markerLngLat?.[0], markerLngLat?.[1]],
-  );
-
-  useMapOverlay(map, SOURCE_ID, { type: 'geojson', data: EMPTY_FC }, LAYERS);
-
-  // Subscribe `styledata` ONCE and push the latest data from a ref (B10,
-  // tuxlink-vnk7) — the old effect re-subscribed on every `fc` change.
-  const fcRef = useRef(fc);
-  fcRef.current = fc;
   useEffect(() => {
-    if (!map) return;
-    const push = () => {
-      const src = map.getSource(SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
-      src?.setData?.(fcRef.current);
-    };
-    map.on('styledata', push);
-    return () => {
-      map.off('styledata', push);
-    };
-  }, [map]);
-
-  // Push imperatively whenever the data actually changes.
-  useEffect(() => {
-    if (!map) return;
-    const src = map.getSource(SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
-    src?.setData?.(fc);
-  }, [map, fc]);
-
-  // Draggable marker (flow 3): drag the pin to set the location by hand. Standard
-  // MapLibre draggable-point recipe — grab on the marker layer, move the point
-  // live, commit on release (→ Manual via onGridChange).
-  useEffect(() => {
-    if (!map) return;
-    let dragging = false;
-    // Coalesce the live drag preview to one setData per animation frame (B10,
-    // tuxlink-vnk7) — pointer mousemove can fire faster than the (software-GL)
-    // render cadence, so an un-throttled setData rebuilt the GeoJSON many times
-    // per frame while the map was already CPU-limited.
-    let rafId: number | null = null;
-    let pending: [number, number] | null = null;
-    const flushPreview = () => {
-      rafId = null;
-      if (!pending) return;
-      const src = map.getSource(SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
-      src?.setData?.(buildFC(grid, ll, pending));
-      pending = null;
-    };
-    const cancelPreview = () => {
-      if (rafId != null) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
+    if (!map || !group) return;
+    try {
+      group.clearLayers();
+      // Grid square (drawn first so the marker sits above it).
+      if (grid && ll) {
+        L.rectangle(squareBounds(grid, ll), {
+          renderer: rendererRef.current ?? undefined,
+          color: '#5fd39a',
+          weight: 2,
+          fillColor: '#5fd39a',
+          fillOpacity: 0.1,
+          interactive: false,
+        }).addTo(group);
       }
-      pending = null;
-    };
-    const setCursor = (c: string) => {
-      try {
-        map.getCanvas().style.cursor = c;
-      } catch {
-        /* jsdom canvas has no style in some envs */
+      // Draggable marker → set location by hand (flow 3).
+      if (markerLat != null && markerLon != null) {
+        const marker = L.marker([markerLat, markerLon], {
+          icon: markerIcon(),
+          draggable: true,
+          keyboard: false,
+        });
+        marker.on('dragend', () => {
+          const p = marker.getLatLng();
+          onGridChangeRef.current(latLonToGrid(p.lat, p.lng));
+        });
+        marker.addTo(group);
       }
-    };
-    const onEnter = () => setCursor('move');
-    const onLeave = () => {
-      if (!dragging) setCursor('');
-    };
-    const onDown = (e: MapMouseEvent) => {
-      e.preventDefault?.();
-      dragging = true;
-      map.dragPan.disable();
-    };
-    const onMove = (e: MapMouseEvent) => {
-      if (!dragging) return;
-      pending = [e.lngLat.lng, e.lngLat.lat];
-      if (rafId == null) rafId = requestAnimationFrame(flushPreview);
-    };
-    const onUp = (e: MapMouseEvent) => {
-      if (!dragging) return;
-      dragging = false;
-      // Cancel any pending throttled frame, but commit the FINAL release point
-      // synchronously first (Codex P2): otherwise, if onGridChange resolves to the
-      // same grid, no FC re-push occurs and the pin lags at the last flushed frame.
-      cancelPreview();
-      const src = map.getSource(SOURCE_ID) as { setData?: (d: unknown) => void } | undefined;
-      src?.setData?.(buildFC(grid, ll, [e.lngLat.lng, e.lngLat.lat]));
-      map.dragPan.enable();
-      setCursor('');
-      onGridChange(latLonToGrid(e.lngLat.lat, e.lngLat.lng));
-    };
-    map.on('mouseenter', MARKER_LAYER_ID, onEnter);
-    map.on('mouseleave', MARKER_LAYER_ID, onLeave);
-    map.on('mousedown', MARKER_LAYER_ID, onDown);
-    map.on('mousemove', onMove);
-    map.on('mouseup', onUp);
-    return () => {
-      cancelPreview();
-      map.off('mouseenter', MARKER_LAYER_ID, onEnter);
-      map.off('mouseleave', MARKER_LAYER_ID, onLeave);
-      map.off('mousedown', MARKER_LAYER_ID, onDown);
-      map.off('mousemove', onMove);
-      map.off('mouseup', onUp);
-    };
-  }, [map, grid, ll?.lat, ll?.lon, onGridChange]);
+    } catch (e) {
+      reportFrontendError(
+        'location-map',
+        `overlay reconcile: ${e instanceof Error ? e.message : String(e)}`,
+        e instanceof Error ? e.stack : undefined,
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- primitive marker coords + grid; onGridChange held in a ref
+  }, [map, group, grid, ll?.lat, ll?.lon, markerLat, markerLon]);
 
   return null;
 }
@@ -227,19 +124,19 @@ export function LocationMap({ grid, fixLatLon, selectedSource, onGridChange }: L
   const center: LatLon | undefined = (showFix ? fixLatLon : ll) ?? undefined;
   return (
     <div className="location-map" data-testid="location-map">
-      <MapLibreMap
+      <LeafletMap
         onMapClick={({ lat, lon }) => onGridChange(latLonToGrid(lat, lon))}
         initialCenter={center}
         initialZoom={center ? 6 : 2}
       >
-        <MaidenheadGridLayer visible />
+        <LeafletMaidenheadGridLayer visible />
         <LocationOverlay
           grid={grid}
           fixLatLon={fixLatLon}
           selectedSource={selectedSource}
           onGridChange={onGridChange}
         />
-      </MapLibreMap>
+      </LeafletMap>
     </div>
   );
 }
