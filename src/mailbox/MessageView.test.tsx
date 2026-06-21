@@ -465,6 +465,36 @@ describe('<MessageViewLoaded>', () => {
     expect(strip).toHaveTextContent('photo.jpg');
   });
 
+  // tuxlink-unq9: switching messages while an image preview is open must NOT
+  // carry the previous message's preview into the new message (the strip is keyed
+  // by message id, so it remounts and its index-keyed preview state resets).
+  it('resets an open image preview when switching messages', async () => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValueOnce({
+      filename: 'a.jpg',
+      mimeType: 'image/jpeg',
+      dataBase64: 'AAAA',
+    });
+    const msgA = parsed({ id: 'MSG-A', attachments: [{ filename: 'a.jpg', size: 100 }] });
+    const msgB = parsed({ id: 'MSG-B', attachments: [{ filename: 'b.jpg', size: 100 }] });
+    const { rerender } = render(<MessageViewLoaded message={msgA} currentFolder="inbox" />);
+
+    // Open message A's image preview.
+    fireEvent.click(screen.getByTestId('attachment-preview-0'));
+    await waitFor(() =>
+      expect(screen.getByTestId('attachment-preview-image-0')).toHaveAttribute(
+        'src',
+        'data:image/jpeg;base64,AAAA',
+      ),
+    );
+    expect(screen.getByTestId('attachment-preview-0')).toHaveTextContent('Hide');
+
+    // Switch to message B WITHOUT closing the preview: B must show NO stale preview.
+    rerender(<MessageViewLoaded message={msgB} currentFolder="inbox" />);
+    expect(screen.queryByTestId('attachment-preview-image-0')).toBeNull();
+    expect(screen.getByTestId('attachment-preview-0')).toHaveTextContent('Preview');
+  });
+
   it('does not render attachment strip when no attachments', () => {
     render(<MessageViewLoaded message={parsed({ attachments: [] })} />);
     expect(screen.queryByTestId('message-attachments')).toBeNull();
