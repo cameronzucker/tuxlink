@@ -8,9 +8,11 @@
 // The modem mock returns `stopped`, so radioPanelMode is null and the dock
 // appears purely from aprsOpen — proving the re-home path, not a modem path.
 // fireEvent (not @testing-library/user-event, which is not installed) per plan.
+import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { MessageMeta } from '../mailbox/types';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (cmd: string) => {
@@ -48,8 +50,45 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (cmd === 'contacts_read') return [];
     if (cmd === 'contacts_suggestions') return [];
     if (cmd === 'aprs_config_get') return { listenDefault: false };
+    // tuxlink-jvtu: seed one inbox message so the reading-pane-vs-map
+    // interaction has a clickable row. useMailbox stays real (this file's
+    // integration purpose); data is fed through the IPC boundary it calls.
+    if (cmd === 'mailbox_list') return [APRS_TEST_INBOX_MSG];
     return undefined;
   }),
+}));
+
+// tuxlink-jvtu: a single inbox message for the map/reading-pane select test.
+// Declared after the mock (vi.mock is hoisted; the factory closes over this at
+// call time, not definition time, so the const is initialized before invoke runs).
+const APRS_TEST_INBOX_MSG: MessageMeta = {
+  id: 'INBOX1',
+  subject: 'Inbox subject',
+  from: 'KK4XYZ@winlink.org',
+  to: [],
+  date: '2026-05-19T14:00:00Z',
+  unread: true,
+  bodySize: 100,
+  hasAttachments: false,
+};
+
+// tuxlink-jvtu: real react-virtuoso renders into a zero-height scroller under
+// jsdom (no layout engine), so rows never paint and can't be clicked. Mirror the
+// flat-render stub AppShell.test.tsx uses so `message-row-*` testids exist.
+vi.mock('react-virtuoso', () => ({
+  Virtuoso: ({
+    data,
+    itemContent,
+  }: {
+    data: MessageMeta[];
+    itemContent: (i: number, m: MessageMeta) => unknown;
+  }) => (
+    <div data-testid="virtuoso-mock">
+      {data.map((m, i) => (
+        <div key={m.id}>{itemContent(i, m) as ReactNode}</div>
+      ))}
+    </div>
+  ),
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -155,5 +194,30 @@ describe('APRS dock integration', () => {
     // Toggling off collapses the map back to the normal reading pane.
     fireEvent.click(screen.getByTestId('aprs-map-toggle'));
     expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument();
+  });
+
+  // tuxlink-jvtu: the map occupies the reading-pane grid slot while the
+  // MessageList column stays visible, so clicking a message used to only
+  // highlight the row — the map kept covering the reading pane and the body
+  // never showed. Selecting a message must close the map (switch back to the
+  // reading pane); reopening requires the dock Map toggle again.
+  it('closes the map and shows the reading pane when a message is selected', async () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('dash-aprs-control'));
+    await screen.findByTestId('aprs-chat-panel');
+    // Open the map into the reading-pane slot.
+    fireEvent.click(screen.getByTestId('aprs-map-toggle'));
+    expect(await screen.findByTestId('aprs-positions-map', {}, { timeout: 5000 })).toBeInTheDocument();
+    // Click a seeded inbox message row.
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'));
+    // The map is gone — the reading pane reclaimed the slot. waitFor: the
+    // reading-pane branch mounts the lazy MessageView, so the commit that
+    // unmounts the map lands a microtask later.
+    await waitFor(() =>
+      expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument(),
+    );
+    // The dock itself stays open; the operator reopens the map via the toggle.
+    expect(screen.getByTestId('aprs-chat-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('aprs-map-toggle')).toBeInTheDocument();
   });
 });
