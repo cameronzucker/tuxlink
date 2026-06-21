@@ -79,6 +79,8 @@ test('integration §6.3: State 1 → click source chip → State 4 → Set manua
     position_precision: 'FourCharGrid',
     position_source: configSource,
     review_inbound_before_download: false,
+    trash_auto_purge: true,
+    trash_retention_days: 30,
   });
   const positionDto = (): PositionStatusDto => ({
     gps_ready: false,

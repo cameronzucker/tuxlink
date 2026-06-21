@@ -3395,6 +3395,14 @@ pub struct ConfigViewDto {
     /// matching the TS `config.map_tile_source` read; the inner `TileSource`
     /// stays camelCase per its own `rename_all`.
     pub map_tile_source: Option<crate::tiles::TileSource>,
+    /// Auto-purge expired Trash on a schedule (tuxlink-wl7n). When `true`
+    /// (the default) the app sweeps Trash at startup and every 6h, permanently
+    /// removing messages whose `deleted_at` is at least `trash_retention_days`
+    /// old. Mirrors `Config.trash_auto_purge`.
+    pub trash_auto_purge: bool,
+    /// Retention window in days before a Trash item is eligible for auto-purge
+    /// (tuxlink-wl7n). Default 30. Mirrors `Config.trash_retention_days`.
+    pub trash_retention_days: u32,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -3414,6 +3422,8 @@ impl From<&config::Config> for ConfigViewDto {
             review_inbound_before_download: c.review_inbound_before_download,
             aredn_master_node_host: c.aredn_master_node_host.clone(),
             map_tile_source: c.map_tile_source.clone(),
+            trash_auto_purge: c.trash_auto_purge,
+            trash_retention_days: c.trash_retention_days,
         }
     }
 }
@@ -6656,6 +6666,47 @@ pub async fn config_set_review_inbound(
     Ok(())
 }
 
+// ============================================================================
+// tuxlink-wl7n — config_set_trash_auto_purge (Trash auto-purge + retention)
+// ============================================================================
+
+/// Validate and clamp `retention_days` for `config_set_trash_auto_purge`.
+/// Returns `Err(UiError::Rejected)` when `days == 0`; otherwise clamps to
+/// `365` and returns the effective value. Pure; no I/O. Testable in isolation.
+fn validate_trash_retention_days(days: u32) -> Result<u32, UiError> {
+    if days == 0 {
+        return Err(UiError::Rejected("retention_days must be at least 1".to_string()));
+    }
+    Ok(days.min(365))
+}
+
+/// Persist the Trash auto-purge preference and retention window (tuxlink-wl7n).
+/// `enabled` enables or disables the scheduled purge sweep. `retention_days`
+/// is the number of days before a trashed message is eligible for permanent
+/// removal; rejected when `0`, clamped to a maximum of `365`.
+///
+/// Mirrors `config_set_review_inbound`'s read → mutate → `write_config_atomic`
+/// → `backend.set_config` live-refresh shape. The live-refresh is load-bearing:
+/// the purge scheduler reads the backend's live config, so persisting alone is
+/// not enough without a restart.
+#[tauri::command]
+pub async fn config_set_trash_auto_purge(
+    state: State<'_, BackendState>,
+    enabled: bool,
+    retention_days: u32,
+) -> Result<(), UiError> {
+    let clamped = validate_trash_retention_days(retention_days)?;
+    let mut cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.trash_auto_purge = enabled;
+    cfg.trash_retention_days = clamped;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg);
+    }
+    Ok(())
+}
+
 /// Validate a user-supplied CMS host. Returns `Some(message)` for the FIRST rule
 /// violated, `None` when valid. Rules (most-actionable first, mirroring
 /// `config::validate_identity_describe`): nonempty → no whitespace. A hostname's
@@ -9055,6 +9106,70 @@ hw:CARD=Device,DEV=0
         assert_eq!(v["position_precision"], "SixCharGrid");
         // tuxlink-686 Task 7: position_source key is snake_case; value is PascalCase.
         assert_eq!(v["position_source"], "Gps");
+    }
+
+    // ========================================================================
+    // tuxlink-wl7n — ConfigViewDto projects trash_auto_purge / trash_retention_days
+    // ========================================================================
+
+    // The DTO must surface the fixture defaults (true / 30) through the From impl.
+    #[test]
+    fn config_view_dto_maps_trash_fields_defaults() {
+        let cfg = cms_config_fixture();
+        let dto = ConfigViewDto::from(&cfg);
+        assert!(dto.trash_auto_purge, "trash_auto_purge default true must project to DTO");
+        assert_eq!(dto.trash_retention_days, 30, "trash_retention_days default 30 must project to DTO");
+    }
+
+    // Flipping to non-default values confirms the From impl reads the live config
+    // rather than a hardcoded constant.
+    #[test]
+    fn config_view_dto_maps_trash_fields_custom() {
+        let mut cfg = cms_config_fixture();
+        cfg.trash_auto_purge = false;
+        cfg.trash_retention_days = 14;
+        let dto = ConfigViewDto::from(&cfg);
+        assert!(!dto.trash_auto_purge, "trash_auto_purge = false must project through");
+        assert_eq!(dto.trash_retention_days, 14, "trash_retention_days = 14 must project through");
+    }
+
+    // ========================================================================
+    // tuxlink-wl7n — config_set_trash_auto_purge validation
+    //
+    // NOTE: the full read→write round-trip is NOT unit-tested here because
+    // `config::config_path()` resolves via the process-global `TUXLINK_CONFIG_DIR`
+    // env var and races under parallel `cargo test` (same caveat as
+    // `config_set_review_inbound`). The validation path does not touch the
+    // filesystem and is safe to test in isolation. The persist path is identical
+    // in shape to `config_set_connect` / `config_set_review_inbound` and is
+    // operator-smoke-covered.
+    // ========================================================================
+
+    // retention_days = 0 must be rejected before any config I/O.
+    #[test]
+    fn config_set_trash_auto_purge_rejects_zero_days() {
+        let result = validate_trash_retention_days(0);
+        assert!(result.is_err(), "retention_days = 0 must be rejected");
+        match result.unwrap_err() {
+            UiError::Rejected(_) => {}
+            other => panic!("expected UiError::Rejected, got {other:?}"),
+        }
+    }
+
+    // retention_days > 365 must be clamped to 365 (not rejected).
+    #[test]
+    fn config_set_trash_auto_purge_clamps_above_max() {
+        let result = validate_trash_retention_days(400);
+        assert!(result.is_ok(), "retention_days > 365 must clamp, not reject; got {result:?}");
+        assert_eq!(result.unwrap(), 365, "must clamp to 365");
+    }
+
+    // Valid in-range value passes through unchanged.
+    #[test]
+    fn config_set_trash_auto_purge_accepts_valid_days() {
+        let result = validate_trash_retention_days(14);
+        assert!(result.is_ok(), "retention_days = 14 must be accepted; got {result:?}");
+        assert_eq!(result.unwrap(), 14, "must not alter a valid value");
     }
 
     // ========================================================================
