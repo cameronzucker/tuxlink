@@ -757,25 +757,33 @@ pub fn write_config_atomic(config: &Config) -> Result<(), ConfigWriteError> {
     match std::fs::read(&path) {
         Ok(bytes) => {
             if let Ok(probe) = serde_json::from_slice::<SchemaVersionProbe>(&bytes) {
-                // Refuse only versions we can neither load nor migrate (future /
-                // unknown); a MigrateFromV1/MigrateAdditive file is a legitimate
-                // overwrite target so migration can rewrite it at the current version.
-                if let SchemaAction::Unsupported { found } = detect_schema_action(probe.schema_version) {
-                    return Err(ConfigWriteError::SchemaVersionMismatch {
-                        existing: found,
-                        ours: CONFIG_SCHEMA_VERSION,
-                    });
-                }
-                // Defense-in-depth (tuxlink-ulrz): the probe reads ONLY schema_version,
-                // so a config at a known version but with an UNKNOWN field (a field
-                // added by a newer build without bumping the version — the exact bug
-                // that motivated this) passes the check above yet cannot be loaded by
-                // this binary. Refuse to clobber it with defaults; preserve it instead.
-                if let Err(source) = serde_json::from_slice::<Config>(&bytes) {
-                    return Err(ConfigWriteError::ExistingConfigUnreadable {
-                        path: path.clone(),
-                        source,
-                    });
+                match detect_schema_action(probe.schema_version) {
+                    // Future / unknown version (a newer build wrote it): refuse so a
+                    // downgrade never clobbers it.
+                    SchemaAction::Unsupported { found } => {
+                        return Err(ConfigWriteError::SchemaVersionMismatch {
+                            existing: found,
+                            ours: CONFIG_SCHEMA_VERSION,
+                        });
+                    }
+                    // Current or additively-loadable: this binary is EXPECTED to parse
+                    // the existing file. Defense-in-depth (tuxlink-ulrz): the probe
+                    // reads ONLY schema_version, so a config at a known version but with
+                    // an UNKNOWN field (a field a newer build added without bumping the
+                    // version — the exact bug that motivated this) passes the probe yet
+                    // cannot be loaded. Refuse to clobber it with defaults; preserve it.
+                    SchemaAction::Current | SchemaAction::MigrateAdditive => {
+                        if let Err(source) = serde_json::from_slice::<Config>(&bytes) {
+                            return Err(ConfigWriteError::ExistingConfigUnreadable {
+                                path: path.clone(),
+                                source,
+                            });
+                        }
+                    }
+                    // A v1 file is a legitimate BREAKING-migration target that does NOT
+                    // parse as the current Config — the v1→v2 migration is precisely
+                    // what is about to rewrite it. Do NOT apply the full-parse check.
+                    SchemaAction::MigrateFromV1 => {}
                 }
             }
         }

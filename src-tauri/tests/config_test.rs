@@ -568,8 +568,10 @@ fn test_write_atomic_refuses_schema_version_mismatch_future() {
         let config = make_valid_cms_config();
         let err = write_config_atomic(&config).unwrap_err();
         match err {
-            ConfigWriteError::SchemaVersionMismatch { existing: 99, ours: 2 } => {}
-            other => panic!("expected SchemaVersionMismatch{{99,2}}, got {other:?}"),
+            ConfigWriteError::SchemaVersionMismatch { existing: 99, ours } => {
+                assert_eq!(ours, tuxlink_lib::config::CONFIG_SCHEMA_VERSION);
+            }
+            other => panic!("expected SchemaVersionMismatch with existing=99, got {other:?}"),
         }
         // PRESERVATION CONTRACT: original file MUST be untouched.
         let current = std::fs::read(&path).unwrap();
@@ -589,8 +591,10 @@ fn test_write_atomic_refuses_schema_version_mismatch_past() {
         let config = make_valid_cms_config();
         let err = write_config_atomic(&config).unwrap_err();
         match err {
-            ConfigWriteError::SchemaVersionMismatch { existing: 0, ours: 2 } => {}
-            other => panic!("expected SchemaVersionMismatch{{0,2}}, got {other:?}"),
+            ConfigWriteError::SchemaVersionMismatch { existing: 0, ours } => {
+                assert_eq!(ours, tuxlink_lib::config::CONFIG_SCHEMA_VERSION);
+            }
+            other => panic!("expected SchemaVersionMismatch with existing=0, got {other:?}"),
         }
     });
 }
