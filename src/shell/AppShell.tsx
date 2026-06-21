@@ -1290,6 +1290,13 @@ export function AppShell() {
     replyAll: () => { if (openMessage) void openReplyWindow(openMessage, 'replyAll').catch(() => {}); },
     forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
     archive: () => { void archiveOpen(); },
+    // tuxlink-wl7n: Message → Delete menubar item. Move the open message to the
+    // Deleted folder (Trash). No-op when nothing is open; `deleteByIdAndFolder`
+    // itself no-ops when the message is already in 'deleted'. (The Del KEY is
+    // handled in the reading pane, MessageViewLoaded — see menuModel.ts.)
+    delete: () => {
+      if (selectedMessage) void deleteByIdAndFolder(selectedMessage.id, selectedMessage.folder);
+    },
     // tuxlink-j0m3: fire the webview's native print dialog when a message
     // is open. No-op otherwise — Ctrl+P on an empty reading pane would
     // print the bare chrome and is rarely useful. The print stylesheet
@@ -1355,7 +1362,7 @@ export function AppShell() {
     openCatalogBuilder: () => setCatalogBuilderOpen(true),
     openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
     quit: () => { void invoke('app_quit'); },
-  }), [openMessage, archiveOpen, reportIssueController, aprsOpen, dockTab]);
+  }), [openMessage, archiveOpen, selectedMessage, deleteByIdAndFolder, reportIssueController, aprsOpen, dockTab]);
 
   const editDraft = useCallback((draftId: string) => {
     void invoke('compose_window_open', { draftId });
