@@ -70,6 +70,8 @@ const MAILBOX_ITEMS: readonly MailboxItem[] = [
   { id: 'outbox', label: 'Outbox', enabled: true },
   { id: 'drafts', label: 'Drafts', enabled: true },
   { id: 'archive', label: 'Archive', enabled: true },
+  // tuxlink-wl7n: Deleted folder is now a live backend folder.
+  { id: 'deleted', label: 'Deleted', enabled: true },
 ];
 
 export interface FolderSidebarProps {

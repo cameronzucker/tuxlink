@@ -80,8 +80,8 @@ export interface AttachmentPreview {
 }
 
 /// Sidebar folder identifiers. `drafts` is a local (localStorage) store, not
-/// a backend folder; `deleted` is a disabled placeholder for now (spec
-/// §2.2). `archive` is a system folder (Phase 1, tuxlink-ca5x); Phase 2
+/// a backend folder. `deleted` is now a live backend folder (tuxlink-wl7n).
+/// `archive` is a system folder (Phase 1, tuxlink-ca5x); Phase 2
 /// (tuxlink-f62f) open-set user-folder slugs are STRINGS that ride alongside
 /// this union via `MailboxFolderRef`.
 export type MailboxFolder = 'inbox' | 'outbox' | 'sent' | 'drafts' | 'deleted' | 'archive';

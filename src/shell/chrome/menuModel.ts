@@ -40,6 +40,8 @@ export const MENU_TREE: TopMenu[] = [
     // tuxlink-ca5x (user-folders Phase 1): move open message to Archive.
     // The `A` accelerator is gated on input-focus (see useAccelerators.ts).
     { id: 'menu:message:archive', label: 'Archive', accel: 'A' },
+    // tuxlink-wl7n: Delete — moves to Deleted folder (recoverable). Del key.
+    { id: 'menu:message:delete', label: 'Delete', accel: 'Del' },
     { separator: true },
     // tuxlink-eymu: unified Request Center. Opens the inline Request Center
     // overlay (catalog browse + WLE inquiries + Saildocs GRIB requests), which
@@ -170,4 +172,8 @@ export const ACCELERATORS: Accelerator[] = [
   // tuxlink-ca5x: Archive shortcut — plain `A`, gated on text-input focus so
   // typing the letter 'a' in the search bar or compose body doesn't archive.
   { combo: 'A', key: 'a', ctrl: false, shift: false, id: 'menu:message:archive', suppressInTextInput: true },
+  // tuxlink-wl7n: Delete — plain Delete key, gated on text-input focus.
+  // The actual key handling is in MessageViewLoaded (useEffect above); this
+  // entry adds the accelerator to the menu vocabulary for parity.
+  { combo: 'Del', key: 'Delete', ctrl: false, shift: false, id: 'menu:message:delete', suppressInTextInput: true },
 ];

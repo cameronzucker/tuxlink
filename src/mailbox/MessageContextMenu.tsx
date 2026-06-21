@@ -29,6 +29,16 @@ export interface MessageContextMenuProps {
   onMoveTo: (toFolder: MailboxFolderRef) => void;
   onArchive: () => void;
   onClose: () => void;
+  /// Move to Deleted (tuxlink-wl7n). Shown below Archive when folder ≠ 'deleted'.
+  /// No confirm — delete-to-trash is always recoverable.
+  onDelete?: () => void;
+  /// Restore from Deleted (tuxlink-wl7n). Shown instead of Delete/Archive/Move
+  /// when folder === 'deleted'. No confirm.
+  onRestore?: () => void;
+  /// Permanently delete a message from Deleted (tuxlink-wl7n). Shown alongside
+  /// Restore when folder === 'deleted'. The PARENT wires this to a confirm dialog
+  /// (Task 14); the menu just calls the prop without its own modal.
+  onDeletePermanently?: () => void;
   /// Selection mode (tuxlink-l80q). When set, the right-clicked row is part of
   /// the multi-select set and every action applies to all `selectionCount`
   /// selected messages. The menu shows an "N messages" header, an
@@ -57,11 +67,17 @@ export function MessageContextMenu({
   onMoveTo,
   onArchive,
   onClose,
+  onDelete,
+  onRestore,
+  onDeletePermanently,
   selectionCount,
 }: MessageContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const selectionMode = selectionCount !== undefined;
   const plural = (selectionCount ?? 0) === 1 ? 'message' : 'messages';
+  // tuxlink-wl7n: when in the Deleted folder the action set switches to
+  // Restore + Delete-permanently; Delete/Archive/Move are suppressed.
+  const isDeleted = folder === 'deleted';
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -146,58 +162,100 @@ export function MessageContextMenu({
           <div className="tux-ctx-separator" />
         </>
       )}
-      <div className="tux-ctx-label" data-testid="ctx-msg-header">
-        Move to
-      </div>
-      {SYSTEM_DESTINATIONS.map((d) => {
-        const self = d.slug === folder;
-        return (
-          <button
-            type="button"
-            role="menuitem"
-            key={d.slug}
-            data-testid={`ctx-move-${d.slug}`}
-            disabled={self}
-            onClick={actAndClose(() => !self && onMoveTo(d.slug))}
-            className="tux-ctx-item"
-          >
-            {d.label}
-            {self && <span className="tux-ctx-item-hint">(current)</span>}
-          </button>
-        );
-      })}
-      <button
-        type="button"
-        role="menuitem"
-        data-testid="ctx-archive"
-        disabled={folder === 'archive'}
-        onClick={actAndClose(onArchive)}
-        className="tux-ctx-item"
-      >
-        Archive
-        {folder === 'archive' && <span className="tux-ctx-item-hint">(current)</span>}
-      </button>
-      {userFolders.length > 0 && (
+      {/* tuxlink-wl7n: Deleted folder shows Restore + Delete-permanently;
+          all other folders show Move to / Archive / Delete. */}
+      {isDeleted ? (
         <>
-          <div className="tux-ctx-separator" />
-          <div className="tux-ctx-label">Folders</div>
-          {userFolders.map((uf) => {
-            const self = uf.slug === folder;
+          {onRestore && (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="ctx-restore"
+              className="tux-ctx-item"
+              onClick={actAndClose(onRestore)}
+            >
+              Restore
+            </button>
+          )}
+          {onDeletePermanently && (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="ctx-delete-permanently"
+              className="tux-ctx-item"
+              onClick={actAndClose(onDeletePermanently)}
+            >
+              Delete permanently
+            </button>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="tux-ctx-label" data-testid="ctx-msg-header">
+            Move to
+          </div>
+          {SYSTEM_DESTINATIONS.map((d) => {
+            const self = d.slug === folder;
             return (
               <button
                 type="button"
                 role="menuitem"
-                key={uf.slug}
-                data-testid={`ctx-move-${uf.slug}`}
+                key={d.slug}
+                data-testid={`ctx-move-${d.slug}`}
                 disabled={self}
-                onClick={actAndClose(() => !self && onMoveTo(uf.slug))}
+                onClick={actAndClose(() => !self && onMoveTo(d.slug))}
                 className="tux-ctx-item"
               >
-                {uf.displayName}
+                {d.label}
                 {self && <span className="tux-ctx-item-hint">(current)</span>}
               </button>
             );
           })}
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="ctx-archive"
+            disabled={folder === 'archive'}
+            onClick={actAndClose(onArchive)}
+            className="tux-ctx-item"
+          >
+            Archive
+            {folder === 'archive' && <span className="tux-ctx-item-hint">(current)</span>}
+          </button>
+          {onDelete && (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="ctx-delete"
+              className="tux-ctx-item"
+              onClick={actAndClose(onDelete)}
+            >
+              Delete
+            </button>
+          )}
+          {userFolders.length > 0 && (
+            <>
+              <div className="tux-ctx-separator" />
+              <div className="tux-ctx-label">Folders</div>
+              {userFolders.map((uf) => {
+                const self = uf.slug === folder;
+                return (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    key={uf.slug}
+                    data-testid={`ctx-move-${uf.slug}`}
+                    disabled={self}
+                    onClick={actAndClose(() => !self && onMoveTo(uf.slug))}
+                    className="tux-ctx-item"
+                  >
+                    {uf.displayName}
+                    {self && <span className="tux-ctx-item-hint">(current)</span>}
+                  </button>
+                );
+              })}
+            </>
+          )}
         </>
       )}
       <div className="tux-ctx-separator" />
