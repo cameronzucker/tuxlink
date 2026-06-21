@@ -1245,28 +1245,37 @@ export function AppShell() {
   /// Execute the confirmed permanent-delete action, then close the dialog.
   const handlePurgeConfirm = useCallback(async () => {
     if (!pendingPurge) return;
-    if (pendingPurge.kind === 'single') {
-      await purgeMessage(pendingPurge.id);
-      void queryClient.invalidateQueries({ queryKey: ['mailbox', 'deleted'] });
-      setSelectedMessage((cur) => (cur?.id === pendingPurge.id ? null : cur));
-      setSelectedIds((cur) => dropId(cur, pendingPurge.id));
-    } else if (pendingPurge.kind === 'bulk') {
-      const { ids } = pendingPurge;
-      const items = selectionToFolderItems(ids, visibleMessages, selectedFolder);
-      for (const it of items) {
-        await purgeMessage(it.id);
+    const p = pendingPurge;
+    try {
+      if (p.kind === 'single') {
+        await purgeMessage(p.id);
+      } else if (p.kind === 'bulk') {
+        const items = selectionToFolderItems(p.ids, visibleMessages, selectedFolder);
+        for (const it of items) {
+          await purgeMessage(it.id);
+        }
+      } else {
+        await emptyTrash();
       }
-      void queryClient.invalidateQueries({ queryKey: ['mailbox', 'deleted'] });
-      setSelectedIds((cur) => dropIds(cur, ids));
-      setSelectedMessage((cur) => (cur && ids.has(cur.id) ? null : cur));
-    } else {
-      // 'empty'
-      await emptyTrash();
+    } finally {
+      // Resync regardless of a mid-loop failure (Task-14 review I1): any message
+      // purged before a throw is already gone backend-side, so the cache must
+      // refresh or the list shows phantom rows. `['mailbox']` covers the
+      // `['mailbox','deleted']` child key. On a throw the propagating error skips
+      // the `setPendingPurge(null)` below, so the dialog stays open and shows the
+      // error (ConfirmPurgeDialog's own catch); on success it closes.
       void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
-      void queryClient.invalidateQueries({ queryKey: ['mailbox', 'deleted'] });
-      setSelectedIds(new Set());
-      // Clear the reading pane if the open message was in Deleted.
-      setSelectedMessage((cur) => (cur?.folder === 'deleted' ? null : cur));
+      if (p.kind === 'single') {
+        setSelectedMessage((cur) => (cur?.id === p.id ? null : cur));
+        setSelectedIds((cur) => dropId(cur, p.id));
+      } else if (p.kind === 'bulk') {
+        setSelectedIds((cur) => dropIds(cur, p.ids));
+        setSelectedMessage((cur) => (cur && p.ids.has(cur.id) ? null : cur));
+      } else {
+        setSelectedIds(new Set());
+        // Clear the reading pane if the open message was in Deleted.
+        setSelectedMessage((cur) => (cur?.folder === 'deleted' ? null : cur));
+      }
     }
     setPendingPurge(null);
   }, [pendingPurge, visibleMessages, selectedFolder, queryClient]);
