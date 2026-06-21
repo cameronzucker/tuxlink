@@ -1,16 +1,94 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, act, screen, fireEvent } from '@testing-library/react';
-import { getLastMap, type MapLibreMock } from '../map/testMapLibreMock';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, act, screen, fireEvent, waitFor } from '@testing-library/react';
+import L from 'leaflet';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { stationKey } from './useReachabilityMap';
-import { StationFinderMap } from './StationFinderMap';
 import type { ReachTier } from './reachability';
 import type { Station } from './stationModel';
 
-// MapLibre re-expression: pins are GeoJSON circle-layer features, not Leaflet
-// markers. These tests prove the source/feature wiring (tier + selected props,
-// gridless drop, operator pin, layer-scoped click→onSelect). Render fidelity +
-// recenter are covered by grim + MapLibreMap's own tests respectively.
+// Leaflet re-expression: each station is an L.circleMarker rendered on an explicit
+// SVG renderer. These tests run the REAL Leaflet map in jsdom (no engine mock) and
+// inspect the live layer objects: one marker per placeable station, the data-driven
+// tier style, selection emphasis applied in place (no marker churn), the operator
+// pin, and click→onSelect. Render fidelity is grim-verified.
+
+// LeafletMap fetches packs via invoke('basemap_list_packs') (wants {packs}).
+const invokeMock = vi.hoisted(() =>
+  vi.fn(async (cmd: string) => (cmd === 'basemap_list_packs' ? { packs: [] } : undefined)),
+);
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+
+// Mock the base-layer builder → inert layer: a real protomaps-leaflet GridLayer
+// would try to fetch/decode PMTiles to canvas in jsdom. Base render is grim-verified.
+vi.mock('../map/basemapLeaflet', () => ({
+  buildBaseLayers: vi.fn(() => [L.layerGroup()]),
+  OSM_ATTRIBUTION: '© OpenStreetMap contributors',
+  flavorBackground: () => '#34373d',
+}));
+
+import { StationFinderMap } from './StationFinderMap';
+
+// Leaflet sizes from clientWidth/Height; jsdom reports 0. Shim the prototype.
+const origW = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+const origH = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+
+const realLMap = L.map.bind(L);
+let captured: L.Map | null = null;
+
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 800 });
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, value: 600 });
+  captured = null;
+  vi.spyOn(L, 'map').mockImplementation(((el: HTMLElement | string, opts?: L.MapOptions) => {
+    const m = realLMap(el as HTMLElement, opts);
+    captured = m;
+    return m;
+  }) as typeof L.map);
+  window.localStorage.clear();
+  invokeMock.mockClear();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  if (origW) Object.defineProperty(HTMLElement.prototype, 'clientWidth', origW);
+  if (origH) Object.defineProperty(HTMLElement.prototype, 'clientHeight', origH);
+});
+
+/** Render and flush LeafletMap's whenReady (sync) + async pack fetch. */
+async function renderMap(ui: React.ReactElement) {
+  const result = render(ui);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(captured).not.toBeNull());
+  return result;
+}
+
+/** All circleMarkers on the live map. */
+function circleMarkers(): L.CircleMarker[] {
+  const out: L.CircleMarker[] = [];
+  captured!.eachLayer((l) => {
+    if (l instanceof L.CircleMarker) out.push(l);
+  });
+  return out;
+}
+
+/** The station/operator pin nearest a grid centroid. Excludes the glow disc
+ * (the only marker with `stroke:false`), which `syncGlow` parks ON TOP of the
+ * selected pin — so without this filter a selected pin's coords would match the
+ * glow first and report the glow's style instead of the pin's. */
+function markerAtGrid(grid: string): L.CircleMarker | undefined {
+  const ll = gridToLatLon(grid)!;
+  return circleMarkers().find((m) => {
+    if (m.options.stroke === false) return false; // skip the glow disc
+    const p = m.getLatLng();
+    return Math.abs(p.lat - ll.lat) < 1e-6 && Math.abs(p.lng - ll.lon) < 1e-6;
+  });
+}
+
+/** The station pins only — exclude the operator pin (non-interactive) + glow. */
+function stationPins(): L.CircleMarker[] {
+  return circleMarkers().filter((m) => m.options.interactive !== false);
+}
 
 const stations: Station[] = [
   { baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, gatewayAntenna: null, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
@@ -18,195 +96,154 @@ const stations: Station[] = [
   { baseCallsign: 'NOGRID', grid: '', sysopName: null, location: null, modes: ['vara-hf'], fetchedAtMs: 1, gatewayAntenna: null, channels: [{ mode: 'vara-hf', frequencyKhz: 7103, band: '40m' }] },
 ];
 
-interface PinFeature {
-  id: string;
-  properties: { key: string; tier: string };
-}
-
-function loadLast(): MapLibreMock {
-  const map = getLastMap()!;
-  act(() => map.__emit('load'));
-  return map;
-}
-
-function sourceData(map: MapLibreMock, id: string): { features: PinFeature[] } {
-  return (map.getSource(id) as { data: { features: PinFeature[] } }).data;
-}
-
-describe('StationFinderMap', () => {
-  it('builds one feature per placeable station, dropping gridless ones', () => {
-    render(<StationFinderMap stations={stations} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />);
-    const map = loadLast();
-    expect(sourceData(map, 'stations').features).toHaveLength(2); // NOGRID dropped
+describe('StationFinderMap (Leaflet)', () => {
+  it('builds one pin per placeable station, dropping gridless ones', async () => {
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    // DM34oa + EN34 placed; NOGRID dropped. No operator grid → no operator pin.
+    expect(stationPins()).toHaveLength(2);
+    expect(markerAtGrid('DM34oa')).toBeDefined();
+    expect(markerAtGrid('EN34')).toBeDefined();
   });
 
-  it('encodes the reachability tier and a stable feature id on each feature', () => {
+  it('encodes the reachability tier into the pin colour + radius', async () => {
     const key0 = stationKey(stations[0]);
     const tiers = new Map<string, ReachTier>([[key0, 'good']]);
-    render(<StationFinderMap stations={stations} operatorGrid="" tiers={tiers} selectedKey={key0} onSelect={() => {}} />);
-    const map = loadLast();
-    const feats = sourceData(map, 'stations').features;
-    const good = feats.find((f) => f.properties.key === key0)!;
-    expect(good.properties.tier).toBe('good');
-    expect(good.id).toBe(key0); // top-level id targets setFeatureState
-    // `selected` is no longer baked into feature properties — it is feature-state.
-    expect('selected' in good.properties).toBe(false);
-    const other = feats.find((f) => f.properties.key !== key0)!;
-    expect(other.properties.tier).toBe('untiered'); // no tier → untiered fallback
-  });
-
-  it('drives selection via setFeatureState — selecting does NOT rebuild the FC', () => {
-    const key0 = stationKey(stations[0]);
-    // Hold `stations`/`tiers` identity stable so only `selectedKey` changes — this
-    // isolates the selection path (feature-state), which must not push setData.
-    const tiers = new Map<string, ReachTier>();
-    const { rerender } = render(
+    await renderMap(
       <StationFinderMap stations={stations} operatorGrid="" tiers={tiers} selectedKey={null} onSelect={() => {}} />,
     );
-    const map = loadLast();
-    const src = map.getSource('stations') as { setData: ReturnType<typeof vi.fn> };
-    src.setData.mockClear();
+    const good = markerAtGrid('DM34oa')!;
+    expect(good.options.fillColor).toBe('#41ba6c'); // good → green
+    expect(good.options.radius).toBe(10); // good base radius
+    const untiered = markerAtGrid('EN34')!;
+    expect(untiered.options.fillColor).toBe('#9fb6cc'); // no tier → untiered fallback colour
+    expect(untiered.options.radius).toBe(7); // untiered base radius
+  });
 
-    act(() => {
+  it('drives selection by re-styling the marker in place — selecting does NOT recreate it', async () => {
+    const key0 = stationKey(stations[0]);
+    const tiers = new Map<string, ReachTier>([[key0, 'good']]);
+    const { rerender } = await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={tiers} selectedKey={null} onSelect={() => {}} />,
+    );
+    const before = markerAtGrid('DM34oa')!;
+    expect(before.options.weight).toBe(0.6); // thin rim when unselected
+
+    await act(async () => {
       rerender(
         <StationFinderMap stations={stations} operatorGrid="" tiers={tiers} selectedKey={key0} onSelect={() => {}} />,
       );
+      await Promise.resolve();
     });
 
-    // Selection flips one feature's state; it does NOT push a new FeatureCollection.
-    expect(map.setFeatureState).toHaveBeenCalledWith(
-      { source: 'stations', id: key0 },
-      { selected: true },
-    );
-    expect(src.setData).not.toHaveBeenCalled();
+    const after = markerAtGrid('DM34oa')!;
+    expect(after).toBe(before); // same instance — re-styled, not rebuilt
+    expect(after.options.weight).toBe(2); // bright rim when selected
+    expect(after.options.radius).toBe(12); // selected bump (good 10→12)
   });
 
-  it('promotes the station key to the feature id (feature-state needs it on GeoJSON)', () => {
-    // MapLibre silently ignores feature-state on a GeoJSON source with top-level
-    // STRING ids unless promoteId is set — the root cause of "selection never
-    // showed" (operator 2026-06-16). The stations source must promote `key`.
-    render(<StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />);
-    const map = loadLast();
-    expect(map.addSource).toHaveBeenCalledWith('stations', expect.objectContaining({ promoteId: 'key' }));
-  });
-
-  it('re-applies the selected feature-state after a data push (setData clears it)', () => {
-    // Regression (operator 2026-06-16): GeoJSONSource.setData drops all
-    // feature-state, and reachability tiers stream in (each a setData), so the
-    // selected pin lost its emphasis the instant a tier updated. The map must
-    // re-apply feature-state when the source finishes (re)loading.
-    const key0 = stationKey(stations[0]);
-    render(
-      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={key0} onSelect={() => {}} />,
-    );
-    const map = loadLast();
-    (map.setFeatureState as ReturnType<typeof vi.fn>).mockClear();
-
-    // Simulate a tier-driven setData reload completing.
-    act(() => map.__emit('sourcedata', { sourceId: 'stations', isSourceLoaded: true }));
-
-    expect(map.setFeatureState).toHaveBeenCalledWith({ source: 'stations', id: key0 }, { selected: true });
-    // An unrelated source's load must NOT trigger a re-apply.
-    (map.setFeatureState as ReturnType<typeof vi.fn>).mockClear();
-    act(() => map.__emit('sourcedata', { sourceId: 'operator', isSourceLoaded: true }));
-    expect(map.setFeatureState).not.toHaveBeenCalled();
-  });
-
-  it('changing the selection clears the previous feature-state then sets the new one', () => {
+  it('changing the selection restores the previous pin and emphasises the new one', async () => {
     const key0 = stationKey(stations[0]);
     const key1 = stationKey(stations[1]);
-    const { rerender } = render(
+    const { rerender } = await renderMap(
       <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={key0} onSelect={() => {}} />,
     );
-    const map = loadLast();
-    (map.setFeatureState as ReturnType<typeof vi.fn>).mockClear();
-    (map.removeFeatureState as ReturnType<typeof vi.fn>).mockClear();
+    expect(markerAtGrid('DM34oa')!.options.weight).toBe(2);
 
-    act(() => {
+    await act(async () => {
       rerender(
         <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={key1} onSelect={() => {}} />,
       );
+      await Promise.resolve();
     });
 
-    expect(map.removeFeatureState).toHaveBeenCalledWith({ source: 'stations', id: key0 }, 'selected');
-    expect(map.setFeatureState).toHaveBeenCalledWith({ source: 'stations', id: key1 }, { selected: true });
+    expect(markerAtGrid('DM34oa')!.options.weight).toBe(0.6); // previous restored
+    expect(markerAtGrid('EN34')!.options.weight).toBe(2); // new emphasised
+    void key1;
   });
 
-  it('changing stations still pushes a new FeatureCollection (setData)', () => {
-    const { rerender } = render(
+  it('adds + removes pins as the station set changes', async () => {
+    const { rerender } = await renderMap(
       <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
     );
-    const map = loadLast();
-    const src = map.getSource('stations') as { setData: ReturnType<typeof vi.fn> };
-    src.setData.mockClear();
-
-    act(() => {
+    expect(stationPins()).toHaveLength(2);
+    await act(async () => {
       rerender(
         <StationFinderMap stations={[stations[0]]} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
       );
+      await Promise.resolve();
     });
-
-    expect(src.setData).toHaveBeenCalled();
+    expect(stationPins()).toHaveLength(1);
+    expect(markerAtGrid('DM34oa')).toBeDefined();
+    expect(markerAtGrid('EN34')).toBeUndefined();
   });
 
-  it('places the operator pin only when a grid is set', () => {
-    const { rerender } = render(<StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />);
-    let map = loadLast();
-    expect(sourceData(map, 'operator').features).toHaveLength(0);
-
-    rerender(<StationFinderMap stations={stations} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />);
-    map = getLastMap()!;
-    expect(sourceData(map, 'operator').features).toHaveLength(1);
+  it('places the operator pin only when a grid is set', async () => {
+    const { rerender } = await renderMap(
+      <StationFinderMap stations={[]} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    // No stations, no operator grid → only the (non-interactive) glow disc exists.
+    expect(stationPins()).toHaveLength(0);
+    expect(markerAtGrid('DM43bp')).toBeUndefined();
+    await act(async () => {
+      rerender(
+        <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+      );
+      await Promise.resolve();
+    });
+    expect(markerAtGrid('DM43bp')).toBeDefined(); // operator pin placed
   });
 
-  it('fires onSelect when a station pin is clicked (layer-scoped click)', () => {
+  it('fires onSelect when a station pin is clicked', async () => {
     const onSelect = vi.fn();
-    const key0 = stationKey(stations[0]);
-    render(<StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={onSelect} />);
-    const map = loadLast();
-    act(() => map.__emit('click:station-pins', { features: [{ properties: { key: key0 } }] }));
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={onSelect} />,
+    );
+    act(() => {
+      markerAtGrid('DM34oa')!.fire('click');
+    });
     expect(onSelect).toHaveBeenCalledWith(stations[0]);
   });
 });
 
 describe('StationFinderMap viewport persistence (tuxlink-dwzu)', () => {
   const KEY = 'tuxlink:map-viewport:station-finder';
-  beforeEach(() => window.localStorage.clear());
 
-  it('opens at the saved viewport and suppresses the operator flyTo when one is stored', () => {
+  it('opens at the saved viewport and suppresses the operator flyTo when one is stored', async () => {
     window.localStorage.setItem(KEY, JSON.stringify({ center: { lat: 40, lon: -100 }, zoom: 8 }));
-    render(
+    await renderMap(
       <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
     );
-    const map = getLastMap()!;
-    expect(map.__state.options.center).toEqual([-100, 40]); // [lon, lat] — the saved view, not the operator
-    expect(map.getZoom()).toBe(8);
-    act(() => map.__emit('load'));
-    expect(map.flyTo).not.toHaveBeenCalled(); // saved view wins: no laborious pan to the operator
+    expect(captured!.getCenter().lat).toBeCloseTo(40, 3);
+    expect(captured!.getCenter().lng).toBeCloseTo(-100, 3);
+    expect(captured!.getZoom()).toBe(8); // saved view wins, not the operator
   });
 
-  it('falls back to the operator position at OPERATOR_ZOOM on first run (no saved viewport)', () => {
-    render(
+  it('falls back to the operator position at OPERATOR_ZOOM on first run (no saved viewport)', async () => {
+    await renderMap(
       <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
     );
-    const map = getLastMap()!;
     const me = gridToLatLon('DM43bp')!;
-    expect(map.__state.options.center).toEqual([me.lon, me.lat]);
-    expect(map.getZoom()).toBe(6); // OPERATOR_ZOOM
+    expect(captured!.getCenter().lat).toBeCloseTo(me.lat, 2);
+    expect(captured!.getCenter().lng).toBeCloseTo(me.lon, 2);
+    expect(captured!.getZoom()).toBe(6); // OPERATOR_ZOOM
   });
 
-  it('persists the viewport after the operator pans (moveend, debounced)', () => {
+  it('persists the viewport after the operator pans (debounced)', async () => {
     vi.useFakeTimers();
     try {
       render(
         <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
       );
-      const map = getLastMap()!;
-      act(() => map.__emit('load'));
-      map.__setCenter(-71.06, 42.36);
-      map.__setZoom(10);
-      act(() => map.__emit('moveend'));
-      act(() => vi.advanceTimersByTime(400));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(captured).not.toBeNull();
+      act(() => captured!.setView([42.36, -71.06], 10, { animate: false }));
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
       expect(JSON.parse(window.localStorage.getItem(KEY)!)).toEqual({
         center: { lat: 42.36, lon: -71.06 },
         zoom: 10,
@@ -216,22 +253,20 @@ describe('StationFinderMap viewport persistence (tuxlink-dwzu)', () => {
     }
   });
 
-  it('recenters on the operator at OPERATOR_ZOOM when the recenter control is clicked', () => {
-    render(
+  it('recenters on the operator at OPERATOR_ZOOM when the recenter control is clicked', async () => {
+    await renderMap(
       <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
     );
-    const map = getLastMap()!;
-    act(() => map.__emit('load')); // MapContext provides the live map after load
     const me = gridToLatLon('DM43bp')!;
+    const flySpy = vi.spyOn(captured!, 'flyTo');
     fireEvent.click(screen.getByTestId('map-recenter'));
-    expect(map.flyTo).toHaveBeenCalledWith({ center: [me.lon, me.lat], zoom: 6 });
+    expect(flySpy).toHaveBeenCalledWith([me.lat, me.lon], 6);
   });
 
-  it('hides the recenter control when no operator grid is known', () => {
-    render(
+  it('hides the recenter control when no operator grid is known', async () => {
+    await renderMap(
       <StationFinderMap stations={[]} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
     );
-    act(() => getLastMap()!.__emit('load'));
     expect(screen.queryByTestId('map-recenter')).toBeNull();
   });
 });

@@ -2,19 +2,26 @@
 // coloured/sized by its reachability tier on the selected band; an operator
 // "you" pin; click-to-select.
 //
-// MapLibre re-expression (tuxlink-ndi4 phase 2): pins are GeoJSON CIRCLE layers
-// with data-driven radius/colour/selected-stroke — NOT maplibregl.Marker. Circle
-// layers are CSP-safe and need no per-pin DOM, sidestepping both the historical
-// divIcon CSP "black blob" (s0r1) and the A13 packaged-marker risk. Click-select
-// is a layer-scoped `map.on('click', 'station-pins', …)`. Render fidelity is
-// grim-verified; the unit test proves the source/layer/feature wiring (C1).
+// Leaflet re-expression (tuxlink-mncq; strangler-fig twin of the MapLibre
+// edition): each station is an `L.circleMarker` rendered on an explicit `L.svg()`
+// renderer — the SVG path is robust under the Pi's software-GL WebKitGTK (the
+// map's preferCanvas vector path has no 2D context there) and is unit-inspectable
+// in jsdom, mirroring AprsPositionsMap's uncertainty discs. Radius + colour are
+// data-driven per tier; selection bumps the radius + adds a bright-white rim and
+// a soft glow disc BENEATH the pin (the Leaflet analog of the MapLibre
+// feature-state emphasis). Click-select is a per-marker `marker.on('click', …)`.
+// Markers are created once per station and updated in place across re-renders
+// (no churn). Render fidelity is grim-verified; the unit test proves the marker
+// wiring (count, tier style, selection emphasis, click→onSelect, operator pin).
 import { useEffect, useMemo, useRef } from 'react';
-import { MapLibreMap } from '../map/MapLibreMap';
-import { useMapContext } from '../map/MapContext';
-import { useMapOverlay } from '../map/mapHooks';
+import L from 'leaflet';
+import { LeafletMap } from '../map/LeafletMap';
+import { useLeafletMap } from '../map/LeafletMapContext';
+import { useLeafletLayerGroup } from '../map/leafletHooks';
 import { usePersistedViewport } from '../map/usePersistedViewport';
-import { RecenterControl } from '../map/RecenterControl';
+import { LeafletRecenterControl } from '../map/LeafletRecenterControl';
 import { gridToLatLon } from '../forms/position/maidenhead';
+import { reportFrontendError } from '../frontendErrorLog';
 import { type ReachTier } from './reachability';
 import { stationKey } from './useReachabilityMap';
 import type { Station } from './stationModel';
@@ -27,154 +34,70 @@ export interface StationFinderMapProps {
   onSelect: (station: Station) => void;
 }
 
-// Recenter zoom on the operator, on the z0–14 scale (was raster-native z3; finding 2).
+// Recenter zoom on the operator, on the z0–14 scale (matches the MapLibre edition).
 const OPERATOR_ZOOM = 6;
 
-const STATIONS_SOURCE = 'stations';
-const OPERATOR_SOURCE = 'operator';
-const STATION_PINS_LAYER = 'station-pins';
-const STATION_SEL_GLOW_LAYER = 'station-sel-glow';
+// Per-tier pin colour — mirrors the --reach-* CSS vars and the MapLibre
+// TIER_COLOR_MATCH ramp exactly (Leaflet path paint can't read CSS custom
+// properties either). Six-step green→red→grey ramp; see reachability.ts.
+const TIER_COLOR: Record<string, string> = {
+  good: '#41ba6c',
+  fair: '#8cc23f',
+  marginal: '#d9b13a',
+  poor: '#e2862f',
+  unlikely: '#d64a40', // red — almost certainly not
+  skip: '#6c5a5a', // grey — not reachable, inside radius
+};
+const UNTIERED_COLOR = '#9fb6cc'; // no usable channel / no prediction
 
-type FeatureCollection = { type: 'FeatureCollection'; features: unknown[] };
-const EMPTY_FC: FeatureCollection = { type: 'FeatureCollection', features: [] };
+// Base + selected pin radii per tier — mirror the MapLibre circle-radius match
+// expressions (selected gets a MODEST bump, not a balloon — operator 2026-06-16).
+const BASE_RADIUS: Record<string, number> = {
+  good: 10,
+  fair: 8,
+  marginal: 6.5,
+  poor: 5.5,
+  unlikely: 5,
+  skip: 4.5,
+};
+const SELECTED_RADIUS: Record<string, number> = {
+  good: 12,
+  fair: 10,
+  marginal: 8.5,
+  poor: 7.5,
+  unlikely: 7,
+  skip: 6.5,
+};
+const UNTIERED_BASE_RADIUS = 7;
+const UNTIERED_SELECTED_RADIUS = 9;
 
-// Pin radius (px) + colour per reachability tier — mirrors PIN_SIZE/2 and the
-// --reach-* CSS vars. Data-driven so one circle layer paints every tier.
-// Per-tier hex MUST mirror the --reach-* CSS vars (MapLibre paint can't read CSS
-// custom properties). Six-step green→red→grey ramp; see reachability.ts.
-const TIER_COLOR_MATCH = [
-  'match',
-  ['get', 'tier'],
-  'good', '#41ba6c',
-  'fair', '#8cc23f',
-  'marginal', '#d9b13a',
-  'poor', '#e2862f',
-  'unlikely', '#d64a40', // red — almost certainly not
-  'skip', '#6c5a5a', // grey — not reachable, inside radius
-  '#9fb6cc', // untiered (no usable channel / no prediction)
-];
+const colorFor = (tier: string): string => TIER_COLOR[tier] ?? UNTIERED_COLOR;
+const baseRadiusFor = (tier: string): number => BASE_RADIUS[tier] ?? UNTIERED_BASE_RADIUS;
+const selectedRadiusFor = (tier: string): number => SELECTED_RADIUS[tier] ?? UNTIERED_SELECTED_RADIUS;
 
-const STATION_LAYERS = (
-  [
-    {
-      // Soft selection GLOW — a filled (non-transparent) white disc drawn BENEATH
-      // the pins, sized larger than the selected pin so a halo shows around it.
-      // Filled (not a transparent-fill ring) so the GL path never culls it. Radius
-      // 0 / opacity 0 when not selected → paints nothing. Selection is driven by
-      // `feature-state` (B9, tuxlink-vnk7).
-      id: STATION_SEL_GLOW_LAYER,
-      type: 'circle',
-      source: STATIONS_SOURCE,
-      paint: {
-        'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 12, 0],
-        'circle-color': '#ffffff',
-        'circle-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.25, 0],
-        'circle-blur': 0.6,
-      },
-    },
-    {
-      id: STATION_PINS_LAYER,
-      type: 'circle',
-      source: STATIONS_SOURCE,
-      paint: {
-        // Selected pin gets a MODEST bump + a bright-white rim (a soft glow sits
-        // beneath) — enough to read clearly without ballooning (operator
-        // 2026-06-16: the prior +5/glow-18 looked huge). Selection is
-        // `feature-state`-driven so a click flips one feature's state, not the FC.
-        'circle-radius': [
-          'case',
-          ['boolean', ['feature-state', 'selected'], false],
-          ['match', ['get', 'tier'], 'good', 12, 'fair', 10, 'marginal', 8.5, 'poor', 7.5, 'unlikely', 7, 'skip', 6.5, 9],
-          ['match', ['get', 'tier'], 'good', 10, 'fair', 8, 'marginal', 6.5, 'poor', 5.5, 'unlikely', 5, 'skip', 4.5, 7],
-        ],
-        'circle-color': TIER_COLOR_MATCH,
-        // The grey "not reachable" bottom tier sits back (dimmer) so the live
-        // red/orange/green stations read first; red "unlikely" stays full.
-        'circle-opacity': ['case', ['==', ['get', 'tier'], 'skip'], 0.7, 1],
-        // Selected → bright-white rim; others keep a thin white rim for basemap
-        // contrast. White renders reliably on this webview.
-        'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2, 0.6],
-      },
-    },
-  ] as unknown[]
-).map((l) => l as Record<string, unknown> & { id: string });
-
-const OPERATOR_LAYERS = (
-  [
-    {
-      id: 'operator-pin',
-      type: 'circle',
-      source: OPERATOR_SOURCE,
-      paint: {
-        'circle-radius': 7,
-        'circle-color': '#eaf3fb',
-        'circle-stroke-color': '#2f86f0',
-        'circle-stroke-width': 3,
-      },
-    },
-  ] as unknown[]
-).map((l) => l as Record<string, unknown> & { id: string });
-
-function buildStationFC(stations: Station[], tiers: Map<string, ReachTier>): FeatureCollection {
-  const features: unknown[] = [];
-  for (const s of stations) {
-    const ll = gridToLatLon(s.grid);
-    if (!ll) continue;
-    const key = stationKey(s);
-    features.push({
-      // Top-level `id` (the station key) is what `setFeatureState` targets — a
-      // string id is valid GeoJSON and lets selection flip one feature's state
-      // without rebuilding the FeatureCollection (B9, tuxlink-vnk7).
-      type: 'Feature',
-      id: key,
-      properties: { key, tier: tiers.get(key) ?? 'untiered' },
-      geometry: { type: 'Point', coordinates: [ll.lon, ll.lat] },
-    });
-  }
-  return { type: 'FeatureCollection', features };
+/** The circleMarker style for a station at a given tier + selection state. The
+ * grey "not reachable" bottom tier sits back (dimmer) so the live red/orange/green
+ * stations read first; selected pins get a bright-white rim, others a thin white
+ * rim for basemap contrast. */
+function pinStyle(tier: string, selected: boolean): L.CircleMarkerOptions {
+  return {
+    radius: selected ? selectedRadiusFor(tier) : baseRadiusFor(tier),
+    fillColor: colorFor(tier),
+    fillOpacity: tier === 'skip' ? 0.7 : 1,
+    color: '#ffffff',
+    weight: selected ? 2 : 0.6,
+  };
 }
 
-/**
- * Pushes GeoJSON to a source on change, re-pushing on styledata (style swap).
- *
- * Subscribes `styledata` ONCE (deps `[map, sourceId]`) and re-pushes the latest
- * data from a ref; the push-on-change lives in a SEPARATE effect (deps
- * `[map, sourceId, data]`). The old single-effect form re-subscribed `styledata`
- * and full-replaced the source on EVERY data change (B9, tuxlink-vnk7); mirrors
- * the pattern in LocationMap.
- */
-function usePushData(
-  map: ReturnType<typeof useMapContext>,
-  sourceId: string,
-  data: FeatureCollection,
-) {
-  const dataRef = useRef(data);
-  dataRef.current = data;
-
-  // Subscribe `styledata` once; re-push the latest data after a style swap.
-  useEffect(() => {
-    if (!map) return;
-    const push = () => {
-      const src = map.getSource(sourceId) as { setData?: (d: unknown) => void } | undefined;
-      src?.setData?.(dataRef.current);
-    };
-    map.on('styledata', push);
-    return () => {
-      map.off('styledata', push);
-    };
-  }, [map, sourceId]);
-
-  // Push imperatively whenever the data actually changes.
-  useEffect(() => {
-    if (!map) return;
-    const src = map.getSource(sourceId) as { setData?: (d: unknown) => void } | undefined;
-    src?.setData?.(data);
-  }, [map, sourceId, data]);
+/** One station's owned circleMarker + the tier it was last styled for. */
+interface Pin {
+  marker: L.CircleMarker;
+  tier: string;
 }
 
 function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationFinderMapProps, 'operatorGrid'>) {
-  const map = useMapContext();
+  const map = useLeafletMap();
+  const group = useLeafletLayerGroup(map);
 
   const byKey = useMemo(() => {
     const m = new Map<string, Station>();
@@ -186,124 +109,178 @@ function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationF
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
 
-  // Selection is feature-state-driven (below), so the FC rebuilds only when the
-  // station set or tiers change — NOT on every selection click (B9, tuxlink-vnk7).
-  const fc = useMemo(() => buildStationFC(stations, tiers), [stations, tiers]);
-
-  // `promoteId` is REQUIRED for feature-state here: MapLibre only honors
-  // feature-state on a GeoJSON source whose feature ids are numeric OR promoted
-  // from a property — top-level STRING ids (our `CALL|GRID` station keys) are
-  // silently ignored, so setFeatureState was a no-op and the selected pin never
-  // got its emphasis (operator 2026-06-16, root cause). Promote the `key`
-  // property (= the station key) to the feature id so selection actually paints.
-  useMapOverlay(map, STATIONS_SOURCE, { type: 'geojson', data: EMPTY_FC, promoteId: 'key' }, STATION_LAYERS);
-  usePushData(map, STATIONS_SOURCE, fc);
-
-  // Drive selection via `setFeatureState` instead of rebuilding the FC: clear the
-  // previously-selected feature's state and set `{selected:true}` on the new one.
-  // Also RE-APPLY on `styledata` (Codex P2): a setStyle (flavor/pack change) drops
-  // all feature-state, and the hooks re-add the source on the same tick — without
-  // this the selected pin would lose its emphasis until selectedKey changes.
-  const prevSelectedRef = useRef<string | null>(null);
+  // Hold selection in a ref so the marker-reconcile effect does NOT depend on it:
+  // a selection click must not re-create every marker (mirrors AprsPositionsMap's
+  // ref discipline). Reconcile runs ONLY on station/tier changes; a dedicated
+  // effect re-styles on selection.
   const selectedKeyRef = useRef<string | null>(selectedKey);
   selectedKeyRef.current = selectedKey;
-  useEffect(() => {
-    if (!map) return;
-    const m = map as unknown as {
-      setFeatureState?: (t: { source: string; id: string | number }, s: Record<string, unknown>) => void;
-      removeFeatureState?: (t: { source: string; id?: string | number }, key?: string) => void;
-      triggerRepaint?: () => void;
-      on: (t: string, h: (...a: unknown[]) => void) => unknown;
-      off: (t: string, h: (...a: unknown[]) => void) => unknown;
-    };
-    const apply = () => {
-      const cur = selectedKeyRef.current;
-      const prev = prevSelectedRef.current;
-      if (prev != null && prev !== cur) {
-        m.removeFeatureState?.({ source: STATIONS_SOURCE, id: prev }, 'selected');
-      }
-      if (cur != null) {
-        m.setFeatureState?.({ source: STATIONS_SOURCE, id: cur }, { selected: true });
-      }
-      prevSelectedRef.current = cur;
-      // Force a frame: a feature-state change does not always schedule a repaint
-      // on its own, so the new emphasis wouldn't draw until the next map
-      // interaction — the "needs two clicks" bug (operator 2026-06-16).
-      m.triggerRepaint?.();
-    };
-    apply();
-    // Re-apply after a style swap re-creates the source (clears feature-state).
-    m.on('styledata', apply as (...a: unknown[]) => void);
-    // Re-apply after a data push. `GeoJSONSource.setData` drops ALL feature-state
-    // for the source, and reachability tiers stream in (one setData per update,
-    // plus a full re-push on every prefs change), so without this the selected
-    // pin loses its glow/emphasis the instant a tier updates — the "selection
-    // doesn't show" bug (operator, 2026-06-16). `sourcedata` fires when the
-    // source finishes (re)loading; re-applying then survives the async clear.
-    const onSourceData = (e: { sourceId?: string; isSourceLoaded?: boolean }) => {
-      if (e.sourceId === STATIONS_SOURCE && e.isSourceLoaded) apply();
-    };
-    m.on('sourcedata', onSourceData as (...a: unknown[]) => void);
-    return () => {
-      m.off('styledata', apply as (...a: unknown[]) => void);
-      m.off('sourcedata', onSourceData as (...a: unknown[]) => void);
-    };
-  }, [map, selectedKey]);
 
+  const pinsRef = useRef<Map<string, Pin>>(new Map());
+  // Soft selection GLOW — one white disc moved beneath the selected pin (the
+  // Leaflet analog of the MapLibre feature-state glow layer). Radius 0 / hidden
+  // when nothing is selected.
+  const glowRef = useRef<L.CircleMarker | null>(null);
+  // SVG renderer (NOT the map's jsdom-absent canvas) — few markers, DOM-rendered,
+  // robust under software-GL WebKitGTK and inspectable in jsdom.
+  const rendererRef = useRef<L.Renderer | null>(null);
+  if (!rendererRef.current) rendererRef.current = L.svg({ padding: 2 });
+
+  // Guard every Leaflet layer mutation: a transient throw (add/remove landing mid
+  // zoom/pan animation) is logged + skipped, never crashed to the app
+  // ErrorBoundary. Mirrors AprsPositionsMap's `safe`.
+  const safe = (what: string, fn: () => void): void => {
+    try {
+      fn();
+    } catch (e) {
+      reportFrontendError(
+        'station-finder-map',
+        `${what}: ${e instanceof Error ? e.message : String(e)}`,
+        e instanceof Error ? e.stack : undefined,
+      );
+    }
+  };
+
+  /** Reposition + show/hide the glow disc under the currently-selected pin. */
+  const syncGlow = (): void => {
+    const glow = glowRef.current;
+    if (!glow) return;
+    const cur = selectedKeyRef.current;
+    const pin = cur != null ? pinsRef.current.get(cur) : undefined;
+    if (pin) {
+      glow.setLatLng(pin.marker.getLatLng());
+      glow.setStyle({ radius: 12, fillOpacity: 0.25 });
+    } else {
+      glow.setStyle({ radius: 0, fillOpacity: 0 });
+    }
+  };
+
+  // Diff-based reconciliation: create new stations, update existing markers IN
+  // PLACE (stable identity — no churn), remove dropped ones. Runs on station/tier
+  // change only (NOT selection — that is handled below via refs).
+  useEffect(() => {
+    if (!map || !group) return;
+    const pins = pinsRef.current;
+
+    // Lazily create the glow disc once (drawn first so pins sit above it).
+    if (!glowRef.current) {
+      glowRef.current = L.circleMarker([0, 0], {
+        renderer: rendererRef.current ?? undefined,
+        radius: 0,
+        fillColor: '#ffffff',
+        fillOpacity: 0,
+        stroke: false,
+        interactive: false,
+      });
+      safe('add glow', () => group.addLayer(glowRef.current!));
+    }
+
+    const live = new Set<string>();
+    for (const s of stations) {
+      const ll = gridToLatLon(s.grid);
+      if (!ll) continue; // drop gridless stations
+      const key = stationKey(s);
+      live.add(key);
+      const tier = tiers.get(key) ?? 'untiered';
+      const selected = selectedKeyRef.current === key;
+      safe(`reconcile ${key}`, () => {
+        let pin = pins.get(key);
+        if (!pin) {
+          const marker = L.circleMarker([ll.lat, ll.lon], {
+            renderer: rendererRef.current ?? undefined,
+            ...pinStyle(tier, selected),
+          });
+          marker.on('click', () => {
+            const station = byKeyRef.current.get(key);
+            if (station) onSelectRef.current(station);
+          });
+          pin = { marker, tier };
+          pins.set(key, pin);
+          group.addLayer(marker);
+        } else {
+          // A re-fetch can move a station (grid edit) or change its tier.
+          pin.marker.setLatLng([ll.lat, ll.lon]);
+          pin.marker.setStyle(pinStyle(tier, selected));
+          pin.tier = tier;
+        }
+      });
+    }
+
+    // Remove dropped stations entirely.
+    for (const [key, pin] of pins) {
+      if (!live.has(key)) {
+        safe(`drop ${key}`, () => group.removeLayer(pin.marker));
+        pins.delete(key);
+      }
+    }
+
+    syncGlow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selection handled via refs + the dedicated effect below; depending on it would churn markers
+  }, [map, group, stations, tiers]);
+
+  // Selection re-style: clear the previously-selected pin's emphasis, apply it to
+  // the new one, and move the glow — WITHOUT recreating any marker (the Leaflet
+  // analog of setFeatureState: one click flips two markers' styles, not the set).
+  const prevSelectedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!map) return;
-    const onClick = (e: { features?: Array<{ properties?: { key?: unknown } }> }) => {
-      const key = e.features?.[0]?.properties?.key;
-      if (key == null) return;
-      const station = byKeyRef.current.get(String(key));
-      if (station) onSelectRef.current(station);
-    };
-    map.on('click', STATION_PINS_LAYER, onClick as (...a: unknown[]) => void);
-    return () => {
-      map.off('click', STATION_PINS_LAYER, onClick as (...a: unknown[]) => void);
-    };
-  }, [map]);
+    const pins = pinsRef.current;
+    const prev = prevSelectedRef.current;
+    if (prev != null && prev !== selectedKey) {
+      const p = pins.get(prev);
+      if (p) safe(`deselect ${prev}`, () => p.marker.setStyle(pinStyle(p.tier, false)));
+    }
+    if (selectedKey != null) {
+      const p = pins.get(selectedKey);
+      if (p) safe(`select ${selectedKey}`, () => p.marker.setStyle(pinStyle(p.tier, true)));
+    }
+    prevSelectedRef.current = selectedKey;
+    syncGlow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pins/safe/syncGlow are stable refs; re-style only when the selection changes
+  }, [map, selectedKey]);
 
   return null;
 }
 
+/// The operator's own position pin ("you") — a blue-ringed dot drawn distinctly so
+/// it never reads as a heard/reachable station.
 function OperatorPin({ location }: { location: { lat: number; lon: number } | null }) {
-  const map = useMapContext();
-  const fc = useMemo<FeatureCollection>(
-    () =>
-      location
-        ? {
-            type: 'FeatureCollection',
-            features: [
-              { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [location.lon, location.lat] } },
-            ],
-          }
-        : EMPTY_FC,
-    [location?.lat, location?.lon],
-  );
-  useMapOverlay(map, OPERATOR_SOURCE, { type: 'geojson', data: EMPTY_FC }, OPERATOR_LAYERS);
-  usePushData(map, OPERATOR_SOURCE, fc);
+  const map = useLeafletMap();
+  const group = useLeafletLayerGroup(map);
+  const rendererRef = useRef<L.Renderer | null>(null);
+  if (!rendererRef.current) rendererRef.current = L.svg({ padding: 2 });
+  useEffect(() => {
+    if (!map || !group || !location) return;
+    const marker = L.circleMarker([location.lat, location.lon], {
+      renderer: rendererRef.current ?? undefined,
+      radius: 7,
+      fillColor: '#eaf3fb',
+      fillOpacity: 1,
+      color: '#2f86f0',
+      weight: 3,
+      interactive: false,
+    });
+    group.addLayer(marker);
+    return () => {
+      if (group.hasLayer(marker)) group.removeLayer(marker);
+    };
+  }, [map, group, location?.lat, location?.lon]);
   return null;
 }
 
 export function StationFinderMap(props: StationFinderMapProps) {
   const me = props.operatorGrid ? gridToLatLon(props.operatorGrid) : null;
-  // tuxlink-dwzu: restore the operator's last viewport. A saved view wins over
-  // the operator-centred default AND suppresses the async operator flyTo — a
-  // stable saved center passed at mount makes MapLibreMap skip its arrival
-  // recenter (skipConstructCenter), so the map opens exactly where it was left
-  // instead of panning to the operator. First run (no saved view) keeps the
-  // operator-centred behaviour.
+  // tuxlink-dwzu: restore the operator's last viewport. A saved view wins over the
+  // operator-centred default AND suppresses the async operator flyTo — a stable
+  // saved center passed at mount makes LeafletMap skip its arrival recenter
+  // (skipConstructCenter), so the map opens exactly where it was left. First run
+  // (no saved view) keeps the operator-centred behaviour.
   const { saved, onViewportChange } = usePersistedViewport('tuxlink:map-viewport:station-finder');
   const initialCenter = saved ? saved.center : (me ?? undefined);
   const initialZoom = saved ? saved.zoom : me ? OPERATOR_ZOOM : 2;
   return (
     <div className="station-finder__map" data-testid="station-map">
-      <MapLibreMap
-        initialCenter={initialCenter}
-        initialZoom={initialZoom}
-        onViewportChange={onViewportChange}
-      >
+      <LeafletMap initialCenter={initialCenter} initialZoom={initialZoom} onViewportChange={onViewportChange}>
         <StationLayers
           stations={props.stations}
           tiers={props.tiers}
@@ -311,8 +288,8 @@ export function StationFinderMap(props: StationFinderMapProps) {
           onSelect={props.onSelect}
         />
         <OperatorPin location={me} />
-        <RecenterControl target={me} zoom={OPERATOR_ZOOM} />
-      </MapLibreMap>
+        <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />
+      </LeafletMap>
       <div className="station-finder__reachkey" aria-hidden>
         <span className="k good" /> good
         <span className="k fair" /> fair
