@@ -15,9 +15,11 @@ import { listen } from '@tauri-apps/api/event';
 import type { HeardPosition, InboundPosDto } from './aprsTypes';
 
 /// A heard position is dropped from the map after this long without a re-beacon.
-/// APRS stations beacon every ~10–30 min, so an hour of silence (≈2–4 missed
-/// beacons) is reliably stale — the pin no longer reflects where the station is.
-export const POSITION_TTL_MS = 60 * 60 * 1000;
+/// Default 3 h: while many stations beacon every ~10–30 min, others (mountaintop
+/// digis, fixed weather sites) beacon only ~hourly, so a 1 h TTL dropped pins
+/// that were still current. The pin greys at STALE_MS (1 h) first, then drops
+/// here. User-configurable timings are a follow-up (tuxlink-uhd7 note).
+export const POSITION_TTL_MS = 3 * 60 * 60 * 1000;
 /// How often the silent-station sweep runs, so a pin drops even with no new
 /// traffic on the channel.
 const PRUNE_INTERVAL_MS = 60 * 1000;

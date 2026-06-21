@@ -167,10 +167,10 @@ describe('useAprsPositions', () => {
       await act(async () => {});
       emitPos(BASE); // heard at t=0
       expect(result.current.positions).toHaveLength(1);
-      // 61 minutes of silence (> 60-min TTL): the prune sweep drops the pin.
+      // 181 minutes of silence (> 3-h TTL): the prune sweep drops the pin.
       await act(async () => {
-        vi.setSystemTime(61 * 60 * 1000);
-        vi.advanceTimersByTime(61 * 60 * 1000);
+        vi.setSystemTime(181 * 60 * 1000);
+        vi.advanceTimersByTime(181 * 60 * 1000);
       });
       expect(result.current.positions).toHaveLength(0);
     });
