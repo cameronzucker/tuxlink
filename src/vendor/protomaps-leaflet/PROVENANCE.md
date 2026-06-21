@@ -37,6 +37,26 @@
   + Range fetch — is compatible and is the same version the MapLibre path uses).
   `leaflet` is a peer (`import L from "leaflet"`), added as a direct dep.
 
+## Local patches
+
+Per ADR-0011 (fork-and-own), this bundle may carry local patches. Each is
+recorded here so a future re-vendor knows to re-apply or supersede it.
+
+- **`maxLabeledTiles` 16 → 256 (tuxlink-c973, 2026-06-20).** The `LeafletLayer`
+  hardcodes the label index cap at `16` via two
+  `new Labelers(this.scratch, this.labelRules, 16, this.onTilesInvalidated)`
+  sites (constructor + `clearLayout`). That cap is keyed on the DATA tile. With
+  the world overview capped at `maxDataZoom: 6`, zooming OUT to where overview
+  data is native (display z ≤ 6) makes a desktop viewport span ~20+ distinct data
+  tiles, exceeding 16, so `Index.pruneOrNoop` evicts on-screen tiles' placenames
+  (they flash in, then erase on repaint). 256 clears any realistic native-z6
+  viewport (a 4K display is ~77 tiles) while staying bounded; the overview's
+  labels are sparse so the cost is negligible. The cap is not exposed as a
+  `leafletLayer` option, so the bundle literal is the only seam. Guarded by
+  `src/map/basemapLeaflet.labelcap.test.ts` (Test B asserts the shipped cap, so a
+  re-vendor that resets it to 16 fails CI). NOTE: `index.js.map` still reflects
+  the original `16` — the source map is not regenerated for this literal change.
+
 ## Upstream LICENSE (BSD-3-Clause)
 
 ```
