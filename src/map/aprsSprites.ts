@@ -52,17 +52,6 @@ export function greyIdOf(id: string): string {
   return `${id}:grey`;
 }
 
-/** The minimal MapLibre image surface this module drives. `updateImage` /
- *  `removeImage` are optional because the test double and headless paths may not
- *  provide them; the live `maplibregl.Map` has both. They back the re-bake that
- *  replaces the transparent first-paint sprites once the sheets decode (r8sm). */
-export interface SpriteMap {
-  hasImage(id: string): boolean;
-  addImage(id: string, image: unknown, options?: Record<string, unknown>): void;
-  updateImage?(id: string, image: unknown): void;
-  removeImage?(id: string): void;
-}
-
 /** Source cell size in the vendored sheets. */
 const CELL = 64;
 
@@ -232,42 +221,3 @@ export function spriteDataUrl(table: string, code: string, overlay: string | nul
   }
 }
 
-/**
- * Idempotently register the colour + greyscale images for a symbol and return the
- * colour id. Brand-logo / unresolved symbols register the neutral fallback pair.
- *
- * Fast path: skips the bake when both ids are already present. `force` re-bakes an
- * already-registered pair — used after the sprite sheets decode to replace the
- * transparent sprites the first synchronous paint registered (tuxlink-r8sm). The
- * re-bake prefers `updateImage` (in-place, same dimensions); if the map lacks it,
- * it falls back to remove+add, then to a plain add.
- */
-export function ensureSymbolImage(
-  map: SpriteMap,
-  table: string,
-  code: string,
-  overlay: string | null,
-  force = false,
-): string {
-  const id = spriteIdFor(table, code, overlay);
-  const greyId = greyIdOf(id);
-  if (!force && map.hasImage(id) && map.hasImage(greyId)) return id;
-  const make = (grey: boolean): ImageData =>
-    id === FALLBACK_ID ? renderFallbackBitmap() : renderSymbolBitmap(table, code, overlay, grey);
-  const put = (imgId: string, grey: boolean): void => {
-    if (!map.hasImage(imgId)) {
-      map.addImage(imgId, make(grey), { pixelRatio: 2 });
-      return;
-    }
-    if (!force) return;
-    if (map.updateImage) {
-      map.updateImage(imgId, make(grey));
-      return;
-    }
-    map.removeImage?.(imgId);
-    map.addImage(imgId, make(grey), { pixelRatio: 2 });
-  };
-  put(id, false);
-  put(greyId, true);
-  return id;
-}

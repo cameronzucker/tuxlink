@@ -10,7 +10,7 @@
  */
 import { useEffect, useState } from 'react';
 import { COLOR_SCHEMES } from '../shell/colorScheme';
-import type { BasemapFlavor } from './basemapStyle';
+import type { BasemapFlavor } from './basemapLeaflet';
 
 /** Mode of the 'default' scheme (applied when no `data-theme` is set). */
 const DEFAULT_MODE: BasemapFlavor =
