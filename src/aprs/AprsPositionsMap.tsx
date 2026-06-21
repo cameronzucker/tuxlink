@@ -46,7 +46,7 @@ import { newDraftId } from '../routing';
 import { invoke } from '@tauri-apps/api/core';
 import { reportFrontendError } from '../frontendErrorLog';
 import { resolveDigipeatPath, type PathSegment } from './digipeatPath';
-import { DigipeatPathLayer } from './DigipeatPathLayer';
+import { DigipeatPathLayer, type TraceTrigger } from './DigipeatPathLayer';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
@@ -215,8 +215,12 @@ function MapOverlays({
   const wxCardCallRef = useRef(wxCardCall);
   wxCardCallRef.current = wxCardCall;
 
-  // Path state for the digipeat-path animation layer (tuxlink-qnu6 / cn84).
-  const [tracePath, setTracePath] = useState<PathSegment[] | null>(null);
+  // The latest digipeat-path trace request for the animation layer (tuxlink-qnu6
+  // / cn84). Each fire bumps `key` so the layer sees a new identity; the layer
+  // keys concurrent traces by `call`, so a new request ADDS (or restarts that
+  // station's) trace without canceling the others.
+  const [traceReq, setTraceReq] = useState<TraceTrigger | null>(null);
+  const traceKeyRef = useRef(0);
 
   // Resolve a callsign's digipeat path to drawable segments. Kept in a ref so
   // the reconcile effect (which creates pin hover handlers) does NOT depend on
@@ -238,6 +242,16 @@ function MapOverlays({
   };
   const resolveRef = useRef(resolve);
   resolveRef.current = resolve;
+
+  // Fire a trace for `call` (resolve → add a concurrent trace). No-op when the
+  // station has no drawable path (e.g. an object pin, or nothing locatable).
+  const fireTrace = (call: string): void => {
+    const segments = resolveRef.current(call);
+    if (!segments) return;
+    setTraceReq({ key: (traceKeyRef.current += 1), call, segments });
+  };
+  const fireTraceRef = useRef(fireTrace);
+  fireTraceRef.current = fireTrace;
 
   // Live trigger: when the newest frame (highest `at`) advances, fire the trace
   // for that station once. The layer's bounded animation fades and stops on its
@@ -263,7 +277,7 @@ function MapOverlays({
     }
     if (newest.at > prev.at) {
       newestSeenRef.current = { at: newest.at, call: newest.call };
-      setTracePath(resolveRef.current(newest.call));
+      fireTraceRef.current(newest.call);
     }
   }, [positions]);
 
@@ -343,8 +357,9 @@ function MapOverlays({
           pin.on('click', () => {
             if (byCallRef.current.has(p.call)) setPopupCall(p.call);
           });
-          pin.on('mouseover', () => setTracePath(resolveRef.current(p.call)));
-          pin.on('mouseout', () => setTracePath(null));
+          // Hover adds a concurrent trace (it fades on its own); no mouseout
+          // cancel — canceling is the "interrupt" we deliberately removed.
+          pin.on('mouseover', () => fireTraceRef.current(p.call));
           const circle = p.ambiguity > 0 ? makeCircle(p, c) : null;
           const badge = w ? makeBadge(p.call, w, c) : null;
           // Pin draws above the uncertainty disc: add circle first, then pin, then badge.
@@ -426,7 +441,7 @@ function MapOverlays({
     <>
       {selected && <PositionPopup fix={selected} now={now} onClose={() => setPopupCall(null)} />}
       {wxSelected && <WxCard wx={wxSelected} onClose={() => setWxCardCall(null)} />}
-      <DigipeatPathLayer path={tracePath} />
+      <DigipeatPathLayer trigger={traceReq} />
     </>
   );
 }
