@@ -1,0 +1,28 @@
+# Handoff — sage-fox-mesa — Map engine migrated to Leaflet + protomaps-leaflet (Phase 1 SHIPPED)
+
+**Agent:** sage-fox-mesa · **Date:** 2026-06-20
+**Headline for next session:** **Phase 1 of the map-engine migration is MERGED to main (PR #845).** The APRS positions map now runs on Leaflet + protomaps-leaflet; the four other map surfaces remain on MapLibre behind a strangler-fig. **`.github/RELEASE_FREEZE` stays in place** (operator wants a bigger polish release — do NOT lift it). Next work: **`tuxlink-c973`** (local placenames) — finding below makes it nearly a one-change fix, and a **claimed worktree is already set up** at `worktrees/bd-tuxlink-c973-placenames-packs` (off the post-merge main).
+
+## What shipped (PR #845, merge `76f0cf98`, CI green amd64+arm64)
+- **New Leaflet substrate**, alongside the untouched MapLibre one (strangler-fig):
+  - `src/vendor/protomaps-leaflet/` — vendored 5.1.0 (BSD-3-Clause, ADR-0011).
+  - `src/map/basemapLeaflet.ts` — the seam: overview + pack layers over the real `tile://` Rust 206 seam. **PMTiles INSTANCE** (not a string url, else protomaps → raster `ZxySource` → blank), per-source `maxDataZoom`, packs drop flavor/background (no overview masking), explicit zIndex, software-GL tuning (`updateWhenZooming:false`, `keepBuffer:4`, `devicePixelRatio:1`).
+  - `src/map/LeafletMapContext.ts`, `leafletHooks.ts` (`useLeafletLayerGroup`), `LeafletMap.tsx` (preserves the exact `MapLibreMap` prop contract; native `maxBounds`, `fadeAnimation:false`, **dark flavor container background** so load gaps don't flash white, StrictMode-safe), `LeafletRecenterControl.tsx`.
+- **`AprsPositionsMap` migrated** to Leaflet: divIcon pins (sprites + label, `whenSheetsReady` re-bake), uncertainty circles (×√2, SVG renderer), WX badges at cellCenter (**click-pinned card with × close** — hover-dismiss was unreliable in WebKitGTK), per-station bundles with full re-beacon reconciliation, grey-desaturate staleness, operator pin. **Export PNG removed → `tuxlink-a7qt`** (Weather SITREP text path stays).
+- Process: full build-robust-features — 5-round cross-provider adrev (2 Codex + 3 Claude) + 3-round plan review BEFORE code, then a **Codex adrev on the implemented diff** (caught 3 P1s: stale uncertainty disc / frozen WX-badge readings on re-beacon; controls behind Leaflet panes). Operator-validated on hardware: renders, **tangibly faster than MapLibre**, all smoke regressions fixed (WX card dismissal, control z-order, a reconcile soft-crash, white-on-load).
+
+## Critical gates / state for next session
+- **RELEASE_FREEZE on main STAYS** (operator directive 2026-06-20: holding for a bigger polish release). Live at `.github/RELEASE_FREEZE`; release-please + the nightly cron skip while present. Do NOT delete it until the operator says so.
+- **Strangler-fig in progress:** `StationFinderMap`, `LocationMap`, the compose position picker (`PositionPickerOverlay`/`PositionMapWidget`), and `GridPicker`/`MaidenheadGridLayer` are STILL on MapLibre. Both engines bundle. The MapLibre substrate (`MapLibreMap`, `mapHooks`, `MapContext`, `basemapStyle`/`darkStyle`/`tuxlinkFlavor`) is deleted only when the LAST surface migrates.
+- Worktrees: the merged `6kdw` worktree was disposed. A **claimed `c973` worktree is ready** at `worktrees/bd-tuxlink-c973-placenames-packs` (branch `bd-tuxlink-c973/placenames-packs`, off the post-merge main) — resume c973 there; run `pnpm install` in it first. NOTE: `git worktree list` shows ~159 stale worktree entries repo-wide (heavy accumulation from past sessions) — a separate hygiene backlog. 7 pre-existing global stashes (not this session's) remain.
+
+## Next work (bd) — start with c973
+- **`tuxlink-c973` — local placenames (the operator's top ask).** KEY FINDING: the `continent-na` region pack is ALREADY installed + active (manifest at `~/.local/share/com.tuxlink.app/basemap-packs/`; `init_packs` re-registers it on startup; `LeafletMap` composites it). The ONLY reason placenames don't show is `basemapLeaflet.ts` sets pack `labelRules: []` (mirroring the old MapLibre per-pack perf drop). The bundled overview is z0–6 → city labels only → none at local zoom (**parity with the old MapLibre map**, NOT a regression). Fix: (1) give pack layers `labelRules` from the flavor (placenames appear after restart — continent-na already installed); (2) fire `BASEMAP_PACKS_CHANGED_EVENT` after a successful download/delete — it is NEVER dispatched in `src/`, so installs don't live-refresh (need a remount); (3) ASSESS the perf cost of pack labels (operator is sensitive to zoom smoothness) + the minor double-label vs the overzoomed overview cities. Operator smoke required. **First, confirm with the operator whether continent-na's DETAILED ROADS render at local zoom** (proves the composite); if coarse-only, there's an additional composite bug.
+- **`tuxlink-s587`** — now UNBLOCKED (was gated on the engine decision): WX badge to the approved chip mocks (the AprsPositionsMap WX badge is already a divIcon chip — re-audit vs the mocks).
+- **`tuxlink-a7qt`** — Export PNG via a DOM-aware Leaflet snapshot.
+- **`tuxlink-ox2y`** — PMTiles seam ETag is length-only → stale JS cache (pre-existing, both engines; backend/Rust).
+- **`tuxlink-kepz`** — pack-list invoke failure zeroes the cache (faithful-ported latent bug).
+- Then: continue the strangler-fig (migrate the other 4 surfaces), delete the MapLibre substrate, and only then lift the freeze.
+
+## Adversarial-review traces
+Raw Codex transcripts were local-only (`dev/adversarial/`, gitignored) in the disposed worktree; findings + dispositions are summarized in PR #845 and the bd issues above.

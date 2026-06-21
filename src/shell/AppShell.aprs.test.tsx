@@ -60,6 +60,21 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({ setTitle: vi.fn(async () => {}) }),
 }));
 
+// tuxlink-6kdw: the heard-positions map is now Leaflet. This dock-integration
+// test exercises the toggle WIRING (map mounts in the reading pane), not tile
+// render, so stub the base layer to an inert LayerGroup — a real protomaps-leaflet
+// GridLayer would attempt PMTiles fetch/decode-to-canvas in jsdom (slow +
+// AbortSignal noise), pushing the lazy chunk past the findBy timeout. Real vector
+// render is grim-verified (Task 7), not unit-tested here.
+vi.mock('../map/basemapLeaflet', async () => {
+  const L = (await import('leaflet')).default;
+  return {
+    buildBaseLayers: () => [L.layerGroup()],
+    OSM_ATTRIBUTION: '© OpenStreetMap contributors',
+    flavorBackground: () => '#34373d',
+  };
+});
+
 import { AppShell } from './AppShell';
 
 function renderShell() {
@@ -132,7 +147,9 @@ describe('APRS dock integration', () => {
     // Map not shown until toggled on; the chat dock stays put.
     expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('aprs-map-toggle'));
-    expect(await screen.findByTestId('aprs-positions-map')).toBeInTheDocument();
+    // Lazy chunk (Leaflet + protomaps-leaflet) — match the 5s timeout the sibling
+    // lazy-chunk assertions use; the heavier real-engine mount overran the 1s default.
+    expect(await screen.findByTestId('aprs-positions-map', {}, { timeout: 5000 })).toBeInTheDocument();
     // Chat dock remains docked on the right alongside the expanded map.
     expect(screen.getByTestId('aprs-chat-panel')).toBeInTheDocument();
     // Toggling off collapses the map back to the normal reading pane.

@@ -170,6 +170,29 @@ fn half_deg_ok(v: f64, max: f64) -> bool {
     v.is_finite() && v > 0.0 && v <= max
 }
 
+/// Newest-first `(build_id, url)` candidates for the `max_days_back + 1` days
+/// ending at `today` (inclusive). Each `build_id` is the date formatted
+/// `%Y%m%d`; each `url` is `https://build.protomaps.com/<build_id>.pmtiles` and
+/// therefore passes [`validate_planet_url`].
+///
+/// Protomaps publishes a daily planet build and keeps only a ~6-day rolling
+/// window with no `latest` alias, so a static pin 404s within a week. The pack
+/// download path probes these candidates (newest first) at download time and
+/// uses the first one Protomaps still serves — self-healing, never stale. The
+/// generator is pure (date injected, no clock, no network) so it is unit-tested
+/// across month/year boundaries; the network probe is the thin glue in
+/// `commands.rs`.
+pub fn planet_build_candidates(today: chrono::NaiveDate, max_days_back: u32) -> Vec<(String, String)> {
+    (0..=max_days_back)
+        .filter_map(|back| today.checked_sub_signed(chrono::Duration::days(i64::from(back))))
+        .map(|d| {
+            let build = d.format("%Y%m%d").to_string();
+            let url = format!("https://build.protomaps.com/{build}.pmtiles");
+            (build, url)
+        })
+        .collect()
+}
+
 impl RegionManifest {
     /// Parse + fully validate a manifest. Returns an error (not a partial manifest)
     /// if the schema is unknown, the planet URL is disallowed, or any tier/continent
@@ -239,7 +262,7 @@ mod tests {
     fn bundled_default_is_valid() {
         let m = RegionManifest::bundled_default();
         assert_eq!(m.schema, MANIFEST_SCHEMA);
-        assert_eq!(m.planet_build, "20260614");
+        assert_eq!(m.planet_build, "20260619");
         // tuxlink-4o9r: the pinned planet build emits 9 vector_layers (not the
         // obsolete 13); matches REQUIRED_LAYER_IDS + the @protomaps/basemaps@5 style.
         assert_eq!(m.pmtiles_schema.vector_layers.len(), 9);
@@ -388,7 +411,7 @@ mod tests {
     #[test]
     fn parse_rejects_manifest_with_bad_url() {
         let json = valid_json().replace(
-            "https://build.protomaps.com/20260614.pmtiles",
+            "https://build.protomaps.com/20260619.pmtiles",
             "file:///etc/passwd",
         );
         assert!(matches!(
@@ -449,5 +472,57 @@ mod tests {
         })
         .to_string();
         assert_eq!(RegionManifest::parse(&json), Err(ManifestError::NoTiers));
+    }
+
+    // ── planet build candidate generation (dynamic-build resolution) ─────────────
+
+    #[test]
+    fn candidates_count_and_newest_first() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
+        let c = planet_build_candidates(today, 14);
+        // max_days_back + 1 entries, today first then descending.
+        assert_eq!(c.len(), 15);
+        assert_eq!(c[0].0, "20260620");
+        assert_eq!(c[1].0, "20260619");
+        assert_eq!(c[14].0, "20260606");
+    }
+
+    #[test]
+    fn candidate_urls_are_protomaps_pmtiles() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
+        let c = planet_build_candidates(today, 14);
+        assert_eq!(c[0].1, "https://build.protomaps.com/20260620.pmtiles");
+        // EVERY generated url must pass the SSRF allowlist — the probe validates
+        // the chosen url again (defense in depth), but the generator must not be
+        // capable of emitting a url the validator would reject.
+        for (_build, url) in &c {
+            assert!(validate_planet_url(url).is_ok(), "generated url rejected: {url}");
+        }
+    }
+
+    #[test]
+    fn candidates_cross_month_boundary() {
+        // today = 2026-03-01, back 2 → 20260301, 20260228, 20260227.
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
+        let c = planet_build_candidates(today, 2);
+        let ids: Vec<&str> = c.iter().map(|(b, _)| b.as_str()).collect();
+        assert_eq!(ids, vec!["20260301", "20260228", "20260227"]);
+    }
+
+    #[test]
+    fn candidates_cross_year_boundary() {
+        // today = 2026-01-01, back 2 → 20260101, 20251231, 20251230.
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let c = planet_build_candidates(today, 2);
+        let ids: Vec<&str> = c.iter().map(|(b, _)| b.as_str()).collect();
+        assert_eq!(ids, vec!["20260101", "20251231", "20251230"]);
+    }
+
+    #[test]
+    fn candidates_zero_days_back_is_today_only() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
+        let c = planet_build_candidates(today, 0);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].0, "20260620");
     }
 }
