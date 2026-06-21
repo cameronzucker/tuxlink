@@ -79,6 +79,25 @@ const OVERVIEW_MAX_DATA_ZOOM = 6;
 const DEFAULT_PACK_MAX_DATA_ZOOM = 14;
 
 /**
+ * Smoothness tuning for the Canvas2D GridLayer on the Pi's software renderer.
+ * Unlike MapLibre's GPU-texture cache, protomaps-leaflet re-PAINTS per-tile
+ * canvases on each view change, so rapid pan/zoom flashes white while tiles
+ * repaint. These options narrow that gap (operator smoke, tuxlink-6kdw):
+ *  - `updateWhenZooming: false` — during a zoom gesture, SCALE the existing tiles
+ *    (CSS transform) and only repaint crisp tiles after the zoom settles, rather
+ *    than repainting mid-zoom. The biggest win for "white during zoom".
+ *  - `keepBuffer: 4` — retain more off-screen tiles (Leaflet default 2) so panning
+ *    back does not repaint.
+ *  - `devicePixelRatio: 1` — render fewer pixels per tile (the basemap is
+ *    situational, not print); mirrors the MapLibre `pixelRatio:1` llvmpipe choice.
+ */
+const SMOOTH_RENDER = {
+  updateWhenZooming: false,
+  keepBuffer: 4,
+  devicePixelRatio: 1,
+} as const;
+
+/**
  * Build the protomaps-leaflet base layer(s) for the given flavor over the
  * `tile://` PMTiles seam. Returns `[overview, ...packLayers]`:
  *  - overview: flavored (background + labels), `maxDataZoom: 6`, `zIndex: 1`,
@@ -92,6 +111,7 @@ const DEFAULT_PACK_MAX_DATA_ZOOM = 14;
  */
 export function buildBaseLayers(flavor: BasemapFlavor, packs: PackSource[] = []): LeafletLayer[] {
   const overview = leafletLayer({
+    ...SMOOTH_RENDER,
     url: new PMTiles(PMTILES_TILE_URL(WORLD_OVERVIEW_ID)),
     flavor,
     lang: 'en',
@@ -103,6 +123,7 @@ export function buildBaseLayers(flavor: BasemapFlavor, packs: PackSource[] = [])
   const packLayers = packs.map(
     (pack, i) =>
       leafletLayer({
+        ...SMOOTH_RENDER,
         url: new PMTiles(PMTILES_TILE_URL(pack.id)),
         // Explicit paint rules from the SAME flavor, but NO `flavor`/`backgroundColor`
         // and NO labels — the pack draws only its detail geometry, transparent

@@ -44,6 +44,11 @@ describe('basemapLeaflet', () => {
     expect(o.maxDataZoom).toBe(6); // overzoom cap so it never requests z7+ the z0-6 archive lacks (R2 P0#2)
     expect(o.zIndex).toBe(1);
     expect(o.attribution).toBe(OSM_ATTRIBUTION);
+    // Software-GL smoothness tuning (operator smoke): scale-don't-repaint on zoom,
+    // keep more tiles on pan, render fewer pixels per tile.
+    expect(o.updateWhenZooming).toBe(false);
+    expect(o.keepBuffer).toBe(4);
+    expect(o.devicePixelRatio).toBe(1);
   });
 
   it('pack: NO flavor, NO backgroundColor, explicit paintRules + empty labelRules, maxDataZoom, minZoom 6, higher zIndex (R2 P0#3)', () => {
