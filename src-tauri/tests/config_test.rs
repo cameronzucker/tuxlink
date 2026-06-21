@@ -724,6 +724,8 @@ fn config_skips_pat_mbo_address_on_write() {
         map_tile_source: None,
         aredn_master_node_host: None,
         aprs: tuxlink_lib::config::AprsConfig::default(),
+        trash_auto_purge: true,
+        trash_retention_days: 30,
     };
     let json = serde_json::to_string(&cfg).unwrap();
     assert!(

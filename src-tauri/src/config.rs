@@ -258,6 +258,19 @@ pub struct Config {
     /// `deny_unknown_fields`.
     #[serde(default)]
     pub aprs: AprsConfig,
+    /// Auto-purge expired Trash on a schedule (tuxlink-wl7n). When `true`
+    /// (the default) the app sweeps the Trash folder at startup and every 6h,
+    /// permanently removing messages whose `.trash` sidecar `deleted_at` is at
+    /// least `trash_retention_days` old. `#[serde(default = ...)]` migrates
+    /// configs that predate this field (absent → `true`); the field is KNOWN,
+    /// satisfying `deny_unknown_fields`.
+    #[serde(default = "default_trash_auto_purge")]
+    pub trash_auto_purge: bool,
+    /// Retention window (days) before an item in Trash is eligible for
+    /// auto-purge (tuxlink-wl7n). Default 30. `#[serde(default = ...)]` migrates
+    /// pre-field configs (absent → `30`).
+    #[serde(default = "default_trash_retention_days")]
+    pub trash_retention_days: u32,
 }
 
 /// A saved Network Post Office relay server entry.
@@ -283,6 +296,18 @@ pub struct RelayFavorite {
 /// serde's `default = "..."` takes a path and `bool`'s own `Default` is `false`.
 fn default_review_inbound_before_download() -> bool {
     true
+}
+
+/// Serde default for [`Config::trash_auto_purge`]: `true` — auto-purge expired
+/// Trash on a schedule by default (tuxlink-wl7n). A free fn because serde's
+/// `default = "..."` takes a path and `bool`'s own `Default` is `false`.
+fn default_trash_auto_purge() -> bool {
+    true
+}
+
+/// Serde default for [`Config::trash_retention_days`]: `30` days (tuxlink-wl7n).
+fn default_trash_retention_days() -> u32 {
+    30
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1162,6 +1187,30 @@ mod tests {
         assert!(
             cfg.review_inbound_before_download,
             "missing review_inbound_before_download must default to true (review before download)"
+        );
+    }
+
+    // tuxlink-wl7n: an OLD config JSON with NO trash-auto-purge keys (every
+    // config that predates this field) must deserialize with `trash_auto_purge`
+    // defaulting to true and `trash_retention_days` to 30. The fields are KNOWN
+    // to the struct, so `deny_unknown_fields` stays satisfied; the serde default
+    // fns supply the values when the keys are absent.
+    #[test]
+    fn trash_auto_purge_defaults_when_absent_from_config() {
+        let json = sample_config_json_without_packet();
+        assert!(
+            !json.contains("trash_auto_purge") && !json.contains("trash_retention_days"),
+            "fixture must omit the trash keys for this migration test to be meaningful"
+        );
+        let cfg: Config = serde_json::from_str(&json)
+            .expect("config without trash-auto-purge keys should deserialize");
+        assert!(
+            cfg.trash_auto_purge,
+            "missing trash_auto_purge must default to true"
+        );
+        assert_eq!(
+            cfg.trash_retention_days, 30,
+            "missing trash_retention_days must default to 30"
         );
     }
 

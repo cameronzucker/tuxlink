@@ -875,3 +875,55 @@ describe('<FolderSidebar> drag-drop re-parent (tuxlink-ka3z A9)', () => {
     expect(onBulkDropMessage).not.toHaveBeenCalled();
   });
 });
+
+// ============================================================================
+// Empty Trash (tuxlink-wl7n Task 14). The "Empty Trash" control renders only
+// when selectedFolder === 'deleted'. It fires onEmptyTrash when clicked.
+// ============================================================================
+describe('<FolderSidebar> — Empty Trash (tuxlink-wl7n Task 14)', () => {
+  it('renders the Empty Trash button when selectedFolder is deleted', () => {
+    const onEmptyTrash = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="deleted"
+        onSelectFolder={vi.fn()}
+        onEmptyTrash={onEmptyTrash}
+      />,
+    );
+    expect(screen.getByTestId('empty-trash-btn')).toBeInTheDocument();
+  });
+
+  it('clicking Empty Trash fires onEmptyTrash', () => {
+    const onEmptyTrash = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="deleted"
+        onSelectFolder={vi.fn()}
+        onEmptyTrash={onEmptyTrash}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('empty-trash-btn'));
+    expect(onEmptyTrash).toHaveBeenCalledOnce();
+  });
+
+  it('does NOT render Empty Trash when a different folder is selected', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={vi.fn()}
+        onEmptyTrash={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('empty-trash-btn')).toBeNull();
+  });
+
+  it('does NOT render Empty Trash when onEmptyTrash is absent (no handler = no control)', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="deleted"
+        onSelectFolder={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('empty-trash-btn')).toBeNull();
+  });
+});

@@ -22,14 +22,16 @@ export const MAILBOX_QUERY_KEY = ['mailbox'] as const;
 export const MAILBOX_CHANGED_EVENT = 'mailbox:changed';
 
 /// System folders that hit a backend command via the `MailboxFolder` enum.
-/// `drafts` (local store) and `deleted` (disabled placeholder) are excluded.
-/// User-folder slugs (Phase 2, tuxlink-f62f) are NOT in this set — they're
-/// recognized by `isUserFolderSlug` and ALSO dispatched to the backend.
+/// `drafts` (local store) is excluded; `deleted` is now a live backend folder
+/// (tuxlink-wl7n). User-folder slugs (Phase 2, tuxlink-f62f) are NOT in this
+/// set — they're recognized by `isUserFolderSlug` and ALSO dispatched to the
+/// backend.
 const SYSTEM_BACKEND_FOLDERS: ReadonlySet<MailboxFolder> = new Set<MailboxFolder>([
   'inbox',
   'outbox',
   'sent',
   'archive',
+  'deleted',
 ]);
 
 /// True for any folder reference that should round-trip through `mailbox_list`.
@@ -39,14 +41,15 @@ const SYSTEM_BACKEND_FOLDERS: ReadonlySet<MailboxFolder> = new Set<MailboxFolder
 /// here just avoids dispatching for obvious non-folders like `'drafts'`).
 export function isBackendFolder(folder: MailboxFolderRef): boolean {
   if ((SYSTEM_BACKEND_FOLDERS as ReadonlySet<string>).has(folder)) return true;
-  // `drafts`/`deleted` are local/placeholder; `contacts` and `favorites` are the
-  // Address pseudo-folders (Task A8 / Codex#11; bd-tuxlink-kiaa) — they would
+  // `drafts` is local-only; `contacts` and `favorites` are the Address
+  // pseudo-folders (Task A8 / Codex#11; bd-tuxlink-kiaa) — they would
   // otherwise pass the `isUserFolderSlug` check below and fire a spurious
   // `mailbox_list`. Disable the mailbox query for them so the ContactsPanel /
   // FavoritesPanel render without a backend hit.
+  // `deleted` is now a live backend folder (tuxlink-wl7n) — it's in
+  // SYSTEM_BACKEND_FOLDERS above and passes the first `has()` check.
   if (
     folder === 'drafts' ||
-    folder === 'deleted' ||
     folder === 'contacts' ||
     folder === 'favorites'
   )

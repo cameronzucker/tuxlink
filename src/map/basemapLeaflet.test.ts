@@ -10,7 +10,7 @@ const { leafletLayerSpy, pmPaintRulesSpy, pmLabelRulesSpy, namedFlavorSpy, pmtil
   vi.hoisted(() => ({
     leafletLayerSpy: vi.fn((opts: Record<string, unknown>) => ({ __pm: true, opts })),
     pmPaintRulesSpy: vi.fn(() => [{ dataLayer: 'roads', symbolizer: {} }]),
-    pmLabelRulesSpy: vi.fn(() => []),
+    pmLabelRulesSpy: vi.fn(() => [{ dataLayer: 'places', symbolizer: {} }]),
     namedFlavorSpy: vi.fn((n: string) => ({ __flavor: n })),
     pmtilesCtor: vi.fn().mockImplementation((url: string) => ({ __pmtiles: true, url })),
   }));
@@ -29,6 +29,7 @@ const optsOf = (i: number) => leafletLayerSpy.mock.calls[i][0] as Record<string,
 beforeEach(() => {
   leafletLayerSpy.mockClear();
   pmPaintRulesSpy.mockClear();
+  pmLabelRulesSpy.mockClear();
   namedFlavorSpy.mockClear();
 });
 
@@ -60,7 +61,11 @@ describe('basemapLeaflet', () => {
     expect(p.flavor).toBeUndefined(); // packs are NOT flavored (empty pack tiles would mask the overview)
     expect(p.backgroundColor).toBeUndefined();
     expect(Array.isArray(p.paintRules)).toBe(true); // explicit paint rules from namedFlavor(flavor)
-    expect(p.labelRules).toEqual([]); // labels owned by the overview (no duplicate glyph cost)
+    // pack now owns its placenames in-coverage; labels come from the SAME flavor as
+    // its paint rules (the opaque earth occludes the overview's labels beneath, so
+    // no double-labeling — see 2026-06-20-leaflet-pack-placenames-design.md).
+    expect(p.labelRules).toEqual([{ dataLayer: 'places', symbolizer: {} }]);
+    expect(pmLabelRulesSpy).toHaveBeenCalledWith({ __flavor: 'dark' }, 'en');
     expect(p.maxDataZoom).toBe(14);
     expect(p.minZoom).toBe(6);
     expect(p.zIndex).toBeGreaterThan(optsOf(0).zIndex); // packs paint above the overview

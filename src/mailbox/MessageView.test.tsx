@@ -866,3 +866,132 @@ describe('<MessageViewLoaded> add-to-contacts (G1)', () => {
     expect(saved.callsign).toBe('KE7XYZ');
   });
 });
+
+// ============================================================================
+// tuxlink-wl7n Task 12 — Delete button + Del key in the reading pane.
+// ============================================================================
+describe('<MessageViewLoaded> Delete/Restore/Delete-permanently (tuxlink-wl7n Task 12)', () => {
+  it('renders Delete button next to Archive for a non-Deleted folder', () => {
+    const onDelete = vi.fn();
+    render(
+      <MessageViewLoaded
+        message={parsed()}
+        currentFolder="inbox"
+        onArchive={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+    expect(screen.getByTestId('delete-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('archive-btn')).toBeInTheDocument();
+  });
+
+  it('clicking Delete fires onDelete', () => {
+    const onDelete = vi.fn();
+    render(
+      <MessageViewLoaded
+        message={parsed()}
+        currentFolder="inbox"
+        onDelete={onDelete}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('delete-btn'));
+    expect(onDelete).toHaveBeenCalledOnce();
+  });
+
+  it('does not render Delete button when onDelete is omitted', () => {
+    render(<MessageViewLoaded message={parsed()} currentFolder="inbox" />);
+    expect(screen.queryByTestId('delete-btn')).toBeNull();
+  });
+
+  it('Del key fires onDelete for non-Deleted folder (not inside an input)', () => {
+    const onDelete = vi.fn();
+    render(
+      <MessageViewLoaded
+        message={parsed()}
+        currentFolder="inbox"
+        onDelete={onDelete}
+      />,
+    );
+    fireEvent.keyDown(window, { key: 'Delete' });
+    expect(onDelete).toHaveBeenCalledOnce();
+  });
+
+  it('Del key does NOT fire onDelete when focus is inside a text input', () => {
+    const onDelete = vi.fn();
+    render(
+      <>
+        <input data-testid="some-input" />
+        <MessageViewLoaded
+          message={parsed()}
+          currentFolder="inbox"
+          onDelete={onDelete}
+        />
+      </>,
+    );
+    const inp = screen.getByTestId('some-input');
+    fireEvent.keyDown(inp, { key: 'Delete', target: inp });
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it('shows Restore + Delete-permanently (not Delete/Archive) in the Deleted folder', () => {
+    const onRestore = vi.fn();
+    const onDeletePermanently = vi.fn();
+    render(
+      <MessageViewLoaded
+        message={parsed()}
+        currentFolder="deleted"
+        onArchive={vi.fn()}
+        onDelete={vi.fn()}
+        onRestore={onRestore}
+        onDeletePermanently={onDeletePermanently}
+      />,
+    );
+    expect(screen.getByTestId('restore-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('delete-permanently-btn')).toBeInTheDocument();
+    expect(screen.queryByTestId('delete-btn')).toBeNull();
+    expect(screen.queryByTestId('archive-btn')).toBeNull();
+  });
+
+  it('clicking Restore fires onRestore', () => {
+    const onRestore = vi.fn();
+    render(
+      <MessageViewLoaded
+        message={parsed()}
+        currentFolder="deleted"
+        onRestore={onRestore}
+        onDeletePermanently={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('restore-btn'));
+    expect(onRestore).toHaveBeenCalledOnce();
+  });
+
+  it('clicking Delete-permanently fires onDeletePermanently (parent handles confirm)', () => {
+    const onDeletePermanently = vi.fn();
+    render(
+      <MessageViewLoaded
+        message={parsed()}
+        currentFolder="deleted"
+        onRestore={vi.fn()}
+        onDeletePermanently={onDeletePermanently}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('delete-permanently-btn'));
+    expect(onDeletePermanently).toHaveBeenCalledOnce();
+  });
+
+  it('Del key does NOT fire when in the Deleted folder (no onDelete in trash)', () => {
+    const onDelete = vi.fn();
+    render(
+      <MessageViewLoaded
+        message={parsed()}
+        currentFolder="deleted"
+        onDelete={onDelete}
+        onRestore={vi.fn()}
+        onDeletePermanently={vi.fn()}
+      />,
+    );
+    fireEvent.keyDown(window, { key: 'Delete' });
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+});

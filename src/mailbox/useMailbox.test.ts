@@ -45,10 +45,15 @@ describe('isBackendFolder', () => {
     expect(isBackendFolder('archive')).toBe(true);
   });
 
-  it('treats drafts/deleted as NON-backend folders (no command dispatch)', () => {
-    // Drafts is a local store; Deleted is a disabled placeholder (spec §2.2).
+  it('treats drafts as a NON-backend folder (local store, no command dispatch)', () => {
+    // Drafts is a local store only.
     expect(isBackendFolder('drafts')).toBe(false);
-    expect(isBackendFolder('deleted')).toBe(false);
+  });
+
+  it('treats deleted as a backend folder (tuxlink-wl7n: now a live Tauri-backed folder)', () => {
+    // tuxlink-wl7n: Deleted folder is now wired through mailbox_list just like
+    // Inbox/Archive; it is no longer a placeholder (spec §2.2 updated).
+    expect(isBackendFolder('deleted')).toBe(true);
   });
 
   // bd-tuxlink-kiaa: 'favorites' is a pseudo-folder (Address section), like

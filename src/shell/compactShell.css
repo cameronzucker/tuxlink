@@ -192,6 +192,14 @@
   .layout-b .sidebar-flyout .nav-item:hover:not(.active):not(.disabled) {
     background: var(--surface-2);
   }
+  /* Destructive flyout action (Empty Trash, tuxlink-wl7n) — mirrors the desktop
+     `.nav-item--danger` restrained danger treatment. */
+  .layout-b .sidebar-flyout .nav-item--danger {
+    color: var(--error);
+  }
+  .layout-b .sidebar-flyout .nav-item--danger:hover:not(.active):not(.disabled) {
+    background: rgba(238, 107, 107, 0.12);
+  }
   .layout-b .sidebar-flyout .nav-item.active {
     background: var(--accent-soft);
     color: var(--accent-2);
