@@ -175,8 +175,27 @@ export function LeafletMap({
         emitZoom();
       });
 
+      // Keep the map sized to its container. Leaflet (unlike MapLibre) does NOT
+      // auto-track container resize, so a panel/overlay that sizes-up AFTER
+      // construction would otherwise leave stale pane offsets → blank/offset
+      // render + mis-targeted clicks (tuxlink-gf5s, defense-in-depth). Guarded
+      // for jsdom, which has no ResizeObserver.
+      let resizeObserver: ResizeObserver | null = null;
+      if (typeof ResizeObserver !== 'undefined' && containerRef.current) {
+        resizeObserver = new ResizeObserver(() => {
+          if (!removed) instance.invalidateSize();
+        });
+        resizeObserver.observe(containerRef.current);
+      }
+
       return () => {
         removed = true;
+        resizeObserver?.disconnect();
+        // Stop any in-flight pan/zoom animation BEFORE remove(): a flyTo (e.g. the
+        // recenter control) completing on a torn-down pane throws `el._leaflet_pos`
+        // from Leaflet's own rAF, outside every safe() wrapper (tuxlink-gf5s;
+        // observed in operator logs as _onZoomTransitionEnd).
+        instance.stop();
         instance.remove();
       };
     } catch (e) {

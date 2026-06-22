@@ -82,6 +82,17 @@ const LAT_MAX = 90;
  */
 const MAX_GRID_LABELS = 2000;
 
+/**
+ * Hard cap on rendered lattice LINES (one SVG `<path>` each). PR #864 capped only
+ * labels; the lines stayed unbounded, so a Subsquare lattice over a world-width
+ * window via the `bounds`/`level` override props would be ~8,640 `<path>` nodes —
+ * the same DOM-storm class. Field/Square after the world clamp are ≤~362 lines, and
+ * Subsquare at its real zoom band (≥9, tiny viewport) is small, so this only trips
+ * the pathological override path; above it the lattice is unreadable anyway, so
+ * drop it (tuxlink-gf5s, defense-in-depth symmetry with the label cap).
+ */
+const MAX_GRID_LINES = 1000;
+
 /** All four bounds finite? A non-finite `max` makes the range loops below run
  *  forever (`count → Infinity`); callers pass `map.getBounds()`, which can go
  *  non-finite at extreme projections, so guard at the source (tuxlink-u4k2). */
@@ -165,8 +176,13 @@ export function gridLines(bounds: GridBounds, level: GridLevel): GridLinesResult
   const south = Math.max(LAT_MIN, bounds.south);
   const north = Math.min(LAT_MAX, bounds.north);
 
-  const lonLines = linesInRange(west, east, step.lon);
-  const latLines = linesInRange(south, north, step.lat);
+  // One SVG `<path>` renders per line; cap the total the same way as labels so the
+  // override-prop path can't reintroduce the DOM storm in `<path>` form (tuxlink-gf5s).
+  const rawLonLines = linesInRange(west, east, step.lon);
+  const rawLatLines = linesInRange(south, north, step.lat);
+  const linesOk = rawLonLines.length + rawLatLines.length <= MAX_GRID_LINES;
+  const lonLines = linesOk ? rawLonLines : [];
+  const latLines = linesOk ? rawLatLines : [];
 
   const lonCells = cellStarts(west, east, step.lon);
   const latCells = cellStarts(south, north, step.lat);

@@ -123,4 +123,22 @@ describe('LocationMap (Leaflet)', () => {
     expect(rectangles()).toHaveLength(1);
     expect(locationMarker()).toBeDefined();
   });
+
+  // tuxlink-gf5s: with a GPS source active the live fix updates every tick; the
+  // camera must hold still (marker tracks the fix, not the map) so the operator can
+  // pan to hand-set. Passing the live fix as initialCenter re-flyTo'd on every tick.
+  it('does not chase the live GPS fix — stable center, no flyTo churn', async () => {
+    const { rerender } = await renderMap(
+      <LocationMap grid="EM75km" fixLatLon={{ lat: 33.4, lon: -112.0 }} selectedSource="gpsd" onGridChange={vi.fn()} />,
+    );
+    const flySpy = vi.spyOn(captured!, 'flyTo');
+    // A fresh GPS fix arrives at a far-away location.
+    await act(async () => {
+      rerender(
+        <LocationMap grid="EM75km" fixLatLon={{ lat: 40.7, lon: -74.0 }} selectedSource="gpsd" onGridChange={vi.fn()} />,
+      );
+      await Promise.resolve();
+    });
+    expect(flySpy).not.toHaveBeenCalled();
+  });
 });

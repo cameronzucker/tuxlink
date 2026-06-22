@@ -126,3 +126,33 @@ describe('gridLines — freeze guards (tuxlink-u4k2)', () => {
     for (const l of g.labels) expect(l.text).toHaveLength(4);
   });
 });
+
+// tuxlink-gf5s: #864 capped LABELS (DOM markers) but left LINES (SVG <path>)
+// unbounded. A Subsquare lattice over a world-width window via the bounds/level
+// override props is ~8,640 paths — the same storm class. Cap lines symmetrically.
+describe('gridLines — line cap (tuxlink-gf5s)', () => {
+  const MAX_GRID_LINES = 1000;
+
+  it('drops lines for a Subsquare lattice over a world-width window (override path)', () => {
+    const g = gridLines({ south: -90, west: -180, north: 90, east: 180 }, GridLevel.Subsquare);
+    // Would be ~4,320 + ~4,320 lines unguarded; above the cap → dropped.
+    expect(g.lonLines).toEqual([]);
+    expect(g.latLines).toEqual([]);
+    // Labels are also above their cap here → empty too (no marker storm).
+    expect(g.labels).toEqual([]);
+  });
+
+  it('keeps lines for a full-world Square view (under the line cap)', () => {
+    const g = gridLines({ south: -90, west: -180, north: 90, east: 180 }, GridLevel.Square);
+    // 181 + 181 = 362 lines ≤ cap → present.
+    expect(g.lonLines.length + g.latLines.length).toBeGreaterThan(0);
+    expect(g.lonLines.length + g.latLines.length).toBeLessThanOrEqual(MAX_GRID_LINES);
+  });
+
+  it('keeps the dense lattice at a real Subsquare zoom (tiny viewport, under cap)', () => {
+    // z9-13 Subsquare always pairs with a geographically tiny viewport (~1°).
+    const g = gridLines({ south: 33.0, west: -112.5, north: 34.0, east: -111.5 }, GridLevel.Subsquare);
+    expect(g.lonLines.length).toBeGreaterThan(0);
+    expect(g.lonLines.length + g.latLines.length).toBeLessThanOrEqual(MAX_GRID_LINES);
+  });
+});
