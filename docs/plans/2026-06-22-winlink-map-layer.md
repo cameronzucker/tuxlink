@@ -8,7 +8,14 @@
 
 **Tech Stack:** Rust + Tauri 2.x (backend command), React 18 + TypeScript + Leaflet (frontend), Vitest (TS unit tests), `cargo test` (Rust unit tests, compiled by CI — this Pi does not finish a cold cargo build, per CLAUDE.md).
 
-**Design source:** `docs/design/2026-06-22-winlink-map-layer-design.md` (APPROVED). bd issue: tuxlink-s1o1.
+**Design source:** `docs/design/2026-06-22-winlink-map-layer-design.md` (APPROVED, copied into this branch). bd issue: tuxlink-s1o1.
+
+## Adversarial-review dispositions (Codex `gpt-5.5` xhigh + self-verify, 2026-06-22)
+
+Transcript: `dev/adversarial/2026-06-22-winlink-plan-codex.md` (gitignored; noisy — Codex spent its budget reading source). Concrete findings, all reconciled against real code and fixed below:
+- **VERIFIED CORRECT:** `gridToLatLon` returns `LatLon { lat; lon }` (`src/forms/position/maidenhead.ts:11-13`) — Task 4's `ll.lat/ll.lon` is right; Leaflet still wants `.lng` (Task 7).
+- **FIXED (Task 1 test construction):** `FavoritesStore` has **NO `Default`** (`store.rs:740` guards against it) and `file` is **private** (read via `fn file()/favorites()/log()`). The original `FavoritesStore::default()` + `store.file.push(..)` would not compile. Construct via `FavoritesStore::open(tempdir path)`. Because `record_attempt` stamps `ts_local = now` (can't inject a historical timestamp), the recency-window test MUST use the **JSON-fixture-open idiom**: write a `stations.json` with favorites + log carrying controlled `ts_local`, then `FavoritesStore::open(path)` — mirror the existing `unknown_top_level_field_tolerated` test in `store.rs`. The `recent_gateways` method body itself may read `self.file.favorites`/`self.file.log` (valid inside the impl) or the `self.favorites()/self.log()` accessors.
+- **FIXED (design doc was absent on this branch):** copied `docs/design/2026-06-22-winlink-map-layer-design.md` into this worktree branch (it was committed on `recover-handoffs`, not here).
 
 ## Global Constraints
 
@@ -63,31 +70,19 @@
   ```
   Semantics: for each favorite, find its attempts (via `unit_id`→favorite `id`, gateway match — reuse the `attempts_for_gateway` join logic), keep the single most-recent attempt whose `ts_local` is within `within_hours` of `now`; emit one `RecentGateway` per gateway that has such an attempt. `grid` passes through from the favorite (may be `None`; the frontend drops `None`). `now` is injected (not `Local::now()`) so the test is deterministic.
 
-- [ ] **Step 1: Write the failing test** (add to the `#[cfg(test)]` mod in `store.rs`; reuse existing test helpers for building a store if present, else construct `StationsFile` directly)
+- [ ] **Step 1: Write the failing test** (add to the `#[cfg(test)]` mod in `store.rs`). **Construction (corrected — see dispositions):** `FavoritesStore` has no `Default` and a private `file`; build via `FavoritesStore::open(<tempdir>/stations.json)` from a **JSON fixture** carrying controlled `ts_local` (because `record_attempt` stamps `now`). Mirror the existing `unknown_top_level_field_tolerated` test for the fixture-write+open shape. First READ that test + the `StationsFile`/`Favorite`/`ConnectionAttempt` serde field names in `store.rs` to get the exact JSON keys (snake_case: `unit_id`, `ts_local`, `outcome`, `gateway`, `grid`, `schema_version`, etc.). Sketch:
 
 ```rust
 #[test]
 fn recent_gateways_returns_in_window_most_recent_with_grid() {
-    // now = 2026-06-22T12:00:00-07:00
     let now = chrono::DateTime::parse_from_rfc3339("2026-06-22T12:00:00-07:00").unwrap();
-    let mut store = FavoritesStore::default();
-    // Favorite W6DRZ has a grid; two attempts, newest 30m ago (in 6h window).
-    store.file.favorites.push(Favorite {
-        id: "u1".into(), mode: "ardop".into(), gateway: "W6DRZ".into(),
-        freq: None, transport: None, band: None, grid: Some("CM97".into()),
-        note: None, starred: false, last_attempt_at: None,
-        created_at: "2026-06-01T00:00:00-07:00".into(), updated_at: "2026-06-01T00:00:00-07:00".into(),
-    });
-    store.file.log.push(ConnectionAttempt { unit_id: "u1".into(), ts_local: "2026-06-22T09:00:00-07:00".into(), freq: None, outcome: "failed".into() });
-    store.file.log.push(ConnectionAttempt { unit_id: "u1".into(), ts_local: "2026-06-22T11:30:00-07:00".into(), freq: None, outcome: "reached".into() });
-    // Favorite AI6BX called 8h ago — OUTSIDE a 6h window.
-    store.file.favorites.push(Favorite {
-        id: "u2".into(), mode: "ardop".into(), gateway: "AI6BX".into(),
-        freq: None, transport: None, band: None, grid: Some("CM98".into()),
-        note: None, starred: false, last_attempt_at: None,
-        created_at: "2026-06-01T00:00:00-07:00".into(), updated_at: "2026-06-01T00:00:00-07:00".into(),
-    });
-    store.file.log.push(ConnectionAttempt { unit_id: "u2".into(), ts_local: "2026-06-22T04:00:00-07:00".into(), freq: None, outcome: "reached".into() });
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("stations.json");
+    // Write a fixture with: W6DRZ (grid CM97) two attempts — newest 11:30 (in 6h),
+    // older 09:00 failed; AI6BX (grid CM98) one attempt at 04:00 (OUTSIDE 6h).
+    // Match the EXACT serde shape of StationsFile (read store.rs first).
+    std::fs::write(&path, r#"{ "schema_version": 1, "favorites": [ /* ...W6DRZ id=u1 grid=CM97, AI6BX id=u2 grid=CM98... */ ], "log": [ /* ...attempts with unit_id+ts_local+outcome... */ ] }"#).unwrap();
+    let store = FavoritesStore::open(path);
 
     let got = store.recent_gateways(6, now);
     assert_eq!(got.len(), 1, "only W6DRZ is within the 6h window");
@@ -97,6 +92,7 @@ fn recent_gateways_returns_in_window_most_recent_with_grid() {
     assert_eq!(got[0].grid.as_deref(), Some("CM97"));
 }
 ```
+(Fill the JSON arrays with the real field names from `store.rs`. If `tempfile` isn't a dev-dependency, check `src-tauri/Cargo.toml` — the existing tests use `tempdir()`, so it is.)
 
 - [ ] **Step 2: Run test to verify it fails** — `cargo test --manifest-path src-tauri/Cargo.toml recent_gateways -- --nocapture` Expected: FAIL (method not found). **If the Pi cannot finish the cold build, skip running and rely on CI; mark this step done with a note "deferred to CI" — do NOT block.**
 
