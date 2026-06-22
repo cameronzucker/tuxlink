@@ -323,6 +323,27 @@ pub fn contacts_connection_record(
     Ok(ContactConnectionRecord { attempts, hint })
 }
 
+/// Return the gateways that this station has attempted to connect to within
+/// the given look-back window (hours), suitable for rendering as pins on the
+/// Winlink map layer (tuxlink-s1o1).
+///
+/// Delegates entirely to `FavoritesStore::recent_gateways`; `now` is supplied
+/// by the real wall clock here so the store method remains deterministically
+/// testable (see Task 1 tests in `favorites::store`).
+///
+/// The `within_hours` arg arrives from JS camelCased as `{ withinHours }`;
+/// no serde rename is needed — Tauri handles JS↔Rust camelCase mapping for
+/// primitive command args automatically.
+#[tauri::command]
+pub fn contacts_recent_gateways(
+    within_hours: u32,
+    favorites: tauri::State<Arc<Mutex<FavoritesStore>>>,
+) -> Result<Vec<crate::favorites::store::RecentGateway>, ContactsError> {
+    let store = favorites.lock().expect("favorites store mutex poisoned");
+    let now = chrono::Local::now().fixed_offset();
+    Ok(store.recent_gateways(within_hours, now))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,5 +581,29 @@ mod tests {
         let record = connection_record_via_command_logic(&store, "W7CPZ");
         assert!(record.attempts.is_empty(), "no favorite → empty attempts");
         assert!(record.hint.is_none(), "no favorite → None hint (never fabricated)");
+    }
+
+    // ------------------------------------------------------------------
+    // contacts_recent_gateways (tuxlink-s1o1) — JSON shape on the wire.
+    //
+    // The `#[tauri::command]` wrapper adds only `State` extraction and the
+    // real wall clock; `FavoritesStore::recent_gateways` is fully exercised
+    // by Task 1's unit tests.  This test asserts the serialization contract
+    // the frontend depends on: keys are snake_case on the wire (Tauri
+    // serializes via serde_json; no rename_all on the struct means the
+    // Rust field names ARE the wire names, which are already snake_case).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn recent_gateways_serializes_snake_case() {
+        let rg = crate::favorites::store::RecentGateway {
+            gateway: "W6DRZ".into(),
+            grid: Some("CM97".into()),
+            last_attempt_at: "2026-06-22T11:30:00-07:00".into(),
+            outcome: "reached".into(),
+        };
+        let v = serde_json::to_value(&rg).unwrap();
+        assert!(v.get("last_attempt_at").is_some(), "snake_case on the wire");
+        assert!(v.get("lastAttemptAt").is_none());
     }
 }

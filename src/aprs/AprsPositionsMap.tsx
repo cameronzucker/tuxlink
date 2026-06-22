@@ -47,6 +47,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { reportFrontendError } from '../frontendErrorLog';
 import { resolveDigipeatPath, type PathSegment } from './digipeatPath';
 import { DigipeatPathLayer, type TraceTrigger } from './DigipeatPathLayer';
+import { useWinlinkLayerToggle } from '../winlink/useWinlinkLayerToggle';
+import { useRecentGateways } from '../winlink/recentGateways';
+import { toWinlinkPins } from '../winlink/winlinkPins';
+import { WinlinkGatewayLayer } from '../winlink/WinlinkGatewayLayer';
+import { WinlinkLinkLayer } from '../winlink/WinlinkLinkLayer';
+import { useContactConnectionRecord } from '../contacts/useContactConnectionRecord';
+import { ConnectionRecord } from '../favorites/ConnectionRecord';
+import { useModemStatus } from '../modem/useModemStatus';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
@@ -570,6 +578,28 @@ function WxSitrepControl({ wx, operatorGrid }: { wx: WxStation[]; operatorGrid?:
   );
 }
 
+/// Gateway connection-history popup — shown when the user clicks a Winlink
+/// diamond pin. Uses the same ConnectionRecord + useContactConnectionRecord
+/// pattern as ContactDetail (tuxlink-je5d). Mounted only when selectedGateway
+/// is non-null so the hook mounts/unmounts cleanly (hooks-rules valid).
+function WinlinkGatewayPopup({ gateway, onClose }: { gateway: string; onClose: () => void }) {
+  const { attempts, hint } = useContactConnectionRecord(gateway);
+  return (
+    <div className="aprs-positions-map__popup" role="status" data-testid="winlink-gateway-popup">
+      <button
+        type="button"
+        className="aprs-positions-map__popup-close"
+        aria-label="Dismiss"
+        onClick={onClose}
+      >
+        ×
+      </button>
+      <span className="aprs-positions-map__popup-call">{gateway}</span>
+      <ConnectionRecord attempts={attempts} hint={hint} />
+    </div>
+  );
+}
+
 export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocusStation }: AprsPositionsMapProps) {
   const me = operatorGrid ? gridToLatLon(operatorGrid) : null;
   // tuxlink-dwzu: remember + restore the operator's last viewport. First run (no
@@ -580,6 +610,25 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
   const initialZoom = saved ? saved.zoom : me ? OPERATOR_ZOOM : 2;
   const filter = usePersistedBucketFilter('tuxlink:map-filter:aprs');
   const wx = useMemo(() => joinWxStations(envStations ?? [], positions), [envStations, positions]);
+
+  // Winlink layer toggle + recency window (tuxlink-s1o1 Task 8).
+  const winlink = useWinlinkLayerToggle();
+  const { gateways } = useRecentGateways(winlink.withinHours);
+  const { status } = useModemStatus();
+  const winlinkPins = useMemo(
+    () =>
+      winlink.on
+        ? toWinlinkPins(gateways, { livePeer: status.peer, nowMs: Date.now() })
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [winlink.on, gateways, status.peer],
+  );
+  const [selectedGateway, setSelectedGateway] = useState<string | null>(null);
+  // The lat/lon of the live peer pin (if any), for the WinlinkLinkLayer arc.
+  const livePeerLatLon = useMemo(() => {
+    const p = winlinkPins.find((pin) => pin.isLive);
+    return p ? { lat: p.lat, lon: p.lon } : null;
+  }, [winlinkPins]);
 
   // Live per-bucket counts over heard stations (wx drives the weather override).
   const { counts, total } = useMemo(() => {
@@ -605,10 +654,21 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
         onToggleBucket={filter.toggleBucket}
         onToggleAll={filter.setAll}
         onToggleCollapsed={filter.toggleCollapsed}
+        winlinkOn={winlink.on}
+        onToggleWinlink={winlink.toggle}
       />
       <LeafletMap initialCenter={initialCenter} initialZoom={initialZoom} onViewportChange={onViewportChange}>
         <MapOverlays positions={positions} wx={wx} enabledBuckets={filter.enabled} onFocusStation={onFocusStation} operator={me} />
         <OperatorPin location={me} />
+        {winlink.on && (
+          <>
+            <WinlinkGatewayLayer pins={winlinkPins} onSelect={setSelectedGateway} />
+            <WinlinkLinkLayer origin={me} peer={livePeerLatLon} />
+          </>
+        )}
+        {selectedGateway != null && (
+          <WinlinkGatewayPopup gateway={selectedGateway} onClose={() => setSelectedGateway(null)} />
+        )}
         <WxSitrepControl wx={wx} operatorGrid={operatorGrid || undefined} />
         <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </LeafletMap>

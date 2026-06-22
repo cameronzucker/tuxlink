@@ -95,6 +95,24 @@ impl ConnectionAttempt {
     }
 }
 
+/// A gateway that has at least one connection attempt within a recency window,
+/// carrying its most-recent in-window attempt's timestamp + outcome plus the
+/// favorite's stored grid square. Used by the Winlink map layer (tuxlink-s1o1)
+/// to place and color stations on the APRS map.
+///
+/// `grid` may be `None` when the favorite was added without a grid square; the
+/// frontend drops those entries from the map but the struct still carries them
+/// so the query layer is not responsible for that UI decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentGateway {
+    pub gateway: String,
+    pub grid: Option<String>,
+    /// RFC3339 offset-bearing timestamp of the most-recent attempt in the window.
+    pub last_attempt_at: String,
+    /// Outcome of that most-recent attempt: `"reached"` | `"failed"`.
+    pub outcome: String,
+}
+
 /// The record-path DTO (H3/Codex#8). Carries everything needed to upsert/find
 /// the unit; the client passes this (NOT a `unit_id`) to the record path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -444,6 +462,71 @@ impl FavoritesStore {
             .filter(|a| unit_ids.contains(a.unit_id.as_str()))
             .cloned()
             .collect()
+    }
+
+    /// Gateways that have at least one connection attempt within `within_hours`
+    /// of `now`, each carrying its most-recent in-window attempt's timestamp +
+    /// outcome plus the favorite's stored grid. Used by the Winlink map layer
+    /// (tuxlink-s1o1).
+    ///
+    /// - `now` is injected (not `Local::now()`) so tests are deterministic.
+    /// - The cutoff is `now - within_hours` (inclusive: `ts >= cutoff`).
+    /// - When a gateway has multiple favorites (e.g. same callsign in two modes),
+    ///   all their attempts are considered; the single most-recent in-window
+    ///   attempt wins, and `grid` comes from whichever favorite owns that attempt.
+    /// - Returned vec is sorted newest-first by `last_attempt_at` (string compare
+    ///   is safe here because all timestamps share the same offset — the caller's
+    ///   `now` offset — after parse-and-back-to-source; in practice, lexicographic
+    ///   order on same-offset RFC3339 strings IS correct temporal order).
+    pub fn recent_gateways(
+        &self,
+        within_hours: u32,
+        now: chrono::DateTime<chrono::FixedOffset>,
+    ) -> Vec<RecentGateway> {
+        use std::collections::HashMap;
+        let cutoff = now - chrono::Duration::hours(within_hours as i64);
+        // Build a lookup: unit_id → (gateway, grid).
+        let units: HashMap<&str, (&str, Option<&str>)> = self
+            .file
+            .favorites
+            .iter()
+            .map(|f| (f.id.as_str(), (f.gateway.as_str(), f.grid.as_deref())))
+            .collect();
+        // For each in-window attempt, track the most-recent per gateway.
+        // Value: (attempt_ref, parsed_instant, grid).
+        let mut best: HashMap<
+            &str,
+            (&ConnectionAttempt, chrono::DateTime<chrono::FixedOffset>, Option<&str>),
+        > = HashMap::new();
+        for a in &self.file.log {
+            let Some(&(gw, grid)) = units.get(a.unit_id.as_str()) else {
+                continue;
+            };
+            let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&a.ts_local) else {
+                continue;
+            };
+            if ts < cutoff {
+                continue;
+            }
+            match best.get(gw) {
+                Some((_, prev_ts, _)) if *prev_ts >= ts => {}
+                _ => {
+                    best.insert(gw, (a, ts, grid));
+                }
+            }
+        }
+        let mut out: Vec<RecentGateway> = best
+            .into_iter()
+            .map(|(gw, (a, _ts, grid))| RecentGateway {
+                gateway: gw.to_string(),
+                grid: grid.map(|g| g.to_string()),
+                last_attempt_at: a.ts_local.clone(),
+                outcome: a.outcome.clone(),
+            })
+            .collect();
+        // Sort newest-first by timestamp string (safe for same-offset RFC3339).
+        out.sort_by(|x, y| y.last_attempt_at.cmp(&x.last_attempt_at));
+        out
     }
 
     /// Insert a favorite, or replace the existing one with the same `id`. The
@@ -1691,5 +1774,301 @@ mod tests {
         // The UTC equivalent would be the previous day at 16:00 — proving we do
         // NOT use it.
         assert_ne!(parsed.with_timezone(&chrono::Utc).day(), parsed.day());
+    }
+
+    // ---- recent_gateways: Winlink map layer (tuxlink-s1o1) ------------------
+
+    /// Helper: write a JSON fixture to `path` and open it as a `FavoritesStore`.
+    /// Mirrors the `unknown_top_level_field_tolerated` fixture-write+open idiom.
+    fn store_from_json(path: std::path::PathBuf, json: &str) -> FavoritesStore {
+        std::fs::write(&path, json).unwrap();
+        FavoritesStore::open(path)
+    }
+
+    #[test]
+    fn recent_gateways_returns_in_window_most_recent_with_grid() {
+        // Primary case (from the brief):
+        //   now = 2026-06-22T12:00:00-07:00
+        //   W6DRZ (id=u1, grid=CM97): two attempts — newest at 11:30 (in 6h window,
+        //     outcome "reached"), older at 09:00 (in window, outcome "failed").
+        //     The MOST RECENT in-window attempt is 11:30 "reached".
+        //   AI6BX (id=u2, grid=CM98): one attempt at 04:00 (OUTSIDE the 6h window
+        //     because 12:00 - 6h = 06:00, and 04:00 < 06:00).
+        //
+        // Expected: only W6DRZ returned, with last_attempt_at=11:30, outcome="reached",
+        // grid=Some("CM97").
+        let now =
+            chrono::DateTime::parse_from_rfc3339("2026-06-22T12:00:00-07:00").unwrap();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let json = r#"{
+            "schema_version": 1,
+            "favorites": [
+                {
+                    "id": "u1",
+                    "mode": "ardop-hf",
+                    "gateway": "W6DRZ",
+                    "freq": "14105.0",
+                    "transport": null,
+                    "band": "20m",
+                    "grid": "CM97",
+                    "note": null,
+                    "starred": false,
+                    "last_attempt_at": "2026-06-22T11:30:00-07:00",
+                    "created_at": "2026-06-20T00:00:00+00:00",
+                    "updated_at": "2026-06-22T11:30:00-07:00"
+                },
+                {
+                    "id": "u2",
+                    "mode": "ardop-hf",
+                    "gateway": "AI6BX",
+                    "freq": "14105.0",
+                    "transport": null,
+                    "band": "20m",
+                    "grid": "CM98",
+                    "note": null,
+                    "starred": false,
+                    "last_attempt_at": "2026-06-22T04:00:00-07:00",
+                    "created_at": "2026-06-20T00:00:00+00:00",
+                    "updated_at": "2026-06-22T04:00:00-07:00"
+                }
+            ],
+            "log": [
+                {
+                    "unit_id": "u1",
+                    "ts_local": "2026-06-22T11:30:00-07:00",
+                    "freq": null,
+                    "outcome": "reached"
+                },
+                {
+                    "unit_id": "u1",
+                    "ts_local": "2026-06-22T09:00:00-07:00",
+                    "freq": null,
+                    "outcome": "failed"
+                },
+                {
+                    "unit_id": "u2",
+                    "ts_local": "2026-06-22T04:00:00-07:00",
+                    "freq": null,
+                    "outcome": "reached"
+                }
+            ]
+        }"#;
+        let store = store_from_json(path, json);
+        let got = store.recent_gateways(6, now);
+        assert_eq!(got.len(), 1, "only W6DRZ is within the 6h window");
+        assert_eq!(got[0].gateway, "W6DRZ");
+        assert_eq!(
+            got[0].last_attempt_at, "2026-06-22T11:30:00-07:00",
+            "most-recent in-window attempt"
+        );
+        assert_eq!(got[0].outcome, "reached", "most-recent attempt's outcome");
+        assert_eq!(got[0].grid.as_deref(), Some("CM97"));
+    }
+
+    #[test]
+    fn recent_gateways_empty_log_returns_empty() {
+        // Edge case: store has favorites but no log entries → no gateways returned.
+        let now =
+            chrono::DateTime::parse_from_rfc3339("2026-06-22T12:00:00-07:00").unwrap();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let json = r#"{
+            "schema_version": 1,
+            "favorites": [
+                {
+                    "id": "u1",
+                    "mode": "ardop-hf",
+                    "gateway": "W6DRZ",
+                    "freq": "14105.0",
+                    "transport": null,
+                    "band": "20m",
+                    "grid": "CM97",
+                    "note": null,
+                    "starred": false,
+                    "last_attempt_at": null,
+                    "created_at": "2026-06-20T00:00:00+00:00",
+                    "updated_at": "2026-06-20T00:00:00+00:00"
+                }
+            ],
+            "log": []
+        }"#;
+        let store = store_from_json(path, json);
+        let got = store.recent_gateways(6, now);
+        assert!(got.is_empty(), "no log entries → no recent gateways");
+    }
+
+    #[test]
+    fn recent_gateways_boundary_attempt_exactly_at_cutoff_included() {
+        // Edge case: an attempt whose ts_local == cutoff (now - within_hours)
+        // is included (cutoff is INCLUSIVE: ts >= cutoff).
+        //   now = 2026-06-22T12:00:00-07:00, within_hours = 6
+        //   cutoff = 2026-06-22T06:00:00-07:00
+        //   attempt at exactly 06:00:00-07:00 → included.
+        let now =
+            chrono::DateTime::parse_from_rfc3339("2026-06-22T12:00:00-07:00").unwrap();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let json = r#"{
+            "schema_version": 1,
+            "favorites": [
+                {
+                    "id": "u1",
+                    "mode": "ardop-hf",
+                    "gateway": "W6DRZ",
+                    "freq": "14105.0",
+                    "transport": null,
+                    "band": "20m",
+                    "grid": "CM97",
+                    "note": null,
+                    "starred": false,
+                    "last_attempt_at": "2026-06-22T06:00:00-07:00",
+                    "created_at": "2026-06-20T00:00:00+00:00",
+                    "updated_at": "2026-06-22T06:00:00-07:00"
+                }
+            ],
+            "log": [
+                {
+                    "unit_id": "u1",
+                    "ts_local": "2026-06-22T06:00:00-07:00",
+                    "freq": null,
+                    "outcome": "reached"
+                }
+            ]
+        }"#;
+        let store = store_from_json(path, json);
+        let got = store.recent_gateways(6, now);
+        assert_eq!(
+            got.len(),
+            1,
+            "attempt exactly at cutoff must be included (ts >= cutoff is inclusive)"
+        );
+        assert_eq!(got[0].gateway, "W6DRZ");
+        assert_eq!(got[0].last_attempt_at, "2026-06-22T06:00:00-07:00");
+    }
+
+    #[test]
+    fn recent_gateways_grid_none_still_returned() {
+        // Edge case: a favorite with grid=None is still included in results;
+        // the frontend is responsible for dropping it from the map pin set.
+        let now =
+            chrono::DateTime::parse_from_rfc3339("2026-06-22T12:00:00-07:00").unwrap();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let json = r#"{
+            "schema_version": 1,
+            "favorites": [
+                {
+                    "id": "u1",
+                    "mode": "ardop-hf",
+                    "gateway": "W6DRZ",
+                    "freq": "14105.0",
+                    "transport": null,
+                    "band": "20m",
+                    "grid": null,
+                    "note": null,
+                    "starred": false,
+                    "last_attempt_at": "2026-06-22T11:00:00-07:00",
+                    "created_at": "2026-06-20T00:00:00+00:00",
+                    "updated_at": "2026-06-22T11:00:00-07:00"
+                }
+            ],
+            "log": [
+                {
+                    "unit_id": "u1",
+                    "ts_local": "2026-06-22T11:00:00-07:00",
+                    "freq": null,
+                    "outcome": "failed"
+                }
+            ]
+        }"#;
+        let store = store_from_json(path, json);
+        let got = store.recent_gateways(6, now);
+        assert_eq!(got.len(), 1, "gateway with grid=None must still be returned");
+        assert_eq!(got[0].gateway, "W6DRZ");
+        assert!(
+            got[0].grid.is_none(),
+            "grid=None from the favorite passes through as None"
+        );
+    }
+
+    #[test]
+    fn recent_gateways_multiple_favorites_same_gateway_most_recent_wins() {
+        // Edge case: same gateway in two favorites (two modes → two unit_ids).
+        // Both have in-window attempts. The single most-recent attempt across
+        // ALL favorites for that gateway is picked, along with ITS grid.
+        //
+        // Favorite u1: ardop-hf, grid=CM97, attempt at 11:00 "reached"
+        // Favorite u2: vara-hf,  grid=CM97, attempt at 11:30 "failed"  ← most recent
+        // Expected: ONE RecentGateway for W6DRZ, last_attempt_at=11:30, outcome="failed",
+        //           grid from u2 (same gateway, same grid here; the important thing is
+        //           the most-recent attempt is selected regardless of which unit it belongs to).
+        let now =
+            chrono::DateTime::parse_from_rfc3339("2026-06-22T12:00:00-07:00").unwrap();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let json = r#"{
+            "schema_version": 1,
+            "favorites": [
+                {
+                    "id": "u1",
+                    "mode": "ardop-hf",
+                    "gateway": "W6DRZ",
+                    "freq": "14105.0",
+                    "transport": null,
+                    "band": "20m",
+                    "grid": "CM97",
+                    "note": null,
+                    "starred": false,
+                    "last_attempt_at": "2026-06-22T11:00:00-07:00",
+                    "created_at": "2026-06-20T00:00:00+00:00",
+                    "updated_at": "2026-06-22T11:00:00-07:00"
+                },
+                {
+                    "id": "u2",
+                    "mode": "vara-hf",
+                    "gateway": "W6DRZ",
+                    "freq": "14105.0",
+                    "transport": null,
+                    "band": "20m",
+                    "grid": "CM97",
+                    "note": null,
+                    "starred": false,
+                    "last_attempt_at": "2026-06-22T11:30:00-07:00",
+                    "created_at": "2026-06-20T00:00:00+00:00",
+                    "updated_at": "2026-06-22T11:30:00-07:00"
+                }
+            ],
+            "log": [
+                {
+                    "unit_id": "u1",
+                    "ts_local": "2026-06-22T11:00:00-07:00",
+                    "freq": null,
+                    "outcome": "reached"
+                },
+                {
+                    "unit_id": "u2",
+                    "ts_local": "2026-06-22T11:30:00-07:00",
+                    "freq": null,
+                    "outcome": "failed"
+                }
+            ]
+        }"#;
+        let store = store_from_json(path, json);
+        let got = store.recent_gateways(6, now);
+        assert_eq!(
+            got.len(),
+            1,
+            "multiple favorites for the same gateway → ONE RecentGateway"
+        );
+        assert_eq!(got[0].gateway, "W6DRZ");
+        assert_eq!(
+            got[0].last_attempt_at, "2026-06-22T11:30:00-07:00",
+            "most-recent in-window attempt wins across all favorites for the gateway"
+        );
+        assert_eq!(
+            got[0].outcome, "failed",
+            "outcome belongs to the most-recent attempt"
+        );
     }
 }
