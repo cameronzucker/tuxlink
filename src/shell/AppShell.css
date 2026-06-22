@@ -35,6 +35,17 @@
 .layout-b {
   display: grid;
   grid-template-rows: auto auto auto 1fr auto;
+  /* Pin the single column to the window width (tuxlink-5x21 / GH #881). With only
+   * grid-template-ROWS declared, the implicit column is auto-sized — and WebKitGTK
+   * sizes it to the max-content of its widest row (the 5-column `.panes`). That made
+   * EVERY row, including the titlebar, span an over-wide track, so the titlebar's
+   * right-pinned window controls landed past the window edge and were clipped by
+   * `overflow:hidden` — even though `max-width:100%` clamps the box. Chromium sizes
+   * the implicit column differently, which is why the prior `100vw`→`100%` fixes
+   * (PR #812/#822) passed at :1420 but never fixed the real WebKitGTK app. An explicit
+   * `minmax(0, 1fr)` column forces the track to the container width, so every row —
+   * controls included — tracks the window. */
+  grid-template-columns: minmax(0, 1fr);
   /* Track the WINDOW, not the screen (tuxlink-be2q). `100vw`/`100vh` resolve to the
    * full output size under WebKitGTK, so a non-maximized / half-tiled window rendered
    * the shell screen-wide — pushing the right side (Connect, window controls) off the

@@ -1,0 +1,85 @@
+/* CloseBehaviorPrompt — one-time close-behavior explainer overlay
+ * (tuxlink-5rvp / #882). Shares the VerifyCmsDialog / AboutDialog backdrop +
+ * panel chrome conventions (variables, sizing, button styles) so the dialog
+ * family reads consistently. */
+
+.tux-closeprompt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.tux-closeprompt-panel {
+  width: min(460px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  font-family: var(--sans);
+  color: var(--text);
+}
+
+.tux-closeprompt-body {
+  padding: 20px 18px 6px;
+}
+
+.tux-closeprompt-title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.tux-closeprompt-text {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.tux-closeprompt-text:last-child {
+  margin-bottom: 0;
+}
+
+.tux-closeprompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 18px 6px;
+}
+
+.tux-closeprompt-button {
+  padding: 7px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tux-closeprompt-button:hover {
+  border-color: var(--accent);
+}
+
+.tux-closeprompt-button-primary {
+  color: var(--tux-accent-fg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.tux-closeprompt-button-primary:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+.tux-closeprompt-footnote {
+  margin: 0;
+  padding: 0 18px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+}

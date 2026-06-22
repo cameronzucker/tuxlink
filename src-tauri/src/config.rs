@@ -11,7 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// whole config (and the write guard, which probes only `schema_version`, would
 /// then clobber it). EVERY additive field MUST bump this — enforced by the
 /// `config_schema_version_tracks_field_set` test below.
-pub const CONFIG_SCHEMA_VERSION: u32 = 3;
+pub const CONFIG_SCHEMA_VERSION: u32 = 4;
 
 /// What to do with an on-disk config of a given `schema_version` (Phase 2,
 /// tuxlink-7iy2). A v1 file is a breaking migration candidate; a version ≥2 but
@@ -283,6 +283,28 @@ pub struct Config {
     /// pre-field configs (absent → `30`).
     #[serde(default = "default_trash_retention_days")]
     pub trash_retention_days: u32,
+    /// Close-to-tray behavior (tuxlink-5rvp / #882). When `true` (the default)
+    /// closing the main window minimizes Tuxlink instead of quitting, so an
+    /// active transfer or connection is not interrupted; the process stays
+    /// alive in the system tray / window list. When `false` the operator has
+    /// opted out and the close button quits the app. `#[serde(default = ...)]`
+    /// migrates configs that predate this field (absent → `true`); the field
+    /// is now KNOWN, satisfying `deny_unknown_fields`. Always serialized, so per
+    /// the rule at `CONFIG_SCHEMA_VERSION` this field bumped the schema to v4
+    /// (tuxlink-5rvp): a pre-v4 build must treat a v4 file as Unsupported on
+    /// write rather than rejecting the unknown key.
+    #[serde(default = "default_close_to_tray")]
+    pub close_to_tray: bool,
+    /// Whether the one-time close-behavior prompt has been shown (tuxlink-5rvp
+    /// / #882). `false` (the default) until the operator answers the first-close
+    /// modal explaining the minimize-to-tray behavior; set `true` once answered,
+    /// so the prompt never reappears. `#[serde(default)]` migrates pre-field
+    /// configs (absent → `false`, the value `bool::default()` already provides,
+    /// so no free fn is needed); the field is now KNOWN, satisfying
+    /// `deny_unknown_fields`. Always serialized — part of the v4 bump above
+    /// (tuxlink-5rvp).
+    #[serde(default)]
+    pub close_prompt_seen: bool,
 }
 
 /// A saved Network Post Office relay server entry.
@@ -320,6 +342,14 @@ fn default_trash_auto_purge() -> bool {
 /// Serde default for [`Config::trash_retention_days`]: `30` days (tuxlink-wl7n).
 fn default_trash_retention_days() -> u32 {
     30
+}
+
+/// Serde default for [`Config::close_to_tray`]: `true` — closing the window
+/// minimizes to tray (the current behavior) by default (tuxlink-5rvp / #882).
+/// A free fn because serde's `default = "..."` takes a path and `bool`'s own
+/// `Default` is `false`.
+fn default_close_to_tray() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1119,6 +1149,7 @@ mod tests {
             "packet", "telnet_listen", "network_po_favorites",
             "review_inbound_before_download", "aprs",
             "trash_auto_purge", "trash_retention_days",
+            "close_to_tray", "close_prompt_seen",
         ];
         expected.sort_unstable();
         assert_eq!(
@@ -1357,6 +1388,46 @@ mod tests {
             cfg.trash_retention_days, 30,
             "missing trash_retention_days must default to 30"
         );
+    }
+
+    // tuxlink-5rvp / #882: an OLD config JSON with NO close-behavior keys (every
+    // config that predates the close-to-tray prompt) must deserialize with
+    // `close_to_tray` defaulting to true (current minimize-to-tray behavior) and
+    // `close_prompt_seen` defaulting to false (so the one-time prompt still
+    // shows). The fields are KNOWN to the struct, so `deny_unknown_fields` stays
+    // satisfied; the serde defaults supply the values when the keys are absent.
+    #[test]
+    fn close_behavior_defaults_when_absent_from_config() {
+        let json = sample_config_json_without_packet();
+        assert!(
+            !json.contains("close_to_tray") && !json.contains("close_prompt_seen"),
+            "fixture must omit the close-behavior keys for this migration test to be meaningful"
+        );
+        let cfg: Config = serde_json::from_str(&json)
+            .expect("config without close-behavior keys should deserialize");
+        assert!(
+            cfg.close_to_tray,
+            "missing close_to_tray must default to true (minimize-to-tray)"
+        );
+        assert!(
+            !cfg.close_prompt_seen,
+            "missing close_prompt_seen must default to false (prompt not yet shown)"
+        );
+    }
+
+    // tuxlink-5rvp / #882: the close-behavior fields must round-trip through
+    // serde unchanged (explicit values survive a serialize → deserialize cycle).
+    #[test]
+    fn close_behavior_round_trips() {
+        let json = sample_config_json_without_packet();
+        let mut cfg: Config = serde_json::from_str(&json).expect("base config deserializes");
+        cfg.close_to_tray = false;
+        cfg.close_prompt_seen = true;
+        let serialized = serde_json::to_string(&cfg).expect("config serializes");
+        let round: Config =
+            serde_json::from_str(&serialized).expect("serialized config deserializes");
+        assert!(!round.close_to_tray, "close_to_tray must survive the round-trip");
+        assert!(round.close_prompt_seen, "close_prompt_seen must survive the round-trip");
     }
 
     // tuxlink-efo: a packet.link variant THIS build doesn't know (forward/sideways
