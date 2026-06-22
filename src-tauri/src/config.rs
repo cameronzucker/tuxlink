@@ -11,7 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// whole config (and the write guard, which probes only `schema_version`, would
 /// then clobber it). EVERY additive field MUST bump this — enforced by the
 /// `config_schema_version_tracks_field_set` test below.
-pub const CONFIG_SCHEMA_VERSION: u32 = 3;
+pub const CONFIG_SCHEMA_VERSION: u32 = 4;
 
 /// What to do with an on-disk config of a given `schema_version` (Phase 2,
 /// tuxlink-7iy2). A v1 file is a breaking migration candidate; a version ≥2 but
@@ -289,8 +289,10 @@ pub struct Config {
     /// alive in the system tray / window list. When `false` the operator has
     /// opted out and the close button quits the app. `#[serde(default = ...)]`
     /// migrates configs that predate this field (absent → `true`); the field
-    /// is now KNOWN, satisfying `deny_unknown_fields`. Additive at v3 (like the
-    /// trash_* fields) — no `CONFIG_SCHEMA_VERSION` bump required.
+    /// is now KNOWN, satisfying `deny_unknown_fields`. Always serialized, so per
+    /// the rule at `CONFIG_SCHEMA_VERSION` this field bumped the schema to v4
+    /// (tuxlink-5rvp): a pre-v4 build must treat a v4 file as Unsupported on
+    /// write rather than rejecting the unknown key.
     #[serde(default = "default_close_to_tray")]
     pub close_to_tray: bool,
     /// Whether the one-time close-behavior prompt has been shown (tuxlink-5rvp
@@ -299,7 +301,8 @@ pub struct Config {
     /// so the prompt never reappears. `#[serde(default)]` migrates pre-field
     /// configs (absent → `false`, the value `bool::default()` already provides,
     /// so no free fn is needed); the field is now KNOWN, satisfying
-    /// `deny_unknown_fields`. Additive at v3 — no schema bump required.
+    /// `deny_unknown_fields`. Always serialized — part of the v4 bump above
+    /// (tuxlink-5rvp).
     #[serde(default)]
     pub close_prompt_seen: bool,
 }

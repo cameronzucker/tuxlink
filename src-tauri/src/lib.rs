@@ -1126,50 +1126,54 @@ pub fn run() {
             // need real close + unsaved-draft handling, not hide-to-tray).
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    // tuxlink-5rvp / #882: the close path is now config-aware.
-                    // Read config synchronously (read_config is sync); on Err
-                    // (pre-wizard, unreadable) fall back to the historical
-                    // minimize-to-tray behavior — the safe default that never
-                    // kills the process mid-transfer.
-                    let cfg = crate::config::read_config().ok();
-                    let prompt_seen = cfg.as_ref().map(|c| c.close_prompt_seen).unwrap_or(false);
-                    // On a read error, `close_to_tray` defaults to true (the
-                    // safe minimize behavior) — same fallback as the field's
-                    // serde default.
-                    let close_to_tray = cfg.as_ref().map(|c| c.close_to_tray).unwrap_or(true);
-
-                    if !prompt_seen {
-                        // First-ever close: show the one-time explainer modal.
-                        // Keep the window VISIBLE (do NOT minimize) so the user
-                        // sees the dialog; the frontend re-issues the close via
-                        // resolve_close_prompt once they answer.
-                        api.prevent_close();
-                        use tauri::Emitter as _;
-                        let _ = window.emit("show-close-prompt", ());
-                    } else if close_to_tray {
-                        // The operator kept the default. tuxlink-9zd: on Linux the
-                        // SNI tray often does not register (e.g. Wayland +
-                        // wf-panel-pi has no SNI host), so hide() would strand the
-                        // window — process alive, no GUI path back. minimize()
-                        // keeps the window in the compositor's window list (always
-                        // recoverable via the panel/window-switcher) while keeping
-                        // the process alive mid-session. macOS/Windows have a
-                        // reliable tray, so hide() there.
-                        api.prevent_close();
-                        #[cfg(target_os = "linux")]
-                        let _ = window.minimize();
-                        #[cfg(not(target_os = "linux"))]
-                        let _ = window.hide();
-                    } else {
+                    // tuxlink-5rvp / #882: the close path is config-aware.
+                    // Read config synchronously (read_config is sync).
+                    match crate::config::read_config().ok() {
+                        // First-ever close (config readable, prompt not yet
+                        // answered): show the one-time explainer modal. Keep the
+                        // window VISIBLE (do NOT minimize) so the user sees it;
+                        // the frontend re-issues the close via resolve_close_prompt
+                        // once they answer.
+                        Some(c) if !c.close_prompt_seen => {
+                            api.prevent_close();
+                            use tauri::Emitter as _;
+                            let _ = window.emit("show-close-prompt", ());
+                        }
                         // The operator opted out (close = quit). Exit explicitly
                         // via the canonical app.exit(0) path (the SAME path as
                         // File→Quit / tray Quit / resolve_close_prompt) rather
                         // than relying on implicit last-window-close: with a tray
                         // icon present and no RunEvent::ExitRequested handler,
                         // implicit exit is fragile and a missed exit would strand
-                        // a GUI-less process. exit(0) is unambiguous.
-                        use tauri::Manager as _;
-                        window.app_handle().exit(0);
+                        // a GUI-less process. exit(0) is unambiguous. (Reaching
+                        // this arm means close_prompt_seen is already true, since
+                        // the Settings toggle marks the prompt seen — see
+                        // set_close_to_tray.)
+                        Some(c) if !c.close_to_tray => {
+                            use tauri::Manager as _;
+                            window.app_handle().exit(0);
+                        }
+                        // Default minimize-to-tray. Covers BOTH the operator who
+                        // kept the default (close_to_tray=true, prompt seen) AND a
+                        // None config (fresh install / unreadable): the None case
+                        // MUST NOT emit the prompt — during the wizard the prompt
+                        // UI isn't mounted and resolve_close_prompt would fail the
+                        // same read, so the close would silently no-op (window
+                        // un-closeable). Minimize is the safe fallback that never
+                        // kills the process mid-transfer.
+                        // tuxlink-9zd: on Linux the SNI tray often does not register
+                        // (e.g. Wayland + wf-panel-pi has no SNI host), so hide()
+                        // would strand the window — process alive, no GUI path back.
+                        // minimize() keeps it in the compositor's window list
+                        // (recoverable via the panel/window-switcher). macOS/Windows
+                        // have a reliable tray, so hide() there.
+                        _ => {
+                            api.prevent_close();
+                            #[cfg(target_os = "linux")]
+                            let _ = window.minimize();
+                            #[cfg(not(target_os = "linux"))]
+                            let _ = window.hide();
+                        }
                     }
                 }
             }

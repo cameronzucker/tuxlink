@@ -6758,15 +6758,22 @@ pub async fn resolve_close_prompt(
 }
 
 /// Persist the close-to-tray preference from the Settings toggle (tuxlink-5rvp /
-/// #882). Unlike `resolve_close_prompt`, this is the change-it-later path: it
-/// does NOT touch `close_prompt_seen` and does NOT exit or minimize — it only
-/// updates the persisted preference that `lib.rs`'s `CloseRequested` handler
-/// reads on the next window close. Mirrors `config_set_*`'s read → mutate →
-/// `write_config_atomic` shape.
+/// #882). Unlike `resolve_close_prompt`, this is the change-it-later path: it does
+/// NOT exit or minimize — it only updates the persisted preference that `lib.rs`'s
+/// `CloseRequested` handler reads on the next window close.
+///
+/// It DOES mark `close_prompt_seen = true`: an operator who reaches Settings →
+/// Window and flips this toggle has made an explicit, informed decision, so the
+/// one-time first-close prompt is moot. Without this, toggling OFF before ever
+/// seeing the prompt would leave `close_prompt_seen = false`, so the next close
+/// would still show the prompt — whose Escape/backdrop default (keep-running)
+/// would silently OVERWRITE the operator's explicit opt-out back to true.
+/// Mirrors `config_set_*`'s read → mutate → `write_config_atomic` shape.
 #[tauri::command]
 pub async fn set_close_to_tray(value: bool) -> Result<(), UiError> {
     let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
     cfg.close_to_tray = value;
+    cfg.close_prompt_seen = true;
     config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
     Ok(())
 }
