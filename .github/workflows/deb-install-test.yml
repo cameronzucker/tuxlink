@@ -61,7 +61,7 @@ jobs:
       # workflow_call path (undeclared → empty on a direct dispatch).
       - name: Download freshly-built .deb (CI gate)
         if: inputs.deb_artifact_prefix != ''
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.deb_artifact_prefix }}-${{ matrix.arch }}
           path: debs

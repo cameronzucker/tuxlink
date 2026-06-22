@@ -203,7 +203,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Download the ECT .deb
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: tuxlink-ect-${{ matrix.arch }}
           path: debs
@@ -239,7 +239,7 @@ jobs:
       contents: write
     steps:
       - name: Download the ECT .debs (all arches)
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: tuxlink-ect-*
           path: dist-ect
