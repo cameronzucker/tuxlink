@@ -30,6 +30,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.74.1](https://github.com/cameronzucker/tuxlink/compare/v0.74.0...v0.74.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* **map:** size Leaflet divIcons via attributes/CSS, not CSP-blocked inline styles (tuxlink-ivfr) ([18c20b2](https://github.com/cameronzucker/tuxlink/commit/18c20b27ae30c124affd1aa6bfc905419a51a1bf))
+
 ## [0.74.0](https://github.com/cameronzucker/tuxlink/compare/v0.73.0...v0.74.0) (2026-06-22)
 
 
