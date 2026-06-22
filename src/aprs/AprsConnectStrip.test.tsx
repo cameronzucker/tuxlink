@@ -116,14 +116,16 @@ describe('AprsConnectStrip', () => {
     expect(screen.queryByTestId('modem-link-section')).not.toBeInTheDocument();
   });
 
-  it('persists a link selection via onLinkChange', () => {
+  it('does not persist an incomplete (null-MAC) link on a bare BT switch (tuxlink-614x)', () => {
     const onLinkChange = vi.fn();
     renderStrip({ linkKind: null, radioLabel: null, onLinkChange });
-    // The picker is auto-expanded; switching to the BT segment emits a link.
+    // No paired radio yet: switching to BT reveals the picker locally but must NOT
+    // persist a null-MAC link. The old behavior emitted Bluetooth+null → the backend
+    // rejected it and the rollback snapped the segment back, so BT was unselectable
+    // (tuxlink-614x). The real persist happens when a radio is chosen in the picker.
     fireEvent.click(screen.getByTestId('modem-seg-bt'));
-    expect(onLinkChange).toHaveBeenCalledWith(
-      expect.objectContaining({ linkKind: 'Bluetooth' }),
-    );
+    expect(screen.getByTestId('modem-seg-bt')).toHaveAttribute('aria-pressed', 'true');
+    expect(onLinkChange).not.toHaveBeenCalled();
   });
 
   it('seeds the picker so a UV-Pro segment tap preserves the saved MAC (does not blank it)', () => {
