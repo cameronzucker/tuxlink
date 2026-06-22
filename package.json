@@ -29,7 +29,6 @@
     "color2k": "^2.0.3",
     "dompurify": "^3.4.11",
     "leaflet": "^1.9.4",
-    "maplibre-gl": "^5",
     "marked": "^15.0.12",
     "marked-extended-tables": "^2.0.1",
     "marked-footnote": "^1.4.0",
