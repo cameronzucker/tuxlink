@@ -1452,6 +1452,8 @@ pub fn run() {
             // attempts across every favorite whose gateway == callsign (reuses
             // the favorites store + tod_hint gate; no new storage).
             crate::contacts::commands::contacts_connection_record,
+            // tuxlink-s1o1: recent gateways for Winlink map layer pin rendering.
+            crate::contacts::commands::contacts_recent_gateways,
             // favorites (tuxlink-egmp, Task B2): per-radio-mode Favorites/Recents
             // CRUD + the honest connection record, over the managed
             // `Arc<Mutex<FavoritesStore>>`. `favorite_upsert` MERGES only
