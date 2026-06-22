@@ -1,17 +1,29 @@
+import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import L from 'leaflet';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { ambiguityRadiusMeters } from './AprsPositionsMap';
 import type { HeardPosition } from './aprsTypes';
 import { listDraftIds, loadDraft } from '../compose/useDraft';
+import { STOPPED } from '../modem/types';
 
 // LeafletMap fetches packs via invoke('basemap_list_packs') (wants {packs}); the
-// SITREP button calls invoke('compose_window_open').
+// SITREP button calls invoke('compose_window_open'). useRecentGateways calls
+// contacts_recent_gateways; useModemStatus calls modem_get_status.
 const invokeMock = vi.hoisted(() =>
-  vi.fn(async (cmd: string) => (cmd === 'basemap_list_packs' ? { packs: [] } : undefined)),
+  vi.fn(async (cmd: string) => {
+    if (cmd === 'basemap_list_packs') return { packs: [] };
+    if (cmd === 'contacts_recent_gateways') return [];
+    if (cmd === 'modem_get_status') return STOPPED;
+    return undefined;
+  }),
 );
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+
+// useModemStatus subscribes via listen('@tauri-apps/api/event'); make it inert.
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 
 // Mock the base-layer builder → inert layer (R5 P1): a real protomaps-leaflet
 // GridLayer would try to fetch/decode PMTiles to canvas in jsdom (AbortSignal /
@@ -67,7 +79,14 @@ afterEach(() => {
 
 /** Render and flush LeafletMap's whenReady (sync) + async pack fetch. */
 async function renderMap(ui: React.ReactElement) {
-  const result = render(ui);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // Use the `wrapper` option so RTL's `rerender` keeps the QueryClientProvider
+  // intact when tests call result.rerender(<AprsPositionsMap .../>).
+  const result = render(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    ),
+  });
   await act(async () => {
     await Promise.resolve();
   });
@@ -329,7 +348,12 @@ describe('AprsPositionsMap viewport + operator pin (tuxlink-dwzu)', () => {
   it('persists the viewport after a pan (debounced)', async () => {
     vi.useFakeTimers();
     try {
-      render(<AprsPositionsMap positions={[]} />);
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(<AprsPositionsMap positions={[]} />, {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+        ),
+      });
       await act(async () => {
         await Promise.resolve();
       });

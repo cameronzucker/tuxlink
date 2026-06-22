@@ -15,6 +15,9 @@ export interface AprsLayersPanelProps {
   onToggleBucket: (key: BucketKey) => void;
   onToggleAll: (on: boolean) => void;
   onToggleCollapsed: () => void;
+  /** Optional Winlink layer toggle row — rendered only when the callback is provided. */
+  winlinkOn?: boolean;
+  onToggleWinlink?: () => void;
 }
 
 export function AprsLayersPanel({
@@ -25,6 +28,8 @@ export function AprsLayersPanel({
   onToggleBucket,
   onToggleAll,
   onToggleCollapsed,
+  winlinkOn,
+  onToggleWinlink,
 }: AprsLayersPanelProps) {
   if (collapsed) {
     return (
@@ -92,6 +97,15 @@ export function AprsLayersPanel({
           </span>
         </label>
       ))}
+
+      {onToggleWinlink && (
+        <label className="aprs-layers-panel__row" data-testid="winlink-layer-toggle">
+          <input type="checkbox" checked={!!winlinkOn} onChange={onToggleWinlink} />
+          <span className="aprs-layers-panel__name">
+            <span className="aprs-layers-panel__glyph" aria-hidden="true">◆</span> Winlink links
+          </span>
+        </label>
+      )}
     </div>
   );
 }
