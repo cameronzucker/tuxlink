@@ -97,6 +97,18 @@ describe('AprsPositionsMap (Leaflet)', () => {
     expect(getByTestId('aprs-positions-map')).toBeInTheDocument();
   });
 
+  // tuxlink-ivfr: the sprite divIcon html is set via innerHTML, so a parsed inline
+  // `style="width:..."` is blocked by the production Tauri CSP `style-src` nonce
+  // (it makes 'unsafe-inline' inert) → the img would fall back to its natural 64px.
+  // Size via the width/height ATTRIBUTES, which CSP `style-src` does not govern.
+  it('sizes the sprite via width/height attributes, not a CSP-blocked inline style', async () => {
+    const { container } = await renderMap(<AprsPositionsMap positions={positions} />);
+    const img = pinByCall(container, 'KK6XYZ')!;
+    expect(img.getAttribute('width')).toBe('32');
+    expect(img.getAttribute('height')).toBe('32');
+    expect(img.getAttribute('style')).toBeNull();
+  });
+
   it('renders one pin per heard position with callsign + sprite identity + decoded coords', async () => {
     const { container } = await renderMap(<AprsPositionsMap positions={positions} />);
     expect(pins(container)).toHaveLength(2);

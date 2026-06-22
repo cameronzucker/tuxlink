@@ -1,0 +1,17 @@
+/* Maidenhead grid cell labels. Class-based (not an inline `style` attribute) so
+   the production Tauri CSP's `style-src` nonce — which makes `'unsafe-inline'`
+   inert and blocks parsed inline styles in divIcon html — cannot drop the
+   styling (tuxlink-ivfr). Mirrors the MapLibre label paint: #475569 text,
+   white halo, centred on the cell point via the transform. */
+.maidenhead-grid-label {
+  color: #475569;
+  font: 12px sans-serif;
+  white-space: nowrap;
+  display: inline-block;
+  transform: translate(-50%, -50%);
+  text-shadow:
+    -1px -1px 0 #fff,
+    1px -1px 0 #fff,
+    -1px 1px 0 #fff,
+    1px 1px 0 #fff;
+}

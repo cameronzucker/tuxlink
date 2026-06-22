@@ -124,6 +124,18 @@ describe('LocationMap (Leaflet)', () => {
     expect(locationMarker()).toBeDefined();
   });
 
+  // tuxlink-ivfr: the location-pin divIcon html is set via innerHTML, so a parsed
+  // inline `style` is blocked by the production Tauri CSP `style-src` nonce. The
+  // pin must be styled by the .location-pin CSS class, never inline.
+  it('styles the location pin via a CSS class, not a CSP-blocked inline style', async () => {
+    const { container } = await renderMap(
+      <LocationMap grid="EM75km" fixLatLon={{ lat: 36.1, lon: -86.8 }} selectedSource="gpsd" onGridChange={vi.fn()} />,
+    );
+    const pin = container.querySelector('.location-pin');
+    expect(pin).not.toBeNull();
+    expect(pin!.getAttribute('style')).toBeNull();
+  });
+
   // tuxlink-gf5s: with a GPS source active the live fix updates every tick; the
   // camera must hold still (marker tracks the fix, not the map) so the operator can
   // pan to hand-set. Passing the live fix as initialCenter re-flyTo'd on every tick.
