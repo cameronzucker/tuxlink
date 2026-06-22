@@ -171,4 +171,48 @@ describe('LeafletMap', () => {
     // a usable single map (no "container already initialized" throw, no leak)
     expect(captured!.getZoom()).toBe(3);
   });
+
+  // tuxlink-gf5s
+  it('stops in-flight animations before remove() on unmount', async () => {
+    let captured: L.Map | null = null;
+    const { unmount } = render(
+      <LeafletMap initialCenter={{ lat: 0, lon: 0 }} initialZoom={2}>
+        <Capture onMap={(m) => (captured = m)} />
+      </LeafletMap>,
+    );
+    await waitFor(() => expect(captured).not.toBeNull());
+    // A recenter flyTo completing on a torn-down pane throws `el._leaflet_pos`;
+    // cleanup must stop() the animation before remove().
+    const stopSpy = vi.spyOn(captured!, 'stop');
+    unmount();
+    expect(stopSpy).toHaveBeenCalled();
+  });
+
+  // tuxlink-gf5s
+  it('invalidates size when the container resizes (ResizeObserver wiring)', async () => {
+    let roCb: (() => void) | null = null;
+    const origRO = (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver;
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+      constructor(cb: () => void) {
+        roCb = cb;
+      }
+      observe() {}
+      disconnect() {}
+    };
+    try {
+      let captured: L.Map | null = null;
+      render(
+        <LeafletMap initialCenter={{ lat: 0, lon: 0 }} initialZoom={2}>
+          <Capture onMap={(m) => (captured = m)} />
+        </LeafletMap>,
+      );
+      await waitFor(() => expect(captured).not.toBeNull());
+      const invSpy = vi.spyOn(captured!, 'invalidateSize');
+      expect(roCb).not.toBeNull();
+      act(() => roCb!());
+      expect(invSpy).toHaveBeenCalled();
+    } finally {
+      (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver = origRO;
+    }
+  });
 });

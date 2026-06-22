@@ -527,7 +527,10 @@ function OperatorPin({ location }: { location: { lat: number; lon: number } | nu
     });
     group.addLayer(marker);
     return () => {
-      group.removeLayer(marker);
+      // Guard removal: a StrictMode double-unmount / fast tab switch can run this
+      // after the marker is already gone; bare removeLayer would then throw to the
+      // ErrorBoundary. Matches the StationFinderMap sibling (tuxlink-gf5s).
+      if (group.hasLayer(marker)) group.removeLayer(marker);
     };
   }, [map, group, location?.lat, location?.lon]);
   return null;

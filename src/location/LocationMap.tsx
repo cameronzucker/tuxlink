@@ -121,7 +121,18 @@ function LocationOverlay({ grid, fixLatLon, selectedSource, onGridChange }: Loca
 export function LocationMap({ grid, fixLatLon, selectedSource, onGridChange }: LocationMapProps) {
   const ll = grid ? gridToLatLon(grid) : null;
   const showFix = selectedSource !== 'manual' && fixLatLon != null;
-  const center: LatLon | undefined = (showFix ? fixLatLon : ll) ?? undefined;
+  // Center the map ONCE, on the first known location (precise fix if a GPS source
+  // is active, else the grid centre). The live fix afterward moves only the MARKER
+  // (LocationOverlay) — not the camera — so the operator can pan freely to hand-set
+  // location. Passing the live, per-tick `fixLatLon` as initialCenter made the map a
+  // follow-cam that re-`flyTo`'d on every GPS update and fought the operator
+  // (tuxlink-gf5s). Mirrors the stable-center discipline of StationFinderMap /
+  // AprsPositionsMap.
+  const initialCenterRef = useRef<LatLon | null>(null);
+  if (initialCenterRef.current === null) {
+    initialCenterRef.current = (showFix ? fixLatLon : ll) ?? null;
+  }
+  const center: LatLon | undefined = initialCenterRef.current ?? undefined;
   return (
     <div className="location-map" data-testid="location-map">
       <LeafletMap
