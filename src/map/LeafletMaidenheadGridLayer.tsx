@@ -27,6 +27,7 @@ import {
   type GridBounds,
   type GridLinesResult,
 } from './gridGeometry';
+import './LeafletMaidenheadGridLayer.css';
 
 export interface LeafletMaidenheadGridLayerProps {
   visible?: boolean;
@@ -47,14 +48,12 @@ const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /** A cell-label divIcon: the locator prefix, halo'd for basemap contrast and
- * centred on the cell centre. Styled inline (mirrors the MapLibre label paint:
- * #475569 text, white halo) so the overlay needs no separate stylesheet. */
-const LABEL_STYLE =
-  'color:#475569;font:12px sans-serif;white-space:nowrap;display:inline-block;' +
-  'transform:translate(-50%,-50%);' +
-  'text-shadow:-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff,1px 1px 0 #fff';
+ * centred on the cell centre. Styled via the `.maidenhead-grid-label` CSS class,
+ * NOT an inline `style` attribute — the production Tauri CSP nonces `style-src`,
+ * which makes `'unsafe-inline'` inert and blocks parsed inline styles in divIcon
+ * html (set via innerHTML), so an inline style here is dropped (tuxlink-ivfr). */
 function labelIcon(text: string): L.DivIcon {
-  const html = `<span class="maidenhead-grid-label" data-grid-label="${esc(text)}" style="${LABEL_STYLE}">${esc(text)}</span>`;
+  const html = `<span class="maidenhead-grid-label" data-grid-label="${esc(text)}">${esc(text)}</span>`;
   return L.divIcon({ className: 'maidenhead-grid-label-icon', html, iconSize: [0, 0], iconAnchor: [0, 0] });
 }
 

@@ -26,6 +26,7 @@ import { useLeafletLayerGroup } from '../map/leafletHooks';
 import { gridToLatLon, latLonToGrid } from '../forms/position/maidenhead';
 import { reportFrontendError } from '../frontendErrorLog';
 import type { LatLon } from '../map/projection';
+import './LocationMap.css';
 
 export interface LocationMapProps {
   /** Current grid — square highlight + manual-marker center. */
@@ -53,11 +54,12 @@ function squareBounds(grid: string, ll: LatLon): L.LatLngBoundsExpression {
   ];
 }
 
-/** A green "you are here" marker (matches the MapLibre #5fd39a dot). */
+/** A green "you are here" marker (matches the MapLibre #5fd39a dot). Styled via
+ *  the `.location-pin` CSS class, NOT an inline `style` attribute: the production
+ *  Tauri CSP nonces `style-src`, blocking parsed inline styles in divIcon html
+ *  (tuxlink-ivfr). */
 function markerIcon(): L.DivIcon {
-  const html =
-    '<span class="location-pin" data-testid="location-pin" style="display:block;width:14px;height:14px;' +
-    'border-radius:50%;background:#5fd39a;border:2px solid #0a1a2a;box-sizing:border-box"></span>';
+  const html = '<span class="location-pin" data-testid="location-pin"></span>';
   return L.divIcon({ className: 'location-pin-icon', html, iconSize: [14, 14], iconAnchor: [7, 7] });
 }
 

@@ -1,0 +1,13 @@
+/* The "you are here" location marker. Class-based (not an inline `style`
+   attribute) so the production Tauri CSP's `style-src` nonce — which makes
+   `'unsafe-inline'` inert and blocks parsed inline styles in divIcon html —
+   cannot drop the styling (tuxlink-ivfr). */
+.location-pin {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #5fd39a;
+  border: 2px solid #0a1a2a;
+  box-sizing: border-box;
+}

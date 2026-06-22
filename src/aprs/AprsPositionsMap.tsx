@@ -133,10 +133,16 @@ function pinIcon(p: HeardPosition, c: { lat: number; lon: number }, stale: boole
   const url = spriteDataUrl(p.symbolTable, p.symbolCode, sym.overlay, stale);
   const scale = p.ambiguity > 0 ? 0.7 : 1;
   const px = Math.round(32 * scale);
+  // Size via the HTML width/height ATTRIBUTES, not an inline `style` attribute:
+  // the production Tauri CSP nonces `style-src`, which makes `'unsafe-inline'`
+  // inert and blocks parsed inline-style attributes (the divIcon html is set via
+  // innerHTML, so the browser parses + CSP-checks its `style`). A blocked style
+  // dropped the sprite to its natural 64px (tuxlink-ivfr). Presentational
+  // width/height attributes are not governed by `style-src`.
   const html =
     `<img class="aprs-pin${stale ? ' aprs-pin--stale' : ''}" data-sprite="${esc(id)}" ` +
     `data-call="${esc(p.call)}" data-lat="${c.lat}" data-lon="${c.lon}" ` +
-    `style="width:${px}px;height:${px}px" src="${url}" alt="">` +
+    `width="${px}" height="${px}" src="${url}" alt="">` +
     `<span class="aprs-pin-label">${esc(p.call)}</span>`;
   return L.divIcon({ className: 'aprs-pin-icon', html, iconSize: [px, px], iconAnchor: [px / 2, px / 2] });
 }

@@ -75,6 +75,18 @@ describe('LeafletMaidenheadGridLayer', () => {
     expect(container.querySelectorAll('.maidenhead-grid-label').length).toBeGreaterThan(0);
   });
 
+  // tuxlink-ivfr: divIcon html is set via innerHTML, so a parsed inline `style`
+  // attribute is blocked by the production Tauri CSP `style-src` nonce. Labels
+  // must be styled by the .maidenhead-grid-label CSS class, never inline.
+  it('styles cell labels via a CSS class, not a CSP-blocked inline style', async () => {
+    const { container } = await renderLattice(
+      <LeafletMaidenheadGridLayer bounds={BOUNDS} level={GridLevel.Square} />,
+    );
+    const labels = container.querySelectorAll('.maidenhead-grid-label');
+    expect(labels.length).toBeGreaterThan(0);
+    labels.forEach((l) => expect(l.getAttribute('style')).toBeNull());
+  });
+
   it('draws nothing when not visible', async () => {
     const { container } = await renderLattice(
       <LeafletMaidenheadGridLayer visible={false} bounds={BOUNDS} level={GridLevel.Square} />,
