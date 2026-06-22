@@ -24,18 +24,6 @@ use std::time::{Duration, Instant};
 use super::proposal::{Answer, Proposal};
 use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, OutboundMessage};
 use super::wire;
-use crate::logging::wire_sanitize::{sanitize_wire_line, WireContext};
-
-/// Insert credential-equivalent redaction between the WireTap and the
-/// caller's `wire_log` closure. Fixes the BLOCKER R2 #1 leak where the
-/// telnet WireTap was emitting `;PR: <token>` lines into the session log.
-///
-/// Made `pub(crate)` so other winlink modules (telnet_listen, telnet_p2p,
-/// telnet_p2p_login) can use the same redaction discipline (Task 7).
-pub(crate) fn wire_log_with_redaction(line: &str, wire_log: &dyn Fn(&str)) {
-    let redacted = super::redaction::redact_wire_line(line);
-    wire_log(&redacted);
-}
 
 /// How long to wait on a single read or write before giving up.
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -144,14 +132,15 @@ impl<'a, T> WireTap<'a, T> {
     /// LZHUF-compressed message body) and is summarized as a byte count — never
     /// dumped as mojibake (tuxlink-nki re-smoke finding).
     ///
-    /// Outbound lines (dir `>`) and inbound lines (dir `<`) are both routed
-    /// through `sanitize_wire_line` before reaching the sink. The outbound path
-    /// is the critical one: `handshake::build_handshake` writes the `;PR: <token>`
-    /// response to the wire, and without this sanitize step the `WireTap` would
-    /// forward the raw token bytes to the session-log sink — a credential leak in
-    /// Detailed-mode UI. The inbound path is sanitized symmetrically: the CMS
-    /// sends `;PQ: <challenge>` inbound; forwarding that unredacted is less
-    /// dangerous (the challenge is single-use) but still undesirable.
+    /// Lines are forwarded to the sink RAW, including the secure-login
+    /// `;PQ:`/`;PR:` exchange. The sink is the operator's in-memory session-log
+    /// ring (`LogSource::Wire`), which the operator reads live to diagnose
+    /// connection problems (tuxlink-6726, operator decision 2026-06-22). Wire
+    /// bytes are never handed to a tracing macro, so they never reach the
+    /// `.jsonl` disk sink; the issue-report upload re-redacts the ring at its own
+    /// boundary (`logging::export::clean_operator_session_message`). Redacting
+    /// here instead blanked the operator's own diagnostic window — the regression
+    /// this method's prior `sanitize_wire_line` call introduced.
     fn flush(&mut self) {
         let raw = std::mem::take(&mut self.line);
         if raw.is_empty() {
@@ -163,8 +152,7 @@ impl<'a, T> WireTap<'a, T> {
         if is_ascii_text {
             let text = wire::clean_line(&String::from_utf8_lossy(&raw)).to_string();
             if !text.is_empty() {
-                let sanitized = sanitize_wire_line(&text, WireContext::Generic);
-                (self.sink)(&format!("{} {}", self.dir, sanitized));
+                (self.sink)(&format!("{} {}", self.dir, text));
             }
         } else {
             (self.sink)(&format!("{} <{} bytes binary>", self.dir, raw.len()));
@@ -222,12 +210,13 @@ where
     // (`[WL2K-...]`, `;PQ`, `;FW`, the client SID, `FF`/`FQ`) is visible in the
     // session log's Raw output, not just the human progress summary (tuxlink-nki).
     //
-    // Route through `wire_log_with_redaction` so `;PR`/`;PQ` tokens are scrubbed
-    // before the session log buffer sees them (R2 #1 BLOCKER fix).
-    let read_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
-    let write_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
-    let mut reader = BufReader::new(WireTap::new(ReadHalf(shared.clone()), &read_redacted, '<'));
-    let mut writer = WireTap::new(WriteHalf(shared), &write_redacted, '>');
+    // Tee both directions RAW into `wire_log` so the operator's scrolling log
+    // shows the full B2F dialogue, including the secure-login `;PQ`/`;PR`
+    // exchange (tuxlink-6726). Safe: wire bytes feed only the in-memory
+    // session-log ring, never the `.jsonl` tracing sink; the issue-report upload
+    // re-redacts the ring at its own boundary.
+    let mut reader = BufReader::new(WireTap::new(ReadHalf(shared.clone()), wire_log, '<'));
+    let mut writer = WireTap::new(WriteHalf(shared), wire_log, '>');
 
     // The CMS telnet "post office" greets with a callsign/password login that
     // precedes the B2F handshake; clear it first.
@@ -271,10 +260,11 @@ pub(crate) fn connect_and_auth_test(
         progress,
         register_socket,
     )?));
-    let read_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
-    let write_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
-    let mut reader = BufReader::new(WireTap::new(ReadHalf(shared.clone()), &read_redacted, '<'));
-    let mut writer = WireTap::new(WriteHalf(shared), &write_redacted, '>');
+    // Tee both directions RAW into `wire_log` (tuxlink-6726) — see the sibling
+    // `connect_and_exchange` above for why the operator window gets the
+    // unredacted B2F dialogue while the `.jsonl` + upload sinks stay redacted.
+    let mut reader = BufReader::new(WireTap::new(ReadHalf(shared.clone()), wire_log, '<'));
+    let mut writer = WireTap::new(WriteHalf(shared), wire_log, '>');
 
     telnet_login(&mut reader, &mut writer, &config.mycall)?;
     progress("CMS login complete.");
@@ -789,30 +779,38 @@ mod tests {
     }
 
     #[test]
-    fn wire_log_redacts_pr_token_per_blocker_fix() {
-        // R2 #1 BLOCKER (independently caught as Codex impl-adrev P1 #1 on the
-        // alpha-logging branch): the WireTap was emitting `;PR: <token>\r`
-        // verbatim into the session log before this fix. Verify the helper
-        // scrubs it.
-        let captured: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
-        let wire_log = |line: &str| {
-            captured.borrow_mut().push(line.to_string());
-        };
-        // Emulate WireTap's formatted output on a write of the canonical ;PR token.
-        // wl2k-go test vector: challenge "23753528", password "FOOBAR" → response "72768415".
-        let line = "> ;PR: 72768415\r";
-        wire_log_with_redaction(line, &wire_log);
-        let entries = captured.into_inner();
-        assert_eq!(entries.len(), 1);
+    fn wire_tap_emits_secure_login_tokens_raw_to_the_operator_window() {
+        // tuxlink-6726: the operator's live scrolling log MUST show the raw B2F
+        // dialogue, including the secure-login `;PQ:`/`;PR:` exchange, so alpha
+        // testers can diagnose connection problems. (Operator decision, 2026-06-22:
+        // "We WANT passwords in the scrolling logs and do NOT want them in the
+        // .jsonl disk logs.")
+        //
+        // This is safe because the WireTap feeds ONLY the in-memory session-log
+        // ring (LogSource::Wire); wire bytes are never handed to a tracing macro,
+        // so they never reach the `.jsonl` disk sink. The issue-report upload
+        // re-redacts the ring at its own boundary
+        // (`logging::export::clean_operator_session_message` → `redact_freeform`,
+        // covered by `logging::export` tests), so a raw window does not leak
+        // credential-equivalent material to disk or to an uploaded report.
+        //
+        // Replaces the prior `wire_log_redacts_pr_token_per_blocker_fix` test,
+        // whose source-level scrubbing blanked the operator's own diagnostic
+        // window — the regression this change fixes.
+        let recorded = std::cell::RefCell::new(Vec::<String>::new());
+        let sink = |l: &str| recorded.borrow_mut().push(l.to_string());
+        let mut tap = WireTap::new(std::io::sink(), &sink, '>');
+        // wl2k-go vector: challenge "23753528", password "FOOBAR" → response "72768415".
+        tap.observe(b";PR: 72768415\r");
+        tap.observe(b";PQ: 23753528\r");
+        let lines = recorded.into_inner();
         assert!(
-            !entries[0].contains("72768415"),
-            "token must be scrubbed, got: {:?}",
-            entries[0]
+            lines.iter().any(|l| l == "> ;PR: 72768415"),
+            "operator window must show the raw ;PR response token, got {lines:?}"
         );
         assert!(
-            entries[0].contains(";PR:"),
-            "marker must remain for log readability, got: {:?}",
-            entries[0]
+            lines.iter().any(|l| l == "> ;PQ: 23753528"),
+            "operator window must show the raw ;PQ challenge token, got {lines:?}"
         );
     }
 
