@@ -1,0 +1,7 @@
+/* Diamond = rotated square; color by tier. divIcon html carries NO inline style (CSP). */
+.winlink-pin { width: 14px; height: 14px; transform: rotate(45deg); border: 2px solid #eafff2; box-sizing: border-box; }
+.winlink-pin--live    { width: 18px; height: 18px; background: #46d07f; box-shadow: 0 0 0 6px rgba(70,208,127,.18); }
+.winlink-pin--reached { background: #46d07f; }
+.winlink-pin--failed  { background: #e0913a; border-color: #e0913a; }
+.winlink-pin--stale   { background: rgba(70,208,127,.45); border-color: rgba(234,255,242,.5); }
+.winlink-pin-label { font: 10px ui-monospace, Menlo, monospace; color: #bfe6cd; white-space: nowrap; }
