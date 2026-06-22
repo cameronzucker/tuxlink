@@ -257,12 +257,10 @@ describe('<PacketRadioPanel>', () => {
     });
   });
 
-  it('switching modem segment (TCP → USB) persists via packet_config_set', async () => {
+  it('switching modem segment to USB without a device does NOT persist an incomplete link (tuxlink-614x)', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     renderPanel(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
-    // Same race as the SSID test — wait for config to be loaded into
-    // component state before firing the click (the handler short-circuits
-    // when `config` is null).
+    // Wait for config to load into component state before firing the click.
     await waitFor(() => {
       const sel = screen.getByTestId('packet-ssid-select') as HTMLSelectElement;
       expect(sel.value).toBe('7');
@@ -270,14 +268,12 @@ describe('<PacketRadioPanel>', () => {
     await waitFor(() => expect(screen.getByTestId('modem-seg-usb')).toBeInTheDocument());
     (invoke as ReturnType<typeof vi.fn>).mockClear();
     fireEvent.click(screen.getByTestId('modem-seg-usb'));
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith(
-        'packet_config_set',
-        expect.objectContaining({
-          dto: expect.objectContaining({ linkKind: 'Serial' }),
-        }),
-      );
-    });
+    // The segment switches locally so the device picker appears, but persisting a
+    // null-device Serial link would be rejected by the backend and the
+    // usePacketConfig rollback would snap the segment back — so NO packet_config_set
+    // fires until a device is actually chosen (tuxlink-614x).
+    expect(screen.getByTestId('modem-seg-usb')).toHaveAttribute('aria-pressed', 'true');
+    expect(invoke).not.toHaveBeenCalledWith('packet_config_set', expect.anything());
   });
 
   // ── Listener allowed-stations editor (tuxlink-7vea) ──────────────────────

@@ -205,8 +205,21 @@ export function ModemLinkSection({
   };
 
   const selectSegment = (seg: ModemSegment) => {
+    // Switch the visible segment locally first, ALWAYS — picking a transport must
+    // reveal its device picker even before a device is chosen.
     setSegment(seg);
-    emit(seg);
+    // Only PERSIST when the resulting link is complete. USB needs a serial device,
+    // BT/UV-Pro need a radio MAC; persisting a bare switch with a null device/mac
+    // makes the backend reject the incomplete link (`into_packet_config`), and the
+    // usePacketConfig optimistic-rollback then snaps the segment straight back —
+    // the operator could never reach the device picker (tuxlink-614x). TCP always
+    // persists (host/port default). For the others, the device dropdown's onChange
+    // persists the complete link once a radio is selected.
+    const linkComplete =
+      seg === 'tcp' ||
+      (seg === 'usb' && Boolean(deviceInput.trim() || serialDevice)) ||
+      ((seg === 'bt' || seg === 'uvpro') && Boolean(btMacInput.trim() || btMac));
+    if (linkComplete) emit(seg);
   };
 
   // Filter to USB-class entries for the USB segment. The backend also

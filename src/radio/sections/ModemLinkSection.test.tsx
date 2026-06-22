@@ -42,19 +42,45 @@ describe('<ModemLinkSection>', () => {
     expect(screen.getByRole('button', { name: /BT/ })).toBeInTheDocument();
   });
 
-  it('fires onChange with the new kind when a segment is clicked', () => {
+  it('switching to USB or BT without a device does NOT persist an incomplete link (tuxlink-614x)', () => {
+    // Regression: a bare segment switch used to emit a full link with a null
+    // device/mac. The backend rejects that incomplete link, and the
+    // usePacketConfig optimistic-rollback then snapped the segment straight back —
+    // so BT/UV-Pro (no paired radio yet) could NEVER be selected, and USB reverted
+    // once its device was cleared. The switch must reveal the device picker locally
+    // and persist only once a device/mac exists.
     const onChange = vi.fn();
     render(
-      <ModemLinkSection
-        kind="Tcp"
-        host="127.0.0.1"
-        port={8001}
-        onChange={onChange}
-      />,
+      <ModemLinkSection kind="Tcp" host="127.0.0.1" port={8001} onChange={onChange} />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /USB/ }));
+    fireEvent.click(screen.getByTestId('modem-seg-usb'));
+    expect(screen.getByTestId('modem-seg-usb')).toHaveAttribute('aria-pressed', 'true');
+    expect(onChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('modem-seg-bt'));
+    expect(screen.getByTestId('modem-seg-bt')).toHaveAttribute('aria-pressed', 'true');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('switching to TCP persists immediately — host/port default, so the link is complete', () => {
+    const onChange = vi.fn();
+    render(
+      <ModemLinkSection kind="Serial" serialDevice="/dev/ttyUSB0" serialBaud={1200} onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByTestId('modem-seg-tcp'));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ linkKind: 'Tcp' }));
+  });
+
+  it('switching to a segment whose device is ALREADY saved persists (link is complete)', () => {
+    // A saved serialDevice means switching back to USB yields a complete link, so
+    // it persists on switch (no device-picker round-trip needed).
+    const onChange = vi.fn();
+    render(
+      <ModemLinkSection kind="Tcp" host="127.0.0.1" port={8001} serialDevice="/dev/ttyUSB0" serialBaud={1200} onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByTestId('modem-seg-usb'));
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ linkKind: 'Serial' }),
+      expect.objectContaining({ linkKind: 'Serial', serialDevice: '/dev/ttyUSB0' }),
     );
   });
 
