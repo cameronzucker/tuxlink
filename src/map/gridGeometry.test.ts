@@ -87,3 +87,42 @@ describe('maidenhead overlay geometry', () => {
     expect(g.latLines[1] - g.latLines[0]).toBeCloseTo(latStep, 10);
   });
 });
+
+// tuxlink-u4k2: the Leaflet overlay renders ONE DOM marker per label, so an
+// unbounded label cross-product froze WebKitGTK on a wide Square-level zoom-out
+// (confirmed 10k–130k labels). These guard gridLines at the source: clamp to the
+// Maidenhead world, cap the label count, and never loop on non-finite bounds.
+describe('gridLines — freeze guards (tuxlink-u4k2)', () => {
+  const MAX_GRID_LABELS = 2000;
+
+  it('caps labels for a wide Square-level view (the LocationMap zoom-out freeze repro)', () => {
+    // A span far wider than the world (low-zoom Leaflet getBounds + padBounds
+    // overshoot). Unguarded this is tens of thousands of labels → DOM explosion.
+    const g = gridLines({ south: -90, west: -380, north: 90, east: 380 }, GridLevel.Square);
+    expect(g.labels.length).toBeLessThanOrEqual(MAX_GRID_LABELS);
+    // Lines stay bounded to the world (no phantom-world-copy lattice).
+    expect(g.lonLines.length).toBeLessThanOrEqual(200);
+    expect(g.latLines.length).toBeLessThanOrEqual(200);
+    expect(Math.min(...g.lonLines)).toBeGreaterThanOrEqual(-180);
+    expect(Math.max(...g.lonLines)).toBeLessThanOrEqual(180);
+  });
+
+  it('returns an empty lattice (no infinite loop) on non-finite bounds', () => {
+    const inf = gridLines({ south: 0, west: 0, north: Infinity, east: Infinity }, GridLevel.Square);
+    expect(inf.lonLines).toEqual([]);
+    expect(inf.latLines).toEqual([]);
+    expect(inf.labels).toEqual([]);
+    const nan = gridLines({ south: NaN, west: NaN, north: NaN, east: NaN }, GridLevel.Field);
+    expect(nan.lonLines).toEqual([]);
+    expect(nan.labels).toEqual([]);
+  });
+
+  it('leaves a normal in-world view unchanged (labels present, within cap)', () => {
+    // ~30°×30° CONUS-ish Square-level window — the working open-at-z6 case.
+    const g = gridLines({ south: 20, west: -120, north: 50, east: -90 }, GridLevel.Square);
+    expect(g.labels.length).toBeGreaterThan(0);
+    expect(g.labels.length).toBeLessThanOrEqual(MAX_GRID_LABELS);
+    // still 4-char Square locators (behavior unchanged for an in-world view)
+    for (const l of g.labels) expect(l.text).toHaveLength(4);
+  });
+});

@@ -61,6 +61,39 @@ const LABEL_PREFIX: Record<GridLevel, number> = {
   [GridLevel.Subsquare]: 6,
 };
 
+/** The Maidenhead world. Clamping the visible window to this bounds the line and
+ *  cell counts: a low-zoom Leaflet `getBounds()` can report longitudes well
+ *  beyond ±180 (multiple world copies), and the overlay's `padBounds` doubles
+ *  the span — without this clamp a Square-level zoom-out generates a phantom
+ *  lattice spanning hundreds of degrees (tuxlink-u4k2). */
+const LON_MIN = -180;
+const LON_MAX = 180;
+const LAT_MIN = -90;
+const LAT_MAX = 90;
+
+/**
+ * Hard cap on rendered cell labels. The Leaflet overlay
+ * (`LeafletMaidenheadGridLayer`) renders ONE DOM `L.marker` per label, so an
+ * unbounded count synchronously creates tens of thousands of DOM nodes and
+ * freezes the Pi's software-GL WebKitGTK (tuxlink-u4k2: a Square-level zoom-out
+ * produced 10k–130k labels). The working open-at-z6 LocationMap view is ~1,860
+ * labels; cap just above it so a heavier view renders the lattice LINES only,
+ * never a marker storm. Lines are cheap (≤~360 after the world clamp).
+ */
+const MAX_GRID_LABELS = 2000;
+
+/** All four bounds finite? A non-finite `max` makes the range loops below run
+ *  forever (`count → Infinity`); callers pass `map.getBounds()`, which can go
+ *  non-finite at extreme projections, so guard at the source (tuxlink-u4k2). */
+function boundsAreFinite(b: GridBounds): boolean {
+  return (
+    Number.isFinite(b.south) &&
+    Number.isFinite(b.west) &&
+    Number.isFinite(b.north) &&
+    Number.isFinite(b.east)
+  );
+}
+
 /**
  * Grid granularity for a map zoom across the FULL offline+LAN zoom range.
  *
@@ -117,21 +150,38 @@ function cellStarts(min: number, max: number, step: number): number[] {
 }
 
 export function gridLines(bounds: GridBounds, level: GridLevel): GridLinesResult {
-  const { south, west, north, east } = bounds;
+  // Guard non-finite bounds before any range loop (tuxlink-u4k2): a non-finite
+  // `max` makes `linesInRange`/`cellStarts` loop forever. Bail to an empty lattice.
+  if (!boundsAreFinite(bounds)) return { lonLines: [], latLines: [], labels: [] };
+
   const step = STEPS[level];
   const prefix = LABEL_PREFIX[level];
+
+  // Clamp the visible window to the Maidenhead world so a multi-world-copy /
+  // padded low-zoom view cannot generate a phantom lattice or an unbounded label
+  // cross-product (tuxlink-u4k2).
+  const west = Math.max(LON_MIN, bounds.west);
+  const east = Math.min(LON_MAX, bounds.east);
+  const south = Math.max(LAT_MIN, bounds.south);
+  const north = Math.min(LAT_MAX, bounds.north);
 
   const lonLines = linesInRange(west, east, step.lon);
   const latLines = linesInRange(south, north, step.lat);
 
-  const labels: GridLabel[] = [];
   const lonCells = cellStarts(west, east, step.lon);
   const latCells = cellStarts(south, north, step.lat);
-  for (const latSW of latCells) {
-    const lat = noNegZero(latSW + step.lat / 2);
-    for (const lonSW of lonCells) {
-      const lon = noNegZero(lonSW + step.lon / 2);
-      labels.push({ lat, lon, text: latLonToGrid(lat, lon).slice(0, prefix) });
+
+  // Each label becomes one DOM marker downstream. Above the cap, render the
+  // lattice lines only — a wide view's labels overlap into unreadable mush
+  // anyway, and the marker storm is what froze WebKitGTK (tuxlink-u4k2).
+  const labels: GridLabel[] = [];
+  if (lonCells.length * latCells.length <= MAX_GRID_LABELS) {
+    for (const latSW of latCells) {
+      const lat = noNegZero(latSW + step.lat / 2);
+      for (const lonSW of lonCells) {
+        const lon = noNegZero(lonSW + step.lon / 2);
+        labels.push({ lat, lon, text: latLonToGrid(lat, lon).slice(0, prefix) });
+      }
     }
   }
 
