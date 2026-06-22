@@ -30,6 +30,36 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.74.0](https://github.com/cameronzucker/tuxlink/compare/v0.73.0...v0.74.0) (2026-06-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **map:** the MapLibre map engine is removed; Tuxlink renders all maps with Leaflet. No user-facing behavior change (faithful 1:1 surface ports).
+
+### Features
+
+* **map:** migrate GridPicker to Leaflet (tuxlink-rqvk) ([3b72c35](https://github.com/cameronzucker/tuxlink/commit/3b72c3543f27c919fe64a3aec1e1acb6f74e0e8c))
+* **map:** migrate LocationMap to Leaflet + add LeafletMaidenheadGridLayer (tuxlink-4hol) ([a04e535](https://github.com/cameronzucker/tuxlink/commit/a04e5354641b22f788b7a8fea6cc7126e690e257))
+* **map:** migrate PositionMapWidget to Leaflet (tuxlink-kkd3) ([d054f2b](https://github.com/cameronzucker/tuxlink/commit/d054f2b1a33fabd113f870a7e8e0515e8dac68cd))
+* **map:** migrate StationFinderMap to Leaflet (tuxlink-mncq) ([6dec24c](https://github.com/cameronzucker/tuxlink/commit/6dec24cc286ed4eadcf88585c16a5272e285cebe))
+
+
+### Bug Fixes
+
+* **aprs:** don't persist an incomplete link on a bare segment switch (tuxlink-614x) ([8ca0a1a](https://github.com/cameronzucker/tuxlink/commit/8ca0a1a6a507050f31f6bc7b5560d51800115170))
+* **config:** bump schema to v3 + additive forward-migration + write-guard parse check (ulrz) ([4df3c33](https://github.com/cameronzucker/tuxlink/commit/4df3c3375e9613f1085aa0273042ce98a793150d))
+* **config:** exempt v1 migration target from the write-guard parse check; fix tests for v3 (ulrz) ([4bcf5ea](https://github.com/cameronzucker/tuxlink/commit/4bcf5eac65c8def696e4cbf3b851faf50ec7caad))
+* **mailbox:** reset attachment image preview on message switch (tuxlink-unq9) ([aa93723](https://github.com/cameronzucker/tuxlink/commit/aa93723c5c3bc1fc1d37043b40e0a40cfbb80d62))
+* **map:** bound Maidenhead grid generation to stop O(N) DOM-label freeze (tuxlink-u4k2) ([774a27c](https://github.com/cameronzucker/tuxlink/commit/774a27c4241831290da640517193e2a0a7d98a98))
+* **map:** Leaflet map hardening before 0.74.0 — follow-cam, teardown crash, line cap (tuxlink-gf5s) ([6adb228](https://github.com/cameronzucker/tuxlink/commit/6adb2282b16bfa82931c535d5c60a4db461ee37b))
+* **wizard:** un-gate in-app account creation; degrade to note+link when keyless (tuxlink-6afw) ([15eb2ea](https://github.com/cameronzucker/tuxlink/commit/15eb2eaa25027bd865e7789b33e89c9877487f41))
+
+
+### Refactors
+
+* **map:** delete the MapLibre substrate; Leaflet is the sole map engine (tuxlink-lru7) ([21dcea9](https://github.com/cameronzucker/tuxlink/commit/21dcea9d5b0cd9d2eaf6e340b8b46df0ee19fba8))
+
 ## [0.73.0](https://github.com/cameronzucker/tuxlink/compare/v0.72.0...v0.73.0) (2026-06-21)
 
 
