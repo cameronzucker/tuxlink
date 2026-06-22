@@ -730,6 +730,8 @@ fn config_skips_pat_mbo_address_on_write() {
         aprs: tuxlink_lib::config::AprsConfig::default(),
         trash_auto_purge: true,
         trash_retention_days: 30,
+        close_to_tray: true,
+        close_prompt_seen: false,
     };
     let json = serde_json::to_string(&cfg).unwrap();
     assert!(
