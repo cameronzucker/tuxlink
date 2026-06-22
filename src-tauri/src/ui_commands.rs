@@ -3403,6 +3403,12 @@ pub struct ConfigViewDto {
     /// Retention window in days before a Trash item is eligible for auto-purge
     /// (tuxlink-wl7n). Default 30. Mirrors `Config.trash_retention_days`.
     pub trash_retention_days: u32,
+    /// Close-to-tray behavior (tuxlink-5rvp / #882). When `true` (the default)
+    /// closing the main window minimizes Tuxlink instead of quitting; `false`
+    /// means the operator opted out (close = quit). Surfaced so the Settings
+    /// "Window" toggle can load the current preference. Mirrors
+    /// `Config.close_to_tray`.
+    pub close_to_tray: bool,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -3424,6 +3430,7 @@ impl From<&config::Config> for ConfigViewDto {
             map_tile_source: c.map_tile_source.clone(),
             trash_auto_purge: c.trash_auto_purge,
             trash_retention_days: c.trash_retention_days,
+            close_to_tray: c.close_to_tray,
         }
     }
 }
@@ -6707,6 +6714,63 @@ pub async fn config_set_trash_auto_purge(
     Ok(())
 }
 
+// ============================================================================
+// tuxlink-5rvp / #882 — close-to-tray prompt (resolve_close_prompt + set_close_to_tray)
+// ============================================================================
+
+/// Record the operator's answer to the one-time close-behavior prompt and then
+/// perform the close they asked for (tuxlink-5rvp / #882).
+///
+/// `quit_on_close == true`  → opt out of minimize-to-tray; persist
+/// `close_to_tray = false`, mark the prompt seen, and `app.exit(0)`.
+/// `quit_on_close == false` → keep the current minimize-to-tray behavior;
+/// persist `close_to_tray = true`, mark the prompt seen, and minimize the main
+/// window (matching `lib.rs`'s `CloseRequested` cfg split — `minimize()` on
+/// Linux where the SNI tray is unreliable, `hide()` elsewhere).
+///
+/// The window-close is performed HERE (not in the frontend) because the
+/// frontend's `CloseRequested` handler called `api.prevent_close()` and emitted
+/// `show-close-prompt` instead of closing; once the operator answers, the close
+/// must be re-issued. Persist-before-act mirrors the other `config_set_*`
+/// commands' read → mutate → `write_config_atomic` ordering.
+#[tauri::command]
+pub async fn resolve_close_prompt(
+    app: tauri::AppHandle,
+    quit_on_close: bool,
+) -> Result<(), UiError> {
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.close_to_tray = !quit_on_close;
+    cfg.close_prompt_seen = true;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+
+    if quit_on_close {
+        app.exit(0);
+    } else if let Some(window) = app.get_webview_window("main") {
+        // Mirror the lib.rs CloseRequested cfg split: minimize on Linux (the SNI
+        // tray is unreliable there, so keep the window in the compositor's list),
+        // hide elsewhere (reliable tray).
+        #[cfg(target_os = "linux")]
+        let _ = window.minimize();
+        #[cfg(not(target_os = "linux"))]
+        let _ = window.hide();
+    }
+    Ok(())
+}
+
+/// Persist the close-to-tray preference from the Settings toggle (tuxlink-5rvp /
+/// #882). Unlike `resolve_close_prompt`, this is the change-it-later path: it
+/// does NOT touch `close_prompt_seen` and does NOT exit or minimize — it only
+/// updates the persisted preference that `lib.rs`'s `CloseRequested` handler
+/// reads on the next window close. Mirrors `config_set_*`'s read → mutate →
+/// `write_config_atomic` shape.
+#[tauri::command]
+pub async fn set_close_to_tray(value: bool) -> Result<(), UiError> {
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.close_to_tray = value;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
 /// Validate a user-supplied CMS host. Returns `Some(message)` for the FIRST rule
 /// violated, `None` when valid. Rules (most-actionable first, mirroring
 /// `config::validate_identity_describe`): nonempty → no whitespace. A hostname's
@@ -9000,6 +9064,8 @@ hw:CARD=Device,DEV=0
             aprs: crate::config::AprsConfig::default(),
             trash_auto_purge: true,
             trash_retention_days: 30,
+            close_to_tray: true,
+            close_prompt_seen: false,
         }
     }
 
@@ -9023,6 +9089,9 @@ hw:CARD=Device,DEV=0
         // tuxlink-bsiy: review_inbound_before_download maps through the From impl
         // (default false on the fixture).
         assert!(!dto.review_inbound_before_download);
+        // tuxlink-5rvp / #882: close_to_tray maps through the From impl
+        // (default true on the fixture).
+        assert!(dto.close_to_tray);
     }
 
     // tuxlink-bsiy: a config with review_inbound_before_download=true maps to a
@@ -9323,6 +9392,8 @@ hw:CARD=Device,DEV=0
             aprs: crate::config::AprsConfig::default(),
             trash_auto_purge: true,
             trash_retention_days: 30,
+            close_to_tray: true,
+            close_prompt_seen: false,
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -10723,6 +10794,8 @@ hw:CARD=Device,DEV=0
             aprs: crate::config::AprsConfig::default(),
             trash_auto_purge: true,
             trash_retention_days: 30,
+            close_to_tray: true,
+            close_prompt_seen: false,
         }
     }
 

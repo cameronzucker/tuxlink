@@ -1126,18 +1126,51 @@ pub fn run() {
             // need real close + unsaved-draft handling, not hide-to-tray).
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    // tuxlink-9zd: on Linux the SNI tray often does not register
-                    // (e.g. Wayland + wf-panel-pi has no SNI host), so hide()
-                    // would strand the window — process alive, no GUI path back.
-                    // minimize() keeps the window in the compositor's window list
-                    // (always recoverable via the panel/window-switcher) while
-                    // still keeping the process + Pat child alive mid-session.
-                    // macOS/Windows have a reliable tray, so hide() there.
-                    #[cfg(target_os = "linux")]
-                    let _ = window.minimize();
-                    #[cfg(not(target_os = "linux"))]
-                    let _ = window.hide();
+                    // tuxlink-5rvp / #882: the close path is now config-aware.
+                    // Read config synchronously (read_config is sync); on Err
+                    // (pre-wizard, unreadable) fall back to the historical
+                    // minimize-to-tray behavior — the safe default that never
+                    // kills the process mid-transfer.
+                    let cfg = crate::config::read_config().ok();
+                    let prompt_seen = cfg.as_ref().map(|c| c.close_prompt_seen).unwrap_or(false);
+                    // On a read error, `close_to_tray` defaults to true (the
+                    // safe minimize behavior) — same fallback as the field's
+                    // serde default.
+                    let close_to_tray = cfg.as_ref().map(|c| c.close_to_tray).unwrap_or(true);
+
+                    if !prompt_seen {
+                        // First-ever close: show the one-time explainer modal.
+                        // Keep the window VISIBLE (do NOT minimize) so the user
+                        // sees the dialog; the frontend re-issues the close via
+                        // resolve_close_prompt once they answer.
+                        api.prevent_close();
+                        use tauri::Emitter as _;
+                        let _ = window.emit("show-close-prompt", ());
+                    } else if close_to_tray {
+                        // The operator kept the default. tuxlink-9zd: on Linux the
+                        // SNI tray often does not register (e.g. Wayland +
+                        // wf-panel-pi has no SNI host), so hide() would strand the
+                        // window — process alive, no GUI path back. minimize()
+                        // keeps the window in the compositor's window list (always
+                        // recoverable via the panel/window-switcher) while keeping
+                        // the process alive mid-session. macOS/Windows have a
+                        // reliable tray, so hide() there.
+                        api.prevent_close();
+                        #[cfg(target_os = "linux")]
+                        let _ = window.minimize();
+                        #[cfg(not(target_os = "linux"))]
+                        let _ = window.hide();
+                    } else {
+                        // The operator opted out (close = quit). Exit explicitly
+                        // via the canonical app.exit(0) path (the SAME path as
+                        // File→Quit / tray Quit / resolve_close_prompt) rather
+                        // than relying on implicit last-window-close: with a tray
+                        // icon present and no RunEvent::ExitRequested handler,
+                        // implicit exit is fragile and a missed exit would strand
+                        // a GUI-less process. exit(0) is unambiguous.
+                        use tauri::Manager as _;
+                        window.app_handle().exit(0);
+                    }
                 }
             }
         })
@@ -1246,6 +1279,8 @@ pub fn run() {
             crate::theme_state::theme_broadcast_scheme, // tuxlink-0gsy (spec §8.2)
             crate::search::commands::docs_search,       // tuxlink-0gsy (spec §9.3)
             crate::ui_commands::app_quit,             // tuxlink-ng3 (HTML File→Quit / Ctrl+Q)
+            crate::ui_commands::resolve_close_prompt, // tuxlink-5rvp / #882 (one-time close prompt)
+            crate::ui_commands::set_close_to_tray,    // tuxlink-5rvp / #882 (Settings toggle)
             crate::ui_commands::packet_config_get,    // tuxlink-7fr (packet config read)
             crate::ui_commands::packet_config_set,    // tuxlink-7fr (packet config write)
             crate::ui_commands::aprs_config_get,      // tuxlink-2f2n (APRS config read)

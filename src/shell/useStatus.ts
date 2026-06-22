@@ -64,6 +64,11 @@ export interface ConfigViewDto {
   /** Retention window in days before a Trash item is eligible for auto-purge
    * (tuxlink-wl7n). Default 30. */
   trash_retention_days: number;
+  /** Close-to-tray behavior (tuxlink-5rvp / #882). When true (the default)
+   * closing the main window minimizes Tuxlink instead of quitting; when false
+   * the operator opted out and the close button quits. The Settings "Window"
+   * toggle reads this and persists changes via set_close_to_tray. */
+  close_to_tray: boolean;
 }
 
 /** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-va1i: amended for the

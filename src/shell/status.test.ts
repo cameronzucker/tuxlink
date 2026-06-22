@@ -252,6 +252,7 @@ describe('ConfigViewDto shape', () => {
       review_inbound_before_download: false,
       trash_auto_purge: true,
       trash_retention_days: 30,
+      close_to_tray: true,
     };
     expect(config.callsign).toBe('W4PHS');
     expect(config.transport).toBe('CmsSsl');
@@ -272,6 +273,7 @@ describe('ConfigViewDto shape', () => {
       review_inbound_before_download: false,
       trash_auto_purge: true,
       trash_retention_days: 30,
+      close_to_tray: true,
     };
     expect(config.callsign).toBeNull();
     expect(config.identifier).toBe('OFFLINE-STATION');
@@ -318,6 +320,7 @@ describe('useStatusData — position_source mapping (tuxlink-686)', () => {
       review_inbound_before_download: false,
       trash_auto_purge: true,
       trash_retention_days: 30,
+      close_to_tray: true,
     };
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return dto;
@@ -352,6 +355,7 @@ describe('useStatusData — position_source mapping (tuxlink-686)', () => {
       review_inbound_before_download: false,
       trash_auto_purge: true,
       trash_retention_days: 30,
+      close_to_tray: true,
     };
     const positionDto: PositionStatusDto = {
       gps_ready: true, // ← but a fresh fix exists
@@ -393,6 +397,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       review_inbound_before_download: false,
       trash_auto_purge: true,
       trash_retention_days: 30,
+      close_to_tray: true,
     };
     const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87', ui_grid: 'CN87' };
 
@@ -444,6 +449,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       review_inbound_before_download: false,
       trash_auto_purge: true,
       trash_retention_days: 30,
+      close_to_tray: true,
     };
     // Live position_status returns ui_grid = CN87 (precision-reduced live fix).
     const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87', ui_grid: 'CN87' };
@@ -475,6 +481,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       review_inbound_before_download: false,
       trash_auto_purge: true,
       trash_retention_days: 30,
+      close_to_tray: true,
     };
     // Empty ui_grid + empty broadcast_grid = no position available.
     const positionDto: PositionStatusDto = { gps_ready: false, broadcast_grid: '', ui_grid: '' };
@@ -513,6 +520,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       review_inbound_before_download: false,
       trash_auto_purge: true,
       trash_retention_days: 30,
+      close_to_tray: true,
     };
     // The divergent case: ui_grid is the live 6-char fix; broadcast_grid is the
     // config_grid on-air fallback under LocalUiOnly.

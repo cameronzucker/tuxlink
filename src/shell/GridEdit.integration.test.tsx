@@ -81,6 +81,7 @@ test('integration §6.3: State 1 → click source chip → State 4 → Set manua
     review_inbound_before_download: false,
     trash_auto_purge: true,
     trash_retention_days: 30,
+    close_to_tray: true,
   });
   const positionDto = (): PositionStatusDto => ({
     gps_ready: false,

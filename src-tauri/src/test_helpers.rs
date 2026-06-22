@@ -46,5 +46,7 @@ pub fn native_test_config() -> Config {
         aprs: crate::config::AprsConfig::default(),
         trash_auto_purge: true,
         trash_retention_days: 30,
+        close_to_tray: true,
+        close_prompt_seen: false,
     }
 }

@@ -41,6 +41,7 @@ import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
 import type { ConnectionKey } from '../mailbox/FolderSidebar';
 import { DashboardRibbon } from './DashboardRibbon';
+import { CloseBehaviorPrompt } from './CloseBehaviorPrompt';
 import { useIdentityList, useActiveIdentity, useIdentitySwitch } from './useIdentities';
 import { StatusBar } from './StatusBar';
 import { useStatusData, type StatusTone } from './useStatus';
@@ -2013,6 +2014,11 @@ export function AppShell() {
           <VerifyCmsDialog open={true} onClose={() => setVerifyCmsOpen(false)} />
         </Suspense>
       )}
+
+      {/* tuxlink-5rvp / #882: one-time close-behavior explainer. Self-manages
+          its open state via the `show-close-prompt` backend event (no parent
+          state flag), so it is always mounted. */}
+      <CloseBehaviorPrompt />
 
       {catalogBuilderOpen && (
         <Suspense fallback={null}>
