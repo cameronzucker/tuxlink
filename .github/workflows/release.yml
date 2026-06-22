@@ -48,7 +48,7 @@ jobs:
     # clean apt refusal on Bookworm (via the libc6 (>= 2.39) Depends) rather than
     # a silently broken install.
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Harden apt against mirror flakiness
         run: echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99retries

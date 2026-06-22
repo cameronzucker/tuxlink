@@ -52,7 +52,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Branch on the input, not github.event_name: when release.yml is run
       # manually (workflow_dispatch) and CALLS this workflow, the event name is
