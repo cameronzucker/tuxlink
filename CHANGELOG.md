@@ -30,6 +30,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.75.1](https://github.com/cameronzucker/tuxlink/compare/v0.75.0...v0.75.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **ardop:** bundle ardopcf 2.0.3.2.1 (implements CODEC) instead of 1.0.4.1.3 (tuxlink-y061) ([e6a6535](https://github.com/cameronzucker/tuxlink/commit/e6a65359dd96856e94c72cdfdfb6f22e93c9b9ec))
+
 ## [0.75.0](https://github.com/cameronzucker/tuxlink/compare/v0.74.1...v0.75.0) (2026-06-23)
 
 
