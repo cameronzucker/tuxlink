@@ -152,31 +152,39 @@ jobs:
           install -m 0755 /tmp/pmtiles "src-tauri/binaries/pmtiles-${TRIPLE}"
           echo "Staged pmtiles-${TRIPLE} ($(du -h "src-tauri/binaries/pmtiles-${TRIPLE}" | cut -f1))"
 
-      # tuxlink-vbpy: bundle the ardopcf HF modem as a Tauri sidecar (externalBin)
+      # tuxlink-4zs4: bundle the ardopcf HF modem as a Tauri sidecar (externalBin)
       # so ARDOP HF works from a packaged install with NO separate ardopcf setup.
-      # Downloaded per-arch from the upstream release (same Option-A pattern as
-      # go-pmtiles); never committed. The app resolves it adjacent to the main
-      # binary (current_exe()/ardopcf — see modem_commands::resolve_ardop_binary).
-      # ardopcf is GPL-3; this is the UNMODIFIED upstream release binary, source at
-      # https://github.com/pflarue/ardop (mere aggregation — separate process).
-      - name: Stage ardopcf sidecar (ARDOP HF modem)
+      # BUILT FROM PINNED UPSTREAM SOURCE (not a release asset): tuxlink's modem
+      # init requires three ardopcf features that NO tagged release carries
+      # together — the CODEC host command (absent in 1.0.4.1.3), the -G/--webgui
+      # flag (removed in 2.0.3.2.1 → ardopcf prints usage and exits → bind
+      # timeout), and -p/--ptt. Only the develop line has all three, so we pin a
+      # develop commit and compile it per-arch (native make on the matrix runner).
+      # The app resolves it adjacent to the main binary (current_exe()/ardopcf —
+      # see modem_commands::resolve_ardop_binary). ardopcf is GPL-3; this compiles
+      # UNMODIFIED upstream source (mere aggregation — separate process).
+      - name: Stage ardopcf sidecar (ARDOP HF modem, built from pinned source)
         run: |
           set -euxo pipefail
-          # 2.0.3.2.1 (NOT the 1.0.4.1.3 release): tuxlink's init_tnc sends
-          # `CODEC TRUE`, which 1.0.4.1.3 lacks ("FAULT CMD CODEC not recognized")
-          # but 2.0.3.2.1 implements. Full init replay is identical to the develop
-          # build validated on-air (tuxlink-y061).
-          AC_VER=2.0.3.2.1
-          case "${{ matrix.arch }}" in
-            amd64) AC_ASSET=ardopcf_amd64_Linux_64 ;;
-            arm64) AC_ASSET=ardopcf_arm_Linux_64 ;;
-            *) echo "unknown arch ${{ matrix.arch }}"; exit 1 ;;
-          esac
+          ARDOP_REPO=https://github.com/pflarue/ardop
+          # develop @ cb2c4c1 (version 1.0.4.1.3_develop, 2025-08-14): has CODEC +
+          # --webgui + --ptt. Validated locally against tuxlink's exact 7-arg spawn
+          # (all 3 ports bind, full init handshake acks) — tuxlink-4zs4.
+          ARDOP_PIN=cb2c4c1eaf906ec5914514d83aef903f4b981b43
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev
+          rm -rf /tmp/ardop-src
+          git clone --filter=blob:none "$ARDOP_REPO" /tmp/ardop-src
+          git -C /tmp/ardop-src checkout --detach "$ARDOP_PIN"
+          make -C /tmp/ardop-src
+          test -x /tmp/ardop-src/build/linux/ardopcf
+          # Feature guard: fail loudly if the pin ever loses the WebGUI flag (the
+          # exact regression that broke the 2.0.3.2.1 bundle).
+          /tmp/ardop-src/build/linux/ardopcf -h 2>&1 | grep -q -- '--webgui'
           TRIPLE="$(rustc -vV | awk '/^host:/{print $2}')"
           mkdir -p src-tauri/binaries
-          curl -fSL "https://github.com/pflarue/ardop/releases/download/${AC_VER}/${AC_ASSET}" -o /tmp/ardopcf
-          install -m 0755 /tmp/ardopcf "src-tauri/binaries/ardopcf-${TRIPLE}"
-          echo "Staged ardopcf-${TRIPLE} ($(du -h "src-tauri/binaries/ardopcf-${TRIPLE}" | cut -f1))"
+          install -m 0755 /tmp/ardop-src/build/linux/ardopcf "src-tauri/binaries/ardopcf-${TRIPLE}"
+          echo "Staged ardopcf-${TRIPLE} (built ${ARDOP_PIN}, $(du -h "src-tauri/binaries/ardopcf-${TRIPLE}" | cut -f1))"
 
       # Inject externalBin + the itshfbc/basemap resource globs — CI-ONLY, never
       # committed. tauri-build validates externalBin existence at cargo-build time,

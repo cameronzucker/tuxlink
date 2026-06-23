@@ -124,25 +124,31 @@ jobs:
           tar xzf /tmp/gp.tgz -C /tmp pmtiles
           install -m 0755 /tmp/pmtiles "src-tauri/binaries/pmtiles-${TRIPLE}"
 
-      # tuxlink-vbpy: bundle the ardopcf HF modem as a Tauri sidecar so ARDOP HF
-      # works from a packaged install with no separate ardopcf setup. Per-arch
-      # upstream release binary (GPL-3, unmodified; source github.com/pflarue/ardop).
-      - name: Stage ardopcf sidecar (ARDOP HF modem)
+      # tuxlink-4zs4: bundle the ardopcf HF modem as a Tauri sidecar, BUILT FROM
+      # PINNED UPSTREAM SOURCE. tuxlink's modem init needs CODEC + -G/--webgui +
+      # -p, which no tagged release carries together (1.0.4.1.3 lacks CODEC;
+      # 2.0.3.2.1 removed --webgui). Only the develop line has all three, so we
+      # pin a develop commit and compile per-arch. GPL-3, unmodified upstream
+      # source; github.com/pflarue/ardop.
+      - name: Stage ardopcf sidecar (ARDOP HF modem, built from pinned source)
         run: |
           set -euxo pipefail
-          # 2.0.3.2.1 (NOT 1.0.4.1.3): tuxlink init sends `CODEC TRUE` which the
-          # 1.0.4.1.3 release lacks; 2.0.3.2.1 implements it (tuxlink-y061).
-          AC_VER=2.0.3.2.1
-          case "${{ matrix.arch }}" in
-            amd64) AC_ASSET=ardopcf_amd64_Linux_64 ;;
-            arm64) AC_ASSET=ardopcf_arm_Linux_64 ;;
-            *) echo "unknown arch ${{ matrix.arch }}"; exit 1 ;;
-          esac
+          ARDOP_REPO=https://github.com/pflarue/ardop
+          # develop @ cb2c4c1 (1.0.4.1.3_develop): CODEC + --webgui + --ptt.
+          # Validated locally vs tuxlink's exact 7-arg spawn (tuxlink-4zs4).
+          ARDOP_PIN=cb2c4c1eaf906ec5914514d83aef903f4b981b43
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev
+          rm -rf /tmp/ardop-src
+          git clone --filter=blob:none "$ARDOP_REPO" /tmp/ardop-src
+          git -C /tmp/ardop-src checkout --detach "$ARDOP_PIN"
+          make -C /tmp/ardop-src
+          test -x /tmp/ardop-src/build/linux/ardopcf
+          /tmp/ardop-src/build/linux/ardopcf -h 2>&1 | grep -q -- '--webgui'
           TRIPLE="$(rustc -vV | awk '/^host:/{print $2}')"
           mkdir -p src-tauri/binaries
-          curl -fSL "https://github.com/pflarue/ardop/releases/download/${AC_VER}/${AC_ASSET}" -o /tmp/ardopcf
-          install -m 0755 /tmp/ardopcf "src-tauri/binaries/ardopcf-${TRIPLE}"
-          echo "Staged ardopcf-${TRIPLE} ($(du -h "src-tauri/binaries/ardopcf-${TRIPLE}" | cut -f1))"
+          install -m 0755 /tmp/ardop-src/build/linux/ardopcf "src-tauri/binaries/ardopcf-${TRIPLE}"
+          echo "Staged ardopcf-${TRIPLE} (built ${ARDOP_PIN}, $(du -h "src-tauri/binaries/ardopcf-${TRIPLE}" | cut -f1))"
 
       # Same externalBin + resources inject as release.yml, PLUS a low-floor
       # Depends override: libc6 (>= 2.35) for the jammy build, and drop
