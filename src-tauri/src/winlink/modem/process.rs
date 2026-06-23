@@ -19,8 +19,10 @@
 //! rest of the `winlink::modem` subtree (ADR 0015).
 
 use std::io;
+use std::io::BufRead;
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use nix::sys::signal::{kill, Signal};
@@ -62,11 +64,53 @@ pub struct ManagedModem {
     exit_status: Option<ExitStatus>,
 }
 
+/// Drain a child stream line-by-line into the structured log on a detached
+/// thread (tuxlink-c119). Empty lines and harmless Jack/PipeWire probe spam are
+/// dropped; everything else logs at `info` under the `ardopcf` target so the
+/// modem's diagnostics are greppable in the session log. The thread ends when
+/// the stream reaches EOF (child exit).
+fn spawn_log_forwarder<R: io::Read + Send + 'static>(stream: R, pid: u32, label: &'static str) {
+    thread::spawn(move || {
+        let reader = io::BufReader::new(stream);
+        for line in reader.lines() {
+            let Ok(line) = line else { break };
+            let trimmed = line.trim();
+            if trimmed.is_empty() || is_modem_log_noise(trimmed) {
+                continue;
+            }
+            tracing::info!(
+                target: "tuxlink::winlink::modem::ardopcf",
+                pid,
+                stream = label,
+                "{}",
+                trimmed,
+            );
+        }
+    });
+}
+
+/// Harmless Jack/PipeWire probe failures ardopcf emits before falling back to
+/// ALSA — pure startup noise, never operationally relevant. Filtered so they
+/// don't bury the useful lines.
+fn is_modem_log_noise(line: &str) -> bool {
+    line.contains("jack server")
+        || line.contains("JackShm")
+        || line.contains("Cannot connect to server socket")
+        || line.contains("Cannot connect to server request channel")
+}
+
 impl ManagedModem {
-    /// Spawn `program` with `args`, routing stdin/stdout/stderr to `/dev/null`.
+    /// Spawn `program` with `args`, capturing stdout/stderr into the structured
+    /// log and routing stdin to `/dev/null`.
     ///
     /// Returns a `ManagedModem` that owns the child process. The process is
-    /// running on successful return.
+    /// running on successful return. The child's stdout and stderr are piped
+    /// and drained by detached forwarder threads (tuxlink-c119): the modem's
+    /// own diagnostics — the PTT method, audio-device open/errors, frame
+    /// decodes, `[SendARQConnectRequest] TARGET=…` — land in the tuxlink log
+    /// instead of `/dev/null`, and draining the pipes keeps a verbose child
+    /// from blocking on a full pipe buffer. The full `args` vector is logged at
+    /// spawn so the resolved PTT/audio devices and ports are always visible.
     ///
     /// # RADIO-1
     ///
@@ -76,14 +120,15 @@ impl ManagedModem {
         tracing::info!(
             target: "tuxlink::winlink::modem::process",
             program,
+            args = ?args,
             arg_count = args.len(),
             "modem process spawning",
         );
-        let child = Command::new(program)
+        let mut child = Command::new(program)
             .args(args)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
                 tracing::error!(
@@ -95,10 +140,24 @@ impl ManagedModem {
                 ProcessError::Spawn(e)
             })?;
 
+        let pid = child.id();
+
+        // Forward the modem's stdout/stderr into the structured log so its
+        // operational diagnostics are visible (tuxlink-c119). Detached threads:
+        // each reads until EOF, which arrives when the child exits (including
+        // after stop()'s SIGINT/SIGKILL), then terminates on its own — so they
+        // need no lifecycle management on `ManagedModem`.
+        if let Some(out) = child.stdout.take() {
+            spawn_log_forwarder(out, pid, "stdout");
+        }
+        if let Some(err) = child.stderr.take() {
+            spawn_log_forwarder(err, pid, "stderr");
+        }
+
         tracing::info!(
             target: "tuxlink::winlink::modem::process",
             program,
-            pid = child.id(),
+            pid,
             "modem process spawned",
         );
 
@@ -500,5 +559,57 @@ mod tests {
 
         // Cleanup.
         let _ = fs::remove_file(&tmp);
+    }
+
+    /// tuxlink-c119: a verbose modem must not deadlock on a full stdout pipe.
+    /// The forwarder threads drain stdout/stderr; without them a child that
+    /// writes more than the ~64 KiB pipe buffer blocks on `write()` forever and
+    /// never exits. Flood well past the buffer, then require the child to run
+    /// to completion on its own.
+    #[test]
+    fn high_volume_stdout_does_not_deadlock() {
+        let mut modem = sh(
+            "i=0; while [ $i -lt 8000 ]; do \
+             echo \"modem stdout flood line $i ----------------------------------------\"; \
+             i=$((i+1)); done",
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while modem.is_running() {
+            assert!(
+                Instant::now() < deadline,
+                "child blocked on a full stdout pipe — forwarder is not draining it"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(
+            modem.exit_status().and_then(|s| s.code()),
+            Some(0),
+            "flood stub should run to completion and exit 0"
+        );
+    }
+
+    /// tuxlink-c119: the noise filter drops Jack/PipeWire probe spam but keeps
+    /// the operationally useful lines (PTT target, audio errors, bind status).
+    #[test]
+    fn modem_log_noise_filter_drops_jack_keeps_diagnostics() {
+        assert!(is_modem_log_noise("jack server is not running or cannot be started"));
+        assert!(is_modem_log_noise(
+            "JackShmReadWritePtr::~JackShmReadWritePtr - Init not done for -1, skipping unlock"
+        ));
+        assert!(is_modem_log_noise(
+            "Cannot connect to server socket err = No such file or directory"
+        ));
+        assert!(is_modem_log_noise("Cannot connect to server request channel"));
+        // The lines that mattered all session — must survive the filter.
+        assert!(!is_modem_log_noise(
+            "[SendARQConnectRequest] MYCALL=N7CPZ  TARGET=N0DAJ bytPendingSessionID=ae"
+        ));
+        assert!(!is_modem_log_noise(
+            "ERROR: CaptureDevice=plughw:CARD=Device,DEV=0 could not be opened as configured."
+        ));
+        assert!(!is_modem_log_noise(
+            "ardopcf listening for host connection on host_port 8515"
+        ));
+        assert!(!is_modem_log_noise(""));
     }
 }
