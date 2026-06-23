@@ -30,6 +30,34 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.75.0](https://github.com/cameronzucker/tuxlink/compare/v0.74.1...v0.75.0) (2026-06-23)
+
+
+### Features
+
+* **ardop:** bundle ardopcf as a Tauri sidecar so ARDOP HF works from a packaged install (tuxlink-vbpy) ([ac3dc56](https://github.com/cameronzucker/tuxlink/commit/ac3dc56403d5fcca139135be52ef472b378826e5))
+* **cms:** &gt;12-char password truncation notice + flag-gated unredacted secure-login wire log (tuxlink-wg2p) ([44db1cd](https://github.com/cameronzucker/tuxlink/commit/44db1cd87de106c7eeac6b544f44dd8ce1a9f252))
+* **shell:** one-time close-to-tray prompt + Settings toggle (tuxlink-5rvp / GH [#882](https://github.com/cameronzucker/tuxlink/issues/882)) ([bc64920](https://github.com/cameronzucker/tuxlink/commit/bc64920dd457412cf08cd949e00ed5dc8e38be30))
+* **winlink-map:** contacts_recent_gateways command (tuxlink-s1o1) ([01f44f7](https://github.com/cameronzucker/tuxlink/commit/01f44f78679df593a2740560050da64698ae2969))
+* **winlink-map:** mount Winlink layer, toggle gates diamonds+arc, hover history (tuxlink-s1o1) ([55f70f9](https://github.com/cameronzucker/tuxlink/commit/55f70f985c02a6bf255ec55fae3ac4f8c5ad3cd7))
+* **winlink-map:** pure truthful-now link animation grammar (tuxlink-s1o1) ([084698f](https://github.com/cameronzucker/tuxlink/commit/084698f25474d63b5dd454b016460bf92a2fbc39))
+* **winlink-map:** pure WinlinkPin tier/position mapping (tuxlink-s1o1) ([79ae5dc](https://github.com/cameronzucker/tuxlink/commit/79ae5dc4069252ab83c0a099e3149c027be2ad03))
+* **winlink-map:** recent_gateways store query (tuxlink-s1o1) ([bf03b3c](https://github.com/cameronzucker/tuxlink/commit/bf03b3cea026f040b30e4b929a069214846a4589))
+* **winlink-map:** useRecentGateways hook + RecentGatewayPin type (tuxlink-s1o1) ([cc1e781](https://github.com/cameronzucker/tuxlink/commit/cc1e781281b5510ab3ce54c6219514a051d2cd90))
+* **winlink-map:** WinlinkGatewayLayer diamond markers (CSP-safe) (tuxlink-s1o1) ([786f7a7](https://github.com/cameronzucker/tuxlink/commit/786f7a78d6b7550f0db3f9b6e17f6b3f264a469d))
+* **winlink-map:** WinlinkLinkLayer animated truthful-now arc (tuxlink-s1o1) ([21ec691](https://github.com/cameronzucker/tuxlink/commit/21ec691e47e6b1f9b781a231face4b536148079e))
+
+
+### Bug Fixes
+
+* **ardop:** resolver opts into the bundled sidecar only for the exact default name (Codex P2) ([b214ebe](https://github.com/cameronzucker/tuxlink/commit/b214ebecd723419c6f079e1f8b2a863b79e8e3ae))
+* **cms:** reword truncation notice + add it to the change-flow current-password field (tuxlink-wg2p) ([1fc487e](https://github.com/cameronzucker/tuxlink/commit/1fc487ebb7e08034ef8526244e2f4b5bc05498a2))
+* **logging:** show raw B2F wire dialogue in the operator's live session log (tuxlink-6726) ([5751751](https://github.com/cameronzucker/tuxlink/commit/5751751397e0c417ebced79655d72ae11909b8b5))
+* **shell:** address Codex review of the close-to-tray prompt (tuxlink-5rvp / [#882](https://github.com/cameronzucker/tuxlink/issues/882)) ([93eb432](https://github.com/cameronzucker/tuxlink/commit/93eb432aa3f51edde0581acb1148d9b5c7efc576))
+* **shell:** pin .layout-b grid column to window width — real WebKitGTK fix for clipped window controls (tuxlink-5x21 / GH [#881](https://github.com/cameronzucker/tuxlink/issues/881)) ([7e30170](https://github.com/cameronzucker/tuxlink/commit/7e30170648f0e1e24898eafa87476d374c75d08b))
+* **test:** add close_to_tray/close_prompt_seen to the two integration-test Config literals (tuxlink-5rvp / [#882](https://github.com/cameronzucker/tuxlink/issues/882)) ([318e468](https://github.com/cameronzucker/tuxlink/commit/318e46842c09b0d8270aa80dbb4b5d049670967f))
+* **vite:** pre-bundle map lazy-route deps via optimizeDeps.include — stop the first-map-open dev reload crash (tuxlink-37ln) ([13726df](https://github.com/cameronzucker/tuxlink/commit/13726df56ec5e1874108ed1fff290675d412cd42))
+
 ## [0.74.1](https://github.com/cameronzucker/tuxlink/compare/v0.74.0...v0.74.1) (2026-06-22)
 
 
