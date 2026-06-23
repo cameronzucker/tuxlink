@@ -46,7 +46,7 @@ jobs:
           - { runner: ubuntu-22.04-arm, arch: arm64 }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
         # heif OFF → no libheif-dev/libde265-dev; webp is vendored (libwebp-sys
@@ -200,7 +200,7 @@ jobs:
           - { runner: ubuntu-22.04-arm, arch: arm64 }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download the ECT .deb
         uses: actions/download-artifact@v8

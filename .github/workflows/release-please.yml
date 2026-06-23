@@ -12,7 +12,7 @@ jobs:
   release-please:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Release freeze guard (tuxlink-561d): when `.github/RELEASE_FREEZE`
       # exists, skip release-please entirely so merges to main during an

@@ -34,7 +34,7 @@ jobs:
     # rare cold-cache run headroom for the re-download plus a cold compile.
     timeout-minutes: 55
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Harden apt against mirror flakiness
         run: echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99retries
