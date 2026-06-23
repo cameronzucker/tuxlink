@@ -63,6 +63,34 @@ pub(crate) fn ardop_wire_sink(app: &AppHandle) -> crate::winlink_backend::WireSi
     })
 }
 
+/// Resolve the ardopcf modem binary to spawn (tuxlink-vbpy).
+///
+/// The shipped `.deb` bundles `ardopcf` as a Tauri `externalBin` sidecar, which
+/// Tauri places next to the main executable with the target-triple suffix
+/// stripped (`<exe-dir>/ardopcf`). When the operator has NOT set an explicit
+/// path — i.e. `configured` is a bare program name with no path separator (the
+/// `ArdopUiConfig::default` value `"ardopcf"`) — prefer that bundled sibling so a
+/// packaged install works with zero setup and no `$PATH`/config surgery.
+///
+/// Only the EXACT default name `"ardopcf"` opts into the bundled sidecar. Any
+/// other value — an explicit path (`/opt/ardopcf`) OR a custom bare program name
+/// (`ardopcf-dev`, `ardopcf-git`) — is a deliberate operator choice and is
+/// honored verbatim (`Command` resolves a bare name via `$PATH`). In an unbundled
+/// dev run (no sibling present) the default also falls back to `"ardopcf"` on
+/// `$PATH`, so `tauri dev` still works for anyone with ardopcf installed.
+fn resolve_ardop_binary(configured: &str) -> PathBuf {
+    if configured == "ardopcf" {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(sibling) = exe.parent().map(|dir| dir.join("ardopcf")) {
+                if sibling.exists() {
+                    return sibling;
+                }
+            }
+        }
+    }
+    PathBuf::from(configured)
+}
+
 /// Return the persisted ARDOP configuration, or the struct default if nothing
 /// has been written yet (first run) or the config file is absent.
 #[tauri::command]
@@ -269,7 +297,7 @@ where
     let extra_args = build_ardop_extra_args(ardop_ui);
 
     let ardop_cfg = ArdopConfig {
-        binary: PathBuf::from(&ardop_ui.binary),
+        binary: resolve_ardop_binary(&ardop_ui.binary),
         extra_args,
         cmd_port: ardop_ui.cmd_port,
         // ardopcf convention: data_port = cmd_port + 1 (8516 for default 8515).
@@ -394,7 +422,7 @@ where
 {
     let extra_args = build_ardop_extra_args(ardop_ui);
     let ardop_cfg = ArdopConfig {
-        binary: PathBuf::from(&ardop_ui.binary),
+        binary: resolve_ardop_binary(&ardop_ui.binary),
         extra_args,
         cmd_port: ardop_ui.cmd_port,
         data_port: ardop_ui.cmd_port.saturating_add(1),
@@ -497,7 +525,7 @@ where
 {
     let extra_args = build_ardop_extra_args(ardop_ui);
     let ardop_cfg = ArdopConfig {
-        binary: PathBuf::from(&ardop_ui.binary),
+        binary: resolve_ardop_binary(&ardop_ui.binary),
         extra_args,
         cmd_port: ardop_ui.cmd_port,
         data_port: ardop_ui.cmd_port.saturating_add(1),
@@ -1328,6 +1356,35 @@ mod tests {
         // the next test (each test fully restores its env in a deferred-style
         // tail). Recover and proceed.
         LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn resolve_ardop_binary_honors_explicit_paths_and_defaults_to_name() {
+        // An explicit path (contains a separator) is an operator override and is
+        // returned verbatim — even when the file name is not `ardopcf`.
+        assert_eq!(
+            resolve_ardop_binary("/opt/ardop/ardopcf"),
+            std::path::PathBuf::from("/opt/ardop/ardopcf")
+        );
+        assert_eq!(
+            resolve_ardop_binary("/home/op/custom-modem"),
+            std::path::PathBuf::from("/home/op/custom-modem")
+        );
+        // A CUSTOM bare name is an operator choice too — honored verbatim (PATH-
+        // resolved by Command), NOT silently replaced by the bundled sidecar.
+        assert_eq!(
+            resolve_ardop_binary("ardopcf-dev"),
+            std::path::PathBuf::from("ardopcf-dev")
+        );
+        // A bare program name resolves to either the bundled sidecar sibling (if
+        // present next to the test exe) or the bare name for PATH fallback — both
+        // end in `ardopcf`, and neither path should panic.
+        let resolved = resolve_ardop_binary("ardopcf");
+        assert_eq!(
+            resolved.file_name().and_then(|s| s.to_str()),
+            Some("ardopcf"),
+            "bare default must resolve to an ardopcf path, got {resolved:?}"
+        );
     }
 
     #[test]

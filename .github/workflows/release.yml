@@ -152,6 +152,28 @@ jobs:
           install -m 0755 /tmp/pmtiles "src-tauri/binaries/pmtiles-${TRIPLE}"
           echo "Staged pmtiles-${TRIPLE} ($(du -h "src-tauri/binaries/pmtiles-${TRIPLE}" | cut -f1))"
 
+      # tuxlink-vbpy: bundle the ardopcf HF modem as a Tauri sidecar (externalBin)
+      # so ARDOP HF works from a packaged install with NO separate ardopcf setup.
+      # Downloaded per-arch from the upstream release (same Option-A pattern as
+      # go-pmtiles); never committed. The app resolves it adjacent to the main
+      # binary (current_exe()/ardopcf — see modem_commands::resolve_ardop_binary).
+      # ardopcf is GPL-3; this is the UNMODIFIED upstream release binary, source at
+      # https://github.com/pflarue/ardop (mere aggregation — separate process).
+      - name: Stage ardopcf sidecar (ARDOP HF modem)
+        run: |
+          set -euxo pipefail
+          AC_VER=1.0.4.1.3
+          case "${{ matrix.arch }}" in
+            amd64) AC_ASSET=ardopcf_amd64_Linux_64 ;;
+            arm64) AC_ASSET=ardopcf_arm_Linux_64 ;;
+            *) echo "unknown arch ${{ matrix.arch }}"; exit 1 ;;
+          esac
+          TRIPLE="$(rustc -vV | awk '/^host:/{print $2}')"
+          mkdir -p src-tauri/binaries
+          curl -fSL "https://github.com/pflarue/ardop/releases/download/${AC_VER}/${AC_ASSET}" -o /tmp/ardopcf
+          install -m 0755 /tmp/ardopcf "src-tauri/binaries/ardopcf-${TRIPLE}"
+          echo "Staged ardopcf-${TRIPLE} ($(du -h "src-tauri/binaries/ardopcf-${TRIPLE}" | cut -f1))"
+
       # Inject externalBin + the itshfbc/basemap resource globs — CI-ONLY, never
       # committed. tauri-build validates externalBin existence at cargo-build time,
       # so these entries in the committed tauri.conf.json would break the `verify`
@@ -159,11 +181,11 @@ jobs:
       # REPLACED wholesale here, so it MUST re-state every committed glob
       # (resources/basemap/**/* carries the bundled world overview + the region
       # manifest — omitting it ships a blank map). See docs/reference/voacapl-ci-bundling.md.
-      - name: Inject voacapl + go-pmtiles bundle config (CI-only)
+      - name: Inject voacapl + go-pmtiles + ardopcf bundle config (CI-only)
         run: |
           set -euxo pipefail
           cd src-tauri
-          jq '.bundle.externalBin = ["binaries/voacapl", "binaries/pmtiles"]
+          jq '.bundle.externalBin = ["binaries/voacapl", "binaries/pmtiles", "binaries/ardopcf"]
               | .bundle.resources = ["resources/wle-forms/**/*", "resources/itshfbc/**/*", "resources/propagation/ssn-forecast.json", "resources/basemap/**/*"]' \
              tauri.conf.json > tauri.conf.json.tmp
           mv tauri.conf.json.tmp tauri.conf.json
@@ -178,7 +200,7 @@ jobs:
       # Production-mount-path check: the .deb must place voacapl ADJACENT to the
       # main binary (current_exe()/voacapl) and itshfbc under the Resource dir,
       # or prediction silently degrades to Unavailable in the installed app.
-      - name: Verify voacapl + go-pmtiles + itshfbc + basemap bundled where the app resolves them
+      - name: Verify voacapl + go-pmtiles + ardopcf + itshfbc + basemap bundled where the app resolves them
         run: |
           set -euxo pipefail
           deb="$(find src-tauri/target/release/bundle/deb -name '*.deb' | head -1)"
@@ -189,10 +211,11 @@ jobs:
           test -n "$main"
           test -x "$(dirname "$main")/voacapl"   # sidecar adjacent to the main binary
           test -x "$(dirname "$main")/pmtiles"   # go-pmtiles region-pack extractor, adjacent (tuxlink-ndi4)
+          test -x "$(dirname "$main")/ardopcf"   # ARDOP HF modem, adjacent (tuxlink-vbpy)
           find /tmp/deb-extract -path '*resources/itshfbc/database/version.w32' | grep -q version.w32
           # tuxlink-ndi4: the bundled world overview must ship, or the map is blank.
           find /tmp/deb-extract -path '*resources/basemap/world-z0-6.pmtiles' | grep -q world-z0-6.pmtiles
-          echo "OK: voacapl + pmtiles adjacent to $main; itshfbc + basemap present under resources/"
+          echo "OK: voacapl + pmtiles + ardopcf adjacent to $main; itshfbc + basemap present under resources/"
 
       - name: Collect bundle artifacts
         run: |
