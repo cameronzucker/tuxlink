@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "tuxlink",
-  "version": "0.75.2",
+  "version": "0.75.3",
   "identifier": "com.tuxlink.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
