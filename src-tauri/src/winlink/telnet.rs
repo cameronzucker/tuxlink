@@ -138,7 +138,7 @@ impl<'a, T> WireTap<'a, T> {
     /// connection problems (tuxlink-6726, operator decision 2026-06-22). Wire
     /// bytes are never handed to a tracing macro, so they never reach the
     /// `.jsonl` disk sink; the issue-report upload re-redacts the ring at its own
-    /// boundary (`logging::export::clean_operator_session_message`). Redacting
+    /// boundary (`logging::export::clean_operator_session_message_inner`). Redacting
     /// here instead blanked the operator's own diagnostic window — the regression
     /// this method's prior `sanitize_wire_line` call introduced.
     fn flush(&mut self) {
@@ -790,7 +790,7 @@ mod tests {
         // ring (LogSource::Wire); wire bytes are never handed to a tracing macro,
         // so they never reach the `.jsonl` disk sink. The issue-report upload
         // re-redacts the ring at its own boundary
-        // (`logging::export::clean_operator_session_message` → `redact_freeform`,
+        // (`logging::export::clean_operator_session_message_inner` → `redact_freeform`,
         // covered by `logging::export` tests), so a raw window does not leak
         // credential-equivalent material to disk or to an uploaded report.
         //

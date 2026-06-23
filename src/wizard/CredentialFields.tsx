@@ -14,6 +14,7 @@
 // instance on the same surface never collides.
 
 import { useState } from 'react';
+import { cmsPasswordTruncationNotice } from './validators';
 
 export interface CredentialFieldsProps {
   callsign: string;
@@ -53,6 +54,9 @@ export function CredentialFields({
   const callsignId = `${idPrefix}-callsign`;
   const passwordId = `${idPrefix}-password`;
   const errorId = `${idPrefix}-callsign-error`;
+
+  // Non-blocking advisory: the CMS truncates a password to its first 12 chars.
+  const truncationNotice = cmsPasswordTruncationNotice(password);
 
   return (
     <>
@@ -98,6 +102,11 @@ export function CredentialFields({
             {showPassword ? 'Hide' : 'Show'}
           </button>
         </div>
+        {truncationNotice && (
+          <span className="wizard-field-notice" data-testid={`${idPrefix}-password-truncation-notice`}>
+            {truncationNotice}
+          </span>
+        )}
       </div>
     </>
   );

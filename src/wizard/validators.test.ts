@@ -12,6 +12,7 @@ import {
   validateAccountPassword,
   validateAmateurCallsign,
   validateRecoveryEmail,
+  cmsPasswordTruncationNotice,
 } from './validators';
 
 describe('validators', () => {
@@ -60,6 +61,31 @@ describe('validators', () => {
     });
     it('accepts exactly 6 chars', () => {
       expect(validatePassword('123456')).toBeNull();
+    });
+    it('does NOT error on >12 chars (truncation is a non-blocking notice, not a gate)', () => {
+      expect(validatePassword('thirteenchars')).toBeNull(); // 13 chars
+    });
+  });
+
+  describe('cmsPasswordTruncationNotice (non-blocking >12-char advisory)', () => {
+    it('returns null for the empty string', () => {
+      expect(cmsPasswordTruncationNotice('')).toBeNull();
+    });
+    it('returns null below the limit', () => {
+      expect(cmsPasswordTruncationNotice('secret')).toBeNull(); // 6
+    });
+    it('returns null at exactly 12 chars (boundary, inclusive)', () => {
+      expect(cmsPasswordTruncationNotice('abcdefghijkl')).toBeNull(); // 12
+    });
+    it('returns the notice at 13 chars (boundary, just over)', () => {
+      const notice = cmsPasswordTruncationNotice('abcdefghijklm'); // 13
+      expect(notice).not.toBeNull();
+      expect(notice).toMatch(/first 12 characters/i);
+    });
+    it('returns the notice for a clearly-long password', () => {
+      expect(cmsPasswordTruncationNotice('a-very-long-passphrase')).toMatch(
+        /Winlink stores only the first 12 characters/,
+      );
     });
   });
 

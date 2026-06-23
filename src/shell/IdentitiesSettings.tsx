@@ -19,6 +19,7 @@ import {
   useRemoveIdentity,
 } from './useIdentities';
 import { parseIdentityError, type CmsBadge } from './identityTypes';
+import { cmsPasswordTruncationNotice } from '../wizard/validators';
 import './IdentitiesSettings.css';
 
 const CMS_BADGE_TEXT: Record<CmsBadge, string> = {
@@ -222,6 +223,14 @@ export function IdentitiesSettings() {
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="off"
           />
+          {hasCmsAccount && cmsPasswordTruncationNotice(password) && (
+            <span
+              className="tux-identities__notice"
+              data-testid="identity-add-full-truncation-notice"
+            >
+              {cmsPasswordTruncationNotice(password)}
+            </span>
+          )}
         </label>
         <label className="tux-identities__check">
           <input

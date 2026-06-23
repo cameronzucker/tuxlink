@@ -114,6 +114,44 @@ describe('<CredentialFields>', () => {
     expect(screen.getByRole('button', { name: /conceal|reveal/i })).toBeDisabled();
   });
 
+  it('shows the >12-char truncation notice for a 13-char password but not a 12-char one', () => {
+    const { rerender } = render(
+      <CredentialFields
+        callsign=""
+        password="abcdefghijkl" /* 12 — at the limit, no notice */
+        onCallsignChange={vi.fn()}
+        onPasswordChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('w-password-truncation-notice')).toBeNull();
+
+    rerender(
+      <CredentialFields
+        callsign=""
+        password="abcdefghijklm" /* 13 — over the limit, notice shown */
+        onCallsignChange={vi.fn()}
+        onPasswordChange={vi.fn()}
+      />,
+    );
+    const notice = screen.getByTestId('w-password-truncation-notice');
+    expect(notice).toHaveTextContent(/Winlink stores only the first 12 characters/i);
+  });
+
+  it('does NOT disable submit-relevant inputs for a >12-char password (notice is advisory only)', () => {
+    render(
+      <CredentialFields
+        callsign="W4PHS"
+        password="abcdefghijklm" /* 13 */
+        onCallsignChange={vi.fn()}
+        onPasswordChange={vi.fn()}
+      />,
+    );
+    // The component renders no disabled state from the notice; the password input
+    // remains enabled and editable (the notice never gates submit).
+    expect(screen.getByLabelText(/cms password/i)).not.toBeDisabled();
+    expect(screen.getByTestId('w-password-truncation-notice')).toBeInTheDocument();
+  });
+
   it('namespaces input ids by idPrefix so two instances can coexist', () => {
     const { container } = render(
       <CredentialFields

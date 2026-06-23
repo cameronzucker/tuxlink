@@ -9,7 +9,7 @@ use crate::logging::event::LoggedEvent;
 use crate::logging::manifest::{self, Compression, Counts, LoggingMeta, Manifest, Runtime, Window};
 use crate::logging::summary::{self, SummaryInputs};
 use crate::session_log::SessionLogState;
-use crate::winlink::redaction::redact_freeform;
+use crate::winlink::redaction::{redact_freeform, secure_login_unredacted};
 use crate::winlink_backend::{LogLevel, LogLine, LogSource};
 use chrono::Utc;
 use std::io::Write;
@@ -398,8 +398,23 @@ fn render_operator_session_log(lines: &[LogLine]) -> (Vec<u8>, u64) {
     let mut out = Vec::new();
     let mut truncated = 0u64;
 
+    // Read the diagnostic env flag ONCE per export (not per line). When set, the
+    // secure-login (;PQ/;PR) token scrub is bypassed at this export boundary so an
+    // operator can independently recompute the secure-login hash. Loud, one-time
+    // warning per export — credential-equivalent material is leaving the redaction
+    // boundary on purpose.
+    let unredact = secure_login_unredacted();
+    if unredact {
+        tracing::warn!(
+            target: "tuxlink::redaction",
+            "TUXLINK_UNREDACT_SECURE_LOGIN is set — secure-login tokens are being INCLUDED \
+             UNREDACTED in the exported log. Credential-equivalent material; share only for \
+             debugging and rotate the password after."
+        );
+    }
+
     for line in lines {
-        let (message, was_truncated) = clean_operator_session_message(&line.message);
+        let (message, was_truncated) = clean_operator_session_message_inner(&line.message, unredact);
         if was_truncated {
             truncated += 1;
         }
@@ -419,9 +434,24 @@ fn render_operator_session_log(lines: &[LogLine]) -> (Vec<u8>, u64) {
     (out, truncated)
 }
 
-fn clean_operator_session_message(message: &str) -> (String, bool) {
+/// Operator-session-log message cleaner.
+///
+/// `unredact == false` (the default) runs the full pipeline including the
+/// secure-login (;PQ/;PR) token scrub; `unredact == true` bypasses ONLY that token
+/// scrub while preserving every other cleaning step (ANSI strip, control-char
+/// neutralization, length cap). The flag is threaded as an explicit bool — read
+/// once per export by [`render_operator_session_log`] via
+/// [`secure_login_unredacted`] — which keeps this fn deterministic and
+/// parallel-test-safe (no `std::env` read in the hot path).
+fn clean_operator_session_message_inner(message: &str, unredact: bool) -> (String, bool) {
     let stripped = strip_ansi_escapes::strip_str(message);
-    let redacted = redact_freeform(&stripped);
+    // Bypass ONLY the secure-login token scrub when the operator opted in; all
+    // other cleaning below still runs.
+    let redacted: String = if unredact {
+        stripped
+    } else {
+        redact_freeform(&stripped).into_owned()
+    };
     let cleaned: String = redacted
         .chars()
         .map(|c| if c.is_control() && c != '\t' { ' ' } else { c })
@@ -661,5 +691,46 @@ mod tests {
         assert!(operator_text.contains("operator line 500"));
         assert!(manifest_text.contains("\"operator_session_log_lines\": 501"));
         assert!(summary_text.contains("operator_session_log: 501 retained lines"));
+    }
+
+    // --- tuxlink-wg2p Part B: flag-gated unredacted secure-login wire log ---
+    //
+    // These exercise the bool-threaded inner cleaner directly (deterministic,
+    // parallel-safe — no `std::env` read), proving the default redacts and the
+    // opt-in flag bypasses ONLY the secure-login token scrub.
+
+    #[test]
+    fn unredact_false_redacts_secure_login_tokens_by_default() {
+        let raw = "< ;PR: 72768415\r";
+        let (cleaned, _truncated) = clean_operator_session_message_inner(raw, false);
+        assert!(
+            !cleaned.contains("72768415"),
+            "default (flag unset) MUST redact the ;PR token; got: {cleaned:?}"
+        );
+        assert!(
+            cleaned.contains(";PR:"),
+            "marker is preserved for log readability; got: {cleaned:?}"
+        );
+    }
+
+    #[test]
+    fn unredact_true_preserves_secure_login_tokens() {
+        let raw = "< ;PR: 72768415\r";
+        let (cleaned, _truncated) = clean_operator_session_message_inner(raw, true);
+        assert!(
+            cleaned.contains("72768415"),
+            "with the opt-in flag the raw ;PR token must survive; got: {cleaned:?}"
+        );
+    }
+
+    #[test]
+    fn unredact_true_still_strips_ansi_and_control_chars() {
+        // The opt-in bypasses ONLY the secure-login scrub — ANSI + control-char
+        // cleaning must still run so the export stays well-formed.
+        let raw = "\x1b[31m< ;PQ: 23753528\r";
+        let (cleaned, _truncated) = clean_operator_session_message_inner(raw, true);
+        assert!(cleaned.contains("23753528"), "token survives: {cleaned:?}");
+        assert!(!cleaned.contains('\x1b'), "ANSI escape still stripped: {cleaned:?}");
+        assert!(!cleaned.contains('\r'), "control char still neutralized: {cleaned:?}");
     }
 }

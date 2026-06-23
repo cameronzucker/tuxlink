@@ -15,6 +15,7 @@ import { useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
+import { cmsPasswordTruncationNotice } from '../../wizard/validators';
 import { useAuthDiagnostic } from '../../connections/useAuthDiagnostic';
 import { useSessionLog } from './useSessionLog';
 import { copyFor } from './authDiagnosticCopy';
@@ -103,6 +104,15 @@ function PasswordForm({ onClose }: PasswordFormProps) {
           data-testid="diag-password-input"
         />
       </div>
+      {cmsPasswordTruncationNotice(password) && (
+        <p
+          className="diag-help"
+          data-testid="diag-password-truncation-notice"
+          style={{ color: 'var(--tux-warn, #ffd166)' }}
+        >
+          {cmsPasswordTruncationNotice(password)}
+        </p>
+      )}
       {error && (
         <p className="diag-help" data-testid="diag-password-error" style={{ color: 'var(--error)' }}>
           {error}
