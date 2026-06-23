@@ -162,7 +162,11 @@ jobs:
       - name: Stage ardopcf sidecar (ARDOP HF modem)
         run: |
           set -euxo pipefail
-          AC_VER=1.0.4.1.3
+          # 2.0.3.2.1 (NOT the 1.0.4.1.3 release): tuxlink's init_tnc sends
+          # `CODEC TRUE`, which 1.0.4.1.3 lacks ("FAULT CMD CODEC not recognized")
+          # but 2.0.3.2.1 implements. Full init replay is identical to the develop
+          # build validated on-air (tuxlink-y061).
+          AC_VER=2.0.3.2.1
           case "${{ matrix.arch }}" in
             amd64) AC_ASSET=ardopcf_amd64_Linux_64 ;;
             arm64) AC_ASSET=ardopcf_arm_Linux_64 ;;
