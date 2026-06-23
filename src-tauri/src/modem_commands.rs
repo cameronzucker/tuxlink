@@ -72,12 +72,14 @@ pub(crate) fn ardop_wire_sink(app: &AppHandle) -> crate::winlink_backend::WireSi
 /// `ArdopUiConfig::default` value `"ardopcf"`) — prefer that bundled sibling so a
 /// packaged install works with zero setup and no `$PATH`/config surgery.
 ///
-/// An explicit path (contains `/`) is treated as a deliberate operator override
-/// and honored verbatim. In an unbundled dev run (no sibling present) we fall
-/// back to `configured`, which `Command` resolves via `$PATH` — so `tauri dev`
-/// still works for anyone with `ardopcf` installed.
+/// Only the EXACT default name `"ardopcf"` opts into the bundled sidecar. Any
+/// other value — an explicit path (`/opt/ardopcf`) OR a custom bare program name
+/// (`ardopcf-dev`, `ardopcf-git`) — is a deliberate operator choice and is
+/// honored verbatim (`Command` resolves a bare name via `$PATH`). In an unbundled
+/// dev run (no sibling present) the default also falls back to `"ardopcf"` on
+/// `$PATH`, so `tauri dev` still works for anyone with ardopcf installed.
 fn resolve_ardop_binary(configured: &str) -> PathBuf {
-    if !configured.contains('/') {
+    if configured == "ardopcf" {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(sibling) = exe.parent().map(|dir| dir.join("ardopcf")) {
                 if sibling.exists() {
@@ -1367,6 +1369,12 @@ mod tests {
         assert_eq!(
             resolve_ardop_binary("/home/op/custom-modem"),
             std::path::PathBuf::from("/home/op/custom-modem")
+        );
+        // A CUSTOM bare name is an operator choice too — honored verbatim (PATH-
+        // resolved by Command), NOT silently replaced by the bundled sidecar.
+        assert_eq!(
+            resolve_ardop_binary("ardopcf-dev"),
+            std::path::PathBuf::from("ardopcf-dev")
         );
         // A bare program name resolves to either the bundled sidecar sibling (if
         // present next to the test exe) or the bare name for PATH fallback — both
