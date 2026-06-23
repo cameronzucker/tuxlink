@@ -262,7 +262,7 @@ pub struct InitConfig {
     /// ARQ link timeout in seconds (wl2k-go default: 30).
     pub arq_timeout_s: u32,
     /// Optional ARQ bandwidth in Hz: 200/500/1000/2000. None = leave at
-    /// ardopcf default. If set, init_tnc sends `ARQBW <hz> FORCED` between
+    /// ardopcf default. If set, init_tnc sends `ARQBW <hz>FORCED` between
     /// LISTEN and MYCALL (tuxlink-j0ij). Caller validates the value range
     /// before constructing the InitConfig (modem_commands.rs); init_tnc
     /// trusts the value verbatim.
@@ -317,7 +317,7 @@ const SETTER_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 /// 3. `PROTOCOLMODE ARQ`
 /// 4. `ARQTIMEOUT <n>`
 /// 5. `LISTEN FALSE`
-/// 6. `ARQBW <hz> FORCED` — only when `cfg.arq_bandwidth_hz` is Some (tuxlink-j0ij).
+/// 6. `ARQBW <hz>FORCED` — only when `cfg.arq_bandwidth_hz` is Some (tuxlink-j0ij).
 /// 7. `MYCALL <call>`
 /// 8. `GRIDSQUARE <grid>`
 ///
@@ -344,7 +344,11 @@ pub fn init_tnc(sock: &mut CmdSocket, cfg: &InitConfig) -> Result<(), SessionErr
     let listen_arg = if cfg.initial_listen { "TRUE" } else { "FALSE" };
     set_and_ack(sock, "LISTEN", Some(listen_arg))?;
     if let Some(bw) = cfg.arq_bandwidth_hz {
-        set_and_ack(sock, "ARQBW", Some(&format!("{bw} FORCED")))?;
+        // ardopcf's ARQBW parameter is a SINGLE token — `2000FORCED` / `500MAX`,
+        // no space between width and qualifier. `{bw} FORCED` (with a space)
+        // parses as two params and faults "Syntax Err: ARQBW <bw> FORCED",
+        // aborting init whenever a bandwidth is set (tuxlink-87uc).
+        set_and_ack(sock, "ARQBW", Some(&format!("{bw}FORCED")))?;
     }
     set_and_ack(sock, "MYCALL", Some(&cfg.mycall))?;
     set_and_ack(sock, "GRIDSQUARE", Some(&cfg.gridsquare))?;
@@ -763,10 +767,10 @@ mod tests {
         server.join().unwrap();
     }
 
-    // ── tuxlink-j0ij: init_tnc sends ARQBW <hz> FORCED between LISTEN and MYCALL ──
+    // ── tuxlink-j0ij: init_tnc sends ARQBW <hz>FORCED between LISTEN and MYCALL ──
 
     /// When `cfg.arq_bandwidth_hz` is Some, init_tnc must send
-    /// `ARQBW <hz> FORCED` AFTER `LISTEN FALSE` and BEFORE `MYCALL`.
+    /// `ARQBW <hz>FORCED` AFTER `LISTEN FALSE` and BEFORE `MYCALL`.
     /// The 8-element sequence proves both presence and position.
     #[test]
     fn init_tnc_sends_arqbw_between_listen_and_mycall_when_some() {
@@ -809,11 +813,11 @@ mod tests {
                 "PROTOCOLMODE ARQ",
                 "ARQTIMEOUT 30",
                 "LISTEN FALSE",
-                "ARQBW 500 FORCED",
+                "ARQBW 500FORCED",
                 "MYCALL N7CPZ",
                 "GRIDSQUARE CN87",
             ],
-            "ARQBW <hz> FORCED must be sent between LISTEN FALSE and MYCALL when bandwidth is Some (tuxlink-j0ij)"
+            "ARQBW <hz>FORCED must be sent between LISTEN FALSE and MYCALL when bandwidth is Some (tuxlink-j0ij)"
         );
     }
 
