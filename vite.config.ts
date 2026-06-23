@@ -20,6 +20,28 @@ export default defineConfig(async () => ({
     __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
 
+  // Pre-bundle the map lazy-route's heavy deps at dev startup (tuxlink-37ln).
+  // The map surface is a React.lazy chunk; its deps (leaflet + the protomaps /
+  // mapbox vector-tile stack) are NOT imported anywhere eagerly, so without this
+  // include vite discovers them on-demand the first time the map opens. After the
+  // dependabot major bumps (rbush 4 ESM-only, @mapbox/vector-tile 3, transitive
+  // pbf 5) changed the optimize graph, that first-open discovery forced a full
+  // re-optimize + page reload, which killed the in-flight dynamic import() and
+  // surfaced as the ErrorBoundary "something went wrong" ("Importing a module
+  // script failed") on BOTH the map and RadioDrawer lazy chunks. Listing them
+  // here pre-bundles them at startup so there is no on-demand re-optimize reload.
+  // Dev-only concern: `vite build` (production) already pre-bundles everything.
+  optimizeDeps: {
+    include: [
+      "leaflet",
+      "@protomaps/basemaps",
+      "@mapbox/vector-tile",
+      "@mapbox/point-geometry",
+      "pbf",
+      "rbush",
+    ],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
