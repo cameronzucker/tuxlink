@@ -30,6 +30,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.75.3](https://github.com/cameronzucker/tuxlink/compare/v0.75.2...v0.75.3) (2026-06-23)
+
+
+### Bug Fixes
+
+* **ardop:** send ARQBW as a single token (`2000FORCED`), not `2000 FORCED` (tuxlink-87uc) ([4c45277](https://github.com/cameronzucker/tuxlink/commit/4c45277af0f84fcc1ac6019eacd228a9eac2d292))
+* **modem:** capture ardopcf stdout/stderr into the structured log (tuxlink-c119) ([3c765c5](https://github.com/cameronzucker/tuxlink/commit/3c765c5a0f82898158121d84f43b0a9a6d2a76dc))
+
 ## [0.75.2](https://github.com/cameronzucker/tuxlink/compare/v0.75.1...v0.75.2) (2026-06-23)
 
 
