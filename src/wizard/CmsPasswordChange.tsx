@@ -50,6 +50,7 @@ export function CmsPasswordChange({ callsign }: CmsPasswordChangeProps) {
   const currentError = current === '' ? 'Enter your current password.' : null;
   const newError = validatePassword(newPw);
   const newTruncationNotice = cmsPasswordTruncationNotice(newPw);
+  const currentTruncationNotice = cmsPasswordTruncationNotice(current);
   const matchError = confirm !== newPw ? 'Passwords do not match.' : null;
   const canSubmit = !currentError && !newError && !matchError && !inFlight;
 
@@ -101,6 +102,11 @@ export function CmsPasswordChange({ callsign }: CmsPasswordChangeProps) {
           onChange={(e) => setCurrent(e.target.value)}
           disabled={inFlight}
         />
+        {currentTruncationNotice && (
+          <span className="wizard-field-notice" data-testid="cms-pw-current-truncation-notice">
+            {currentTruncationNotice}
+          </span>
+        )}
       </div>
 
       <div className="wizard-field">

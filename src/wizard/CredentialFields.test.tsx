@@ -134,7 +134,7 @@ describe('<CredentialFields>', () => {
       />,
     );
     const notice = screen.getByTestId('w-password-truncation-notice');
-    expect(notice).toHaveTextContent(/Winlink stores only the first 12 characters/i);
+    expect(notice).toHaveTextContent(/Winlink CMS passwords use only their first 12 characters/i);
   });
 
   it('does NOT disable submit-relevant inputs for a >12-char password (notice is advisory only)', () => {

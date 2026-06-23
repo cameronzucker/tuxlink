@@ -84,7 +84,7 @@ describe('validators', () => {
     });
     it('returns the notice for a clearly-long password', () => {
       expect(cmsPasswordTruncationNotice('a-very-long-passphrase')).toMatch(
-        /Winlink stores only the first 12 characters/,
+        /Winlink CMS passwords use only their first 12 characters/,
       );
     });
   });

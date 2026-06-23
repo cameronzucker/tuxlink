@@ -58,7 +58,7 @@ const CMS_PASSWORD_MAX_EFFECTIVE_LEN = 12;
  */
 export function cmsPasswordTruncationNotice(input: string): string | null {
   if (input.length > CMS_PASSWORD_MAX_EFFECTIVE_LEN) {
-    return 'Winlink stores only the first 12 characters of your password; anything longer is ignored.';
+    return 'Winlink CMS passwords use only their first 12 characters.';
   }
   return null;
 }
