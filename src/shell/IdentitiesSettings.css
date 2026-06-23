@@ -18,6 +18,15 @@
   font-size: 0.85rem;
 }
 
+/* Non-blocking advisory under a field (CMS >12-char password truncation). */
+.tux-identities__notice {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--warn, #ffd166);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 .tux-identities__empty {
   margin: 0;
   color: var(--text-dim, #9aa0aa);

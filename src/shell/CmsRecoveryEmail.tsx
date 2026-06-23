@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { validateRecoveryEmail } from '../wizard/validators';
+import { validateRecoveryEmail, cmsPasswordTruncationNotice } from '../wizard/validators';
 
 export interface CmsRecoveryEmailProps {
   /** The account callsign whose recovery email is being set (active identity). */
@@ -136,6 +136,11 @@ export function CmsRecoveryEmail({ callsign }: CmsRecoveryEmailProps) {
           }}
           disabled={inFlight}
         />
+        {cmsPasswordTruncationNotice(password) && (
+          <span className="wizard-field-notice" data-testid="account-recovery-truncation-notice">
+            {cmsPasswordTruncationNotice(password)}
+          </span>
+        )}
       </div>
 
       {error && (

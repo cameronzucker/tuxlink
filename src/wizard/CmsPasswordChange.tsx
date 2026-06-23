@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { validatePassword } from './validators';
+import { validatePassword, cmsPasswordTruncationNotice } from './validators';
 
 export interface CmsPasswordChangeProps {
   /** The account callsign whose CMS password is being rotated. */
@@ -49,6 +49,8 @@ export function CmsPasswordChange({ callsign }: CmsPasswordChangeProps) {
 
   const currentError = current === '' ? 'Enter your current password.' : null;
   const newError = validatePassword(newPw);
+  const newTruncationNotice = cmsPasswordTruncationNotice(newPw);
+  const currentTruncationNotice = cmsPasswordTruncationNotice(current);
   const matchError = confirm !== newPw ? 'Passwords do not match.' : null;
   const canSubmit = !currentError && !newError && !matchError && !inFlight;
 
@@ -100,6 +102,11 @@ export function CmsPasswordChange({ callsign }: CmsPasswordChangeProps) {
           onChange={(e) => setCurrent(e.target.value)}
           disabled={inFlight}
         />
+        {currentTruncationNotice && (
+          <span className="wizard-field-notice" data-testid="cms-pw-current-truncation-notice">
+            {currentTruncationNotice}
+          </span>
+        )}
       </div>
 
       <div className="wizard-field">
@@ -116,6 +123,11 @@ export function CmsPasswordChange({ callsign }: CmsPasswordChangeProps) {
         {newPw !== '' && newError && (
           <span role="alert" className="wizard-field-error">
             {newError}
+          </span>
+        )}
+        {newTruncationNotice && (
+          <span className="wizard-field-notice" data-testid="cms-pw-new-truncation-notice">
+            {newTruncationNotice}
           </span>
         )}
       </div>

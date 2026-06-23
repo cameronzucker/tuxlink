@@ -18,7 +18,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { CmsPasswordChange } from '../wizard/CmsPasswordChange';
 import { CmsRecoveryEmail } from './CmsRecoveryEmail';
 import { CmsAccountDelete } from './CmsAccountDelete';
-import { validatePassword } from '../wizard/validators';
+import { validatePassword, cmsPasswordTruncationNotice } from '../wizard/validators';
 
 /** Mirrors the Rust ActiveIdentityDto returned by identity_active. */
 interface ActiveIdentityDto {
@@ -59,6 +59,7 @@ export function WinlinkAccountSettings() {
   }, []);
 
   const pwError = validatePassword(password);
+  const truncationNotice = cmsPasswordTruncationNotice(password);
   const canSubmit = !pwError && !inFlight && !!callsign;
 
   const onReenter = useCallback(async () => {
@@ -134,6 +135,11 @@ export function WinlinkAccountSettings() {
             }}
             disabled={inFlight}
           />
+          {truncationNotice && (
+            <span className="wizard-field-notice" data-testid="account-reenter-truncation-notice">
+              {truncationNotice}
+            </span>
+          )}
         </div>
 
         {error && (

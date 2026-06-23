@@ -61,6 +61,26 @@ pub fn redact_freeform(text: &str) -> Cow<'_, str> {
     redact_wire_line(text)
 }
 
+/// Diagnostic opt-in: when the `TUXLINK_UNREDACT_SECURE_LOGIN` env var is truthy
+/// (`"1"` or `"true"`, case-insensitive), the EXPORT / "Copy log for help" path
+/// is allowed to INCLUDE the raw `;PQ`/`;PR` secure-login tokens so an operator
+/// can independently recompute `secure_login_response(challenge, password)` and
+/// prove the client hash is byte-correct.
+///
+/// This deliberately exposes credential-equivalent material, so it is OFF by
+/// default and the caller emits a loud one-time warning when it is honored. This
+/// helper does NOT change the default behavior of [`redact_wire_line`] /
+/// [`redact_freeform`] — those always redact; only the export boundary consults
+/// this flag to decide whether to bypass the secure-login scrub.
+pub fn secure_login_unredacted() -> bool {
+    std::env::var("TUXLINK_UNREDACT_SECURE_LOGIN")
+        .map(|v| {
+            let v = v.trim();
+            v.eq_ignore_ascii_case("1") || v.eq_ignore_ascii_case("true")
+        })
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

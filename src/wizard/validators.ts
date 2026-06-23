@@ -32,11 +32,34 @@ export function validateCallsign(input: string): string | null {
  * Returns null if valid; a human-readable error string if invalid.
  *
  * ≥6 chars per the Winlink Express convention (CMS minimum).
- * No upper-bound enforced — the CMS is authoritative for exact acceptance.
+ * No upper bound is enforced here on PURPOSE: the CMS silently truncates a sign-in
+ * password to its first 12 characters (anything past 12 is ignored, not rejected), so
+ * a >12-char entry is still a valid submission — the user may intend the first 12.
+ * The >12 case surfaces as a separate, NON-BLOCKING notice via
+ * {@link cmsPasswordTruncationNotice}, not as a validation error that gates submit.
  */
 export function validatePassword(input: string): string | null {
   if (!input) return 'Password is required.';
   if (input.length < 6) return 'Password must be ≥6 characters (per Winlink Express convention).';
+  return null;
+}
+
+/** The CMS truncates account passwords to their first 12 characters. */
+const CMS_PASSWORD_MAX_EFFECTIVE_LEN = 12;
+
+/**
+ * Non-blocking truncation notice for a CMS password entry.
+ *
+ * Returns an advisory string when the input exceeds the CMS's effective 12-character
+ * limit, else null. The Winlink CMS stores only the first 12 characters of an account
+ * password and silently ignores the rest, which is a frequent source of "my password
+ * stopped working" confusion. This is informational ONLY — it must never gate submit,
+ * since a user may deliberately type a longer string whose first 12 chars are correct.
+ */
+export function cmsPasswordTruncationNotice(input: string): string | null {
+  if (input.length > CMS_PASSWORD_MAX_EFFECTIVE_LEN) {
+    return 'Winlink CMS passwords use only their first 12 characters.';
+  }
   return null;
 }
 

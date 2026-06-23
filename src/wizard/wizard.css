@@ -209,6 +209,15 @@
   font-size: 12px;
   color: var(--w-error);
 }
+/* Non-blocking advisory under a field (e.g. the CMS >12-char password truncation
+ * notice). Muted warning tone — informational, not an error that gates submit. */
+.wizard-root .wizard-field-notice {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--w-warn);
+  line-height: 1.45;
+}
 .wizard-root .wizard-field-hint {
   display: block;
   margin-top: 6px;
