@@ -30,6 +30,19 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.76.0](https://github.com/cameronzucker/tuxlink/compare/v0.75.3...v0.76.0) (2026-06-24)
+
+
+### Features
+
+* **ardop:** CAT-command PTT for FT-710-class radios (close-serial during audio) ([95c7d8e](https://github.com/cameronzucker/tuxlink/commit/95c7d8e2164f4180fe66bf7e6e8d8657056600ea))
+
+
+### Bug Fixes
+
+* **ardop:** add missing cat_bridge field to ardop_connect example ([60e6913](https://github.com/cameronzucker/tuxlink/commit/60e6913d8a3643ae14263daf508aead25fae5cdb))
+* **ardop:** harden CAT-PTT against stranded-keyed + wrong-device keying (Codex adrev) ([ec4dc57](https://github.com/cameronzucker/tuxlink/commit/ec4dc57d1d47da5fe4e0e350e1c924e6ed0a184b))
+
 ## [0.75.3](https://github.com/cameronzucker/tuxlink/compare/v0.75.2...v0.75.3) (2026-06-23)
 
 
