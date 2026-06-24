@@ -140,11 +140,35 @@ VARA's window appears; the command port answers. Idle CPU ~6–8% (one core, box
 | runs ~18 s then `com_get_class_object {248dd896-…} not registered` | OCXs unregistered → step 7 (`regsvr32`) |
 | stray VS Code `rg` pegging CPU | keep the wine/box64 trees **out of the editor workspace** (huge file counts + symlink follow) |
 
+## Driving it: PTT via Pat/Hamlib (NOT VARA's wine serial)
+VARA's own PTT does not work reliably through wine's serial emulation. The working pattern (confirmed by
+the dl1gkk Pi-5 guide and pat-users) is to **let the host client (Pat) key the radio via Hamlib/rigctld**
+— VARA never touches the serial line:
+```bash
+rigctld -m <hamlib_model> -r /dev/ttyUSBx -s <baud> --set-conf=dtr_state=OFF,rts_state=OFF &
+```
+```jsonc
+// ~/.config/pat/config.json — Pat watches VARA's PTT request and keys the rig itself
+"varahf": { "addr": "localhost:8300", "bandwidth": 500, "rig": "<rig>", "ptt_ctrl": true }
+```
+Then `pat connect "varahf:///<gateway>"`. Pat holds the VARA link (VARA's TCP indicator goes **green** —
+red just means *no host attached*, not a fault) and drives the connect. Use a **clear channel / dummy
+load**: VARA's busy detector (no GUI toggle) won't key an occupied frequency. If VARA crashes on launch
+on ARM, disable the pdh.dll sensor: `wine reg add "HKCU\Software\Wine\DllOverrides" /v pdh /t REG_SZ /d "" /f`.
+
+> **Single-cable radios (e.g. FT-710):** rigctld holds the CAT serial open, which on a radio whose CAT +
+> USB-audio share one internal hub resets the codec mid-stream. Use a **separate-interface rig (e.g. a
+> DigiRig: distinct USB audio + CAT)**, or route PTT through a *close-serial* shim that opens the port
+> only momentarily to key. A radio with independent audio and CAT paths "just works."
+
 ## What's proven vs not
-- **Proven:** install + launch + stable run + functional TCP interface, on emulation, no x86 HW.
-- **Not yet proven:** real-time DSP throughput under an actual ARQ exchange. Test via an ALSA
-  `snd-aloop` loopback between two VARA instances (clean channel → fastest mode → heaviest DSP),
-  driving a P2P connect and watching CPU + whether frames decode in real time.
+- **Proven:** install + launch + stable run + functional TCP interface + **license**, on emulation, no
+  x86 HW. **Pat → VARA host link works** (green, accepts dial commands).
+- **Proven (DSP receive path):** with a sound card configured, VARA's real-time receive DSP / busy
+  detector demodulates the audio stream **at ~25–34% of one core** (≈8% of a 4-core Pi 5) — the
+  deadline-critical path keeps up with ~3× headroom. (Measured via an `snd-aloop` loopback.)
+- **Open:** a full bidirectional ARQ throughput run, gated only on getting a clean PTT path keying the
+  radio (Pat/Hamlib, above) into a clear channel. Not an emulation question — an integration one.
 
 ## Reproducibility notes
 - The build of box64 is the load-bearing, non-obvious step; pin a known-good commit if archiving.
