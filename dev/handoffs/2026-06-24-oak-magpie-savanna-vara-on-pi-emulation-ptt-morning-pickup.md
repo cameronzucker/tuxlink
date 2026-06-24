@@ -27,6 +27,33 @@ rigctld -m <FT710_hamlib_model> -r /dev/ttyUSB0 -s 38400 --set-conf=dtr_state=OF
 Pat's `rig` + `ptt_ctrl:true` makes Pat key the rig via rigctld when VARA asks to transmit. VARA's own
 wine-PTT gap stops mattering.
 
+## ★ UPDATE (same night, ~04:00) — PTT SOLVED; VARA's flaky CONNECT is the real wall
+Ran the whole chain on the dummy load. Three corrections to the plan above:
+
+1. **`rigctld`'s own PTT does NOT key the FT-710.** `rigctl T 1` returns success (`RPRT 0`, `t`→1) but
+   produces **no RF** — confirmed against the operator watching the radio. (Oddly, rigctld's *open-time*
+   line pulse DID key it once — nondeterministic.) The radio keys reliably **only** via the proven
+   close-serial `TX1;` CAT command (operator confirmed it fired, twice).
+2. **So PTT is solved with a shim, not rigctld:** `dev/scratch/ft710-ardop-bringup/closeserial_rigctl_shim.py`
+   — a rigctl-protocol server (port 4532) that answers hamlib's handshake (replays the captured
+   `hs_dumpstate.raw`/`hs_chkvfo.raw`/`hs_powerstat.raw` in that dir) but keys via **close-serial `TX1;`/`TX0;`**
+   (momentary opens = codec-safe). Verified: a hamlib client + Pat's `\set_ptt 1` both drive a real key
+   through it. Pat config already points `hamlib_rigs.FT710 → localhost:4532`. **Start the shim BEFORE Pat;
+   do NOT run rigctld (it can't key this radio + holds the port).**
+3. **The "yellow Listen state" was a red herring.** Per EA5HVK's command ref, `LISTEN ON` is part of the
+   *normal* connect sequence (`MYCALL → LISTEN ON → CONNECT → CONNECTED`) — it does NOT block transmit.
+
+**The actual wall: VARA's `CONNECT` is flaky.** `CONNECT N7CPZ N0DAJ` (the documented form) returned, across
+runs: `WRONG` (twice), then silent-accept-but-no-`PTT ON`, then total silence (deaf even to `BW2300`). VARA
+emits PTT via `PTT ON`/`PTT OFF` on 8300 — we **never** got a single `PTT ON`, so VARA never tried to key.
+Operator's read (trust it): **VARA is just unstable in general, on Windows too** — not an emulation artifact.
+Registration is **async** (`REGISTERED N7CPZ` lands seconds after `MYCALL`); wait for it before `CONNECT`.
+
+**Morning path (PTT is done; only VARA's flake remains):** fresh single VARA → wait for `REGISTERED` →
+`BW2300` → start shim → `pat connect varahf:///<target>` (or drive 8300 directly), and **retry the connect
+until VARA emits `PTT ON`**. The instant it does, the shim keys the radio (proven). Consider also: a 2nd
+VARA instance on 8400 as a known-good P2P target to prove a full ARQ without depending on a live gateway.
+
 ## Morning permutation plan (FT-710 on a DUMMY LOAD — clear channel so the busy detector lets it key)
 1. **Find the FT-710 hamlib model** (`rigctl --list | grep -i 710` / FTDX10 family; the FT-710 may be a
    recent model number). Start `rigctld -m <model> -r /dev/ttyUSB0 -s 38400 --set-conf=dtr_state=OFF,rts_state=OFF`.
