@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use super::super::process::{ManagedModem, ProcessError};
 use super::arq_state::ArqState;
+use super::cat_ptt_bridge::CatPttBridge;
 use super::command::{Command, State};
 use super::data::DataSocket;
 use super::session::{arq_connect, arq_disconnect, init_tnc, CmdSocket, ConnectInfo, InitConfig, SessionError};
@@ -115,6 +116,12 @@ pub struct ArdopTransport {
     /// machine. Installed via [`Self::with_wire_sink`] before `init` and cloned
     /// into the [`CmdSocket`] there.
     wire: Option<WireSink>,
+    /// Optional close-serial CAT-PTT bridge (tuxlink-wu0k). `Some` when
+    /// `ArdopConfig.cat_bridge` was set (`ptt_method == CatCommand`): tuxlink
+    /// spawned the bridge BEFORE ardopcf so ardopcf's `-c TCP:<port>` keying
+    /// has a socket to talk to. `shutdown` stops it; `CatPttBridge::Drop` is the
+    /// backstop if the transport is dropped without `shutdown`.
+    cat_bridge: Option<CatPttBridge>,
 }
 
 impl ArdopTransport {
@@ -131,6 +138,7 @@ impl ArdopTransport {
             accumulators: AccumulatorState::default(),
             arq_state: None,
             wire: None,
+            cat_bridge: None,
         }
     }
 
@@ -178,6 +186,36 @@ impl ArdopTransport {
         // transport socket addresses.
         let binary_str = cfg.binary.to_string_lossy().into_owned();
         let args_refs: Vec<&str> = cfg.extra_args.iter().map(|s| s.as_str()).collect();
+
+        // tuxlink-wu0k: if a CAT-PTT bridge is configured, spawn it FIRST so its
+        // loopback port is bound before ardopcf (whose `-c TCP:<port>` connect
+        // follows immediately) tries to reach it. The bridge is owned by the
+        // transport and stopped in `shutdown`; on any early return below it is
+        // dropped (CatPttBridge::Drop terminates the python3 process), so a
+        // failed ardopcf spawn does not leak the bridge.
+        let cat_bridge = match cfg.cat_bridge {
+            Some(ref spec) => {
+                tracing::info!(
+                    target: "tuxlink::winlink::modem::ardop",
+                    bridge_port = spec.bridge_port,
+                    serial = %spec.serial_path,
+                    baud = spec.baud,
+                    "CAT-PTT bridge spawning",
+                );
+                let bridge = CatPttBridge::spawn(spec).map_err(|e| {
+                    tracing::error!(
+                        target: "tuxlink::winlink::modem::ardop",
+                        error = %e,
+                        "CAT-PTT bridge spawn failed",
+                    );
+                    SessionError::Io(io::Error::other(format!(
+                        "failed to start CAT-PTT bridge: {e}"
+                    )))
+                })?;
+                Some(bridge)
+            }
+            None => None,
+        };
 
         tracing::info!(
             target: "tuxlink::winlink::modem::ardop",
@@ -254,6 +292,7 @@ impl ArdopTransport {
             accumulators: AccumulatorState::default(),
             arq_state: None,
             wire: None,
+            cat_bridge,
         })
     }
 
@@ -327,6 +366,22 @@ impl ArdopTransport {
 
             // Surface a stop failure only after the swap-invariant check has run.
             stop_result.map_err(|e| io::Error::other(format!("modem stop failed: {e}")))?;
+        }
+
+        // tuxlink-wu0k: stop the CAT-PTT bridge AFTER ardopcf is gone. ardopcf
+        // sends its own final unkey through the bridge during its clean exit, so
+        // tearing the bridge down first could strand the radio keyed. The bridge
+        // also sends the unkey command itself on socket teardown / on its
+        // SIGINT/SIGTERM handler, so this is belt-and-suspenders. `take()` makes
+        // a second shutdown() a no-op for the bridge.
+        if let Some(mut bridge) = self.cat_bridge.take() {
+            if let Err(e) = bridge.stop(Duration::from_secs(3)) {
+                tracing::warn!(
+                    target: "tuxlink::winlink::modem::ardop",
+                    error = %e,
+                    "CAT-PTT bridge stop reported an error (process is terminated regardless)",
+                );
+            }
         }
 
         Ok(())
@@ -2350,6 +2405,7 @@ data_thread.join(timeout=2.0)
             cmd_port,
             data_port,
             audio_device_path: None,
+            cat_bridge: None,
         };
 
         // Use a generous bind-wait because Python startup can be slow on a
@@ -2398,6 +2454,7 @@ data_thread.join(timeout=2.0)
             cmd_port,
             data_port,
             audio_device_path: None,
+            cat_bridge: None,
         };
 
         // Very short bind-wait so the test completes quickly.

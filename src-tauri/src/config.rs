@@ -839,11 +839,60 @@ pub fn write_config_atomic(config: &Config) -> Result<(), ConfigWriteError> {
 #[derive(serde::Deserialize)]
 struct SchemaVersionProbe { schema_version: u32 }
 
+/// How tuxlink keys the radio for ARDOP transmit (tuxlink-wu0k).
+///
+/// - [`Vox`](PttMethod::Vox) — no PTT line; the radio keys on detected audio
+///   (or an external VOX). ardopcf is spawned with no PTT flag.
+/// - [`SerialRts`](PttMethod::SerialRts) — ardopcf toggles RTS on the serial
+///   port named by [`ArdopUiConfig::ptt_serial_path`] (`-p <path>`). The legacy
+///   default before CAT PTT existed.
+/// - [`CatCommand`](PttMethod::CatCommand) — the radio keys ONLY by a CAT
+///   command (e.g. the Yaesu FT-710: `TX1;` / `TX0;`), and the serial port must
+///   be CLOSED during audio to avoid USB-tree codec contention. tuxlink owns a
+///   close-serial CAT-PTT bridge and points ardopcf at it over TCP
+///   (`-c TCP:<port> -k <hex(key)> -u <hex(unkey)>`). Proven on air 2026-06-23.
+///
+/// Serialized lowercase (`"vox"` / `"serialRts"` is `"serial_rts"`) — see the
+/// `rename_all = "snake_case"` attribute. Default is [`Vox`](PttMethod::Vox).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PttMethod {
+    /// No PTT line — VOX / audio-detected keying.
+    #[default]
+    Vox,
+    /// ardopcf RTS PTT on `ptt_serial_path` (`-p <path>`).
+    SerialRts,
+    /// CAT-command PTT via tuxlink's close-serial bridge.
+    CatCommand,
+}
+
+/// Default CAT baud rate (the FT-710 Enhanced port speed proven 2026-06-23).
+fn default_cat_baud() -> u32 {
+    38400
+}
+/// Default CAT key command (FT-710 `TX1;`).
+fn default_cat_key_cmd() -> String {
+    "TX1;".into()
+}
+/// Default CAT unkey command (FT-710 `TX0;`).
+fn default_cat_unkey_cmd() -> String {
+    "TX0;".into()
+}
+/// Default loopback TCP port the CAT-PTT bridge listens on (proven 2026-06-23).
+fn default_cat_bridge_port() -> u16 {
+    4532
+}
+
 /// Frontend-shaped ARDOP HF modem settings. Persisted as `[modem_ardop]` in config;
 /// Task 3.3 (`modem_ardop_connect`) translates this into `ArdopConfig::extra_args` at
 /// spawn time. `deny_unknown_fields` is intentionally absent here — the ARDOP config
 /// is additive and forward-compat relaxation is acceptable for a new section.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Deserialize` is hand-written (see below) ONLY to migrate pre-CAT-PTT
+/// configs: a stored config that predates `ptt_method` derives the method from
+/// the legacy `ptt_serial_path` field (`Some` → [`PttMethod::SerialRts`], `None`
+/// → [`PttMethod::Vox`]) so old configs keep keying exactly as before.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ArdopUiConfig {
     /// Path or name of the ARDOP binary (e.g. `"ardopcf"`).
     pub binary: String,
@@ -851,9 +900,32 @@ pub struct ArdopUiConfig {
     pub capture_device: String,
     /// ALSA playback device (e.g. `"plughw:1,0"`).
     pub playback_device: String,
-    /// Serial device for PTT control. `None` = VOX or CAT PTT.
+    /// How tuxlink keys the radio (tuxlink-wu0k). Default [`PttMethod::Vox`].
+    /// Migrated from `ptt_serial_path` for pre-CAT-PTT configs (see the
+    /// hand-written `Deserialize`).
+    #[serde(default)]
+    pub ptt_method: PttMethod,
+    /// Serial device for RTS PTT control. Consulted only when
+    /// `ptt_method == SerialRts`. `None` = no serial RTS PTT.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ptt_serial_path: Option<String>,
+    /// Serial device for CAT PTT. Consulted only when
+    /// `ptt_method == CatCommand`. `None` until the operator picks a port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cat_serial_path: Option<String>,
+    /// Serial baud for CAT PTT. Default 38400 (the FT-710 Enhanced port).
+    #[serde(default = "default_cat_baud")]
+    pub cat_baud: u32,
+    /// CAT key command (e.g. `TX1;`). Default `TX1;`.
+    #[serde(default = "default_cat_key_cmd")]
+    pub cat_key_cmd: String,
+    /// CAT unkey command (e.g. `TX0;`). Default `TX0;`.
+    #[serde(default = "default_cat_unkey_cmd")]
+    pub cat_unkey_cmd: String,
+    /// Loopback TCP port the CAT-PTT bridge listens on; ardopcf is pointed at it
+    /// via `-c TCP:<port>`. Default 4532. Distinct from `cmd_port`/`data_port`.
+    #[serde(default = "default_cat_bridge_port")]
+    pub cat_bridge_port: u16,
     /// ARDOP command/control port (default 8515).
     pub cmd_port: u16,
     /// ARDOP ARQ bandwidth in Hz. One of {200, 500, 1000, 2000}. None means
@@ -921,7 +993,13 @@ impl Default for ArdopUiConfig {
             binary: "ardopcf".into(),
             capture_device: String::new(),
             playback_device: String::new(),
+            ptt_method: PttMethod::Vox,
             ptt_serial_path: None,
+            cat_serial_path: None,
+            cat_baud: default_cat_baud(),
+            cat_key_cmd: default_cat_key_cmd(),
+            cat_unkey_cmd: default_cat_unkey_cmd(),
+            cat_bridge_port: default_cat_bridge_port(),
             cmd_port: 8515,
             bandwidth_hz: None,
             // None → derive from cmd_port - 1 (8514 with the default cmd_port).
@@ -932,6 +1010,77 @@ impl Default for ArdopUiConfig {
             // decision). Operator opts into a finite duration in minutes.
             listen_ttl_minutes: 0,
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for ArdopUiConfig {
+    /// Hand-written so a pre-CAT-PTT config (no `ptt_method` key) MIGRATES
+    /// instead of defaulting blindly: an old config that recorded a
+    /// `ptt_serial_path` was using ardopcf's RTS PTT, so it deserializes to
+    /// [`PttMethod::SerialRts`]; an old config with no PTT path was VOX, so it
+    /// deserializes to [`PttMethod::Vox`]. A config that already carries
+    /// `ptt_method` is honored verbatim. All other fields fill via their serde
+    /// defaults exactly as the derived impl would.
+    fn deserialize<D>(de: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Shadow struct with the SAME serde shape as ArdopUiConfig, except
+        // `ptt_method` is optional so absence is detectable for migration.
+        #[derive(Deserialize)]
+        struct Shadow {
+            binary: String,
+            capture_device: String,
+            playback_device: String,
+            #[serde(default)]
+            ptt_method: Option<PttMethod>,
+            #[serde(default)]
+            ptt_serial_path: Option<String>,
+            #[serde(default)]
+            cat_serial_path: Option<String>,
+            #[serde(default = "default_cat_baud")]
+            cat_baud: u32,
+            #[serde(default = "default_cat_key_cmd")]
+            cat_key_cmd: String,
+            #[serde(default = "default_cat_unkey_cmd")]
+            cat_unkey_cmd: String,
+            #[serde(default = "default_cat_bridge_port")]
+            cat_bridge_port: u16,
+            cmd_port: u16,
+            #[serde(default)]
+            bandwidth_hz: Option<u32>,
+            #[serde(default)]
+            webgui_port: Option<u16>,
+            #[serde(default)]
+            listen_ttl_minutes: u32,
+        }
+
+        let s = Shadow::deserialize(de)?;
+        let ptt_method = s.ptt_method.unwrap_or_else(|| {
+            // Back-compat migration: derive from the legacy field.
+            if s.ptt_serial_path.is_some() {
+                PttMethod::SerialRts
+            } else {
+                PttMethod::Vox
+            }
+        });
+
+        Ok(ArdopUiConfig {
+            binary: s.binary,
+            capture_device: s.capture_device,
+            playback_device: s.playback_device,
+            ptt_method,
+            ptt_serial_path: s.ptt_serial_path,
+            cat_serial_path: s.cat_serial_path,
+            cat_baud: s.cat_baud,
+            cat_key_cmd: s.cat_key_cmd,
+            cat_unkey_cmd: s.cat_unkey_cmd,
+            cat_bridge_port: s.cat_bridge_port,
+            cmd_port: s.cmd_port,
+            bandwidth_hz: s.bandwidth_hz,
+            webgui_port: s.webgui_port,
+            listen_ttl_minutes: s.listen_ttl_minutes,
+        })
     }
 }
 
@@ -1698,7 +1847,13 @@ mod tests {
             binary: "ardopcf".into(),
             capture_device: "plughw:1,0".into(),
             playback_device: "plughw:1,0".into(),
+            ptt_method: PttMethod::Vox,
             ptt_serial_path: Some("/dev/ttyUSB0".into()),
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
@@ -1709,6 +1864,107 @@ mod tests {
         assert_eq!(back.binary, "ardopcf");
         assert_eq!(back.cmd_port, 8515);
         assert_eq!(back.ptt_serial_path.as_deref(), Some("/dev/ttyUSB0"));
+    }
+
+    // --- tuxlink-wu0k: PttMethod + CAT-PTT field persistence + back-compat ---
+
+    #[test]
+    fn ardop_ui_config_round_trips_cat_command_ptt() {
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:CARD=Device,DEV=0".into(),
+            playback_device: "plughw:CARD=Device,DEV=0".into(),
+            ptt_method: PttMethod::CatCommand,
+            ptt_serial_path: None,
+            cat_serial_path: Some("/dev/ttyUSB0".into()),
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
+            cmd_port: 8515,
+            bandwidth_hz: None,
+            webgui_port: None,
+            listen_ttl_minutes: 0,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        // PttMethod serializes snake_case.
+        assert!(
+            json.contains("\"ptt_method\":\"cat_command\""),
+            "ptt_method must serialize as \"cat_command\"; got: {json}"
+        );
+        let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.ptt_method, PttMethod::CatCommand);
+        assert_eq!(back.cat_serial_path.as_deref(), Some("/dev/ttyUSB0"));
+        assert_eq!(back.cat_baud, 38400);
+        assert_eq!(back.cat_key_cmd, "TX1;");
+        assert_eq!(back.cat_unkey_cmd, "TX0;");
+        assert_eq!(back.cat_bridge_port, 4532);
+    }
+
+    #[test]
+    fn ardop_ui_config_migrates_legacy_serial_rts_when_ptt_method_absent() {
+        // A pre-CAT-PTT config recorded a ptt_serial_path and NO ptt_method:
+        // it was using ardopcf RTS PTT, so it must migrate to SerialRts.
+        let legacy = r#"{
+            "binary": "ardopcf",
+            "capture_device": "plughw:1,0",
+            "playback_device": "plughw:1,0",
+            "ptt_serial_path": "/dev/ttyUSB0",
+            "cmd_port": 8515
+        }"#;
+        let back: ArdopUiConfig = serde_json::from_str(legacy).unwrap();
+        assert_eq!(
+            back.ptt_method,
+            PttMethod::SerialRts,
+            "legacy config with a ptt_serial_path must migrate to SerialRts"
+        );
+        assert_eq!(back.ptt_serial_path.as_deref(), Some("/dev/ttyUSB0"));
+        // CAT fields fill from their defaults.
+        assert_eq!(back.cat_baud, 38400);
+        assert_eq!(back.cat_key_cmd, "TX1;");
+        assert_eq!(back.cat_unkey_cmd, "TX0;");
+        assert_eq!(back.cat_bridge_port, 4532);
+    }
+
+    #[test]
+    fn ardop_ui_config_migrates_legacy_vox_when_no_ptt_fields() {
+        // A pre-CAT-PTT config with neither ptt_method nor ptt_serial_path was
+        // VOX. It must migrate to Vox, not SerialRts.
+        let legacy = r#"{
+            "binary": "ardopcf",
+            "capture_device": "plughw:1,0",
+            "playback_device": "plughw:1,0",
+            "cmd_port": 8515
+        }"#;
+        let back: ArdopUiConfig = serde_json::from_str(legacy).unwrap();
+        assert_eq!(
+            back.ptt_method,
+            PttMethod::Vox,
+            "legacy config with no PTT fields must migrate to Vox"
+        );
+        assert_eq!(back.ptt_serial_path, None);
+    }
+
+    #[test]
+    fn ardop_ui_config_explicit_ptt_method_overrides_legacy_derivation() {
+        // If ptt_method IS present, it wins even when a ptt_serial_path also
+        // exists (e.g. operator switched to CAT but the old serial path lingers).
+        let cfg = r#"{
+            "binary": "ardopcf",
+            "capture_device": "plughw:1,0",
+            "playback_device": "plughw:1,0",
+            "ptt_method": "cat_command",
+            "ptt_serial_path": "/dev/ttyUSB0",
+            "cat_serial_path": "/dev/ttyUSB0",
+            "cmd_port": 8515
+        }"#;
+        let back: ArdopUiConfig = serde_json::from_str(cfg).unwrap();
+        assert_eq!(back.ptt_method, PttMethod::CatCommand);
+    }
+
+    #[test]
+    fn ptt_method_defaults_to_vox() {
+        assert_eq!(PttMethod::default(), PttMethod::Vox);
     }
 
     // --- tuxlink-j0ij: ArdopUiConfig.bandwidth_hz persistence tests ---
@@ -1722,7 +1978,13 @@ mod tests {
             binary: "ardopcf".into(),
             capture_device: "plughw:1,0".into(),
             playback_device: "plughw:1,0".into(),
+            ptt_method: PttMethod::Vox,
             ptt_serial_path: None,
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: Some(500),
             webgui_port: None,
@@ -1750,7 +2012,13 @@ mod tests {
             binary: "ardopcf".into(),
             capture_device: "plughw:1,0".into(),
             playback_device: "plughw:1,0".into(),
+            ptt_method: PttMethod::Vox,
             ptt_serial_path: None,
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
@@ -1826,7 +2094,13 @@ mod tests {
             binary: "ardopcf".into(),
             capture_device: "plughw:1,0".into(),
             playback_device: "plughw:1,0".into(),
+            ptt_method: PttMethod::Vox,
             ptt_serial_path: None,
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: Some(9080),

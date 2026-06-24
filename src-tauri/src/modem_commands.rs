@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 
-use crate::config::{self, ArdopUiConfig, Config};
+use crate::config::{self, ArdopUiConfig, Config, PttMethod};
 use crate::modem_status::{ModemSession, ModemState, ModemStatus};
 use crate::native_mailbox::Mailbox;
 use crate::session_log::SessionLogState;
@@ -303,6 +303,9 @@ where
         // ardopcf convention: data_port = cmd_port + 1 (8516 for default 8515).
         data_port: ardop_ui.cmd_port.saturating_add(1),
         audio_device_path: None,
+        // tuxlink-wu0k: spawn the close-serial CAT-PTT bridge when the operator
+        // selected CAT PTT; None for VOX / serial-RTS.
+        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
     };
 
     // Mark spawning so any concurrent status_snapshot sees the transition
@@ -427,6 +430,8 @@ where
         cmd_port: ardop_ui.cmd_port,
         data_port: ardop_ui.cmd_port.saturating_add(1),
         audio_device_path: None,
+        // tuxlink-wu0k: CAT-PTT bridge when ptt_method == CatCommand; else None.
+        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
     };
 
     let mut snap = session.status_snapshot();
@@ -530,6 +535,8 @@ where
         cmd_port: ardop_ui.cmd_port,
         data_port: ardop_ui.cmd_port.saturating_add(1),
         audio_device_path: None,
+        // tuxlink-wu0k: CAT-PTT bridge when ptt_method == CatCommand; else None.
+        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
     };
 
     let mut snap = session.status_snapshot();
@@ -872,37 +879,112 @@ fn init_config_from_session(
     }
 }
 
+/// Uppercase-hex encode the ASCII bytes of a CAT command string (tuxlink-wu0k).
+///
+/// ardopcf's `-k`/`-u` keystring arguments are hex of the raw bytes to send over
+/// the CAT socket, e.g. `TX1;` → `5458313B`, `TX0;` → `5458303B`. Encoding the
+/// configured key/unkey commands rather than hardcoding the FT-710 values lets
+/// the operator drive any CAT-keyed radio.
+pub(crate) fn hex_encode_cat_cmd(cmd: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(cmd.len() * 2);
+    for b in cmd.as_bytes() {
+        // Infallible: writing to a String never errors.
+        let _ = write!(out, "{b:02X}");
+    }
+    out
+}
+
+/// Build the [`CatBridgeSpec`] for a CAT-PTT config, or `None` for any other
+/// PTT method (tuxlink-wu0k).
+///
+/// `Ok(Some(..))` only when `ptt_method == CatCommand` and a CAT serial device
+/// is configured; the spec carries the bridge port, CAT serial path/baud, and
+/// key/unkey commands so
+/// [`crate::winlink::modem::ardop::transport::ArdopTransport::with_managed_modem`]
+/// can spawn the close-serial bridge before ardopcf. `Ok(None)` for non-CAT PTT.
+///
+/// Fails closed: CAT-command PTT with a blank CAT serial path returns `Err`
+/// rather than inventing a default device — a hardcoded `/dev/ttyUSB0` could be
+/// a TNC, GPS, or a different radio, so keying it would transmit on the wrong
+/// device. The operator must pick the CAT serial port in the panel first.
+pub(crate) fn cat_bridge_spec_from(
+    ardop_ui: &ArdopUiConfig,
+) -> Result<Option<crate::winlink::modem::ardop::CatBridgeSpec>, String> {
+    if ardop_ui.ptt_method != PttMethod::CatCommand {
+        return Ok(None);
+    }
+    let serial_path = ardop_ui
+        .cat_serial_path
+        .clone()
+        .filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| {
+            "CAT-command PTT is selected but no CAT serial device is configured — \
+             set the CAT serial port in the ARDOP panel before connecting"
+                .to_string()
+        })?;
+    Ok(Some(crate::winlink::modem::ardop::CatBridgeSpec {
+        bridge_port: ardop_ui.cat_bridge_port,
+        serial_path,
+        baud: ardop_ui.cat_baud,
+        key_cmd: ardop_ui.cat_key_cmd.clone(),
+        unkey_cmd: ardop_ui.cat_unkey_cmd.clone(),
+    }))
+}
+
 /// Build the `extra_args` vector passed to `ArdopConfig` (the ardopcf CLI).
 ///
 /// ardopcf's positional CLI is:
 /// ```text
-/// ardopcf [-p <ptt>] [-G <webgui_port>] <cmd_port> <capture> <playback>
+/// ardopcf [PTT FLAGS] [-G <webgui_port>] <cmd_port> <capture> <playback>
 /// ```
 ///
-/// Optional flags (in this order) precede the positional triple:
+/// PTT flags depend on `ardop_ui.ptt_method` (tuxlink-wu0k):
 ///
-/// - **`-p <ptt>`** — only when `ardop_ui.ptt_serial_path` is `Some(non_empty)`.
-///   RTS PTT via the named serial port. ardopcf rejects an empty value, so we
-///   filter empty strings here defensively.
-/// - **`-G <webgui_port>`** — tuxlink-60wh: enable ardopcf's built-in WebGUI
-///   (Spectrum + Waterfall + level meters) so the operator can open it in
-///   their browser via the dock's "Open WebGUI" button. The port follows
-///   ardopcf's documented convention `webgui_port = cmd_port - 1` (default
-///   8515 → 8514). The flag is omitted when `cmd_port < 2` (no valid TCP
-///   port can be derived); `0` is reserved and `1` is too low to bind in
-///   practice. The omission is a safe default — ardopcf simply runs
-///   without a WebGUI when `-G` is absent.
+/// - [`PttMethod::Vox`] — no PTT flag; the radio keys on VOX / detected audio.
+/// - [`PttMethod::SerialRts`] — **`-p <ptt_serial_path>`**, ardopcf's RTS PTT,
+///   only when the path is `Some(non_empty)` (ardopcf rejects an empty value).
+/// - [`PttMethod::CatCommand`] — **`-c TCP:<cat_bridge_port> -k <hex(key)>
+///   -u <hex(unkey)>`**. ardopcf sends the keystring over a TCP "CAT" socket
+///   served by tuxlink's close-serial bridge (the serial port is held OPEN only
+///   momentarily per keystring so it does not contend with the audio codec on a
+///   single-cable USB tree). NO `-p` is emitted. The bridge itself is spawned by
+///   [`crate::winlink::modem::ardop::transport::ArdopTransport::with_managed_modem`]
+///   from the [`CatBridgeSpec`](crate::winlink::modem::ardop::CatBridgeSpec)
+///   carried on `ArdopConfig`; this function only emits the matching ardopcf
+///   flags. Proven on air 2026-06-23 (FT-710 + Pi 5).
+///
+/// Then **`-G <webgui_port>`** (tuxlink-60wh) enables ardopcf's built-in WebGUI
+/// on `cmd_port - 1` (omitted when `cmd_port < 2`).
 ///
 /// Pure over `&ArdopUiConfig` so unit tests can assert the exact argv shape
 /// without spawning a real process.
 pub(crate) fn build_ardop_extra_args(ardop_ui: &ArdopUiConfig) -> Vec<String> {
-    // Capacity covers worst case: -p <ptt> -G <wg> <cmd> <cap> <play> = 7.
-    let mut extra_args: Vec<String> = Vec::with_capacity(7);
+    // Capacity covers worst case: -c TCP:p -k h -u h -G <wg> <cmd> <cap> <play>.
+    let mut extra_args: Vec<String> = Vec::with_capacity(11);
 
-    if let Some(ref ptt) = ardop_ui.ptt_serial_path {
-        if !ptt.is_empty() {
-            extra_args.push("-p".into());
-            extra_args.push(ptt.clone());
+    match ardop_ui.ptt_method {
+        PttMethod::Vox => {
+            // No PTT line.
+        }
+        PttMethod::SerialRts => {
+            if let Some(ref ptt) = ardop_ui.ptt_serial_path {
+                if !ptt.is_empty() {
+                    extra_args.push("-p".into());
+                    extra_args.push(ptt.clone());
+                }
+            }
+        }
+        PttMethod::CatCommand => {
+            // ardopcf keys over the TCP CAT socket served by tuxlink's
+            // close-serial bridge: -c TCP:<port> -k <hex(key)> -u <hex(unkey)>.
+            // NO -p — the radio is keyed by CAT command, not an RTS line.
+            extra_args.push("-c".into());
+            extra_args.push(format!("TCP:{}", ardop_ui.cat_bridge_port));
+            extra_args.push("-k".into());
+            extra_args.push(hex_encode_cat_cmd(&ardop_ui.cat_key_cmd));
+            extra_args.push("-u".into());
+            extra_args.push(hex_encode_cat_cmd(&ardop_ui.cat_unkey_cmd));
         }
     }
 
@@ -1428,7 +1510,13 @@ mod tests {
             binary: "ardopcf".into(),
             capture_device: "plughw:0,0".into(),
             playback_device: "plughw:0,0".into(),
+            ptt_method: PttMethod::Vox,
             ptt_serial_path: None,
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
@@ -1560,7 +1648,13 @@ mod tests {
             binary: "ardopcf-stub".into(),
             capture_device: "plughw:0,0".into(),
             playback_device: "plughw:0,0".into(),
+            ptt_method: PttMethod::Vox,
             ptt_serial_path: None,
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
@@ -2308,7 +2402,13 @@ mod tests {
             binary: "ardopcf".into(),
             capture_device: "plughw:1,0".into(),
             playback_device: "plughw:1,0".into(),
+            ptt_method: PttMethod::Vox,
             ptt_serial_path: None,
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
@@ -2336,7 +2436,13 @@ mod tests {
             binary: "ardopcf".into(),
             capture_device: "plughw:0,0".into(),
             playback_device: "plughw:0,0".into(),
+            ptt_method: PttMethod::Vox,
             ptt_serial_path: None,
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 9001,
             bandwidth_hz: None,
             webgui_port: None,
@@ -2359,7 +2465,13 @@ mod tests {
                 binary: "ardopcf".into(),
                 capture_device: "plughw:0,0".into(),
                 playback_device: "plughw:0,0".into(),
+                ptt_method: PttMethod::Vox,
                 ptt_serial_path: None,
+                cat_serial_path: None,
+                cat_baud: 38400,
+                cat_key_cmd: "TX1;".into(),
+                cat_unkey_cmd: "TX0;".into(),
+                cat_bridge_port: 4532,
                 cmd_port: low_port,
                 bandwidth_hz: None,
                 webgui_port: None,
@@ -2382,7 +2494,13 @@ mod tests {
             binary: "ardopcf".into(),
             capture_device: "plughw:1,0".into(),
             playback_device: "plughw:1,0".into(),
+            ptt_method: PttMethod::SerialRts,
             ptt_serial_path: Some("/dev/ttyUSB0".into()),
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
@@ -2414,7 +2532,13 @@ mod tests {
             binary: "ardopcf".into(),
             capture_device: "plughw:1,0".into(),
             playback_device: "plughw:1,0".into(),
+            ptt_method: PttMethod::SerialRts,
             ptt_serial_path: Some("".into()),
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: None,
@@ -2439,7 +2563,13 @@ mod tests {
             binary: "ardopcf".into(),
             capture_device: "plughw:1,0".into(),
             playback_device: "plughw:1,0".into(),
+            ptt_method: PttMethod::Vox,
             ptt_serial_path: None,
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
             webgui_port: Some(9080),
@@ -2465,7 +2595,13 @@ mod tests {
             binary: "ardopcf".into(),
             capture_device: "plughw:1,0".into(),
             playback_device: "plughw:1,0".into(),
+            ptt_method: PttMethod::Vox,
             ptt_serial_path: None,
+            cat_serial_path: None,
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
             cmd_port: 0,
             bandwidth_hz: None,
             webgui_port: Some(8514),
@@ -2476,6 +2612,148 @@ mod tests {
             args.windows(2).any(|w| w[0] == "-G" && w[1] == "8514"),
             "override must apply even with low cmd_port; got: {args:?}"
         );
+    }
+
+    // ── tuxlink-wu0k: CAT-command PTT branch + hex helper ─────────────────
+
+    #[test]
+    fn hex_encode_cat_cmd_matches_proven_ft710_values() {
+        // The values proven on air 2026-06-23: TX1; → 5458313B, TX0; → 5458303B.
+        assert_eq!(hex_encode_cat_cmd("TX1;"), "5458313B");
+        assert_eq!(hex_encode_cat_cmd("TX0;"), "5458303B");
+        // Empty input → empty hex.
+        assert_eq!(hex_encode_cat_cmd(""), "");
+    }
+
+    fn cat_ptt_cfg() -> ArdopUiConfig {
+        ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:CARD=Device,DEV=0".into(),
+            playback_device: "plughw:CARD=Device,DEV=0".into(),
+            ptt_method: PttMethod::CatCommand,
+            ptt_serial_path: None,
+            cat_serial_path: Some("/dev/ttyUSB0".into()),
+            cat_baud: 38400,
+            cat_key_cmd: "TX1;".into(),
+            cat_unkey_cmd: "TX0;".into(),
+            cat_bridge_port: 4532,
+            cmd_port: 8515,
+            bandwidth_hz: None,
+            webgui_port: None,
+            listen_ttl_minutes: 0,
+        }
+    }
+
+    #[test]
+    fn extra_args_cat_command_emits_c_k_u_and_no_p() {
+        // CAT PTT must emit `-c TCP:<port> -k <hex(key)> -u <hex(unkey)>` and
+        // NOT a `-p` RTS flag. This is the seam the FT-710 close-serial path
+        // rides on (tuxlink-wu0k).
+        let args = build_ardop_extra_args(&cat_ptt_cfg());
+
+        assert!(
+            args.windows(2).any(|w| w[0] == "-c" && w[1] == "TCP:4532"),
+            "expected `-c TCP:4532`; got: {args:?}"
+        );
+        assert!(
+            args.windows(2).any(|w| w[0] == "-k" && w[1] == "5458313B"),
+            "expected `-k 5458313B` (hex of TX1;); got: {args:?}"
+        );
+        assert!(
+            args.windows(2).any(|w| w[0] == "-u" && w[1] == "5458303B"),
+            "expected `-u 5458303B` (hex of TX0;); got: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "-p"),
+            "CAT PTT must NOT emit a -p RTS flag; got: {args:?}"
+        );
+    }
+
+    #[test]
+    fn extra_args_cat_command_honors_custom_bridge_port_and_commands() {
+        let mut cfg = cat_ptt_cfg();
+        cfg.cat_bridge_port = 4600;
+        cfg.cat_key_cmd = "RT1;".into(); // 52 54 31 3B
+        cfg.cat_unkey_cmd = "RT0;".into(); // 52 54 30 3B
+        let args = build_ardop_extra_args(&cfg);
+        assert!(args.windows(2).any(|w| w[0] == "-c" && w[1] == "TCP:4600"), "{args:?}");
+        assert!(args.windows(2).any(|w| w[0] == "-k" && w[1] == "5254313B"), "{args:?}");
+        assert!(args.windows(2).any(|w| w[0] == "-u" && w[1] == "5254303B"), "{args:?}");
+    }
+
+    #[test]
+    fn extra_args_cat_command_ignores_ptt_serial_path() {
+        // Even if a stale ptt_serial_path lingers, CAT mode must not emit -p.
+        let mut cfg = cat_ptt_cfg();
+        cfg.ptt_serial_path = Some("/dev/ttyUSB9".into());
+        let args = build_ardop_extra_args(&cfg);
+        assert!(!args.iter().any(|a| a == "-p"), "{args:?}");
+        assert!(!args.iter().any(|a| a == "/dev/ttyUSB9"), "{args:?}");
+    }
+
+    #[test]
+    fn extra_args_cat_command_keeps_g_and_positional_after_cat_flags() {
+        // Full argv order: -c TCP:p -k h -u h -G <wg> <cmd> <cap> <play>.
+        let args = build_ardop_extra_args(&cat_ptt_cfg());
+        assert_eq!(
+            args,
+            vec![
+                "-c".to_string(),
+                "TCP:4532".to_string(),
+                "-k".to_string(),
+                "5458313B".to_string(),
+                "-u".to_string(),
+                "5458303B".to_string(),
+                "-G".to_string(),
+                "8514".to_string(),
+                "8515".to_string(),
+                "plughw:CARD=Device,DEV=0".to_string(),
+                "plughw:CARD=Device,DEV=0".to_string(),
+            ],
+            "CAT argv order must be -c TCP:p -k h -u h -G wg cmd cap play"
+        );
+    }
+
+    #[test]
+    fn extra_args_vox_emits_no_ptt_flags() {
+        let mut cfg = cat_ptt_cfg();
+        cfg.ptt_method = PttMethod::Vox;
+        let args = build_ardop_extra_args(&cfg);
+        assert!(!args.iter().any(|a| a == "-p" || a == "-c" || a == "-k" || a == "-u"), "{args:?}");
+    }
+
+    #[test]
+    fn cat_bridge_spec_is_none_for_non_cat_methods() {
+        let mut cfg = cat_ptt_cfg();
+        cfg.ptt_method = PttMethod::Vox;
+        assert!(matches!(cat_bridge_spec_from(&cfg), Ok(None)));
+        cfg.ptt_method = PttMethod::SerialRts;
+        assert!(matches!(cat_bridge_spec_from(&cfg), Ok(None)));
+    }
+
+    #[test]
+    fn cat_bridge_spec_carries_config_for_cat_method() {
+        let spec = cat_bridge_spec_from(&cat_ptt_cfg())
+            .expect("configured CAT config is valid")
+            .expect("CAT method yields a spec");
+        assert_eq!(spec.bridge_port, 4532);
+        assert_eq!(spec.serial_path, "/dev/ttyUSB0");
+        assert_eq!(spec.baud, 38400);
+        assert_eq!(spec.key_cmd, "TX1;");
+        assert_eq!(spec.unkey_cmd, "TX0;");
+    }
+
+    #[test]
+    fn cat_bridge_spec_fails_closed_when_serial_unset() {
+        // CAT PTT with no serial device must REFUSE, not invent /dev/ttyUSB0 —
+        // keying an unintended device (a TNC, GPS, or different radio) is unsafe.
+        let mut cfg = cat_ptt_cfg();
+        cfg.cat_serial_path = None;
+        assert!(cat_bridge_spec_from(&cfg).is_err(), "unset CAT serial must error");
+        cfg.cat_serial_path = Some(String::new());
+        assert!(cat_bridge_spec_from(&cfg).is_err(), "empty CAT serial must error");
+        cfg.cat_serial_path = Some("   ".into());
+        assert!(cat_bridge_spec_from(&cfg).is_err(), "whitespace CAT serial must error");
     }
 
     /// When the persisted config has no `modem_ardop` section, the

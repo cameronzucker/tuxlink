@@ -116,6 +116,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cmd_port,
         data_port,
         audio_device_path,
+        // Connect-only example: no CAT-PTT bridge (the FT-710 single-cable
+        // close-serial path is exercised by the UI / modem_commands). tuxlink-wu0k.
+        cat_bridge: None,
     };
 
     println!("ardop_connect: spawning {binary} on ports {cmd_port}/{data_port}");

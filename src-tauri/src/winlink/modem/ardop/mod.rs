@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 pub mod arq_state;
 pub mod b2f;
+pub mod cat_ptt_bridge;
 pub mod command;
 pub mod data;
 pub mod frame;
@@ -22,6 +23,8 @@ pub mod listener;
 pub mod session;
 pub mod transport;
 pub mod wire;
+
+pub use cat_ptt_bridge::CatBridgeSpec;
 
 // ─── ArdopConfig ─────────────────────────────────────────────────────────────
 
@@ -59,4 +62,13 @@ pub struct ArdopConfig {
     /// When `Some`, `shutdown` will call
     /// [`process::ManagedModem::confirm_audio_device_released`] before returning.
     pub audio_device_path: Option<PathBuf>,
+    /// Optional CAT-PTT bridge to spawn BEFORE ardopcf (tuxlink-wu0k).
+    ///
+    /// `Some` when `ptt_method == CatCommand`: tuxlink starts a close-serial
+    /// CAT-PTT bridge listening on a loopback TCP port, and ardopcf (whose
+    /// `extra_args` carry `-c TCP:<port> -k … -u …`) keys the radio by sending
+    /// its keystring to that port. `with_managed_modem` spawns the bridge first
+    /// (so the port is bound when ardopcf connects) and `shutdown`/`Drop` stop
+    /// it. `None` for VOX / serial-RTS PTT — no bridge process is started.
+    pub cat_bridge: Option<CatBridgeSpec>,
 }
