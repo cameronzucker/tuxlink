@@ -108,6 +108,28 @@ impl CatPttBridge {
     /// Returns an error if the temp file cannot be written, `python3` cannot be
     /// spawned, or the port never binds within [`BIND_WAIT`].
     pub fn spawn(spec: &CatBridgeSpec) -> io::Result<CatPttBridge> {
+        // Port-collision pre-check, BEFORE any side effects. The default bridge
+        // port (4532) is ALSO rigctld's default. If another process already holds
+        // the port, the post-spawn TCP probe below would accept against THAT
+        // listener — and ardopcf would key the wrong process while our bridge
+        // silently failed to bind, with its unkey failsafe out of the path. Fail
+        // loudly instead. The listener is dropped immediately so the bridge child
+        // can bind the port within milliseconds.
+        match std::net::TcpListener::bind(("127.0.0.1", spec.bridge_port)) {
+            Ok(listener) => drop(listener),
+            Err(e) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    format!(
+                        "CAT-PTT bridge port {} is unavailable ({e}) — rigctld \
+                         defaults to 4532, or another session holds it; choose a \
+                         different CAT bridge port",
+                        spec.bridge_port
+                    ),
+                ));
+            }
+        }
+
         let script_path = write_bridge_script()?;
         let script_str = script_path.to_string_lossy().into_owned();
 
@@ -120,7 +142,7 @@ impl CatPttBridge {
             io::Error::other(format!("failed to spawn CAT-PTT bridge (python3): {e}"))
         })?;
 
-        let bridge = CatPttBridge {
+        let mut bridge = CatPttBridge {
             process,
             script_path,
             bridge_port: spec.bridge_port,
@@ -139,10 +161,22 @@ impl CatPttBridge {
 
     /// Poll `TcpStream::connect` to the bridge port until it accepts or the
     /// timeout elapses. Each successful probe connection is immediately closed.
-    fn wait_for_port(&self, timeout: Duration) -> io::Result<()> {
+    ///
+    /// Also checks the spawned child is still alive on each poll: if the bridge
+    /// process exited during startup (e.g. a serial-open or late bind failure),
+    /// fail immediately rather than wait out the timeout — and never report a
+    /// dead bridge as ready.
+    fn wait_for_port(&mut self, timeout: Duration) -> io::Result<()> {
         let addr = format!("127.0.0.1:{}", self.bridge_port);
         let start = Instant::now();
         loop {
+            if !self.process.is_running() {
+                return Err(io::Error::other(format!(
+                    "CAT-PTT bridge process exited during startup (port {}) — \
+                     check the serial device and that the port is free",
+                    self.bridge_port
+                )));
+            }
             if TcpStream::connect_timeout(
                 &addr.parse().map_err(|e| {
                     io::Error::new(io::ErrorKind::InvalidInput, format!("bad bridge addr: {e}"))
@@ -182,7 +216,16 @@ impl CatPttBridge {
 
 impl Drop for CatPttBridge {
     fn drop(&mut self) {
-        // ManagedModem::Drop terminates the python3 process as a backstop.
+        // The real Tauri disconnect path DROPS the transport (it holds it as a
+        // `Box<dyn ModemTransport>` and `modem_ardop_disconnect_inner` drops it
+        // rather than calling `ArdopTransport::shutdown`), so this Drop — not
+        // `shutdown` — is the usual bridge teardown. Give the bridge a real grace
+        // window to run its SIGINT unkey-failsafe (open serial → write TX0; →
+        // close) instead of relying on `ManagedModem::Drop`'s short 200 ms
+        // SIGINT→SIGKILL escalation, which can cut the unkey off mid-write and
+        // strand the radio keyed. Best-effort; `ManagedModem::Drop` terminates the
+        // process regardless. Idempotent with `stop` on the `shutdown` path.
+        let _ = self.process.stop(Duration::from_secs(3));
         // Remove the temp script so we don't leak files across reconnects.
         let _ = std::fs::remove_file(&self.script_path);
     }

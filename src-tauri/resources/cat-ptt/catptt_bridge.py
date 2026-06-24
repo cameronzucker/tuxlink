@@ -55,11 +55,7 @@ def main(argv):
     args = parse_args(argv)
     key_bytes = args.key.encode("ascii")
     unkey_bytes = args.unkey.encode("ascii")
-    # Match on the alnum prefix of each command (e.g. "TX1" / "TX0") so a
-    # trailing-terminator difference between the configured command and the
-    # keystring ardopcf echoes back does not defeat the match.
-    key_tag = args.key.rstrip(";").encode("ascii")
-    unkey_tag = args.unkey.rstrip(";").encode("ascii")
+    maxlen = max(len(key_bytes), len(unkey_bytes))
 
     def cat_send(payload, label):
         """Momentary open/write/close so the serial port is shut during audio."""
@@ -106,12 +102,28 @@ def main(argv):
                     break
                 buf += data
                 print(f"[bridge rx] {data!r}", flush=True)
-                while b";" in buf:
-                    cmd, buf = buf.split(b";", 1)
-                    if key_tag and key_tag in cmd:
-                        cat_send(key_bytes, "KEY")
-                    elif unkey_tag and unkey_tag in cmd:
+                # Match the FULL configured key/unkey byte sequences (e.g. b"TX1;"
+                # / b"TX0;"), not a ';'-delimited substring. This processes
+                # commands that carry no ';' terminator, and avoids
+                # overlapping-prefix misrouting (e.g. key "TX" vs unkey "TX0"). On
+                # any ambiguity the UNKEY wins, so the radio is never accidentally
+                # left keyed.
+                while True:
+                    ki = buf.find(key_bytes)
+                    ui = buf.find(unkey_bytes)
+                    if ki < 0 and ui < 0:
+                        break
+                    if ui >= 0 and (ki < 0 or ui <= ki):
                         cat_send(unkey_bytes, "UNKEY")
+                        buf = buf[ui + len(unkey_bytes):]
+                    else:
+                        cat_send(key_bytes, "KEY")
+                        buf = buf[ki + len(key_bytes):]
+                # No complete command remains. Keep only a tail that could be the
+                # prefix of a future full match so unrecognized noise can't grow
+                # the buffer without bound.
+                if len(buf) >= maxlen:
+                    buf = buf[-(maxlen - 1):] if maxlen > 1 else b""
         except Exception as exc:  # noqa: BLE001
             print(f"[bridge] conn end {exc!r}", flush=True)
         finally:

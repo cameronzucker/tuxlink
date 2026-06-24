@@ -305,7 +305,7 @@ where
         audio_device_path: None,
         // tuxlink-wu0k: spawn the close-serial CAT-PTT bridge when the operator
         // selected CAT PTT; None for VOX / serial-RTS.
-        cat_bridge: cat_bridge_spec_from(ardop_ui),
+        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
     };
 
     // Mark spawning so any concurrent status_snapshot sees the transition
@@ -431,7 +431,7 @@ where
         data_port: ardop_ui.cmd_port.saturating_add(1),
         audio_device_path: None,
         // tuxlink-wu0k: CAT-PTT bridge when ptt_method == CatCommand; else None.
-        cat_bridge: cat_bridge_spec_from(ardop_ui),
+        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
     };
 
     let mut snap = session.status_snapshot();
@@ -536,7 +536,7 @@ where
         data_port: ardop_ui.cmd_port.saturating_add(1),
         audio_device_path: None,
         // tuxlink-wu0k: CAT-PTT bridge when ptt_method == CatCommand; else None.
-        cat_bridge: cat_bridge_spec_from(ardop_ui),
+        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
     };
 
     let mut snap = session.status_snapshot();
@@ -898,30 +898,38 @@ pub(crate) fn hex_encode_cat_cmd(cmd: &str) -> String {
 /// Build the [`CatBridgeSpec`] for a CAT-PTT config, or `None` for any other
 /// PTT method (tuxlink-wu0k).
 ///
-/// `Some` only when `ptt_method == CatCommand`; the spec carries the bridge
-/// port, CAT serial path/baud, and key/unkey commands so
+/// `Ok(Some(..))` only when `ptt_method == CatCommand` and a CAT serial device
+/// is configured; the spec carries the bridge port, CAT serial path/baud, and
+/// key/unkey commands so
 /// [`crate::winlink::modem::ardop::transport::ArdopTransport::with_managed_modem`]
-/// can spawn the close-serial bridge before ardopcf. `cat_serial_path` defaults
-/// to `/dev/ttyUSB0` when unset so a freshly-toggled CAT config still has a
-/// serial target (the operator picks the real port in the panel; this is a
-/// last-resort default matching the proven FT-710 device).
+/// can spawn the close-serial bridge before ardopcf. `Ok(None)` for non-CAT PTT.
+///
+/// Fails closed: CAT-command PTT with a blank CAT serial path returns `Err`
+/// rather than inventing a default device — a hardcoded `/dev/ttyUSB0` could be
+/// a TNC, GPS, or a different radio, so keying it would transmit on the wrong
+/// device. The operator must pick the CAT serial port in the panel first.
 pub(crate) fn cat_bridge_spec_from(
     ardop_ui: &ArdopUiConfig,
-) -> Option<crate::winlink::modem::ardop::CatBridgeSpec> {
+) -> Result<Option<crate::winlink::modem::ardop::CatBridgeSpec>, String> {
     if ardop_ui.ptt_method != PttMethod::CatCommand {
-        return None;
+        return Ok(None);
     }
-    Some(crate::winlink::modem::ardop::CatBridgeSpec {
+    let serial_path = ardop_ui
+        .cat_serial_path
+        .clone()
+        .filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| {
+            "CAT-command PTT is selected but no CAT serial device is configured — \
+             set the CAT serial port in the ARDOP panel before connecting"
+                .to_string()
+        })?;
+    Ok(Some(crate::winlink::modem::ardop::CatBridgeSpec {
         bridge_port: ardop_ui.cat_bridge_port,
-        serial_path: ardop_ui
-            .cat_serial_path
-            .clone()
-            .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| "/dev/ttyUSB0".to_string()),
+        serial_path,
         baud: ardop_ui.cat_baud,
         key_cmd: ardop_ui.cat_key_cmd.clone(),
         unkey_cmd: ardop_ui.cat_unkey_cmd.clone(),
-    })
+    }))
 }
 
 /// Build the `extra_args` vector passed to `ArdopConfig` (the ardopcf CLI).
@@ -2718,14 +2726,16 @@ mod tests {
     fn cat_bridge_spec_is_none_for_non_cat_methods() {
         let mut cfg = cat_ptt_cfg();
         cfg.ptt_method = PttMethod::Vox;
-        assert!(cat_bridge_spec_from(&cfg).is_none());
+        assert!(matches!(cat_bridge_spec_from(&cfg), Ok(None)));
         cfg.ptt_method = PttMethod::SerialRts;
-        assert!(cat_bridge_spec_from(&cfg).is_none());
+        assert!(matches!(cat_bridge_spec_from(&cfg), Ok(None)));
     }
 
     #[test]
     fn cat_bridge_spec_carries_config_for_cat_method() {
-        let spec = cat_bridge_spec_from(&cat_ptt_cfg()).expect("CAT method yields a spec");
+        let spec = cat_bridge_spec_from(&cat_ptt_cfg())
+            .expect("configured CAT config is valid")
+            .expect("CAT method yields a spec");
         assert_eq!(spec.bridge_port, 4532);
         assert_eq!(spec.serial_path, "/dev/ttyUSB0");
         assert_eq!(spec.baud, 38400);
@@ -2734,14 +2744,16 @@ mod tests {
     }
 
     #[test]
-    fn cat_bridge_spec_defaults_serial_when_unset() {
+    fn cat_bridge_spec_fails_closed_when_serial_unset() {
+        // CAT PTT with no serial device must REFUSE, not invent /dev/ttyUSB0 —
+        // keying an unintended device (a TNC, GPS, or different radio) is unsafe.
         let mut cfg = cat_ptt_cfg();
         cfg.cat_serial_path = None;
-        let spec = cat_bridge_spec_from(&cfg).expect("spec");
-        assert_eq!(spec.serial_path, "/dev/ttyUSB0", "unset CAT serial falls back");
+        assert!(cat_bridge_spec_from(&cfg).is_err(), "unset CAT serial must error");
         cfg.cat_serial_path = Some(String::new());
-        let spec = cat_bridge_spec_from(&cfg).expect("spec");
-        assert_eq!(spec.serial_path, "/dev/ttyUSB0", "empty CAT serial falls back");
+        assert!(cat_bridge_spec_from(&cfg).is_err(), "empty CAT serial must error");
+        cfg.cat_serial_path = Some("   ".into());
+        assert!(cat_bridge_spec_from(&cfg).is_err(), "whitespace CAT serial must error");
     }
 
     /// When the persisted config has no `modem_ardop` section, the
