@@ -228,11 +228,29 @@ interface SerialDeviceDto {
   label: string;
 }
 
+/** How tuxlink keys the radio for ARDOP TX (tuxlink-wu0k). Mirrors Rust's
+ *  `config::PttMethod` (serde snake_case). CAT command is for radios like the
+ *  FT-710 that key ONLY by CAT (TX1;/TX0;) and need the serial port CLOSED
+ *  during audio — tuxlink owns a close-serial bridge for that path. */
+type PttMethod = 'vox' | 'serial_rts' | 'cat_command';
+
 interface ArdopFullConfig {
   binary: string;
   capture_device: string;
   playback_device: string;
+  /** How tuxlink keys the radio. Default 'vox'. */
+  ptt_method: PttMethod;
   ptt_serial_path: string | null;
+  /** Serial device for CAT PTT (consulted only when ptt_method='cat_command'). */
+  cat_serial_path: string | null;
+  /** CAT serial baud. Default 38400 (FT-710 Enhanced port). */
+  cat_baud: number;
+  /** CAT key command, e.g. 'TX1;'. */
+  cat_key_cmd: string;
+  /** CAT unkey command, e.g. 'TX0;'. */
+  cat_unkey_cmd: string;
+  /** Loopback TCP port the close-serial CAT-PTT bridge listens on. Default 4532. */
+  cat_bridge_port: number;
   cmd_port: number;
   bandwidth_hz: number | null;
   /** Optional WebGUI port pin. null → derive from `cmd_port - 1` (the
@@ -290,6 +308,14 @@ export function ArdopRadioPanel({
   const [captureInput, setCaptureInput] = useState<string>('');
   const [playbackInput, setPlaybackInput] = useState<string>('');
   const [pttSerialInput, setPttSerialInput] = useState<string>('');
+  // tuxlink-wu0k: PTT method + CAT-command fields. CAT command keys radios
+  // like the FT-710 that key ONLY by CAT (TX1;/TX0;) and need the serial port
+  // CLOSED during audio — tuxlink spawns a close-serial bridge for that path.
+  const [pttMethod, setPttMethod] = useState<PttMethod>('vox');
+  const [catSerialInput, setCatSerialInput] = useState<string>('');
+  const [catBaudInput, setCatBaudInput] = useState<string>('38400');
+  const [catKeyInput, setCatKeyInput] = useState<string>('TX1;');
+  const [catUnkeyInput, setCatUnkeyInput] = useState<string>('TX0;');
   // tuxlink-0kew: collapse the Radio-configuration group to reclaim panel
   // real estate once it's set. Default open (discoverable on first use); the
   // operator's collapse choice persists across sessions via localStorage.
@@ -413,6 +439,13 @@ export function ArdopRadioPanel({
         setCaptureInput(c.capture_device ?? '');
         setPlaybackInput(c.playback_device ?? '');
         setPttSerialInput(c.ptt_serial_path ?? '');
+        // tuxlink-wu0k: PTT method + CAT fields. Older configs may lack
+        // ptt_method (the backend migrates it on read), so default to 'vox'.
+        setPttMethod(c.ptt_method ?? 'vox');
+        setCatSerialInput(c.cat_serial_path ?? '');
+        setCatBaudInput(String(c.cat_baud ?? 38400));
+        setCatKeyInput(c.cat_key_cmd ?? 'TX1;');
+        setCatUnkeyInput(c.cat_unkey_cmd ?? 'TX0;');
         setCmdPortInput(String(c.cmd_port));
         setBinaryInput(c.binary ?? '');
         // Display the resolved port (override OR cmd_port-1) as a hint so
@@ -455,6 +488,42 @@ export function ArdopRadioPanel({
     const trimmed = pttSerialInput.trim();
     // Empty string → null on the wire (means "use VOX").
     persistArdop({ ptt_serial_path: trimmed === '' ? null : trimmed });
+  };
+  // tuxlink-wu0k: CAT-PTT field commits. The method selector persists eagerly
+  // on change; the text fields persist on blur (matching the panel's idiom).
+  const onPttMethodChange = (next: PttMethod) => {
+    setPttMethod(next);
+    persistArdop({ ptt_method: next });
+  };
+  const commitCatSerial = () => {
+    const trimmed = catSerialInput.trim();
+    persistArdop({ cat_serial_path: trimmed === '' ? null : trimmed });
+  };
+  const commitCatBaud = () => {
+    const n = Number(catBaudInput.trim());
+    // Reject NaN / non-integer / non-positive; keep the prior persisted value.
+    if (!Number.isInteger(n) || n <= 0) {
+      setCatBaudInput(String(ardopConfig?.cat_baud ?? 38400));
+      return;
+    }
+    persistArdop({ cat_baud: n });
+  };
+  const commitCatKey = () => {
+    const trimmed = catKeyInput.trim();
+    // Empty → keep the default rather than persisting an unkeyable empty string.
+    if (trimmed === '') {
+      setCatKeyInput(ardopConfig?.cat_key_cmd ?? 'TX1;');
+      return;
+    }
+    persistArdop({ cat_key_cmd: trimmed });
+  };
+  const commitCatUnkey = () => {
+    const trimmed = catUnkeyInput.trim();
+    if (trimmed === '') {
+      setCatUnkeyInput(ardopConfig?.cat_unkey_cmd ?? 'TX0;');
+      return;
+    }
+    persistArdop({ cat_unkey_cmd: trimmed });
   };
   const commitWebguiPort = () => {
     const trimmed = webguiPortInput.trim();
@@ -929,57 +998,172 @@ export function ArdopRadioPanel({
               onBlur={commitPlayback}
             />
           </label>
+          {/* tuxlink-wu0k: PTT method selector. VOX = no PTT line; Serial RTS =
+              ardopcf toggles RTS on a serial port; CAT command = key the radio
+              by a CAT command (TX1;/TX0;) through tuxlink's close-serial bridge
+              (for radios like the FT-710 that key ONLY by CAT and whose codec
+              resets if the serial port is held open during audio). */}
           <label className="radio-panel-input-row">
-            <span>PTT</span>
+            <span>PTT method</span>
             <select
               className="radio-panel-input"
-              data-testid="ardop-ptt-select"
-              // Empty value renders as the (none — VOX) row; a non-empty
-              // persisted path that isn't in the enumerated list also falls
-              // back to the empty option so the dropdown isn't lying.
-              value={pttDevices.some((d) => d.path === pttSerialInput) ? pttSerialInput : ''}
-              onChange={(e) => {
-                const next = e.target.value;
-                setPttSerialInput(next);
-                // Empty selection → null on the wire (= use VOX keying);
-                // a path selection persists the path verbatim.
-                persistArdop({ ptt_serial_path: next === '' ? null : next });
-              }}
+              data-testid="ardop-ptt-method-select"
+              value={pttMethod}
+              onChange={(e) => onPttMethodChange(e.target.value as PttMethod)}
             >
-              <option value="">(none — use VOX)</option>
-              {pttDevices
-                .filter((d) => d.kind === 'usb')
-                .map((d) => (
-                  <option key={d.path} value={d.path}>
-                    {d.path} — {d.label}
-                  </option>
-                ))}
+              <option value="vox">VOX (no PTT line)</option>
+              <option value="serial_rts">Serial RTS</option>
+              <option value="cat_command">CAT command (TX1;/TX0;)</option>
             </select>
-            <button
-              type="button"
-              className="radio-panel-btn-sm"
-              data-testid="ardop-ptt-refresh"
-              onClick={loadPttDevices}
-              aria-label="Refresh PTT serial device list"
-            >
-              ↻
-            </button>
           </label>
-          <label className="radio-panel-input-row">
-            <span>Manual</span>
-            <input
-              type="text"
-              className="radio-panel-input"
-              data-testid="ardop-ptt-input"
-              value={pttSerialInput}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-              placeholder="/dev/ttyUSB0 (unlisted; empty = VOX)"
-              onChange={(e) => setPttSerialInput(e.target.value)}
-              onBlur={commitPttSerial}
-            />
-          </label>
+          {pttMethod === 'serial_rts' && (
+            <>
+              <label className="radio-panel-input-row">
+                <span>PTT serial</span>
+                <select
+                  className="radio-panel-input"
+                  data-testid="ardop-ptt-select"
+                  // A persisted path not in the enumerated list falls back to
+                  // the empty option so the dropdown isn't lying.
+                  value={pttDevices.some((d) => d.path === pttSerialInput) ? pttSerialInput : ''}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setPttSerialInput(next);
+                    persistArdop({ ptt_serial_path: next === '' ? null : next });
+                  }}
+                >
+                  <option value="">Choose serial port…</option>
+                  {pttDevices
+                    .filter((d) => d.kind === 'usb')
+                    .map((d) => (
+                      <option key={d.path} value={d.path}>
+                        {d.path} — {d.label}
+                      </option>
+                    ))}
+                </select>
+                <button
+                  type="button"
+                  className="radio-panel-btn-sm"
+                  data-testid="ardop-ptt-refresh"
+                  onClick={loadPttDevices}
+                  aria-label="Refresh PTT serial device list"
+                >
+                  ↻
+                </button>
+              </label>
+              <label className="radio-panel-input-row">
+                <span>Manual</span>
+                <input
+                  type="text"
+                  className="radio-panel-input"
+                  data-testid="ardop-ptt-input"
+                  value={pttSerialInput}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  placeholder="/dev/ttyUSB0 (unlisted)"
+                  onChange={(e) => setPttSerialInput(e.target.value)}
+                  onBlur={commitPttSerial}
+                />
+              </label>
+            </>
+          )}
+          {pttMethod === 'cat_command' && (
+            <>
+              <label className="radio-panel-input-row">
+                <span>CAT serial</span>
+                <select
+                  className="radio-panel-input"
+                  data-testid="ardop-cat-serial-select"
+                  value={pttDevices.some((d) => d.path === catSerialInput) ? catSerialInput : ''}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setCatSerialInput(next);
+                    persistArdop({ cat_serial_path: next === '' ? null : next });
+                  }}
+                >
+                  <option value="">Choose CAT serial port…</option>
+                  {pttDevices
+                    .filter((d) => d.kind === 'usb')
+                    .map((d) => (
+                      <option key={d.path} value={d.path}>
+                        {d.path} — {d.label}
+                      </option>
+                    ))}
+                </select>
+                <button
+                  type="button"
+                  className="radio-panel-btn-sm"
+                  data-testid="ardop-cat-serial-refresh"
+                  onClick={loadPttDevices}
+                  aria-label="Refresh CAT serial device list"
+                >
+                  ↻
+                </button>
+              </label>
+              <label className="radio-panel-input-row">
+                <span>Manual</span>
+                <input
+                  type="text"
+                  className="radio-panel-input"
+                  data-testid="ardop-cat-serial-input"
+                  value={catSerialInput}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  placeholder="/dev/ttyUSB0 (CAT/Enhanced port)"
+                  onChange={(e) => setCatSerialInput(e.target.value)}
+                  onBlur={commitCatSerial}
+                />
+              </label>
+              <label className="radio-panel-input-row">
+                <span>CAT baud</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  className="radio-panel-input"
+                  data-testid="ardop-cat-baud-input"
+                  value={catBaudInput}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  placeholder="38400"
+                  onChange={(e) => setCatBaudInput(e.target.value)}
+                  onBlur={commitCatBaud}
+                />
+              </label>
+              <label className="radio-panel-input-row">
+                <span>Key cmd</span>
+                <input
+                  type="text"
+                  className="radio-panel-input"
+                  data-testid="ardop-cat-key-input"
+                  value={catKeyInput}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  placeholder="TX1;"
+                  onChange={(e) => setCatKeyInput(e.target.value)}
+                  onBlur={commitCatKey}
+                />
+              </label>
+              <label className="radio-panel-input-row">
+                <span>Unkey cmd</span>
+                <input
+                  type="text"
+                  className="radio-panel-input"
+                  data-testid="ardop-cat-unkey-input"
+                  value={catUnkeyInput}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  placeholder="TX0;"
+                  onChange={(e) => setCatUnkeyInput(e.target.value)}
+                  onBlur={commitCatUnkey}
+                />
+              </label>
+            </>
+          )}
           {/* WebGUI port — operator smoke 2026-05-31 round 3. Defaults to
               `cmd_port - 1` (the ardopcf convention). Override when running
               an ardopcf build that binds the WebGUI somewhere else. Empty

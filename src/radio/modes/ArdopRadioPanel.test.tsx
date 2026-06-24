@@ -512,7 +512,9 @@ describe('<ArdopRadioPanel>', () => {
       );
       expect(screen.getByTestId('ardop-capture-input')).toBeInTheDocument();
       expect(screen.getByTestId('ardop-playback-input')).toBeInTheDocument();
-      expect(screen.getByTestId('ardop-ptt-input')).toBeInTheDocument();
+      // tuxlink-wu0k: PTT is now a method selector (VOX / Serial RTS / CAT).
+      // The serial-path input only renders under Serial RTS.
+      expect(screen.getByTestId('ardop-ptt-method-select')).toBeInTheDocument();
     });
 
     it('loads capture/playback/PTT from config_get_ardop on mount', async () => {
@@ -545,16 +547,17 @@ describe('<ArdopRadioPanel>', () => {
       });
     });
 
-    it('empty PTT serial path persists as null (= VOX)', async () => {
+    it('empty PTT serial path persists as null (Serial RTS)', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-      // Seed with a non-empty PTT path so we can clear it.
+      // Seed Serial-RTS method with a non-empty PTT path so we can clear it.
       invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
         if (cmd === 'config_get_ardop') {
           return {
             binary: 'ardopcf',
             capture_device: '',
             playback_device: '',
+            ptt_method: 'serial_rts',
             ptt_serial_path: '/dev/ttyUSB0',
             cmd_port: 8515,
             bandwidth_hz: null,
@@ -892,7 +895,7 @@ describe('<ArdopRadioPanel>', () => {
       });
     });
 
-    it('PTT picker filters to USB serial entries + includes (none = VOX) option', async () => {
+    it('PTT serial picker filters to USB entries (Serial RTS method)', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
       invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
@@ -901,6 +904,7 @@ describe('<ArdopRadioPanel>', () => {
             binary: 'ardopcf',
             capture_device: '',
             playback_device: '',
+            ptt_method: 'serial_rts',
             ptt_serial_path: null,
             cmd_port: 8515,
             bandwidth_hz: null,
@@ -923,13 +927,13 @@ describe('<ArdopRadioPanel>', () => {
         expect(Array.from(pttSel.options).map((o) => o.value)).toContain('/dev/ttyUSB0');
       });
       const values = Array.from(pttSel.options).map((o) => o.value);
-      // (none = VOX) is an empty-string option at the top.
+      // Empty-string "Choose serial port…" placeholder at the top.
       expect(values).toContain('');
       expect(values).toContain('/dev/ttyUSB0');
       expect(values).not.toContain('/dev/ttyAMA0');
     });
 
-    it('selecting (none) in PTT picker persists ptt_serial_path=null (VOX)', async () => {
+    it('clearing the PTT serial picker persists ptt_serial_path=null (Serial RTS)', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
       invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
@@ -938,6 +942,7 @@ describe('<ArdopRadioPanel>', () => {
             binary: 'ardopcf',
             capture_device: '',
             playback_device: '',
+            ptt_method: 'serial_rts',
             ptt_serial_path: '/dev/ttyUSB0',
             cmd_port: 8515,
             bandwidth_hz: null,
@@ -962,6 +967,103 @@ describe('<ArdopRadioPanel>', () => {
           'config_set_ardop',
           expect.objectContaining({
             value: expect.objectContaining({ ptt_serial_path: null }),
+          }),
+        );
+      });
+    });
+
+    // ── tuxlink-wu0k: CAT-command PTT ────────────────────────────────────────
+
+    it('selecting CAT command persists ptt_method and reveals CAT fields', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'config_get_ardop') {
+          return {
+            binary: 'ardopcf',
+            capture_device: '',
+            playback_device: '',
+            ptt_method: 'vox',
+            ptt_serial_path: null,
+            cat_serial_path: null,
+            cat_baud: 38400,
+            cat_key_cmd: 'TX1;',
+            cat_unkey_cmd: 'TX0;',
+            cat_bridge_port: 4532,
+            cmd_port: 8515,
+            bandwidth_hz: null,
+            webgui_port: null,
+          };
+        }
+        if (cmd === 'ardop_list_audio_devices') return { captures: [], playbacks: [] };
+        if (cmd === 'packet_list_serial_devices') {
+          return [{ path: '/dev/ttyUSB0', kind: 'usb', label: 'USB serial' }];
+        }
+        return defaultInvokeImpl(cmd, args);
+      });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      const methodSel = (await screen.findByTestId(
+        'ardop-ptt-method-select',
+      )) as HTMLSelectElement;
+      // CAT fields hidden while VOX is selected.
+      expect(screen.queryByTestId('ardop-cat-key-input')).not.toBeInTheDocument();
+
+      invokeMock.mockClear();
+      fireEvent.change(methodSel, { target: { value: 'cat_command' } });
+
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'config_set_ardop',
+          expect.objectContaining({
+            value: expect.objectContaining({ ptt_method: 'cat_command' }),
+          }),
+        );
+      });
+      // CAT fields now visible with proven FT-710 defaults.
+      const keyInput = (await screen.findByTestId('ardop-cat-key-input')) as HTMLInputElement;
+      expect(keyInput.value).toBe('TX1;');
+      expect((screen.getByTestId('ardop-cat-unkey-input') as HTMLInputElement).value).toBe('TX0;');
+      expect((screen.getByTestId('ardop-cat-baud-input') as HTMLInputElement).value).toBe('38400');
+    });
+
+    it('editing the CAT key command persists cat_key_cmd on blur', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'config_get_ardop') {
+          return {
+            binary: 'ardopcf',
+            capture_device: '',
+            playback_device: '',
+            ptt_method: 'cat_command',
+            ptt_serial_path: null,
+            cat_serial_path: '/dev/ttyUSB0',
+            cat_baud: 38400,
+            cat_key_cmd: 'TX1;',
+            cat_unkey_cmd: 'TX0;',
+            cat_bridge_port: 4532,
+            cmd_port: 8515,
+            bandwidth_hz: null,
+            webgui_port: null,
+          };
+        }
+        if (cmd === 'ardop_list_audio_devices') return { captures: [], playbacks: [] };
+        if (cmd === 'packet_list_serial_devices') {
+          return [{ path: '/dev/ttyUSB0', kind: 'usb', label: 'USB serial' }];
+        }
+        return defaultInvokeImpl(cmd, args);
+      });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      const keyInput = (await screen.findByTestId('ardop-cat-key-input')) as HTMLInputElement;
+      await waitFor(() => expect(keyInput.value).toBe('TX1;'));
+      invokeMock.mockClear();
+      fireEvent.change(keyInput, { target: { value: 'TX1' } });
+      fireEvent.blur(keyInput);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'config_set_ardop',
+          expect.objectContaining({
+            value: expect.objectContaining({ cat_key_cmd: 'TX1' }),
           }),
         );
       });
