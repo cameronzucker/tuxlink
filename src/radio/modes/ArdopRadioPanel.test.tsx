@@ -775,9 +775,10 @@ describe('<ArdopRadioPanel>', () => {
       expect(playValues).toContain('plughw:CARD=Device,DEV=0');
     });
 
-    // tuxlink-y7nq: pin the hardware-only filter so a future regression
-    // (e.g., re-introducing the plugin chains to the dropdown) fails here.
-    it('Capture/Playback dropdowns hide ALSA plugin chains, keeping plughw/hw:CARD only', async () => {
+    // tuxlink-y7nq + tuxlink-ebtbv: pin the hardware-only filter AND the
+    // hw/plughw collapse so future regressions (re-introducing plugin chains,
+    // or showing both hw: and plughw: for one card) fail here.
+    it('Capture/Playback dropdowns drop plugin chains and collapse hw/plughw to the plughw row', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
       invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
@@ -821,12 +822,16 @@ describe('<ArdopRadioPanel>', () => {
           .toContain('plughw:CARD=Device,DEV=0');
       });
       const capValues = Array.from(captureSel.options).map((o) => o.value);
-      // Hardware kept, plugin chains dropped.
+      // plughw kept; the bare hw: for the same card collapses into it (one row
+      // per card, plughw preferred); plugin chains dropped.
       expect(capValues).toContain('plughw:CARD=Device,DEV=0');
-      expect(capValues).toContain('hw:CARD=Device,DEV=0');
+      expect(capValues).not.toContain('hw:CARD=Device,DEV=0');
       for (const noisy of ['null', 'default', 'pulse', 'lavrate']) {
         expect(capValues).not.toContain(noisy);
       }
+      // The friendly name leads the visible label, not the cryptic id.
+      const capLabels = Array.from(captureSel.options).map((o) => o.textContent ?? '');
+      expect(capLabels.some((l) => l.startsWith('USB Audio CODEC'))).toBe(true);
       const playValues = Array.from(playbackSel.options).map((o) => o.value);
       expect(playValues).toContain('plughw:CARD=Device,DEV=0');
       expect(playValues).not.toContain('null');
