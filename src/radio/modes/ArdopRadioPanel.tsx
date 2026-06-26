@@ -292,8 +292,8 @@ interface ArdopFullConfig {
   listen_ttl_minutes: number;
   /** ConReq repeats packed into ARQCALL on an outbound connect (tuxlink-ant8s).
    *  Also DERIVES the connect backstop deadline backend-side (tuxlink-5xxq), so
-   *  the two never drift. Clamped 2..=30; absent → backend default (15). */
-  connect_attempts?: number;
+   *  the two never drift. Clamped 2..=30; null/absent → backend default (15). */
+  connect_attempts?: number | null;
 }
 
 /** Mirror of Rust's `ArdopUiConfig::resolved_webgui_port`. Single source
@@ -673,16 +673,11 @@ export function ArdopRadioPanel({
         ? null
         : Math.min(30, Math.max(2, parseInt(trimmed, 10) || 15));
     setRetriesInput(next === null ? '' : String(next));
-    void (async () => {
-      try {
-        const current = await invoke<Record<string, unknown>>('config_get_ardop');
-        await invoke('config_set_ardop', {
-          value: { ...current, connect_attempts: next },
-        });
-      } catch {
-        // Persist errors surface via the session log; UI keeps the new value.
-      }
-    })();
+    // Route through persistArdop (not a standalone read-modify-write) so the
+    // local `ardopConfig` stays in sync — otherwise a later persistArdop (e.g.
+    // changing Capture) would spread a stale config and drop this override
+    // (Codex P2). `config_set_ardop` replaces the whole ARDOP config.
+    persistArdop({ connect_attempts: next });
   };
 
   const isStopped = status.state === 'stopped';

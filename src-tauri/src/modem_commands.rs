@@ -1368,10 +1368,16 @@ fn finish_b2f_exchange(
 ) -> Result<(), String> {
     match outcome {
         ExchangeOutcome::ConnectFailed(msg) => {
-            // Link never came up → terminal. Reset session state, then drop the
-            // transport to reap ardopcf. No 5 s link-disconnect — there is no
-            // live ARQ link to tear down (and it would only add latency).
-            let _ = session.reset_to_stopped();
+            // Link never came up → terminal. Reset session state + drop the
+            // transport to reap ardopcf. But reset ONLY if no operator close
+            // intervened while connect_arq was blocked (Codex P1): a
+            // stale-generation reset would clobber a newly-reopened session.
+            // Either way we drop OUR failed transport (reaping ardopcf). No 5 s
+            // link-disconnect — there is no live ARQ link to tear down.
+            match session.reset_to_stopped_if_generation_matches(close_gen_snapshot) {
+                Ok(prior) => drop(prior),
+                Err(()) => { /* close intervened — leave the new session alone */ }
+            }
             drop(transport);
             Err(msg)
         }
@@ -1787,6 +1793,43 @@ mod tests {
             session.status_snapshot().state,
             ModemState::Stopped,
             "connect failure must reset the session to Stopped (terminal, not re-armable Idle)"
+        );
+    }
+
+    #[test]
+    fn connect_failure_with_stale_generation_leaves_new_session_untouched() {
+        // Codex P1: if an operator Close intervened (bumping close_generation)
+        // and a NEW session was opened while the failed-connect worker was still
+        // unwinding, the stale worker must NOT reset/clobber the new session.
+        let session = Arc::new(ModemSession::new());
+        let stale_gen = session.current_close_generation();
+        // Simulate the close + reopen: bump generation, install a fresh
+        // transport, mark the new session Idle (open posture).
+        session.bump_close_generation();
+        session.install_transport(stub_transport());
+        let mut snap = session.status_snapshot();
+        snap.state = ModemState::Idle;
+        session.set_status(snap);
+
+        // The stale worker finishes with its OLD generation snapshot.
+        let res = finish_b2f_exchange(
+            &session,
+            stub_transport(),
+            stale_gen,
+            ExchangeOutcome::ConnectFailed("late no-answer".into()),
+        );
+
+        assert!(res.is_err(), "the stale worker still surfaces its error");
+        // The NEW session must be untouched — its transport stays installed and
+        // its state stays Idle (NOT reset to Stopped by the stale worker).
+        assert!(
+            session.snapshot_transport_present(),
+            "a stale-generation connect failure must NOT drop the newly-opened transport"
+        );
+        assert_eq!(
+            session.status_snapshot().state,
+            ModemState::Idle,
+            "a stale-generation connect failure must NOT reset the new session"
         );
     }
 

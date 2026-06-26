@@ -1085,6 +1085,43 @@ impl ModemSession {
         }
     }
 
+    /// Like [`reset_to_stopped`](Self::reset_to_stopped), but resets ONLY if
+    /// `snapshot_gen` is still the live close generation — checked atomically
+    /// under the mutex, the same guard pattern as
+    /// [`install_transport_if_generation_matches`](Self::install_transport_if_generation_matches).
+    ///
+    /// tuxlink-5xxq (Codex P1): a failed-connect worker must free the modem,
+    /// but if the operator clicked Close/Stop while `connect_arq` was blocked,
+    /// the close path already bumped `close_generation` and may have re-opened
+    /// a NEW session. An unconditional reset would then clobber that new
+    /// session. So: if the generation moved, leave the session untouched and
+    /// return `Err(())` — the caller just drops its own (old, failed) transport.
+    ///
+    /// On a match, returns `Ok(prior_installed_transport)` (usually `None` on
+    /// the connect-failure path, since the transport was taken before the dial)
+    /// so the caller drops it OUTSIDE the lock. Mutex-poisoned ⇒ `Err(())`.
+    pub fn reset_to_stopped_if_generation_matches(
+        &self,
+        snapshot_gen: u64,
+    ) -> Result<Option<Box<dyn crate::winlink::modem::ModemTransport>>, ()> {
+        match self.inner.lock() {
+            Ok(mut inner) => {
+                let live = self.close_generation.load(Ordering::Acquire);
+                if live != snapshot_gen {
+                    return Err(());
+                }
+                inner.status = ModemStatus::stopped();
+                inner.abort_writer = None;
+                inner.abort_stream = None;
+                inner.transport_owner = TransportOwner::None;
+                inner.active_intent = None;
+                inner.active_transport_kind = None;
+                Ok(inner.transport.take())
+            }
+            Err(_poisoned) => Err(()),
+        }
+    }
+
     /// Try to begin a connect. Returns `true` if the caller now owns the busy
     /// bit; `false` if another connect is already in flight. Caller MUST call
     /// [`clear_connect_in_progress`] in every exit path (use the RAII guard in
