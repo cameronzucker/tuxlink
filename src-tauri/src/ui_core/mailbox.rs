@@ -6,21 +6,21 @@
 
 use std::sync::Arc;
 use crate::ui_commands::{MessageMetaDto, UiError};
+use crate::native_mailbox::FolderRef;
 use crate::winlink_backend::WinlinkBackend;
 
 /// List the messages in `folder` using the given backend.
 ///
-/// `folder` is parsed via [`crate::ui_commands::parse_folder_ref`] before
-/// dispatching to the backend, preserving the same routing logic as the
-/// `mailbox_list` Tauri command. Returns the same DTO shape so the adapter
-/// shim in `ui_commands` is byte-identical to the old inline body.
+/// Takes an already-parsed [`FolderRef`] (a domain type): folder-string
+/// parsing is an adapter concern, kept in the caller, so the original
+/// error ordering — folder validated before backend state — is preserved
+/// and the core works on domain types, not wire strings. Returns the same
+/// DTO shape the `mailbox_list` Tauri command always returned.
 pub async fn list_mailbox(
     backend: &Arc<dyn WinlinkBackend>,
-    folder: &str,
+    folder: FolderRef,
 ) -> Result<Vec<MessageMetaDto>, UiError> {
-    use crate::native_mailbox::FolderRef;
-    let parsed = crate::ui_commands::parse_folder_ref(folder)?;
-    let metas = match parsed {
+    let metas = match folder {
         FolderRef::System(f) => backend.list_messages(f).await?,
         FolderRef::User(slug) => backend.list_user_messages(&slug).await?,
     };
@@ -30,7 +30,7 @@ pub async fn list_mailbox(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::native_mailbox::Mailbox;
+    use crate::native_mailbox::{FolderRef, Mailbox};
     use crate::winlink_backend::{MailboxFolder, MessageId, NativeBackend};
     use crate::test_helpers::native_test_config;
     use crate::winlink::compose::compose_message;
@@ -50,7 +50,9 @@ mod tests {
         let backend: Arc<dyn WinlinkBackend> =
             Arc::new(NativeBackend::new(native_test_config(), dir.path()));
 
-        let metas = list_mailbox(&backend, "inbox").await.unwrap();
+        let metas = list_mailbox(&backend, FolderRef::System(MailboxFolder::Inbox))
+            .await
+            .unwrap();
         assert_eq!(metas.len(), 1);
         assert_eq!(metas[0].subject, "Hi");
     }

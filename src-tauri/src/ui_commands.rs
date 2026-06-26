@@ -499,10 +499,13 @@ pub async fn mailbox_list(
     folder: String,
     state: State<'_, BackendState>,
 ) -> Result<Vec<MessageMetaDto>, UiError> {
+    // Validate the folder before checking backend state, preserving the
+    // original error ordering (folder parse precedes the NotConfigured check).
+    let parsed = parse_folder_ref(&folder)?;
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
-    crate::ui_core::mailbox::list_mailbox(&backend, &folder).await
+    crate::ui_core::mailbox::list_mailbox(&backend, parsed).await
 }
 
 // ============================================================================
