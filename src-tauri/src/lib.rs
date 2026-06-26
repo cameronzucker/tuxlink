@@ -24,6 +24,7 @@ pub mod session_log;
 pub mod session_log_emit;
 pub mod tray;
 pub mod ui_commands;
+pub mod ui_core;
 pub mod uninstall_cleanup;
 pub mod user_folders;
 pub mod winlink;
