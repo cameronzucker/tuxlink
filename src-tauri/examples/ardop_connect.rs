@@ -133,6 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         gridsquare: gridsquare.clone(),
         arq_timeout_s: 30,
         arq_bandwidth_hz: None,
+        drive_level: None,
         // Connect-only example; the listener-arm path is exercised by
         // the UI's ardop_listen command. See tuxlink-dhbl.
         initial_listen: false,
