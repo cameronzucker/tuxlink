@@ -75,6 +75,10 @@ function renderTabs(props: {
 beforeEach(() => {
   invokeMock.mockReset();
   routeInvoke();
+  // tuxlink-9hjw3: the connect tab now persists to localStorage per mode, so
+  // clear it between tests — otherwise one test's tab choice leaks into the
+  // next, which expects the default Favorites tab.
+  window.localStorage.clear();
 });
 
 describe('<FavoritesTabs> — per-mode chrome (M7)', () => {

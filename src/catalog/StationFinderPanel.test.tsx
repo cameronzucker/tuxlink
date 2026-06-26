@@ -20,6 +20,9 @@ const N0DAJ = {
 };
 
 beforeEach(() => {
+  // tuxlink-liqs9: the finder view now persists to localStorage; clear it
+  // between tests so one test's filters/selection don't leak into the next.
+  window.localStorage.clear();
   vi.mocked(invoke).mockReset();
   // cmd-gated so the runner's stray no-arg cleanup call stays inert.
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {

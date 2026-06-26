@@ -65,23 +65,106 @@ function ssnAge(year: number, month: number): number {
   return Math.max(0, months) * 30;
 }
 
+// tuxlink-liqs9: persist the operator's finder VIEW (search + band/mode filters
+// + radius + selection) across a close/reopen — the panel used to reset
+// entirely. localStorage, validated on read so cross-version / hand-edited data
+// degrades to defaults. The MAP viewport persists separately (usePersistedViewport).
+const FINDER_VIEW_KEY = 'tuxlink:station-finder:view';
+
+interface PersistedFinderView {
+  search: string;
+  bands: Band[];
+  modes: FilterMode[];
+  radiusMi: number | null;
+  selectedKey: string | null;
+}
+
+/** Resolve localStorage defensively — the getter itself can throw. */
+function finderStorage(): Storage | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    return window.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function readFinderView(): Partial<PersistedFinderView> {
+  const storage = finderStorage();
+  if (!storage) return {};
+  try {
+    const raw = storage.getItem(FINDER_VIEW_KEY);
+    if (!raw) return {};
+    const v = JSON.parse(raw) as Record<string, unknown>;
+    const out: Partial<PersistedFinderView> = {};
+    if (typeof v.search === 'string') out.search = v.search;
+    if (Array.isArray(v.bands)) out.bands = v.bands.filter((b) => typeof b === 'string') as Band[];
+    if (Array.isArray(v.modes)) {
+      out.modes = v.modes.filter((m) => typeof m === 'string') as FilterMode[];
+    }
+    if (typeof v.radiusMi === 'number' || v.radiusMi === null) {
+      out.radiusMi = v.radiusMi as number | null;
+    }
+    if (typeof v.selectedKey === 'string' || v.selectedKey === null) {
+      out.selectedKey = v.selectedKey as string | null;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeFinderView(view: PersistedFinderView): void {
+  const storage = finderStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(FINDER_VIEW_KEY, JSON.stringify(view));
+  } catch {
+    /* storage full / disabled — skip persistence, keep the in-memory view. */
+  }
+}
+
 export function StationFinderPanel({ onClose, activePrefillMode, onUse }: StationFinderPanelProps) {
+  // tuxlink-liqs9: seed the finder view from the operator's last session so a
+  // close/reopen restores where they left off. Read ONCE at mount (lazy);
+  // re-persisted by the effect below.
+  const [persisted0] = useState(readFinderView);
   const [grid, setGrid] = useState('');
   // Band picker is a multi-select FILTER (tuxlink-hlas). Default: all HF bands
   // on (show the operator's full HF options), VHF/UHF off (line-of-sight packet
   // is opt-in). A station shows only if it has a channel on a selected band.
-  const [enabledBands, setEnabledBands] = useState<Set<Band>>(() => new Set(HF_BANDS));
-  const [enabledModes, setEnabledModes] = useState<Set<FilterMode>>(new Set(FILTER_MODES));
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [enabledBands, setEnabledBands] = useState<Set<Band>>(
+    () => new Set(persisted0.bands ?? HF_BANDS),
+  );
+  const [enabledModes, setEnabledModes] = useState<Set<FilterMode>>(
+    () => new Set(persisted0.modes ?? FILTER_MODES),
+  );
+  const [selectedKey, setSelectedKey] = useState<string | null>(persisted0.selectedKey ?? null);
   const [utcHour] = useState(currentUtcHour);
-  const [radiusMi, setRadiusMi] = useState<number | null>(500);
-  const [search, setSearch] = useState('');
+  // `null` is a valid "no radius" choice, so distinguish it from "not persisted".
+  const [radiusMi, setRadiusMi] = useState<number | null>(
+    persisted0.radiusMi !== undefined ? persisted0.radiusMi : 500,
+  );
+  const [search, setSearch] = useState(persisted0.search ?? '');
   // Operator propagation prefs (own antenna / SNR / power). Loaded once on open;
   // `predictReload` is bumped AFTER a save persists so the forecast re-runs with
   // the new TX model (the backend reads these prefs fresh each prediction).
   const [prefs, setPrefs] = useState<PropagationPrefs | null>(null);
   const [prefsError, setPrefsError] = useState<string | null>(null);
   const [predictReload, setPredictReload] = useState(0);
+
+  // tuxlink-liqs9: persist the finder view on every change so a close/reopen
+  // restores it. Sets serialize as arrays. Cheap (localStorage write of a small
+  // object); fires once on mount writing the seeded values back (a no-op).
+  useEffect(() => {
+    writeFinderView({
+      search,
+      bands: [...enabledBands],
+      modes: [...enabledModes],
+      radiusMi,
+      selectedKey,
+    });
+  }, [search, enabledBands, enabledModes, radiusMi, selectedKey]);
   const stations = useStations();
 
   // Resolve the operator's EFFECTIVE location the way the rest of the app does
