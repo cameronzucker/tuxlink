@@ -37,6 +37,7 @@ import { useSampleHistory } from '../useSampleHistory';
 import { useModemStatus } from '../../modem/useModemStatus';
 import type { ModemState, ModemStatus } from '../../modem/types';
 import type { ArdopFrameType } from '../charts/FrameRibbon';
+import { friendlyAudioOptions, type AudioOption } from './audioDevices';
 import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
 import { ListenArmButton } from '../sections/ListenArmButton';
 import { useListenerState } from '../sections/useListenerState';
@@ -184,6 +185,30 @@ function fmtUptime(sec: number): string {
 // renders as empty <option value=""> meaning "Auto (ardopcf default)".
 // Mirrors SettingsPanel.tsx — restored to the Connect section per Codex P1
 // 2026-05-31 so the operator doesn't have to leave the radio panel.
+/** Render the friendly device options into a native <select>, with a disabled
+ *  separator before the virtual (Loopback / HDMI) block so real radio
+ *  interfaces lead and the never-a-radio devices are visually demoted. The raw
+ *  ALSA id trails the friendly name instead of leading it (tuxlink-ebtbv). */
+function renderDeviceOptions(options: AudioOption[]) {
+  const firstVirtualIdx = options.findIndex((o) => o.isVirtual);
+  return options.flatMap((o, i) => {
+    const opt = (
+      <option key={o.value} value={o.value}>
+        {o.primary} — {o.secondary}
+      </option>
+    );
+    if (i === firstVirtualIdx && firstVirtualIdx > 0) {
+      return [
+        <option key="__virtual_sep" disabled>
+          ──────── virtual (loopback / HDMI) ────────
+        </option>,
+        opt,
+      ];
+    }
+    return [opt];
+  });
+}
+
 const ARQ_BANDWIDTH_OPTIONS: { value: number | null; label: string }[] = [
   { value: null, label: 'Auto (ardopcf default)' },
   { value: 200, label: '200 Hz (most robust)' },
@@ -662,8 +687,10 @@ export function ArdopRadioPanel({
   // `isHardware`; here we use that as a FILTER (not just a sort key as the
   // initial tuxlink-y7x7 ship did). Manual-fallback input below the dropdown
   // covers the rare advanced case (someone explicitly wants `pulse`/`default`).
-  const captureHardware = captureDevices.filter((d) => d.isHardware);
-  const playbackHardware = playbackDevices.filter((d) => d.isHardware);
+  const captureOptions = friendlyAudioOptions(captureDevices);
+  const playbackOptions = friendlyAudioOptions(playbackDevices);
+  const captureHasReal = captureOptions.some((o) => !o.isVirtual);
+  const playbackHasReal = playbackOptions.some((o) => !o.isVirtual);
 
   // tuxlink-y7x7: load device lists when the Radio section becomes editable
   // (Stopped state). Refresh buttons re-invoke via these same callbacks.
@@ -905,7 +932,7 @@ export function ArdopRadioPanel({
             <select
               className="radio-panel-input"
               data-testid="ardop-capture-select"
-              value={captureHardware.some((d) => d.name === captureInput) ? captureInput : ''}
+              value={captureOptions.some((o) => o.value === captureInput) ? captureInput : ''}
               onChange={(e) => {
                 const next = e.target.value;
                 setCaptureInput(next);
@@ -913,16 +940,11 @@ export function ArdopRadioPanel({
               }}
             >
               <option value="" disabled>
-                {captureHardware.length === 0
-                  ? 'No USB audio interfaces found — plug one in and Refresh'
-                  : 'Choose capture device…'}
+                {captureHasReal
+                  ? 'Choose capture device…'
+                  : 'No USB audio interfaces found — plug one in and Refresh'}
               </option>
-              {captureHardware.map((d) => (
-                <option key={d.name} value={d.name}>
-                  {d.name}
-                  {d.description ? ` — ${d.description}` : ''}
-                </option>
-              ))}
+              {renderDeviceOptions(captureOptions)}
             </select>
             <button
               type="button"
@@ -954,7 +976,7 @@ export function ArdopRadioPanel({
             <select
               className="radio-panel-input"
               data-testid="ardop-playback-select"
-              value={playbackHardware.some((d) => d.name === playbackInput) ? playbackInput : ''}
+              value={playbackOptions.some((o) => o.value === playbackInput) ? playbackInput : ''}
               onChange={(e) => {
                 const next = e.target.value;
                 setPlaybackInput(next);
@@ -962,16 +984,11 @@ export function ArdopRadioPanel({
               }}
             >
               <option value="" disabled>
-                {playbackHardware.length === 0
-                  ? 'No USB audio interfaces found — plug one in and Refresh'
-                  : 'Choose playback device…'}
+                {playbackHasReal
+                  ? 'Choose playback device…'
+                  : 'No USB audio interfaces found — plug one in and Refresh'}
               </option>
-              {playbackHardware.map((d) => (
-                <option key={d.name} value={d.name}>
-                  {d.name}
-                  {d.description ? ` — ${d.description}` : ''}
-                </option>
-              ))}
+              {renderDeviceOptions(playbackOptions)}
             </select>
             <button
               type="button"
