@@ -24,8 +24,17 @@ use crate::winlink::modem::{InitConfig, ModemTransport};
 /// the call errors out and the session is reset.
 const CONNECT_DEADLINE: Duration = Duration::from_secs(120);
 
-/// Number of ARQ retries packed into the `ARQCALL` setter.
-const CONNECT_REPEAT: u32 = 3;
+/// Default ConReq repeats packed into the `ARQCALL` setter when the operator
+/// has not set `modem_ardop.connect_attempts`. A real gateway may need to wake
+/// up and tune, and ARDOP is not tune-aware, so the call must sustain ConReqs
+/// until the gateway is ready; the prior value of 3 (~10 s) was too short to
+/// raise one (2026-06-25 on-air). 15 ≈ ~50 s, well inside CONNECT_DEADLINE.
+const CONNECT_REPEAT: u32 = 15;
+
+/// Hard clamp for `modem_ardop.connect_attempts`: at least 2 to allow any retry,
+/// at most 30 (~105 s of ConReqs) so the call stays inside CONNECT_DEADLINE.
+const CONNECT_ATTEMPTS_MIN: u32 = 2;
+const CONNECT_ATTEMPTS_MAX: u32 = 30;
 
 /// ARQ-link idle timeout passed to the TNC via `ARQTIMEOUT` during init.
 const ARQ_TIMEOUT_SECS: u32 = 30;
@@ -281,7 +290,7 @@ where
     session.set_status(snap);
 
     // ─── ARQ connect (bounded airtime) ───────────────────────────────────
-    let info = match transport.connect_arq(target, CONNECT_REPEAT, CONNECT_DEADLINE) {
+    let info = match transport.connect_arq(target, connect_attempts_from_config(), CONNECT_DEADLINE) {
         Ok(info) => info,
         Err(e) => {
             let msg = format!("ARQ connect failed: {e}");
@@ -322,7 +331,7 @@ where
 /// passed through and rejected by ardopcf at init time.
 fn init_config_from_persisted_config() -> InitConfig {
     let cfg = config::read_config().ok();
-    let (mycall, grid, arq_bandwidth_hz) = match &cfg {
+    let (mycall, grid, arq_bandwidth_hz, drive_level) = match &cfg {
         Some(c) => {
             let call = c
                 .identity
@@ -336,9 +345,14 @@ fn init_config_from_persisted_config() -> InitConfig {
                 .as_ref()
                 .and_then(|a| a.bandwidth_hz)
                 .and_then(validate_arq_bandwidth_hz);
-            (call, grid, bw)
+            let dl = c
+                .modem_ardop
+                .as_ref()
+                .and_then(|a| a.drive_level)
+                .and_then(validate_drive_level);
+            (call, grid, bw, dl)
         }
-        None => (String::new(), String::new(), None),
+        None => (String::new(), String::new(), None, None),
     };
 
     // ARDOP requires a non-empty grid; "AA00" is the canonical placeholder
@@ -355,6 +369,32 @@ fn init_config_from_persisted_config() -> InitConfig {
         gridsquare,
         arq_timeout_s: ARQ_TIMEOUT_SECS,
         arq_bandwidth_hz,
+        drive_level,
+    }
+}
+
+/// ConReq repeats for an outbound `ARQCALL`: the operator's
+/// `modem_ardop.connect_attempts` (clamped to [`CONNECT_ATTEMPTS_MIN`]..=
+/// [`CONNECT_ATTEMPTS_MAX`]) if set, else [`CONNECT_REPEAT`]. A real gateway may
+/// need to wake/tune before it answers; 3 was too short to raise one (2026-06-25).
+fn connect_attempts_from_config() -> u32 {
+    config::read_config()
+        .ok()
+        .and_then(|c| c.modem_ardop.as_ref().and_then(|a| a.connect_attempts))
+        .map(|n| n.clamp(CONNECT_ATTEMPTS_MIN, CONNECT_ATTEMPTS_MAX))
+        .unwrap_or(CONNECT_REPEAT)
+}
+
+/// Validate a persisted `drive_level` (0–100). Out-of-range values are logged
+/// and dropped to `None` (leave ardopcf at its default) rather than passed to
+/// the TNC, which would reject `DRIVELEVEL > 100`. Mirrors
+/// [`validate_arq_bandwidth_hz`]'s defend-in-depth posture for hand-edited JSON.
+fn validate_drive_level(dl: u8) -> Option<u8> {
+    if dl <= 100 {
+        Some(dl)
+    } else {
+        eprintln!("config: ignoring out-of-range modem_ardop.drive_level={dl} (must be 0..=100)");
+        None
     }
 }
 
@@ -736,6 +776,8 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
         };
         config_set_ardop(initial.clone()).expect("config_set_ardop must succeed");
@@ -841,6 +883,8 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
         }
     }
@@ -1439,6 +1483,8 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
         };
         let args = build_ardop_extra_args(&cfg);
@@ -1466,6 +1512,8 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 9001,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
         };
         let args = build_ardop_extra_args(&cfg);
@@ -1488,7 +1536,9 @@ mod tests {
                 ptt_serial_path: None,
                 cmd_port: low_port,
                 bandwidth_hz: None,
-                webgui_port: None,
+                drive_level: None,
+            connect_attempts: None,
+            webgui_port: None,
             };
             let args = build_ardop_extra_args(&cfg);
             assert!(
@@ -1510,6 +1560,8 @@ mod tests {
             ptt_serial_path: Some("/dev/ttyUSB0".into()),
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
         };
         let args = build_ardop_extra_args(&cfg);
@@ -1541,6 +1593,8 @@ mod tests {
             ptt_serial_path: Some("".into()),
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
         };
         let args = build_ardop_extra_args(&cfg);
@@ -1565,6 +1619,8 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: Some(9080),
         };
         let args = build_ardop_extra_args(&cfg);
@@ -1590,6 +1646,8 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 0,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: Some(8514),
         };
         let args = build_ardop_extra_args(&cfg);

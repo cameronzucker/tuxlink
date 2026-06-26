@@ -210,6 +210,11 @@ pub struct InitConfig {
     /// before constructing the InitConfig (modem_commands.rs); init_tnc
     /// trusts the value verbatim.
     pub arq_bandwidth_hz: Option<u32>,
+    /// Optional ARDOP transmit drive level (0–100). None = leave at ardopcf
+    /// default. If set, init_tnc sends `DRIVELEVEL <n>` after ARQBW so the
+    /// digital TX peak is capped (prevents multicarrier clipping/splatter).
+    /// Caller validates the range before constructing the InitConfig.
+    pub drive_level: Option<u8>,
 }
 
 // ─── SessionError ──────────────────────────────────────────────────────────
@@ -264,6 +269,9 @@ pub fn init_tnc(sock: &mut CmdSocket, cfg: &InitConfig) -> Result<(), SessionErr
     set_and_ack(sock, "LISTEN", Some("FALSE"))?;
     if let Some(bw) = cfg.arq_bandwidth_hz {
         set_and_ack(sock, "ARQBW", Some(&format!("{bw} FORCED")))?;
+    }
+    if let Some(dl) = cfg.drive_level {
+        set_and_ack(sock, "DRIVELEVEL", Some(&dl.to_string()))?;
     }
     set_and_ack(sock, "MYCALL", Some(&cfg.mycall))?;
     set_and_ack(sock, "GRIDSQUARE", Some(&cfg.gridsquare))?;
@@ -507,6 +515,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
         };
         init_tnc(&mut sock, &cfg).expect("init should succeed");
 
@@ -554,6 +563,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
         };
         let err = init_tnc(&mut sock, &cfg).expect_err("init must fail on FAULT");
         assert!(
@@ -616,6 +626,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
         };
         init_tnc(&mut sock, &cfg).expect("init must tolerate interleaved async events");
 
@@ -653,6 +664,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: Some(500),
+            drive_level: None,
         };
         init_tnc(&mut sock, &cfg).expect("init with bandwidth should succeed");
 
@@ -673,6 +685,59 @@ mod tests {
                 "GRIDSQUARE CN87",
             ],
             "ARQBW <hz> FORCED must be sent between LISTEN FALSE and MYCALL when bandwidth is Some (tuxlink-j0ij)"
+        );
+    }
+
+    /// When `cfg.drive_level` is Some, init_tnc must send `DRIVELEVEL <n>` after
+    /// ARQBW and before MYCALL — caps the digital TX peak to prevent the ARDOP
+    /// multicarrier splatter seen on-air 2026-06-25.
+    #[test]
+    fn init_tnc_sends_drivelevel_when_some() {
+        let recorded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let rec = recorded.clone();
+
+        let (addr, server) = spawn_mock_tnc(move |conn| {
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            loop {
+                let line = read_cmd_line(&mut reader);
+                if line.is_empty() {
+                    break;
+                }
+                rec.lock().unwrap().push(line.clone());
+                let cmd_name = line.split_whitespace().next().unwrap_or("").to_string();
+                write_reply(&mut writer, &cmd_name);
+            }
+        });
+
+        let mut sock = CmdSocket::connect(addr).unwrap();
+        let cfg = InitConfig {
+            mycall: "N7CPZ".into(),
+            gridsquare: "CN87".into(),
+            arq_timeout_s: 30,
+            arq_bandwidth_hz: Some(500),
+            drive_level: Some(40),
+        };
+        init_tnc(&mut sock, &cfg).expect("init with drive level should succeed");
+
+        let _ = sock.writer.shutdown(std::net::Shutdown::Write);
+        server.join().unwrap();
+
+        let lines = recorded.lock().unwrap().clone();
+        assert_eq!(
+            lines,
+            vec![
+                "INITIALIZE",
+                "CODEC TRUE",
+                "PROTOCOLMODE ARQ",
+                "ARQTIMEOUT 30",
+                "LISTEN FALSE",
+                "ARQBW 500 FORCED",
+                "DRIVELEVEL 40",
+                "MYCALL N7CPZ",
+                "GRIDSQUARE CN87",
+            ],
+            "DRIVELEVEL <n> must be sent after ARQBW and before MYCALL when drive_level is Some"
         );
     }
 
@@ -704,6 +769,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
         };
         init_tnc(&mut sock, &cfg).expect("init with no bandwidth should succeed");
 
