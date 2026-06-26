@@ -30,6 +30,28 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.77.0](https://github.com/cameronzucker/tuxlink/compare/v0.76.1...v0.77.0) (2026-06-26)
+
+
+### Features
+
+* **connections:** show sender + subject in the inbound review pane (tuxlink-9u07u) ([369e8cc](https://github.com/cameronzucker/tuxlink/commit/369e8cc752145afa3652711707d7f8ae6a526005))
+* **ui_core:** egress armed-grant + taint authorization gate ([5fb1a2a](https://github.com/cameronzucker/tuxlink/commit/5fb1a2a806d0275d2655034f6ecb903b935882d3))
+* **winlink:** parse ;PM: pending-message manifest (tuxlink-9u07u) ([dc72480](https://github.com/cameronzucker/tuxlink/commit/dc724806c81c915d46a881d0fb0bca00aad46971))
+* **winlink:** review the whole inbound manifest in one prompt (tuxlink-9u07u) ([db11a0e](https://github.com/cameronzucker/tuxlink/commit/db11a0e9434129780a0fcfcb3cde2a3527807893))
+
+
+### Bug Fixes
+
+* **ardop:** friendly ALSA device names in the audio picker ([26cae1d](https://github.com/cameronzucker/tuxlink/commit/26cae1dfa9929c8b82660bd2c8c8f6b9a2877e02))
+* **winlink:** widen remaining decide closures to the 2-arg manifest signature ([563f352](https://github.com/cameronzucker/tuxlink/commit/563f3522f21fa9b62bc51648d98acab845d1c6bf))
+
+
+### Refactors
+
+* **ui_core:** extract list_mailbox + config read/redaction into core ([7355bee](https://github.com/cameronzucker/tuxlink/commit/7355bee6f004ed7358406a97578f376ed645d81e))
+* **ui_core:** take parsed FolderRef in list_mailbox to preserve error order ([6c8c359](https://github.com/cameronzucker/tuxlink/commit/6c8c3595257e494e3b27231ad5c41f8c54ce39da))
+
 ## [0.76.1](https://github.com/cameronzucker/tuxlink/compare/v0.76.0...v0.76.1) (2026-06-26)
 
 
