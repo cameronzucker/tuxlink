@@ -936,6 +936,20 @@ pub struct ArdopUiConfig {
     /// outbound calls (tuxlink-j0ij).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bandwidth_hz: Option<u32>,
+    /// ARDOP transmit drive level (0–100), sent as `DRIVELEVEL <n>` during
+    /// init_tnc. `None` = leave at ardopcf's default. Too high a value clips
+    /// the ARDOP multicarrier waveform and splatters across the band (unlike a
+    /// single tone); ~40 is a clean digital level on a typical USB-soundcard
+    /// chain (verified on-air 2026-06-25).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drive_level: Option<u8>,
+    /// ConReq repeats packed into `ARQCALL <target> <n>` on an outbound connect.
+    /// `None` = built-in default (15 ≈ ~50 s, bounded by the 120 s connect
+    /// deadline). A real gateway may need to wake up and tune, and ARDOP is not
+    /// tune-aware, so the call must sustain ConReqs; the prior fixed value of 3
+    /// (~10 s) was too short to raise one (2026-06-25). Clamped to 2..=30 when read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_attempts: Option<u32>,
     /// ardopcf built-in WebGUI port. `None` (the default) means "derive from
     /// `cmd_port - 1`" per ardopcf's documented convention (default
     /// 8515 → 8514). An explicit `Some(port)` overrides the derivation so the
@@ -1002,6 +1016,8 @@ impl Default for ArdopUiConfig {
             cat_bridge_port: default_cat_bridge_port(),
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             // None → derive from cmd_port - 1 (8514 with the default cmd_port).
             // Operator can pin explicitly via the radio panel when ardopcf's
             // build/config has the WebGUI somewhere non-standard.
@@ -1050,6 +1066,10 @@ impl<'de> Deserialize<'de> for ArdopUiConfig {
             #[serde(default)]
             bandwidth_hz: Option<u32>,
             #[serde(default)]
+            drive_level: Option<u8>,
+            #[serde(default)]
+            connect_attempts: Option<u32>,
+            #[serde(default)]
             webgui_port: Option<u16>,
             #[serde(default)]
             listen_ttl_minutes: u32,
@@ -1078,6 +1098,8 @@ impl<'de> Deserialize<'de> for ArdopUiConfig {
             cat_bridge_port: s.cat_bridge_port,
             cmd_port: s.cmd_port,
             bandwidth_hz: s.bandwidth_hz,
+            drive_level: s.drive_level,
+            connect_attempts: s.connect_attempts,
             webgui_port: s.webgui_port,
             listen_ttl_minutes: s.listen_ttl_minutes,
         })
@@ -1856,6 +1878,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
         };
@@ -1883,6 +1907,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
         };
@@ -1987,6 +2013,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: Some(500),
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
         };
@@ -2021,6 +2049,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
         };
@@ -2103,6 +2133,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: Some(9080),
             listen_ttl_minutes: 0,
         };

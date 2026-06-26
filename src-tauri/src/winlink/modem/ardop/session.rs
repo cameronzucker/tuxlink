@@ -267,6 +267,9 @@ pub struct InitConfig {
     /// before constructing the InitConfig (modem_commands.rs); init_tnc
     /// trusts the value verbatim.
     pub arq_bandwidth_hz: Option<u32>,
+    /// Optional ARDOP transmit drive level (0–100). None = leave at ardopcf
+    /// default. If set, init_tnc sends `DRIVELEVEL <n>` after ARQBW.
+    pub drive_level: Option<u8>,
     /// Whether to send `LISTEN TRUE` (vs `LISTEN FALSE`) during init
     /// (tuxlink-dhbl). Default `false`: the modem comes up NOT listening
     /// for inbound ARDOP calls — operator arms it via the
@@ -318,8 +321,9 @@ const SETTER_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 /// 4. `ARQTIMEOUT <n>`
 /// 5. `LISTEN FALSE`
 /// 6. `ARQBW <hz>FORCED` — only when `cfg.arq_bandwidth_hz` is Some (tuxlink-j0ij).
-/// 7. `MYCALL <call>`
-/// 8. `GRIDSQUARE <grid>`
+/// 7. `DRIVELEVEL <n>` — only when `cfg.drive_level` is Some.
+/// 8. `MYCALL <call>`
+/// 9. `GRIDSQUARE <grid>`
 ///
 /// For each setter: sends the encoded line, then consumes events from the channel
 /// until the matching `EchoBack(cmd)` ack arrives — tolerating interleaved async
@@ -349,6 +353,9 @@ pub fn init_tnc(sock: &mut CmdSocket, cfg: &InitConfig) -> Result<(), SessionErr
         // parses as two params and faults "Syntax Err: ARQBW <bw> FORCED",
         // aborting init whenever a bandwidth is set (tuxlink-87uc).
         set_and_ack(sock, "ARQBW", Some(&format!("{bw}FORCED")))?;
+    }
+    if let Some(dl) = cfg.drive_level {
+        set_and_ack(sock, "DRIVELEVEL", Some(&dl.to_string()))?;
     }
     set_and_ack(sock, "MYCALL", Some(&cfg.mycall))?;
     set_and_ack(sock, "GRIDSQUARE", Some(&cfg.gridsquare))?;
@@ -608,6 +615,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         init_tnc(&mut sock, &cfg).expect("init should succeed");
@@ -696,6 +704,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         let err = init_tnc(&mut sock, &cfg).expect_err("init must fail on FAULT");
@@ -759,6 +768,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         init_tnc(&mut sock, &cfg).expect("init must tolerate interleaved async events");
@@ -797,6 +807,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: Some(500),
+            drive_level: None,
             initial_listen: false,
         };
         init_tnc(&mut sock, &cfg).expect("init with bandwidth should succeed");
@@ -818,6 +829,60 @@ mod tests {
                 "GRIDSQUARE CN87",
             ],
             "ARQBW <hz>FORCED must be sent between LISTEN FALSE and MYCALL when bandwidth is Some (tuxlink-j0ij)"
+        );
+    }
+
+    /// When `cfg.drive_level` is Some, init_tnc must send `DRIVELEVEL <n>`
+    /// immediately AFTER the ARQBW setter and BEFORE `MYCALL`. The full
+    /// sequence proves both presence and position.
+    #[test]
+    fn init_tnc_sends_drivelevel_when_some() {
+        let recorded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let rec = recorded.clone();
+
+        let (addr, server) = spawn_mock_tnc(move |conn| {
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            loop {
+                let line = read_cmd_line(&mut reader);
+                if line.is_empty() {
+                    break;
+                }
+                rec.lock().unwrap().push(line.clone());
+                let cmd_name = line.split_whitespace().next().unwrap_or("").to_string();
+                write_reply(&mut writer, &cmd_name);
+            }
+        });
+
+        let mut sock = CmdSocket::connect(addr).unwrap();
+        let cfg = InitConfig {
+            mycall: "N7CPZ".into(),
+            gridsquare: "CN87".into(),
+            arq_timeout_s: 30,
+            arq_bandwidth_hz: Some(500),
+            drive_level: Some(40),
+            initial_listen: false,
+        };
+        init_tnc(&mut sock, &cfg).expect("init with drive level should succeed");
+
+        let _ = sock.writer.shutdown(std::net::Shutdown::Write);
+        server.join().unwrap();
+
+        let lines = recorded.lock().unwrap().clone();
+        assert_eq!(
+            lines,
+            vec![
+                "INITIALIZE",
+                "CODEC TRUE",
+                "PROTOCOLMODE ARQ",
+                "ARQTIMEOUT 30",
+                "LISTEN FALSE",
+                "ARQBW 500FORCED",
+                "DRIVELEVEL 40",
+                "MYCALL N7CPZ",
+                "GRIDSQUARE CN87",
+            ],
+            "DRIVELEVEL <n> must be sent immediately after ARQBW and before MYCALL when drive_level is Some"
         );
     }
 
@@ -849,6 +914,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         init_tnc(&mut sock, &cfg).expect("init with no bandwidth should succeed");

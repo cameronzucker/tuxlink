@@ -1713,6 +1713,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         transport.init(&cfg).expect("init must succeed");
@@ -1864,6 +1865,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         t.init(&cfg).expect("init must succeed");
@@ -1921,6 +1923,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         t.init(&cfg).expect("init must succeed");
@@ -1993,6 +1996,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         t.init(&cfg).expect("init must succeed");
@@ -2070,6 +2074,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         t.init(&cfg).expect("init must succeed");
@@ -2135,6 +2140,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         t.init(&cfg).unwrap();
@@ -2209,6 +2215,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         t.init(&cfg).expect("init must succeed");
@@ -2419,6 +2426,7 @@ data_thread.join(timeout=2.0)
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            drive_level: None,
             initial_listen: false,
         };
         transport.init(&init_cfg).expect("init must succeed");

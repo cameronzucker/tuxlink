@@ -20,8 +20,18 @@ use crate::winlink::modem::{InitConfig, ModemTransport};
 use crate::winlink::session::SessionIntent;
 use crate::winlink_backend::{LogLevel, LogSource};
 
-/// Number of ARQ retries packed into the `ARQCALL` setter.
-const CONNECT_REPEAT: u32 = 3;
+/// Default number of ARQ ConReq repeats packed into the `ARQCALL` setter when
+/// the operator has not set `modem_ardop.connect_attempts`. 15 ConReqs is
+/// ≈50 s of calling, comfortably inside the 120 s connect deadline. The prior
+/// value of 3 (≈10 s) was too short to raise a real gateway, which may need to
+/// wake up and tune while ARDOP — not being tune-aware — keeps re-calling
+/// (2026-06-25). The operator can override via `connect_attempts_from_config`.
+const CONNECT_REPEAT: u32 = 15;
+
+/// Lower clamp for the operator-supplied `modem_ardop.connect_attempts`.
+const CONNECT_ATTEMPTS_MIN: u32 = 2;
+/// Upper clamp for the operator-supplied `modem_ardop.connect_attempts`.
+const CONNECT_ATTEMPTS_MAX: u32 = 30;
 
 /// ARQ-link idle timeout passed to the TNC via `ARQTIMEOUT` during init.
 const ARQ_TIMEOUT_SECS: u32 = 30;
@@ -375,7 +385,11 @@ where
     // operator ABORT). This command is slated for deletion in Phase 6
     // when the panel migrates fully to `ardop_open_session` +
     // `modem_ardop_b2f_exchange`.
-    let info = match transport.connect_arq(target, CONNECT_REPEAT, Some(Duration::from_secs(120))) {
+    let info = match transport.connect_arq(
+        target,
+        connect_attempts_from_config(),
+        Some(Duration::from_secs(120)),
+    ) {
         Ok(info) => info,
         Err(e) => {
             let msg = format!("ARQ connect failed: {e}");
@@ -829,11 +843,12 @@ pub async fn ardop_close_session(
 /// transmit-capable modem requires an authenticated identity, resolved
 /// fail-closed by the caller before this function runs.
 ///
-/// `gridsquare` and `arq_bandwidth_hz` are NOT identity — they remain config:
-/// `gridsquare` from `cfg.identity.grid` (defaulting to `"AA00"` when no grid
-/// is set — the ARDOP TNC requires a non-empty value but the broadcast
-/// precision gate happens upstream in the position layer), and the ARQ
-/// bandwidth from `cfg.modem_ardop.bandwidth_hz` (tuxlink-j0ij).
+/// `gridsquare`, `arq_bandwidth_hz`, and `drive_level` are NOT identity — they
+/// remain config: `gridsquare` from `cfg.identity.grid` (defaulting to `"AA00"`
+/// when no grid is set — the ARDOP TNC requires a non-empty value but the
+/// broadcast precision gate happens upstream in the position layer), the ARQ
+/// bandwidth from `cfg.modem_ardop.bandwidth_hz` (tuxlink-j0ij), and the TX
+/// drive level from `cfg.modem_ardop.drive_level`.
 ///
 /// The function no longer reads config itself — the caller (which already
 /// holds or reads a `Config`) passes `&Config` in. This keeps the modem-init
@@ -858,6 +873,11 @@ fn init_config_from_session(
         .as_ref()
         .and_then(|a| a.bandwidth_hz)
         .and_then(validate_arq_bandwidth_hz);
+    let drive_level = cfg
+        .modem_ardop
+        .as_ref()
+        .and_then(|a| a.drive_level)
+        .and_then(validate_drive_level);
 
     // ARDOP requires a non-empty grid; "AA00" is the canonical placeholder
     // (also wl2k-go's fallback). Operators who care about grid accuracy
@@ -873,6 +893,7 @@ fn init_config_from_session(
         gridsquare,
         arq_timeout_s: ARQ_TIMEOUT_SECS,
         arq_bandwidth_hz,
+        drive_level,
         // tuxlink-dhbl: outbound-connect path leaves LISTEN FALSE at init.
         // The listener-arm UI command flips it via `set_listen` at runtime.
         initial_listen: false,
@@ -1034,6 +1055,26 @@ fn validate_arq_bandwidth_hz(bw: u32) -> Option<u32> {
             );
             None
         }
+    }
+}
+
+/// ConReq repeats for an outbound `ARQCALL`: the operator's
+/// `modem_ardop.connect_attempts` (clamped 2..=30) if set, else CONNECT_REPEAT.
+fn connect_attempts_from_config() -> u32 {
+    config::read_config()
+        .ok()
+        .and_then(|c| c.modem_ardop.as_ref().and_then(|a| a.connect_attempts))
+        .map(|n| n.clamp(CONNECT_ATTEMPTS_MIN, CONNECT_ATTEMPTS_MAX))
+        .unwrap_or(CONNECT_REPEAT)
+}
+
+/// Validate a persisted drive_level (0..=100); out-of-range -> None (logged).
+fn validate_drive_level(dl: u8) -> Option<u8> {
+    if dl <= 100 {
+        Some(dl)
+    } else {
+        eprintln!("config: ignoring out-of-range modem_ardop.drive_level={dl} (must be 0..=100)");
+        None
     }
 }
 
@@ -1319,7 +1360,7 @@ fn run_ardop_connect_b2f_with_transport(
 ) -> Result<(), String> {
     // ─── ARQ connect FIRST (Codex R1 P1 #1: ARQCALL before any B2F byte) ──
     transport
-        .connect_arq(target, CONNECT_REPEAT, None)
+        .connect_arq(target, connect_attempts_from_config(), None)
         .map_err(|e| format!("ARDOP ARQ connect to {target} failed: {e}"))?;
 
     // ─── Run the B2F exchange over the now-connected data stream ─────────
@@ -1519,6 +1560,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
         };
@@ -1657,6 +1700,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
         }
@@ -2411,6 +2456,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
         };
@@ -2445,6 +2492,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 9001,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
         };
@@ -2474,6 +2523,8 @@ mod tests {
                 cat_bridge_port: 4532,
                 cmd_port: low_port,
                 bandwidth_hz: None,
+                drive_level: None,
+                connect_attempts: None,
                 webgui_port: None,
                 listen_ttl_minutes: 0,
             };
@@ -2503,6 +2554,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
         };
@@ -2541,6 +2594,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
         };
@@ -2572,6 +2627,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: Some(9080),
             listen_ttl_minutes: 0,
         };
@@ -2604,6 +2661,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 0,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: Some(8514),
             listen_ttl_minutes: 0,
         };
@@ -2639,6 +2698,8 @@ mod tests {
             cat_bridge_port: 4532,
             cmd_port: 8515,
             bandwidth_hz: None,
+            drive_level: None,
+            connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
         }
