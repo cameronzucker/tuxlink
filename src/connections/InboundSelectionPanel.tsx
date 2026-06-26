@@ -6,8 +6,10 @@
 // backdrop-click-close. There is no backdrop onClick here either — accidental
 // dismissal of a modal selection dialog is undesirable.
 //
-// Columns are MID / uncompressed / compressed — the only fields available
-// pre-download (the proposal phase carries no sender/subject). All rows are
+// Columns are sender / subject / MID / uncompressed / compressed. Sender and
+// subject come from the CMS `;PM:` manifest (tuxlink-9u07u) — the whole pending
+// list is reviewed at once, matching WLE. They may be blank for an `FC`-only
+// path (no manifest), in which case only MID + sizes show. All rows are
 // PRE-CHECKED on open (download-everything is the common case + the WLE
 // default); the operator unchecks what they want to hold/delete. The
 // Hold/Delete radio controls the disposition of the UNCHECKED messages.
@@ -143,6 +145,8 @@ export function InboundSelectionPanel({
 
         <div className="inbound-selection__col-head" aria-hidden="true">
           <span />
+          <span>From</span>
+          <span>Subject</span>
           <span>Message ID</span>
           <span>Size</span>
           <span>Compressed</span>
@@ -159,6 +163,12 @@ export function InboundSelectionPanel({
                   onChange={() => toggle(p.mid)}
                 />
               </label>
+              <span className="inbound-selection__sender" title={p.sender}>
+                {p.sender || '—'}
+              </span>
+              <span className="inbound-selection__subject" title={p.subject}>
+                {p.subject || '(no subject)'}
+              </span>
               <span className="inbound-selection__mid" title={p.mid}>
                 {p.mid}
               </span>

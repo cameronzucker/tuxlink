@@ -156,13 +156,16 @@ export type CredentialScope =
 /// lowercase on the wire. Default is `'hold'`.
 export type UnselectedDisposition = 'hold' | 'delete';
 
-/// One proposed inbound message offered before download. Sizes are bytes;
-/// sender/subject are unavailable pre-download (proposal phase only carries
-/// the MID + sizes), matching the WLE pending-messages columns.
+/// One proposed inbound message offered before download. Sizes are bytes.
+/// `sender`/`subject` come from the CMS `;PM:` manifest (tuxlink-9u07u) and are
+/// empty for messages surfaced via an `FC`-only path (no manifest). The backend
+/// redacts all wire-derived fields before they reach here.
 export interface PendingProposalDto {
   mid: string;
   uncompressed_size: number;
   compressed_size: number;
+  sender: string;
+  subject: string;
 }
 
 /// The operator's selection, sent back to the backend via

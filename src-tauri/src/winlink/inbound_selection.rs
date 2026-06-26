@@ -281,8 +281,10 @@ where
         }
         // Later batches: the operator already reviewed the whole manifest on the
         // first batch. Apply that one cached decision and return WITHOUT emitting
-        // another prompt — this is the fix for the per-block prompt storm.
-        if let Some(decision) = cached.lock().unwrap().clone() {
+        // another prompt — this is the fix for the per-block prompt storm. Clone
+        // out of the guard so the lock is released before `answers_for` runs.
+        let cached_decision = cached.lock().unwrap().clone();
+        if let Some(decision) = cached_decision {
             return Ok(decision.answers_for(proposals));
         }
         // Abort that already happened before we registered: cancel without
