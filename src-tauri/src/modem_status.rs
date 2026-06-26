@@ -1094,21 +1094,19 @@ impl ModemSession {
     /// but if the operator clicked Close/Stop while `connect_arq` was blocked,
     /// the close path already bumped `close_generation` and may have re-opened
     /// a NEW session. An unconditional reset would then clobber that new
-    /// session. So: if the generation moved, leave the session untouched and
-    /// return `Err(())` — the caller just drops its own (old, failed) transport.
+    /// session. So: if the generation moved, leave the session untouched.
     ///
-    /// On a match, returns `Ok(prior_installed_transport)` (usually `None` on
-    /// the connect-failure path, since the transport was taken before the dial)
-    /// so the caller drops it OUTSIDE the lock. Mutex-poisoned ⇒ `Err(())`.
-    pub fn reset_to_stopped_if_generation_matches(
-        &self,
-        snapshot_gen: u64,
-    ) -> Result<Option<Box<dyn crate::winlink::modem::ModemTransport>>, ()> {
+    /// Returns `true` if it reset (generation matched), `false` if a close
+    /// intervened (generation moved) or the mutex was poisoned and nothing was
+    /// touched. The caller drops its own (failed) transport regardless. In the
+    /// connect-failure path the session's installed transport is already `None`
+    /// (the worker holds it); any installed transport is taken + dropped here.
+    pub fn reset_to_stopped_if_generation_matches(&self, snapshot_gen: u64) -> bool {
         match self.inner.lock() {
             Ok(mut inner) => {
                 let live = self.close_generation.load(Ordering::Acquire);
                 if live != snapshot_gen {
-                    return Err(());
+                    return false;
                 }
                 inner.status = ModemStatus::stopped();
                 inner.abort_writer = None;
@@ -1116,9 +1114,10 @@ impl ModemSession {
                 inner.transport_owner = TransportOwner::None;
                 inner.active_intent = None;
                 inner.active_transport_kind = None;
-                Ok(inner.transport.take())
+                let _ = inner.transport.take();
+                true
             }
-            Err(_poisoned) => Err(()),
+            Err(_poisoned) => false,
         }
     }
 

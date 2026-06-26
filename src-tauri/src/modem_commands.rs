@@ -1374,10 +1374,11 @@ fn finish_b2f_exchange(
             // stale-generation reset would clobber a newly-reopened session.
             // Either way we drop OUR failed transport (reaping ardopcf). No 5 s
             // link-disconnect — there is no live ARQ link to tear down.
-            match session.reset_to_stopped_if_generation_matches(close_gen_snapshot) {
-                Ok(prior) => drop(prior),
-                Err(()) => { /* close intervened — leave the new session alone */ }
-            }
+            // Reset the session ONLY if no operator close intervened (generation
+            // still current); a `false` return means a close did, so the
+            // (possibly newly-reopened) session is left alone. Either way we drop
+            // our failed transport, reaping ardopcf.
+            let _ = session.reset_to_stopped_if_generation_matches(close_gen_snapshot);
             drop(transport);
             Err(msg)
         }
