@@ -66,8 +66,14 @@ describe('GpsSourcePicker', () => {
     renderPicker();
     expect(screen.queryByTestId('gps-source-serial:/dev/ttyACM0')).toBeNull();
     const setup = await screen.findByTestId('gps-setup-gpsd');
-    expect(setup.textContent).toMatch(/u-blox AG GNSS receiver/);
-    expect(setup.textContent).toMatch(/\/dev\/ttyACM0/);
+    // The card mounts before the async serial-probe result populates its device
+    // details, so assert on the content via waitFor rather than synchronously
+    // right after the card appears (tuxlink-kx0ck: this raced on the amd64 CI
+    // runner under load — findByTestId resolves on mount, not on data).
+    await waitFor(() => {
+      expect(setup.textContent).toMatch(/u-blox AG GNSS receiver/);
+      expect(setup.textContent).toMatch(/\/dev\/ttyACM0/);
+    });
   });
 
   it('shows a dialout triage card with a copy-pasteable fix command (the core Linux GPS wall)', async () => {
@@ -198,7 +204,11 @@ describe('GpsSourcePicker', () => {
     await screen.findByTestId('gps-setup-gpsd');
     expect(screen.queryByTestId('gps-setup-run')).toBeNull(); // no one-click on non-apt
     fireEvent.click(screen.getByTestId('gps-setup-show-commands'));
-    expect(screen.getByTestId('gps-setup-command').textContent).toContain('pacman -S');
+    // Same gps-setup-gpsd card: the distro-specific command text populates from
+    // an async probe, so wait for the content (tuxlink-kx0ck race class).
+    await waitFor(() =>
+      expect(screen.getByTestId('gps-setup-command').textContent).toContain('pacman -S'),
+    );
   });
 
   it('shows "acquiring" when a GPS source is selected without a fix', async () => {
