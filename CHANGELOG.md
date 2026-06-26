@@ -30,6 +30,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.76.1](https://github.com/cameronzucker/tuxlink/compare/v0.76.0...v0.76.1) (2026-06-26)
+
+
+### Bug Fixes
+
+* **modem:** add drive_level to ardop_connect example (fix main CI) ([08e8494](https://github.com/cameronzucker/tuxlink/commit/08e849483bd224980504e70a3fa91e9bf04c1359))
+* **modem:** config-driven DRIVELEVEL + sustained ARDOP call window ([373aeca](https://github.com/cameronzucker/tuxlink/commit/373aeca3d5b76d40b8a83f4b772d2455a6deb5a7))
+
 ## [0.76.0](https://github.com/cameronzucker/tuxlink/compare/v0.75.3...v0.76.0) (2026-06-24)
 
 
