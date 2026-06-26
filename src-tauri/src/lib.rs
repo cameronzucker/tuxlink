@@ -649,6 +649,10 @@ pub fn run() {
         // handler is on the Builder above); the bundled `world` archive is
         // registered in `.setup()` once its resource path resolves.
         .manage(std::sync::Arc::new(crate::basemap::PmtilesRegistry::new()))
+        // tuxlink-7dwqa (Plan 2): armed-grant + taint egress-authorization gate
+        // for the MCP server's agent caller. `EgressGuard` is the single
+        // authoritative gate; arm/disarm/status commands are registered below.
+        .manage(std::sync::Arc::new(crate::ui_core::security::EgressGuard::new()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
 
@@ -1517,6 +1521,11 @@ pub fn run() {
             crate::tiles::commands::test_tile_source,
             crate::tiles::commands::clear_tile_cache,
             crate::tiles::commands::tile_source_status,
+            // tuxlink-7dwqa (Plan 2): egress arm/disarm/status — operator
+            // delegates send authority to the MCP agent caller for a timed window.
+            crate::ui_core::security_commands::egress_arm,
+            crate::ui_core::security_commands::egress_disarm,
+            crate::ui_core::security_commands::egress_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
