@@ -1510,7 +1510,7 @@ mod tests {
             ExchangeRole::Answer,
             &config,
             vec![],
-            |_| Ok(vec![Answer::Accept { resume_offset: 0 }]),
+            |_, _| Ok(vec![Answer::Accept { resume_offset: 0 }]),
             None,
         )
         .unwrap();

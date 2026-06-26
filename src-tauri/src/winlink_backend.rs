@@ -2962,7 +2962,7 @@ fn native_connect(
                 aborting.clone(),
             ))
         }
-        None => Box::new(|proposals: &[Proposal]| {
+        None => Box::new(|proposals: &[Proposal], _manifest: &[crate::winlink::proposal::PendingMessage]| {
             Ok(proposals
                 .iter()
                 .map(|_| Answer::Accept { resume_offset: 0 })

@@ -74,7 +74,7 @@ use super::listener::{
 };
 use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, ExchangeRole};
 #[cfg(test)]
-use super::proposal::Proposal;
+use super::proposal::{PendingMessage, Proposal};
 
 /// Default TCP listen port — matches WLE's `Globals.strTelnetListeningPort`
 /// initial value `"8774"` at `Globals.cs:1518`. NOTE: 8772 is RMS-Relay's
@@ -1417,7 +1417,7 @@ mod tests {
                 shutdown_for_loop,
                 &|_| {},
                 &|_| {},
-                |_proposals: &[Proposal]| Ok(Vec::new()),
+                |_proposals: &[Proposal], _manifest: &[PendingMessage]| Ok(Vec::new()),
             );
         });
 

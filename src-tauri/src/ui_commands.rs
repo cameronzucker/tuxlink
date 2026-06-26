@@ -7567,6 +7567,7 @@ fn post_office_exchange<F>(
 where
     F: Fn(
         &[crate::winlink::proposal::Proposal],
+        &[crate::winlink::proposal::PendingMessage],
     ) -> Result<Vec<crate::winlink::proposal::Answer>, crate::winlink::session::ExchangeError>,
 {
     let config = post_office_exchange_config(mycall, locator, local);
@@ -8298,7 +8299,7 @@ pub async fn telnet_listen(
                     line.to_string(),
                 );
             },
-            |proposals: &[crate::winlink::proposal::Proposal]| {
+            |proposals: &[crate::winlink::proposal::Proposal], _manifest: &[crate::winlink::proposal::PendingMessage]| {
                 // Codex review 2026-06-03 [P1]: returning an empty Vec made
                 // `receive_turn` fail with `AnswerCountMismatch` on any
                 // inbound batch, so the listener couldn't actually accept

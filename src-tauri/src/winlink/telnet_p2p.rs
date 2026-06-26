@@ -263,7 +263,7 @@ mod tests {
             Vec::new(),
             &|_| {},
             &|_| {},
-            |_proposals: &[Proposal]| Ok(Vec::new()),
+            |_proposals: &[Proposal], _manifest: &[PendingMessage]| Ok(Vec::new()),
         );
 
         let _peer_received = peer_handle.join().unwrap();
@@ -291,7 +291,7 @@ mod tests {
             Vec::new(),
             &|_| {},
             &|_| {},
-            |_proposals: &[Proposal]| Ok(Vec::new()),
+            |_proposals: &[Proposal], _manifest: &[PendingMessage]| Ok(Vec::new()),
         );
         assert!(matches!(result, Err(P2pTelnetError::Connect { .. })));
     }
