@@ -499,16 +499,10 @@ pub async fn mailbox_list(
     folder: String,
     state: State<'_, BackendState>,
 ) -> Result<Vec<MessageMetaDto>, UiError> {
-    use crate::native_mailbox::FolderRef;
-    let parsed = parse_folder_ref(&folder)?;
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
-    let metas = match parsed {
-        FolderRef::System(f) => backend.list_messages(f).await?,
-        FolderRef::User(slug) => backend.list_user_messages(&slug).await?,
-    };
-    Ok(metas.into_iter().map(MessageMetaDto::from).collect())
+    crate::ui_core::mailbox::list_mailbox(&backend, &folder).await
 }
 
 // ============================================================================
@@ -3464,10 +3458,7 @@ pub async fn config_set_aredn_master_node_host(host: Option<String>) -> Result<(
 /// so pre-wizard launches degrade gracefully.
 #[tauri::command]
 pub async fn config_read() -> Result<ConfigViewDto, UiError> {
-    let cfg = config::read_config().map_err(|e| UiError::Internal {
-        detail: e.to_string(),
-    })?;
-    Ok(ConfigViewDto::from(&cfg))
+    crate::ui_core::config::read_config_view()
 }
 
 /// Serializable projection of [`BackendStatus`] for the ribbon. Mirrors
