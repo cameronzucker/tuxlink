@@ -1204,12 +1204,12 @@ pub async fn modem_ardop_connect(
 /// # Flow (Codex R1 P1 #1 ordering + Codex R2 P1 #2/#3 cleanup semantics)
 ///
 /// 1. **Take the installed transport** out of `ModemSession`.
-/// 2. **`connect_arq`** with `deadline: None` (Codex R2 P1 #2 + operator
-///    decision bd tuxlink-qtgg — no tuxlink wall-clock cap; ardopcf's own
-///    `ARQTIMEOUT` × `CONNECT_REPEAT` + operator ABORT bound the call).
-///    Sends ARQCALL on the cmd port BEFORE any B2F byte (Codex R1 P1 #1:
-///    ARQCALL ordering is load-bearing — B2F over an unconnected stream
-///    is undefined).
+/// 2. **`connect_arq`** with a backstop deadline DERIVED from the retry count
+///    (tuxlink-5xxq, supersedes the tuxlink-qtgg `None`). ardopcf reports a
+///    failed dial via `NEWSTATE DISC` after `CONNECT_REPEAT` × ~3.3 s, so the
+///    deadline only backstops a *wedged* modem that never reports. Sends
+///    ARQCALL on the cmd port BEFORE any B2F byte (Codex R1 P1 #1: ARQCALL
+///    ordering is load-bearing — B2F over an unconnected stream is undefined).
 /// 3. **Run the B2F exchange** via
 ///    [`crate::winlink_backend::run_ardop_b2f_exchange`] — builds outbound
 ///    from the mailbox Outbox, files received messages into Inbox, moves
@@ -1229,12 +1229,16 @@ pub async fn modem_ardop_connect(
 ///    would force the operator to re-open before another exchange or
 ///    retry.
 ///
-/// # Failure semantics (Codex R2 P1 #3)
+/// # Failure semantics (tuxlink-5xxq, refines Codex R2 P1 #3)
 ///
-/// On a failed `connect_arq` OR failed B2F, the transport is still
-/// link-disconnected (best-effort) and then RE-INSTALLED into the session.
-/// The session does NOT transition to `Stopped`. The operator can retry
-/// Send/Receive, or click Close Session to fully tear down.
+/// Cleanup branches on the failure class (see [`finish_b2f_exchange`]):
+/// - **CONNECT-class failure** (`connect_arq` failed — link never came up):
+///   terminal. The session is reset to `Stopped` and the transport is dropped,
+///   reaping ardopcf. The modem is freed; the operator re-opens to try again.
+/// - **Mid-EXCHANGE failure** (link was up, B2F faulted) **or success**: the
+///   transport is best-effort link-disconnected and RE-INSTALLED (Codex R2 P1
+///   #3) — the open-session window survives so a retry / re-arm needs no
+///   re-open.
 ///
 /// # Arbiter wire-in deferred (tuxlink-17u9)
 ///
@@ -1297,24 +1301,15 @@ pub async fn modem_ardop_b2f_exchange(
                 .to_string()
         })?;
 
-        // connect_arq → B2F via the inner helper (uniform cleanup, both paths).
+        // connect_arq → B2F via the inner helper.
         let outcome =
             run_ardop_connect_b2f_with_transport(&app, &mut *transport, &target, intent);
 
-        // Always tear down the ARQ LINK (link-only, 5 s budget) + re-install
-        // the transport regardless of outcome. Codex R2 P1 #3: do NOT
-        // `reset_to_stopped` — the open-session window + listener arming must
-        // survive so a retry / re-arm needs no re-open.
-        let _ = transport.disconnect(Duration::from_secs(5));
-        // Guarded install (tuxlink-pdnw): stale snapshot (a close intervened)
-        // → drop the transport explicitly, defeating no operator close.
-        if let Err(dropped) =
-            session.install_transport_if_generation_matches(transport, close_gen_snapshot)
-        {
-            drop(dropped);
-        }
-
-        outcome
+        // Branch cleanup on the outcome (tuxlink-5xxq): a CONNECT-class failure
+        // is terminal — free the modem (reset session + drop transport → reap
+        // ardopcf). A success or mid-EXCHANGE failure keeps the open session for
+        // retry/re-arm (the prior uniform re-install, Codex R2 P1 #3).
+        finish_b2f_exchange(&session, transport, close_gen_snapshot, outcome)
     })
     .await
     .map_err(|e| format!("b2f task panicked: {e}"))?;
@@ -1328,10 +1323,82 @@ pub async fn modem_ardop_b2f_exchange(
     result
 }
 
+/// Outcome of a connect→B2F attempt (tuxlink-5xxq). Distinguishes a
+/// CONNECT-class failure (the ARQ link never came up — terminal, free the
+/// modem) from a mid-EXCHANGE failure (the link was up — keep the open session
+/// for retry). The caller, [`finish_b2f_exchange`], branches cleanup on it.
+enum ExchangeOutcome {
+    /// `connect_arq` + the full B2F exchange completed.
+    Completed,
+    /// `connect_arq` failed — the ARQ link never reached CONNECTED.
+    ConnectFailed(String),
+    /// The link came up but the B2F exchange itself failed.
+    ExchangeFailed(String),
+}
+
+/// Defense-in-depth backstop deadline for `connect_arq`, DERIVED from the
+/// operator-set retry count so the two can never drift (tuxlink-5xxq, operator
+/// decision). Each ardopcf ConReq cycle is ~3.3 s (`intFrameRepeatInterval`
+/// 2000 ms + frame TX, per ardopcf `ARQ.c`); the 1.6× margin (8/5) covers RF
+/// leader/jitter so it never fires before a legitimately slow dial. This is NOT
+/// a tuxlink-added airtime cap — it only bounds the wait to just beyond when the
+/// operator's own configured attempts are spent, and normally never fires:
+/// ardopcf emits `NEWSTATE DISC` on ConReq exhaustion (≈ attempts × 3.3 s)
+/// first, which `connect_arq` already surfaces as an `Err`.
+fn connect_backstop_deadline(attempts: u32) -> Duration {
+    const PER_CONREQ_MS: u64 = 3300;
+    Duration::from_millis(u64::from(attempts) * PER_CONREQ_MS * 8 / 5)
+}
+
+/// Post-exchange cleanup, branched on the outcome (tuxlink-5xxq). A
+/// CONNECT-class failure is terminal: reset the session to `Stopped` and DROP
+/// the transport, whose `ManagedModem::Drop` reaps ardopcf — the modem is freed
+/// and the session presents a terminal state, not a re-armable `Idle`. A
+/// success or mid-EXCHANGE failure keeps the prior retry-friendly behavior
+/// (Codex R2 P1 #3): best-effort link-disconnect (link-only, 5 s budget) +
+/// guarded re-install so the open-session window + listener arming survive.
+///
+/// Returns the flat `Result` the command surfaces (and `emit_modem_error`
+/// logs honestly, including the attempt count for a connect failure).
+fn finish_b2f_exchange(
+    session: &ModemSession,
+    mut transport: Box<dyn ModemTransport>,
+    close_gen_snapshot: u64,
+    outcome: ExchangeOutcome,
+) -> Result<(), String> {
+    match outcome {
+        ExchangeOutcome::ConnectFailed(msg) => {
+            // Link never came up → terminal. Reset session state, then drop the
+            // transport to reap ardopcf. No 5 s link-disconnect — there is no
+            // live ARQ link to tear down (and it would only add latency).
+            let _ = session.reset_to_stopped();
+            drop(transport);
+            Err(msg)
+        }
+        other => {
+            // Link was up (success or mid-exchange failure): tear down the ARQ
+            // LINK (link-only) + guarded re-install so the open session survives
+            // for retry/re-arm. Guarded (tuxlink-pdnw): a stale generation
+            // snapshot (an operator close intervened) drops the transport.
+            let _ = transport.disconnect(Duration::from_secs(5));
+            if let Err(dropped) =
+                session.install_transport_if_generation_matches(transport, close_gen_snapshot)
+            {
+                drop(dropped);
+            }
+            match other {
+                ExchangeOutcome::Completed => Ok(()),
+                ExchangeOutcome::ExchangeFailed(msg) => Err(msg),
+                ExchangeOutcome::ConnectFailed(_) => unreachable!("handled above"),
+            }
+        }
+    }
+}
+
 /// Inner helper for [`modem_ardop_b2f_exchange`]: drives the full
-/// connect_arq → B2F sequence over a borrowed transport handle. Caller is
-/// responsible for the post-exchange link-disconnect + transport re-install
-/// (uniform cleanup on both success and failure).
+/// connect_arq → B2F sequence over a borrowed transport handle. Returns an
+/// [`ExchangeOutcome`] so the caller can free the modem on a CONNECT-class
+/// failure but keep the open session on a mid-EXCHANGE failure (tuxlink-5xxq).
 ///
 /// **Ordering invariant (Codex R1 P1 #1):** `connect_arq` is invoked BEFORE
 /// any byte is written to the data stream. B2F over an unconnected ARQ
@@ -1339,32 +1406,34 @@ pub async fn modem_ardop_b2f_exchange(
 /// `modem_ardop_connect` had already brought the link up, which is no
 /// longer true after Task 3.5's split of ardopcf-spawn from ARQ-connect.
 ///
-/// **Deadline (Codex R2 P1 #2 + operator decision tuxlink-qtgg):**
-/// `connect_arq` is called with `None` — no tuxlink-layer wall-clock cap
-/// on the ARQCALL. The bound is ardopcf's `ARQTIMEOUT` setter (sent at
-/// init time, default 30 s) × `CONNECT_REPEAT` retries + the operator's
-/// ABORT side channel (`ModemSession::abort_in_flight`). The `None`
-/// branch routes through `recv_event_blocking` rather than feeding
-/// `Duration::MAX` into `mpsc::Receiver::recv_timeout`, which would
-/// overflow the internal `Instant::checked_add`.
-///
-/// Factored out so the Tauri command can run cleanup uniformly. Returns
-/// the error as a `String` so it surfaces to the frontend without exposing
-/// the internal `BackendError` / `SessionError` types — same pattern as the
-/// other modem commands.
+/// **Deadline (tuxlink-5xxq, supersedes the tuxlink-qtgg `None`):**
+/// `connect_arq` is called with a backstop deadline DERIVED from the retry
+/// count ([`connect_backstop_deadline`]). ardopcf reports a failed dial via
+/// `NEWSTATE DISC` (surfaced as an `Err`) after attempts × ~3.3 s, so the
+/// deadline normally never fires — it only bounds a *wedged* ardopcf (RF/USB
+/// hang) that never reports. Deriving it from the operator-set retry count
+/// keeps the two from drifting.
 fn run_ardop_connect_b2f_with_transport(
     app: &AppHandle,
     transport: &mut dyn ModemTransport,
     target: &str,
     intent: SessionIntent,
-) -> Result<(), String> {
+) -> ExchangeOutcome {
     // ─── ARQ connect FIRST (Codex R1 P1 #1: ARQCALL before any B2F byte) ──
-    transport
-        .connect_arq(target, connect_attempts_from_config(), None)
-        .map_err(|e| format!("ARDOP ARQ connect to {target} failed: {e}"))?;
+    let attempts = connect_attempts_from_config();
+    if let Err(e) =
+        transport.connect_arq(target, attempts, Some(connect_backstop_deadline(attempts)))
+    {
+        return ExchangeOutcome::ConnectFailed(format!(
+            "ARDOP connect to {target} failed after {attempts} attempts ({e}) — modem stopped"
+        ));
+    }
 
     // ─── Run the B2F exchange over the now-connected data stream ─────────
-    run_b2f_with_transport(app, transport, target, intent)
+    match run_b2f_with_transport(app, transport, target, intent) {
+        Ok(()) => ExchangeOutcome::Completed,
+        Err(e) => ExchangeOutcome::ExchangeFailed(e),
+    }
 }
 
 /// Inner helper for [`modem_ardop_b2f_exchange`]: reads the live config, opens
@@ -1684,6 +1753,90 @@ mod tests {
 
     fn stub_transport() -> Box<dyn ModemTransport> {
         Box::new(StubTransport::new())
+    }
+
+    // ── tuxlink-5xxq: a CONNECT-class failure must FREE the modem (drop the
+    // transport → reap ardopcf) + reset the session to Stopped, NOT re-install
+    // the live transport (which left ardopcf running + the session re-armable —
+    // the "sits in REJ / never frees the modem on failure" bug). A SUCCESS or a
+    // mid-EXCHANGE failure must keep the open session (re-install) for retry. ──
+
+    #[test]
+    fn connect_failure_stops_session_and_drops_transport() {
+        let session = Arc::new(ModemSession::new());
+        // Put the session in the open-but-idle posture an open session has.
+        let mut snap = session.status_snapshot();
+        snap.state = ModemState::Idle;
+        session.set_status(snap);
+        let gen = session.current_close_generation();
+
+        let res = finish_b2f_exchange(
+            &session,
+            stub_transport(),
+            gen,
+            ExchangeOutcome::ConnectFailed("no answer after 15 attempts".into()),
+        );
+
+        assert!(res.is_err(), "a connect failure surfaces an error");
+        // The catch: must NOT re-install the transport, and MUST reset to Stopped.
+        assert!(
+            !session.snapshot_transport_present(),
+            "connect failure must drop the transport (reap the modem), not re-install it"
+        );
+        assert_eq!(
+            session.status_snapshot().state,
+            ModemState::Stopped,
+            "connect failure must reset the session to Stopped (terminal, not re-armable Idle)"
+        );
+    }
+
+    #[test]
+    fn completed_exchange_reinstalls_transport_for_retry() {
+        let session = Arc::new(ModemSession::new());
+        let gen = session.current_close_generation();
+
+        let res =
+            finish_b2f_exchange(&session, stub_transport(), gen, ExchangeOutcome::Completed);
+
+        assert!(res.is_ok());
+        assert!(
+            session.snapshot_transport_present(),
+            "a completed exchange keeps the open session (transport re-installed for retry)"
+        );
+    }
+
+    #[test]
+    fn mid_exchange_failure_keeps_session_for_retry() {
+        let session = Arc::new(ModemSession::new());
+        let gen = session.current_close_generation();
+
+        let res = finish_b2f_exchange(
+            &session,
+            stub_transport(),
+            gen,
+            ExchangeOutcome::ExchangeFailed("CMS rejected mid".into()),
+        );
+
+        assert!(res.is_err());
+        assert!(
+            session.snapshot_transport_present(),
+            "a mid-exchange failure keeps the open session for retry (transport re-installed)"
+        );
+    }
+
+    #[test]
+    fn connect_backstop_deadline_scales_with_retries_and_exceeds_actual_dial() {
+        // Derived from attempts so the two never drift; must exceed ardopcf's own
+        // dial time (attempts × ~3.3 s) so it only backstops a wedged modem.
+        let d15 = connect_backstop_deadline(15);
+        assert!(
+            d15 >= Duration::from_secs(50),
+            "15 attempts × ~3.3 s ≈ 50 s actual dial; backstop must exceed it, got {d15:?}"
+        );
+        assert!(
+            connect_backstop_deadline(30) > d15,
+            "more retries must yield a longer backstop"
+        );
     }
 
     fn test_ardop_ui_config() -> ArdopUiConfig {
