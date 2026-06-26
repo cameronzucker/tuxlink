@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::proposal::{Answer, Proposal};
+use super::proposal::{Answer, PendingMessage, Proposal};
 use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, OutboundMessage};
 use super::wire;
 
@@ -197,7 +197,7 @@ pub fn connect_and_exchange<F>(
     decide: F,
 ) -> Result<ExchangeResult, TelnetError>
 where
-    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
+    F: Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>,
 {
     let shared: Shared = Arc::new(Mutex::new(connect_stream(
         host,
@@ -275,7 +275,7 @@ pub(crate) fn connect_and_auth_test(
         &mut writer,
         config,
         vec![],
-        |_| Ok(vec![]),
+        |_, _| Ok(vec![]),
         None,
         events,
         attempt_id,
@@ -523,7 +523,7 @@ mod tests {
             &|_| {},
             &|_| {},
             &|_| {},
-            |_| Ok(vec![]),
+            |_, _| Ok(vec![]),
         )
         .unwrap();
 
@@ -685,7 +685,7 @@ mod tests {
             &|msg: &str| recorded.borrow_mut().push(msg.to_string()),
             &|_| {},
             &|_| {},
-            |_| Ok(vec![]),
+            |_, _| Ok(vec![]),
         )
         .unwrap();
         server.join().unwrap();
@@ -739,7 +739,7 @@ mod tests {
             &|_| {},
             &|line: &str| wire.borrow_mut().push(line.to_string()),
             &|_| {},
-            |_| Ok(vec![]),
+            |_, _| Ok(vec![]),
         )
         .unwrap();
         server.join().unwrap();

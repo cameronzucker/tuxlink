@@ -45,7 +45,7 @@ use std::io::{BufReader, Read, Write};
 use std::sync::{Arc, Mutex};
 
 use crate::winlink::modem::{ModemTransport, ReadWrite};
-use crate::winlink::proposal::{Answer, Proposal};
+use crate::winlink::proposal::{Answer, PendingMessage, Proposal};
 use crate::winlink::session::{
     self, ExchangeConfig, ExchangeError, ExchangeResult, ExchangeRole, OutboundMessage,
 };
@@ -74,7 +74,7 @@ pub fn run_b2f_exchange<F>(
     decide: F,
 ) -> Result<ExchangeResult, B2fOverArdopError>
 where
-    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
+    F: Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>,
 {
     let data: &mut dyn ReadWrite = transport
         .data_stream()
@@ -252,7 +252,7 @@ mod tests {
             ExchangeRole::Dial,
             &dial_config(),
             vec![],
-            |_| Ok(vec![]),
+            |_, _| Ok(vec![]),
         );
         assert!(
             matches!(result, Err(B2fOverArdopError::DataStream(_))),
@@ -289,7 +289,7 @@ mod tests {
             ExchangeRole::Dial,
             &dial_config(),
             vec![],
-            |_| Ok(vec![]),
+            |_, _| Ok(vec![]),
         )
         .expect("empty exchange must succeed");
         assert!(result.received.is_empty());
@@ -343,7 +343,7 @@ mod tests {
             ExchangeRole::Dial,
             &dial_config(),
             vec![],
-            |proposals| {
+            |proposals, _manifest| {
                 *decide_calls.lock().unwrap() += 1;
                 Ok(proposals
                     .iter()
@@ -406,7 +406,7 @@ mod tests {
             ExchangeRole::Dial,
             &dial_config(),
             outbound,
-            |_| Ok(vec![]),
+            |_, _| Ok(vec![]),
         )
         .expect("outbound exchange must succeed");
 
@@ -446,7 +446,7 @@ mod tests {
             ExchangeRole::Dial,
             &dial_config(),
             vec![],
-            |_| Ok(vec![]),
+            |_, _| Ok(vec![]),
         )
         .expect("exchange must succeed");
 

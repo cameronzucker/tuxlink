@@ -76,6 +76,66 @@ impl Proposal {
     }
 }
 
+/// One entry from the CMS's pending-message manifest — a `;PM:` line the CMS
+/// sends up front listing every message awaiting download, BEFORE it negotiates
+/// the actual download in small `FC` blocks (tuxlink-9u07u).
+///
+/// The manifest is the parity lever: WLE renders its "Review Pending Messages"
+/// pane from these lines (all messages at once, with sender + subject), then
+/// answers the `FC` blocks underneath. tuxlink historically skipped every
+/// `;`-prefixed line, so it only ever saw the `FC` blocks (≈3 at a time) and
+/// prompted once per block. A [`PendingMessage`] carries the sender and subject
+/// that the `FC` [`Proposal`] line lacks — that richer data lives ONLY here.
+///
+/// Wire format: `;PM: <recipient> <mid> <size> <sender> <subject…>`
+/// e.g. `;PM: N7CPZ WCCJR0N74QU3 764 SERVICE@winlink.org INQUIRY - https://…`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingMessage {
+    /// The recipient callsign the CMS holds this message for.
+    pub recipient: String,
+    /// The message's unique id (matches the `FC` proposal's MID).
+    pub mid: String,
+    /// Uncompressed size in bytes.
+    pub size: usize,
+    /// The originating address (e.g. `SERVICE@winlink.org`).
+    pub sender: String,
+    /// The subject line. May be empty and may contain spaces.
+    pub subject: String,
+}
+
+impl PendingMessage {
+    /// Parse a `;PM:` manifest line. Returns `None` for any line that is not a
+    /// well-formed `;PM:` entry (a different `;` control line, a malformed size,
+    /// or a missing required field) so callers can try this on every received
+    /// line and ignore non-matches.
+    ///
+    /// The first four whitespace-delimited fields are `recipient mid size
+    /// sender`; everything after the fourth space is the subject verbatim
+    /// (so subjects containing spaces survive intact). The subject may be empty.
+    pub fn parse(line: &str) -> Option<PendingMessage> {
+        let rest = line.strip_prefix(";PM:")?.trim_start();
+        let mut fields = rest.splitn(5, ' ');
+        let recipient = fields.next()?.to_string();
+        let mid = fields.next()?.to_string();
+        let size = fields.next()?.parse::<usize>().ok()?;
+        let sender = fields.next()?.to_string();
+        // Subject is optional and keeps its internal spaces; trailing CR/space
+        // is already stripped by the line reader, so only trim the right edge
+        // defensively.
+        let subject = fields.next().unwrap_or("").trim_end().to_string();
+        if recipient.is_empty() || mid.is_empty() || sender.is_empty() {
+            return None;
+        }
+        Some(PendingMessage {
+            recipient,
+            mid,
+            size,
+            sender,
+            subject,
+        })
+    }
+}
+
 /// One side's answer to a single proposal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Answer {
@@ -197,6 +257,49 @@ mod tests {
             compressed_size: 123,
         };
         assert_eq!(p.line(), "FC EM TJKYEIMMHSRB 527 123 0");
+    }
+
+    // --- tuxlink-9u07u: ;PM: pending-message manifest parsing ---
+
+    #[test]
+    fn parses_a_pm_manifest_line_with_sender_and_subject() {
+        // Verbatim from an operator-captured CMS session (2026-06-26).
+        let line = ";PM: N7CPZ WCCJR0N74QU3 764 SERVICE@winlink.org INQUIRY - https://services.swpc.noaa.gov/text/3-day-geomag-forecast.txt";
+        let pm = PendingMessage::parse(line).expect("a well-formed ;PM: line parses");
+        assert_eq!(pm.recipient, "N7CPZ");
+        assert_eq!(pm.mid, "WCCJR0N74QU3");
+        assert_eq!(pm.size, 764);
+        assert_eq!(pm.sender, "SERVICE@winlink.org");
+        assert_eq!(
+            pm.subject,
+            "INQUIRY - https://services.swpc.noaa.gov/text/3-day-geomag-forecast.txt",
+            "subject keeps its internal spaces"
+        );
+    }
+
+    #[test]
+    fn pm_subject_may_be_empty() {
+        let pm = PendingMessage::parse(";PM: N7CPZ ABC123XYZ456 100 W7AAA@winlink.org")
+            .expect("a ;PM: line with no subject still parses");
+        assert_eq!(pm.mid, "ABC123XYZ456");
+        assert_eq!(pm.sender, "W7AAA@winlink.org");
+        assert_eq!(pm.subject, "");
+    }
+
+    #[test]
+    fn non_pm_lines_do_not_parse_as_manifest() {
+        // FC proposal lines, other ; control lines, and a bare/empty ;PM: must
+        // all return None so the receive loop can try parse() on every line.
+        assert!(PendingMessage::parse("FC EM ABC123 1 2 0").is_none());
+        assert!(PendingMessage::parse(";PR: 48796332").is_none());
+        assert!(PendingMessage::parse(";PQ: 99864849").is_none());
+        assert!(PendingMessage::parse(";PM:").is_none());
+        assert!(PendingMessage::parse(";PM: N7CPZ").is_none(), "missing fields");
+    }
+
+    #[test]
+    fn pm_with_non_numeric_size_is_rejected() {
+        assert!(PendingMessage::parse(";PM: N7CPZ ABC123 notanumber W7AAA@winlink.org Subj").is_none());
     }
 
     #[test]

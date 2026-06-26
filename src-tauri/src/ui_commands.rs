@@ -7204,7 +7204,7 @@ pub async fn telnet_p2p_connect(
                     line.to_string(),
                 );
             },
-            |_proposals| Ok(Vec::new()),
+            |_proposals, _manifest| Ok(Vec::new()),
         )
     })
     .await
@@ -7567,6 +7567,7 @@ fn post_office_exchange<F>(
 where
     F: Fn(
         &[crate::winlink::proposal::Proposal],
+        &[crate::winlink::proposal::PendingMessage],
     ) -> Result<Vec<crate::winlink::proposal::Answer>, crate::winlink::session::ExchangeError>,
 {
     let config = post_office_exchange_config(mycall, locator, local);
@@ -8298,7 +8299,7 @@ pub async fn telnet_listen(
                     line.to_string(),
                 );
             },
-            |proposals: &[crate::winlink::proposal::Proposal]| {
+            |proposals: &[crate::winlink::proposal::Proposal], _manifest: &[crate::winlink::proposal::PendingMessage]| {
                 // Codex review 2026-06-03 [P1]: returning an empty Vec made
                 // `receive_turn` fail with `AnswerCountMismatch` on any
                 // inbound batch, so the listener couldn't actually accept
@@ -11829,7 +11830,7 @@ hw:CARD=Device,DEV=0
             build_selecting_decider, resolve_selection, InboundSelection, PendingProposalDto,
             SelectionRegistry, UnselectedDisposition,
         };
-        use crate::winlink::proposal::{Answer, Proposal};
+        use crate::winlink::proposal::{Answer, PendingMessage, Proposal};
         use crate::winlink::session::{
             run_exchange_with_role, ExchangeConfig, ExchangeRole, OutboundMessage as SessionOutbound,
             SessionIntent,
@@ -11940,7 +11941,7 @@ hw:CARD=Device,DEV=0
                     ExchangeRole::Answer,
                     &server_config,
                     server_outbound,
-                    |proposals: &[Proposal]| {
+                    |proposals: &[Proposal], _manifest: &[PendingMessage]| {
                         let mut g = proposed_mids.lock().unwrap();
                         for p in proposals {
                             g.push(p.mid.clone());
