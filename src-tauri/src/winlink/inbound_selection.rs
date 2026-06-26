@@ -23,7 +23,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use crate::winlink::b2f_events::AttemptId;
-use crate::winlink::proposal::{Answer, Proposal};
+use crate::winlink::proposal::{Answer, PendingMessage, Proposal};
 use crate::winlink::session::ExchangeError;
 
 /// What to do with proposals that the operator did NOT explicitly select.
@@ -100,15 +100,44 @@ pub struct PendingProposalDto {
     pub uncompressed_size: usize,
     /// Compressed size in bytes (the amount that actually transfers over the link).
     pub compressed_size: usize,
+    /// Redacted sender address (tuxlink-9u07u). Sourced from the `;PM:` manifest,
+    /// which is the only carrier of sender/subject — the `FC` proposal line has
+    /// neither. Empty when the message came from an `FC`-only path (no manifest).
+    pub sender: String,
+    /// Redacted subject (tuxlink-9u07u). Same `;PM:` source as `sender`; empty
+    /// when unavailable.
+    pub subject: String,
 }
 
 impl PendingProposalDto {
+    /// Build from an `FC` proposal line (MID + sizes only). Sender/subject are
+    /// blank — the `FC` line does not carry them. Used as the fallback when the
+    /// CMS sent no `;PM:` manifest.
+    ///
     /// MID is wire-derived; redact before it crosses to the UI (B2F-wire pitfall, Codex #8).
     pub fn from_proposal_redacted(p: &Proposal) -> Self {
         PendingProposalDto {
             mid: crate::winlink::redaction::redact_freeform(&p.mid).into_owned(),
             uncompressed_size: p.size,
             compressed_size: p.compressed_size,
+            sender: String::new(),
+            subject: String::new(),
+        }
+    }
+
+    /// Build from a `;PM:` manifest entry (tuxlink-9u07u) — the rich form with
+    /// sender + subject. `compressed_size` is unknown from `;PM:` (it appears
+    /// only on the later `FC` line) so it is reported as `0`.
+    ///
+    /// MID, sender, and subject are all wire-derived; each is redacted before it
+    /// crosses to the UI (B2F-wire pitfall, Codex #8).
+    pub fn from_pending_redacted(pm: &PendingMessage) -> Self {
+        PendingProposalDto {
+            mid: crate::winlink::redaction::redact_freeform(&pm.mid).into_owned(),
+            uncompressed_size: pm.size,
+            compressed_size: 0,
+            sender: crate::winlink::redaction::redact_freeform(&pm.sender).into_owned(),
+            subject: crate::winlink::redaction::redact_freeform(&pm.subject).into_owned(),
         }
     }
 }
@@ -150,6 +179,30 @@ pub type SelectionRegistry = Arc<Mutex<Option<SelectionSlot>>>;
 /// "no request" sentinel in callers that want one.
 static REQUEST_SEQ: AtomicU64 = AtomicU64::new(1);
 
+/// The decision the operator made for the whole download, cached after the FIRST
+/// proposal batch so later `FC` batches resolve without re-prompting
+/// (tuxlink-9u07u). The CMS sends one `;PM:` manifest up front but proposes the
+/// download in several small `FC` blocks; WLE reviews once and applies that one
+/// choice to every block. This caches the equivalent.
+#[derive(Debug, Clone)]
+enum CachedDecision {
+    /// The operator's explicit selection (which MIDs to download + what to do
+    /// with the rest). Applied to each batch by matching MIDs.
+    Select(InboundSelection),
+    /// The timeout fallback (WLE parity): accept every message in every batch.
+    AcceptAll,
+}
+
+impl CachedDecision {
+    /// Map this cached decision onto a concrete batch of proposals.
+    fn answers_for(&self, proposals: &[Proposal]) -> Vec<Answer> {
+        match self {
+            CachedDecision::Select(sel) => sel.to_answers(proposals),
+            CachedDecision::AcceptAll => InboundSelection::accept_all(proposals),
+        }
+    }
+}
+
 /// Build the decider the exchange loop calls once per inbound proposal batch.
 ///
 /// The returned closure registers a [`SelectionSlot`] in `reg`, emits the
@@ -173,7 +226,7 @@ pub fn build_selecting_decider<E>(
     attempt_id: AttemptId,
     emit: E,
     aborting: Arc<AtomicBool>,
-) -> impl Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>
+) -> impl Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>
 where
     E: Fn(u64, &[PendingProposalDto]) + Send + Sync + 'static,
 {
@@ -204,11 +257,19 @@ fn build_selecting_decider_with_timeout<E>(
     emit: E,
     aborting: Arc<AtomicBool>,
     timeout: Duration,
-) -> impl Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>
+) -> impl Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>
 where
     E: Fn(u64, &[PendingProposalDto]) + Send + Sync + 'static,
 {
-    move |proposals| {
+    // The operator's decision, cached after the FIRST batch so later `FC` batches
+    // resolve without re-prompting (tuxlink-9u07u). The CMS sends one `;PM:`
+    // manifest up front, then proposes the download in several small `FC` blocks;
+    // this caches the single review choice and applies it to every block — one
+    // prompt, not one per block. Interior mutability keeps the decider `Fn` (the
+    // exchange loop holds it behind a shared reference across batches).
+    let cached: Arc<Mutex<Option<CachedDecision>>> = Arc::new(Mutex::new(None));
+
+    move |proposals, manifest| {
         // Empty-batch defence: `receive_turn` pre-gates empty batches (it never
         // asks the operator about zero messages), but a decider that registered
         // a slot + emitted an empty prompt for a stray empty batch would hang
@@ -218,6 +279,12 @@ where
         if proposals.is_empty() {
             return Ok(Vec::new());
         }
+        // Later batches: the operator already reviewed the whole manifest on the
+        // first batch. Apply that one cached decision and return WITHOUT emitting
+        // another prompt — this is the fix for the per-block prompt storm.
+        if let Some(decision) = cached.lock().unwrap().clone() {
+            return Ok(decision.answers_for(proposals));
+        }
         // Abort that already happened before we registered: cancel without
         // prompting. Returning Cancelled (not accept-all) means an operator who
         // aborts mid-handshake does not silently download everything.
@@ -226,10 +293,21 @@ where
         }
 
         let request_id = REQUEST_SEQ.fetch_add(1, Ordering::SeqCst);
-        let dtos: Vec<PendingProposalDto> = proposals
-            .iter()
-            .map(PendingProposalDto::from_proposal_redacted)
-            .collect();
+        // Emit the FULL pending-message manifest when the CMS sent one (`;PM:`
+        // lines, with sender + subject) so the operator reviews EVERY pending
+        // message at once — not just this first `FC` block. Fall back to the
+        // `FC` proposals (MID-only) when no manifest arrived.
+        let dtos: Vec<PendingProposalDto> = if manifest.is_empty() {
+            proposals
+                .iter()
+                .map(PendingProposalDto::from_proposal_redacted)
+                .collect()
+        } else {
+            manifest
+                .iter()
+                .map(PendingProposalDto::from_pending_redacted)
+                .collect()
+        };
         let (tx, rx) = mpsc::channel();
         *reg.lock().unwrap() = Some(SelectionSlot { attempt_id, request_id, tx });
         emit(request_id, &dtos);
@@ -265,11 +343,21 @@ where
         }
 
         match r {
-            Ok(sel) => Ok(sel.to_answers(proposals)),
+            Ok(sel) => {
+                // Cache the operator's choice so every later `FC` block applies
+                // it without another prompt.
+                *cached.lock().unwrap() = Some(CachedDecision::Select(sel.clone()));
+                Ok(sel.to_answers(proposals))
+            }
             // Timeout OR sender dropped without an abort flag set: WLE parity
             // says accept everything so the session completes rather than
-            // stalling. (The abort case returned Cancelled above.)
-            Err(_) => Ok(InboundSelection::accept_all(proposals)),
+            // stalling. (The abort case returned Cancelled above.) Cache the
+            // fallback so later blocks also accept-all rather than each timing
+            // out for the full duration.
+            Err(_) => {
+                *cached.lock().unwrap() = Some(CachedDecision::AcceptAll);
+                Ok(InboundSelection::accept_all(proposals))
+            }
         }
     }
 }
@@ -462,7 +550,7 @@ mod tests {
                 Arc::clone(&aborting),
             );
             let proposals = &proposals;
-            let handle = scope.spawn(move || decider(proposals));
+            let handle = scope.spawn(move || decider(proposals, &[]));
 
             let (slot_attempt, slot_req) = wait_for_slot(&reg);
             assert_eq!(slot_attempt, attempt_id);
@@ -503,7 +591,7 @@ mod tests {
             let decider =
                 build_selecting_decider(Arc::clone(&reg), attempt_id, emit, Arc::clone(&aborting));
             let proposals = &proposals;
-            let handle = scope.spawn(move || decider(proposals));
+            let handle = scope.spawn(move || decider(proposals, &[]));
 
             let (a, r) = wait_for_slot(&reg);
             resolve_selection(
@@ -534,7 +622,7 @@ mod tests {
             Arc::clone(&aborting),
             Duration::from_millis(50),
         );
-        let answers = decider(&proposals).expect("timeout path returns Ok(accept_all)");
+        let answers = decider(&proposals, &[]).expect("timeout path returns Ok(accept_all)");
         assert_eq!(answers.len(), 2);
         assert!(answers
             .iter()
@@ -551,7 +639,7 @@ mod tests {
         let aborting = Arc::new(AtomicBool::new(false));
         let decider =
             build_selecting_decider(Arc::clone(&reg), AttemptId(41), noop_emit(), Arc::clone(&aborting));
-        let answers = decider(&[]).expect("empty batch returns Ok(empty)");
+        let answers = decider(&[], &[]).expect("empty batch returns Ok(empty)");
         assert!(answers.is_empty());
         assert!(reg.lock().unwrap().is_none(), "empty batch must not register a slot");
     }
@@ -573,7 +661,7 @@ mod tests {
                 Arc::clone(&aborting),
             );
             let proposals = &proposals;
-            let handle = scope.spawn(move || decider(proposals));
+            let handle = scope.spawn(move || decider(proposals, &[]));
 
             wait_for_slot(&reg);
             aborting.store(true, Ordering::SeqCst);
@@ -593,7 +681,7 @@ mod tests {
         let proposals = vec![prop("A")];
         let decider =
             build_selecting_decider(Arc::clone(&reg), AttemptId(61), noop_emit(), Arc::clone(&aborting));
-        assert_eq!(decider(&proposals), Err(ExchangeError::Cancelled));
+        assert_eq!(decider(&proposals, &[]), Err(ExchangeError::Cancelled));
         assert!(reg.lock().unwrap().is_none(), "pre-abort must not register a slot");
     }
 
@@ -623,7 +711,7 @@ mod tests {
         );
         let proposals = vec![prop("A")];
         let start = std::time::Instant::now();
-        let r = decider(&proposals);
+        let r = decider(&proposals, &[]);
         assert_eq!(r, Err(ExchangeError::Cancelled));
         assert!(
             start.elapsed() < Duration::from_secs(5),
@@ -750,5 +838,119 @@ mod tests {
         assert!(!second, "second submit for the same key must be a no-op");
         assert!(rx.try_recv().is_err(), "no second answer should be delivered");
         assert!(reg.lock().unwrap().is_none(), "slot stays cleared after the first take");
+    }
+
+    // tuxlink-9u07u: once the operator reviews the first batch, every later `FC`
+    // batch in the same session applies that one decision WITHOUT re-prompting —
+    // the fix for the per-block prompt storm.
+    #[test]
+    fn second_batch_applies_cached_decision_without_reprompting() {
+        use std::sync::atomic::AtomicUsize;
+
+        let reg: SelectionRegistry = Arc::new(Mutex::new(None));
+        let aborting = Arc::new(AtomicBool::new(false));
+        let emit_count = Arc::new(AtomicUsize::new(0));
+        let ec = Arc::clone(&emit_count);
+        let emit = move |_req: u64, _dtos: &[PendingProposalDto]| {
+            ec.fetch_add(1, Ordering::SeqCst);
+        };
+        let decider =
+            build_selecting_decider(Arc::clone(&reg), AttemptId(71), emit, Arc::clone(&aborting));
+
+        // Batch 1: A, B. Operator selects only A and Holds the rest.
+        let batch1 = vec![prop("A"), prop("B")];
+        let answers1 = std::thread::scope(|scope| {
+            let d = &decider;
+            let b1 = &batch1;
+            let handle = scope.spawn(move || d(b1, &[]));
+            let (a, r) = wait_for_slot(&reg);
+            assert!(resolve_selection(
+                &reg,
+                a,
+                r,
+                InboundSelection {
+                    selected_mids: vec!["A".into()],
+                    disposition: UnselectedDisposition::Hold,
+                },
+            ));
+            handle.join().unwrap()
+        })
+        .expect("batch 1 resolves to the operator's selection");
+        assert!(matches!(answers1[0], Answer::Accept { .. }));
+        assert!(matches!(answers1[1], Answer::Defer));
+        assert_eq!(emit_count.load(Ordering::SeqCst), 1, "first batch prompts exactly once");
+
+        // Batch 2 (a later FC block): C, A. No new prompt; the cache applies.
+        let answers2 = decider(&[prop("C"), prop("A")], &[])
+            .expect("second batch resolves from the cached decision");
+        assert_eq!(
+            emit_count.load(Ordering::SeqCst),
+            1,
+            "the second batch must NOT emit another prompt"
+        );
+        assert!(matches!(answers2[0], Answer::Defer), "C was never selected -> held");
+        assert!(matches!(answers2[1], Answer::Accept { .. }), "A stays selected across batches");
+    }
+
+    // tuxlink-9u07u: the first prompt is built from the WHOLE `;PM:` manifest
+    // (with sender + subject), not just the first `FC` block.
+    #[test]
+    fn first_batch_emits_the_full_manifest_with_sender_and_subject() {
+        let reg: SelectionRegistry = Arc::new(Mutex::new(None));
+        let aborting = Arc::new(AtomicBool::new(false));
+        let captured: Arc<Mutex<Vec<PendingProposalDto>>> = Arc::new(Mutex::new(Vec::new()));
+        let cap = Arc::clone(&captured);
+        let emit = move |_req: u64, dtos: &[PendingProposalDto]| {
+            *cap.lock().unwrap() = dtos.to_vec();
+        };
+        let decider =
+            build_selecting_decider(Arc::clone(&reg), AttemptId(72), emit, Arc::clone(&aborting));
+
+        // The FC block proposes only A, but the manifest lists A, B, C.
+        let manifest = vec![
+            PendingMessage {
+                recipient: "N7CPZ".into(),
+                mid: "A".into(),
+                size: 10,
+                sender: "alpha@winlink.org".into(),
+                subject: "Alpha".into(),
+            },
+            PendingMessage {
+                recipient: "N7CPZ".into(),
+                mid: "B".into(),
+                size: 20,
+                sender: "bravo@winlink.org".into(),
+                subject: "Bravo".into(),
+            },
+            PendingMessage {
+                recipient: "N7CPZ".into(),
+                mid: "C".into(),
+                size: 30,
+                sender: "charlie@winlink.org".into(),
+                subject: "Charlie".into(),
+            },
+        ];
+        let batch1 = vec![prop("A")];
+        std::thread::scope(|scope| {
+            let d = &decider;
+            let b1 = &batch1;
+            let m = &manifest;
+            let handle = scope.spawn(move || d(b1, m));
+            let (a, r) = wait_for_slot(&reg);
+            assert!(resolve_selection(
+                &reg,
+                a,
+                r,
+                InboundSelection { selected_mids: vec![], disposition: UnselectedDisposition::Hold },
+            ));
+            let _ = handle.join().unwrap();
+        });
+
+        let dtos = captured.lock().unwrap().clone();
+        assert_eq!(dtos.len(), 3, "the prompt lists the WHOLE manifest, not just the FC block");
+        assert!(
+            dtos.iter().all(|d| !d.sender.is_empty() && !d.subject.is_empty()),
+            "manifest-sourced rows carry sender + subject: {dtos:?}"
+        );
     }
 }

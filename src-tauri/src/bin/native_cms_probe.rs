@@ -68,7 +68,7 @@ fn main() {
         // protocol dialogue, not just the human progress summary.
         &|line: &str| println!("    {line}"),
         &|_| {},
-        |proposals| {
+        |proposals, _manifest| {
             if !proposals.is_empty() {
                 println!("CMS offered {} message(s); deferring all", proposals.len());
             }

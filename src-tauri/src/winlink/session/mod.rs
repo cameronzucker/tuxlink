@@ -19,7 +19,7 @@ use std::io::{BufRead, Write};
 use cms_health::{CmsAttemptOutcome, CMS_HEALTH};
 
 use super::message::{self, Message};
-use super::proposal::{self, Answer, Proposal};
+use super::proposal::{self, Answer, PendingMessage, Proposal};
 use super::{handshake, lzhuf, secure, transfer, wire};
 
 /// At most this many proposals are offered in a single batch.
@@ -261,7 +261,7 @@ pub fn run_exchange<R, W, F>(
 where
     R: BufRead,
     W: Write,
-    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
+    F: Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>,
 {
     run_exchange_with_role(reader, writer, ExchangeRole::Dial, config, outbound, decide, wire_log)
 }
@@ -280,7 +280,7 @@ pub fn run_exchange_with_role<R, W, F>(
 where
     R: BufRead,
     W: Write,
-    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
+    F: Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>,
 {
     let span = tracing::info_span!(
         "b2f_exchange",
@@ -483,7 +483,7 @@ pub fn run_exchange_with_events<R, W, F>(
 where
     R: BufRead,
     W: Write,
-    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
+    F: Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>,
 {
     use super::b2f_events::{B2fEvent, ConnectionPhase};
 
@@ -692,10 +692,17 @@ pub fn receive_turn<R, W, F>(
 where
     R: BufRead,
     W: Write,
-    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
+    F: Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>,
 {
     let mut outcome = ReceiveOutcome::default();
     let mut proposals: Vec<Proposal> = Vec::new();
+    // tuxlink-9u07u: the CMS lists EVERY pending message as `;PM:` lines up front
+    // (recipient, MID, size, sender, subject) before negotiating the download in
+    // small `FC` blocks. These all arrive in this single receive turn, ahead of
+    // the first `FC` block, so a local manifest captures the complete list and is
+    // handed to `decide` at `F>` — letting the operator review everything at once
+    // (with sender + subject) instead of being prompted once per `FC` block.
+    let mut manifest: Vec<PendingMessage> = Vec::new();
     let mut checksum: u32 = 0;
     let answers: Vec<Answer>;
 
@@ -705,6 +712,12 @@ where
             return Err(ExchangeError::RemoteError(message));
         }
         if line.is_empty() || line.starts_with(';') {
+            // tuxlink-9u07u: capture `;PM:` manifest entries (the only carrier of
+            // sender/subject) instead of discarding them; other `;` lines remain
+            // comments to skip.
+            if let Some(pending) = PendingMessage::parse(&line) {
+                manifest.push(pending);
+            }
             continue; // comment, pending-message info, or blank
         }
         if line.len() < 2 || !line.starts_with('F') {
@@ -738,7 +751,7 @@ where
                     outcome.remote_no_messages = true;
                     return Ok(outcome);
                 }
-                answers = decide(&proposals)?; // Err (e.g. Cancelled) propagates before any FS write
+                answers = decide(&proposals, &manifest)?; // Err (e.g. Cancelled) propagates before any FS write
                 if answers.len() != proposals.len() {
                     return Err(ExchangeError::AnswerCountMismatch);
                 }
@@ -1099,7 +1112,7 @@ mod tests {
         let mut reader = Cursor::new(script);
         let mut writer = Vec::new();
         let outcome =
-            receive_turn(&mut reader, &mut writer, |_| {
+            receive_turn(&mut reader, &mut writer, |_, _| {
                 Ok(vec![Answer::Accept { resume_offset: 0 }])
             })
             .unwrap();
@@ -1132,7 +1145,7 @@ mod tests {
 
         let mut reader = Cursor::new(script);
         let mut writer = Vec::new();
-        let result = receive_turn(&mut reader, &mut writer, |_| Err(ExchangeError::Cancelled));
+        let result = receive_turn(&mut reader, &mut writer, |_, _| Err(ExchangeError::Cancelled));
 
         assert_eq!(result, Err(ExchangeError::Cancelled));
         assert!(
@@ -1145,7 +1158,7 @@ mod tests {
     fn the_other_side_having_no_messages_ends_the_turn() {
         let mut reader = Cursor::new(b"FF\r".to_vec());
         let mut writer = Vec::new();
-        let outcome = receive_turn(&mut reader, &mut writer, |_| Ok(vec![])).unwrap();
+        let outcome = receive_turn(&mut reader, &mut writer, |_, _| Ok(vec![])).unwrap();
         assert!(outcome.remote_no_messages);
         assert!(outcome.messages.is_empty());
         assert!(writer.is_empty());
@@ -1155,7 +1168,7 @@ mod tests {
     fn the_other_side_quitting_is_reported() {
         let mut reader = Cursor::new(b"FQ\r".to_vec());
         let mut writer = Vec::new();
-        let outcome = receive_turn(&mut reader, &mut writer, |_| Ok(vec![])).unwrap();
+        let outcome = receive_turn(&mut reader, &mut writer, |_, _| Ok(vec![])).unwrap();
         assert!(outcome.remote_quit);
     }
 
@@ -1164,10 +1177,59 @@ mod tests {
         // No proposals, just the end-of-batch line; its checksum is "00".
         let mut reader = Cursor::new(b"F> 00\r".to_vec());
         let mut writer = Vec::new();
-        let outcome = receive_turn(&mut reader, &mut writer, |_| Ok(vec![])).unwrap();
+        let outcome = receive_turn(&mut reader, &mut writer, |_, _| Ok(vec![])).unwrap();
         assert!(outcome.remote_no_messages);
         assert!(outcome.messages.is_empty());
         assert!(writer.is_empty());
+    }
+
+    #[test]
+    fn pm_manifest_lines_are_captured_and_handed_to_decide() {
+        // tuxlink-9u07u: the CMS lists every pending message as `;PM:` lines up
+        // front, then proposes the download in small `FC` blocks. receive_turn
+        // must capture the manifest (not skip it as a comment) and pass it to
+        // `decide` so the operator can review the WHOLE list at once.
+        use std::cell::RefCell;
+
+        let prop = Proposal {
+            code: 'C',
+            msg_type: "EM".to_string(),
+            mid: "WCCJR0N74QU3".to_string(),
+            size: 764,
+            compressed_size: 1456,
+        };
+        let mut wire: Vec<u8> = Vec::new();
+        // Full manifest (two entries) ahead of the FC block, verbatim shape.
+        wire.extend_from_slice(
+            b";PM: N7CPZ WCCJR0N74QU3 764 SERVICE@winlink.org INQUIRY - geomag forecast\r",
+        );
+        wire.extend_from_slice(
+            b";PM: N7CPZ 9O1X4ZUL02EI 1095 SERVICE@winlink.org INQUIRY - advisory outlook\r",
+        );
+        // The FC download block proposes just the first message (chunked wire).
+        wire.extend_from_slice(prop.line().as_bytes());
+        wire.push(b'\r');
+        wire.extend_from_slice(batch_checksum_line(std::slice::from_ref(&prop)).as_bytes());
+        wire.push(b'\r');
+
+        let mut reader = Cursor::new(wire);
+        let mut writer = Vec::new();
+        let seen: RefCell<Vec<PendingMessage>> = RefCell::new(Vec::new());
+        // Defer => no body transfer needed to reach and exercise `decide`.
+        let outcome = receive_turn(&mut reader, &mut writer, |_proposals, manifest| {
+            *seen.borrow_mut() = manifest.to_vec();
+            Ok(vec![Answer::Defer])
+        })
+        .unwrap();
+
+        let manifest = seen.into_inner();
+        assert_eq!(manifest.len(), 2, "both ;PM: entries reach decide as a manifest");
+        assert_eq!(manifest[0].mid, "WCCJR0N74QU3");
+        assert_eq!(manifest[0].sender, "SERVICE@winlink.org");
+        assert_eq!(manifest[0].subject, "INQUIRY - geomag forecast");
+        assert_eq!(manifest[1].mid, "9O1X4ZUL02EI");
+        assert_eq!(manifest[1].size, 1095);
+        assert!(outcome.messages.is_empty(), "deferred => nothing downloaded");
     }
 
     #[test]
@@ -1192,7 +1254,7 @@ mod tests {
             ExchangeRole::Dial,
             &config,
             vec![],
-            |_| Ok(vec![]),
+            |_, _| Ok(vec![]),
             None,
         )
         .unwrap();
@@ -1221,7 +1283,7 @@ mod tests {
             password: Some("MYPASS".into()),
             intent: SessionIntent::Cms,
         };
-        let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None).unwrap();
+        let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_, _| Ok(vec![]), None).unwrap();
 
         assert!(result.received.is_empty());
         assert!(result.sent.is_empty());
@@ -1261,7 +1323,7 @@ mod tests {
             password: None,
             intent: SessionIntent::Cms,
         };
-        let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| {
+        let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_, _| {
             Ok(vec![Answer::Accept { resume_offset: 0 }])
         }, None)
         .unwrap();
@@ -1321,7 +1383,7 @@ mod tests {
             ExchangeRole::Dial,
             &config,
             outbound,
-            |_| Ok(vec![]),
+            |_, _| Ok(vec![]),
             None,
         )
         .expect("multi-batch exchange must complete without error");
@@ -1355,7 +1417,7 @@ mod tests {
             intent: SessionIntent::Cms,
         };
         assert_eq!(
-            run_exchange(&mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None),
+            run_exchange(&mut reader, &mut writer, &config, vec![], |_, _| Ok(vec![]), None),
             Err(ExchangeError::PasswordRequired)
         );
     }
@@ -1368,7 +1430,7 @@ mod tests {
                 .to_vec(),
         );
         let mut writer = Vec::new();
-        let result = receive_turn(&mut reader, &mut writer, |_| Ok(vec![]));
+        let result = receive_turn(&mut reader, &mut writer, |_, _| Ok(vec![]));
         assert!(matches!(result, Err(ExchangeError::RemoteError(_))));
     }
 
@@ -1404,7 +1466,7 @@ mod tests {
         let mut reader = Cursor::new(script);
         let mut writer = Vec::new();
         assert_eq!(
-            receive_turn(&mut reader, &mut writer, |_| Ok(vec![Answer::Accept { resume_offset: 0 }])),
+            receive_turn(&mut reader, &mut writer, |_, _| Ok(vec![Answer::Accept { resume_offset: 0 }])),
             Err(ExchangeError::ChecksumMismatch)
         );
     }
@@ -1498,7 +1560,7 @@ mod tests {
         };
         let sink = VecEventSink::new();
         let result = run_exchange_with_events(
-            &mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None, Some(&sink),
+            &mut reader, &mut writer, &config, vec![], |_, _| Ok(vec![]), None, Some(&sink),
             AttemptId::fresh(),
         ).unwrap();
         assert!(result.received.is_empty());
@@ -1536,7 +1598,7 @@ mod tests {
         };
         let sink = VecEventSink::new();
         let _ = run_exchange_with_events(
-            &mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None, Some(&sink),
+            &mut reader, &mut writer, &config, vec![], |_, _| Ok(vec![]), None, Some(&sink),
             AttemptId::fresh(),
         );
         let events = sink.snapshot();
@@ -1588,7 +1650,7 @@ mod tests {
 
         let sink = VecEventSink::new();
         let result = run_exchange_with_events(
-            &mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None, Some(&sink),
+            &mut reader, &mut writer, &config, vec![], |_, _| Ok(vec![]), None, Some(&sink),
             AttemptId::fresh(),
         );
         assert!(result.is_ok(), "happy-path exchange must not error: {result:?}");
@@ -1640,7 +1702,7 @@ mod tests {
         let sink = VecEventSink::new();
         let supplied_id = AttemptId(99);
         let _ = run_exchange_with_events(
-            &mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None, Some(&sink), supplied_id,
+            &mut reader, &mut writer, &config, vec![], |_, _| Ok(vec![]), None, Some(&sink), supplied_id,
         );
         let events = sink.snapshot();
         for event in &events {
@@ -1676,7 +1738,7 @@ mod tests {
         };
         let sink = VecEventSink::new();
         let result = run_exchange_with_events(
-            &mut reader, &mut writer, &config, vec![], |_| Ok(vec![]), None, Some(&sink), AttemptId(1),
+            &mut reader, &mut writer, &config, vec![], |_, _| Ok(vec![]), None, Some(&sink), AttemptId(1),
         );
         // PostAuthExchangeStarted must NOT fire — the line is not a valid B2F command.
         let events = sink.snapshot();

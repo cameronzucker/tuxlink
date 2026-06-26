@@ -7204,7 +7204,7 @@ pub async fn telnet_p2p_connect(
                     line.to_string(),
                 );
             },
-            |_proposals| Ok(Vec::new()),
+            |_proposals, _manifest| Ok(Vec::new()),
         )
     })
     .await
@@ -11829,7 +11829,7 @@ hw:CARD=Device,DEV=0
             build_selecting_decider, resolve_selection, InboundSelection, PendingProposalDto,
             SelectionRegistry, UnselectedDisposition,
         };
-        use crate::winlink::proposal::{Answer, Proposal};
+        use crate::winlink::proposal::{Answer, PendingMessage, Proposal};
         use crate::winlink::session::{
             run_exchange_with_role, ExchangeConfig, ExchangeRole, OutboundMessage as SessionOutbound,
             SessionIntent,
@@ -11940,7 +11940,7 @@ hw:CARD=Device,DEV=0
                     ExchangeRole::Answer,
                     &server_config,
                     server_outbound,
-                    |proposals: &[Proposal]| {
+                    |proposals: &[Proposal], _manifest: &[PendingMessage]| {
                         let mut g = proposed_mids.lock().unwrap();
                         for p in proposals {
                             g.push(p.mid.clone());
