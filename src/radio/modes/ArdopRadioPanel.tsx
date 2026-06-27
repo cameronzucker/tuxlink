@@ -292,6 +292,10 @@ interface ArdopFullConfig {
    *  operator disarms it (WLE-parity; 2026-06-16 operator decision). A
    *  positive value arms for that many minutes (tuxlink-5g5d). */
   listen_ttl_minutes: number;
+  /** ConReq repeats packed into ARQCALL on an outbound connect (tuxlink-ant8s).
+   *  Also DERIVES the connect backstop deadline backend-side (tuxlink-5xxq), so
+   *  the two never drift. Clamped 2..=30; null/absent → backend default (15). */
+  connect_attempts?: number | null;
 }
 
 /** Mirror of Rust's `ArdopUiConfig::resolved_webgui_port`. Single source
@@ -331,6 +335,10 @@ export function ArdopRadioPanel({
   // config_get_ardop on mount; persisted via config_set_ardop on change.
   // null = "leave at ardopcf default."
   const [bandwidth, setBandwidth] = useState<number | null>(null);
+  // tuxlink-5xxq: ConReq retry count (ARQCALL repeat + derived backstop
+  // deadline). String-backed so the operator can type freely; committed +
+  // clamped (2..30) on blur. Blank = leave at the backend default (15).
+  const [retriesInput, setRetriesInput] = useState<string>('');
   // Full ARDOP config — operator smoke 2026-05-31 added a Radio section
   // here so audio devices + PTT serial path are editable inline (parity
   // with AX.25's ModemLinkSection on the Packet panel). Loaded on mount,
@@ -482,6 +490,9 @@ export function ArdopRadioPanel({
         if (typeof c.bandwidth_hz !== 'undefined') {
           setBandwidth(c.bandwidth_hz);
         }
+        setRetriesInput(
+          typeof c.connect_attempts === 'number' ? String(c.connect_attempts) : '',
+        );
         setArdopConfig(c);
         setCaptureInput(c.capture_device ?? '');
         setPlaybackInput(c.playback_device ?? '');
@@ -659,6 +670,24 @@ export function ArdopRadioPanel({
         // Persist errors surface via the session log; UI keeps the new value.
       }
     })();
+  };
+
+  // tuxlink-5xxq: commit the retry count on blur — clamp to ardopcf's sane
+  // window (2..30), persist via merge (same read-modify-write as bandwidth so
+  // concurrent writers don't clobber). Blank clears the override (backend
+  // default of 15 applies).
+  const commitRetries = () => {
+    const trimmed = retriesInput.trim();
+    const next: number | null =
+      trimmed === ''
+        ? null
+        : Math.min(30, Math.max(2, parseInt(trimmed, 10) || 15));
+    setRetriesInput(next === null ? '' : String(next));
+    // Route through persistArdop (not a standalone read-modify-write) so the
+    // local `ardopConfig` stays in sync — otherwise a later persistArdop (e.g.
+    // changing Capture) would spread a stale config and drop this override
+    // (Codex P2). `config_set_ardop` replaces the whole ARDOP config.
+    persistArdop({ connect_attempts: next });
   };
 
   const isStopped = status.state === 'stopped';
@@ -942,6 +971,23 @@ export function ArdopRadioPanel({
                   Tune…
                 </button>
               </div>
+              {/* tuxlink-5xxq: connect retries (ConReq repeats) — feeds the
+                  derived self-terminate backstop deadline. */}
+              <label className="radio-panel-input-row">
+                <span>Retries</span>
+                <input
+                  type="number"
+                  min={2}
+                  max={30}
+                  className="radio-panel-input"
+                  data-testid="ardop-retries-input"
+                  value={retriesInput}
+                  placeholder="15 (default)"
+                  onChange={(e) => setRetriesInput(e.target.value)}
+                  onBlur={commitRetries}
+                  title="Number of connect attempts (ConReq repeats). More retries = longer to raise a slow/tuning gateway. 2–30; default 15 (~50 s)."
+                />
+              </label>
             </section>
           }
         />
