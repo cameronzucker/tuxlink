@@ -111,10 +111,18 @@ pub fn validate_address(addr: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Validate a message subject: no CR/LF (header injection), at most 256 bytes.
+/// Validate a message subject: no CR/LF (header injection), no other control
+/// characters (NUL/BEL/etc. must not reach the RFC5322 header block), at most
+/// 256 bytes. CR/LF are reported as [`ValidationError::HeaderInjection`] (the
+/// header-splitting class); any other control char is
+/// [`ValidationError::ControlChars`]. Mirrors [`validate_address`]'s control
+/// rejection.
 pub fn validate_subject(s: &str) -> Result<(), ValidationError> {
     if s.contains('\r') || s.contains('\n') {
         return Err(ValidationError::HeaderInjection);
+    }
+    if s.chars().any(|c| c.is_control()) {
+        return Err(ValidationError::ControlChars);
     }
     if s.len() > 256 {
         return Err(ValidationError::TooLong(256));
@@ -299,6 +307,37 @@ mod tests {
             validate_subject("hello\nworld"),
             Err(ValidationError::HeaderInjection)
         );
+    }
+
+    #[test]
+    fn subject_carriage_return_is_header_injection() {
+        assert_eq!(
+            validate_subject("hello\rworld"),
+            Err(ValidationError::HeaderInjection)
+        );
+    }
+
+    #[test]
+    fn subject_nul_is_control_chars() {
+        // A non-CRLF control char (NUL) must be rejected so it can never reach
+        // the RFC5322 header block.
+        assert_eq!(
+            validate_subject("hello\u{0}world"),
+            Err(ValidationError::ControlChars)
+        );
+    }
+
+    #[test]
+    fn subject_bell_is_control_chars() {
+        assert_eq!(
+            validate_subject("ding\u{0007}"),
+            Err(ValidationError::ControlChars)
+        );
+    }
+
+    #[test]
+    fn subject_plain_ascii_is_ok() {
+        assert!(validate_subject("ICS-213 General Message").is_ok());
     }
 
     #[test]

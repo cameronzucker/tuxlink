@@ -1111,13 +1111,44 @@ impl WritePort for MonolithWritePort {
     }
 
     async fn set_packet(&self, dto: PacketWriteDto) -> Result<(), WritePortError> {
-        // No mcp-core validator applies to the narrow packet payload; SSID range
-        // (0..=15) is enforced downstream by `cfg.validate()` inside
-        // `packet_config_set`. Map the narrow agent DTO onto the monolith
-        // PacketConfigDto: read the current packet config, override ONLY
-        // ssid/tcp_host/tcp_port/txdelay, and pin link_kind = "Tcp" so the
+        // VALIDATE BEFORE GATE (FIX 4): a malformed payload is `Invalid`
+        // regardless of arm state, so an unarmed caller gets `Invalid` (not
+        // `Denied`) and an armed session never audits a write that should never
+        // have reached the gate.
+        //   * SSID range 0..=15 (AX.25 SSID, mirrors config.rs:699
+        //     PacketSsidOutOfRange). The downstream `cfg.validate()` also
+        //     enforces this, but post-gate; check it here so it short-circuits
+        //     before the gate.
+        if dto.ssid > 15 {
+            return Err(WritePortError::Invalid(format!(
+                "packet ssid {} out of the 0..=15 AX.25 range",
+                dto.ssid
+            )));
+        }
+        // FIX 3: the agent surface can only set TCP/IP packet parameters
+        // (host/port/ssid/txdelay). Read the CURRENT link kind: if the operator
+        // has configured a non-TCP link (Serial / Bluetooth / UvproNative /
+        // Managed Dire Wolf, plus its audio + PTT), REJECT — the agent must not
+        // silently switch the link type and discard that configuration. Only an
+        // already-TCP link (or no link yet) may be (re)pointed by the agent.
+        // This read is side-effect-free, so it belongs pre-gate alongside the
+        // SSID check.
+        let mut current = crate::ui_commands::packet_config_get()
+            .await
+            .map_err(|e| WritePortError::Failed(format!("{e:?}")))?;
+        match current.link_kind.as_deref() {
+            Some("Tcp") | None => {}
+            Some(other) => {
+                return Err(WritePortError::Invalid(format!(
+                    "packet link is not TCP (currently {other}); agent cannot change link type"
+                )))
+            }
+        }
+        // Map the narrow agent DTO onto the monolith PacketConfigDto: override
+        // ONLY ssid/tcp_host/tcp_port/txdelay, and pin link_kind = "Tcp" so the
         // host/port apply (an absent link_kind would PRESERVE the prior link,
-        // leaving the agent-supplied host/port inert).
+        // leaving the agent-supplied host/port inert). `current` already carries
+        // the operator's other packet params (paclen, timing, etc.).
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
         let PacketWriteDto {
@@ -1127,9 +1158,6 @@ impl WritePort for MonolithWritePort {
             txdelay_ms,
         } = dto;
         guarded_egress(&self.guard, EgressAuthority::Agent, "set_packet", &audit, || async move {
-            let mut current = crate::ui_commands::packet_config_get()
-                .await
-                .map_err(|e| WritePortError::Failed(format!("{e:?}")))?;
             current.ssid = ssid;
             current.link_kind = Some("Tcp".to_string());
             current.tcp_host = Some(tcp_host);
@@ -1149,6 +1177,14 @@ impl WritePort for MonolithWritePort {
     }
 
     async fn set_grid(&self, grid: String) -> Result<(), WritePortError> {
+        // VALIDATE BEFORE GATE (FIX 4): a malformed Maidenhead locator is
+        // `Invalid` regardless of arm state. `config_set_grid_impl` already
+        // rejects a bad grid (UiError::Rejected) but only AFTER the gate; check
+        // it here (reusing the same validator) so a bad locator never reaches
+        // the gate or gets audited as an authorized write.
+        if let Some(reason) = crate::ui_commands::validate_grid_input(&grid) {
+            return Err(WritePortError::Invalid(reason.to_string()));
+        }
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
         guarded_egress(&self.guard, EgressAuthority::Agent, "set_grid", &audit, || async move {
@@ -1169,6 +1205,15 @@ impl WritePort for MonolithWritePort {
     }
 
     async fn set_position_source(&self, source: String) -> Result<(), WritePortError> {
+        // VALIDATE BEFORE GATE (FIX 4): "Gps" is the only accepted source
+        // (position_set_source_impl rejects anything else with UiError::Rejected,
+        // but only after the gate). Reject an unknown source as `Invalid` here so
+        // it never reaches the gate or audits an authorized write.
+        if source != "Gps" {
+            return Err(WritePortError::Invalid(format!(
+                "unsupported position source '{source}' (only \"Gps\" is accepted)"
+            )));
+        }
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
         guarded_egress(
@@ -1272,6 +1317,14 @@ impl WritePort for MonolithWritePort {
         to: String,
         id: String,
     ) -> Result<(), WritePortError> {
+        // VALIDATE BEFORE GATE (FIX 4): both endpoints must be known folder
+        // refs. mailbox_move validates them via parse_folder_ref but only after
+        // the gate; reject an unknown from/to as `Invalid` here so a malformed
+        // move never reaches the gate or audits an authorized write.
+        crate::ui_commands::parse_folder_ref(&from)
+            .map_err(|e| WritePortError::Invalid(format!("invalid 'from' folder: {e:?}")))?;
+        crate::ui_commands::parse_folder_ref(&to)
+            .map_err(|e| WritePortError::Invalid(format!("invalid 'to' folder: {e:?}")))?;
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
         guarded_egress(&self.guard, EgressAuthority::Agent, "mailbox_move", &audit, || async move {
@@ -1360,12 +1413,40 @@ impl WritePort for MonolithWritePort {
                     WritePortError::Failed(format!("attachment '{filename}' not in message {id}"))
                 })?;
                 // FS write off the async runtime (spawn_blocking) at the
-                // pre-validated, base-contained path.
+                // pre-validated, base-contained path. The prevalidated PathBuf
+                // (validate_attachment_dest) proves the PARENT canonicalizes
+                // under the base, but `fs::write` follows the FINAL component
+                // through a symlink — a leaf symlink planted at `path` (or a
+                // parent swapped after validation) would redirect the write
+                // outside the sandbox. Two defenses, applied AT WRITE TIME:
+                //   1. symlink_metadata refusal: if the final path already
+                //      exists AND is a symlink, reject before opening.
+                //   2. O_NOFOLLOW open: open with O_CREAT|O_WRONLY|O_TRUNC and
+                //      O_NOFOLLOW so the kernel refuses to follow a leaf symlink
+                //      at the final component (closes the validate→write TOCTOU).
+                // (Mirrors the tiles/cache.rs leaf-symlink guard.)
                 let write_path = path.clone();
-                tokio::task::spawn_blocking(move || std::fs::write(&write_path, &bytes))
-                    .await
-                    .map_err(|e| WritePortError::Failed(format!("write task failed: {e}")))?
-                    .map_err(|e| WritePortError::Failed(format!("write attachment: {e}")))?;
+                tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+                    use std::io::Write;
+                    use std::os::unix::fs::OpenOptionsExt;
+                    let final_is_symlink = std::fs::symlink_metadata(&write_path)
+                        .map(|m| m.file_type().is_symlink())
+                        .unwrap_or(false);
+                    if final_is_symlink {
+                        return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+                    }
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .custom_flags(libc::O_NOFOLLOW)
+                        .open(&write_path)?;
+                    file.write_all(&bytes)?;
+                    Ok(())
+                })
+                .await
+                .map_err(|e| WritePortError::Failed(format!("write task failed: {e}")))?
+                .map_err(|e| WritePortError::Failed(format!("write attachment: {e}")))?;
                 Ok::<String, WritePortError>(path.to_string_lossy().into_owned())
             },
         )
@@ -1434,9 +1515,7 @@ impl ComposePort for MonolithComposePort {
 
     async fn send_form(&self, dto: SendFormDto) -> Result<String, WritePortError> {
         // VALIDATE recipients + the sender callsign + grid for CR/LF + control
-        // chars (field_values are XML-sanitized downstream by the form
-        // serializer; the addresses/identity fields are the header-injection
-        // surface). Subject is rendered from the form template, not agent-typed.
+        // chars (the addresses/identity fields are a header-injection surface).
         Self::validate_recipients(&dto.to, &dto.cc)?;
         validate_address(&dto.senders_callsign)?;
         validate_address(&dto.grid_square)?;
@@ -1444,6 +1523,26 @@ impl ComposePort for MonolithComposePort {
         // BTreeMap. Convert.
         let field_values: std::collections::HashMap<String, String> =
             dto.field_values.into_iter().collect();
+        // FIX 2: the form SUBJECT is rendered from `form.subject_template` with
+        // the agent's field_values (ui_commands::send_form does exactly
+        // `render_body_template(form.subject_template, &field_values)`). The
+        // renderer drops XML-1.0-illegal control chars but DELIBERATELY keeps
+        // 0x9/0x0A/0x0D (is_xml10_legal), so a CR/LF inside a subject-bound field
+        // would survive into the rendered subject and split the RFC5322 header
+        // block — the to/cc/identity checks above never see it. Defense: replicate
+        // the exact subject render the command will do, then run validate_subject
+        // on the RESULT before staging. This validates only the SUBJECT-bound
+        // fields (whichever the template references), so a legitimately multi-line
+        // BODY field is not over-rejected. Look up the form first so an unknown
+        // form_id still surfaces "unknown form" from send_form (we mirror its
+        // find_form lookup but tolerate a miss here and let send_form report it).
+        if let Some(form) = crate::forms::catalog::find_form(&dto.form_id) {
+            let rendered_subject = crate::forms::serialize::render_body_template(
+                form.subject_template,
+                &field_values,
+            );
+            validate_subject(&rendered_subject)?;
+        }
         crate::ui_commands::send_form(
             dto.form_id,
             field_values,
