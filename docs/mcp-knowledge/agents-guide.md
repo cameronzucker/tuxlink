@@ -15,6 +15,15 @@ intelligence, stage outbound messages, and — only under operator authorization
 change configuration or transmit. Use it to help the operator diagnose, set up,
 and operate their station.
 
+## New to amateur radio?
+
+If terms such as *WARC bands*, *RMS gateway*, *grid square* (Maidenhead locator),
+or *B2F* are unfamiliar, read `tuxlink://glossary` and
+`tuxlink://glossary-supplement` for vocabulary and `tuxlink://reference/band-plan`
+for band and frequency conventions before planning a flow. The
+station-intelligence tools (`find_stations`, `predict_path`) and the transport
+guides assume this domain vocabulary; resolve it first rather than guessing.
+
 ## The MCP surface by tier
 
 ### Diagnostic reads — always available, redacted, no authorization
