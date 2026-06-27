@@ -1118,6 +1118,113 @@ pub fn run() {
                 app.manage(prop_state);
             }
 
+            // tuxlink-cvx84 (MCP phase 3.1, Task 4): bind the MCP server's
+            // Unix-domain-socket endpoint and serve the real router. This is the
+            // monolith embedder of `tuxlink-mcp-core`: it injects the app's own
+            // identity (`env!` here resolves to the MONOLITH's CARGO_PKG_*, not
+            // the core crate's) and shares the already-managed `Arc<EgressGuard>`
+            // so `server_info` reaches the live, operator-facing send-authority
+            // state. Tier-2 (the standalone testserver) already exercises the
+            // protocol round-trip; this is what makes tier-3 (the real app) work.
+            {
+                // Resolve a per-user runtime dir. Prefer $XDG_RUNTIME_DIR (a
+                // per-user, 0700, tmpfs dir on modern Linux); fall back to a
+                // per-uid subdir of the system temp dir when it is unset (e.g.
+                // some headless / cron contexts). Either way the `tuxlink` parent
+                // is created 0700 so the transport's group/world-writable-parent
+                // refusal passes.
+                let runtime_base = match std::env::var("XDG_RUNTIME_DIR") {
+                    Ok(dir) if !dir.is_empty() => std::path::PathBuf::from(dir),
+                    _ => {
+                        // Per-uid temp fallback keeps the socket dir private to
+                        // this user even on a shared box.
+                        // SAFETY: `getuid(2)` takes no arguments and is always
+                        // successful (POSIX guarantees it cannot fail).
+                        let uid = unsafe { libc::getuid() };
+                        std::env::temp_dir().join(format!("tuxlink-{uid}"))
+                    }
+                };
+                let mcp_dir = runtime_base.join("tuxlink");
+
+                // Create the parent dir (if missing) and harden it to 0700 so the
+                // transport will accept it. If we cannot make it private, LOG and
+                // SKIP starting the MCP server — never crash the app or block
+                // setup over an optional agent endpoint.
+                let dir_ready = match std::fs::create_dir_all(&mcp_dir) {
+                    Ok(()) => {
+                        match std::fs::set_permissions(
+                            &mcp_dir,
+                            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+                        ) {
+                            Ok(()) => true,
+                            Err(e) => {
+                                tracing::warn!(
+                                    target: "mcp",
+                                    dir = %mcp_dir.display(),
+                                    error = %e,
+                                    "could not set MCP runtime dir to 0700; skipping MCP server"
+                                );
+                                false
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "mcp",
+                            dir = %mcp_dir.display(),
+                            error = %e,
+                            "could not create MCP runtime dir; skipping MCP server"
+                        );
+                        false
+                    }
+                };
+
+                if dir_ready {
+                    let sock_path = mcp_dir.join("mcp.sock");
+
+                    // Share the already-managed egress authority (line ~655's
+                    // `.manage(Arc::new(EgressGuard::new()))`). Same TypeId: the
+                    // managed `crate::ui_core::security::EgressGuard` is a glob
+                    // re-export of `tuxlink_security::EgressGuard`.
+                    let guard = app
+                        .state::<std::sync::Arc<tuxlink_security::EgressGuard>>()
+                        .inner()
+                        .clone();
+
+                    // env! HERE resolves to the MONOLITH (tuxlink / its version) —
+                    // Task-4-injects-identity, so `server_info` reports the app's
+                    // identity, not the core crate's 0.0.0.
+                    let mcp_state = std::sync::Arc::new(tuxlink_mcp_core::McpState {
+                        guard,
+                        name: env!("CARGO_PKG_NAME").to_string(),
+                        version: env!("CARGO_PKG_VERSION").to_string(),
+                    });
+                    let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
+
+                    tracing::info!(
+                        target: "mcp",
+                        socket = %sock_path.display(),
+                        "starting MCP server on Unix socket"
+                    );
+
+                    // Serve forever on the runtime; do NOT block setup. `serve`
+                    // binds a 0600 single-caller UDS and runs an accept loop until
+                    // an accept fails or the future is dropped.
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) =
+                            tuxlink_mcp_core::transport_uds::serve(router, &sock_path).await
+                        {
+                            tracing::error!(
+                                target: "mcp",
+                                socket = %sock_path.display(),
+                                error = %e,
+                                "MCP server stopped with error"
+                            );
+                        }
+                    });
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
