@@ -113,7 +113,9 @@ playbooks `tuxlink://playbook/ardop-wont-connect`,
 `tuxlink://device/uv-pro`, `tuxlink://guide/ptt`, `tuxlink://guide/ardop`,
 `tuxlink://guide/vara`, `tuxlink://guide/packet`,
 `tuxlink://guide/picking-a-transport`, `tuxlink://guide/emcomm-ics`; references
-`tuxlink://reference/band-plan`, `tuxlink://reference/modem-capability-matrix`.
+`tuxlink://reference/band-plan`, `tuxlink://reference/modem-capability-matrix`,
+`tuxlink://reference/local-agent-deployment` (what local/edge hardware runs a
+Tuxlink assistant offline, and how a local assistant compares to a cloud one).
 Call `list_resources` for the full catalog.
 
 Three prompts walk common operator workflows: `diagnose_my_connection` (optional

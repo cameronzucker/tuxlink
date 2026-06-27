@@ -90,6 +90,13 @@ pub static CATALOG: &[KnowledgeResource] = &[
         description: "Comparison of ARDOP, VARA HF, and packet/AX.25: bandwidth, speed, robustness, license/cost, and when to use each.",
         markdown: include_str!("../../../docs/mcp-knowledge/modem-capability-matrix.md"),
     },
+    KnowledgeResource {
+        uri: "tuxlink://reference/local-agent-deployment",
+        name: "reference-local-agent-deployment",
+        title: "Running a Tuxlink assistant on local hardware",
+        description: "What local/edge hardware (RTX Spark / DGX Spark) runs a Tuxlink assistant offline, which models fit, and how a local assistant compares to a cloud one — safety holds, depth and long-horizon reliability trade off.",
+        markdown: include_str!("../../../docs/mcp-knowledge/local-agent-deployment.md"),
+    },
     // ----- Curated user-guide docs (reused from the in-app guide) -----
     KnowledgeResource {
         uri: "tuxlink://glossary",
