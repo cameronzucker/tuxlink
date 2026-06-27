@@ -1987,6 +1987,14 @@ pub fn ardop_tune_rig(freq_hz: u64) -> Result<(), String> {
     Ok(())
 }
 
+// tuxlink-wxwlr: a read-only CAT VFO/mode/PTT probe was considered as the MCP
+// `rig_status` source but removed (Codex P1): reading the live VFO requires
+// spawning `rigctld`, which opens an unauthenticated command-capable CAT server.
+// Triggering that from an un-gated read-only tool would expose a transmit-capable
+// surface that bypasses the egress gate. A safe live readout (reuse a running
+// session's rig, or gate it) is tracked as a follow-up; `rig_status` reports
+// config-derived state only.
+
 #[cfg(test)]
 mod tests {
     use super::*;

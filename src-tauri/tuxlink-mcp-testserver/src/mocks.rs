@@ -19,10 +19,11 @@ use tuxlink_mcp_core::ports::{
     ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
     GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
     ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
-    PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort, SearchPort,
-    SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
-    SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
-    VaraConfigDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort,
+    QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto,
+    SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto, StationFilterDto,
+    StationListDto, StationModeDto, StationPort, StatusPort, VaraConfigDto, VaraStatusDto,
+    VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -87,6 +88,14 @@ impl StatusPort for MockStatus {
     }
     async fn p2p_peer_password_status(&self, _callsign: &str) -> Result<bool, PortError> {
         Ok(true)
+    }
+    async fn rig_status(&self) -> Result<RigStatusDto, PortError> {
+        Ok(RigStatusDto {
+            vfo_hz: Some(7_104_000),
+            mode: Some("PKTUSB".into()),
+            ptt: Some(false),
+            configured: true,
+        })
     }
 }
 
@@ -200,6 +209,19 @@ impl ConfigPort for MockConfig {
             tx_delay: 30,
         })
     }
+    async fn rig(&self) -> Result<RigConfigDto, PortError> {
+        Ok(RigConfigDto {
+            rig_hamlib_model: Some(1035),
+            rigctld_host: "127.0.0.1".into(),
+            rigctld_port: 4534,
+            rigctld_binary: "rigctld".into(),
+            close_serial_sequencing: false,
+            live_vfo_poll: false,
+            qsy_on_fail: false,
+            cat_serial_path: Some("/dev/ttyUSB0".into()),
+            cat_baud: 38400,
+        })
+    }
 }
 
 pub struct MockDevice;
@@ -288,7 +310,15 @@ impl EgressPort for MockEgress {
     async fn verify_cms_connection(&self) -> Result<(), EgressPortError> {
         self.gated("verify_cms_connection").await
     }
-    async fn ardop_connect(&self, _target: String) -> Result<(), EgressPortError> {
+    async fn rig_tune(&self, _freq_hz: u64) -> Result<(), EgressPortError> {
+        self.gated("rig_tune").await
+    }
+    async fn ardop_connect(
+        &self,
+        _target: String,
+        _freq_hz: Option<u64>,
+        _qsy_candidates: Option<Vec<QsyCandidateDto>>,
+    ) -> Result<(), EgressPortError> {
         self.gated("ardop_connect").await
     }
     async fn ardop_b2f_exchange(
@@ -302,6 +332,8 @@ impl EgressPort for MockEgress {
         &self,
         _target: String,
         _intent: SessionIntentDto,
+        _freq_hz: Option<u64>,
+        _qsy_candidates: Option<Vec<QsyCandidateDto>>,
     ) -> Result<(), EgressPortError> {
         self.gated("vara_b2f_exchange").await
     }

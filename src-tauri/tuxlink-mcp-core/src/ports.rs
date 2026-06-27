@@ -162,6 +162,65 @@ pub struct PacketConfigDto {
     pub tx_delay: u32,
 }
 
+/// Non-secret radio-level rig (CAT) config — the hamlib model, the rigctld
+/// endpoint, the CAT serial, and the close-serial/live-vfo/qsy behavior flags.
+/// Shared by ARDOP + VARA (it is `Config.rig`, not per-modem). No secrets.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RigConfigDto {
+    /// Hamlib rig model id for rigctld-based QSY/VFO control; `None` = no rig.
+    pub rig_hamlib_model: Option<u32>,
+    /// Host where rigctld listens.
+    pub rigctld_host: String,
+    /// TCP port rigctld listens on.
+    pub rigctld_port: u16,
+    /// rigctld binary name or path.
+    pub rigctld_binary: String,
+    /// Close the CAT serial before audio (internal-codec radios that share one
+    /// serial between CAT and audio PTT).
+    pub close_serial_sequencing: bool,
+    /// Poll the VFO frequency from rigctld in real time.
+    pub live_vfo_poll: bool,
+    /// Walk ranked candidate frequencies on a connect failure (QSY).
+    pub qsy_on_fail: bool,
+    /// CAT serial device path for QSY/VFO control; `None` until the operator
+    /// picks a port.
+    pub cat_serial_path: Option<String>,
+    /// CAT serial baud.
+    pub cat_baud: u32,
+}
+
+/// Live + configured rig status. The live fields (`vfo_hz`, `mode`, `ptt`) are
+/// `Option` because a best-effort transient rigctld read can fail (rig
+/// unconfigured, rigctld absent, or the CAT serial busy with an active
+/// session); on any such failure they are `None` while `configured` still
+/// reports whether rig control is set up at all. NEVER carries a transmit
+/// side effect — the probe behind it is CAT-read-only.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RigStatusDto {
+    /// Live VFO frequency in Hz, when the transient read succeeded.
+    pub vfo_hz: Option<u64>,
+    /// Live mode token (e.g. `"PKTUSB"`), when known.
+    pub mode: Option<String>,
+    /// Live PTT state, when the transient read succeeded.
+    pub ptt: Option<bool>,
+    /// Whether rig control is configured (a hamlib model + CAT serial are set),
+    /// independent of whether the live read succeeded.
+    pub configured: bool,
+}
+
+/// One QSY (frequency-walk) candidate the agent can supply on a gated
+/// connect/exchange: a dial `target` plus the frequency to tune for it. Mirrors
+/// the monolith's `DialCandidate` field-for-field (snake_case wire form). An
+/// omitted/empty candidate list reproduces today's single-dial behavior.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct QsyCandidateDto {
+    /// The dial target (station/gateway callsign) for this candidate.
+    pub target: String,
+    /// The frequency in Hz to tune before dialing this candidate; `None` skips
+    /// the pre-audio CAT tune for it.
+    pub freq_hz: Option<u64>,
+}
+
 /// One serial device the operator can pick for a TNC / CAT connection.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerialDeviceDto {
@@ -401,6 +460,11 @@ pub trait StatusPort: Send + Sync {
     /// Returns the boolean only — never the password — so this is NOT a taint
     /// source.
     async fn p2p_peer_password_status(&self, callsign: &str) -> Result<bool, PortError>;
+    /// Report the rig's configured state and, best-effort, its live VFO
+    /// frequency / mode / PTT via a transient CAT read. NEVER transmits; the
+    /// live fields are `None` when the read fails (unconfigured / rigctld
+    /// absent / serial busy).
+    async fn rig_status(&self) -> Result<RigStatusDto, PortError>;
 }
 
 /// Mailbox reads. `list` + `read` return untrusted message content → the
@@ -435,6 +499,8 @@ pub trait ConfigPort: Send + Sync {
     async fn ardop(&self) -> Result<ArdopConfigDto, PortError>;
     async fn vara(&self) -> Result<VaraConfigDto, PortError>;
     async fn packet(&self) -> Result<PacketConfigDto, PortError>;
+    /// Read the non-secret radio-level rig (CAT) config. Read-only; no secrets.
+    async fn rig(&self) -> Result<RigConfigDto, PortError>;
 }
 
 /// Hardware device enumeration. None taint (device names, not message content).
@@ -537,19 +603,42 @@ pub trait EgressPort: Send + Sync {
     async fn cms_connect(&self) -> Result<(), EgressPortError>;
     /// Verify the live CMS connection (a round-trip that touches the network).
     async fn verify_cms_connection(&self) -> Result<(), EgressPortError>;
-    /// Connect the ARDOP modem to `target`.
-    async fn ardop_connect(&self, target: String) -> Result<(), EgressPortError>;
+    /// Tune the rig to `freq_hz` (set VFO + the HF data mode) over CAT. This
+    /// COMMANDS the radio and is therefore EGRESS, in the SAME authority class
+    /// as a transmit: a disarmed / expired / tainted / poisoned session is
+    /// `Denied` and nothing is sent to the radio. (`rig_tune` takes only a
+    /// single frequency — a bare tune has no candidate walk.)
+    async fn rig_tune(&self, freq_hz: u64) -> Result<(), EgressPortError>;
+    /// Connect the ARDOP modem to `target`. `freq_hz` (when `Some`) is the
+    /// pre-audio CAT tune for the single dial; `qsy_candidates` (when `Some` +
+    /// non-empty) overrides `target`/`freq_hz` with an ordered frequency walk
+    /// (operator-gated). `None`/empty reproduces the legacy single dial.
+    async fn ardop_connect(
+        &self,
+        target: String,
+        freq_hz: Option<u64>,
+        qsy_candidates: Option<Vec<QsyCandidateDto>>,
+    ) -> Result<(), EgressPortError>;
     /// Run an ARDOP B2F message exchange with `target` for the given `intent`.
+    /// No `freq_hz` / `qsy_candidates`: the ARDOP lifecycle tunes at the CONNECT
+    /// (via [`EgressPort::ardop_connect`]'s dial walk), and the B2F exchange runs
+    /// over the ALREADY-connected link — a pre-tune is genuinely N/A here, so
+    /// accepting one would be an inert, misleading transmit-adjacent param.
     async fn ardop_b2f_exchange(
         &self,
         target: String,
         intent: SessionIntentDto,
     ) -> Result<(), EgressPortError>;
     /// Run a VARA B2F message exchange with `target` for the given `intent`.
+    /// VARA differs from ARDOP: its B2F connects + tunes + exchanges in a single
+    /// call, so `freq_hz` / `qsy_candidates` are live here (same pre-tune + QSY
+    /// semantics as [`EgressPort::ardop_connect`]).
     async fn vara_b2f_exchange(
         &self,
         target: String,
         intent: SessionIntentDto,
+        freq_hz: Option<u64>,
+        qsy_candidates: Option<Vec<QsyCandidateDto>>,
     ) -> Result<(), EgressPortError>;
     /// Connect an AX.25 packet session to `call` over the optional digipeater
     /// `path`.

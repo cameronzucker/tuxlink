@@ -23,8 +23,8 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData, RoleServer};
 use crate::content;
 use crate::ports::{
     ArdopWriteDto, ComposeDraftDto, EgressPortError, GribRequestDto, PacketWriteDto, PortError,
-    PredictRequestDto, SearchQueryDto, SendFormDto, SessionIntentDto, StationFilterDto, VaraWriteDto,
-    WritePortError,
+    PredictRequestDto, QsyCandidateDto, SearchQueryDto, SendFormDto, SessionIntentDto,
+    StationFilterDto, VaraWriteDto, WritePortError,
 };
 use crate::{server_info_view, McpState};
 
@@ -150,6 +150,15 @@ impl TuxlinkMcp {
     )]
     pub async fn platform_info(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.platform_info().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "rig_status",
+        description = "Report the rig's configured state and, best-effort, its live VFO frequency/mode/PTT via a transient rigctld read (never transmits; may report nulls if the rig is unconfigured or its serial is busy with an active session). Read-only."
+    )]
+    pub async fn rig_status(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.status.rig_status().await.map_err(port_err)?;
         Ok(CallToolResult::success(vec![Content::json(dto)?]))
     }
 
@@ -313,6 +322,15 @@ impl TuxlinkMcp {
         Ok(CallToolResult::success(vec![Content::json(dto)?]))
     }
 
+    #[tool(
+        name = "config_get_rig",
+        description = "Read the non-secret radio-level rig config (hamlib model, rigctld endpoint, CAT serial, close-serial/live-vfo/qsy flags). Read-only; no secrets."
+    )]
+    pub async fn config_get_rig(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.config.rig().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
     // ----- Devices -----
 
     #[tool(
@@ -453,17 +471,34 @@ impl TuxlinkMcp {
     }
 
     #[tool(
+        name = "rig_tune",
+        description = "Tune the rig to a frequency (set VFO + data mode) over CAT. EGRESS (commands the radio — same authority class as a transmit): requires armed send-authority and an un-tainted session; denied otherwise."
+    )]
+    pub async fn rig_tune(
+        &self,
+        params: Parameters<RigTuneParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(RigTuneParams { freq_hz }) = params;
+        self.state.egress.rig_tune(freq_hz).await.map_err(egress_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
         name = "ardop_connect",
-        description = "Connect the ARDOP modem to a target station. EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Connect the ARDOP modem to a target station. Optional freq_hz pre-tunes the rig over CAT for the dial; optional qsy_candidates supplies an ordered frequency walk (operator-gated). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn ardop_connect(
         &self,
         params: Parameters<TargetParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let Parameters(TargetParams { target }) = params;
+        let Parameters(TargetParams {
+            target,
+            freq_hz,
+            qsy_candidates,
+        }) = params;
         self.state
             .egress
-            .ardop_connect(target)
+            .ardop_connect(target, freq_hz, qsy_candidates)
             .await
             .map_err(egress_err)?;
         Ok(CallToolResult::success(vec![Content::json("ok")?]))
@@ -471,7 +506,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "ardop_b2f_exchange",
-        description = "Run an ARDOP B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Run an ARDOP B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). The ARDOP link is tuned at connect, so this carries no frequency/QSY params. EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn ardop_b2f_exchange(
         &self,
@@ -488,16 +523,21 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_b2f_exchange",
-        description = "Run a VARA B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Run a VARA B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). Optional freq_hz / qsy_candidates pre-tune + QSY-walk the dial (VARA connects + tunes + exchanges in one call). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn vara_b2f_exchange(
         &self,
-        params: Parameters<ExchangeParams>,
+        params: Parameters<VaraExchangeParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let Parameters(ExchangeParams { target, intent }) = params;
+        let Parameters(VaraExchangeParams {
+            target,
+            intent,
+            freq_hz,
+            qsy_candidates,
+        }) = params;
         self.state
             .egress
-            .vara_b2f_exchange(target, intent)
+            .vara_b2f_exchange(target, intent, freq_hz, qsy_candidates)
             .await
             .map_err(egress_err)?;
         Ok(CallToolResult::success(vec![Content::json("ok")?]))
@@ -891,24 +931,67 @@ pub struct QueryParams {
     pub query: String,
 }
 
-/// `{ "target": "KX4Z-10" }` — input for `ardop_connect`.
+/// `{ "freq_hz": 7104000 }` — input for `rig_tune`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RigTuneParams {
+    /// The frequency in Hz to tune the rig VFO to.
+    pub freq_hz: u64,
+}
+
+/// `{ "target": "KX4Z-10" }` — input for `ardop_connect`. Optional `freq_hz`
+/// pre-tunes the rig for the dial; optional `qsy_candidates` supplies an ordered
+/// frequency walk (operator-gated). Both omitted = legacy single dial.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct TargetParams {
     /// The target station/gateway callsign to connect to.
     pub target: String,
+    /// Optional pre-audio CAT tune frequency in Hz for the single dial.
+    #[serde(default)]
+    pub freq_hz: Option<u64>,
+    /// Optional ordered QSY candidate list; when present + non-empty it
+    /// overrides `target`/`freq_hz` with a frequency walk.
+    #[serde(default)]
+    pub qsy_candidates: Option<Vec<QsyCandidateDto>>,
 }
 
-/// `{ "target": "KX4Z", "intent": "cms" }` — input for the B2F exchange tools.
+/// `{ "target": "KX4Z", "intent": "cms" }` — input for `ardop_b2f_exchange`.
 /// `intent` selects the routing pool ([`SessionIntentDto`]:
 /// `cms` / `radio-only` / `post-office` / `mesh` / `p2p`) and defaults to
-/// [`SessionIntentDto::Cms`] when omitted.
+/// [`SessionIntentDto::Cms`] when omitted. No frequency/QSY params: the ARDOP
+/// link is tuned at connect, and the B2F runs over the already-connected link.
+/// `deny_unknown_fields` (Codex tuxlink-wxwlr P2): a caller that sends `freq_hz`
+/// / `qsy_candidates` here (natural, since the adjacent egress tools accept them)
+/// is REJECTED rather than having those keys silently dropped — otherwise the
+/// agent could believe it requested a tune while the radio transmits on the
+/// existing VFO.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExchangeParams {
     /// The target station/gateway callsign.
     pub target: String,
     /// The routing pool for the exchange; defaults to `cms` when omitted.
     #[serde(default)]
     pub intent: SessionIntentDto,
+}
+
+/// `{ "target": "KX4Z", "intent": "cms" }` — input for `vara_b2f_exchange`.
+/// Like [`ExchangeParams`] but with the VARA-only `freq_hz` / `qsy_candidates`:
+/// VARA's B2F connects + tunes + exchanges in a single call, so a pre-tune + QSY
+/// walk are live here (unlike ARDOP, which tunes at a separate connect step).
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct VaraExchangeParams {
+    /// The target station/gateway callsign.
+    pub target: String,
+    /// The routing pool for the exchange; defaults to `cms` when omitted.
+    #[serde(default)]
+    pub intent: SessionIntentDto,
+    /// Optional pre-audio CAT tune frequency in Hz for the single dial.
+    #[serde(default)]
+    pub freq_hz: Option<u64>,
+    /// Optional ordered QSY candidate list; when present + non-empty it
+    /// overrides `target`/`freq_hz` with a frequency walk.
+    #[serde(default)]
+    pub qsy_candidates: Option<Vec<QsyCandidateDto>>,
 }
 
 /// `{ "call": "W1AW-5", "path": ["WIDE1-1"] }` — input for `packet_connect`.
@@ -1557,6 +1640,40 @@ mod tests {
         assert_eq!(dto.grid, "CN87", "grid must be the 4-char fixture value");
     }
 
+    // --- rig CAT-control read tools (no taint, no gate) ---
+
+    #[tokio::test]
+    async fn rig_status_returns_dto_and_does_not_taint() {
+        use crate::ports::RigStatusDto;
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        let result = h.rig_status().await.unwrap();
+        let dto: RigStatusDto = json_of(&result);
+        assert!(dto.configured, "the mock reports rig control configured");
+        assert_eq!(dto.vfo_hz, Some(7_104_000));
+        assert_eq!(dto.mode.as_deref(), Some("PKTUSB"));
+        assert_eq!(dto.ptt, Some(false));
+        assert!(
+            !h.state.guard.is_tainted(),
+            "rig_status is a read-only CAT probe and must NOT taint the session"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_get_rig_returns_dto_and_does_not_taint() {
+        use crate::ports::RigConfigDto;
+        let h = handler();
+        let result = h.config_get_rig().await.unwrap();
+        let dto: RigConfigDto = json_of(&result);
+        assert_eq!(dto.rig_hamlib_model, Some(1035));
+        assert_eq!(dto.rigctld_port, 4534);
+        assert_eq!(dto.cat_serial_path.as_deref(), Some("/dev/ttyUSB0"));
+        assert!(
+            !h.state.guard.is_tainted(),
+            "config_get_rig must NOT taint the session"
+        );
+    }
+
     // --- Station intelligence: inert reads (no taint, no gate) ---
 
     #[tokio::test]
@@ -1673,6 +1790,8 @@ mod tests {
         let err = h
             .ardop_connect(Parameters(TargetParams {
                 target: "KX4Z-10".into(),
+                freq_hz: None,
+                qsy_candidates: None,
             }))
             .await
             .expect_err("tainted must deny even when armed");
@@ -1689,13 +1808,130 @@ mod tests {
         h.state.guard.taint();
         h.state.guard.clear_taint(); // explicit session reset
         h.state.guard.arm(30);
-        h.vara_b2f_exchange(Parameters(ExchangeParams {
+        h.vara_b2f_exchange(Parameters(VaraExchangeParams {
             target: "KX4Z".into(),
             intent: SessionIntentDto::Cms,
+            freq_hz: None,
+            qsy_candidates: None,
         }))
         .await
         .expect("fresh arm after clear_taint must allow");
         assert!(op_ran.load(Ordering::SeqCst), "op must run after a clean re-arm");
+    }
+
+    #[tokio::test]
+    async fn rig_tune_denied_when_unarmed_and_op_never_runs() {
+        // rig_tune rides the SAME egress gate as transmit: an unarmed session is
+        // denied and the underlying CAT tune never runs.
+        let (h, op_ran, _aborted) = handler_with_probes();
+        let err = h
+            .rig_tune(Parameters(RigTuneParams {
+                freq_hz: 7_104_000,
+            }))
+            .await
+            .expect_err("unarmed rig_tune must deny");
+        assert!(
+            err.message.contains("not authorized"),
+            "denial must name the missing authorization, got: {}",
+            err.message
+        );
+        assert!(
+            !op_ran.load(Ordering::SeqCst),
+            "the underlying rig tune must NEVER run when denied"
+        );
+    }
+
+    #[tokio::test]
+    async fn rig_tune_allowed_after_arm_and_op_runs() {
+        let (h, op_ran, _aborted) = handler_with_probes();
+        h.state.guard.arm(30);
+        h.rig_tune(Parameters(RigTuneParams {
+            freq_hz: 7_104_000,
+        }))
+        .await
+        .expect("armed + untainted rig_tune must allow");
+        assert!(
+            op_ran.load(Ordering::SeqCst),
+            "the underlying rig tune must run once authorized"
+        );
+    }
+
+    #[tokio::test]
+    async fn rig_tune_denied_when_tainted_even_if_armed() {
+        let (h, op_ran, _aborted) = handler_with_probes();
+        h.state.guard.taint();
+        h.state.guard.arm(30); // arming does NOT clear taint
+        let err = h
+            .rig_tune(Parameters(RigTuneParams {
+                freq_hz: 7_104_000,
+            }))
+            .await
+            .expect_err("tainted rig_tune must deny even when armed");
+        assert!(err.message.contains("not authorized"));
+        assert!(
+            !op_ran.load(Ordering::SeqCst),
+            "a tainted session must not tune even while armed"
+        );
+    }
+
+    #[test]
+    fn target_params_deserialize_with_freq_and_qsy_candidates() {
+        // The parity params parse: a connect call carrying freq_hz +
+        // qsy_candidates (snake_case wire form) deserializes into TargetParams.
+        let json = r#"{
+            "target": "KX4Z-10",
+            "freq_hz": 7104000,
+            "qsy_candidates": [
+                {"target": "KX4Z-10", "freq_hz": 7104000},
+                {"target": "W1AW-10", "freq_hz": null}
+            ]
+        }"#;
+        let p: TargetParams = serde_json::from_str(json).expect("parity params must parse");
+        assert_eq!(p.target, "KX4Z-10");
+        assert_eq!(p.freq_hz, Some(7_104_000));
+        let cands = p.qsy_candidates.expect("candidates present");
+        assert_eq!(cands.len(), 2);
+        assert_eq!(cands[0].freq_hz, Some(7_104_000));
+        assert_eq!(cands[1].freq_hz, None);
+    }
+
+    #[test]
+    fn target_params_deserialize_legacy_target_only() {
+        // The legacy `{ target }` shape still parses (both new fields default to
+        // None), so a pre-rig-control caller is unaffected.
+        let p: TargetParams =
+            serde_json::from_str(r#"{ "target": "KX4Z-10" }"#).expect("legacy shape must parse");
+        assert_eq!(p.target, "KX4Z-10");
+        assert_eq!(p.freq_hz, None);
+        assert!(p.qsy_candidates.is_none());
+    }
+
+    #[test]
+    fn vara_exchange_params_deserialize_with_freq_and_qsy_candidates() {
+        // VARA b2f carries freq/qsy (it connects + tunes + exchanges in one
+        // call); ARDOP b2f does not (it tunes at the separate connect step).
+        let json = r#"{
+            "target": "KX4Z",
+            "intent": "p2p",
+            "freq_hz": 14105000,
+            "qsy_candidates": [{"target": "KX4Z", "freq_hz": 14105000}]
+        }"#;
+        let p: VaraExchangeParams = serde_json::from_str(json).expect("parity params must parse");
+        assert_eq!(p.target, "KX4Z");
+        assert_eq!(p.intent, SessionIntentDto::P2p);
+        assert_eq!(p.freq_hz, Some(14_105_000));
+        assert_eq!(p.qsy_candidates.map(|c| c.len()), Some(1));
+    }
+
+    #[test]
+    fn ardop_exchange_params_have_no_freq_or_qsy_fields() {
+        // ExchangeParams (ARDOP b2f) is target+intent only; freq/qsy keys in the
+        // JSON are ignored (serde default deny_unknown is off), and the struct
+        // exposes no such fields. The ARDOP link is tuned at connect.
+        let p: ExchangeParams = serde_json::from_str(r#"{ "target": "KX4Z", "intent": "cms" }"#)
+            .expect("ardop exchange params must parse");
+        assert_eq!(p.target, "KX4Z");
+        assert_eq!(p.intent, SessionIntentDto::Cms);
     }
 
     #[tokio::test]
