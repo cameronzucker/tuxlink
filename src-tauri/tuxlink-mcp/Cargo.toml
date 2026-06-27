@@ -1,0 +1,27 @@
+# tuxlink-mcp — stdio→UDS byte-pump shim for `claude mcp`.
+#
+# A transparent bidirectional `tokio::io::copy` pump: it connects a UnixStream to
+# the app's MCP socket and pipes a client's stdio to/from it. It carries NO rmcp
+# dependency and does NOT parse the MCP bytes — `claude mcp` speaks framed JSON-RPC
+# over the shim's stdio and the shim relays it verbatim. The crate is small and
+# Pi-buildable, so its inline test runs locally (MCP phase 3.1 Task 5).
+[package]
+name = "tuxlink-mcp"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[[bin]]
+name = "tuxlink-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# Match the monolith's tokio MAJOR version (`tokio = "1"` in src-tauri/Cargo.toml)
+# so the single workspace Cargo.lock unifies one tokio across all members. Only
+# the features this pump needs: `net` (UnixStream), `io-util` (copy/AsyncRead/
+# AsyncWrite/split), `io-std` (tokio::io::stdin/stdout — gated behind this feature,
+# NOT io-util), `macros` (#[tokio::main]/#[tokio::test]), `rt-multi-thread` (the
+# runtime the macro spins up). NO rmcp, NO serde.
+tokio = { version = "1", features = ["net", "io-util", "io-std", "macros", "rt-multi-thread"] }

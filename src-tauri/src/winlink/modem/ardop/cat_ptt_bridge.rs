@@ -109,12 +109,15 @@ impl CatPttBridge {
     /// spawned, or the port never binds within [`BIND_WAIT`].
     pub fn spawn(spec: &CatBridgeSpec) -> io::Result<CatPttBridge> {
         // Port-collision pre-check, BEFORE any side effects. The default bridge
-        // port (4532) is ALSO rigctld's default. If another process already holds
-        // the port, the post-spawn TCP probe below would accept against THAT
-        // listener — and ardopcf would key the wrong process while our bridge
-        // silently failed to bind, with its unkey failsafe out of the path. Fail
-        // loudly instead. The listener is dropped immediately so the bridge child
-        // can bind the port within milliseconds.
+        // port (4532) is hamlib rigctld's upstream default; tuxlink defaults its
+        // own rigctld to 4534 to avoid this exact collision (C1 fix,
+        // tuxlink-8fkkk), but a manually-launched rigctld or any other process
+        // may still hold 4532. If another process already holds the port, the
+        // post-spawn TCP probe below would accept against THAT listener — and
+        // ardopcf would key the wrong process while our bridge silently failed
+        // to bind, with its unkey failsafe out of the path. Fail loudly instead.
+        // The listener is dropped immediately so the bridge child can bind the
+        // port within milliseconds.
         match std::net::TcpListener::bind(("127.0.0.1", spec.bridge_port)) {
             Ok(listener) => drop(listener),
             Err(e) => {

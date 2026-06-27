@@ -27,6 +27,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import * as Tabs from '@radix-ui/react-tabs';
+import { usePersistedState } from '../util/usePersistedState';
 import './FavoritesTabs.css';
 import type { FavoriteDial, RadioMode, StationsFile } from './types';
 import { useFavorites, FAVORITES_QUERY_KEY } from './useFavorites';
@@ -70,6 +71,16 @@ export function FavoritesTabs({ mode, onPrefill, manualContent }: FavoritesTabsP
   // shown only when a tab's list exceeds FILTER_THRESHOLD. One shared input
   // narrows whichever tab is active.
   const [filter, setFilter] = useState('');
+
+  // tuxlink-9hjw3: remember the last-used connect tab PER MODE across panel
+  // close/reopen (it used to reset to Favorites every revisit, even when the
+  // operator was working in Manual). Hook runs before the manual-only early
+  // return below to satisfy rules-of-hooks.
+  const [activeTab, setActiveTab] = usePersistedState<string>(
+    `connect-tab:${mode}`,
+    'favorites',
+    (v): v is string => v === 'favorites' || v === 'recent' || v === 'manual',
+  );
 
   // C4: full-precision operator grid for distance. Fetched ONCE; shared down.
   const fixQuery = useQuery({
@@ -140,7 +151,11 @@ export function FavoritesTabs({ mode, onPrefill, manualContent }: FavoritesTabsP
 
   return (
     <div className="favorites-tabs">
-      <Tabs.Root defaultValue="favorites" className="favorites-tabs-root">
+      <Tabs.Root
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="favorites-tabs-root"
+      >
         <Tabs.List
           className="favorites-tabs-list"
           aria-label="Favorites, recents, or manual entry"

@@ -1,0 +1,9 @@
+[package]
+name = "tux-rig"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tracing = "0.1"
+
+[dev-dependencies]

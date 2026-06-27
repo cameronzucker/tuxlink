@@ -30,6 +30,7 @@ pub mod user_folders;
 pub mod winlink;
 pub mod winlink_backend;
 pub mod wizard;
+pub mod mcp_ports;
 pub mod modem_commands;
 pub mod modem_status;
 pub mod propagation;
@@ -301,6 +302,80 @@ mod linux_gl_env_tests {
         assert_eq!(has(&v, "MESA_GLES_VERSION_OVERRIDE"), None);
         assert_eq!(has(&v, "LIBGL_ALWAYS_SOFTWARE"), None);
         assert_eq!(has(&v, "GALLIUM_DRIVER"), None);
+    }
+}
+
+/// Verify `dir` is a private directory we can trust to hold the MCP socket:
+/// a real directory (not a symlink), owned by `uid`, with NO group/other
+/// permission bits set (mode `& 0o077 == 0`). Uses `symlink_metadata` so a
+/// planted symlink is rejected rather than followed. Returns `false` (caller
+/// skips the MCP server) on any failed check or stat error.
+///
+/// tuxlink-cvx84 FIX 1: hardens the runtime-dir ancestor chain so another local
+/// user cannot pre-create / rename / replace an ancestor under the process umask
+/// and plant a fake `mcp.sock`.
+#[cfg(target_os = "linux")]
+fn mcp_dir_is_safe(dir: &std::path::Path, uid: u32) -> bool {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+    match std::fs::symlink_metadata(dir) {
+        Ok(meta) => {
+            let is_dir = meta.file_type().is_dir();
+            let not_symlink = !meta.file_type().is_symlink();
+            let uid_owned = meta.uid() == uid;
+            let private = meta.permissions().mode() & 0o077 == 0;
+            is_dir && not_symlink && uid_owned && private
+        }
+        Err(_) => false,
+    }
+}
+
+/// Create `dir` (best-effort; tolerates "already exists"), chmod it to `0700`,
+/// then verify it via [`mcp_dir_is_safe`]. Returns `Some(dir)` only when the
+/// final on-disk state is a private (0700, uid-owned, non-symlink) directory;
+/// otherwise LOGs a warning and returns `None` so the caller skips the MCP
+/// server. Used to harden EACH level of the runtime-dir chain explicitly
+/// (tuxlink-cvx84 FIX 1).
+#[cfg(target_os = "linux")]
+fn harden_and_verify_mcp_dir(dir: &std::path::Path, uid: u32) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt as _;
+    // Create this single level. Do NOT use create_dir_all here — each level is
+    // created + hardened + verified in turn by the caller, so an ancestor that
+    // already exists must independently pass the safety check below.
+    match std::fs::create_dir(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => {
+            tracing::warn!(
+                target: "mcp",
+                dir = %dir.display(),
+                error = %e,
+                "could not create MCP runtime dir; skipping MCP server"
+            );
+            return None;
+        }
+    }
+    // chmod 0700 (idempotent; fixes a too-permissive dir we just adopted).
+    if let Err(e) =
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+    {
+        tracing::warn!(
+            target: "mcp",
+            dir = %dir.display(),
+            error = %e,
+            "could not set MCP runtime dir to 0700; skipping MCP server"
+        );
+        return None;
+    }
+    // Re-stat (via symlink_metadata) and verify owner + mode + non-symlink.
+    if mcp_dir_is_safe(dir, uid) {
+        Some(dir.to_path_buf())
+    } else {
+        tracing::warn!(
+            target: "mcp",
+            dir = %dir.display(),
+            "MCP runtime dir is not a private (0700, uid-owned, non-symlink) directory after hardening; skipping MCP server"
+        );
+        None
     }
 }
 
@@ -649,6 +724,10 @@ pub fn run() {
         // handler is on the Builder above); the bundled `world` archive is
         // registered in `.setup()` once its resource path resolves.
         .manage(std::sync::Arc::new(crate::basemap::PmtilesRegistry::new()))
+        // tuxlink-7dwqa (Plan 2): armed-grant + taint egress-authorization gate
+        // for the MCP server's agent caller. `EgressGuard` is the single
+        // authoritative gate; arm/disarm/status commands are registered below.
+        .manage(std::sync::Arc::new(crate::ui_core::security::EgressGuard::new()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
 
@@ -1114,6 +1193,183 @@ pub fn run() {
                 app.manage(prop_state);
             }
 
+            // tuxlink-cvx84 (MCP phase 3.1, Task 4): bind the MCP server's
+            // Unix-domain-socket endpoint and serve the real router. This is the
+            // monolith embedder of `tuxlink-mcp-core`: it injects the app's own
+            // identity (`env!` here resolves to the MONOLITH's CARGO_PKG_*, not
+            // the core crate's) and shares the already-managed `Arc<EgressGuard>`
+            // so `server_info` reaches the live, operator-facing send-authority
+            // state. Tier-2 (the standalone testserver) already exercises the
+            // protocol round-trip; this is what makes tier-3 (the real app) work.
+            //
+            // Linux-only: the runtime-dir hardening helpers and the UDS transport
+            // use Unix/Linux filesystem APIs (uid ownership, mode bits). The app
+            // ships on Linux (WebKitGTK); the bound `#[cfg]` keeps a non-Linux
+            // build of the crate compiling.
+            #[cfg(target_os = "linux")]
+            {
+                // Resolve + harden a per-user runtime dir for the MCP socket.
+                // The threat: another local user races us to create/rename/
+                // replace an ancestor dir created under the process umask (often
+                // 0o775, group/world-writable) and plants a hostile dir at our
+                // path so they can later swap in a fake `mcp.sock`. Defense:
+                // create each dir EXPLICITLY, chmod 0700, then VERIFY (via
+                // symlink_metadata so we never follow a planted symlink) that the
+                // result is a real, uid-owned, 0700, non-symlink directory. Any
+                // failed check → LOG and SKIP starting the MCP server (never
+                // crash, never block setup over an optional agent endpoint).
+                //
+                // SAFETY: `getuid(2)` takes no arguments and cannot fail (POSIX).
+                let my_uid = unsafe { libc::getuid() };
+
+                // Build a hardened, verified-private /tmp/tuxlink-<uid>/tuxlink
+                // dir we fully own: create + chmod 0700 + verify (uid-owned,
+                // 0700, non-symlink) at EACH level so an attacker cannot pre-plant
+                // a group/world-writable ancestor under the process umask. /tmp's
+                // sticky bit prevents other users from renaming/replacing our
+                // subdir. Used both when XDG_RUNTIME_DIR is unset AND when it is
+                // set-but-not-private.
+                let temp_fallback = |uid: u32| -> Option<std::path::PathBuf> {
+                    let base = std::env::temp_dir().join(format!("tuxlink-{uid}"));
+                    harden_and_verify_mcp_dir(&base, uid)
+                        .and_then(|base| harden_and_verify_mcp_dir(&base.join("tuxlink"), uid))
+                };
+
+                // `mcp_dir` is set when (and only when) we have a verified-private
+                // socket dir; `None` means "skip the MCP server".
+                let mcp_dir: Option<std::path::PathBuf> = match std::env::var(
+                    "XDG_RUNTIME_DIR",
+                ) {
+                    Ok(dir) if !dir.is_empty() => {
+                        // XDG_RUNTIME_DIR is usually 0700/uid-owned, but some
+                        // systems make /run/user/<uid> group-writable (0770).
+                        // Verify the supplied base; if private, create + chmod +
+                        // verify the `tuxlink` child there.
+                        let base = std::path::PathBuf::from(dir);
+                        if mcp_dir_is_safe(&base, my_uid) {
+                            harden_and_verify_mcp_dir(&base.join("tuxlink"), my_uid)
+                        } else {
+                            // Set-but-not-private: do NOT skip the MCP server —
+                            // fall back to a private temp runtime dir we create
+                            // and harden ourselves (security unchanged; the socket
+                            // dir is still a verified-private 0700 dir we own).
+                            tracing::warn!(
+                                target: "mcp",
+                                dir = %base.display(),
+                                "XDG_RUNTIME_DIR is not a private (0700, uid-owned, non-symlink) directory; falling back to a private temp runtime dir for the MCP socket"
+                            );
+                            temp_fallback(my_uid)
+                        }
+                    }
+                    // XDG_RUNTIME_DIR unset/empty.
+                    _ => temp_fallback(my_uid),
+                };
+                if let Some(mcp_dir) = mcp_dir {
+                    let sock_path = mcp_dir.join("mcp.sock");
+
+                    // Share the already-managed egress authority (line ~655's
+                    // `.manage(Arc::new(EgressGuard::new()))`). Same TypeId: the
+                    // managed `crate::ui_core::security::EgressGuard` is a glob
+                    // re-export of `tuxlink_security::EgressGuard`.
+                    let guard = app
+                        .state::<std::sync::Arc<tuxlink_security::EgressGuard>>()
+                        .inner()
+                        .clone();
+
+                    // env! HERE resolves to the MONOLITH (tuxlink / its version) —
+                    // Task-4-injects-identity, so `server_info` reports the app's
+                    // identity, not the core crate's 0.0.0.
+                    // Inject the REAL monolith port adapters (phase 3.2 Chunk
+                    // 2). Each holds a cloned AppHandle and reads live managed
+                    // state on demand; redaction (grid 4-char, wire-line creds,
+                    // BT-MAC minimization) happens inside these impls so RAW
+                    // values never cross into mcp-core. One struct per domain.
+                    let h = app.handle();
+                    let mcp_state = std::sync::Arc::new(tuxlink_mcp_core::McpState {
+                        // Clone so the bare `guard` binding survives for the
+                        // egress port's `guard.clone()` below (same shared Arc).
+                        guard: guard.clone(),
+                        name: env!("CARGO_PKG_NAME").to_string(),
+                        version: env!("CARGO_PKG_VERSION").to_string(),
+                        status: std::sync::Arc::new(crate::mcp_ports::MonolithStatusPort::new(
+                            h.clone(),
+                        )),
+                        mailbox: std::sync::Arc::new(crate::mcp_ports::MonolithMailboxPort::new(
+                            h.clone(),
+                        )),
+                        search: std::sync::Arc::new(crate::mcp_ports::MonolithSearchPort::new(
+                            h.clone(),
+                        )),
+                        config: std::sync::Arc::new(crate::mcp_ports::MonolithConfigPort::new(
+                            h.clone(),
+                        )),
+                        devices: std::sync::Arc::new(crate::mcp_ports::MonolithDevicePort::new(
+                            h.clone(),
+                        )),
+                        logs: std::sync::Arc::new(crate::mcp_ports::MonolithLogPort::new(
+                            h.clone(),
+                        )),
+                        // Phase 3.3 Chunk 2: GATED Agent egress + UNGATED abort.
+                        // The egress port shares the SAME `Arc<EgressGuard>` the
+                        // operator's egress_arm/egress_disarm mutate, so the gate
+                        // sees the live arm/taint state at call time.
+                        egress: std::sync::Arc::new(crate::mcp_ports::MonolithEgressPort::new(
+                            h.clone(),
+                            guard.clone(),
+                        )),
+                        abort: std::sync::Arc::new(crate::mcp_ports::MonolithAbortPort::new(
+                            h.clone(),
+                        )),
+                        // Phase 3.4 Chunk 2: GATED config/state writes + UNGATED
+                        // compose/staging. The write port shares the SAME
+                        // `Arc<EgressGuard>` the operator's egress_arm/disarm
+                        // mutate (validate-before-gate per impl); the compose port
+                        // is ungated (stages local outbox drafts only).
+                        write: std::sync::Arc::new(crate::mcp_ports::MonolithWritePort::new(
+                            h.clone(),
+                            guard.clone(),
+                        )),
+                        compose: std::sync::Arc::new(crate::mcp_ports::MonolithComposePort::new(
+                            h.clone(),
+                        )),
+                        // Phase 3.2 Chunk 2: station-intelligence READS. Both are
+                        // ungated, non-tainting reads — the station finder routes
+                        // through the polite offline cache; prediction/solar are
+                        // offline compute. The prediction port injects the
+                        // operator's OWN tx_grid from config (never agent-supplied).
+                        stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(
+                            h.clone(),
+                        )),
+                        prediction: std::sync::Arc::new(
+                            crate::mcp_ports::MonolithPredictionPort::new(h.clone()),
+                        ),
+                    });
+                    let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
+
+                    tracing::info!(
+                        target: "mcp",
+                        socket = %sock_path.display(),
+                        "starting MCP server on Unix socket"
+                    );
+
+                    // Serve forever on the runtime; do NOT block setup. `serve`
+                    // binds a 0600 single-caller UDS and runs an accept loop until
+                    // an accept fails or the future is dropped.
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) =
+                            tuxlink_mcp_core::transport_uds::serve(router, &sock_path).await
+                        {
+                            tracing::error!(
+                                target: "mcp",
+                                socket = %sock_path.display(),
+                                error = %e,
+                                "MCP server stopped with error"
+                            );
+                        }
+                    });
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1388,9 +1644,12 @@ pub fn run() {
             crate::grib::commands::grib_send_request,
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)
             crate::modem_commands::config_set_ardop,   // tuxlink-4ek (ARDOP config write)
+            crate::modem_commands::config_get_rig,      // tuxlink-8fkkk (radio-level rig config read; shared ARDOP+VARA)
+            crate::modem_commands::config_set_rig,      // tuxlink-8fkkk (radio-level rig config write)
             crate::modem_commands::modem_get_status,   // tuxlink-4ek Task 3.2 (session snapshot)
             crate::modem_commands::modem_ardop_disconnect, // tuxlink-4ek Task 3.2 (clear consent + reset)
             crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
+            crate::modem_commands::ardop_tune_rig,     // tuxlink-8fkkk Task 7 (Tune-only: set freq+mode, drop serial)
             crate::modem_commands::modem_ardop_b2f_exchange, // tuxlink-ytg (B2F over ARDOP — Winlink mail flows)
             // tuxlink-0ye6 Task 3.5: ARDOP session lifecycle commands —
             // ardop_open_session spawns ardopcf + records (intent, transport_kind)
@@ -1517,6 +1776,11 @@ pub fn run() {
             crate::tiles::commands::test_tile_source,
             crate::tiles::commands::clear_tile_cache,
             crate::tiles::commands::tile_source_status,
+            // tuxlink-7dwqa (Plan 2): egress arm/disarm/status — operator
+            // delegates send authority to the MCP agent caller for a timed window.
+            crate::ui_core::security_commands::egress_arm,
+            crate::ui_core::security_commands::egress_disarm,
+            crate::ui_core::security_commands::egress_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

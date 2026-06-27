@@ -1,0 +1,38 @@
+# MCP server core (tuxlink-cvx84.1, phase 3.1 transport spine).
+#
+# The rmcp tool router (`TuxlinkMcp`), the lone inert `server_info` tool, the
+# `McpState` handle bundle, and the UDS transport live here as a standalone
+# crate so BOTH the Tauri monolith AND the Pi-buildable tier-2 testserver depend
+# on the SAME real router + the SAME `tuxlink-security` EgressGuard without
+# pulling in the Tauri app. Ports-and-adapters core.
+[package]
+name = "tuxlink-mcp-core"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+tuxlink-security = { path = "../tuxlink-security" }
+# `server` + `macros` drive #[tool_router]/#[tool]/#[tool_handler];
+# `transport-async-rw` is the blanket (R, W) IntoTransport used for the UDS
+# split-stream serve. MSRV-1.75 / clippy-clean of rmcp 0.8.x is CI-verified on
+# the monolith draft PR; this small crate ALSO compiles locally on the Pi.
+rmcp = { version = "0.8", features = ["server", "macros", "transport-async-rw"] }
+# rmcp 0.8's #[tool] macro references schemars 1.0 for JSON Schema generation;
+# a 0.8 pin would resolve a SECOND incompatible schemars and fail the derive.
+schemars = "1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["net", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+# `umask(2)` (FIX 3: close the bind->chmod permission window) — the monolith
+# already depends on libc 0.2, so this resolves to the same version.
+libc = "0.2"
+# Phase 3.2: object-safe async port traits + a typed PortError enum. Both are
+# pulled in by the monolith already, so they resolve to the same versions.
+async-trait = "0.1"
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"

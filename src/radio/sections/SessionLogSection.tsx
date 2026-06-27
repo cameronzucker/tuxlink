@@ -12,6 +12,7 @@
 // Used by every per-mode panel (Telnet, Packet, ARDOP, VARA).
 
 import { useEffect, useRef, useState } from 'react';
+import { usePersistedState } from '../../util/usePersistedState';
 import './SessionLogSection.css';
 
 export const SESSION_LOG_VISIBLE_ENTRY_LIMIT = 500;
@@ -49,7 +50,14 @@ export function SessionLogSection({
   onCopy,
   onClear,
 }: SessionLogSectionProps) {
-  const [showRaw, setShowRaw] = useState(initialShowRaw);
+  // tuxlink-9hjw3: the raw-log preference is sticky across panel close/reopen
+  // (it used to reset to off on every remount). One global key — the operator's
+  // "Show raw" choice applies to every mode's session log.
+  const [showRaw, setShowRaw] = usePersistedState<boolean>(
+    'session-log:show-raw',
+    initialShowRaw,
+    (v): v is boolean => typeof v === 'boolean',
+  );
   const [autoScroll, setAutoScroll] = useState(initialAutoScroll);
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldFollowScrollRef = useRef(initialAutoScroll);

@@ -994,7 +994,7 @@ fn collect_attachments(msg: &mail_parser::Message<'_>, raw: &[u8]) -> Vec<Attach
 /// Mirrors [`collect_attachments`]' B2F-then-MIME dispatch ladder so that
 /// AttachmentStrip → click → Save As → write-to-disk works end-to-end for
 /// inbound CMS messages (tuxlink-4or5).
-fn extract_attachment_bytes(
+pub(crate) fn extract_attachment_bytes(
     msg: &mail_parser::Message<'_>,
     raw: &[u8],
     filename: &str,
@@ -7204,7 +7204,7 @@ pub async fn telnet_p2p_connect(
                     line.to_string(),
                 );
             },
-            |_proposals| Ok(Vec::new()),
+            |_proposals, _manifest| Ok(Vec::new()),
         )
     })
     .await
@@ -7567,6 +7567,7 @@ fn post_office_exchange<F>(
 where
     F: Fn(
         &[crate::winlink::proposal::Proposal],
+        &[crate::winlink::proposal::PendingMessage],
     ) -> Result<Vec<crate::winlink::proposal::Answer>, crate::winlink::session::ExchangeError>,
 {
     let config = post_office_exchange_config(mycall, locator, local);
@@ -8298,7 +8299,7 @@ pub async fn telnet_listen(
                     line.to_string(),
                 );
             },
-            |proposals: &[crate::winlink::proposal::Proposal]| {
+            |proposals: &[crate::winlink::proposal::Proposal], _manifest: &[crate::winlink::proposal::PendingMessage]| {
                 // Codex review 2026-06-03 [P1]: returning an empty Vec made
                 // `receive_turn` fail with `AnswerCountMismatch` on any
                 // inbound batch, so the listener couldn't actually accept
@@ -8868,6 +8869,31 @@ hw:CARD=Device,DEV=0
     }
 
     #[test]
+    fn build_attachment_preview_rejects_svg_even_with_image_extension() {
+        // tuxlink-2590 (receiving-end appsec audit): SVG is the script-capable
+        // "image" format (it can embed <script>). The preview gate keys on MAGIC
+        // BYTES, not the filename, so a hostile SVG named "map.png" is still
+        // rejected — the data: URL MIME can never become image/svg+xml. This is
+        // the load-bearing control against active content rendered in <img>.
+        let svg =
+            br#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#.to_vec();
+        let err = build_attachment_preview("map.png", svg)
+            .expect_err("SVG content must be rejected regardless of the .png filename");
+        assert!(matches!(err, UiError::Rejected(detail) if detail.contains("supported image")));
+    }
+
+    #[test]
+    fn build_attachment_preview_rejects_html_disguised_as_image() {
+        // A text/html payload (even with an image extension) is not a supported
+        // raster format → rejected, so the data: URL MIME can never be text/html
+        // and the preview can never render attacker markup (tuxlink-2590).
+        let html = b"<!DOCTYPE html><script>alert(1)</script>".to_vec();
+        let err = build_attachment_preview("photo.jpg", html)
+            .expect_err("HTML content must be rejected regardless of the .jpg filename");
+        assert!(matches!(err, UiError::Rejected(detail) if detail.contains("supported image")));
+    }
+
+    #[test]
     fn build_attachment_preview_rejects_oversized_payloads() {
         let too_large = vec![0u8; MAX_ATTACHMENT_PREVIEW_BYTES + 1];
         let err = build_attachment_preview("huge.jpg", too_large)
@@ -9057,6 +9083,7 @@ hw:CARD=Device,DEV=0
             packet: PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            rig: crate::config::RigUiConfig::default(),
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
@@ -9385,6 +9412,7 @@ hw:CARD=Device,DEV=0
             packet: PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            rig: crate::config::RigUiConfig::default(),
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
@@ -10787,6 +10815,7 @@ hw:CARD=Device,DEV=0
             packet: crate::config::PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            rig: crate::config::RigUiConfig::default(),
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
@@ -11829,7 +11858,7 @@ hw:CARD=Device,DEV=0
             build_selecting_decider, resolve_selection, InboundSelection, PendingProposalDto,
             SelectionRegistry, UnselectedDisposition,
         };
-        use crate::winlink::proposal::{Answer, Proposal};
+        use crate::winlink::proposal::{Answer, PendingMessage, Proposal};
         use crate::winlink::session::{
             run_exchange_with_role, ExchangeConfig, ExchangeRole, OutboundMessage as SessionOutbound,
             SessionIntent,
@@ -11940,7 +11969,7 @@ hw:CARD=Device,DEV=0
                     ExchangeRole::Answer,
                     &server_config,
                     server_outbound,
-                    |proposals: &[Proposal]| {
+                    |proposals: &[Proposal], _manifest: &[PendingMessage]| {
                         let mut g = proposed_mids.lock().unwrap();
                         for p in proposals {
                             g.push(p.mid.clone());

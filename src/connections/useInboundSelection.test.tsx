@@ -66,8 +66,8 @@ function setPath(pathname: string) {
 }
 
 const PROPOSALS: PendingProposalDto[] = [
-  { mid: 'MID-AAA', uncompressed_size: 2048, compressed_size: 1024 },
-  { mid: 'MID-BBB', uncompressed_size: 4096, compressed_size: 2048 },
+  { mid: 'MID-AAA', uncompressed_size: 2048, compressed_size: 1024, sender: 'svc@winlink.org', subject: 'Test subject' },
+  { mid: 'MID-BBB', uncompressed_size: 4096, compressed_size: 2048, sender: 'svc@winlink.org', subject: 'Test subject' },
 ];
 
 import App from '../App';
@@ -174,7 +174,7 @@ describe('useInboundSelection — AttemptId stale filter (tuxlink-bsiy)', () => 
         kind: 'inbound_proposals_offered',
         request_id: 2,
         attempt_id: 2,
-        proposals: [{ mid: 'STALE', uncompressed_size: 1, compressed_size: 1 }],
+        proposals: [{ mid: 'STALE', uncompressed_size: 1, compressed_size: 1, sender: 'svc@winlink.org', subject: 'Test subject' }],
       });
 
       // The active prompt is unchanged (still attempt 5 / request 9).

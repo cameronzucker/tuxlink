@@ -38,6 +38,7 @@ pub fn native_test_config() -> Config {
         packet: PacketConfig::default(),
         modem_ardop: None,
         modem_vara: None,
+        rig: crate::config::RigUiConfig::default(),
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
         network_po_favorites: Vec::new(),
         review_inbound_before_download: false,

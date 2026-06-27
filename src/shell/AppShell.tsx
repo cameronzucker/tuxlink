@@ -184,6 +184,7 @@ const EnvPanel = lazy(loadEnvPanel);
 // the shared right dock (chat ⇄ modem). AppShell lifts one useAprsChat instance
 // so the status-strip control (unread/listening) + the dock panel share state.
 import { useAprsChat } from '../aprs/useAprsChat';
+import { useEgressArm } from '../security/useEgressArm';
 import { useAprsPositions } from '../aprs/useAprsPositions';
 import { useEnvStations } from '../aprs/useEnvStations';
 import { openStationsWindow } from '../aprs/stationsWindow';
@@ -352,6 +353,11 @@ export function AppShell() {
   // chose plain Option A — no auto-open).
   const { isCompact } = useViewport();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Egress ARM surface (MCP phase 3.6): the operator arms/disarms agent
+  // send-authority and SEES its live state in the dashboard ribbon. Without an
+  // arm, nothing the MCP agent does can egress (the operator-present surface for
+  // the egress gate).
+  const egressArm = useEgressArm();
   // APRS tactical chat — lifted here (single instance) so the status-strip
   // control (unread/listening) and the dock panel share one state. (spec §1,§3)
   const aprs = useAprsChat();
@@ -1413,11 +1419,13 @@ export function AppShell() {
   // (prefillEvent) so the just-opened panel consumes it once it mounts + subscribes.
   // We close the finder so the operator lands on the armed, prefilled modem.
   const handleStationUse = useCallback(
-    (dial: FavoriteDial) => {
+    (dial: FavoriteDial, candidates?: FavoriteDial[]) => {
       // RadioMode and ProtocolId share the same string set; a station channel is
       // never 'telnet'. CMS = connect to the dialed RMS gateway over that protocol.
       onSelectConnection({ sessionType: 'cms', protocol: dial.mode as ConnectionKey['protocol'] });
-      emitGatewayPrefill(dial);
+      // tuxlink-8fkkk Task B: carry the ranked QSY-on-fail candidate list so the
+      // armed panel can send `qsyCandidates` on Connect.
+      emitGatewayPrefill(dial, candidates);
       setCatalogBuilderOpen(false);
     },
     [onSelectConnection],
@@ -1661,6 +1669,13 @@ export function AppShell() {
           identities={identityList.data ?? null}
           activeIdentity={activeIdentity.data ?? null}
           onSwitchIdentity={onSwitchIdentity}
+          egress={{
+            status: egressArm.status,
+            onArm: (durationSecs) => { void egressArm.arm(durationSecs); },
+            onDisarm: () => { void egressArm.disarm(); },
+            busy: egressArm.busy,
+            error: egressArm.error,
+          }}
         />
       </div>
 

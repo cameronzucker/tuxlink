@@ -101,11 +101,16 @@ jobs:
         # Catches Vite production-build failures that tsc + vitest miss.
         run: pnpm build
 
-      - name: Rust lint (clippy --all-targets --locked -D warnings)
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Rust lint (clippy --workspace --all-targets --locked -D warnings)
+        # --workspace lints ALL members (tuxlink-security, tuxlink-mcp-core,
+        # tuxlink-mcp, tuxlink-mcp-testserver), not just the default-members=["."]
+        # tuxlink package. The release build below stays package-scoped.
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets --locked -- -D warnings
 
       - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --verbose
+        # --workspace runs the new crates' unit tests too (without it,
+        # default-members=["."] skips them).
+        run: cargo test --manifest-path src-tauri/Cargo.toml --workspace --locked --verbose
         # NB: the heif-off (ECT/low-floor) compile path is covered end-to-end by
         # ect-build.yml (a full --no-default-features tauri build + install-test),
         # so it is intentionally NOT re-checked here — that extra cargo check

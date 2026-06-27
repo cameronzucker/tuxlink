@@ -88,7 +88,39 @@ describe('StationRail', () => {
     fireEvent.click(vara40);
     expect(handler).toHaveBeenCalled();
     const evt = handler.mock.calls[0][0] as CustomEvent;
-    expect(evt.detail).toEqual({ mode: 'vara-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' });
+    // tuxlink-8fkkk Task B: the event detail is now { dial, candidates }. The
+    // primary dial is the clicked channel; candidates is the station's ranked
+    // vara-hf list (reliability DESC: 40m 0.86 then 80m 0.74).
+    expect(evt.detail.dial).toEqual({ mode: 'vara-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' });
+    expect(evt.detail.candidates).toEqual([
+      { mode: 'vara-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' },
+      { mode: 'vara-hf', gateway: 'N0DAJ', freq: '3.590', grid: 'DM34oa' },
+    ]);
+    window.removeEventListener(GATEWAY_PREFILL_EVENT, handler as EventListener);
+  });
+
+  it('Use → keeps the CLICKED channel as candidates[0] even when it is not the highest-ranked', () => {
+    // tuxlink-8fkkk Codex Fix 2: 40m ranks higher (rel 0.86) than 80m (0.74),
+    // but the operator clicked 80m. The clicked dial MUST be the PRIMARY
+    // candidate — the backend dials candidates[0] first and a non-empty list
+    // overrides the form target/freq, so a misordered list would dial 40m
+    // first. Assert the clicked 80m dial leads, with 40m following as QSY.
+    const handler = vi.fn();
+    window.addEventListener(GATEWAY_PREFILL_EVENT, handler as EventListener);
+    render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} activePrefillMode="vara-hf" />);
+    fireEvent.click(screen.getByTestId('use-vara-hf-3590'));
+    const evt = handler.mock.calls[0][0] as CustomEvent;
+    expect(evt.detail.dial).toEqual({ mode: 'vara-hf', gateway: 'N0DAJ', freq: '3.590', grid: 'DM34oa' });
+    expect(evt.detail.candidates).toEqual([
+      { mode: 'vara-hf', gateway: 'N0DAJ', freq: '3.590', grid: 'DM34oa' },
+      { mode: 'vara-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' },
+    ]);
+    // No duplicate of the clicked dial appears in the QSY tail.
+    expect(
+      evt.detail.candidates.filter(
+        (d: { freq?: string }) => d.freq === '3.590',
+      ).length,
+    ).toBe(1);
     window.removeEventListener(GATEWAY_PREFILL_EVENT, handler as EventListener);
   });
 
@@ -106,7 +138,12 @@ describe('StationRail', () => {
     const ardop = screen.getByTestId('use-ardop-hf-7103');
     expect(ardop.hasAttribute('disabled')).toBe(false);
     fireEvent.click(ardop);
-    expect(onUse).toHaveBeenCalledWith({ mode: 'ardop-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' });
+    // tuxlink-8fkkk Task B: onUse now receives (dial, candidates). The station
+    // has one ardop-hf channel, so the ranked list is the single clicked dial.
+    expect(onUse).toHaveBeenCalledWith(
+      { mode: 'ardop-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' },
+      [{ mode: 'ardop-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' }],
+    );
   });
 
   // tuxlink-5016 — save-to-favorites affordance.

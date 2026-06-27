@@ -2353,7 +2353,7 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
         role,
         &exchange_config,
         outbound,
-        |proposals| Ok(proposals.iter().map(|_| Answer::Accept { resume_offset: 0 }).collect()),
+        |proposals, _manifest| Ok(proposals.iter().map(|_| Answer::Accept { resume_offset: 0 }).collect()),
         Some(wire_log),
     )
     .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
@@ -2819,7 +2819,7 @@ fn resolve_locator(config: &Config, position: Option<&crate::position::PositionA
 /// Boxed because the two arms have distinct concrete types; it stays on the
 /// blocking exchange thread, so no `Send`/`Sync` bound is required.
 type InboundDecider =
-    Box<dyn Fn(&[crate::winlink::proposal::Proposal]) -> Result<Vec<Answer>, session::ExchangeError>>;
+    Box<dyn Fn(&[crate::winlink::proposal::Proposal], &[crate::winlink::proposal::PendingMessage]) -> Result<Vec<Answer>, session::ExchangeError>>;
 
 /// Run one CMS exchange (blocking): build the outbox into proposals, connect over
 /// the chosen transport, accept all offered messages, then file what arrived into
@@ -2962,7 +2962,7 @@ fn native_connect(
                 aborting.clone(),
             ))
         }
-        None => Box::new(|proposals: &[Proposal]| {
+        None => Box::new(|proposals: &[Proposal], _manifest: &[crate::winlink::proposal::PendingMessage]| {
             Ok(proposals
                 .iter()
                 .map(|_| Answer::Accept { resume_offset: 0 })
@@ -3276,7 +3276,7 @@ pub fn run_ardop_b2f_exchange(
         ExchangeRole::Dial,
         &exchange_config,
         outbound,
-        |proposals| {
+        |proposals, _manifest| {
             Ok(proposals
                 .iter()
                 .map(|_| Answer::Accept { resume_offset: 0 })
@@ -3354,7 +3354,7 @@ pub fn run_ardop_b2f_answer(
         ExchangeRole::Answer,
         &exchange_config,
         outbound,
-        |proposals| {
+        |proposals, _manifest| {
             Ok(proposals
                 .iter()
                 .map(|_| Answer::Accept { resume_offset: 0 })
@@ -3466,7 +3466,7 @@ pub fn run_vara_b2f_answer(
         ExchangeRole::Answer,
         &exchange_config,
         outbound,
-        |proposals| {
+        |proposals, _manifest| {
             Ok(proposals
                 .iter()
                 .map(|_| Answer::Accept { resume_offset: 0 })
@@ -3619,7 +3619,7 @@ pub fn run_vara_b2f_exchange(
         ExchangeRole::Dial,
         &exchange_config,
         outbound,
-        |proposals| {
+        |proposals, _manifest| {
             Ok(proposals
                 .iter()
                 .map(|_| Answer::Accept { resume_offset: 0 })
@@ -4105,6 +4105,7 @@ mod native_read_state_tests {
             packet: PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            rig: crate::config::RigUiConfig::default(),
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
@@ -4594,7 +4595,7 @@ mod native_read_state_tests {
             &|_| {},
             &|_| {},
             &|_| {},
-            |_| Ok(vec![]),
+            |_, _| Ok(vec![]),
         )
         .expect("dial to the local listener should connect and complete a clean exchange");
 
@@ -4868,7 +4869,7 @@ mod native_read_state_tests {
                 ExchangeRole::Answer,
                 &server_config,
                 server_outbound, // the server OFFERS this message
-                |proposals| {
+                |proposals, _manifest| {
                     Ok(proposals
                         .iter()
                         .map(|_| Answer::Accept { resume_offset: 0 })
@@ -5692,6 +5693,7 @@ mod native_read_state_tests {
             packet: PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            rig: crate::config::RigUiConfig::default(),
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,

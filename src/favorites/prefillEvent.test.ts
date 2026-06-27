@@ -9,7 +9,9 @@ describe('prefillEvent', () => {
     const cb = vi.fn();
     const off = listenGatewayPrefill('vara-hf', cb);
     emitGatewayPrefill(dial('vara-hf'));
-    expect(cb).toHaveBeenCalledWith(dial('vara-hf'));
+    // tuxlink-8fkkk Task B: the callback now receives (dial, candidates); a bare
+    // emit passes no candidates.
+    expect(cb).toHaveBeenCalledWith(dial('vara-hf'), undefined);
     off();
   });
 
@@ -19,7 +21,19 @@ describe('prefillEvent', () => {
     emitGatewayPrefill(dial('ardop-hf'));
     const cb = vi.fn();
     const off = listenGatewayPrefill('ardop-hf', cb);
-    expect(cb).toHaveBeenCalledWith(dial('ardop-hf'));
+    expect(cb).toHaveBeenCalledWith(dial('ardop-hf'), undefined);
+    off();
+  });
+
+  it('carries an ordered candidate list through a live emit (tuxlink-8fkkk Task B)', () => {
+    const cb = vi.fn();
+    const off = listenGatewayPrefill('ardop-hf', cb);
+    const candidates: FavoriteDial[] = [
+      { mode: 'ardop-hf', gateway: 'W7DG', freq: '7.103' },
+      { mode: 'ardop-hf', gateway: 'W7DG', freq: '14.105' },
+    ];
+    emitGatewayPrefill(dial('ardop-hf'), candidates);
+    expect(cb).toHaveBeenCalledWith(dial('ardop-hf'), candidates);
     off();
   });
 

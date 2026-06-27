@@ -240,6 +240,17 @@ pub struct ModemStatus {
     ///
     /// Stub today: returns `None` until Phase 3.2 + 3.5 wire this.
     pub active_transport_kind: Option<TransportKind>,
+    /// Live VFO frequency (Hz) read back from the rig over CAT, when the
+    /// live-VFO poll thread is running (rig-control LIVE-VFO POLL). Present
+    /// only on the DRA-100 keep-serial path with `live_vfo_poll` enabled:
+    /// a dedicated poll thread (its own rigctld client) writes the latest
+    /// reading here every ~2 s via [`ModemSession::set_rig_freq_hz`].
+    ///
+    /// `None` until the first successful read, and cleared by
+    /// [`ModemSession::reset_to_stopped`] on disconnect. The frontend's
+    /// ARDOP frequency element renders the live MHz when this is `Some`,
+    /// falling back to the configured/idle frequency otherwise.
+    pub rig_freq_hz: Option<u64>,
 }
 
 impl ModemStatus {
@@ -264,6 +275,7 @@ impl ModemStatus {
             transport_owner: TransportOwner::None,
             active_intent: None,
             active_transport_kind: None,
+            rig_freq_hz: None,
         }
     }
 }
@@ -334,6 +346,23 @@ pub struct ModemSession {
     /// accessor already reads this field under `#[cfg(test)]`.
     #[allow(dead_code)]
     transport_return_rx: Mutex<Option<mpsc::Receiver<Box<dyn crate::winlink::modem::ModemTransport>>>>,
+    /// Stop flag for the live-VFO poll thread (rig-control LIVE-VFO POLL).
+    /// Cloned into the poll thread when it spawns; the thread checks it each
+    /// loop iteration and exits when it flips to `true`. Set by
+    /// [`ModemSession::stop_rig_poll`] (called from every disconnect path
+    /// before the rig is dropped) so the thread stops cooperatively rather
+    /// than only via its independent client erroring after rigctld dies.
+    ///
+    /// Decoupled from the inner mutex so the poll thread never contends with
+    /// status ticks: it loads the flag lock-free and only grabs the mutex to
+    /// write a fresh frequency reading.
+    rig_poll_stop: Arc<AtomicBool>,
+    /// Join handle for the live-VFO poll thread, if one is running. Taken +
+    /// joined by [`ModemSession::stop_rig_poll`] so a disconnect blocks until
+    /// the prior poll thread has exited — preventing a thread leak across
+    /// reconnects (a fresh connect would otherwise spawn a second poller while
+    /// the first is still draining its final read/sleep).
+    rig_poll_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for ModemSession {
@@ -405,6 +434,20 @@ struct ModemSessionInner {
     /// vs `VaraFm`) so the frontend's sidebar-nav drift guard reads a
     /// uniform `(intent, transport_kind)` pair across modems.
     active_transport_kind: Option<TransportKind>,
+    /// Live CAT rig handle for the connected session (tuxlink rig-control
+    /// Task 8/9). Present only on the DRA-100 (keep-serial) path: the
+    /// pre-audio tune left rigctld running so the operator keeps CAT control
+    /// for the session's duration. `None` on the close-serial (internal-codec)
+    /// path, where [`crate::modem_commands::tune_rig_for_connect`] released
+    /// the serial before audio.
+    ///
+    /// Dropped by [`ModemSession::reset_to_stopped`] — the only full-teardown
+    /// path — so rigctld stops when the operator disconnects. `ManagedRig::Drop`
+    /// SIGKILLs + reaps its child, so the drop releases the CAT serial. NOT
+    /// cleared by [`Self::take_transport`], which is a temporary borrow
+    /// (b2f-exchange / listener arbiter) that re-installs the transport into
+    /// the still-live session.
+    rig: Option<tux_rig::ManagedRig>,
 }
 
 // Manual `Debug` impl: `Box<dyn ModemTransport>` does not implement `Debug`,
@@ -432,6 +475,7 @@ impl std::fmt::Debug for ModemSessionInner {
             .field("transport_owner", &self.transport_owner)
             .field("active_intent", &self.active_intent)
             .field("active_transport_kind", &self.active_transport_kind)
+            .field("rig", &self.rig.as_ref().map(|_| "Some(<ManagedRig>)"))
             .finish()
     }
 }
@@ -453,6 +497,7 @@ impl ModemSession {
                 transport_owner: TransportOwner::None,
                 active_intent: None,
                 active_transport_kind: None,
+                rig: None,
             }),
             connect_in_progress: AtomicBool::new(false),
             close_generation: AtomicU64::new(0),
@@ -461,6 +506,8 @@ impl ModemSession {
             transport_yield_tx: yield_tx,
             transport_return_tx: return_tx,
             transport_return_rx: Mutex::new(Some(return_rx)),
+            rig_poll_stop: Arc::new(AtomicBool::new(false)),
+            rig_poll_handle: Mutex::new(None),
         }
     }
 
@@ -531,6 +578,129 @@ impl ModemSession {
         self.inner.lock().unwrap().transport = Some(t);
     }
 
+    /// Store (or clear) the live CAT rig handle for the connected session
+    /// (rig-control Task 8/9). Called from the ARDOP connect flow after a
+    /// successful pre-audio tune on the DRA-100 (keep-serial) path, with the
+    /// `ManagedRig` that
+    /// [`crate::modem_commands::tune_rig_for_connect`] kept alive. Pass `None`
+    /// (or simply never call it) on the close-serial path, where the helper
+    /// already released the serial before audio.
+    ///
+    /// Replacing an existing rig drops the prior handle (its `Drop` SIGKILLs
+    /// rigctld); the swap runs under the lock but the drop of the *prior*
+    /// handle happens after the guard is released, so no rigctld teardown
+    /// runs while the mutex is held.
+    pub fn set_rig(&self, rig: Option<tux_rig::ManagedRig>) {
+        let prior = {
+            let mut inner = self.inner.lock().unwrap();
+            std::mem::replace(&mut inner.rig, rig)
+        };
+        drop(prior);
+    }
+
+    /// Write the live VFO frequency read back from the rig into the cached
+    /// status snapshot (rig-control LIVE-VFO POLL). Called by the poll thread
+    /// every ~2 s with `Some(hz)` on a successful read. The lock is held only
+    /// for the field write — NEVER across the rigctld I/O that produced the
+    /// value (the read happens on the poll thread's own client, lock-free).
+    ///
+    /// `None` clears the reading; [`Self::reset_to_stopped`] already resets the
+    /// whole snapshot, so the poller does not need to clear on exit.
+    pub fn set_rig_freq_hz(&self, hz: Option<u64>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.status.rig_freq_hz = hz;
+    }
+
+    /// Spawn the live-VFO poll thread (rig-control LIVE-VFO POLL). The thread
+    /// opens its OWN timeout-bounded rigctld client (rigctld accepts multiple
+    /// clients; the managed client on the session is left untouched) and loops
+    /// every [`RIG_POLL_INTERVAL`]: read the VFO frequency, write it into the
+    /// cached status via [`Self::set_rig_freq_hz`], sleep, repeat. It exits
+    /// when [`Self::stop_rig_poll`] flips the stop flag, or when its client read
+    /// errors (e.g. rigctld was SIGKILLed by the dropped `ManagedRig` on
+    /// disconnect — a belt-and-suspenders exit even if the flag is missed).
+    ///
+    /// Caller contract (the ARDOP connect flow on the DRA-100 keep-serial
+    /// path, when `live_vfo_poll` is enabled): call AFTER the rig handle is
+    /// stored on the session. Re-spawning replaces any prior poller — this
+    /// first stops + joins the old thread via [`Self::stop_rig_poll`] so no
+    /// poller leaks across reconnects.
+    ///
+    /// `host` / `port` are the rigctld endpoint (same values the managed rig
+    /// connected to). No-op-safe to call with rigctld down: the connect inside
+    /// the thread fails and the thread exits immediately (the readout simply
+    /// stays absent).
+    pub fn start_rig_poll(self: &Arc<Self>, host: String, port: u16) {
+        // Stop + join any prior poller first so we never run two at once.
+        self.stop_rig_poll();
+
+        // Clear the stop flag for this generation of the poller.
+        self.rig_poll_stop.store(false, Ordering::Release);
+        let stop = self.rig_poll_stop.clone();
+        let session = self.clone();
+
+        let handle = std::thread::Builder::new()
+            .name("rig-vfo-poll".into())
+            .spawn(move || {
+                // `read_status` is a `tux_rig::Rig` trait method — bring the
+                // trait into scope so the call resolves.
+                use tux_rig::Rig;
+                // Open an independent, timeout-bounded client. A hung rigctld
+                // cannot wedge this thread: the bounded read returns an error
+                // and the loop exits.
+                let mut client = match tux_rig::RigctldClient::connect_with_timeout(
+                    &host,
+                    port,
+                    RIG_POLL_READ_TIMEOUT,
+                ) {
+                    Ok(c) => c,
+                    // rigctld not reachable (down, or racing the spawn): nothing
+                    // to poll. Exit; the readout stays absent.
+                    Err(_) => return,
+                };
+                while !stop.load(Ordering::Acquire) {
+                    match client.read_status() {
+                        Ok(s) => session.set_rig_freq_hz(Some(s.freq_hz)),
+                        // Read failed (timeout, rigctld died, socket reset).
+                        // Stop polling — the session's dropped ManagedRig will
+                        // have killed rigctld on disconnect; a transient error
+                        // is also a reasonable exit (the readout freezes at the
+                        // last good value rather than thrashing reconnects).
+                        Err(_) => break,
+                    }
+                    // Sleep in short slices so the stop flag is observed
+                    // promptly on disconnect rather than after a full interval.
+                    let mut slept = Duration::ZERO;
+                    while slept < RIG_POLL_INTERVAL && !stop.load(Ordering::Acquire) {
+                        std::thread::sleep(RIG_POLL_SLEEP_SLICE);
+                        slept += RIG_POLL_SLEEP_SLICE;
+                    }
+                }
+            })
+            .expect("failed to spawn rig-vfo-poll thread");
+
+        *self.rig_poll_handle.lock().unwrap() = Some(handle);
+    }
+
+    /// Signal the live-VFO poll thread to stop and join it (rig-control
+    /// LIVE-VFO POLL). Idempotent + safe to call when no poller is running.
+    /// Called by every disconnect path (via [`Self::reset_to_stopped`]) BEFORE
+    /// the rig is dropped, so the thread stops cooperatively. The join blocks
+    /// until the thread has exited — bounded by one short sleep slice plus one
+    /// in-flight bounded read — guaranteeing no poller outlives the session.
+    ///
+    /// The handle is taken OUTSIDE any other lock and joined with the inner
+    /// mutex NOT held, so the joined thread's final [`Self::set_rig_freq_hz`]
+    /// (which takes the inner mutex) can complete without deadlocking against
+    /// the joiner.
+    pub fn stop_rig_poll(&self) {
+        self.rig_poll_stop.store(true, Ordering::Release);
+        let handle = self.rig_poll_handle.lock().unwrap().take();
+        if let Some(handle) = handle {
+            let _ = handle.join();
+        }
+    }
+
     /// Take ownership of the live transport handle, if any. The caller is
     /// responsible for calling `disconnect()` + dropping it. Intended for
     /// flows that want to shut down the transport WITHOUT also resetting
@@ -568,17 +738,34 @@ impl ModemSession {
     /// `transport_owner` to `None` — the session is back to a closed
     /// posture and no owner is holding the transport.
     pub fn reset_to_stopped(&self) -> Option<Box<dyn crate::winlink::modem::ModemTransport>> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.status = ModemStatus::stopped();
-        inner.abort_writer = None;
-        inner.abort_stream = None;
-        inner.transport_owner = TransportOwner::None;
-        // tuxlink-0ye6 Task 3.5: clear active session mode on full reset so
-        // a follow-up open starts with a clean slate. Mirrors VARA's
-        // `vara_stop_session_inner` clearing the same two fields.
-        inner.active_intent = None;
-        inner.active_transport_kind = None;
-        inner.transport.take()
+        // rig-control LIVE-VFO POLL: stop + join the poll thread FIRST, before
+        // the rig is dropped. The join must run with the inner mutex NOT held
+        // (the poll thread's final `set_rig_freq_hz` takes it), so this is the
+        // very first step — outside the critical section below. Idempotent /
+        // no-op when no poller is running.
+        self.stop_rig_poll();
+        // Take both the transport and the live rig (if any) out under one lock,
+        // then drop the rig AFTER releasing the guard so `ManagedRig::Drop`
+        // (a SIGKILL + reap of rigctld) never runs while the session mutex is
+        // held — same "no I/O under the lock" discipline the transport handle
+        // follows (the caller drops the transport outside the lock).
+        let (transport, rig) = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.status = ModemStatus::stopped();
+            inner.abort_writer = None;
+            inner.abort_stream = None;
+            inner.transport_owner = TransportOwner::None;
+            // tuxlink-0ye6 Task 3.5: clear active session mode on full reset so
+            // a follow-up open starts with a clean slate. Mirrors VARA's
+            // `vara_stop_session_inner` clearing the same two fields.
+            inner.active_intent = None;
+            inner.active_transport_kind = None;
+            (inner.transport.take(), inner.rig.take())
+        };
+        // rig-control Task 8/9: stop rigctld on disconnect (DRA-100 keep path).
+        // `None` on the close-serial path — nothing to drop.
+        drop(rig);
+        transport
     }
 
     /// Record the operator-typed `intent` + `transport_kind` on the session
@@ -1148,6 +1335,21 @@ impl Default for ModemSession {
 /// will replace the cached-snapshot rebroadcast (v0.3+) can revisit this.
 pub const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// Interval between live-VFO frequency reads (rig-control LIVE-VFO POLL). 2 s
+/// keeps CAT serial chatter light while still feeling live in the readout.
+pub const RIG_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Sleep-slice granularity inside the poll loop's inter-read wait. The loop
+/// sleeps in slices (rather than one `RIG_POLL_INTERVAL` sleep) so the stop
+/// flag is observed within ~`RIG_POLL_SLEEP_SLICE` of a disconnect instead of
+/// after a full interval — bounding `stop_rig_poll`'s join latency.
+pub const RIG_POLL_SLEEP_SLICE: Duration = Duration::from_millis(100);
+
+/// Read timeout on the poll thread's independent rigctld client. Bounds a
+/// single socket read so a hung rigctld cannot wedge the poll thread; on
+/// timeout the read errors and the loop exits.
+pub const RIG_POLL_READ_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// Tauri event name the broadcaster emits on. The frontend's `useModemStatus`
 /// hook (Task 1.3) subscribes to this exact string — do not rename without
 /// updating `src/hooks/useModemStatus.ts`.
@@ -1239,6 +1441,7 @@ mod tests {
             transport_owner: TransportOwner::None,
             active_intent: None,
             active_transport_kind: None,
+            rig_freq_hz: None,
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: ModemStatus = serde_json::from_str(&json).unwrap();
@@ -1263,6 +1466,140 @@ mod tests {
     fn modem_session_starts_stopped() {
         let s = ModemSession::new();
         assert_eq!(s.status_snapshot().state, ModemState::Stopped);
+    }
+
+    // ── rig-control LIVE-VFO POLL ──────────────────────────────────────────
+
+    #[test]
+    fn rig_freq_hz_default_none_and_setter_round_trips() {
+        let session = ModemSession::new();
+        assert!(
+            session.status_snapshot().rig_freq_hz.is_none(),
+            "fresh session must have no live VFO reading"
+        );
+        session.set_rig_freq_hz(Some(7_102_000));
+        assert_eq!(session.status_snapshot().rig_freq_hz, Some(7_102_000));
+        session.set_rig_freq_hz(None);
+        assert!(session.status_snapshot().rig_freq_hz.is_none());
+    }
+
+    #[test]
+    fn reset_to_stopped_clears_rig_freq_hz() {
+        let session = ModemSession::new();
+        session.set_rig_freq_hz(Some(14_105_000));
+        assert_eq!(session.status_snapshot().rig_freq_hz, Some(14_105_000));
+        let _ = session.reset_to_stopped();
+        assert!(
+            session.status_snapshot().rig_freq_hz.is_none(),
+            "reset_to_stopped must clear the live VFO reading"
+        );
+    }
+
+    #[test]
+    fn stop_rig_poll_is_a_no_op_when_no_poller_running() {
+        // Idempotent + safe to call with no poller — exercised by every
+        // disconnect on the close-serial path (where no poller was spawned).
+        let session = ModemSession::new();
+        session.stop_rig_poll();
+        session.stop_rig_poll();
+    }
+
+    /// In-process fake rigctld: bind a TCP port and answer `f`/`m`/`t` with
+    /// fixed values for as many clients as connect. Returns the bound port.
+    /// Serves until the process exits (test-scoped daemon thread).
+    fn fake_rigctld_for_poll(freq_line: &'static str) -> u16 {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                std::thread::spawn(move || {
+                    let mut writer = stream.try_clone().unwrap();
+                    let mut reader = BufReader::new(stream);
+                    let mut line = String::new();
+                    while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                        let reply = match line.trim_end().chars().next() {
+                            Some('f') => format!("{freq_line}\n"),
+                            Some('m') => "PKTUSB\n3000\n".to_string(),
+                            Some('t') => "0\n".to_string(),
+                            _ => "RPRT -1\n".to_string(),
+                        };
+                        if writer.write_all(reply.as_bytes()).is_err() {
+                            break;
+                        }
+                        let _ = writer.flush();
+                        line.clear();
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn start_rig_poll_reads_freq_then_stop_joins_cleanly() {
+        let port = fake_rigctld_for_poll("7102000");
+        let session = Arc::new(ModemSession::new());
+        session.start_rig_poll("127.0.0.1".into(), port);
+
+        // Wait (bounded) for the first reading to land. The poller reads
+        // immediately on entry, so this should be quick.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if session.status_snapshot().rig_freq_hz == Some(7_102_000) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "poll thread never wrote the VFO reading"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        // stop_rig_poll must signal + join the thread without hanging.
+        session.stop_rig_poll();
+        // After join, no second poller leaks: handle slot is empty.
+        assert!(
+            session.rig_poll_handle.lock().unwrap().is_none(),
+            "join must clear the handle slot"
+        );
+    }
+
+    #[test]
+    fn start_rig_poll_replaces_prior_poller_no_leak() {
+        let port = fake_rigctld_for_poll("14105000");
+        let session = Arc::new(ModemSession::new());
+        session.start_rig_poll("127.0.0.1".into(), port);
+        // Re-spawn: the second start must stop + join the first internally so
+        // exactly one poller is live afterward.
+        session.start_rig_poll("127.0.0.1".into(), port);
+        // Confirm a reading still lands from the live (second) poller.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while session.status_snapshot().rig_freq_hz != Some(14_105_000) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "second poller never produced a reading"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        session.stop_rig_poll();
+    }
+
+    #[test]
+    fn start_rig_poll_exits_immediately_when_rigctld_unreachable() {
+        // No listener bound on this port → connect_with_timeout fails → the
+        // thread returns without ever writing a reading. stop must still join
+        // cleanly (the thread already exited).
+        let session = Arc::new(ModemSession::new());
+        // Port 1 is privileged + unbound in test env → connect refused fast.
+        session.start_rig_poll("127.0.0.1".into(), 1);
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(
+            session.status_snapshot().rig_freq_hz.is_none(),
+            "no reading when rigctld is unreachable"
+        );
+        session.stop_rig_poll();
     }
 
     #[test]
@@ -1899,8 +2236,13 @@ mod tests {
             transport_owner: TransportOwner::ListenerInbound,
             active_intent: Some(SessionIntent::P2p),
             active_transport_kind: Some(TransportKind::Ardop),
+            rig_freq_hz: Some(7_102_000),
         };
         let json = serde_json::to_string(&s).unwrap();
+        assert!(
+            json.contains("\"rigFreqHz\":7102000"),
+            "field `rig_freq_hz` must serialize as `rigFreqHz`; got {json}"
+        );
         assert!(
             json.contains("\"listenerArmed\":true"),
             "field `listener_armed` must serialize as `listenerArmed`; got {json}"

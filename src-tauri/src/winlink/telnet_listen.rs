@@ -74,7 +74,7 @@ use super::listener::{
 };
 use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, ExchangeRole};
 #[cfg(test)]
-use super::proposal::Proposal;
+use super::proposal::{PendingMessage, Proposal};
 
 /// Default TCP listen port — matches WLE's `Globals.strTelnetListeningPort`
 /// initial value `"8774"` at `Globals.cs:1518`. NOTE: 8772 is RMS-Relay's
@@ -184,7 +184,7 @@ pub fn run_accept_loop<F>(
     wire_log: &dyn Fn(&str),
     decide: F,
 ) where
-    F: Fn(&[crate::winlink::proposal::Proposal]) -> Result<Vec<crate::winlink::proposal::Answer>, ExchangeError>
+    F: Fn(&[crate::winlink::proposal::Proposal], &[crate::winlink::proposal::PendingMessage]) -> Result<Vec<crate::winlink::proposal::Answer>, ExchangeError>
         + Clone,
 {
     let local = listener
@@ -310,7 +310,7 @@ pub(crate) fn handle_one_session<F>(
     decide: F,
 ) -> Result<ExchangeResult, TelnetListenError>
 where
-    F: Fn(&[crate::winlink::proposal::Proposal]) -> Result<Vec<crate::winlink::proposal::Answer>, ExchangeError>,
+    F: Fn(&[crate::winlink::proposal::Proposal], &[crate::winlink::proposal::PendingMessage]) -> Result<Vec<crate::winlink::proposal::Answer>, ExchangeError>,
 {
     // Bound the wire phase so a half-open peer can't pin the listener.
     stream.set_read_timeout(Some(PEER_TIMEOUT)).ok();
@@ -524,7 +524,7 @@ fn run_b2f_answerer<R, W, F>(
 where
     R: Read,
     W: Write,
-    F: Fn(&[crate::winlink::proposal::Proposal]) -> Result<Vec<crate::winlink::proposal::Answer>, ExchangeError>,
+    F: Fn(&[crate::winlink::proposal::Proposal], &[crate::winlink::proposal::PendingMessage]) -> Result<Vec<crate::winlink::proposal::Answer>, ExchangeError>,
 {
     use crate::winlink_backend::MailboxFolder;
 
@@ -980,7 +980,7 @@ mod tests {
                 None,
                 &|_| {},
                 &|_| {},
-                |_| Ok(Vec::new()),
+                |_, _| Ok(Vec::new()),
             )
         });
 
@@ -1056,7 +1056,7 @@ mod tests {
                 None,
                 &|_| {},
                 &|_| {},
-                |_| Ok(Vec::new()),
+                |_, _| Ok(Vec::new()),
             )
         });
 
@@ -1123,7 +1123,7 @@ mod tests {
                 None,
                 &|_| {},
                 &|_| {},
-                |_| Ok(Vec::new()),
+                |_, _| Ok(Vec::new()),
             )
         });
 
@@ -1183,7 +1183,7 @@ mod tests {
                 None,
                 &|_| {},
                 &|_| {},
-                |_| Ok(Vec::new()),
+                |_, _| Ok(Vec::new()),
             )
         });
 
@@ -1358,7 +1358,7 @@ mod tests {
                 None,
                 &|_| {},
                 &|_| {},
-                |_| Ok(Vec::new()),
+                |_, _| Ok(Vec::new()),
             )
         });
 
@@ -1417,7 +1417,7 @@ mod tests {
                 shutdown_for_loop,
                 &|_| {},
                 &|_| {},
-                |_proposals: &[Proposal]| Ok(Vec::new()),
+                |_proposals: &[Proposal], _manifest: &[PendingMessage]| Ok(Vec::new()),
             );
         });
 

@@ -30,9 +30,9 @@ const overlayZIndex = (css: string): number => {
 // Distinct byte values so every formatSize() result is unique — keeps the
 // getByText size assertions unambiguous.
 const PROPOSALS: PendingProposalDto[] = [
-  { mid: 'AAA111BBB222', uncompressed_size: 2048, compressed_size: 1024 }, // 2.0 KB / 1.0 KB
-  { mid: 'CCC333DDD444', uncompressed_size: 8192, compressed_size: 4096 }, // 8.0 KB / 4.0 KB
-  { mid: 'EEE555FFF666', uncompressed_size: 512, compressed_size: 256 },   // 512 B / 256 B
+  { mid: 'AAA111BBB222', uncompressed_size: 2048, compressed_size: 1024, sender: 'svc@winlink.org', subject: 'Test subject' }, // 2.0 KB / 1.0 KB
+  { mid: 'CCC333DDD444', uncompressed_size: 8192, compressed_size: 4096, sender: 'svc@winlink.org', subject: 'Test subject' }, // 8.0 KB / 4.0 KB
+  { mid: 'EEE555FFF666', uncompressed_size: 512, compressed_size: 256, sender: 'svc@winlink.org', subject: 'Test subject' },   // 512 B / 256 B
 ];
 
 describe('InboundSelectionPanel', () => {

@@ -16,7 +16,7 @@
 // disabled-with-banner state so the operator understands why the controls
 // are unusable. The Start button is disabled regardless of the form state.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
@@ -35,6 +35,12 @@ import { useFavorites } from '../../favorites/useFavorites';
 import { listenGatewayPrefill } from '../../favorites/prefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
+import { RigControlSection } from './RigControlSection';
+import {
+  parseFreqInputToHz,
+  dialFreqToMhzString,
+  dialsToQsyCandidates,
+} from './freq';
 import './VaraRadioPanel.css';
 import '../sections/ListenSection.css';
 
@@ -129,6 +135,11 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   // recorded on the call's resolve and `failed` in its catch (Packet semantics).
   const [target, setTarget] = useState<string>('');
   const [exchanging, setExchanging] = useState(false);
+  // tuxlink-8fkkk A3: operator-entered frequency in MHz for CAT-based QSY before
+  // the VARA connect. "7.102" → 7102000 Hz. Empty/invalid → null (backend skips
+  // the pre-audio retune). Mirrors ARDOP; uses the shared parse/normalize helper.
+  const [freqMhz, setFreqMhz] = useState<string>('');
+  const freqHz = useMemo<number | null>(() => parseFreqInputToHz(freqMhz), [freqMhz]);
   // recordAttempt logs the HONEST on-air outcome. mode.kind is literally
   // 'vara-hf' / 'vara-fm' — the same strings as the favorites RadioMode union.
   const { recordAttempt } = useFavorites(mode.kind);
@@ -136,20 +147,33 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   // connection record IFF its gateway matches the dial target. Cleared on a
   // manual target edit (a hand-typed target is not the prefilled favorite).
   const pendingDialRef = useRef<FavoriteDial | null>(null);
+  // tuxlink-8fkkk Task B: the ranked QSY-on-fail candidate list from the last
+  // Find-a-Station "Use →". Sent as `qsyCandidates` on Send/Receive when it has
+  // more than one entry; a single/empty list falls back to the legacy single dial.
+  const pendingCandidatesRef = useRef<FavoriteDial[]>([]);
   // RADIO-1: a favorite's Connect is PRE-FILL ONLY — it sets `target` and NEVER
   // invokes the exchange. The operator's later Send/Receive click is the Part 97
   // consent gate.
-  const handlePrefill = useCallback((dial: FavoriteDial) => {
-    setTarget(dial.gateway);
-    pendingDialRef.current = dial;
-    // tuxlink-vu97: persist so the ribbon Connect can dial this target (pane closed).
-    writeLastTarget(mode.kind, dial.gateway);
-    // tuxlink-p6iq: a "use this gateway" action lands the operator CONNECTABLE.
-    // Request an auto-open of the transport — opening the cmd/data sockets does
-    // NOT transmit (the Start button says as much), so this preserves the
-    // prefill-never-transmits rule: Send/Receive stays the explicit consent click.
-    setAutoOpenPending(true);
-  }, [mode.kind]);
+  const handlePrefill = useCallback(
+    (dial: FavoriteDial, candidates?: FavoriteDial[]) => {
+      setTarget(dial.gateway);
+      pendingDialRef.current = dial;
+      pendingCandidatesRef.current = candidates ?? [];
+      // tuxlink-vu97: persist so the ribbon Connect can dial this target (pane closed).
+      writeLastTarget(mode.kind, dial.gateway);
+      // tuxlink-8fkkk A3/C4: normalize the dial's freq metadata to a MHz string
+      // (handles both Find-a-Station MHz and saved-favorite kHz) and populate the
+      // field so Send/Receive CAT-tunes the rig. CLEAR the field when the dial
+      // carries no parseable freq so a stale freq never tunes the wrong frequency.
+      setFreqMhz(dialFreqToMhzString(dial) ?? '');
+      // tuxlink-p6iq: a "use this gateway" action lands the operator CONNECTABLE.
+      // Request an auto-open of the transport — opening the cmd/data sockets does
+      // NOT transmit (the Start button says as much), so this preserves the
+      // prefill-never-transmits rule: Send/Receive stays the explicit consent click.
+      setAutoOpenPending(true);
+    },
+    [mode.kind],
+  );
 
   // tuxlink-ypz3 (3a): restore the per-mode persisted target so switching modes
   // (or reopening the pane) doesn't blank the previously-dialed station. The
@@ -402,10 +426,19 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
       // (mode.intent), mirroring ARDOP (tuxlink-nnws). transportKind is the
       // panel's mode.kind so the backend records the operator-meaningful HF/FM
       // discriminator on session state.
+      // tuxlink-8fkkk A3/Task B: send the pre-audio tune frequency and (when a
+      // Find-a-Station "Use →" supplied more than one ranked candidate) the
+      // ordered `qsyCandidates` list the backend's qsy_on_fail walk visits in
+      // turn. A non-empty list overrides the single `target`/`freqHz`; otherwise
+      // the legacy single-dial path is unchanged.
+      const candidates = pendingCandidatesRef.current;
       await invoke('modem_vara_b2f_exchange', {
         target: call,
         intent: mode.intent,
         transportKind: mode.kind,
+        freqHz, // null when unset → backend skips the pre-audio CAT retune
+        qsyCandidates:
+          candidates.length > 1 ? dialsToQsyCandidates(candidates) : null,
       });
       void recordAttempt(dial, 'reached', tsLocal());
     } catch (e) {
@@ -537,6 +570,13 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         </label>
       </section>
 
+      {/* tuxlink-8fkkk Task A1UI: Rig control — shared with ARDOP so the operator
+          configures hamlib / CAT serial / QSY in one place for both modes. Reads
+          and writes Config.rig (config_get_rig / config_set_rig). */}
+      <section className="radio-panel-sec" data-testid="vara-rig-section">
+        <RigControlSection storageKeyPrefix="vara" />
+      </section>
+
       <section className="radio-panel-sec" data-testid="vara-status-section">
         <h5>Transport</h5>
         <p className="radio-panel-mono" data-testid="vara-state-display">
@@ -584,6 +624,9 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
                   // A hand-typed target is not the prefilled favorite — drop the
                   // association so the record doesn't carry stale metadata.
                   pendingDialRef.current = null;
+                  // tuxlink-8fkkk Task B: a manual target is a single dial —
+                  // drop any ranked QSY candidates from a prior prefill.
+                  pendingCandidatesRef.current = [];
                   // tuxlink-vu97: persist the configured target so the ribbon
                   // Connect can fire VARA's full send/receive with this pane closed.
                   writeLastTarget(mode.kind, e.target.value);
@@ -592,6 +635,38 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             </label>
           }
         />
+        {/* tuxlink-8fkkk A3: frequency + Tune affordance, mirroring ARDOP. The
+            operator types the gateway frequency in MHz; the panel parses it to Hz
+            and sends it on Send/Receive so the backend CAT-tunes the rig before
+            the VARA connect. Tune… (ardop_tune_rig — mode-agnostic Tune-only,
+            reads Config.rig) sets the rig WITHOUT dialing. Both paths are no-ops
+            when the field is blank (freqHz === null). */}
+        <div className="radio-panel-input-row">
+          <label htmlFor="vara-freq">Frequency (MHz)</label>
+          <input
+            id="vara-freq"
+            data-testid="vara-freq"
+            className="radio-panel-input radio-panel-mono"
+            value={freqMhz}
+            onChange={(e) => setFreqMhz(e.target.value)}
+            placeholder="14.105"
+            inputMode="decimal"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+          />
+          <button
+            type="button"
+            className="radio-panel-btn radio-panel-btn-sm"
+            data-testid="vara-tune"
+            disabled={freqHz === null}
+            onClick={() => {
+              if (freqHz !== null) void invoke('ardop_tune_rig', { freqHz });
+            }}
+          >
+            Tune…
+          </button>
+        </div>
         <button
           type="button"
           className="radio-panel-btn radio-panel-btn-primary"

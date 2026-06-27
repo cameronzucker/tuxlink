@@ -10,7 +10,7 @@ use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::proposal::{Answer, Proposal};
+use super::proposal::{Answer, PendingMessage, Proposal};
 use super::session::{
     self, ExchangeConfig, ExchangeError, ExchangeResult, ExchangeRole, OutboundMessage,
 };
@@ -140,7 +140,7 @@ pub fn connect_and_exchange<F>(
     decide: F,
 ) -> Result<ExchangeResult, P2pTelnetError>
 where
-    F: Fn(&[Proposal]) -> Result<Vec<Answer>, ExchangeError>,
+    F: Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>,
 {
     let _ = peer_callsign; // PR 1 doesn't use this; PR 2 listener-side will.
 
@@ -263,7 +263,7 @@ mod tests {
             Vec::new(),
             &|_| {},
             &|_| {},
-            |_proposals: &[Proposal]| Ok(Vec::new()),
+            |_proposals: &[Proposal], _manifest: &[PendingMessage]| Ok(Vec::new()),
         );
 
         let _peer_received = peer_handle.join().unwrap();
@@ -291,7 +291,7 @@ mod tests {
             Vec::new(),
             &|_| {},
             &|_| {},
-            |_proposals: &[Proposal]| Ok(Vec::new()),
+            |_proposals: &[Proposal], _manifest: &[PendingMessage]| Ok(Vec::new()),
         );
         assert!(matches!(result, Err(P2pTelnetError::Connect { .. })));
     }

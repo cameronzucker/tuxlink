@@ -1,0 +1,21 @@
+# Egress authorization core (MCP phase 3.1, transport-spine plan Task 3.1).
+#
+# EgressGuard + the pure `decide()` heart live here so BOTH the Tauri monolith
+# AND the standalone tier-2 testserver can depend on the SAME real authority
+# without pulling in the Tauri app. This is the ports-and-adapters security
+# core: the monolith re-exports it via `crate::ui_core::security`.
+[package]
+name = "tuxlink-security"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+thiserror = "2"
+
+[dev-dependencies]
+# `guarded_egress` is async; its tier-1 tests need a runtime + #[tokio::test].
+# `macros` + `rt` (current-thread) are sufficient — no multi-thread needed.
+tokio = { version = "1", features = ["macros", "rt"] }

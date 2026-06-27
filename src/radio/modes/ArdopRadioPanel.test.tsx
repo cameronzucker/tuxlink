@@ -78,6 +78,21 @@ const defaultInvokeImpl = async (cmd: string, _args?: unknown) => {
       webgui_port: null,
     };
   }
+  // tuxlink-8fkkk Task A1UI: rig config is now radio-level (Config.rig).
+  // RigControlSection calls config_get_rig; return the Rust defaults.
+  if (cmd === 'config_get_rig') {
+    return {
+      rig_hamlib_model: null,
+      rigctld_host: '127.0.0.1',
+      rigctld_port: 4534,
+      rigctld_binary: 'rigctld',
+      close_serial_sequencing: false,
+      live_vfo_poll: false,
+      qsy_on_fail: false,
+      cat_serial_path: null,
+      cat_baud: 38400,
+    };
+  }
   // Listener defaults (tuxlink-7vea backend default flip).
   if (cmd === 'ardop_allowed_stations_get') {
     return { allow_all: true, callsigns: [] };
@@ -158,6 +173,30 @@ describe('<ArdopRadioPanel>', () => {
     renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     expect(screen.getByTestId('signal-section')).toBeInTheDocument();
     expect(screen.getByTestId('quality-score')).toHaveTextContent('72');
+  });
+
+  it('shows the live VFO frequency in MHz when rigFreqHz is present (live-VFO poll)', () => {
+    mockUseModemStatus.mockReturnValue({
+      status: { ...RUNNING, rigFreqHz: 7_102_000 },
+      loading: false,
+      error: null,
+    });
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+    const stats = screen.getByTestId('ardop-live-stats');
+    expect(stats).toHaveTextContent('7.10200 MHz');
+    expect(stats).not.toHaveTextContent('follows on connect');
+  });
+
+  it('shows the idle "follows on connect" text when rigFreqHz is null', () => {
+    mockUseModemStatus.mockReturnValue({
+      status: { ...RUNNING, rigFreqHz: null },
+      loading: false,
+      error: null,
+    });
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+    expect(screen.getByTestId('ardop-live-stats')).toHaveTextContent(
+      'follows on connect',
+    );
   });
 
   it('renders the target-callsign input in the Connect form (stopped state)', async () => {
@@ -979,7 +1018,7 @@ describe('<ArdopRadioPanel>', () => {
 
     // ── tuxlink-wu0k: CAT-command PTT ────────────────────────────────────────
 
-    it('selecting CAT command persists ptt_method and reveals CAT fields', async () => {
+    it('selecting CAT command persists ptt_method and reveals CAT key/unkey fields', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
       invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
@@ -990,8 +1029,6 @@ describe('<ArdopRadioPanel>', () => {
             playback_device: '',
             ptt_method: 'vox',
             ptt_serial_path: null,
-            cat_serial_path: null,
-            cat_baud: 38400,
             cat_key_cmd: 'TX1;',
             cat_unkey_cmd: 'TX0;',
             cat_bridge_port: 4532,
@@ -1024,11 +1061,14 @@ describe('<ArdopRadioPanel>', () => {
           }),
         );
       });
-      // CAT fields now visible with proven FT-710 defaults.
+      // CAT key/unkey fields are now visible. CAT serial/baud are in RigControlSection.
       const keyInput = (await screen.findByTestId('ardop-cat-key-input')) as HTMLInputElement;
       expect(keyInput.value).toBe('TX1;');
       expect((screen.getByTestId('ardop-cat-unkey-input') as HTMLInputElement).value).toBe('TX0;');
-      expect((screen.getByTestId('ardop-cat-baud-input') as HTMLInputElement).value).toBe('38400');
+      // The hint pointing to Rig control is visible.
+      expect(screen.getByTestId('ardop-cat-serial-hint')).toBeInTheDocument();
+      // cat-baud-input is NOT in the ARDOP panel — it is in RigControlSection.
+      expect(screen.queryByTestId('ardop-cat-baud-input')).not.toBeInTheDocument();
     });
 
     it('editing the CAT key command persists cat_key_cmd on blur', async () => {
@@ -1042,8 +1082,6 @@ describe('<ArdopRadioPanel>', () => {
             playback_device: '',
             ptt_method: 'cat_command',
             ptt_serial_path: null,
-            cat_serial_path: '/dev/ttyUSB0',
-            cat_baud: 38400,
             cat_key_cmd: 'TX1;',
             cat_unkey_cmd: 'TX0;',
             cat_bridge_port: 4532,
@@ -1500,6 +1538,191 @@ describe('<ArdopRadioPanel>', () => {
       expect(target.value).toBe('KE7XYZ-10');
       // The ARDOP Connect form has no freq input — only target + bandwidth.
       expect(screen.queryByTestId('ardop-freq-input')).toBeNull();
+    });
+  });
+
+  // ── tuxlink-8fkkk: Frequency element + Tune affordance ───────────────────
+
+  describe('Frequency element (tuxlink-8fkkk)', () => {
+    it('sends freqHz on Connect when a frequency is entered', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+
+      // Type a target callsign.
+      const targetInput = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
+      fireEvent.change(targetInput, { target: { value: 'W7DG' } });
+
+      // Type a frequency in MHz.
+      const freqInput = (await screen.findByTestId('ardop-freq')) as HTMLInputElement;
+      fireEvent.change(freqInput, { target: { value: '7.102' } });
+
+      // Click Start (the connect button).
+      fireEvent.click(screen.getByTestId('ardop-start-btn'));
+
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'modem_ardop_connect',
+          expect.objectContaining({
+            target: 'W7DG',
+            freqHz: 7102000,
+          }),
+        );
+      });
+    });
+
+    it('sends freqHz: null on Connect when frequency field is blank', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+
+      const targetInput = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
+      fireEvent.change(targetInput, { target: { value: 'W7DG' } });
+      // Leave freq blank.
+      fireEvent.click(screen.getByTestId('ardop-start-btn'));
+
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'modem_ardop_connect',
+          expect.objectContaining({ target: 'W7DG', freqHz: null }),
+        );
+      });
+    });
+
+    it('Tune button is disabled when frequency field is blank', async () => {
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+      const tuneBtn = (await screen.findByTestId('ardop-tune')) as HTMLButtonElement;
+      expect(tuneBtn.disabled).toBe(true);
+    });
+
+    it('Tune button fires ardop_tune_rig with freqHz when a valid frequency is entered', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+
+      const freqInput = (await screen.findByTestId('ardop-freq')) as HTMLInputElement;
+      fireEvent.change(freqInput, { target: { value: '7.102' } });
+
+      const tuneBtn = (await screen.findByTestId('ardop-tune')) as HTMLButtonElement;
+      expect(tuneBtn.disabled).toBe(false);
+      fireEvent.click(tuneBtn);
+
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith('ardop_tune_rig', { freqHz: 7102000 });
+      });
+    });
+
+    it('prefill from Find a Station fills both target and frequency (tuxlink-8fkkk T11)', async () => {
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+
+      act(() => {
+        emitGatewayPrefill({ mode: 'ardop-hf', gateway: 'W7DG', freq: '7.103 MHz' });
+      });
+
+      await switchToManualTab();
+      await waitFor(() => {
+        const targetInput = screen.getByTestId('ardop-target-input') as HTMLInputElement;
+        expect(targetInput.value).toBe('W7DG');
+        const freqInput = screen.getByTestId('ardop-freq') as HTMLInputElement;
+        expect(freqInput.value).toBe('7.103');
+      });
+    });
+
+    it('normalizes a kHz favorite freq on prefill (C4 — "14105.0" → "14.105")', async () => {
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      act(() => {
+        emitGatewayPrefill({ mode: 'ardop-hf', gateway: 'W6ABC', freq: '14105.0' });
+      });
+      await switchToManualTab();
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-freq') as HTMLInputElement).value).toBe('14.105');
+      });
+    });
+
+    it('clears the freq field on a prefill with no freq (C4 clear-on-empty)', async () => {
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+      const freqInput = (await screen.findByTestId('ardop-freq')) as HTMLInputElement;
+      fireEvent.change(freqInput, { target: { value: '7.103' } });
+      expect(freqInput.value).toBe('7.103');
+      act(() => {
+        emitGatewayPrefill({ mode: 'ardop-hf', gateway: 'W6ABC' });
+      });
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-freq') as HTMLInputElement).value).toBe('');
+      });
+    });
+
+    it('sends qsyCandidates on Connect when a Use → supplied a ranked list', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      act(() => {
+        emitGatewayPrefill({ mode: 'ardop-hf', gateway: 'W7DG', freq: '7.103' }, [
+          { mode: 'ardop-hf', gateway: 'W7DG', freq: '7.103' },
+          { mode: 'ardop-hf', gateway: 'W7DG', freq: '14.105' },
+        ]);
+      });
+      await switchToManualTab();
+      fireEvent.click(await screen.findByTestId('ardop-start-btn'));
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'modem_ardop_connect',
+          expect.objectContaining({
+            target: 'W7DG',
+            freqHz: 7103000,
+            qsyCandidates: [
+              { target: 'W7DG', freq_hz: 7103000 },
+              { target: 'W7DG', freq_hz: 14105000 },
+            ],
+          }),
+        );
+      });
+    });
+
+    it('sends qsyCandidates null on a manual single dial', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+      const targetInput = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
+      fireEvent.change(targetInput, { target: { value: 'W7DG' } });
+      fireEvent.click(screen.getByTestId('ardop-start-btn'));
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'modem_ardop_connect',
+          expect.objectContaining({ target: 'W7DG', qsyCandidates: null }),
+        );
+      });
+    });
+  });
+
+  // tuxlink-8fkkk Task A1UI: Rig control is now the shared RigControlSection.
+  // Mutual-exclusion between close-serial sequencing and live VFO poll is tested
+  // in RigControlSection.test.tsx. Here we assert that the shared component is
+  // rendered within the ARDOP panel's Radio section.
+  describe('Rig control section (shared component)', () => {
+    it('renders the RigControlSection expander within the Radio section', async () => {
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => {
+        expect(screen.getByTestId('ardop-radio-section')).toBeInTheDocument();
+        expect(screen.getByTestId('rig-control-expander')).toBeInTheDocument();
+      });
+    });
+
+    it('shows the "Rig control" summary label', async () => {
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => {
+        expect(screen.getByTestId('rig-control-expander-summary')).toHaveTextContent('Rig control');
+      });
     });
   });
 });
