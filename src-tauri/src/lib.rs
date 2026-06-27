@@ -1222,43 +1222,47 @@ pub fn run() {
                 // SAFETY: `getuid(2)` takes no arguments and cannot fail (POSIX).
                 let my_uid = unsafe { libc::getuid() };
 
-                // `mcp_dir` is set when (and only when) the full ancestor chain is
-                // verified safe; `None` means "skip the MCP server".
+                // Build a hardened, verified-private /tmp/tuxlink-<uid>/tuxlink
+                // dir we fully own: create + chmod 0700 + verify (uid-owned,
+                // 0700, non-symlink) at EACH level so an attacker cannot pre-plant
+                // a group/world-writable ancestor under the process umask. /tmp's
+                // sticky bit prevents other users from renaming/replacing our
+                // subdir. Used both when XDG_RUNTIME_DIR is unset AND when it is
+                // set-but-not-private.
+                let temp_fallback = |uid: u32| -> Option<std::path::PathBuf> {
+                    let base = std::env::temp_dir().join(format!("tuxlink-{uid}"));
+                    harden_and_verify_mcp_dir(&base, uid)
+                        .and_then(|base| harden_and_verify_mcp_dir(&base.join("tuxlink"), uid))
+                };
+
+                // `mcp_dir` is set when (and only when) we have a verified-private
+                // socket dir; `None` means "skip the MCP server".
                 let mcp_dir: Option<std::path::PathBuf> = match std::env::var(
                     "XDG_RUNTIME_DIR",
                 ) {
                     Ok(dir) if !dir.is_empty() => {
-                        // XDG_RUNTIME_DIR is guaranteed 0700/uid-owned by the OS,
-                        // but verify the supplied base anyway (refuse if it is
-                        // group/world-writable or not uid-owned), then create +
-                        // chmod + verify the `tuxlink` child explicitly.
+                        // XDG_RUNTIME_DIR is usually 0700/uid-owned, but some
+                        // systems make /run/user/<uid> group-writable (0770).
+                        // Verify the supplied base; if private, create + chmod +
+                        // verify the `tuxlink` child there.
                         let base = std::path::PathBuf::from(dir);
                         if mcp_dir_is_safe(&base, my_uid) {
-                            let child = base.join("tuxlink");
-                            harden_and_verify_mcp_dir(&child, my_uid)
+                            harden_and_verify_mcp_dir(&base.join("tuxlink"), my_uid)
                         } else {
+                            // Set-but-not-private: do NOT skip the MCP server —
+                            // fall back to a private temp runtime dir we create
+                            // and harden ourselves (security unchanged; the socket
+                            // dir is still a verified-private 0700 dir we own).
                             tracing::warn!(
                                 target: "mcp",
                                 dir = %base.display(),
-                                "XDG_RUNTIME_DIR base is not a private (0700, uid-owned, non-symlink) directory; skipping MCP server"
+                                "XDG_RUNTIME_DIR is not a private (0700, uid-owned, non-symlink) directory; falling back to a private temp runtime dir for the MCP socket"
                             );
-                            None
+                            temp_fallback(my_uid)
                         }
                     }
-                    _ => {
-                        // Fallback (XDG_RUNTIME_DIR unset/empty): build
-                        // /tmp/tuxlink-<uid>/tuxlink, creating + hardening +
-                        // verifying EACH level so an attacker cannot pre-plant a
-                        // group/world-writable ancestor under the process umask.
-                        let base = std::env::temp_dir().join(format!("tuxlink-{my_uid}"));
-                        match harden_and_verify_mcp_dir(&base, my_uid) {
-                            Some(base) => {
-                                let child = base.join("tuxlink");
-                                harden_and_verify_mcp_dir(&child, my_uid)
-                            }
-                            None => None,
-                        }
-                    }
+                    // XDG_RUNTIME_DIR unset/empty.
+                    _ => temp_fallback(my_uid),
                 };
                 if let Some(mcp_dir) = mcp_dir {
                     let sock_path = mcp_dir.join("mcp.sock");
