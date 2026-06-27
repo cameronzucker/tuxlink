@@ -12,15 +12,23 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    AnnotateAble, CallToolResult, Content, GetPromptRequestParam, GetPromptResult, Implementation,
+    ListPromptsResult, ListResourcesResult, PaginatedRequestParam, Prompt, PromptArgument,
+    PromptMessage, PromptMessageRole, ProtocolVersion, RawResource, ReadResourceRequestParam,
+    ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
 };
-use rmcp::{tool, tool_handler, tool_router, ErrorData};
+use rmcp::service::RequestContext;
+use rmcp::{tool, tool_handler, tool_router, ErrorData, RoleServer};
 
+use crate::content;
 use crate::ports::{
     ArdopWriteDto, ComposeDraftDto, EgressPortError, GribRequestDto, PacketWriteDto, PortError,
     SearchQueryDto, SendFormDto, SessionIntentDto, VaraWriteDto, WritePortError,
 };
 use crate::{server_info_view, McpState};
+
+/// The MIME type all knowledge resources are served as.
+const KNOWLEDGE_MIME: &str = "text/markdown";
 
 /// Map a [`PortError`] onto an rmcp tool error. Read tools surface the failure
 /// to the agent rather than crashing the transport.
@@ -988,17 +996,296 @@ impl ServerHandler for TuxlinkMcp {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
         info.protocol_version = ProtocolVersion::LATEST;
-        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info.capabilities = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_prompts()
+            .enable_resources()
+            .build();
         info.server_info = Implementation::from_build_env();
         info.instructions = Some(
             "Tuxlink MCP server. Read-only tools report app/backend/modem status, \
              mailbox + search content, curated config, devices, and the session log. \
              Tools that return untrusted external content (mailbox_list, message_read, \
              tauri_search_run, session_log_snapshot) taint the session, locking send \
-             authority until the operator re-arms."
+             authority until the operator re-arms. Resources (tuxlink:// URIs) serve \
+             curated operator knowledge — glossary, transport/device guides, and \
+             diagnostic playbooks. Prompts walk common operator workflows."
                 .to_string(),
         );
         info
+    }
+
+    // ----- Knowledge layer: resources + prompts (phase 3.5) -----
+    //
+    // These four methods are thin delegators over the context-free inherent
+    // methods on `TuxlinkMcp` (the `knowledge_*` helpers below). The logic is
+    // transport-free so the tier-1 tests exercise it WITHOUT constructing an
+    // rmcp `RequestContext`, mirroring the `server_info_view` core-fn pattern.
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(self.knowledge_resources())
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        self.knowledge_read(&request.uri)
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        Ok(self.knowledge_prompts())
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, ErrorData> {
+        self.knowledge_get_prompt(&request.name, request.arguments)
+    }
+}
+
+/// Knowledge-layer (phase 3.5) inherent methods. Context-free so they are
+/// unit-testable without an rmcp transport. The `ServerHandler` resource/prompt
+/// methods are thin delegators over these.
+impl TuxlinkMcp {
+    /// Project [`content::CATALOG`] into a [`ListResourcesResult`]. Pure.
+    fn knowledge_resources(&self) -> ListResourcesResult {
+        let resources = content::CATALOG
+            .iter()
+            .map(|r| {
+                let mut raw = RawResource::new(r.uri, r.name);
+                raw.title = Some(r.title.to_string());
+                raw.description = Some(r.description.to_string());
+                raw.mime_type = Some(KNOWLEDGE_MIME.to_string());
+                raw.no_annotation()
+            })
+            .collect();
+        ListResourcesResult::with_all_items(resources)
+    }
+
+    /// Look up a knowledge resource by URI and return its markdown body as a
+    /// `text/markdown` resource content. Unknown URI → `invalid_request`.
+    fn knowledge_read(&self, uri: &str) -> Result<ReadResourceResult, ErrorData> {
+        let Some(resource) = content::find_by_uri(uri) else {
+            return Err(ErrorData::invalid_request(
+                format!("unknown resource uri: {uri}"),
+                None,
+            ));
+        };
+        // Build the TextResourceContents literal directly so the mime is the
+        // correct "text/markdown" — `ResourceContents::text()` would force a
+        // bare "text" mime.
+        let contents = ResourceContents::TextResourceContents {
+            uri: resource.uri.to_string(),
+            mime_type: Some(KNOWLEDGE_MIME.to_string()),
+            text: resource.markdown.to_string(),
+            meta: None,
+        };
+        Ok(ReadResourceResult {
+            contents: vec![contents],
+        })
+    }
+
+    /// The three knowledge-layer prompts. Pure.
+    fn knowledge_prompts(&self) -> ListPromptsResult {
+        let prompts = vec![
+            Prompt::new(
+                "diagnose_my_connection",
+                Some(
+                    "Diagnose why a connection or transport is not working, read-only. \
+                     Optional `transport` (ardop/vara/packet/telnet) focuses the walk.",
+                ),
+                Some(vec![PromptArgument {
+                    name: "transport".to_string(),
+                    title: Some("Transport".to_string()),
+                    description: Some(
+                        "Optional transport to focus on: ardop, vara, packet, or telnet."
+                            .to_string(),
+                    ),
+                    required: Some(false),
+                }]),
+            ),
+            Prompt::new(
+                "help_me_set_up",
+                Some(
+                    "Walk through setting up a device or PTT method. Requires `device` \
+                     (e.g. uv-pro, digirig, ptt).",
+                ),
+                Some(vec![PromptArgument {
+                    name: "device".to_string(),
+                    title: Some("Device".to_string()),
+                    description: Some(
+                        "The device or method to set up (e.g. uv-pro, digirig, ptt)."
+                            .to_string(),
+                    ),
+                    required: Some(true),
+                }]),
+            ),
+            Prompt::new(
+                "compose_an_ics_213",
+                Some(
+                    "Help compose an ICS-213 general message and stage it (no transmission). \
+                     Optional `to` and `subject` pre-fill fields.",
+                ),
+                Some(vec![
+                    PromptArgument {
+                        name: "to".to_string(),
+                        title: Some("To".to_string()),
+                        description: Some("Optional recipient address(es).".to_string()),
+                        required: Some(false),
+                    },
+                    PromptArgument {
+                        name: "subject".to_string(),
+                        title: Some("Subject".to_string()),
+                        description: Some("Optional message subject.".to_string()),
+                        required: Some(false),
+                    },
+                ]),
+            ),
+        ];
+        ListPromptsResult::with_all_items(prompts)
+    }
+
+    /// Render the named prompt with the supplied arguments. Unknown name →
+    /// `invalid_request`; a missing required arg (`help_me_set_up.device`) →
+    /// `invalid_request`. Pure.
+    fn knowledge_get_prompt(
+        &self,
+        name: &str,
+        arguments: Option<rmcp::model::JsonObject>,
+    ) -> Result<GetPromptResult, ErrorData> {
+        let args = arguments.unwrap_or_default();
+        let arg = |key: &str| -> Option<String> {
+            args.get(key)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        };
+
+        match name {
+            "diagnose_my_connection" => {
+                let transport = arg("transport");
+                let (transport_line, playbook_line) = match transport.as_deref() {
+                    Some(t) if t.eq_ignore_ascii_case("ardop") => (
+                        "The operator is using the ARDOP transport.".to_string(),
+                        "Also read the resource tuxlink://playbook/ardop-wont-connect and \
+                         tuxlink://guide/ardop."
+                            .to_string(),
+                    ),
+                    Some(t) if t.eq_ignore_ascii_case("vara") => (
+                        "The operator is using the VARA HF transport.".to_string(),
+                        "Also read the resource tuxlink://guide/vara.".to_string(),
+                    ),
+                    Some(t) if t.eq_ignore_ascii_case("packet") => (
+                        "The operator is using the packet (AX.25) transport.".to_string(),
+                        "Also read the resource tuxlink://guide/packet.".to_string(),
+                    ),
+                    Some(t) => (
+                        format!("The operator is using the {t} transport."),
+                        "Also read the resource tuxlink://guide/picking-a-transport.".to_string(),
+                    ),
+                    None => (
+                        "The transport was not specified; determine it from the diagnostics."
+                            .to_string(),
+                        "Read the resource tuxlink://guide/picking-a-transport to identify the \
+                         transport in use."
+                            .to_string(),
+                    ),
+                };
+                let text = format!(
+                    "Diagnose why the operator's connection is not working. {transport_line}\n\n\
+                     1. Read the resource tuxlink://playbook/connection-troubleshooting. \
+                     {playbook_line}\n\
+                     2. Call the read-only diagnostic tools to gather current state: \
+                     backend_status, modem_get_status, config_read, and \
+                     session_log_snapshot.\n\
+                     3. Correlate the diagnostics against the playbook's failure points and \
+                     explain plainly, in operator language, what is wrong and the next step.\n\n\
+                     DO NOT transmit, connect, or change any configuration. This is a \
+                     read-only diagnosis; staging or transmission is the operator's call."
+                );
+                Ok(GetPromptResult {
+                    description: Some("Read-only connection diagnosis walk.".to_string()),
+                    messages: vec![PromptMessage::new_text(PromptMessageRole::User, text)],
+                })
+            }
+            "help_me_set_up" => {
+                let Some(device) = arg("device") else {
+                    return Err(ErrorData::invalid_request(
+                        "help_me_set_up requires a `device` argument".to_string(),
+                        None,
+                    ));
+                };
+                let resource_line = if device.eq_ignore_ascii_case("uv-pro")
+                    || device.eq_ignore_ascii_case("uvpro")
+                {
+                    "Read the resource tuxlink://device/uv-pro."
+                } else if device.eq_ignore_ascii_case("ptt") {
+                    "Read the resource tuxlink://guide/ptt."
+                } else {
+                    "Read the resource tuxlink://guide/ptt and tuxlink://device/uv-pro for the \
+                     closest matching guidance."
+                };
+                let text = format!(
+                    "Help the operator set up: {device}.\n\n\
+                     1. {resource_line}\n\
+                     2. Read the current configuration with config_read (and \
+                     config_get_ardop / config_get_vara / packet_config_get as relevant) and \
+                     enumerate hardware with packet_list_serial_devices, \
+                     packet_list_bluetooth_devices, and ardop_list_audio_devices.\n\
+                     3. Walk the operator through the configuration step by step, in plain \
+                     language, matching the guide to what the diagnostics show.\n\n\
+                     Configuration writes require the operator's armed send authority; \
+                     propose the values and let the operator apply them. Do not transmit."
+                );
+                Ok(GetPromptResult {
+                    description: Some(format!("Setup walk for {device}.")),
+                    messages: vec![PromptMessage::new_text(PromptMessageRole::User, text)],
+                })
+            }
+            "compose_an_ics_213" => {
+                let to = arg("to");
+                let subject = arg("subject");
+                let mut prefill = String::new();
+                if let Some(to) = to {
+                    prefill.push_str(&format!("\nRecipient (To): {to}"));
+                }
+                if let Some(subject) = subject {
+                    prefill.push_str(&format!("\nSubject: {subject}"));
+                }
+                let text = format!(
+                    "Help the operator compose an ICS-213 General Message.\n\n\
+                     1. Read the resource tuxlink://guide/emcomm-ics for the ICS context and \
+                     form usage.\n\
+                     2. Collect the ICS-213 fields with the operator: To, From, Subject, \
+                     Date, Time, Message, Approved By (name + position/title), and the \
+                     reply section if a response is expected.\n\
+                     3. Stage the message as a local outbox draft using send_form (or \
+                     message_send for a plain message). Return the staged message id.\
+                     {prefill}\n\n\
+                     Staging only — no transmission occurs. The message stays in the local \
+                     outbox until the operator arms send authority and runs a gated connect."
+                );
+                Ok(GetPromptResult {
+                    description: Some("ICS-213 compose-and-stage walk.".to_string()),
+                    messages: vec![PromptMessage::new_text(PromptMessageRole::User, text)],
+                })
+            }
+            other => Err(ErrorData::invalid_request(
+                format!("unknown prompt: {other}"),
+                None,
+            )),
+        }
     }
 }
 
@@ -1410,6 +1697,176 @@ mod tests {
         assert!(
             !staged.load(Ordering::SeqCst),
             "an invalid compose must NOT stage a draft"
+        );
+    }
+
+    // --- STEP 3.5: knowledge layer (resources + prompts) ---
+
+    #[test]
+    fn list_resources_returns_full_catalog() {
+        let h = handler();
+        let result = h.knowledge_resources();
+        assert_eq!(
+            result.resources.len(),
+            content::CATALOG.len(),
+            "list_resources must project the entire catalog"
+        );
+        let uris: Vec<&str> = result.resources.iter().map(|r| r.uri.as_str()).collect();
+        // The new authored playbooks must be present.
+        assert!(uris.contains(&"tuxlink://playbook/ardop-wont-connect"));
+        assert!(uris.contains(&"tuxlink://playbook/cms-z-password-lag"));
+        assert!(uris.contains(&"tuxlink://device/uv-pro"));
+        assert!(uris.contains(&"tuxlink://reference/modem-capability-matrix"));
+        // A curated user-guide resource must be present too.
+        assert!(uris.contains(&"tuxlink://guide/ardop"));
+    }
+
+    #[test]
+    fn list_resources_advertises_markdown_mime() {
+        let h = handler();
+        let result = h.knowledge_resources();
+        for r in &result.resources {
+            assert_eq!(
+                r.mime_type.as_deref(),
+                Some("text/markdown"),
+                "every resource must advertise the text/markdown mime"
+            );
+        }
+    }
+
+    #[test]
+    fn read_resource_known_uri_returns_markdown_text() {
+        let h = handler();
+        let result = h
+            .knowledge_read("tuxlink://playbook/ardop-wont-connect")
+            .expect("a known uri must read successfully");
+        assert_eq!(result.contents.len(), 1);
+        match &result.contents[0] {
+            ResourceContents::TextResourceContents {
+                uri,
+                mime_type,
+                text,
+                ..
+            } => {
+                assert_eq!(uri, "tuxlink://playbook/ardop-wont-connect");
+                assert_eq!(
+                    mime_type.as_deref(),
+                    Some("text/markdown"),
+                    "the content mime must be text/markdown, not a bare \"text\""
+                );
+                assert!(!text.is_empty(), "the markdown body must be non-empty");
+                assert!(
+                    text.contains("ARDOP"),
+                    "the body must be the ARDOP playbook content"
+                );
+            }
+            other => panic!("expected TextResourceContents, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_resource_unknown_uri_is_invalid_request() {
+        let h = handler();
+        let err = h
+            .knowledge_read("tuxlink://does-not-exist")
+            .expect_err("an unknown uri must error");
+        assert!(
+            err.message.contains("unknown resource uri"),
+            "the error must name the unknown-resource condition, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn list_prompts_returns_three_prompts_with_args() {
+        let h = handler();
+        let result = h.knowledge_prompts();
+        assert_eq!(result.prompts.len(), 3, "exactly three prompts");
+        let by_name = |name: &str| result.prompts.iter().find(|p| p.name == name);
+
+        let diagnose = by_name("diagnose_my_connection").expect("diagnose prompt present");
+        let diagnose_args = diagnose.arguments.as_ref().expect("diagnose has args");
+        assert_eq!(diagnose_args[0].name, "transport");
+        assert_eq!(diagnose_args[0].required, Some(false));
+
+        let setup = by_name("help_me_set_up").expect("setup prompt present");
+        let setup_args = setup.arguments.as_ref().expect("setup has args");
+        assert_eq!(setup_args[0].name, "device");
+        assert_eq!(
+            setup_args[0].required,
+            Some(true),
+            "device is the required setup arg"
+        );
+
+        let ics = by_name("compose_an_ics_213").expect("ics prompt present");
+        let ics_args = ics.arguments.as_ref().expect("ics has args");
+        let ics_names: Vec<&str> = ics_args.iter().map(|a| a.name.as_str()).collect();
+        assert!(ics_names.contains(&"to"));
+        assert!(ics_names.contains(&"subject"));
+    }
+
+    #[test]
+    fn get_prompt_diagnose_ardop_references_the_playbooks() {
+        let h = handler();
+        let mut args = rmcp::model::JsonObject::new();
+        args.insert("transport".to_string(), serde_json::json!("ardop"));
+        let result = h
+            .knowledge_get_prompt("diagnose_my_connection", Some(args))
+            .expect("diagnose prompt renders");
+        assert_eq!(result.messages.len(), 1);
+        let msg = &result.messages[0];
+        assert_eq!(msg.role, PromptMessageRole::User);
+        let text = match &msg.content {
+            rmcp::model::PromptMessageContent::Text { text } => text.clone(),
+            other => panic!("expected a Text prompt message, got {other:?}"),
+        };
+        assert!(
+            text.contains("ardop-wont-connect"),
+            "the ardop diagnosis must cite the ARDOP playbook"
+        );
+        assert!(
+            text.contains("connection-troubleshooting"),
+            "the diagnosis must cite the connection-troubleshooting playbook"
+        );
+        assert!(
+            text.contains("DO NOT transmit"),
+            "the diagnosis must instruct read-only (no transmit)"
+        );
+    }
+
+    #[test]
+    fn get_prompt_setup_requires_device() {
+        let h = handler();
+        let err = h
+            .knowledge_get_prompt("help_me_set_up", None)
+            .expect_err("missing required device must error");
+        assert!(err.message.contains("device"), "error must name the missing arg");
+    }
+
+    #[test]
+    fn get_prompt_unknown_name_is_invalid_request() {
+        let h = handler();
+        let err = h
+            .knowledge_get_prompt("no_such_prompt", None)
+            .expect_err("an unknown prompt name must error");
+        assert!(err.message.contains("unknown prompt"));
+    }
+
+    #[test]
+    fn get_info_advertises_resources_and_prompts() {
+        let h = handler();
+        let info = h.get_info();
+        assert!(
+            info.capabilities.resources.is_some(),
+            "get_info must advertise resources capability"
+        );
+        assert!(
+            info.capabilities.prompts.is_some(),
+            "get_info must advertise prompts capability"
+        );
+        assert!(
+            info.capabilities.tools.is_some(),
+            "tools capability must remain advertised"
         );
     }
 }
