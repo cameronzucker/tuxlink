@@ -29,21 +29,34 @@ pub use router::TuxlinkMcp;
 pub use transport_uds::serve;
 
 /// The live handles the MCP router needs. Phase 3.1's only tool (`server_info`)
-/// reads the [`EgressGuard`]; later phases (3.2+) extend this bundle with the
-/// backend, session-log, modem, and position handles as tools are added.
+/// reads the [`EgressGuard`] plus the embedder-injected app identity; later
+/// phases (3.2+) extend this bundle with the backend, session-log, modem, and
+/// position handles as tools are added.
+///
+/// Embedders inject identity: the monolith passes `env!("CARGO_PKG_NAME")` /
+/// `env!("CARGO_PKG_VERSION")` so `server_info` reports the real Tuxlink app
+/// version, NOT this core crate's own package identity.
 #[derive(Clone)]
 pub struct McpState {
     /// The armed-grant + taint authority, shared with the Tauri-managed
     /// `Arc<EgressGuard>` (lib.rs `.manage()`).
     pub guard: Arc<EgressGuard>,
+    /// The embedding app's package name (e.g. `"tuxlink"`), injected by the
+    /// embedder. `server_info` echoes this — it must NOT be the core crate's
+    /// `CARGO_PKG_NAME`.
+    pub name: String,
+    /// The embedding app's package version, injected by the embedder.
+    /// `server_info` echoes this — it must NOT be the core crate's
+    /// `CARGO_PKG_VERSION`.
+    pub version: String,
 }
 
 /// Serializable shape returned by the `server_info` tool.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ServerInfoDto {
-    /// Package name (`CARGO_PKG_NAME`).
+    /// Embedding app's package name (injected via [`McpState::name`]).
     pub name: String,
-    /// Package version (`CARGO_PKG_VERSION`).
+    /// Embedding app's package version (injected via [`McpState::version`]).
     pub version: String,
     /// True when send authority is currently armed (grant not expired).
     pub armed: bool,
@@ -51,14 +64,16 @@ pub struct ServerInfoDto {
     pub tainted: bool,
 }
 
-/// Pure view of `server_info`: reads the live guard state and the compile-time
-/// package identity. Transport-free so it can be unit-tested directly. `armed`
-/// is `armed_remaining() > 0` (a live, un-expired grant); `tainted` mirrors the
+/// Pure view of `server_info`: reads the live guard state and the
+/// embedder-injected app identity. Transport-free so it can be unit-tested
+/// directly. `name`/`version` echo the identity the embedder set on
+/// [`McpState`] (the app's, not this core crate's); `armed` is
+/// `armed_remaining() > 0` (a live, un-expired grant); `tainted` mirrors the
 /// guard's taint flag.
 pub fn server_info_view(state: &McpState) -> ServerInfoDto {
     ServerInfoDto {
-        name: env!("CARGO_PKG_NAME").to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        name: state.name.clone(),
+        version: state.version.clone(),
         armed: state.guard.armed_remaining() > 0,
         tainted: state.guard.is_tainted(),
     }
@@ -74,8 +89,13 @@ mod tests {
     }
 
     fn state_with(guard: EgressGuard) -> McpState {
+        // Inject identity distinct from this core crate's own 0.0.0 so a
+        // regression to env!("CARGO_PKG_NAME"/"CARGO_PKG_VERSION") would be
+        // caught by `view_reports_package_identity`.
         McpState {
             guard: Arc::new(guard),
+            name: "tuxlink".into(),
+            version: "9.9.9".into(),
         }
     }
 
@@ -83,8 +103,10 @@ mod tests {
     fn view_reports_package_identity() {
         let state = state_with(EgressGuard::with_clock(fixed_1000));
         let dto = server_info_view(&state);
-        assert_eq!(dto.name, env!("CARGO_PKG_NAME"));
-        assert_eq!(dto.version, env!("CARGO_PKG_VERSION"));
+        // The DTO must echo the embedder-injected identity, NOT the core
+        // crate's CARGO_PKG_* (which are tuxlink-mcp-core / 0.0.0).
+        assert_eq!(dto.name, "tuxlink");
+        assert_eq!(dto.version, "9.9.9");
     }
 
     #[test]

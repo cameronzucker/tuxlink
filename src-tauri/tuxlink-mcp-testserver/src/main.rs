@@ -16,6 +16,11 @@
 //!   `server_info` reports `armed=true` for the duration of the test.
 //! - `TUXLINK_TEST_TAINT` (OPTIONAL): `1` or `true` (case-insensitive) taints
 //!   the guard, so `server_info` reports `tainted=true`.
+//! - `TUXLINK_TEST_NAME` (OPTIONAL): app name `server_info` reports. Defaults
+//!   to `"tuxlink"` so a default tier-2 run reports the real app name, not this
+//!   core/testserver crate identity.
+//! - `TUXLINK_TEST_VERSION` (OPTIONAL): app version `server_info` reports.
+//!   Defaults to `"testserver"`.
 //!
 //! With neither arm nor taint set, the guard is fresh (`armed=false`,
 //! `tainted=false`).
@@ -32,6 +37,8 @@ use tuxlink_security::EgressGuard;
 const SOCK_ENV: &str = "TUXLINK_MCP_SOCK";
 const ARM_ENV: &str = "TUXLINK_TEST_ARM";
 const TAINT_ENV: &str = "TUXLINK_TEST_TAINT";
+const NAME_ENV: &str = "TUXLINK_TEST_NAME";
+const VERSION_ENV: &str = "TUXLINK_TEST_VERSION";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -79,15 +86,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Identity the `server_info` tool reports. Overridable for test
+    // flexibility; defaults to the real app name so a default tier-2 run
+    // reports name="tuxlink", NOT this core/testserver crate identity.
+    let name = std::env::var(NAME_ENV).unwrap_or_else(|_| "tuxlink".to_string());
+    let version = std::env::var(VERSION_ENV).unwrap_or_else(|_| "testserver".to_string());
+
     let guard = Arc::new(guard);
     let state = McpState {
         guard: Arc::clone(&guard),
+        name: name.clone(),
+        version: version.clone(),
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 
     eprintln!(
-        "{} listening on {} (armed={}, tainted={})",
-        env!("CARGO_PKG_NAME"),
+        "{name} v{version} listening on {} (armed={}, tainted={})",
         sock_path.display(),
         guard.armed_remaining() > 0,
         guard.is_tainted(),

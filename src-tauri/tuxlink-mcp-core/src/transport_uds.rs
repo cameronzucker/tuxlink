@@ -145,6 +145,8 @@ mod tests {
     fn test_router() -> TuxlinkMcp {
         let state = Arc::new(crate::McpState {
             guard: Arc::new(EgressGuard::with_clock(fixed_1000)),
+            name: "tuxlink".into(),
+            version: "9.9.9".into(),
         });
         TuxlinkMcp::new(state)
     }
