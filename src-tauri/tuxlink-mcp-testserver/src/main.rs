@@ -25,14 +25,17 @@
 //! With neither arm nor taint set, the guard is fresh (`armed=false`,
 //! `tainted=false`).
 //
-// TODO(3.2+): extend McpState with mock backend/mailbox/log handles as later
-// phases add tools beyond the inert `server_info`.
+//! Phase 3.2: the McpState is now wired with canned mock ports (see `mocks`)
+//! so the tier-2 round-trip can exercise the tier-1 read tools + taint behavior
+//! against a real UDS without the Tauri monolith.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use tuxlink_mcp_core::{McpState, TuxlinkMcp};
 use tuxlink_security::EgressGuard;
+
+mod mocks;
 
 const SOCK_ENV: &str = "TUXLINK_MCP_SOCK";
 const ARM_ENV: &str = "TUXLINK_TEST_ARM";
@@ -97,6 +100,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         guard: Arc::clone(&guard),
         name: name.clone(),
         version: version.clone(),
+        status: Arc::new(mocks::MockStatus),
+        mailbox: Arc::new(mocks::MockMailbox),
+        search: Arc::new(mocks::MockSearch),
+        config: Arc::new(mocks::MockConfig),
+        devices: Arc::new(mocks::MockDevice),
+        logs: Arc::new(mocks::MockLog),
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 
