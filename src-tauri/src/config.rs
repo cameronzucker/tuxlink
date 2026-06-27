@@ -2286,9 +2286,11 @@ mod tests {
 
     #[test]
     fn ardop_ui_config_rig_fields_round_trip_json() {
-        let mut c = ArdopUiConfig::default();
-        c.rig_hamlib_model = Some(1049);
-        c.close_serial_sequencing = true;
+        let c = ArdopUiConfig {
+            rig_hamlib_model: Some(1049),
+            close_serial_sequencing: true,
+            ..Default::default()
+        };
         let json = serde_json::to_string(&c).unwrap();
         let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.rig_hamlib_model, Some(1049));

@@ -3954,9 +3954,11 @@ mod tests {
 
     #[test]
     fn rig_config_present_when_model_and_serial_set() {
-        let mut ui = ArdopUiConfig::default();
-        ui.rig_hamlib_model = Some(1049);
-        ui.cat_serial_path = Some("/dev/ttyUSB0".into());
+        let ui = ArdopUiConfig {
+            rig_hamlib_model: Some(1049),
+            cat_serial_path: Some("/dev/ttyUSB0".into()),
+            ..Default::default()
+        };
         let rc = rig_config_from(&ui).expect("rig config");
         assert_eq!(rc.model, 1049);
         assert_eq!(rc.serial_path, "/dev/ttyUSB0");
@@ -3975,8 +3977,10 @@ mod tests {
     #[test]
     fn close_serial_releases_rig_before_audio() {
         // close_serial_sequencing = true → helper must NOT retain the rig handle.
-        let mut ui = ArdopUiConfig::default();
-        ui.close_serial_sequencing = true;
+        let ui = ArdopUiConfig {
+            close_serial_sequencing: true,
+            ..Default::default()
+        };
         assert!(should_release_after_tune(&ui));
     }
 
