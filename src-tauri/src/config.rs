@@ -2131,10 +2131,19 @@ mod tests {
             json.contains("\"ptt_method\":\"cat_command\""),
             "ptt_method must serialize as \"cat_command\"; got: {json}"
         );
+        // tuxlink-8fkkk: the CAT serial link (cat_serial_path / cat_baud) is now
+        // radio-level (Config.rig / RigUiConfig) and only MIGRATION-ONLY on
+        // ArdopUiConfig (#[serde(skip_serializing)]), so it must NOT serialize
+        // under [modem_ardop]. The serial link's persistence + legacy lift are
+        // covered by the RigUiConfig round-trip + migrate_rig_from_legacy_ardop
+        // tests. The PTT-method-specific fields (method, key/unkey cmds, bridge
+        // port) still round-trip through ArdopUiConfig.
+        assert!(
+            !json.contains("cat_serial_path"),
+            "cat_serial_path must not serialize under [modem_ardop] (it is radio-level now); got: {json}"
+        );
         let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.ptt_method, PttMethod::CatCommand);
-        assert_eq!(back.cat_serial_path.as_deref(), Some("/dev/ttyUSB0"));
-        assert_eq!(back.cat_baud, 38400);
         assert_eq!(back.cat_key_cmd, "TX1;");
         assert_eq!(back.cat_unkey_cmd, "TX0;");
         assert_eq!(back.cat_bridge_port, 4532);
