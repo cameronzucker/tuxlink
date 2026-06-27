@@ -10,12 +10,14 @@
 //! agent-facing mcp-core DTO.
 //!
 //! **Redaction is this module's job.** RAW values never cross the port
-//! boundary: the grid is precision-reduced to a 4-char Maidenhead locator, the
-//! session log's Wire-source lines are run through
-//! [`crate::winlink::redaction::redact_wire_line`], and Bluetooth MACs are
-//! minimized by [`minimize_bt_mac`] before the DTO is returned. The mcp-core
-//! DTOs carry no password/secret fields by construction; the impls here never
-//! populate one.
+//! boundary: the grid is precision-reduced to a 4-char Maidenhead locator,
+//! every session-log line (all sources) is run through
+//! [`crate::winlink::redaction::redact_freeform`] to scrub `;PQ`/`;PR`
+//! secure-login tokens, any underlying backend/protocol error formatted into a
+//! returned port-error string is scrubbed via [`redact_err`] BEFORE crossing
+//! into mcp-core, and Bluetooth MACs are minimized by [`minimize_bt_mac`]
+//! before the DTO is returned. The mcp-core DTOs carry no password/secret
+//! fields by construction; the impls here never populate one.
 //!
 //! Managed-state access pattern: a Tauri command receives `State<'_, T>` via the
 //! invoke extractor. Outside a command we recover the same handle with
@@ -47,6 +49,28 @@ use tuxlink_mcp_core::validate::{
     validate_subject, validate_vara_bandwidth,
 };
 use tuxlink_security::{guarded_egress, EgressAudit, EgressAuthority, EgressGuard};
+
+// ---------------------------------------------------------------------------
+// Error-string redaction (FINDING 1).
+// ---------------------------------------------------------------------------
+
+/// Scrub credential-equivalent secure-login tokens (`;PQ`/`;PR`) from an error
+/// string BEFORE it is placed in a port-error variant that crosses into
+/// `tuxlink-mcp-core`.
+///
+/// Any port method that formats an underlying backend/protocol error (via
+/// `format!("{e:?}")` or similar) into a returned error string can carry a raw,
+/// remote-controlled protocol line — a misbehaving/echoing CMS, a transport
+/// failure that quotes the wire, etc. `mcp-core` cannot see the redactor, so the
+/// scrub MUST happen here, at the monolith boundary, so the scrubbed string is
+/// what crosses the port. This delegates to the free-form secure-login scrubber
+/// (`redact_freeform`), a cheap no-op (`Cow::Borrowed`) on clean strings.
+///
+/// Gate-`Denied` messages are intentionally NOT routed through this helper: they
+/// are policy strings (arm/taint/poison state), never underlying protocol text.
+fn redact_err(s: String) -> String {
+    crate::winlink::redaction::redact_freeform(&s).into_owned()
+}
 
 // ---------------------------------------------------------------------------
 // Bluetooth MAC minimization (Step 2).
@@ -142,11 +166,22 @@ impl StatusPort for MonolithStatusPort {
                 transport: String::new(),
                 state: "disconnecting".to_string(),
             },
-            Some(StatusDto::Error { reason }) => BackendStatusDto {
-                connected: false,
-                transport: String::new(),
-                state: format!("error: {reason}"),
-            },
+            Some(StatusDto::Error { reason }) => {
+                // FINDING 3: `reason` can carry a raw, remote-controlled protocol
+                // line (e.g. UnexpectedResponse/UnknownCommand preserve the
+                // verbatim CMS line), which may echo a `;PQ`/`;PR` secure-login
+                // token. REDACT it — do NOT taint: tainting backend_status would
+                // break the Flow-1 "diagnose stays untainted" property, whereas
+                // scrubbing the reason closes the credential leak while keeping
+                // backend_status non-tainting. redact_freeform is the free-form
+                // secure-login scrubber (no-op Cow::Borrowed on clean text).
+                let reason = crate::winlink::redaction::redact_freeform(&reason);
+                BackendStatusDto {
+                    connected: false,
+                    transport: String::new(),
+                    state: format!("error: {reason}"),
+                }
+            }
         };
         Ok(curated)
     }
@@ -201,7 +236,7 @@ impl StatusPort for MonolithStatusPort {
         // to Arc, Arc derefs to PositionArbiter).
         let arbiter: &crate::position::PositionArbiter = &arbiter_state;
         let cfg = crate::config::read_config()
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         let has_fix = arbiter.has_fresh_fix()
             && cfg.privacy.gps_state != crate::config::GpsState::Off;
         // Reduce the broadcast locator to a 4-char grid for the MCP DTO —
@@ -235,14 +270,14 @@ impl StatusPort for MonolithStatusPort {
     async fn wizard_completed(&self) -> Result<bool, PortError> {
         crate::wizard::get_wizard_completed()
             .await
-            .map_err(|e| PortError::Internal(format!("{e:?}")))
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))
     }
 
     async fn p2p_peer_password_status(&self, callsign: &str) -> Result<bool, PortError> {
         use crate::ui_commands::PeerPasswordStatus;
         let status = crate::ui_commands::p2p_peer_password_status(callsign.to_string())
             .await
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         // Return ONLY the set/not-set boolean — never the password.
         Ok(matches!(status, PeerPasswordStatus::Set))
     }
@@ -292,10 +327,10 @@ impl MailboxPort for MonolithMailboxPort {
     async fn list(&self, folder: &str) -> Result<Vec<MessageMetaDto>, PortError> {
         let backend = self.backend()?;
         let parsed = crate::ui_commands::parse_folder_ref(folder)
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         let metas = crate::ui_core::mailbox::list_mailbox(&backend, parsed)
             .await
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         Ok(metas.into_iter().map(map_message_meta).collect())
     }
 
@@ -304,21 +339,21 @@ impl MailboxPort for MonolithMailboxPort {
         use crate::winlink_backend::MessageId;
         let backend = self.backend()?;
         let parsed = crate::ui_commands::parse_folder_ref(folder)
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         let mid = MessageId::new(id);
         // Same fetch path as the `message_read` command.
         let body = match &parsed {
             FolderRef::System(f) => backend
                 .read_message_in(*f, &mid)
                 .await
-                .map_err(|e| PortError::Internal(format!("{e:?}")))?,
+                .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?,
             FolderRef::User(slug) => backend
                 .read_user_message(slug, &mid)
                 .await
-                .map_err(|e| PortError::Internal(format!("{e:?}")))?,
+                .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?,
         };
         let dto = crate::ui_commands::parse_raw_rfc5322(id, &body.raw_rfc5322)
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         Ok(ParsedMessageDto {
             id: dto.id,
             subject: dto.subject,
@@ -356,7 +391,7 @@ impl MailboxPort for MonolithMailboxPort {
             let metas = backend
                 .list_messages(folder)
                 .await
-                .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+                .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
             out.push(FolderDto {
                 name: name.to_string(),
                 count: u32::try_from(metas.len()).unwrap_or(u32::MAX),
@@ -366,12 +401,12 @@ impl MailboxPort for MonolithMailboxPort {
         let user = backend
             .list_user_folders()
             .await
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         for f in user {
             let metas = backend
                 .list_user_messages(&f.slug)
                 .await
-                .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+                .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
             out.push(FolderDto {
                 name: f.display_name,
                 count: u32::try_from(metas.len()).unwrap_or(u32::MAX),
@@ -427,7 +462,7 @@ impl SearchPort for MonolithSearchPort {
         }
         let results = svc
             .run(spec)
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         Ok(SearchResultsDto {
             items: results
                 .items
@@ -457,7 +492,7 @@ impl SearchPort for MonolithSearchPort {
             .lock()
             .map_err(|e| PortError::Internal(format!("docs index poisoned: {e}")))?
             .search_docs(query)
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         Ok(hits
             .into_iter()
             .map(|h| DocsHitDto {
@@ -471,7 +506,7 @@ impl SearchPort for MonolithSearchPort {
     async fn catalog(&self) -> Result<Vec<CatalogEntryDto>, PortError> {
         // Pure: parses the bundled catalog; no managed state.
         let entries = crate::catalog::commands::catalog_list()
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         Ok(entries
             .into_iter()
             .map(|e| CatalogEntryDto {
@@ -506,7 +541,7 @@ impl ConfigPort for MonolithConfigPort {
         // `broadcast_grid(.., FourCharGrid)` — the redaction boundary. Read the
         // raw view, then redact BEFORE crossing the port.
         let raw = crate::ui_core::config::read_config_view()
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         let view = crate::ui_core::config::redact_config_view(raw);
         Ok(ConfigViewDto {
             connect_to_cms: view.connect_to_cms,
@@ -545,7 +580,7 @@ impl ConfigPort for MonolithConfigPort {
     async fn packet(&self) -> Result<PacketConfigDto, PortError> {
         let cfg = crate::ui_commands::packet_config_get()
             .await
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         // The bt_mac field is minimized before crossing the boundary even though
         // PacketConfigDto's mcp-core shape has no MAC field today — the packet
         // DTO surfaces the KISS-link parameters only. If a future mcp-core
@@ -581,7 +616,7 @@ impl DevicePort for MonolithDevicePort {
     async fn serial(&self) -> Result<Vec<SerialDeviceDto>, PortError> {
         let devices = crate::ui_commands::packet_list_serial_devices()
             .await
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         Ok(devices
             .into_iter()
             .map(|d| SerialDeviceDto {
@@ -594,7 +629,7 @@ impl DevicePort for MonolithDevicePort {
     async fn bluetooth(&self) -> Result<Vec<BluetoothDeviceDto>, PortError> {
         let devices = crate::ui_commands::packet_list_bluetooth_devices()
             .await
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         Ok(devices
             .into_iter()
             .map(|d| BluetoothDeviceDto {
@@ -609,7 +644,7 @@ impl DevicePort for MonolithDevicePort {
     async fn audio(&self) -> Result<AudioDevicesDto, PortError> {
         let devices = crate::ui_commands::ardop_list_audio_devices()
             .await
-            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         Ok(AudioDevicesDto {
             capture: devices.captures.into_iter().map(|d| d.name).collect(),
             playback: devices.playbacks.into_iter().map(|d| d.name).collect(),
@@ -621,7 +656,8 @@ impl DevicePort for MonolithDevicePort {
 // Log port.
 // ---------------------------------------------------------------------------
 
-/// [`LogPort`] adapter over the session-log snapshot, redacting Wire lines.
+/// [`LogPort`] adapter over the session-log snapshot, redacting secure-login
+/// tokens on every line (all sources) before they cross into mcp-core.
 pub struct MonolithLogPort {
     app: AppHandle,
 }
@@ -635,7 +671,7 @@ impl MonolithLogPort {
 #[async_trait]
 impl LogPort for MonolithLogPort {
     async fn snapshot(&self) -> Result<Vec<LogLineDto>, PortError> {
-        use crate::winlink_backend::{LogLevel, LogSource};
+        use crate::winlink_backend::LogLevel;
         let state = self
             .app
             .state::<Arc<crate::session_log::SessionLogState>>();
@@ -645,17 +681,18 @@ impl LogPort for MonolithLogPort {
         Ok(lines
             .into_iter()
             .map(|l| {
-                // Redact credential tokens (;PQ/;PR) on Wire-source lines BEFORE
-                // the line crosses into mcp-core. Backend/Transport lines are
-                // operator-visible app events and are not wire bytes. `LogSource`
-                // is matched exhaustively in-crate; if a Wire-class variant is
-                // ever added, add it to the redacting arm (fail safe).
-                let message = match l.source {
-                    LogSource::Backend | LogSource::Transport => l.message,
-                    LogSource::Wire => {
-                        crate::winlink::redaction::redact_wire_line(&l.message).into_owned()
-                    }
-                };
+                // FINDING 2: redact credential tokens (;PQ/;PR) on EVERY line's
+                // message BEFORE it crosses into mcp-core, regardless of
+                // `LogSource`. Backend/Transport failure lines (e.g.
+                // "CMS connect failed: {e}") can carry echoed remote protocol
+                // text that includes a secure-login token, so they must be
+                // scrubbed too — not just Wire lines. `redact_freeform` is the
+                // free-form secure-login scrubber; it is a cheap no-op
+                // (Cow::Borrowed) on clean lines. Source is no longer branched
+                // for redaction (the LogSource label is not surfaced in the
+                // agent DTO).
+                let message =
+                    crate::winlink::redaction::redact_freeform(&l.message).into_owned();
                 let level = match l.level {
                     LogLevel::Trace => "trace",
                     LogLevel::Debug => "debug",
@@ -780,7 +817,7 @@ impl EgressPort for MonolithEgressPort {
                 app.state::<crate::winlink::inbound_selection::SelectionRegistry>(),
             )
             .await
-            .map_err(|e| EgressPortError::Failed(format!("{e:?}")))
+            .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
         })
         .await
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
@@ -800,7 +837,7 @@ impl EgressPort for MonolithEgressPort {
                 // no Display → format with {e:?}.
                 crate::wizard::verify_cms_connection_impl(app.clone())
                     .await
-                    .map_err(|e| EgressPortError::Failed(format!("{e:?}")))
+                    .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
             },
         )
         .await
@@ -818,7 +855,7 @@ impl EgressPort for MonolithEgressPort {
                 target,
             )
             .await
-            .map_err(EgressPortError::Failed)
+            .map_err(|e| EgressPortError::Failed(redact_err(e)))
         })
         .await
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
@@ -848,7 +885,7 @@ impl EgressPort for MonolithEgressPort {
                     crate::winlink::listener::transport::TransportKind::Ardop,
                 )
                 .await
-                .map_err(EgressPortError::Failed)
+                .map_err(|e| EgressPortError::Failed(redact_err(e)))
             },
         )
         .await
@@ -881,7 +918,7 @@ impl EgressPort for MonolithEgressPort {
                     crate::winlink::listener::transport::TransportKind::VaraHf,
                 )
                 .await
-                .map_err(EgressPortError::Failed)
+                .map_err(|e| EgressPortError::Failed(redact_err(e)))
             },
         )
         .await
@@ -905,7 +942,7 @@ impl EgressPort for MonolithEgressPort {
                 path,
             )
             .await
-            .map_err(|e| EgressPortError::Failed(format!("{e:?}")))
+            .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
         })
         .await
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
@@ -964,7 +1001,7 @@ impl AbortPort for MonolithAbortPort {
                 .state::<crate::winlink::inbound_selection::SelectionRegistry>(),
         )
         .await
-        .map_err(|e| PortError::Internal(format!("{e:?}")))
+        .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))
     }
 
     async fn ardop_disconnect(&self) -> Result<(), PortError> {
@@ -976,7 +1013,7 @@ impl AbortPort for MonolithAbortPort {
             self.app.state::<Arc<crate::modem_status::ModemSession>>(),
         )
         .await
-        .map_err(PortError::Internal)
+        .map_err(|e| PortError::Internal(redact_err(e)))
     }
 
     async fn vara_stop_session(&self) -> Result<(), PortError> {
@@ -990,7 +1027,7 @@ impl AbortPort for MonolithAbortPort {
         let session = Arc::clone(session.inner());
         crate::winlink::modem::vara::commands::vara_stop_session_inner(&session)
             .map(|_status| ())
-            .map_err(PortError::Internal)
+            .map_err(|e| PortError::Internal(redact_err(e)))
     }
 }
 
@@ -1077,7 +1114,7 @@ impl WritePort for MonolithWritePort {
             // agent may not touch any other ARDOP field.
             let mut cfg = crate::modem_commands::config_get_ardop();
             cfg.drive_level = Some(drive_level);
-            crate::modem_commands::config_set_ardop(cfg).map_err(WritePortError::Failed)
+            crate::modem_commands::config_set_ardop(cfg).map_err(|e| WritePortError::Failed(redact_err(e)))
         })
         .await
         .map_err(|d| WritePortError::Denied(d.to_string()))?
@@ -1104,7 +1141,7 @@ impl WritePort for MonolithWritePort {
             let mut cfg = crate::winlink::modem::vara::commands::config_get_vara();
             cfg.bandwidth_hz = Some(bandwidth_hz);
             crate::winlink::modem::vara::commands::config_set_vara(cfg)
-                .map_err(WritePortError::Failed)
+                .map_err(|e| WritePortError::Failed(redact_err(e)))
         })
         .await
         .map_err(|d| WritePortError::Denied(d.to_string()))?
@@ -1135,7 +1172,7 @@ impl WritePort for MonolithWritePort {
         // SSID check.
         let mut current = crate::ui_commands::packet_config_get()
             .await
-            .map_err(|e| WritePortError::Failed(format!("{e:?}")))?;
+            .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
         match current.link_kind.as_deref() {
             Some("Tcp") | None => {}
             Some(other) => {
@@ -1170,7 +1207,7 @@ impl WritePort for MonolithWritePort {
                 current,
             )
             .await
-            .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+            .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
         })
         .await
         .map_err(|d| WritePortError::Denied(d.to_string()))?
@@ -1198,7 +1235,7 @@ impl WritePort for MonolithWritePort {
             let backend = app.state::<crate::app_backend::BackendState>().current();
             crate::ui_commands::config_set_grid_impl(grid, arbiter, backend)
                 .await
-                .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+                .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
         })
         .await
         .map_err(|d| WritePortError::Denied(d.to_string()))?
@@ -1231,7 +1268,7 @@ impl WritePort for MonolithWritePort {
                 let backend = app.state::<crate::app_backend::BackendState>().current();
                 crate::ui_commands::position_set_source_impl(source, arbiter, backend)
                     .await
-                    .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+                    .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
             },
         )
         .await
@@ -1278,11 +1315,11 @@ impl WritePort for MonolithWritePort {
                 .inner()
                 .clone();
             let mut cfg = crate::config::read_config()
-                .map_err(|e| WritePortError::Failed(format!("{e:?}")))?;
+                .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
             cfg.privacy.gps_state = gps_state;
             cfg.privacy.position_precision = precision;
             crate::config::write_config_atomic(&cfg)
-                .map_err(|e| WritePortError::Failed(format!("{e:?}")))?;
+                .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
             arbiter.set_precision(precision);
             if let Some(backend) = app.state::<crate::app_backend::BackendState>().current() {
                 backend.set_config(cfg);
@@ -1304,7 +1341,7 @@ impl WritePort for MonolithWritePort {
                 // ui_commands.rs:4670 packet_set_listen(bool).
                 crate::ui_commands::packet_set_listen(enabled)
                     .await
-                    .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+                    .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
             },
         )
         .await
@@ -1337,7 +1374,7 @@ impl WritePort for MonolithWritePort {
                 app.state::<crate::app_backend::BackendState>(),
             )
             .await
-            .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+            .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
         })
         .await
         .map_err(|d| WritePortError::Denied(d.to_string()))?
@@ -1362,7 +1399,7 @@ impl WritePort for MonolithWritePort {
             .app
             .path()
             .app_data_dir()
-            .map_err(|e| WritePortError::Failed(format!("{e:?}")))?
+            .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?
             .join("agent-attachments");
         std::fs::create_dir_all(&base)
             .map_err(|e| WritePortError::Failed(format!("create agent-attachments dir: {e}")))?;
@@ -1387,17 +1424,17 @@ impl WritePort for MonolithWritePort {
                     .current()
                     .ok_or_else(|| WritePortError::Failed("backend offline".to_string()))?;
                 let parsed = crate::ui_commands::parse_folder_ref(&folder)
-                    .map_err(|e| WritePortError::Failed(format!("{e:?}")))?;
+                    .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
                 let mid = MessageId::new(&id);
                 let body = match &parsed {
                     FolderRef::System(f) => backend
                         .read_message_in(*f, &mid)
                         .await
-                        .map_err(|e| WritePortError::Failed(format!("{e:?}")))?,
+                        .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?,
                     FolderRef::User(slug) => backend
                         .read_user_message(slug, &mid)
                         .await
-                        .map_err(|e| WritePortError::Failed(format!("{e:?}")))?,
+                        .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?,
                 };
                 let msg = mail_parser::MessageParser::new()
                     .parse(body.raw_rfc5322.as_slice())
@@ -1486,6 +1523,32 @@ impl MonolithComposePort {
         }
         Ok(())
     }
+
+    /// Append a forensic audit line to the operator-visible session log after a
+    /// compose op stages a draft to the outbox (LOW finding — forensic gap).
+    ///
+    /// The ComposePort ops are UNGATED by design (staging is local; transmission
+    /// is a later gated connect), so without this line an agent could silently
+    /// queue drafts that later ride a gated connect with no record of who staged
+    /// them. This closes that gap with the same `append_operator_line` + `tracing`
+    /// pattern the write/egress audit sinks use. It does NOT gate the op (compose
+    /// remains ungated); it only records a successful stage. A missing/poisoned
+    /// log sink is tolerated — the stage already succeeded.
+    fn audit_stage(&self, op: &str, mid: &str) {
+        use crate::winlink_backend::{LogLevel, LogSource};
+        tracing::info!(
+            target: "tuxlink::compose_audit",
+            op = op,
+            mid = mid,
+            "agent staged compose draft"
+        );
+        let log = self.app.state::<Arc<crate::session_log::SessionLogState>>();
+        log.append_operator_line(
+            LogLevel::Info,
+            LogSource::Backend,
+            format!("[compose] staged {op} mid={mid} by Agent"),
+        );
+    }
 }
 
 #[async_trait]
@@ -1505,12 +1568,14 @@ impl ComposePort for MonolithComposePort {
             body: dto.body,
             attachments: Vec::new(),
         };
-        crate::ui_commands::message_send(
+        let mid = crate::ui_commands::message_send(
             draft,
             self.app.state::<crate::app_backend::BackendState>(),
         )
         .await
-        .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+        .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
+        self.audit_stage("message_send", &mid);
+        Ok(mid)
     }
 
     async fn send_form(&self, dto: SendFormDto) -> Result<String, WritePortError> {
@@ -1543,7 +1608,7 @@ impl ComposePort for MonolithComposePort {
             );
             validate_subject(&rendered_subject)?;
         }
-        crate::ui_commands::send_form(
+        let mid = crate::ui_commands::send_form(
             dto.form_id,
             field_values,
             dto.to,
@@ -1553,7 +1618,9 @@ impl ComposePort for MonolithComposePort {
             self.app.state::<crate::app_backend::BackendState>(),
         )
         .await
-        .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+        .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
+        self.audit_stage("send_form", &mid);
+        Ok(mid)
     }
 
     async fn catalog_send_inquiry(
@@ -1568,12 +1635,14 @@ impl ComposePort for MonolithComposePort {
         for fname in &item_ids {
             validate_address(fname)?;
         }
-        crate::catalog::commands::catalog_send_inquiry(
+        let mid = crate::catalog::commands::catalog_send_inquiry(
             item_ids,
             self.app.state::<crate::app_backend::BackendState>(),
         )
         .await
-        .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+        .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
+        self.audit_stage("catalog_send_inquiry", &mid);
+        Ok(mid)
     }
 
     async fn grib_send_request(&self, dto: GribRequestDto) -> Result<String, WritePortError> {
@@ -1650,12 +1719,14 @@ impl ComposePort for MonolithComposePort {
             sub_time: None,
             subject: dto.subject,
         };
-        crate::grib::commands::grib_send_request(
+        let mid = crate::grib::commands::grib_send_request(
             request,
             self.app.state::<crate::app_backend::BackendState>(),
         )
         .await
-        .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+        .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
+        self.audit_stage("grib_send_request", &mid);
+        Ok(mid)
     }
 }
 
