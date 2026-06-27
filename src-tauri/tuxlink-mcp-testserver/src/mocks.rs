@@ -491,8 +491,8 @@ impl ComposePort for MockCompose {
 /// Station-intelligence read mock for the tier-2 testserver (phase 3.2).
 ///
 /// `find_stations` returns ONE recognizable gateway (W1AW / FN31 / VaraHf /
-/// [7104.0] / Dipole, `from_cache=false`). Read-only — never touches the guard
-/// (no taint, no gate), mirroring the inert tier-1 read tools.
+/// [7104.0] / Dipole). Read-only — never touches the guard (no taint, no gate),
+/// mirroring the inert tier-1 read tools.
 pub struct MockStation;
 
 #[async_trait]
@@ -504,13 +504,10 @@ impl StationPort for MockStation {
                 channel: "7104.0 VARA HF".into(),
                 callsign: SEED_GW_CALLSIGN.into(),
                 grid: Some(SEED_GW_GRID.into()),
-                location: Some("Newington, CT".into()),
                 frequencies_khz: vec![SEED_GW_FREQ_KHZ],
-                last_update: Some("2026-06-26T00:00:00Z".into()),
                 antenna: Some(GatewayAntennaDto::Dipole),
             }],
             fetched_at_ms: Some(0),
-            from_cache: false,
         })
     }
 }

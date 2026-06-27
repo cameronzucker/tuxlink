@@ -1574,7 +1574,11 @@ mod tests {
         assert_eq!(dto.gateways.len(), 1, "the mock seeds exactly one gateway");
         assert_eq!(dto.gateways[0].callsign, SEED_GW_CALLSIGN);
         assert_eq!(dto.gateways[0].grid.as_deref(), Some(SEED_GW_GRID));
-        assert!(!dto.from_cache, "the seeded gateway is a fresh (non-cache) fetch");
+        assert_eq!(
+            dto.fetched_at_ms,
+            Some(0),
+            "the seeded fetch carries a freshness stamp the agent reasons from"
+        );
         assert!(
             !h.state.guard.is_tainted(),
             "find_stations must NOT taint the session (public directory data)"

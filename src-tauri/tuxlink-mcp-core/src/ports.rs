@@ -287,34 +287,39 @@ pub struct StationFilterDto {
 
 /// One curated RMS gateway directory entry. Public directory data, no PII:
 /// deliberately NO sysop name / email / homepage (see module note).
+///
+/// **Structured-only.** Untrusted free-text directory fields (`location`,
+/// `last_update`) are intentionally OMITTED: they are agent-facing
+/// prompt-injection surfaces with no structured contract. A future follow-up
+/// re-adds a PARSED `last_update_ms: Option<u64>`; the raw free-text never
+/// returns. The remaining fields are either app-controlled enums (`mode`,
+/// `antenna`), numeric (`frequencies_khz`), or validated by the impl (`callsign`
+/// shape-checked, bogus entries dropped; `grid` Maidenhead-validated or nulled;
+/// `channel` control-stripped + length-capped).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GatewayDto {
     pub mode: StationModeDto,
     /// The Winlink "channel" identifier (e.g. a frequency/mode channel name).
     pub channel: String,
     pub callsign: String,
-    /// Maidenhead grid locator, when known.
+    /// Maidenhead grid locator, when known and structurally valid. Set to `None`
+    /// by the impl when the directory value fails Maidenhead validation.
     pub grid: Option<String>,
-    /// Human-readable location string, when known.
-    pub location: Option<String>,
     /// Dial frequencies in kHz this channel advertises.
     pub frequencies_khz: Vec<f64>,
-    /// Last-heard timestamp (RFC3339), when known.
-    pub last_update: Option<String>,
     /// Gateway antenna type, when known.
     pub antenna: Option<GatewayAntennaDto>,
 }
 
-/// Output of [`StationPort::find_stations`]: the matched gateways plus cache
-/// provenance.
+/// Output of [`StationPort::find_stations`]: the matched gateways plus a fetch
+/// timestamp the agent reasons freshness from.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StationListDto {
     pub gateways: Vec<GatewayDto>,
-    /// When the underlying directory was fetched (unix ms), when known.
+    /// When the underlying directory was fetched (unix ms), when known. The agent
+    /// reasons freshness directly from this stamp; there is no separate
+    /// cache-provenance flag.
     pub fetched_at_ms: Option<u64>,
-    /// True when these gateways came from the local cache rather than a fresh
-    /// fetch.
-    pub from_cache: bool,
 }
 
 /// Agent-supplied request for [`PredictionPort::predict_path`]. Carries NO
