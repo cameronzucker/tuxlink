@@ -76,6 +76,14 @@ const defaultInvokeImpl = async (cmd: string, _args?: unknown) => {
       cmd_port: 8515,
       bandwidth_hz: null,
       webgui_port: null,
+      // tuxlink-8fkkk Task 12: rig fields — Rust defaults.
+      rig_hamlib_model: null,
+      rigctld_host: '127.0.0.1',
+      rigctld_port: 4532,
+      rigctld_binary: 'rigctld',
+      close_serial_sequencing: false,
+      live_vfo_poll: false,
+      qsy_on_fail: false,
     };
   }
   // Listener defaults (tuxlink-7vea backend default flip).
@@ -1592,6 +1600,27 @@ describe('<ArdopRadioPanel>', () => {
         expect(targetInput.value).toBe('W7DG');
         const freqInput = screen.getByTestId('ardop-freq') as HTMLInputElement;
         expect(freqInput.value).toBe('7.103');
+      });
+    });
+  });
+
+  // tuxlink-8fkkk Task 12: Rig control expander — mutual exclusion between
+  // close-serial sequencing and live VFO poll (they contend for the serial port).
+  describe('Rig control expander', () => {
+    it('disables live-VFO poll when close-serial sequencing is turned on', async () => {
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      // Wait for ardopConfig to hydrate (rig fields must be present in the
+      // default mock so the checkboxes render with correct initial state).
+      await waitFor(() => {
+        expect(screen.getByTestId('ardop-radio-section')).toBeInTheDocument();
+      });
+      // Open the Rig control expander.
+      fireEvent.click(screen.getByTestId('rig-control-expander-summary'));
+      // Turn on close-serial sequencing.
+      fireEvent.click(screen.getByTestId('rig-close-serial'));
+      // live-VFO poll must now be disabled (mutual exclusion).
+      await waitFor(() => {
+        expect(screen.getByTestId('rig-live-vfo')).toBeDisabled();
       });
     });
   });

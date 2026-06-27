@@ -379,6 +379,16 @@ export function ArdopRadioPanel({
       return true;
     }
   });
+  // tuxlink-8fkkk Task 12: Rig control expander (model/CAT/sequencing/VFO/QSY).
+  // Collapsed by default — most operators won't need rigctld integration on day
+  // one. Persisted via localStorage so the state survives panel remounts.
+  const [rigCfgOpen, setRigCfgOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('tuxlink.ardop.rigCfgOpen') === '1';
+    } catch {
+      return false;
+    }
+  });
   // cmd_port + binary inputs (tuxlink-jmfm Task 3). PR #185 commit 4c88618
   // added Capture / Playback / PTT / WebGUI; Task 2 of the radio-panel-width
   // plan deleted the Settings ARDOP fieldset, so cmd_port + binary needed an
@@ -1308,6 +1318,109 @@ export function ArdopRadioPanel({
               onBlur={commitBinary}
             />
           </label>
+          </details>
+
+          {/* tuxlink-8fkkk Task 12: Rig control — rigctld integration for
+              CAT-based QSY / VFO polling. Collapsed by default; the operator
+              opens it only when wiring up hamlib. Each toggle persists via
+              persistArdop so the backend sees the change immediately. The
+              live_vfo_poll checkbox is disabled when close_serial_sequencing
+              is on — polling holds the serial port open, which is incompatible
+              with the close-serial-before-PTT sequencing the FT-710 needs. */}
+          <details
+            className="expander"
+            open={rigCfgOpen}
+            onToggle={(e) => {
+              const open = e.currentTarget.open;
+              setRigCfgOpen(open);
+              try {
+                localStorage.setItem('tuxlink.ardop.rigCfgOpen', open ? '1' : '0');
+              } catch {
+                /* localStorage unavailable — in-memory toggle still works */
+              }
+            }}
+            data-testid="ardop-rig-expander"
+          >
+            <summary className="expander-summary" data-testid="rig-control-expander-summary">
+              Rig control
+            </summary>
+            <label className="radio-panel-input-row">
+              <span>Rig model</span>
+              <select
+                className="radio-panel-input"
+                data-testid="rig-model"
+                value={ardopConfig?.rig_hamlib_model ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  persistArdop({ rig_hamlib_model: v === '' ? null : Number(v) });
+                }}
+              >
+                <option value="">None / unset</option>
+                <option value="1049">Yaesu FT-710 (1049)</option>
+              </select>
+            </label>
+            <label className="radio-panel-input-row">
+              <span>CAT port</span>
+              <input
+                type="text"
+                className="radio-panel-input"
+                data-testid="rig-cat-port"
+                value={catSerialInput}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                placeholder="/dev/ttyUSB0 (CAT/Enhanced port)"
+                onChange={(e) => setCatSerialInput(e.target.value)}
+                onBlur={commitCatSerial}
+              />
+            </label>
+            <div className="radio-panel-input-row">
+              <span>CAT backend</span>
+              <span className="radio-panel-input" style={{ opacity: 0.7, userSelect: 'none' }}>
+                Managed rigctld
+              </span>
+            </div>
+            <label className="radio-panel-input-row">
+              <span>Close-serial sequencing</span>
+              <input
+                type="checkbox"
+                data-testid="rig-close-serial"
+                checked={ardopConfig?.close_serial_sequencing ?? false}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  // Turning on close-serial is incompatible with live VFO poll
+                  // (polling holds the port open). Force live_vfo_poll false
+                  // in the same patch so the two never coexist enabled.
+                  persistArdop({
+                    close_serial_sequencing: checked,
+                    ...(checked ? { live_vfo_poll: false } : {}),
+                  });
+                }}
+              />
+            </label>
+            <label className="radio-panel-input-row">
+              <span>Live VFO poll</span>
+              <input
+                type="checkbox"
+                data-testid="rig-live-vfo"
+                checked={ardopConfig?.live_vfo_poll ?? false}
+                disabled={ardopConfig?.close_serial_sequencing ?? false}
+                onChange={(e) => {
+                  persistArdop({ live_vfo_poll: e.target.checked });
+                }}
+              />
+            </label>
+            <label className="radio-panel-input-row">
+              <span>QSY on fail</span>
+              <input
+                type="checkbox"
+                data-testid="rig-qsy-on-fail"
+                checked={ardopConfig?.qsy_on_fail ?? false}
+                onChange={(e) => {
+                  persistArdop({ qsy_on_fail: e.target.checked });
+                }}
+              />
+            </label>
           </details>
         </section>
       )}
