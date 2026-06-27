@@ -722,6 +722,7 @@ fn config_skips_pat_mbo_address_on_write() {
         packet: tuxlink_lib::config::PacketConfig::default(),
         modem_ardop: None,
         modem_vara: None,
+        rig: tuxlink_lib::config::RigUiConfig::default(),
         telnet_listen: tuxlink_lib::config::TelnetListenUiConfig::default(),
         network_po_favorites: Vec::new(),
         review_inbound_before_download: false,

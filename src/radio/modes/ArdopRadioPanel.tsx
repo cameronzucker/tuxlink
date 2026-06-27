@@ -23,7 +23,7 @@
 // yields an unbindable webgui_port, so we surface an error rather
 // than open a dead URL.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
@@ -48,6 +48,12 @@ import { listenGatewayPrefill } from '../../favorites/prefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
 import type { RadioPanelMode } from '../types';
+import { RigControlSection } from './RigControlSection';
+import {
+  parseFreqInputToHz,
+  dialFreqToMhzString,
+  dialsToQsyCandidates,
+} from './freq';
 import './ArdopRadioPanel.css';
 import '../sections/ListenSection.css';
 
@@ -266,10 +272,6 @@ interface ArdopFullConfig {
   /** How tuxlink keys the radio. Default 'vox'. */
   ptt_method: PttMethod;
   ptt_serial_path: string | null;
-  /** Serial device for CAT PTT (consulted only when ptt_method='cat_command'). */
-  cat_serial_path: string | null;
-  /** CAT serial baud. Default 38400 (FT-710 Enhanced port). */
-  cat_baud: number;
   /** CAT key command, e.g. 'TX1;'. */
   cat_key_cmd: string;
   /** CAT unkey command, e.g. 'TX0;'. */
@@ -312,6 +314,10 @@ export function ArdopRadioPanel({
 }: ArdopRadioPanelProps) {
   const { status } = useModemStatus();
   const [target, setTarget] = useState('');
+  // tuxlink-8fkkk: operator-entered frequency in MHz for CAT-based QSY before
+  // connecting. "7.102" → 7102000 Hz. Empty/invalid → null (backend skips retune).
+  const [freqMhz, setFreqMhz] = useState('');
+  const freqHz = useMemo<number | null>(() => parseFreqInputToHz(freqMhz), [freqMhz]);
   // tuxlink-ypz3 (3a): restore the persisted ARDOP target on mount so switching
   // modes (panel remounts) doesn't blank the previously-dialed station. Mirrors
   // the localStorage key the ribbon Connect (connectDispatch) reads. Keyed on
@@ -336,9 +342,9 @@ export function ArdopRadioPanel({
   // tuxlink-wu0k: PTT method + CAT-command fields. CAT command keys radios
   // like the FT-710 that key ONLY by CAT (TX1;/TX0;) and need the serial port
   // CLOSED during audio — tuxlink spawns a close-serial bridge for that path.
+  // Note: cat_serial_path and cat_baud are now radio-level (Config.rig) and
+  // edited via RigControlSection below.
   const [pttMethod, setPttMethod] = useState<PttMethod>('vox');
-  const [catSerialInput, setCatSerialInput] = useState<string>('');
-  const [catBaudInput, setCatBaudInput] = useState<string>('38400');
   const [catKeyInput, setCatKeyInput] = useState<string>('TX1;');
   const [catUnkeyInput, setCatUnkeyInput] = useState<string>('TX0;');
   // tuxlink-0kew: collapse the Radio-configuration group to reclaim panel
@@ -351,6 +357,8 @@ export function ArdopRadioPanel({
       return true;
     }
   });
+  // Rig control is now provided by the shared RigControlSection component
+  // (tuxlink-8fkkk Task A1UI), which manages its own collapse state.
   // cmd_port + binary inputs (tuxlink-jmfm Task 3). PR #185 commit 4c88618
   // added Capture / Playback / PTT / WebGUI; Task 2 of the radio-panel-width
   // plan deleted the Settings ARDOP fieldset, so cmd_port + binary needed an
@@ -394,13 +402,27 @@ export function ArdopRadioPanel({
   // connection record IFF it matches the live peer. Cleared on a manual target
   // edit (a hand-typed target is not the prefilled favorite).
   const pendingDialRef = useRef<FavoriteDial | null>(null);
-  const handlePrefill = useCallback((dial: FavoriteDial) => {
-    setTarget(dial.gateway);
-    pendingDialRef.current = dial;
-    // tuxlink-vu97: persist so the ribbon Connect can dial this target with the
-    // pane closed.
-    writeLastTarget('ardop-hf', dial.gateway);
-  }, []);
+  // tuxlink-8fkkk Task B: the ranked QSY-on-fail candidate list from the last
+  // Find-a-Station "Use →". Sent as `qsyCandidates` on Connect when it has more
+  // than one entry; a single/empty list falls back to the legacy single dial.
+  const pendingCandidatesRef = useRef<FavoriteDial[]>([]);
+  const handlePrefill = useCallback(
+    (dial: FavoriteDial, candidates?: FavoriteDial[]) => {
+      setTarget(dial.gateway);
+      pendingDialRef.current = dial;
+      pendingCandidatesRef.current = candidates ?? [];
+      // tuxlink-vu97: persist so the ribbon Connect can dial this target with the
+      // pane closed.
+      writeLastTarget('ardop-hf', dial.gateway);
+      // tuxlink-8fkkk C4: normalize the dial's freq metadata to a MHz string
+      // (handles both Find-a-Station MHz "7.103" and saved-favorite kHz
+      // "14105.0") and populate the field so Connect tunes the rig on the next
+      // Start click. CLEAR the field when the dial carries no parseable freq so
+      // a stale freq from a prior prefill never tunes the wrong frequency.
+      setFreqMhz(dialFreqToMhzString(dial) ?? '');
+    },
+    [],
+  );
 
   useEffect(
     () => listenGatewayPrefill('ardop-hf', handlePrefill),
@@ -466,9 +488,9 @@ export function ArdopRadioPanel({
         setPttSerialInput(c.ptt_serial_path ?? '');
         // tuxlink-wu0k: PTT method + CAT fields. Older configs may lack
         // ptt_method (the backend migrates it on read), so default to 'vox'.
+        // Note: cat_serial_path and cat_baud are now read from Config.rig
+        // (via RigControlSection), not from ArdopUiConfig.
         setPttMethod(c.ptt_method ?? 'vox');
-        setCatSerialInput(c.cat_serial_path ?? '');
-        setCatBaudInput(String(c.cat_baud ?? 38400));
         setCatKeyInput(c.cat_key_cmd ?? 'TX1;');
         setCatUnkeyInput(c.cat_unkey_cmd ?? 'TX0;');
         setCmdPortInput(String(c.cmd_port));
@@ -516,22 +538,10 @@ export function ArdopRadioPanel({
   };
   // tuxlink-wu0k: CAT-PTT field commits. The method selector persists eagerly
   // on change; the text fields persist on blur (matching the panel's idiom).
+  // Note: cat_serial_path and cat_baud are now persisted via RigControlSection.
   const onPttMethodChange = (next: PttMethod) => {
     setPttMethod(next);
     persistArdop({ ptt_method: next });
-  };
-  const commitCatSerial = () => {
-    const trimmed = catSerialInput.trim();
-    persistArdop({ cat_serial_path: trimmed === '' ? null : trimmed });
-  };
-  const commitCatBaud = () => {
-    const n = Number(catBaudInput.trim());
-    // Reject NaN / non-integer / non-positive; keep the prior persisted value.
-    if (!Number.isInteger(n) || n <= 0) {
-      setCatBaudInput(String(ardopConfig?.cat_baud ?? 38400));
-      return;
-    }
-    persistArdop({ cat_baud: n });
   };
   const commitCatKey = () => {
     const trimmed = catKeyInput.trim();
@@ -729,8 +739,17 @@ export function ArdopRadioPanel({
     setConnecting(true);
     setConnectError(null);
     try {
+      // tuxlink-8fkkk Task B: when a Find-a-Station "Use →" supplied more than
+      // one ranked candidate, send the ordered `qsyCandidates` list — the
+      // backend's qsy_on_fail walk visits each in turn (a non-empty list
+      // overrides the single `target`/`freqHz`). Otherwise send the legacy
+      // single dial so the backend's one-element path is unchanged.
+      const candidates = pendingCandidatesRef.current;
       await invoke('modem_ardop_connect', {
         target: target.trim(),
+        freqHz, // null when unset → backend skips CAT retune
+        qsyCandidates:
+          candidates.length > 1 ? dialsToQsyCandidates(candidates) : null,
       });
     } catch (e) {
       // tuxlink-nnjz: modem errors are surfaced in the session log (the backend
@@ -832,6 +851,9 @@ export function ArdopRadioPanel({
     // A hand-typed target is not the prefilled favorite — drop the association
     // so the connection record doesn't carry stale favorite metadata.
     pendingDialRef.current = null;
+    // tuxlink-8fkkk Task B: a manual target is a single dial — drop any ranked
+    // QSY candidates from a prior prefill so they don't fire for a hand-typed call.
+    pendingCandidatesRef.current = [];
     // tuxlink-vu97: persist the configured target so the ribbon Connect button
     // can fire ARDOP's full send/receive with this pane closed.
     writeLastTarget('ardop-hf', e.target.value);
@@ -889,6 +911,37 @@ export function ArdopRadioPanel({
                   ))}
                 </select>
               </label>
+              {/* tuxlink-8fkkk: frequency + Tune affordance. Operator types the
+                  gateway frequency in MHz; the panel parses it to Hz and passes it
+                  on Connect so the backend CAT-tunes the rig before dialing. The
+                  Tune… button sends ardop_tune_rig without dialing (QSY-only). Both
+                  paths are no-ops when the field is blank (freqHz === null). */}
+              <div className="radio-panel-input-row">
+                <label htmlFor="ardop-freq">Frequency (MHz)</label>
+                <input
+                  id="ardop-freq"
+                  data-testid="ardop-freq"
+                  className="radio-panel-input radio-panel-mono"
+                  value={freqMhz}
+                  onChange={(e) => setFreqMhz(e.target.value)}
+                  placeholder="7.102"
+                  inputMode="decimal"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                />
+                <button
+                  type="button"
+                  className="radio-panel-btn radio-panel-btn-sm"
+                  data-testid="ardop-tune"
+                  disabled={freqHz === null}
+                  onClick={() => {
+                    if (freqHz !== null) void invoke('ardop_tune_rig', { freqHz });
+                  }}
+                >
+                  Tune…
+                </button>
+              </div>
             </section>
           }
         />
@@ -1087,68 +1140,13 @@ export function ArdopRadioPanel({
           )}
           {pttMethod === 'cat_command' && (
             <>
-              <label className="radio-panel-input-row">
-                <span>CAT serial</span>
-                <select
-                  className="radio-panel-input"
-                  data-testid="ardop-cat-serial-select"
-                  value={pttDevices.some((d) => d.path === catSerialInput) ? catSerialInput : ''}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setCatSerialInput(next);
-                    persistArdop({ cat_serial_path: next === '' ? null : next });
-                  }}
-                >
-                  <option value="">Choose CAT serial port…</option>
-                  {pttDevices
-                    .filter((d) => d.kind === 'usb')
-                    .map((d) => (
-                      <option key={d.path} value={d.path}>
-                        {d.path} — {d.label}
-                      </option>
-                    ))}
-                </select>
-                <button
-                  type="button"
-                  className="radio-panel-btn-sm"
-                  data-testid="ardop-cat-serial-refresh"
-                  onClick={loadPttDevices}
-                  aria-label="Refresh CAT serial device list"
-                >
-                  ↻
-                </button>
-              </label>
-              <label className="radio-panel-input-row">
-                <span>Manual</span>
-                <input
-                  type="text"
-                  className="radio-panel-input"
-                  data-testid="ardop-cat-serial-input"
-                  value={catSerialInput}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  placeholder="/dev/ttyUSB0 (CAT/Enhanced port)"
-                  onChange={(e) => setCatSerialInput(e.target.value)}
-                  onBlur={commitCatSerial}
-                />
-              </label>
-              <label className="radio-panel-input-row">
-                <span>CAT baud</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  className="radio-panel-input"
-                  data-testid="ardop-cat-baud-input"
-                  value={catBaudInput}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  placeholder="38400"
-                  onChange={(e) => setCatBaudInput(e.target.value)}
-                  onBlur={commitCatBaud}
-                />
-              </label>
+              {/* CAT serial port and baud are radio-level (Config.rig) and
+                  configured in the Rig control section below. Key/unkey/bridge
+                  commands remain PTT-method-specific and live here. */}
+              <p className="radio-panel-radio-help" data-testid="ardop-cat-serial-hint">
+                CAT serial port and baud are configured in{' '}
+                <strong>Rig control</strong> below.
+              </p>
               <label className="radio-panel-input-row">
                 <span>Key cmd</span>
                 <input
@@ -1242,6 +1240,12 @@ export function ArdopRadioPanel({
             />
           </label>
           </details>
+
+          {/* tuxlink-8fkkk Task A1UI: Rig control is now the shared
+              RigControlSection, which reads/writes Config.rig via
+              config_get_rig / config_set_rig so VARA and ARDOP share
+              the same physical rig configuration. */}
+          <RigControlSection storageKeyPrefix="ardop" />
         </section>
       )}
 
@@ -1279,8 +1283,13 @@ export function ArdopRadioPanel({
             <Meter label="Throughput" value={`${status.throughputBps} bps`} warn />
           )}
           <Sparkline samples={throughputHistory} height={28} />
-          <pre className="radio-panel-mono ardop-stats">
+          <pre className="radio-panel-mono ardop-stats" data-testid="ardop-live-stats">
 {`Peer   ${status.peer ?? '—'}
+Freq   ${
+            status.rigFreqHz !== null
+              ? `${(status.rigFreqHz / 1e6).toFixed(5)} MHz`
+              : 'follows on connect'
+          }
 Mode   ${status.mode ?? '—'}
 Width  ${status.widthHz !== null ? `${status.widthHz} Hz` : '—'}
 PTT    ${status.pttBackend ?? '—'}

@@ -7,6 +7,7 @@
 
 import type { CSSProperties } from 'react';
 import { groupChannelsByMode, channelToDial, channelReliability } from './channelGrouping';
+import { rankedDialsFor } from './ranking';
 import { bestBandNow, relToTier, tierColorVar } from './reachability';
 import { bandLabel, bandForKhz, HF_BANDS } from './bandPlan';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
@@ -29,9 +30,11 @@ export interface StationRailProps {
    * Handle "Use →" for a channel. AppShell arms (opens) the matching modem panel
    * on demand and then prefills it, so the operator does not have to open the
    * modem first (tuxlink-s0r1). When omitted, falls back to emitting the prefill
-   * for an already-open panel.
+   * for an already-open panel. `candidates` is the Find-a-Station ranked list of
+   * the station's other channels for this mode (tuxlink-8fkkk Task B) — the
+   * panel sends it as `qsyCandidates` for the backend QSY-on-fail walk.
    */
-  onUse?: (dial: FavoriteDial) => void;
+  onUse?: (dial: FavoriteDial, candidates?: FavoriteDial[]) => void;
   /**
    * Save / unsave a discovered channel as a starred favorite (tuxlink-5016).
    * The parent finds-or-creates the per-mode favorite and toggles its star;
@@ -79,11 +82,28 @@ export function StationRail(props: StationRailProps) {
   const onUse = (channel: Channel) => {
     const dial = channelToDial(station, channel);
     if (!dial) return;
+    // tuxlink-8fkkk Task B: the QSY-on-fail walk needs the station's OTHER
+    // channels for this mode, ranked best-first. Compute them here where the
+    // station + prediction + utcHour are in scope and pass them alongside the
+    // primary dial.
+    //
+    // The clicked `dial` MUST be the PRIMARY candidate (index 0): the backend
+    // treats a non-empty `qsyCandidates` list as OVERRIDING the form's
+    // target/freq, so it dials candidates[0] first. `rankedDialsFor` returns
+    // channels ranked best-first (and capped), which may NOT be the clicked
+    // channel — and could even omit it under the cap. Force the clicked dial to
+    // the front, then append the ranked channels minus a duplicate of it, so
+    // "Use" on channel X always dials X first and only QSYs to others on
+    // failure.
+    const ranked = rankedDialsFor(station, dial.mode, prediction, utcHour);
+    const sameDial = (a: FavoriteDial, b: FavoriteDial) =>
+      a.gateway === b.gateway && a.freq === b.freq;
+    const candidates = [dial, ...ranked.filter((d) => !sameDial(d, dial))];
     // Arm-on-demand (tuxlink-s0r1): AppShell opens the matching modem panel then
     // prefills it. Fall back to a bare emit for an already-open panel in contexts
     // that don't supply the handler (e.g. tests/standalone harness).
-    if (props.onUse) props.onUse(dial);
-    else emitGatewayPrefill(dial);
+    if (props.onUse) props.onUse(dial, candidates);
+    else emitGatewayPrefill(dial, candidates);
   };
 
   const onSave = (channel: Channel) => {

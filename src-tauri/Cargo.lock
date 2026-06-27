@@ -6727,6 +6727,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
+name = "tux-rig"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+]
+
+[[package]]
 name = "tuxlink"
 version = "0.77.0"
 dependencies = [
@@ -6789,6 +6796,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "tracing-test",
+ "tux-rig",
  "tuxlink",
  "tuxlink-mcp-core",
  "tuxlink-security",

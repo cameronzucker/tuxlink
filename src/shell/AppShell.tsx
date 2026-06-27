@@ -1419,11 +1419,13 @@ export function AppShell() {
   // (prefillEvent) so the just-opened panel consumes it once it mounts + subscribes.
   // We close the finder so the operator lands on the armed, prefilled modem.
   const handleStationUse = useCallback(
-    (dial: FavoriteDial) => {
+    (dial: FavoriteDial, candidates?: FavoriteDial[]) => {
       // RadioMode and ProtocolId share the same string set; a station channel is
       // never 'telnet'. CMS = connect to the dialed RMS gateway over that protocol.
       onSelectConnection({ sessionType: 'cms', protocol: dial.mode as ConnectionKey['protocol'] });
-      emitGatewayPrefill(dial);
+      // tuxlink-8fkkk Task B: carry the ranked QSY-on-fail candidate list so the
+      // armed panel can send `qsyCandidates` on Connect.
+      emitGatewayPrefill(dial, candidates);
       setCatalogBuilderOpen(false);
     },
     [onSelectConnection],

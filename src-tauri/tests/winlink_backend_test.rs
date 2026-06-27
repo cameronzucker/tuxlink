@@ -101,6 +101,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         packet: PacketConfig::default(),
         modem_ardop: None,
         modem_vara: None,
+        rig: tuxlink_lib::config::RigUiConfig::default(),
         telnet_listen: tuxlink_lib::config::TelnetListenUiConfig::default(),
         network_po_favorites: Vec::new(),
         review_inbound_before_download: false,

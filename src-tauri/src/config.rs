@@ -4,14 +4,21 @@
 //! bd issue: tuxlink-4mt
 
 use crate::winlink::ax25::KissLinkConfig;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Bumped 2 → 3 (tuxlink-ulrz): `trash_auto_purge` was added under
 /// `deny_unknown_fields` WITHOUT a version bump, so an older binary rejected the
 /// whole config (and the write guard, which probes only `schema_version`, would
 /// then clobber it). EVERY additive field MUST bump this — enforced by the
 /// `config_schema_version_tracks_field_set` test below.
-pub const CONFIG_SCHEMA_VERSION: u32 = 4;
+///
+/// Bumped 4 → 5 (tuxlink-8fkkk): added the always-serialized top-level `rig`
+/// section (radio-level CAT / rig-control, hoisted out of `[modem_ardop]` so
+/// VARA reaches the same rig). A pre-v5 build under `deny_unknown_fields` would
+/// reject a config carrying `"rig"`, so the field set change bumps the version
+/// (the trash_auto_purge class). The bump also lets a v5 file be classified
+/// `MigrateAdditive` by an intermediate build rather than `Unsupported`.
+pub const CONFIG_SCHEMA_VERSION: u32 = 5;
 
 /// What to do with an on-disk config of a given `schema_version` (Phase 2,
 /// tuxlink-7iy2). A v1 file is a breaking migration candidate; a version ≥2 but
@@ -189,8 +196,17 @@ fn tag_folder(
 /// Top-level config struct. `deny_unknown_fields` is the AMD-11 drift defense:
 /// any stale field (e.g. `winlink_password_present` from the pre-AMD-1 flat schema)
 /// hard-fails at deserialize time rather than silently being dropped.
+///
+/// `#[serde(remote = "Self")]` (tuxlink-8fkkk): the derive generates an inherent
+/// `Config::deserialize` associated fn rather than the trait impl, so the
+/// hand-written `impl<'de> Deserialize<'de> for Config` below can call it and
+/// then run a post-deserialize migration ([`Config::migrate_rig_from_legacy_ardop`])
+/// — lifting a legacy `[modem_ardop]` CAT serial link into the new top-level
+/// `[rig]` section. This is the documented serde idiom for post-deserialize
+/// fix-ups; all field-level serde attributes (including the
+/// `deserialize_schema_version` normalization) are preserved verbatim.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, remote = "Self")]
 pub struct Config {
     #[serde(deserialize_with = "deserialize_schema_version")]
     pub schema_version: u32,
@@ -220,6 +236,17 @@ pub struct Config {
     /// client; tuxlink does NOT manage the VARA process lifecycle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modem_vara: Option<VaraUiConfig>,
+    /// Radio-level CAT / rig-control settings (tuxlink-8fkkk). Describes ONE
+    /// physical transceiver and is consumed by BOTH the ARDOP and VARA paths:
+    /// the hamlib model + rigctld endpoint for QSY / live-VFO, the CAT serial
+    /// link (`cat_serial_path` / `cat_baud`), and the per-radio behavior flags
+    /// (close-serial sequencing, live-VFO poll, QSY-on-fail). Hoisted out of
+    /// `[modem_ardop]` so VARA reaches the same rig. `#[serde(default)]` migrates
+    /// configs that predate this field (absent → `RigUiConfig::default()`); the
+    /// legacy `[modem_ardop]` CAT serial link is lifted in by
+    /// [`Config::migrate_rig_from_legacy_ardop`] during deserialize.
+    #[serde(default)]
+    pub rig: RigUiConfig,
     /// Telnet-P2P listener settings (additive; defaults when absent). The
     /// allowlist + station password live OUTSIDE this struct (the allowlist in
     /// `<config-dir>/listener/telnet/allowed_stations.json`, the password in
@@ -305,6 +332,67 @@ pub struct Config {
     /// (tuxlink-5rvp).
     #[serde(default)]
     pub close_prompt_seen: bool,
+}
+
+impl Config {
+    /// Lift the legacy `[modem_ardop]` CAT serial link into the top-level
+    /// `[rig]` section (tuxlink-8fkkk). The CAT serial path + baud were RELEASED
+    /// under `[modem_ardop]` before the rig config was hoisted to `Config.rig`,
+    /// so a config written by an older build carries them there. This migration
+    /// runs once at deserialize time (via the hand-written `Deserialize` impl):
+    /// when `[rig]` carries no CAT serial path of its own AND a legacy
+    /// `[modem_ardop]` carries one, the legacy values are copied into `rig`.
+    ///
+    /// The legacy fields are `#[serde(skip_serializing)]` on [`ArdopUiConfig`],
+    /// so a subsequent save persists the CAT serial link ONLY under `[rig]` and
+    /// it stops appearing under `[modem_ardop]` — the migration is one-way and
+    /// self-healing. An explicit `[rig].cat_serial_path` always wins (no
+    /// clobber of an operator-set value).
+    fn migrate_rig_from_legacy_ardop(&mut self) {
+        if self.rig.cat_serial_path.is_some() {
+            return; // [rig] already owns the CAT serial link; do not clobber.
+        }
+        if let Some(legacy_path) = self
+            .modem_ardop
+            .as_ref()
+            .and_then(|ardop| ardop.cat_serial_path.clone())
+        {
+            let legacy_baud = self
+                .modem_ardop
+                .as_ref()
+                .map(|ardop| ardop.cat_baud)
+                .unwrap_or_else(default_cat_baud);
+            self.rig.cat_serial_path = Some(legacy_path);
+            // Carry the legacy baud alongside the path so the rig keys at the
+            // proven rate (default 38400 if the legacy config omitted it).
+            self.rig.cat_baud = legacy_baud;
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Config {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // `remote = "Self"` makes the derive emit this inherent associated fn;
+        // we run the post-deserialize rig migration before handing the value back.
+        let mut config = Config::deserialize(deserializer)?;
+        config.migrate_rig_from_legacy_ardop();
+        Ok(config)
+    }
+}
+
+impl Serialize for Config {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // `remote = "Self"` also emits an inherent `serialize` assoc fn (the
+        // derive does NOT generate the trait impl when `remote` is set), so the
+        // trait impl delegates to it. Serialization is otherwise unchanged.
+        Config::serialize(self, serializer)
+    }
 }
 
 /// A saved Network Post Office relay server entry.
@@ -882,6 +970,25 @@ fn default_cat_unkey_cmd() -> String {
 fn default_cat_bridge_port() -> u16 {
     4532
 }
+/// Default rigctld host (loopback — rigctld almost always runs on the same
+/// machine). Backs [`RigUiConfig`] (tuxlink-8fkkk).
+fn default_rigctld_host() -> String {
+    "127.0.0.1".into()
+}
+/// Default rigctld port. **4534, NOT hamlib's upstream 4532 (C1 fix,
+/// tuxlink-8fkkk).** The close-serial CAT-PTT bridge ([`default_cat_bridge_port`])
+/// binds 4532; if a tuxlink-spawned rigctld also defaulted to 4532 the two would
+/// collide on the loopback bind. Defaulting rigctld to 4534 keeps the rig-control
+/// endpoint clear of the bridge. (`RigUiConfig::default().rigctld_port !=
+/// ArdopUiConfig::default().cat_bridge_port` is asserted by a unit test.)
+fn default_rigctld_port() -> u16 {
+    4534
+}
+/// Default rigctld binary name (on $PATH on most Linux distros that ship
+/// hamlib). Backs [`RigUiConfig`] (tuxlink-8fkkk).
+fn default_rigctld_binary() -> String {
+    "rigctld".into()
+}
 
 /// Frontend-shaped ARDOP HF modem settings. Persisted as `[modem_ardop]` in config;
 /// Task 3.3 (`modem_ardop_connect`) translates this into `ArdopConfig::extra_args` at
@@ -909,12 +1016,21 @@ pub struct ArdopUiConfig {
     /// `ptt_method == SerialRts`. `None` = no serial RTS PTT.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ptt_serial_path: Option<String>,
-    /// Serial device for CAT PTT. Consulted only when
-    /// `ptt_method == CatCommand`. `None` until the operator picks a port.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// MIGRATION-ONLY (tuxlink-8fkkk). The CAT serial device once lived under
+    /// `[modem_ardop]`; it is now radio-level on [`RigUiConfig`]
+    /// (`Config.rig.cat_serial_path`). This field is retained ONLY to read a
+    /// legacy `[modem_ardop].cat_serial_path` at deserialize time so
+    /// [`Config::migrate_rig_from_legacy_ardop`] can lift it into `[rig]`.
+    /// `skip_serializing` ensures a re-save never writes it back under
+    /// `[modem_ardop]` — the CAT serial link persists ONLY under `[rig]`.
+    /// Read the live value from `Config.rig`, NOT here.
+    #[serde(default, skip_serializing)]
     pub cat_serial_path: Option<String>,
-    /// Serial baud for CAT PTT. Default 38400 (the FT-710 Enhanced port).
-    #[serde(default = "default_cat_baud")]
+    /// MIGRATION-ONLY (tuxlink-8fkkk). Legacy `[modem_ardop].cat_baud`, lifted
+    /// into `Config.rig.cat_baud` at deserialize time. `skip_serializing` keeps
+    /// it out of a re-saved `[modem_ardop]`. Read the live value from
+    /// `Config.rig`. Default 38400 (the FT-710 Enhanced port).
+    #[serde(default = "default_cat_baud", skip_serializing)]
     pub cat_baud: u32,
     /// CAT key command (e.g. `TX1;`). Default `TX1;`.
     #[serde(default = "default_cat_key_cmd")]
@@ -978,6 +1094,14 @@ pub struct ArdopUiConfig {
     /// listener no longer self-closes by default (tuxlink-5g5d).
     #[serde(default)]
     pub listen_ttl_minutes: u32,
+    // tuxlink-8fkkk: the rig-control fields (rig_hamlib_model, rigctld_host,
+    // rigctld_port, rigctld_binary, close_serial_sequencing, live_vfo_poll,
+    // qsy_on_fail) were hoisted to the radio-level [`RigUiConfig`]
+    // (`Config.rig`) so VARA reaches the same rig as ARDOP. They were
+    // UNRELEASED here (added in this PR's predecessor, never shipped under
+    // `[modem_ardop]`), so they are removed cleanly with no migration. The CAT
+    // serial link (cat_serial_path / cat_baud) WAS released here, so those two
+    // remain above as migration-only `skip_serializing` fields.
 }
 
 impl ArdopUiConfig {
@@ -1073,6 +1197,8 @@ impl<'de> Deserialize<'de> for ArdopUiConfig {
             webgui_port: Option<u16>,
             #[serde(default)]
             listen_ttl_minutes: u32,
+            // tuxlink-8fkkk: rig fields hoisted to RigUiConfig; cat_serial_path
+            // / cat_baud remain (migration-only — read here to lift into [rig]).
         }
 
         let s = Shadow::deserialize(de)?;
@@ -1141,6 +1267,93 @@ impl Default for VaraUiConfig {
             cmd_port: 8300,
             data_port: 8301,
             bandwidth_hz: None,
+        }
+    }
+}
+
+// ============================================================================
+// Radio-level CAT / rig-control config (tuxlink-8fkkk)
+// ============================================================================
+
+/// Radio-level CAT / rig-control settings, persisted under `[rig]` in config.
+///
+/// Describes ONE physical transceiver and is consumed by BOTH the ARDOP and
+/// VARA connect/tune paths (a station has one radio; the modem mode is
+/// orthogonal). Hoisted out of `[modem_ardop]` (tuxlink-8fkkk) so VARA reaches
+/// the same rig as ARDOP.
+///
+/// Fields:
+/// - `rig_hamlib_model`: hamlib model ID for rigctld-based QSY / VFO control.
+///   `None` = no rigctld integration (close-serial CAT-PTT still works without
+///   it). e.g. `1049` for Icom IC-7300, `1037` for Yaesu FT-817.
+/// - `rigctld_host` / `rigctld_port`: where rigctld listens. Default
+///   `127.0.0.1:4534` — **4534 NOT 4532** to avoid colliding with the
+///   close-serial CAT-PTT bridge (which binds 4532). See [`default_rigctld_port`].
+/// - `rigctld_binary`: binary name/path tuxlink spawns. Default `"rigctld"`.
+/// - `close_serial_sequencing`: when `true`, close the CAT serial before audio
+///   and re-open after TX (radios that share one serial between CAT + audio PTT).
+/// - `live_vfo_poll`: when `true`, poll the VFO from rigctld so the panel's
+///   frequency readout stays current.
+/// - `qsy_on_fail`: when `true`, walk the ranked candidate frequencies on a
+///   connect failure (QSY to the next gateway/freq). Default `false`.
+/// - `cat_serial_path` / `cat_baud`: the CAT serial link (device + baud). The
+///   ARDOP CAT-PTT bridge and the rigctld QSY path both use this serial port.
+///
+/// `Deserialize` is derived with `#[serde(default = ...)]` per field — matching
+/// [`VaraUiConfig`]'s derived style — so a config that predates `[rig]` (or
+/// omits any field) fills from the defaults. `deny_unknown_fields` is
+/// intentionally absent (consistent with the other additive UI-config sections).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RigUiConfig {
+    /// Hamlib rig model ID for rigctld-based QSY / VFO control. `None` = no
+    /// rigctld integration. `skip_serializing_if` keeps a no-model config tidy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rig_hamlib_model: Option<u32>,
+    /// Host where rigctld is listening. Default `127.0.0.1`.
+    #[serde(default = "default_rigctld_host")]
+    pub rigctld_host: String,
+    /// TCP port rigctld is listening on. Default `4534` (NOT 4532 — avoids the
+    /// CAT-PTT bridge bind collision; see [`default_rigctld_port`]).
+    #[serde(default = "default_rigctld_port")]
+    pub rigctld_port: u16,
+    /// rigctld binary name or path. Default `"rigctld"` (expected on $PATH).
+    #[serde(default = "default_rigctld_binary")]
+    pub rigctld_binary: String,
+    /// Close the CAT serial before audio and re-open after TX (internal-codec
+    /// radios that share one serial between CAT and audio PTT). Default `false`.
+    #[serde(default)]
+    pub close_serial_sequencing: bool,
+    /// Poll the VFO frequency from rigctld in real time so the panel readout
+    /// stays current. Default `false`.
+    #[serde(default)]
+    pub live_vfo_poll: bool,
+    /// Walk the ranked candidate frequencies on a connect failure (QSY to the
+    /// next gateway/freq). Default `false`.
+    #[serde(default)]
+    pub qsy_on_fail: bool,
+    /// CAT serial device for QSY/VFO control and the ARDOP CAT-PTT bridge.
+    /// `None` until the operator picks a port. `skip_serializing_if` keeps an
+    /// unset config tidy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cat_serial_path: Option<String>,
+    /// CAT serial baud. Default 38400 (the FT-710 Enhanced port speed proven
+    /// 2026-06-23).
+    #[serde(default = "default_cat_baud")]
+    pub cat_baud: u32,
+}
+
+impl Default for RigUiConfig {
+    fn default() -> Self {
+        Self {
+            rig_hamlib_model: None,
+            rigctld_host: default_rigctld_host(),
+            rigctld_port: default_rigctld_port(),
+            rigctld_binary: default_rigctld_binary(),
+            close_serial_sequencing: false,
+            live_vfo_poll: false,
+            qsy_on_fail: false,
+            cat_serial_path: None,
+            cat_baud: default_cat_baud(),
         }
     }
 }
@@ -1236,7 +1449,7 @@ mod tests {
     // and read_config can self-heal it forward.
     #[test]
     fn older_additive_versions_are_migratable_not_unsupported() {
-        // current is 3; 2 is additively loadable.
+        // current is 5 (tuxlink-8fkkk); 2 is additively loadable.
         assert_eq!(super::detect_schema_action(2), super::SchemaAction::MigrateAdditive);
         // strictly-above-current (a newer build's config) is unsupported → refused on write.
         assert_eq!(
@@ -1317,7 +1530,7 @@ mod tests {
         keys.sort_unstable();
         let mut expected = vec![
             "schema_version", "wizard_completed", "connect", "identity", "privacy",
-            "packet", "telnet_listen", "network_po_favorites",
+            "packet", "rig", "telnet_listen", "network_po_favorites",
             "review_inbound_before_download", "aprs",
             "trash_auto_purge", "trash_retention_days",
             "close_to_tray", "close_prompt_seen",
@@ -1918,10 +2131,19 @@ mod tests {
             json.contains("\"ptt_method\":\"cat_command\""),
             "ptt_method must serialize as \"cat_command\"; got: {json}"
         );
+        // tuxlink-8fkkk: the CAT serial link (cat_serial_path / cat_baud) is now
+        // radio-level (Config.rig / RigUiConfig) and only MIGRATION-ONLY on
+        // ArdopUiConfig (#[serde(skip_serializing)]), so it must NOT serialize
+        // under [modem_ardop]. The serial link's persistence + legacy lift are
+        // covered by the RigUiConfig round-trip + migrate_rig_from_legacy_ardop
+        // tests. The PTT-method-specific fields (method, key/unkey cmds, bridge
+        // port) still round-trip through ArdopUiConfig.
+        assert!(
+            !json.contains("cat_serial_path"),
+            "cat_serial_path must not serialize under [modem_ardop] (it is radio-level now); got: {json}"
+        );
         let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.ptt_method, PttMethod::CatCommand);
-        assert_eq!(back.cat_serial_path.as_deref(), Some("/dev/ttyUSB0"));
-        assert_eq!(back.cat_baud, 38400);
         assert_eq!(back.cat_key_cmd, "TX1;");
         assert_eq!(back.cat_unkey_cmd, "TX0;");
         assert_eq!(back.cat_bridge_port, 4532);
@@ -2160,6 +2382,134 @@ mod tests {
         let no_wg_json = r#"{"binary":"ardopcf","capture_device":"","playback_device":"","cmd_port":8515}"#;
         let back: ArdopUiConfig = serde_json::from_str(no_wg_json).unwrap();
         assert_eq!(back.webgui_port, None);
+    }
+
+    // --- tuxlink-8fkkk: RigUiConfig (radio-level rig control, hoisted from
+    // [modem_ardop] so VARA reaches the same rig) ---
+
+    #[test]
+    fn rig_ui_config_defaults() {
+        let c = RigUiConfig::default();
+        assert_eq!(c.rig_hamlib_model, None);
+        assert_eq!(c.rigctld_host, "127.0.0.1");
+        // C1: 4534, NOT 4532 — avoids colliding with the CAT-PTT bridge bind.
+        assert_eq!(c.rigctld_port, 4534);
+        assert_eq!(c.rigctld_binary, "rigctld");
+        assert!(!c.close_serial_sequencing);
+        assert!(!c.live_vfo_poll);
+        assert!(!c.qsy_on_fail);
+        assert_eq!(c.cat_serial_path, None);
+        assert_eq!(c.cat_baud, 38400);
+    }
+
+    /// C1 (tuxlink-8fkkk): the rigctld port default MUST differ from the CAT-PTT
+    /// bridge port so a tuxlink-spawned rigctld and the bridge do not collide on
+    /// the loopback bind.
+    #[test]
+    fn rig_ui_config_rigctld_port_differs_from_cat_bridge_port() {
+        assert_ne!(
+            RigUiConfig::default().rigctld_port,
+            ArdopUiConfig::default().cat_bridge_port,
+            "rigctld_port (4534) must differ from cat_bridge_port (4532) — C1 bind-collision fix"
+        );
+    }
+
+    #[test]
+    fn rig_ui_config_round_trips_json() {
+        let c = RigUiConfig {
+            rig_hamlib_model: Some(1049),
+            close_serial_sequencing: true,
+            live_vfo_poll: true,
+            qsy_on_fail: true,
+            cat_serial_path: Some("/dev/ttyUSB0".into()),
+            cat_baud: 19200,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back: RigUiConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, c, "RigUiConfig must round-trip JSON verbatim");
+    }
+
+    /// Migration (tuxlink-8fkkk): a legacy config whose CAT serial link lived
+    /// under `[modem_ardop]` and which has no `[rig]` section must lift the
+    /// serial path + baud into `Config.rig` at deserialize time.
+    #[test]
+    fn legacy_modem_ardop_cat_serial_migrates_to_rig() {
+        let json = config_json(
+            CONFIG_SCHEMA_VERSION,
+            r#", "modem_ardop": {
+                "binary": "ardopcf",
+                "capture_device": "plughw:1,0",
+                "playback_device": "plughw:1,0",
+                "cmd_port": 8515,
+                "cat_serial_path": "/dev/ttyUSB0",
+                "cat_baud": 38400
+            }"#,
+        );
+        let cfg: Config = serde_json::from_str(&json)
+            .expect("legacy config with modem_ardop CAT serial must deserialize");
+        assert_eq!(
+            cfg.rig.cat_serial_path.as_deref(),
+            Some("/dev/ttyUSB0"),
+            "legacy [modem_ardop].cat_serial_path must lift into [rig]"
+        );
+        assert_eq!(cfg.rig.cat_baud, 38400, "legacy cat_baud must lift into [rig]");
+    }
+
+    /// Migration must NOT clobber an explicit `[rig]`: when the config already
+    /// carries a `[rig].cat_serial_path`, the legacy `[modem_ardop]` value is
+    /// ignored.
+    #[test]
+    fn explicit_rig_section_is_not_overwritten_by_legacy_ardop() {
+        let json = config_json(
+            CONFIG_SCHEMA_VERSION,
+            r#", "rig": { "cat_serial_path": "/dev/ttyACM1", "cat_baud": 57600 },
+                "modem_ardop": {
+                    "binary": "ardopcf",
+                    "capture_device": "plughw:1,0",
+                    "playback_device": "plughw:1,0",
+                    "cmd_port": 8515,
+                    "cat_serial_path": "/dev/ttyUSB0",
+                    "cat_baud": 38400
+                }"#,
+        );
+        let cfg: Config = serde_json::from_str(&json)
+            .expect("config with explicit [rig] must deserialize");
+        assert_eq!(
+            cfg.rig.cat_serial_path.as_deref(),
+            Some("/dev/ttyACM1"),
+            "explicit [rig].cat_serial_path must win over legacy [modem_ardop]"
+        );
+        assert_eq!(cfg.rig.cat_baud, 57600, "explicit [rig].cat_baud must be preserved");
+    }
+
+    /// A re-save persists the CAT serial link ONLY under `[rig]`: because the
+    /// `[modem_ardop]` CAT fields are `skip_serializing`, the migrated value
+    /// stops appearing under `[modem_ardop]` after the next serialize.
+    #[test]
+    fn migrated_cat_serial_is_resaved_under_rig_only() {
+        let json = config_json(
+            CONFIG_SCHEMA_VERSION,
+            r#", "modem_ardop": {
+                "binary": "ardopcf",
+                "capture_device": "plughw:1,0",
+                "playback_device": "plughw:1,0",
+                "cmd_port": 8515,
+                "cat_serial_path": "/dev/ttyUSB0",
+                "cat_baud": 38400
+            }"#,
+        );
+        let cfg: Config = serde_json::from_str(&json).expect("legacy config deserializes");
+        let reserialized = serde_json::to_string(&cfg).unwrap();
+        // The CAT serial link now lives under [rig]; modem_ardop no longer
+        // carries cat_serial_path on a re-save (skip_serializing).
+        let reloaded: Config = serde_json::from_str(&reserialized).unwrap();
+        assert_eq!(reloaded.rig.cat_serial_path.as_deref(), Some("/dev/ttyUSB0"));
+        let modem_ardop_str = serde_json::to_string(reloaded.modem_ardop.as_ref().unwrap()).unwrap();
+        assert!(
+            !modem_ardop_str.contains("cat_serial_path"),
+            "re-saved [modem_ardop] must NOT carry cat_serial_path (skip_serializing): {modem_ardop_str}"
+        );
     }
 
     #[test]
