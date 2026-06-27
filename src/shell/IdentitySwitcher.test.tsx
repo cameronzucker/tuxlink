@@ -104,6 +104,42 @@ test('null_active with no last_selected renders an em-dash', () => {
   expect(screen.getByTestId('ribbon-callsign-text')).toHaveTextContent('—');
 });
 
+// ---------------------------------------------------------------------------
+// Locked-chip indicator (bd-tuxlink-mcp-acceptance): when no identity is
+// authenticated this launch but one IS configured, the CLOSED chip must surface
+// the not-transmit-ready state. Previously the per-row lock inside the open
+// dropdown was the only signal, so the closed chip looked identical whether the
+// active session was loaded or not — a silent transmit-locked trap.
+// ---------------------------------------------------------------------------
+
+test('null_active with a configured identity surfaces a locked chip indicator', () => {
+  render(<IdentitySwitcher active={null} list={LIST} onSwitch={vi.fn()} />);
+  // Still shows the last-selected callsign...
+  expect(screen.getByTestId('ribbon-callsign-text')).toHaveTextContent('W7XYZ');
+  // ...but now visibly flags that it is not authenticated for transmit.
+  expect(screen.getByTestId('identity-chip-lock')).toBeInTheDocument();
+  // Accessible: the trigger conveys the locked state to assistive tech.
+  expect(
+    screen.getByTestId('identity-switcher-trigger').getAttribute('aria-label'),
+  ).toMatch(/locked/i);
+});
+
+test('authenticated active identity shows NO locked chip indicator', () => {
+  render(<IdentitySwitcher active={FULL_ACTIVE} list={LIST} onSwitch={vi.fn()} />);
+  expect(screen.queryByTestId('identity-chip-lock')).not.toBeInTheDocument();
+  expect(
+    screen.getByTestId('identity-switcher-trigger').getAttribute('aria-label'),
+  ).toBeNull();
+});
+
+test('null_active with no configured identity (em-dash) shows NO locked indicator', () => {
+  const emptyList: IdentityListDto = { full: [], tactical: [], last_selected: null };
+  render(<IdentitySwitcher active={null} list={emptyList} onSwitch={vi.fn()} />);
+  // Fresh/empty is not "locked" — there is nothing to authenticate yet.
+  expect(screen.getByTestId('ribbon-callsign-text')).toHaveTextContent('—');
+  expect(screen.queryByTestId('identity-chip-lock')).not.toBeInTheDocument();
+});
+
 test('never renders an SSID select (bd-tuxlink-y8tf — SSID is per-transport)', () => {
   render(
     <IdentitySwitcher active={FULL_ACTIVE} list={LIST} onSwitch={vi.fn()} />,

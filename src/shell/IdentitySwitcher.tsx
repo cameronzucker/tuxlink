@@ -135,6 +135,16 @@ export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherPro
   const primaryLabel = active?.address_as ?? list?.last_selected ?? '—';
   const parentIndicator = active?.is_tactical ? active.mycall : null;
 
+  // Locked = no identity authenticated this launch, but one IS configured. Auth
+  // is in-memory and re-acquired per launch (auto-auth at bootstrap, else manual
+  // unlock); when auto-auth cannot read the stored credential the active slot
+  // stays empty and every transmit/egress fails closed. The closed chip otherwise
+  // shows `last_selected` identically whether authenticated or not, so the
+  // operator gets no at-a-glance signal that they are not transmit-ready. Surface
+  // it here (the open dropdown already flags per-identity locks). An empty store
+  // (em-dash, nothing to authenticate) is NOT "locked".
+  const locked = active == null && list?.last_selected != null;
+
   // Reset transient state whenever the dropdown closes.
   function closeDropdown() {
     setOpen(false);
@@ -366,10 +376,16 @@ export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherPro
     >
       <button
         type="button"
-        className="identity-switcher-trigger"
+        className={`identity-switcher-trigger${locked ? ' identity-switcher-trigger--locked' : ''}`}
         data-testid="identity-switcher-trigger"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={
+          locked
+            ? `${primaryLabel} — locked: not authenticated for transmit. Open to authenticate.`
+            : undefined
+        }
+        title={locked ? 'Not authenticated for transmit — open to authenticate your identity' : undefined}
         onClick={() => (open ? closeDropdown() : setOpen(true))}
       >
         <span className="dash-callsign-text" data-testid="ribbon-callsign-text">
@@ -378,6 +394,11 @@ export function IdentitySwitcher({ active, list, onSwitch }: IdentitySwitcherPro
         {parentIndicator && (
           <span className="identity-active-parent" data-testid="identity-active-parent">
             ({parentIndicator})
+          </span>
+        )}
+        {locked && (
+          <span className="identity-chip-lock" data-testid="identity-chip-lock" aria-hidden="true">
+            🔒
           </span>
         )}
       </button>

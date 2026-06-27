@@ -44,6 +44,19 @@
   outline: none;
 }
 
+/* Locked chip: no identity authenticated this launch (active slot empty). The
+   callsign still shows, but the amber tint + lock flag that transmit is not
+   armed until the operator authenticates — open the dropdown to unlock. A muted
+   caution, not an alarm. */
+.identity-switcher-trigger--locked {
+  color: var(--warning, #e0a44a);
+}
+.identity-chip-lock {
+  flex: 0 0 auto;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
 /* Small parent indicator beneath/after a tactical's primary label. */
 .identity-active-parent {
   font-family: var(--mono);
