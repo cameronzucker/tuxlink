@@ -304,6 +304,80 @@ mod linux_gl_env_tests {
     }
 }
 
+/// Verify `dir` is a private directory we can trust to hold the MCP socket:
+/// a real directory (not a symlink), owned by `uid`, with NO group/other
+/// permission bits set (mode `& 0o077 == 0`). Uses `symlink_metadata` so a
+/// planted symlink is rejected rather than followed. Returns `false` (caller
+/// skips the MCP server) on any failed check or stat error.
+///
+/// tuxlink-cvx84 FIX 1: hardens the runtime-dir ancestor chain so another local
+/// user cannot pre-create / rename / replace an ancestor under the process umask
+/// and plant a fake `mcp.sock`.
+#[cfg(target_os = "linux")]
+fn mcp_dir_is_safe(dir: &std::path::Path, uid: u32) -> bool {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+    match std::fs::symlink_metadata(dir) {
+        Ok(meta) => {
+            let is_dir = meta.file_type().is_dir();
+            let not_symlink = !meta.file_type().is_symlink();
+            let uid_owned = meta.uid() == uid;
+            let private = meta.permissions().mode() & 0o077 == 0;
+            is_dir && not_symlink && uid_owned && private
+        }
+        Err(_) => false,
+    }
+}
+
+/// Create `dir` (best-effort; tolerates "already exists"), chmod it to `0700`,
+/// then verify it via [`mcp_dir_is_safe`]. Returns `Some(dir)` only when the
+/// final on-disk state is a private (0700, uid-owned, non-symlink) directory;
+/// otherwise LOGs a warning and returns `None` so the caller skips the MCP
+/// server. Used to harden EACH level of the runtime-dir chain explicitly
+/// (tuxlink-cvx84 FIX 1).
+#[cfg(target_os = "linux")]
+fn harden_and_verify_mcp_dir(dir: &std::path::Path, uid: u32) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt as _;
+    // Create this single level. Do NOT use create_dir_all here — each level is
+    // created + hardened + verified in turn by the caller, so an ancestor that
+    // already exists must independently pass the safety check below.
+    match std::fs::create_dir(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => {
+            tracing::warn!(
+                target: "mcp",
+                dir = %dir.display(),
+                error = %e,
+                "could not create MCP runtime dir; skipping MCP server"
+            );
+            return None;
+        }
+    }
+    // chmod 0700 (idempotent; fixes a too-permissive dir we just adopted).
+    if let Err(e) =
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+    {
+        tracing::warn!(
+            target: "mcp",
+            dir = %dir.display(),
+            error = %e,
+            "could not set MCP runtime dir to 0700; skipping MCP server"
+        );
+        return None;
+    }
+    // Re-stat (via symlink_metadata) and verify owner + mode + non-symlink.
+    if mcp_dir_is_safe(dir, uid) {
+        Some(dir.to_path_buf())
+    } else {
+        tracing::warn!(
+            target: "mcp",
+            dir = %dir.display(),
+            "MCP runtime dir is not a private (0700, uid-owned, non-symlink) directory after hardening; skipping MCP server"
+        );
+        None
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Force the working WebKitGTK GL environment before the webview inits.
@@ -1126,60 +1200,66 @@ pub fn run() {
             // so `server_info` reaches the live, operator-facing send-authority
             // state. Tier-2 (the standalone testserver) already exercises the
             // protocol round-trip; this is what makes tier-3 (the real app) work.
+            //
+            // Linux-only: the runtime-dir hardening helpers and the UDS transport
+            // use Unix/Linux filesystem APIs (uid ownership, mode bits). The app
+            // ships on Linux (WebKitGTK); the bound `#[cfg]` keeps a non-Linux
+            // build of the crate compiling.
+            #[cfg(target_os = "linux")]
             {
-                // Resolve a per-user runtime dir. Prefer $XDG_RUNTIME_DIR (a
-                // per-user, 0700, tmpfs dir on modern Linux); fall back to a
-                // per-uid subdir of the system temp dir when it is unset (e.g.
-                // some headless / cron contexts). Either way the `tuxlink` parent
-                // is created 0700 so the transport's group/world-writable-parent
-                // refusal passes.
-                let runtime_base = match std::env::var("XDG_RUNTIME_DIR") {
-                    Ok(dir) if !dir.is_empty() => std::path::PathBuf::from(dir),
-                    _ => {
-                        // Per-uid temp fallback keeps the socket dir private to
-                        // this user even on a shared box.
-                        // SAFETY: `getuid(2)` takes no arguments and is always
-                        // successful (POSIX guarantees it cannot fail).
-                        let uid = unsafe { libc::getuid() };
-                        std::env::temp_dir().join(format!("tuxlink-{uid}"))
-                    }
-                };
-                let mcp_dir = runtime_base.join("tuxlink");
+                // Resolve + harden a per-user runtime dir for the MCP socket.
+                // The threat: another local user races us to create/rename/
+                // replace an ancestor dir created under the process umask (often
+                // 0o775, group/world-writable) and plants a hostile dir at our
+                // path so they can later swap in a fake `mcp.sock`. Defense:
+                // create each dir EXPLICITLY, chmod 0700, then VERIFY (via
+                // symlink_metadata so we never follow a planted symlink) that the
+                // result is a real, uid-owned, 0700, non-symlink directory. Any
+                // failed check → LOG and SKIP starting the MCP server (never
+                // crash, never block setup over an optional agent endpoint).
+                //
+                // SAFETY: `getuid(2)` takes no arguments and cannot fail (POSIX).
+                let my_uid = unsafe { libc::getuid() };
 
-                // Create the parent dir (if missing) and harden it to 0700 so the
-                // transport will accept it. If we cannot make it private, LOG and
-                // SKIP starting the MCP server — never crash the app or block
-                // setup over an optional agent endpoint.
-                let dir_ready = match std::fs::create_dir_all(&mcp_dir) {
-                    Ok(()) => {
-                        match std::fs::set_permissions(
-                            &mcp_dir,
-                            std::os::unix::fs::PermissionsExt::from_mode(0o700),
-                        ) {
-                            Ok(()) => true,
-                            Err(e) => {
-                                tracing::warn!(
-                                    target: "mcp",
-                                    dir = %mcp_dir.display(),
-                                    error = %e,
-                                    "could not set MCP runtime dir to 0700; skipping MCP server"
-                                );
-                                false
-                            }
+                // `mcp_dir` is set when (and only when) the full ancestor chain is
+                // verified safe; `None` means "skip the MCP server".
+                let mcp_dir: Option<std::path::PathBuf> = match std::env::var(
+                    "XDG_RUNTIME_DIR",
+                ) {
+                    Ok(dir) if !dir.is_empty() => {
+                        // XDG_RUNTIME_DIR is guaranteed 0700/uid-owned by the OS,
+                        // but verify the supplied base anyway (refuse if it is
+                        // group/world-writable or not uid-owned), then create +
+                        // chmod + verify the `tuxlink` child explicitly.
+                        let base = std::path::PathBuf::from(dir);
+                        if mcp_dir_is_safe(&base, my_uid) {
+                            let child = base.join("tuxlink");
+                            harden_and_verify_mcp_dir(&child, my_uid)
+                        } else {
+                            tracing::warn!(
+                                target: "mcp",
+                                dir = %base.display(),
+                                "XDG_RUNTIME_DIR base is not a private (0700, uid-owned, non-symlink) directory; skipping MCP server"
+                            );
+                            None
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "mcp",
-                            dir = %mcp_dir.display(),
-                            error = %e,
-                            "could not create MCP runtime dir; skipping MCP server"
-                        );
-                        false
+                    _ => {
+                        // Fallback (XDG_RUNTIME_DIR unset/empty): build
+                        // /tmp/tuxlink-<uid>/tuxlink, creating + hardening +
+                        // verifying EACH level so an attacker cannot pre-plant a
+                        // group/world-writable ancestor under the process umask.
+                        let base = std::env::temp_dir().join(format!("tuxlink-{my_uid}"));
+                        match harden_and_verify_mcp_dir(&base, my_uid) {
+                            Some(base) => {
+                                let child = base.join("tuxlink");
+                                harden_and_verify_mcp_dir(&child, my_uid)
+                            }
+                            None => None,
+                        }
                     }
                 };
-
-                if dir_ready {
+                if let Some(mcp_dir) = mcp_dir {
                     let sock_path = mcp_dir.join("mcp.sock");
 
                     // Share the already-managed egress authority (line ~655's

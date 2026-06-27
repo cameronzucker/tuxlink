@@ -25,7 +25,10 @@ rmcp = { version = "0.8", features = ["server", "macros", "transport-async-rw"] 
 schemars = "1.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["net", "io-util", "macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["net", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+# `umask(2)` (FIX 3: close the bind->chmod permission window) — the monolith
+# already depends on libc 0.2, so this resolves to the same version.
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
