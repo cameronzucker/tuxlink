@@ -1457,6 +1457,45 @@ pub fn parse_b2f_intent(s: &str) -> Result<SessionIntent, String> {
     }
 }
 
+// ── Task 7: rig-control translation helper + Tune-only command ──────────────
+
+/// Build a `tux_rig::RigConfig` from the ARDOP UI config, or `None` if rig
+/// control is not configured (no hamlib model or no CAT serial).
+pub(crate) fn rig_config_from(ardop_ui: &ArdopUiConfig) -> Option<tux_rig::RigConfig> {
+    let model = ardop_ui.rig_hamlib_model?;
+    let serial_path = ardop_ui
+        .cat_serial_path
+        .clone()
+        .filter(|p| !p.trim().is_empty())?;
+    Some(tux_rig::RigConfig {
+        binary: ardop_ui.rigctld_binary.clone(),
+        model,
+        serial_path,
+        baud: ardop_ui.cat_baud,
+        host: ardop_ui.rigctld_host.clone(),
+        port: ardop_ui.rigctld_port,
+    })
+}
+
+/// HF Winlink data mode (FT-710 = PKTUSB).
+pub(crate) fn ardop_data_mode() -> tux_rig::Mode {
+    tux_rig::Mode::PktUsb
+}
+
+/// Tune-only: set the rig to `freq_hz` + the HF data mode over CAT, then release
+/// the serial (drop). Does NOT dial. Used by the "Tune…" affordance.
+#[tauri::command]
+pub fn ardop_tune_rig(freq_hz: u64) -> Result<(), String> {
+    let cfg = config::read_config().map_err(|e| format!("read failed: {e}"))?;
+    let ardop_ui = cfg.modem_ardop.unwrap_or_default();
+    let rc = rig_config_from(&ardop_ui)
+        .ok_or_else(|| "rig control not configured — set the rig model + CAT serial".to_string())?;
+    let mut rig = tux_rig::ManagedRig::spawn(rc).map_err(|e| e.to_string())?;
+    rig.tune(freq_hz, ardop_data_mode()).map_err(|e| e.to_string())?;
+    // Drop releases the serial (close-serial-safe for internal-codec radios).
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3574,5 +3613,25 @@ mod tests {
              Codex Round 1 P1 #3 + operator decision bd tuxlink-qtgg \
              reject any tuxlink-added wall-clock cap"
         );
+    }
+
+    // ── Task 7: rig_config_from mapping tests ────────────────────────────────
+
+    #[test]
+    fn rig_config_present_when_model_and_serial_set() {
+        let mut ui = ArdopUiConfig::default();
+        ui.rig_hamlib_model = Some(1049);
+        ui.cat_serial_path = Some("/dev/ttyUSB0".into());
+        let rc = rig_config_from(&ui).expect("rig config");
+        assert_eq!(rc.model, 1049);
+        assert_eq!(rc.serial_path, "/dev/ttyUSB0");
+        assert_eq!(rc.port, 4532);
+        assert_eq!(rc.binary, "rigctld");
+    }
+
+    #[test]
+    fn rig_config_absent_when_unconfigured() {
+        let ui = ArdopUiConfig::default();
+        assert!(rig_config_from(&ui).is_none());
     }
 }
