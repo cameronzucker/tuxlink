@@ -297,3 +297,121 @@ pub trait LogPort: Send + Sync {
     /// content even after sink redaction).
     async fn snapshot(&self) -> Result<Vec<LogLineDto>, PortError>;
 }
+
+// ---------------------------------------------------------------------------
+// Egress (phase 3.3) — gated capability + ungated abort.
+//
+// EgressPort methods are already-gated Agent operations: every IMPL runs the
+// real work through `tuxlink_security::guarded_egress(.., Agent, ..)` so the
+// armed/taint/poison gate is enforced AT the impl, not at the router. The
+// trait merely EXPOSES the capability; the router #[tool] is a thin adapter.
+// AbortPort is the dual: stopping is ALWAYS allowed and never gated.
+// ---------------------------------------------------------------------------
+
+/// Failure modes an egress (transmit/connect) op can surface to the agent.
+/// `Denied` carries the egress-gate refusal reason (unarmed / expired / tainted
+/// / poisoned); `Failed` carries an operational failure AFTER the gate passed.
+/// The router maps `Denied` onto an authorization-shaped tool error.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum EgressPortError {
+    /// The egress gate refused the Agent caller. The string is the
+    /// `EgressDenied` reason (e.g. "send authority is not armed").
+    #[error("egress denied: {0}")]
+    Denied(String),
+    /// The egress was authorized but the operation itself failed.
+    #[error("egress failed: {0}")]
+    Failed(String),
+}
+
+/// Which message POOL / routing a B2F session targets. Mirrors the monolith's
+/// `SessionIntent` 1:1 (`Cms` / `RadioOnly` / `PostOffice` / `Mesh` / `P2p`);
+/// the impl maps it onto `crate::winlink::session::SessionIntent`.
+/// A B2F exchange always performs a full send+receive round once connected, so
+/// this selects the routing pool, not a transfer direction.
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionIntentDto {
+    /// Global Winlink CMS (Telnet/TLS or transparent relay-to-CMS proxy).
+    #[default]
+    Cms,
+    /// R pool — RF-only Hybrid network; messages never traverse the internet.
+    RadioOnly,
+    /// L pool — store-and-forward at a local RMS Relay "post office".
+    PostOffice,
+    /// MESH — Network Post Office (locally-run RMS Relay / AREDN mesh transport,
+    /// normal CMS mail pool).
+    Mesh,
+    /// Peer-to-peer — direct station, no CMS, no creds, no routing flag.
+    P2p,
+}
+
+/// Dial parameters for a telnet P2P session. Carries what a direct dial needs:
+/// the peer callsign plus the host/port of the peer's TCP listener. The impl
+/// derives the on-air station ID (my_callsign / locator) from the active
+/// `SessionIdentity` (tuxlink-0063); secrets are resolved from the keyring at
+/// the impl boundary and never carried here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct P2pDialDto {
+    /// The peer station callsign to dial (used for the login exchange + keyring
+    /// password lookup).
+    pub peer: String,
+    /// Hostname or IP address of the peer's TCP listener.
+    pub host: String,
+    /// TCP port on the peer.
+    pub port: u16,
+}
+
+/// GATED egress capability. EVERY method is an Agent-authority egress: the impl
+/// gates it through [`guarded_egress`](tuxlink_security::guarded_egress) before
+/// any connect/transmit happens, so a disarmed/expired/tainted/poisoned session
+/// gets [`EgressPortError::Denied`] and NOTHING leaves the box. Object-safe so
+/// [`crate::McpState`] can hold it as `Arc<dyn EgressPort>`.
+#[async_trait]
+pub trait EgressPort: Send + Sync {
+    /// Connect to the configured CMS (Winlink common message server).
+    async fn cms_connect(&self) -> Result<(), EgressPortError>;
+    /// Verify the live CMS connection (a round-trip that touches the network).
+    async fn verify_cms_connection(&self) -> Result<(), EgressPortError>;
+    /// Open a telnet peer-to-peer session to `req.peer`.
+    async fn telnet_p2p_connect(&self, req: P2pDialDto) -> Result<(), EgressPortError>;
+    /// Connect the ARDOP modem to `target`.
+    async fn ardop_connect(&self, target: String) -> Result<(), EgressPortError>;
+    /// Run an ARDOP B2F message exchange with `target` for the given `intent`.
+    async fn ardop_b2f_exchange(
+        &self,
+        target: String,
+        intent: SessionIntentDto,
+    ) -> Result<(), EgressPortError>;
+    /// Run a VARA B2F message exchange with `target` for the given `intent`.
+    async fn vara_b2f_exchange(
+        &self,
+        target: String,
+        intent: SessionIntentDto,
+    ) -> Result<(), EgressPortError>;
+    /// Connect an AX.25 packet session to `call` over the optional digipeater
+    /// `path`.
+    async fn packet_connect(&self, call: String, path: Vec<String>)
+        -> Result<(), EgressPortError>;
+    /// Begin listening for inbound AX.25 packet connections.
+    async fn packet_listen(&self) -> Result<(), EgressPortError>;
+}
+
+/// UNGATED pure-stop capability. Stopping a transmission/connection is ALWAYS
+/// allowed — never gated by armed/taint state — because a working abort is a
+/// safety primitive, not an egress. Returns [`PortError`] (operational failure
+/// only; there is no authorization failure for an abort). Object-safe.
+#[async_trait]
+pub trait AbortPort: Send + Sync {
+    /// Abort/disconnect the CMS connection.
+    async fn cms_abort(&self) -> Result<(), PortError>;
+    /// Abort the telnet P2P session.
+    async fn telnet_p2p_abort(&self) -> Result<(), PortError>;
+    /// Disconnect the ARDOP modem.
+    async fn ardop_disconnect(&self) -> Result<(), PortError>;
+    /// Stop the active VARA session.
+    async fn vara_stop_session(&self) -> Result<(), PortError>;
+    /// Stop listening for inbound packet connections.
+    async fn packet_stop_listen(&self) -> Result<(), PortError>;
+}

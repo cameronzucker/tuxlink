@@ -131,9 +131,85 @@ impl EgressGuard {
     }
 
     /// THE GATE. Authorize an egress for `authority` against the live state.
+    ///
+    /// Fail-closed on a poisoned mutex: if a prior holder panicked while
+    /// mutating the guard, we cannot trust the armed/taint state, so an
+    /// [`EgressAuthority::Agent`] caller is DENIED with [`EgressDenied::Tainted`]
+    /// (poison ≡ untrusted state ≡ deny) rather than panicking. The
+    /// [`EgressAuthority::Operator`] path is answered BEFORE the lock — an
+    /// operator's button click is unconditionally allowed and never reads
+    /// armed/taint — so a poisoned guard cannot strand the human operator.
     pub fn authorize(&self, authority: EgressAuthority) -> Result<(), EgressDenied> {
-        let g = self.inner.lock().unwrap();
-        decide(g.armed_until, g.tainted, authority, (self.now_unix)())
+        // Operator is always allowed and needs no state; answer before locking
+        // so a poisoned lock never blocks the present human.
+        if authority == EgressAuthority::Operator {
+            return Ok(());
+        }
+        // Agent: read the live state. A poisoned lock means a prior holder
+        // panicked mid-mutation; treat the session as untrusted → DENIED.
+        match self.inner.lock() {
+            Ok(g) => decide(g.armed_until, g.tainted, authority, (self.now_unix)()),
+            Err(_poisoned) => Err(EgressDenied::Tainted),
+        }
+    }
+}
+
+/// One audit record describing an egress authorization decision, handed to the
+/// [`guarded_egress`] caller's audit sink. Borrows the op label so the sink can
+/// log it without an allocation; `reason` is owned (the denial's `Display`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EgressAudit<'a> {
+    /// A short label for the operation being gated (e.g. `"cms_connect"`).
+    pub op: &'a str,
+    /// Who requested the egress.
+    pub authority: EgressAuthority,
+    /// True when the authorization passed and the op was about to run.
+    pub allowed: bool,
+    /// On denial, the human-readable reason (the `EgressDenied` `Display`);
+    /// `None` when allowed.
+    pub reason: Option<String>,
+}
+
+/// Gate an arbitrary async egress operation through the [`EgressGuard`].
+///
+/// This is the ONE place egress capability and authorization meet: it calls
+/// [`EgressGuard::authorize`] for `authority`, audits the decision, and only
+/// runs `op` when authorization passed. On denial `op` is NEVER constructed nor
+/// awaited — the closure is consumed only on the allowed path — so a gated
+/// capability cannot fire while disarmed / expired / tainted / poisoned.
+///
+/// `audit` is invoked exactly once per call (allowed or denied) before the
+/// result is returned, so callers get a complete decision trail.
+pub async fn guarded_egress<T, F, Fut>(
+    guard: &EgressGuard,
+    authority: EgressAuthority,
+    op_label: &str,
+    audit: &(dyn Fn(EgressAudit<'_>) + Send + Sync),
+    op: F,
+) -> Result<T, EgressDenied>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    match guard.authorize(authority) {
+        Ok(()) => {
+            audit(EgressAudit {
+                op: op_label,
+                authority,
+                allowed: true,
+                reason: None,
+            });
+            Ok(op().await)
+        }
+        Err(denied) => {
+            audit(EgressAudit {
+                op: op_label,
+                authority,
+                allowed: false,
+                reason: Some(denied.to_string()),
+            });
+            Err(denied)
+        }
     }
 }
 
@@ -246,5 +322,147 @@ mod tests {
         let g = EgressGuard::with_clock(fixed_1000);
         g.taint();
         assert!(g.authorize(EgressAuthority::Operator).is_ok());
+    }
+
+    // --- STEP 1: poison fail-closed ---
+
+    /// Poison the guard's mutex by panicking while holding the lock, then assert
+    /// the fail-closed posture: Agent is DENIED (Tainted), Operator still Ok.
+    #[test]
+    fn poisoned_guard_denies_agent_but_allows_operator() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::Arc;
+
+        let g = Arc::new(EgressGuard::with_clock(fixed_1000));
+        // Arm it so that, absent poison, an Agent WOULD be allowed — proving the
+        // denial is the poison, not an unarmed state.
+        g.arm(30);
+        assert!(g.authorize(EgressAuthority::Agent).is_ok());
+
+        // Panic while holding the inner lock → poisons the Mutex.
+        let g2 = Arc::clone(&g);
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _held = g2.inner.lock().unwrap();
+            panic!("poison the mutex on purpose");
+        }));
+
+        // Agent is now denied (state untrusted), reported as Tainted.
+        assert_eq!(
+            g.authorize(EgressAuthority::Agent),
+            Err(EgressDenied::Tainted),
+            "a poisoned guard must deny the Agent fail-closed"
+        );
+        // Operator is answered before the lock → still allowed.
+        assert!(
+            g.authorize(EgressAuthority::Operator).is_ok(),
+            "a poisoned guard must NOT strand the human operator"
+        );
+    }
+
+    // --- STEP 2: guarded_egress ---
+
+    // A minimal current-thread runtime via #[tokio::test] (rt + macros features).
+
+    /// Outcome of a [`run_guarded`] call: the gate result, whether the op ran,
+    /// and the captured (allowed, reason) audit records.
+    struct GuardedOutcome {
+        res: Result<u32, EgressDenied>,
+        ran: bool,
+        audits: Vec<(bool, Option<String>)>,
+    }
+
+    /// Run guarded_egress with a flag-tracking op + a capturing audit sink.
+    fn run_guarded(guard: &EgressGuard, authority: EgressAuthority) -> GuardedOutcome {
+        use std::cell::Cell;
+        use std::sync::Mutex as StdMutex;
+
+        let ran = Cell::new(false);
+        let captured: StdMutex<Vec<(bool, Option<String>)>> = StdMutex::new(Vec::new());
+        let audit = |a: EgressAudit<'_>| {
+            captured.lock().unwrap().push((a.allowed, a.reason.clone()));
+        };
+
+        // Drive the async fn to completion on a current-thread runtime.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let res = rt.block_on(guarded_egress(guard, authority, "test_op", &audit, || {
+            ran.set(true);
+            async { 42u32 }
+        }));
+
+        GuardedOutcome {
+            res,
+            ran: ran.get(),
+            audits: captured.into_inner().unwrap(),
+        }
+    }
+
+    #[test]
+    fn guarded_armed_untainted_agent_runs_op_and_audits_allowed() {
+        let g = EgressGuard::with_clock(fixed_1000);
+        g.arm(30);
+        let o = run_guarded(&g, EgressAuthority::Agent);
+        assert_eq!(o.res, Ok(42));
+        assert!(o.ran, "op must run when authorized");
+        assert_eq!(o.audits, vec![(true, None)]);
+    }
+
+    #[test]
+    fn guarded_unarmed_agent_denies_and_op_never_runs() {
+        let g = EgressGuard::with_clock(fixed_1000);
+        let o = run_guarded(&g, EgressAuthority::Agent);
+        assert_eq!(o.res, Err(EgressDenied::NotArmed));
+        assert!(!o.ran, "op must NOT run when denied");
+        assert_eq!(o.audits.len(), 1);
+        assert!(!o.audits[0].0, "audit must record allowed=false");
+        assert_eq!(o.audits[0].1.as_deref(), Some("send authority is not armed"));
+    }
+
+    #[test]
+    fn guarded_expired_agent_denies_and_op_never_runs() {
+        let g = EgressGuard::with_clock(fixed_1000);
+        g.arm(0); // deadline == now → expired
+        let o = run_guarded(&g, EgressAuthority::Agent);
+        assert_eq!(o.res, Err(EgressDenied::Expired(0)));
+        assert!(!o.ran);
+    }
+
+    #[test]
+    fn guarded_tainted_agent_denies_and_op_never_runs() {
+        let g = EgressGuard::with_clock(fixed_1000);
+        g.arm(30);
+        g.taint();
+        let o = run_guarded(&g, EgressAuthority::Agent);
+        assert_eq!(o.res, Err(EgressDenied::Tainted));
+        assert!(!o.ran);
+    }
+
+    #[test]
+    fn guarded_poisoned_agent_denies_and_op_never_runs() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::Arc;
+
+        let g = Arc::new(EgressGuard::with_clock(fixed_1000));
+        g.arm(30);
+        let g2 = Arc::clone(&g);
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _held = g2.inner.lock().unwrap();
+            panic!("poison");
+        }));
+
+        let o = run_guarded(&g, EgressAuthority::Agent);
+        assert_eq!(o.res, Err(EgressDenied::Tainted));
+        assert!(!o.ran, "op must NOT run on a poisoned guard");
+    }
+
+    #[test]
+    fn guarded_operator_runs_op_even_when_tainted() {
+        let g = EgressGuard::with_clock(fixed_1000);
+        g.taint(); // tainted + disarmed — Operator must still run
+        let o = run_guarded(&g, EgressAuthority::Operator);
+        assert_eq!(o.res, Ok(42));
+        assert!(o.ran, "Operator op must run regardless of state");
+        assert_eq!(o.audits, vec![(true, None)]);
     }
 }

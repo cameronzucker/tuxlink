@@ -34,12 +34,14 @@ use tauri::{AppHandle, Manager};
 // returned by `BackendState::current()`.
 
 use tuxlink_mcp_core::ports::{
-    ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto, BluetoothDeviceDto,
-    CatalogEntryDto, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, FolderDto, LogLineDto,
-    LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto, ParsedMessageDto,
-    PlatformInfoDto, PortError, PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto,
-    SerialDeviceDto, StatusPort, VaraConfigDto, VaraStatusDto,
+    AbortPort, ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
+    BluetoothDeviceDto, CatalogEntryDto, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto,
+    EgressPort, EgressPortError, FolderDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
+    ModemStatusDto, P2pDialDto, PacketConfigDto, ParsedMessageDto, PlatformInfoDto, PortError,
+    PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto,
+    SessionIntentDto, StatusPort, VaraConfigDto, VaraStatusDto,
 };
+use tuxlink_security::{guarded_egress, EgressAudit, EgressAuthority, EgressGuard};
 
 // ---------------------------------------------------------------------------
 // Bluetooth MAC minimization (Step 2).
@@ -663,6 +665,407 @@ impl LogPort for MonolithLogPort {
                 }
             })
             .collect())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Egress port (phase 3.3) — GATED Agent egress.
+//
+// Every method runs the REAL egress (the same connect/exchange the GUI command
+// performs) INSIDE `guarded_egress(.., EgressAuthority::Agent, ..)`. The gate is
+// the operator's live arm/taint/poison state shared via the `Arc<EgressGuard>`
+// the monolith manages (same Arc the GUI's egress_arm/egress_disarm mutate). A
+// disarmed / expired / tainted / poisoned session yields
+// `EgressDenied` → `EgressPortError::Denied`; an authorized op that then fails
+// operationally yields `EgressPortError::Failed`. The GUI Tauri commands are
+// UNCHANGED (Operator is unconditionally allowed and never reaches this path).
+//
+// Audit: each op builds a small `Fn(EgressAudit)` closure capturing a cloned
+// `AppHandle` that writes one operator-visible session-log line (Info on allow,
+// Warn on deny) AND a structured `tracing` record under
+// `target: "tuxlink::egress_gate"`. The AppHandle is `Clone`; the closure is
+// `Send + Sync` (it captures only `Clone` handles + `&str`/`String`), satisfying
+// `guarded_egress`'s `&(dyn Fn(EgressAudit<'_>) + Send + Sync)` bound.
+// ---------------------------------------------------------------------------
+
+/// [`EgressPort`] adapter that gates each Agent egress through the shared
+/// [`EgressGuard`] before performing the same connect/exchange the GUI command
+/// performs.
+pub struct MonolithEgressPort {
+    app: AppHandle,
+    guard: Arc<EgressGuard>,
+}
+
+impl MonolithEgressPort {
+    pub fn new(app: AppHandle, guard: Arc<EgressGuard>) -> Self {
+        Self { app, guard }
+    }
+}
+
+/// Build the audit sink for one gated egress: writes an operator-visible
+/// session-log line (Warn on denial, Info on allow) and a structured tracing
+/// record. Returned as an owned closure so each `guarded_egress` call passes it
+/// by reference. Captures only `Clone` handles → `Send + Sync`.
+fn egress_audit_sink(app: AppHandle) -> impl Fn(EgressAudit<'_>) + Send + Sync {
+    use crate::winlink_backend::{LogLevel, LogSource};
+    move |a: EgressAudit<'_>| {
+        let log = app.state::<Arc<crate::session_log::SessionLogState>>();
+        if a.allowed {
+            let msg = format!("[egress] {} authorized for Agent", a.op);
+            tracing::info!(
+                target: "tuxlink::egress_gate",
+                op = a.op,
+                authority = ?a.authority,
+                allowed = true,
+                "agent egress authorized"
+            );
+            log.append_operator_line(LogLevel::Info, LogSource::Backend, msg);
+        } else {
+            let reason = a.reason.as_deref().unwrap_or("denied");
+            let msg = format!("[egress] {} DENIED for Agent: {reason}", a.op);
+            tracing::warn!(
+                target: "tuxlink::egress_gate",
+                op = a.op,
+                authority = ?a.authority,
+                allowed = false,
+                reason = reason,
+                "agent egress denied"
+            );
+            log.append_operator_line(LogLevel::Warn, LogSource::Backend, msg);
+        }
+    }
+}
+
+/// Map a `SessionIntentDto` onto the monolith's [`SessionIntent`] 1:1.
+///
+/// The agent-facing DTO mirrors `SessionIntent`'s routing-pool variants
+/// (Cms / RadioOnly / PostOffice / Mesh / P2p), so this is a faithful
+/// variant-for-variant map — the agent selects the same message pool the GUI
+/// would. A B2F exchange always performs a full send+receive round once
+/// connected; the intent selects routing, not transfer direction.
+///
+/// [`SessionIntent`]: crate::winlink::session::SessionIntent
+fn map_session_intent(
+    intent: SessionIntentDto,
+) -> crate::winlink::session::SessionIntent {
+    use crate::winlink::session::SessionIntent;
+    match intent {
+        SessionIntentDto::Cms => SessionIntent::Cms,
+        SessionIntentDto::RadioOnly => SessionIntent::RadioOnly,
+        SessionIntentDto::PostOffice => SessionIntent::PostOffice,
+        SessionIntentDto::Mesh => SessionIntent::Mesh,
+        SessionIntentDto::P2p => SessionIntent::P2p,
+    }
+}
+
+#[async_trait]
+impl EgressPort for MonolithEgressPort {
+    async fn cms_connect(&self) -> Result<(), EgressPortError> {
+        let audit = egress_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(&self.guard, EgressAuthority::Agent, "cms_connect", &audit, || async move {
+            // Same egress as the `cms_connect` command (ui_commands.rs:2891):
+            // drive `NativeBackend::connect` over the configured CMS transport
+            // (the outbox flush rides inside the native exchange), then close
+            // the transient session. Resolve managed state via the AppHandle.
+            crate::ui_commands::cms_connect(
+                app.clone(),
+                app.state::<crate::app_backend::BackendState>(),
+                app.state::<Arc<crate::session_log::SessionLogState>>(),
+                app.state::<crate::winlink::inbound_selection::SelectionRegistry>(),
+            )
+            .await
+            .map_err(|e| EgressPortError::Failed(format!("{e:?}")))
+        })
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))?
+    }
+
+    async fn verify_cms_connection(&self) -> Result<(), EgressPortError> {
+        let audit = egress_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "verify_cms_connection",
+            &audit,
+            || async move {
+                // wizard.rs:479 verify_cms_connection_impl — ephemeral backend
+                // over an empty tempdir outbox (handshake only). WizardError has
+                // no Display → format with {e:?}.
+                crate::wizard::verify_cms_connection_impl(app.clone())
+                    .await
+                    .map_err(|e| EgressPortError::Failed(format!("{e:?}")))
+            },
+        )
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))?
+    }
+
+    async fn telnet_p2p_connect(&self, req: P2pDialDto) -> Result<(), EgressPortError> {
+        let audit = egress_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "telnet_p2p_connect",
+            &audit,
+            || async move {
+                // ui_commands.rs:7026 telnet_p2p_connect. P2pDialDto carries the
+                // peer callsign plus the host/port of the peer's TCP listener
+                // (a direct dial needs all three). my_callsign + locator are
+                // advisory on the command: the on-air ID is derived from the
+                // active SessionIdentity inside the command (tuxlink-0063), so
+                // they are passed empty here.
+                let request = crate::ui_commands::P2pDialRequest {
+                    host: req.host,
+                    port: req.port,
+                    peer_callsign: req.peer,
+                    my_callsign: String::new(),
+                    locator: String::new(),
+                };
+                crate::ui_commands::telnet_p2p_connect(
+                    app.clone(),
+                    app.state::<crate::app_backend::BackendState>(),
+                    app.state::<crate::ui_commands::P2pConnectState>(),
+                    app.state::<Arc<crate::session_log::SessionLogState>>(),
+                    request,
+                )
+                .await
+                .map(|_res| ())
+                .map_err(|e| EgressPortError::Failed(format!("{e:?}")))
+            },
+        )
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))?
+    }
+
+    async fn ardop_connect(&self, target: String) -> Result<(), EgressPortError> {
+        let audit = egress_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(&self.guard, EgressAuthority::Agent, "ardop_connect", &audit, || async move {
+            // modem_commands.rs:1123 modem_ardop_connect (Arc<ModemSession>).
+            crate::modem_commands::modem_ardop_connect(
+                app.clone(),
+                app.state::<Arc<crate::modem_status::ModemSession>>(),
+                target,
+            )
+            .await
+            .map_err(EgressPortError::Failed)
+        })
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))?
+    }
+
+    async fn ardop_b2f_exchange(
+        &self,
+        target: String,
+        intent: SessionIntentDto,
+    ) -> Result<(), EgressPortError> {
+        let audit = egress_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "ardop_b2f_exchange",
+            &audit,
+            || async move {
+                // modem_commands.rs:1253 modem_ardop_b2f_exchange — pin the
+                // ARDOP TransportKind (the command validates it) and map the
+                // coarse intent DTO onto SessionIntent.
+                crate::modem_commands::modem_ardop_b2f_exchange(
+                    app.clone(),
+                    app.state::<Arc<crate::modem_status::ModemSession>>(),
+                    target,
+                    map_session_intent(intent),
+                    crate::winlink::listener::transport::TransportKind::Ardop,
+                )
+                .await
+                .map_err(EgressPortError::Failed)
+            },
+        )
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))?
+    }
+
+    async fn vara_b2f_exchange(
+        &self,
+        target: String,
+        intent: SessionIntentDto,
+    ) -> Result<(), EgressPortError> {
+        let audit = egress_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "vara_b2f_exchange",
+            &audit,
+            || async move {
+                // vara/commands.rs:1541 modem_vara_b2f_exchange — VARA CONNECT
+                // is LIVE here; the gate runs the real path. Pin VARA-HF (the
+                // operationally-confirmed G90 + VARA HF Standard path); the
+                // command validates the kind is VaraHf | VaraFm.
+                crate::winlink::modem::vara::commands::modem_vara_b2f_exchange(
+                    app.clone(),
+                    app.state::<Arc<crate::session_log::SessionLogState>>(),
+                    app.state::<Arc<crate::winlink::modem::vara::VaraSession>>(),
+                    target,
+                    map_session_intent(intent),
+                    crate::winlink::listener::transport::TransportKind::VaraHf,
+                )
+                .await
+                .map_err(EgressPortError::Failed)
+            },
+        )
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))?
+    }
+
+    async fn packet_connect(
+        &self,
+        call: String,
+        path: Vec<String>,
+    ) -> Result<(), EgressPortError> {
+        let audit = egress_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(&self.guard, EgressAuthority::Agent, "packet_connect", &audit, || async move {
+            // ui_commands.rs:4534 packet_connect.
+            crate::ui_commands::packet_connect(
+                app.clone(),
+                app.state::<crate::app_backend::BackendState>(),
+                app.state::<Arc<crate::session_log::SessionLogState>>(),
+                call,
+                path,
+            )
+            .await
+            .map_err(|e| EgressPortError::Failed(format!("{e:?}")))
+        })
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))?
+    }
+
+    async fn packet_listen(&self) -> Result<(), EgressPortError> {
+        let audit = egress_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(&self.guard, EgressAuthority::Agent, "packet_listen", &audit, || async move {
+            // ui_commands.rs:4594 packet_listen — arming Listen auto-answers an
+            // inbound call, which TRANSMITS a UA under the operator's callsign,
+            // so it is an Agent egress and gated.
+            crate::ui_commands::packet_listen(
+                app.clone(),
+                app.state::<crate::app_backend::BackendState>(),
+                app.state::<Arc<crate::session_log::SessionLogState>>(),
+            )
+            .await
+            .map_err(|e| EgressPortError::Failed(format!("{e:?}")))
+        })
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))?
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Abort port (phase 3.3) — UNGATED pure-stop.
+//
+// Stopping a transmission/connection is ALWAYS allowed — never gated by
+// armed/taint state — because a working abort is a safety primitive, not an
+// egress. Each method calls the existing abort fn directly (no guarded_egress)
+// and appends a forensic "[egress] abort <op> by Agent" session-log line; an
+// abort is NEVER denied. Errors are operational only → `PortError::Internal`.
+// ---------------------------------------------------------------------------
+
+/// [`AbortPort`] adapter over the monolith's per-transport abort/stop fns.
+pub struct MonolithAbortPort {
+    app: AppHandle,
+}
+
+impl MonolithAbortPort {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+
+    /// Append a forensic abort line to the operator-visible session log. Never
+    /// fails the abort (abort is unconditional); a missing/poisoned log sink is
+    /// silently tolerated.
+    fn audit_abort(&self, op: &str) {
+        use crate::winlink_backend::{LogLevel, LogSource};
+        tracing::info!(
+            target: "tuxlink::egress_gate",
+            op = op,
+            "agent abort"
+        );
+        let log = self.app.state::<Arc<crate::session_log::SessionLogState>>();
+        log.append_operator_line(
+            LogLevel::Info,
+            LogSource::Backend,
+            format!("[egress] abort {op} by Agent"),
+        );
+    }
+}
+
+#[async_trait]
+impl AbortPort for MonolithAbortPort {
+    async fn cms_abort(&self) -> Result<(), PortError> {
+        self.audit_abort("cms_abort");
+        // ui_commands.rs:3062 cms_abort — backend.abort() + wake parked decider.
+        crate::ui_commands::cms_abort(
+            self.app.clone(),
+            self.app.state::<crate::app_backend::BackendState>(),
+            self.app.state::<Arc<crate::session_log::SessionLogState>>(),
+            self.app
+                .state::<crate::winlink::inbound_selection::SelectionRegistry>(),
+        )
+        .await
+        .map_err(|e| PortError::Internal(format!("{e:?}")))
+    }
+
+    async fn telnet_p2p_abort(&self) -> Result<(), PortError> {
+        self.audit_abort("telnet_p2p_abort");
+        // ui_commands.rs:7319 telnet_p2p_abort — sets the aborting flag + emits
+        // Disconnected status.
+        crate::ui_commands::telnet_p2p_abort(
+            self.app.clone(),
+            self.app.state::<crate::ui_commands::P2pConnectState>(),
+            self.app.state::<Arc<crate::session_log::SessionLogState>>(),
+        )
+        .await
+        .map_err(|e| PortError::Internal(format!("{e:?}")))
+    }
+
+    async fn ardop_disconnect(&self) -> Result<(), PortError> {
+        self.audit_abort("ardop_disconnect");
+        // modem_commands.rs:202 modem_ardop_disconnect (inner :153) — best-effort
+        // abort_in_flight + transport teardown.
+        crate::modem_commands::modem_ardop_disconnect(
+            self.app.clone(),
+            self.app.state::<Arc<crate::modem_status::ModemSession>>(),
+        )
+        .await
+        .map_err(PortError::Internal)
+    }
+
+    async fn vara_stop_session(&self) -> Result<(), PortError> {
+        self.audit_abort("vara_stop_session");
+        // vara/commands.rs:1420 vara_stop_session_inner(&Arc<VaraSession>) — the
+        // sync transport-teardown helper; call it directly off the managed
+        // VaraSession (the command wrapper only adds state extraction).
+        let session = self
+            .app
+            .state::<Arc<crate::winlink::modem::vara::VaraSession>>();
+        let session = Arc::clone(session.inner());
+        crate::winlink::modem::vara::commands::vara_stop_session_inner(&session)
+            .map(|_status| ())
+            .map_err(PortError::Internal)
+    }
+
+    async fn packet_stop_listen(&self) -> Result<(), PortError> {
+        self.audit_abort("packet_stop_listen");
+        // ui_commands.rs:4670 packet_set_listen(false) — clears the sticky
+        // idle-listen default. (Tearing down an in-flight listen uses cms_abort;
+        // this stops the ARMED-listen state per the AbortPort contract.)
+        crate::ui_commands::packet_set_listen(false)
+            .await
+            .map_err(|e| PortError::Internal(format!("{e:?}")))
     }
 }
 
