@@ -1540,6 +1540,11 @@ const VARA_DISCONNECT_DEADLINE: Duration = Duration::from_secs(5);
 /// `b2f_exchange` uses today. See the TODO inside `run_vara_b2f_with_transport`
 /// for the bd issue that tracks the arbiter wire-in.
 #[tauri::command]
+// tuxlink-8fkkk A2: 8 args after adding freq_hz + qsy_candidates for the
+// pre-audio CAT tune + ordered-list QSY. A Tauri command's args are its IPC
+// surface, not a refactor smell — splitting them into a struct would only
+// obscure the camelCase arg mapping the frontend invoke relies on.
+#[allow(clippy::too_many_arguments)]
 pub async fn modem_vara_b2f_exchange(
     app: AppHandle,
     log: State<'_, Arc<SessionLogState>>,
