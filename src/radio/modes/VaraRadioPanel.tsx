@@ -35,6 +35,7 @@ import { useFavorites } from '../../favorites/useFavorites';
 import { listenGatewayPrefill } from '../../favorites/prefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
+import { RigControlSection } from './RigControlSection';
 import './VaraRadioPanel.css';
 import '../sections/ListenSection.css';
 
@@ -535,6 +536,13 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             ))}
           </select>
         </label>
+      </section>
+
+      {/* tuxlink-8fkkk Task A1UI: Rig control — shared with ARDOP so the operator
+          configures hamlib / CAT serial / QSY in one place for both modes. Reads
+          and writes Config.rig (config_get_rig / config_set_rig). */}
+      <section className="radio-panel-sec" data-testid="vara-rig-section">
+        <RigControlSection storageKeyPrefix="vara" />
       </section>
 
       <section className="radio-panel-sec" data-testid="vara-status-section">

@@ -48,6 +48,7 @@ import { listenGatewayPrefill } from '../../favorites/prefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
 import type { RadioPanelMode } from '../types';
+import { RigControlSection } from './RigControlSection';
 import './ArdopRadioPanel.css';
 import '../sections/ListenSection.css';
 
@@ -266,10 +267,6 @@ interface ArdopFullConfig {
   /** How tuxlink keys the radio. Default 'vox'. */
   ptt_method: PttMethod;
   ptt_serial_path: string | null;
-  /** Serial device for CAT PTT (consulted only when ptt_method='cat_command'). */
-  cat_serial_path: string | null;
-  /** CAT serial baud. Default 38400 (FT-710 Enhanced port). */
-  cat_baud: number;
   /** CAT key command, e.g. 'TX1;'. */
   cat_key_cmd: string;
   /** CAT unkey command, e.g. 'TX0;'. */
@@ -290,24 +287,6 @@ interface ArdopFullConfig {
    *  operator disarms it (WLE-parity; 2026-06-16 operator decision). A
    *  positive value arms for that many minutes (tuxlink-5g5d). */
   listen_ttl_minutes: number;
-  /** Hamlib rig model ID for rigctld-based QSY / VFO control. null = no
-   *  rigctld integration. Set to the hamlib model number matching the
-   *  transceiver (e.g. 1049 for IC-7300). */
-  rig_hamlib_model: number | null;
-  /** Host where rigctld is listening. Default '127.0.0.1'. */
-  rigctld_host: string;
-  /** TCP port rigctld is listening on. Default 4532. */
-  rigctld_port: number;
-  /** rigctld binary name or path used when tuxlink spawns it. Default 'rigctld'. */
-  rigctld_binary: string;
-  /** When true, tuxlink closes the CAT serial port before passing audio to
-   *  ardopcf and re-opens it after TX (required for single-port radios). */
-  close_serial_sequencing: boolean;
-  /** When true, tuxlink polls the VFO frequency from rigctld in real time. */
-  live_vfo_poll: boolean;
-  /** When true, tuxlink attempts an automatic QSY to the gateway frequency
-   *  before initiating a connect. */
-  qsy_on_fail: boolean;
 }
 
 /** Mirror of Rust's `ArdopUiConfig::resolved_webgui_port`. Single source
@@ -364,9 +343,9 @@ export function ArdopRadioPanel({
   // tuxlink-wu0k: PTT method + CAT-command fields. CAT command keys radios
   // like the FT-710 that key ONLY by CAT (TX1;/TX0;) and need the serial port
   // CLOSED during audio — tuxlink spawns a close-serial bridge for that path.
+  // Note: cat_serial_path and cat_baud are now radio-level (Config.rig) and
+  // edited via RigControlSection below.
   const [pttMethod, setPttMethod] = useState<PttMethod>('vox');
-  const [catSerialInput, setCatSerialInput] = useState<string>('');
-  const [catBaudInput, setCatBaudInput] = useState<string>('38400');
   const [catKeyInput, setCatKeyInput] = useState<string>('TX1;');
   const [catUnkeyInput, setCatUnkeyInput] = useState<string>('TX0;');
   // tuxlink-0kew: collapse the Radio-configuration group to reclaim panel
@@ -379,16 +358,8 @@ export function ArdopRadioPanel({
       return true;
     }
   });
-  // tuxlink-8fkkk Task 12: Rig control expander (model/CAT/sequencing/VFO/QSY).
-  // Collapsed by default — most operators won't need rigctld integration on day
-  // one. Persisted via localStorage so the state survives panel remounts.
-  const [rigCfgOpen, setRigCfgOpen] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('tuxlink.ardop.rigCfgOpen') === '1';
-    } catch {
-      return false;
-    }
-  });
+  // Rig control is now provided by the shared RigControlSection component
+  // (tuxlink-8fkkk Task A1UI), which manages its own collapse state.
   // cmd_port + binary inputs (tuxlink-jmfm Task 3). PR #185 commit 4c88618
   // added Capture / Playback / PTT / WebGUI; Task 2 of the radio-panel-width
   // plan deleted the Settings ARDOP fieldset, so cmd_port + binary needed an
@@ -511,9 +482,9 @@ export function ArdopRadioPanel({
         setPttSerialInput(c.ptt_serial_path ?? '');
         // tuxlink-wu0k: PTT method + CAT fields. Older configs may lack
         // ptt_method (the backend migrates it on read), so default to 'vox'.
+        // Note: cat_serial_path and cat_baud are now read from Config.rig
+        // (via RigControlSection), not from ArdopUiConfig.
         setPttMethod(c.ptt_method ?? 'vox');
-        setCatSerialInput(c.cat_serial_path ?? '');
-        setCatBaudInput(String(c.cat_baud ?? 38400));
         setCatKeyInput(c.cat_key_cmd ?? 'TX1;');
         setCatUnkeyInput(c.cat_unkey_cmd ?? 'TX0;');
         setCmdPortInput(String(c.cmd_port));
@@ -561,22 +532,10 @@ export function ArdopRadioPanel({
   };
   // tuxlink-wu0k: CAT-PTT field commits. The method selector persists eagerly
   // on change; the text fields persist on blur (matching the panel's idiom).
+  // Note: cat_serial_path and cat_baud are now persisted via RigControlSection.
   const onPttMethodChange = (next: PttMethod) => {
     setPttMethod(next);
     persistArdop({ ptt_method: next });
-  };
-  const commitCatSerial = () => {
-    const trimmed = catSerialInput.trim();
-    persistArdop({ cat_serial_path: trimmed === '' ? null : trimmed });
-  };
-  const commitCatBaud = () => {
-    const n = Number(catBaudInput.trim());
-    // Reject NaN / non-integer / non-positive; keep the prior persisted value.
-    if (!Number.isInteger(n) || n <= 0) {
-      setCatBaudInput(String(ardopConfig?.cat_baud ?? 38400));
-      return;
-    }
-    persistArdop({ cat_baud: n });
   };
   const commitCatKey = () => {
     const trimmed = catKeyInput.trim();
@@ -1164,68 +1123,13 @@ export function ArdopRadioPanel({
           )}
           {pttMethod === 'cat_command' && (
             <>
-              <label className="radio-panel-input-row">
-                <span>CAT serial</span>
-                <select
-                  className="radio-panel-input"
-                  data-testid="ardop-cat-serial-select"
-                  value={pttDevices.some((d) => d.path === catSerialInput) ? catSerialInput : ''}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setCatSerialInput(next);
-                    persistArdop({ cat_serial_path: next === '' ? null : next });
-                  }}
-                >
-                  <option value="">Choose CAT serial port…</option>
-                  {pttDevices
-                    .filter((d) => d.kind === 'usb')
-                    .map((d) => (
-                      <option key={d.path} value={d.path}>
-                        {d.path} — {d.label}
-                      </option>
-                    ))}
-                </select>
-                <button
-                  type="button"
-                  className="radio-panel-btn-sm"
-                  data-testid="ardop-cat-serial-refresh"
-                  onClick={loadPttDevices}
-                  aria-label="Refresh CAT serial device list"
-                >
-                  ↻
-                </button>
-              </label>
-              <label className="radio-panel-input-row">
-                <span>Manual</span>
-                <input
-                  type="text"
-                  className="radio-panel-input"
-                  data-testid="ardop-cat-serial-input"
-                  value={catSerialInput}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  placeholder="/dev/ttyUSB0 (CAT/Enhanced port)"
-                  onChange={(e) => setCatSerialInput(e.target.value)}
-                  onBlur={commitCatSerial}
-                />
-              </label>
-              <label className="radio-panel-input-row">
-                <span>CAT baud</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  className="radio-panel-input"
-                  data-testid="ardop-cat-baud-input"
-                  value={catBaudInput}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  placeholder="38400"
-                  onChange={(e) => setCatBaudInput(e.target.value)}
-                  onBlur={commitCatBaud}
-                />
-              </label>
+              {/* CAT serial port and baud are radio-level (Config.rig) and
+                  configured in the Rig control section below. Key/unkey/bridge
+                  commands remain PTT-method-specific and live here. */}
+              <p className="radio-panel-radio-help" data-testid="ardop-cat-serial-hint">
+                CAT serial port and baud are configured in{' '}
+                <strong>Rig control</strong> below.
+              </p>
               <label className="radio-panel-input-row">
                 <span>Key cmd</span>
                 <input
@@ -1320,108 +1224,11 @@ export function ArdopRadioPanel({
           </label>
           </details>
 
-          {/* tuxlink-8fkkk Task 12: Rig control — rigctld integration for
-              CAT-based QSY / VFO polling. Collapsed by default; the operator
-              opens it only when wiring up hamlib. Each toggle persists via
-              persistArdop so the backend sees the change immediately. The
-              live_vfo_poll checkbox is disabled when close_serial_sequencing
-              is on — polling holds the serial port open, which is incompatible
-              with the close-serial-before-PTT sequencing the FT-710 needs. */}
-          <details
-            className="expander"
-            open={rigCfgOpen}
-            onToggle={(e) => {
-              const open = e.currentTarget.open;
-              setRigCfgOpen(open);
-              try {
-                localStorage.setItem('tuxlink.ardop.rigCfgOpen', open ? '1' : '0');
-              } catch {
-                /* localStorage unavailable — in-memory toggle still works */
-              }
-            }}
-            data-testid="ardop-rig-expander"
-          >
-            <summary className="expander-summary" data-testid="rig-control-expander-summary">
-              Rig control
-            </summary>
-            <label className="radio-panel-input-row">
-              <span>Rig model</span>
-              <select
-                className="radio-panel-input"
-                data-testid="rig-model"
-                value={ardopConfig?.rig_hamlib_model ?? ''}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  persistArdop({ rig_hamlib_model: v === '' ? null : Number(v) });
-                }}
-              >
-                <option value="">None / unset</option>
-                <option value="1049">Yaesu FT-710 (1049)</option>
-              </select>
-            </label>
-            <label className="radio-panel-input-row">
-              <span>CAT port</span>
-              <input
-                type="text"
-                className="radio-panel-input"
-                data-testid="rig-cat-port"
-                value={catSerialInput}
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                placeholder="/dev/ttyUSB0 (CAT/Enhanced port)"
-                onChange={(e) => setCatSerialInput(e.target.value)}
-                onBlur={commitCatSerial}
-              />
-            </label>
-            <div className="radio-panel-input-row">
-              <span>CAT backend</span>
-              <span className="radio-panel-input" style={{ opacity: 0.7, userSelect: 'none' }}>
-                Managed rigctld
-              </span>
-            </div>
-            <label className="radio-panel-input-row">
-              <span>Close-serial sequencing</span>
-              <input
-                type="checkbox"
-                data-testid="rig-close-serial"
-                checked={ardopConfig?.close_serial_sequencing ?? false}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  // Turning on close-serial is incompatible with live VFO poll
-                  // (polling holds the port open). Force live_vfo_poll false
-                  // in the same patch so the two never coexist enabled.
-                  persistArdop({
-                    close_serial_sequencing: checked,
-                    ...(checked ? { live_vfo_poll: false } : {}),
-                  });
-                }}
-              />
-            </label>
-            <label className="radio-panel-input-row">
-              <span>Live VFO poll</span>
-              <input
-                type="checkbox"
-                data-testid="rig-live-vfo"
-                checked={ardopConfig?.live_vfo_poll ?? false}
-                disabled={ardopConfig?.close_serial_sequencing ?? false}
-                onChange={(e) => {
-                  persistArdop({ live_vfo_poll: e.target.checked });
-                }}
-              />
-            </label>
-            <label className="radio-panel-input-row">
-              <span>QSY on fail</span>
-              <input
-                type="checkbox"
-                data-testid="rig-qsy-on-fail"
-                checked={ardopConfig?.qsy_on_fail ?? false}
-                onChange={(e) => {
-                  persistArdop({ qsy_on_fail: e.target.checked });
-                }}
-              />
-            </label>
-          </details>
+          {/* tuxlink-8fkkk Task A1UI: Rig control is now the shared
+              RigControlSection, which reads/writes Config.rig via
+              config_get_rig / config_set_rig so VARA and ARDOP share
+              the same physical rig configuration. */}
+          <RigControlSection storageKeyPrefix="ardop" />
         </section>
       )}
 

@@ -71,6 +71,21 @@ function makeInvoke(overrides: Record<string, unknown> = {}) {
       return v;
     }
     if (cmd === 'config_get_vara') return defaultConfig;
+    // tuxlink-8fkkk Task A1UI: RigControlSection (rendered in VaraRadioPanel)
+    // calls config_get_rig on mount — return the Rust defaults.
+    if (cmd === 'config_get_rig') {
+      return {
+        rig_hamlib_model: null,
+        rigctld_host: '127.0.0.1',
+        rigctld_port: 4534,
+        rigctld_binary: 'rigctld',
+        close_serial_sequencing: false,
+        live_vfo_poll: false,
+        qsy_on_fail: false,
+        cat_serial_path: null,
+        cat_baud: 38400,
+      };
+    }
     if (cmd === 'vara_status') return closedStatus;
     // vara_open_session defaults to a successful open (the real command always
     // returns a VaraStatusDto). Tests override it for failure-path coverage.

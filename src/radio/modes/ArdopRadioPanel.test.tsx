@@ -76,14 +76,21 @@ const defaultInvokeImpl = async (cmd: string, _args?: unknown) => {
       cmd_port: 8515,
       bandwidth_hz: null,
       webgui_port: null,
-      // tuxlink-8fkkk Task 12: rig fields — Rust defaults.
+    };
+  }
+  // tuxlink-8fkkk Task A1UI: rig config is now radio-level (Config.rig).
+  // RigControlSection calls config_get_rig; return the Rust defaults.
+  if (cmd === 'config_get_rig') {
+    return {
       rig_hamlib_model: null,
       rigctld_host: '127.0.0.1',
-      rigctld_port: 4532,
+      rigctld_port: 4534,
       rigctld_binary: 'rigctld',
       close_serial_sequencing: false,
       live_vfo_poll: false,
       qsy_on_fail: false,
+      cat_serial_path: null,
+      cat_baud: 38400,
     };
   }
   // Listener defaults (tuxlink-7vea backend default flip).
@@ -1011,7 +1018,7 @@ describe('<ArdopRadioPanel>', () => {
 
     // ── tuxlink-wu0k: CAT-command PTT ────────────────────────────────────────
 
-    it('selecting CAT command persists ptt_method and reveals CAT fields', async () => {
+    it('selecting CAT command persists ptt_method and reveals CAT key/unkey fields', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
       invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
@@ -1022,8 +1029,6 @@ describe('<ArdopRadioPanel>', () => {
             playback_device: '',
             ptt_method: 'vox',
             ptt_serial_path: null,
-            cat_serial_path: null,
-            cat_baud: 38400,
             cat_key_cmd: 'TX1;',
             cat_unkey_cmd: 'TX0;',
             cat_bridge_port: 4532,
@@ -1056,11 +1061,14 @@ describe('<ArdopRadioPanel>', () => {
           }),
         );
       });
-      // CAT fields now visible with proven FT-710 defaults.
+      // CAT key/unkey fields are now visible. CAT serial/baud are in RigControlSection.
       const keyInput = (await screen.findByTestId('ardop-cat-key-input')) as HTMLInputElement;
       expect(keyInput.value).toBe('TX1;');
       expect((screen.getByTestId('ardop-cat-unkey-input') as HTMLInputElement).value).toBe('TX0;');
-      expect((screen.getByTestId('ardop-cat-baud-input') as HTMLInputElement).value).toBe('38400');
+      // The hint pointing to Rig control is visible.
+      expect(screen.getByTestId('ardop-cat-serial-hint')).toBeInTheDocument();
+      // cat-baud-input is NOT in the ARDOP panel — it is in RigControlSection.
+      expect(screen.queryByTestId('ardop-cat-baud-input')).not.toBeInTheDocument();
     });
 
     it('editing the CAT key command persists cat_key_cmd on blur', async () => {
@@ -1074,8 +1082,6 @@ describe('<ArdopRadioPanel>', () => {
             playback_device: '',
             ptt_method: 'cat_command',
             ptt_serial_path: null,
-            cat_serial_path: '/dev/ttyUSB0',
-            cat_baud: 38400,
             cat_key_cmd: 'TX1;',
             cat_unkey_cmd: 'TX0;',
             cat_bridge_port: 4532,
@@ -1628,23 +1634,23 @@ describe('<ArdopRadioPanel>', () => {
     });
   });
 
-  // tuxlink-8fkkk Task 12: Rig control expander — mutual exclusion between
-  // close-serial sequencing and live VFO poll (they contend for the serial port).
-  describe('Rig control expander', () => {
-    it('disables live-VFO poll when close-serial sequencing is turned on', async () => {
+  // tuxlink-8fkkk Task A1UI: Rig control is now the shared RigControlSection.
+  // Mutual-exclusion between close-serial sequencing and live VFO poll is tested
+  // in RigControlSection.test.tsx. Here we assert that the shared component is
+  // rendered within the ARDOP panel's Radio section.
+  describe('Rig control section (shared component)', () => {
+    it('renders the RigControlSection expander within the Radio section', async () => {
       renderPanel(<ArdopRadioPanel onClose={() => {}} />);
-      // Wait for ardopConfig to hydrate (rig fields must be present in the
-      // default mock so the checkboxes render with correct initial state).
       await waitFor(() => {
         expect(screen.getByTestId('ardop-radio-section')).toBeInTheDocument();
+        expect(screen.getByTestId('rig-control-expander')).toBeInTheDocument();
       });
-      // Open the Rig control expander.
-      fireEvent.click(screen.getByTestId('rig-control-expander-summary'));
-      // Turn on close-serial sequencing.
-      fireEvent.click(screen.getByTestId('rig-close-serial'));
-      // live-VFO poll must now be disabled (mutual exclusion).
+    });
+
+    it('shows the "Rig control" summary label', async () => {
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() => {
-        expect(screen.getByTestId('rig-live-vfo')).toBeDisabled();
+        expect(screen.getByTestId('rig-control-expander-summary')).toHaveTextContent('Rig control');
       });
     });
   });
