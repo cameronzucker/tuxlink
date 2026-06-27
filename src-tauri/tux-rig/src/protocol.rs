@@ -52,7 +52,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn set_freq_is_F_space_hz_newline() {
+    fn set_freq_is_f_space_hz_newline() {
         assert_eq!(cmd_set_freq(7_102_000), "F 7102000\n");
     }
 
