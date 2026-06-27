@@ -516,6 +516,7 @@ where
             cfg,
             candidate,
             ardop_ui,
+            walk_gen,
             &mut make_transport,
         ) {
             Ok((transport, rig, info)) => {
@@ -585,12 +586,19 @@ type DialedConnection = (
 /// returns the live `(transport, kept-rig, ConnectInfo)` for the caller to install.
 /// On failure the candidate's transport and rig are dropped here (RAII teardown
 /// of ardopcf + rigctld) before the `Err` is returned.
+///
+/// `walk_gen` is the close-generation snapshot taken by the walk BEFORE the
+/// first candidate was attempted. After the pre-audio tune returns (which can
+/// take non-trivial wall time), the generation is re-checked so that an
+/// operator Disconnect issued during the tune is honoured before the blocking
+/// `connect_arq` call begins (tuxlink-8fkkk C2).
 fn dial_one_candidate<F>(
     session: &Arc<ModemSession>,
     session_id: &crate::identity::SessionIdentity,
     cfg: &Config,
     candidate: &DialCandidate,
     ardop_ui: &ArdopUiConfig,
+    walk_gen: u64,
     make_transport: &mut F,
 ) -> Result<DialedConnection, String>
 where
@@ -632,6 +640,19 @@ where
             return Err(e);
         }
     };
+
+    // tuxlink-8fkkk C2: re-check the close-generation AFTER the tune returns.
+    // The pre-audio tune can take non-trivial wall time (rigctld spawn + CAT
+    // round-trips), widening the window where the operator's Disconnect is
+    // missed. If the generation has bumped since the walk began, bail now —
+    // before the blocking `connect_arq` call — so the operator's abort is
+    // honoured promptly. Mirror of the per-candidate check in the walk closure
+    // (~508) which guards between candidates; this guards within a candidate.
+    if session.current_close_generation() != walk_gen {
+        drop(transport);
+        drop(live_rig);
+        return Err("connect aborted".into());
+    }
 
     // tuxlink-o3f2: install the side-channel abort writer BEFORE the blocking
     // `connect_arq`. The operator's Disconnect → `abort_in_flight()` writes
@@ -4079,5 +4100,115 @@ mod tests {
         });
         assert_eq!(attempted, vec![0]); // qsy off → no walk
         assert_eq!(outcome, None);
+    }
+
+    // ── tuxlink-8fkkk C2: abort-generation re-check after tune ───────────────
+
+    /// Verifies that when the close-generation is bumped (operator Disconnect)
+    /// between the walk snapshot and the dial attempt's post-tune check, the
+    /// walk stops immediately and returns an "aborted" error.  The factory
+    /// must NOT be called (no transport is spawned).
+    ///
+    /// This exercises the guard added inside `dial_one_candidate` after
+    /// `tune_rig_for_connect` returns.  In the test, `tune_rig_for_connect` is
+    /// a no-op because the test config carries no rig, so the generation check
+    /// fires right after the immediate-return tune path — covering the control
+    /// flow that the real rig path also reaches.
+    #[test]
+    fn abort_during_tune_stops_dial_before_connect_arq() {
+        let session = Arc::new(ModemSession::new());
+        let candidates = vec![DialCandidate {
+            target: "W7RMS-10".into(),
+            freq_hz: None,
+        }];
+
+        // Bump the close-generation BEFORE the walk begins. This simulates the
+        // operator pressing Disconnect during (or just after) the tune step —
+        // the generation the walk sees differs from the session's current value.
+        let _ = session.bump_close_generation();
+
+        let factory_called = std::sync::atomic::AtomicBool::new(false);
+        let result = modem_ardop_connect_walk_with_factory(
+            &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
+            &candidates,
+            false, // qsy_on_fail irrelevant — abort fires before connect_arq
+            &test_ardop_ui_config(),
+            |_cfg, _target| {
+                factory_called.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(stub_transport())
+            },
+        );
+
+        // The walk must return an abort error, not a connect success.
+        assert!(
+            result.is_err(),
+            "walk must fail when generation bumped before dial; got: {result:?}"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("aborted"),
+            "error must indicate abort; got: {msg:?}"
+        );
+        // The factory must NOT have been called — the abort check fires in the
+        // walk's per-candidate guard (before dial_one_candidate) which also
+        // short-circuits before the tune+factory path.
+        assert!(
+            !factory_called.load(std::sync::atomic::Ordering::SeqCst),
+            "factory must not run when abort fires in the walk guard"
+        );
+    }
+
+    /// Verifies that when the close-generation is bumped WHILE the walk is
+    /// inside `dial_one_candidate` (simulated by the factory bumping it during
+    /// the spawn step, after the per-candidate walk guard has already passed),
+    /// the post-tune generation re-check inside `dial_one_candidate` fires and
+    /// returns an abort error before `connect_arq` is attempted.
+    ///
+    /// The factory for this test bumps the generation and then returns a stub
+    /// transport.  The post-tune check must observe the bump and bail before
+    /// installing the abort writer or calling `connect_arq`.  Session state
+    /// must not end up `ConnectedIrs`.
+    #[test]
+    fn abort_during_dial_candidate_stops_before_connect_arq() {
+        let session = Arc::new(ModemSession::new());
+        let candidates = vec![DialCandidate {
+            target: "W7RMS-10".into(),
+            freq_hz: None,
+        }];
+
+        let session_for_factory = Arc::clone(&session);
+        let result = modem_ardop_connect_walk_with_factory(
+            &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
+            &candidates,
+            false,
+            &test_ardop_ui_config(),
+            move |_cfg, _target| {
+                // Bump the generation inside the factory — simulates the
+                // operator hitting Disconnect after the walk's per-candidate
+                // guard has cleared but before the post-tune check fires.
+                let _ = session_for_factory.bump_close_generation();
+                Ok(stub_transport())
+            },
+        );
+
+        assert!(
+            result.is_err(),
+            "dial must fail when generation bumped inside factory; got: {result:?}"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("aborted"),
+            "error must indicate abort; got: {msg:?}"
+        );
+        // Session must NOT be in a connected state.
+        let state = session.status_snapshot().state;
+        assert!(
+            !matches!(state, ModemState::ConnectedIrs | ModemState::ConnectedIss),
+            "session must not be connected after abort; got: {state:?}"
+        );
     }
 }

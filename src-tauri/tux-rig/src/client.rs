@@ -32,12 +32,12 @@ impl RigctldClient {
     /// the underlying socket so a hung rigctld cannot wedge the caller's thread
     /// indefinitely.
     ///
-    /// Used by the live-VFO poll thread (which runs an independent client on the
-    /// DRA-100 keep-serial path): if rigctld stops answering, the next
-    /// [`Rig::read_status`] read returns a `WouldBlock`/`TimedOut` I/O error
-    /// instead of blocking forever, so the poll loop can observe the failure and
-    /// exit. The managed client (`ManagedRig`) keeps the unbounded [`connect`]
-    /// behavior — its calls are operator-synchronous and short-lived.
+    /// Used by both the live-VFO poll thread (DRA-100 keep-serial path) and the
+    /// managed rig client (`ManagedRig`) for pre-audio CAT tune operations
+    /// (tuxlink-8fkkk C3). In both cases a bounded read prevents a stalled
+    /// rigctld from blocking the caller's thread until a manual kill: the next
+    /// [`Rig::read_status`] or CAT set call returns a `WouldBlock`/`TimedOut`
+    /// I/O error that the caller can observe and surface as a rig error.
     ///
     /// The timeout governs each individual socket read. A multi-line reply (e.g.
     /// the two-line `m` response) is several reads, so a complete

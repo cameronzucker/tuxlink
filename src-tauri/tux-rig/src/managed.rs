@@ -42,6 +42,12 @@ pub struct ManagedRig {
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_POLL: Duration = Duration::from_millis(100);
 const STOP_GRACE: Duration = Duration::from_millis(500);
+/// Read timeout for the managed client's CAT socket (tuxlink-8fkkk C3).
+/// Bounds each socket read so a hung rigctld cannot wedge the caller's thread
+/// indefinitely during the pre-audio tune or live-VFO poll. Sized to be
+/// generous relative to the CAT round-trip (~ms) yet short enough to surface
+/// a stall within the operator's attention window.
+const RIG_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl ManagedRig {
     /// Spawn rigctld and connect a control client once its socket accepts.
@@ -54,9 +60,15 @@ impl ManagedRig {
             .spawn()
             .map_err(|e| RigError::Spawn(format!("failed to spawn {}: {e}", cfg.binary)))?;
 
+        // tuxlink-8fkkk C3: switch to `connect_with_timeout` so the managed
+        // client carries a read timeout on its CAT socket. The retry poll
+        // loop on connection refusal (rigctld startup lag) is preserved — only
+        // the *successful* client is bounded. A hung rigctld therefore blocks
+        // at most one `RIG_READ_TIMEOUT` per CAT command rather than
+        // indefinitely.
         let start = Instant::now();
         let client = loop {
-            match RigctldClient::connect(&cfg.host, cfg.port) {
+            match RigctldClient::connect_with_timeout(&cfg.host, cfg.port, RIG_READ_TIMEOUT) {
                 Ok(c) => break c,
                 Err(_) if start.elapsed() < CONNECT_TIMEOUT => {
                     thread::sleep(CONNECT_POLL);
