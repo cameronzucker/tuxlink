@@ -8869,6 +8869,31 @@ hw:CARD=Device,DEV=0
     }
 
     #[test]
+    fn build_attachment_preview_rejects_svg_even_with_image_extension() {
+        // tuxlink-2590 (receiving-end appsec audit): SVG is the script-capable
+        // "image" format (it can embed <script>). The preview gate keys on MAGIC
+        // BYTES, not the filename, so a hostile SVG named "map.png" is still
+        // rejected — the data: URL MIME can never become image/svg+xml. This is
+        // the load-bearing control against active content rendered in <img>.
+        let svg =
+            br#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#.to_vec();
+        let err = build_attachment_preview("map.png", svg)
+            .expect_err("SVG content must be rejected regardless of the .png filename");
+        assert!(matches!(err, UiError::Rejected(detail) if detail.contains("supported image")));
+    }
+
+    #[test]
+    fn build_attachment_preview_rejects_html_disguised_as_image() {
+        // A text/html payload (even with an image extension) is not a supported
+        // raster format → rejected, so the data: URL MIME can never be text/html
+        // and the preview can never render attacker markup (tuxlink-2590).
+        let html = b"<!DOCTYPE html><script>alert(1)</script>".to_vec();
+        let err = build_attachment_preview("photo.jpg", html)
+            .expect_err("HTML content must be rejected regardless of the .jpg filename");
+        assert!(matches!(err, UiError::Rejected(detail) if detail.contains("supported image")));
+    }
+
+    #[test]
     fn build_attachment_preview_rejects_oversized_payloads() {
         let too_large = vec![0u8; MAX_ATTACHMENT_PREVIEW_BYTES + 1];
         let err = build_attachment_preview("huge.jpg", too_large)
