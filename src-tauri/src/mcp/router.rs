@@ -52,13 +52,12 @@ impl TuxlinkMcp {
 
 #[tool_handler]
 impl ServerHandler for TuxlinkMcp {
+    // Build `ServerInfo` (= `InitializeResult`) from `default()` then set the
+    // fields we care about. clippy's `field_reassign_with_default` must be
+    // allowed at the FN level: a statement-level allow on the `let` does NOT
+    // cover the lint's span and CI's clippy still fired (PR #911 first verify).
+    #[allow(clippy::field_reassign_with_default)]
     fn get_info(&self) -> ServerInfo {
-        // `ServerInfo` (= `InitializeResult`) is `#[non_exhaustive]`, so it
-        // cannot be built with a struct literal NOR `..Default::default()` from
-        // this crate; mutating fields after `default()` is the only path. The
-        // clippy lint that flags reassign-after-default does not apply here
-        // because the literal form is unavailable for a non-exhaustive struct.
-        #[allow(clippy::field_reassign_with_default)]
         let mut info = ServerInfo::default();
         info.protocol_version = ProtocolVersion::LATEST;
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
