@@ -5,6 +5,9 @@
 
 use std::fmt;
 
+mod mode;
+pub use mode::Mode;
+
 /// Errors from rig control.
 #[derive(Debug)]
 pub enum RigError {
