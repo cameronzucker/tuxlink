@@ -6804,6 +6804,9 @@ dependencies = [
 [[package]]
 name = "tuxlink-mcp"
 version = "0.0.0"
+dependencies = [
+ "tokio",
+]
 
 [[package]]
 name = "tuxlink-mcp-testserver"
