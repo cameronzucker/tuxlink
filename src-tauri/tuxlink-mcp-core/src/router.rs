@@ -1100,7 +1100,9 @@ impl ServerHandler for TuxlinkMcp {
             .build();
         info.server_info = Implementation::from_build_env();
         info.instructions = Some(
-            "Tuxlink MCP server. Read-only tools report app/backend/modem status, \
+            "Tuxlink MCP server. New here? Read the resource tuxlink://agents/guide \
+             first — it explains the full tool surface by tier and the arm/taint \
+             rules. Read-only tools report app/backend/modem status, \
              mailbox + search content, curated config, devices, and the session log. \
              Tools that return untrusted external content (mailbox_list, message_read, \
              tauri_search_run, session_log_snapshot) taint the session, locking send \
@@ -2025,6 +2027,36 @@ mod tests {
             .knowledge_get_prompt("no_such_prompt", None)
             .expect_err("an unknown prompt name must error");
         assert!(err.message.contains("unknown prompt"));
+    }
+
+    #[test]
+    fn agents_guide_resource_is_present_and_readable() {
+        let h = handler();
+        // The catalog advertises the agent onboarding guide.
+        let listed = h
+            .knowledge_resources()
+            .resources
+            .iter()
+            .any(|r| r.uri == "tuxlink://agents/guide");
+        assert!(listed, "the catalog must advertise the agent guide");
+        // It reads back as non-empty markdown.
+        let result = h
+            .knowledge_read("tuxlink://agents/guide")
+            .expect("the agent guide must read successfully");
+        match &result.contents[0] {
+            ResourceContents::TextResourceContents { text, .. } => {
+                assert!(!text.is_empty(), "the agent guide body must be non-empty");
+            }
+            other => panic!("expected TextResourceContents, got {other:?}"),
+        }
+        // get_info points new callers at the guide.
+        let info = h.get_info();
+        assert!(
+            info.instructions
+                .as_deref()
+                .is_some_and(|s| s.contains("tuxlink://agents/guide")),
+            "get_info instructions must point at the agent guide"
+        );
     }
 
     #[test]
