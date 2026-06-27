@@ -233,6 +233,153 @@ pub struct LogLineDto {
 }
 
 // ---------------------------------------------------------------------------
+// Station-intelligence DTOs (phase 3.2 / Chunk 1). All Tier-1 reads; the
+// `find_stations` / `predict_path` / `solar_conditions` tools are INERT — they
+// call the port and JSON-encode the result, never touching the egress guard
+// (no taint, no gate). The agent-supplied INPUT dtos carry `schemars::JsonSchema`
+// so rmcp can advertise their tool-input schema.
+//
+// Curate-down notes baked into the shapes:
+// - `GatewayDto` deliberately omits sysop_name/email/homepage: PII + a prompt-
+//   injection surface the agent should never see.
+// - `PredictRequestDto` carries NO tx_grid: the operator's own grid is injected
+//   by the Chunk-2 monolith impl, never agent-supplied (a malicious agent must
+//   not be able to spoof the station's location into a prediction).
+// ---------------------------------------------------------------------------
+
+/// A Winlink RMS gateway operating mode / transport. Kebab-case on the wire so
+/// the agent-facing values read `vara-hf`, `ardop-hf`, `robust-packet`, etc.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum StationModeDto {
+    VaraHf,
+    Packet,
+    ArdopHf,
+    Pactor,
+    RobustPacket,
+}
+
+/// A gateway's antenna type, used as an optional prediction parameter. Lowercase
+/// on the wire (`beam` / `dipole` / `vertical`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum GatewayAntennaDto {
+    Beam,
+    Dipole,
+    Vertical,
+}
+
+/// Agent-supplied filter for [`StationPort::find_stations`]. `modes` and `bands`
+/// are AND-ish narrowing selectors; `history_hours` bounds how far back a
+/// gateway must have been last heard. Empty `modes`/`bands` mean "no filter".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct StationFilterDto {
+    /// Restrict to these transports; empty means all transports.
+    #[serde(default)]
+    pub modes: Vec<StationModeDto>,
+    /// Only gateways heard within this many hours; `None` means no bound.
+    #[serde(default)]
+    pub history_hours: Option<u32>,
+    /// Restrict to these amateur bands (e.g. `"40m"`); empty means all bands.
+    #[serde(default)]
+    pub bands: Vec<String>,
+}
+
+/// One curated RMS gateway directory entry. Public directory data, no PII:
+/// deliberately NO sysop name / email / homepage (see module note).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GatewayDto {
+    pub mode: StationModeDto,
+    /// The Winlink "channel" identifier (e.g. a frequency/mode channel name).
+    pub channel: String,
+    pub callsign: String,
+    /// Maidenhead grid locator, when known.
+    pub grid: Option<String>,
+    /// Human-readable location string, when known.
+    pub location: Option<String>,
+    /// Dial frequencies in kHz this channel advertises.
+    pub frequencies_khz: Vec<f64>,
+    /// Last-heard timestamp (RFC3339), when known.
+    pub last_update: Option<String>,
+    /// Gateway antenna type, when known.
+    pub antenna: Option<GatewayAntennaDto>,
+}
+
+/// Output of [`StationPort::find_stations`]: the matched gateways plus cache
+/// provenance.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StationListDto {
+    pub gateways: Vec<GatewayDto>,
+    /// When the underlying directory was fetched (unix ms), when known.
+    pub fetched_at_ms: Option<u64>,
+    /// True when these gateways came from the local cache rather than a fresh
+    /// fetch.
+    pub from_cache: bool,
+}
+
+/// Agent-supplied request for [`PredictionPort::predict_path`]. Carries NO
+/// `tx_grid`: the operator's own grid is injected by the Chunk-2 impl, never
+/// agent-supplied (see module note).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
+pub struct PredictRequestDto {
+    /// The TARGET (receiving) station's Maidenhead grid locator.
+    pub rx_grid: String,
+    /// Candidate dial frequencies in kHz to predict across.
+    pub frequencies_khz: Vec<f64>,
+    /// The target gateway's antenna type, when known (refines the prediction).
+    #[serde(default)]
+    pub gateway_antenna: Option<GatewayAntennaDto>,
+}
+
+/// Per-channel hourly HF reliability prediction. Each vector is 24 entries long,
+/// indexed by UTC hour `0..=23`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelReliabilityDto {
+    pub frequency_khz: f64,
+    /// Reliability `0.0..=1.0` per UTC hour (24-long).
+    pub rel_by_hour: Vec<f64>,
+    /// Predicted SNR (dB) per UTC hour (24-long).
+    pub snr_by_hour: Vec<f64>,
+    /// MUF-day fraction per UTC hour (24-long).
+    pub mufday_by_hour: Vec<f64>,
+}
+
+/// A full path prediction from the operator's station to the target grid.
+/// `tx_grid` is the operator's own 4-char grid, injected by the impl as
+/// provenance (it is NOT agent-supplied).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PathPredictionDto {
+    pub bearing_deg: f64,
+    pub distance_km: f64,
+    /// Smoothed sunspot number used for the prediction.
+    pub ssn: f64,
+    pub year: i32,
+    pub month: u8,
+    /// The operator's own 4-char grid (provenance; injected by the impl).
+    pub tx_grid: String,
+    pub channels: Vec<ChannelReliabilityDto>,
+}
+
+/// A current space-weather snapshot. The numeric indices are `Option` because a
+/// stale/offline source may not carry all of them; `ssn` is always present (it
+/// is the value predictions key off).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SolarSnapshotDto {
+    /// Solar flux index (10.7 cm), when known.
+    pub sfi: Option<f64>,
+    /// Geomagnetic A index, when known.
+    pub a_index: Option<f64>,
+    /// Geomagnetic K index, when known.
+    pub k_index: Option<f64>,
+    /// Sunspot number used for predictions.
+    pub ssn: f64,
+    /// When this snapshot was last updated (unix ms).
+    pub updated_at_ms: u64,
+    /// Provenance of the data (e.g. `"bundled"`, `"noaa"`).
+    pub source: String,
+}
+
+// ---------------------------------------------------------------------------
 // Port traits.
 // ---------------------------------------------------------------------------
 
@@ -300,6 +447,29 @@ pub trait LogPort: Send + Sync {
     /// Snapshot the current session log. **TAINT** (may contain untrusted wire
     /// content even after sink redaction).
     async fn snapshot(&self) -> Result<Vec<LogLineDto>, PortError>;
+}
+
+/// Winlink RMS gateway directory lookups. Public directory data, cached. Does
+/// NOT taint (app-owned/public content) and is NOT gated (read-only; never
+/// transmits).
+#[async_trait]
+pub trait StationPort: Send + Sync {
+    /// List RMS gateways matching `filter`. Read-only; does not taint or gate.
+    async fn find_stations(&self, filter: StationFilterDto)
+        -> Result<StationListDto, PortError>;
+}
+
+/// Offline HF propagation prediction + space-weather reads. Both methods are
+/// read-only computation/data reads: they do NOT taint and are NOT gated (no
+/// transmission).
+#[async_trait]
+pub trait PredictionPort: Send + Sync {
+    /// Predict the HF path from the operator's station to the requested target
+    /// grid across the requested dials. Read-only; does not taint or gate.
+    async fn predict_path(&self, req: PredictRequestDto) -> Result<PathPredictionDto, PortError>;
+    /// Report the current space-weather snapshot. Read-only; does not taint or
+    /// gate.
+    async fn solar(&self) -> Result<SolarSnapshotDto, PortError>;
 }
 
 // ---------------------------------------------------------------------------

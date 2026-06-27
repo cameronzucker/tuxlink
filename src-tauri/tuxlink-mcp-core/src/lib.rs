@@ -30,7 +30,8 @@ pub mod validate;
 
 pub use ports::{
     AbortPort, ComposePort, ConfigPort, DevicePort, EgressPort, EgressPortError, LogPort,
-    MailboxPort, PortError, SearchPort, StatusPort, WritePort, WritePortError,
+    MailboxPort, PortError, PredictionPort, SearchPort, StationPort, StatusPort, WritePort,
+    WritePortError,
 };
 pub use router::TuxlinkMcp;
 pub use transport_uds::serve;
@@ -84,6 +85,12 @@ pub struct McpState {
     /// transmission until a later gated connect. Validates input; never gates,
     /// never taints.
     pub compose: Arc<dyn ComposePort>,
+    /// Winlink RMS gateway directory lookups. Public/cached data; read-only —
+    /// never taints, never gates.
+    pub stations: Arc<dyn StationPort>,
+    /// Offline HF propagation prediction + space-weather reads. Read-only —
+    /// never taints, never gates.
+    pub prediction: Arc<dyn PredictionPort>,
 }
 
 /// Serializable shape returned by the `server_info` tool.
@@ -127,13 +134,15 @@ pub(crate) mod test_support {
 
     use crate::ports::{
         AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto,
-        BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ComposeDraftDto, ComposePort,
-        ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
-        GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto,
-        PacketConfigDto, PacketWriteDto, ParsedMessageDto, PlatformInfoDto, PortError,
-        PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto,
-        SerialDeviceDto, SessionIntentDto, StatusPort, VaraConfigDto, VaraStatusDto, VaraWriteDto,
-        WritePort, WritePortError,
+        BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto,
+        ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort,
+        EgressPortError, FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto,
+        LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto,
+        ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto,
+        PredictRequestDto, PredictionPort, SearchPort, SearchQueryDto, SearchResultsDto,
+        SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto, StationFilterDto,
+        StationListDto, StationModeDto, StationPort, StatusPort, VaraConfigDto, VaraStatusDto,
+        VaraWriteDto, WritePort, WritePortError,
     };
     use crate::validate::{
         validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -147,6 +156,13 @@ pub(crate) mod test_support {
     pub const SEED_MSG_ID: &str = "MSG001";
     pub const SEED_MSG_FROM: &str = "W1AW";
     pub const SEED_MSG_SUBJECT: &str = "ARES net check-in";
+
+    /// Station-intel fixtures: the one gateway `find_stations` seeds, and the
+    /// `tx_grid` `predict_path` returns (4-char, proving the provenance shape).
+    pub const SEED_GW_CALLSIGN: &str = "W1AW";
+    pub const SEED_GW_GRID: &str = "FN31";
+    pub const SEED_GW_FREQ_KHZ: f64 = 7104.0;
+    pub const SEED_TX_GRID: &str = "CN87";
 
     pub struct MockStatus;
     #[async_trait]
@@ -584,6 +600,71 @@ pub(crate) mod test_support {
         }
     }
 
+    /// A mock [`StationPort`] returning ONE recognizable gateway (W1AW / FN31 /
+    /// VaraHf / [7104.0] / Dipole, `from_cache=false`). Read-only; never touches
+    /// the guard.
+    pub struct MockStation;
+    #[async_trait]
+    impl StationPort for MockStation {
+        async fn find_stations(
+            &self,
+            _filter: StationFilterDto,
+        ) -> Result<StationListDto, PortError> {
+            Ok(StationListDto {
+                gateways: vec![GatewayDto {
+                    mode: StationModeDto::VaraHf,
+                    channel: "7104.0 VARA HF".into(),
+                    callsign: SEED_GW_CALLSIGN.into(),
+                    grid: Some(SEED_GW_GRID.into()),
+                    location: Some("Newington, CT".into()),
+                    frequencies_khz: vec![SEED_GW_FREQ_KHZ],
+                    last_update: Some("2026-06-26T00:00:00Z".into()),
+                    antenna: Some(GatewayAntennaDto::Dipole),
+                }],
+                fetched_at_ms: Some(0),
+                from_cache: false,
+            })
+        }
+    }
+
+    /// A mock [`PredictionPort`]. `predict_path` returns a deterministic
+    /// prediction with `tx_grid="CN87"` (4-char provenance) and ONE channel
+    /// carrying 24-long hourly vectors; `solar` returns a fixed snapshot.
+    /// Read-only; never touches the guard.
+    pub struct MockPrediction;
+    #[async_trait]
+    impl PredictionPort for MockPrediction {
+        async fn predict_path(
+            &self,
+            _req: PredictRequestDto,
+        ) -> Result<PathPredictionDto, PortError> {
+            Ok(PathPredictionDto {
+                bearing_deg: 90.0,
+                distance_km: 4000.0,
+                ssn: 70.0,
+                year: 2026,
+                month: 6,
+                tx_grid: SEED_TX_GRID.into(),
+                channels: vec![ChannelReliabilityDto {
+                    frequency_khz: SEED_GW_FREQ_KHZ,
+                    rel_by_hour: vec![0.5; 24],
+                    snr_by_hour: vec![10.0; 24],
+                    mufday_by_hour: vec![0.8; 24],
+                }],
+            })
+        }
+        async fn solar(&self) -> Result<SolarSnapshotDto, PortError> {
+            Ok(SolarSnapshotDto {
+                sfi: Some(140.0),
+                a_index: Some(7.0),
+                k_index: Some(2.0),
+                ssn: 70.0,
+                updated_at_ms: 0,
+                source: "bundled".into(),
+            })
+        }
+    }
+
     /// Build an [`McpState`] around the supplied guard, wiring all mock ports.
     /// The egress/abort flags are internal; use [`state_with_egress_probes`] to
     /// observe whether a gated egress op actually ran or an abort fired.
@@ -629,6 +710,8 @@ pub(crate) mod test_support {
             abort: Arc::new(MockAbort::new(Arc::clone(&aborted))),
             write: Arc::new(MockWrite::new(Arc::clone(&guard), Arc::clone(&op_ran))),
             compose: Arc::new(MockCompose::new(Arc::clone(&staged))),
+            stations: Arc::new(MockStation),
+            prediction: Arc::new(MockPrediction),
         };
         (state, op_ran, aborted, staged)
     }
