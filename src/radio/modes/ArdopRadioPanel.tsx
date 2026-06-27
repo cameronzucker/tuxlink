@@ -23,7 +23,7 @@
 // yields an unbindable webgui_port, so we surface an error rather
 // than open a dead URL.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
@@ -330,6 +330,16 @@ export function ArdopRadioPanel({
 }: ArdopRadioPanelProps) {
   const { status } = useModemStatus();
   const [target, setTarget] = useState('');
+  // tuxlink-8fkkk: operator-entered frequency in MHz for CAT-based QSY before
+  // connecting. "7.102" → 7102000 Hz. Empty/invalid → null (backend skips retune).
+  const [freqMhz, setFreqMhz] = useState('');
+  const freqHz = useMemo<number | null>(() => {
+    const t = freqMhz.trim();
+    if (!t) return null;
+    const mhz = Number(t);
+    if (!Number.isFinite(mhz) || mhz <= 0) return null;
+    return Math.round(mhz * 1_000_000);
+  }, [freqMhz]);
   // tuxlink-ypz3 (3a): restore the persisted ARDOP target on mount so switching
   // modes (panel remounts) doesn't blank the previously-dialed station. Mirrors
   // the localStorage key the ribbon Connect (connectDispatch) reads. Keyed on
@@ -749,6 +759,7 @@ export function ArdopRadioPanel({
     try {
       await invoke('modem_ardop_connect', {
         target: target.trim(),
+        freqHz, // null when unset → backend skips CAT retune
       });
     } catch (e) {
       // tuxlink-nnjz: modem errors are surfaced in the session log (the backend
@@ -907,6 +918,37 @@ export function ArdopRadioPanel({
                   ))}
                 </select>
               </label>
+              {/* tuxlink-8fkkk: frequency + Tune affordance. Operator types the
+                  gateway frequency in MHz; the panel parses it to Hz and passes it
+                  on Connect so the backend CAT-tunes the rig before dialing. The
+                  Tune… button sends ardop_tune_rig without dialing (QSY-only). Both
+                  paths are no-ops when the field is blank (freqHz === null). */}
+              <div className="radio-panel-input-row">
+                <label htmlFor="ardop-freq">Frequency (MHz)</label>
+                <input
+                  id="ardop-freq"
+                  data-testid="ardop-freq"
+                  className="radio-panel-input radio-panel-mono"
+                  value={freqMhz}
+                  onChange={(e) => setFreqMhz(e.target.value)}
+                  placeholder="7.102"
+                  inputMode="decimal"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                />
+                <button
+                  type="button"
+                  className="radio-panel-btn radio-panel-btn-sm"
+                  data-testid="ardop-tune"
+                  disabled={freqHz === null}
+                  onClick={() => {
+                    if (freqHz !== null) void invoke('ardop_tune_rig', { freqHz });
+                  }}
+                >
+                  Tune…
+                </button>
+              </div>
             </section>
           }
         />

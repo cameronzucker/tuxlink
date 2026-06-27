@@ -1502,4 +1502,80 @@ describe('<ArdopRadioPanel>', () => {
       expect(screen.queryByTestId('ardop-freq-input')).toBeNull();
     });
   });
+
+  // ── tuxlink-8fkkk: Frequency element + Tune affordance ───────────────────
+
+  describe('Frequency element (tuxlink-8fkkk)', () => {
+    it('sends freqHz on Connect when a frequency is entered', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+
+      // Type a target callsign.
+      const targetInput = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
+      fireEvent.change(targetInput, { target: { value: 'W7DG' } });
+
+      // Type a frequency in MHz.
+      const freqInput = (await screen.findByTestId('ardop-freq')) as HTMLInputElement;
+      fireEvent.change(freqInput, { target: { value: '7.102' } });
+
+      // Click Start (the connect button).
+      fireEvent.click(screen.getByTestId('ardop-start-btn'));
+
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'modem_ardop_connect',
+          expect.objectContaining({
+            target: 'W7DG',
+            freqHz: 7102000,
+          }),
+        );
+      });
+    });
+
+    it('sends freqHz: null on Connect when frequency field is blank', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+
+      const targetInput = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
+      fireEvent.change(targetInput, { target: { value: 'W7DG' } });
+      // Leave freq blank.
+      fireEvent.click(screen.getByTestId('ardop-start-btn'));
+
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'modem_ardop_connect',
+          expect.objectContaining({ target: 'W7DG', freqHz: null }),
+        );
+      });
+    });
+
+    it('Tune button is disabled when frequency field is blank', async () => {
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+      const tuneBtn = (await screen.findByTestId('ardop-tune')) as HTMLButtonElement;
+      expect(tuneBtn.disabled).toBe(true);
+    });
+
+    it('Tune button fires ardop_tune_rig with freqHz when a valid frequency is entered', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+
+      const freqInput = (await screen.findByTestId('ardop-freq')) as HTMLInputElement;
+      fireEvent.change(freqInput, { target: { value: '7.102' } });
+
+      const tuneBtn = (await screen.findByTestId('ardop-tune')) as HTMLButtonElement;
+      expect(tuneBtn.disabled).toBe(false);
+      fireEvent.click(tuneBtn);
+
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith('ardop_tune_rig', { freqHz: 7102000 });
+      });
+    });
+  });
 });
