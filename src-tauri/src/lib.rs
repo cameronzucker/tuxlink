@@ -14,6 +14,7 @@ pub mod identity;
 pub mod help_window;
 pub mod logging;
 pub mod logging_window;
+pub mod mcp;
 pub mod media;
 pub mod stations_window;
 pub mod theme_state;

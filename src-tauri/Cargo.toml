@@ -1,3 +1,13 @@
+# The tuxlink package is also the workspace root (MCP phase 3.1, ADR-tracked in
+# the transport-spine plan). The two MCP helper crates live UNDER src-tauri/ so
+# `--manifest-path src-tauri/Cargo.toml` resolves them; `default-members = ["."]`
+# keeps `cd src-tauri && cargo build --release` (release.yml) building ONLY the
+# app, and `default-run = "tuxlink"` is unchanged. The sibling xtask/ and tools/
+# crates are OUTSIDE src-tauri and are not pulled into this workspace.
+[workspace]
+members = [".", "tuxlink-mcp", "tuxlink-mcp-testserver"]
+default-members = ["."]
+
 [package]
 name = "tuxlink"
 version = "0.77.0"
@@ -120,6 +130,19 @@ urlencoding = "2"          # Task 8.1 GitHub URL body encoding
 once_cell = "1.20"
 regex = "1.10"
 mini_sbc = "0.1.7"        # NEW (tuxlink-vgvn) — pure-Rust SBC DECODER for the UV-Pro SSTV audio transport; MIT/Apache (GPL-3 compatible). Encode is a from-scratch port (no pure-Rust SBC encoder on crates.io). Decode verified MAE 6.7 vs ffmpeg golden vectors.
+# MCP server (tuxlink-cvx84.1, phase 3.1 transport spine). `server` + `macros`
+# drive the #[tool_router]/#[tool]/#[tool_handler] attributes; `transport-async-rw`
+# is the blanket (R, W) transport used for the UDS split-stream serve in Task 3
+# (the stdio shim itself uses NO rmcp). The #[tool] macro expands to references
+# `schemars` (input/output JSON Schema generation), so it is a DIRECT dep even
+# though the lone 3.1 tool (server_info) takes no parameters. serde + serde_json
+# (required by the macros) are already direct deps above. MSRV-1.75 / clippy-clean
+# compatibility of rmcp 0.8.x is CI-verified via the draft PR — not a local build.
+rmcp = { version = "0.8", features = ["server", "macros", "transport-async-rw"] }
+# schemars 1.x: rmcp 0.8's #[tool] macro + JsonSchema derives use the 1.0 API
+# surface (SchemaGenerator / inline_schema); rmcp 0.3+ docs pin `schemars = "1.0"`.
+# A 0.8 pin would resolve a SECOND incompatible schemars and fail the derive.
+schemars = "1.0"
 
 # tuxlink-cumx / G8 — faithful PDF export drives the live form's WebKitGTK view
 # via WebKitPrintOperation. Both crates are already in the build (transitive via

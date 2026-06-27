@@ -1,0 +1,18 @@
+# tuxlink-mcp — stdio→UDS byte-pump shim for `claude mcp`.
+#
+# This is a stub for MCP phase 3.1 Task 1 (workspace conversion). The real
+# dumb bidirectional `tokio::io::copy` pump lands in Task 5; for now this is an
+# empty binary so the workspace member resolves and CI exercises the build.
+[package]
+name = "tuxlink-mcp"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+license = "GPL-3.0-or-later"
+publish = false
+
+[[bin]]
+name = "tuxlink-mcp"
+path = "src/main.rs"
+
+[dependencies]

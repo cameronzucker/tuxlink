@@ -1,0 +1,20 @@
+# tuxlink-mcp-testserver — tier-2 harness: the MCP router over UDS with a mock
+# backend and no Tauri, so the `claude mcp` round-trip runs with no operator and
+# no full app build.
+#
+# This is a stub for MCP phase 3.1 Task 1 (workspace conversion). The real
+# testserver lands in Task 6; for now this is an empty binary so the workspace
+# member resolves and CI exercises the build.
+[package]
+name = "tuxlink-mcp-testserver"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+license = "GPL-3.0-or-later"
+publish = false
+
+[[bin]]
+name = "tuxlink-mcp-testserver"
+path = "src/main.rs"
+
+[dependencies]
