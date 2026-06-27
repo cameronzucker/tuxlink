@@ -66,7 +66,8 @@ describe('useAprsChat (open channel)', () => {
 
   it('treats an empty recipient as a broadcast (call: null, to: null)', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
-    (invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce('b7');
+    // First Once is consumed by the aprs_listen_status mount seed; second by aprs_send.
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false).mockResolvedValueOnce('b7');
     const { result } = renderHook(() => useAprsChat());
     await act(async () => {});
     await act(async () => { await result.current.send('', 'CQ'); });
@@ -77,7 +78,8 @@ describe('useAprsChat (open channel)', () => {
 
   it('passes a callsign recipient through as call', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
-    (invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce('A2');
+    // First Once is consumed by the aprs_listen_status mount seed; second by aprs_send.
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false).mockResolvedValueOnce('A2');
     const { result } = renderHook(() => useAprsChat());
     await act(async () => {});
     await act(async () => { await result.current.send('W7RPT-9', 'hi'); });
@@ -86,7 +88,8 @@ describe('useAprsChat (open channel)', () => {
 
   it('does NOT append a message when send is rejected', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
-    (invoke as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('too many messages pending'));
+    // First Once is consumed by the aprs_listen_status mount seed; second by aprs_send.
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false).mockRejectedValueOnce(new Error('too many messages pending'));
     const { result } = renderHook(() => useAprsChat());
     await act(async () => {});
     await act(async () => { await result.current.send('KK6XYZ', 'hello').catch(() => {}); });
@@ -95,7 +98,8 @@ describe('useAprsChat (open channel)', () => {
 
   it('stamps ackedAt when a message transitions to acked', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
-    (invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce('A3');
+    // First Once is consumed by the aprs_listen_status mount seed; second by aprs_send.
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false).mockResolvedValueOnce('A3');
     const { result } = renderHook(() => useAprsChat());
     await act(async () => {});
     await act(async () => { await result.current.send('KK6XYZ', 'hello'); });
@@ -113,5 +117,41 @@ describe('useAprsChat (open channel)', () => {
     const dto = { sourceSsid: 9, tocall: 'APZTUX', path: 'WIDE1-1' };
     await act(async () => { await result.current.setConfig(dto); });
     expect(invoke).toHaveBeenCalledWith('aprs_config_set', { dto });
+  });
+
+  // tuxlink-9grg regression: when the hook remounts while the engine is already
+  // listening, no new `aprs-listening:change` event fires, so the indicator must
+  // be seeded from the `aprs_listen_status` query on mount.
+  it('seeds listening=true from aprs_listen_status on mount when no event fires', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    // Override: aprs_listen_status returns true; all other invoke calls fall through
+    // to the default 'A1' return. The command string is the first argument to invoke.
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      (cmd: string) => cmd === 'aprs_listen_status' ? Promise.resolve(true) : Promise.resolve('A1'),
+    );
+
+    const { result } = renderHook(() => useAprsChat());
+    // Flush microtasks: the subscribe promises + the aprs_listen_status query.
+    await act(async () => {});
+
+    expect(result.current.listening).toBe(true);
+
+    // Restore default mock so later tests are unaffected.
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue('A1');
+  });
+
+  // tuxlink-9grg companion: when engine is not running, seed must leave listening=false.
+  it('seeds listening=false from aprs_listen_status on mount when engine is idle', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      (cmd: string) => cmd === 'aprs_listen_status' ? Promise.resolve(false) : Promise.resolve('A1'),
+    );
+
+    const { result } = renderHook(() => useAprsChat());
+    await act(async () => {});
+
+    expect(result.current.listening).toBe(false);
+
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue('A1');
   });
 });

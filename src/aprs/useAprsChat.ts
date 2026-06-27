@@ -127,6 +127,24 @@ export function useAprsChat(): UseAprsChat {
       setListening(payload);
     });
 
+    // tuxlink-9grg: seed `listening` from backend truth on mount so the indicator
+    // is correct when the hook remounts (dock tab switch) while the engine is already
+    // running. The subscription above is registered first — so no transition event is
+    // missed. The query races to the same AtomicBool the event stream reads; any
+    // transition that fires between subscribe and query-resolve is handled by the event
+    // handler, and then the seed lands; this is benign because the query reflects the
+    // same atomic and both writes are correct (last-write-wins; both agree when the
+    // engine has not transitioned again). We guard against calling setState after
+    // unmount with the `mounted` flag shared with the event handlers above.
+    invoke<boolean>('aprs_listen_status')
+      .then((current) => {
+        if (mounted) setListening(current);
+      })
+      .catch(() => {
+        // Tauri IPC unavailable (jsdom / test environment without Tauri mocking this
+        // command) — the event subscription alone is sufficient as the fallback path.
+      });
+
     return () => {
       mounted = false;
       for (const un of unlistens) un();

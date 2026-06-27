@@ -4164,6 +4164,20 @@ pub async fn aprs_listen_stop(
     Ok(())
 }
 
+/// Query the current APRS listening state without waiting for a transition event.
+///
+/// Used by the frontend to seed `listening` on mount so the indicator is correct
+/// when the hook remounts (e.g. operator switches dock tabs) while the engine is
+/// already running. Reads the same `Arc<AtomicBool>` that `aprs-listening:change`
+/// events are emitted from, so it is always consistent with the event stream.
+/// tuxlink-9grg
+#[tauri::command]
+pub fn aprs_listen_status(
+    aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
+) -> bool {
+    aprs.is_listening()
+}
+
 /// Queue an APRS text message to `call`. Returns the minted msgid so the frontend
 /// can render + reconcile the outgoing bubble against later ack/timeout events.
 #[tauri::command]
