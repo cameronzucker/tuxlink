@@ -46,7 +46,7 @@ const STOP_GRACE: Duration = Duration::from_millis(500);
 impl ManagedRig {
     /// Spawn rigctld and connect a control client once its socket accepts.
     pub fn spawn(cfg: RigConfig) -> Result<Self, RigError> {
-        let child = Command::new(&cfg.binary)
+        let mut child = Command::new(&cfg.binary)
             .args(cfg.rigctld_args())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -61,7 +61,16 @@ impl ManagedRig {
                 Err(_) if start.elapsed() < CONNECT_TIMEOUT => {
                     thread::sleep(CONNECT_POLL);
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    // Connect timed out: kill + reap the spawned rigctld before
+                    // returning. `Child::drop` neither kills nor reaps, so a bare
+                    // return would orphan a live rigctld holding the CAT serial.
+                    // Per-dial-candidate spawn retries (Task 8/9) would otherwise
+                    // accumulate orphans and block the port.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(e);
+                }
             }
         };
 
