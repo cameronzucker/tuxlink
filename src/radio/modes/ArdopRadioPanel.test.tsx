@@ -1577,5 +1577,22 @@ describe('<ArdopRadioPanel>', () => {
         expect(invokeMock).toHaveBeenCalledWith('ardop_tune_rig', { freqHz: 7102000 });
       });
     });
+
+    it('prefill from Find a Station fills both target and frequency (tuxlink-8fkkk T11)', async () => {
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+
+      act(() => {
+        emitGatewayPrefill({ mode: 'ardop-hf', gateway: 'W7DG', freq: '7.103 MHz' });
+      });
+
+      await switchToManualTab();
+      await waitFor(() => {
+        const targetInput = screen.getByTestId('ardop-target-input') as HTMLInputElement;
+        expect(targetInput.value).toBe('W7DG');
+        const freqInput = screen.getByTestId('ardop-freq') as HTMLInputElement;
+        expect(freqInput.value).toBe('7.103');
+      });
+    });
   });
 });

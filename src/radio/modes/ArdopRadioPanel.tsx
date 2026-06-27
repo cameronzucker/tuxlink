@@ -428,6 +428,13 @@ export function ArdopRadioPanel({
     // tuxlink-vu97: persist so the ribbon Connect can dial this target with the
     // pane closed.
     writeLastTarget('ardop-hf', dial.gateway);
+    // tuxlink-8fkkk Task 11: extract numeric MHz from the dial's freq metadata
+    // ("7.103 MHz" → "7.103") and populate the frequency field so Connect tunes
+    // the rig automatically on the next Start click.
+    if (dial.freq) {
+      const m = dial.freq.match(/[\d.]+/);
+      if (m) setFreqMhz(m[0]);
+    }
   }, []);
 
   useEffect(
