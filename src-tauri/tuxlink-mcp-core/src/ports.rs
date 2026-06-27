@@ -20,9 +20,13 @@
 //! All traits are `Send + Sync` and object-safe so [`crate::McpState`] can hold
 //! them as `Arc<dyn Port>`.
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::validate::ValidationError;
 
 /// Failure modes a port adapter can surface to the agent. The router maps these
 /// onto rmcp tool errors; the impl chooses the variant.
@@ -390,4 +394,176 @@ pub trait AbortPort: Send + Sync {
     async fn ardop_disconnect(&self) -> Result<(), PortError>;
     /// Stop the active VARA session.
     async fn vara_stop_session(&self) -> Result<(), PortError>;
+}
+
+// ---------------------------------------------------------------------------
+// Write + Compose (phase 3.4) — gated config/state writes + ungated drafting.
+//
+// WritePort methods MUTATE config/mailbox state and are gated like egress: the
+// IMPL validates the agent-supplied input FIRST (a malformed value is rejected
+// as `Invalid` WITHOUT consuming the armed grant), then runs the mutation
+// through `guarded_egress(.., Agent, ..)`. So a disarmed/tainted session gets
+// `Denied` and nothing is written; a bad input gets `Invalid` even when
+// disarmed (validate-before-gate).
+//
+// ComposePort methods only STAGE a local outbox draft — no transmission happens
+// until a later GATED connect — so they are UNGATED: they validate input but do
+// NOT touch the guard and do NOT taint. They cannot return `Denied`.
+// ---------------------------------------------------------------------------
+
+/// Failure modes a write/compose port adapter can surface to the agent.
+/// `Denied` is the egress-gate refusal (write tier only); `Invalid` is an
+/// input-validation rejection (returned even when disarmed, before the gate);
+/// `Failed` is an operational failure after both checks passed. The router maps
+/// `Denied` onto an authorization-shaped error, `Invalid` onto
+/// `invalid_request`, and `Failed` onto `internal_error`.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum WritePortError {
+    /// The egress gate refused the Agent caller (unarmed / expired / tainted /
+    /// poisoned). Carries the `EgressDenied` reason. Write tier only.
+    #[error("denied: {0}")]
+    Denied(String),
+    /// The agent-supplied input failed validation BEFORE the gate. The session's
+    /// armed grant is not consumed.
+    #[error("invalid: {0}")]
+    Invalid(String),
+    /// The input was valid and the gate passed, but the operation itself failed.
+    #[error("failed: {0}")]
+    Failed(String),
+}
+
+impl From<ValidationError> for WritePortError {
+    fn from(e: ValidationError) -> Self {
+        WritePortError::Invalid(e.to_string())
+    }
+}
+
+/// Narrow ARDOP write payload: just the operator-settable drive level.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct ArdopWriteDto {
+    /// Transmit drive level, `0..=100`.
+    pub drive_level: u8,
+}
+
+/// Narrow VARA write payload: just the bandwidth in Hz (`500`/`2300`/`2750`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct VaraWriteDto {
+    /// VARA bandwidth in Hz; one of `500`, `2300`, `2750`.
+    pub bandwidth_hz: u32,
+}
+
+/// Narrow packet (AX.25/KISS) write payload. Non-secret connection params only.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct PacketWriteDto {
+    /// Station SSID (`0..=15` by AX.25 convention; the impl range-checks).
+    pub ssid: u8,
+    /// KISS TNC TCP host.
+    pub tcp_host: String,
+    /// KISS TNC TCP port.
+    pub tcp_port: u16,
+    /// TX delay in milliseconds.
+    pub txdelay_ms: u32,
+}
+
+/// A composed message draft to stage in the local outbox. Carries no secrets.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct ComposeDraftDto {
+    /// Primary recipient addresses.
+    pub to: Vec<String>,
+    /// Carbon-copy recipient addresses.
+    pub cc: Vec<String>,
+    /// Message subject.
+    pub subject: String,
+    /// Message body.
+    pub body: String,
+}
+
+/// A form submission to stage in the local outbox.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct SendFormDto {
+    /// The catalog form id (e.g. `"ICS-213"`).
+    pub form_id: String,
+    /// The form's field name → value map.
+    pub field_values: BTreeMap<String, String>,
+    /// Primary recipient addresses.
+    pub to: Vec<String>,
+    /// Carbon-copy recipient addresses.
+    pub cc: Vec<String>,
+    /// The sender's callsign.
+    pub senders_callsign: String,
+    /// The sender's grid square.
+    pub grid_square: String,
+}
+
+/// A GRIB weather-product request to stage in the local outbox. `lat`/`lon` are
+/// `f64`, so this derives `PartialEq` but not `Eq`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
+pub struct GribRequestDto {
+    /// Request center latitude.
+    pub lat: f64,
+    /// Request center longitude.
+    pub lon: f64,
+    /// Request mode/product selector (impl-interpreted).
+    pub mode: String,
+    /// Subject line for the staged request message.
+    pub subject: String,
+}
+
+/// GATED config/state writes. EVERY method validates the agent-supplied input
+/// first (returning [`WritePortError::Invalid`] without consuming the armed
+/// grant) and then gates the mutation through
+/// [`guarded_egress`](tuxlink_security::guarded_egress), so a
+/// disarmed/expired/tainted/poisoned session gets [`WritePortError::Denied`] and
+/// NOTHING is written. Object-safe so [`crate::McpState`] can hold it as
+/// `Arc<dyn WritePort>`.
+#[async_trait]
+pub trait WritePort: Send + Sync {
+    /// Set the ARDOP drive level.
+    async fn set_ardop(&self, dto: ArdopWriteDto) -> Result<(), WritePortError>;
+    /// Set the VARA bandwidth.
+    async fn set_vara(&self, dto: VaraWriteDto) -> Result<(), WritePortError>;
+    /// Set the packet (AX.25/KISS) connection params.
+    async fn set_packet(&self, dto: PacketWriteDto) -> Result<(), WritePortError>;
+    /// Set the station grid square.
+    async fn set_grid(&self, grid: String) -> Result<(), WritePortError>;
+    /// Set the position source (e.g. `"gps"` / `"manual"`).
+    async fn set_position_source(&self, source: String) -> Result<(), WritePortError>;
+    /// Set the GPS privacy: broadcast state + precision.
+    async fn set_privacy(&self, gps_state: String, precision: String)
+        -> Result<(), WritePortError>;
+    /// Enable/disable packet listen mode.
+    async fn set_packet_listen(&self, enabled: bool) -> Result<(), WritePortError>;
+    /// Move a message between folders.
+    async fn mailbox_move(
+        &self,
+        from: String,
+        to: String,
+        id: String,
+    ) -> Result<(), WritePortError>;
+    /// Save an attachment to a (validated) destination, returning the saved path.
+    async fn attachment_save(
+        &self,
+        folder: String,
+        id: String,
+        filename: String,
+        dest: String,
+    ) -> Result<String, WritePortError>;
+}
+
+/// UNGATED compose/staging capability. EVERY method validates input but only
+/// stages a LOCAL outbox draft — no transmission happens until a later GATED
+/// connect — so it never touches the egress guard and never taints. It returns
+/// the staged message id (MID) on success, or [`WritePortError::Invalid`] /
+/// [`WritePortError::Failed`] (never `Denied`). Object-safe.
+#[async_trait]
+pub trait ComposePort: Send + Sync {
+    /// Stage a composed message; returns the staged MID.
+    async fn message_send(&self, dto: ComposeDraftDto) -> Result<String, WritePortError>;
+    /// Stage a form submission; returns the staged MID.
+    async fn send_form(&self, dto: SendFormDto) -> Result<String, WritePortError>;
+    /// Stage a catalog inquiry for the given catalog item ids; returns the MID.
+    async fn catalog_send_inquiry(&self, item_ids: Vec<String>)
+        -> Result<String, WritePortError>;
+    /// Stage a GRIB weather-product request; returns the staged MID.
+    async fn grib_send_request(&self, dto: GribRequestDto) -> Result<String, WritePortError>;
 }

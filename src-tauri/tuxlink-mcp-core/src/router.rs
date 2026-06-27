@@ -16,7 +16,10 @@ use rmcp::model::{
 };
 use rmcp::{tool, tool_handler, tool_router, ErrorData};
 
-use crate::ports::{EgressPortError, PortError, SearchQueryDto, SessionIntentDto};
+use crate::ports::{
+    ArdopWriteDto, ComposeDraftDto, EgressPortError, GribRequestDto, PacketWriteDto, PortError,
+    SearchQueryDto, SendFormDto, SessionIntentDto, VaraWriteDto, WritePortError,
+};
 use crate::{server_info_view, McpState};
 
 /// Map a [`PortError`] onto an rmcp tool error. Read tools surface the failure
@@ -40,6 +43,25 @@ fn egress_err(e: EgressPortError) -> ErrorData {
             None,
         ),
         EgressPortError::Failed(reason) => ErrorData::internal_error(reason, None),
+    }
+}
+
+/// Map a [`WritePortError`] onto an rmcp tool error. `Denied` is an
+/// authorization refusal (write tier only) and reuses the egress-denial message
+/// shape; `Invalid` is a malformed-request rejection (surfaced even when
+/// disarmed, before the gate); `Failed` is an operational error.
+fn write_err(e: WritePortError) -> ErrorData {
+    match e {
+        WritePortError::Denied(reason) => ErrorData::invalid_request(
+            format!(
+                "not authorized to write: {reason}. The operator must ARM send \
+                 authority, and the session must not be tainted (reading untrusted \
+                 message content locks send authority until re-armed)."
+            ),
+            None,
+        ),
+        WritePortError::Invalid(reason) => ErrorData::invalid_request(reason, None),
+        WritePortError::Failed(reason) => ErrorData::internal_error(reason, None),
     }
 }
 
@@ -456,6 +478,296 @@ impl TuxlinkMcp {
             .map_err(port_err)?;
         Ok(CallToolResult::success(vec![Content::json("ok")?]))
     }
+
+    // ----- GATED writes (mutate config/state; require armed send authority) -----
+    //
+    // These tools mutate config/mailbox state. The IMPL validates the input
+    // FIRST (an `Invalid` is returned even when disarmed, never consuming the
+    // armed grant) and then gates the mutation through `guarded_egress(.., Agent,
+    // ..)`. The tool is a thin adapter mapping a `WritePortError` onto a tool
+    // error (Denied → not-authorized, Invalid → invalid_request, Failed →
+    // internal_error). They do NOT taint.
+
+    #[tool(
+        name = "config_set_ardop",
+        description = "Set the ARDOP drive level (0..=100). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise. An out-of-range value is rejected as invalid even when disarmed."
+    )]
+    pub async fn config_set_ardop(
+        &self,
+        params: Parameters<ArdopWriteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(ArdopWriteParams { drive_level }) = params;
+        self.state
+            .write
+            .set_ardop(ArdopWriteDto { drive_level })
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "config_set_vara",
+        description = "Set the VARA bandwidth in Hz (500/2300/2750). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise. An out-of-range value is rejected as invalid even when disarmed."
+    )]
+    pub async fn config_set_vara(
+        &self,
+        params: Parameters<VaraWriteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(VaraWriteParams { bandwidth_hz }) = params;
+        self.state
+            .write
+            .set_vara(VaraWriteDto { bandwidth_hz })
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "packet_config_set",
+        description = "Set the packet (AX.25/KISS) connection params (ssid, tcp host/port, tx delay). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+    )]
+    pub async fn packet_config_set(
+        &self,
+        params: Parameters<PacketWriteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(PacketWriteParams {
+            ssid,
+            tcp_host,
+            tcp_port,
+            txdelay_ms,
+        }) = params;
+        self.state
+            .write
+            .set_packet(PacketWriteDto {
+                ssid,
+                tcp_host,
+                tcp_port,
+                txdelay_ms,
+            })
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "config_set_grid",
+        description = "Set the station grid square (Maidenhead locator). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+    )]
+    pub async fn config_set_grid(
+        &self,
+        params: Parameters<GridParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(GridParams { grid }) = params;
+        self.state.write.set_grid(grid).await.map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "position_set_source",
+        description = "Set the position source (e.g. gps/manual). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+    )]
+    pub async fn position_set_source(
+        &self,
+        params: Parameters<PositionSourceParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(PositionSourceParams { source }) = params;
+        self.state
+            .write
+            .set_position_source(source)
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "config_set_privacy",
+        description = "Set the GPS privacy: broadcast state + position precision. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+    )]
+    pub async fn config_set_privacy(
+        &self,
+        params: Parameters<PrivacyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(PrivacyParams {
+            gps_state,
+            precision,
+        }) = params;
+        self.state
+            .write
+            .set_privacy(gps_state, precision)
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "packet_set_listen",
+        description = "Enable or disable packet listen mode. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+    )]
+    pub async fn packet_set_listen(
+        &self,
+        params: Parameters<ListenParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(ListenParams { enabled }) = params;
+        self.state
+            .write
+            .set_packet_listen(enabled)
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "mailbox_move",
+        description = "Move a message between mailbox folders. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+    )]
+    pub async fn mailbox_move(
+        &self,
+        params: Parameters<MailboxMoveParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(MailboxMoveParams { from, to, id }) = params;
+        self.state
+            .write
+            .mailbox_move(from, to, id)
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "message_attachment_save",
+        description = "Save a message attachment to a destination path (validated to stay inside the attachment base; absolute/parent-traversal/escaping paths are rejected as invalid). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+    )]
+    pub async fn message_attachment_save(
+        &self,
+        params: Parameters<AttachmentSaveParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(AttachmentSaveParams {
+            folder,
+            id,
+            filename,
+            dest,
+        }) = params;
+        let saved = self
+            .state
+            .write
+            .attachment_save(folder, id, filename, dest)
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json(saved)?]))
+    }
+
+    // ----- UNGATED compose/staging (no transmission; never gated/tainting) -----
+    //
+    // These tools STAGE a local outbox draft; no transmission happens until a
+    // later GATED connect. They validate input but never touch the guard and
+    // never taint. They return the staged message id (MID). They cannot be
+    // Denied — only Invalid (bad input) or Failed (op error).
+
+    #[tool(
+        name = "message_send",
+        description = "Stage a composed message in the local outbox; returns the staged message id. No transmission occurs until a later gated connect. Validates recipients/subject/body; a malformed value (e.g. a CR/LF in an address) is rejected as invalid."
+    )]
+    pub async fn message_send(
+        &self,
+        params: Parameters<ComposeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(ComposeParams {
+            to,
+            cc,
+            subject,
+            body,
+        }) = params;
+        let mid = self
+            .state
+            .compose
+            .message_send(ComposeDraftDto {
+                to,
+                cc,
+                subject,
+                body,
+            })
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json(mid)?]))
+    }
+
+    #[tool(
+        name = "send_form",
+        description = "Stage a form submission in the local outbox; returns the staged message id. No transmission occurs until a later gated connect. Validates recipients and headers."
+    )]
+    pub async fn send_form(
+        &self,
+        params: Parameters<SendFormParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(SendFormParams {
+            form_id,
+            field_values,
+            to,
+            cc,
+            senders_callsign,
+            grid_square,
+        }) = params;
+        let mid = self
+            .state
+            .compose
+            .send_form(SendFormDto {
+                form_id,
+                field_values,
+                to,
+                cc,
+                senders_callsign,
+                grid_square,
+            })
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json(mid)?]))
+    }
+
+    #[tool(
+        name = "catalog_send_inquiry",
+        description = "Stage a catalog inquiry for the given catalog item ids in the local outbox; returns the staged message id. No transmission occurs until a later gated connect."
+    )]
+    pub async fn catalog_send_inquiry(
+        &self,
+        params: Parameters<CatalogInquiryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(CatalogInquiryParams { item_ids }) = params;
+        let mid = self
+            .state
+            .compose
+            .catalog_send_inquiry(item_ids)
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json(mid)?]))
+    }
+
+    #[tool(
+        name = "grib_send_request",
+        description = "Stage a GRIB weather-product request in the local outbox; returns the staged message id. No transmission occurs until a later gated connect. Validates the subject header."
+    )]
+    pub async fn grib_send_request(
+        &self,
+        params: Parameters<GribRequestParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(GribRequestParams {
+            lat,
+            lon,
+            mode,
+            subject,
+        }) = params;
+        let mid = self
+            .state
+            .compose
+            .grib_send_request(GribRequestDto {
+                lat,
+                lon,
+                mode,
+                subject,
+            })
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![Content::json(mid)?]))
+    }
 }
 
 /// `{ "callsign": "W1AW" }` — input for `p2p_peer_password_status`.
@@ -532,6 +844,140 @@ pub struct PacketConnectParams {
     pub path: Vec<String>,
 }
 
+/// `{ "drive_level": 80 }` — input for `config_set_ardop`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ArdopWriteParams {
+    /// Transmit drive level, `0..=100`.
+    pub drive_level: u8,
+}
+
+/// `{ "bandwidth_hz": 2300 }` — input for `config_set_vara`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct VaraWriteParams {
+    /// VARA bandwidth in Hz; one of `500`, `2300`, `2750`.
+    pub bandwidth_hz: u32,
+}
+
+/// Input for `packet_config_set`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PacketWriteParams {
+    /// Station SSID.
+    pub ssid: u8,
+    /// KISS TNC TCP host.
+    pub tcp_host: String,
+    /// KISS TNC TCP port.
+    pub tcp_port: u16,
+    /// TX delay in milliseconds.
+    pub txdelay_ms: u32,
+}
+
+/// `{ "grid": "CN87" }` — input for `config_set_grid`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GridParams {
+    /// The Maidenhead grid square to set.
+    pub grid: String,
+}
+
+/// `{ "source": "gps" }` — input for `position_set_source`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PositionSourceParams {
+    /// The position source (e.g. `gps` / `manual`).
+    pub source: String,
+}
+
+/// Input for `config_set_privacy`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PrivacyParams {
+    /// GPS broadcast state (e.g. `on` / `off`).
+    pub gps_state: String,
+    /// Position precision (e.g. a Maidenhead precision selector).
+    pub precision: String,
+}
+
+/// `{ "enabled": true }` — input for `packet_set_listen`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListenParams {
+    /// Whether packet listen mode is enabled.
+    pub enabled: bool,
+}
+
+/// Input for `mailbox_move`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct MailboxMoveParams {
+    /// The source folder.
+    pub from: String,
+    /// The destination folder.
+    pub to: String,
+    /// The message id to move.
+    pub id: String,
+}
+
+/// Input for `message_attachment_save`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AttachmentSaveParams {
+    /// The folder the message lives in.
+    pub folder: String,
+    /// The message id.
+    pub id: String,
+    /// The attachment filename within the message.
+    pub filename: String,
+    /// The destination path (validated to stay inside the attachment base).
+    pub dest: String,
+}
+
+/// Input for `message_send`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ComposeParams {
+    /// Primary recipient addresses.
+    pub to: Vec<String>,
+    /// Carbon-copy recipient addresses.
+    #[serde(default)]
+    pub cc: Vec<String>,
+    /// Message subject.
+    pub subject: String,
+    /// Message body.
+    pub body: String,
+}
+
+/// Input for `send_form`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SendFormParams {
+    /// The catalog form id.
+    pub form_id: String,
+    /// The form's field name → value map.
+    #[serde(default)]
+    pub field_values: std::collections::BTreeMap<String, String>,
+    /// Primary recipient addresses.
+    pub to: Vec<String>,
+    /// Carbon-copy recipient addresses.
+    #[serde(default)]
+    pub cc: Vec<String>,
+    /// The sender's callsign.
+    pub senders_callsign: String,
+    /// The sender's grid square.
+    pub grid_square: String,
+}
+
+/// `{ "item_ids": ["FORM-1"] }` — input for `catalog_send_inquiry`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CatalogInquiryParams {
+    /// The catalog item ids to inquire about.
+    pub item_ids: Vec<String>,
+}
+
+/// Input for `grib_send_request`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GribRequestParams {
+    /// Request center latitude.
+    pub lat: f64,
+    /// Request center longitude.
+    pub lon: f64,
+    /// Request mode/product selector.
+    pub mode: String,
+    /// Subject line for the staged request message.
+    pub subject: String,
+}
+
 #[tool_handler]
 impl ServerHandler for TuxlinkMcp {
     // Build `ServerInfo` (= `InitializeResult`) from `default()` then set the
@@ -563,7 +1009,8 @@ mod tests {
 
     use crate::ports::{MessageMetaDto, ParsedMessageDto};
     use crate::test_support::{
-        state_with_egress_probes, state_with_guard, SEED_MSG_FROM, SEED_MSG_ID, SEED_MSG_SUBJECT,
+        state_with_all_probes, state_with_egress_probes, state_with_guard, SEED_MSG_FROM,
+        SEED_MSG_ID, SEED_MSG_SUBJECT,
     };
     use tuxlink_security::EgressGuard;
 
@@ -582,6 +1029,15 @@ mod tests {
         let (state, op_ran, aborted) =
             state_with_egress_probes(EgressGuard::with_clock(fixed_1000));
         (TuxlinkMcp::new(Arc::new(state)), op_ran, aborted)
+    }
+
+    /// Handler plus `(op_ran, staged)` for the write + compose tier-1 tests.
+    /// `op_ran` is shared by the gated write mock; `staged` is flipped by the
+    /// ungated compose mock.
+    fn handler_with_write_probes() -> (TuxlinkMcp, Arc<AtomicBool>, Arc<AtomicBool>) {
+        let (state, op_ran, _aborted, staged) =
+            state_with_all_probes(EgressGuard::with_clock(fixed_1000));
+        (TuxlinkMcp::new(Arc::new(state)), op_ran, staged)
     }
 
     /// Extract + deserialize the JSON the tool packed into its first text
@@ -798,5 +1254,162 @@ mod tests {
         h.modem_ardop_disconnect().await.unwrap();
         h.vara_stop_session().await.unwrap();
         assert!(aborted.load(Ordering::SeqCst));
+    }
+
+    // --- STEP 5: gated WRITE tier (validate-before-gate) via the real tools ---
+
+    #[tokio::test]
+    async fn write_denied_when_unarmed_and_op_never_runs() {
+        let (h, op_ran, _staged) = handler_with_write_probes();
+        let err = h
+            .config_set_ardop(Parameters(ArdopWriteParams { drive_level: 80 }))
+            .await
+            .expect_err("unarmed write must deny");
+        assert!(
+            err.message.contains("not authorized"),
+            "denial must name the missing authorization, got: {}",
+            err.message
+        );
+        assert!(
+            !op_ran.load(Ordering::SeqCst),
+            "the underlying write op must NOT run when denied"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_denied_when_tainted_even_if_armed() {
+        let (h, op_ran, _staged) = handler_with_write_probes();
+        h.state.guard.taint();
+        h.state.guard.arm(30); // arming does NOT clear taint
+        let err = h
+            .config_set_ardop(Parameters(ArdopWriteParams { drive_level: 80 }))
+            .await
+            .expect_err("tainted write must deny even when armed");
+        assert!(err.message.contains("not authorized"));
+        assert!(
+            !op_ran.load(Ordering::SeqCst),
+            "a tainted session must not write even while armed"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_allowed_when_armed_and_untainted_and_op_runs() {
+        let (h, op_ran, _staged) = handler_with_write_probes();
+        h.state.guard.arm(30);
+        h.config_set_ardop(Parameters(ArdopWriteParams { drive_level: 80 }))
+            .await
+            .expect("armed + untainted write must allow");
+        assert!(
+            op_ran.load(Ordering::SeqCst),
+            "the underlying write op must run once authorized"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_invalid_input_is_rejected_even_when_unarmed() {
+        // validate-before-gate: an out-of-range drive level is `invalid`, NOT a
+        // `not authorized` denial, even though the session is unarmed — proving
+        // validation runs BEFORE the gate and does not consume the arm grant.
+        let (h, op_ran, _staged) = handler_with_write_probes();
+        let err = h
+            .config_set_ardop(Parameters(ArdopWriteParams { drive_level: 200 }))
+            .await
+            .expect_err("out-of-range drive level must be rejected");
+        assert!(
+            !err.message.contains("not authorized"),
+            "an invalid input must NOT be reported as an authorization denial, got: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("drive_level"),
+            "the invalid-input message must name the offending field, got: {}",
+            err.message
+        );
+        assert!(
+            !op_ran.load(Ordering::SeqCst),
+            "an invalid input must never reach the gated op"
+        );
+    }
+
+    #[tokio::test]
+    async fn attachment_save_traversal_dest_is_invalid() {
+        // Even unarmed, a parent-traversal dest is rejected as invalid (not a
+        // denial) by the validate-before-gate check.
+        let (h, op_ran, _staged) = handler_with_write_probes();
+        let err = h
+            .message_attachment_save(Parameters(AttachmentSaveParams {
+                folder: "Inbox".into(),
+                id: SEED_MSG_ID.into(),
+                filename: "roster.txt".into(),
+                dest: "../../etc/x".into(),
+            }))
+            .await
+            .expect_err("a traversal dest must be rejected");
+        assert!(
+            !err.message.contains("not authorized"),
+            "a traversal dest must be invalid, not an authorization denial, got: {}",
+            err.message
+        );
+        assert!(
+            !op_ran.load(Ordering::SeqCst),
+            "an invalid dest must never reach the gated save op"
+        );
+    }
+
+    // --- STEP 5: UNGATED compose tier (no arm, no taint, no op flag) ---
+
+    #[tokio::test]
+    async fn compose_message_send_allowed_without_arm_and_does_not_gate_or_taint() {
+        // Compose is ungated: it succeeds on a fresh (unarmed, untainted) guard,
+        // returns a staged MID, does NOT flip the egress op flag, and does NOT
+        // taint the session.
+        let (h, op_ran, staged) = handler_with_write_probes();
+        assert!(!h.state.guard.is_tainted());
+        let result = h
+            .message_send(Parameters(ComposeParams {
+                to: vec!["W1AW@winlink.org".into()],
+                cc: vec![],
+                subject: "ARES net".into(),
+                body: "Check in.".into(),
+            }))
+            .await
+            .expect("compose must succeed without an arm (ungated)");
+        let mid: String = json_of(&result);
+        assert!(!mid.is_empty(), "compose must return a staged MID");
+        assert!(
+            staged.load(Ordering::SeqCst),
+            "compose must stage the draft locally"
+        );
+        assert!(
+            !op_ran.load(Ordering::SeqCst),
+            "compose must NOT fire the egress op flag (no transmission staged)"
+        );
+        assert!(
+            !h.state.guard.is_tainted(),
+            "compose must NOT taint the session"
+        );
+    }
+
+    #[tokio::test]
+    async fn compose_message_send_with_header_injection_address_is_invalid() {
+        let (h, _op_ran, staged) = handler_with_write_probes();
+        let err = h
+            .message_send(Parameters(ComposeParams {
+                to: vec!["a@b.com\r\nBcc: evil@x.com".into()],
+                cc: vec![],
+                subject: "hi".into(),
+                body: "body".into(),
+            }))
+            .await
+            .expect_err("a CR/LF address must be rejected");
+        assert!(
+            !err.message.contains("not authorized"),
+            "a malformed address must be invalid, not a denial, got: {}",
+            err.message
+        );
+        assert!(
+            !staged.load(Ordering::SeqCst),
+            "an invalid compose must NOT stage a draft"
+        );
     }
 }

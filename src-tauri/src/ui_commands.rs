@@ -994,7 +994,7 @@ fn collect_attachments(msg: &mail_parser::Message<'_>, raw: &[u8]) -> Vec<Attach
 /// Mirrors [`collect_attachments`]' B2F-then-MIME dispatch ladder so that
 /// AttachmentStrip → click → Save As → write-to-disk works end-to-end for
 /// inbound CMS messages (tuxlink-4or5).
-fn extract_attachment_bytes(
+pub(crate) fn extract_attachment_bytes(
     msg: &mail_parser::Message<'_>,
     raw: &[u8],
     filename: &str,

@@ -101,6 +101,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // end-to-end: a gated egress is denied unless armed + un-tainted.
     let egress_op_ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let staged = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    // Attachment base dir for the write mock's dest validation. A real,
+    // canonicalizable directory so `validate_attachment_dest`'s symlink-escape
+    // check has something to canonicalize against.
+    let attach_base = std::env::temp_dir().join(format!("tuxlink-mcp-attach-{}", std::process::id()));
+    std::fs::create_dir_all(&attach_base)?;
+
     let state = McpState {
         guard: Arc::clone(&guard),
         name: name.clone(),
@@ -116,6 +124,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Arc::clone(&egress_op_ran),
         )),
         abort: Arc::new(mocks::MockAbort::new(Arc::clone(&aborted))),
+        write: Arc::new(mocks::MockWrite::new(
+            Arc::clone(&guard),
+            Arc::clone(&egress_op_ran),
+            attach_base,
+        )),
+        compose: Arc::new(mocks::MockCompose::new(Arc::clone(&staged))),
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 

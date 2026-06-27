@@ -34,12 +34,17 @@ use tauri::{AppHandle, Manager};
 // returned by `BackendState::current()`.
 
 use tuxlink_mcp_core::ports::{
-    AbortPort, ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
-    BluetoothDeviceDto, CatalogEntryDto, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto,
-    EgressPort, EgressPortError, FolderDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
-    ModemStatusDto, PacketConfigDto, ParsedMessageDto, PlatformInfoDto, PortError,
-    PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto,
-    SessionIntentDto, StatusPort, VaraConfigDto, VaraStatusDto,
+    AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
+    BluetoothDeviceDto, CatalogEntryDto, ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto,
+    DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto, GribRequestDto, LogLineDto,
+    LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto,
+    ParsedMessageDto, PlatformInfoDto, PortError, PositionStatusDto, SearchPort, SearchQueryDto,
+    SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, StatusPort, VaraConfigDto,
+    VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+};
+use tuxlink_mcp_core::validate::{
+    validate_address, validate_attachment_dest, validate_body, validate_drive_level,
+    validate_subject, validate_vara_bandwidth,
 };
 use tuxlink_security::{guarded_egress, EgressAudit, EgressAuthority, EgressGuard};
 
@@ -986,6 +991,671 @@ impl AbortPort for MonolithAbortPort {
         crate::winlink::modem::vara::commands::vara_stop_session_inner(&session)
             .map(|_status| ())
             .map_err(PortError::Internal)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Write port (phase 3.4) — GATED Agent config/state writes.
+//
+// EVERY method VALIDATES the agent-supplied input FIRST (a malformed value is
+// rejected as `WritePortError::Invalid` via the `?`-on-`ValidationError` `From`
+// impl, BEFORE the gate is reached, so the armed grant is never consumed by a
+// bad input), THEN runs the mutation through
+// `guarded_egress(.., EgressAuthority::Agent, ..)`. A disarmed / expired /
+// tainted / poisoned session yields `EgressDenied` → `WritePortError::Denied`
+// and NOTHING is written; an authorized op that then fails operationally yields
+// `WritePortError::Failed`. The GUI Tauri commands are UNCHANGED (Operator is
+// unconditionally allowed and never reaches this path).
+//
+// Audit: each op reuses `write_audit_sink` (same shape as `egress_audit_sink`,
+// labeled "[write]" so the operator can tell a config/state write from a
+// transmit/connect egress in the session log).
+// ---------------------------------------------------------------------------
+
+/// Build the audit sink for one gated WRITE: writes an operator-visible
+/// session-log line (Warn on denial, Info on allow) and a structured tracing
+/// record under `target: "tuxlink::write_gate"`. Mirrors [`egress_audit_sink`]
+/// but labels the line `[write]` so a config/state mutation is distinguishable
+/// from a transmit/connect egress in the operator's log. Captures only `Clone`
+/// handles → `Send + Sync`.
+fn write_audit_sink(app: AppHandle) -> impl Fn(EgressAudit<'_>) + Send + Sync {
+    use crate::winlink_backend::{LogLevel, LogSource};
+    move |a: EgressAudit<'_>| {
+        let log = app.state::<Arc<crate::session_log::SessionLogState>>();
+        if a.allowed {
+            let msg = format!("[write] {} authorized for Agent", a.op);
+            tracing::info!(
+                target: "tuxlink::write_gate",
+                op = a.op,
+                authority = ?a.authority,
+                allowed = true,
+                "agent write authorized"
+            );
+            log.append_operator_line(LogLevel::Info, LogSource::Backend, msg);
+        } else {
+            let reason = a.reason.as_deref().unwrap_or("denied");
+            let msg = format!("[write] {} DENIED for Agent: {reason}", a.op);
+            tracing::warn!(
+                target: "tuxlink::write_gate",
+                op = a.op,
+                authority = ?a.authority,
+                allowed = false,
+                reason = reason,
+                "agent write denied"
+            );
+            log.append_operator_line(LogLevel::Warn, LogSource::Backend, msg);
+        }
+    }
+}
+
+/// [`WritePort`] adapter that validates input first, then gates each Agent
+/// config/state write through the shared [`EgressGuard`] before persisting via
+/// the existing command-layer logic.
+pub struct MonolithWritePort {
+    app: AppHandle,
+    guard: Arc<EgressGuard>,
+}
+
+impl MonolithWritePort {
+    pub fn new(app: AppHandle, guard: Arc<EgressGuard>) -> Self {
+        Self { app, guard }
+    }
+}
+
+#[async_trait]
+impl WritePort for MonolithWritePort {
+    async fn set_ardop(&self, dto: ArdopWriteDto) -> Result<(), WritePortError> {
+        // VALIDATE BEFORE GATE: an out-of-range drive level is `Invalid` even
+        // when disarmed; `?` returns before `guarded_egress` is reached.
+        validate_drive_level(dto.drive_level)?;
+        let audit = write_audit_sink(self.app.clone());
+        let drive_level = dto.drive_level;
+        guarded_egress(&self.guard, EgressAuthority::Agent, "set_ardop", &audit, || async move {
+            // Read the current ArdopUiConfig, mutate ONLY drive_level, persist.
+            // (modem_commands.rs:107 config_get_ardop / :117 config_set_ardop —
+            // the latter read-modify-writes the whole config atomically.) The
+            // agent may not touch any other ARDOP field.
+            let mut cfg = crate::modem_commands::config_get_ardop();
+            cfg.drive_level = Some(drive_level);
+            crate::modem_commands::config_set_ardop(cfg).map_err(WritePortError::Failed)
+        })
+        .await
+        .map_err(|d| WritePortError::Denied(d.to_string()))?
+    }
+
+    async fn set_vara(&self, dto: VaraWriteDto) -> Result<(), WritePortError> {
+        // VALIDATE BEFORE GATE: only 500/2300/2750 Hz are accepted.
+        validate_vara_bandwidth(dto.bandwidth_hz)?;
+        // Defense-in-depth: confirm the value maps to a canonical Bandwidth
+        // variant before the gate (validate_vara_bandwidth + bandwidth_from_hz
+        // share the same valid set; a divergence here would be Invalid).
+        if crate::winlink::modem::vara::commands::bandwidth_from_hz(dto.bandwidth_hz).is_none() {
+            return Err(WritePortError::Invalid(format!(
+                "vara bandwidth {} Hz is not a supported width",
+                dto.bandwidth_hz
+            )));
+        }
+        let audit = write_audit_sink(self.app.clone());
+        let bandwidth_hz = dto.bandwidth_hz;
+        guarded_egress(&self.guard, EgressAuthority::Agent, "set_vara", &audit, || async move {
+            // Read the current VaraUiConfig, mutate ONLY bandwidth_hz, persist
+            // via the same read-modify-write-atomic path the ARDOP setter uses
+            // (vara/commands.rs:983 config_get_vara / :993 config_set_vara).
+            let mut cfg = crate::winlink::modem::vara::commands::config_get_vara();
+            cfg.bandwidth_hz = Some(bandwidth_hz);
+            crate::winlink::modem::vara::commands::config_set_vara(cfg)
+                .map_err(WritePortError::Failed)
+        })
+        .await
+        .map_err(|d| WritePortError::Denied(d.to_string()))?
+    }
+
+    async fn set_packet(&self, dto: PacketWriteDto) -> Result<(), WritePortError> {
+        // VALIDATE BEFORE GATE (FIX 4): a malformed payload is `Invalid`
+        // regardless of arm state, so an unarmed caller gets `Invalid` (not
+        // `Denied`) and an armed session never audits a write that should never
+        // have reached the gate.
+        //   * SSID range 0..=15 (AX.25 SSID, mirrors config.rs:699
+        //     PacketSsidOutOfRange). The downstream `cfg.validate()` also
+        //     enforces this, but post-gate; check it here so it short-circuits
+        //     before the gate.
+        if dto.ssid > 15 {
+            return Err(WritePortError::Invalid(format!(
+                "packet ssid {} out of the 0..=15 AX.25 range",
+                dto.ssid
+            )));
+        }
+        // FIX 3: the agent surface can only set TCP/IP packet parameters
+        // (host/port/ssid/txdelay). Read the CURRENT link kind: if the operator
+        // has configured a non-TCP link (Serial / Bluetooth / UvproNative /
+        // Managed Dire Wolf, plus its audio + PTT), REJECT — the agent must not
+        // silently switch the link type and discard that configuration. Only an
+        // already-TCP link (or no link yet) may be (re)pointed by the agent.
+        // This read is side-effect-free, so it belongs pre-gate alongside the
+        // SSID check.
+        let mut current = crate::ui_commands::packet_config_get()
+            .await
+            .map_err(|e| WritePortError::Failed(format!("{e:?}")))?;
+        match current.link_kind.as_deref() {
+            Some("Tcp") | None => {}
+            Some(other) => {
+                return Err(WritePortError::Invalid(format!(
+                    "packet link is not TCP (currently {other}); agent cannot change link type"
+                )))
+            }
+        }
+        // Map the narrow agent DTO onto the monolith PacketConfigDto: override
+        // ONLY ssid/tcp_host/tcp_port/txdelay, and pin link_kind = "Tcp" so the
+        // host/port apply (an absent link_kind would PRESERVE the prior link,
+        // leaving the agent-supplied host/port inert). `current` already carries
+        // the operator's other packet params (paclen, timing, etc.).
+        let audit = write_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        let PacketWriteDto {
+            ssid,
+            tcp_host,
+            tcp_port,
+            txdelay_ms,
+        } = dto;
+        guarded_egress(&self.guard, EgressAuthority::Agent, "set_packet", &audit, || async move {
+            current.ssid = ssid;
+            current.link_kind = Some("Tcp".to_string());
+            current.tcp_host = Some(tcp_host);
+            current.tcp_port = Some(tcp_port);
+            // txdelay is a u8 on the monolith DTO; clamp the agent's u32 ms.
+            current.txdelay = u8::try_from(txdelay_ms).unwrap_or(u8::MAX);
+            crate::ui_commands::packet_config_set(
+                app.clone(),
+                app.state::<crate::app_backend::BackendState>(),
+                current,
+            )
+            .await
+            .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+        })
+        .await
+        .map_err(|d| WritePortError::Denied(d.to_string()))?
+    }
+
+    async fn set_grid(&self, grid: String) -> Result<(), WritePortError> {
+        // VALIDATE BEFORE GATE (FIX 4): a malformed Maidenhead locator is
+        // `Invalid` regardless of arm state. `config_set_grid_impl` already
+        // rejects a bad grid (UiError::Rejected) but only AFTER the gate; check
+        // it here (reusing the same validator) so a bad locator never reaches
+        // the gate or gets audited as an authorized write.
+        if let Some(reason) = crate::ui_commands::validate_grid_input(&grid) {
+            return Err(WritePortError::Invalid(reason.to_string()));
+        }
+        let audit = write_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(&self.guard, EgressAuthority::Agent, "set_grid", &audit, || async move {
+            // ui_commands.rs:6323 config_set_grid_impl (validates via
+            // validate_grid_input → UiError::Rejected on a bad locator). Resolve
+            // the arbiter + backend from managed state.
+            let arbiter = app
+                .state::<Arc<crate::position::PositionArbiter>>()
+                .inner()
+                .clone();
+            let backend = app.state::<crate::app_backend::BackendState>().current();
+            crate::ui_commands::config_set_grid_impl(grid, arbiter, backend)
+                .await
+                .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+        })
+        .await
+        .map_err(|d| WritePortError::Denied(d.to_string()))?
+    }
+
+    async fn set_position_source(&self, source: String) -> Result<(), WritePortError> {
+        // VALIDATE BEFORE GATE (FIX 4): "Gps" is the only accepted source
+        // (position_set_source_impl rejects anything else with UiError::Rejected,
+        // but only after the gate). Reject an unknown source as `Invalid` here so
+        // it never reaches the gate or audits an authorized write.
+        if source != "Gps" {
+            return Err(WritePortError::Invalid(format!(
+                "unsupported position source '{source}' (only \"Gps\" is accepted)"
+            )));
+        }
+        let audit = write_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "set_position_source",
+            &audit,
+            || async move {
+                // ui_commands.rs:6398 position_set_source_impl (rejects any
+                // source other than "Gps" with UiError::Rejected).
+                let arbiter = app
+                    .state::<Arc<crate::position::PositionArbiter>>()
+                    .inner()
+                    .clone();
+                let backend = app.state::<crate::app_backend::BackendState>().current();
+                crate::ui_commands::position_set_source_impl(source, arbiter, backend)
+                    .await
+                    .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+            },
+        )
+        .await
+        .map_err(|d| WritePortError::Denied(d.to_string()))?
+    }
+
+    async fn set_privacy(
+        &self,
+        gps_state: String,
+        precision: String,
+    ) -> Result<(), WritePortError> {
+        use crate::config::{GpsState, PositionPrecision};
+        // VALIDATE BEFORE GATE: parse the two agent strings into the typed
+        // monolith enums; an unknown value is `Invalid` regardless of arm state.
+        let gps_state = match gps_state.as_str() {
+            "Off" => GpsState::Off,
+            "LocalUiOnly" => GpsState::LocalUiOnly,
+            "BroadcastAtPrecision" => GpsState::BroadcastAtPrecision,
+            other => {
+                return Err(WritePortError::Invalid(format!(
+                    "unknown gps_state '{other}' (expected Off | LocalUiOnly | BroadcastAtPrecision)"
+                )))
+            }
+        };
+        let precision = match precision.as_str() {
+            "FourCharGrid" => PositionPrecision::FourCharGrid,
+            "SixCharGrid" => PositionPrecision::SixCharGrid,
+            other => {
+                return Err(WritePortError::Invalid(format!(
+                    "unknown precision '{other}' (expected FourCharGrid | SixCharGrid)"
+                )))
+            }
+        };
+        let audit = write_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(&self.guard, EgressAuthority::Agent, "set_privacy", &audit, || async move {
+            // Replicate config_set_privacy's body (ui_commands.rs:6568): read →
+            // set both privacy fields → write atomically → sync the arbiter's
+            // precision → refresh the live backend. The command itself takes
+            // Tauri State extractors; call its inner logic against resolved
+            // managed state so the agent path mirrors the GUI exactly.
+            let arbiter = app
+                .state::<Arc<crate::position::PositionArbiter>>()
+                .inner()
+                .clone();
+            let mut cfg = crate::config::read_config()
+                .map_err(|e| WritePortError::Failed(format!("{e:?}")))?;
+            cfg.privacy.gps_state = gps_state;
+            cfg.privacy.position_precision = precision;
+            crate::config::write_config_atomic(&cfg)
+                .map_err(|e| WritePortError::Failed(format!("{e:?}")))?;
+            arbiter.set_precision(precision);
+            if let Some(backend) = app.state::<crate::app_backend::BackendState>().current() {
+                backend.set_config(cfg);
+            }
+            Ok::<(), WritePortError>(())
+        })
+        .await
+        .map_err(|d| WritePortError::Denied(d.to_string()))?
+    }
+
+    async fn set_packet_listen(&self, enabled: bool) -> Result<(), WritePortError> {
+        let audit = write_audit_sink(self.app.clone());
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "set_packet_listen",
+            &audit,
+            || async move {
+                // ui_commands.rs:4670 packet_set_listen(bool).
+                crate::ui_commands::packet_set_listen(enabled)
+                    .await
+                    .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+            },
+        )
+        .await
+        .map_err(|d| WritePortError::Denied(d.to_string()))?
+    }
+
+    async fn mailbox_move(
+        &self,
+        from: String,
+        to: String,
+        id: String,
+    ) -> Result<(), WritePortError> {
+        // VALIDATE BEFORE GATE (FIX 4): both endpoints must be known folder
+        // refs. mailbox_move validates them via parse_folder_ref but only after
+        // the gate; reject an unknown from/to as `Invalid` here so a malformed
+        // move never reaches the gate or audits an authorized write.
+        crate::ui_commands::parse_folder_ref(&from)
+            .map_err(|e| WritePortError::Invalid(format!("invalid 'from' folder: {e:?}")))?;
+        crate::ui_commands::parse_folder_ref(&to)
+            .map_err(|e| WritePortError::Invalid(format!("invalid 'to' folder: {e:?}")))?;
+        let audit = write_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(&self.guard, EgressAuthority::Agent, "mailbox_move", &audit, || async move {
+            // ui_commands.rs:1426 mailbox_move (validates folders via
+            // parse_folder_ref). Resolve BackendState from the AppHandle.
+            crate::ui_commands::mailbox_move(
+                from,
+                to,
+                id,
+                app.state::<crate::app_backend::BackendState>(),
+            )
+            .await
+            .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+        })
+        .await
+        .map_err(|d| WritePortError::Denied(d.to_string()))?
+    }
+
+    async fn attachment_save(
+        &self,
+        folder: String,
+        id: String,
+        filename: String,
+        dest: String,
+    ) -> Result<String, WritePortError> {
+        use crate::native_mailbox::FolderRef;
+        use crate::winlink_backend::MessageId;
+        // The agent attachment-save target is a fixed, sandboxed base —
+        // <app_data>/agent-attachments — NOT the native save dialog the GUI
+        // command uses. Compute + create the base, then VALIDATE the dest
+        // against it BEFORE the gate so a traversal/absolute/escaping dest is
+        // rejected as `Invalid` regardless of arm state. The actual mailbox
+        // read + FS write happen INSIDE the gated op.
+        let base = self
+            .app
+            .path()
+            .app_data_dir()
+            .map_err(|e| WritePortError::Failed(format!("{e:?}")))?
+            .join("agent-attachments");
+        std::fs::create_dir_all(&base)
+            .map_err(|e| WritePortError::Failed(format!("create agent-attachments dir: {e}")))?;
+        // VALIDATE BEFORE GATE: canonicalize + contain the requested dest under
+        // the base; `?`-on-`ValidationError` returns `Invalid` before the gate.
+        let path = validate_attachment_dest(&base, &dest)?;
+
+        let audit = write_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "attachment_save",
+            &audit,
+            || async move {
+                // Read the message + extract the attachment bytes by filename —
+                // the same read/extract path the GUI command uses
+                // (ui_commands.rs:1350 message_attachment_save), minus the native
+                // dialog. The gated FS write lands at the pre-validated `path`.
+                let backend = app
+                    .state::<crate::app_backend::BackendState>()
+                    .current()
+                    .ok_or_else(|| WritePortError::Failed("backend offline".to_string()))?;
+                let parsed = crate::ui_commands::parse_folder_ref(&folder)
+                    .map_err(|e| WritePortError::Failed(format!("{e:?}")))?;
+                let mid = MessageId::new(&id);
+                let body = match &parsed {
+                    FolderRef::System(f) => backend
+                        .read_message_in(*f, &mid)
+                        .await
+                        .map_err(|e| WritePortError::Failed(format!("{e:?}")))?,
+                    FolderRef::User(slug) => backend
+                        .read_user_message(slug, &mid)
+                        .await
+                        .map_err(|e| WritePortError::Failed(format!("{e:?}")))?,
+                };
+                let msg = mail_parser::MessageParser::new()
+                    .parse(body.raw_rfc5322.as_slice())
+                    .ok_or_else(|| {
+                        WritePortError::Failed(format!("could not parse message {id}"))
+                    })?;
+                let bytes = crate::ui_commands::extract_attachment_bytes(
+                    &msg,
+                    body.raw_rfc5322.as_slice(),
+                    &filename,
+                )
+                .ok_or_else(|| {
+                    WritePortError::Failed(format!("attachment '{filename}' not in message {id}"))
+                })?;
+                // FS write off the async runtime (spawn_blocking) at the
+                // pre-validated, base-contained path. The prevalidated PathBuf
+                // (validate_attachment_dest) proves the PARENT canonicalizes
+                // under the base, but `fs::write` follows the FINAL component
+                // through a symlink — a leaf symlink planted at `path` (or a
+                // parent swapped after validation) would redirect the write
+                // outside the sandbox. Two defenses, applied AT WRITE TIME:
+                //   1. symlink_metadata refusal: if the final path already
+                //      exists AND is a symlink, reject before opening.
+                //   2. O_NOFOLLOW open: open with O_CREAT|O_WRONLY|O_TRUNC and
+                //      O_NOFOLLOW so the kernel refuses to follow a leaf symlink
+                //      at the final component (closes the validate→write TOCTOU).
+                // (Mirrors the tiles/cache.rs leaf-symlink guard.)
+                let write_path = path.clone();
+                tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+                    use std::io::Write;
+                    use std::os::unix::fs::OpenOptionsExt;
+                    let final_is_symlink = std::fs::symlink_metadata(&write_path)
+                        .map(|m| m.file_type().is_symlink())
+                        .unwrap_or(false);
+                    if final_is_symlink {
+                        return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+                    }
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .custom_flags(libc::O_NOFOLLOW)
+                        .open(&write_path)?;
+                    file.write_all(&bytes)?;
+                    Ok(())
+                })
+                .await
+                .map_err(|e| WritePortError::Failed(format!("write task failed: {e}")))?
+                .map_err(|e| WritePortError::Failed(format!("write attachment: {e}")))?;
+                Ok::<String, WritePortError>(path.to_string_lossy().into_owned())
+            },
+        )
+        .await
+        .map_err(|d| WritePortError::Denied(d.to_string()))?
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Compose port (phase 3.4) — UNGATED local-outbox staging.
+//
+// EVERY method VALIDATES the agent-supplied input (addresses for CR/LF header
+// injection + control chars + length; subject/body length where applicable) and
+// then calls the existing compose/send-to-outbox command DIRECTLY — NO gate,
+// because nothing is transmitted: a staged outbox draft only leaves the box on a
+// later GATED connect. So a compose succeeds without an arm and can never be
+// `Denied`. Each method returns the staged MID string the underlying command
+// yields.
+// ---------------------------------------------------------------------------
+
+/// [`ComposePort`] adapter over the message/form/catalog/GRIB outbox-staging
+/// commands. Validates agent input, then stages a LOCAL draft (no egress gate).
+pub struct MonolithComposePort {
+    app: AppHandle,
+}
+
+impl MonolithComposePort {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+
+    /// Validate every recipient (`to` + `cc`) for header injection / control
+    /// chars / length. Returns `Invalid` on the first offender.
+    fn validate_recipients(to: &[String], cc: &[String]) -> Result<(), WritePortError> {
+        for addr in to.iter().chain(cc.iter()) {
+            validate_address(addr)?;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ComposePort for MonolithComposePort {
+    async fn message_send(&self, dto: ComposeDraftDto) -> Result<String, WritePortError> {
+        // VALIDATE recipients + subject + body BEFORE staging.
+        Self::validate_recipients(&dto.to, &dto.cc)?;
+        validate_subject(&dto.subject)?;
+        validate_body(&dto.body)?;
+        // Map onto the monolith OutboundDraftDto (no attachments from the agent
+        // surface) and stage via ui_commands.rs:1837 message_send (UNGATED —
+        // queues in the outbox; transmission is a later gated connect).
+        let draft = crate::ui_commands::OutboundDraftDto {
+            to: dto.to,
+            cc: dto.cc,
+            subject: dto.subject,
+            body: dto.body,
+            attachments: Vec::new(),
+        };
+        crate::ui_commands::message_send(
+            draft,
+            self.app.state::<crate::app_backend::BackendState>(),
+        )
+        .await
+        .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+    }
+
+    async fn send_form(&self, dto: SendFormDto) -> Result<String, WritePortError> {
+        // VALIDATE recipients + the sender callsign + grid for CR/LF + control
+        // chars (the addresses/identity fields are a header-injection surface).
+        Self::validate_recipients(&dto.to, &dto.cc)?;
+        validate_address(&dto.senders_callsign)?;
+        validate_address(&dto.grid_square)?;
+        // send_form (ui_commands.rs:1893) takes a HashMap; the DTO carries a
+        // BTreeMap. Convert.
+        let field_values: std::collections::HashMap<String, String> =
+            dto.field_values.into_iter().collect();
+        // FIX 2: the form SUBJECT is rendered from `form.subject_template` with
+        // the agent's field_values (ui_commands::send_form does exactly
+        // `render_body_template(form.subject_template, &field_values)`). The
+        // renderer drops XML-1.0-illegal control chars but DELIBERATELY keeps
+        // 0x9/0x0A/0x0D (is_xml10_legal), so a CR/LF inside a subject-bound field
+        // would survive into the rendered subject and split the RFC5322 header
+        // block — the to/cc/identity checks above never see it. Defense: replicate
+        // the exact subject render the command will do, then run validate_subject
+        // on the RESULT before staging. This validates only the SUBJECT-bound
+        // fields (whichever the template references), so a legitimately multi-line
+        // BODY field is not over-rejected. Look up the form first so an unknown
+        // form_id still surfaces "unknown form" from send_form (we mirror its
+        // find_form lookup but tolerate a miss here and let send_form report it).
+        if let Some(form) = crate::forms::catalog::find_form(&dto.form_id) {
+            let rendered_subject = crate::forms::serialize::render_body_template(
+                form.subject_template,
+                &field_values,
+            );
+            validate_subject(&rendered_subject)?;
+        }
+        crate::ui_commands::send_form(
+            dto.form_id,
+            field_values,
+            dto.to,
+            dto.cc,
+            dto.senders_callsign,
+            dto.grid_square,
+            self.app.state::<crate::app_backend::BackendState>(),
+        )
+        .await
+        .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+    }
+
+    async fn catalog_send_inquiry(
+        &self,
+        item_ids: Vec<String>,
+    ) -> Result<String, WritePortError> {
+        // VALIDATE each filename for control chars + length (reuse the address
+        // validator's control/CRLF/len checks; catalog filenames carry no `@`
+        // semantics but must not inject CRLF or control bytes into the inquiry
+        // body). The composer (catalog::commands::catalog_send_inquiry) does its
+        // own body-composition validation.
+        for fname in &item_ids {
+            validate_address(fname)?;
+        }
+        crate::catalog::commands::catalog_send_inquiry(
+            item_ids,
+            self.app.state::<crate::app_backend::BackendState>(),
+        )
+        .await
+        .map_err(|e| WritePortError::Failed(format!("{e:?}")))
+    }
+
+    async fn grib_send_request(&self, dto: GribRequestDto) -> Result<String, WritePortError> {
+        use crate::grib::composer::{
+            ForecastTime, GribDirection, GribMode, GribParameter, GribRequest, Latitude, Longitude,
+        };
+        // VALIDATE the subject (CR/LF header injection + length) BEFORE staging.
+        validate_subject(&dto.subject)?;
+        // Map the coarse mode string onto GribMode; unknown → Invalid.
+        let mode = match dto.mode.to_ascii_lowercase().as_str() {
+            "send" => GribMode::Send,
+            "sub" => GribMode::Sub,
+            other => {
+                return Err(WritePortError::Invalid(format!(
+                    "unknown grib mode '{other}' (expected send | sub)"
+                )))
+            }
+        };
+        // Validate the agent-supplied center coordinates are on the globe.
+        if !(-90.0..=90.0).contains(&dto.lat) {
+            return Err(WritePortError::Invalid(format!(
+                "latitude {} out of range [-90, 90]",
+                dto.lat
+            )));
+        }
+        if !(-180.0..=180.0).contains(&dto.lon) {
+            return Err(WritePortError::Invalid(format!(
+                "longitude {} out of range [-180, 180]",
+                dto.lon
+            )));
+        }
+        // The agent surface supplies a single CENTER point; Saildocs needs a
+        // bounding box. Build a 10°-wide box around the center, clamped to the
+        // globe, and split each bound into whole-degree magnitude + hemisphere.
+        // Defaults (grid 2x2, empty times/params) defer to Saildocs' own
+        // defaults, matching the composer's documented behavior.
+        const HALF: f64 = 5.0;
+        let lat0_v = (dto.lat - HALF).clamp(-90.0, 90.0);
+        let lat1_v = (dto.lat + HALF).clamp(-90.0, 90.0);
+        let lon0_v = (dto.lon - HALF).clamp(-180.0, 180.0);
+        let lon1_v = (dto.lon + HALF).clamp(-180.0, 180.0);
+        let to_lat = |v: f64| -> Latitude {
+            let dir = if v >= 0.0 {
+                GribDirection::N
+            } else {
+                GribDirection::S
+            };
+            Latitude {
+                degrees: v.abs().round() as u8,
+                dir,
+            }
+        };
+        let to_lon = |v: f64| -> Longitude {
+            let dir = if v >= 0.0 {
+                GribDirection::E
+            } else {
+                GribDirection::W
+            };
+            Longitude {
+                degrees: v.abs().round() as u16,
+                dir,
+            }
+        };
+        let request = GribRequest {
+            mode,
+            lat0: to_lat(lat0_v),
+            lat1: to_lat(lat1_v),
+            lon0: to_lon(lon0_v),
+            lon1: to_lon(lon1_v),
+            grid: (2, 2),
+            times: Vec::<ForecastTime>::new(),
+            params: Vec::<GribParameter>::new(),
+            sub_days: None,
+            sub_time: None,
+            subject: dto.subject,
+        };
+        crate::grib::commands::grib_send_request(
+            request,
+            self.app.state::<crate::app_backend::BackendState>(),
+        )
+        .await
+        .map_err(|e| WritePortError::Failed(format!("{e:?}")))
     }
 }
 
