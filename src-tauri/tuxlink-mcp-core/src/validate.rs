@@ -46,6 +46,12 @@ pub enum ValidationError {
     /// A numeric value fell outside its accepted range. Carries a description.
     #[error("value out of range: {0}")]
     OutOfRange(String),
+    /// A Maidenhead grid locator was malformed (wrong length or field shape).
+    #[error("grid must be a 4- or 6-char Maidenhead locator (e.g. EM75 or EM75xx)")]
+    InvalidGrid,
+    /// A frequency list was empty, too long, or carried an out-of-band dial.
+    #[error("frequency list invalid: {0}")]
+    InvalidFrequencies(String),
 }
 
 /// Validate an attachment destination `requested` (relative) against the
@@ -153,6 +159,75 @@ pub fn validate_vara_bandwidth(hz: u32) -> Result<(), ValidationError> {
         _ => Err(ValidationError::OutOfRange(
             "vara bandwidth must be one of 500, 2300, 2750 Hz".to_string(),
         )),
+    }
+}
+
+/// Validate a Maidenhead grid locator (station-intelligence tier, phase 3.2).
+///
+/// Accepts a 4- or 6-character locator matching the monolith's
+/// `validate_grid_input` shape:
+/// - chars 1-2: field letters `A..=R` (case-insensitive),
+/// - chars 3-4: square digits `0..=9`,
+/// - chars 5-6 (optional, both-or-neither): subsquare letters `a..=x`
+///   (case-insensitive).
+///
+/// Pure (no I/O). A 3-char or 5-char input, or any out-of-range field, is
+/// rejected as [`ValidationError::InvalidGrid`].
+pub fn validate_grid(grid: &str) -> Result<(), ValidationError> {
+    let bytes = grid.as_bytes();
+    if bytes.len() != 4 && bytes.len() != 6 {
+        return Err(ValidationError::InvalidGrid);
+    }
+    // Field letters A..R (case-insensitive).
+    let field_ok = |b: u8| (b'A'..=b'R').contains(&b.to_ascii_uppercase());
+    if !field_ok(bytes[0]) || !field_ok(bytes[1]) {
+        return Err(ValidationError::InvalidGrid);
+    }
+    // Square digits 0..9.
+    if !bytes[2].is_ascii_digit() || !bytes[3].is_ascii_digit() {
+        return Err(ValidationError::InvalidGrid);
+    }
+    // Optional subsquare letters a..x (case-insensitive).
+    if bytes.len() == 6 {
+        let sub_ok = |b: u8| (b'A'..=b'X').contains(&b.to_ascii_uppercase());
+        if !sub_ok(bytes[4]) || !sub_ok(bytes[5]) {
+            return Err(ValidationError::InvalidGrid);
+        }
+    }
+    Ok(())
+}
+
+/// Validate a candidate dial-frequency list (kHz): `1..=11` entries, each within
+/// the HF amateur span `1800.0..=30000.0` kHz. Pure.
+pub fn validate_frequencies_khz(freqs: &[f64]) -> Result<(), ValidationError> {
+    if freqs.is_empty() {
+        return Err(ValidationError::InvalidFrequencies(
+            "at least one frequency is required".to_string(),
+        ));
+    }
+    if freqs.len() > 11 {
+        return Err(ValidationError::InvalidFrequencies(
+            "at most 11 frequencies are allowed".to_string(),
+        ));
+    }
+    for f in freqs {
+        if !(1800.0..=30000.0).contains(f) {
+            return Err(ValidationError::InvalidFrequencies(format!(
+                "{f} kHz is outside the 1800..=30000 kHz HF range"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Validate an optional `history_hours` bound for a station search: when present,
+/// it must not exceed 720 hours (30 days). `None` is always valid. Pure.
+pub fn validate_history_hours(hours: Option<u32>) -> Result<(), ValidationError> {
+    match hours {
+        Some(h) if h > 720 => Err(ValidationError::OutOfRange(
+            "history_hours must be <= 720".to_string(),
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -351,5 +426,103 @@ mod tests {
         assert!(validate_body("line one\nline two\n").is_ok());
         let big = "x".repeat(65537);
         assert_eq!(validate_body(&big), Err(ValidationError::TooLong(65536)));
+    }
+
+    // --- grid (station-intelligence) ---
+
+    #[test]
+    fn grid_four_char_is_accepted() {
+        assert!(validate_grid("EM75").is_ok());
+        assert!(validate_grid("CN87").is_ok());
+        assert!(validate_grid("AA00").is_ok());
+        assert!(validate_grid("RR99").is_ok());
+    }
+
+    #[test]
+    fn grid_six_char_is_accepted() {
+        assert!(validate_grid("EM75xx").is_ok());
+        assert!(validate_grid("CN87ux").is_ok());
+        // Case-insensitive field + subsquare.
+        assert!(validate_grid("em75XA").is_ok());
+    }
+
+    #[test]
+    fn grid_three_char_is_rejected() {
+        assert_eq!(validate_grid("EM7"), Err(ValidationError::InvalidGrid));
+    }
+
+    #[test]
+    fn grid_five_char_is_rejected() {
+        assert_eq!(validate_grid("EM75x"), Err(ValidationError::InvalidGrid));
+    }
+
+    #[test]
+    fn grid_out_of_range_fields_are_rejected() {
+        // Field letter past R.
+        assert_eq!(validate_grid("ZZ00"), Err(ValidationError::InvalidGrid));
+        // Non-digit square.
+        assert_eq!(validate_grid("EMxx"), Err(ValidationError::InvalidGrid));
+        // Subsquare past x.
+        assert_eq!(validate_grid("EM75yz"), Err(ValidationError::InvalidGrid));
+    }
+
+    // --- frequencies ---
+
+    #[test]
+    fn frequencies_valid_set_is_accepted() {
+        assert!(validate_frequencies_khz(&[7104.0]).is_ok());
+        assert!(validate_frequencies_khz(&[1800.0, 30000.0, 14105.0]).is_ok());
+    }
+
+    #[test]
+    fn frequencies_empty_is_rejected() {
+        assert!(matches!(
+            validate_frequencies_khz(&[]),
+            Err(ValidationError::InvalidFrequencies(_))
+        ));
+    }
+
+    #[test]
+    fn frequencies_twelve_items_is_rejected() {
+        let twelve = vec![7104.0; 12];
+        assert!(matches!(
+            validate_frequencies_khz(&twelve),
+            Err(ValidationError::InvalidFrequencies(_))
+        ));
+    }
+
+    #[test]
+    fn frequencies_out_of_range_is_rejected() {
+        // Below 1800 kHz.
+        assert!(matches!(
+            validate_frequencies_khz(&[1500.0]),
+            Err(ValidationError::InvalidFrequencies(_))
+        ));
+        // Above 30000 kHz.
+        assert!(matches!(
+            validate_frequencies_khz(&[30000.1]),
+            Err(ValidationError::InvalidFrequencies(_))
+        ));
+    }
+
+    // --- history hours ---
+
+    #[test]
+    fn history_hours_none_is_ok() {
+        assert!(validate_history_hours(None).is_ok());
+    }
+
+    #[test]
+    fn history_hours_within_cap_is_ok() {
+        assert!(validate_history_hours(Some(0)).is_ok());
+        assert!(validate_history_hours(Some(720)).is_ok());
+    }
+
+    #[test]
+    fn history_hours_over_cap_is_rejected() {
+        assert!(matches!(
+            validate_history_hours(Some(721)),
+            Err(ValidationError::OutOfRange(_))
+        ));
     }
 }

@@ -130,6 +130,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             attach_base,
         )),
         compose: Arc::new(mocks::MockCompose::new(Arc::clone(&staged))),
+        stations: Arc::new(mocks::MockStation),
+        prediction: Arc::new(mocks::MockPrediction),
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 

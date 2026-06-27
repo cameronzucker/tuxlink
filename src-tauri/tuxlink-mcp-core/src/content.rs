@@ -39,6 +39,14 @@ pub struct KnowledgeResource {
 /// The full catalog of knowledge resources, in listing order. The MCP-knowledge
 /// docs come first, then the curated user-guide subset.
 pub static CATALOG: &[KnowledgeResource] = &[
+    // ----- Agent onboarding (read first) -----
+    KnowledgeResource {
+        uri: "tuxlink://agents/guide",
+        name: "agents-guide",
+        title: "Tuxlink agent guide",
+        description: "Read first: what Tuxlink is, the full MCP tool surface by tier, the arm/taint model, and where the docs are.",
+        markdown: include_str!("../../../docs/mcp-knowledge/agents-guide.md"),
+    },
     // ----- MCP-knowledge docs (authored for the agent) -----
     KnowledgeResource {
         uri: "tuxlink://glossary-supplement",

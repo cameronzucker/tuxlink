@@ -15,12 +15,14 @@ use async_trait::async_trait;
 
 use tuxlink_mcp_core::ports::{
     AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
-    BluetoothDeviceDto, CatalogEntryDto, ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto,
-    DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto, GribRequestDto, LogLineDto,
-    LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto,
-    ParsedMessageDto, PlatformInfoDto, PortError, PositionStatusDto, SearchPort, SearchQueryDto,
-    SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, StatusPort, VaraConfigDto,
-    VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto, ComposePort,
+    ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
+    GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
+    ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
+    PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort, SearchPort,
+    SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
+    SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
+    VaraConfigDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -34,6 +36,12 @@ pub const SEED_MSG_FROM: &str = "W1AW";
 pub const SEED_MSG_SUBJECT: &str = "ARES net check-in";
 /// 4-char grid the ConfigPort mock reports.
 pub const SEED_GRID: &str = "CN87";
+/// Station-intel fixtures: the gateway `find_stations` seeds + the `tx_grid`
+/// (4-char) `predict_path` returns.
+pub const SEED_GW_CALLSIGN: &str = "W1AW";
+pub const SEED_GW_GRID: &str = "FN31";
+pub const SEED_GW_FREQ_KHZ: f64 = 7104.0;
+pub const SEED_TX_GRID: &str = "CN87";
 
 pub struct MockStatus;
 
@@ -477,5 +485,66 @@ impl ComposePort for MockCompose {
     async fn grib_send_request(&self, dto: GribRequestDto) -> Result<String, WritePortError> {
         validate_subject(&dto.subject)?;
         Ok(self.stage())
+    }
+}
+
+/// Station-intelligence read mock for the tier-2 testserver (phase 3.2).
+///
+/// `find_stations` returns ONE recognizable gateway (W1AW / FN31 / VaraHf /
+/// [7104.0] / Dipole). Read-only — never touches the guard (no taint, no gate),
+/// mirroring the inert tier-1 read tools.
+pub struct MockStation;
+
+#[async_trait]
+impl StationPort for MockStation {
+    async fn find_stations(&self, _filter: StationFilterDto) -> Result<StationListDto, PortError> {
+        Ok(StationListDto {
+            gateways: vec![GatewayDto {
+                mode: StationModeDto::VaraHf,
+                channel: "7104.0 VARA HF".into(),
+                callsign: SEED_GW_CALLSIGN.into(),
+                grid: Some(SEED_GW_GRID.into()),
+                frequencies_khz: vec![SEED_GW_FREQ_KHZ],
+                antenna: Some(GatewayAntennaDto::Dipole),
+            }],
+            fetched_at_ms: Some(0),
+        })
+    }
+}
+
+/// Offline propagation/space-weather read mock for the tier-2 testserver
+/// (phase 3.2). `predict_path` returns a deterministic prediction with
+/// `tx_grid="CN87"` (4-char provenance) + one channel with 24-long hourly
+/// vectors; `solar` returns a fixed snapshot. Read-only — never touches the
+/// guard.
+pub struct MockPrediction;
+
+#[async_trait]
+impl PredictionPort for MockPrediction {
+    async fn predict_path(&self, _req: PredictRequestDto) -> Result<PathPredictionDto, PortError> {
+        Ok(PathPredictionDto {
+            bearing_deg: 90.0,
+            distance_km: 4000.0,
+            ssn: 70.0,
+            year: 2026,
+            month: 6,
+            tx_grid: SEED_TX_GRID.into(),
+            channels: vec![ChannelReliabilityDto {
+                frequency_khz: SEED_GW_FREQ_KHZ,
+                rel_by_hour: vec![0.5; 24],
+                snr_by_hour: vec![10.0; 24],
+                mufday_by_hour: vec![0.8; 24],
+            }],
+        })
+    }
+    async fn solar(&self) -> Result<SolarSnapshotDto, PortError> {
+        Ok(SolarSnapshotDto {
+            sfi: Some(140.0),
+            a_index: Some(7.0),
+            k_index: Some(2.0),
+            ssn: 70.0,
+            updated_at_ms: 0,
+            source: "bundled".into(),
+        })
     }
 }

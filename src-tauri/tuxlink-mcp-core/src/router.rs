@@ -23,7 +23,8 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData, RoleServer};
 use crate::content;
 use crate::ports::{
     ArdopWriteDto, ComposeDraftDto, EgressPortError, GribRequestDto, PacketWriteDto, PortError,
-    SearchQueryDto, SendFormDto, SessionIntentDto, VaraWriteDto, WritePortError,
+    PredictRequestDto, SearchQueryDto, SendFormDto, SessionIntentDto, StationFilterDto, VaraWriteDto,
+    WritePortError,
 };
 use crate::{server_info_view, McpState};
 
@@ -350,6 +351,74 @@ impl TuxlinkMcp {
     pub async fn session_log_snapshot(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.logs.snapshot().await.map_err(port_err)?;
         self.state.guard.taint();
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    // ----- Station intelligence (inert reads; no taint, no gate) -----
+    //
+    // These three tools call a read-only port and JSON-encode the result. They
+    // serve public/cached directory data and offline propagation/space-weather
+    // computation — no untrusted external message content and no transmission —
+    // so they NEITHER taint the session NOR pass through the egress gate.
+
+    #[tool(
+        name = "find_stations",
+        description = "List Winlink RMS gateways for the given transports/bands (callsign, frequencies, grid, last-heard). Public directory data, cached. Read-only; does not transmit."
+    )]
+    pub async fn find_stations(
+        &self,
+        params: Parameters<StationFilterParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(StationFilterParams {
+            modes,
+            history_hours,
+            bands,
+        }) = params;
+        let dto = self
+            .state
+            .stations
+            .find_stations(StationFilterDto {
+                modes,
+                history_hours,
+                bands,
+            })
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "predict_path",
+        description = "Predict HF path reliability/SNR/MUFday by UTC hour from your station to a target grid across the given dials. Offline VOACAP. Read-only."
+    )]
+    pub async fn predict_path(
+        &self,
+        params: Parameters<PredictRequestParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(PredictRequestParams {
+            rx_grid,
+            frequencies_khz,
+            gateway_antenna,
+        }) = params;
+        let dto = self
+            .state
+            .prediction
+            .predict_path(PredictRequestDto {
+                rx_grid,
+                frequencies_khz,
+                gateway_antenna,
+            })
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "solar_conditions",
+        description = "Report current space-weather indices (SFI/A/K) + the sunspot number used for predictions. Public data. Read-only."
+    )]
+    pub async fn solar_conditions(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.prediction.solar().await.map_err(port_err)?;
         Ok(CallToolResult::success(vec![Content::json(dto)?]))
     }
 
@@ -986,6 +1055,34 @@ pub struct GribRequestParams {
     pub subject: String,
 }
 
+/// Input for `find_stations`. All fields optional/defaultable: empty `modes` /
+/// `bands` mean "no filter"; `history_hours` omitted means "no time bound".
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct StationFilterParams {
+    /// Restrict to these transports (e.g. `vara-hf`, `ardop-hf`); empty = all.
+    #[serde(default)]
+    pub modes: Vec<crate::ports::StationModeDto>,
+    /// Only gateways heard within this many hours; omitted = no bound.
+    #[serde(default)]
+    pub history_hours: Option<u32>,
+    /// Restrict to these amateur bands (e.g. `"40m"`); empty = all bands.
+    #[serde(default)]
+    pub bands: Vec<String>,
+}
+
+/// Input for `predict_path`. Carries NO tx_grid — the operator's own grid is
+/// injected by the impl, never agent-supplied.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PredictRequestParams {
+    /// The TARGET (receiving) station's Maidenhead grid locator.
+    pub rx_grid: String,
+    /// Candidate dial frequencies in kHz to predict across.
+    pub frequencies_khz: Vec<f64>,
+    /// The target gateway's antenna type, when known.
+    #[serde(default)]
+    pub gateway_antenna: Option<crate::ports::GatewayAntennaDto>,
+}
+
 #[tool_handler]
 impl ServerHandler for TuxlinkMcp {
     // Build `ServerInfo` (= `InitializeResult`) from `default()` then set the
@@ -1003,7 +1100,9 @@ impl ServerHandler for TuxlinkMcp {
             .build();
         info.server_info = Implementation::from_build_env();
         info.instructions = Some(
-            "Tuxlink MCP server. Read-only tools report app/backend/modem status, \
+            "Tuxlink MCP server. New here? Read the resource tuxlink://agents/guide \
+             first — it explains the full tool surface by tier and the arm/taint \
+             rules. Read-only tools report app/backend/modem status, \
              mailbox + search content, curated config, devices, and the session log. \
              Tools that return untrusted external content (mailbox_list, message_read, \
              tauri_search_run, session_log_snapshot) taint the session, locking send \
@@ -1296,8 +1395,8 @@ mod tests {
 
     use crate::ports::{MessageMetaDto, ParsedMessageDto};
     use crate::test_support::{
-        state_with_all_probes, state_with_egress_probes, state_with_guard, SEED_MSG_FROM,
-        SEED_MSG_ID, SEED_MSG_SUBJECT,
+        state_with_all_probes, state_with_egress_probes, state_with_guard, SEED_GW_CALLSIGN,
+        SEED_GW_GRID, SEED_MSG_FROM, SEED_MSG_ID, SEED_MSG_SUBJECT, SEED_TX_GRID,
     };
     use tuxlink_security::EgressGuard;
 
@@ -1456,6 +1555,84 @@ mod tests {
         let result = h.config_read().await.unwrap();
         let dto: crate::ports::ConfigViewDto = json_of(&result);
         assert_eq!(dto.grid, "CN87", "grid must be the 4-char fixture value");
+    }
+
+    // --- Station intelligence: inert reads (no taint, no gate) ---
+
+    #[tokio::test]
+    async fn find_stations_returns_seeded_gateway_and_does_not_taint() {
+        use crate::ports::StationListDto;
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        let result = h
+            .find_stations(Parameters(StationFilterParams {
+                modes: vec![],
+                history_hours: None,
+                bands: vec![],
+            }))
+            .await
+            .unwrap();
+        let dto: StationListDto = json_of(&result);
+        assert_eq!(dto.gateways.len(), 1, "the mock seeds exactly one gateway");
+        assert_eq!(dto.gateways[0].callsign, SEED_GW_CALLSIGN);
+        assert_eq!(dto.gateways[0].grid.as_deref(), Some(SEED_GW_GRID));
+        assert_eq!(
+            dto.fetched_at_ms,
+            Some(0),
+            "the seeded fetch carries a freshness stamp the agent reasons from"
+        );
+        assert!(
+            !h.state.guard.is_tainted(),
+            "find_stations must NOT taint the session (public directory data)"
+        );
+    }
+
+    #[tokio::test]
+    async fn predict_path_returns_24h_vectors_and_4char_tx_grid_and_does_not_taint() {
+        use crate::ports::PathPredictionDto;
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        let result = h
+            .predict_path(Parameters(PredictRequestParams {
+                rx_grid: "FN31".into(),
+                frequencies_khz: vec![7104.0],
+                gateway_antenna: None,
+            }))
+            .await
+            .unwrap();
+        let dto: PathPredictionDto = json_of(&result);
+        assert_eq!(
+            dto.tx_grid, SEED_TX_GRID,
+            "tx_grid is the impl-injected provenance grid"
+        );
+        assert_eq!(dto.tx_grid.len(), 4, "tx_grid must be the 4-char provenance grid");
+        assert_eq!(dto.channels.len(), 1, "the mock returns one channel");
+        let ch = &dto.channels[0];
+        assert_eq!(ch.rel_by_hour.len(), 24, "rel vector is 24-long (UTC 0..23)");
+        assert_eq!(ch.snr_by_hour.len(), 24, "snr vector is 24-long");
+        assert_eq!(ch.mufday_by_hour.len(), 24, "mufday vector is 24-long");
+        assert!(
+            !h.state.guard.is_tainted(),
+            "predict_path must NOT taint the session (offline computation)"
+        );
+    }
+
+    #[tokio::test]
+    async fn solar_conditions_returns_snapshot_and_does_not_taint() {
+        use crate::ports::SolarSnapshotDto;
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        let result = h.solar_conditions().await.unwrap();
+        let dto: SolarSnapshotDto = json_of(&result);
+        assert_eq!(dto.sfi, Some(140.0));
+        assert_eq!(dto.a_index, Some(7.0));
+        assert_eq!(dto.k_index, Some(2.0));
+        assert_eq!(dto.ssn, 70.0);
+        assert_eq!(dto.source, "bundled");
+        assert!(
+            !h.state.guard.is_tainted(),
+            "solar_conditions must NOT taint the session (public data)"
+        );
     }
 
     // --- STEP 6: egress gate + injection-containment via the real tools ---
@@ -1850,6 +2027,36 @@ mod tests {
             .knowledge_get_prompt("no_such_prompt", None)
             .expect_err("an unknown prompt name must error");
         assert!(err.message.contains("unknown prompt"));
+    }
+
+    #[test]
+    fn agents_guide_resource_is_present_and_readable() {
+        let h = handler();
+        // The catalog advertises the agent onboarding guide.
+        let listed = h
+            .knowledge_resources()
+            .resources
+            .iter()
+            .any(|r| r.uri == "tuxlink://agents/guide");
+        assert!(listed, "the catalog must advertise the agent guide");
+        // It reads back as non-empty markdown.
+        let result = h
+            .knowledge_read("tuxlink://agents/guide")
+            .expect("the agent guide must read successfully");
+        match &result.contents[0] {
+            ResourceContents::TextResourceContents { text, .. } => {
+                assert!(!text.is_empty(), "the agent guide body must be non-empty");
+            }
+            other => panic!("expected TextResourceContents, got {other:?}"),
+        }
+        // get_info points new callers at the guide.
+        let info = h.get_info();
+        assert!(
+            info.instructions
+                .as_deref()
+                .is_some_and(|s| s.contains("tuxlink://agents/guide")),
+            "get_info instructions must point at the agent guide"
+        );
     }
 
     #[test]
