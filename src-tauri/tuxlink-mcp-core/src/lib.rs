@@ -22,6 +22,7 @@ use serde::Serialize;
 
 use tuxlink_security::EgressGuard;
 
+pub mod content;
 pub mod ports;
 pub mod router;
 pub mod transport_uds;
