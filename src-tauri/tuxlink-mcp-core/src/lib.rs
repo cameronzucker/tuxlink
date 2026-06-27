@@ -25,10 +25,11 @@ use tuxlink_security::EgressGuard;
 pub mod ports;
 pub mod router;
 pub mod transport_uds;
+pub mod validate;
 
 pub use ports::{
-    AbortPort, ConfigPort, DevicePort, EgressPort, EgressPortError, LogPort, MailboxPort, PortError,
-    SearchPort, StatusPort,
+    AbortPort, ComposePort, ConfigPort, DevicePort, EgressPort, EgressPortError, LogPort,
+    MailboxPort, PortError, SearchPort, StatusPort, WritePort, WritePortError,
 };
 pub use router::TuxlinkMcp;
 pub use transport_uds::serve;
@@ -74,6 +75,14 @@ pub struct McpState {
     pub egress: Arc<dyn EgressPort>,
     /// UNGATED pure-stop capability. Stopping is always allowed.
     pub abort: Arc<dyn AbortPort>,
+    /// GATED config/state writes (modem/grid/privacy/mailbox/attachment). Each
+    /// impl validates input first, then gates the mutation through
+    /// `guarded_egress(.., Agent, ..)`.
+    pub write: Arc<dyn WritePort>,
+    /// UNGATED compose/staging capability. Stages local outbox drafts; no
+    /// transmission until a later gated connect. Validates input; never gates,
+    /// never taints.
+    pub compose: Arc<dyn ComposePort>,
 }
 
 /// Serializable shape returned by the `server_info` tool.
@@ -116,12 +125,18 @@ pub(crate) mod test_support {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::ports::{
-        AbortPort, ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
-        BluetoothDeviceDto, CatalogEntryDto, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto,
-        EgressPort, EgressPortError, FolderDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
-        ModemStatusDto, PacketConfigDto, ParsedMessageDto, PlatformInfoDto, PortError,
-        PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto,
-        SessionIntentDto, StatusPort, VaraConfigDto, VaraStatusDto,
+        AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto,
+        BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ComposeDraftDto, ComposePort,
+        ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
+        GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto,
+        PacketConfigDto, PacketWriteDto, ParsedMessageDto, PlatformInfoDto, PortError,
+        PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto,
+        SerialDeviceDto, SessionIntentDto, StatusPort, VaraConfigDto, VaraStatusDto, VaraWriteDto,
+        WritePort, WritePortError,
+    };
+    use crate::validate::{
+        validate_address, validate_attachment_dest, validate_body, validate_drive_level,
+        validate_subject, validate_vara_bandwidth,
     };
     use crate::McpState;
     use tuxlink_security::{guarded_egress, EgressAuthority, EgressGuard};
@@ -421,6 +436,153 @@ pub(crate) mod test_support {
         }
     }
 
+    /// A mock [`WritePort`] proving the **validate-before-gate** contract: every
+    /// method runs the relevant `validate.rs` check FIRST (a bad value returns
+    /// [`WritePortError::Invalid`] WITHOUT touching the gate, so the armed grant
+    /// is not consumed and `op_ran` never flips), then gates the mutation through
+    /// the REAL [`guarded_egress`] against the SHARED [`EgressGuard`], flipping
+    /// `op_ran` only inside the gated op. `attachment_save` validates `dest`
+    /// against a per-mock tempdir base.
+    pub struct MockWrite {
+        guard: Arc<EgressGuard>,
+        op_ran: Arc<AtomicBool>,
+        /// Attachment base dir for `attachment_save` dest validation. Kept alive
+        /// (RAII) for the mock's lifetime.
+        base: tempfile::TempDir,
+    }
+
+    impl MockWrite {
+        pub fn new(guard: Arc<EgressGuard>, op_ran: Arc<AtomicBool>) -> Self {
+            Self {
+                guard,
+                op_ran,
+                base: tempfile::tempdir().expect("tempdir for attachment base"),
+            }
+        }
+
+        /// Gate `label` through the real gate; flip `op_ran` only if it runs.
+        async fn gated(&self, label: &str) -> Result<(), WritePortError> {
+            let op_ran = Arc::clone(&self.op_ran);
+            let noop_audit = |_a: tuxlink_security::EgressAudit<'_>| {};
+            guarded_egress(
+                &self.guard,
+                EgressAuthority::Agent,
+                label,
+                &noop_audit,
+                || async move {
+                    op_ran.store(true, Ordering::SeqCst);
+                },
+            )
+            .await
+            .map_err(|d| WritePortError::Denied(d.to_string()))
+        }
+    }
+
+    #[async_trait]
+    impl WritePort for MockWrite {
+        async fn set_ardop(&self, dto: ArdopWriteDto) -> Result<(), WritePortError> {
+            // VALIDATE BEFORE GATE: an out-of-range drive level is Invalid even
+            // when disarmed; the `?` returns before `gated` is reached.
+            validate_drive_level(dto.drive_level)?;
+            self.gated("set_ardop").await
+        }
+        async fn set_vara(&self, dto: VaraWriteDto) -> Result<(), WritePortError> {
+            validate_vara_bandwidth(dto.bandwidth_hz)?;
+            self.gated("set_vara").await
+        }
+        async fn set_packet(&self, _dto: PacketWriteDto) -> Result<(), WritePortError> {
+            self.gated("set_packet").await
+        }
+        async fn set_grid(&self, _grid: String) -> Result<(), WritePortError> {
+            self.gated("set_grid").await
+        }
+        async fn set_position_source(&self, _source: String) -> Result<(), WritePortError> {
+            self.gated("set_position_source").await
+        }
+        async fn set_privacy(
+            &self,
+            _gps_state: String,
+            _precision: String,
+        ) -> Result<(), WritePortError> {
+            self.gated("set_privacy").await
+        }
+        async fn set_packet_listen(&self, _enabled: bool) -> Result<(), WritePortError> {
+            self.gated("set_packet_listen").await
+        }
+        async fn mailbox_move(
+            &self,
+            _from: String,
+            _to: String,
+            _id: String,
+        ) -> Result<(), WritePortError> {
+            self.gated("mailbox_move").await
+        }
+        async fn attachment_save(
+            &self,
+            _folder: String,
+            _id: String,
+            _filename: String,
+            dest: String,
+        ) -> Result<String, WritePortError> {
+            // VALIDATE BEFORE GATE: a traversal/absolute/escaping dest is Invalid
+            // even when disarmed.
+            let path = validate_attachment_dest(self.base.path(), &dest)?;
+            self.gated("attachment_save").await?;
+            Ok(path.to_string_lossy().into_owned())
+        }
+    }
+
+    /// A mock [`ComposePort`] proving the UNGATED-compose contract: it validates
+    /// recipients/subject/body and, on success, flips a shared `staged` flag and
+    /// returns a canned MID. It NEVER touches the guard (no `op_ran`, no taint),
+    /// so a compose succeeds without an arm and cannot be `Denied`.
+    pub struct MockCompose {
+        staged: Arc<AtomicBool>,
+    }
+
+    impl MockCompose {
+        pub fn new(staged: Arc<AtomicBool>) -> Self {
+            Self { staged }
+        }
+        fn validate_recipients(
+            to: &[String],
+            cc: &[String],
+        ) -> Result<(), WritePortError> {
+            for addr in to.iter().chain(cc.iter()) {
+                validate_address(addr)?;
+            }
+            Ok(())
+        }
+        fn stage(&self) -> String {
+            self.staged.store(true, Ordering::SeqCst);
+            "STAGED-MID-0001".to_string()
+        }
+    }
+
+    #[async_trait]
+    impl ComposePort for MockCompose {
+        async fn message_send(&self, dto: ComposeDraftDto) -> Result<String, WritePortError> {
+            Self::validate_recipients(&dto.to, &dto.cc)?;
+            validate_subject(&dto.subject)?;
+            validate_body(&dto.body)?;
+            Ok(self.stage())
+        }
+        async fn send_form(&self, dto: SendFormDto) -> Result<String, WritePortError> {
+            Self::validate_recipients(&dto.to, &dto.cc)?;
+            Ok(self.stage())
+        }
+        async fn catalog_send_inquiry(
+            &self,
+            _item_ids: Vec<String>,
+        ) -> Result<String, WritePortError> {
+            Ok(self.stage())
+        }
+        async fn grib_send_request(&self, dto: GribRequestDto) -> Result<String, WritePortError> {
+            validate_subject(&dto.subject)?;
+            Ok(self.stage())
+        }
+    }
+
     /// Build an [`McpState`] around the supplied guard, wiring all mock ports.
     /// The egress/abort flags are internal; use [`state_with_egress_probes`] to
     /// observe whether a gated egress op actually ran or an abort fired.
@@ -431,12 +593,27 @@ pub(crate) mod test_support {
     /// Like [`state_with_guard`] but also returns `(op_ran, aborted)` probe
     /// flags so the egress-gate + injection-containment tests can assert the
     /// underlying op fired (or did not) and that abort succeeded.
+    ///
+    /// `op_ran` is SHARED by the egress mock AND the write mock (both flip it
+    /// inside their gated op), so a write-tier test can assert the gated
+    /// mutation ran or did not.
     pub fn state_with_egress_probes(
         guard: EgressGuard,
     ) -> (McpState, Arc<AtomicBool>, Arc<AtomicBool>) {
+        let (state, op_ran, aborted, _staged) = state_with_all_probes(guard);
+        (state, op_ran, aborted)
+    }
+
+    /// Full probe builder: returns `(state, op_ran, aborted, staged)`. `op_ran`
+    /// is shared by the egress + write mocks (flipped inside the gated op);
+    /// `staged` is flipped by the ungated compose mock on a successful stage.
+    pub fn state_with_all_probes(
+        guard: EgressGuard,
+    ) -> (McpState, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>) {
         let guard = Arc::new(guard);
         let op_ran = Arc::new(AtomicBool::new(false));
         let aborted = Arc::new(AtomicBool::new(false));
+        let staged = Arc::new(AtomicBool::new(false));
         let state = McpState {
             guard: Arc::clone(&guard),
             name: "tuxlink".into(),
@@ -449,8 +626,10 @@ pub(crate) mod test_support {
             logs: Arc::new(MockLog),
             egress: Arc::new(MockEgress::new(Arc::clone(&guard), Arc::clone(&op_ran))),
             abort: Arc::new(MockAbort::new(Arc::clone(&aborted))),
+            write: Arc::new(MockWrite::new(Arc::clone(&guard), Arc::clone(&op_ran))),
+            compose: Arc::new(MockCompose::new(Arc::clone(&staged))),
         };
-        (state, op_ran, aborted)
+        (state, op_ran, aborted, staged)
     }
 }
 

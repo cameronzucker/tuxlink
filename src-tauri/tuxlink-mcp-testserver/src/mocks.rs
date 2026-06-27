@@ -7,18 +7,24 @@
 //! The MailboxPort mock seeds ONE message with a recognizable
 //! `from`/`subject`; the ConfigPort mock returns a 4-char grid (`"CN87"`).
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use tuxlink_mcp_core::ports::{
-    AbortPort, ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
-    BluetoothDeviceDto, CatalogEntryDto, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto,
-    EgressPort, EgressPortError, FolderDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
-    ModemStatusDto, PacketConfigDto, ParsedMessageDto, PlatformInfoDto, PortError,
-    PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto,
-    SessionIntentDto, StatusPort, VaraConfigDto, VaraStatusDto,
+    AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
+    BluetoothDeviceDto, CatalogEntryDto, ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto,
+    DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto, GribRequestDto, LogLineDto,
+    LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto,
+    ParsedMessageDto, PlatformInfoDto, PortError, PositionStatusDto, SearchPort, SearchQueryDto,
+    SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, StatusPort, VaraConfigDto,
+    VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+};
+use tuxlink_mcp_core::validate::{
+    validate_address, validate_attachment_dest, validate_body, validate_drive_level,
+    validate_subject, validate_vara_bandwidth,
 };
 use tuxlink_security::{guarded_egress, EgressAuthority, EgressAudit, EgressGuard};
 
@@ -327,5 +333,149 @@ impl AbortPort for MockAbort {
     async fn vara_stop_session(&self) -> Result<(), PortError> {
         self.mark();
         Ok(())
+    }
+}
+
+/// GATED write mock for the tier-2 testserver (phase 3.4).
+///
+/// Mirrors the tier-1 `MockWrite`: every method runs the relevant `validate.rs`
+/// check FIRST (a bad value → [`WritePortError::Invalid`] without consuming the
+/// armed grant), then gates the mutation through the REAL [`guarded_egress`]
+/// against the SAME [`EgressGuard`] the testserver built from the environment,
+/// flipping `op_ran` inside the gated op. `attachment_save` validates `dest`
+/// against the injected `base` dir.
+pub struct MockWrite {
+    guard: Arc<EgressGuard>,
+    op_ran: Arc<AtomicBool>,
+    base: PathBuf,
+}
+
+impl MockWrite {
+    pub fn new(guard: Arc<EgressGuard>, op_ran: Arc<AtomicBool>, base: PathBuf) -> Self {
+        Self {
+            guard,
+            op_ran,
+            base,
+        }
+    }
+
+    async fn gated(&self, label: &str) -> Result<(), WritePortError> {
+        let op_ran = Arc::clone(&self.op_ran);
+        let audit = |a: EgressAudit<'_>| {
+            eprintln!(
+                "write-audit op={} allowed={} reason={:?}",
+                a.op, a.allowed, a.reason
+            );
+        };
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            label,
+            &audit,
+            || async move {
+                op_ran.store(true, Ordering::SeqCst);
+            },
+        )
+        .await
+        .map_err(|d| WritePortError::Denied(d.to_string()))
+    }
+}
+
+#[async_trait]
+impl WritePort for MockWrite {
+    async fn set_ardop(&self, dto: ArdopWriteDto) -> Result<(), WritePortError> {
+        validate_drive_level(dto.drive_level)?;
+        self.gated("set_ardop").await
+    }
+    async fn set_vara(&self, dto: VaraWriteDto) -> Result<(), WritePortError> {
+        validate_vara_bandwidth(dto.bandwidth_hz)?;
+        self.gated("set_vara").await
+    }
+    async fn set_packet(&self, _dto: PacketWriteDto) -> Result<(), WritePortError> {
+        self.gated("set_packet").await
+    }
+    async fn set_grid(&self, _grid: String) -> Result<(), WritePortError> {
+        self.gated("set_grid").await
+    }
+    async fn set_position_source(&self, _source: String) -> Result<(), WritePortError> {
+        self.gated("set_position_source").await
+    }
+    async fn set_privacy(
+        &self,
+        _gps_state: String,
+        _precision: String,
+    ) -> Result<(), WritePortError> {
+        self.gated("set_privacy").await
+    }
+    async fn set_packet_listen(&self, _enabled: bool) -> Result<(), WritePortError> {
+        self.gated("set_packet_listen").await
+    }
+    async fn mailbox_move(
+        &self,
+        _from: String,
+        _to: String,
+        _id: String,
+    ) -> Result<(), WritePortError> {
+        self.gated("mailbox_move").await
+    }
+    async fn attachment_save(
+        &self,
+        _folder: String,
+        _id: String,
+        _filename: String,
+        dest: String,
+    ) -> Result<String, WritePortError> {
+        let path = validate_attachment_dest(&self.base, &dest)?;
+        self.gated("attachment_save").await?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+}
+
+/// UNGATED compose mock for the tier-2 testserver (phase 3.4).
+///
+/// Validates recipients/subject/body and, on success, flips a shared `staged`
+/// flag and returns a canned MID. NEVER touches the guard and never taints, so a
+/// compose succeeds without an arm and cannot be `Denied`.
+pub struct MockCompose {
+    staged: Arc<AtomicBool>,
+}
+
+impl MockCompose {
+    pub fn new(staged: Arc<AtomicBool>) -> Self {
+        Self { staged }
+    }
+    fn validate_recipients(to: &[String], cc: &[String]) -> Result<(), WritePortError> {
+        for addr in to.iter().chain(cc.iter()) {
+            validate_address(addr)?;
+        }
+        Ok(())
+    }
+    fn stage(&self) -> String {
+        self.staged.store(true, Ordering::SeqCst);
+        "STAGED-MID-0001".to_string()
+    }
+}
+
+#[async_trait]
+impl ComposePort for MockCompose {
+    async fn message_send(&self, dto: ComposeDraftDto) -> Result<String, WritePortError> {
+        Self::validate_recipients(&dto.to, &dto.cc)?;
+        validate_subject(&dto.subject)?;
+        validate_body(&dto.body)?;
+        Ok(self.stage())
+    }
+    async fn send_form(&self, dto: SendFormDto) -> Result<String, WritePortError> {
+        Self::validate_recipients(&dto.to, &dto.cc)?;
+        Ok(self.stage())
+    }
+    async fn catalog_send_inquiry(
+        &self,
+        _item_ids: Vec<String>,
+    ) -> Result<String, WritePortError> {
+        Ok(self.stage())
+    }
+    async fn grib_send_request(&self, dto: GribRequestDto) -> Result<String, WritePortError> {
+        validate_subject(&dto.subject)?;
+        Ok(self.stage())
     }
 }

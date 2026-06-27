@@ -1316,6 +1316,18 @@ pub fn run() {
                         abort: std::sync::Arc::new(crate::mcp_ports::MonolithAbortPort::new(
                             h.clone(),
                         )),
+                        // Phase 3.4 Chunk 2: GATED config/state writes + UNGATED
+                        // compose/staging. The write port shares the SAME
+                        // `Arc<EgressGuard>` the operator's egress_arm/disarm
+                        // mutate (validate-before-gate per impl); the compose port
+                        // is ungated (stages local outbox drafts only).
+                        write: std::sync::Arc::new(crate::mcp_ports::MonolithWritePort::new(
+                            h.clone(),
+                            guard.clone(),
+                        )),
+                        compose: std::sync::Arc::new(crate::mcp_ports::MonolithComposePort::new(
+                            h.clone(),
+                        )),
                     });
                     let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
 
