@@ -405,6 +405,20 @@ struct ModemSessionInner {
     /// vs `VaraFm`) so the frontend's sidebar-nav drift guard reads a
     /// uniform `(intent, transport_kind)` pair across modems.
     active_transport_kind: Option<TransportKind>,
+    /// Live CAT rig handle for the connected session (tuxlink rig-control
+    /// Task 8/9). Present only on the DRA-100 (keep-serial) path: the
+    /// pre-audio tune left rigctld running so the operator keeps CAT control
+    /// for the session's duration. `None` on the close-serial (internal-codec)
+    /// path, where [`crate::modem_commands::tune_rig_for_connect`] released
+    /// the serial before audio.
+    ///
+    /// Dropped by [`ModemSession::reset_to_stopped`] — the only full-teardown
+    /// path — so rigctld stops when the operator disconnects. `ManagedRig::Drop`
+    /// SIGKILLs + reaps its child, so the drop releases the CAT serial. NOT
+    /// cleared by [`Self::take_transport`], which is a temporary borrow
+    /// (b2f-exchange / listener arbiter) that re-installs the transport into
+    /// the still-live session.
+    rig: Option<tux_rig::ManagedRig>,
 }
 
 // Manual `Debug` impl: `Box<dyn ModemTransport>` does not implement `Debug`,
@@ -432,6 +446,7 @@ impl std::fmt::Debug for ModemSessionInner {
             .field("transport_owner", &self.transport_owner)
             .field("active_intent", &self.active_intent)
             .field("active_transport_kind", &self.active_transport_kind)
+            .field("rig", &self.rig.as_ref().map(|_| "Some(<ManagedRig>)"))
             .finish()
     }
 }
@@ -453,6 +468,7 @@ impl ModemSession {
                 transport_owner: TransportOwner::None,
                 active_intent: None,
                 active_transport_kind: None,
+                rig: None,
             }),
             connect_in_progress: AtomicBool::new(false),
             close_generation: AtomicU64::new(0),
@@ -531,6 +547,26 @@ impl ModemSession {
         self.inner.lock().unwrap().transport = Some(t);
     }
 
+    /// Store (or clear) the live CAT rig handle for the connected session
+    /// (rig-control Task 8/9). Called from the ARDOP connect flow after a
+    /// successful pre-audio tune on the DRA-100 (keep-serial) path, with the
+    /// `ManagedRig` that
+    /// [`crate::modem_commands::tune_rig_for_connect`] kept alive. Pass `None`
+    /// (or simply never call it) on the close-serial path, where the helper
+    /// already released the serial before audio.
+    ///
+    /// Replacing an existing rig drops the prior handle (its `Drop` SIGKILLs
+    /// rigctld); the swap runs under the lock but the drop of the *prior*
+    /// handle happens after the guard is released, so no rigctld teardown
+    /// runs while the mutex is held.
+    pub fn set_rig(&self, rig: Option<tux_rig::ManagedRig>) {
+        let prior = {
+            let mut inner = self.inner.lock().unwrap();
+            std::mem::replace(&mut inner.rig, rig)
+        };
+        drop(prior);
+    }
+
     /// Take ownership of the live transport handle, if any. The caller is
     /// responsible for calling `disconnect()` + dropping it. Intended for
     /// flows that want to shut down the transport WITHOUT also resetting
@@ -568,17 +604,28 @@ impl ModemSession {
     /// `transport_owner` to `None` — the session is back to a closed
     /// posture and no owner is holding the transport.
     pub fn reset_to_stopped(&self) -> Option<Box<dyn crate::winlink::modem::ModemTransport>> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.status = ModemStatus::stopped();
-        inner.abort_writer = None;
-        inner.abort_stream = None;
-        inner.transport_owner = TransportOwner::None;
-        // tuxlink-0ye6 Task 3.5: clear active session mode on full reset so
-        // a follow-up open starts with a clean slate. Mirrors VARA's
-        // `vara_stop_session_inner` clearing the same two fields.
-        inner.active_intent = None;
-        inner.active_transport_kind = None;
-        inner.transport.take()
+        // Take both the transport and the live rig (if any) out under one lock,
+        // then drop the rig AFTER releasing the guard so `ManagedRig::Drop`
+        // (a SIGKILL + reap of rigctld) never runs while the session mutex is
+        // held — same "no I/O under the lock" discipline the transport handle
+        // follows (the caller drops the transport outside the lock).
+        let (transport, rig) = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.status = ModemStatus::stopped();
+            inner.abort_writer = None;
+            inner.abort_stream = None;
+            inner.transport_owner = TransportOwner::None;
+            // tuxlink-0ye6 Task 3.5: clear active session mode on full reset so
+            // a follow-up open starts with a clean slate. Mirrors VARA's
+            // `vara_stop_session_inner` clearing the same two fields.
+            inner.active_intent = None;
+            inner.active_transport_kind = None;
+            (inner.transport.take(), inner.rig.take())
+        };
+        // rig-control Task 8/9: stop rigctld on disconnect (DRA-100 keep path).
+        // `None` on the close-serial path — nothing to drop.
+        drop(rig);
+        transport
     }
 
     /// Record the operator-typed `intent` + `transport_kind` on the session

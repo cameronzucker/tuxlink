@@ -280,6 +280,51 @@ where
     )
 }
 
+/// QSY-aware gated connect (Task 8 + 9). Same in-process busy guard as
+/// [`modem_ardop_connect_gated_with_factory`], but dials an ordered list of
+/// candidates with the pre-audio CAT tune + (when `qsy_on_fail`) a walk to the
+/// next candidate on failure. The public `modem_ardop_connect` command calls
+/// this directly with the candidate list it builds from `freq_hz` /
+/// `qsy_candidates`; a single-element list reproduces the legacy single dial
+/// (with an optional tune).
+#[allow(clippy::too_many_arguments)]
+pub fn modem_ardop_connect_gated_walk_with_factory<F>(
+    session: &Arc<ModemSession>,
+    session_id: &crate::identity::SessionIdentity,
+    cfg: &Config,
+    candidates: &[DialCandidate],
+    qsy_on_fail: bool,
+    ardop_ui: &ArdopUiConfig,
+    make_transport: F,
+) -> Result<(), String>
+where
+    F: FnMut(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
+{
+    // ─── In-process busy guard ───────────────────────────────────────────
+    if !session.try_begin_connect() {
+        return Err(
+            "connect already in progress; wait for the previous attempt to complete".into(),
+        );
+    }
+    struct ConnectGuard<'a>(&'a Arc<ModemSession>);
+    impl Drop for ConnectGuard<'_> {
+        fn drop(&mut self) {
+            self.0.clear_connect_in_progress();
+        }
+    }
+    let _guard = ConnectGuard(session);
+
+    modem_ardop_connect_walk_with_factory(
+        session,
+        session_id,
+        cfg,
+        candidates,
+        qsy_on_fail,
+        ardop_ui,
+        make_transport,
+    )
+}
+
 /// Inner helper that runs AFTER the busy guard has been acquired. Caller
 /// (`modem_ardop_connect_gated_with_factory`) holds the `ConnectGuard` RAII
 /// that clears the busy bit on drop. Do NOT call this from anywhere that
@@ -301,9 +346,15 @@ where
 {
     // NO GATE here — caller MUST have acquired the busy bit already.
     // (The `_post_consume` name is legacy; behavior is unchanged.)
+    //
+    // Single-target, no-tune dial — the legacy `{ target }` path + the existing
+    // tests. The QSY-aware multi-candidate + pre-audio-tune path lives in
+    // `modem_ardop_connect_walk_with_factory` (Task 8/9), which the public
+    // `modem_ardop_connect` command drives via the gated walk wrapper. This
+    // function is preserved verbatim so its `FnOnce` test factories (which move
+    // captured state into the constructed transport) keep compiling.
 
     // ─── Translate ArdopUiConfig (frontend) → ArdopConfig (backend) ─────
-    // See `build_ardop_extra_args` — extracted for unit testing.
     let extra_args = build_ardop_extra_args(ardop_ui);
 
     let ardop_cfg = ArdopConfig {
@@ -353,22 +404,7 @@ where
     }
 
     // tuxlink-o3f2: install the side-channel abort writer BEFORE the
-    // blocking `connect_arq` begins. While the recv loop inside
-    // `arq_connect` holds the transport on its stack, the operator's
-    // Disconnect button calls `modem_ardop_disconnect_inner` → which calls
-    // `session.abort_in_flight()` → which writes `ABORT\r` to ardopcf via
-    // this writer. The recv loop then surfaces FAULT/NEWSTATE DISC and
-    // returns Err, unwinding the connect path. Without this hook the
-    // legacy 120s connect cap (inlined below) was the only abort path —
-    // see the 2026-05-22 runaway-connect incident (memory
-    // radio1-bounded-airtime-abort).
-    //
-    // If the backend can't expose a writer (default trait impl returns
-    // None), the install is silently skipped: graceful disconnect remains
-    // the only path. For ardopcf the writer is always available after
-    // init() succeeds. tuxlink-0ye6 Task 4.1 widened to a (writer, stream)
-    // pair so the session can hard-close via the stream when the
-    // cooperative write fails (Codex Round 4 P1 #3).
+    // blocking `connect_arq` begins (see the walk path for the full rationale).
     if let Some((writer, stream)) = transport.try_clone_abort_writer() {
         session.install_abort_writer(writer, stream);
     }
@@ -379,12 +415,6 @@ where
     session.set_status(snap);
 
     // ─── ARQ connect (bounded airtime) ───────────────────────────────────
-    // Legacy Start-button path: inline the historical 120s wall-clock cap.
-    // The new b2f_exchange path (modem_ardop_b2f_exchange) passes `None`
-    // (no tuxlink-layer wall-clock cap; bound is ardopcf's ARQTIMEOUT +
-    // operator ABORT). This command is slated for deletion in Phase 6
-    // when the panel migrates fully to `ardop_open_session` +
-    // `modem_ardop_b2f_exchange`.
     let info = match transport.connect_arq(
         target,
         connect_attempts_from_config(),
@@ -413,6 +443,208 @@ where
     session.set_status(s);
 
     Ok(())
+}
+
+/// QSY-aware connect core (Task 8 + 9). Runs AFTER the busy guard. Walks
+/// `candidates` in order: per candidate it spawns + inits a transport, performs
+/// the pre-audio CAT tune ([`tune_rig_for_connect`]), then `connect_arq`. On
+/// success it installs the transport (+ the kept DRA-100 rig) and returns; on
+/// failure it drops that candidate's transport/rig (RAII) and, only when
+/// `qsy_on_fail` is set, advances to the next candidate. An operator
+/// disconnect/abort between candidates (observed via a bumped close-generation)
+/// stops the walk.
+///
+/// `make_transport` is `FnMut` so the walk can spawn one transport per
+/// candidate. The single-candidate `_post_consume_with_factory` shim preserves
+/// the legacy contract (callers that only handle one dial pass `FnMut`
+/// closures, which a single-use `move` closure satisfies).
+#[allow(clippy::too_many_arguments)]
+pub fn modem_ardop_connect_walk_with_factory<F>(
+    session: &Arc<ModemSession>,
+    session_id: &crate::identity::SessionIdentity,
+    cfg: &Config,
+    candidates: &[DialCandidate],
+    qsy_on_fail: bool,
+    ardop_ui: &ArdopUiConfig,
+    mut make_transport: F,
+) -> Result<(), String>
+where
+    F: FnMut(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
+{
+    // NO GATE here — caller MUST have acquired the busy bit already.
+
+    if candidates.is_empty() {
+        return Err("connect: no dial candidates".into());
+    }
+
+    // Snapshot the close-generation BEFORE the walk. If an operator
+    // disconnect/abort bumps it between candidates, the walk stops rather
+    // than QSY-ing to the next frequency after the operator asked to stop
+    // (mirrors the worker close-vs-reinstall guard, tuxlink-vyby/pdnw).
+    let walk_gen = session.current_close_generation();
+
+    // The last candidate's failure message — surfaced if no candidate connects.
+    let mut last_err: Option<String> = None;
+    // Carries the winning candidate's connect info out of the closure so the
+    // post-walk snapshot publishes the connected peer. (Set inside `attempt`.)
+    let mut connected: Option<crate::winlink::modem::ConnectInfo> = None;
+
+    let outcome = walk_candidates(candidates, qsy_on_fail, |_idx, candidate| {
+        // Honor an in-flight operator abort: if a close intervened since the
+        // walk began, stop without dialing the next candidate.
+        if session.current_close_generation() != walk_gen {
+            last_err = Some("connect aborted".into());
+            return false;
+        }
+
+        match dial_one_candidate(
+            session,
+            session_id,
+            cfg,
+            candidate,
+            ardop_ui,
+            &mut make_transport,
+        ) {
+            Ok((transport, rig, info)) => {
+                // Success: install the live transport + (DRA-100) rig handle.
+                session.install_transport(transport);
+                session.set_rig(rig);
+                connected = Some(info);
+                true
+            }
+            Err(e) => {
+                // Failure: this candidate's transport + rig already dropped
+                // inside `dial_one_candidate` (RAII). Record + continue/stop
+                // per `qsy_on_fail` (handled by `walk_candidates`).
+                last_err = Some(e);
+                false
+            }
+        }
+    });
+
+    match outcome {
+        Some(_) => {
+            let info = connected.expect("walk reported success without info");
+            let mut s = session.status_snapshot();
+            s.state = ModemState::ConnectedIrs;
+            s.peer = Some(info.peer_call.clone());
+            s.width_hz = Some(info.bandwidth_hz);
+            s.last_error = None;
+            session.set_status(s);
+            Ok(())
+        }
+        None => {
+            let msg = last_err.unwrap_or_else(|| "ARQ connect failed".into());
+            let mut s = ModemStatus::stopped();
+            s.state = ModemState::Error;
+            s.last_error = Some(msg.clone());
+            session.set_status(s);
+            Err(msg)
+        }
+    }
+}
+
+/// Spawn + init + pre-audio tune + `connect_arq` for ONE candidate. On success
+/// returns the live `(transport, kept-rig, ConnectInfo)` for the caller to install.
+/// On failure the candidate's transport and rig are dropped here (RAII teardown
+/// of ardopcf + rigctld) before the `Err` is returned.
+fn dial_one_candidate<F>(
+    session: &Arc<ModemSession>,
+    session_id: &crate::identity::SessionIdentity,
+    cfg: &Config,
+    candidate: &DialCandidate,
+    ardop_ui: &ArdopUiConfig,
+    make_transport: &mut F,
+) -> Result<
+    (
+        Box<dyn ModemTransport>,
+        Option<tux_rig::ManagedRig>,
+        crate::winlink::modem::ConnectInfo,
+    ),
+    String,
+>
+where
+    F: FnMut(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
+{
+    let target = candidate.target.as_str();
+
+    // ─── Translate ArdopUiConfig (frontend) → ArdopConfig (backend) ─────
+    let extra_args = build_ardop_extra_args(ardop_ui);
+    let ardop_cfg = ArdopConfig {
+        binary: resolve_ardop_binary(&ardop_ui.binary),
+        extra_args,
+        cmd_port: ardop_ui.cmd_port,
+        // ardopcf convention: data_port = cmd_port + 1 (8516 for default 8515).
+        data_port: ardop_ui.cmd_port.saturating_add(1),
+        audio_device_path: None,
+        // tuxlink-wu0k: spawn the close-serial CAT-PTT bridge when the operator
+        // selected CAT PTT; None for VOX / serial-RTS.
+        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
+    };
+
+    // Mark spawning so any concurrent status_snapshot sees the transition
+    // before the (potentially slow) ardopcf bind-wait + init.
+    let mut snap = session.status_snapshot();
+    snap.state = ModemState::Spawning;
+    snap.peer = Some(target.to_string());
+    snap.last_error = None;
+    session.set_status(snap);
+
+    // ─── Spawn ───────────────────────────────────────────────────────────
+    let mut transport = make_transport(ardop_cfg, target)?;
+
+    // ─── Init the TNC ────────────────────────────────────────────────────
+    let init_cfg = init_config_from_session(session_id, cfg);
+    if let Err(e) = transport.init(&init_cfg) {
+        // Drop the partially-initialized transport so any spawned process
+        // is torn down by its Drop impl rather than leaking past this fn.
+        drop(transport);
+        return Err(format!("init failed: {e}"));
+    }
+
+    // ─── Pre-audio CAT tune (tux-rig) — Task 8 ────────────────────────────
+    // AFTER init, BEFORE connect_arq (audio). Close-serial radios release the
+    // serial here; DRA-100 keeps the rig and hands it back for session storage.
+    // On a tune error, drop the transport first so ardopcf is reaped.
+    let live_rig = match tune_rig_for_connect(ardop_ui, candidate.freq_hz) {
+        Ok(rig) => rig,
+        Err(e) => {
+            drop(transport);
+            return Err(e);
+        }
+    };
+
+    // tuxlink-o3f2: install the side-channel abort writer BEFORE the blocking
+    // `connect_arq`. The operator's Disconnect → `abort_in_flight()` writes
+    // `ABORT\r` to ardopcf so the recv loop surfaces FAULT/DISC and unwinds.
+    // tuxlink-0ye6 Task 4.1 widened to a (writer, stream) pair for the
+    // hard-close fallback (Codex Round 4 P1 #3).
+    if let Some((writer, stream)) = transport.try_clone_abort_writer() {
+        session.install_abort_writer(writer, stream);
+    }
+
+    // Status: Connecting (bounded by the inlined legacy 120s cap below).
+    let mut snap = session.status_snapshot();
+    snap.state = ModemState::Connecting;
+    session.set_status(snap);
+
+    // ─── ARQ connect (bounded airtime) ───────────────────────────────────
+    // Legacy Start-button path: inline the historical 120s wall-clock cap.
+    match transport.connect_arq(
+        target,
+        connect_attempts_from_config(),
+        Some(Duration::from_secs(120)),
+    ) {
+        Ok(info) => Ok((transport, live_rig, info)),
+        Err(e) => {
+            // RAII teardown: drop the transport (reaps ardopcf) and the rig
+            // (reaps rigctld) before returning so the next candidate starts
+            // clean and no rigctld is left holding the CAT serial.
+            drop(transport);
+            drop(live_rig);
+            Err(format!("ARQ connect failed: {e}"))
+        }
+    }
 }
 
 /// Start the ARDOP modem in **listen-only** mode for the listener
@@ -1124,6 +1356,14 @@ pub async fn modem_ardop_connect(
     app: AppHandle,
     session: State<'_, Arc<ModemSession>>,
     target: String,
+    // rig-control Task 8: tune frequency for the (single) dial. Optional —
+    // `None` (the legacy `{ target }` invoke) skips the pre-audio CAT tune.
+    freq_hz: Option<u64>,
+    // rig-control Task 9: ordered QSY candidate list. Optional — when `Some`
+    // and non-empty it overrides `target`/`freq_hz` and the walk visits each
+    // candidate in order (gated by the operator's `qsy_on_fail` config). When
+    // `None`/empty the single `{ target, freq_hz }` candidate is dialed.
+    qsy_candidates: Option<Vec<DialCandidate>>,
 ) -> Result<(), String> {
     // ─── Pre-flight identity check (tuxlink-5738) ────────────────────────
     // Operator must have a callsign OR identifier configured before any
@@ -1158,17 +1398,29 @@ pub async fn modem_ardop_connect(
     // gated) could not render and the operator had NO working abort during
     // TX. The fast identity + audio gates above stay synchronous (RADIO-1 /
     // fail-closed before any modem I/O).
+    // rig-control Task 9: build the ordered candidate list. A non-empty
+    // `qsy_candidates` overrides the single dial; otherwise a one-element list
+    // from `{ target, freq_hz }` reproduces the legacy single-dial behavior.
+    let candidates: Vec<DialCandidate> = match qsy_candidates {
+        Some(v) if !v.is_empty() => v,
+        _ => vec![DialCandidate { target, freq_hz }],
+    };
+    // QSY-on-fail is an operator config flag; it only matters when the list has
+    // more than one candidate.
+    let qsy_on_fail = ardop_ui.qsy_on_fail;
+
     let session = Arc::clone(session.inner());
     // tuxlink-ngsk: route this session's cmd-port traffic into the session log.
     let wire = ardop_wire_sink(&app);
     let result = tokio::task::spawn_blocking(move || {
-        modem_ardop_connect_gated_with_factory(
+        modem_ardop_connect_gated_walk_with_factory(
             &session,
             &session_id,
             &cfg,
-            &target,
+            &candidates,
+            qsy_on_fail,
             &ardop_ui,
-            |cfg, _target| {
+            move |cfg, _target| {
                 ArdopTransport::with_managed_modem(cfg)
                     .map(|t| Box::new(t.with_wire_sink(wire.clone())) as Box<dyn ModemTransport>)
                     .map_err(|e| format!("spawn failed: {e}"))
@@ -1480,6 +1732,89 @@ pub(crate) fn rig_config_from(ardop_ui: &ArdopUiConfig) -> Option<tux_rig::RigCo
 /// HF Winlink data mode (FT-710 = PKTUSB).
 pub(crate) fn ardop_data_mode() -> tux_rig::Mode {
     tux_rig::Mode::PktUsb
+}
+
+// ── Task 8: pre-audio CAT tune helper ───────────────────────────────────────
+
+/// Whether to stop rigctld (release the CAT serial) immediately after tuning,
+/// before audio. True on internal-codec radios (close-serial sequencing): the
+/// rig's codec contends with the audio device for the serial, so CAT must drop
+/// before audio starts. False on DRA-100-class setups, where CAT and audio are
+/// independent and the serial stays up for the whole session.
+pub(crate) fn should_release_after_tune(ardop_ui: &ArdopUiConfig) -> bool {
+    ardop_ui.close_serial_sequencing
+}
+
+/// Pre-audio CAT tune for one connect candidate. Runs AFTER `transport.init()`
+/// and BEFORE `connect_arq()` (audio).
+///
+/// - Returns `Ok(None)` when rig control is not configured
+///   ([`rig_config_from`] is `None`) OR no target frequency is known
+///   (`freq_hz` is `None`) — preserving today's no-tune behavior.
+/// - Otherwise spawns [`tux_rig::ManagedRig`], tunes to `(hz, ardop_data_mode())`,
+///   then branches on [`should_release_after_tune`]:
+///   - close-serial (internal codec): `release_serial()` then `Ok(None)` —
+///     the serial is freed before audio.
+///   - keep-serial (DRA-100): `Ok(Some(rig))` — CAT stays up; the caller
+///     stores the handle on the session so it stops on disconnect.
+///
+/// Spawn / tune failures map to a `String` (surfaced to the operator).
+pub(crate) fn tune_rig_for_connect(
+    ardop_ui: &ArdopUiConfig,
+    freq_hz: Option<u64>,
+) -> Result<Option<tux_rig::ManagedRig>, String> {
+    let (rc, hz) = match (rig_config_from(ardop_ui), freq_hz) {
+        (Some(rc), Some(hz)) => (rc, hz),
+        // Rig not configured or no frequency → no tune (back-compat).
+        _ => return Ok(None),
+    };
+    let mut rig =
+        tux_rig::ManagedRig::spawn(rc).map_err(|e| format!("rigctld spawn failed: {e}"))?;
+    rig.tune(hz, ardop_data_mode())
+        .map_err(|e| format!("CAT tune failed: {e}"))?;
+    if should_release_after_tune(ardop_ui) {
+        // Close-serial: free the serial before audio. Drop happens at fn end.
+        rig.release_serial();
+        Ok(None)
+    } else {
+        // DRA-100: keep CAT up for the session.
+        Ok(Some(rig))
+    }
+}
+
+// ── Task 9: ordered-list QSY (operator-gated) ───────────────────────────────
+
+/// One dial target plus the frequency to tune for it before dialing.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct DialCandidate {
+    pub target: String,
+    pub freq_hz: Option<u64>,
+}
+
+/// Walk `candidates` in order, calling `attempt(idx, candidate)` — which
+/// returns `true` on a successful connect. Stops at the first success and
+/// returns its index. When `qsy_on_fail` is `false`, only the first candidate
+/// is attempted (no walk). Returns `None` if no attempt succeeded.
+///
+/// Pure planner: no I/O, no session state — the real tune + `connect_arq` +
+/// abort check live in the caller's `attempt` closure.
+pub(crate) fn walk_candidates<F>(
+    candidates: &[DialCandidate],
+    qsy_on_fail: bool,
+    mut attempt: F,
+) -> Option<usize>
+where
+    F: FnMut(usize, &DialCandidate) -> bool,
+{
+    for (idx, c) in candidates.iter().enumerate() {
+        if attempt(idx, c) {
+            return Some(idx);
+        }
+        if !qsy_on_fail {
+            break;
+        }
+    }
+    None
 }
 
 /// Tune-only: set the rig to `freq_hz` + the HF data mode over CAT, then release
@@ -3633,5 +3968,56 @@ mod tests {
     fn rig_config_absent_when_unconfigured() {
         let ui = ArdopUiConfig::default();
         assert!(rig_config_from(&ui).is_none());
+    }
+
+    // ── Task 8: tune-helper release decision ─────────────────────────────────
+
+    #[test]
+    fn close_serial_releases_rig_before_audio() {
+        // close_serial_sequencing = true → helper must NOT retain the rig handle.
+        let mut ui = ArdopUiConfig::default();
+        ui.close_serial_sequencing = true;
+        assert!(should_release_after_tune(&ui));
+    }
+
+    #[test]
+    fn dra100_path_retains_rig() {
+        let ui = ArdopUiConfig::default(); // close_serial_sequencing = false
+        assert!(!should_release_after_tune(&ui));
+    }
+
+    // ── Task 9: candidate-walk planner ───────────────────────────────────────
+
+    #[test]
+    fn qsy_walks_candidates_until_first_success() {
+        // Given outcomes [fail, fail, ok], the planner attempts indices [0,1,2]
+        // and stops at 2.
+        let candidates = vec![
+            DialCandidate { target: "W7DG".into(), freq_hz: Some(7_102_000) },
+            DialCandidate { target: "KE7XYZ".into(), freq_hz: Some(10_145_500) },
+            DialCandidate { target: "N6ARA".into(), freq_hz: Some(14_109_000) },
+        ];
+        let mut attempted = Vec::new();
+        let outcome = walk_candidates(&candidates, true, |idx, _c| {
+            attempted.push(idx);
+            idx == 2 // succeed on the third
+        });
+        assert_eq!(attempted, vec![0, 1, 2]);
+        assert_eq!(outcome, Some(2));
+    }
+
+    #[test]
+    fn no_qsy_attempts_only_first() {
+        let candidates = vec![
+            DialCandidate { target: "W7DG".into(), freq_hz: Some(7_102_000) },
+            DialCandidate { target: "KE7XYZ".into(), freq_hz: Some(10_145_500) },
+        ];
+        let mut attempted = Vec::new();
+        let outcome = walk_candidates(&candidates, false, |idx, _c| {
+            attempted.push(idx);
+            false // first fails
+        });
+        assert_eq!(attempted, vec![0]); // qsy off → no walk
+        assert_eq!(outcome, None);
     }
 }

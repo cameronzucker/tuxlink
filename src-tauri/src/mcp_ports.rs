@@ -811,11 +811,17 @@ impl EgressPort for MonolithEgressPort {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
         guarded_egress(&self.guard, EgressAuthority::Agent, "ardop_connect", &audit, || async move {
-            // modem_commands.rs:1123 modem_ardop_connect (Arc<ModemSession>).
+            // modem_commands.rs modem_ardop_connect (Arc<ModemSession>).
+            // rig-control Task 8/9: the MCP egress dial keeps the legacy
+            // single-target, no-tune, no-QSY behavior — `freq_hz` + the QSY
+            // candidate list are operator-UI concerns (Task 10), not agent
+            // egress. `None, None` reproduces the pre-rig-control single dial.
             crate::modem_commands::modem_ardop_connect(
                 app.clone(),
                 app.state::<Arc<crate::modem_status::ModemSession>>(),
                 target,
+                None,
+                None,
             )
             .await
             .map_err(EgressPortError::Failed)
