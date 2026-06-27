@@ -15,7 +15,7 @@ description = "Linux-native full-capability Winlink client"
 authors = ["Cameron Zucker"]
 edition = "2021"
 rust-version = "1.75"
-license = "GPL-3.0-or-later"
+license = "AGPL-3.0-or-later"
 # With the helper bin in src/bin/ (native_cms_probe), a bare
 # `cargo run` / `tauri dev` is ambiguous; name the app binary as the default.
 default-run = "tuxlink"

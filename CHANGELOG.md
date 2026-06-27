@@ -7,6 +7,7 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
 ## Unreleased
 
 ### Changed
+- License: relicensed from GPL-3.0-or-later to AGPL-3.0-or-later. The MCP server makes Tuxlink network-capable, which makes GPL's network/SaaS loophole relevant; AGPLv3 §13 closes it. The local UDS/stdio MCP transport is local-only, so this is future-proofing for any hosted/networked downstream deployment, ahead of the network surface.
 - Request Center — visual redesign: request-first location hero, compact category chips, line-icon set, and true-window proportions.
 
 ### Added
