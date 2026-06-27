@@ -38,8 +38,10 @@ export interface StationFinderPanelProps {
   onClose: () => void;
   /** The open modem that can consume a channel prefill (Use →). */
   activePrefillMode?: RadioMode;
-  /** Arm-on-demand handler for "Use →" (AppShell opens the modem + prefills). */
-  onUse?: (dial: FavoriteDial) => void;
+  /** Arm-on-demand handler for "Use →" (AppShell opens the modem + prefills).
+   *  `candidates` is the ranked QSY-on-fail list for the used channel's
+   *  station+mode (tuxlink-8fkkk Task B). */
+  onUse?: (dial: FavoriteDial, candidates?: FavoriteDial[]) => void;
 }
 
 const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet'];

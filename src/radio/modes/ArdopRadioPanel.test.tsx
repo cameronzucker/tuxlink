@@ -1632,6 +1632,77 @@ describe('<ArdopRadioPanel>', () => {
         expect(freqInput.value).toBe('7.103');
       });
     });
+
+    it('normalizes a kHz favorite freq on prefill (C4 — "14105.0" → "14.105")', async () => {
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      act(() => {
+        emitGatewayPrefill({ mode: 'ardop-hf', gateway: 'W6ABC', freq: '14105.0' });
+      });
+      await switchToManualTab();
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-freq') as HTMLInputElement).value).toBe('14.105');
+      });
+    });
+
+    it('clears the freq field on a prefill with no freq (C4 clear-on-empty)', async () => {
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+      const freqInput = (await screen.findByTestId('ardop-freq')) as HTMLInputElement;
+      fireEvent.change(freqInput, { target: { value: '7.103' } });
+      expect(freqInput.value).toBe('7.103');
+      act(() => {
+        emitGatewayPrefill({ mode: 'ardop-hf', gateway: 'W6ABC' });
+      });
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-freq') as HTMLInputElement).value).toBe('');
+      });
+    });
+
+    it('sends qsyCandidates on Connect when a Use → supplied a ranked list', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      act(() => {
+        emitGatewayPrefill({ mode: 'ardop-hf', gateway: 'W7DG', freq: '7.103' }, [
+          { mode: 'ardop-hf', gateway: 'W7DG', freq: '7.103' },
+          { mode: 'ardop-hf', gateway: 'W7DG', freq: '14.105' },
+        ]);
+      });
+      await switchToManualTab();
+      fireEvent.click(await screen.findByTestId('ardop-start-btn'));
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'modem_ardop_connect',
+          expect.objectContaining({
+            target: 'W7DG',
+            freqHz: 7103000,
+            qsyCandidates: [
+              { target: 'W7DG', freq_hz: 7103000 },
+              { target: 'W7DG', freq_hz: 14105000 },
+            ],
+          }),
+        );
+      });
+    });
+
+    it('sends qsyCandidates null on a manual single dial', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await switchToManualTab();
+      const targetInput = (await screen.findByTestId('ardop-target-input')) as HTMLInputElement;
+      fireEvent.change(targetInput, { target: { value: 'W7DG' } });
+      fireEvent.click(screen.getByTestId('ardop-start-btn'));
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'modem_ardop_connect',
+          expect.objectContaining({ target: 'W7DG', qsyCandidates: null }),
+        );
+      });
+    });
   });
 
   // tuxlink-8fkkk Task A1UI: Rig control is now the shared RigControlSection.

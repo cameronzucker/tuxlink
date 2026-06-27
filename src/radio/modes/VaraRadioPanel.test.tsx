@@ -547,6 +547,10 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
         target: 'W7RPT-10',
         intent: 'cms',
         transportKind: 'vara-hf',
+        // tuxlink-8fkkk A3/Task B: a manual target is a single dial with no freq
+        // typed — freqHz null (no pre-audio tune), qsyCandidates null (legacy path).
+        freqHz: null,
+        qsyCandidates: null,
       });
     });
   });
@@ -568,6 +572,84 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
         'modem_vara_b2f_exchange',
         expect.objectContaining({ transportKind: 'vara-fm' }),
       );
+    });
+  });
+
+  // ── tuxlink-8fkkk A3 + Task B: frequency element, Tune, freqHz + qsyCandidates
+  describe('Frequency element + QSY candidates (tuxlink-8fkkk)', () => {
+    it('Tune button is disabled when the frequency field is blank', async () => {
+      renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+      const tune = (await screen.findByTestId('vara-tune')) as HTMLButtonElement;
+      expect(tune.disabled).toBe(true);
+    });
+
+    it('Tune button fires ardop_tune_rig with freqHz when a valid frequency is entered', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+      const freq = (await screen.findByTestId('vara-freq')) as HTMLInputElement;
+      fireEvent.change(freq, { target: { value: '14.105' } });
+      const tune = (await screen.findByTestId('vara-tune')) as HTMLButtonElement;
+      expect(tune.disabled).toBe(false);
+      fireEvent.click(tune);
+      await waitFor(() => {
+        expect(invokeSpy).toHaveBeenCalledWith('ardop_tune_rig', { freqHz: 14105000 });
+      });
+    });
+
+    it('prefill from Find a Station fills the frequency field (normalized MHz)', async () => {
+      renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+      await screen.findByTestId('vara-freq');
+      await act(async () => {
+        emitGatewayPrefill({ mode: 'vara-hf', gateway: 'W7RMS-10', freq: '14105.0' });
+      });
+      await waitFor(() => {
+        expect((screen.getByTestId('vara-freq') as HTMLInputElement).value).toBe('14.105');
+      });
+    });
+
+    it('clears the frequency field when a prefilled dial carries no freq (C4 clear-on-empty)', async () => {
+      renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+      const freq = (await screen.findByTestId('vara-freq')) as HTMLInputElement;
+      fireEvent.change(freq, { target: { value: '7.103' } });
+      expect(freq.value).toBe('7.103');
+      await act(async () => {
+        emitGatewayPrefill({ mode: 'vara-hf', gateway: 'W7RMS-10' });
+      });
+      await waitFor(() => {
+        expect((screen.getByTestId('vara-freq') as HTMLInputElement).value).toBe('');
+      });
+    });
+
+    it('sends qsyCandidates on Send/Receive when a Use → supplied a ranked list', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+      // Transport already open so Send/Receive enables once a target is prefilled.
+      invokeSpy.mockImplementation(makeInvoke({ vara_status: openStatus }));
+      renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+      await screen.findByTestId('vara-send-receive-btn');
+      await act(async () => {
+        emitGatewayPrefill({ mode: 'vara-hf', gateway: 'W7RMS-10', freq: '7.103' }, [
+          { mode: 'vara-hf', gateway: 'W7RMS-10', freq: '7.103' },
+          { mode: 'vara-hf', gateway: 'W7RMS-10', freq: '14.105' },
+        ]);
+      });
+      // The prefill sets the target + freq; wait for the button to enable.
+      await waitFor(() => expect(screen.getByTestId('vara-send-receive-btn')).not.toBeDisabled());
+      fireEvent.click(screen.getByTestId('vara-send-receive-btn'));
+      await waitFor(() => {
+        expect(invokeSpy).toHaveBeenCalledWith(
+          'modem_vara_b2f_exchange',
+          expect.objectContaining({
+            target: 'W7RMS-10',
+            freqHz: 7103000,
+            qsyCandidates: [
+              { target: 'W7RMS-10', freq_hz: 7103000 },
+              { target: 'W7RMS-10', freq_hz: 14105000 },
+            ],
+          }),
+        );
+      });
     });
   });
 

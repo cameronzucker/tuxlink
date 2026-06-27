@@ -49,6 +49,11 @@ import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
 import type { RadioPanelMode } from '../types';
 import { RigControlSection } from './RigControlSection';
+import {
+  parseFreqInputToHz,
+  dialFreqToMhzString,
+  dialsToQsyCandidates,
+} from './freq';
 import './ArdopRadioPanel.css';
 import '../sections/ListenSection.css';
 
@@ -312,13 +317,7 @@ export function ArdopRadioPanel({
   // tuxlink-8fkkk: operator-entered frequency in MHz for CAT-based QSY before
   // connecting. "7.102" → 7102000 Hz. Empty/invalid → null (backend skips retune).
   const [freqMhz, setFreqMhz] = useState('');
-  const freqHz = useMemo<number | null>(() => {
-    const t = freqMhz.trim();
-    if (!t) return null;
-    const mhz = Number(t);
-    if (!Number.isFinite(mhz) || mhz <= 0) return null;
-    return Math.round(mhz * 1_000_000);
-  }, [freqMhz]);
+  const freqHz = useMemo<number | null>(() => parseFreqInputToHz(freqMhz), [freqMhz]);
   // tuxlink-ypz3 (3a): restore the persisted ARDOP target on mount so switching
   // modes (panel remounts) doesn't blank the previously-dialed station. Mirrors
   // the localStorage key the ribbon Connect (connectDispatch) reads. Keyed on
@@ -403,20 +402,27 @@ export function ArdopRadioPanel({
   // connection record IFF it matches the live peer. Cleared on a manual target
   // edit (a hand-typed target is not the prefilled favorite).
   const pendingDialRef = useRef<FavoriteDial | null>(null);
-  const handlePrefill = useCallback((dial: FavoriteDial) => {
-    setTarget(dial.gateway);
-    pendingDialRef.current = dial;
-    // tuxlink-vu97: persist so the ribbon Connect can dial this target with the
-    // pane closed.
-    writeLastTarget('ardop-hf', dial.gateway);
-    // tuxlink-8fkkk Task 11: extract numeric MHz from the dial's freq metadata
-    // ("7.103 MHz" → "7.103") and populate the frequency field so Connect tunes
-    // the rig automatically on the next Start click.
-    if (dial.freq) {
-      const m = dial.freq.match(/[\d.]+/);
-      if (m) setFreqMhz(m[0]);
-    }
-  }, []);
+  // tuxlink-8fkkk Task B: the ranked QSY-on-fail candidate list from the last
+  // Find-a-Station "Use →". Sent as `qsyCandidates` on Connect when it has more
+  // than one entry; a single/empty list falls back to the legacy single dial.
+  const pendingCandidatesRef = useRef<FavoriteDial[]>([]);
+  const handlePrefill = useCallback(
+    (dial: FavoriteDial, candidates?: FavoriteDial[]) => {
+      setTarget(dial.gateway);
+      pendingDialRef.current = dial;
+      pendingCandidatesRef.current = candidates ?? [];
+      // tuxlink-vu97: persist so the ribbon Connect can dial this target with the
+      // pane closed.
+      writeLastTarget('ardop-hf', dial.gateway);
+      // tuxlink-8fkkk C4: normalize the dial's freq metadata to a MHz string
+      // (handles both Find-a-Station MHz "7.103" and saved-favorite kHz
+      // "14105.0") and populate the field so Connect tunes the rig on the next
+      // Start click. CLEAR the field when the dial carries no parseable freq so
+      // a stale freq from a prior prefill never tunes the wrong frequency.
+      setFreqMhz(dialFreqToMhzString(dial) ?? '');
+    },
+    [],
+  );
 
   useEffect(
     () => listenGatewayPrefill('ardop-hf', handlePrefill),
@@ -733,9 +739,17 @@ export function ArdopRadioPanel({
     setConnecting(true);
     setConnectError(null);
     try {
+      // tuxlink-8fkkk Task B: when a Find-a-Station "Use →" supplied more than
+      // one ranked candidate, send the ordered `qsyCandidates` list — the
+      // backend's qsy_on_fail walk visits each in turn (a non-empty list
+      // overrides the single `target`/`freqHz`). Otherwise send the legacy
+      // single dial so the backend's one-element path is unchanged.
+      const candidates = pendingCandidatesRef.current;
       await invoke('modem_ardop_connect', {
         target: target.trim(),
         freqHz, // null when unset → backend skips CAT retune
+        qsyCandidates:
+          candidates.length > 1 ? dialsToQsyCandidates(candidates) : null,
       });
     } catch (e) {
       // tuxlink-nnjz: modem errors are surfaced in the session log (the backend
@@ -837,6 +851,9 @@ export function ArdopRadioPanel({
     // A hand-typed target is not the prefilled favorite — drop the association
     // so the connection record doesn't carry stale favorite metadata.
     pendingDialRef.current = null;
+    // tuxlink-8fkkk Task B: a manual target is a single dial — drop any ranked
+    // QSY candidates from a prior prefill so they don't fire for a hand-typed call.
+    pendingCandidatesRef.current = [];
     // tuxlink-vu97: persist the configured target so the ribbon Connect button
     // can fire ARDOP's full send/receive with this pane closed.
     writeLastTarget('ardop-hf', e.target.value);

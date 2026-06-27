@@ -88,7 +88,14 @@ describe('StationRail', () => {
     fireEvent.click(vara40);
     expect(handler).toHaveBeenCalled();
     const evt = handler.mock.calls[0][0] as CustomEvent;
-    expect(evt.detail).toEqual({ mode: 'vara-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' });
+    // tuxlink-8fkkk Task B: the event detail is now { dial, candidates }. The
+    // primary dial is the clicked channel; candidates is the station's ranked
+    // vara-hf list (reliability DESC: 40m 0.86 then 80m 0.74).
+    expect(evt.detail.dial).toEqual({ mode: 'vara-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' });
+    expect(evt.detail.candidates).toEqual([
+      { mode: 'vara-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' },
+      { mode: 'vara-hf', gateway: 'N0DAJ', freq: '3.590', grid: 'DM34oa' },
+    ]);
     window.removeEventListener(GATEWAY_PREFILL_EVENT, handler as EventListener);
   });
 
@@ -106,7 +113,12 @@ describe('StationRail', () => {
     const ardop = screen.getByTestId('use-ardop-hf-7103');
     expect(ardop.hasAttribute('disabled')).toBe(false);
     fireEvent.click(ardop);
-    expect(onUse).toHaveBeenCalledWith({ mode: 'ardop-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' });
+    // tuxlink-8fkkk Task B: onUse now receives (dial, candidates). The station
+    // has one ardop-hf channel, so the ranked list is the single clicked dial.
+    expect(onUse).toHaveBeenCalledWith(
+      { mode: 'ardop-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' },
+      [{ mode: 'ardop-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' }],
+    );
   });
 
   // tuxlink-5016 — save-to-favorites affordance.
