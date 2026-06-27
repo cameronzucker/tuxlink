@@ -1328,6 +1328,17 @@ pub fn run() {
                         compose: std::sync::Arc::new(crate::mcp_ports::MonolithComposePort::new(
                             h.clone(),
                         )),
+                        // Phase 3.2 Chunk 2: station-intelligence READS. Both are
+                        // ungated, non-tainting reads — the station finder routes
+                        // through the polite offline cache; prediction/solar are
+                        // offline compute. The prediction port injects the
+                        // operator's OWN tx_grid from config (never agent-supplied).
+                        stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(
+                            h.clone(),
+                        )),
+                        prediction: std::sync::Arc::new(
+                            crate::mcp_ports::MonolithPredictionPort::new(h.clone()),
+                        ),
                     });
                     let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
 

@@ -37,16 +37,19 @@ use tauri::{AppHandle, Manager};
 
 use tuxlink_mcp_core::ports::{
     AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
-    BluetoothDeviceDto, CatalogEntryDto, ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto,
-    DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto, GribRequestDto, LogLineDto,
-    LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto,
-    ParsedMessageDto, PlatformInfoDto, PortError, PositionStatusDto, SearchPort, SearchQueryDto,
-    SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, StatusPort, VaraConfigDto,
-    VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto, ComposePort,
+    ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
+    GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
+    ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
+    PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort, SearchPort,
+    SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
+    SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
+    VaraConfigDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
-    validate_subject, validate_vara_bandwidth,
+    validate_frequencies_khz, validate_grid, validate_history_hours, validate_subject,
+    validate_vara_bandwidth,
 };
 use tuxlink_security::{guarded_egress, EgressAudit, EgressAuthority, EgressGuard};
 
@@ -1730,9 +1733,371 @@ impl ComposePort for MonolithComposePort {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Station-intelligence ports (phase 3.2 / Chunk 2). Both are Tier-1 READS:
+// `find_stations` and `predict_path`/`solar` call the existing backend logic and
+// curate the monolith DTO into the agent-facing mcp-core shape. NEITHER taints
+// (public directory data / offline compute) and NEITHER is gated (read-only;
+// never transmits) — the router tools are inert (no `guarded_egress`, no
+// `EgressGuard`). Curation done here:
+//   - GatewayDto drops sysop_name / email / homepage (PII + injection surface).
+//   - PredictRequestDto carries NO tx_grid: the operator's OWN grid is injected
+//     from config here (a malicious agent must not be able to spoof the
+//     station's location into a prediction).
+// ---------------------------------------------------------------------------
+
+/// Map an agent-facing [`StationModeDto`] onto the monolith [`ListingMode`].
+fn map_station_mode(mode: StationModeDto) -> crate::catalog::stations::ListingMode {
+    use crate::catalog::stations::ListingMode;
+    match mode {
+        StationModeDto::VaraHf => ListingMode::VaraHf,
+        StationModeDto::Packet => ListingMode::Packet,
+        StationModeDto::ArdopHf => ListingMode::ArdopHf,
+        StationModeDto::Pactor => ListingMode::Pactor,
+        StationModeDto::RobustPacket => ListingMode::RobustPacket,
+    }
+}
+
+/// Map a monolith [`ListingMode`] back onto the agent-facing [`StationModeDto`]
+/// (the listing's mode becomes each gateway's `mode` in the flattened output).
+fn map_listing_mode(mode: crate::catalog::stations::ListingMode) -> StationModeDto {
+    use crate::catalog::stations::ListingMode;
+    match mode {
+        ListingMode::VaraHf => StationModeDto::VaraHf,
+        ListingMode::Packet => StationModeDto::Packet,
+        ListingMode::ArdopHf => StationModeDto::ArdopHf,
+        ListingMode::Pactor => StationModeDto::Pactor,
+        ListingMode::RobustPacket => StationModeDto::RobustPacket,
+    }
+}
+
+/// Map a monolith [`GatewayAntenna`] onto the agent-facing [`GatewayAntennaDto`].
+fn map_gateway_antenna_out(
+    a: crate::catalog::stations::GatewayAntenna,
+) -> GatewayAntennaDto {
+    use crate::catalog::stations::GatewayAntenna;
+    match a {
+        GatewayAntenna::Beam => GatewayAntennaDto::Beam,
+        GatewayAntenna::Dipole => GatewayAntennaDto::Dipole,
+        GatewayAntenna::Vertical => GatewayAntennaDto::Vertical,
+    }
+}
+
+/// Map an agent-supplied [`GatewayAntennaDto`] onto the monolith
+/// [`GatewayAntenna`] (the far-end antenna refinement for a prediction).
+fn map_gateway_antenna_in(
+    a: GatewayAntennaDto,
+) -> crate::catalog::stations::GatewayAntenna {
+    use crate::catalog::stations::GatewayAntenna;
+    match a {
+        GatewayAntennaDto::Beam => GatewayAntenna::Beam,
+        GatewayAntennaDto::Dipole => GatewayAntenna::Dipole,
+        GatewayAntennaDto::Vertical => GatewayAntenna::Vertical,
+    }
+}
+
+/// Map a dial frequency (kHz) onto its amateur-band label, or `None` when the
+/// dial falls outside every modeled HF/VHF/UHF amateur band the station finder
+/// surfaces. The bounds mirror the agent-facing band selectors the
+/// `find_stations` filter accepts; `60m` uses the channelized 5 MHz allocation
+/// span. Edges are inclusive. Used for the client-side BAND filter — a gateway
+/// is kept when at least one of its dials maps to a requested band.
+fn khz_to_band(khz: f64) -> Option<&'static str> {
+    // Inclusive ranges, low..=high in kHz.
+    const BANDS: &[(f64, f64, &str)] = &[
+        (1800.0, 2000.0, "160m"),
+        (3500.0, 4000.0, "80m"),
+        (5300.0, 5410.0, "60m"),
+        (7000.0, 7300.0, "40m"),
+        (10100.0, 10150.0, "30m"),
+        (14000.0, 14350.0, "20m"),
+        (18068.0, 18168.0, "17m"),
+        (21000.0, 21450.0, "15m"),
+        (24890.0, 24990.0, "12m"),
+        (28000.0, 29700.0, "10m"),
+    ];
+    for (lo, hi, label) in BANDS {
+        if khz >= *lo && khz <= *hi {
+            return Some(label);
+        }
+    }
+    None
+}
+
+/// True when at least one of `freqs_khz` falls in one of the `wanted` bands.
+/// Band labels are compared case-insensitively (`"40M"` matches `"40m"`).
+fn any_freq_in_bands(freqs_khz: &[f64], wanted: &[String]) -> bool {
+    freqs_khz.iter().any(|f| match khz_to_band(*f) {
+        Some(band) => wanted.iter().any(|w| w.eq_ignore_ascii_case(band)),
+        None => false,
+    })
+}
+
+/// [`StationPort`] adapter over the catalog station-list poll + offline cache.
+pub struct MonolithStationPort {
+    app: AppHandle,
+}
+
+impl MonolithStationPort {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+#[async_trait]
+impl StationPort for MonolithStationPort {
+    async fn find_stations(
+        &self,
+        filter: StationFilterDto,
+    ) -> Result<StationListDto, PortError> {
+        use crate::catalog::stations::ListingMode;
+        // VALIDATE the optional history bound up front (cap 720 h): a bad bound is
+        // a malformed request, rejected before any fetch. (No armed-grant concept
+        // here — this is a read — so a validation miss is simply Internal.)
+        validate_history_hours(filter.history_hours)
+            .map_err(|e| PortError::Internal(e.to_string()))?;
+
+        // Map the agent-supplied modes onto the monolith ListingModes; an empty
+        // selector means "all confirmed modes" (ListingMode::ALL).
+        let modes: Vec<ListingMode> = if filter.modes.is_empty() {
+            ListingMode::ALL.to_vec()
+        } else {
+            filter.modes.iter().copied().map(map_station_mode).collect()
+        };
+
+        // Resolve the managed StationsCache (the same Arc the
+        // `catalog_fetch_stations` command's State extractor would yield) and call
+        // the command fn directly via that state. The command body routes through
+        // the polite cache (TTL + per-key coalescing + stale-on-error), so this is
+        // the identical code path the GUI finder uses.
+        let cache = self
+            .app
+            .state::<Arc<crate::catalog::stations_cache::StationsCache>>();
+        let listings = crate::catalog::commands::catalog_fetch_stations(
+            modes,
+            filter.history_hours,
+            cache,
+        )
+        .await
+        .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+
+        // Provenance: the cache stamps `fetched_at_ms` on every entry it stores or
+        // stale-returns (a fresh in-memory parse leaves it `None`). The
+        // command always routes through the cache, so a `Some` stamp means the
+        // listing came through the cache layer. Surface the MOST-RECENT stamp
+        // across the fetched modes as the list-level `fetched_at_ms`, and treat
+        // `from_cache = any listing carried a stamp` (the honest signal the cache
+        // exposes at this boundary — it does not publish a per-call hit/miss flag).
+        let fetched_at_ms = listings
+            .iter()
+            .filter_map(|l| l.fetched_at_ms)
+            .max();
+        let from_cache = fetched_at_ms.is_some();
+
+        // Flatten every listing's gateways into curated GatewayDtos. Each
+        // gateway's `mode` is the listing's mode. PII (sysop_name/email/homepage)
+        // is dropped — it never crosses into mcp-core. `service_codes` is read
+        // internally by the command (keyring) and is NEVER part of the output.
+        let mut gateways: Vec<GatewayDto> = Vec::new();
+        for listing in &listings {
+            let mode = map_listing_mode(listing.mode);
+            for g in &listing.gateways {
+                // Apply the client-side BAND filter: when `bands` is non-empty,
+                // keep only gateways with >=1 dial in a requested band.
+                if !filter.bands.is_empty()
+                    && !any_freq_in_bands(&g.frequencies_khz, &filter.bands)
+                {
+                    continue;
+                }
+                gateways.push(GatewayDto {
+                    mode,
+                    channel: g.channel.clone(),
+                    callsign: g.callsign.clone(),
+                    grid: g.grid.clone(),
+                    location: g.location.clone(),
+                    frequencies_khz: g.frequencies_khz.clone(),
+                    last_update: g.last_update.clone(),
+                    antenna: g.antenna.map(map_gateway_antenna_out),
+                    // DROPPED on purpose: sysop_name, email, homepage.
+                });
+            }
+        }
+
+        Ok(StationListDto {
+            gateways,
+            fetched_at_ms,
+            from_cache,
+        })
+    }
+}
+
+/// Load the persisted solar snapshot's fields for the agent surface, falling
+/// back to the bundled SSN when no live snapshot exists.
+///
+/// The persisted `solar-snapshot.json` (written by "Update propagation data")
+/// carries only the live indices (SFI/A/K) + a freshness stamp + provenance — it
+/// does NOT carry the smoothed SSN, which is the *prediction* input and lives in
+/// the SSN forecast table. The agent DTO needs both (`ssn` is always present), so
+/// this reads the snapshot for indices/stamp/source and the forecast (writable
+/// then bundled) for the current month's SSN. When no snapshot is on disk the
+/// indices degrade to `None`, `ssn` comes from the bundled forecast, and the
+/// source is reported as `"bundled"` — never an error (offline-first; absent
+/// solar data is a fallback, not a failure).
+fn load_solar_snapshot_dto() -> SolarSnapshotDto {
+    use crate::catalog::stations_cache::{Clock, SystemClock};
+    use crate::propagation::commands::utc_year_month;
+    use crate::propagation::solar_update::SolarSnapshot;
+    use crate::propagation::ssn::SsnForecast;
+
+    let config_dir = crate::config::config_path()
+        .parent()
+        .map(std::path::Path::to_path_buf);
+
+    // Current UTC year/month drives the SSN lookup (same as a prediction).
+    let clock = SystemClock;
+    let now_ms = clock.now_millis();
+    let (year, month) = utc_year_month(&clock);
+
+    let forecast = match &config_dir {
+        Some(dir) => SsnForecast::load_writable_then_bundled(dir),
+        None => SsnForecast::from_json(crate::propagation::ssn::BUNDLED_SSN_FORECAST)
+            .unwrap_or_default(),
+    };
+    let ssn = forecast.ssn_for(year, month);
+
+    let snapshot = config_dir.as_deref().and_then(SolarSnapshot::load);
+    match snapshot {
+        Some(snap) => {
+            let (sfi, a_index, k_index) = match snap.indices {
+                Some(i) => (Some(i.sfi), i.a_index, i.k_index),
+                None => (None, None, None),
+            };
+            SolarSnapshotDto {
+                sfi,
+                a_index,
+                k_index,
+                ssn,
+                updated_at_ms: snap.updated_at_ms,
+                source: snap.source,
+            }
+        }
+        None => SolarSnapshotDto {
+            sfi: None,
+            a_index: None,
+            k_index: None,
+            ssn,
+            // No live snapshot on disk: the SSN comes from the bundled (or
+            // operator-persisted) forecast table; stamp "now" so the freshness
+            // caption is sensible and label the provenance "bundled".
+            updated_at_ms: now_ms,
+            source: "bundled".to_string(),
+        },
+    }
+}
+
+/// [`PredictionPort`] adapter over the offline voacapl prediction + solar reads.
+pub struct MonolithPredictionPort {
+    app: AppHandle,
+}
+
+impl MonolithPredictionPort {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+#[async_trait]
+impl PredictionPort for MonolithPredictionPort {
+    async fn predict_path(
+        &self,
+        req: PredictRequestDto,
+    ) -> Result<PathPredictionDto, PortError> {
+        use crate::config::PositionPrecision;
+        use crate::propagation::commands::PropagationState;
+
+        // VALIDATE the agent-supplied inputs BEFORE doing any work (reuse the
+        // mcp-core validators): a 4/6-char Maidenhead rx_grid and a 1..=11 dial
+        // list each within 1800..=30000 kHz. A bad input is a malformed request.
+        validate_grid(&req.rx_grid)
+            .map_err(|e| PortError::Internal(e.to_string()))?;
+        validate_frequencies_khz(&req.frequencies_khz)
+            .map_err(|e| PortError::Internal(e.to_string()))?;
+
+        // Resolve the operator's OWN tx_grid from config — NEVER agent-supplied.
+        // Mirror position_status's grid-clamp: effective_broadcast_locator honors
+        // gps_state, then broadcast_grid clamps to a 4-char locator for the agent
+        // surface. (A malicious agent must not be able to spoof the station's
+        // location into a prediction.)
+        let arbiter_state = self
+            .app
+            .state::<Arc<crate::position::PositionArbiter>>();
+        let arbiter: &crate::position::PositionArbiter = &arbiter_state;
+        let cfg = crate::config::read_config()
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+        let raw_grid =
+            crate::position::effective_broadcast_locator(&cfg, Some(arbiter));
+        let tx_grid =
+            crate::config::broadcast_grid(&raw_grid, PositionPrecision::FourCharGrid);
+
+        // Map the optional far-end antenna refinement onto the monolith enum.
+        let gateway_antenna = req.gateway_antenna.map(map_gateway_antenna_in);
+
+        // Resolve the propagation engine state; a soft-disabled engine (binary not
+        // found at startup, scratch dir unavailable) is `Unavailable` → surface
+        // its reason. The command's own body re-checks this, but resolving it here
+        // lets a disabled engine return `PortError::Unavailable` cleanly.
+        let state = self.app.state::<PropagationState>();
+        if let PropagationState::Unavailable(reason) = state.inner() {
+            return Err(PortError::Unavailable(redact_err(reason.clone())));
+        }
+
+        // Call the same command path the GUI finder uses, with tx_grid pinned to
+        // the resolved operator grid (NOT agent-supplied).
+        let prediction = crate::propagation::commands::propagation_predict_path(
+            tx_grid.clone(),
+            req.rx_grid,
+            req.frequencies_khz,
+            gateway_antenna,
+            state,
+        )
+        .await
+        .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+
+        // Curate the monolith PathPrediction into the agent DTO. `tx_grid` carries
+        // the 4-char operator grid actually used (provenance). Each channel keeps
+        // rel/snr/mufday-by-hour + the exact input dial; `voacap_mhz` is dropped
+        // (the mcp-core ChannelReliabilityDto does not carry it).
+        Ok(PathPredictionDto {
+            bearing_deg: prediction.bearing_deg,
+            distance_km: prediction.distance_km,
+            ssn: prediction.ssn,
+            year: prediction.year,
+            month: prediction.month,
+            tx_grid,
+            channels: prediction
+                .channels
+                .into_iter()
+                .map(|c| ChannelReliabilityDto {
+                    frequency_khz: c.frequency_khz,
+                    rel_by_hour: c.rel_by_hour,
+                    snr_by_hour: c.snr_by_hour,
+                    mufday_by_hour: c.mufday_by_hour,
+                })
+                .collect(),
+        })
+    }
+
+    async fn solar(&self) -> Result<SolarSnapshotDto, PortError> {
+        // Never errors hard when solar data is merely absent: the loader returns
+        // the bundled-SSN fallback (ssn present, indices None, source "bundled").
+        Ok(load_solar_snapshot_dto())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::minimize_bt_mac;
+    use super::{any_freq_in_bands, khz_to_band};
 
     #[test]
     fn minimize_bt_mac_masks_middle_octets() {
@@ -1759,5 +2124,44 @@ mod tests {
     fn minimize_bt_mac_masks_three_segment_input() {
         // Exactly three segments: first + last kept, single middle masked.
         assert_eq!(minimize_bt_mac("AA:BB:CC"), "AA:**:CC");
+    }
+
+    // --- station-intelligence band helpers (pure; CI-runnable) ----------------
+
+    #[test]
+    fn khz_to_band_maps_each_amateur_band() {
+        // One in-band dial per modeled band; edges inclusive.
+        assert_eq!(khz_to_band(1800.0), Some("160m"));
+        assert_eq!(khz_to_band(2000.0), Some("160m"));
+        assert_eq!(khz_to_band(3589.0), Some("80m"));
+        assert_eq!(khz_to_band(5357.0), Some("60m"));
+        assert_eq!(khz_to_band(7103.0), Some("40m"));
+        assert_eq!(khz_to_band(10147.5), Some("30m"));
+        assert_eq!(khz_to_band(14096.4), Some("20m"));
+        assert_eq!(khz_to_band(18106.0), Some("17m"));
+        assert_eq!(khz_to_band(21096.0), Some("15m"));
+        assert_eq!(khz_to_band(24920.0), Some("12m"));
+        assert_eq!(khz_to_band(28120.0), Some("10m"));
+    }
+
+    #[test]
+    fn khz_to_band_rejects_out_of_band_and_vhf() {
+        // Between bands (e.g. the 30m..20m gap) and VHF/UHF packet dials (in kHz
+        // after normalization, e.g. 144925) map to no HF amateur band.
+        assert_eq!(khz_to_band(12000.0), None);
+        assert_eq!(khz_to_band(144925.0), None);
+        assert_eq!(khz_to_band(0.0), None);
+    }
+
+    #[test]
+    fn any_freq_in_bands_matches_case_insensitively() {
+        let freqs = vec![3589.0, 144925.0]; // 80m + a VHF dial
+        assert!(any_freq_in_bands(&freqs, &["80m".to_string()]));
+        // Case-insensitive label compare.
+        assert!(any_freq_in_bands(&freqs, &["80M".to_string()]));
+        // No requested band matches → false.
+        assert!(!any_freq_in_bands(&freqs, &["40m".to_string()]));
+        // The VHF dial alone never matches an HF band selector.
+        assert!(!any_freq_in_bands(&[144925.0], &["20m".to_string()]));
     }
 }
