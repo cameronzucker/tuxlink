@@ -1,10 +1,15 @@
-//! MCP server for the agent caller (phase 3.1 transport spine).
+//! MCP server core for the agent caller (phase 3.1 transport spine).
 //!
-//! This module exposes the Tuxlink MCP endpoint. Phase 3.1 ships exactly ONE
-//! inert tool — [`router::TuxlinkMcp::server_info`] — which reports the app
-//! name/version plus the live [`EgressGuard`] arm/taint state, proving the
-//! spine reaches real security state. No real capability is wired here; later
-//! phases add tools, redaction, taint-setting, and the egress gate.
+//! This crate exposes the Tuxlink MCP endpoint as a standalone, Pi-buildable
+//! library so BOTH the Tauri monolith AND the tier-2 testserver can serve the
+//! SAME real router over the SAME real [`tuxlink_security::EgressGuard`] without
+//! pulling in the Tauri app.
+//!
+//! Phase 3.1 ships exactly ONE inert tool — [`router::TuxlinkMcp::server_info`]
+//! — which reports the app name/version plus the live `EgressGuard` arm/taint
+//! state, proving the spine reaches real security state. No real capability is
+//! wired here; later phases add tools, redaction, taint-setting, and the egress
+//! gate.
 //!
 //! Design seam: all of `server_info`'s logic lives in the pure, transport-free
 //! [`server_info_view`] free function so it is unit-testable WITHOUT the rmcp
@@ -15,9 +20,13 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
-use crate::ui_core::security::EgressGuard;
+use tuxlink_security::EgressGuard;
 
 pub mod router;
+pub mod transport_uds;
+
+pub use router::TuxlinkMcp;
+pub use transport_uds::serve;
 
 /// The live handles the MCP router needs. Phase 3.1's only tool (`server_info`)
 /// reads the [`EgressGuard`]; later phases (3.2+) extend this bundle with the

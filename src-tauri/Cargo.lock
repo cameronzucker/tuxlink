@@ -6761,9 +6761,7 @@ dependencies = [
  "rand 0.10.1",
  "regex",
  "reqwest",
- "rmcp",
  "rusqlite",
- "schemars 1.2.1",
  "serde",
  "serde_json",
  "serial_test",
@@ -6792,6 +6790,8 @@ dependencies = [
  "tracing-subscriber",
  "tracing-test",
  "tuxlink",
+ "tuxlink-mcp-core",
+ "tuxlink-security",
  "urlencoding",
  "uuid",
  "walkdir",
@@ -6809,8 +6809,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "tuxlink-mcp-core"
+version = "0.0.0"
+dependencies = [
+ "rmcp",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tuxlink-security",
+]
+
+[[package]]
 name = "tuxlink-mcp-testserver"
 version = "0.0.0"
+
+[[package]]
+name = "tuxlink-security"
+version = "0.0.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "typeid"

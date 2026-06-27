@@ -3,8 +3,8 @@
 //! [`TuxlinkMcp`] is the rmcp handler. It owns the shared [`McpState`] and a
 //! generated [`ToolRouter`]. Phase 3.1 registers exactly one tool —
 //! [`TuxlinkMcp::server_info`] — a thin wrapper over the pure
-//! [`server_info_view`](crate::mcp::server_info_view); all logic lives there so
-//! the transport layer stays untested-by-design (it is exercised at tier-2).
+//! [`server_info_view`](crate::server_info_view); all logic lives there so the
+//! transport layer stays untested-by-design (it is exercised at tier-2).
 
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ use rmcp::model::{
 };
 use rmcp::{tool, tool_handler, tool_router, ErrorData};
 
-use crate::mcp::{server_info_view, McpState};
+use crate::{server_info_view, McpState};
 
 /// The Tuxlink MCP server handler. Cloned per the rmcp serve loop; the inner
 /// [`McpState`] is `Arc`-shared so all clones see the same live guard state.
