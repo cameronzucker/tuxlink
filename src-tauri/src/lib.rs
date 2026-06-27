@@ -1629,6 +1629,8 @@ pub fn run() {
             crate::grib::commands::grib_send_request,
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)
             crate::modem_commands::config_set_ardop,   // tuxlink-4ek (ARDOP config write)
+            crate::modem_commands::config_get_rig,      // tuxlink-8fkkk (radio-level rig config read; shared ARDOP+VARA)
+            crate::modem_commands::config_set_rig,      // tuxlink-8fkkk (radio-level rig config write)
             crate::modem_commands::modem_get_status,   // tuxlink-4ek Task 3.2 (session snapshot)
             crate::modem_commands::modem_ardop_disconnect, // tuxlink-4ek Task 3.2 (clear consent + reset)
             crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)

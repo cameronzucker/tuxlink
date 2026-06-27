@@ -180,6 +180,7 @@ pub async fn persist_cms_impl(
         packet: crate::config::PacketConfig::default(),
         modem_ardop: None,
         modem_vara: None,
+        rig: crate::config::RigUiConfig::default(),
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
         network_po_favorites: Vec::new(),
         // tuxlink-pmp5: review pending messages before download is the default
@@ -419,6 +420,7 @@ pub async fn persist_offline_impl(
         packet: crate::config::PacketConfig::default(),
         modem_ardop: None,
         modem_vara: None,
+        rig: crate::config::RigUiConfig::default(),
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
         network_po_favorites: Vec::new(),
         // tuxlink-pmp5: review pending messages before download is the default

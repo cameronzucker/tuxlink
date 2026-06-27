@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 
-use crate::config::{self, ArdopUiConfig, Config, PttMethod};
+use crate::config::{self, ArdopUiConfig, Config, PttMethod, RigUiConfig};
 use crate::modem_status::{ModemSession, ModemState, ModemStatus};
 use crate::native_mailbox::Mailbox;
 use crate::session_log::SessionLogState;
@@ -117,6 +117,27 @@ pub fn config_get_ardop() -> ArdopUiConfig {
 pub fn config_set_ardop(value: ArdopUiConfig) -> Result<(), String> {
     let mut cfg = config::read_config().map_err(|e| format!("read failed: {e}"))?;
     cfg.modem_ardop = Some(value);
+    config::write_config_atomic(&cfg).map_err(|e| format!("save failed: {e}"))
+}
+
+/// Return the persisted radio-level rig configuration (tuxlink-8fkkk), or the
+/// struct default if nothing has been written yet (first run) or the config
+/// file is absent. Shared by the ARDOP and VARA rig-control sections.
+#[tauri::command]
+pub fn config_get_rig() -> RigUiConfig {
+    config::read_config()
+        .map(|cfg| cfg.rig)
+        .unwrap_or_default()
+}
+
+/// Persist a new radio-level rig configuration (tuxlink-8fkkk). Reads the
+/// current config, replaces `rig`, and writes atomically. Returns an error if
+/// the config file cannot be read (e.g. wizard has not been completed) or the
+/// write fails.
+#[tauri::command]
+pub fn config_set_rig(value: RigUiConfig) -> Result<(), String> {
+    let mut cfg = config::read_config().map_err(|e| format!("read failed: {e}"))?;
+    cfg.rig = value;
     config::write_config_atomic(&cfg).map_err(|e| format!("save failed: {e}"))
 }
 
@@ -355,7 +376,7 @@ where
     // captured state into the constructed transport) keep compiling.
 
     // ─── Translate ArdopUiConfig (frontend) → ArdopConfig (backend) ─────
-    let ardop_cfg = ardop_config_for(ardop_ui)?;
+    let ardop_cfg = ardop_config_for(ardop_ui, &cfg.rig)?;
 
     // Mark spawning so any concurrent status_snapshot sees the transition
     // before the (potentially slow) ardopcf bind-wait + init.
@@ -507,12 +528,14 @@ where
                 // close-serial path `rig` is `None` (the serial was released
                 // after tune) so there's nothing to poll. The thread opens its
                 // own rigctld client; the managed rig handle is independent.
-                let want_poll = rig.is_some() && ardop_ui.live_vfo_poll;
+                // tuxlink-8fkkk: live-VFO poll + rigctld endpoint are radio-level
+                // (Config.rig), not ARDOP-specific.
+                let want_poll = rig.is_some() && cfg.rig.live_vfo_poll;
                 session.set_rig(rig);
                 if want_poll {
                     session.start_rig_poll(
-                        ardop_ui.rigctld_host.clone(),
-                        ardop_ui.rigctld_port,
+                        cfg.rig.rigctld_host.clone(),
+                        cfg.rig.rigctld_port,
                     );
                 }
                 connected = Some(info);
@@ -576,7 +599,7 @@ where
     let target = candidate.target.as_str();
 
     // ─── Translate ArdopUiConfig (frontend) → ArdopConfig (backend) ─────
-    let ardop_cfg = ardop_config_for(ardop_ui)?;
+    let ardop_cfg = ardop_config_for(ardop_ui, &cfg.rig)?;
 
     // Mark spawning so any concurrent status_snapshot sees the transition
     // before the (potentially slow) ardopcf bind-wait + init.
@@ -602,7 +625,7 @@ where
     // AFTER init, BEFORE connect_arq (audio). Close-serial radios release the
     // serial here; DRA-100 keeps the rig and hands it back for session storage.
     // On a tune error, drop the transport first so ardopcf is reaped.
-    let live_rig = match tune_rig_for_connect(ardop_ui, candidate.freq_hz) {
+    let live_rig = match tune_rig_for_connect(&cfg.rig, candidate.freq_hz) {
         Ok(rig) => rig,
         Err(e) => {
             drop(transport);
@@ -670,7 +693,7 @@ pub fn start_modem_listen_only<F>(
 where
     F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
 {
-    let ardop_cfg = ardop_config_for(ardop_ui)?;
+    let ardop_cfg = ardop_config_for(ardop_ui, &cfg.rig)?;
 
     let mut snap = session.status_snapshot();
     snap.state = ModemState::Spawning;
@@ -766,7 +789,7 @@ pub fn spawn_and_init_ardop_inner<F>(
 where
     F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
 {
-    let ardop_cfg = ardop_config_for(ardop_ui)?;
+    let ardop_cfg = ardop_config_for(ardop_ui, &cfg.rig)?;
 
     let mut snap = session.status_snapshot();
     snap.state = ModemState::Spawning;
@@ -1146,23 +1169,26 @@ pub(crate) fn hex_encode_cat_cmd(cmd: &str) -> String {
 /// device. The operator must pick the CAT serial port in the panel first.
 pub(crate) fn cat_bridge_spec_from(
     ardop_ui: &ArdopUiConfig,
+    rig: &RigUiConfig,
 ) -> Result<Option<crate::winlink::modem::ardop::CatBridgeSpec>, String> {
     if ardop_ui.ptt_method != PttMethod::CatCommand {
         return Ok(None);
     }
-    let serial_path = ardop_ui
+    // tuxlink-8fkkk: the CAT serial link (path + baud) is radio-level and lives
+    // on RigUiConfig; key/unkey/bridge_port stay PTT-method-specific on ArdopUiConfig.
+    let serial_path = rig
         .cat_serial_path
         .clone()
         .filter(|p| !p.trim().is_empty())
         .ok_or_else(|| {
             "CAT-command PTT is selected but no CAT serial device is configured — \
-             set the CAT serial port in the ARDOP panel before connecting"
+             set the CAT serial port in the Rig control panel before connecting"
                 .to_string()
         })?;
     Ok(Some(crate::winlink::modem::ardop::CatBridgeSpec {
         bridge_port: ardop_ui.cat_bridge_port,
         serial_path,
-        baud: ardop_ui.cat_baud,
+        baud: rig.cat_baud,
         key_cmd: ardop_ui.cat_key_cmd.clone(),
         unkey_cmd: ardop_ui.cat_unkey_cmd.clone(),
     }))
@@ -1180,7 +1206,7 @@ pub(crate) fn cat_bridge_spec_from(
 ///
 /// Fails closed via [`cat_bridge_spec_from`] when CAT-command PTT is selected
 /// without a configured CAT serial device.
-fn ardop_config_for(ardop_ui: &ArdopUiConfig) -> Result<ArdopConfig, String> {
+fn ardop_config_for(ardop_ui: &ArdopUiConfig, rig: &RigUiConfig) -> Result<ArdopConfig, String> {
     Ok(ArdopConfig {
         binary: resolve_ardop_binary(&ardop_ui.binary),
         extra_args: build_ardop_extra_args(ardop_ui),
@@ -1189,8 +1215,9 @@ fn ardop_config_for(ardop_ui: &ArdopUiConfig) -> Result<ArdopConfig, String> {
         data_port: ardop_ui.cmd_port.saturating_add(1),
         audio_device_path: None,
         // tuxlink-wu0k: spawn the close-serial CAT-PTT bridge when the operator
-        // selected CAT PTT; None for VOX / serial-RTS.
-        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
+        // selected CAT PTT; None for VOX / serial-RTS. tuxlink-8fkkk: the CAT
+        // serial link is read from the radio-level rig config.
+        cat_bridge: cat_bridge_spec_from(ardop_ui, rig)?,
     })
 }
 
@@ -1415,8 +1442,8 @@ pub async fn modem_ardop_connect(
         _ => vec![DialCandidate { target, freq_hz }],
     };
     // QSY-on-fail is an operator config flag; it only matters when the list has
-    // more than one candidate.
-    let qsy_on_fail = ardop_ui.qsy_on_fail;
+    // more than one candidate. tuxlink-8fkkk: radio-level (Config.rig).
+    let qsy_on_fail = cfg.rig.qsy_on_fail;
 
     let session = Arc::clone(session.inner());
     // tuxlink-ngsk: route this session's cmd-port traffic into the session log.
@@ -1720,21 +1747,22 @@ pub fn parse_b2f_intent(s: &str) -> Result<SessionIntent, String> {
 
 // ── Task 7: rig-control translation helper + Tune-only command ──────────────
 
-/// Build a `tux_rig::RigConfig` from the ARDOP UI config, or `None` if rig
-/// control is not configured (no hamlib model or no CAT serial).
-pub(crate) fn rig_config_from(ardop_ui: &ArdopUiConfig) -> Option<tux_rig::RigConfig> {
-    let model = ardop_ui.rig_hamlib_model?;
-    let serial_path = ardop_ui
+/// Build a `tux_rig::RigConfig` from the radio-level rig config, or `None` if
+/// rig control is not configured (no hamlib model or no CAT serial).
+/// tuxlink-8fkkk: reads `Config.rig` (shared by ARDOP + VARA), not `ArdopUiConfig`.
+pub(crate) fn rig_config_from(rig: &RigUiConfig) -> Option<tux_rig::RigConfig> {
+    let model = rig.rig_hamlib_model?;
+    let serial_path = rig
         .cat_serial_path
         .clone()
         .filter(|p| !p.trim().is_empty())?;
     Some(tux_rig::RigConfig {
-        binary: ardop_ui.rigctld_binary.clone(),
+        binary: rig.rigctld_binary.clone(),
         model,
         serial_path,
-        baud: ardop_ui.cat_baud,
-        host: ardop_ui.rigctld_host.clone(),
-        port: ardop_ui.rigctld_port,
+        baud: rig.cat_baud,
+        host: rig.rigctld_host.clone(),
+        port: rig.rigctld_port,
     })
 }
 
@@ -1750,8 +1778,8 @@ pub(crate) fn ardop_data_mode() -> tux_rig::Mode {
 /// rig's codec contends with the audio device for the serial, so CAT must drop
 /// before audio starts. False on DRA-100-class setups, where CAT and audio are
 /// independent and the serial stays up for the whole session.
-pub(crate) fn should_release_after_tune(ardop_ui: &ArdopUiConfig) -> bool {
-    ardop_ui.close_serial_sequencing
+pub(crate) fn should_release_after_tune(rig: &RigUiConfig) -> bool {
+    rig.close_serial_sequencing
 }
 
 /// Pre-audio CAT tune for one connect candidate. Runs AFTER `transport.init()`
@@ -1769,10 +1797,10 @@ pub(crate) fn should_release_after_tune(ardop_ui: &ArdopUiConfig) -> bool {
 ///
 /// Spawn / tune failures map to a `String` (surfaced to the operator).
 pub(crate) fn tune_rig_for_connect(
-    ardop_ui: &ArdopUiConfig,
+    rig_cfg: &RigUiConfig,
     freq_hz: Option<u64>,
 ) -> Result<Option<tux_rig::ManagedRig>, String> {
-    let (rc, hz) = match (rig_config_from(ardop_ui), freq_hz) {
+    let (rc, hz) = match (rig_config_from(rig_cfg), freq_hz) {
         (Some(rc), Some(hz)) => (rc, hz),
         // Rig not configured or no frequency → no tune (back-compat).
         _ => return Ok(None),
@@ -1781,7 +1809,7 @@ pub(crate) fn tune_rig_for_connect(
         tux_rig::ManagedRig::spawn(rc).map_err(|e| format!("rigctld spawn failed: {e}"))?;
     rig.tune(hz, ardop_data_mode())
         .map_err(|e| format!("CAT tune failed: {e}"))?;
-    if should_release_after_tune(ardop_ui) {
+    if should_release_after_tune(rig_cfg) {
         // Close-serial: free the serial before audio. Drop happens at fn end.
         rig.release_serial();
         Ok(None)
@@ -1831,8 +1859,9 @@ where
 #[tauri::command]
 pub fn ardop_tune_rig(freq_hz: u64) -> Result<(), String> {
     let cfg = config::read_config().map_err(|e| format!("read failed: {e}"))?;
-    let ardop_ui = cfg.modem_ardop.unwrap_or_default();
-    let rc = rig_config_from(&ardop_ui)
+    // tuxlink-8fkkk: rig control is radio-level (Config.rig), shared by ARDOP +
+    // VARA. This Tune-only command is mode-agnostic.
+    let rc = rig_config_from(&cfg.rig)
         .ok_or_else(|| "rig control not configured — set the rig model + CAT serial".to_string())?;
     let mut rig = tux_rig::ManagedRig::spawn(rc).map_err(|e| e.to_string())?;
     rig.tune(freq_hz, ardop_data_mode()).map_err(|e| e.to_string())?;
@@ -2633,6 +2662,7 @@ mod tests {
             packet: crate::config::PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            rig: crate::config::RigUiConfig::default(),
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
@@ -3083,8 +3113,8 @@ mod tests {
             playback_device: "plughw:CARD=Device,DEV=0".into(),
             ptt_method: PttMethod::CatCommand,
             ptt_serial_path: None,
-            cat_serial_path: Some("/dev/ttyUSB0".into()),
-            cat_baud: 38400,
+            // tuxlink-8fkkk: the CAT serial link is radio-level now — see
+            // `cat_ptt_rig()`. key/unkey/bridge_port stay on ArdopUiConfig.
             cat_key_cmd: "TX1;".into(),
             cat_unkey_cmd: "TX0;".into(),
             cat_bridge_port: 4532,
@@ -3094,6 +3124,16 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            ..Default::default()
+        }
+    }
+
+    /// Radio-level rig config with the CAT serial link set (tuxlink-8fkkk).
+    /// Pairs with [`cat_ptt_cfg`] for the CAT-PTT bridge-spec tests.
+    fn cat_ptt_rig() -> RigUiConfig {
+        RigUiConfig {
+            cat_serial_path: Some("/dev/ttyUSB0".into()),
+            cat_baud: 38400,
             ..Default::default()
         }
     }
@@ -3179,18 +3219,20 @@ mod tests {
     #[test]
     fn cat_bridge_spec_is_none_for_non_cat_methods() {
         let mut cfg = cat_ptt_cfg();
+        let rig = cat_ptt_rig();
         cfg.ptt_method = PttMethod::Vox;
-        assert!(matches!(cat_bridge_spec_from(&cfg), Ok(None)));
+        assert!(matches!(cat_bridge_spec_from(&cfg, &rig), Ok(None)));
         cfg.ptt_method = PttMethod::SerialRts;
-        assert!(matches!(cat_bridge_spec_from(&cfg), Ok(None)));
+        assert!(matches!(cat_bridge_spec_from(&cfg, &rig), Ok(None)));
     }
 
     #[test]
     fn cat_bridge_spec_carries_config_for_cat_method() {
-        let spec = cat_bridge_spec_from(&cat_ptt_cfg())
+        let spec = cat_bridge_spec_from(&cat_ptt_cfg(), &cat_ptt_rig())
             .expect("configured CAT config is valid")
             .expect("CAT method yields a spec");
         assert_eq!(spec.bridge_port, 4532);
+        // tuxlink-8fkkk: serial_path + baud come from the rig config now.
         assert_eq!(spec.serial_path, "/dev/ttyUSB0");
         assert_eq!(spec.baud, 38400);
         assert_eq!(spec.key_cmd, "TX1;");
@@ -3201,13 +3243,15 @@ mod tests {
     fn cat_bridge_spec_fails_closed_when_serial_unset() {
         // CAT PTT with no serial device must REFUSE, not invent /dev/ttyUSB0 —
         // keying an unintended device (a TNC, GPS, or different radio) is unsafe.
-        let mut cfg = cat_ptt_cfg();
-        cfg.cat_serial_path = None;
-        assert!(cat_bridge_spec_from(&cfg).is_err(), "unset CAT serial must error");
-        cfg.cat_serial_path = Some(String::new());
-        assert!(cat_bridge_spec_from(&cfg).is_err(), "empty CAT serial must error");
-        cfg.cat_serial_path = Some("   ".into());
-        assert!(cat_bridge_spec_from(&cfg).is_err(), "whitespace CAT serial must error");
+        // tuxlink-8fkkk: the CAT serial link is on the rig config now.
+        let cfg = cat_ptt_cfg();
+        let mut rig = cat_ptt_rig();
+        rig.cat_serial_path = None;
+        assert!(cat_bridge_spec_from(&cfg, &rig).is_err(), "unset CAT serial must error");
+        rig.cat_serial_path = Some(String::new());
+        assert!(cat_bridge_spec_from(&cfg, &rig).is_err(), "empty CAT serial must error");
+        rig.cat_serial_path = Some("   ".into());
+        assert!(cat_bridge_spec_from(&cfg, &rig).is_err(), "whitespace CAT serial must error");
     }
 
     /// When the persisted config has no `modem_ardop` section, the
@@ -3343,6 +3387,7 @@ mod tests {
             packet: crate::config::PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            rig: crate::config::RigUiConfig::default(),
             telnet_listen: crate::config::TelnetListenUiConfig::default(),
             network_po_favorites: Vec::new(),
             review_inbound_before_download: false,
@@ -3963,22 +4008,24 @@ mod tests {
 
     #[test]
     fn rig_config_present_when_model_and_serial_set() {
-        let ui = ArdopUiConfig {
+        // tuxlink-8fkkk: rig control is built from the radio-level RigUiConfig.
+        let rig = RigUiConfig {
             rig_hamlib_model: Some(1049),
             cat_serial_path: Some("/dev/ttyUSB0".into()),
             ..Default::default()
         };
-        let rc = rig_config_from(&ui).expect("rig config");
+        let rc = rig_config_from(&rig).expect("rig config");
         assert_eq!(rc.model, 1049);
         assert_eq!(rc.serial_path, "/dev/ttyUSB0");
-        assert_eq!(rc.port, 4532);
+        // C1: rigctld default port is 4534 (not 4532).
+        assert_eq!(rc.port, 4534);
         assert_eq!(rc.binary, "rigctld");
     }
 
     #[test]
     fn rig_config_absent_when_unconfigured() {
-        let ui = ArdopUiConfig::default();
-        assert!(rig_config_from(&ui).is_none());
+        let rig = RigUiConfig::default();
+        assert!(rig_config_from(&rig).is_none());
     }
 
     // ── Task 8: tune-helper release decision ─────────────────────────────────
@@ -3986,17 +4033,17 @@ mod tests {
     #[test]
     fn close_serial_releases_rig_before_audio() {
         // close_serial_sequencing = true → helper must NOT retain the rig handle.
-        let ui = ArdopUiConfig {
+        let rig = RigUiConfig {
             close_serial_sequencing: true,
             ..Default::default()
         };
-        assert!(should_release_after_tune(&ui));
+        assert!(should_release_after_tune(&rig));
     }
 
     #[test]
     fn dra100_path_retains_rig() {
-        let ui = ArdopUiConfig::default(); // close_serial_sequencing = false
-        assert!(!should_release_after_tune(&ui));
+        let rig = RigUiConfig::default(); // close_serial_sequencing = false
+        assert!(!should_release_after_tune(&rig));
     }
 
     // ── Task 9: candidate-walk planner ───────────────────────────────────────
