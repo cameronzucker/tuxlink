@@ -8,6 +8,8 @@ use std::fmt;
 mod mode;
 pub use mode::Mode;
 
+mod protocol;
+
 /// Errors from rig control.
 #[derive(Debug)]
 pub enum RigError {
