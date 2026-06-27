@@ -32,7 +32,6 @@ use tauri::{AppHandle, Manager};
 // `WinlinkBackend` trait must be in scope to call its methods
 // (`list_messages`, `read_message_in`, …) on the `Arc<dyn WinlinkBackend>`
 // returned by `BackendState::current()`.
-use crate::winlink_backend::WinlinkBackend;
 
 use tuxlink_mcp_core::ports::{
     ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto, BluetoothDeviceDto,
@@ -195,7 +194,7 @@ impl StatusPort for MonolithStatusPort {
         // to Arc, Arc derefs to PositionArbiter).
         let arbiter: &crate::position::PositionArbiter = &arbiter_state;
         let cfg = crate::config::read_config()
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         let has_fix = arbiter.has_fresh_fix()
             && cfg.privacy.gps_state != crate::config::GpsState::Off;
         // Reduce the broadcast locator to a 4-char grid for the MCP DTO —
@@ -229,14 +228,14 @@ impl StatusPort for MonolithStatusPort {
     async fn wizard_completed(&self) -> Result<bool, PortError> {
         crate::wizard::get_wizard_completed()
             .await
-            .map_err(|e| PortError::Internal(e.to_string()))
+            .map_err(|e| PortError::Internal(format!("{e:?}")))
     }
 
     async fn p2p_peer_password_status(&self, callsign: &str) -> Result<bool, PortError> {
         use crate::ui_commands::PeerPasswordStatus;
         let status = crate::ui_commands::p2p_peer_password_status(callsign.to_string())
             .await
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         // Return ONLY the set/not-set boolean — never the password.
         Ok(matches!(status, PeerPasswordStatus::Set))
     }
@@ -286,10 +285,10 @@ impl MailboxPort for MonolithMailboxPort {
     async fn list(&self, folder: &str) -> Result<Vec<MessageMetaDto>, PortError> {
         let backend = self.backend()?;
         let parsed = crate::ui_commands::parse_folder_ref(folder)
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         let metas = crate::ui_core::mailbox::list_mailbox(&backend, parsed)
             .await
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         Ok(metas.into_iter().map(map_message_meta).collect())
     }
 
@@ -298,21 +297,21 @@ impl MailboxPort for MonolithMailboxPort {
         use crate::winlink_backend::MessageId;
         let backend = self.backend()?;
         let parsed = crate::ui_commands::parse_folder_ref(folder)
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         let mid = MessageId::new(id);
         // Same fetch path as the `message_read` command.
         let body = match &parsed {
             FolderRef::System(f) => backend
                 .read_message_in(*f, &mid)
                 .await
-                .map_err(|e| PortError::Internal(e.to_string()))?,
+                .map_err(|e| PortError::Internal(format!("{e:?}")))?,
             FolderRef::User(slug) => backend
                 .read_user_message(slug, &mid)
                 .await
-                .map_err(|e| PortError::Internal(e.to_string()))?,
+                .map_err(|e| PortError::Internal(format!("{e:?}")))?,
         };
         let dto = crate::ui_commands::parse_raw_rfc5322(id, &body.raw_rfc5322)
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         Ok(ParsedMessageDto {
             id: dto.id,
             subject: dto.subject,
@@ -350,7 +349,7 @@ impl MailboxPort for MonolithMailboxPort {
             let metas = backend
                 .list_messages(folder)
                 .await
-                .map_err(|e| PortError::Internal(e.to_string()))?;
+                .map_err(|e| PortError::Internal(format!("{e:?}")))?;
             out.push(FolderDto {
                 name: name.to_string(),
                 count: u32::try_from(metas.len()).unwrap_or(u32::MAX),
@@ -360,12 +359,12 @@ impl MailboxPort for MonolithMailboxPort {
         let user = backend
             .list_user_folders()
             .await
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         for f in user {
             let metas = backend
                 .list_user_messages(&f.slug)
                 .await
-                .map_err(|e| PortError::Internal(e.to_string()))?;
+                .map_err(|e| PortError::Internal(format!("{e:?}")))?;
             out.push(FolderDto {
                 name: f.display_name,
                 count: u32::try_from(metas.len()).unwrap_or(u32::MAX),
@@ -421,7 +420,7 @@ impl SearchPort for MonolithSearchPort {
         }
         let results = svc
             .run(spec)
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         Ok(SearchResultsDto {
             items: results
                 .items
@@ -451,7 +450,7 @@ impl SearchPort for MonolithSearchPort {
             .lock()
             .map_err(|e| PortError::Internal(format!("docs index poisoned: {e}")))?
             .search_docs(query)
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         Ok(hits
             .into_iter()
             .map(|h| DocsHitDto {
@@ -465,7 +464,7 @@ impl SearchPort for MonolithSearchPort {
     async fn catalog(&self) -> Result<Vec<CatalogEntryDto>, PortError> {
         // Pure: parses the bundled catalog; no managed state.
         let entries = crate::catalog::commands::catalog_list()
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         Ok(entries
             .into_iter()
             .map(|e| CatalogEntryDto {
@@ -500,7 +499,7 @@ impl ConfigPort for MonolithConfigPort {
         // `broadcast_grid(.., FourCharGrid)` — the redaction boundary. Read the
         // raw view, then redact BEFORE crossing the port.
         let raw = crate::ui_core::config::read_config_view()
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         let view = crate::ui_core::config::redact_config_view(raw);
         Ok(ConfigViewDto {
             connect_to_cms: view.connect_to_cms,
@@ -539,7 +538,7 @@ impl ConfigPort for MonolithConfigPort {
     async fn packet(&self) -> Result<PacketConfigDto, PortError> {
         let cfg = crate::ui_commands::packet_config_get()
             .await
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         // The bt_mac field is minimized before crossing the boundary even though
         // PacketConfigDto's mcp-core shape has no MAC field today — the packet
         // DTO surfaces the KISS-link parameters only. If a future mcp-core
@@ -575,7 +574,7 @@ impl DevicePort for MonolithDevicePort {
     async fn serial(&self) -> Result<Vec<SerialDeviceDto>, PortError> {
         let devices = crate::ui_commands::packet_list_serial_devices()
             .await
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         Ok(devices
             .into_iter()
             .map(|d| SerialDeviceDto {
@@ -588,7 +587,7 @@ impl DevicePort for MonolithDevicePort {
     async fn bluetooth(&self) -> Result<Vec<BluetoothDeviceDto>, PortError> {
         let devices = crate::ui_commands::packet_list_bluetooth_devices()
             .await
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         Ok(devices
             .into_iter()
             .map(|d| BluetoothDeviceDto {
@@ -603,7 +602,7 @@ impl DevicePort for MonolithDevicePort {
     async fn audio(&self) -> Result<AudioDevicesDto, PortError> {
         let devices = crate::ui_commands::ardop_list_audio_devices()
             .await
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::Internal(format!("{e:?}")))?;
         Ok(AudioDevicesDto {
             capture: devices.captures.into_iter().map(|d| d.name).collect(),
             playback: devices.playbacks.into_iter().map(|d| d.name).collect(),
@@ -642,14 +641,13 @@ impl LogPort for MonolithLogPort {
                 // Redact credential tokens (;PQ/;PR) on Wire-source lines BEFORE
                 // the line crosses into mcp-core. Backend/Transport lines are
                 // operator-visible app events and are not wire bytes. `LogSource`
-                // is `#[non_exhaustive]`; treat any future variant as wire and
-                // redact it (fail safe — never leak an unredacted unknown).
+                // is matched exhaustively in-crate; if a Wire-class variant is
+                // ever added, add it to the redacting arm (fail safe).
                 let message = match l.source {
                     LogSource::Backend | LogSource::Transport => l.message,
                     LogSource::Wire => {
                         crate::winlink::redaction::redact_wire_line(&l.message).into_owned()
                     }
-                    _ => crate::winlink::redaction::redact_wire_line(&l.message).into_owned(),
                 };
                 let level = match l.level {
                     LogLevel::Trace => "trace",
