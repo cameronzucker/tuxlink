@@ -37,7 +37,7 @@ use tuxlink_mcp_core::ports::{
     AbortPort, ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
     BluetoothDeviceDto, CatalogEntryDto, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto,
     EgressPort, EgressPortError, FolderDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
-    ModemStatusDto, P2pDialDto, PacketConfigDto, ParsedMessageDto, PlatformInfoDto, PortError,
+    ModemStatusDto, PacketConfigDto, ParsedMessageDto, PlatformInfoDto, PortError,
     PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto,
     SessionIntentDto, StatusPort, VaraConfigDto, VaraStatusDto,
 };
@@ -802,44 +802,6 @@ impl EgressPort for MonolithEgressPort {
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
     }
 
-    async fn telnet_p2p_connect(&self, req: P2pDialDto) -> Result<(), EgressPortError> {
-        let audit = egress_audit_sink(self.app.clone());
-        let app = self.app.clone();
-        guarded_egress(
-            &self.guard,
-            EgressAuthority::Agent,
-            "telnet_p2p_connect",
-            &audit,
-            || async move {
-                // ui_commands.rs:7026 telnet_p2p_connect. P2pDialDto carries the
-                // peer callsign plus the host/port of the peer's TCP listener
-                // (a direct dial needs all three). my_callsign + locator are
-                // advisory on the command: the on-air ID is derived from the
-                // active SessionIdentity inside the command (tuxlink-0063), so
-                // they are passed empty here.
-                let request = crate::ui_commands::P2pDialRequest {
-                    host: req.host,
-                    port: req.port,
-                    peer_callsign: req.peer,
-                    my_callsign: String::new(),
-                    locator: String::new(),
-                };
-                crate::ui_commands::telnet_p2p_connect(
-                    app.clone(),
-                    app.state::<crate::app_backend::BackendState>(),
-                    app.state::<crate::ui_commands::P2pConnectState>(),
-                    app.state::<Arc<crate::session_log::SessionLogState>>(),
-                    request,
-                )
-                .await
-                .map(|_res| ())
-                .map_err(|e| EgressPortError::Failed(format!("{e:?}")))
-            },
-        )
-        .await
-        .map_err(|d| EgressPortError::Denied(d.to_string()))?
-    }
-
     async fn ardop_connect(&self, target: String) -> Result<(), EgressPortError> {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
@@ -943,25 +905,6 @@ impl EgressPort for MonolithEgressPort {
         .await
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
     }
-
-    async fn packet_listen(&self) -> Result<(), EgressPortError> {
-        let audit = egress_audit_sink(self.app.clone());
-        let app = self.app.clone();
-        guarded_egress(&self.guard, EgressAuthority::Agent, "packet_listen", &audit, || async move {
-            // ui_commands.rs:4594 packet_listen — arming Listen auto-answers an
-            // inbound call, which TRANSMITS a UA under the operator's callsign,
-            // so it is an Agent egress and gated.
-            crate::ui_commands::packet_listen(
-                app.clone(),
-                app.state::<crate::app_backend::BackendState>(),
-                app.state::<Arc<crate::session_log::SessionLogState>>(),
-            )
-            .await
-            .map_err(|e| EgressPortError::Failed(format!("{e:?}")))
-        })
-        .await
-        .map_err(|d| EgressPortError::Denied(d.to_string()))?
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1019,19 +962,6 @@ impl AbortPort for MonolithAbortPort {
         .map_err(|e| PortError::Internal(format!("{e:?}")))
     }
 
-    async fn telnet_p2p_abort(&self) -> Result<(), PortError> {
-        self.audit_abort("telnet_p2p_abort");
-        // ui_commands.rs:7319 telnet_p2p_abort — sets the aborting flag + emits
-        // Disconnected status.
-        crate::ui_commands::telnet_p2p_abort(
-            self.app.clone(),
-            self.app.state::<crate::ui_commands::P2pConnectState>(),
-            self.app.state::<Arc<crate::session_log::SessionLogState>>(),
-        )
-        .await
-        .map_err(|e| PortError::Internal(format!("{e:?}")))
-    }
-
     async fn ardop_disconnect(&self) -> Result<(), PortError> {
         self.audit_abort("ardop_disconnect");
         // modem_commands.rs:202 modem_ardop_disconnect (inner :153) — best-effort
@@ -1056,16 +986,6 @@ impl AbortPort for MonolithAbortPort {
         crate::winlink::modem::vara::commands::vara_stop_session_inner(&session)
             .map(|_status| ())
             .map_err(PortError::Internal)
-    }
-
-    async fn packet_stop_listen(&self) -> Result<(), PortError> {
-        self.audit_abort("packet_stop_listen");
-        // ui_commands.rs:4670 packet_set_listen(false) — clears the sticky
-        // idle-listen default. (Tearing down an in-flight listen uses cms_abort;
-        // this stops the ARMED-listen state per the AbortPort contract.)
-        crate::ui_commands::packet_set_listen(false)
-            .await
-            .map_err(|e| PortError::Internal(format!("{e:?}")))
     }
 }
 

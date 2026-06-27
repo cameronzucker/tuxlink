@@ -16,9 +16,7 @@ use rmcp::model::{
 };
 use rmcp::{tool, tool_handler, tool_router, ErrorData};
 
-use crate::ports::{
-    EgressPortError, P2pDialDto, PortError, SearchQueryDto, SessionIntentDto,
-};
+use crate::ports::{EgressPortError, PortError, SearchQueryDto, SessionIntentDto};
 use crate::{server_info_view, McpState};
 
 /// Map a [`PortError`] onto an rmcp tool error. Read tools surface the failure
@@ -356,23 +354,6 @@ impl TuxlinkMcp {
     }
 
     #[tool(
-        name = "telnet_p2p_connect",
-        description = "Open a telnet peer-to-peer session to a peer callsign at the given host and port. EGRESS: requires armed send-authority and an un-tainted session; denied otherwise."
-    )]
-    pub async fn telnet_p2p_connect(
-        &self,
-        params: Parameters<PeerParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let Parameters(PeerParams { peer, host, port }) = params;
-        self.state
-            .egress
-            .telnet_p2p_connect(P2pDialDto { peer, host, port })
-            .await
-            .map_err(egress_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
-    }
-
-    #[tool(
         name = "ardop_connect",
         description = "Connect the ARDOP modem to a target station. EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
@@ -440,19 +421,6 @@ impl TuxlinkMcp {
         Ok(CallToolResult::success(vec![Content::json("ok")?]))
     }
 
-    #[tool(
-        name = "packet_listen",
-        description = "Begin listening for inbound AX.25 packet connections (an inbound connection can key the transmitter). EGRESS: requires armed send-authority and an un-tainted session; denied otherwise."
-    )]
-    pub async fn packet_listen(&self) -> Result<CallToolResult, ErrorData> {
-        self.state
-            .egress
-            .packet_listen()
-            .await
-            .map_err(egress_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
-    }
-
     // ----- UNGATED abort (stopping is ALWAYS allowed) -----
     //
     // Pure-stop tools. Never gated by armed/taint state: a working abort is a
@@ -464,15 +432,6 @@ impl TuxlinkMcp {
     )]
     pub async fn cms_abort(&self) -> Result<CallToolResult, ErrorData> {
         self.state.abort.cms_abort().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
-    }
-
-    #[tool(
-        name = "telnet_p2p_abort",
-        description = "Abort the telnet P2P session. Stopping is always allowed (never gated)."
-    )]
-    pub async fn telnet_p2p_abort(&self) -> Result<CallToolResult, ErrorData> {
-        self.state.abort.telnet_p2p_abort().await.map_err(port_err)?;
         Ok(CallToolResult::success(vec![Content::json("ok")?]))
     }
 
@@ -493,19 +452,6 @@ impl TuxlinkMcp {
         self.state
             .abort
             .vara_stop_session()
-            .await
-            .map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
-    }
-
-    #[tool(
-        name = "packet_set_listen_off",
-        description = "Stop listening for inbound packet connections. Stopping is always allowed (never gated)."
-    )]
-    pub async fn packet_set_listen_off(&self) -> Result<CallToolResult, ErrorData> {
-        self.state
-            .abort
-            .packet_stop_listen()
             .await
             .map_err(port_err)?;
         Ok(CallToolResult::success(vec![Content::json("ok")?]))
@@ -554,18 +500,6 @@ pub struct SearchParams {
 pub struct QueryParams {
     /// The documentation search query string.
     pub query: String,
-}
-
-/// `{ "peer": "W1AW", "host": "10.0.0.5", "port": 8772 }` — input for
-/// `telnet_p2p_connect`.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct PeerParams {
-    /// The peer station callsign to dial.
-    pub peer: String,
-    /// Hostname or IP address of the peer's TCP listener.
-    pub host: String,
-    /// TCP port on the peer.
-    pub port: u16,
 }
 
 /// `{ "target": "KX4Z-10" }` — input for `ardop_connect`.
@@ -861,10 +795,8 @@ mod tests {
         let (h, _op_ran, aborted) = handler_with_probes();
         h.state.guard.taint();
         h.cms_abort().await.unwrap();
-        h.telnet_p2p_abort().await.unwrap();
         h.modem_ardop_disconnect().await.unwrap();
         h.vara_stop_session().await.unwrap();
-        h.packet_set_listen_off().await.unwrap();
         assert!(aborted.load(Ordering::SeqCst));
     }
 }

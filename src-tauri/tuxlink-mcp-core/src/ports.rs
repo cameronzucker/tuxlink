@@ -347,22 +347,6 @@ pub enum SessionIntentDto {
     P2p,
 }
 
-/// Dial parameters for a telnet P2P session. Carries what a direct dial needs:
-/// the peer callsign plus the host/port of the peer's TCP listener. The impl
-/// derives the on-air station ID (my_callsign / locator) from the active
-/// `SessionIdentity` (tuxlink-0063); secrets are resolved from the keyring at
-/// the impl boundary and never carried here.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct P2pDialDto {
-    /// The peer station callsign to dial (used for the login exchange + keyring
-    /// password lookup).
-    pub peer: String,
-    /// Hostname or IP address of the peer's TCP listener.
-    pub host: String,
-    /// TCP port on the peer.
-    pub port: u16,
-}
-
 /// GATED egress capability. EVERY method is an Agent-authority egress: the impl
 /// gates it through [`guarded_egress`](tuxlink_security::guarded_egress) before
 /// any connect/transmit happens, so a disarmed/expired/tainted/poisoned session
@@ -374,8 +358,6 @@ pub trait EgressPort: Send + Sync {
     async fn cms_connect(&self) -> Result<(), EgressPortError>;
     /// Verify the live CMS connection (a round-trip that touches the network).
     async fn verify_cms_connection(&self) -> Result<(), EgressPortError>;
-    /// Open a telnet peer-to-peer session to `req.peer`.
-    async fn telnet_p2p_connect(&self, req: P2pDialDto) -> Result<(), EgressPortError>;
     /// Connect the ARDOP modem to `target`.
     async fn ardop_connect(&self, target: String) -> Result<(), EgressPortError>;
     /// Run an ARDOP B2F message exchange with `target` for the given `intent`.
@@ -394,8 +376,6 @@ pub trait EgressPort: Send + Sync {
     /// `path`.
     async fn packet_connect(&self, call: String, path: Vec<String>)
         -> Result<(), EgressPortError>;
-    /// Begin listening for inbound AX.25 packet connections.
-    async fn packet_listen(&self) -> Result<(), EgressPortError>;
 }
 
 /// UNGATED pure-stop capability. Stopping a transmission/connection is ALWAYS
@@ -406,12 +386,8 @@ pub trait EgressPort: Send + Sync {
 pub trait AbortPort: Send + Sync {
     /// Abort/disconnect the CMS connection.
     async fn cms_abort(&self) -> Result<(), PortError>;
-    /// Abort the telnet P2P session.
-    async fn telnet_p2p_abort(&self) -> Result<(), PortError>;
     /// Disconnect the ARDOP modem.
     async fn ardop_disconnect(&self) -> Result<(), PortError>;
     /// Stop the active VARA session.
     async fn vara_stop_session(&self) -> Result<(), PortError>;
-    /// Stop listening for inbound packet connections.
-    async fn packet_stop_listen(&self) -> Result<(), PortError>;
 }

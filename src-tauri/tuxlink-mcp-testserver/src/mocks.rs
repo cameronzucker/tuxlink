@@ -16,7 +16,7 @@ use tuxlink_mcp_core::ports::{
     AbortPort, ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
     BluetoothDeviceDto, CatalogEntryDto, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto,
     EgressPort, EgressPortError, FolderDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
-    ModemStatusDto, P2pDialDto, PacketConfigDto, ParsedMessageDto, PlatformInfoDto, PortError,
+    ModemStatusDto, PacketConfigDto, ParsedMessageDto, PlatformInfoDto, PortError,
     PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto,
     SessionIntentDto, StatusPort, VaraConfigDto, VaraStatusDto,
 };
@@ -274,9 +274,6 @@ impl EgressPort for MockEgress {
     async fn verify_cms_connection(&self) -> Result<(), EgressPortError> {
         self.gated("verify_cms_connection").await
     }
-    async fn telnet_p2p_connect(&self, _req: P2pDialDto) -> Result<(), EgressPortError> {
-        self.gated("telnet_p2p_connect").await
-    }
     async fn ardop_connect(&self, _target: String) -> Result<(), EgressPortError> {
         self.gated("ardop_connect").await
     }
@@ -301,9 +298,6 @@ impl EgressPort for MockEgress {
     ) -> Result<(), EgressPortError> {
         self.gated("packet_connect").await
     }
-    async fn packet_listen(&self) -> Result<(), EgressPortError> {
-        self.gated("packet_listen").await
-    }
 }
 
 /// UNGATED abort mock. Flips a shared `aborted` flag; never gated.
@@ -326,19 +320,11 @@ impl AbortPort for MockAbort {
         self.mark();
         Ok(())
     }
-    async fn telnet_p2p_abort(&self) -> Result<(), PortError> {
-        self.mark();
-        Ok(())
-    }
     async fn ardop_disconnect(&self) -> Result<(), PortError> {
         self.mark();
         Ok(())
     }
     async fn vara_stop_session(&self) -> Result<(), PortError> {
-        self.mark();
-        Ok(())
-    }
-    async fn packet_stop_listen(&self) -> Result<(), PortError> {
         self.mark();
         Ok(())
     }
