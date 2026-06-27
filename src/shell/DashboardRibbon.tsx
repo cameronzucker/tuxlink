@@ -17,6 +17,8 @@ import { DEV_FIXTURE, DEV_POSITION, DEV_CONNECTION_DASH } from '../mailbox/devFi
 import { formatPacketConnection, type PacketUiState } from '../packet/packetStatus';
 import { IdentitySwitcher } from './IdentitySwitcher';
 import type { ActiveIdentityDto, IdentityListDto } from './identityTypes';
+import { EgressArmControl } from './EgressArmControl';
+import type { EgressStatusDto } from '../security/egressTypes';
 
 /**
  * Self-contained clock cell (tuxlink-sndh). Lives in its own subtree so the
@@ -110,13 +112,25 @@ export interface DashboardRibbonProps {
    *  row; when omitted, the legacy bare markup renders (back-compat — keeps
    *  prop-free consumers/tests unchanged). */
   onSwitchIdentity?: (args: { callsign: string; credential: string; tacticalLabel: string | null }) => Promise<void>;
+  /** Operator ARM surface for agent send-authority (MCP phase 3.6). Absent → the
+   *  control is not rendered (keeps prop-free consumers/tests unchanged). When
+   *  present, renders the EgressArmControl: arm/disarm toggle + duration presets
+   *  + live countdown + taint lock. `status` is the live egress_status snapshot;
+   *  `onArm`/`onDisarm` call the backend (AppShell owns the useEgressArm hook). */
+  egress?: {
+    status: EgressStatusDto;
+    onArm: (durationSecs: number) => void;
+    onDisarm: () => void;
+    busy?: boolean;
+    error?: string | null;
+  };
 }
 
 // tuxlink-djnl: React.memo so 2s status-poll renders (now reference-stable
 // via useStatusData's useMemo) and other shell-level renders skip the ribbon
 // when its props haven't changed. The 1s clock tick already lives inside the
 // scoped ClockCell subtree, so a memo'd ribbon stays still while time advances.
-export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, reviewInbound, onReviewInboundChange, aprs, identities, activeIdentity, onSwitchIdentity }: DashboardRibbonProps) {
+export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, reviewInbound, onReviewInboundChange, aprs, identities, activeIdentity, onSwitchIdentity, egress }: DashboardRibbonProps) {
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Task 14 (tuxlink-c79g, spec §4.3 + Codex P1 #4): after a grid commit or a
   // source flip resolves, invalidate the config_read query so the source chip
@@ -310,6 +324,19 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
               )}
             </button>
           </div>
+        </>
+      )}
+
+      {egress && (
+        <>
+          <div className="dash-divider" />
+          <EgressArmControl
+            status={egress.status}
+            onArm={egress.onArm}
+            onDisarm={egress.onDisarm}
+            busy={egress.busy}
+            error={egress.error}
+          />
         </>
       )}
 
