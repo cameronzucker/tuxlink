@@ -26,3 +26,5 @@ path = "src/main.rs"
 tuxlink-mcp-core = { path = "../tuxlink-mcp-core" }
 tuxlink-security = { path = "../tuxlink-security" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal"] }
+# Phase 3.2: the canned mock ports implement the async-trait port traits.
+async-trait = "0.1"

@@ -9,13 +9,21 @@
 use std::sync::Arc;
 
 use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::wrapper::Parameters;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
     CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
 };
 use rmcp::{tool, tool_handler, tool_router, ErrorData};
 
+use crate::ports::{PortError, SearchQueryDto};
 use crate::{server_info_view, McpState};
+
+/// Map a [`PortError`] onto an rmcp tool error. Read tools surface the failure
+/// to the agent rather than crashing the transport.
+fn port_err(e: PortError) -> ErrorData {
+    ErrorData::internal_error(e.to_string(), None)
+}
 
 /// The Tuxlink MCP server handler. Cloned per the rmcp serve loop; the inner
 /// [`McpState`] is `Arc`-shared so all clones see the same live guard state.
@@ -48,6 +56,298 @@ impl TuxlinkMcp {
         let dto = server_info_view(&self.state);
         Ok(CallToolResult::success(vec![Content::json(dto)?]))
     }
+
+    // ----- Status / diagnostics (no taint) -----
+
+    #[tool(
+        name = "backend_status",
+        description = "Report the Winlink backend (CMS engine) connection status: connected, transport, and state. Read-only."
+    )]
+    pub async fn backend_status(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.status.backend_status().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "modem_get_status",
+        description = "Report the current modem (ARDOP/VARA/packet) status: kind, connected, and state. Read-only."
+    )]
+    pub async fn modem_get_status(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.status.modem_status().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "vara_status",
+        description = "Report VARA modem status: connected, bandwidth, and state. Read-only."
+    )]
+    pub async fn vara_status(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.status.vara_status().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "position_status",
+        description = "Report the current position fix status and grid square (precision-reduced). Read-only."
+    )]
+    pub async fn position_status(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.status.position_status().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "platform_info",
+        description = "Report host platform info (OS, arch, app version) for diagnostics. Read-only."
+    )]
+    pub async fn platform_info(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.status.platform_info().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "get_wizard_completed",
+        description = "Report whether the first-run setup wizard has been completed. Read-only."
+    )]
+    pub async fn get_wizard_completed(&self) -> Result<CallToolResult, ErrorData> {
+        let done = self.state.status.wizard_completed().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(done)?]))
+    }
+
+    #[tool(
+        name = "p2p_peer_password_status",
+        description = "Report whether a P2P peer password is Set (true) or NotSet (false) for the given callsign. Never returns the password itself. Read-only."
+    )]
+    pub async fn p2p_peer_password_status(
+        &self,
+        params: Parameters<CallsignParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(CallsignParams { callsign }) = params;
+        let set = self
+            .state
+            .status
+            .p2p_peer_password_status(&callsign)
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(set)?]))
+    }
+
+    // ----- Mailbox -----
+
+    #[tool(
+        name = "mailbox_list",
+        description = "List message metadata in a mailbox folder. Returns untrusted message senders/subjects, so calling this taints the session (send authority is locked until the operator re-arms)."
+    )]
+    pub async fn mailbox_list(
+        &self,
+        params: Parameters<FolderParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(FolderParams { folder }) = params;
+        let dto = self.state.mailbox.list(&folder).await.map_err(port_err)?;
+        self.state.guard.taint();
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "message_read",
+        description = "Read a parsed message (headers, body, attachment metadata) by folder + id. Returns untrusted content, so calling this taints the session."
+    )]
+    pub async fn message_read(
+        &self,
+        params: Parameters<MessageReadParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(MessageReadParams { folder, id }) = params;
+        let dto = self
+            .state
+            .mailbox
+            .read(&folder, &id)
+            .await
+            .map_err(port_err)?;
+        self.state.guard.taint();
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "user_folders_list",
+        description = "Enumerate mailbox folders and their message counts. Structural metadata; does not taint. Read-only."
+    )]
+    pub async fn user_folders_list(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.mailbox.folders().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    // ----- Search -----
+
+    #[tool(
+        name = "tauri_search_run",
+        description = "Search mailbox messages by query, optionally scoped to a folder and limited. Returns untrusted message content, so calling this taints the session."
+    )]
+    pub async fn tauri_search_run(
+        &self,
+        params: Parameters<SearchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(SearchParams {
+            query,
+            folder,
+            limit,
+        }) = params;
+        let dto = self
+            .state
+            .search
+            .messages(SearchQueryDto {
+                query,
+                folder,
+                limit,
+            })
+            .await
+            .map_err(port_err)?;
+        self.state.guard.taint();
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "docs_search",
+        description = "Search the in-app documentation by query. App-owned content; does not taint. Read-only."
+    )]
+    pub async fn docs_search(
+        &self,
+        params: Parameters<QueryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(QueryParams { query }) = params;
+        let dto = self.state.search.docs(&query).await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "catalog_list",
+        description = "List the template/form catalog entries. App-owned content; does not taint. Read-only."
+    )]
+    pub async fn catalog_list(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.search.catalog().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    // ----- Config (curated, non-secret) -----
+
+    #[tool(
+        name = "config_read",
+        description = "Read the curated, non-secret top-level config (CMS connect flag, transport, host, callsign, 4-char grid). Read-only; no passwords."
+    )]
+    pub async fn config_read(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.config.read().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "config_get_ardop",
+        description = "Read the non-secret ARDOP modem config (host, port, drive level, bandwidth). Read-only."
+    )]
+    pub async fn config_get_ardop(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.config.ardop().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "config_get_vara",
+        description = "Read the non-secret VARA modem config (host, port, bandwidth, drive level). Read-only; no VARA license secrets."
+    )]
+    pub async fn config_get_vara(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.config.vara().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "packet_config_get",
+        description = "Read the non-secret packet (AX.25/KISS) config (KISS host/port, baud, TX delay). Read-only."
+    )]
+    pub async fn packet_config_get(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.config.packet().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    // ----- Devices -----
+
+    #[tool(
+        name = "packet_list_serial_devices",
+        description = "Enumerate serial devices available for a TNC/CAT connection. Read-only."
+    )]
+    pub async fn packet_list_serial_devices(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.devices.serial().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "packet_list_bluetooth_devices",
+        description = "Enumerate Bluetooth devices (names + minimized MACs). Read-only."
+    )]
+    pub async fn packet_list_bluetooth_devices(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.devices.bluetooth().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "ardop_list_audio_devices",
+        description = "Enumerate capture + playback audio devices for modem audio selection. Read-only."
+    )]
+    pub async fn ardop_list_audio_devices(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.devices.audio().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    // ----- Logs -----
+
+    #[tool(
+        name = "session_log_snapshot",
+        description = "Snapshot the current session log. May contain untrusted wire content, so calling this taints the session."
+    )]
+    pub async fn session_log_snapshot(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.logs.snapshot().await.map_err(port_err)?;
+        self.state.guard.taint();
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+}
+
+/// `{ "callsign": "W1AW" }` — input for `p2p_peer_password_status`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CallsignParams {
+    /// The peer station callsign to check.
+    pub callsign: String,
+}
+
+/// `{ "folder": "Inbox" }` — input for `mailbox_list`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct FolderParams {
+    /// The mailbox folder name to list.
+    pub folder: String,
+}
+
+/// `{ "folder": "Inbox", "id": "MSG001" }` — input for `message_read`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct MessageReadParams {
+    /// The folder the message lives in.
+    pub folder: String,
+    /// The message id to read.
+    pub id: String,
+}
+
+/// `{ "query": "...", "folder": null, "limit": null }` — input for
+/// `tauri_search_run`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SearchParams {
+    /// The search query string.
+    pub query: String,
+    /// Optional folder to scope the search to.
+    #[serde(default)]
+    pub folder: Option<String>,
+    /// Optional maximum number of results to return.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// `{ "query": "..." }` — input for `docs_search`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct QueryParams {
+    /// The documentation search query string.
+    pub query: String,
 }
 
 #[tool_handler]
@@ -63,10 +363,158 @@ impl ServerHandler for TuxlinkMcp {
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info = Implementation::from_build_env();
         info.instructions = Some(
-            "Tuxlink MCP server. `server_info` reports the app version and the \
-             operator's live send-authority state (armed, tainted)."
+            "Tuxlink MCP server. Read-only tools report app/backend/modem status, \
+             mailbox + search content, curated config, devices, and the session log. \
+             Tools that return untrusted external content (mailbox_list, message_read, \
+             tauri_search_run, session_log_snapshot) taint the session, locking send \
+             authority until the operator re-arms."
                 .to_string(),
         );
         info
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ports::{MessageMetaDto, ParsedMessageDto};
+    use crate::test_support::{
+        state_with_guard, SEED_MSG_FROM, SEED_MSG_ID, SEED_MSG_SUBJECT,
+    };
+    use tuxlink_security::EgressGuard;
+
+    fn handler() -> TuxlinkMcp {
+        TuxlinkMcp::new(Arc::new(state_with_guard(EgressGuard::new())))
+    }
+
+    /// Extract + deserialize the JSON the tool packed into its first text
+    /// content. `Content::json` serializes to a text content carrying the JSON.
+    fn json_of<T: serde::de::DeserializeOwned>(result: &CallToolResult) -> T {
+        let text = result.content[0]
+            .as_text()
+            .expect("tool result must be a JSON text content")
+            .text
+            .clone();
+        serde_json::from_str(&text).expect("tool JSON must deserialize back into the DTO")
+    }
+
+    // --- TAINT tools flip the guard ---
+
+    #[tokio::test]
+    async fn mailbox_list_taints() {
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        h.mailbox_list(Parameters(FolderParams {
+            folder: "Inbox".into(),
+        }))
+        .await
+        .unwrap();
+        assert!(h.state.guard.is_tainted(), "mailbox_list must taint");
+    }
+
+    #[tokio::test]
+    async fn message_read_taints() {
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        h.message_read(Parameters(MessageReadParams {
+            folder: "Inbox".into(),
+            id: SEED_MSG_ID.into(),
+        }))
+        .await
+        .unwrap();
+        assert!(h.state.guard.is_tainted(), "message_read must taint");
+    }
+
+    #[tokio::test]
+    async fn tauri_search_run_taints() {
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        h.tauri_search_run(Parameters(SearchParams {
+            query: "ares".into(),
+            folder: None,
+            limit: None,
+        }))
+        .await
+        .unwrap();
+        assert!(h.state.guard.is_tainted(), "tauri_search_run must taint");
+    }
+
+    #[tokio::test]
+    async fn session_log_snapshot_taints() {
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        h.session_log_snapshot().await.unwrap();
+        assert!(
+            h.state.guard.is_tainted(),
+            "session_log_snapshot must taint"
+        );
+    }
+
+    // --- NON-taint tools leave a fresh guard clean ---
+
+    #[tokio::test]
+    async fn non_taint_tools_do_not_taint() {
+        let h = handler();
+        h.backend_status().await.unwrap();
+        h.config_read().await.unwrap();
+        h.platform_info().await.unwrap();
+        h.docs_search(Parameters(QueryParams {
+            query: "start".into(),
+        }))
+        .await
+        .unwrap();
+        h.user_folders_list().await.unwrap();
+        h.catalog_list().await.unwrap();
+        h.packet_list_serial_devices().await.unwrap();
+        h.p2p_peer_password_status(Parameters(CallsignParams {
+            callsign: "W1AW".into(),
+        }))
+        .await
+        .unwrap();
+        assert!(
+            !h.state.guard.is_tainted(),
+            "read-only status/config/docs/devices tools must NOT taint a fresh guard"
+        );
+    }
+
+    // --- DTO round-trips through the tool result ---
+
+    #[tokio::test]
+    async fn message_read_round_trips_dto() {
+        let h = handler();
+        let result = h
+            .message_read(Parameters(MessageReadParams {
+                folder: "Inbox".into(),
+                id: SEED_MSG_ID.into(),
+            }))
+            .await
+            .unwrap();
+        let dto: ParsedMessageDto = json_of(&result);
+        assert_eq!(dto.id, SEED_MSG_ID);
+        assert_eq!(dto.from, SEED_MSG_FROM);
+        assert_eq!(dto.subject, SEED_MSG_SUBJECT);
+    }
+
+    #[tokio::test]
+    async fn mailbox_list_round_trips_dto() {
+        let h = handler();
+        let result = h
+            .mailbox_list(Parameters(FolderParams {
+                folder: "Inbox".into(),
+            }))
+            .await
+            .unwrap();
+        let items: Vec<MessageMetaDto> = json_of(&result);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].from, SEED_MSG_FROM);
+        assert_eq!(items[0].subject, SEED_MSG_SUBJECT);
+    }
+
+    #[tokio::test]
+    async fn config_read_round_trips_grid() {
+        let h = handler();
+        let result = h.config_read().await.unwrap();
+        let dto: crate::ports::ConfigViewDto = json_of(&result);
+        assert_eq!(dto.grid, "CN87", "grid must be the 4-char fixture value");
     }
 }

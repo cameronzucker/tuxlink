@@ -6812,12 +6812,14 @@ dependencies = [
 name = "tuxlink-mcp-core"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "libc",
  "rmcp",
  "schemars 1.2.1",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
  "tuxlink-security",
 ]
@@ -6826,6 +6828,7 @@ dependencies = [
 name = "tuxlink-mcp-testserver"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "tokio",
  "tuxlink-mcp-core",
  "tuxlink-security",

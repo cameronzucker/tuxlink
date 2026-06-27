@@ -29,6 +29,10 @@ tokio = { version = "1", features = ["net", "io-util", "macros", "rt-multi-threa
 # `umask(2)` (FIX 3: close the bind->chmod permission window) — the monolith
 # already depends on libc 0.2, so this resolves to the same version.
 libc = "0.2"
+# Phase 3.2: object-safe async port traits + a typed PortError enum. Both are
+# pulled in by the monolith already, so they resolve to the same versions.
+async-trait = "0.1"
+thiserror = "1"
 
 [dev-dependencies]
 tempfile = "3"

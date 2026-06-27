@@ -30,6 +30,7 @@ pub mod user_folders;
 pub mod winlink;
 pub mod winlink_backend;
 pub mod wizard;
+pub mod mcp_ports;
 pub mod modem_commands;
 pub mod modem_status;
 pub mod propagation;
@@ -1274,10 +1275,34 @@ pub fn run() {
                     // env! HERE resolves to the MONOLITH (tuxlink / its version) —
                     // Task-4-injects-identity, so `server_info` reports the app's
                     // identity, not the core crate's 0.0.0.
+                    // Inject the REAL monolith port adapters (phase 3.2 Chunk
+                    // 2). Each holds a cloned AppHandle and reads live managed
+                    // state on demand; redaction (grid 4-char, wire-line creds,
+                    // BT-MAC minimization) happens inside these impls so RAW
+                    // values never cross into mcp-core. One struct per domain.
+                    let h = app.handle();
                     let mcp_state = std::sync::Arc::new(tuxlink_mcp_core::McpState {
                         guard,
                         name: env!("CARGO_PKG_NAME").to_string(),
                         version: env!("CARGO_PKG_VERSION").to_string(),
+                        status: std::sync::Arc::new(crate::mcp_ports::MonolithStatusPort::new(
+                            h.clone(),
+                        )),
+                        mailbox: std::sync::Arc::new(crate::mcp_ports::MonolithMailboxPort::new(
+                            h.clone(),
+                        )),
+                        search: std::sync::Arc::new(crate::mcp_ports::MonolithSearchPort::new(
+                            h.clone(),
+                        )),
+                        config: std::sync::Arc::new(crate::mcp_ports::MonolithConfigPort::new(
+                            h.clone(),
+                        )),
+                        devices: std::sync::Arc::new(crate::mcp_ports::MonolithDevicePort::new(
+                            h.clone(),
+                        )),
+                        logs: std::sync::Arc::new(crate::mcp_ports::MonolithLogPort::new(
+                            h.clone(),
+                        )),
                     });
                     let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
 
