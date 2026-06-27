@@ -882,6 +882,18 @@ fn default_cat_unkey_cmd() -> String {
 fn default_cat_bridge_port() -> u16 {
     4532
 }
+/// Default rigctld host (loopback — rigctld almost always runs on the same machine).
+fn default_rigctld_host() -> String {
+    "127.0.0.1".into()
+}
+/// Default rigctld port (hamlib upstream default).
+fn default_rigctld_port() -> u16 {
+    4532
+}
+/// Default rigctld binary name (on $PATH on most Linux distros that ship hamlib).
+fn default_rigctld_binary() -> String {
+    "rigctld".into()
+}
 
 /// Frontend-shaped ARDOP HF modem settings. Persisted as `[modem_ardop]` in config;
 /// Task 3.3 (`modem_ardop_connect`) translates this into `ArdopConfig::extra_args` at
@@ -978,6 +990,39 @@ pub struct ArdopUiConfig {
     /// listener no longer self-closes by default (tuxlink-5g5d).
     #[serde(default)]
     pub listen_ttl_minutes: u32,
+    /// Hamlib rig model ID for rigctld-based QSY / VFO control. `None` = no
+    /// rigctld integration (close-serial CAT-PTT still works without this).
+    /// Set to the hamlib model number matching the connected transceiver
+    /// (e.g. `1049` for Icom IC-7300; `1037` for Yaesu FT-817).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rig_hamlib_model: Option<u32>,
+    /// Host where rigctld is listening. Default `127.0.0.1` (same machine).
+    #[serde(default = "default_rigctld_host")]
+    pub rigctld_host: String,
+    /// TCP port rigctld is listening on. Default `4532` (hamlib upstream default).
+    #[serde(default = "default_rigctld_port")]
+    pub rigctld_port: u16,
+    /// rigctld binary name or path, used when tuxlink spawns rigctld on behalf
+    /// of the operator. Default `"rigctld"` (expected on $PATH).
+    #[serde(default = "default_rigctld_binary")]
+    pub rigctld_binary: String,
+    /// When `true`, tuxlink closes the CAT serial port before passing audio to
+    /// ardopcf and re-opens it after TX completes (required for radios that
+    /// share the same serial device between CAT and audio PTT). Default `false`.
+    #[serde(default)]
+    pub close_serial_sequencing: bool,
+    /// When `true`, tuxlink polls the VFO frequency from rigctld in real time
+    /// so the frequency readout in the panel stays current. Default `false`
+    /// (polling off until the operator enables it; avoids serial chatter on
+    /// radios where continuous polling is unreliable).
+    #[serde(default)]
+    pub live_vfo_poll: bool,
+    /// When `true`, tuxlink attempts an automatic QSY (frequency change via
+    /// rigctld) to the gateway's published frequency before initiating a
+    /// connect. Default `false` (operator tunes manually; QSY-on-connect is
+    /// opt-in to avoid unintended frequency changes mid-QSO).
+    #[serde(default)]
+    pub qsy_on_fail: bool,
 }
 
 impl ArdopUiConfig {
@@ -1025,6 +1070,13 @@ impl Default for ArdopUiConfig {
             // 0 = no self-expiry (WLE-parity default; 2026-06-16 operator
             // decision). Operator opts into a finite duration in minutes.
             listen_ttl_minutes: 0,
+            rig_hamlib_model: None,
+            rigctld_host: default_rigctld_host(),
+            rigctld_port: default_rigctld_port(),
+            rigctld_binary: default_rigctld_binary(),
+            close_serial_sequencing: false,
+            live_vfo_poll: false,
+            qsy_on_fail: false,
         }
     }
 }
@@ -1073,6 +1125,20 @@ impl<'de> Deserialize<'de> for ArdopUiConfig {
             webgui_port: Option<u16>,
             #[serde(default)]
             listen_ttl_minutes: u32,
+            #[serde(default)]
+            rig_hamlib_model: Option<u32>,
+            #[serde(default = "default_rigctld_host")]
+            rigctld_host: String,
+            #[serde(default = "default_rigctld_port")]
+            rigctld_port: u16,
+            #[serde(default = "default_rigctld_binary")]
+            rigctld_binary: String,
+            #[serde(default)]
+            close_serial_sequencing: bool,
+            #[serde(default)]
+            live_vfo_poll: bool,
+            #[serde(default)]
+            qsy_on_fail: bool,
         }
 
         let s = Shadow::deserialize(de)?;
@@ -1102,6 +1168,13 @@ impl<'de> Deserialize<'de> for ArdopUiConfig {
             connect_attempts: s.connect_attempts,
             webgui_port: s.webgui_port,
             listen_ttl_minutes: s.listen_ttl_minutes,
+            rig_hamlib_model: s.rig_hamlib_model,
+            rigctld_host: s.rigctld_host,
+            rigctld_port: s.rigctld_port,
+            rigctld_binary: s.rigctld_binary,
+            close_serial_sequencing: s.close_serial_sequencing,
+            live_vfo_poll: s.live_vfo_poll,
+            qsy_on_fail: s.qsy_on_fail,
         })
     }
 }
@@ -1882,6 +1955,13 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            rig_hamlib_model: None,
+            rigctld_host: default_rigctld_host(),
+            rigctld_port: default_rigctld_port(),
+            rigctld_binary: default_rigctld_binary(),
+            close_serial_sequencing: false,
+            live_vfo_poll: false,
+            qsy_on_fail: false,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
@@ -1911,6 +1991,13 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            rig_hamlib_model: None,
+            rigctld_host: default_rigctld_host(),
+            rigctld_port: default_rigctld_port(),
+            rigctld_binary: default_rigctld_binary(),
+            close_serial_sequencing: false,
+            live_vfo_poll: false,
+            qsy_on_fail: false,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         // PttMethod serializes snake_case.
@@ -2017,6 +2104,13 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            rig_hamlib_model: None,
+            rigctld_host: default_rigctld_host(),
+            rigctld_port: default_rigctld_port(),
+            rigctld_binary: default_rigctld_binary(),
+            close_serial_sequencing: false,
+            live_vfo_poll: false,
+            qsy_on_fail: false,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(
@@ -2053,6 +2147,13 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            rig_hamlib_model: None,
+            rigctld_host: default_rigctld_host(),
+            rigctld_port: default_rigctld_port(),
+            rigctld_binary: default_rigctld_binary(),
+            close_serial_sequencing: false,
+            live_vfo_poll: false,
+            qsy_on_fail: false,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(
@@ -2137,6 +2238,13 @@ mod tests {
             connect_attempts: None,
             webgui_port: Some(9080),
             listen_ttl_minutes: 0,
+            rig_hamlib_model: None,
+            rigctld_host: default_rigctld_host(),
+            rigctld_port: default_rigctld_port(),
+            rigctld_binary: default_rigctld_binary(),
+            close_serial_sequencing: false,
+            live_vfo_poll: false,
+            qsy_on_fail: false,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(
@@ -2160,6 +2268,31 @@ mod tests {
         let no_wg_json = r#"{"binary":"ardopcf","capture_device":"","playback_device":"","cmd_port":8515}"#;
         let back: ArdopUiConfig = serde_json::from_str(no_wg_json).unwrap();
         assert_eq!(back.webgui_port, None);
+    }
+
+    // --- tuxlink-8fkkk: rig-control fields (rigctld / close-serial / QSY) ---
+
+    #[test]
+    fn ardop_ui_config_rig_defaults() {
+        let c = ArdopUiConfig::default();
+        assert_eq!(c.rig_hamlib_model, None);
+        assert_eq!(c.rigctld_host, "127.0.0.1");
+        assert_eq!(c.rigctld_port, 4532);
+        assert_eq!(c.rigctld_binary, "rigctld");
+        assert!(!c.close_serial_sequencing);
+        assert!(!c.live_vfo_poll);
+        assert!(!c.qsy_on_fail);
+    }
+
+    #[test]
+    fn ardop_ui_config_rig_fields_round_trip_json() {
+        let mut c = ArdopUiConfig::default();
+        c.rig_hamlib_model = Some(1049);
+        c.close_serial_sequencing = true;
+        let json = serde_json::to_string(&c).unwrap();
+        let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rig_hamlib_model, Some(1049));
+        assert!(back.close_serial_sequencing);
     }
 
     #[test]

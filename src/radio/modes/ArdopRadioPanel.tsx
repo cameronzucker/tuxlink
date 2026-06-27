@@ -290,6 +290,24 @@ interface ArdopFullConfig {
    *  operator disarms it (WLE-parity; 2026-06-16 operator decision). A
    *  positive value arms for that many minutes (tuxlink-5g5d). */
   listen_ttl_minutes: number;
+  /** Hamlib rig model ID for rigctld-based QSY / VFO control. null = no
+   *  rigctld integration. Set to the hamlib model number matching the
+   *  transceiver (e.g. 1049 for IC-7300). */
+  rig_hamlib_model: number | null;
+  /** Host where rigctld is listening. Default '127.0.0.1'. */
+  rigctld_host: string;
+  /** TCP port rigctld is listening on. Default 4532. */
+  rigctld_port: number;
+  /** rigctld binary name or path used when tuxlink spawns it. Default 'rigctld'. */
+  rigctld_binary: string;
+  /** When true, tuxlink closes the CAT serial port before passing audio to
+   *  ardopcf and re-opens it after TX (required for single-port radios). */
+  close_serial_sequencing: boolean;
+  /** When true, tuxlink polls the VFO frequency from rigctld in real time. */
+  live_vfo_poll: boolean;
+  /** When true, tuxlink attempts an automatic QSY to the gateway frequency
+   *  before initiating a connect. */
+  qsy_on_fail: boolean;
 }
 
 /** Mirror of Rust's `ArdopUiConfig::resolved_webgui_port`. Single source

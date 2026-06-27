@@ -1564,6 +1564,7 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            ..Default::default()
         };
         config_set_ardop(initial.clone()).expect("config_set_ardop must succeed");
         let read = config_get_ardop();
@@ -1704,6 +1705,7 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            ..Default::default()
         }
     }
 
@@ -2460,6 +2462,7 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            ..Default::default()
         };
         let args = build_ardop_extra_args(&cfg);
         assert_eq!(
@@ -2496,6 +2499,7 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            ..Default::default()
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
@@ -2527,6 +2531,7 @@ mod tests {
                 connect_attempts: None,
                 webgui_port: None,
                 listen_ttl_minutes: 0,
+                ..Default::default()
             };
             let args = build_ardop_extra_args(&cfg);
             assert!(
@@ -2558,6 +2563,7 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            ..Default::default()
         };
         let args = build_ardop_extra_args(&cfg);
         assert_eq!(
@@ -2598,6 +2604,7 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            ..Default::default()
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
@@ -2631,6 +2638,7 @@ mod tests {
             connect_attempts: None,
             webgui_port: Some(9080),
             listen_ttl_minutes: 0,
+            ..Default::default()
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
@@ -2665,6 +2673,7 @@ mod tests {
             connect_attempts: None,
             webgui_port: Some(8514),
             listen_ttl_minutes: 0,
+            ..Default::default()
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
@@ -2702,6 +2711,7 @@ mod tests {
             connect_attempts: None,
             webgui_port: None,
             listen_ttl_minutes: 0,
+            ..Default::default()
         }
     }
 
