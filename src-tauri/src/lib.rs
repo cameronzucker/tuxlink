@@ -1650,7 +1650,6 @@ pub fn run() {
             crate::modem_commands::modem_ardop_disconnect, // tuxlink-4ek Task 3.2 (clear consent + reset)
             crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
             crate::modem_commands::ardop_tune_rig,     // tuxlink-8fkkk Task 7 (Tune-only: set freq+mode, drop serial)
-            crate::modem_commands::rig_probe_status,   // tuxlink-wxwlr (read-only CAT VFO/mode/PTT probe; MCP rig_status source)
             crate::modem_commands::modem_ardop_b2f_exchange, // tuxlink-ytg (B2F over ARDOP — Winlink mail flows)
             // tuxlink-0ye6 Task 3.5: ARDOP session lifecycle commands —
             // ardop_open_session spawns ardopcf + records (intent, transport_kind)

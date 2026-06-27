@@ -287,29 +287,25 @@ impl StatusPort for MonolithStatusPort {
     }
 
     async fn rig_status(&self) -> Result<RigStatusDto, PortError> {
-        // `configured` is read from config (a hamlib model + CAT serial set).
-        // The live VFO/mode/PTT come from a BEST-EFFORT transient CAT probe
-        // (rig_probe_status): on ANY error (unconfigured, rigctld absent, or the
-        // CAT serial busy with an active DRA-100 session holding rigctld) the
-        // live fields are `None` while `configured` still reports the setup
-        // state. The probe is CAT-READ-ONLY — it never transmits or retunes.
+        // Config-derived ONLY: `configured` = a hamlib model + CAT serial are set.
+        // The live VFO/mode/PTT fields stay `None` here BY DESIGN (Codex
+        // tuxlink-wxwlr P1): reading them requires spawning `rigctld`, which opens
+        // an unauthenticated, command-capable CAT server (it accepts F/M/T set
+        // commands). Doing that from this READ-ONLY, un-gated tool would let an
+        // un-armed agent open a transmit-capable surface that bypasses the egress
+        // gate. A live readout is deferred to a path that reuses an already-running
+        // session's rig (no new server) or runs behind the egress gate
+        // (tracked separately). This tool never spawns a subprocess and never
+        // touches the radio.
         let configured = crate::config::read_config()
             .map(|cfg| crate::modem_commands::rig_config_from(&cfg.rig).is_some())
             .unwrap_or(false);
-        match crate::modem_commands::rig_probe_status() {
-            Ok(probe) => Ok(RigStatusDto {
-                vfo_hz: Some(probe.vfo_hz),
-                mode: probe.mode,
-                ptt: Some(probe.ptt),
-                configured,
-            }),
-            Err(_) => Ok(RigStatusDto {
-                vfo_hz: None,
-                mode: None,
-                ptt: None,
-                configured,
-            }),
-        }
+        Ok(RigStatusDto {
+            vfo_hz: None,
+            mode: None,
+            ptt: None,
+            configured,
+        })
     }
 }
 

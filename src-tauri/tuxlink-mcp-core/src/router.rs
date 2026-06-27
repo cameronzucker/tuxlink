@@ -959,7 +959,13 @@ pub struct TargetParams {
 /// `cms` / `radio-only` / `post-office` / `mesh` / `p2p`) and defaults to
 /// [`SessionIntentDto::Cms`] when omitted. No frequency/QSY params: the ARDOP
 /// link is tuned at connect, and the B2F runs over the already-connected link.
+/// `deny_unknown_fields` (Codex tuxlink-wxwlr P2): a caller that sends `freq_hz`
+/// / `qsy_candidates` here (natural, since the adjacent egress tools accept them)
+/// is REJECTED rather than having those keys silently dropped — otherwise the
+/// agent could believe it requested a tune while the radio transmits on the
+/// existing VFO.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExchangeParams {
     /// The target station/gateway callsign.
     pub target: String,

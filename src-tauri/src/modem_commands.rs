@@ -1911,40 +1911,13 @@ pub fn ardop_tune_rig(freq_hz: u64) -> Result<(), String> {
     Ok(())
 }
 
-// ── tuxlink-wxwlr: read-only CAT VFO/mode/PTT probe (MCP rig_status source) ──
-
-/// A live rig state snapshot from a transient CAT read. `mode` is the rigctld
-/// mode token (e.g. `"PKTUSB"`) when known. Read-only — never transmits.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct RigProbe {
-    pub vfo_hz: u64,
-    pub mode: Option<String>,
-    pub ptt: bool,
-}
-
-/// Read-only CAT probe: spawn a transient `rigctld`, read the live VFO/mode/PTT,
-/// then drop (releasing the serial). Mirrors [`ardop_tune_rig`]'s spawn pattern
-/// but calls `status()` instead of `tune()`, so it NEVER transmits and NEVER
-/// changes the rig's frequency/mode. Used as the MCP `rig_status` source and as
-/// a usable GUI command.
-///
-/// Errors (rig not configured, rigctld spawn failure, or a busy CAT serial held
-/// by an active session) surface as `Err(String)`; the MCP StatusPort treats
-/// any error as "live fields unknown" and reports `configured` from config.
-#[tauri::command]
-pub fn rig_probe_status() -> Result<RigProbe, String> {
-    let cfg = config::read_config().map_err(|e| format!("read failed: {e}"))?;
-    let rc = rig_config_from(&cfg.rig)
-        .ok_or_else(|| "rig control not configured — set the rig model + CAT serial".to_string())?;
-    let mut rig = tux_rig::ManagedRig::spawn(rc).map_err(|e| e.to_string())?;
-    let status = rig.status().map_err(|e| e.to_string())?;
-    // Drop releases the serial (close-serial-safe for internal-codec radios).
-    Ok(RigProbe {
-        vfo_hz: status.freq_hz,
-        mode: status.mode.map(|m| m.rigctl_str().to_string()),
-        ptt: status.ptt,
-    })
-}
+// tuxlink-wxwlr: a read-only CAT VFO/mode/PTT probe was considered as the MCP
+// `rig_status` source but removed (Codex P1): reading the live VFO requires
+// spawning `rigctld`, which opens an unauthenticated command-capable CAT server.
+// Triggering that from an un-gated read-only tool would expose a transmit-capable
+// surface that bypasses the egress gate. A safe live readout (reuse a running
+// session's rig, or gate it) is tracked as a follow-up; `rig_status` reports
+// config-derived state only.
 
 #[cfg(test)]
 mod tests {
