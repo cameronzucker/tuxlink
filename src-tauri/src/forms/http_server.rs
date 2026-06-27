@@ -649,9 +649,19 @@ fn html_escape(s: &str) -> String {
 }
 
 /// Escape a string for embedding inside a JavaScript double-quoted string
-/// literal. Handles backslash, double-quote, newline, carriage-return, and
-/// the `</` sequence (which would otherwise close the surrounding `<script>`
-/// tag from inside a JS string — the classic XSS via `</script>` payload).
+/// literal. Handles backslash, double-quote, newline, carriage-return, the
+/// `</` sequence (which would otherwise close the surrounding `<script>` tag
+/// from inside a JS string — the classic XSS via `</script>` payload), and the
+/// Unicode line terminators U+2028 / U+2029.
+///
+/// tuxlink-2590 (receiving-end appsec audit): U+2028 (LINE SEPARATOR) and
+/// U+2029 (PARAGRAPH SEPARATOR) terminate a string literal in pre-ES2019 JS
+/// engines. WebKitGTK's JavaScriptCore is ES2019+ (they are legal inside
+/// string literals there, so this is not an exploitable bypass on the shipping
+/// engine), but escaping them is cheap defense-in-depth: it removes a
+/// binder-script parse-failure (silent no-op) on any non-ES2019 engine and
+/// keeps `js_escape` sound for reuse in any future context. The quote /
+/// backslash / `<` / newline escapes above are what actually gate breakout.
 fn js_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -664,6 +674,10 @@ fn js_escape(s: &str) -> String {
             // element when injected payload contains it. < is the
             // standard JS escape for `<` inside string literals.
             '<' => out.push_str("\\u003C"),
+            // Unicode line terminators — escape so they can never terminate the
+            // string literal on a non-ES2019 engine (tuxlink-2590).
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
             _ => out.push(ch),
         }
     }
@@ -2190,6 +2204,36 @@ s = "{var Comments}";
         );
         // And the escaped form should be present.
         assert!(out.contains("\\u003C"));
+    }
+
+    #[test]
+    fn js_escape_escapes_unicode_line_terminators() {
+        // tuxlink-2590 (receiving-end appsec audit): U+2028 (LINE SEPARATOR) and
+        // U+2029 (PARAGRAPH SEPARATOR) terminate a JS string literal on
+        // pre-ES2019 engines. They must be escaped so a hostile field value can
+        // never split the binder string literal there. (Not exploitable on
+        // WebKitGTK's ES2019+ JavaScriptCore — defense-in-depth.)
+        let out = js_escape("a\u{2028}b\u{2029}c");
+        assert_eq!(out, "a\\u2028b\\u2029c");
+        assert!(!out.contains('\u{2028}'), "raw U+2028 must not survive");
+        assert!(!out.contains('\u{2029}'), "raw U+2029 must not survive");
+    }
+
+    #[test]
+    fn inject_field_value_script_escapes_unicode_line_terminators() {
+        // End-to-end: a received field value carrying U+2028 lands escaped in
+        // the injected binder script, never as a raw terminator (tuxlink-2590).
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("a".to_string(), "x\u{2028}y".to_string());
+        let out = inject_field_value_script("<html><body></body></html>", &fv);
+        assert!(
+            out.contains("\\u2028"),
+            "U+2028 in a field value must be escaped in the injected script"
+        );
+        assert!(
+            !out.contains('\u{2028}'),
+            "raw U+2028 must not appear in the injected script"
+        );
     }
 
     #[test]
