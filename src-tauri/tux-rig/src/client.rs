@@ -1,5 +1,7 @@
 //! `rigctld` TCP client. One request line → one reply (set: `RPRT n`;
-//! get: value line(s)). The client opens a short-lived line exchange per call.
+//! get: value line(s)). A persistent `BufReader` ensures bytes from a
+//! multi-line reply (e.g. the two-line `m` response) are never lost between
+//! calls.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -8,24 +10,29 @@ use crate::protocol::{self, CMD_GET_FREQ, CMD_GET_MODE, CMD_GET_PTT};
 use crate::{Mode, Rig, RigError, RigStatus};
 
 /// A connected rigctld control client.
+///
+/// Holds a persistent `BufReader` so that buffered bytes from a prior reply
+/// are never lost between `exchange` calls.
 pub struct RigctldClient {
-    stream: TcpStream,
+    reader: BufReader<TcpStream>,
+    writer: TcpStream,
 }
 
 impl RigctldClient {
     /// Connect to a running rigctld at `host:port`.
     pub fn connect(host: &str, port: u16) -> Result<Self, RigError> {
         let stream = TcpStream::connect((host, port))?;
-        Ok(Self { stream })
+        let writer = stream.try_clone()?;
+        let reader = BufReader::new(stream);
+        Ok(Self { reader, writer })
     }
 
     /// Send one command and return the first reply line, trimmed.
     fn exchange(&mut self, cmd: &str) -> Result<String, RigError> {
-        self.stream.write_all(cmd.as_bytes())?;
-        self.stream.flush()?;
-        let mut reader = BufReader::new(&self.stream);
+        self.writer.write_all(cmd.as_bytes())?;
+        self.writer.flush()?;
         let mut line = String::new();
-        reader.read_line(&mut line)?;
+        self.reader.read_line(&mut line)?;
         Ok(line.trim_end().to_string())
     }
 }
@@ -48,7 +55,11 @@ impl Rig for RigctldClient {
 
     fn read_status(&mut self) -> Result<RigStatus, RigError> {
         let freq = protocol::parse_freq(&self.exchange(CMD_GET_FREQ)?)?;
-        let mode = Mode::from_rigctl(&self.exchange(CMD_GET_MODE)?);
+        // rigctld answers `m` with two lines: mode then passband; consume the passband.
+        let mode_line = self.exchange(CMD_GET_MODE)?;
+        let mode = Mode::from_rigctl(&mode_line);
+        let mut passband = String::new();
+        self.reader.read_line(&mut passband)?;
         let ptt = self.exchange(CMD_GET_PTT)?.trim() == "1";
         Ok(RigStatus { freq_hz: freq, mode, ptt })
     }
@@ -77,7 +88,9 @@ mod tests {
                     Some('F') | Some('M') | Some('T') => "RPRT 0\n".to_string(),
                     Some('f') => "7102000\n".to_string(),
                     Some('m') => "PKTUSB\n3000\n".to_string(),
-                    Some('t') => "0\n".to_string(),
+                    // PTT=1 so that if the passband line ("3000") is mis-read as the
+                    // `t` reply the assertion `ptt == true` fails (3000 != "1").
+                    Some('t') => "1\n".to_string(),
                     _ => "RPRT -1\n".to_string(),
                 };
                 writer.write_all(reply.as_bytes()).unwrap();
@@ -109,6 +122,8 @@ mod tests {
         let s = c.read_status().unwrap();
         assert_eq!(s.freq_hz, 7_102_000);
         assert_eq!(s.mode, Some(Mode::PktUsb));
-        assert!(!s.ptt);
+        // PTT is 1 in the fake; if the passband line ("3000") leaked into the `t`
+        // exchange, ptt would parse as false (trim "3000" != "1") — catching the bug.
+        assert!(s.ptt);
     }
 }
