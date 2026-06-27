@@ -14,3 +14,8 @@ publish = false
 
 [dependencies]
 thiserror = "2"
+
+[dev-dependencies]
+# `guarded_egress` is async; its tier-1 tests need a runtime + #[tokio::test].
+# `macros` + `rt` (current-thread) are sufficient — no multi-thread needed.
+tokio = { version = "1", features = ["macros", "rt"] }

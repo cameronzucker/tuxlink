@@ -1282,7 +1282,9 @@ pub fn run() {
                     // values never cross into mcp-core. One struct per domain.
                     let h = app.handle();
                     let mcp_state = std::sync::Arc::new(tuxlink_mcp_core::McpState {
-                        guard,
+                        // Clone so the bare `guard` binding survives for the
+                        // egress port's `guard.clone()` below (same shared Arc).
+                        guard: guard.clone(),
                         name: env!("CARGO_PKG_NAME").to_string(),
                         version: env!("CARGO_PKG_VERSION").to_string(),
                         status: std::sync::Arc::new(crate::mcp_ports::MonolithStatusPort::new(
@@ -1301,6 +1303,17 @@ pub fn run() {
                             h.clone(),
                         )),
                         logs: std::sync::Arc::new(crate::mcp_ports::MonolithLogPort::new(
+                            h.clone(),
+                        )),
+                        // Phase 3.3 Chunk 2: GATED Agent egress + UNGATED abort.
+                        // The egress port shares the SAME `Arc<EgressGuard>` the
+                        // operator's egress_arm/egress_disarm mutate, so the gate
+                        // sees the live arm/taint state at call time.
+                        egress: std::sync::Arc::new(crate::mcp_ports::MonolithEgressPort::new(
+                            h.clone(),
+                            guard.clone(),
+                        )),
+                        abort: std::sync::Arc::new(crate::mcp_ports::MonolithAbortPort::new(
                             h.clone(),
                         )),
                     });

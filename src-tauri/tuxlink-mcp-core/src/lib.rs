@@ -27,7 +27,8 @@ pub mod router;
 pub mod transport_uds;
 
 pub use ports::{
-    ConfigPort, DevicePort, LogPort, MailboxPort, PortError, SearchPort, StatusPort,
+    AbortPort, ConfigPort, DevicePort, EgressPort, EgressPortError, LogPort, MailboxPort, PortError,
+    SearchPort, StatusPort,
 };
 pub use router::TuxlinkMcp;
 pub use transport_uds::serve;
@@ -67,6 +68,12 @@ pub struct McpState {
     pub devices: Arc<dyn DevicePort>,
     /// Session-log snapshot. Taints at the calling tool.
     pub logs: Arc<dyn LogPort>,
+    /// GATED egress capability (CMS/P2P/ARDOP/VARA/packet connect + B2F). Each
+    /// impl method gates itself through `guarded_egress(.., Agent, ..)`, so a
+    /// disarmed/expired/tainted/poisoned session cannot transmit.
+    pub egress: Arc<dyn EgressPort>,
+    /// UNGATED pure-stop capability. Stopping is always allowed.
+    pub abort: Arc<dyn AbortPort>,
 }
 
 /// Serializable shape returned by the `server_info` tool.
@@ -106,15 +113,18 @@ pub(crate) mod test_support {
 
     use async_trait::async_trait;
 
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use crate::ports::{
-        ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto, BluetoothDeviceDto,
-        CatalogEntryDto, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, FolderDto, LogLineDto,
-        LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto, ParsedMessageDto,
-        PlatformInfoDto, PortError, PositionStatusDto, SearchPort, SearchQueryDto,
-        SearchResultsDto, SerialDeviceDto, StatusPort, VaraConfigDto, VaraStatusDto,
+        AbortPort, ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
+        BluetoothDeviceDto, CatalogEntryDto, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto,
+        EgressPort, EgressPortError, FolderDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
+        ModemStatusDto, PacketConfigDto, ParsedMessageDto, PlatformInfoDto, PortError,
+        PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto,
+        SessionIntentDto, StatusPort, VaraConfigDto, VaraStatusDto,
     };
     use crate::McpState;
-    use tuxlink_security::EgressGuard;
+    use tuxlink_security::{guarded_egress, EgressAuthority, EgressGuard};
 
     /// A recognizable seeded message so taint-then-read tier-2 checks can assert
     /// the sender + subject round-tripped. Mirrors the testserver fixture.
@@ -312,10 +322,123 @@ pub(crate) mod test_support {
         }
     }
 
+    /// A mock [`EgressPort`] that gates EVERY method through the REAL
+    /// [`guarded_egress`] against a SHARED [`EgressGuard`], flipping a shared
+    /// `op_ran` flag inside the gated op. So a test can assert both the
+    /// authorization decision AND whether the underlying egress actually fired
+    /// (denied → flag stays false; allowed → flag flips true). `Denied` is
+    /// surfaced as [`EgressPortError::Denied`] with the gate's reason.
+    pub struct MockEgress {
+        guard: Arc<EgressGuard>,
+        op_ran: Arc<AtomicBool>,
+    }
+
+    impl MockEgress {
+        pub fn new(guard: Arc<EgressGuard>, op_ran: Arc<AtomicBool>) -> Self {
+            Self { guard, op_ran }
+        }
+
+        /// Run `label` through the real gate; flip `op_ran` only if it runs.
+        async fn gated(&self, label: &str) -> Result<(), EgressPortError> {
+            let op_ran = Arc::clone(&self.op_ran);
+            let noop_audit = |_a: tuxlink_security::EgressAudit<'_>| {};
+            guarded_egress(
+                &self.guard,
+                EgressAuthority::Agent,
+                label,
+                &noop_audit,
+                || async move {
+                    op_ran.store(true, Ordering::SeqCst);
+                },
+            )
+            .await
+            .map_err(|d| EgressPortError::Denied(d.to_string()))
+        }
+    }
+
+    #[async_trait]
+    impl EgressPort for MockEgress {
+        async fn cms_connect(&self) -> Result<(), EgressPortError> {
+            self.gated("cms_connect").await
+        }
+        async fn verify_cms_connection(&self) -> Result<(), EgressPortError> {
+            self.gated("verify_cms_connection").await
+        }
+        async fn ardop_connect(&self, _target: String) -> Result<(), EgressPortError> {
+            self.gated("ardop_connect").await
+        }
+        async fn ardop_b2f_exchange(
+            &self,
+            _target: String,
+            _intent: SessionIntentDto,
+        ) -> Result<(), EgressPortError> {
+            self.gated("ardop_b2f_exchange").await
+        }
+        async fn vara_b2f_exchange(
+            &self,
+            _target: String,
+            _intent: SessionIntentDto,
+        ) -> Result<(), EgressPortError> {
+            self.gated("vara_b2f_exchange").await
+        }
+        async fn packet_connect(
+            &self,
+            _call: String,
+            _path: Vec<String>,
+        ) -> Result<(), EgressPortError> {
+            self.gated("packet_connect").await
+        }
+    }
+
+    /// A mock [`AbortPort`] that flips a shared `aborted` flag and is NEVER
+    /// gated — every method succeeds regardless of guard state.
+    pub struct MockAbort {
+        aborted: Arc<AtomicBool>,
+    }
+
+    impl MockAbort {
+        pub fn new(aborted: Arc<AtomicBool>) -> Self {
+            Self { aborted }
+        }
+        fn mark(&self) {
+            self.aborted.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl AbortPort for MockAbort {
+        async fn cms_abort(&self) -> Result<(), PortError> {
+            self.mark();
+            Ok(())
+        }
+        async fn ardop_disconnect(&self) -> Result<(), PortError> {
+            self.mark();
+            Ok(())
+        }
+        async fn vara_stop_session(&self) -> Result<(), PortError> {
+            self.mark();
+            Ok(())
+        }
+    }
+
     /// Build an [`McpState`] around the supplied guard, wiring all mock ports.
+    /// The egress/abort flags are internal; use [`state_with_egress_probes`] to
+    /// observe whether a gated egress op actually ran or an abort fired.
     pub fn state_with_guard(guard: EgressGuard) -> McpState {
-        McpState {
-            guard: Arc::new(guard),
+        state_with_egress_probes(guard).0
+    }
+
+    /// Like [`state_with_guard`] but also returns `(op_ran, aborted)` probe
+    /// flags so the egress-gate + injection-containment tests can assert the
+    /// underlying op fired (or did not) and that abort succeeded.
+    pub fn state_with_egress_probes(
+        guard: EgressGuard,
+    ) -> (McpState, Arc<AtomicBool>, Arc<AtomicBool>) {
+        let guard = Arc::new(guard);
+        let op_ran = Arc::new(AtomicBool::new(false));
+        let aborted = Arc::new(AtomicBool::new(false));
+        let state = McpState {
+            guard: Arc::clone(&guard),
             name: "tuxlink".into(),
             version: "9.9.9".into(),
             status: Arc::new(MockStatus),
@@ -324,7 +447,10 @@ pub(crate) mod test_support {
             config: Arc::new(MockConfig),
             devices: Arc::new(MockDevice),
             logs: Arc::new(MockLog),
-        }
+            egress: Arc::new(MockEgress::new(Arc::clone(&guard), Arc::clone(&op_ran))),
+            abort: Arc::new(MockAbort::new(Arc::clone(&aborted))),
+        };
+        (state, op_ran, aborted)
     }
 }
 

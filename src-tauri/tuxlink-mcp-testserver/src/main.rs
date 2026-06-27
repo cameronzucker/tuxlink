@@ -96,6 +96,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let version = std::env::var(VERSION_ENV).unwrap_or_else(|_| "testserver".to_string());
 
     let guard = Arc::new(guard);
+    // Egress/abort probe flags. The egress mock shares the SAME guard built from
+    // the environment above, so TUXLINK_TEST_ARM/TAINT drive the real gate
+    // end-to-end: a gated egress is denied unless armed + un-tainted.
+    let egress_op_ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let state = McpState {
         guard: Arc::clone(&guard),
         name: name.clone(),
@@ -106,6 +111,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: Arc::new(mocks::MockConfig),
         devices: Arc::new(mocks::MockDevice),
         logs: Arc::new(mocks::MockLog),
+        egress: Arc::new(mocks::MockEgress::new(
+            Arc::clone(&guard),
+            Arc::clone(&egress_op_ran),
+        )),
+        abort: Arc::new(mocks::MockAbort::new(Arc::clone(&aborted))),
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 

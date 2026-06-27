@@ -7,15 +7,20 @@
 //! The MailboxPort mock seeds ONE message with a recognizable
 //! `from`/`subject`; the ConfigPort mock returns a 4-char grid (`"CN87"`).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
 use tuxlink_mcp_core::ports::{
-    ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto, BluetoothDeviceDto,
-    CatalogEntryDto, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, FolderDto, LogLineDto,
-    LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto, ParsedMessageDto,
-    PlatformInfoDto, PortError, PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto,
-    SerialDeviceDto, StatusPort, VaraConfigDto, VaraStatusDto,
+    AbortPort, ArdopConfigDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
+    BluetoothDeviceDto, CatalogEntryDto, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto,
+    EgressPort, EgressPortError, FolderDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
+    ModemStatusDto, PacketConfigDto, ParsedMessageDto, PlatformInfoDto, PortError,
+    PositionStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto,
+    SessionIntentDto, StatusPort, VaraConfigDto, VaraStatusDto,
 };
+use tuxlink_security::{guarded_egress, EgressAuthority, EgressAudit, EgressGuard};
 
 /// Recognizable seeded message — tier-2 reads this and verifies the round-trip.
 pub const SEED_MSG_ID: &str = "MSG001";
@@ -217,5 +222,110 @@ impl LogPort for MockLog {
             level: "info".into(),
             message: "session started".into(),
         }])
+    }
+}
+
+/// GATED egress mock for the tier-2 testserver (phase 3.3).
+///
+/// Holds the SAME [`EgressGuard`] the testserver built from the environment, so
+/// `TUXLINK_TEST_ARM` / `TUXLINK_TEST_TAINT` directly affect whether a gated
+/// egress is allowed. Every method runs through the REAL
+/// [`guarded_egress`](tuxlink_security::guarded_egress) with
+/// [`EgressAuthority::Agent`]; the gated op flips a shared `op_ran` flag and
+/// stderr-logs the decision via the audit sink, so a tier-2 run demonstrates
+/// the real gate end-to-end (denied → no transmit; armed+untainted → transmit).
+pub struct MockEgress {
+    guard: Arc<EgressGuard>,
+    op_ran: Arc<AtomicBool>,
+}
+
+impl MockEgress {
+    pub fn new(guard: Arc<EgressGuard>, op_ran: Arc<AtomicBool>) -> Self {
+        Self { guard, op_ran }
+    }
+
+    async fn gated(&self, label: &str) -> Result<(), EgressPortError> {
+        let op_ran = Arc::clone(&self.op_ran);
+        let audit = |a: EgressAudit<'_>| {
+            eprintln!(
+                "egress-audit op={} allowed={} reason={:?}",
+                a.op, a.allowed, a.reason
+            );
+        };
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            label,
+            &audit,
+            || async move {
+                op_ran.store(true, Ordering::SeqCst);
+            },
+        )
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))
+    }
+}
+
+#[async_trait]
+impl EgressPort for MockEgress {
+    async fn cms_connect(&self) -> Result<(), EgressPortError> {
+        self.gated("cms_connect").await
+    }
+    async fn verify_cms_connection(&self) -> Result<(), EgressPortError> {
+        self.gated("verify_cms_connection").await
+    }
+    async fn ardop_connect(&self, _target: String) -> Result<(), EgressPortError> {
+        self.gated("ardop_connect").await
+    }
+    async fn ardop_b2f_exchange(
+        &self,
+        _target: String,
+        _intent: SessionIntentDto,
+    ) -> Result<(), EgressPortError> {
+        self.gated("ardop_b2f_exchange").await
+    }
+    async fn vara_b2f_exchange(
+        &self,
+        _target: String,
+        _intent: SessionIntentDto,
+    ) -> Result<(), EgressPortError> {
+        self.gated("vara_b2f_exchange").await
+    }
+    async fn packet_connect(
+        &self,
+        _call: String,
+        _path: Vec<String>,
+    ) -> Result<(), EgressPortError> {
+        self.gated("packet_connect").await
+    }
+}
+
+/// UNGATED abort mock. Flips a shared `aborted` flag; never gated.
+pub struct MockAbort {
+    aborted: Arc<AtomicBool>,
+}
+
+impl MockAbort {
+    pub fn new(aborted: Arc<AtomicBool>) -> Self {
+        Self { aborted }
+    }
+    fn mark(&self) {
+        self.aborted.store(true, Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl AbortPort for MockAbort {
+    async fn cms_abort(&self) -> Result<(), PortError> {
+        self.mark();
+        Ok(())
+    }
+    async fn ardop_disconnect(&self) -> Result<(), PortError> {
+        self.mark();
+        Ok(())
+    }
+    async fn vara_stop_session(&self) -> Result<(), PortError> {
+        self.mark();
+        Ok(())
     }
 }

@@ -16,13 +16,31 @@ use rmcp::model::{
 };
 use rmcp::{tool, tool_handler, tool_router, ErrorData};
 
-use crate::ports::{PortError, SearchQueryDto};
+use crate::ports::{EgressPortError, PortError, SearchQueryDto, SessionIntentDto};
 use crate::{server_info_view, McpState};
 
 /// Map a [`PortError`] onto an rmcp tool error. Read tools surface the failure
 /// to the agent rather than crashing the transport.
 fn port_err(e: PortError) -> ErrorData {
     ErrorData::internal_error(e.to_string(), None)
+}
+
+/// Map an [`EgressPortError`] onto an rmcp tool error. A `Denied` is an
+/// authorization refusal — surface it with a clear message telling the agent it
+/// is not authorized to transmit (the operator must arm send authority, and the
+/// session must not be tainted), distinct from an operational `Failed`.
+fn egress_err(e: EgressPortError) -> ErrorData {
+    match e {
+        EgressPortError::Denied(reason) => ErrorData::invalid_request(
+            format!(
+                "not authorized to transmit: {reason}. The operator must ARM send \
+                 authority, and the session must not be tainted (reading untrusted \
+                 message content locks send authority until re-armed)."
+            ),
+            None,
+        ),
+        EgressPortError::Failed(reason) => ErrorData::internal_error(reason, None),
+    }
 }
 
 /// The Tuxlink MCP server handler. Cloned per the rmcp serve loop; the inner
@@ -304,6 +322,140 @@ impl TuxlinkMcp {
         self.state.guard.taint();
         Ok(CallToolResult::success(vec![Content::json(dto)?]))
     }
+
+    // ----- GATED egress (require armed send authority; deny when tainted) -----
+    //
+    // These tools transmit/connect (egress). The IMPL gates each call through
+    // `guarded_egress(.., Agent, ..)`; the tool itself is a thin adapter that
+    // maps an EgressPortError::Denied onto an authorization-shaped tool error.
+    // They do NOT call `guard.taint()` — the gate READS taint; the reading tier
+    // SETS it.
+
+    #[tool(
+        name = "cms_connect",
+        description = "Connect to the configured CMS (Winlink common message server). EGRESS: requires armed send-authority and an un-tainted session; denied otherwise."
+    )]
+    pub async fn cms_connect(&self) -> Result<CallToolResult, ErrorData> {
+        self.state.egress.cms_connect().await.map_err(egress_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "verify_cms_connection",
+        description = "Verify the live CMS connection with a network round-trip. EGRESS: requires armed send-authority and an un-tainted session; denied otherwise."
+    )]
+    pub async fn verify_cms_connection(&self) -> Result<CallToolResult, ErrorData> {
+        self.state
+            .egress
+            .verify_cms_connection()
+            .await
+            .map_err(egress_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "ardop_connect",
+        description = "Connect the ARDOP modem to a target station. EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+    )]
+    pub async fn ardop_connect(
+        &self,
+        params: Parameters<TargetParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(TargetParams { target }) = params;
+        self.state
+            .egress
+            .ardop_connect(target)
+            .await
+            .map_err(egress_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "ardop_b2f_exchange",
+        description = "Run an ARDOP B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+    )]
+    pub async fn ardop_b2f_exchange(
+        &self,
+        params: Parameters<ExchangeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(ExchangeParams { target, intent }) = params;
+        self.state
+            .egress
+            .ardop_b2f_exchange(target, intent)
+            .await
+            .map_err(egress_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "vara_b2f_exchange",
+        description = "Run a VARA B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+    )]
+    pub async fn vara_b2f_exchange(
+        &self,
+        params: Parameters<ExchangeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(ExchangeParams { target, intent }) = params;
+        self.state
+            .egress
+            .vara_b2f_exchange(target, intent)
+            .await
+            .map_err(egress_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "packet_connect",
+        description = "Connect an AX.25 packet session to a callsign over an optional digipeater path. EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+    )]
+    pub async fn packet_connect(
+        &self,
+        params: Parameters<PacketConnectParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(PacketConnectParams { call, path }) = params;
+        self.state
+            .egress
+            .packet_connect(call, path)
+            .await
+            .map_err(egress_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    // ----- UNGATED abort (stopping is ALWAYS allowed) -----
+    //
+    // Pure-stop tools. Never gated by armed/taint state: a working abort is a
+    // safety primitive, so the agent can always halt a transmission/connection.
+
+    #[tool(
+        name = "cms_abort",
+        description = "Abort/disconnect the CMS connection. Stopping is always allowed (never gated)."
+    )]
+    pub async fn cms_abort(&self) -> Result<CallToolResult, ErrorData> {
+        self.state.abort.cms_abort().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "modem_ardop_disconnect",
+        description = "Disconnect the ARDOP modem. Stopping is always allowed (never gated)."
+    )]
+    pub async fn modem_ardop_disconnect(&self) -> Result<CallToolResult, ErrorData> {
+        self.state.abort.ardop_disconnect().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
+
+    #[tool(
+        name = "vara_stop_session",
+        description = "Stop the active VARA session. Stopping is always allowed (never gated)."
+    )]
+    pub async fn vara_stop_session(&self) -> Result<CallToolResult, ErrorData> {
+        self.state
+            .abort
+            .vara_stop_session()
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+    }
 }
 
 /// `{ "callsign": "W1AW" }` — input for `p2p_peer_password_status`.
@@ -350,6 +502,36 @@ pub struct QueryParams {
     pub query: String,
 }
 
+/// `{ "target": "KX4Z-10" }` — input for `ardop_connect`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TargetParams {
+    /// The target station/gateway callsign to connect to.
+    pub target: String,
+}
+
+/// `{ "target": "KX4Z", "intent": "cms" }` — input for the B2F exchange tools.
+/// `intent` selects the routing pool ([`SessionIntentDto`]:
+/// `cms` / `radio-only` / `post-office` / `mesh` / `p2p`) and defaults to
+/// [`SessionIntentDto::Cms`] when omitted.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ExchangeParams {
+    /// The target station/gateway callsign.
+    pub target: String,
+    /// The routing pool for the exchange; defaults to `cms` when omitted.
+    #[serde(default)]
+    pub intent: SessionIntentDto,
+}
+
+/// `{ "call": "W1AW-5", "path": ["WIDE1-1"] }` — input for `packet_connect`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PacketConnectParams {
+    /// The destination station callsign.
+    pub call: String,
+    /// Optional ordered digipeater path; empty for a direct connection.
+    #[serde(default)]
+    pub path: Vec<String>,
+}
+
 #[tool_handler]
 impl ServerHandler for TuxlinkMcp {
     // Build `ServerInfo` (= `InitializeResult`) from `default()` then set the
@@ -377,14 +559,29 @@ impl ServerHandler for TuxlinkMcp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use crate::ports::{MessageMetaDto, ParsedMessageDto};
     use crate::test_support::{
-        state_with_guard, SEED_MSG_FROM, SEED_MSG_ID, SEED_MSG_SUBJECT,
+        state_with_egress_probes, state_with_guard, SEED_MSG_FROM, SEED_MSG_ID, SEED_MSG_SUBJECT,
     };
     use tuxlink_security::EgressGuard;
 
     fn handler() -> TuxlinkMcp {
         TuxlinkMcp::new(Arc::new(state_with_guard(EgressGuard::new())))
+    }
+
+    /// Deterministic clock so an armed grant is un-expired within the test.
+    fn fixed_1000() -> u64 {
+        1000
+    }
+
+    /// Build a handler plus the egress `op_ran` + `aborted` probe flags, all
+    /// sharing one guard (on a fixed clock so arm() is live).
+    fn handler_with_probes() -> (TuxlinkMcp, Arc<AtomicBool>, Arc<AtomicBool>) {
+        let (state, op_ran, aborted) =
+            state_with_egress_probes(EgressGuard::with_clock(fixed_1000));
+        (TuxlinkMcp::new(Arc::new(state)), op_ran, aborted)
     }
 
     /// Extract + deserialize the JSON the tool packed into its first text
@@ -516,5 +713,90 @@ mod tests {
         let result = h.config_read().await.unwrap();
         let dto: crate::ports::ConfigViewDto = json_of(&result);
         assert_eq!(dto.grid, "CN87", "grid must be the 4-char fixture value");
+    }
+
+    // --- STEP 6: egress gate + injection-containment via the real tools ---
+
+    #[tokio::test]
+    async fn gated_egress_on_unarmed_guard_denies_and_op_never_runs() {
+        let (h, op_ran, _aborted) = handler_with_probes();
+        // Fresh guard is unarmed → the gated egress tool must be denied.
+        let err = h.cms_connect().await.expect_err("unarmed must deny");
+        assert!(
+            err.message.contains("not authorized"),
+            "denial message must name the missing authorization, got: {}",
+            err.message
+        );
+        assert!(
+            !op_ran.load(Ordering::SeqCst),
+            "the underlying egress op must NEVER run when denied"
+        );
+    }
+
+    #[tokio::test]
+    async fn gated_egress_after_arm_is_allowed_and_op_runs() {
+        let (h, op_ran, _aborted) = handler_with_probes();
+        h.state.guard.arm(30); // arm send authority (deadline 1030, now 1000)
+        h.cms_connect().await.expect("armed + untainted must allow");
+        assert!(
+            op_ran.load(Ordering::SeqCst),
+            "the underlying egress op must run once authorized"
+        );
+    }
+
+    #[tokio::test]
+    async fn gated_egress_denied_when_tainted_even_if_armed() {
+        // Simulate a prior malicious read tainting the session, then arming.
+        let (h, op_ran, _aborted) = handler_with_probes();
+        h.state.guard.taint(); // a prior message_read/search tainted the session
+        h.state.guard.arm(30); // arming does NOT clear taint
+        let err = h
+            .ardop_connect(Parameters(TargetParams {
+                target: "KX4Z-10".into(),
+            }))
+            .await
+            .expect_err("tainted must deny even when armed");
+        assert!(err.message.contains("not authorized"));
+        assert!(
+            !op_ran.load(Ordering::SeqCst),
+            "a tainted session must not transmit even while armed"
+        );
+    }
+
+    #[tokio::test]
+    async fn gated_egress_allowed_after_clear_taint_and_fresh_arm() {
+        let (h, op_ran, _aborted) = handler_with_probes();
+        h.state.guard.taint();
+        h.state.guard.clear_taint(); // explicit session reset
+        h.state.guard.arm(30);
+        h.vara_b2f_exchange(Parameters(ExchangeParams {
+            target: "KX4Z".into(),
+            intent: SessionIntentDto::Cms,
+        }))
+        .await
+        .expect("fresh arm after clear_taint must allow");
+        assert!(op_ran.load(Ordering::SeqCst), "op must run after a clean re-arm");
+    }
+
+    #[tokio::test]
+    async fn abort_tool_succeeds_regardless_of_guard_state() {
+        // Unarmed + tainted: the abort tool must STILL succeed (never gated).
+        let (h, _op_ran, aborted) = handler_with_probes();
+        h.state.guard.taint(); // hostile state
+        h.cms_abort().await.expect("abort is never gated");
+        assert!(
+            aborted.load(Ordering::SeqCst),
+            "the underlying abort must fire regardless of guard state"
+        );
+    }
+
+    #[tokio::test]
+    async fn all_abort_tools_succeed_when_tainted_and_unarmed() {
+        let (h, _op_ran, aborted) = handler_with_probes();
+        h.state.guard.taint();
+        h.cms_abort().await.unwrap();
+        h.modem_ardop_disconnect().await.unwrap();
+        h.vara_stop_session().await.unwrap();
+        assert!(aborted.load(Ordering::SeqCst));
     }
 }

@@ -6839,6 +6839,7 @@ name = "tuxlink-security"
 version = "0.0.0"
 dependencies = [
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
