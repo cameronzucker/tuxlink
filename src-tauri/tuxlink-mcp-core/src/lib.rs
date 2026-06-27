@@ -1,0 +1,156 @@
+//! MCP server core for the agent caller (phase 3.1 transport spine).
+//!
+//! This crate exposes the Tuxlink MCP endpoint as a standalone, Pi-buildable
+//! library so BOTH the Tauri monolith AND the tier-2 testserver can serve the
+//! SAME real router over the SAME real [`tuxlink_security::EgressGuard`] without
+//! pulling in the Tauri app.
+//!
+//! Phase 3.1 ships exactly ONE inert tool — [`router::TuxlinkMcp::server_info`]
+//! — which reports the app name/version plus the live `EgressGuard` arm/taint
+//! state, proving the spine reaches real security state. No real capability is
+//! wired here; later phases add tools, redaction, taint-setting, and the egress
+//! gate.
+//!
+//! Design seam: all of `server_info`'s logic lives in the pure, transport-free
+//! [`server_info_view`] free function so it is unit-testable WITHOUT the rmcp
+//! transport. The `#[tool]` method in [`router`] is a thin wrapper over it,
+//! mirroring the project's core-fn + thin-adapter pattern.
+
+use std::sync::Arc;
+
+use serde::Serialize;
+
+use tuxlink_security::EgressGuard;
+
+pub mod router;
+pub mod transport_uds;
+
+pub use router::TuxlinkMcp;
+pub use transport_uds::serve;
+
+/// The live handles the MCP router needs. Phase 3.1's only tool (`server_info`)
+/// reads the [`EgressGuard`] plus the embedder-injected app identity; later
+/// phases (3.2+) extend this bundle with the backend, session-log, modem, and
+/// position handles as tools are added.
+///
+/// Embedders inject identity: the monolith passes `env!("CARGO_PKG_NAME")` /
+/// `env!("CARGO_PKG_VERSION")` so `server_info` reports the real Tuxlink app
+/// version, NOT this core crate's own package identity.
+#[derive(Clone)]
+pub struct McpState {
+    /// The armed-grant + taint authority, shared with the Tauri-managed
+    /// `Arc<EgressGuard>` (lib.rs `.manage()`).
+    pub guard: Arc<EgressGuard>,
+    /// The embedding app's package name (e.g. `"tuxlink"`), injected by the
+    /// embedder. `server_info` echoes this — it must NOT be the core crate's
+    /// `CARGO_PKG_NAME`.
+    pub name: String,
+    /// The embedding app's package version, injected by the embedder.
+    /// `server_info` echoes this — it must NOT be the core crate's
+    /// `CARGO_PKG_VERSION`.
+    pub version: String,
+}
+
+/// Serializable shape returned by the `server_info` tool.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ServerInfoDto {
+    /// Embedding app's package name (injected via [`McpState::name`]).
+    pub name: String,
+    /// Embedding app's package version (injected via [`McpState::version`]).
+    pub version: String,
+    /// True when send authority is currently armed (grant not expired).
+    pub armed: bool,
+    /// True when the session is tainted by untrusted content.
+    pub tainted: bool,
+}
+
+/// Pure view of `server_info`: reads the live guard state and the
+/// embedder-injected app identity. Transport-free so it can be unit-tested
+/// directly. `name`/`version` echo the identity the embedder set on
+/// [`McpState`] (the app's, not this core crate's); `armed` is
+/// `armed_remaining() > 0` (a live, un-expired grant); `tainted` mirrors the
+/// guard's taint flag.
+pub fn server_info_view(state: &McpState) -> ServerInfoDto {
+    ServerInfoDto {
+        name: state.name.clone(),
+        version: state.version.clone(),
+        armed: state.guard.armed_remaining() > 0,
+        tainted: state.guard.is_tainted(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Deterministic clock so an armed grant has a known, un-expired deadline.
+    fn fixed_1000() -> u64 {
+        1000
+    }
+
+    fn state_with(guard: EgressGuard) -> McpState {
+        // Inject identity distinct from this core crate's own 0.0.0 so a
+        // regression to env!("CARGO_PKG_NAME"/"CARGO_PKG_VERSION") would be
+        // caught by `view_reports_package_identity`.
+        McpState {
+            guard: Arc::new(guard),
+            name: "tuxlink".into(),
+            version: "9.9.9".into(),
+        }
+    }
+
+    #[test]
+    fn view_reports_package_identity() {
+        let state = state_with(EgressGuard::with_clock(fixed_1000));
+        let dto = server_info_view(&state);
+        // The DTO must echo the embedder-injected identity, NOT the core
+        // crate's CARGO_PKG_* (which are tuxlink-mcp-core / 0.0.0).
+        assert_eq!(dto.name, "tuxlink");
+        assert_eq!(dto.version, "9.9.9");
+    }
+
+    #[test]
+    fn fresh_guard_is_not_armed_and_not_tainted() {
+        let state = state_with(EgressGuard::with_clock(fixed_1000));
+        let dto = server_info_view(&state);
+        assert!(!dto.armed, "a fresh guard must report armed=false");
+        assert!(!dto.tainted, "a fresh guard must report tainted=false");
+    }
+
+    #[test]
+    fn arming_makes_view_report_armed() {
+        let state = state_with(EgressGuard::with_clock(fixed_1000));
+        state.guard.arm(30); // deadline 1030, now 1000 -> 30s remaining
+        let dto = server_info_view(&state);
+        assert!(dto.armed, "after arm(30) the view must report armed=true");
+        assert!(!dto.tainted);
+    }
+
+    #[test]
+    fn expired_grant_is_not_armed() {
+        // arm(0): deadline == now == 1000 -> armed_remaining() == 0 -> not armed.
+        let state = state_with(EgressGuard::with_clock(fixed_1000));
+        state.guard.arm(0);
+        let dto = server_info_view(&state);
+        assert!(!dto.armed, "an expired/zero grant must report armed=false");
+    }
+
+    #[test]
+    fn tainting_makes_view_report_tainted() {
+        let state = state_with(EgressGuard::with_clock(fixed_1000));
+        state.guard.taint();
+        let dto = server_info_view(&state);
+        assert!(dto.tainted, "after taint() the view must report tainted=true");
+    }
+
+    #[test]
+    fn armed_and_tainted_are_independent() {
+        // Taint must not clear the arm grant, and vice versa: both can be true.
+        let state = state_with(EgressGuard::with_clock(fixed_1000));
+        state.guard.arm(30);
+        state.guard.taint();
+        let dto = server_info_view(&state);
+        assert!(dto.armed);
+        assert!(dto.tainted);
+    }
+}

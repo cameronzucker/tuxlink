@@ -1,3 +1,13 @@
+# The tuxlink package is also the workspace root (MCP phase 3.1, ADR-tracked in
+# the transport-spine plan). The two MCP helper crates live UNDER src-tauri/ so
+# `--manifest-path src-tauri/Cargo.toml` resolves them; `default-members = ["."]`
+# keeps `cd src-tauri && cargo build --release` (release.yml) building ONLY the
+# app, and `default-run = "tuxlink"` is unchanged. The sibling xtask/ and tools/
+# crates are OUTSIDE src-tauri and are not pulled into this workspace.
+[workspace]
+members = [".", "tuxlink-security", "tuxlink-mcp-core", "tuxlink-mcp", "tuxlink-mcp-testserver"]
+default-members = ["."]
+
 [package]
 name = "tuxlink"
 version = "0.77.0"
@@ -120,6 +130,16 @@ urlencoding = "2"          # Task 8.1 GitHub URL body encoding
 once_cell = "1.20"
 regex = "1.10"
 mini_sbc = "0.1.7"        # NEW (tuxlink-vgvn) — pure-Rust SBC DECODER for the UV-Pro SSTV audio transport; MIT/Apache (GPL-3 compatible). Encode is a from-scratch port (no pure-Rust SBC encoder on crates.io). Decode verified MAE 6.7 vs ffmpeg golden vectors.
+# MCP core (tuxlink-cvx84.1, phase 3.1 transport spine). The rmcp tool router,
+# server_info tool, McpState, and the UDS transport live in the standalone
+# `tuxlink-mcp-core` crate (which owns the rmcp + schemars deps) so the
+# Pi-buildable tier-2 testserver can reuse the REAL router without the Tauri
+# monolith. The monolith reaches the MCP core via this path dep; Task 4 spawns
+# `tuxlink_mcp_core::transport_uds::serve` from `.setup()`. The egress authority
+# lives one layer down in `tuxlink-security` (re-exported via
+# `crate::ui_core::security`).
+tuxlink-security = { path = "tuxlink-security" }
+tuxlink-mcp-core = { path = "tuxlink-mcp-core" }
 
 # tuxlink-cumx / G8 — faithful PDF export drives the live form's WebKitGTK view
 # via WebKitPrintOperation. Both crates are already in the build (transitive via
