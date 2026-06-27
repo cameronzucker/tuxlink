@@ -32,6 +32,7 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::{mpsc, Notify};
 
 use crate::config::{self, VaraUiConfig};
+use crate::modem_commands::{tune_rig_for_connect, walk_candidates, DialCandidate};
 use crate::modem_status::{
     ExchangeState, ShutdownableStream, TransportOwner, ARBITER_YIELD_TIMEOUT,
 };
@@ -1546,6 +1547,15 @@ pub async fn modem_vara_b2f_exchange(
     target: String,
     intent: SessionIntent,
     transport_kind: TransportKind,
+    // tuxlink-8fkkk Task A2: pre-audio CAT tune + ordered-list QSY, mirroring
+    // the ARDOP `modem_ardop_connect` shape. Tauri maps Rust `freq_hz` → JS
+    // `freqHz` and `qsy_candidates` → JS `qsyCandidates` (camelCase). A JS
+    // caller that omits these (today's VaraRadioPanel, pre-A3) sends `None` for
+    // each `Option`, reproducing the legacy single-dial behavior. When
+    // `qsy_candidates` is `Some` + non-empty it overrides `target`/`freq_hz`
+    // and the walk visits each candidate (operator-gated by `config.rig.qsy_on_fail`).
+    freq_hz: Option<u64>,
+    qsy_candidates: Option<Vec<DialCandidate>>,
 ) -> Result<(), String> {
     // Codex Phase 3-4 boundary P2 #2 (tuxlink-u1r7): defensive
     // validation — the VARA b2f command must be invoked with a VARA
@@ -1634,9 +1644,13 @@ pub async fn modem_vara_b2f_exchange(
     let outcome = run_vara_b2f_with_transport(
         &app,
         &log,
+        &session,
+        close_gen_snapshot,
         &mut transport,
         &target_clean,
         intent,
+        freq_hz,
+        qsy_candidates,
     );
 
     // Always clear the exchange marker — install_transport_if_generation_matches
@@ -1707,12 +1721,17 @@ pub async fn modem_vara_b2f_exchange(
 /// the error as a `String` so it surfaces to the frontend without
 /// exposing the internal `BackendError` type — same pattern as the
 /// other modem commands.
+#[allow(clippy::too_many_arguments)]
 fn run_vara_b2f_with_transport(
     app: &AppHandle,
     log: &Arc<SessionLogState>,
+    session: &VaraSession,
+    close_gen_snapshot: u64,
     transport: &mut VaraTransport,
     target: &str,
     intent: SessionIntent,
+    freq_hz: Option<u64>,
+    qsy_candidates: Option<Vec<DialCandidate>>,
 ) -> Result<(), String> {
     // Mailbox lives at <app_data_dir>/native-mbox (per `bootstrap::install_native`).
     let mbox_dir = app
@@ -1752,22 +1771,94 @@ fn run_vara_b2f_with_transport(
     let arbiter_state = app.state::<std::sync::Arc<crate::position::PositionArbiter>>();
     let arbiter: std::sync::Arc<crate::position::PositionArbiter> = (*arbiter_state).clone();
 
-    // ─── Send CONNECT + await CONNECTED (bounded airtime) ────────────
-    emit_vara_log(
-        app,
-        log,
-        LogLevel::Info,
-        format!("VARA CONNECT {mycall} {target}"),
-    );
-    transport
-        .send(&OutboundCommand::Connect {
-            mycall: mycall.clone(),
-            target: target.to_string(),
-        })
-        .map_err(|e| format!("VARA cmd-port CONNECT write failed: {e}"))?;
+    // ─── Pre-audio CAT tune + ordered-list QSY walk (tuxlink-8fkkk A2) ─
+    // Mirror the ARDOP connect walk: for each candidate, CAT-tune (pre-audio)
+    // then send CONNECT + await CONNECTED. Stop at the first success. The kept
+    // rig handle (DRA-100 keep-serial path) is held in `kept_rig` for the
+    // synchronous B2F exchange below and drops at fn end — the correct
+    // session-scoped rig lifetime for VARA's single-call connect+exchange+
+    // disconnect. On the close-serial path `tune_rig_for_connect` releases the
+    // serial and returns `None`, so there is nothing to hold.
+    let candidates = vara_dial_candidates(target, freq_hz, qsy_candidates);
+    let qsy_on_fail = cfg.rig.qsy_on_fail;
 
-    wait_for_connected(transport, target, VARA_CONNECT_DEADLINE)
-        .map_err(|e| format!("VARA CONNECT to {target} failed: {e}"))?;
+    // The last candidate's failure message — surfaced if no candidate connects.
+    let mut last_err: Option<String> = None;
+    // Holds the winning candidate's kept rig (DRA-100) across the post-walk B2F
+    // exchange. `None` on the close-serial path or when no rig is configured.
+    let mut kept_rig: Option<tux_rig::ManagedRig> = None;
+    // The connected target (winning candidate) for the post-walk log + exchange.
+    let mut connected_target: Option<String> = None;
+
+    let outcome = walk_candidates(&candidates, qsy_on_fail, |_idx, c| {
+        // Abort recheck (C2 for VARA): if the operator closed the session
+        // mid-walk, the close generation bumps; stop attempting rather than
+        // QSY-ing to the next candidate after a Close. The remaining
+        // candidates also observe the bumped generation and no-op, so the
+        // walk drains to `None` and surfaces a connect failure — same
+        // outcome-consistency as ARDOP's walk (intentional).
+        if session.current_close_generation() != close_gen_snapshot {
+            last_err = Some("VARA CONNECT aborted".into());
+            return false;
+        }
+
+        // Pre-CONNECT (pre-audio) CAT tune. `tune_rig_for_connect` honors
+        // close-serial (returns `None` once the serial is released) vs the
+        // DRA-100 keep-serial path (returns `Some(rig)` to hold for the
+        // session). Spawn/tune failures abort THIS candidate.
+        let rig = match tune_rig_for_connect(&cfg.rig, c.freq_hz) {
+            Ok(r) => r,
+            Err(e) => {
+                emit_vara_log(
+                    app,
+                    log,
+                    LogLevel::Error,
+                    format!("VARA tune failed for {}: {e}", c.target),
+                );
+                last_err = Some(e);
+                return false;
+            }
+        };
+
+        match send_connect_and_wait(app, log, transport, &mycall, &c.target) {
+            Ok(()) => {
+                // Hold the rig for the exchange (DRA-100); `None` if released.
+                kept_rig = rig;
+                connected_target = Some(c.target.clone());
+                true
+            }
+            Err(e) => {
+                // Release this candidate's rig before the next attempt so no
+                // rigctld is left holding the CAT serial.
+                drop(rig);
+                emit_vara_log(
+                    app,
+                    log,
+                    LogLevel::Error,
+                    format!("VARA CONNECT to {} failed: {e}", c.target),
+                );
+                last_err = Some(e);
+                false
+            }
+        }
+    });
+
+    if outcome.is_none() {
+        // No candidate connected. Surface the last useful error.
+        return Err(
+            last_err.unwrap_or_else(|| "VARA CONNECT failed for all candidates".to_string())
+        );
+    }
+
+    // The winning target: the candidate `send_connect_and_wait` succeeded for.
+    // Falls back to the primary `target` if (impossibly) unset.
+    let connected_target = connected_target.unwrap_or_else(|| target.to_string());
+    let target = connected_target.as_str();
+
+    // Keep the kept rig (DRA-100) alive across the synchronous B2F exchange;
+    // it drops — stopping rigctld — when this function returns. Named to make
+    // the load-bearing lifetime explicit and silence the unused-var lint.
+    let _kept_rig = kept_rig;
 
     emit_vara_log(
         app,
@@ -1798,6 +1889,56 @@ fn run_vara_b2f_with_transport(
         Some(&progress),
     )
     .map_err(|e| format!("VARA B2F exchange failed: {e}"))
+}
+
+/// Build the ordered dial-candidate list for a VARA exchange.
+///
+/// When `qsy_candidates` is `Some` and non-empty, it is used verbatim (the
+/// Find-a-Station ranked channels wired by Task B). Otherwise a single-element
+/// list `[{ target, freq_hz }]` reproduces today's single-dial behavior
+/// (back-compat). An empty `Some(vec![])` falls back to the single dial too.
+fn vara_dial_candidates(
+    target: &str,
+    freq_hz: Option<u64>,
+    qsy_candidates: Option<Vec<DialCandidate>>,
+) -> Vec<DialCandidate> {
+    match qsy_candidates {
+        Some(cands) if !cands.is_empty() => cands,
+        _ => vec![DialCandidate {
+            target: target.to_string(),
+            freq_hz,
+        }],
+    }
+}
+
+/// Send `CONNECT <mycall> <target>` on the cmd port and wait for the
+/// `CONNECTED` event (bounded by [`VARA_CONNECT_DEADLINE`]). Factored out of
+/// the candidate-walk closure so the two primitives (the existing cmd-port
+/// write + [`wait_for_connected`]) stay together and the closure body reads
+/// cleanly. Emits the per-candidate "VARA CONNECT {mycall} {target}" line so
+/// the operator sees each dialed target during a QSY walk.
+fn send_connect_and_wait(
+    app: &AppHandle,
+    log: &Arc<SessionLogState>,
+    transport: &mut VaraTransport,
+    mycall: &str,
+    target: &str,
+) -> Result<(), String> {
+    emit_vara_log(
+        app,
+        log,
+        LogLevel::Info,
+        format!("VARA CONNECT {mycall} {target}"),
+    );
+    transport
+        .send(&OutboundCommand::Connect {
+            mycall: mycall.to_string(),
+            target: target.to_string(),
+        })
+        .map_err(|e| format!("VARA cmd-port CONNECT write failed: {e}"))?;
+
+    wait_for_connected(transport, target, VARA_CONNECT_DEADLINE)
+        .map_err(|e| format!("VARA CONNECT to {target} failed: {e}"))
 }
 
 /// Wait for the `CONNECTED <mycall> <target> [bw]` async event on the
@@ -1933,6 +2074,50 @@ fn vara_dial_disconnect(transport: &mut VaraTransport) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    // ── tuxlink-8fkkk Task A2: VARA pre-audio tune + candidate walk ──
+    //
+    // `walk_candidates` + `tune_rig_for_connect` are unit-tested in
+    // `modem_commands`. Here we pin the VARA-local candidate-list construction:
+    // the back-compat single-dial fallback vs the QSY passthrough.
+
+    #[test]
+    fn vara_dial_candidates_none_yields_single_dial() {
+        let c = vara_dial_candidates("W1AW", Some(7_103_000), None);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].target, "W1AW");
+        assert_eq!(c[0].freq_hz, Some(7_103_000));
+    }
+
+    #[test]
+    fn vara_dial_candidates_empty_some_yields_single_dial() {
+        // An explicit empty list is treated like `None` (back-compat).
+        let c = vara_dial_candidates("KX4Z", None, Some(vec![]));
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].target, "KX4Z");
+        assert_eq!(c[0].freq_hz, None);
+    }
+
+    #[test]
+    fn vara_dial_candidates_some_passes_through_in_order() {
+        let supplied = vec![
+            DialCandidate {
+                target: "GW1".into(),
+                freq_hz: Some(14_105_000),
+            },
+            DialCandidate {
+                target: "GW2".into(),
+                freq_hz: Some(7_103_000),
+            },
+        ];
+        // The primary target/freq are overridden by a non-empty candidate list.
+        let c = vara_dial_candidates("IGNORED", Some(3_580_000), Some(supplied));
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0].target, "GW1");
+        assert_eq!(c[0].freq_hz, Some(14_105_000));
+        assert_eq!(c[1].target, "GW2");
+        assert_eq!(c[1].freq_hz, Some(7_103_000));
+    }
 
     #[test]
     fn fresh_session_snapshot_is_closed() {

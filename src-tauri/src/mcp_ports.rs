@@ -885,6 +885,12 @@ impl EgressPort for MonolithEgressPort {
                     target,
                     map_session_intent(intent),
                     crate::winlink::listener::transport::TransportKind::VaraHf,
+                    // The MCP egress path does not QSY: no pre-audio CAT tune
+                    // (no rig freq known here) and no candidate list. Pass
+                    // `None, None` for the tuxlink-8fkkk freq_hz / qsy_candidates
+                    // params; the inner falls back to a single dial of `target`.
+                    None,
+                    None,
                 )
                 .await
                 .map_err(EgressPortError::Failed)
