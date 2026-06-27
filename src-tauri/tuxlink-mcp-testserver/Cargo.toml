@@ -1,10 +1,15 @@
-# tuxlink-mcp-testserver — tier-2 harness: the MCP router over UDS with a mock
-# backend and no Tauri, so the `claude mcp` round-trip runs with no operator and
-# no full app build.
+# tuxlink-mcp-testserver — tier-2 harness: the REAL MCP router over a REAL UDS,
+# wired to a REAL EgressGuard, with NO Tauri and NO full app build.
 #
-# This is a stub for MCP phase 3.1 Task 1 (workspace conversion). The real
-# testserver lands in Task 6; for now this is an empty binary so the workspace
-# member resolves and CI exercises the build.
+# Phase 3.1 Task 6: this is "the spike productionized." The agent runs
+# `claude mcp add` against this standalone server on the Pi and calls
+# `server_info` to confirm the MCP layer + UDS + (later) redaction + the gate
+# behave end-to-end. It depends ONLY on the Pi-buildable tuxlink-mcp-core +
+# tuxlink-security crates, never the Tauri monolith.
+#
+# The initial guard state is controllable from the environment so the tier-2
+# round-trip can assert `server_info` reflects armed/tainted. See src/main.rs
+# for the env-var contract.
 [package]
 name = "tuxlink-mcp-testserver"
 version = "0.0.0"
@@ -18,3 +23,6 @@ name = "tuxlink-mcp-testserver"
 path = "src/main.rs"
 
 [dependencies]
+tuxlink-mcp-core = { path = "../tuxlink-mcp-core" }
+tuxlink-security = { path = "../tuxlink-security" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal"] }
