@@ -355,19 +355,7 @@ where
     // captured state into the constructed transport) keep compiling.
 
     // ─── Translate ArdopUiConfig (frontend) → ArdopConfig (backend) ─────
-    let extra_args = build_ardop_extra_args(ardop_ui);
-
-    let ardop_cfg = ArdopConfig {
-        binary: resolve_ardop_binary(&ardop_ui.binary),
-        extra_args,
-        cmd_port: ardop_ui.cmd_port,
-        // ardopcf convention: data_port = cmd_port + 1 (8516 for default 8515).
-        data_port: ardop_ui.cmd_port.saturating_add(1),
-        audio_device_path: None,
-        // tuxlink-wu0k: spawn the close-serial CAT-PTT bridge when the operator
-        // selected CAT PTT; None for VOX / serial-RTS.
-        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
-    };
+    let ardop_cfg = ardop_config_for(ardop_ui)?;
 
     // Mark spawning so any concurrent status_snapshot sees the transition
     // before the (potentially slow) ardopcf bind-wait + init.
@@ -415,6 +403,10 @@ where
     session.set_status(snap);
 
     // ─── ARQ connect (bounded airtime) ───────────────────────────────────
+    // Legacy 120s cap — same inline literal as `dial_one_candidate`. Kept
+    // un-named (no `*_DEADLINE` const) per operator decision bd tuxlink-qtgg
+    // (enforced by `modem_commands_source_does_not_define_..`); the two copies
+    // must be edited together.
     let info = match transport.connect_arq(
         target,
         connect_attempts_from_config(),
@@ -544,6 +536,14 @@ where
     }
 }
 
+/// The live connection a successful dial yields: the modem transport, the kept
+/// rig handle (`Some` only on the DRA-100 keep-serial path), and the ConnectInfo.
+type DialedConnection = (
+    Box<dyn ModemTransport>,
+    Option<tux_rig::ManagedRig>,
+    crate::winlink::modem::ConnectInfo,
+);
+
 /// Spawn + init + pre-audio tune + `connect_arq` for ONE candidate. On success
 /// returns the live `(transport, kept-rig, ConnectInfo)` for the caller to install.
 /// On failure the candidate's transport and rig are dropped here (RAII teardown
@@ -555,32 +555,14 @@ fn dial_one_candidate<F>(
     candidate: &DialCandidate,
     ardop_ui: &ArdopUiConfig,
     make_transport: &mut F,
-) -> Result<
-    (
-        Box<dyn ModemTransport>,
-        Option<tux_rig::ManagedRig>,
-        crate::winlink::modem::ConnectInfo,
-    ),
-    String,
->
+) -> Result<DialedConnection, String>
 where
     F: FnMut(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
 {
     let target = candidate.target.as_str();
 
     // ─── Translate ArdopUiConfig (frontend) → ArdopConfig (backend) ─────
-    let extra_args = build_ardop_extra_args(ardop_ui);
-    let ardop_cfg = ArdopConfig {
-        binary: resolve_ardop_binary(&ardop_ui.binary),
-        extra_args,
-        cmd_port: ardop_ui.cmd_port,
-        // ardopcf convention: data_port = cmd_port + 1 (8516 for default 8515).
-        data_port: ardop_ui.cmd_port.saturating_add(1),
-        audio_device_path: None,
-        // tuxlink-wu0k: spawn the close-serial CAT-PTT bridge when the operator
-        // selected CAT PTT; None for VOX / serial-RTS.
-        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
-    };
+    let ardop_cfg = ardop_config_for(ardop_ui)?;
 
     // Mark spawning so any concurrent status_snapshot sees the transition
     // before the (potentially slow) ardopcf bind-wait + init.
@@ -630,6 +612,11 @@ where
 
     // ─── ARQ connect (bounded airtime) ───────────────────────────────────
     // Legacy Start-button path: inline the historical 120s wall-clock cap.
+    // This literal is INTENTIONALLY un-named (no `*_DEADLINE` const): operator
+    // decision bd tuxlink-qtgg bans a named wall-clock-cap symbol on
+    // `connect_arq` (enforced by `modem_commands_source_does_not_define_..`).
+    // The legacy single-dial path (`_post_consume`) carries the same literal;
+    // keep the two in sync by hand — they cannot share a const.
     match transport.connect_arq(
         target,
         connect_attempts_from_config(),
@@ -669,16 +656,7 @@ pub fn start_modem_listen_only<F>(
 where
     F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
 {
-    let extra_args = build_ardop_extra_args(ardop_ui);
-    let ardop_cfg = ArdopConfig {
-        binary: resolve_ardop_binary(&ardop_ui.binary),
-        extra_args,
-        cmd_port: ardop_ui.cmd_port,
-        data_port: ardop_ui.cmd_port.saturating_add(1),
-        audio_device_path: None,
-        // tuxlink-wu0k: CAT-PTT bridge when ptt_method == CatCommand; else None.
-        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
-    };
+    let ardop_cfg = ardop_config_for(ardop_ui)?;
 
     let mut snap = session.status_snapshot();
     snap.state = ModemState::Spawning;
@@ -774,16 +752,7 @@ pub fn spawn_and_init_ardop_inner<F>(
 where
     F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
 {
-    let extra_args = build_ardop_extra_args(ardop_ui);
-    let ardop_cfg = ArdopConfig {
-        binary: resolve_ardop_binary(&ardop_ui.binary),
-        extra_args,
-        cmd_port: ardop_ui.cmd_port,
-        data_port: ardop_ui.cmd_port.saturating_add(1),
-        audio_device_path: None,
-        // tuxlink-wu0k: CAT-PTT bridge when ptt_method == CatCommand; else None.
-        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
-    };
+    let ardop_cfg = ardop_config_for(ardop_ui)?;
 
     let mut snap = session.status_snapshot();
     snap.state = ModemState::Spawning;
@@ -1183,6 +1152,32 @@ pub(crate) fn cat_bridge_spec_from(
         key_cmd: ardop_ui.cat_key_cmd.clone(),
         unkey_cmd: ardop_ui.cat_unkey_cmd.clone(),
     }))
+}
+
+/// Translate the `ArdopUiConfig` (frontend) into the backend `ArdopConfig` used
+/// to spawn ardopcf. Single source of truth for the binary / extra-args /
+/// cmd-port / data-port / cat-bridge wiring so the connect flow's per-candidate
+/// dial ([`dial_one_candidate`]), the legacy single-dial path
+/// ([`modem_ardop_connect_post_consume_with_factory`]), the listen-only spawn
+/// ([`start_modem_listen_only`]), and the open-session spawn
+/// ([`spawn_and_init_ardop_inner`]) can never drift from one another (the
+/// data-port `+1` convention and the close-serial CAT-bridge spec in
+/// particular).
+///
+/// Fails closed via [`cat_bridge_spec_from`] when CAT-command PTT is selected
+/// without a configured CAT serial device.
+fn ardop_config_for(ardop_ui: &ArdopUiConfig) -> Result<ArdopConfig, String> {
+    Ok(ArdopConfig {
+        binary: resolve_ardop_binary(&ardop_ui.binary),
+        extra_args: build_ardop_extra_args(ardop_ui),
+        cmd_port: ardop_ui.cmd_port,
+        // ardopcf convention: data_port = cmd_port + 1 (8516 for default 8515).
+        data_port: ardop_ui.cmd_port.saturating_add(1),
+        audio_device_path: None,
+        // tuxlink-wu0k: spawn the close-serial CAT-PTT bridge when the operator
+        // selected CAT PTT; None for VOX / serial-RTS.
+        cat_bridge: cat_bridge_spec_from(ardop_ui)?,
+    })
 }
 
 /// Build the `extra_args` vector passed to `ArdopConfig` (the ardopcf CLI).
