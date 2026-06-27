@@ -38,6 +38,14 @@ export interface ModemStatus {
    * "Quality" big-number indicator (spec §5.3). Closes tuxlink-1637.
    */
   quality: number | null;
+  /**
+   * Live VFO frequency (Hz) read back from the rig over CAT while a session
+   * is connected (rig-control LIVE-VFO POLL). Present only on the DRA-100
+   * keep-serial path with `live_vfo_poll` enabled; `null` otherwise (and
+   * until the first read lands). The ARDOP frequency element shows this live
+   * MHz when set, falling back to the configured/idle frequency.
+   */
+  rigFreqHz: number | null;
 }
 
 export const STOPPED: Readonly<ModemStatus> = {
@@ -48,4 +56,5 @@ export const STOPPED: Readonly<ModemStatus> = {
   arqFlags: { busy: false, rx: false, tx: false },
   lastError: null,
   quality: null,
+  rigFreqHz: null,
 };

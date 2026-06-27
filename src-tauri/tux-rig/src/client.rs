@@ -5,6 +5,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
+use std::time::Duration;
 
 use crate::protocol::{self, CMD_GET_FREQ, CMD_GET_MODE, CMD_GET_PTT};
 use crate::{Mode, Rig, RigError, RigStatus};
@@ -22,6 +23,33 @@ impl RigctldClient {
     /// Connect to a running rigctld at `host:port`.
     pub fn connect(host: &str, port: u16) -> Result<Self, RigError> {
         let stream = TcpStream::connect((host, port))?;
+        let writer = stream.try_clone()?;
+        let reader = BufReader::new(stream);
+        Ok(Self { reader, writer })
+    }
+
+    /// Connect to a running rigctld at `host:port`, installing a read timeout on
+    /// the underlying socket so a hung rigctld cannot wedge the caller's thread
+    /// indefinitely.
+    ///
+    /// Used by the live-VFO poll thread (which runs an independent client on the
+    /// DRA-100 keep-serial path): if rigctld stops answering, the next
+    /// [`Rig::read_status`] read returns a `WouldBlock`/`TimedOut` I/O error
+    /// instead of blocking forever, so the poll loop can observe the failure and
+    /// exit. The managed client (`ManagedRig`) keeps the unbounded [`connect`]
+    /// behavior — its calls are operator-synchronous and short-lived.
+    ///
+    /// The timeout governs each individual socket read. A multi-line reply (e.g.
+    /// the two-line `m` response) is several reads, so a complete
+    /// [`Rig::read_status`] round-trip can take up to a few multiples of
+    /// `read_timeout` in the worst case; size the timeout with that in mind.
+    pub fn connect_with_timeout(
+        host: &str,
+        port: u16,
+        read_timeout: Duration,
+    ) -> Result<Self, RigError> {
+        let stream = TcpStream::connect((host, port))?;
+        stream.set_read_timeout(Some(read_timeout))?;
         let writer = stream.try_clone()?;
         let reader = BufReader::new(stream);
         Ok(Self { reader, writer })
@@ -124,6 +152,25 @@ mod tests {
         assert_eq!(s.mode, Some(Mode::PktUsb));
         // PTT is 1 in the fake; if the passband line ("3000") leaked into the `t`
         // exchange, ptt would parse as false (trim "3000" != "1") — catching the bug.
+        assert!(s.ptt);
+    }
+
+    #[test]
+    fn connect_with_timeout_still_round_trips() {
+        let port = fake_rigctld();
+        // A generous timeout: the fake answers promptly, so the read completes
+        // well inside it. The point is that installing a read timeout does not
+        // break a normal status round-trip — the poll thread's bounded client
+        // reads the same values the unbounded client would.
+        let mut c = RigctldClient::connect_with_timeout(
+            "127.0.0.1",
+            port,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let s = c.read_status().unwrap();
+        assert_eq!(s.freq_hz, 7_102_000);
+        assert_eq!(s.mode, Some(Mode::PktUsb));
         assert!(s.ptt);
     }
 }

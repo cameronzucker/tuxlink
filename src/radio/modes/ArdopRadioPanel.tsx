@@ -1459,8 +1459,13 @@ export function ArdopRadioPanel({
             <Meter label="Throughput" value={`${status.throughputBps} bps`} warn />
           )}
           <Sparkline samples={throughputHistory} height={28} />
-          <pre className="radio-panel-mono ardop-stats">
+          <pre className="radio-panel-mono ardop-stats" data-testid="ardop-live-stats">
 {`Peer   ${status.peer ?? '—'}
+Freq   ${
+            status.rigFreqHz !== null
+              ? `${(status.rigFreqHz / 1e6).toFixed(5)} MHz`
+              : 'follows on connect'
+          }
 Mode   ${status.mode ?? '—'}
 Width  ${status.widthHz !== null ? `${status.widthHz} Hz` : '—'}
 PTT    ${status.pttBackend ?? '—'}

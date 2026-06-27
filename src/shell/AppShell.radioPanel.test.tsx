@@ -204,6 +204,7 @@ const RUNNING: ModemStatus = {
   arqFlags: { busy: false, rx: false, tx: false },
   lastError: null,
   quality: null,
+  rigFreqHz: null,
 };
 
 describe('<AppShell> radio panel', () => {

@@ -500,7 +500,21 @@ where
             Ok((transport, rig, info)) => {
                 // Success: install the live transport + (DRA-100) rig handle.
                 session.install_transport(transport);
+                // rig-control LIVE-VFO POLL: when the rig was kept alive
+                // (DRA-100 keep-serial path → `rig.is_some()`) AND the operator
+                // enabled `live_vfo_poll`, start the poll thread so the panel's
+                // frequency element tracks the rig's actual VFO. On the
+                // close-serial path `rig` is `None` (the serial was released
+                // after tune) so there's nothing to poll. The thread opens its
+                // own rigctld client; the managed rig handle is independent.
+                let want_poll = rig.is_some() && ardop_ui.live_vfo_poll;
                 session.set_rig(rig);
+                if want_poll {
+                    session.start_rig_poll(
+                        ardop_ui.rigctld_host.clone(),
+                        ardop_ui.rigctld_port,
+                    );
+                }
                 connected = Some(info);
                 true
             }

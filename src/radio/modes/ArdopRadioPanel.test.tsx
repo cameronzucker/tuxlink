@@ -168,6 +168,30 @@ describe('<ArdopRadioPanel>', () => {
     expect(screen.getByTestId('quality-score')).toHaveTextContent('72');
   });
 
+  it('shows the live VFO frequency in MHz when rigFreqHz is present (live-VFO poll)', () => {
+    mockUseModemStatus.mockReturnValue({
+      status: { ...RUNNING, rigFreqHz: 7_102_000 },
+      loading: false,
+      error: null,
+    });
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+    const stats = screen.getByTestId('ardop-live-stats');
+    expect(stats).toHaveTextContent('7.10200 MHz');
+    expect(stats).not.toHaveTextContent('follows on connect');
+  });
+
+  it('shows the idle "follows on connect" text when rigFreqHz is null', () => {
+    mockUseModemStatus.mockReturnValue({
+      status: { ...RUNNING, rigFreqHz: null },
+      loading: false,
+      error: null,
+    });
+    renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+    expect(screen.getByTestId('ardop-live-stats')).toHaveTextContent(
+      'follows on connect',
+    );
+  });
+
   it('renders the target-callsign input in the Connect form (stopped state)', async () => {
     renderPanel(<ArdopRadioPanel onClose={() => {}} />);
     await switchToManualTab();
