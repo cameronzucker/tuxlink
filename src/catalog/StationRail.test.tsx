@@ -99,6 +99,31 @@ describe('StationRail', () => {
     window.removeEventListener(GATEWAY_PREFILL_EVENT, handler as EventListener);
   });
 
+  it('Use → keeps the CLICKED channel as candidates[0] even when it is not the highest-ranked', () => {
+    // tuxlink-8fkkk Codex Fix 2: 40m ranks higher (rel 0.86) than 80m (0.74),
+    // but the operator clicked 80m. The clicked dial MUST be the PRIMARY
+    // candidate — the backend dials candidates[0] first and a non-empty list
+    // overrides the form target/freq, so a misordered list would dial 40m
+    // first. Assert the clicked 80m dial leads, with 40m following as QSY.
+    const handler = vi.fn();
+    window.addEventListener(GATEWAY_PREFILL_EVENT, handler as EventListener);
+    render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} activePrefillMode="vara-hf" />);
+    fireEvent.click(screen.getByTestId('use-vara-hf-3590'));
+    const evt = handler.mock.calls[0][0] as CustomEvent;
+    expect(evt.detail.dial).toEqual({ mode: 'vara-hf', gateway: 'N0DAJ', freq: '3.590', grid: 'DM34oa' });
+    expect(evt.detail.candidates).toEqual([
+      { mode: 'vara-hf', gateway: 'N0DAJ', freq: '3.590', grid: 'DM34oa' },
+      { mode: 'vara-hf', gateway: 'N0DAJ', freq: '7.103', grid: 'DM34oa' },
+    ]);
+    // No duplicate of the clicked dial appears in the QSY tail.
+    expect(
+      evt.detail.candidates.filter(
+        (d: { freq?: string }) => d.freq === '3.590',
+      ).length,
+    ).toBe(1);
+    window.removeEventListener(GATEWAY_PREFILL_EVENT, handler as EventListener);
+  });
+
   it('enables Use → for any dialable channel (arm-on-demand), not just the open modem', () => {
     // tuxlink-s0r1: Use → now opens the matching modem on demand, so a channel
     // whose mode is not the currently-open modem is still usable, not greyed.

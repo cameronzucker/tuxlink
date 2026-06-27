@@ -85,8 +85,20 @@ export function StationRail(props: StationRailProps) {
     // tuxlink-8fkkk Task B: the QSY-on-fail walk needs the station's OTHER
     // channels for this mode, ranked best-first. Compute them here where the
     // station + prediction + utcHour are in scope and pass them alongside the
-    // primary dial. The primary dial stays the clicked channel.
-    const candidates = rankedDialsFor(station, dial.mode, prediction, utcHour);
+    // primary dial.
+    //
+    // The clicked `dial` MUST be the PRIMARY candidate (index 0): the backend
+    // treats a non-empty `qsyCandidates` list as OVERRIDING the form's
+    // target/freq, so it dials candidates[0] first. `rankedDialsFor` returns
+    // channels ranked best-first (and capped), which may NOT be the clicked
+    // channel — and could even omit it under the cap. Force the clicked dial to
+    // the front, then append the ranked channels minus a duplicate of it, so
+    // "Use" on channel X always dials X first and only QSYs to others on
+    // failure.
+    const ranked = rankedDialsFor(station, dial.mode, prediction, utcHour);
+    const sameDial = (a: FavoriteDial, b: FavoriteDial) =>
+      a.gateway === b.gateway && a.freq === b.freq;
+    const candidates = [dial, ...ranked.filter((d) => !sameDial(d, dial))];
     // Arm-on-demand (tuxlink-s0r1): AppShell opens the matching modem panel then
     // prefills it. Fall back to a bare emit for an already-open panel in contexts
     // that don't supply the handler (e.g. tests/standalone harness).

@@ -1820,6 +1820,19 @@ fn run_vara_b2f_with_transport(
             }
         };
 
+        // tuxlink-8fkkk C2 (VARA): re-check the close-generation AFTER the tune
+        // returns and BEFORE `send_connect_and_wait`. The pre-CONNECT tune
+        // (rigctld spawn + CAT round-trips) can block for seconds; if the
+        // operator hit Stop during the tune the generation bumps, and without
+        // this guard the path would still send CONNECT — VARA would transmit
+        // after the session was closed. Release the just-spawned rig and bail.
+        // Mirror of the ARDOP post-tune guard in `dial_one_candidate`.
+        if session.current_close_generation() != close_gen_snapshot {
+            last_err = Some("VARA CONNECT aborted".into());
+            drop(rig);
+            return false;
+        }
+
         match send_connect_and_wait(app, log, transport, &mycall, &c.target) {
             Ok(()) => {
                 // Hold the rig for the exchange (DRA-100); `None` if released.
@@ -1828,15 +1841,23 @@ fn run_vara_b2f_with_transport(
                 true
             }
             Err(e) => {
-                // Release this candidate's rig before the next attempt so no
-                // rigctld is left holding the CAT serial.
-                drop(rig);
                 emit_vara_log(
                     app,
                     log,
                     LogLevel::Error,
                     format!("VARA CONNECT to {} failed: {e}", c.target),
                 );
+                // A failed CONNECT (especially a timeout with no
+                // DISCONNECTED/CANCELPENDING) may leave VARA still calling the
+                // previous target. Best-effort DISCONNECT it back to idle BEFORE
+                // the walk retunes + dials the next candidate on this same
+                // transport, so the modem cannot end up dual-calling. Result is
+                // ignored: the next attempt drops the transport regardless and
+                // the TCP FIN forces VARA to notice if the wind-down stalls.
+                let _ = vara_dial_disconnect(transport);
+                // Release this candidate's rig before the next attempt so no
+                // rigctld is left holding the CAT serial.
+                drop(rig);
                 last_err = Some(e);
                 false
             }

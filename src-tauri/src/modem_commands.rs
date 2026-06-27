@@ -36,6 +36,16 @@ const CONNECT_ATTEMPTS_MAX: u32 = 30;
 /// ARQ-link idle timeout passed to the TNC via `ARQTIMEOUT` during init.
 const ARQ_TIMEOUT_SECS: u32 = 30;
 
+/// Sentinel `last_err` value used by the connect walk when an attempt is
+/// abandoned because the operator's Disconnect bumped the close-generation
+/// (i.e. an operator-initiated abort, not a genuine connect failure). The
+/// gated-walk `None` arm matches on this to AVOID clobbering the `Stopped`
+/// state that `modem_ardop_disconnect_inner` already installed — an abort must
+/// not leave the panel stuck in `Error`. Producer sites: the per-candidate
+/// abort guard in the walk closure and the C2 post-tune guard in
+/// `dial_one_candidate`.
+pub(crate) const CONNECT_ABORTED_MSG: &str = "connect aborted";
+
 /// Surface a modem-operation failure in the operator session log (tuxlink-nnjz).
 ///
 /// Modem/transport errors belong in the session-log window the operator is
@@ -506,7 +516,7 @@ where
         // Honor an in-flight operator abort: if a close intervened since the
         // walk began, stop without dialing the next candidate.
         if session.current_close_generation() != walk_gen {
-            last_err = Some("connect aborted".into());
+            last_err = Some(CONNECT_ABORTED_MSG.into());
             return false;
         }
 
@@ -565,10 +575,21 @@ where
         }
         None => {
             let msg = last_err.unwrap_or_else(|| "ARQ connect failed".into());
-            let mut s = ModemStatus::stopped();
-            s.state = ModemState::Error;
-            s.last_error = Some(msg.clone());
-            session.set_status(s);
+            // Distinguish an operator-initiated abort from a genuine connect
+            // failure. When the walk drained to `None` because the operator hit
+            // Stop (close-generation bump → `CONNECT_ABORTED_MSG`),
+            // `modem_ardop_disconnect_inner` has ALREADY reset the session to
+            // `Stopped`. Overwriting that with `Error` here would leave the
+            // ARDOP panel stuck in its non-stopped branch after a successful
+            // Stop. So on abort, leave the `Stopped` state in place and just
+            // surface the abort message as `Err`. Only a genuine failure
+            // installs the `Error` status.
+            if msg != CONNECT_ABORTED_MSG {
+                let mut s = ModemStatus::stopped();
+                s.state = ModemState::Error;
+                s.last_error = Some(msg.clone());
+                session.set_status(s);
+            }
             Err(msg)
         }
     }
@@ -651,7 +672,7 @@ where
     if session.current_close_generation() != walk_gen {
         drop(transport);
         drop(live_rig);
-        return Err("connect aborted".into());
+        return Err(CONNECT_ABORTED_MSG.into());
     }
 
     // tuxlink-o3f2: install the side-channel abort writer BEFORE the blocking
@@ -4209,6 +4230,83 @@ mod tests {
         assert!(
             !matches!(state, ModemState::ConnectedIrs | ModemState::ConnectedIss),
             "session must not be connected after abort; got: {state:?}"
+        );
+    }
+
+    /// tuxlink-8fkkk Codex Fix 4: an operator-initiated abort must NOT clobber
+    /// the `Stopped` state that `modem_ardop_disconnect_inner` already installed
+    /// with `Error`. The walk's `None` arm distinguishes the abort sentinel
+    /// (`CONNECT_ABORTED_MSG`) from a genuine connect failure: on abort it
+    /// leaves the status untouched (still `Stopped`) and only surfaces the abort
+    /// message as `Err`. Without the fix the panel would be stuck in its
+    /// non-stopped (Error) branch after a successful Stop.
+    #[test]
+    fn aborted_walk_does_not_overwrite_stopped_state_with_error() {
+        let session = Arc::new(ModemSession::new());
+        let candidates = vec![DialCandidate {
+            target: "W7RMS-10".into(),
+            freq_hz: None,
+        }];
+
+        // Simulate the disconnect path having already reset the session to
+        // Stopped (what `modem_ardop_disconnect_inner` does on operator Stop).
+        session.set_status(ModemStatus::stopped());
+        // Bump the close-generation so the walk's per-candidate guard fires the
+        // abort sentinel immediately (factory is never reached).
+        let _ = session.bump_close_generation();
+
+        let result = modem_ardop_connect_walk_with_factory(
+            &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
+            &candidates,
+            false,
+            &test_ardop_ui_config(),
+            |_cfg, _target| Ok(stub_transport()),
+        );
+
+        // The abort message is still surfaced as Err...
+        let msg = result.expect_err("aborted walk must return Err");
+        assert_eq!(msg, CONNECT_ABORTED_MSG);
+        // ...but the Stopped state set by disconnect must SURVIVE — not be
+        // overwritten with Error.
+        let state = session.status_snapshot().state;
+        assert_eq!(
+            state,
+            ModemState::Stopped,
+            "abort must not clobber Stopped with Error; got: {state:?}"
+        );
+    }
+
+    /// Counterpart to the abort case: a GENUINE connect failure (no
+    /// close-generation bump) still installs the `Error` status so the panel
+    /// surfaces the failure. Guards against the Fix-4 change over-broadening to
+    /// swallow real errors.
+    #[test]
+    fn failed_walk_still_sets_error_state() {
+        let session = Arc::new(ModemSession::new());
+        let candidates = vec![DialCandidate {
+            target: "W7RMS-10".into(),
+            freq_hz: None,
+        }];
+
+        // No generation bump: the factory error is a genuine connect failure.
+        let result = modem_ardop_connect_walk_with_factory(
+            &session,
+            &test_session_id("N7CPZ"),
+            &test_config(),
+            &candidates,
+            false,
+            &test_ardop_ui_config(),
+            |_cfg, _target| Err("spawn boom".into()),
+        );
+
+        assert!(result.is_err(), "genuine failure must return Err");
+        let state = session.status_snapshot().state;
+        assert_eq!(
+            state,
+            ModemState::Error,
+            "genuine failure must set Error status; got: {state:?}"
         );
     }
 }
