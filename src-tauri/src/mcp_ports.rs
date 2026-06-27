@@ -41,10 +41,11 @@ use tuxlink_mcp_core::ports::{
     ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
     GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
     ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
-    PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort, SearchPort,
-    SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
-    SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
-    VaraConfigDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort,
+    QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto,
+    SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto, StationFilterDto,
+    StationListDto, StationModeDto, StationPort, StatusPort, VaraConfigDto, VaraStatusDto,
+    VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -283,6 +284,32 @@ impl StatusPort for MonolithStatusPort {
             .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         // Return ONLY the set/not-set boolean — never the password.
         Ok(matches!(status, PeerPasswordStatus::Set))
+    }
+
+    async fn rig_status(&self) -> Result<RigStatusDto, PortError> {
+        // `configured` is read from config (a hamlib model + CAT serial set).
+        // The live VFO/mode/PTT come from a BEST-EFFORT transient CAT probe
+        // (rig_probe_status): on ANY error (unconfigured, rigctld absent, or the
+        // CAT serial busy with an active DRA-100 session holding rigctld) the
+        // live fields are `None` while `configured` still reports the setup
+        // state. The probe is CAT-READ-ONLY — it never transmits or retunes.
+        let configured = crate::config::read_config()
+            .map(|cfg| crate::modem_commands::rig_config_from(&cfg.rig).is_some())
+            .unwrap_or(false);
+        match crate::modem_commands::rig_probe_status() {
+            Ok(probe) => Ok(RigStatusDto {
+                vfo_hz: Some(probe.vfo_hz),
+                mode: probe.mode,
+                ptt: Some(probe.ptt),
+                configured,
+            }),
+            Err(_) => Ok(RigStatusDto {
+                vfo_hz: None,
+                mode: None,
+                ptt: None,
+                configured,
+            }),
+        }
     }
 }
 
@@ -596,6 +623,23 @@ impl ConfigPort for MonolithConfigPort {
             tx_delay: u32::from(cfg.txdelay),
         })
     }
+
+    async fn rig(&self) -> Result<RigConfigDto, PortError> {
+        // Radio-level rig config (Config.rig), shared by ARDOP + VARA. No
+        // secrets — model id, rigctld endpoint, CAT serial, behavior flags only.
+        let rig = crate::modem_commands::config_get_rig();
+        Ok(RigConfigDto {
+            rig_hamlib_model: rig.rig_hamlib_model,
+            rigctld_host: rig.rigctld_host,
+            rigctld_port: rig.rigctld_port,
+            rigctld_binary: rig.rigctld_binary,
+            close_serial_sequencing: rig.close_serial_sequencing,
+            live_vfo_poll: rig.live_vfo_poll,
+            qsy_on_fail: rig.qsy_on_fail,
+            cat_serial_path: rig.cat_serial_path,
+            cat_baud: rig.cat_baud,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -803,6 +847,24 @@ fn map_session_intent(
     }
 }
 
+/// Map the agent-facing [`QsyCandidateDto`] list onto the monolith's
+/// [`DialCandidate`](crate::modem_commands::DialCandidate) list field-for-field.
+/// `None` (agent omitted the list) stays `None` so the inner connect path falls
+/// back to today's single dial of `target`/`freq_hz`.
+fn map_qsy_candidates(
+    candidates: Option<Vec<QsyCandidateDto>>,
+) -> Option<Vec<crate::modem_commands::DialCandidate>> {
+    candidates.map(|cands| {
+        cands
+            .into_iter()
+            .map(|c| crate::modem_commands::DialCandidate {
+                target: c.target,
+                freq_hz: c.freq_hz,
+            })
+            .collect()
+    })
+}
+
 #[async_trait]
 impl EgressPort for MonolithEgressPort {
     async fn cms_connect(&self) -> Result<(), EgressPortError> {
@@ -847,21 +909,44 @@ impl EgressPort for MonolithEgressPort {
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
     }
 
-    async fn ardop_connect(&self, target: String) -> Result<(), EgressPortError> {
+    async fn rig_tune(&self, freq_hz: u64) -> Result<(), EgressPortError> {
+        // tuxlink-wxwlr: rig_tune rides the SAME armed-send-authority gate as the
+        // transmit/connect egress methods — tuning COMMANDS the radio, the same
+        // authority class as a transmit. A disarmed / expired / tainted /
+        // poisoned session is Denied and `ardop_tune_rig` never runs (nothing is
+        // sent to the radio). The gate pattern is reused verbatim (op="rig_tune",
+        // EgressAuthority::Agent, the shared guard + the egress audit sink).
+        let audit = egress_audit_sink(self.app.clone());
+        guarded_egress(&self.guard, EgressAuthority::Agent, "rig_tune", &audit, || async move {
+            // modem_commands.rs ardop_tune_rig: set VFO + the HF data mode over
+            // CAT, then drop (release the serial). Mode-agnostic, radio-level.
+            crate::modem_commands::ardop_tune_rig(freq_hz)
+                .map_err(|e| EgressPortError::Failed(redact_err(e)))
+        })
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))?
+    }
+
+    async fn ardop_connect(
+        &self,
+        target: String,
+        freq_hz: Option<u64>,
+        qsy_candidates: Option<Vec<QsyCandidateDto>>,
+    ) -> Result<(), EgressPortError> {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
+        let qsy = map_qsy_candidates(qsy_candidates);
         guarded_egress(&self.guard, EgressAuthority::Agent, "ardop_connect", &audit, || async move {
             // modem_commands.rs modem_ardop_connect (Arc<ModemSession>).
-            // rig-control Task 8/9: the MCP egress dial keeps the legacy
-            // single-target, no-tune, no-QSY behavior — `freq_hz` + the QSY
-            // candidate list are operator-UI concerns (Task 10), not agent
-            // egress. `None, None` reproduces the pre-rig-control single dial.
+            // tuxlink-wxwlr: thread the agent-supplied freq_hz + QSY candidate
+            // list through (mapped to Vec<DialCandidate>). `None`/empty → the
+            // legacy single dial of `target`.
             crate::modem_commands::modem_ardop_connect(
                 app.clone(),
                 app.state::<Arc<crate::modem_status::ModemSession>>(),
                 target,
-                None,
-                None,
+                freq_hz,
+                qsy,
             )
             .await
             .map_err(|e| EgressPortError::Failed(redact_err(e)))
@@ -877,6 +962,9 @@ impl EgressPort for MonolithEgressPort {
     ) -> Result<(), EgressPortError> {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
+        // tuxlink-wxwlr: no freq/QSY here by design. The ARDOP lifecycle tunes at
+        // the CONNECT (modem_ardop_connect's dial walk); modem_ardop_b2f_exchange
+        // runs over the ALREADY-connected link, so a pre-tune is genuinely N/A.
         guarded_egress(
             &self.guard,
             EgressAuthority::Agent,
@@ -905,19 +993,25 @@ impl EgressPort for MonolithEgressPort {
         &self,
         target: String,
         intent: SessionIntentDto,
+        freq_hz: Option<u64>,
+        qsy_candidates: Option<Vec<QsyCandidateDto>>,
     ) -> Result<(), EgressPortError> {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
+        let qsy = map_qsy_candidates(qsy_candidates);
         guarded_egress(
             &self.guard,
             EgressAuthority::Agent,
             "vara_b2f_exchange",
             &audit,
             || async move {
-                // vara/commands.rs:1541 modem_vara_b2f_exchange — VARA CONNECT
+                // vara/commands.rs:1548 modem_vara_b2f_exchange — VARA CONNECT
                 // is LIVE here; the gate runs the real path. Pin VARA-HF (the
                 // operationally-confirmed G90 + VARA HF Standard path); the
                 // command validates the kind is VaraHf | VaraFm.
+                // tuxlink-wxwlr: thread the agent-supplied freq_hz + QSY
+                // candidate list (tuxlink-8fkkk freq_hz / qsy_candidates params);
+                // `None`/empty → single dial of `target`.
                 crate::winlink::modem::vara::commands::modem_vara_b2f_exchange(
                     app.clone(),
                     app.state::<Arc<crate::session_log::SessionLogState>>(),
@@ -925,12 +1019,8 @@ impl EgressPort for MonolithEgressPort {
                     target,
                     map_session_intent(intent),
                     crate::winlink::listener::transport::TransportKind::VaraHf,
-                    // The MCP egress path does not QSY: no pre-audio CAT tune
-                    // (no rig freq known here) and no candidate list. Pass
-                    // `None, None` for the tuxlink-8fkkk freq_hz / qsy_candidates
-                    // params; the inner falls back to a single dial of `target`.
-                    None,
-                    None,
+                    freq_hz,
+                    qsy,
                 )
                 .await
                 .map_err(|e| EgressPortError::Failed(redact_err(e)))
