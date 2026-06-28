@@ -5,9 +5,34 @@ export type WizardError =
   | { kind: 'PermissionDenied'; detail: { platform_hint: 'linux' | 'macos' | 'windows' } }
   | { kind: 'ConfigWrite'; detail: { detail: string } }
   | { kind: 'ConfigWriteAndRollbackFailed'; detail: { config_error: string; rollback_error: string } }
+  // tuxlink-xknyx: on-disk config is newer than this build can parse, so the
+  // downgrade-protection write guard refuses. config_path is the resolved path
+  // the user moves aside to recover.
+  | { kind: 'ConfigSchemaTooNew'; detail: { existing: number; ours: number; config_path: string } }
   | { kind: 'Busy' }
   | { kind: 'InvalidInput'; detail: { field: string } }
   | { kind: 'Other'; detail: { detail: string } };
+
+// tuxlink-xknyx: shared, honest message for the schema-downgrade brick. States
+// the real cause (not "disk full?") and surfaces the EXACT, copy-pasteable shell
+// command to move the newer config aside so this build can set up. The
+// `$(date +%s)` suffix keeps the backup unique (never clobbers an existing .bak),
+// and the single-quoted path tolerates spaces. Reused by both wizard steps.
+export function schemaTooNewMessage(d: {
+  existing: number;
+  ours: number;
+  config_path: string;
+}): string {
+  const p = d.config_path;
+  return (
+    `These settings were created by a newer version of Tuxlink ` +
+    `(settings format v${d.existing}; this version supports v${d.ours}). ` +
+    `This version can't use them.\n\n` +
+    `To keep your existing settings, open the newer version of Tuxlink you ran. ` +
+    `To set up THIS version instead, move the newer settings aside and relaunch:\n\n` +
+    `mv '${p}' '${p}.bak-$(date +%s)'`
+  );
+}
 
 // TestSendOutcome removed (Task 5.4 / tuxlink-9phd): the Pat-based test-send is
 // replaced by verify_cms_connection, which returns Result<(), WizardError>. The

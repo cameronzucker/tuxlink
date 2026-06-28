@@ -43,9 +43,33 @@ pub enum WizardError {
     PermissionDenied { platform_hint: String },
     ConfigWrite { detail: String },
     ConfigWriteAndRollbackFailed { config_error: String, rollback_error: String },
+    /// The on-disk config was written by a NEWER build (its `schema_version`
+    /// exceeds this binary's), so the write guard refuses to overwrite it
+    /// (downgrade protection) and setup cannot save here. Distinct from
+    /// `ConfigWrite` so the UI states the real cause and surfaces the exact
+    /// recovery command instead of a misleading "disk full?" message.
+    /// `config_path` is the resolved path the user must move aside. tuxlink-xknyx.
+    ConfigSchemaTooNew { existing: u32, ours: u32, config_path: String },
     Busy,
     InvalidInput { field: String },
     Other { detail: String },
+}
+
+/// Map a `ConfigWriteError` to the wizard-facing error, splitting out the
+/// version-downgrade case (the on-disk config is newer than this build) so the
+/// UI can show the true cause + the exact recovery command rather than the
+/// generic "disk full?" message. tuxlink-xknyx.
+fn wizard_error_from_config_write(e: crate::config::ConfigWriteError) -> WizardError {
+    match e {
+        crate::config::ConfigWriteError::SchemaVersionMismatch { existing, ours } => {
+            WizardError::ConfigSchemaTooNew {
+                existing,
+                ours,
+                config_path: crate::config::config_path().display().to_string(),
+            }
+        }
+        other => WizardError::ConfigWrite { detail: format!("{other}") },
+    }
 }
 
 /// Single-flight mutex for the 3 wizard write commands. Per spec §3.7, this
@@ -234,9 +258,9 @@ pub async fn persist_cms_impl(
         };
         match rollback_result {
             Ok(_) => {
-                return Err(WizardError::ConfigWrite {
-                    detail: format!("{config_err}"),
-                });
+                // Keyring rolled back cleanly; surface the precise config cause
+                // (incl. the schema-downgrade case → ConfigSchemaTooNew). tuxlink-xknyx.
+                return Err(wizard_error_from_config_write(config_err));
             }
             Err(rollback_err) => {
                 tracing::error!(
@@ -439,7 +463,7 @@ pub async fn persist_offline_impl(
     // Single atomic write to config.json. No keyring involved.
     // On failure: nothing to roll back (no prior writes succeeded).
     crate::config::write_config_atomic(&new_config)
-        .map_err(|e| WizardError::ConfigWrite { detail: format!("{e}") })?;
+        .map_err(wizard_error_from_config_write)?;
 
     tracing::info!(
         target: "tuxlink::wizard",
@@ -568,6 +592,33 @@ pub fn reopen(app: &tauri::AppHandle, step: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    // tuxlink-xknyx: the schema-downgrade write failure must map to the distinct
+    // ConfigSchemaTooNew (so the UI shows the real cause + recovery command), and
+    // other write failures must stay generic ConfigWrite (the "disk full?" copy).
+    #[test]
+    fn schema_mismatch_maps_to_config_schema_too_new() {
+        let e = crate::config::ConfigWriteError::SchemaVersionMismatch { existing: 5, ours: 4 };
+        match wizard_error_from_config_write(e) {
+            WizardError::ConfigSchemaTooNew { existing, ours, config_path } => {
+                assert_eq!(existing, 5);
+                assert_eq!(ours, 4);
+                assert!(config_path.ends_with("config.json"), "carries the resolved path: {config_path}");
+            }
+            other => panic!("expected ConfigSchemaTooNew, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn other_write_errors_stay_generic_config_write() {
+        let e = crate::config::ConfigWriteError::NoParentDirectory {
+            path: std::path::PathBuf::from("/nope/config.json"),
+        };
+        assert!(matches!(
+            wizard_error_from_config_write(e),
+            WizardError::ConfigWrite { .. }
+        ));
+    }
 
     #[tokio::test]
     async fn get_wizard_completed_returns_false_when_no_config() {

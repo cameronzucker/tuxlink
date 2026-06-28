@@ -379,6 +379,85 @@ fn harden_and_verify_mcp_dir(dir: &std::path::Path, uid: u32) -> Option<std::pat
     }
 }
 
+/// What the main-window close path should do. Extracted from the
+/// `on_window_event` handler so the SETUP-is-quittable invariant is unit-tested
+/// (the handler itself needs a live Tauri window). tuxlink-xknyx.
+#[derive(Debug, PartialEq, Eq)]
+enum CloseAction {
+    /// Exit the process (`app.exit(0)`).
+    Quit,
+    /// Show the one-time close-to-tray explainer; keep the window visible.
+    ShowPrompt,
+    /// Hide/minimize to the tray; keep the process alive.
+    MinimizeToTray,
+}
+
+/// Pure close-path decision. `cfg` is `read_config().ok()` — `None` means there
+/// is no readable config yet: a fresh install (no file) OR a config written by a
+/// NEWER build that this binary cannot parse (the schema-downgrade brick).
+///
+/// SETUP must be cleanly QUITTABLE (tuxlink-xknyx): while there is no readable,
+/// wizard-completed config, closing the window EXITS rather than minimizing.
+/// Before the wizard completes there is no in-flight transfer to protect, and the
+/// close-prompt modal / tray Quit are not reachable from the wizard (the window
+/// has no decorations and the SNI tray is often absent on Wayland). Minimizing
+/// there traps the user with no way to quit. Once setup is complete the prior
+/// behavior is preserved exactly: first close shows the prompt; thereafter close
+/// quits (opted out) or minimizes to tray (default).
+fn close_action(cfg: Option<&crate::config::Config>) -> CloseAction {
+    match cfg {
+        None => CloseAction::Quit,
+        Some(c) if !c.wizard_completed => CloseAction::Quit,
+        Some(c) if !c.close_prompt_seen => CloseAction::ShowPrompt,
+        Some(c) if !c.close_to_tray => CloseAction::Quit,
+        _ => CloseAction::MinimizeToTray,
+    }
+}
+
+#[cfg(test)]
+mod close_action_tests {
+    use super::{close_action, CloseAction};
+
+    fn cfg(wizard_completed: bool, close_prompt_seen: bool, close_to_tray: bool) -> crate::config::Config {
+        let mut c = crate::test_helpers::native_test_config();
+        c.wizard_completed = wizard_completed;
+        c.close_prompt_seen = close_prompt_seen;
+        c.close_to_tray = close_to_tray;
+        c
+    }
+
+    #[test]
+    fn none_config_quits_so_setup_is_never_trapped() {
+        // The schema-downgrade brick + every fresh install: read_config() fails →
+        // None. Close MUST quit, not minimize. (tuxlink-xknyx regression.)
+        assert_eq!(close_action(None), CloseAction::Quit);
+    }
+
+    #[test]
+    fn incomplete_wizard_quits_even_when_config_is_readable() {
+        let c = cfg(false, false, true);
+        assert_eq!(close_action(Some(&c)), CloseAction::Quit);
+    }
+
+    #[test]
+    fn completed_unseen_prompt_shows_prompt() {
+        let c = cfg(true, false, true);
+        assert_eq!(close_action(Some(&c)), CloseAction::ShowPrompt);
+    }
+
+    #[test]
+    fn completed_opted_out_quits() {
+        let c = cfg(true, true, false);
+        assert_eq!(close_action(Some(&c)), CloseAction::Quit);
+    }
+
+    #[test]
+    fn completed_default_minimizes_to_tray() {
+        let c = cfg(true, true, true);
+        assert_eq!(close_action(Some(&c)), CloseAction::MinimizeToTray);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Force the working WebKitGTK GL environment before the webview inits.
@@ -1384,47 +1463,33 @@ pub fn run() {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     // tuxlink-5rvp / #882: the close path is config-aware.
-                    // Read config synchronously (read_config is sync).
-                    match crate::config::read_config().ok() {
-                        // First-ever close (config readable, prompt not yet
-                        // answered): show the one-time explainer modal. Keep the
-                        // window VISIBLE (do NOT minimize) so the user sees it;
-                        // the frontend re-issues the close via resolve_close_prompt
-                        // once they answer.
-                        Some(c) if !c.close_prompt_seen => {
+                    // tuxlink-xknyx: decision extracted to the pure `close_action`
+                    // (unit-tested in `close_action_tests`) so the SETUP case is
+                    // provably quittable rather than trapped behind a minimize.
+                    match close_action(crate::config::read_config().ok().as_ref()) {
+                        // SETUP (no readable config yet — fresh install OR a config
+                        // newer than this build can parse — or wizard not completed):
+                        // close QUITS. Setup must never be trapped. Same canonical
+                        // app.exit(0) path as File→Quit / tray Quit (implicit
+                        // last-window-close is fragile with a tray icon present).
+                        CloseAction::Quit => {
+                            use tauri::Manager as _;
+                            window.app_handle().exit(0);
+                        }
+                        // First-ever close after setup (prompt not yet answered):
+                        // show the one-time explainer modal; keep the window VISIBLE;
+                        // the frontend re-issues the close via resolve_close_prompt.
+                        CloseAction::ShowPrompt => {
                             api.prevent_close();
                             use tauri::Emitter as _;
                             let _ = window.emit("show-close-prompt", ());
                         }
-                        // The operator opted out (close = quit). Exit explicitly
-                        // via the canonical app.exit(0) path (the SAME path as
-                        // File→Quit / tray Quit / resolve_close_prompt) rather
-                        // than relying on implicit last-window-close: with a tray
-                        // icon present and no RunEvent::ExitRequested handler,
-                        // implicit exit is fragile and a missed exit would strand
-                        // a GUI-less process. exit(0) is unambiguous. (Reaching
-                        // this arm means close_prompt_seen is already true, since
-                        // the Settings toggle marks the prompt seen — see
-                        // set_close_to_tray.)
-                        Some(c) if !c.close_to_tray => {
-                            use tauri::Manager as _;
-                            window.app_handle().exit(0);
-                        }
-                        // Default minimize-to-tray. Covers BOTH the operator who
-                        // kept the default (close_to_tray=true, prompt seen) AND a
-                        // None config (fresh install / unreadable): the None case
-                        // MUST NOT emit the prompt — during the wizard the prompt
-                        // UI isn't mounted and resolve_close_prompt would fail the
-                        // same read, so the close would silently no-op (window
-                        // un-closeable). Minimize is the safe fallback that never
-                        // kills the process mid-transfer.
+                        // Default minimize-to-tray (close_to_tray kept, prompt seen).
                         // tuxlink-9zd: on Linux the SNI tray often does not register
-                        // (e.g. Wayland + wf-panel-pi has no SNI host), so hide()
-                        // would strand the window — process alive, no GUI path back.
-                        // minimize() keeps it in the compositor's window list
-                        // (recoverable via the panel/window-switcher). macOS/Windows
-                        // have a reliable tray, so hide() there.
-                        _ => {
+                        // (Wayland + wf-panel-pi has no SNI host), so hide() would
+                        // strand the window; minimize() keeps it in the compositor's
+                        // window list. macOS/Windows have a reliable tray, so hide().
+                        CloseAction::MinimizeToTray => {
                             api.prevent_close();
                             #[cfg(target_os = "linux")]
                             let _ = window.minimize();
