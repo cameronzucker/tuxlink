@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveGlyph, conditionTextClass } from './weatherGlyph';
+import { resolveGlyph, conditionTextClass } from './weatherGlyphData';
 
 describe('resolveGlyph (tuxlink-n6tp)', () => {
   it('decodes core SFT codes to plain-English labels', () => {

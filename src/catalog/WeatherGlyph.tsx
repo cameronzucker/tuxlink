@@ -7,7 +7,7 @@
 // Approved design: dev/scratch/2026-06-10-nws-weather-glyphs-mock.html.
 
 import type { JSX } from 'react';
-import { resolveGlyph, conditionTextClass, type WeatherGlyph as Glyph } from './weatherGlyph';
+import { resolveGlyph, conditionTextClass, type WeatherGlyph as Glyph } from './weatherGlyphData';
 import './WeatherGlyph.css';
 
 const A8 = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => (i * Math.PI) / 4); // full 8 rays
