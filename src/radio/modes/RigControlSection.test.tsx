@@ -122,6 +122,19 @@ describe('<RigControlSection>', () => {
     });
   });
 
+  // tuxlink-qevsf (SAFETY/Part 97): the QSY-on-fail checkbox was removed because
+  // auto-QSY transmitted on candidate frequencies the operator never saw or
+  // selected. The control must no longer render (the connect commands clamp the
+  // candidate list to the operator-chosen channel, so it would be inert anyway).
+  it('does not render the QSY on fail checkbox (tuxlink-qevsf)', async () => {
+    render(<RigControlSection storageKeyPrefix="ardop" />);
+    // Wait for a control that IS rendered, then assert the QSY checkbox is absent.
+    await waitFor(() => {
+      expect(screen.getByTestId('rig-live-vfo')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('rig-qsy-on-fail')).not.toBeInTheDocument();
+  });
+
   it('persists rig model change via config_set_rig', async () => {
     const core = await import('@tauri-apps/api/core');
     const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
@@ -502,4 +515,9 @@ describe('<RigControlSection>', () => {
       expect(onRadioSelected).toHaveBeenCalledWith(1049, true);
     });
   });
+
+  // tuxlink-qevsf (SAFETY/Part 97): the "persists QSY-on-fail toggle" test was
+  // removed alongside the checkbox — there is no longer a control to toggle. The
+  // `qsy_on_fail` field stays in the RigConfig DTO (config-schema stability) but
+  // is not user-settable from this section.
 });

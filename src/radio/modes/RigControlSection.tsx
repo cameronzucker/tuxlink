@@ -390,6 +390,15 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
           }}
         />
       </label>
+
+      {/* QSY on fail — control removed for tuxlink-qevsf/tuxlink-31c63
+          (SAFETY/Part 97): auto-QSY transmitted on candidate frequencies the
+          operator never saw or selected (a control-operator violation). The
+          connect path clamps the candidate list to the operator-chosen channel,
+          so this control would be inert. The `qsy_on_fail` field stays in
+          RigConfig/DEFAULT_RIG_CONFIG to avoid churning the config schema; it is
+          simply not rendered. Restored by the Channel-Selection redesign (Find a
+          Station = operator-driven channel picker). */}
     </>
   );
 

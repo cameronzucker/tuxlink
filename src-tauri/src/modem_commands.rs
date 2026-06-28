@@ -1510,12 +1510,19 @@ pub async fn modem_ardop_connect(
     // rig-control Task 9: build the ordered candidate list. A non-empty
     // `qsy_candidates` overrides the single dial; otherwise a one-element list
     // from `{ target, freq_hz }` reproduces the legacy single-dial behavior.
-    let candidates: Vec<DialCandidate> = match qsy_candidates {
+    let assembled: Vec<DialCandidate> = match qsy_candidates {
         Some(v) if !v.is_empty() => v,
         _ => vec![DialCandidate { target, freq_hz }],
     };
+    // tuxlink-qevsf (SAFETY/Part 97): auto-QSY disabled — the station must not
+    // transmit on any frequency the operator has not seen + selected. Only the
+    // operator-chosen channel (candidate[0]) is dialed. Restored by the
+    // Channel-Selection redesign (Find a Station = operator-driven channel picker).
+    let candidates = clamp_connect_candidates(assembled);
     // QSY-on-fail is an operator config flag; it only matters when the list has
-    // more than one candidate. tuxlink-8fkkk: radio-level (Config.rig).
+    // more than one candidate. tuxlink-8fkkk: radio-level (Config.rig). The
+    // clamp above leaves a single candidate, so the walk has nothing to advance
+    // to regardless of this flag.
     let qsy_on_fail = cfg.rig.qsy_on_fail;
 
     let session = Arc::clone(session.inner());
@@ -1982,6 +1989,20 @@ pub(crate) fn tune_rig_for_connect(
 pub struct DialCandidate {
     pub target: String,
     pub freq_hz: Option<u64>,
+}
+
+/// tuxlink-qevsf (SAFETY/Part 97): clamp an assembled connect-candidate list to
+/// its first element. Auto-QSY is disabled because the walk would CAT-tune +
+/// dial/key on candidate frequencies the operator never saw or selected — only
+/// the operator-chosen channel (candidate[0]) was ever presented in the UI.
+/// Transmitting on the others is a control-operator violation. Both connect
+/// commands (ARDOP + VARA) route their candidate list through this helper before
+/// it reaches the walk, so there is nothing for `qsy_on_fail` to advance to.
+/// Restored by the Channel-Selection redesign (Find a Station = operator-driven
+/// channel picker).
+pub(crate) fn clamp_connect_candidates(mut candidates: Vec<DialCandidate>) -> Vec<DialCandidate> {
+    candidates.truncate(1);
+    candidates
 }
 
 /// Walk `candidates` in order, calling `attempt(idx, candidate)` — which
@@ -4354,6 +4375,54 @@ mod tests {
             false // first fails
         });
         assert_eq!(attempted, vec![0]); // qsy off → no walk
+        assert_eq!(outcome, None);
+    }
+
+    // ── tuxlink-qevsf SAFETY/Part 97: connect-candidate clamp ────────────────
+
+    /// The connect commands route their assembled candidate list through
+    /// `clamp_connect_candidates` before it reaches the walk. Even when the
+    /// operator supplied several QSY candidates, only candidate[0] — the channel
+    /// the operator actually saw + selected — survives. This is the mitigation:
+    /// the station physically cannot auto-transmit on an unseen frequency because
+    /// the walk has nothing to advance to.
+    #[test]
+    fn clamp_connect_candidates_keeps_only_first() {
+        let supplied = vec![
+            DialCandidate { target: "W7DG".into(), freq_hz: Some(7_102_000) },
+            DialCandidate { target: "KE7XYZ".into(), freq_hz: Some(10_145_500) },
+            DialCandidate { target: "N6ARA".into(), freq_hz: Some(14_109_000) },
+        ];
+        let clamped = clamp_connect_candidates(supplied);
+        assert_eq!(clamped.len(), 1, "only the operator-chosen channel survives");
+        assert_eq!(clamped[0].target, "W7DG");
+        assert_eq!(clamped[0].freq_hz, Some(7_102_000));
+    }
+
+    /// End-to-end of the mitigation through the planner: after clamping, the walk
+    /// attempts ONLY candidate[0] even with `qsy_on_fail = true` and a connect
+    /// failure that would otherwise advance the walk to the other frequencies.
+    #[test]
+    fn clamped_walk_attempts_only_first_even_with_qsy_on_fail_true() {
+        let supplied = vec![
+            DialCandidate { target: "W7DG".into(), freq_hz: Some(7_102_000) },
+            DialCandidate { target: "KE7XYZ".into(), freq_hz: Some(10_145_500) },
+            DialCandidate { target: "N6ARA".into(), freq_hz: Some(14_109_000) },
+        ];
+        let candidates = clamp_connect_candidates(supplied);
+
+        let mut attempted = Vec::new();
+        // qsy_on_fail = true AND every attempt fails: pre-clamp this would have
+        // dialed all three frequencies; post-clamp only candidate[0] is reachable.
+        let outcome = walk_candidates(&candidates, true, |idx, _c| {
+            attempted.push(idx);
+            false
+        });
+        assert_eq!(
+            attempted,
+            vec![0],
+            "auto-QSY must not transmit on any frequency past candidate[0]"
+        );
         assert_eq!(outcome, None);
     }
 

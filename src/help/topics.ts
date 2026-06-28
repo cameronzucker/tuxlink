@@ -90,6 +90,7 @@ export const SECTIONS: readonly HelpSection[] = [
       '21-search',
       '22-user-folders',
       '23-catalog-requests',
+      '35-agent-mcp',
     ],
   },
   {
