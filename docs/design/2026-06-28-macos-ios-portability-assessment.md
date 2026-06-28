@@ -883,6 +883,29 @@ Executed per [docs/plans/2026-06-28-macos-app-bundle-plan.md](../plans/2026-06-2
 
 **Net:** a launchable, arm64, unsigned macOS `.app` builds from `pnpm tauri build` with one additive config line; only the `.dmg` packaging and code-signing/notarization remain, and those are operator/Apple-account concerns, not code blockers.
 
+## V.11 Local stdio MCP server on macOS (2026-06-28)
+
+Tuxlink exposes an MCP server for "Connect an AI agent": the **real router** lives in `tuxlink-mcp-core` (`router::TuxlinkMcp`, rmcp 0.8.5) served over a **Unix-domain socket** (`transport_uds::serve`); `tuxlink-mcp` is a *dumb stdio↔UDS byte-pump* shim that `claude mcp` (or any stdio MCP client) launches. **The app-side server start (`lib.rs:1371-1443`) and `mcp_socket_path()` are `#[cfg(target_os = "linux")]`-gated**, so the Tauri *app* does not expose MCP on macOS — but the standalone **`tuxlink-mcp-testserver`** (real router + real `EgressGuard` + mock ports) does, and it builds and runs on macOS.
+
+**What was exercised (all on macOS, headless):**
+
+- **Build:** `cargo build -p tuxlink-mcp -p tuxlink-mcp-testserver` ✅ (the UDS/`std::os::unix`/`libc::umask`/`getuid` code compiles on Darwin — it's Unix, unlike Windows).
+- **Socket hardening works on macOS:** the server **refused to bind under world-writable `/tmp`** (mode 1777) — "another local user could hijack the socket path" — then bound `srw-------` (**0600**) under a private **0700** dir (`/tmp/tuxlink-<uid>/`), exactly mirroring the app's Linux fallback. So `transport_uds`' dir-privacy + 0600-socket hardening are functional on Darwin.
+- **stdio handshake:** driving the **shim** (`tuxlink-mcp <sock>`) with newline-delimited JSON-RPC, `initialize` round-tripped (server `rmcp` 0.8.5, protocol `2025-03-26`, plus Tuxlink's instructions on tool tiers + arm/taint rules).
+- **`tools/list` → 50 tools** (status/modem/vara/ardop/packet, mailbox/search, config get/set, position/rig, `find_stations`, `solar_conditions`, `predict_path`, B2F exchanges, forms, etc.). Read tools returned data (`server_info`, `backend_status`, `platform_info`).
+- **Arm/taint security state machine — verified over MCP (real router enforcement, sequential drive):**
+  - armed + untainted → `config_set_grid` (WRITE) **succeeds**;
+  - `mailbox_list` (untrusted content) **taints** the session → `server_info` then reports `tainted=true`;
+  - subsequent WRITE (`config_set_grid`) and EGRESS (`cms_connect`) are **denied** with the explicit *"session is tainted by untrusted message content; egress blocked … operator must ARM"* error;
+  - **the taint persists across a fresh reconnect** — a brand-new MCP connection still sees `tainted=true` and writes stay denied, so reconnecting does **not** bypass the lock (the secure design).
+
+**Caveats / findings:**
+- The testserver wires **mock ports**, so tool *results* are canned (e.g. `platform_info` reports `os:"linux"` — the mock's value, not the macOS host). This validates the MCP **plumbing + router + security gate** on macOS, not the real app subsystems.
+- To make the **app** expose MCP on macOS you'd un-gate the `#[cfg(linux)]` server-start in `lib.rs` and give `mcp_socket_path()` a macOS path (the `/tmp/tuxlink-<uid>` fallback already used here, or `~/Library/Application Support`). That's a separate, scoped change — out of scope for this verification.
+- A sequential stdio client is required to test ordering-sensitive behavior: rmcp dispatches pipelined requests on one connection **concurrently**, so a taint tool can apply before an earlier-sent write is evaluated. (Pipelining all requests at once gave out-of-order results; a send→await→send driver gave clean ones.)
+
+**Net:** the MCP layer — rmcp router, UDS transport, 0600/private-dir hardening, the stdio shim, and the arm/taint authority gate — is **fully functional on macOS** via the standalone testserver; only the Tauri app's *wiring* of it is Linux-gated.
+
 ---
 
 ## Appendix A — provenance
