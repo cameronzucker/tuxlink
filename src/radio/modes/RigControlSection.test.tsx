@@ -449,4 +449,57 @@ describe('<RigControlSection>', () => {
     render(<RigControlSection storageKeyPrefix="vara" />);
     await waitFor(() => expect(screen.getByTestId('rig-control-expander')).toBeInTheDocument());
   });
+
+  // ── Task 7 fix: ptt_method override must survive a RigControlSection write ──
+
+  it('regression: onModelSelected preserves ptt_method override written by ArdopRadioPanel', async () => {
+    // Scenario: ARDOP panel's onPttMethodChange has already called config_set_rig
+    // with rig_field_overrides: ['ptt_method']. The local RigControlSection state
+    // (rigConfig) is stale and still has rig_field_overrides: []. When the operator
+    // then changes the radio model, the stale local copy must NOT be used for the
+    // write — the fresh backend value must be read first, preserving 'ptt_method'.
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+
+    // Backend returns stale local state (no ptt_method override) on initial mount,
+    // then returns the updated state (ptt_method already overridden by ARDOP panel)
+    // on the read-modify-write's config_get_rig call.
+    let getRigCallCount = 0;
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_rig') {
+        getRigCallCount++;
+        if (getRigCallCount === 1) {
+          // Initial mount load: no overrides yet
+          return { ...knownConfig, rig_hamlib_model: null, rig_field_overrides: [] };
+        }
+        // Subsequent reads (during rmwRig): ARDOP panel has since written ptt_method
+        return { ...knownConfig, rig_hamlib_model: null, rig_field_overrides: ['ptt_method'] };
+      }
+      if (cmd === 'rig_list_models') return [{ id: 1049, manufacturer: 'Yaesu', model: 'FT-710' }];
+      if (cmd === 'packet_list_serial_devices') return [];
+      return undefined;
+    });
+
+    const onRadioSelected = vi.fn();
+    render(<RigControlSection storageKeyPrefix="ardop" onRadioSelected={onRadioSelected} />);
+    await waitFor(() => expect(screen.getByTestId('rig-model')).toBeInTheDocument());
+
+    // Clear calls after mount so we only examine the model-change write
+    invokeMock.mockClear();
+    getRigCallCount = 1; // reset so next config_get_rig (in rmwRig) returns the updated overrides
+
+    fireEvent.change(screen.getByTestId('rig-model'), { target: { value: '1049' } });
+
+    await waitFor(() => {
+      // The config_set_rig call must include 'ptt_method' in rig_field_overrides
+      const setCall = invokeMock.mock.calls.find((c) => c[0] === 'config_set_rig');
+      expect(setCall).toBeTruthy();
+      expect(setCall![1].value.rig_field_overrides).toContain('ptt_method');
+    });
+
+    // onRadioSelected must be called with pttOverridden=true (fresh read saw the override)
+    await waitFor(() => {
+      expect(onRadioSelected).toHaveBeenCalledWith(1049, true);
+    });
+  });
 });

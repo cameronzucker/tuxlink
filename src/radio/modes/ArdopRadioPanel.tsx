@@ -571,7 +571,12 @@ export function ArdopRadioPanel({
   // tuxlink-31c63 Task 7: when a radio is selected in the shared rig section,
   // pre-fill the ARDOP-only ptt_method from the radio's documented profile
   // unless the operator has overridden it. RigControlSection passes whether
-  // ptt is already overridden (read from the shared Config.rig override set).
+  // ptt is already overridden — read from the FRESH Config.rig override set
+  // via RigControlSection's backend read-modify-write (rmwRig), so the flag
+  // reflects any concurrent onPttMethodChange write that hasn't propagated to
+  // local state yet. This is accurate only because rmwRig calls config_get_rig
+  // before computing the override set; callers of onRadioSelected must not
+  // supply pttOverridden from a stale local copy.
   const onRigRadioSelected = (modelId: number | null, pttOverridden: boolean) => {
     if (pttOverridden) return;
     const profile = getRigProfile(modelId);

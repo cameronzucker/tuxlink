@@ -136,51 +136,74 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
     loadSerialPorts();
   }, [loadModels, loadSerialPorts]);
 
-  /** Merge a patch into the local state and persist the result to the backend.
-   *  Mirrors the persistArdop pattern used by the ARDOP panel. */
+  /** Read-modify-write Config.rig against the BACKEND (not the possibly-stale
+   *  local rigConfig) so the shared rig_field_overrides — also written by the
+   *  ARDOP panel's PTT handler — is never clobbered by a stale copy. `compute`
+   *  receives the fresh backend config and returns the patch to merge. */
+  const rmwRig = (compute: (fresh: RigConfig) => Partial<RigConfig>) => {
+    void invoke<RigConfig>('config_get_rig')
+      .then((fresh) => {
+        const base = fresh ?? rigConfig ?? DEFAULT_RIG_CONFIG;
+        const next = { ...base, ...compute(base) };
+        setRigConfig(next);
+        return invoke('config_set_rig', { value: next });
+      })
+      .catch(() => {
+        // backend unreadable (pre-wizard): best-effort local merge
+        const base = rigConfig ?? DEFAULT_RIG_CONFIG;
+        const next = { ...base, ...compute(base) };
+        setRigConfig(next);
+        void invoke('config_set_rig', { value: next }).catch(() => {});
+      });
+  };
+
+  /** Merge a patch into the backend config and update local state.
+   *  Uses a read-modify-write against the backend so the shared
+   *  rig_field_overrides (also written by the ARDOP PTT handler) is never
+   *  clobbered by a stale local copy. */
   const persistRig = (patch: Partial<RigConfig>) => {
-    const base = rigConfig ?? DEFAULT_RIG_CONFIG;
-    const next = { ...base, ...patch };
-    setRigConfig(next);
-    void invoke('config_set_rig', { value: next }).catch(() => {
-      /* persist errors surface via the session log from the backend */
-    });
+    rmwRig(() => patch);
   };
 
   /** Persist a patch AND add `key` to the override set (idempotent). Used when
    *  the operator hand-edits a profile-managed field so a later radio change
-   *  won't clobber it. */
+   *  won't clobber it. Reads the fresh override set from the backend so a
+   *  concurrent ARDOP-panel PTT override is never lost. */
   const persistRigWithOverride = (key: string, patch: Partial<RigConfig>) => {
-    const base = rigConfig ?? DEFAULT_RIG_CONFIG;
-    const overrides = base.rig_field_overrides.includes(key)
-      ? base.rig_field_overrides
-      : [...base.rig_field_overrides, key];
-    persistRig({ ...patch, rig_field_overrides: overrides });
+    rmwRig((fresh) => ({
+      ...patch,
+      rig_field_overrides: fresh.rig_field_overrides.includes(key)
+        ? fresh.rig_field_overrides
+        : [...fresh.rig_field_overrides, key],
+    }));
   };
 
   /** On radio selection: set the model, then apply the radio's documented
-   *  profile to each shared field the operator has NOT overridden. */
+   *  profile to each shared field the operator has NOT overridden.
+   *  Reads the fresh override set from the backend so a concurrent ARDOP-panel
+   *  PTT override is never lost (fixes the ptt_method-drop regression). */
   const onModelSelected = (modelId: number | null) => {
-    const base = rigConfig ?? DEFAULT_RIG_CONFIG;
-    const overrides = new Set(base.rig_field_overrides);
-    const patch: Partial<RigConfig> = { rig_hamlib_model: modelId };
-    const profile = getRigProfile(modelId);
-    if (profile) {
-      if (profile.data_mode !== undefined && !overrides.has('data_mode')) {
-        patch.data_mode = profile.data_mode;
+    rmwRig((fresh) => {
+      const overrides = new Set(fresh.rig_field_overrides);
+      const patch: Partial<RigConfig> = { rig_hamlib_model: modelId };
+      const profile = getRigProfile(modelId);
+      if (profile) {
+        if (profile.data_mode !== undefined && !overrides.has('data_mode')) {
+          patch.data_mode = profile.data_mode;
+        }
+        if (profile.cat_baud !== undefined && !overrides.has('cat_baud')) {
+          patch.cat_baud = profile.cat_baud;
+          // keep the controlled baud input in sync if the profile changed it
+          setCatBaudInput(String(profile.cat_baud));
+        }
+        if (profile.close_serial_sequencing !== undefined && !overrides.has('close_serial')) {
+          patch.close_serial_sequencing = profile.close_serial_sequencing;
+        }
       }
-      if (profile.cat_baud !== undefined && !overrides.has('cat_baud')) {
-        patch.cat_baud = profile.cat_baud;
-      }
-      if (profile.close_serial_sequencing !== undefined && !overrides.has('close_serial')) {
-        patch.close_serial_sequencing = profile.close_serial_sequencing;
-      }
-    }
-    persistRig(patch);
-    // keep the controlled baud input in sync if the profile changed it
-    if (patch.cat_baud !== undefined) setCatBaudInput(String(patch.cat_baud));
-    // notify ARDOP to pre-fill ptt_method (Task 7); no-op when prop absent
-    if (onRadioSelected) onRadioSelected(modelId, overrides.has('ptt_method'));
+      // notify ARDOP to pre-fill ptt_method (Task 7); no-op when prop absent
+      if (onRadioSelected) onRadioSelected(modelId, overrides.has('ptt_method'));
+      return patch;
+    });
   };
 
   const commitCatSerial = () => {
