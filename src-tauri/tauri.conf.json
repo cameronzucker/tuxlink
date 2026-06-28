@@ -45,6 +45,9 @@
       "resources/propagation/ssn-forecast.json",
       "resources/basemap/**/*"
     ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
     "linux": {
       "deb": {
         "section": "hamradio",
