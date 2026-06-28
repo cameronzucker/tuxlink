@@ -9,6 +9,15 @@
 use std::path::PathBuf;
 use serde::Serialize;
 
+/// Join the socket filename onto an already-chosen, already-verified MCP
+/// directory. This is the single point where "mcp.sock" is appended so both
+/// the standalone query (`mcp_socket_path`) and the setup path in `lib.rs`
+/// (which has already chosen and verified the dir) derive the same final path
+/// from a shared combinator — eliminating the double-derivation race (PR #924).
+pub fn mcp_socket_path_from(mcp_dir: &std::path::Path) -> std::path::PathBuf {
+    mcp_dir.join("mcp.sock")
+}
+
 /// Resolve the MCP socket path: `$XDG_RUNTIME_DIR/tuxlink/mcp.sock` when the
 /// runtime dir is private (0700, uid-owned, non-symlink per PR #924), else the
 /// hardened private `/tmp/tuxlink-<uid>/tuxlink/mcp.sock` fallback.
@@ -25,10 +34,11 @@ pub fn mcp_socket_path() -> PathBuf {
     // The hardened temp fallback path — used both when XDG_RUNTIME_DIR is
     // unset/empty AND when it is set but fails the private-dir check.
     let temp_fallback_path = |uid: u32| -> PathBuf {
-        std::env::temp_dir()
-            .join(format!("tuxlink-{uid}"))
-            .join("tuxlink")
-            .join("mcp.sock")
+        mcp_socket_path_from(
+            &std::env::temp_dir()
+                .join(format!("tuxlink-{uid}"))
+                .join("tuxlink"),
+        )
     };
 
     match std::env::var("XDG_RUNTIME_DIR") {
@@ -36,7 +46,7 @@ pub fn mcp_socket_path() -> PathBuf {
             let base = PathBuf::from(dir);
             if crate::mcp_dir_is_safe(&base, my_uid) {
                 // XDG_RUNTIME_DIR is private: socket lives under it.
-                base.join("tuxlink").join("mcp.sock")
+                mcp_socket_path_from(&base.join("tuxlink"))
             } else {
                 // Set-but-not-private: same fallback the setup uses.
                 temp_fallback_path(my_uid)
@@ -65,8 +75,10 @@ pub struct McpConnectionInfoDto {
 pub fn mcp_connection_info(_app: tauri::AppHandle) -> McpConnectionInfoDto {
     #[cfg(target_os = "linux")]
     let socket = mcp_socket_path();
+    // Compile-only stub: Tuxlink is Linux-only in production; this branch is
+    // never reached at runtime.
     #[cfg(not(target_os = "linux"))]
-    let socket = PathBuf::from("mcp.sock"); // non-Linux stub; app ships on Linux
+    let socket = PathBuf::from("mcp.sock");
 
     // The shim ships beside the app binary (externalBin in tauri.conf.json).
     // Resolve the current executable's directory and append the shim name.

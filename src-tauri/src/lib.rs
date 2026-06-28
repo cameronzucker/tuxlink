@@ -1344,10 +1344,11 @@ pub fn run() {
                     // XDG_RUNTIME_DIR unset/empty.
                     _ => temp_fallback(my_uid),
                 };
-                if let Some(_mcp_dir) = mcp_dir {
-                    // Path is computed by the shared resolver so the command
-                    // and the server always agree on the socket location.
-                    let sock_path = crate::mcp_connection::mcp_socket_path();
+                if let Some(mcp_dir) = mcp_dir {
+                    // Derive the socket path from the already-chosen,
+                    // already-verified dir — single derivation, no second stat
+                    // (eliminates the double-derivation race from PR #924).
+                    let sock_path = crate::mcp_connection::mcp_socket_path_from(&mcp_dir);
 
                     // Share the already-managed egress authority (line ~655's
                     // `.manage(Arc::new(EgressGuard::new()))`). Same TypeId: the
