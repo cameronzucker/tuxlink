@@ -390,9 +390,13 @@ fn resolve_sidecar() -> PathBuf {
 fn available_bytes(path: &Path) -> Option<u64> {
     match nix::sys::statvfs::statvfs(path) {
         Ok(s) => {
-            // On the 64-bit Linux build targets both are u64; the explicit bindings
-            // avoid an `as` cast (clippy unnecessary_cast under -D warnings).
+            // On 64-bit Linux both are u64; on macOS `f_bavail` (fsblkcnt_t) is u32
+            // while `f_frsize` (c_ulong) is u64. cfg-split the widening so each target
+            // stays free of an unnecessary cast (clippy unnecessary_cast under -D warnings).
+            #[cfg(target_os = "linux")]
             let blocks: u64 = s.blocks_available();
+            #[cfg(not(target_os = "linux"))]
+            let blocks: u64 = s.blocks_available().into();
             let frag: u64 = s.fragment_size();
             Some(blocks.saturating_mul(frag))
         }
