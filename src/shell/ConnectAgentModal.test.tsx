@@ -1,5 +1,5 @@
 // src/shell/ConnectAgentModal.test.tsx
-import { test, expect, vi, beforeEach } from 'vitest';
+import { test, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConnectAgentModal } from './ConnectAgentModal';

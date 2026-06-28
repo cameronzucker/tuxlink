@@ -105,7 +105,7 @@ export function ConnectAgentModal({ open, onClose }: ConnectAgentModalProps): JS
 
           <p className="tux-connect-agent-security-note">
             {
-              'This lets the agent read and diagnose your station. Transmitting or changing settings still needs you to arm “Agent send” on the dashboard.'
+              'This lets the agent read and diagnose your station. Transmitting or changing settings still needs you to arm "Agent send" on the dashboard.'
             }
           </p>
         </div>
