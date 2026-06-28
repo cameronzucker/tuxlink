@@ -80,7 +80,13 @@ mod tests {
         let tmp = tempdir().unwrap();
         std::env::set_var("XDG_STATE_HOME", tmp.path());
         let resolved = resolve().expect("should resolve");
-        assert!(resolved.starts_with(tmp.path()));
+        // `resolve()` returns a CANONICAL path. On macOS the tempdir lives under
+        // /var/folders/... where /var is a symlink to /private/var, so the
+        // canonical `resolved` is prefixed /private/var/... and would not
+        // `starts_with` the non-canonical `tmp.path()`. Compare against the
+        // canonicalized tempdir (a no-op on Linux, where /tmp is not symlinked).
+        let tmp_canon = tmp.path().canonicalize().unwrap();
+        assert!(resolved.starts_with(&tmp_canon));
         assert!(resolved.ends_with("tuxlink/logs"));
         let mode = std::fs::metadata(&resolved).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700, "directory mode must be 0700");
