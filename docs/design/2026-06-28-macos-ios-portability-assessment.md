@@ -806,10 +806,19 @@ The frontend (`pnpm build` = `tsc && vite build`) does **not** build on a defaul
 
    The repo git-tracks **both** `src/catalog/WeatherGlyph.tsx` (the React component) and `src/catalog/weatherGlyph.ts` (types + `resolveGlyph`) — stems differing only by case (plus a second pair, `WeatherGlyph.test.tsx` ↔ `weatherGlyph.test.ts`). On Linux's case-sensitive filesystem the import `./WeatherGlyph` resolves to `WeatherGlyph.tsx`; on macOS's **default case-insensitive APFS** the resolver matches `weatherGlyph.ts` first, which doesn't export the `WeatherGlyph` *value* → build error. **Fix:** rename one stem (e.g. `weatherGlyph.ts` → `weatherGlyphData.ts`) and update importers, or disambiguate the import. This blocks a full app bundle on a default macOS checkout and is a latent hazard on any case-insensitive FS (incl. default Windows NTFS) — worth fixing regardless of the port.
 
-## V.7 Not yet performed
+## V.7 Verified end-to-end (2026-06-28 follow-up)
 
-- Full `cargo build` (link step), `pnpm tauri build` bundle (`.app`/`.dmg`), and runtime boot — gated on the §V.6 frontend case fix. The Rust side is verified to **check** clean; linking/bundling was not exercised.
-- Runtime credential storage will additionally want the keyring `apple-native` cfg-swap — a **runtime** requirement (Keychain vs the absent D-Bus Secret Service), distinct from the compile, which succeeds with the current feature set.
+After the §V.6 fixes landed on `feat/macos-build-assessment`, the full macOS path was exercised and **works start-to-finish**:
+
+- **Frontend builds.** The `weatherGlyph.ts` → `weatherGlyphData.ts` rename resolves the §V.6 case collision; `tsc` is clean, `vite build` ✓, `vitest` 10/10. The pnpm-11 gate is cleared by `pnpm approve-builds --all`, which records `allowBuilds: { esbuild: true }` in `pnpm-workspace.yaml` — the `onlyBuiltDependencies` list alone did **not** clear a stale ignored-build state — after which `pnpm build` passes.
+- **Keyring → native Keychain.** `keyring` is split per-target: macOS uses `apple-native` (security-framework / Keychain), Linux keeps `sync-secret-service`. `cargo check` confirms `security-framework` enters the macOS dep graph and `secret-service` is excluded.
+- **Full debug build + LINK.** `pnpm tauri dev` ran `cargo run` to completion — `Finished dev profile … in 57.18s` (warm dep cache), then `Running target/debug/tuxlink`. The link step (which `cargo check` does not exercise) succeeds on macOS.
+- **App launch + runtime + clean exit.** The window opened and **rendered its UI** (operator-confirmed), the process ran stably (~150 MB RSS, ~4% CPU), logged no panics, and **exited cleanly (code 0)** on close. The only runtime log lines were benign and non-macOS-specific: a `gpsd` connection-refused retry (no GPS attached; self-labeled normal) and a Vite resolve warning for the dev-only `dev/perf-harness/harness.tsx` (imports `maplibre-gl`, not an app dependency).
+
+**Still not exercised (future work, not blockers):**
+- `pnpm tauri build` **release bundle** (`.app`/`.dmg`) + code-signing / notarization (needs an Apple Developer account; ad-hoc signing suffices for local dev).
+- An in-app **Keychain credential round-trip** through the identity wizard UI. (The `apple-native` backend is verified to compile + link; a standalone runtime set/get/delete smoke test against the macOS Keychain is the immediate next check.)
+- Per RADIO-1 (ADR 0018), on-air transmit validation remains operator-only.
 
 ## V.8 Minimal reproduction recipe (CI / future macOS work)
 
@@ -820,24 +829,33 @@ brew install pnpm                                                          # pnp
 xcode-select --install                                                     # Xcode CLT (xcrun) if absent
 # 2. HEIF system libs — SKIP if building --no-default-features
 brew install pkgconf libheif libde265
-# 3. pnpm 11 allowlist: pnpm-workspace.yaml  ->  onlyBuiltDependencies: [esbuild]
-# 4. Apply the statvfs cfg-split in src-tauri/src/basemap/commands.rs (§V.4)
-# 5. Build
+# 3. pnpm 11 build-script approval (one-time; clears ERR_PNPM_IGNORED_BUILDS)
 pnpm install --frozen-lockfile
-cargo check --manifest-path src-tauri/Cargo.toml --no-default-features    # core      -> PASSES (8s)
-cargo check --manifest-path src-tauri/Cargo.toml                          # + HEIF    -> PASSES (12s, needs step 2)
-# pnpm build / pnpm tauri build                                           # needs the WeatherGlyph case fix (§V.6)
+pnpm approve-builds --all          # records allowBuilds: { esbuild: true } in pnpm-workspace.yaml
+# 4. statvfs cfg-split, keyring apple-native split, and WeatherGlyph rename are
+#    already committed on feat/macos-build-assessment (§V.4, §V.7, §V.9)
+# 5. Build + run
+cargo check --manifest-path src-tauri/Cargo.toml --no-default-features    # core   -> PASSES (~8s)
+cargo check --manifest-path src-tauri/Cargo.toml                          # + HEIF -> PASSES (~12s, needs step 2)
+pnpm build                                                                # frontend -> PASSES
+pnpm tauri dev                                                            # full build+link+launch -> UI renders (~57s build)
 ```
 
-## V.9 Working-tree changes left by this verification
+## V.9 Changes committed by this work (branch `feat/macos-build-assessment`)
 
-- `src-tauri/src/basemap/commands.rs` — the statvfs cfg-split (a genuine cross-platform fix; **Linux behavior unchanged**). Recommend keeping / committing.
-- `pnpm-workspace.yaml` — new, currently **untracked**; `onlyBuiltDependencies: [esbuild]`. Recommend committing (fixes the pnpm-11 drift for all platforms).
-- `dist/` (placeholder `index.html`), `target/`, `node_modules/` — build output / gitignored; disposable.
-- **No commits were made.** The `WeatherGlyph` case bug was **not** auto-fixed (it's an app-code refactor; flagged for a separate change).
+All fixes are committed on `feat/macos-build-assessment` (ahead of `origin/main`):
+
+- `fix(basemap)` `067fab08` — statvfs `u32`/`u64` cfg-split (Linux behavior unchanged).
+- `build(pnpm)` `383f98aa` + `41a9d4d0` — pnpm-11 build-script allowlist, then the working `allowBuilds` approval.
+- `fix(catalog)` `8551368c` — `weatherGlyph.ts` → `weatherGlyphData.ts` rename (the §V.6 case bug), via `git mv`.
+- `build(deps)` `5a9084a5` — keyring `apple-native` (Keychain) on macOS, `sync-secret-service` on Linux.
+- `fix(forms)` `79e9c179` — gate `PRINT_DEADLINE_SECS` to Linux (non-Linux `dead_code`).
+- `docs(design)` `066013ee` (+ a follow-up recording this §V.7 verification) — this assessment.
+
+`dist/`, `target/`, `node_modules/` remain gitignored build output. `package.json`'s legacy `pnpm.onlyBuiltDependencies` field is left in place (a harmless warning under pnpm 11) for pnpm <11 compatibility.
 
 ---
 
 ## Appendix A — provenance
 
-Analysis of the `nice-tu-ac3438` worktree at the session's `claude/nice-tu-ac3438` HEAD. **Parts I–IV are static source analysis + external research** (no build). **Part V is an empirical macOS build** run on the M5 host: `cargo check` only (the Rust crate graph), not a full `cargo build` link, `tauri build` bundle, packaged artifact, or runtime boot — and per RADIO-1 (ADR 0018) no on-air run. The **Windows, iOS, and Android compile-blocker verdicts remain unverified predictions** and a cross-build (`cargo check --target …`) for each is the highest-value, cheapest first action of any port attempt — exactly as the macOS `cargo check` was here, which corrected the macOS §I.2 predictions to fact.
+Analysis of the worktree on branch `feat/macos-build-assessment` (renamed from `claude/nice-tu-ac3438`). **Parts I–IV are static source analysis + external research** (no build). **Part V is an empirical macOS build + run** on the M5 host: `cargo check`, a full debug `cargo build` + **link**, the frontend build, and a `pnpm tauri dev` launch with the **UI rendered and a clean exit** (§V.7). Not done: a `tauri build` release bundle / notarized artifact, and per RADIO-1 (ADR 0018) no on-air run. The **Windows, iOS, and Android compile-blocker verdicts remain unverified predictions** — a cross-build (`cargo check --target …`) for each is the highest-value, cheapest first action of any port attempt, exactly as the macOS build was here, which corrected the macOS §I.2 predictions to fact (and went further: link + launch + runtime).
