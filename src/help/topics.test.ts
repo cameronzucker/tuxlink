@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { TOPICS, SECTIONS, getTopicBySlug } from './topics';
 
 describe('topics registry', () => {
-  it('exposes thirty-four topics', () => {
-    expect(TOPICS).toHaveLength(34);
+  it('exposes thirty-five topics', () => {
+    expect(TOPICS).toHaveLength(35);
   });
 
   it('every topic has a non-empty slug, number, displayName, body, sectionId', () => {
