@@ -6810,6 +6810,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tuxlink-agent-runner"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "tuxlink-mcp"
 version = "0.0.0"
 dependencies = [
