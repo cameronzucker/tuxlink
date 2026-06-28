@@ -9,6 +9,11 @@
 import { useEffect } from 'react';
 import { buildAgentCommands } from './connectAgentCommands';
 import { useMcpConnectionInfo } from './useMcpConnectionInfo';
+// Shared modal chrome (tux-about-* backdrop/panel/header/body/actions). These
+// classes live in AboutDialog.css; with Vite per-chunk CSS splitting this lazy
+// modal must pull them in explicitly or it renders unstyled on a cold open
+// (when the About dialog's chunk has never loaded). See PR #939 final review.
+import './AboutDialog.css';
 import './ConnectAgentModal.css';
 
 export interface ConnectAgentModalProps {
