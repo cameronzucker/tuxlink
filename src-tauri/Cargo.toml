@@ -86,7 +86,9 @@ tokio-stream = { version = "0.1", features = ["sync"] }  # NEW (tuxlink-z5f) —
 # docs/superpowers/specs/2026-05-18-cred-handling-design.md §3.1/§3.3.
 # NOTE: keyring 3.6.3 has no `use_native_store()` — backend is a compile-time
 # feature; `Entry::new()` auto-resolves to the selected `default` module.
-keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+# keyring is declared PER-TARGET below (Linux Secret Service vs macOS Keychain) —
+# the backend is a compile-time feature, so it cannot be one cross-platform entry.
+# See the [target.'cfg(target_os = ...)'] blocks near the end of this manifest.
 mail-parser = "0.11"        # NEW (tuxlink-y5c Task 13) — pure-Rust RFC5322/MIME parser; spec §8
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }  # NEW (tuxlink-dm8, Task 14) — RFC3339 timestamp + serde for alpha-logging Settings TOML (tuxlink-qjgx)
 tauri-plugin-window-state = "2"                            # NEW (tuxlink-dm8, Task 14) — per-compose-window geometry persistence (spec §8)
@@ -152,6 +154,19 @@ tux-rig = { path = "tux-rig" }
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "=2.0.2"
 gtk = "=0.18.2"
+# Linux credential store = freedesktop Secret Service over D-Bus (see the backend
+# rationale comment higher up). `sync-secret-service` + `crypto-rust` are both
+# pure-Rust (no libsecret / OpenSSL C dep). This is the wizard↔Pat cross-process
+# contract on Linux.
+keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS credential store = the native Keychain via security-framework. keyring
+# 3.6.3 selects it with the `apple-native` feature (there is no D-Bus Secret
+# Service on macOS). `crypto-rust` keeps the encrypted-session crypto pure-Rust,
+# matching Linux. The cross-process Pat go-keyring reader is Linux-only; on macOS
+# credential access is in-process against the Keychain.
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "crypto-rust"] }
 
 [dev-dependencies]
 # Self path-dependency: enables the `test-support` feature for test/example/bench
