@@ -221,19 +221,14 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
         />
       </label>
 
-      {/* QSY on fail — when enabled, tuxlink walks the candidate frequency
-          list and retunes the rig on each failed connect attempt. */}
-      <label className="radio-panel-input-row">
-        <span>QSY on fail</span>
-        <input
-          type="checkbox"
-          data-testid="rig-qsy-on-fail"
-          checked={rigConfig?.qsy_on_fail ?? false}
-          onChange={(e) => {
-            persistRig({ qsy_on_fail: e.target.checked });
-          }}
-        />
-      </label>
+      {/* QSY on fail — checkbox removed for tuxlink-qevsf (SAFETY/Part 97):
+          auto-QSY is disabled because it transmitted on candidate frequencies
+          the operator never saw or selected (a control-operator violation).
+          The connect commands clamp the candidate list to the operator-chosen
+          channel, so this control would be inert. The `qsy_on_fail` field stays
+          in RigConfig/DEFAULT_RIG_CONFIG to avoid churning the config schema;
+          it is simply not rendered. Restored by the Channel-Selection redesign
+          (Find a Station = operator-driven channel picker). */}
     </details>
   );
 }
