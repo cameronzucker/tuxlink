@@ -99,6 +99,9 @@ export const MENU_TREE: TopMenu[] = [
     // (verify_cms_connection): confirms CMS reachability + auth over internet
     // telnet, no transmission. Relocated here from the (removed) Session menu.
     { id: 'menu:tools:verify_cms', label: 'Verify CMS Connection…' },
+    // tuxlink-l9sq4: Tools → Connect an AI agent — opens the ConnectAgentModal
+    // with per-agent MCP copy-paste connection commands.
+    { id: 'menu:tools:connect_agent', label: 'Connect an AI agent…' },
     // Not-yet-wired: disabled + badged so it reads as "coming", not broken.
     // Templates is owned by the in-flight forms epic (tuxlink-o4p9). Rig Control
     // was removed in the tuxlink-lqw2 declutter (no backing implementation).

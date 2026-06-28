@@ -16,7 +16,7 @@ export interface ConnectAgentModalProps {
   onClose: () => void;
 }
 
-export function ConnectAgentModal({ open, onClose }: ConnectAgentModalProps): JSX.Element | null {
+export function ConnectAgentModal({ open, onClose }: ConnectAgentModalProps) {
   // Esc closes — mirrors ReportIssueModal / SettingsPanel / AboutDialog pattern.
   useEffect(() => {
     if (!open) return;
