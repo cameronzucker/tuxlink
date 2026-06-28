@@ -817,7 +817,7 @@ After the §V.6 fixes landed on `feat/macos-build-assessment`, the full macOS pa
 
 **Still not exercised (future work, not blockers):**
 - `pnpm tauri build` **release bundle** (`.app`/`.dmg`) + code-signing / notarization (needs an Apple Developer account; ad-hoc signing suffices for local dev).
-- An in-app **Keychain credential round-trip** through the identity wizard UI. (The `apple-native` backend is verified to compile + link; a standalone runtime set/get/delete smoke test against the macOS Keychain is the immediate next check.)
+- An in-app **Keychain credential round-trip** through the identity wizard UI. (A standalone runtime smoke test of the `apple-native` backend **passed** 2026-06-28 — `set` → `get` → `delete` → confirm-gone against the real macOS Keychain, a Unicode secret round-tripping byte-faithfully, with **no interactive prompt** — using the same `keyring::Entry` calls the wizard makes. The only remaining gap is driving that round-trip through the actual UI.)
 - Per RADIO-1 (ADR 0018), on-air transmit validation remains operator-only.
 
 ## V.8 Minimal reproduction recipe (CI / future macOS work)
