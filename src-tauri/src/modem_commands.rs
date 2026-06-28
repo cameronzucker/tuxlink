@@ -151,6 +151,37 @@ pub fn config_set_rig(value: RigUiConfig) -> Result<(), String> {
     config::write_config_atomic(&cfg).map_err(|e| format!("save failed: {e}"))
 }
 
+/// Wire DTO for a hamlib-supported rig model (tuxlink-31c63). Field names are
+/// single words, so serde's default (no rename) already matches the frontend's
+/// `{ id, manufacturer, model }`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RigModelDto {
+    pub id: u32,
+    pub manufacturer: String,
+    pub model: String,
+}
+
+/// List the installed hamlib's supported rig models for the radio picker
+/// (tuxlink-31c63). Runs `rigctl -l` (the companion to `rigctld`) and parses
+/// its table. Returns an empty list on ANY failure (rigctl absent, parse
+/// empty) so the picker degrades to a manual hamlib-model-number entry rather
+/// than erroring — there is no model list for tuxlink to maintain.
+#[tauri::command]
+pub fn rig_list_models() -> Vec<RigModelDto> {
+    tux_rig::list_models("rigctl")
+        .map(|models| {
+            models
+                .into_iter()
+                .map(|m| RigModelDto {
+                    id: m.id,
+                    manufacturer: m.manufacturer,
+                    model: m.model,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Inner helper: snapshot the current session status. Pure on `&Arc<ModemSession>`
 /// so tests can exercise it without constructing a Tauri `State`.
 pub fn modem_get_status_inner(session: &Arc<ModemSession>) -> ModemStatus {
