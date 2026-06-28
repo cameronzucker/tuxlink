@@ -22,6 +22,7 @@ import { DashboardRibbon } from './DashboardRibbon';
 import type { StatusBarData, StatusTone } from './useStatus';
 import type { PacketUiState } from '../packet/packetStatus';
 import type { ActiveIdentityDto, IdentityListDto } from './identityTypes';
+import { EGRESS_STATUS_DISARMED } from '../security/egressTypes';
 
 // Task 14 (tuxlink-c79g): the optimistic-update tests below exercise the
 // invoke('config_set_grid') and invoke('position_set_source') write paths and
@@ -404,5 +405,30 @@ describe('DashboardRibbon — IdentitySwitcher integration (Task 10, tuxlink-noa
     expect(screen.queryByTestId('identity-switcher-trigger')).toBeNull();
     expect(screen.getByTestId('ribbon-callsign-text')).toHaveTextContent(/^N7CPZ$/);
     expect(screen.queryByTestId('ribbon-ssid-select')).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tuxlink-yfezs: ribbon Agent-send chip must be compact (no inline preset row)
+// ---------------------------------------------------------------------------
+
+describe('<DashboardRibbon> — Agent-send chip is compact (tuxlink-yfezs)', () => {
+  const egress = {
+    status: EGRESS_STATUS_DISARMED,
+    onArm: vi.fn(),
+    onDisarm: vi.fn(),
+  };
+
+  it('renders the Agent-send chip with no inline preset row', () => {
+    render(<DashboardRibbon data={makeData()} egress={egress} />);
+    expect(screen.getByTestId('egress-chip')).toBeTruthy();
+    // The presets must NOT be inline in the ribbon — they live in the popover.
+    expect(screen.queryByTestId('egress-presets')).toBeNull();
+  });
+
+  it('opens the preset popover only when the chip is clicked', () => {
+    render(<DashboardRibbon data={makeData()} egress={egress} />);
+    fireEvent.click(screen.getByTestId('egress-chip'));
+    expect(screen.getByTestId('egress-presets')).toBeTruthy();
   });
 });
