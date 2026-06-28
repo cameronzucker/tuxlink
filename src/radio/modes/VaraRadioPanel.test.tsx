@@ -6,7 +6,7 @@
 // `mockImplementation` for failure-path coverage.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { VaraRadioPanel } from './VaraRadioPanel';
@@ -92,6 +92,9 @@ function makeInvoke(overrides: Record<string, unknown> = {}) {
     if (cmd === 'vara_open_session') return openStatus;
     if (cmd === 'platform_info') return x86Platform;
     if (cmd === 'session_log_snapshot') return [];
+    // RigControlSection (rendered by VaraRadioPanel) calls these on mount.
+    if (cmd === 'rig_list_models') return [{ id: 1049, manufacturer: 'Yaesu', model: 'FT-710' }];
+    if (cmd === 'packet_list_serial_devices') return [];
     // Favorites surface (B6 VARA mirror). The mounted FavoritesTabs/useFavorites
     // issue these reads; return empty/benign shapes so the queries RESOLVE
     // (rejecting noisily fails in jsdom). Tests needing a clickable favorite
@@ -495,6 +498,20 @@ describe('<VaraRadioPanel>', () => {
       return b;
     });
     expect(armBtn.textContent).toBe('Arm listener');
+  });
+
+  it('VARA inherits the redesigned rig pickers (model + CAT-port + Mode), no ARDOP audio/PTT', async () => {
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('vara-rig-section')).toBeInTheDocument());
+    const rig = screen.getByTestId('vara-rig-section');
+    expect(within(rig).getByTestId('rig-model')).toBeInTheDocument();
+    expect(within(rig).getByTestId('rig-cat-port')).toBeInTheDocument();
+    expect(within(rig).getByTestId('rig-data-mode')).toBeInTheDocument();
+    // ARDOP-only rows are NOT in the VARA rig group
+    expect(screen.queryByTestId('ardop-capture-select')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ardop-ptt-method-select')).not.toBeInTheDocument();
+    // QSY control is gone here too
+    expect(screen.queryByTestId('rig-qsy-on-fail')).not.toBeInTheDocument();
   });
 });
 
