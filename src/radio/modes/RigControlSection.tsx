@@ -53,6 +53,10 @@ interface RigModel {
 interface RigControlSectionProps {
   /** Prefix for the localStorage collapse-state key, e.g. "ardop" or "vara". */
   storageKeyPrefix: string;
+  /** Render mode. 'expander' (default) wraps the rows in a <details> expander.
+   *  'bare' renders only the field rows as a fragment — used by ARDOP so it can
+   *  embed the rows inside its own merged "Radio & audio" group (Task 7). */
+  variant?: 'expander' | 'bare';
   /** Called after the hamlib model changes; lets the parent panel pre-fill
    *  PTT-method (Task 7). pttOverridden=true when the operator has already
    *  hand-edited ptt_method so the parent should leave it alone. */
@@ -62,8 +66,9 @@ interface RigControlSectionProps {
 /** Collapsible "Rig control" expander — hamlib model, CAT serial/baud,
  *  data mode, close-serial sequencing, and live VFO poll. Loads from
  *  config_get_rig on mount; persists via config_set_rig on change/blur.
- *  Collapsed by default; collapse state is preserved in localStorage. */
-export function RigControlSection({ storageKeyPrefix, onRadioSelected }: RigControlSectionProps) {
+ *  Collapsed by default; collapse state is preserved in localStorage.
+ *  Use variant="bare" to render only the field rows (no expander chrome). */
+export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRadioSelected }: RigControlSectionProps) {
   const lsKey = `tuxlink.${storageKeyPrefix}.rigCfgOpen`;
 
   const [rigCfgOpen, setRigCfgOpen] = useState<boolean>(() => {
@@ -192,25 +197,8 @@ export function RigControlSection({ storageKeyPrefix, onRadioSelected }: RigCont
     persistRigWithOverride('cat_baud', { cat_baud: n });
   };
 
-  return (
-    <details
-      className="expander"
-      open={rigCfgOpen}
-      onToggle={(e) => {
-        const open = e.currentTarget.open;
-        setRigCfgOpen(open);
-        try {
-          localStorage.setItem(lsKey, open ? '1' : '0');
-        } catch {
-          /* localStorage unavailable — in-memory toggle still works */
-        }
-      }}
-      data-testid="rig-control-expander"
-    >
-      <summary className="expander-summary" data-testid="rig-control-expander-summary">
-        Rig control
-      </summary>
-
+  const rows = (
+    <>
       {/* Radio model — sourced from the installed hamlib via rig_list_models
           (rigctl -l), grouped by manufacturer, A–Z. No curated pins. Empty
           model list degrades to a manual hamlib-model-# entry. */}
@@ -379,6 +367,31 @@ export function RigControlSection({ storageKeyPrefix, onRadioSelected }: RigCont
           }}
         />
       </label>
+    </>
+  );
+
+  if (variant === 'bare') {
+    return rows;
+  }
+  return (
+    <details
+      className="expander"
+      open={rigCfgOpen}
+      onToggle={(e) => {
+        const open = e.currentTarget.open;
+        setRigCfgOpen(open);
+        try {
+          localStorage.setItem(lsKey, open ? '1' : '0');
+        } catch {
+          /* localStorage unavailable — in-memory toggle still works */
+        }
+      }}
+      data-testid="rig-control-expander"
+    >
+      <summary className="expander-summary" data-testid="rig-control-expander-summary">
+        Rig control
+      </summary>
+      {rows}
     </details>
   );
 }

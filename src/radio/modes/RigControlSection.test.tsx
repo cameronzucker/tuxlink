@@ -422,4 +422,31 @@ describe('<RigControlSection>', () => {
       expect(call?.[1].value.data_mode).toBe('USB-D');
     });
   });
+
+  // ── Task 6: variant="bare" render mode ────────────────────────────────────
+
+  it('variant="bare" renders rows without the expander chrome', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_rig') return knownConfig;
+      if (cmd === 'rig_list_models') return [];
+      if (cmd === 'packet_list_serial_devices') return [];
+      return undefined;
+    });
+    render(<RigControlSection storageKeyPrefix="ardop" variant="bare" />);
+    await waitFor(() => expect(screen.getByTestId('rig-model-manual')).toBeInTheDocument());
+    expect(screen.queryByTestId('rig-control-expander')).not.toBeInTheDocument();
+  });
+
+  it('default variant still renders the expander', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_rig') return knownConfig;
+      if (cmd === 'rig_list_models') return [];
+      if (cmd === 'packet_list_serial_devices') return [];
+      return undefined;
+    });
+    render(<RigControlSection storageKeyPrefix="vara" />);
+    await waitFor(() => expect(screen.getByTestId('rig-control-expander')).toBeInTheDocument());
+  });
 });
