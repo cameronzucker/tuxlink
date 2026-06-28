@@ -76,16 +76,10 @@ describe('MenuBar', () => {
     expect(onAction).toHaveBeenCalledWith('menu:view:scheme:office-dark');
   });
 
-  // tuxlink-39b: not-yet-wired items render disabled + badged (not dead clickables).
-  it('renders a not-yet-wired item disabled with a "soon" badge and does not fire onAction', () => {
-    const onAction = vi.fn();
-    render(<MenuBar onAction={onAction} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
-    const templates = screen.getByRole('button', { name: /Templates/ });
-    expect(templates).toBeDisabled();
-    fireEvent.click(templates);
-    expect(onAction).not.toHaveBeenCalled();
-  });
+  // tuxlink-esb65: the "renders a disabled/badged not-yet-wired item" test was
+  // removed with the last disabled stub (Tools → Templates). The MenuBar's
+  // disabled-item rendering path remains in code; there is simply no live
+  // disabled entry to exercise it against now. Re-add coverage if one returns.
 
   // tuxlink-39b: "Preferences" removed as a duplicate of "Settings".
   it('no longer offers a Preferences item', () => {
