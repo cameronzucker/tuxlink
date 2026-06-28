@@ -49,6 +49,8 @@ import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
 import type { RadioPanelMode } from '../types';
 import { RigControlSection } from './RigControlSection';
+import type { RigConfig } from './RigControlSection';
+import { getRigProfile } from './rigProfiles';
 import {
   parseFreqInputToHz,
   dialFreqToMhzString,
@@ -550,10 +552,35 @@ export function ArdopRadioPanel({
   // tuxlink-wu0k: CAT-PTT field commits. The method selector persists eagerly
   // on change; the text fields persist on blur (matching the panel's idiom).
   // Note: cat_serial_path and cat_baud are now persisted via RigControlSection.
+  // tuxlink-31c63 Task 7: also mark ptt_method overridden in the shared rig
+  // config so a subsequent radio-profile change doesn't clobber the operator's
+  // manual PTT selection.
   const onPttMethodChange = (next: PttMethod) => {
     setPttMethod(next);
     persistArdop({ ptt_method: next });
+    void invoke<RigConfig>('config_get_rig')
+      .then((rig) => {
+        const overrides = rig.rig_field_overrides.includes('ptt_method')
+          ? rig.rig_field_overrides
+          : [...rig.rig_field_overrides, 'ptt_method'];
+        void invoke('config_set_rig', { value: { ...rig, rig_field_overrides: overrides } });
+      })
+      .catch(() => { /* config absent pre-wizard — nothing to mark */ });
   };
+
+  // tuxlink-31c63 Task 7: when a radio is selected in the shared rig section,
+  // pre-fill the ARDOP-only ptt_method from the radio's documented profile
+  // unless the operator has overridden it. RigControlSection passes whether
+  // ptt is already overridden (read from the shared Config.rig override set).
+  const onRigRadioSelected = useCallback((modelId: number | null, pttOverridden: boolean) => {
+    if (pttOverridden) return;
+    const profile = getRigProfile(modelId);
+    if (profile?.ptt_method) {
+      setPttMethod(profile.ptt_method as PttMethod);
+      persistArdop({ ptt_method: profile.ptt_method as PttMethod });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistArdop]);
   const commitCatKey = () => {
     const trimmed = catKeyInput.trim();
     // Empty → keep the default rather than persisting an unkeyable empty string.
@@ -1017,7 +1044,7 @@ export function ArdopRadioPanel({
             }}
             data-testid="ardop-config-expander"
           >
-            <summary className="expander-summary">Radio</summary>
+            <summary className="expander-summary">Radio &amp; audio</summary>
           {/* tuxlink-y7x7: Capture / Playback / PTT now load real device
               lists from the backend and render dropdown + Refresh + manual
               fallback (same pattern as ModemLinkSection's AX.25 picker).
@@ -1285,13 +1312,17 @@ export function ArdopRadioPanel({
               onBlur={commitBinary}
             />
           </label>
+          {/* tuxlink-31c63 Task 7: Rig rows are now embedded (variant="bare")
+              inside this "Radio & audio" expander so the operator sees all
+              radio-related settings in one collapsed group. The callback
+              pre-fills ptt_method from the selected radio's profile unless
+              the operator has already overridden it. */}
+          <RigControlSection
+            storageKeyPrefix="ardop"
+            variant="bare"
+            onRadioSelected={onRigRadioSelected}
+          />
           </details>
-
-          {/* tuxlink-8fkkk Task A1UI: Rig control is now the shared
-              RigControlSection, which reads/writes Config.rig via
-              config_get_rig / config_set_rig so VARA and ARDOP share
-              the same physical rig configuration. */}
-          <RigControlSection storageKeyPrefix="ardop" />
         </section>
       )}
 
