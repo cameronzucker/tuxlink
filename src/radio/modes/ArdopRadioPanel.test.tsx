@@ -1747,7 +1747,10 @@ describe('<ArdopRadioPanel>', () => {
       // audio + ptt + rig rows all live inside the single group
       expect(within(group).getByTestId('ardop-capture-select')).toBeInTheDocument();
       expect(within(group).getByTestId('ardop-ptt-method-select')).toBeInTheDocument();
-      expect(within(group).getByTestId('rig-model')).toBeInTheDocument();
+      // rig-model renders after RigControlSection's async rig_list_models load,
+      // which lands after the group container — await it (the capture/ptt rows
+      // above are synchronous siblings). Bare getByTestId here races + flakes.
+      expect(await within(group).findByTestId('rig-model')).toBeInTheDocument();
       // the rig section is no longer its own expander
       expect(screen.queryByTestId('rig-control-expander')).not.toBeInTheDocument();
     });
