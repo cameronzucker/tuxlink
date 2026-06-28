@@ -572,15 +572,14 @@ export function ArdopRadioPanel({
   // pre-fill the ARDOP-only ptt_method from the radio's documented profile
   // unless the operator has overridden it. RigControlSection passes whether
   // ptt is already overridden (read from the shared Config.rig override set).
-  const onRigRadioSelected = useCallback((modelId: number | null, pttOverridden: boolean) => {
+  const onRigRadioSelected = (modelId: number | null, pttOverridden: boolean) => {
     if (pttOverridden) return;
     const profile = getRigProfile(modelId);
     if (profile?.ptt_method) {
       setPttMethod(profile.ptt_method as PttMethod);
       persistArdop({ ptt_method: profile.ptt_method as PttMethod });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [persistArdop]);
+  };
   const commitCatKey = () => {
     const trimmed = catKeyInput.trim();
     // Empty → keep the default rather than persisting an unkeyable empty string.
