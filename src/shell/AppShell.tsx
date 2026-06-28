@@ -1342,8 +1342,6 @@ export function AppShell() {
     },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => { setSettingsSection(undefined); setSettingsOpen(true); },
-    // tuxlink-vfb3: open Settings directly on the Winlink Account section.
-    openWinlinkAccount: () => { setSettingsSection('account'); setSettingsOpen(true); },
     openThemeDesigner: () => setThemeDesignerOpen(true),
     openAbout: () => setAboutOpen(true),
     // tuxlink-0gsy / spec §4.1: Help → Documentation opens the separate

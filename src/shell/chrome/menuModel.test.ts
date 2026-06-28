@@ -19,9 +19,8 @@ const EXPECTED_IDS = [
   'menu:view:scheme:grayscale',
   'menu:view:scheme:custom',
   'menu:view:customize_theme',
-  'menu:tools:find_gateway', 'menu:tools:verify_cms', 'menu:tools:connect_agent', 'menu:tools:templates',
-  'menu:tools:settings_account',
-  'menu:tools:settings_privacy',
+  'menu:tools:find_gateway', 'menu:tools:verify_cms', 'menu:tools:connect_agent',
+  'menu:tools:settings',
   'menu:help:about', 'menu:help:docs', 'menu:help:logging', 'menu:help:report_issue', 'menu:help:uninstall_cleanup',
 ];
 

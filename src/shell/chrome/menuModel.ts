@@ -102,25 +102,18 @@ export const MENU_TREE: TopMenu[] = [
     // tuxlink-l9sq4: Tools → Connect an AI agent — opens the ConnectAgentModal
     // with per-agent MCP copy-paste connection commands.
     { id: 'menu:tools:connect_agent', label: 'Connect an AI agent…' },
-    // Not-yet-wired: disabled + badged so it reads as "coming", not broken.
-    // Templates is owned by the in-flight forms epic (tuxlink-o4p9). Rig Control
-    // was removed in the tuxlink-lqw2 declutter (no backing implementation).
-    { id: 'menu:tools:templates', label: 'Templates', disabled: true },
+    // tuxlink-esb65: the disabled "Templates" stub was removed — it was leftover
+    // menu scaffolding for a Tools-level forms browser that never landed there.
+    // The Standard Forms library (wle-forms/Standard_Forms) ships and is reached
+    // from Compose (handleOpenFormPicker → CatalogBrowser), not a Tools entry; a
+    // permanently-greyed item only implied a missing feature that isn't missing.
     { separator: true },
-    { label: 'Settings', submenu: [
-      // tuxlink-vfb3: Winlink Account — opens the inline Settings panel directly
-      // on the Winlink Account section (CMS password change + keyring re-enter).
-      { id: 'menu:tools:settings_account', label: 'Winlink Account…' },
-      // tuxlink-lqw2: the disabled "Connection" leaf was removed (no settings
-      // panel behind it). GPS & Privacy is the reachable Settings surface.
-      // tuxlink-39b: one entry opens the GPS/privacy settings panel (gps_state +
-      // position precision). The former granular leaves (GPS state / Position
-      // precision / a duplicate GPS) all opened the same box — consolidated.
-      { id: 'menu:tools:settings_privacy', label: 'GPS & Privacy…' },
-      // tuxlink-ndi4: the "Map tiles…" LAN-raster-source config entry was removed
-      // with the self-hosted vector basemap swap — the basemap no longer consumes
-      // a configurable LAN tile source.
-    ] },
+    // tuxlink-esb65: a single honest "Settings…" entry replaces the former
+    // Settings submenu, whose two leaves ("Winlink Account…" + "GPS & Privacy…")
+    // both opened the SAME multi-section SettingsPanel — the GPS-flavored naming
+    // hid every other section (account, theme, location) behind it. The panel's
+    // own left nav reaches each section once open, so one door is enough.
+    { id: 'menu:tools:settings', label: 'Settings…' },
     // "Preferences" removed — it duplicated "Settings" (operator call 2026-05-22).
   ] },
   { label: 'Help', items: [

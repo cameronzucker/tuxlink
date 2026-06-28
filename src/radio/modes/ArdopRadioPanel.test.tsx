@@ -9,7 +9,7 @@
 // SignalSection + Sparkline tests, not duplicated here.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
 import type { ModemStatus } from '../../modem/types';
@@ -91,8 +91,15 @@ const defaultInvokeImpl = async (cmd: string, _args?: unknown) => {
       qsy_on_fail: false,
       cat_serial_path: null,
       cat_baud: 38400,
+      data_mode: 'PKTUSB',
+      rig_field_overrides: [],
     };
   }
+  // tuxlink-31c63 Task 7: RigControlSection also calls rig_list_models.
+  if (cmd === 'rig_list_models') {
+    return [{ id: 1049, manufacturer: 'Yaesu', model: 'FT-710' }];
+  }
+  if (cmd === 'config_set_rig') return undefined;
   // Listener defaults (tuxlink-7vea backend default flip).
   if (cmd === 'ardop_allowed_stations_get') {
     return { allow_all: true, callsigns: [] };
@@ -1705,23 +1712,84 @@ describe('<ArdopRadioPanel>', () => {
     });
   });
 
-  // tuxlink-8fkkk Task A1UI: Rig control is now the shared RigControlSection.
+  // tuxlink-8fkkk Task A1UI → tuxlink-31c63 Task 7: Rig control rows are now
+  // embedded (variant="bare") inside the merged "Radio & audio" expander.
   // Mutual-exclusion between close-serial sequencing and live VFO poll is tested
-  // in RigControlSection.test.tsx. Here we assert that the shared component is
-  // rendered within the ARDOP panel's Radio section.
+  // in RigControlSection.test.tsx.
   describe('Rig control section (shared component)', () => {
-    it('renders the RigControlSection expander within the Radio section', async () => {
+    it('renders rig rows inside the merged Radio & audio group (no standalone expander)', async () => {
       renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() => {
         expect(screen.getByTestId('ardop-radio-section')).toBeInTheDocument();
-        expect(screen.getByTestId('rig-control-expander')).toBeInTheDocument();
+        // variant="bare" — no standalone rig-control-expander
+        expect(screen.queryByTestId('rig-control-expander')).not.toBeInTheDocument();
+        // rig-model select renders inside the merged group
+        expect(screen.getByTestId('rig-model')).toBeInTheDocument();
       });
     });
 
-    it('shows the "Rig control" summary label', async () => {
+    it('rig-model select is inside the ardop-config-expander group', async () => {
       renderPanel(<ArdopRadioPanel onClose={() => {}} />);
       await waitFor(() => {
-        expect(screen.getByTestId('rig-control-expander-summary')).toHaveTextContent('Rig control');
+        const group = screen.getByTestId('ardop-config-expander');
+        expect(within(group).getByTestId('rig-model')).toBeInTheDocument();
+      });
+    });
+  });
+
+  // tuxlink-31c63 Task 7: merged "Radio & audio" group + PTT pre-fill/override
+  describe('Task 7 — Radio & audio merge + PTT pre-fill + Tune inline', () => {
+    it('renders one merged "Radio & audio" group containing audio, PTT, and rig rows', async () => {
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => expect(screen.getByTestId('ardop-config-expander')).toBeInTheDocument());
+      const group = screen.getByTestId('ardop-config-expander');
+      expect(within(group).getByText('Radio & audio')).toBeInTheDocument();
+      // audio + ptt + rig rows all live inside the single group
+      expect(within(group).getByTestId('ardop-capture-select')).toBeInTheDocument();
+      expect(within(group).getByTestId('ardop-ptt-method-select')).toBeInTheDocument();
+      expect(within(group).getByTestId('rig-model')).toBeInTheDocument();
+      // the rig section is no longer its own expander
+      expect(screen.queryByTestId('rig-control-expander')).not.toBeInTheDocument();
+    });
+
+    it('Tune button sits in the same row as the frequency input (inline)', async () => {
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      // ardop-freq lives in the "Manual" FavoritesTabs panel — switch to it.
+      await switchToManualTab();
+      await waitFor(() => expect(screen.getByTestId('ardop-freq')).toBeInTheDocument());
+      const freqRow = screen.getByTestId('ardop-freq').closest('.radio-panel-input-row');
+      expect(freqRow).not.toBeNull();
+      expect(within(freqRow as HTMLElement).getByTestId('ardop-tune')).toBeInTheDocument();
+    });
+
+    it('pre-fills ptt_method from the radio profile when ptt is not overridden', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => expect(screen.getByTestId('rig-model')).toBeInTheDocument());
+      invokeMock.mockClear();
+      fireEvent.change(screen.getByTestId('rig-model'), { target: { value: '1049' } });
+      await waitFor(() => {
+        // FT-710 profile → cat_command persisted to ArdopUiConfig
+        const call = invokeMock.mock.calls.find(
+          (c) => c[0] === 'config_set_ardop' && (c[1] as { value?: { ptt_method?: string } })?.value?.ptt_method === 'cat_command',
+        );
+        expect(call).toBeTruthy();
+      });
+    });
+
+    it('marks ptt_method overridden when the operator changes it manually', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => expect(screen.getByTestId('ardop-ptt-method-select')).toBeInTheDocument());
+      invokeMock.mockClear();
+      fireEvent.change(screen.getByTestId('ardop-ptt-method-select'), { target: { value: 'serial_rts' } });
+      await waitFor(() => {
+        const call = invokeMock.mock.calls.find(
+          (c) => c[0] === 'config_set_rig' && (c[1] as { value?: { rig_field_overrides?: string[] } })?.value?.rig_field_overrides?.includes('ptt_method'),
+        );
+        expect(call).toBeTruthy();
       });
     });
   });

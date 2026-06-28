@@ -16,6 +16,9 @@ pub use client::RigctldClient;
 mod managed;
 pub use managed::{ManagedRig, RigConfig};
 
+mod list;
+pub use list::{list_models, RigModel};
+
 /// A snapshot of rig state from `read_status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RigStatus {
