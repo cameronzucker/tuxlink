@@ -41,6 +41,10 @@ pub enum PdfExportError {
 /// Seconds to wait for the asynchronous GTK print to finish writing the file.
 /// A single rendered form prints in well under a second; 30s is generous
 /// headroom that still bounds a wedged print so the command can't hang forever.
+/// Only the Linux (WebKitGTK) print path reads it; gated to Linux so non-Linux
+/// targets — where `export_webview_pdf`/`print_webview` are the unsupported
+/// stubs — don't trip the `dead_code` lint under `-D warnings`.
+#[cfg(target_os = "linux")]
 const PRINT_DEADLINE_SECS: u64 = 30;
 
 /// Ensure the chosen output path ends in `.pdf` (case-insensitive). A native
