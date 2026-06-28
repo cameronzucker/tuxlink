@@ -816,7 +816,7 @@ After the §V.6 fixes landed on `feat/macos-build-assessment`, the full macOS pa
 - **App launch + runtime + clean exit.** The window opened and **rendered its UI** (operator-confirmed), the process ran stably (~150 MB RSS, ~4% CPU), logged no panics, and **exited cleanly (code 0)** on close. The only runtime log lines were benign and non-macOS-specific: a `gpsd` connection-refused retry (no GPS attached; self-labeled normal) and a Vite resolve warning for the dev-only `dev/perf-harness/harness.tsx` (imports `maplibre-gl`, not an app dependency).
 
 **Still not exercised (future work, not blockers):**
-- `pnpm tauri build` **release bundle** (`.app`/`.dmg`) + code-signing / notarization (needs an Apple Developer account; ad-hoc signing suffices for local dev).
+- ~~`pnpm tauri build` release bundle~~ — **`.app` now produced & verified (§V.10).** The `.dmg`, code-signing, and notarization remain (notarization needs a paid Apple Developer account; the `.dmg` step fails headlessly — see §V.10).
 - An in-app **Keychain credential round-trip** through the identity wizard UI. (A standalone runtime smoke test of the `apple-native` backend **passed** 2026-06-28 — `set` → `get` → `delete` → confirm-gone against the real macOS Keychain, a Unicode secret round-tripping byte-faithfully, with **no interactive prompt** — using the same `keyring::Entry` calls the wizard makes. The only remaining gap is driving that round-trip through the actual UI.)
 - Per RADIO-1 (ADR 0018), on-air transmit validation remains operator-only.
 
@@ -853,6 +853,35 @@ All fixes are committed on `feat/macos-build-assessment` (ahead of `origin/main`
 - `docs(design)` `066013ee` (+ a follow-up recording this §V.7 verification) — this assessment.
 
 `dist/`, `target/`, `node_modules/` remain gitignored build output. `package.json`'s legacy `pnpm.onlyBuiltDependencies` field is left in place (a harmless warning under pnpm 11) for pnpm <11 compatibility.
+
+## V.10 Release bundle — `.app` produced, `.dmg` fails headlessly (2026-06-28)
+
+Executed per [docs/plans/2026-06-28-macos-app-bundle-plan.md](../plans/2026-06-28-macos-app-bundle-plan.md) (reviewed: self → Codex cross-model → self).
+
+**Config added:** a minimal, macOS-target-scoped block in `src-tauri/tauri.conf.json` (purely additive — `bundle.linux` untouched):
+```json
+"macOS": { "minimumSystemVersion": "11.0" }
+```
+
+**`.app` — ✅ produced & verified.** `pnpm tauri build --ci --no-sign --bundles app` →
+`src-tauri/target/release/bundle/macos/tuxlink.app` (96 MB). Headlessly verified (no window launched):
+
+| Property | Value |
+|---|---|
+| `CFBundleIdentifier` | `com.tuxlink.app` |
+| `CFBundleShortVersionString` | `0.78.0` |
+| `LSMinimumSystemVersion` | `11.0` (proves the `bundle.macOS` block took effect — exact `plutil -extract`) |
+| Architecture | **arm64-only** Mach-O (`lipo -archs` → `arm64`). NOT universal — a universal binary needs `--target universal-apple-darwin` + the `x86_64-apple-darwin` target (out of scope). |
+| Bundled resources | `wle-forms/`, `ssn-forecast.json`, `basemap/` all present under `Contents/Resources/resources/` |
+| Signing | inner binary **ad-hoc** (`Signature=adhoc`, flags `adhoc,linker-signed` — the linker's mandatory arm64 signature); bundle **not sealed** (`--no-sign`); `codesign --verify --strict` fails ("no resources but signature indicates they must be present" — the known ad-hoc-binary-in-unsigned-bundle state); `spctl --assess` **rejects** (expected — not Developer-ID/notarized). |
+
+**`.dmg` — ❌ not produced (documented non-blocker).** `timeout -k 30 360 pnpm tauri build --ci --no-sign --bundles dmg` exited **1** (not a 124 timeout): Tauri's `bundle_dmg.sh` (the disk-image-layout step driving `hdiutil` + Finder/AppleScript) failed — a known macOS fragility in headless/remote-control/CI contexts. The `.app` is the deliverable; the `.dmg` is deferred to the operator / a full interactive GUI session, or a future switch to a non-Finder dmg layout. Not in scope here.
+
+**`beforeBundleCommand` (gps-fix):** `cargo build --release --bin tuxlink-gps-fix` **compiles on macOS** (2m11s; binary produced) — its systemctl/apt/usermod paths are runtime `Path::exists()` lookups, not compile deps. It is the Linux deb/rpm payload and is **unused** in the macOS `.app`; harmless but wasteful (a future cleanup could skip it on macOS).
+
+**Discovery — bundle identifier ends in `.app`.** Tauri warns: *"The bundle identifier `com.tuxlink.app` … ends with `.app`. This is not recommended because it conflicts with the application bundle extension on macOS."* The build still succeeded, but this is a real macOS advisory. The identifier is cross-cutting (tauri.conf, the polkit action `com.tuxlink.app.gps-fix`, etc.), so a rename (e.g. `com.tuxlink.client`) is out of scope here — flagged for a future decision.
+
+**Net:** a launchable, arm64, unsigned macOS `.app` builds from `pnpm tauri build` with one additive config line; only the `.dmg` packaging and code-signing/notarization remain, and those are operator/Apple-account concerns, not code blockers.
 
 ---
 

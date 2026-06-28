@@ -59,17 +59,22 @@ notes and commit messages.
 
 ## Execution Status
 
-**Overall:** 🚧 In progress — reviewed (R1 self · R2 Codex cross-model, 12 findings applied · R3 self, 2 applied · R4 clean), execution claimed 2026-06-28T23:18Z, inline/autonomous on branch `feat/macos-build-assessment`.
+**Overall:** ✅ Complete (2026-06-28) — `.app` built + headlessly verified; `.dmg` failed headlessly (documented non-blocker). Reviewed (R1 self · R2 Codex cross-model, 12 findings · R3 self, 2 · R4 clean), executed inline/autonomous on branch `feat/macos-build-assessment`. Results in assessment §V.10.
 
 | Phase | Status | Ship SHA(s) | Notes |
 |---|---|---|---|
-| 1 — Recon (gps-fix compile + build) | 🚧 In progress | — | gps-fix fail-fast check first |
-| 2 — Minimal `bundle.macOS` config | 🚧 In progress | — | done before the build (see Deviations) |
-| 3 — Build + headless verification | ⬜ Not started | — | — |
-| 4 — Document §V + commit | ⬜ Not started | — | — |
+| 1 — Recon (gps-fix compile + build) | ✅ Done | — | gps-fix compiles on macOS (2m11s, bin produced) |
+| 2 — Minimal `bundle.macOS` config | ✅ Done | — | `minimumSystemVersion: 11.0`; purely additive (linux untouched) |
+| 3 — Build + headless verification | ✅ Done | — | `.app` ✅ (arm64, resources OK, ad-hoc/unsigned); `.dmg` ❌ (bundle_dmg.sh exit 1) |
+| 4 — Document §V + commit | ✅ Done | — | §V.10 added |
 
 ### Deviations
-- **Phase order:** executing Phase 2 (add `bundle.macOS`) *before* Phase 1's full recon build, so a single `.app` release build serves as both recon and final — avoids two multi-minute release builds. The risk this guards (the build failing) is still caught fail-fast: Phase 1 Step 1 compiles the gps-fix `beforeBundleCommand` standalone first, and adding an optional `minimumSystemVersion` key cannot itself break the build.
+- **Phase order:** executed Phase 2 (add `bundle.macOS`) *before* Phase 1's full recon build, so a single `.app` build served as both recon and final — avoided two multi-minute release builds. The guarded risk (build failure) was still caught fail-fast: Phase 1 Step 1 compiled the gps-fix `beforeBundleCommand` standalone first, and the optional `minimumSystemVersion` key cannot break the build.
+
+### Discoveries
+- **`.dmg` fails headlessly:** `bundle_dmg.sh` exits 1 (not a timeout) — Tauri's dmg-layout step (hdiutil + Finder/AppleScript) is fragile in headless/remote-control contexts. `.app` is unaffected. Deferred to operator/GUI session. (§V.10)
+- **Bundle identifier `com.tuxlink.app` ends in `.app`:** Tauri warns this conflicts with the macOS `.app` extension. Build still succeeds. Cross-cutting rename (tauri.conf + polkit action) → out of scope, flagged. (§V.10)
+- **gps-fix `beforeBundleCommand`** compiles on macOS but bundles nothing into the `.app` (Linux deb/rpm payload) — harmless but wasteful; future cleanup could skip it on macOS. (§V.10)
 
 ---
 
@@ -90,7 +95,7 @@ There is no unit-testable code here; the analog of TDD is **verification-command
 
 ## Phase 1 — Recon the default bundle build
 
-**Execution Status:** ⬜ NOT STARTED
+**Execution Status:** ✅ DONE (2026-06-28) — gps-fix compiles on macOS (release, 2m11s, bin produced); the recon build was folded into Phase 3 (see Deviations).
 
 **Why:** Tauri may already produce a working `.app` with zero config changes. Learn the real behavior (does `beforeBundleCommand`'s release build of `tuxlink-gps-fix` succeed on macOS? is the `.app` produced? is it ad-hoc-signed or unsigned?) before changing config, so Phase 2 only fixes real gaps.
 
@@ -120,7 +125,7 @@ There is no unit-testable code here; the analog of TDD is **verification-command
 
 ## Phase 2 — Add a minimal, macOS-scoped `bundle.macOS` config
 
-**Execution Status:** ⬜ NOT STARTED
+**Execution Status:** ✅ DONE (2026-06-28) — `"macOS": { "minimumSystemVersion": "11.0" }` added; JSON parses; diff is purely additive (bundle.linux untouched).
 
 **Why:** Make the bundle proper and reproducible: pin a minimum macOS version and (only if Phase 1 showed it necessary) address signing/gps-fix. Keep it minimal — **no entitlements file** (a network-client app with outbound TCP/TLS + Keychain needs none for an ad-hoc/unsigned local build; entitlements + hardened runtime only matter for notarization, which is out of scope). Do **NOT** touch `bundle.linux`.
 
@@ -150,7 +155,7 @@ There is no unit-testable code here; the analog of TDD is **verification-command
 
 ## Phase 3 — Build the bundle and verify headlessly
 
-**Execution Status:** ⬜ NOT STARTED
+**Execution Status:** ✅ DONE (2026-06-28) — `.app` built + verified (arm64, identifier/version/minOS exact, resources present, ad-hoc/unsigned, `spctl` rejects as expected). `.dmg` ❌ `bundle_dmg.sh` exit 1 (documented non-blocker).
 
 **Why:** Produce the actual `.app` + `.dmg` and prove they are well-formed without ever launching a window.
 
@@ -229,7 +234,7 @@ There is no unit-testable code here; the analog of TDD is **verification-command
 
 ## Phase 4 — Document in §V and commit
 
-**Execution Status:** ⬜ NOT STARTED
+**Execution Status:** ✅ DONE (2026-06-28) — assessment §V.10 added; config + docs committed on `feat/macos-build-assessment`.
 
 **Why:** Capture exactly what the macOS bundle build required (the doc is the deliverable per the operator's standing instruction), and land the config + doc changes per project commit discipline.
 
