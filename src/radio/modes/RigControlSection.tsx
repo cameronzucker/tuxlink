@@ -9,7 +9,7 @@
 // localStorage collapse-state key so the two panels can be independently
 // expanded/collapsed.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 /** TypeScript mirror of Rust's `RigUiConfig`. Field names are snake_case to
@@ -24,6 +24,8 @@ export interface RigConfig {
   qsy_on_fail: boolean;
   cat_serial_path: string | null;
   cat_baud: number;
+  data_mode: string;
+  rig_field_overrides: string[];
 }
 
 const DEFAULT_RIG_CONFIG: RigConfig = {
@@ -36,7 +38,16 @@ const DEFAULT_RIG_CONFIG: RigConfig = {
   qsy_on_fail: false,
   cat_serial_path: null,
   cat_baud: 38400,
+  data_mode: 'PKTUSB',
+  rig_field_overrides: [],
 };
+
+/** Mirror of the backend RigModelDto from rig_list_models. */
+interface RigModel {
+  id: number;
+  manufacturer: string;
+  model: string;
+}
 
 interface RigControlSectionProps {
   /** Prefix for the localStorage collapse-state key, e.g. "ardop" or "vara". */
@@ -44,7 +55,7 @@ interface RigControlSectionProps {
 }
 
 /** Collapsible "Rig control" expander — hamlib model, CAT serial/baud,
- *  close-serial sequencing, live VFO poll, and QSY-on-fail. Loads from
+ *  data mode, close-serial sequencing, and live VFO poll. Loads from
  *  config_get_rig on mount; persists via config_set_rig on change/blur.
  *  Collapsed by default; collapse state is preserved in localStorage. */
 export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) {
@@ -61,6 +72,36 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
   const [rigConfig, setRigConfig] = useState<RigConfig | null>(null);
   const [catSerialInput, setCatSerialInput] = useState<string>('');
   const [catBaudInput, setCatBaudInput] = useState<string>('38400');
+
+  const [models, setModels] = useState<RigModel[]>([]);
+  const [serialPorts, setSerialPorts] = useState<{ path: string; kind: string; label: string }[]>([]);
+
+  const loadModels = useCallback(() => {
+    void invoke<RigModel[]>('rig_list_models')
+      .then((list) => setModels(list ?? []))
+      .catch(() => setModels([]));
+  }, []);
+  const loadSerialPorts = useCallback(() => {
+    void invoke<{ path: string; kind: string; label: string }[]>('packet_list_serial_devices')
+      .then((list) => setSerialPorts(list ?? []))
+      .catch(() => setSerialPorts([]));
+  }, []);
+
+  // Group + sort models by manufacturer for the picker (A–Z; no curated pins).
+  const groupedModels = useMemo(() => {
+    const byMfg = new Map<string, RigModel[]>();
+    for (const m of models) {
+      const arr = byMfg.get(m.manufacturer) ?? [];
+      arr.push(m);
+      byMfg.set(m.manufacturer, arr);
+    }
+    return [...byMfg.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([mfg, list]) => ({
+        mfg,
+        list: list.slice().sort((a, b) => a.model.localeCompare(b.model)),
+      }));
+  }, [models]);
 
   // Load rig config from backend on mount.
   useEffect(() => {
@@ -79,6 +120,11 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    loadModels();
+    loadSerialPorts();
+  }, [loadModels, loadSerialPorts]);
 
   /** Merge a patch into the local state and persist the result to the backend.
    *  Mirrors the persistArdop pattern used by the ARDOP panel. */
@@ -124,38 +170,100 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
         Rig control
       </summary>
 
-      {/* Hamlib rig model — null means no rigctld integration. The FT-710
-          is the proven model; additional entries can be appended here as
-          more rigs are validated. */}
+      {/* Radio model — sourced from the installed hamlib via rig_list_models
+          (rigctl -l), grouped by manufacturer, A–Z. No curated pins. Empty
+          model list degrades to a manual hamlib-model-# entry. */}
       <label className="radio-panel-input-row">
-        <span>Rig model</span>
-        <select
-          className="radio-panel-input"
-          data-testid="rig-model"
-          value={rigConfig?.rig_hamlib_model ?? ''}
-          onChange={(e) => {
-            const v = e.target.value;
-            persistRig({ rig_hamlib_model: v === '' ? null : Number(v) });
-          }}
+        <span>Radio</span>
+        {models.length > 0 ? (
+          <select
+            className="radio-panel-input"
+            data-testid="rig-model"
+            value={rigConfig?.rig_hamlib_model ?? ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              persistRig({ rig_hamlib_model: v === '' ? null : Number(v) });
+            }}
+          >
+            <option value="">None / unset</option>
+            {groupedModels.map((g) => (
+              <optgroup key={g.mfg} label={g.mfg}>
+                {g.list.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.manufacturer} {m.model} ({m.id})
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="text"
+            inputMode="numeric"
+            className="radio-panel-input"
+            data-testid="rig-model-manual"
+            value={rigConfig?.rig_hamlib_model ?? ''}
+            placeholder="hamlib model # (rigctl unavailable)"
+            spellCheck={false}
+            onChange={(e) => {
+              const n = Number(e.target.value.trim());
+              persistRig({ rig_hamlib_model: Number.isInteger(n) && n > 0 ? n : null });
+            }}
+          />
+        )}
+        <button
+          type="button"
+          className="radio-panel-btn-sm"
+          data-testid="rig-model-refresh"
+          onClick={loadModels}
+          aria-label="Refresh radio model list"
         >
-          <option value="">None / unset</option>
-          <option value="1049">Yaesu FT-710 (1049)</option>
-        </select>
+          ↻
+        </button>
       </label>
 
-      {/* CAT serial port — the /dev/ttyUSB* path the CAT cable connects to.
-          Used by both ARDOP (close-serial bridge) and VARA (managed rigctld). */}
+      {/* CAT port — detected serial ports (reuses packet_list_serial_devices,
+          the AX.25/PTT enumeration). Manual row covers an unlisted device. */}
       <label className="radio-panel-input-row">
         <span>CAT port</span>
+        <select
+          className="radio-panel-input"
+          data-testid="rig-cat-port"
+          value={serialPorts.some((d) => d.path === catSerialInput) ? catSerialInput : ''}
+          onChange={(e) => {
+            const next = e.target.value;
+            setCatSerialInput(next);
+            persistRig({ cat_serial_path: next === '' ? null : next });
+          }}
+        >
+          <option value="">Choose serial port…</option>
+          {serialPorts.map((d) => (
+            <option key={d.path} value={d.path}>
+              {d.path} — {d.label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="radio-panel-btn-sm"
+          data-testid="rig-cat-port-refresh"
+          onClick={loadSerialPorts}
+          aria-label="Refresh CAT serial port list"
+        >
+          ↻
+        </button>
+      </label>
+      <label className="radio-panel-input-row">
+        <span>Manual</span>
         <input
           type="text"
           className="radio-panel-input"
-          data-testid="rig-cat-port"
+          data-testid="rig-cat-port-manual"
           value={catSerialInput}
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
-          placeholder="/dev/ttyUSB0 (CAT/Enhanced port)"
+          placeholder="/dev/ttyUSB0 (unlisted)"
           onChange={(e) => setCatSerialInput(e.target.value)}
           onBlur={commitCatSerial}
         />
@@ -179,19 +287,29 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
         />
       </label>
 
-      {/* rigctld backend label — informational, not user-editable. */}
-      <div className="radio-panel-input-row">
-        <span>CAT backend</span>
-        <span className="radio-panel-input" style={{ opacity: 0.7, userSelect: 'none' }}>
-          Managed rigctld
-        </span>
-      </div>
+      {/* Data mode — the token rigctld sets on tune (Mode::rigctl_str). */}
+      <label className="radio-panel-input-row">
+        <span>Mode</span>
+        <select
+          className="radio-panel-input"
+          data-testid="rig-data-mode"
+          value={rigConfig?.data_mode ?? 'PKTUSB'}
+          onChange={(e) => persistRig({ data_mode: e.target.value })}
+        >
+          <option value="PKTUSB">PKTUSB</option>
+          <option value="PKTLSB">PKTLSB</option>
+          <option value="USB-D">USB-D</option>
+          <option value="LSB-D">LSB-D</option>
+          <option value="USB">USB</option>
+          <option value="LSB">LSB</option>
+        </select>
+      </label>
 
       {/* Close-serial sequencing — required for radios (e.g. FT-710) that
           reset their codec when the CAT serial port is held open during audio.
           Enabling this forces live_vfo_poll off (poll holds the port open). */}
       <label className="radio-panel-input-row">
-        <span>Close-serial sequencing</span>
+        <span>Close serial during audio</span>
         <input
           type="checkbox"
           data-testid="rig-close-serial"
@@ -217,20 +335,6 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
           disabled={rigConfig?.close_serial_sequencing ?? false}
           onChange={(e) => {
             persistRig({ live_vfo_poll: e.target.checked });
-          }}
-        />
-      </label>
-
-      {/* QSY on fail — when enabled, tuxlink walks the candidate frequency
-          list and retunes the rig on each failed connect attempt. */}
-      <label className="radio-panel-input-row">
-        <span>QSY on fail</span>
-        <input
-          type="checkbox"
-          data-testid="rig-qsy-on-fail"
-          checked={rigConfig?.qsy_on_fail ?? false}
-          onChange={(e) => {
-            persistRig({ qsy_on_fail: e.target.checked });
           }}
         />
       </label>

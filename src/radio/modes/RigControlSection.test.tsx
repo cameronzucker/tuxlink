@@ -23,6 +23,8 @@ const knownConfig: RigConfig = {
   qsy_on_fail: false,
   cat_serial_path: '/dev/ttyUSB0',
   cat_baud: 38400,
+  data_mode: 'PKTUSB',
+  rig_field_overrides: [],
 };
 
 describe('<RigControlSection>', () => {
@@ -32,6 +34,10 @@ describe('<RigControlSection>', () => {
     (core.invoke as ReturnType<typeof vi.fn>).mockReset();
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_get_rig') return knownConfig;
+      if (cmd === 'rig_list_models') return [{ id: 1049, manufacturer: 'Yaesu', model: 'FT-710' }];
+      if (cmd === 'packet_list_serial_devices') return [
+        { path: '/dev/ttyUSB0', kind: 'usb', label: 'FT-710 CAT' },
+      ];
       return undefined;
     });
   });
@@ -86,11 +92,11 @@ describe('<RigControlSection>', () => {
     });
   });
 
-  it('renders the CAT port input with the loaded value', async () => {
+  it('renders the CAT port select with the loaded value', async () => {
     render(<RigControlSection storageKeyPrefix="ardop" />);
     await waitFor(() => {
-      const input = screen.getByTestId('rig-cat-port') as HTMLInputElement;
-      expect(input.value).toBe('/dev/ttyUSB0');
+      const sel = screen.getByTestId('rig-cat-port') as HTMLSelectElement;
+      expect(sel.value).toBe('/dev/ttyUSB0');
     });
   });
 
@@ -116,13 +122,6 @@ describe('<RigControlSection>', () => {
     });
   });
 
-  it('renders the QSY on fail checkbox', async () => {
-    render(<RigControlSection storageKeyPrefix="ardop" />);
-    await waitFor(() => {
-      expect(screen.getByTestId('rig-qsy-on-fail')).toBeInTheDocument();
-    });
-  });
-
   it('persists rig model change via config_set_rig', async () => {
     const core = await import('@tauri-apps/api/core');
     const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
@@ -142,41 +141,40 @@ describe('<RigControlSection>', () => {
     });
   });
 
-  it('persists CAT port on blur via config_set_rig', async () => {
+  it('persists CAT port select change via config_set_rig', async () => {
     const core = await import('@tauri-apps/api/core');
     const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
     render(<RigControlSection storageKeyPrefix="ardop" />);
     await waitFor(() => {
-      expect((screen.getByTestId('rig-cat-port') as HTMLInputElement).value).toBe('/dev/ttyUSB0');
-    });
-    invokeMock.mockClear();
-    fireEvent.change(screen.getByTestId('rig-cat-port'), { target: { value: '/dev/ttyUSB1' } });
-    fireEvent.blur(screen.getByTestId('rig-cat-port'));
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith(
-        'config_set_rig',
-        expect.objectContaining({
-          value: expect.objectContaining({ cat_serial_path: '/dev/ttyUSB1' }),
-        }),
-      );
-    });
-  });
-
-  it('empty CAT port persists as null', async () => {
-    const core = await import('@tauri-apps/api/core');
-    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-    render(<RigControlSection storageKeyPrefix="ardop" />);
-    await waitFor(() => {
-      expect((screen.getByTestId('rig-cat-port') as HTMLInputElement).value).toBe('/dev/ttyUSB0');
+      expect(screen.getByTestId('rig-cat-port')).toBeInTheDocument();
     });
     invokeMock.mockClear();
     fireEvent.change(screen.getByTestId('rig-cat-port'), { target: { value: '' } });
-    fireEvent.blur(screen.getByTestId('rig-cat-port'));
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith(
         'config_set_rig',
         expect.objectContaining({
           value: expect.objectContaining({ cat_serial_path: null }),
+        }),
+      );
+    });
+  });
+
+  it('persists CAT port manual input on blur via config_set_rig', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    render(<RigControlSection storageKeyPrefix="ardop" />);
+    await waitFor(() => {
+      expect(screen.getByTestId('rig-cat-port-manual')).toBeInTheDocument();
+    });
+    invokeMock.mockClear();
+    fireEvent.change(screen.getByTestId('rig-cat-port-manual'), { target: { value: '/dev/ttyUSB1' } });
+    fireEvent.blur(screen.getByTestId('rig-cat-port-manual'));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'config_set_rig',
+        expect.objectContaining({
+          value: expect.objectContaining({ cat_serial_path: '/dev/ttyUSB1' }),
         }),
       );
     });
@@ -245,6 +243,8 @@ describe('<RigControlSection>', () => {
     const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === 'config_get_rig') return { ...knownConfig, live_vfo_poll: true };
+      if (cmd === 'rig_list_models') return [];
+      if (cmd === 'packet_list_serial_devices') return [];
       return undefined;
     });
     render(<RigControlSection storageKeyPrefix="ardop" />);
@@ -270,6 +270,8 @@ describe('<RigControlSection>', () => {
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_get_rig') return { ...knownConfig, close_serial_sequencing: true };
+      if (cmd === 'rig_list_models') return [];
+      if (cmd === 'packet_list_serial_devices') return [];
       return undefined;
     });
     render(<RigControlSection storageKeyPrefix="ardop" />);
@@ -279,22 +281,70 @@ describe('<RigControlSection>', () => {
     });
   });
 
-  it('persists QSY-on-fail toggle via config_set_rig', async () => {
+  // ── New tests for Task 4 redesign ──────────────────────────────────────────
+
+  it('renders models from rig_list_models, grouped by manufacturer', async () => {
     const core = await import('@tauri-apps/api/core');
-    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_rig') return { ...knownConfig, rig_hamlib_model: null };
+      if (cmd === 'rig_list_models') return [
+        { id: 1049, manufacturer: 'Yaesu', model: 'FT-710' },
+        { id: 3073, manufacturer: 'Icom', model: 'IC-7300' },
+      ];
+      if (cmd === 'packet_list_serial_devices') return [];
+      return undefined;
+    });
     render(<RigControlSection storageKeyPrefix="ardop" />);
     await waitFor(() => {
-      expect(screen.getByTestId('rig-qsy-on-fail')).toBeInTheDocument();
+      expect(screen.getByTestId('rig-model')).toBeInTheDocument();
     });
-    invokeMock.mockClear();
-    fireEvent.click(screen.getByTestId('rig-qsy-on-fail'));
+    // both manufacturers' models are options
+    expect(screen.getByRole('option', { name: /FT-710/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /IC-7300/ })).toBeInTheDocument();
+  });
+
+  it('renders detected serial ports in the CAT-port picker', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_rig') return knownConfig;
+      if (cmd === 'rig_list_models') return [];
+      if (cmd === 'packet_list_serial_devices') return [
+        { path: '/dev/ttyUSB0', kind: 'usb', label: 'CP2102 USB-UART' },
+      ];
+      return undefined;
+    });
+    render(<RigControlSection storageKeyPrefix="ardop" />);
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith(
-        'config_set_rig',
-        expect.objectContaining({
-          value: expect.objectContaining({ qsy_on_fail: true }),
-        }),
-      );
+      expect(screen.getByTestId('rig-cat-port')).toBeInTheDocument();
     });
+    expect(screen.getByRole('option', { name: /\/dev\/ttyUSB0/ })).toBeInTheDocument();
+  });
+
+  it('renders a Mode row bound to data_mode', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_rig') return { ...knownConfig, data_mode: 'USB-D' };
+      if (cmd === 'rig_list_models') return [];
+      if (cmd === 'packet_list_serial_devices') return [];
+      return undefined;
+    });
+    render(<RigControlSection storageKeyPrefix="ardop" />);
+    await waitFor(() => {
+      expect((screen.getByTestId('rig-data-mode') as HTMLSelectElement).value).toBe('USB-D');
+    });
+  });
+
+  it('no longer renders the QSY-on-fail control or the CAT backend label', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_rig') return knownConfig;
+      if (cmd === 'rig_list_models') return [];
+      if (cmd === 'packet_list_serial_devices') return [];
+      return undefined;
+    });
+    render(<RigControlSection storageKeyPrefix="ardop" />);
+    await waitFor(() => expect(screen.getByTestId('rig-model-manual')).toBeInTheDocument());
+    expect(screen.queryByTestId('rig-qsy-on-fail')).not.toBeInTheDocument();
+    expect(screen.queryByText('CAT backend')).not.toBeInTheDocument();
   });
 });
