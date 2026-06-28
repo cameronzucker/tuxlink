@@ -16,13 +16,16 @@
 import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useWizard } from './wizardContext';
-import type { WizardError } from './types';
+import { type WizardError, schemaTooNewMessage } from './types';
 
 function errorMessage(err: WizardError): string | null {
   switch (err.kind) {
     case 'Busy':
       // Silent per spec §3.5 — ErrBusy needs no operator-visible message.
       return null;
+    case 'ConfigSchemaTooNew':
+      // tuxlink-xknyx: real cause is a newer on-disk config, not disk/permissions.
+      return schemaTooNewMessage(err.detail);
     case 'ConfigWrite':
       return (
         `Tuxlink couldn't save the config file ` +

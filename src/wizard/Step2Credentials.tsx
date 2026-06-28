@@ -16,7 +16,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useWizard } from './wizardContext';
 import { validateCallsign, validatePassword } from './validators';
 import { CredentialFields } from './CredentialFields';
-import type { WizardError } from './types';
+import { type WizardError, schemaTooNewMessage } from './types';
 
 // Auto-fill the MBO address when the callsign changes, BUT only when:
 // - The MBO field is empty, OR
@@ -70,6 +70,10 @@ function errorMessage(err: WizardError): string {
         "github.com/cameronzucker/tuxlink/issues."
       );
     }
+    case 'ConfigSchemaTooNew':
+      // tuxlink-xknyx: NOT a disk/permissions failure — the on-disk config is
+      // newer than this build. State the truth + the exact recovery command.
+      return schemaTooNewMessage(err.detail);
     case 'ConfigWrite':
       return (
         `Tuxlink wrote your password to the keyring but couldn't save the config file ` +
