@@ -151,6 +151,37 @@ pub fn config_set_rig(value: RigUiConfig) -> Result<(), String> {
     config::write_config_atomic(&cfg).map_err(|e| format!("save failed: {e}"))
 }
 
+/// Wire DTO for a hamlib-supported rig model (tuxlink-31c63). Field names are
+/// single words, so serde's default (no rename) already matches the frontend's
+/// `{ id, manufacturer, model }`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RigModelDto {
+    pub id: u32,
+    pub manufacturer: String,
+    pub model: String,
+}
+
+/// List the installed hamlib's supported rig models for the radio picker
+/// (tuxlink-31c63). Runs `rigctl -l` (the companion to `rigctld`) and parses
+/// its table. Returns an empty list on ANY failure (rigctl absent, parse
+/// empty) so the picker degrades to a manual hamlib-model-number entry rather
+/// than erroring — there is no model list for tuxlink to maintain.
+#[tauri::command]
+pub fn rig_list_models() -> Vec<RigModelDto> {
+    tux_rig::list_models("rigctl")
+        .map(|models| {
+            models
+                .into_iter()
+                .map(|m| RigModelDto {
+                    id: m.id,
+                    manufacturer: m.manufacturer,
+                    model: m.model,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Inner helper: snapshot the current session status. Pure on `&Arc<ModemSession>`
 /// so tests can exercise it without constructing a Tauri `State`.
 pub fn modem_get_status_inner(session: &Arc<ModemSession>) -> ModemStatus {
@@ -1896,6 +1927,13 @@ pub(crate) fn ardop_data_mode() -> tux_rig::Mode {
     tux_rig::Mode::PktUsb
 }
 
+/// Resolve the operator-configured rig data mode, falling back to the ardop
+/// default when the persisted token is unrecognised (e.g. hand-edited config).
+/// (tuxlink-31c63)
+pub(crate) fn rig_data_mode(rig: &RigUiConfig) -> tux_rig::Mode {
+    tux_rig::Mode::from_rigctl(&rig.data_mode).unwrap_or_else(ardop_data_mode)
+}
+
 // ── Task 8: pre-audio CAT tune helper ───────────────────────────────────────
 
 /// Whether to stop rigctld (release the CAT serial) immediately after tuning,
@@ -1913,7 +1951,7 @@ pub(crate) fn should_release_after_tune(rig: &RigUiConfig) -> bool {
 /// - Returns `Ok(None)` when rig control is not configured
 ///   ([`rig_config_from`] is `None`) OR no target frequency is known
 ///   (`freq_hz` is `None`) — preserving today's no-tune behavior.
-/// - Otherwise spawns [`tux_rig::ManagedRig`], tunes to `(hz, ardop_data_mode())`,
+/// - Otherwise spawns [`tux_rig::ManagedRig`], tunes to `(hz, rig_data_mode(rig_cfg))`,
 ///   then branches on [`should_release_after_tune`]:
 ///   - close-serial (internal codec): `release_serial()` then `Ok(None)` —
 ///     the serial is freed before audio.
@@ -1932,7 +1970,7 @@ pub(crate) fn tune_rig_for_connect(
     };
     let mut rig =
         tux_rig::ManagedRig::spawn(rc).map_err(|e| format!("rigctld spawn failed: {e}"))?;
-    rig.tune(hz, ardop_data_mode())
+    rig.tune(hz, rig_data_mode(rig_cfg))
         .map_err(|e| format!("CAT tune failed: {e}"))?;
     if should_release_after_tune(rig_cfg) {
         // Close-serial: free the serial before audio. Drop happens at fn end.
@@ -2003,7 +2041,7 @@ pub fn ardop_tune_rig(freq_hz: u64) -> Result<(), String> {
     let rc = rig_config_from(&cfg.rig)
         .ok_or_else(|| "rig control not configured — set the rig model + CAT serial".to_string())?;
     let mut rig = tux_rig::ManagedRig::spawn(rc).map_err(|e| e.to_string())?;
-    rig.tune(freq_hz, ardop_data_mode()).map_err(|e| e.to_string())?;
+    rig.tune(freq_hz, rig_data_mode(&cfg.rig)).map_err(|e| e.to_string())?;
     // Drop releases the serial (close-serial-safe for internal-codec radios).
     Ok(())
 }
@@ -4575,5 +4613,21 @@ mod tests {
             ModemState::Error,
             "genuine failure must set Error status; got: {state:?}"
         );
+    }
+
+    #[test]
+    fn rig_data_mode_falls_back_on_unknown_token() {
+        // Struct-literal init (not default-then-reassign) to avoid clippy's
+        // field_reassign_with_default, which is denied under -D warnings.
+        let rig = crate::config::RigUiConfig {
+            data_mode: "NONSENSE".into(),
+            ..Default::default()
+        };
+        assert_eq!(super::rig_data_mode(&rig), super::ardop_data_mode());
+        let rig = crate::config::RigUiConfig {
+            data_mode: "USB-D".into(),
+            ..Default::default()
+        };
+        assert_eq!(super::rig_data_mode(&rig), tux_rig::Mode::DataU);
     }
 }

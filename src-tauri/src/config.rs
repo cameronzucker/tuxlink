@@ -958,6 +958,12 @@ pub enum PttMethod {
 fn default_cat_baud() -> u32 {
     38400
 }
+/// Default rig data mode token (the value rigctld's `M` command sets). PKTUSB
+/// is the HF Winlink default and the proven FT-710 data mode. Backs
+/// [`RigUiConfig`] (tuxlink-31c63).
+fn default_data_mode() -> String {
+    "PKTUSB".to_string()
+}
 /// Default CAT key command (FT-710 `TX1;`).
 fn default_cat_key_cmd() -> String {
     "TX1;".into()
@@ -1340,6 +1346,17 @@ pub struct RigUiConfig {
     /// 2026-06-23).
     #[serde(default = "default_cat_baud")]
     pub cat_baud: u32,
+    /// Rig data mode token (e.g. "PKTUSB", "USB-D") rigctld sets on tune. Default
+    /// "PKTUSB". Parsed via `tux_rig::Mode::from_rigctl`; an unrecognised token
+    /// falls back to the ardop default at tune time. (tuxlink-31c63)
+    #[serde(default = "default_data_mode")]
+    pub data_mode: String,
+    /// Logical keys of profile-managed fields the operator has hand-edited, so a
+    /// later radio change does NOT overwrite them with the new radio's profile
+    /// value. Keys: "ptt_method", "data_mode", "cat_baud", "close_serial".
+    /// Additive; empty by default. (tuxlink-31c63)
+    #[serde(default)]
+    pub rig_field_overrides: Vec<String>,
 }
 
 impl Default for RigUiConfig {
@@ -1354,6 +1371,8 @@ impl Default for RigUiConfig {
             qsy_on_fail: false,
             cat_serial_path: None,
             cat_baud: default_cat_baud(),
+            data_mode: default_data_mode(),
+            rig_field_overrides: Vec::new(),
         }
     }
 }
@@ -2428,6 +2447,28 @@ mod tests {
         let json = serde_json::to_string(&c).unwrap();
         let back: RigUiConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back, c, "RigUiConfig must round-trip JSON verbatim");
+    }
+
+    #[test]
+    fn rig_ui_config_data_mode_and_overrides_round_trip() {
+        let cfg = RigUiConfig {
+            data_mode: "USB-D".to_string(),
+            rig_field_overrides: vec!["cat_baud".to_string(), "ptt_method".to_string()],
+            ..RigUiConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: RigUiConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.data_mode, "USB-D");
+        assert_eq!(back.rig_field_overrides, vec!["cat_baud", "ptt_method"]);
+    }
+
+    #[test]
+    fn rig_ui_config_defaults_new_fields_when_absent() {
+        // A config JSON that predates data_mode / rig_field_overrides fills both
+        // from their #[serde(default)]s.
+        let back: RigUiConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(back.data_mode, "PKTUSB");
+        assert!(back.rig_field_overrides.is_empty());
     }
 
     /// Migration (tuxlink-8fkkk): a legacy config whose CAT serial link lived
