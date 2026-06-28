@@ -30,11 +30,10 @@ export interface MenuHandlers {
    *  and show the inline result overlay (tuxlink-lqw2). Internet telnet, no
    *  transmission. */
   verifyCms: () => void;
-  /** Open the inline Settings panel (GPS state + position precision), tuxlink-39b. */
+  /** Open the inline multi-section Settings panel at its default section
+   *  (the panel's own left nav reaches Winlink Account, Location & GPS, etc.),
+   *  tuxlink-39b / tuxlink-esb65. */
   openSettings: () => void;
-  /** Open the inline Settings panel on the Winlink Account section (CMS password
-   *  change + keyring re-enter), tuxlink-vfb3. */
-  openWinlinkAccount: () => void;
   /** Open the inline Theme Designer (View → Color Scheme → Customize…), tuxlink-vgth. */
   openThemeDesigner: () => void;
   /** Open the inline About Tuxlink dialog (tuxlink-35g0). */
@@ -85,14 +84,12 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:message:grib_request': h.openRequestCenter('grib'); return;
     case 'menu:view:status_bar': h.toggleStatusBar(); return;
     case 'menu:view:radio_panel': h.toggleRadioPanel(); return;
-    // tuxlink-39b: the consolidated GPS & Privacy settings item opens the inline
-    // Settings panel (previously a cluster of dead no-op stubs found in the
-    // post-merge smoke of #113).
-    case 'menu:tools:settings_privacy':
+    // tuxlink-esb65: one honest "Settings…" entry opens the inline multi-section
+    // Settings panel. Replaces the former settings_privacy + settings_account
+    // leaves, which both opened this same panel (the GPS-flavored naming hid the
+    // other sections). The account section is reached via the panel's left nav.
+    case 'menu:tools:settings':
       h.openSettings(); return;
-    // tuxlink-vfb3: Winlink Account opens the Settings panel on the account section.
-    case 'menu:tools:settings_account':
-      h.openWinlinkAccount(); return;
     // tuxlink-vgth: opens the inline Theme Designer panel.
     case 'menu:view:customize_theme':
       h.openThemeDesigner(); return;

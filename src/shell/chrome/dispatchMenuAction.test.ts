@@ -15,7 +15,6 @@ function handlers(): MenuHandlers {
     verifyCms: vi.fn(),
     setScheme: vi.fn(),
     openSettings: vi.fn(),
-    openWinlinkAccount: vi.fn(),
     openThemeDesigner: vi.fn(),
     openAbout: vi.fn(),
     openHelp: vi.fn(),
@@ -181,21 +180,13 @@ describe('dispatchMenuAction', () => {
     expect(h.openUninstallCleanup).toHaveBeenCalledOnce();
   });
 
-  // tuxlink-39b: the consolidated GPS & Privacy settings item opens the panel
-  // (previously a cluster of dead no-op stubs).
-  it('routes the GPS & Privacy settings item to openSettings', () => {
+  // tuxlink-esb65: the single honest "Settings…" item opens the multi-section
+  // Settings panel. Replaces the former settings_privacy + settings_account
+  // leaves that both opened this same panel.
+  it('routes the Settings item to openSettings', () => {
     const h = handlers();
-    dispatchMenuAction('menu:tools:settings_privacy', h);
+    dispatchMenuAction('menu:tools:settings', h);
     expect(h.openSettings).toHaveBeenCalledOnce();
-  });
-
-  // tuxlink-vfb3: Winlink Account opens the Settings panel on the account section.
-  it('routes the Winlink Account settings item to openWinlinkAccount', () => {
-    const h = handlers();
-    dispatchMenuAction('menu:tools:settings_account', h);
-    expect(h.openWinlinkAccount).toHaveBeenCalledOnce();
-    // Must NOT also fire the GPS/privacy entry point.
-    expect(h.openSettings).not.toHaveBeenCalled();
   });
 
   // tuxlink-eymu: the Request Center replaces the standalone Catalog Request

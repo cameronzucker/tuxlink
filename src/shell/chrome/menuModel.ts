@@ -104,20 +104,12 @@ export const MENU_TREE: TopMenu[] = [
     // was removed in the tuxlink-lqw2 declutter (no backing implementation).
     { id: 'menu:tools:templates', label: 'Templates', disabled: true },
     { separator: true },
-    { label: 'Settings', submenu: [
-      // tuxlink-vfb3: Winlink Account — opens the inline Settings panel directly
-      // on the Winlink Account section (CMS password change + keyring re-enter).
-      { id: 'menu:tools:settings_account', label: 'Winlink Account…' },
-      // tuxlink-lqw2: the disabled "Connection" leaf was removed (no settings
-      // panel behind it). GPS & Privacy is the reachable Settings surface.
-      // tuxlink-39b: one entry opens the GPS/privacy settings panel (gps_state +
-      // position precision). The former granular leaves (GPS state / Position
-      // precision / a duplicate GPS) all opened the same box — consolidated.
-      { id: 'menu:tools:settings_privacy', label: 'GPS & Privacy…' },
-      // tuxlink-ndi4: the "Map tiles…" LAN-raster-source config entry was removed
-      // with the self-hosted vector basemap swap — the basemap no longer consumes
-      // a configurable LAN tile source.
-    ] },
+    // tuxlink-esb65: a single honest "Settings…" entry replaces the former
+    // Settings submenu, whose two leaves ("Winlink Account…" + "GPS & Privacy…")
+    // both opened the SAME multi-section SettingsPanel — the GPS-flavored naming
+    // hid every other section (account, theme, location) behind it. The panel's
+    // own left nav reaches each section once open, so one door is enough.
+    { id: 'menu:tools:settings', label: 'Settings…' },
     // "Preferences" removed — it duplicated "Settings" (operator call 2026-05-22).
   ] },
   { label: 'Help', items: [
