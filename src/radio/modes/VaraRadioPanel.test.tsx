@@ -504,7 +504,11 @@ describe('<VaraRadioPanel>', () => {
     renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('vara-rig-section')).toBeInTheDocument());
     const rig = screen.getByTestId('vara-rig-section');
-    expect(within(rig).getByTestId('rig-model')).toBeInTheDocument();
+    // rig-model renders only after RigControlSection's async rig_list_models
+    // invoke resolves (RigControlSection.tsx:90), which lands after the section
+    // wrapper. Await it like the sibling RigControlSection.test.tsx:89 does — a
+    // bare getByTestId here races the load and flakes under full-suite ordering.
+    expect(await within(rig).findByTestId('rig-model')).toBeInTheDocument();
     expect(within(rig).getByTestId('rig-cat-port')).toBeInTheDocument();
     expect(within(rig).getByTestId('rig-data-mode')).toBeInTheDocument();
     // ARDOP-only rows are NOT in the VARA rig group

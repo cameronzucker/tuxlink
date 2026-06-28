@@ -46,6 +46,9 @@ export interface MenuHandlers {
   reportIssue: () => void;
   /** Open the inline uninstall cleanup dialog (tuxlink-uodl). */
   openUninstallCleanup: () => void;
+  /** Open the Connect an AI agent modal — per-agent MCP copy-paste connect
+   *  commands (tuxlink-l9sq4). */
+  openConnectAgent: () => void;
   /** Open the inline Catalog Builder panel (tuxlink-a2gd) — location-aware
    *  station finder (direct /listings poll) + by-message info-category requests. */
   openCatalogBuilder: () => void;
@@ -106,6 +109,9 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
       h.reportIssue(); return;
     case 'menu:help:uninstall_cleanup':
       h.openUninstallCleanup(); return;
+    // tuxlink-l9sq4: Tools → Connect an AI agent opens the ConnectAgentModal.
+    case 'menu:tools:connect_agent':
+      h.openConnectAgent(); return;
   }
   if (id.startsWith('menu:view:scheme:')) {
     const scheme = id.slice('menu:view:scheme:'.length);

@@ -99,6 +99,9 @@ export const MENU_TREE: TopMenu[] = [
     // (verify_cms_connection): confirms CMS reachability + auth over internet
     // telnet, no transmission. Relocated here from the (removed) Session menu.
     { id: 'menu:tools:verify_cms', label: 'Verify CMS Connection…' },
+    // tuxlink-l9sq4: Tools → Connect an AI agent — opens the ConnectAgentModal
+    // with per-agent MCP copy-paste connection commands.
+    { id: 'menu:tools:connect_agent', label: 'Connect an AI agent…' },
     // tuxlink-esb65: the disabled "Templates" stub was removed — it was leftover
     // menu scaffolding for a Tools-level forms browser that never landed there.
     // The Standard Forms library (wle-forms/Standard_Forms) ships and is reached

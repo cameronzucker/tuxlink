@@ -71,6 +71,11 @@ const UninstallCleanupDialog = lazy(() =>
 const VerifyCmsDialog = lazy(() =>
   import('./VerifyCmsDialog').then((m) => ({ default: m.VerifyCmsDialog })),
 );
+// tuxlink-l9sq4: Tools → Connect an AI agent. Per-agent MCP copy-paste
+// connection commands.
+const ConnectAgentModal = lazy(() =>
+  import('./ConnectAgentModal').then((m) => ({ default: m.ConnectAgentModal })),
+);
 // tuxlink-gife: propagation-aware Find a Station overlay (sibling panel, not a
 // main-content view). Supersedes the location-aware Catalog Builder (a2gd).
 const StationFinderPanel = lazy(() =>
@@ -416,6 +421,8 @@ export function AppShell() {
   const [uninstallCleanupOpen, setUninstallCleanupOpen] = useState(false);
   // tuxlink-lqw2: inline Verify CMS Connection overlay, opened from Tools.
   const [verifyCmsOpen, setVerifyCmsOpen] = useState(false);
+  // tuxlink-l9sq4: Connect an AI agent modal, opened from Tools.
+  const [connectAgentOpen, setConnectAgentOpen] = useState(false);
   // tuxlink-a2gd: inline Catalog Builder ("Find a Gateway"), opened from Message → Find a Gateway.
   const [catalogBuilderOpen, setCatalogBuilderOpen] = useState(false);
   // tuxlink-eymu: Request Center overlay. Carries the initial inner view;
@@ -1355,6 +1362,8 @@ export function AppShell() {
       });
     },
     openUninstallCleanup: () => setUninstallCleanupOpen(true),
+    // tuxlink-l9sq4: Tools → Connect an AI agent opens the modal.
+    openConnectAgent: () => setConnectAgentOpen(true),
     // tuxlink-lqw2: Tools → Verify CMS Connection opens the inline probe overlay.
     verifyCms: () => setVerifyCmsOpen(true),
     reportIssue: () => {
@@ -2025,6 +2034,14 @@ export function AppShell() {
       {verifyCmsOpen && (
         <Suspense fallback={null}>
           <VerifyCmsDialog open={true} onClose={() => setVerifyCmsOpen(false)} />
+        </Suspense>
+      )}
+
+      {/* tuxlink-l9sq4: Connect an AI agent modal — per-agent MCP copy-paste
+          connection commands. Lazy-loaded; only fetches on first open. */}
+      {connectAgentOpen && (
+        <Suspense fallback={null}>
+          <ConnectAgentModal open={true} onClose={() => setConnectAgentOpen(false)} />
         </Suspense>
       )}
 

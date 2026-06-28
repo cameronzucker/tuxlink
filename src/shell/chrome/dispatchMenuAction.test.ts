@@ -21,6 +21,7 @@ function handlers(): MenuHandlers {
     openLogging: vi.fn(),
     reportIssue: vi.fn(),
     openUninstallCleanup: vi.fn(),
+    openConnectAgent: vi.fn(),
     openCatalogBuilder: vi.fn(),
     openRequestCenter: vi.fn(),
     quit: vi.fn(),
@@ -178,6 +179,13 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:help:uninstall_cleanup', h);
     expect(h.openUninstallCleanup).toHaveBeenCalledOnce();
+  });
+
+  // tuxlink-l9sq4: Tools → Connect an AI agent opens the ConnectAgentModal.
+  it('routes tools:connect_agent to openConnectAgent', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:tools:connect_agent', h);
+    expect(h.openConnectAgent).toHaveBeenCalledOnce();
   });
 
   // tuxlink-esb65: the single honest "Settings…" item opens the multi-section

@@ -64,6 +64,8 @@ responsibility.
 
 ## Connecting an agent
 
+The quickest path is **Tools → Connect an AI agent…**, which shows a ready-to-paste connect command for Claude Code, Codex, Gemini CLI, or any MCP client, with this station's paths already filled in.
+
 The server listens on a Unix-domain socket in the user's runtime directory
 (`$XDG_RUNTIME_DIR/tuxlink/mcp.sock`, or a private fallback when the runtime
 directory is not private to the user). A bundled stdio shim, `tuxlink-mcp`,
