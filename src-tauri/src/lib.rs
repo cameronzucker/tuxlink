@@ -35,6 +35,7 @@ pub mod modem_commands;
 pub mod modem_status;
 pub mod propagation;
 pub mod mesh;
+pub mod mcp_connection;
 
 #[cfg(test)]
 pub mod test_helpers;
@@ -315,7 +316,7 @@ mod linux_gl_env_tests {
 /// user cannot pre-create / rename / replace an ancestor under the process umask
 /// and plant a fake `mcp.sock`.
 #[cfg(target_os = "linux")]
-fn mcp_dir_is_safe(dir: &std::path::Path, uid: u32) -> bool {
+pub(crate) fn mcp_dir_is_safe(dir: &std::path::Path, uid: u32) -> bool {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
     match std::fs::symlink_metadata(dir) {
         Ok(meta) => {
@@ -1343,8 +1344,10 @@ pub fn run() {
                     // XDG_RUNTIME_DIR unset/empty.
                     _ => temp_fallback(my_uid),
                 };
-                if let Some(mcp_dir) = mcp_dir {
-                    let sock_path = mcp_dir.join("mcp.sock");
+                if let Some(_mcp_dir) = mcp_dir {
+                    // Path is computed by the shared resolver so the command
+                    // and the server always agree on the socket location.
+                    let sock_path = crate::mcp_connection::mcp_socket_path();
 
                     // Share the already-managed egress authority (line ~655's
                     // `.manage(Arc::new(EgressGuard::new()))`). Same TypeId: the
@@ -1846,6 +1849,8 @@ pub fn run() {
             crate::ui_core::security_commands::egress_arm,
             crate::ui_core::security_commands::egress_disarm,
             crate::ui_core::security_commands::egress_status,
+            // tuxlink-l9sq4 Task 2: MCP connection info (socket path, shim path, liveness).
+            crate::mcp_connection::mcp_connection_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
