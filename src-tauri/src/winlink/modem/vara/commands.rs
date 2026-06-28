@@ -32,7 +32,9 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::{mpsc, Notify};
 
 use crate::config::{self, VaraUiConfig};
-use crate::modem_commands::{tune_rig_for_connect, walk_candidates, DialCandidate};
+use crate::modem_commands::{
+    clamp_connect_candidates, tune_rig_for_connect, walk_candidates, DialCandidate,
+};
 use crate::modem_status::{
     ExchangeState, ShutdownableStream, TransportOwner, ARBITER_YIELD_TIMEOUT,
 };
@@ -1784,7 +1786,14 @@ fn run_vara_b2f_with_transport(
     // session-scoped rig lifetime for VARA's single-call connect+exchange+
     // disconnect. On the close-serial path `tune_rig_for_connect` releases the
     // serial and returns `None`, so there is nothing to hold.
-    let candidates = vara_dial_candidates(target, freq_hz, qsy_candidates);
+    // tuxlink-qevsf (SAFETY/Part 97): auto-QSY disabled — the station must not
+    // transmit on any frequency the operator has not seen + selected. Only the
+    // operator-chosen channel (candidate[0]) is dialed. Restored by the
+    // Channel-Selection redesign (Find a Station = operator-driven channel picker).
+    let candidates =
+        clamp_connect_candidates(vara_dial_candidates(target, freq_hz, qsy_candidates));
+    // The clamp above leaves a single candidate, so the walk has nothing to
+    // advance to regardless of this operator flag (tuxlink-8fkkk).
     let qsy_on_fail = cfg.rig.qsy_on_fail;
 
     // The last candidate's failure message — surfaced if no candidate connects.
@@ -2143,6 +2152,32 @@ mod tests {
         assert_eq!(c[0].freq_hz, Some(14_105_000));
         assert_eq!(c[1].target, "GW2");
         assert_eq!(c[1].freq_hz, Some(7_103_000));
+    }
+
+    /// tuxlink-qevsf (SAFETY/Part 97): the VARA connect command assembles the
+    /// candidate list via `vara_dial_candidates` and then clamps it with
+    /// `clamp_connect_candidates` before the walk. Even when the operator
+    /// supplied multiple QSY candidates, only candidate[0] — the channel they
+    /// saw + selected — survives, so the station cannot auto-transmit on an
+    /// unseen frequency. This asserts the command's clamp, not the pure
+    /// assembler (which still passes the full list through verbatim).
+    #[test]
+    fn connect_clamps_assembled_candidates_to_first() {
+        let supplied = vec![
+            DialCandidate {
+                target: "GW1".into(),
+                freq_hz: Some(14_105_000),
+            },
+            DialCandidate {
+                target: "GW2".into(),
+                freq_hz: Some(7_103_000),
+            },
+        ];
+        let assembled = vara_dial_candidates("IGNORED", Some(3_580_000), Some(supplied));
+        let clamped = clamp_connect_candidates(assembled);
+        assert_eq!(clamped.len(), 1, "only the operator-chosen channel survives");
+        assert_eq!(clamped[0].target, "GW1");
+        assert_eq!(clamped[0].freq_hz, Some(14_105_000));
     }
 
     #[test]
