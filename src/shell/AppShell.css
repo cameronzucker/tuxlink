@@ -396,11 +396,30 @@
 /* Egress ARM surface (MCP phase 3.6) — the operator arms/disarms agent
    send-authority and sees its live state. Reuses the .dash-status-dot tones
    (idle=off, green=armed, tx=tainted/locked) so it reads as part of the ribbon. */
-.layout-b .dashboard .dash-egress-row {
+/* Agent-send chip (compact ribbon trigger). Replaces the old inline egress row. */
+.layout-b .dashboard .dash-egress-chip {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: var(--text);
   font-size: 12px;
+  cursor: pointer;
+}
+.layout-b .dashboard .dash-egress-chip:hover,
+.layout-b .dashboard .dash-egress-chip[aria-expanded='true'] {
+  border-color: var(--accent);
+}
+.layout-b .dashboard .dash-egress-label {
+  color: var(--text-dim);
+}
+.layout-b .dashboard .dash-egress-caret {
+  color: var(--text-faint);
+  font-size: 10px;
 }
 .layout-b .dashboard .dash-egress-state {
   font-family: var(--mono);
@@ -412,54 +431,85 @@
   font-variant-numeric: tabular-nums;
   color: var(--success);
 }
-.layout-b .dashboard .dash-egress-locked {
-  font-size: 11px;
-  color: var(--error, #e5534b);
-}
-.layout-b .dashboard .egress-presets {
-  display: inline-flex;
-  gap: 4px;
-}
-.layout-b .dashboard .egress-arm-button {
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  padding: 4px 9px;
-  cursor: pointer;
-  color: var(--text-dim);
-  background: transparent;
+
+/* Portaled popover (anchored under the chip; position:fixed via the inline
+   top/left from measured coords). Top-level — the panel lives on <body>. */
+.egress-arm-popover {
+  position: fixed;
+  z-index: 200;
+  min-width: 240px;
+  background: var(--bg);
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
-}
-.layout-b .dashboard .egress-arm-button:hover:not(:disabled) {
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  padding: 13px 14px 14px;
+  font-size: 12px;
   color: var(--text);
-  border-color: var(--accent);
 }
-.layout-b .dashboard .egress-arm-button:disabled,
-.layout-b .dashboard .egress-disarm-button:disabled {
-  opacity: 0.6;
+.egress-arm-popover .egress-pop-title {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 10px;
+}
+.egress-arm-popover .egress-arm-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 7px;
+}
+.egress-arm-popover .egress-presets {
+  display: flex;
+  gap: 7px;
+}
+.egress-arm-popover .egress-arm-button {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  padding: 7px 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.egress-arm-popover .egress-arm-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+.egress-arm-popover .egress-disarm-button {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 0;
+  border: 1px solid var(--error);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--error);
+  cursor: pointer;
+}
+.egress-arm-popover .egress-arm-button:disabled,
+.egress-arm-popover .egress-disarm-button:disabled {
+  opacity: 0.55;
   cursor: default;
 }
-.layout-b .dashboard .egress-disarm-button {
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 600;
-  padding: 4px 11px;
-  cursor: pointer;
-  color: var(--error, #e5534b);
-  background: transparent;
-  border: 1px solid var(--error, #e5534b);
-  border-radius: 5px;
-}
-.layout-b .dashboard .egress-disarm-button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--error, #e5534b) 16%, transparent);
-}
-.layout-b .dashboard .dash-egress-error {
+.egress-arm-popover .egress-pop-help {
   font-size: 11px;
-  color: var(--error, #e5534b);
-  margin-top: 2px;
+  color: var(--text-faint);
+  line-height: 1.45;
+  margin-top: 10px;
 }
+.egress-arm-popover .dash-egress-locked {
+  font-size: 12px;
+  color: var(--error);
+  line-height: 1.4;
+}
+.egress-arm-popover .dash-egress-error {
+  margin-top: 10px;
+  color: var(--error);
+  font-size: 11px;
+}
+
 /* "On connect" segmented control — Review | Download all (tuxlink-pmp5). Inline
    opt-out for the review-pending-messages default; lives in the ribbon next to
    Connect, not in the Settings modal. */
