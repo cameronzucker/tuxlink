@@ -31,6 +31,96 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.78.0](https://github.com/cameronzucker/tuxlink/compare/v0.77.0...v0.78.0) (2026-06-28)
+
+
+### Features
+
+* **agent-runner:** bounded agent loop crate (Provider/ToolInvoker, Elmer spine) ([c009c1b](https://github.com/cameronzucker/tuxlink/commit/c009c1b953e4d5bd221999ff19f7cdea484e80b6))
+* **config:** rigctld/close-serial/qsy fields on ArdopUiConfig (+TS DTO) ([5e81dc0](https://github.com/cameronzucker/tuxlink/commit/5e81dc0ab80badc6eeb8fdc1c657ac2b5194218e))
+* **d3zwe:** headless local-model MCP harness binary (agent-runner frontend) ([6fd28bb](https://github.com/cameronzucker/tuxlink/commit/6fd28bb664e13848d353c426e18a8adc33430460))
+* **mcp:** add tuxlink://agents/guide read-first onboarding resource ([a79dcc7](https://github.com/cameronzucker/tuxlink/commit/a79dcc7d4a1af5eceb7f36e1701b69d44a802a4d))
+* **mcp:** CAT rig-control levers (rig_status, config_get_rig, rig_tune, connect parity) ([83a86dc](https://github.com/cameronzucker/tuxlink/commit/83a86dc297ba8414ac6a18bc576cccd94731ac64))
+* **mcp:** mcp_connection_info command + factor socket-path resolver ([b0f74e4](https://github.com/cameronzucker/tuxlink/commit/b0f74e466e1b23f86859ae7b32453c75f1c0baef))
+* **mcp:** phase 3.1 Task 4 — spawn the MCP UDS server from Tauri setup ([46031c2](https://github.com/cameronzucker/tuxlink/commit/46031c2bdd22cf9796ff772ec9405761a097fb8e))
+* **mcp:** phase 3.1 Task 5 — tuxlink-mcp stdio shim (dumb byte-pump) ([9a4f779](https://github.com/cameronzucker/tuxlink/commit/9a4f77932e2826925b8e6fc7829fa4d3aaf10c74))
+* **mcp:** phase 3.1 Task 6 — tuxlink-mcp-testserver (tier-2 harness) ([d495bb9](https://github.com/cameronzucker/tuxlink/commit/d495bb9daf75135f8858ce30e9a03442f4855494))
+* **mcp:** phase 3.1 Tasks 1-2 — workspace + rmcp router + server_info ([9a1e9b2](https://github.com/cameronzucker/tuxlink/commit/9a1e9b2c2a14cb41f822ab938e696a4522053cb2))
+* **mcp:** phase 3.2 Tier-1 read tools — ports-and-adapters + redaction + taint ([a38b49e](https://github.com/cameronzucker/tuxlink/commit/a38b49e6f5c11b535eccdf76109678a35dc43957))
+* **mcp:** phase 3.3 egress enforcement gate + abort (guarded_egress) ([650c6a7](https://github.com/cameronzucker/tuxlink/commit/650c6a7fa817b1c27cccfe6c0adaa5f896978a8a))
+* **mcp:** phase 3.4 Tier-2 writes (armed+taint gated) + Tier-3 compose ([62ccc9b](https://github.com/cameronzucker/tuxlink/commit/62ccc9bc1e56c2e9449741410946488178a13fc1))
+* **mcp:** phase 3.5 knowledge layer — MCP resources + prompts ([4e3d2b8](https://github.com/cameronzucker/tuxlink/commit/4e3d2b895319b3d27923dd03a0cd8a5c555e7f19))
+* **mcp:** phase 3.6 operator arm surface (egress arm/disarm GUI) ([59a632c](https://github.com/cameronzucker/tuxlink/commit/59a632c7c44e3bcc4478e8a310f0f46e21aba1e2))
+* **mcp:** serve local-agent-deployment as a curated knowledge resource ([b870e5d](https://github.com/cameronzucker/tuxlink/commit/b870e5d37da55ac2412f2baa4e536548969a279e))
+* **mcp:** station-intelligence Chunk 1 — StationPort/PredictionPort + tools (Pi) ([c3c01f5](https://github.com/cameronzucker/tuxlink/commit/c3c01f5f2d18edc1d8d2e09a34ccc4e52188fe9f))
+* **mcp:** station-intelligence Chunk 2 — monolith StationPort/PredictionPort impls ([00e7f06](https://github.com/cameronzucker/tuxlink/commit/00e7f0628231a3e48971eaf2648f5cac5b8270ac))
+* **rig:** bundled documented per-radio pre-fill profile table ([15570c5](https://github.com/cameronzucker/tuxlink/commit/15570c51927fd763fa9c9b7ecd898280af838c36))
+* **rig:** live VFO readout while connected (DRA-100 keep-serial path) ([5f6c7d5](https://github.com/cameronzucker/tuxlink/commit/5f6c7d594d6fa75592075ab47cc73a065241d3ac))
+* **rig:** merge ARDOP audio+PTT+rig into one Radio & audio group ([1ce078f](https://github.com/cameronzucker/tuxlink/commit/1ce078f76d8f164116f6d0c4c7f5620a6cd0138b))
+* **rig:** operator-settable data_mode + rig_field_overrides on RigUiConfig ([2196d61](https://github.com/cameronzucker/tuxlink/commit/2196d612b8a33efa8660a8b59c91469ff30e05e8))
+* **rig:** override-respecting per-radio pre-fill for shared rig fields ([db1cd5b](https://github.com/cameronzucker/tuxlink/commit/db1cd5b7b3fdca6c3ee86336ffbdb8fcd6a01cce))
+* **rig:** pre-audio CAT tune step + operator-gated QSY-on-fail ([aae731f](https://github.com/cameronzucker/tuxlink/commit/aae731fd0b1c1e35294f5f7715d1356d5ef94b07))
+* **rig:** rig_config_from + ardop_tune_rig Tune-only command ([a0b61ea](https://github.com/cameronzucker/tuxlink/commit/a0b61ea95425b91284e309017ec1974cbc45c267))
+* **rig:** rig_list_models command parsing rigctl -l ([2cd94dd](https://github.com/cameronzucker/tuxlink/commit/2cd94dd95a8c14c12acb7f933d4c68df0c51be74))
+* **rig:** runtime model picker + serial CAT-port picker + Mode row ([0a9d098](https://github.com/cameronzucker/tuxlink/commit/0a9d098438d7c0bb02c1cf86ac7293655c1aaf20))
+* **shell:** compact Agent-send into a ribbon chip + popover ([f2575b3](https://github.com/cameronzucker/tuxlink/commit/f2575b38a30c0fea5f6e9d042be263adcfee756b))
+* **shell:** ConnectAgentModal — per-agent copy-paste connect commands ([6dcd29c](https://github.com/cameronzucker/tuxlink/commit/6dcd29cec76b34281b5a6655a050ce5cded9c36e))
+* **shell:** per-agent MCP connect-command builder ([487bbea](https://github.com/cameronzucker/tuxlink/commit/487bbeaef54db697e766ee2ade2cece2d639b61c))
+* **shell:** wire Tools → Connect an AI agent ([164fb44](https://github.com/cameronzucker/tuxlink/commit/164fb449fe49b8386219865af36cc06472d41a29))
+* **tux-rig:** ManagedRig spawn/tune/release-serial lifecycle ([26aac91](https://github.com/cameronzucker/tuxlink/commit/26aac91412be6c2b905fac3f9f3857b5876648f6))
+* **tux-rig:** Mode enum + rigctl string mapping ([6e20a55](https://github.com/cameronzucker/tuxlink/commit/6e20a55b892c707b07441add7f0194a3c99e3c1c))
+* **tux-rig:** rigctl protocol encode/decode ([2104da4](https://github.com/cameronzucker/tuxlink/commit/2104da4ceeffa06a6f37e00cfdce1b46880244ea))
+* **tux-rig:** RigctldClient + Rig trait over rigctl TCP ([2805217](https://github.com/cameronzucker/tuxlink/commit/28052178742b6e34c386833662c6f11288f9f42b))
+* **tux-rig:** scaffold crate + RigError ([61257fe](https://github.com/cameronzucker/tuxlink/commit/61257fe9a0edee06eda4f6d22011e081b12409a3))
+* **ui:** ARDOP frequency element + Tune-only button ([39e02d6](https://github.com/cameronzucker/tuxlink/commit/39e02d619ae0ae60c8974d4e4fc0560e62ab474c))
+* **ui:** prefill frequency from Find a Station handoff ([6a37787](https://github.com/cameronzucker/tuxlink/commit/6a3778766cf5b5678d682bd1e3239e813465eb47))
+* **ui:** Rig control expander (model/CAT port/close-serial/live-vfo/qsy) ([f192c65](https://github.com/cameronzucker/tuxlink/commit/f192c65045bdea50c1b66755d540591490954566))
+* **ui:** shared RigControlSection in both ARDOP + VARA panels ([b9ac45a](https://github.com/cameronzucker/tuxlink/commit/b9ac45a6dfdb17eabfa0b9822454d80beb61dd84))
+* **ui:** VARA frequency element + qsyCandidates from Find a Station (+C4) ([def2799](https://github.com/cameronzucker/tuxlink/commit/def2799eac6ede74d524d4eac5b3e83debd235cf))
+* **vara:** pre-audio CAT tune + ordered-list QSY walk on connect ([a772151](https://github.com/cameronzucker/tuxlink/commit/a772151aa1d048100ab372b44de8272505e935a1))
+
+
+### Bug Fixes
+
+* **config:** add rig field to Config literals in integration tests ([b633bf2](https://github.com/cameronzucker/tuxlink/commit/b633bf24f0e5e8a37523a0895734efcc1e669ec6))
+* **help:** group the agent-mcp topic into a Help section + bump topic count ([5f4d6c8](https://github.com/cameronzucker/tuxlink/commit/5f4d6c8edcc7738e029097bb0e1c3bb0a5918258))
+* **mcp:** 3.2 monolith port impls compile clean (CI findings) ([dfdd7e2](https://github.com/cameronzucker/tuxlink/commit/dfdd7e2b30d187eaa7fbc9ab7b381afa9df08102))
+* **mcp:** 3.3 drop packet_listen + p2p from agent surface (Codex adrev) ([48e35df](https://github.com/cameronzucker/tuxlink/commit/48e35df212fe04a1a23d21c9370b0ad06210d039))
+* **mcp:** fall back to private temp dir when XDG_RUNTIME_DIR is not private ([b66f2a6](https://github.com/cameronzucker/tuxlink/commit/b66f2a6f6e7399c1f4feb94a67a26ef1e93117ac))
+* **mcp:** inject app identity into McpState instead of core-crate env! (tier-2 finding) ([d659e29](https://github.com/cameronzucker/tuxlink/commit/d659e29142f75ad321867cb465c6083922c57e6a))
+* **mcp:** move field_reassign_with_default allow to fn level (CI clippy) ([a10e8d6](https://github.com/cameronzucker/tuxlink/commit/a10e8d6e3dfa06de420d3c55c1a321220d1068b6))
+* **mcp:** redact credential-equivalent text in error/log/status failure paths ([7c4447f](https://github.com/cameronzucker/tuxlink/commit/7c4447fd5cba36788c19707958584219b17b2a32))
+* **mcp:** remediate 5 Codex adrev findings on the 3.4 write/compose validators ([1382013](https://github.com/cameronzucker/tuxlink/commit/13820136c28cda0af31a819dbbea557bdda0e075))
+* **mcp:** remediate 6 Codex adrev findings — local-IPC hardening + CI gating ([c6d2257](https://github.com/cameronzucker/tuxlink/commit/c6d225711c657612a2753ddac805e0ac952d36c3))
+* **mcp:** remediate Codex egress/security findings on the rig levers ([0182edb](https://github.com/cameronzucker/tuxlink/commit/0182edbce27e455c8e14a0663ed81e5d92de5ca1))
+* **mcp:** single-source the MCP socket dir (eliminate double-stat race) ([8efe990](https://github.com/cameronzucker/tuxlink/commit/8efe990e1c3ef121a9bdd24a5d978039ddd8a2b4))
+* **mcp:** station-intel structured-only gateways (Codex adrev) ([4f2d586](https://github.com/cameronzucker/tuxlink/commit/4f2d586830b6434c231cd5958f836c10b9f90f31))
+* **menu:** collapse Tools→Settings submenu into one honest 'Settings…' item ([52dff10](https://github.com/cameronzucker/tuxlink/commit/52dff10a351d0f88dc5735c31c2465e6bccfdec6))
+* **menu:** remove the dead Tools→Templates stub ([e4b4984](https://github.com/cameronzucker/tuxlink/commit/e4b498438ad2b74dde53b004c43e0ad2702c15c5))
+* **rig:** abort recheck before connect_arq (C2) + bounded CAT reads (C3) ([3d3cb98](https://github.com/cameronzucker/tuxlink/commit/3d3cb985370004ae9ebe3838c570a36cfd0c0e9a))
+* **rig:** read fresh Config.rig before writing so ptt_method override survives ([b13bae8](https://github.com/cameronzucker/tuxlink/commit/b13bae8fd8561e46c50b2aa00bc4da4ca2c0c5d3))
+* **rig:** remediate 4 Codex adrev findings (VARA abort/QSY + candidate order) ([1992e29](https://github.com/cameronzucker/tuxlink/commit/1992e29de87f83eae07c7f09ee88495d95d38a8c))
+* **rig:** struct-update syntax in tests (clippy field_reassign_with_default) ([fdc6e6c](https://github.com/cameronzucker/tuxlink/commit/fdc6e6c070aceb4b034946fb9122bad1ebe8b646))
+* **safety:** disable auto-QSY — never transmit on an unseen frequency (Part 97) ([3c8ec3e](https://github.com/cameronzucker/tuxlink/commit/3c8ec3e6cbb8cf35539af4528cb92073f9ad5fde))
+* **security:** escape U+2028/U+2029 in forms js_escape + lock receiving-end invariants ([4f11440](https://github.com/cameronzucker/tuxlink/commit/4f114409a5a0142d17976e2dfc52b7a8d5299cbb))
+* **shell:** pull shared modal chrome CSS into ConnectAgentModal ([1cd0ac1](https://github.com/cameronzucker/tuxlink/commit/1cd0ac133482a6fce174da64f114d8f25850b86c))
+* **shell:** straight quotes in Agent-send note; drop unused test import ([bcb6af0](https://github.com/cameronzucker/tuxlink/commit/bcb6af0344dccea29faf550ac53ebac6a0065aac))
+* **tux-rig:** kill+reap rigctld on spawn connect-timeout ([ded8010](https://github.com/cameronzucker/tuxlink/commit/ded801040bc15395d131cffe129caadeb3255a6d))
+* **tux-rig:** persistent reader + consume rigctld two-line mode reply ([e9e7bf4](https://github.com/cameronzucker/tuxlink/commit/e9e7bf410b19d0b6d41ad993905df4b210f51fb9))
+* **tux-rig:** register tux-rig in Cargo.lock for --locked CI ([8d45cca](https://github.com/cameronzucker/tuxlink/commit/8d45cca293a195583be4a467ab9887574483c4b9))
+* **tux-rig:** snake_case test name (clippy non_snake_case) ([89d4e49](https://github.com/cameronzucker/tuxlink/commit/89d4e49b125598ee849c91bf76059de61cd91dc7))
+* **vara:** allow too_many_arguments on modem_vara_b2f_exchange ([0751455](https://github.com/cameronzucker/tuxlink/commit/0751455b8b4bffa1dafc39d87d04a97853a8f625))
+* **wizard:** make first-run recoverable + quittable on a newer-than-binary config ([b9c2b94](https://github.com/cameronzucker/tuxlink/commit/b9c2b94325cf3c7f8b6cd6819827ac92c83cf953))
+
+
+### Refactors
+
+* **config:** hoist rig+CAT-serial config to shared Config.rig (RigUiConfig) ([55dcc59](https://github.com/cameronzucker/tuxlink/commit/55dcc59aec54742c102a7adf33830af19358fe03))
+* **mcp:** extract tuxlink-security + tuxlink-mcp-core crates + UDS transport (Task 3) ([1eca6a2](https://github.com/cameronzucker/tuxlink/commit/1eca6a2ea17a733b4dc9646de85b9bb2bb0b1393))
+* **rig:** add variant=bare render mode to RigControlSection ([51b4c5a](https://github.com/cameronzucker/tuxlink/commit/51b4c5a295422a77e09637fb3e3c2109698ebdf5))
+* **rig:** de-dup ardop_config build + DialedConnection type alias ([d2888dd](https://github.com/cameronzucker/tuxlink/commit/d2888dd9275722513435986be250a74c230cff59))
+* **rig:** drop no-op useCallback on onRigRadioSelected ([d3a3a8f](https://github.com/cameronzucker/tuxlink/commit/d3a3a8fb646620b9a4c63f512cab3890a3dc9551))
+
 ## [0.77.0](https://github.com/cameronzucker/tuxlink/compare/v0.76.1...v0.77.0) (2026-06-26)
 
 
