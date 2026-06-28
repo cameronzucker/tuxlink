@@ -378,7 +378,8 @@ per-invocation operator consent. See
 
 In-app documentation lives at **Help → Documentation**; bundled topics cover the
 wizard, every transport, the mailbox, composing, HTML forms, operating modes,
-search, settings, color schemes, keyboard shortcuts, and troubleshooting. The
+search, settings, color schemes, keyboard shortcuts, troubleshooting, and AI agent
+integration. The
 source markdown resides in [`docs/user-guide/`](docs/user-guide/) for reading
 outside the app. **Help → About Tuxlink** shows the running build's version,
 license, and source-repository links.

@@ -182,4 +182,9 @@ pub static BUNDLED_TOPICS: &[DocTopic<'static>] = &[
         title: "Contacts and groups",
         markdown: include_str!("../../../docs/user-guide/34-contacts-and-groups.md"),
     },
+    DocTopic {
+        slug: "35-agent-mcp",
+        title: "AI agent integration (MCP)",
+        markdown: include_str!("../../../docs/user-guide/35-agent-mcp.md"),
+    },
 ];
