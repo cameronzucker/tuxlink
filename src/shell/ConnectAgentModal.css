@@ -1,0 +1,76 @@
+/* ConnectAgentModal — per-agent MCP connect-command overlay (tuxlink-l9sq4). */
+
+.tux-connect-agent-section {
+  margin-bottom: 18px;
+}
+
+.tux-connect-agent-section:last-of-type {
+  margin-bottom: 0;
+}
+
+.tux-connect-agent-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.tux-connect-agent-command-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.tux-connect-agent-pre {
+  flex: 1;
+  margin: 0;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--surface-raised, #1e2030);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  overflow-x: auto;
+}
+
+.tux-connect-agent-copy-btn {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tux-accent-fg);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.tux-connect-agent-copy-btn:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+.tux-connect-agent-server-warn {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  line-height: 1.45;
+}
+
+.tux-connect-agent-security-note {
+  margin: 16px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
