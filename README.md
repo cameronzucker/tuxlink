@@ -55,6 +55,7 @@ browser-served web UI.
 | Native desktop GUI | Windows only | No (CLI + web UI) | Yes |
 | Winlink forms | Yes | Yes (fetched) | Yes (bundled + native composers) |
 | Native UV-Pro Bluetooth control | No | No | Yes |
+| AI-agent control (MCP server) | No | No | Yes |
 
 Tuxlink takes a third path: it implements the Winlink B2F protocol itself,
 natively in Rust. The mailbox, the CMS connection, and the wire-protocol exchange
@@ -232,6 +233,35 @@ an LCD in direct sun. The same mailbox, two lighting modes:
        alt="Tuxlink in the Daylight color scheme: a light, high-contrast palette across the ribbon, folder sidebar, message list, and reading pane" />
 </p>
 
+### Agent integration (MCP server)
+
+Tuxlink embeds a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP)
+server that exposes the running client to an AI agent — Claude or any MCP-capable
+assistant — over a local Unix-domain socket. The agent reads live station state
+and operates the client under an authorization gate the operator holds.
+
+- **Tiered tool surface.** Diagnostic tools report backend, modem, position,
+  configuration, and device state. Station-intelligence tools query the RMS
+  gateway directory, predict HF path reliability by hour from the operator's grid
+  square, and report space-weather indices. Further tools drive rig and modem
+  control, compose and queue messages, and — only when authorized — connect to
+  the CMS and transmit.
+- **Operator-armed egress.** An agent cannot transmit, connect, or change
+  configuration on its own. The operator arms send-authority in the GUI; egress
+  and write tools are denied until armed, and the grant auto-expires. On-air
+  transmission remains a per-invocation operator act under Part 97.
+- **Prompt-injection containment.** Reading untrusted message or wire content
+  taints the session and re-locks send-authority until the operator re-arms. An
+  instruction embedded in a received message cannot become a transmission within
+  the same armed window.
+- **Curated knowledge and prompts.** The server serves operator knowledge as MCP
+  resources — a glossary, transport and device guides, and diagnostic playbooks —
+  with guided prompts for common workflows and a read-first guide to the tool
+  surface and the authorization model.
+- **Local-only transport.** The server binds a Unix-domain socket in the user's
+  runtime directory, reached through the bundled `tuxlink-mcp` stdio shim. It
+  opens no network port.
+
 ## Install
 
 Download the `.deb`, `.rpm`, or `.AppImage` for your distribution and
@@ -323,6 +353,12 @@ project in its own repository (per [ADR 0019](docs/adr/0019-sonde-rebrand-and-ex
 Tuxlink will consume it as an external modem backend; it is not yet wired into
 the desktop app's Winlink session lifecycle.
 
+An embedded MCP server (Rust crates `tuxlink-mcp-core` for the tool surface and
+`tuxlink-security` for the egress-authorization core) exposes the running client
+to AI agents over a local Unix-domain socket. Agent transmit, connect, and
+configuration-write actions pass through an operator-armed authorization gate;
+the transport opens no network port.
+
 [CLAUDE.md](CLAUDE.md) documents the agent workflow, commit discipline, ethos,
 and safety rails this project operates under.
 
@@ -342,14 +378,15 @@ per-invocation operator consent. See
 
 In-app documentation lives at **Help → Documentation**; bundled topics cover the
 wizard, every transport, the mailbox, composing, HTML forms, operating modes,
-search, settings, color schemes, keyboard shortcuts, and troubleshooting. The
+search, settings, color schemes, keyboard shortcuts, troubleshooting, and AI agent
+integration. The
 source markdown resides in [`docs/user-guide/`](docs/user-guide/) for reading
 outside the app. **Help → About Tuxlink** shows the running build's version,
 license, and source-repository links.
 
 ## License
 
-[GNU GPL v3 or later](LICENSE). Copyright 2026 Cameron Zucker.
+[GNU AGPL v3 or later](LICENSE). Copyright 2026 Cameron Zucker.
 
 ## Contributing and development
 
