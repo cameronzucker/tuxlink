@@ -60,8 +60,8 @@ export interface MenuHandlers {
  * Route a menu:* action id (from an HTML menu click OR a keyboard accelerator)
  * to the matching handler. In-process, main-window only — there is no app-global
  * event broadcast (which is what caused tuxlink-msr + the F7 recursion guard).
- * Unhandled ids (the disabled "soon" stubs, e.g. menu:tools:templates) are
- * intentionally no-ops.
+ * Unhandled ids (an unknown or removed id with no case) are intentionally
+ * no-ops rather than throwing.
  */
 export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
   switch (id) {
@@ -112,5 +112,5 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     if (isColorScheme(scheme)) h.setScheme(scheme);
     return;
   }
-  // Disabled "soon" stubs (e.g. menu:tools:templates) reach here: no-op.
+  // Unknown / removed ids with no case reach here: no-op.
 }

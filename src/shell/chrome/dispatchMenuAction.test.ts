@@ -134,9 +134,9 @@ describe('dispatchMenuAction', () => {
     expect(h.print).toHaveBeenCalledOnce();
   });
 
-  it('is a safe no-op for stub/unhandled ids', () => {
+  it('is a safe no-op for unknown/removed ids', () => {
     const h = handlers();
-    // The disabled "soon" stub and an entirely unknown id both no-op.
+    // Ids with no case (removed or never-wired) no-op rather than throw.
     expect(() => dispatchMenuAction('menu:tools:templates', h)).not.toThrow();
     expect(() => dispatchMenuAction('menu:tools:preferences', h)).not.toThrow();
   });

@@ -99,10 +99,11 @@ export const MENU_TREE: TopMenu[] = [
     // (verify_cms_connection): confirms CMS reachability + auth over internet
     // telnet, no transmission. Relocated here from the (removed) Session menu.
     { id: 'menu:tools:verify_cms', label: 'Verify CMS Connection…' },
-    // Not-yet-wired: disabled + badged so it reads as "coming", not broken.
-    // Templates is owned by the in-flight forms epic (tuxlink-o4p9). Rig Control
-    // was removed in the tuxlink-lqw2 declutter (no backing implementation).
-    { id: 'menu:tools:templates', label: 'Templates', disabled: true },
+    // tuxlink-esb65: the disabled "Templates" stub was removed — it was leftover
+    // menu scaffolding for a Tools-level forms browser that never landed there.
+    // The Standard Forms library (wle-forms/Standard_Forms) ships and is reached
+    // from Compose (handleOpenFormPicker → CatalogBrowser), not a Tools entry; a
+    // permanently-greyed item only implied a missing feature that isn't missing.
     { separator: true },
     // tuxlink-esb65: a single honest "Settings…" entry replaces the former
     // Settings submenu, whose two leaves ("Winlink Account…" + "GPS & Privacy…")
