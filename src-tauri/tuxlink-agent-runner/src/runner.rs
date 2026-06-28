@@ -1,0 +1,160 @@
+//! The bounded agent loop (T3 COR-1, T4 COR-2, T5 COR-3).
+//!
+//! [`run`] drives a [`Provider`] and a [`ToolInvoker`] to a terminal
+//! [`RunOutcome`]. It holds ONLY a `&dyn Provider`, a `&dyn ToolInvoker`, and a
+//! read-only [`EgressStatus`] — nothing that can arm send authority or clear
+//! taint (SEC-4). Every tool call carries [`CallAuthority::Agent`] (SEC-3).
+//!
+//! Termination is guaranteed: every iteration either returns, advances the
+//! bounded tool-turn counter (COR-1), or advances the bounded malformed-retry
+//! counter (COR-3). Both counters are hard caps, so the loop cannot spin
+//! forever even against an adversarial Provider.
+
+use tokio_util::sync::CancellationToken;
+
+use crate::conversation::Conversation;
+use crate::traits::{EgressStatus, Provider, ProviderError, ToolInvoker};
+use crate::types::{CallAuthority, Limits, ModelTurn, RunOutcome, ToolCall, ToolOutcome, ToolSpec};
+use crate::validate;
+
+/// Run the bounded agent loop to completion.
+///
+/// * `user_msg` seeds the conversation.
+/// * `provider` produces model turns; `invoker` executes tool calls.
+/// * `status` is an observed (read-only) egress snapshot — purely informational.
+/// * `limits` bound turns / per-turn time / malformed retries.
+/// * `cancel` cooperatively aborts the loop (COR-2).
+pub async fn run(
+    user_msg: impl Into<String>,
+    provider: &dyn Provider,
+    invoker: &dyn ToolInvoker,
+    status: EgressStatus,
+    limits: Limits,
+    cancel: CancellationToken,
+) -> RunOutcome {
+    // `status` is observed but never used to gate (gating lives below the MCP
+    // boundary). Bind it so the read-only contract is explicit and the param is
+    // not dead.
+    let _ = status;
+
+    let mut conversation = Conversation::new(user_msg);
+    let tools: Vec<ToolSpec> = invoker.tools().to_vec();
+
+    let mut tool_turns: u32 = 0;
+    let mut malformed_retries: u32 = 0;
+
+    loop {
+        // COR-2: never start a Provider call once cancellation is requested.
+        if cancel.is_cancelled() {
+            return RunOutcome::Cancelled;
+        }
+
+        // COR-1: a per-turn wall-clock timeout. Exhaustion → NeedsOperator.
+        let turn = match tokio::time::timeout(
+            limits.per_turn_timeout,
+            provider.turn(&conversation, &tools),
+        )
+        .await
+        {
+            Err(_elapsed) => {
+                return RunOutcome::NeedsOperator(format!(
+                    "model turn exceeded the {}s per-turn timeout",
+                    limits.per_turn_timeout.as_secs()
+                ));
+            }
+            Ok(Err(err)) => return provider_error_outcome(err),
+            Ok(Ok(turn)) => turn,
+        };
+
+        match turn {
+            ModelTurn::Text(text) => {
+                conversation.push_assistant(&text);
+                return RunOutcome::Completed(text);
+            }
+            ModelTurn::ToolCalls(calls) => {
+                // COR-3: validate the calls. A malformed batch is fed back and
+                // re-prompted, bounded by `max_malformed_retries`.
+                if let Some(detail) = first_validation_error(&tools, &calls) {
+                    if malformed_retries >= limits.max_malformed_retries {
+                        return RunOutcome::InvalidAction(detail);
+                    }
+                    malformed_retries += 1;
+                    // Record the offending calls + the validation error so the
+                    // model can correct itself on the re-prompt.
+                    for call in &calls {
+                        conversation.push_tool_call(call.clone());
+                    }
+                    conversation.push_tool_error("validation", detail);
+                    continue;
+                }
+
+                // Valid batch. COR-1: this counts as one tool-executing turn.
+                // Reset the malformed counter — the model recovered.
+                malformed_retries = 0;
+                tool_turns += 1;
+                if tool_turns > limits.max_tool_turns {
+                    return RunOutcome::NeedsOperator(format!(
+                        "taken {} tool turns without finishing — continue?",
+                        limits.max_tool_turns
+                    ));
+                }
+
+                // Dispatch each call. Cancellation is checked before each and
+                // propagated into the in-flight tool future (COR-2).
+                for call in &calls {
+                    if cancel.is_cancelled() {
+                        return RunOutcome::Cancelled;
+                    }
+                    conversation.push_tool_call(call.clone());
+
+                    // SEC-3: the authority is ALWAYS Agent. There is no code
+                    // path here that can construct any other CallAuthority.
+                    let outcome = invoker
+                        .invoke(call, CallAuthority::Agent, &cancel)
+                        .await;
+
+                    // A denial is terminal: the security layer refused egress.
+                    if let ToolOutcome::Denied(reason) = &outcome {
+                        conversation.push_outcome(&call.name, &outcome);
+                        return RunOutcome::ToolDenied(reason.clone());
+                    }
+
+                    conversation.push_outcome(&call.name, &outcome);
+                }
+            }
+        }
+    }
+}
+
+/// Map a [`ProviderError`] onto a terminal outcome. The loop cannot make
+/// progress without the model, so any provider failure surfaces to the operator.
+fn provider_error_outcome(err: ProviderError) -> RunOutcome {
+    RunOutcome::NeedsOperator(format!("provider error: {err}"))
+}
+
+/// Return the first validation error across a batch of tool calls, or `None`
+/// if every call is well-formed. An unknown tool name is itself a malformed
+/// call (the model addressed a tool that does not exist).
+fn first_validation_error(tools: &[ToolSpec], calls: &[ToolCall]) -> Option<String> {
+    if calls.is_empty() {
+        return Some("model emitted an empty tool-call batch".to_string());
+    }
+    for call in calls {
+        match tools.iter().find(|t| t.name == call.name) {
+            None => {
+                let known: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+                return Some(format!(
+                    "unknown tool `{}`; available tools: {}",
+                    call.name,
+                    known.join(", ")
+                ));
+            }
+            Some(spec) => {
+                if let Err(detail) = validate::validate(&spec.json_schema, &call.args) {
+                    return Some(format!("arguments for `{}` are invalid: {detail}", call.name));
+                }
+            }
+        }
+    }
+    None
+}

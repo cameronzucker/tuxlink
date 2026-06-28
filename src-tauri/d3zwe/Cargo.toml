@@ -1,0 +1,74 @@
+# d3zwe — headless terminal frontend over `tuxlink-agent-runner` (Elmer spine).
+#
+# A thin binary that supplies the two REAL adapters the loop crate leaves
+# abstract:
+#   * `OpenAiProvider`  — a reqwest client POSTing /v1/chat/completions with the
+#     tool surface, LOOPBACK-ENFORCED by default (SEC-5): a non-loopback or
+#     link-local/metadata endpoint is rejected unless `--allow-remote` is passed,
+#     and the endpoint comes ONLY from the CLI/config, never from a tool result.
+#   * `UdsToolInvoker` — an rmcp CLIENT over the live `tuxlink-mcp` Unix-domain
+#     socket (#939 descriptor). It calls tools as Agent authority and RELAYS a
+#     `not authorized` / tainted denial as `ToolOutcome::Denied`; it NEVER arms
+#     (arm/taint is enforced server-side by the MCP guard).
+#
+# This is the N305 trial artifact: the live model+socket run is the operator's,
+# not a CI test. All non-IO logic (URL validation, response mapping, arg
+# assembly, denial classification) lives in pure, unit-tested functions; the live
+# wiring is deliberately thin.
+#
+# NOT in `default-members` (see ../Cargo.toml): a bare `cd src-tauri && cargo
+# build --release` (release.yml) must keep building ONLY the app. This member is
+# built + tested by CI's workspace-wide `cargo test`/`clippy --all-targets`.
+#
+# Versions are pinned to whatever the single workspace Cargo.lock already
+# resolves (rmcp 0.8, reqwest 0.13, url 2.5, tokio-util 0.7, async-trait 0.1) so
+# adding this member does NOT introduce a new major and churn the lock.
+[package]
+name = "d3zwe"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[[bin]]
+name = "d3zwe"
+path = "src/main.rs"
+
+[dependencies]
+tuxlink-agent-runner = { path = "../tuxlink-agent-runner" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+thiserror = "1"
+
+# Cooperative cancellation token shared with the loop crate (COR-2) and used to
+# wire Ctrl-C → abort. Same 0.7 the lockfile already resolves.
+tokio-util = "0.7"
+
+# `net` for UnixStream (the rmcp UDS client transport); `signal` for ctrl_c();
+# `time`/`macros`/`rt-multi-thread` for the binary's runtime + the per-turn
+# timeout the loop wraps; `io-util` for split halves of the UnixStream.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "io-util"] }
+
+# The model adapter HTTP client. reqwest 0.13 is already in the lockfile with the
+# `json` feature; we add no new feature here so the resolved feature set is a
+# subset of what the monolith already enables.
+reqwest = { version = "0.13", features = ["json"] }
+
+# URL parsing for the SEC-5 loopback/metadata host validation. `url` 2.5 is
+# already transitively in the lockfile (reqwest depends on it).
+url = "2"
+
+# rmcp CLIENT over the UDS. `client` is the new feature this member needs;
+# `transport-async-rw` matches the server's `(read_half, write_half)` tuple
+# transport in tuxlink-mcp-core's transport_uds.rs, so the client side connects
+# symmetrically. `macros` is not needed on the client (no #[tool] here).
+rmcp = { version = "0.8", features = ["client", "transport-async-rw"] }
+
+# uid for the default socket-path fallback (mirrors src-tauri/src/mcp_connection.rs).
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }

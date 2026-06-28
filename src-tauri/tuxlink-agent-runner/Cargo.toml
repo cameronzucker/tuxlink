@@ -1,0 +1,38 @@
+# Bounded agent-loop core (tuxlink-d3zwe, Elmer spine).
+#
+# A transport-agnostic agent loop over two async traits (`Provider`,
+# `ToolInvoker`) with cancellation and malformed-tool-call recovery. It holds
+# only a `&dyn ToolInvoker` plus a read-only status snapshot, so it can NEVER
+# arm send authority or clear taint (SEC-4). Every tool call it makes carries
+# `CallAuthority::Agent` (SEC-3) — the type has no other variant the runner can
+# construct.
+#
+# Standalone crate, like `tuxlink-mcp-core`, so the loop is unit-testable in CI
+# with FAKES (no live model, no live MCP, no Tauri). The `d3zwe` binary and the
+# Elmer pane are SEPARATE frontends that supply real `Provider` / `ToolInvoker`
+# adapters; neither lives here.
+#
+# Deliberately does NOT depend on Tauri or on tuxlink-security's mutating API.
+[package]
+name = "tuxlink-agent-runner"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Object-safe async traits (Provider / ToolInvoker), mirroring tuxlink-mcp-core's
+# port traits. Same version the monolith already resolves.
+async-trait = "0.1"
+thiserror = "1"
+# Cooperative cancellation (COR-2). tokio-util is already in the lockfile
+# (transitive); CancellationToken needs no extra feature flag.
+tokio-util = "0.7"
+tokio = { version = "1", features = ["time", "macros", "rt"] }
+
+[dev-dependencies]
+# rt-multi-thread + time for the loop tests; macros for #[tokio::test].
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
