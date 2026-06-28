@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { getRigProfile } from './rigProfiles';
 
 /** TypeScript mirror of Rust's `RigUiConfig`. Field names are snake_case to
  *  match the serde-serialised wire format from the Tauri backend. */
@@ -52,13 +53,17 @@ interface RigModel {
 interface RigControlSectionProps {
   /** Prefix for the localStorage collapse-state key, e.g. "ardop" or "vara". */
   storageKeyPrefix: string;
+  /** Called after the hamlib model changes; lets the parent panel pre-fill
+   *  PTT-method (Task 7). pttOverridden=true when the operator has already
+   *  hand-edited ptt_method so the parent should leave it alone. */
+  onRadioSelected?: (modelId: number | null, pttOverridden: boolean) => void;
 }
 
 /** Collapsible "Rig control" expander — hamlib model, CAT serial/baud,
  *  data mode, close-serial sequencing, and live VFO poll. Loads from
  *  config_get_rig on mount; persists via config_set_rig on change/blur.
  *  Collapsed by default; collapse state is preserved in localStorage. */
-export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) {
+export function RigControlSection({ storageKeyPrefix, onRadioSelected }: RigControlSectionProps) {
   const lsKey = `tuxlink.${storageKeyPrefix}.rigCfgOpen`;
 
   const [rigCfgOpen, setRigCfgOpen] = useState<boolean>(() => {
@@ -137,6 +142,42 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
     });
   };
 
+  /** Persist a patch AND add `key` to the override set (idempotent). Used when
+   *  the operator hand-edits a profile-managed field so a later radio change
+   *  won't clobber it. */
+  const persistRigWithOverride = (key: string, patch: Partial<RigConfig>) => {
+    const base = rigConfig ?? DEFAULT_RIG_CONFIG;
+    const overrides = base.rig_field_overrides.includes(key)
+      ? base.rig_field_overrides
+      : [...base.rig_field_overrides, key];
+    persistRig({ ...patch, rig_field_overrides: overrides });
+  };
+
+  /** On radio selection: set the model, then apply the radio's documented
+   *  profile to each shared field the operator has NOT overridden. */
+  const onModelSelected = (modelId: number | null) => {
+    const base = rigConfig ?? DEFAULT_RIG_CONFIG;
+    const overrides = new Set(base.rig_field_overrides);
+    const patch: Partial<RigConfig> = { rig_hamlib_model: modelId };
+    const profile = getRigProfile(modelId);
+    if (profile) {
+      if (profile.data_mode !== undefined && !overrides.has('data_mode')) {
+        patch.data_mode = profile.data_mode;
+      }
+      if (profile.cat_baud !== undefined && !overrides.has('cat_baud')) {
+        patch.cat_baud = profile.cat_baud;
+      }
+      if (profile.close_serial_sequencing !== undefined && !overrides.has('close_serial')) {
+        patch.close_serial_sequencing = profile.close_serial_sequencing;
+      }
+    }
+    persistRig(patch);
+    // keep the controlled baud input in sync if the profile changed it
+    if (patch.cat_baud !== undefined) setCatBaudInput(String(patch.cat_baud));
+    // notify ARDOP to pre-fill ptt_method (Task 7); no-op when prop absent
+    if (onRadioSelected) onRadioSelected(modelId, overrides.has('ptt_method'));
+  };
+
   const commitCatSerial = () => {
     const trimmed = catSerialInput.trim();
     persistRig({ cat_serial_path: trimmed === '' ? null : trimmed });
@@ -148,7 +189,7 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
       setCatBaudInput(String(rigConfig?.cat_baud ?? 38400));
       return;
     }
-    persistRig({ cat_baud: n });
+    persistRigWithOverride('cat_baud', { cat_baud: n });
   };
 
   return (
@@ -182,7 +223,7 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
             value={rigConfig?.rig_hamlib_model ?? ''}
             onChange={(e) => {
               const v = e.target.value;
-              persistRig({ rig_hamlib_model: v === '' ? null : Number(v) });
+              onModelSelected(v === '' ? null : Number(v));
             }}
           >
             <option value="">None / unset</option>
@@ -207,7 +248,7 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
             spellCheck={false}
             onChange={(e) => {
               const n = Number(e.target.value.trim());
-              persistRig({ rig_hamlib_model: Number.isInteger(n) && n > 0 ? n : null });
+              onModelSelected(Number.isInteger(n) && n > 0 ? n : null);
             }}
           />
         )}
@@ -294,7 +335,7 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
           className="radio-panel-input"
           data-testid="rig-data-mode"
           value={rigConfig?.data_mode ?? 'PKTUSB'}
-          onChange={(e) => persistRig({ data_mode: e.target.value })}
+          onChange={(e) => persistRigWithOverride('data_mode', { data_mode: e.target.value })}
         >
           <option value="PKTUSB">PKTUSB</option>
           <option value="PKTLSB">PKTLSB</option>
@@ -316,7 +357,7 @@ export function RigControlSection({ storageKeyPrefix }: RigControlSectionProps) 
           checked={rigConfig?.close_serial_sequencing ?? false}
           onChange={(e) => {
             const checked = e.target.checked;
-            persistRig({
+            persistRigWithOverride('close_serial', {
               close_serial_sequencing: checked,
               ...(checked ? { live_vfo_poll: false } : {}),
             });

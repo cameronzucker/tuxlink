@@ -347,4 +347,79 @@ describe('<RigControlSection>', () => {
     expect(screen.queryByTestId('rig-qsy-on-fail')).not.toBeInTheDocument();
     expect(screen.queryByText('CAT backend')).not.toBeInTheDocument();
   });
+
+  // ── Task 5: override-respecting per-radio pre-fill ─────────────────────────
+
+  it('pre-fills non-overridden rig fields when a radio is selected', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_rig') return { ...knownConfig, rig_hamlib_model: null, rig_field_overrides: [] };
+      if (cmd === 'rig_list_models') return [{ id: 1049, manufacturer: 'Yaesu', model: 'FT-710' }];
+      if (cmd === 'packet_list_serial_devices') return [];
+      return undefined;
+    });
+    render(<RigControlSection storageKeyPrefix="ardop" />);
+    await waitFor(() => expect(screen.getByTestId('rig-model')).toBeInTheDocument());
+    invokeMock.mockClear();
+    fireEvent.change(screen.getByTestId('rig-model'), { target: { value: '1049' } });
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'config_set_rig',
+        expect.objectContaining({
+          value: expect.objectContaining({
+            rig_hamlib_model: 1049,
+            data_mode: 'PKTUSB',
+            cat_baud: 38400,
+            close_serial_sequencing: true,
+          }),
+        }),
+      );
+    });
+  });
+
+  it('editing a field marks it overridden and a later radio change leaves it untouched', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    // Start with cat_baud already overridden + a non-default value.
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_rig') return {
+        ...knownConfig, rig_hamlib_model: null, cat_baud: 9600, rig_field_overrides: ['cat_baud'],
+      };
+      if (cmd === 'rig_list_models') return [{ id: 1049, manufacturer: 'Yaesu', model: 'FT-710' }];
+      if (cmd === 'packet_list_serial_devices') return [];
+      return undefined;
+    });
+    render(<RigControlSection storageKeyPrefix="ardop" />);
+    await waitFor(() => expect(screen.getByTestId('rig-model')).toBeInTheDocument());
+    invokeMock.mockClear();
+    fireEvent.change(screen.getByTestId('rig-model'), { target: { value: '1049' } });
+    await waitFor(() => {
+      // cat_baud is overridden → NOT clobbered by the FT-710 profile's 38400.
+      const call = invokeMock.mock.calls.find((c) => c[0] === 'config_set_rig');
+      expect(call?.[1].value.cat_baud).toBe(9600);
+      // but data_mode (not overridden) IS pre-filled.
+      expect(call?.[1].value.data_mode).toBe('PKTUSB');
+    });
+  });
+
+  it('records an override key when the operator edits the Mode', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_rig') return { ...knownConfig, rig_field_overrides: [] };
+      if (cmd === 'rig_list_models') return [];
+      if (cmd === 'packet_list_serial_devices') return [];
+      return undefined;
+    });
+    render(<RigControlSection storageKeyPrefix="ardop" />);
+    await waitFor(() => expect(screen.getByTestId('rig-data-mode')).toBeInTheDocument());
+    invokeMock.mockClear();
+    fireEvent.change(screen.getByTestId('rig-data-mode'), { target: { value: 'USB-D' } });
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find((c) => c[0] === 'config_set_rig');
+      expect(call?.[1].value.rig_field_overrides).toContain('data_mode');
+      expect(call?.[1].value.data_mode).toBe('USB-D');
+    });
+  });
 });
