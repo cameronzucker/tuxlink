@@ -1,24 +1,26 @@
 /**
  * EgressArmControl — the operator ARM surface for agent send-authority
- * (MCP phase 3.6). Lives in the dashboard ribbon next to the APRS + Connection
- * indicators (AppShell wires it in).
- *
- * Without this, nothing the MCP agent does can egress: this is the
- * operator-present surface for the egress gate. The operator arms send-authority
- * for a bounded window and SEES its state at a glance.
+ * (MCP phase 3.6). A compact ribbon chip shows the state at a glance; the
+ * arm/disarm actions live in a click-to-open popover so the dashboard ribbon
+ * stays uncrowded.
  *
  * States (plain-language, WLE-litmus: forgiving + legible, never cryptic):
- *   - Disarmed  → "Agent send: OFF" + duration presets to arm.
- *   - Armed     → "Agent send: ON" + a live ticking countdown + Disarm.
- *   - Tainted   → "Agent send: LOCKED" — session tainted, authority locked.
+ *   - Disarmed → chip "Agent send: OFF"; popover offers duration presets.
+ *   - Armed    → chip "Agent send: ON" + a live ticking countdown; popover
+ *                offers Disarm.
+ *   - Tainted  → chip "Agent send: LOCKED"; popover explains the session is
+ *                tainted and authority is locked until restart.
  *
  * Presentational: state + actions come from useEgressArm (AppShell owns the
- * hook instance), mirroring DashboardRibbon's data-down convention. The live
- * 1-second countdown lives in a scoped subtree (like ClockCell) so the tick
- * does not repaint the rest of the ribbon.
+ * hook instance). The popover reuses IdentitySwitcher's mechanism: measured
+ * anchor coords, createPortal to <body> (position:fixed) so it escapes the
+ * ribbon's stacking context, Esc-to-close, and document mousedown
+ * outside-click-to-close. The live 1-second countdown lives in a scoped
+ * subtree (CountdownCell) so the tick does not repaint the rest of the ribbon.
  */
 
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   EGRESS_DURATION_PRESETS,
   formatEgressRemaining,
@@ -33,7 +35,6 @@ import {
 function CountdownCell({ remainingSecs }: { remainingSecs: number }) {
   const [secs, setSecs] = useState(remainingSecs);
 
-  // Re-seed when the polled value changes (re-arm, disarm-then-arm, drift fix).
   useEffect(() => {
     setSecs(remainingSecs);
   }, [remainingSecs]);
@@ -76,73 +77,138 @@ export const EgressArmControl = memo(function EgressArmControl({
   const { armed, armedRemainingSecs, tainted } = status;
 
   // Taint is terminal: send-authority is locked regardless of arm state.
-  // Surface it first so the operator is never misled by a stale "ON".
   const dotClass = tainted ? 'tx' : armed ? '' : 'idle';
   const stateLabel = tainted ? 'LOCKED' : armed ? 'ON' : 'OFF';
 
+  const [open, setOpen] = useState(false);
+  const chipRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+
+  // Anchor the portaled popover under the chip; re-measure on resize.
+  useLayoutEffect(() => {
+    if (!open) {
+      setCoords(null);
+      return;
+    }
+    function measure() {
+      const r = chipRef.current?.getBoundingClientRect();
+      if (r) setCoords({ top: r.bottom + 6, left: r.left });
+    }
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [open]);
+
+  // Click-outside closes (the popover is portaled out of the chip subtree).
+  useEffect(() => {
+    if (!open) return;
+    function onDocMouseDown(e: MouseEvent) {
+      const t = e.target as Node;
+      if (!chipRef.current?.contains(t) && !popRef.current?.contains(t)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [open]);
+
   return (
     <div className="dash-item dash-egress" data-testid="egress-arm-control">
-      <div className="dash-label">Agent send</div>
-      <div
-        className="dash-egress-row"
-        data-testid="egress-state"
-        data-armed={armed}
-        data-tainted={tainted}
+      <button
+        type="button"
+        ref={chipRef}
+        className="dash-egress-chip"
+        data-testid="egress-chip"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
       >
+        <span className={`dash-status-dot ${dotClass}`} aria-hidden="true" />
+        <span className="dash-egress-label">Agent send</span>
         <span
-          className={`dash-status-dot ${dotClass}`}
-          aria-hidden="true"
-        />
-        <span className="dash-egress-state">{stateLabel}</span>
+          className="dash-egress-state"
+          data-testid="egress-state"
+          data-armed={armed}
+          data-tainted={tainted}
+        >
+          {stateLabel}
+        </span>
+        {armed && !tainted && <CountdownCell remainingSecs={armedRemainingSecs} />}
+        <span className="dash-egress-caret" aria-hidden="true">
+          {open ? '▴' : '▾'}
+        </span>
+      </button>
 
-        {tainted ? (
-          // Terminal locked state — no arm/disarm affordance; the session must
-          // be restarted to clear taint. Plain-language so the operator knows
-          // why the agent can't send (no cryptic error code).
-          <span className="dash-egress-locked" data-testid="egress-locked">
-            session tainted — restart to re-enable
-          </span>
-        ) : armed ? (
-          <>
-            <CountdownCell remainingSecs={armedRemainingSecs} />
-            <button
-              type="button"
-              className="egress-disarm-button"
-              data-testid="egress-disarm"
-              disabled={busy}
-              onClick={onDisarm}
-            >
-              Disarm
-            </button>
-          </>
-        ) : (
-          <span
-            className="egress-presets"
-            role="group"
-            aria-label="Arm agent send-authority for a bounded window"
-            data-testid="egress-presets"
+      {open &&
+        coords &&
+        createPortal(
+          <div
+            ref={popRef}
+            className="egress-arm-popover"
+            data-testid="egress-popover"
+            role="dialog"
+            aria-label="Agent send authority"
+            tabIndex={-1}
+            style={{ top: coords.top, left: coords.left }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setOpen(false);
+            }}
           >
-            {EGRESS_DURATION_PRESETS.map((preset) => (
+            <div className="egress-pop-title">Agent send authority</div>
+
+            {tainted ? (
+              <div className="dash-egress-locked" data-testid="egress-locked">
+                Session tainted — restart Tuxlink to re-enable agent send.
+              </div>
+            ) : armed ? (
               <button
-                key={preset.secs}
                 type="button"
-                className="egress-arm-button"
-                data-testid={`egress-arm-${preset.secs}`}
+                className="egress-disarm-button"
+                data-testid="egress-disarm"
                 disabled={busy}
-                onClick={() => onArm(preset.secs)}
-                title={`Arm agent send-authority for ${preset.label}`}
+                onClick={onDisarm}
               >
-                {preset.label}
+                Disarm now
               </button>
-            ))}
-          </span>
+            ) : (
+              <>
+                <div className="egress-arm-label">Arm send-authority for:</div>
+                <div
+                  className="egress-presets"
+                  role="group"
+                  aria-label="Arm agent send-authority for a bounded window"
+                  data-testid="egress-presets"
+                >
+                  {EGRESS_DURATION_PRESETS.map((preset) => (
+                    <button
+                      key={preset.secs}
+                      type="button"
+                      className="egress-arm-button"
+                      data-testid={`egress-arm-${preset.secs}`}
+                      disabled={busy}
+                      onClick={() => onArm(preset.secs)}
+                      title={`Arm agent send-authority for ${preset.label}`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="egress-pop-help">
+                  While armed, an MCP agent may transmit or change settings. Disarms automatically
+                  when the timer ends.
+                </div>
+              </>
+            )}
+
+            {error && (
+              <div className="dash-egress-error" role="alert" data-testid="egress-error">
+                {error}
+              </div>
+            )}
+          </div>,
+          document.body,
         )}
-      </div>
-      {error && (
-        <div className="dash-egress-error" role="alert" data-testid="egress-error">
-          {error}
-        </div>
-      )}
     </div>
   );
 });
