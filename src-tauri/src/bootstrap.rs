@@ -783,6 +783,7 @@ mod tests {
     #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn cms_config() -> Config {
         Config {
+            elmer: crate::config::ElmerConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {

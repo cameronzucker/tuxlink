@@ -135,9 +135,11 @@ fn make_event_sink(app: AppHandle) -> crate::elmer::session::EventSink {
 
 fn outcome_to_event(outcome: &RunOutcome) -> ElmerEvent {
     let (outcome_kind, detail) = match outcome {
-        RunOutcome::Done => ("done".into(), String::new()),
+        RunOutcome::Completed(text) => ("done".into(), text.clone()),
         RunOutcome::Cancelled => ("cancelled".into(), String::new()),
         RunOutcome::NeedsOperator(msg) => ("needsOperator".into(), msg.clone()),
+        RunOutcome::InvalidAction(msg) => ("invalidAction".into(), msg.clone()),
+        RunOutcome::ToolDenied(msg) => ("toolDenied".into(), msg.clone()),
     };
     ElmerEvent::Outcome { outcome_kind, detail }
 }
@@ -168,9 +170,12 @@ pub async fn elmer_send(
     // Always emit the terminal outcome event so the pane can update its state.
     let _ = app.emit(EV_OUTCOME, outcome_to_event(&outcome));
 
+    // NeedsOperator is the single-flight reject ("a turn is already running") and
+    // bound/provider-error path — surface it as a command error. All other terminal
+    // outcomes are reported via the EV_OUTCOME event the pane already consumes.
     match outcome {
         RunOutcome::NeedsOperator(msg) => Err(msg),
-        RunOutcome::Done | RunOutcome::Cancelled => Ok(()),
+        _ => Ok(()),
     }
 }
 
