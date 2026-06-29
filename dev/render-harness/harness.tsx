@@ -1,22 +1,31 @@
-// WebKitGTK render harness for the Request Center (diagnostic scratch — NOT shipped).
+// WebKitGTK render harness for the Request Center and DashboardRibbon
+// (diagnostic scratch — NOT shipped).
 //
-// Mounts <RequestCenter> in a plain browser/WebKitGTK context by shimming the
+// Mounts components in a plain browser/WebKitGTK context by shimming the
 // Tauri v2 IPC (window.__TAURI_INTERNALS__.invoke) with canned responses, so the
 // real component + CSS render in the exact WebKitGTK engine Tauri uses, with no
 // Rust build and no menu-driving. Drive which view / grid via URL query:
 //   ?grid=CN87        4-char grid (working case)
 //   ?grid=CN87uo      6-char grid (reproduces the gridToLatLon null gap)
 //   ?grid=            no grid ("Location not set")
-//   ?view=home|browse|grib
+//   ?view=home|browse|grib|ribbon
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '../../src/App.css';
+// AppShell.css carries the ribbon's `.layout-b .dashboard .dash-*` rules; without
+// it (and the `.layout-b` wrapper below) DashboardRibbon renders unstyled. Only
+// this file is needed — StatusBar.css has no dash-* rules and compactShell.css is
+// narrow-viewport overrides that would distort the desktop ribbon snapshot.
+import '../../src/shell/AppShell.css';
 import { RequestCenter } from '../../src/request/RequestCenter';
+import { DashboardRibbon } from '../../src/shell/DashboardRibbon';
 import type { CatalogEntry } from '../../src/catalog/types';
+import type { StatusBarData } from '../../src/shell/useStatus';
 
 const params = new URLSearchParams(location.search);
 const grid = params.has('grid') ? params.get('grid') : 'CN87';
-const view = (params.get('view') ?? 'home') as 'home' | 'browse' | 'grib';
+const view = (params.get('view') ?? 'home') as 'home' | 'browse' | 'grib' | 'ribbon';
 
 // Representative catalog: zone forecast + radar for CN87uo (Seattle), EASTPAC
 // marine entries, propagation, and gateway lists — enough categories that the
@@ -44,6 +53,9 @@ const RESPONSES: Record<string, unknown> = {
   config_read: { grid, review_inbound_before_download: false },
   catalog_list: CATALOG,
   catalog_send_inquiry: 'MID-TEST-0001',
+  // DashboardRibbon's GridEdit write paths:
+  config_set_grid: grid,
+  position_set_source: null,
 };
 
 // Tauri v2 routes invoke() through window.__TAURI_INTERNALS__.invoke(cmd, args).
@@ -56,6 +68,26 @@ const RESPONSES: Record<string, unknown> = {
   transformCallback: (cb: unknown) => cb,
 };
 
+// Realistic fixture data for the ribbon view (operator-verified callsign N7CPZ).
+const ribbonData: StatusBarData = {
+  callsign: 'N7CPZ',
+  grid: grid ?? null,
+  gridTooltip: null,
+  state: { label: 'Idle', tone: 'idle' },
+  connection: 'Idle · CMS-SSL',
+  position_source: 'Gps',
+};
+
+const queryClient = new QueryClient();
+
 createRoot(document.getElementById('root')!).render(
-  <RequestCenter initialView={view} onClose={() => undefined} />,
+  <QueryClientProvider client={queryClient}>
+    {view === 'ribbon' ? (
+      <div className="layout-b">
+        <DashboardRibbon data={ribbonData} onConnect={() => undefined} />
+      </div>
+    ) : (
+      <RequestCenter initialView={view} onClose={() => undefined} />
+    )}
+  </QueryClientProvider>,
 );

@@ -1,0 +1,11 @@
+{
+  "extends": ["stylelint-config-standard"],
+  "defaultSeverity": "warning",
+  "rules": {
+    "declaration-property-unit-allowed-list": [
+      { "font-size": [], "border-radius": [] },
+      { "severity": "warning", "message": "Use a var(--type-*) / var(--radius-*) token, not a raw px (tuxlink-9q6ly)" }
+    ]
+  },
+  "ignoreFiles": ["dist/**", "node_modules/**", "src-tauri/**"]
+}

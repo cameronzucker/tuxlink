@@ -5,6 +5,7 @@ import { AppShell } from './shell/AppShell';
 import { ErrorBoundary } from './ErrorBoundary';
 import { parseComposeRoute, parseHelpRoute, parseLoggingRoute, parseStationsRoute } from './routing';
 import './App.css';
+import './styles/controls.css';
 
 // tuxlink-perf-coldstart: lazy-load the first-run wizard and the compose-webview
 // component. Neither is on the main window's cold-start critical path — the
