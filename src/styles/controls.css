@@ -1,0 +1,42 @@
+/* Shared control primitives (tuxlink-9q6ly). Built on the scale tokens in
+ * App.css :root. Additive — no markup adopts these yet; they are the reviewable
+ * foundation the big-3 React wrappers (Button/Select/Field) will wrap later
+ * (deferred until the ribbon + radio panes survive screenshot review). */
+.tux-btn {
+  height: var(--ctl-h-sm);
+  padding: 0 var(--ctl-pad-x-md);
+  font-size: var(--type-control);
+  font-weight: 600;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: max-content;          /* size to content, never stretch (anti flex:1) */
+}
+.tux-btn-sm { height: var(--ctl-h-xs); padding: 0 var(--ctl-pad-x-sm); }
+.tux-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.tux-btn:disabled { opacity: 0.6; cursor: default; }
+.tux-field {
+  height: var(--ctl-h-sm);
+  padding: 0 var(--ctl-pad-x-sm);
+  font-size: var(--type-body);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  color: var(--text);
+}
+.tux-select { /* extends .tux-field; custom chevron is added per-surface for now */
+  height: var(--ctl-h-sm);
+  padding: 0 var(--ctl-pad-x-sm);
+  font-size: var(--type-body);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  color: var(--text);
+  appearance: none;
+  -webkit-appearance: none;
+}
