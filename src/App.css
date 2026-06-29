@@ -109,6 +109,17 @@ body,
   --tux-focus-ring: rgba(245, 159, 60, 0.5);
   --tux-mono: var(--mono);
 
+  /* === Control/sizing scale (tuxlink-9q6ly, 2026-06-29) — dense-desktop scale.
+     Additive: existing color/font tokens above are unchanged. Surfaces migrate
+     onto these incrementally; see docs/superpowers/plans/2026-06-29-frontend-cohesion-design-system.md */
+  --space-1: 2px;  --space-2: 4px;  --space-3: 6px;  --space-4: 8px;
+  --space-5: 12px; --space-6: 16px; --space-7: 20px; --space-8: 24px; --space-9: 32px;
+  --ctl-h-xs: 22px;  --ctl-h-sm: 26px;  --ctl-h-md: 30px;
+  --ctl-pad-x-xs: 6px; --ctl-pad-x-sm: 8px; --ctl-pad-x-md: 10px;
+  --type-micro: 10px; --type-meta: 11px; --type-control: 12px;
+  --type-body: 13px;  --type-heading: 16px;
+  --radius-xs: 2px; --radius-control: 3px; --radius-panel: 6px; --radius-pill: 999px;
+
   /* Typography base (mock body: 14px / 1.5, --sans) */
   font-family: var(--sans);
   font-size: 14px;
