@@ -2066,7 +2066,11 @@ export function AppShell() {
         <Suspense fallback={null}>
           <ElmerPane
             egressStatus={egressArm.status}
+            onArm={(durationSecs) => { void egressArm.arm(durationSecs); }}
+            onDisarm={() => { void egressArm.disarm(); }}
             onRearm={(durationSecs) => { void egressArm.rearm(durationSecs); }}
+            egressBusy={egressArm.busy}
+            egressError={egressArm.error}
             onClose={() => setElmerOpen(false)}
           />
         </Suspense>

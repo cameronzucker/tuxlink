@@ -391,44 +391,72 @@
   opacity: 0.7;
 }
 
-/* Elmer launcher — compact ribbon button beside the Agent-send arm chip. */
-.layout-b .dashboard .dash-elmer-launcher {
+/* Merged Elmer × Agent-send control — ONE ribbon slot. The constant ✦ anchors
+   Elmer's identity; the label transforms with arm state. Display-only: click
+   opens the Elmer drawer (arm/disarm live in the drawer header). Replaces the
+   prior separate launcher + arm chip that overflowed Connect at 1080p. */
+.layout-b .dashboard .dash-elmer-agent {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
   white-space: nowrap;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
-  padding: 3px 9px;
-  border-radius: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 7px;
   border: 1px solid var(--border-strong, var(--border));
   background: var(--surface-2, transparent);
   color: var(--text, #cbd5e1);
 }
-.layout-b .dashboard .dash-elmer-launcher .dash-elmer-icon {
+.layout-b .dashboard .dash-elmer-agent .dash-elmer-agent-spark {
   color: var(--accent, var(--accent-teal));
   font-size: 13px;
   line-height: 1;
 }
-.layout-b .dashboard .dash-elmer-launcher:hover {
+.layout-b .dashboard .dash-elmer-agent .dash-elmer-agent-label {
+  font-weight: 600;
+}
+.layout-b .dashboard .dash-elmer-agent .dash-elmer-agent-cd {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim, var(--text-faint));
+  font-variant-numeric: tabular-nums;
+}
+.layout-b .dashboard .dash-elmer-agent .dash-status-dot {
+  margin-right: 0; /* the flex gap handles spacing */
+}
+.layout-b .dashboard .dash-elmer-agent:hover {
   border-color: var(--accent, var(--accent-teal));
 }
-.layout-b .dashboard .dash-elmer-launcher.is-open {
+/* Drawer open → pressed/active. */
+.layout-b .dashboard .dash-elmer-agent.is-open {
   background: var(--accent, var(--accent-teal));
   border-color: var(--accent, var(--accent-teal));
   color: var(--accent-fg, #0b0f14);
 }
-.layout-b .dashboard .dash-elmer-launcher.is-open .dash-elmer-icon {
+.layout-b .dashboard .dash-elmer-agent.is-open .dash-elmer-agent-spark {
   color: var(--accent-fg, #0b0f14);
 }
-/* Tainted: the assistant has read untrusted content — send authority is locked
-   until a fresh re-arm. Tint matches the arm chip's LOCKED treatment. */
-.layout-b .dashboard .dash-elmer-launcher.is-locked {
-  border-color: var(--accent-amber, var(--accent-danger));
+/* Armed → "Agent send" + green countdown (matches the arm chip's ON identity). */
+.layout-b .dashboard .dash-elmer-agent--armed {
+  border-color: color-mix(in srgb, var(--success) 55%, transparent);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
 }
-.layout-b .dashboard .dash-elmer-launcher.is-locked .dash-elmer-icon {
-  color: var(--accent-amber, var(--accent-danger));
+.layout-b .dashboard .dash-elmer-agent--armed .dash-elmer-agent-label {
+  color: var(--success);
+}
+/* Tainted → LOCKED, amber (matches the arm chip's LOCKED treatment). */
+.layout-b .dashboard .dash-elmer-agent--locked {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.layout-b .dashboard .dash-elmer-agent--locked .dash-elmer-agent-spark,
+.layout-b .dashboard .dash-elmer-agent--locked .dash-elmer-agent-label,
+.layout-b .dashboard .dash-elmer-agent--locked .dash-elmer-agent-warn {
+  color: var(--accent);
 }
 .layout-b .dashboard .dash-aprs-state {
   font-variant-numeric: tabular-nums;

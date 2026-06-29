@@ -19,6 +19,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { ElmerPane } from './ElmerPane';
 import type { ElmerChipPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
 import { EV_CHIP, EV_OUTCOME, EV_TURN } from './elmerEvents';
+import { EGRESS_STATUS_DISARMED } from '../security/egressTypes';
 
 // ---------------------------------------------------------------------------
 // Mock @tauri-apps/api/core (invoke)
@@ -272,5 +273,58 @@ describe('<ElmerPane> — layout discipline (AC-13)', () => {
     render(<ElmerPane />);
     fireEvent.click(screen.getByTestId('elmer-advanced-toggle'));
     expect(screen.getByTestId('elmer-advanced-body')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Relocated arm control (the merged-control design): arm/disarm/re-arm moved
+// from the dashboard ribbon INTO the drawer header. The ribbon chip shows
+// state + opens this drawer; the actual controls live here. onRearm is the
+// 2ouqf quarantine_and_rearm path.
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> — relocated agent-send arm control', () => {
+  const TAINTED = { armed: false, armedRemainingSecs: 0, tainted: true };
+
+  it('does not render the arm strip when the egress hook is not wired', () => {
+    render(<ElmerPane />);
+    expect(screen.queryByTestId('elmer-arm-strip')).toBeNull();
+  });
+
+  it('renders the arm control in the drawer when egress props are wired', () => {
+    render(
+      <ElmerPane
+        egressStatus={EGRESS_STATUS_DISARMED}
+        onArm={vi.fn()}
+        onDisarm={vi.fn()}
+        onRearm={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('elmer-arm-strip')).toBeInTheDocument();
+    expect(screen.getByTestId('egress-arm-control')).toBeInTheDocument();
+  });
+
+  it('arms from the drawer: clicking the chip opens presets and a preset calls onArm', () => {
+    const onArm = vi.fn();
+    render(
+      <ElmerPane egressStatus={EGRESS_STATUS_DISARMED} onArm={onArm} onDisarm={vi.fn()} onRearm={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId('egress-chip'));
+    const presets = screen.getAllByTestId(/^egress-arm-\d+$/);
+    expect(presets.length).toBeGreaterThan(0);
+    fireEvent.click(presets[0]);
+    expect(onArm).toHaveBeenCalledTimes(1);
+  });
+
+  it('tainted: the drawer surfaces re-arm (quarantine_and_rearm) and it calls onRearm', () => {
+    const onRearm = vi.fn();
+    render(
+      <ElmerPane egressStatus={TAINTED} onArm={vi.fn()} onDisarm={vi.fn()} onRearm={onRearm} />,
+    );
+    fireEvent.click(screen.getByTestId('egress-chip'));
+    const rearmPresets = screen.getAllByTestId(/^egress-rearm-\d+$/);
+    expect(rearmPresets.length).toBeGreaterThan(0);
+    fireEvent.click(rearmPresets[0]);
+    expect(onRearm).toHaveBeenCalledTimes(1);
   });
 });

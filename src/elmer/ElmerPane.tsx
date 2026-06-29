@@ -27,6 +27,7 @@
 
 import { memo, useState, useRef, useEffect, type KeyboardEvent } from 'react';
 import { useElmer, type ElmerItem, type ElmerPhase } from './useElmer';
+import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
 import './ElmerPane.css';
 
@@ -122,17 +123,31 @@ function OutcomeCallout({ phase, detail }: { phase: ElmerPhase; detail: string }
 // ---------------------------------------------------------------------------
 
 export interface ElmerPaneProps {
-  /** Live egress-grant snapshot (from useEgressArm in AppShell). Read-only here. */
+  /** Live egress-grant snapshot (from useEgressArm in AppShell). Drives the
+   *  arm control in the drawer header (relocated here from the ribbon). */
   egressStatus?: EgressStatusDto;
-  /** Called when the operator requests a fresh session (clears taint + rearms). */
+  /** Arm send-authority for the chosen duration (seconds). */
+  onArm?: (durationSecs: number) => void;
+  /** Disarm send-authority immediately. */
+  onDisarm?: () => void;
+  /** Re-arm after a tainted session (clears taint + quarantines the tainted
+   *  turns — the 2ouqf quarantine_and_rearm path). */
   onRearm?: (durationSecs: number) => void;
+  /** True while an arm/disarm/rearm round-trip is in flight. */
+  egressBusy?: boolean;
+  /** Last arm/disarm/rearm error, surfaced inline by the arm control. */
+  egressError?: string | null;
   /** Close the pane (AppShell sets elmerOpen=false). */
   onClose?: () => void;
 }
 
 export const ElmerPane = memo(function ElmerPane({
-  egressStatus: _egressStatus,
-  onRearm: _onRearm,
+  egressStatus,
+  onArm,
+  onDisarm,
+  onRearm,
+  egressBusy,
+  egressError,
   onClose,
 }: ElmerPaneProps) {
   const { items, phase, lastOutcome, send, stop } = useElmer();
@@ -184,6 +199,23 @@ export const ElmerPane = memo(function ElmerPane({
           ×
         </button>
       </div>
+
+      {/* Agent-send authority — relocated from the dashboard ribbon (the merged
+          ribbon chip shows state + opens this drawer; the actual arm/disarm/
+          re-arm controls live here). onRearm is the 2ouqf quarantine_and_rearm
+          path. Rendered only when AppShell wires the egress hook. */}
+      {egressStatus && onArm && onDisarm && (
+        <div className="elmer-arm-strip" data-testid="elmer-arm-strip">
+          <EgressArmControl
+            status={egressStatus}
+            onArm={onArm}
+            onDisarm={onDisarm}
+            onRearm={onRearm}
+            busy={egressBusy}
+            error={egressError}
+          />
+        </div>
+      )}
 
       {/* Message list */}
       <div className="elmer-messages" data-testid="elmer-messages" role="log" aria-live="polite">
