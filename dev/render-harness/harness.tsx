@@ -13,6 +13,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '../../src/App.css';
+import '../../src/shell/AppShell.css';
 import { RequestCenter } from '../../src/request/RequestCenter';
 import { DashboardRibbon } from '../../src/shell/DashboardRibbon';
 import type { CatalogEntry } from '../../src/catalog/types';
@@ -78,7 +79,9 @@ const queryClient = new QueryClient();
 createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
     {view === 'ribbon' ? (
-      <DashboardRibbon data={ribbonData} onConnect={() => undefined} />
+      <div className="layout-b">
+        <DashboardRibbon data={ribbonData} onConnect={() => undefined} />
+      </div>
     ) : (
       <RequestCenter initialView={view} onClose={() => undefined} />
     )}
