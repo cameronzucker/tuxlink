@@ -926,6 +926,7 @@ mod tests {
             self.inner.lock().unwrap().generation
         }
 
+        #[allow(dead_code)]
         fn staging_frozen(&self) -> bool {
             self.inner.lock().unwrap().staging_frozen
         }

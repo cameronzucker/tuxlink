@@ -160,7 +160,7 @@ mod tests {
     fn verify_denies_when_a_record_is_added_after_approval() {
         let now = 1000;
         let a = staged("A", "eoc", "status", "body");
-        let appr = compute_approval(&[a.clone()], 7, now, 120);
+        let appr = compute_approval(std::slice::from_ref(&a), 7, now, 120);
         assert!(
             matches!(
                 verify_approval(&appr, &[a, staged("B", "attacker", "x", "y")], 7, now + 5),
@@ -174,12 +174,12 @@ mod tests {
     fn verify_denies_on_epoch_change_or_expiry() {
         let now = 1000;
         let r = staged("A", "eoc", "s", "b");
-        let appr = compute_approval(&[r.clone()], 7, now, 120);
+        let appr = compute_approval(std::slice::from_ref(&r), 7, now, 120);
 
         // Epoch changed (rearm).
         assert!(
             matches!(
-                verify_approval(&appr, &[r.clone()], 8, now + 5),
+                verify_approval(&appr, std::slice::from_ref(&r), 8, now + 5),
                 Err(ApprovalError::EpochMismatch)
             ),
             "changed epoch must yield EpochMismatch"
@@ -199,7 +199,7 @@ mod tests {
     fn verify_ok_for_exact_unchanged_set() {
         let now = 1000;
         let r = staged("A", "eoc", "s", "b");
-        let appr = compute_approval(&[r.clone()], 7, now, 120);
+        let appr = compute_approval(std::slice::from_ref(&r), 7, now, 120);
         assert!(
             verify_approval(&appr, &[r], 7, now + 5).is_ok(),
             "exact unchanged set must verify Ok"
