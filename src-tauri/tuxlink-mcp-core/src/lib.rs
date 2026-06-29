@@ -124,8 +124,10 @@ pub fn server_info_view(state: &McpState) -> ServerInfoDto {
 /// In-crate mock ports + test-state builders, shared by the `lib.rs`
 /// `server_info_view` tests and the `router.rs` taint/round-trip tier-1 tests.
 /// Gated on `#[cfg(test)]` so it never ships in a release build.
-#[cfg(test)]
-pub(crate) mod test_support {
+/// When the `test-support` feature is enabled the module is additionally
+/// reachable from downstream dev-dependencies (e.g. the monolith's elmer/ tests).
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
     use std::sync::Arc;
 
     use async_trait::async_trait;
@@ -711,6 +713,40 @@ pub(crate) mod test_support {
     ) -> (McpState, Arc<AtomicBool>, Arc<AtomicBool>) {
         let (state, op_ran, aborted, _staged) = state_with_all_probes(guard);
         (state, op_ran, aborted)
+    }
+
+    /// Build an `Arc<McpState>` around the supplied guard, with the mock
+    /// `MailboxPort` pre-seeded so `message_read` can return a parseable message
+    /// for `seeded_id`.  The seeded id is accepted by `MockMailbox::read` (it
+    /// echoes whatever id is passed), so any non-empty string works.
+    ///
+    /// Intended for in-process MCP invoker tests in downstream crates (the
+    /// monolith's `elmer/` integration tests).  Available only when the
+    /// `test-support` feature is enabled.
+    pub fn state_with_seeded_inbox(guard: Arc<EgressGuard>, _seeded_id: &str) -> Arc<McpState> {
+        // `MockMailbox::read` already accepts any id and returns a well-formed
+        // `ParsedMessageDto`, so no additional seeding is needed.  Build the
+        // McpState directly, sharing the caller's Arc<EgressGuard>.
+        let op_ran = Arc::new(AtomicBool::new(false));
+        let aborted = Arc::new(AtomicBool::new(false));
+        let staged = Arc::new(AtomicBool::new(false));
+        Arc::new(McpState {
+            guard: Arc::clone(&guard),
+            name: "tuxlink".into(),
+            version: "9.9.9".into(),
+            status: Arc::new(MockStatus),
+            mailbox: Arc::new(MockMailbox),
+            search: Arc::new(MockSearch),
+            config: Arc::new(MockConfig),
+            devices: Arc::new(MockDevice),
+            logs: Arc::new(MockLog),
+            egress: Arc::new(MockEgress::new(Arc::clone(&guard), Arc::clone(&op_ran))),
+            abort: Arc::new(MockAbort::new(Arc::clone(&aborted))),
+            write: Arc::new(MockWrite::new(Arc::clone(&guard), Arc::clone(&op_ran))),
+            compose: Arc::new(MockCompose::new(Arc::clone(&staged))),
+            stations: Arc::new(MockStation),
+            prediction: Arc::new(MockPrediction),
+        })
     }
 
     /// Full probe builder: returns `(state, op_ran, aborted, staged)`. `op_ran`

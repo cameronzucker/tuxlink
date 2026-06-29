@@ -36,6 +36,7 @@ pub mod modem_status;
 pub mod propagation;
 pub mod mesh;
 pub mod mcp_connection;
+pub mod elmer;
 
 #[cfg(test)]
 pub mod test_helpers;
