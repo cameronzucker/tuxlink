@@ -12,7 +12,7 @@ Tuxlink is a native Rust + Tauri application. Tuxlink requires no Go toolchain. 
 |---|---|---|
 | Rust | stable (1.75+) | Tuxlink's Tauri application |
 | libax25-dev | any | Optional but recommended on Linux: enables AX.25 hardware modem support (KISS TNC). Without it, tuxlink builds but AX.25 features remain absent. |
-| libsecret-1-dev | any | Linux only: development headers for the secret-service D-Bus interface. Tuxlink's wizard writes the Winlink CMS password to the OS keyring via the Rust `keyring` crate. macOS employs native Keychain frameworks and Windows employs native CredentialManager; neither requires an additional build-time dep on those platforms. |
+| libsecret-1-dev | any | Development headers for the secret-service D-Bus interface. Tuxlink's wizard writes the Winlink CMS password to the OS keyring via the Rust `keyring` crate. |
 | Tauri 2.x system deps | per Tauri docs | webkit2gtk, GTK dev libs, etc. |
 
 ### Debian / Ubuntu
@@ -52,7 +52,7 @@ The Tuxlink icon ships with the app, but Linux window managers (GNOME / KDE / la
 bash scripts/install-desktop-entry.sh
 ```
 
-This copies `src-tauri/icons/*` into `~/.local/share/icons/hicolor/<size>/apps/com.tuxlink.app.png` and writes `~/.local/share/applications/com.tuxlink.app.desktop`. Idempotent; safe to re-run after `git pull`. Linux-only (macOS uses the `.app` bundle; Windows uses the MSI installer).
+This copies `src-tauri/icons/*` into `~/.local/share/icons/hicolor/<size>/apps/com.tuxlink.app.png` and writes `~/.local/share/applications/com.tuxlink.app.desktop`. Idempotent; safe to re-run after `git pull`. Linux-only — tuxlink targets Linux (x86_64 / arm64); there is no macOS or Windows build.
 
 ## Runtime prerequisites for end-users
 
@@ -61,7 +61,4 @@ On Linux, tuxlink stores the Winlink CMS password in the OS keyring via the secr
 - **GNOME / GNOME-derived desktops** (Ubuntu, Fedora Workstation, Debian GNOME): `gnome-keyring-daemon` ships with the desktop and is usually already running. No action needed.
 - **KDE Plasma**: `kwalletd5` (or `kwalletd6` on Plasma 6) ships with the desktop, configured to provide the secret-service interface to non-KDE apps via `kwalletmanager` settings. Usually no action needed.
 - **Minimal / non-desktop installs** (e.g., a server, a window-manager-only install like i3 / sway): install and start a secret-service provider yourself. Easiest path: `sudo apt install gnome-keyring libsecret-1-0` (or distro-equivalent) and ensure `gnome-keyring-daemon` starts in your session (typically via `pam_gnome_keyring.so` in `/etc/pam.d/login` or by running `gnome-keyring-daemon --daemonize --components=secrets` from your session startup).
-- **macOS**: native Keychain Services. Always available; no action needed.
-- **Windows**: native CredentialManager. Always available; no action needed.
-
-If you launch tuxlink and the wizard reports "keyring backend unavailable" or "secret-service not running," install and start one of the above. The AppImage bundles `libsecret-1-0` (the library) so the binary loads, but it cannot start the daemon process for you. macOS and Windows builds skip libsecret entirely; they employ native frameworks.
+If you launch tuxlink and the wizard reports "keyring backend unavailable" or "secret-service not running," install and start one of the above. The AppImage bundles `libsecret-1-0` (the library) so the binary loads, but it cannot start the daemon process for you.
