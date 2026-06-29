@@ -2,7 +2,7 @@
 
 - **Agent:** willow-marten-fjord
 - **Date:** 2026-06-28
-- **Branch:** `feat/macos-build-assessment` (renamed from `claude/nice-tu-ac3438`; tracks `origin/main`; **ahead 16; NOT pushed**)
+- **Branch:** `feat/macos-build-assessment` (renamed from `claude/nice-tu-ac3438`; tracks `origin/main`; **ahead 19; NOT pushed**)
 - **Host:** Apple Silicon MacBook Air (M5), macOS Tahoe 26.5.1 — i.e. the real macOS target, not the Pi.
 - **Working tree:** clean.
 
@@ -18,7 +18,7 @@ Canonical detail lives in **[docs/design/2026-06-28-macos-ios-portability-assess
 - **Rust:** `cargo check` (core + HEIF) ✅ · full debug build + **link** ✅ · `clippy --bin tuxlink -- -D warnings` ✅ **clean** · **lib tests 2615/2615** ✅.
 - **App runtime** (§V.7): `pnpm tauri dev` → build+link (57s) → window launched, **UI rendered** (operator-confirmed) → clean exit. **Keychain `apple-native` runtime round-trip** (set/get/delete, unicode, no prompt) ✅.
 - **Release bundle** (§V.10): `.app` built + headlessly verified (arm64, identifier/version/`LSMinimumSystemVersion 11.0`, resources bundled, **unsigned** `--no-sign`, `spctl` rejects as expected). `.dmg` **fails headlessly** (`bundle_dmg.sh` exit 1 — hdiutil/Finder/AppleScript) — documented non-blocker, deferred.
-- **Frontend** (§V.12): **vitest 3320/3320 under Node 20** ✅. Under the host default **Node 26.3.0**: 501 failures — a jsdom/undici environment artifact (`localStorage`/`AbortSignal`), **not macOS or code**.
+- **Frontend** (§V.12): **vitest 3320/3320 under Node 24 LTS** ✅ (also verified Node 20 ✅). Under the host default **Node 26.3.0**: 501 failures — a jsdom/undici environment artifact (`localStorage`/`AbortSignal`), **not macOS or code**. The repo now pins Node 24 (see below).
 - **MCP** (§V.11): built `tuxlink-mcp` (stdio shim) + `tuxlink-mcp-testserver`; drove the **real rmcp 0.8.5 router** over UDS via the stdio shim on macOS — `initialize`, **50 tools**, read tools return data, and the **arm/taint security gate verified end-to-end** (armed write OK; `mailbox_list` taints; post-taint write/egress denied; **taint persists across reconnect — no bypass**). Socket hardening (reject world-writable `/tmp`; 0600 socket under 0700 dir) works on Darwin.
 
 ## Code changes on the branch (all Linux-safe — additive or cfg-gated)
@@ -39,7 +39,7 @@ Linux impact: the Rust changes are cfg-split (Linux path unchanged) or additive;
 ## Pending / operator decisions
 
 1. **PUSH** — your call. You asked to confirm pushing to `origin` as `feat/macos-build-assessment`. Branch is push-ready; pushing + a draft PR gets **Linux CI** to validate the primary platform (clippy `-D warnings`, `--locked`, tests) which I can't run on this Mac.
-2. **Node pin** — repo has no `engines`/`.nvmrc`; the suite needs **Node 20** (host defaults to 26 → 501 false failures). Recommend adding `.nvmrc`=20 + `engines.node`. Not done (cross-platform DX change, broader than this branch).
+2. **Node pin — DONE.** Targeted **Node 24 LTS** (Node 20 was EOL; host's Node 26 broke 501 tests). Added `.nvmrc` (`24`) + `engines.node` (`>=22 <25`) and bumped CI (`ci.yml`/`ect-build.yml`/`release.yml`) `20`→`24`. Verified band 20 ✅ · 24 ✅ · 26 ❌. CI (Linux) will confirm the Node 24 bump on push.
 3. **Bundle identifier** `com.tuxlink.app` ends in `.app` → Tauri macOS advisory; cross-cutting rename (tauri.conf + polkit action) deferred (§V.10).
 4. **`.dmg`** — fails headlessly; build in an interactive GUI session, or switch off Finder/AppleScript dmg layout (§V.10).
 5. **App-side MCP on macOS** — the server start is `#[cfg(linux)]`-gated (`lib.rs:1371-1443`); the standalone testserver works, but exposing MCP in the macOS *app* needs un-gating + a macOS socket path (§V.11) — **substantive; plan first** per the writing-plans rule.
