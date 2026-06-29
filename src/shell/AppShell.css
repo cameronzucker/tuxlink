@@ -220,7 +220,7 @@
   padding: 0 18px;
   align-items: center;
   gap: 28px;
-  font-size: 12px;
+  font-size: var(--type-control);
   /* ng3 smoke #6: never let a long connection/rejection string reflow the ribbon
    * or push the right-pinned Connect button off-screen. */
   overflow: hidden;
@@ -255,14 +255,14 @@
   min-width: 0;
 }
 .layout-b .dashboard .dash-label {
-  font-size: 10px;
+  font-size: var(--type-micro);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-faint);
 }
 .layout-b .dashboard .dash-value {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--type-body);
   color: var(--text);
   font-weight: 500;
   letter-spacing: -0.01em;
@@ -270,7 +270,7 @@
 .layout-b .dashboard .dash-value.callsign {
   color: var(--accent-2);
   font-weight: 700;
-  font-size: 14px;
+  font-size: var(--type-body);
 }
 /* Callsign chip. The inline SSID picker that used to sit here was removed in
    bd-tuxlink-y8tf — AX.25 SSID is set per-transport in the Packet/APRS panes,
@@ -282,7 +282,7 @@
 }
 .layout-b .dashboard .dash-callsign-text {
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: var(--type-body);
   font-weight: 700;
   letter-spacing: -0.01em;
   color: var(--accent-2);
@@ -563,7 +563,7 @@
  * keyboard focus but visually matches the surrounding .dash-value cells. */
 .layout-b .dashboard .dash-grid-value-btn {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--type-body);
   color: var(--text);
   font-weight: 500;
   letter-spacing: -0.01em;
@@ -580,7 +580,7 @@
 .layout-b .dashboard .dash-grid-value-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 /* ============================================================================
  * Source segmented control (tuxlink-z5pz, 2026-06-02): radio-group with two
@@ -600,17 +600,17 @@
   display: inline-flex;
   /* Connect the two segments — shared border between them. The container
      carries the outer border-radius; each segment carries its own border. */
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   /* Use a small font-size to match the prior chip footprint (~22px tall). */
   line-height: 1;
 }
 .layout-b .dashboard .dash-source-segment {
   font-family: var(--sans);
-  font-size: 9px;
+  font-size: var(--type-micro);
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  padding: 1px 6px;
+  padding: var(--space-1) var(--space-3);
   line-height: 1.5;
   white-space: nowrap;
   cursor: pointer;
@@ -683,17 +683,17 @@
    Compact inline weight to keep the row from wrapping. */
 .layout-b .dashboard .dash-gps-no-fix-status {
   font-family: var(--sans);
-  font-size: 10px;
+  font-size: var(--type-micro);
   color: var(--text-faint);
   white-space: nowrap;
 }
 .layout-b .dashboard .dash-set-manually {
   font-family: var(--sans);
-  font-size: 10px;
+  font-size: var(--type-micro);
   color: var(--accent);
   background: none;
   border: none;
-  padding: 0 2px;
+  padding: 0 var(--space-1);
   margin: 0;
   cursor: pointer;
   white-space: nowrap;
@@ -704,7 +704,7 @@
 .layout-b .dashboard .dash-set-manually:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 /* Inline edit state: input + error message */
 .layout-b .dashboard .dash-grid-edit-container {
@@ -714,13 +714,13 @@
 }
 .layout-b .dashboard .dash-grid-input {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--type-body);
   color: var(--text);
   font-weight: 500;
   background: var(--surface-2);
   border: 1px solid var(--accent);
-  border-radius: 3px;
-  padding: 1px 6px;
+  border-radius: var(--radius-control);
+  padding: var(--space-1) var(--space-3);
   width: 10ch; /* fits a full 6-char locator + cursor comfortably (tuxlink-39b) */
   outline: none;
 }
@@ -729,7 +729,7 @@
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 .layout-b .dashboard .dash-grid-error {
-  font-size: 10px;
+  font-size: var(--type-micro);
   color: var(--error);
   white-space: nowrap;
   overflow: hidden;
