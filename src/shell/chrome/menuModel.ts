@@ -102,6 +102,9 @@ export const MENU_TREE: TopMenu[] = [
     // tuxlink-l9sq4: Tools → Connect an AI agent — opens the ConnectAgentModal
     // with per-agent MCP copy-paste connection commands.
     { id: 'menu:tools:connect_agent', label: 'Connect an AI agent…' },
+    // Tools → Elmer — opens the in-app assistant pane (local-model agent loop
+    // over the MCP tools, arm/taint enforced). bd tuxlink-13v2l.
+    { id: 'menu:tools:elmer', label: 'Elmer (AI assistant)…' },
     // tuxlink-esb65: the disabled "Templates" stub was removed — it was leftover
     // menu scaffolding for a Tools-level forms browser that never landed there.
     // The Standard Forms library (wle-forms/Standard_Forms) ships and is reached

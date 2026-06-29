@@ -22,6 +22,7 @@ function handlers(): MenuHandlers {
     reportIssue: vi.fn(),
     openUninstallCleanup: vi.fn(),
     openConnectAgent: vi.fn(),
+    openElmer: vi.fn(),
     openCatalogBuilder: vi.fn(),
     openRequestCenter: vi.fn(),
     quit: vi.fn(),

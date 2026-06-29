@@ -31,9 +31,18 @@ export interface UseEgressArm {
   arm: (durationSecs: number) => Promise<void>;
   /** Disarm send-authority immediately. */
   disarm: () => Promise<void>;
-  /** True while an arm/disarm round-trip is in flight (disables the controls). */
+  /** Re-arm after a tainted session: clears taint, resets the Elmer
+   *  conversation, and arms egress for `durationSecs`. Resolves once
+   *  the cache reflects the new state.
+   *
+   *  Wired to `egress_rearm` (Rust: commands.rs), which cancels any
+   *  in-flight run, calls `quarantine_and_rearm`, and returns the new
+   *  EgressStatusDto. Invalidates EGRESS_STATUS_QUERY_KEY so the ribbon
+   *  chip reflects the post-rearm state without waiting for the 2s poll. */
+  rearm: (durationSecs: number) => Promise<void>;
+  /** True while an arm/disarm/rearm round-trip is in flight (disables the controls). */
   busy: boolean;
-  /** Last arm/disarm error message, or null. Cleared on the next attempt. */
+  /** Last arm/disarm/rearm error message, or null. Cleared on the next attempt. */
   error: string | null;
 }
 
@@ -86,5 +95,28 @@ export function useEgressArm(): UseEgressArm {
     }
   }, [queryClient]);
 
-  return { status, arm, disarm, busy, error };
+  // Rearm: clears taint, resets the Elmer conversation, arms for durationSecs.
+  // Calls egress_rearm (src-tauri/src/elmer/commands.rs) which wraps
+  // session.rearm() + guard.armed_remaining(). Invalidates the query so the
+  // ribbon chip reflects the new state immediately (poke-then-invalidate pattern
+  // mirrors arm/disarm above). AC-10.
+  const rearm = useCallback(
+    async (durationSecs: number) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const next = await invoke<EgressStatusDto>('egress_rearm', { durationSecs });
+        queryClient.setQueryData(EGRESS_STATUS_QUERY_KEY, next);
+        // Invalidate so the next 2s poll backstop also picks up the fresh state.
+        void queryClient.invalidateQueries({ queryKey: EGRESS_STATUS_QUERY_KEY });
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [queryClient],
+  );
+
+  return { status, arm, disarm, rearm, busy, error };
 }

@@ -27,6 +27,10 @@ import {
   type EgressStatusDto,
 } from '../security/egressTypes';
 
+// Consequence copy for the re-arm affordance (AC-10).
+const REARM_CONSEQUENCE =
+  'Your chat will be cleared. Anything Elmer staged in your Outbox is kept.';
+
 /**
  * Live countdown cell. Seeds from the polled remaining-seconds and ticks down
  * locally each second; re-seeds whenever a fresh poll changes the value (so a
@@ -60,9 +64,12 @@ export interface EgressArmControlProps {
   onArm: (durationSecs: number) => void;
   /** Disarm send-authority immediately. */
   onDisarm: () => void;
-  /** True while an arm/disarm round-trip is in flight (disables controls). */
+  /** Re-arm after a tainted session (clears taint + resets Elmer chat) for the
+   *  chosen duration in seconds. Surfaces the duration presets + consequence copy. */
+  onRearm?: (durationSecs: number) => void;
+  /** True while an arm/disarm/rearm round-trip is in flight (disables controls). */
   busy?: boolean;
-  /** Last arm/disarm error, or null. Surfaced inline so a failed arm is visible
+  /** Last arm/disarm/rearm error, or null. Surfaced inline so a failed arm is visible
    *  (an operator must never believe authority is armed when it is not). */
   error?: string | null;
 }
@@ -71,6 +78,7 @@ export const EgressArmControl = memo(function EgressArmControl({
   status,
   onArm,
   onDisarm,
+  onRearm,
   busy,
   error,
 }: EgressArmControlProps) {
@@ -159,7 +167,33 @@ export const EgressArmControl = memo(function EgressArmControl({
 
             {tainted ? (
               <div className="dash-egress-locked" data-testid="egress-locked">
-                Session tainted — restart Tuxlink to re-enable agent send.
+                <button
+                  type="button"
+                  className="egress-rearm-button egress-arm-button--primary"
+                  data-testid="egress-rearm-start"
+                  disabled={busy}
+                  onClick={() => {/* label-only; pick a duration below */}}
+                >
+                  Start a fresh authorized session
+                </button>
+                <div className="egress-rearm-presets" data-testid="egress-rearm-presets">
+                  {EGRESS_DURATION_PRESETS.map((preset) => (
+                    <button
+                      key={preset.secs}
+                      type="button"
+                      className="egress-arm-button"
+                      data-testid={`egress-rearm-${preset.secs}`}
+                      disabled={busy}
+                      onClick={() => onRearm?.(preset.secs)}
+                      title={`Start fresh session with send-authority for ${preset.label}`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="egress-rearm-consequence" data-testid="egress-rearm-consequence">
+                  {REARM_CONSEQUENCE}
+                </div>
               </div>
             ) : armed ? (
               <button

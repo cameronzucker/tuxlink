@@ -53,6 +53,13 @@ import { applyColorScheme, saveColorScheme } from './colorScheme';
 // trims the bundle that gates first paint of the main shell. Each lazy panel
 // is also gated at its call site (`{flag && <Suspense>…</Suspense>}`) so the
 // module + its CSS aren't fetched until the open flag flips true.
+
+// tuxlink-13v2l: Elmer agent pane — lazy-loaded; only fetches when the
+// operator opens it (cold-start discipline matches the other overlays here).
+const ElmerPane = lazy(() =>
+  import('../elmer/ElmerPane').then((m) => ({ default: m.ElmerPane })),
+);
+
 const SettingsPanel = lazy(() =>
   import('./SettingsPanel').then((m) => ({ default: m.SettingsPanel })),
 );
@@ -423,6 +430,8 @@ export function AppShell() {
   const [verifyCmsOpen, setVerifyCmsOpen] = useState(false);
   // tuxlink-l9sq4: Connect an AI agent modal, opened from Tools.
   const [connectAgentOpen, setConnectAgentOpen] = useState(false);
+  // tuxlink-13v2l: Elmer agent pane, opened from Tools → Elmer (or ribbon chip).
+  const [elmerOpen, setElmerOpen] = useState(false);
   // tuxlink-a2gd: inline Catalog Builder ("Find a Gateway"), opened from Message → Find a Gateway.
   const [catalogBuilderOpen, setCatalogBuilderOpen] = useState(false);
   // tuxlink-eymu: Request Center overlay. Carries the initial inner view;
@@ -1364,6 +1373,8 @@ export function AppShell() {
     openUninstallCleanup: () => setUninstallCleanupOpen(true),
     // tuxlink-l9sq4: Tools → Connect an AI agent opens the modal.
     openConnectAgent: () => setConnectAgentOpen(true),
+    // tuxlink-13v2l: Tools → Elmer opens the Elmer agent pane.
+    openElmer: () => setElmerOpen(true),
     // tuxlink-lqw2: Tools → Verify CMS Connection opens the inline probe overlay.
     verifyCms: () => setVerifyCmsOpen(true),
     reportIssue: () => {
@@ -2042,6 +2053,19 @@ export function AppShell() {
       {connectAgentOpen && (
         <Suspense fallback={null}>
           <ConnectAgentModal open={true} onClose={() => setConnectAgentOpen(false)} />
+        </Suspense>
+      )}
+
+      {/* tuxlink-13v2l: Elmer agent pane — lazy-loaded; only fetches on first
+          open (cold-start discipline). The pane manages its own useElmer state;
+          AppShell provides the egress-arm context so the arm chip is consistent
+          with the ribbon chip (AC-13). */}
+      {elmerOpen && (
+        <Suspense fallback={null}>
+          <ElmerPane
+            egressStatus={egressArm.status}
+            onRearm={(durationSecs) => { void egressArm.rearm(durationSecs); }}
+          />
         </Suspense>
       )}
 

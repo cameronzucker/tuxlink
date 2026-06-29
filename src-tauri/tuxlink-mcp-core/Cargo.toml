@@ -33,6 +33,19 @@ libc = "0.2"
 # pulled in by the monolith already, so they resolve to the same versions.
 async-trait = "0.1"
 thiserror = "1"
+# Optional: only linked when `test-support` is enabled. The test_support module
+# (exposed under that feature) builds MockWrite over a tempdir; under the crate's
+# own `#[cfg(test)]` the [dev-dependencies] tempfile covers it, and under a
+# downstream `features = ["test-support"]` build the dep:tempfile activation does.
+tempfile = { version = "3", optional = true }
+
+[features]
+# Expose `test_support` helpers (fake ports, state builders) for integration
+# tests in downstream crates (e.g. the monolith's elmer/ tests).  Never enabled
+# in production builds — `cargo build` never resolves features listed only in a
+# downstream crate's [dev-dependencies]. Pulls in tempfile (used by MockWrite),
+# which is otherwise dev-only and absent from a feature (non-test) build.
+test-support = ["dep:tempfile"]
 
 [dev-dependencies]
 tempfile = "3"

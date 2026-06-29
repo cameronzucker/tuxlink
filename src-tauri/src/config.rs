@@ -332,6 +332,14 @@ pub struct Config {
     /// (tuxlink-5rvp).
     #[serde(default)]
     pub close_prompt_seen: bool,
+    /// Elmer agent pane settings (tuxlink-13v2l, Task 8a).
+    ///
+    /// `#[serde(default)]` migrates configs that predate this field (absent →
+    /// `ElmerConfig::default()`); the field is now KNOWN, satisfying
+    /// `deny_unknown_fields`. `skip_serializing_if` keeps a default-config
+    /// byte-identical to its pre-elmer shape.
+    #[serde(default, skip_serializing_if = "ElmerConfig::is_default")]
+    pub elmer: ElmerConfig,
 }
 
 impl Config {
@@ -1449,6 +1457,51 @@ pub struct AprsConfig {
 impl Default for AprsConfig {
     fn default() -> Self {
         Self { source_ssid: 0, tocall: "APZTUX".into(), path: "WIDE1-1,WIDE2-1".into() }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ElmerConfig — Elmer agent pane settings (tuxlink-13v2l, Task 8a)
+// ---------------------------------------------------------------------------
+
+/// Operator-configurable settings for the Elmer agent pane.
+///
+/// All fields default to the loopback-ollama posture; no config file entry is
+/// required for a local-model setup. The endpoint is OPERATOR-ONLY — it is
+/// never written by the agent or reachable from a tool result (AC-7, SSRF-2).
+///
+/// Added under `#[serde(default, skip_serializing_if = "ElmerConfig::is_default")]`
+/// on `Config` so pre-elmer config files load cleanly and remain byte-identical
+/// to their pre-elmer shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElmerConfig {
+    /// The chat-completions endpoint URL. Must resolve to a loopback address
+    /// (`127.0.0.0/8` / `::1` / `localhost`) — see `LoopbackEndpoint::parse`.
+    ///
+    /// Default: local Ollama (`http://127.0.0.1:11434/v1/chat/completions`).
+    pub agent_endpoint: String,
+    /// The model identifier string passed to the endpoint.
+    ///
+    /// Default: `"llama3"` (the most common locally-hosted Ollama model name).
+    pub agent_model: String,
+}
+
+impl Default for ElmerConfig {
+    fn default() -> Self {
+        Self {
+            agent_endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
+            agent_model: "llama3".into(),
+        }
+    }
+}
+
+impl ElmerConfig {
+    /// Returns `true` when this config is byte-for-byte equivalent to the
+    /// default — used by `#[serde(skip_serializing_if)]` to keep the config
+    /// file clean for operators who have not customized the Elmer endpoint.
+    pub fn is_default(&self) -> bool {
+        let d = ElmerConfig::default();
+        self.agent_endpoint == d.agent_endpoint && self.agent_model == d.agent_model
     }
 }
 

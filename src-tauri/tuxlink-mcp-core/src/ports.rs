@@ -831,3 +831,35 @@ pub trait ComposePort: Send + Sync {
     /// Stage a GRIB weather-product request; returns the staged MID.
     async fn grib_send_request(&self, dto: GribRequestDto) -> Result<String, WritePortError>;
 }
+
+// ---------------------------------------------------------------------------
+// Outbox read port — operator-UI only; never exposed as an agent #[tool].
+// ---------------------------------------------------------------------------
+
+/// One staged outbox record as seen by the operator confirm surface.
+///
+/// v1 carries no `staged_by` provenance field — there is no marker infra in
+/// this release. A provenance marker is a filed follow-up (M3 resolution).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct StagedRecordDto {
+    /// The Winlink message-ID (MID) assigned when the message was staged.
+    pub mid: String,
+    /// Primary recipient addresses.
+    pub to: Vec<String>,
+    /// Carbon-copy recipient addresses.
+    pub cc: Vec<String>,
+    /// Message subject.
+    pub subject: String,
+    /// Decoded plain-text body.
+    pub body: String,
+}
+
+/// Non-tainting read of the local outbox — returns the staged set exactly as
+/// the operator will see it in the confirm surface. **Never exposed as an
+/// agent `#[tool]`**; reached only by the operator-driven `outbox_staged_list`
+/// Tauri command (Task 8b). Calling this method does NOT mark messages read
+/// and does NOT touch the egress guard.
+#[async_trait]
+pub trait OutboxReadPort: Send + Sync {
+    async fn list_staged(&self) -> Result<Vec<StagedRecordDto>, PortError>;
+}

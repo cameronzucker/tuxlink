@@ -200,6 +200,7 @@ pub fn validate_endpoint(raw: &str, allow_remote: bool) -> Result<Url, EndpointE
 /// `allow_remote = false`. Callers that only ever talk to a local model shim
 /// (the common case) construct this instead of calling `validate_endpoint`
 /// directly to make the loopback constraint explicit in the type.
+#[derive(Debug, Clone)]
 pub struct LoopbackEndpoint(pub Url);
 
 impl LoopbackEndpoint {

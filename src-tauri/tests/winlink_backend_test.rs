@@ -80,6 +80,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision, PrivacyConfig,
     };
     Config {
+        elmer: tuxlink_lib::config::ElmerConfig::default(),
         schema_version: tuxlink_lib::config::CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: ConnectConfig {

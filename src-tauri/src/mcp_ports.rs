@@ -40,12 +40,12 @@ use tuxlink_mcp_core::ports::{
     BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto, ComposePort,
     ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
     GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
-    ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
-    PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort,
-    QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto,
-    SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto, StationFilterDto,
-    StationListDto, StationModeDto, StationPort, StatusPort, VaraConfigDto, VaraStatusDto,
-    VaraWriteDto, WritePort, WritePortError,
+    ModemStatusDto, OutboxReadPort, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
+    PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto,
+    PredictionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto,
+    SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
+    StationFilterDto, StationListDto, StationModeDto, StationPort, StagedRecordDto, StatusPort,
+    VaraConfigDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -2241,6 +2241,150 @@ impl PredictionPort for MonolithPredictionPort {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Outbox read port — operator-UI only; never exposed as an agent #[tool].
+// Task 5 (tuxlink-13v2l).
+// ---------------------------------------------------------------------------
+
+/// [`OutboxReadPort`] adapter. Reads the outbox WITHOUT touching the read-marker
+/// or the egress guard — non-tainting by construction. Reached only by the
+/// operator-driven `outbox_staged_list` Tauri command (Task 8b).
+pub struct MonolithOutboxReadPort {
+    app: AppHandle,
+}
+
+impl MonolithOutboxReadPort {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+
+    fn backend(
+        &self,
+    ) -> Result<Arc<dyn crate::winlink_backend::WinlinkBackend>, PortError> {
+        let state = self.app.state::<crate::app_backend::BackendState>();
+        state
+            .current()
+            .ok_or_else(|| PortError::Unavailable("backend offline".to_string()))
+    }
+}
+
+#[async_trait]
+impl OutboxReadPort for MonolithOutboxReadPort {
+    /// List every staged outbox record as a [`StagedRecordDto`].
+    ///
+    /// Reads `list_messages(Outbox)` to enumerate MIDs, then
+    /// `read_message_in(Outbox, &id)` per MID and parses the raw RFC 5322
+    /// bytes via `parse_raw_rfc5322`. Records whose bytes cannot be parsed are
+    /// skipped (logged), matching the skip-not-abort posture in
+    /// `build_outbound_proposals`. Calls `read_message_in`, NOT `read_message`
+    /// (which hardcodes Inbox), so the folder is explicit.
+    async fn list_staged(&self) -> Result<Vec<StagedRecordDto>, PortError> {
+        use crate::winlink_backend::MailboxFolder;
+        let backend = self.backend()?;
+        let metas = backend
+            .list_messages(MailboxFolder::Outbox)
+            .await
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+        let mut out = Vec::with_capacity(metas.len());
+        for meta in metas {
+            let body = match backend
+                .read_message_in(MailboxFolder::Outbox, &meta.id)
+                .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!(
+                        "list_staged: skipping outbox message {:?}: {e}",
+                        meta.id
+                    );
+                    continue;
+                }
+            };
+            let parsed =
+                match crate::ui_commands::parse_raw_rfc5322(&meta.id.0, &body.raw_rfc5322) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!(
+                            "list_staged: skipping parse error for {:?}: {e:?}",
+                            meta.id
+                        );
+                        continue;
+                    }
+                };
+            out.push(StagedRecordDto {
+                mid: meta.id.0.clone(),
+                to: parsed.to,
+                cc: parsed.cc,
+                subject: parsed.subject,
+                body: parsed.body,
+            });
+        }
+        Ok(out)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Approval-gated flush helper — Task 6 (tuxlink-13v2l).
+// ---------------------------------------------------------------------------
+
+/// Errors returned by [`approval_gated_flush`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum FlushError {
+    /// The live outbox digest does not match the approval digest — records were
+    /// added, removed, or modified between `compute_approval` and the flush.
+    DigestMismatch,
+    /// The session epoch has changed since the approval was issued.
+    EpochMismatch,
+    /// The approval token has expired (wall-clock TTL exceeded).
+    Expired,
+    /// The egress port denied the flush (guard not armed / tainted / poisoned).
+    Denied(String),
+    /// The flush itself failed after passing the digest check.
+    Failed(String),
+    /// The outbox could not be read to perform the re-digest.
+    ReadError(String),
+}
+
+/// Re-reads the staged outbox, recomputes the digest, and — **only on exact
+/// match** — drives the whole-outbox `EgressPort::cms_connect`. The re-digest
+/// is the security boundary: what the operator approved must exactly equal what
+/// is transmitted.
+///
+/// - Digest mismatch → `FlushError::DigestMismatch` (fail closed).
+/// - Epoch / expiry → forwarded from [`crate::elmer::approval::verify_approval`].
+/// - Gate denial → `FlushError::Denied`.
+/// - CMS connect failure → `FlushError::Failed`.
+pub(crate) async fn approval_gated_flush(
+    outbox_port: &MonolithOutboxReadPort,
+    egress_port: &MonolithEgressPort,
+    approval: &crate::elmer::approval::OutboxApproval,
+    session_epoch: u64,
+    now: u64,
+) -> Result<(), FlushError> {
+    // Step 1 — re-read the live outbox.
+    let live_records = outbox_port
+        .list_staged()
+        .await
+        .map_err(|e| FlushError::ReadError(format!("{e:?}")))?;
+
+    // Step 2 — verify the approval against the live set (digest + epoch + expiry).
+    crate::elmer::approval::verify_approval(approval, &live_records, session_epoch, now)
+        .map_err(|e| match e {
+            crate::elmer::approval::ApprovalError::DigestMismatch => FlushError::DigestMismatch,
+            crate::elmer::approval::ApprovalError::EpochMismatch => FlushError::EpochMismatch,
+            crate::elmer::approval::ApprovalError::Expired => FlushError::Expired,
+        })?;
+
+    // Step 3 — dispatch the whole-outbox flush through the egress gate.
+    egress_port
+        .cms_connect()
+        .await
+        .map_err(|e| match e {
+            EgressPortError::Denied(msg) => FlushError::Denied(msg),
+            EgressPortError::Failed(msg) => FlushError::Failed(msg),
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::minimize_bt_mac;
@@ -2248,7 +2392,8 @@ mod tests {
         any_freq_in_bands, curate_gateway, is_plausible_callsign, khz_to_band, sanitize_channel,
     };
     use crate::catalog::stations::{Gateway, GatewayAntenna};
-    use tuxlink_mcp_core::ports::{GatewayAntennaDto, StationModeDto};
+    use tuxlink_mcp_core::ports::{GatewayAntennaDto, OutboxReadPort, StagedRecordDto, StationModeDto};
+    use tuxlink_mcp_core::ports::PortError;
 
     /// A monolith `Gateway` fixture carrying a full free-text + PII payload so a
     /// curation test can assert those fields never cross the boundary.
@@ -2400,5 +2545,56 @@ mod tests {
         .expect("a plausible callsign survives even with a bad grid");
         assert_eq!(dto.callsign, "KK7ABC-10");
         assert_eq!(dto.grid, None, "an out-of-spec grid is nulled, not injected");
+    }
+
+    // --- OutboxReadPort seam tests (Task 5, tuxlink-13v2l) -------------------
+
+    /// Seeded in-memory impl of [`OutboxReadPort`] for unit tests that cannot
+    /// construct a `tauri::AppHandle`. The real [`MonolithOutboxReadPort`]
+    /// follows the same trait contract; integration is exercised in CI via the
+    /// mcp-testserver + full Tauri build.
+    struct SeededOutboxPort {
+        records: Vec<StagedRecordDto>,
+    }
+
+    #[async_trait::async_trait]
+    impl OutboxReadPort for SeededOutboxPort {
+        async fn list_staged(&self) -> Result<Vec<StagedRecordDto>, PortError> {
+            Ok(self.records.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn outbox_read_port_returns_seeded_records() {
+        let records = vec![
+            StagedRecordDto {
+                mid: "MID001".to_string(),
+                to: vec!["w1aw@winlink.org".to_string()],
+                cc: vec![],
+                subject: "EOC status".to_string(),
+                body: "All clear.".to_string(),
+            },
+            StagedRecordDto {
+                mid: "MID002".to_string(),
+                to: vec!["n7cpz@winlink.org".to_string()],
+                cc: vec!["eoc@example.org".to_string()],
+                subject: "Sitrep".to_string(),
+                body: "Check in.".to_string(),
+            },
+        ];
+        let port = SeededOutboxPort { records: records.clone() };
+        let result = port.list_staged().await.expect("list_staged should succeed");
+        assert_eq!(result.len(), 2, "should return both seeded records");
+        assert_eq!(result[0].mid, "MID001");
+        assert_eq!(result[0].to, vec!["w1aw@winlink.org"]);
+        assert_eq!(result[1].mid, "MID002");
+        assert_eq!(result[1].cc, vec!["eoc@example.org"]);
+    }
+
+    #[tokio::test]
+    async fn outbox_read_port_returns_empty_for_empty_outbox() {
+        let port = SeededOutboxPort { records: vec![] };
+        let result = port.list_staged().await.expect("empty outbox is Ok");
+        assert!(result.is_empty(), "empty outbox should return empty vec");
     }
 }

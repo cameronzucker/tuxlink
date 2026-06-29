@@ -69,6 +69,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.13", features = ["json", "multipart", "stream", "gzip", "form"] }  # tuxlink-z5f: dropped "blocking" — PatClient is async to avoid runtime-drop panic in #[tokio::test] contexts. tuxlink-xipa Codex P1 #1: "stream" added for forms::updater::download_archive chunked size enforcement. tuxlink-k61j: "gzip" — TileServer-GL/nginx serve tiles with Content-Encoding: gzip; the tile client must decompress so the image magic-byte check sees the real image, not gzip bytes. tuxlink-vfb3: "form" — reqwest 0.13 moved RequestBuilder::form() behind this feature (was default in 0.12); the CMS account API posts x-www-form-urlencoded.
 tokio = { version = "1", features = ["full"] }
+# Cooperative cancellation (CancellationToken) for the Elmer agent loop + session.
+tokio-util = "0.7"
 nix = { version = "0.31", features = ["signal", "process", "fs"] }  # "fs" (tuxlink-ndi4): statvfs free-space pre-flight before a region-pack download
 thiserror = "2"            # NEW — for ConfigValidationError + ConfigReadError + ConfigWriteError
 tempfile = "3"             # PROMOTED from [dev-dependencies] below
@@ -143,6 +145,12 @@ tuxlink-mcp-core = { path = "tuxlink-mcp-core" }
 tux-rig = { path = "tux-rig" }
 tuxlink-agent-runner = { path = "tuxlink-agent-runner" }
 tuxlink-agent-frontend = { path = "tuxlink-agent-frontend" }
+# rmcp client (elmer/executor.rs in-process duplex invoker).  `client` +
+# `transport-async-rw` are the features d3zwe already uses; the lockfile already
+# has rmcp 0.8.5 so this does not introduce a new crate or version.  `server` +
+# `macros` come in transitively via tuxlink-mcp-core; Cargo unifies to a single
+# copy.
+rmcp = { version = "0.8", features = ["client", "transport-async-rw"] }
 
 # tuxlink-cumx / G8 — faithful PDF export drives the live form's WebKitGTK view
 # via WebKitPrintOperation. Both crates are already in the build (transitive via
@@ -161,6 +169,9 @@ gtk = "=0.18.2"
 # Release `cargo build` does not resolve dev-dependencies, so `for_test` and
 # other test-support seams stay out of production binaries.
 tuxlink = { path = ".", features = ["test-support"] }
+# tuxlink-mcp-core with test-support exposes mock ports + state_with_seeded_inbox
+# for the elmer/ integration tests (Task 4 taint-parity + withholding tests).
+tuxlink-mcp-core = { path = "tuxlink-mcp-core", features = ["test-support"] }
 filetime = "0.2"           # retention sweep clock-grace test fixtures (unit + integration)
 mockito = "1.5"
 serial_test = "3"          # NEW — gates env-var-mutating tests
