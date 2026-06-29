@@ -17,8 +17,11 @@ import { DEV_FIXTURE, DEV_POSITION, DEV_CONNECTION_DASH } from '../mailbox/devFi
 import { formatPacketConnection, type PacketUiState } from '../packet/packetStatus';
 import { IdentitySwitcher } from './IdentitySwitcher';
 import type { ActiveIdentityDto, IdentityListDto } from './identityTypes';
-import { EgressArmControl } from './EgressArmControl';
-import type { EgressStatusDto } from '../security/egressTypes';
+import {
+  EGRESS_STATUS_DISARMED,
+  formatEgressRemaining,
+  type EgressStatusDto,
+} from '../security/egressTypes';
 
 /**
  * Self-contained clock cell (tuxlink-sndh). Lives in its own subtree so the
@@ -112,11 +115,11 @@ export interface DashboardRibbonProps {
    *  row; when omitted, the legacy bare markup renders (back-compat — keeps
    *  prop-free consumers/tests unchanged). */
   onSwitchIdentity?: (args: { callsign: string; credential: string; tacticalLabel: string | null }) => Promise<void>;
-  /** Operator ARM surface for agent send-authority (MCP phase 3.6). Absent → the
-   *  control is not rendered (keeps prop-free consumers/tests unchanged). When
-   *  present, renders the EgressArmControl: arm/disarm toggle + duration presets
-   *  + live countdown + taint lock. `status` is the live egress_status snapshot;
-   *  `onArm`/`onDisarm` call the backend (AppShell owns the useEgressArm hook). */
+  /** Live egress-grant snapshot for the merged Elmer × Agent-send chip. Only
+   *  `status` is read here (the chip is display-only: it shows arm/taint state
+   *  and opens the Elmer drawer). The arm/disarm/re-arm actions were relocated
+   *  to the drawer header (see ElmerPane); `onArm`/`onDisarm` remain on the type
+   *  so AppShell can pass one egress object, but the ribbon does not call them. */
   egress?: {
     status: EgressStatusDto;
     onArm: (durationSecs: number) => void;
@@ -131,6 +134,84 @@ export interface DashboardRibbonProps {
   /** Whether the Elmer drawer is currently open (drives the launcher's
    *  aria-pressed / active state). */
   elmerOpen?: boolean;
+}
+
+/**
+ * Live countdown for the ribbon agent chip. Seeds from the polled remaining
+ * seconds and ticks locally each second; re-seeds when a fresh poll changes the
+ * value. Scoped so only this text node repaints (mirrors EgressArmControl's
+ * CountdownCell, but with its own testid so the two never collide in the DOM).
+ */
+function ChipCountdown({ remainingSecs }: { remainingSecs: number }) {
+  const [secs, setSecs] = useState(remainingSecs);
+  useEffect(() => setSecs(remainingSecs), [remainingSecs]);
+  useEffect(() => {
+    const id = setInterval(() => setSecs((s) => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <span className="dash-elmer-agent-cd" data-testid="ribbon-elmer-countdown">
+      · {formatEgressRemaining(secs)}
+    </span>
+  );
+}
+
+/**
+ * ElmerAgentChip — the merged ribbon control (the Elmer launcher AND the
+ * at-a-glance agent-send state, in one slot). The constant ✦ anchors Elmer's
+ * identity; the label transforms with arm state. Click ALWAYS opens the Elmer
+ * drawer — arm/disarm/re-arm live in the drawer header (relocated from this
+ * ribbon), so this control is display-only and never disarms on close.
+ *
+ *   disarmed → "✦ Elmer"               (launcher; pressed when the drawer is open)
+ *   armed    → "✦ ● Agent send · M:SS"  (live countdown)
+ *   tainted  → "✦ ⚠ Agent send · LOCKED"
+ */
+function ElmerAgentChip({
+  status,
+  elmerOpen,
+  onOpenElmer,
+}: {
+  status: EgressStatusDto;
+  elmerOpen?: boolean;
+  onOpenElmer: () => void;
+}) {
+  const { armed, armedRemainingSecs, tainted } = status;
+  const mode = tainted ? 'locked' : armed ? 'armed' : 'disarmed';
+  const title =
+    mode === 'locked'
+      ? 'Elmer — agent send LOCKED (open to re-arm)'
+      : mode === 'armed'
+        ? 'Elmer — agent send armed (open to manage)'
+        : 'Elmer — AI assistant';
+  return (
+    <button
+      type="button"
+      className={`dash-elmer-agent dash-elmer-agent--${mode}${elmerOpen ? ' is-open' : ''}`}
+      data-testid="ribbon-elmer-launcher"
+      data-mode={mode}
+      aria-pressed={!!elmerOpen}
+      aria-label="Elmer assistant and agent send authority"
+      title={title}
+      onClick={onOpenElmer}
+    >
+      <span className="dash-elmer-agent-spark" aria-hidden="true">✦</span>
+      {mode === 'disarmed' && <span className="dash-elmer-agent-label">Elmer</span>}
+      {mode === 'armed' && (
+        <>
+          <span className="dash-status-dot" aria-hidden="true" />
+          <span className="dash-elmer-agent-label">Agent send</span>
+          <ChipCountdown remainingSecs={armedRemainingSecs} />
+        </>
+      )}
+      {mode === 'locked' && (
+        <>
+          <span className="dash-elmer-agent-warn" aria-hidden="true">⚠</span>
+          <span className="dash-elmer-agent-label">Agent send · LOCKED</span>
+        </>
+      )}
+    </button>
+  );
 }
 
 // tuxlink-djnl: React.memo so 2s status-poll renders (now reference-stable
@@ -334,36 +415,18 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
         </>
       )}
 
-      {egress && (
-        <>
-          <div className="dash-divider" />
-          <EgressArmControl
-            status={egress.status}
-            onArm={egress.onArm}
-            onDisarm={egress.onDisarm}
-            busy={egress.busy}
-            error={egress.error}
-          />
-        </>
-      )}
-
-      {/* Elmer launcher — global entry point, co-located with the Agent-send
-          arm chip (the assistant + its send authority as one unit). Toggles the
-          drawer; aria-pressed reflects open state; a LOCKED tint when tainted. */}
+      {/* Merged Elmer × Agent-send control — ONE ribbon slot. Display-only:
+          shows arm/taint state at a glance and opens the Elmer drawer on click.
+          Arm/disarm/re-arm were relocated to the drawer header (see ElmerPane),
+          which frees the slot that was pushing Connect off-screen at 1080p. */}
       {onOpenElmer && (
         <>
           <div className="dash-divider" />
-          <button
-            type="button"
-            className={`dash-elmer-launcher${elmerOpen ? ' is-open' : ''}${egress?.status.tainted ? ' is-locked' : ''}`}
-            data-testid="ribbon-elmer-launcher"
-            aria-pressed={!!elmerOpen}
-            title="Elmer — AI assistant"
-            onClick={onOpenElmer}
-          >
-            <span className="dash-elmer-icon" aria-hidden="true">✦</span>
-            <span className="dash-elmer-label">Elmer</span>
-          </button>
+          <ElmerAgentChip
+            status={egress?.status ?? EGRESS_STATUS_DISARMED}
+            elmerOpen={elmerOpen}
+            onOpenElmer={onOpenElmer}
+          />
         </>
       )}
 

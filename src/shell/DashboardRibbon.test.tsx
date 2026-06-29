@@ -409,50 +409,68 @@ describe('DashboardRibbon — IdentitySwitcher integration (Task 10, tuxlink-noa
 });
 
 // ---------------------------------------------------------------------------
-// tuxlink-yfezs: ribbon Agent-send chip must be compact (no inline preset row)
+// Merged Elmer × Agent-send control (one ribbon slot). Display-only: shows
+// arm/taint state and opens the Elmer drawer on click. Arm/disarm/re-arm were
+// relocated to the drawer header — the ribbon NO LONGER renders the egress
+// popover (that's covered by ElmerPane.test.tsx now). Supersedes the separate
+// launcher + arm chip (tuxlink-yfezs) that overflowed Connect at 1080p.
 // ---------------------------------------------------------------------------
 
-describe('<DashboardRibbon> — Agent-send chip is compact (tuxlink-yfezs)', () => {
-  const egress = {
-    status: EGRESS_STATUS_DISARMED,
-    onArm: vi.fn(),
-    onDisarm: vi.fn(),
-  };
+describe('<DashboardRibbon> — merged Elmer × Agent-send chip', () => {
+  const ARMED = { armed: true, armedRemainingSecs: 300, tainted: false };
+  const TAINTED = { armed: false, armedRemainingSecs: 0, tainted: true };
+  const armEgress = (status: typeof ARMED) => ({ status, onArm: vi.fn(), onDisarm: vi.fn() });
 
-  it('renders the Agent-send chip with no inline preset row', () => {
-    render(<DashboardRibbon data={makeData()} egress={egress} />);
-    expect(screen.getByTestId('egress-chip')).toBeTruthy();
-    // The presets must NOT be inline in the ribbon — they live in the popover.
-    expect(screen.queryByTestId('egress-presets')).toBeNull();
-  });
-
-  it('opens the preset popover only when the chip is clicked', () => {
-    render(<DashboardRibbon data={makeData()} egress={egress} />);
-    fireEvent.click(screen.getByTestId('egress-chip'));
-    expect(screen.getByTestId('egress-presets')).toBeTruthy();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Elmer launcher — global entry point, co-located with the Agent-send arm chip
-// (operator-approved IA: ribbon button, not a contextual dock tab or a rail).
-// ---------------------------------------------------------------------------
-
-describe('<DashboardRibbon> — Elmer launcher', () => {
-  it('renders an Elmer launcher and calls onOpenElmer on click', () => {
+  it('renders the launcher and calls onOpenElmer on click', () => {
     const onOpenElmer = vi.fn();
     render(<DashboardRibbon data={makeData()} onOpenElmer={onOpenElmer} />);
     fireEvent.click(screen.getByTestId('ribbon-elmer-launcher'));
     expect(onOpenElmer).toHaveBeenCalledTimes(1);
   });
 
-  it('does not render the launcher when onOpenElmer is omitted', () => {
-    render(<DashboardRibbon data={makeData()} />);
+  it('does not render the control when onOpenElmer is omitted', () => {
+    render(<DashboardRibbon data={makeData()} egress={armEgress(ARMED)} />);
     expect(screen.queryByTestId('ribbon-elmer-launcher')).toBeNull();
   });
 
   it('reflects the open state via aria-pressed', () => {
     render(<DashboardRibbon data={makeData()} onOpenElmer={vi.fn()} elmerOpen />);
     expect(screen.getByTestId('ribbon-elmer-launcher')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('disarmed → reads "Elmer", no countdown', () => {
+    render(<DashboardRibbon data={makeData()} onOpenElmer={vi.fn()} egress={armEgress(EGRESS_STATUS_DISARMED)} />);
+    const chip = screen.getByTestId('ribbon-elmer-launcher');
+    expect(chip).toHaveAttribute('data-mode', 'disarmed');
+    expect(chip).toHaveTextContent('Elmer');
+    expect(screen.queryByTestId('ribbon-elmer-countdown')).toBeNull();
+  });
+
+  it('armed → transforms to "Agent send" + a live countdown', () => {
+    render(<DashboardRibbon data={makeData()} onOpenElmer={vi.fn()} egress={armEgress(ARMED)} />);
+    const chip = screen.getByTestId('ribbon-elmer-launcher');
+    expect(chip).toHaveAttribute('data-mode', 'armed');
+    expect(chip).toHaveTextContent('Agent send');
+    expect(screen.getByTestId('ribbon-elmer-countdown')).toBeInTheDocument();
+  });
+
+  it('tainted → reads LOCKED', () => {
+    render(<DashboardRibbon data={makeData()} onOpenElmer={vi.fn()} egress={armEgress(TAINTED)} />);
+    const chip = screen.getByTestId('ribbon-elmer-launcher');
+    expect(chip).toHaveAttribute('data-mode', 'locked');
+    expect(chip).toHaveTextContent('LOCKED');
+  });
+
+  it('still opens Elmer on click while armed (click ≠ arm/disarm)', () => {
+    const onOpenElmer = vi.fn();
+    render(<DashboardRibbon data={makeData()} onOpenElmer={onOpenElmer} egress={armEgress(ARMED)} />);
+    fireEvent.click(screen.getByTestId('ribbon-elmer-launcher'));
+    expect(onOpenElmer).toHaveBeenCalledTimes(1);
+  });
+
+  it('no longer renders the arm popover/presets in the ribbon (moved to the drawer)', () => {
+    render(<DashboardRibbon data={makeData()} onOpenElmer={vi.fn()} egress={armEgress(EGRESS_STATUS_DISARMED)} />);
+    expect(screen.queryByTestId('egress-chip')).toBeNull();
+    expect(screen.queryByTestId('egress-presets')).toBeNull();
   });
 });
