@@ -98,8 +98,6 @@ for the full list of which desktops require action and which do not. The short s
   Then ensure `gnome-keyring-daemon --daemonize --components=secrets` runs in your
   session (or add it to your session startup). See
   [development.md](development.md#runtime-prerequisites-for-end-users) for details.
-- **macOS**: native Keychain Services. Always available; no action needed.
-- **Windows**: native CredentialManager. Always available; no action needed.
 
 If tuxlink's wizard reports "keyring backend unavailable" or "secret-service not
 running," resolve this before continuing. See [Troubleshooting](#troubleshooting)
