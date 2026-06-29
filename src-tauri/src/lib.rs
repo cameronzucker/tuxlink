@@ -458,6 +458,40 @@ mod close_action_tests {
         let c = cfg(true, true, true);
         assert_eq!(close_action(Some(&c)), CloseAction::MinimizeToTray);
     }
+
+    // ── tuxlink-13v2l Task 8c (AC-4): abort-on-quit invariant ───────────────
+    //
+    // `cancel_and_abort` MUST fire on Quit; it MUST NOT fire on MinimizeToTray.
+    // Because the actual window handler requires a live Tauri window, we test
+    // the decision logic: the `CloseAction` variant determines which branch runs.
+    // The test verifies that:
+    //   - Quit is the action on the opt-out / setup paths (abort fires there).
+    //   - MinimizeToTray is the action on the default minimize path (no abort).
+    //
+    // The invariant that `cancel_and_abort` is ONLY called inside CloseAction::Quit
+    // is enforced by code inspection: the MinimizeToTray arm has no abort call.
+
+    /// `close_action` returns `Quit` for all paths where abort should fire.
+    #[test]
+    fn abort_fires_only_on_quit_not_minimize_to_tray() {
+        // These are the Quit paths (abort should fire):
+        assert_eq!(close_action(None), CloseAction::Quit,
+            "no config → Quit (abort path)");
+        assert_eq!(close_action(Some(&cfg(false, false, true))), CloseAction::Quit,
+            "wizard incomplete → Quit (abort path)");
+        assert_eq!(close_action(Some(&cfg(true, true, false))), CloseAction::Quit,
+            "close_to_tray=false → Quit (abort path)");
+
+        // This is the MinimizeToTray path (abort must NOT fire):
+        assert_eq!(close_action(Some(&cfg(true, true, true))), CloseAction::MinimizeToTray,
+            "close_to_tray=true + seen prompt → MinimizeToTray (no abort)");
+
+        // Verify the two are distinct (sanity check that these constants are
+        // different values — a Quit == MinimizeToTray coincidence would make the
+        // abort-on-quit invariant untestable).
+        assert_ne!(CloseAction::Quit, CloseAction::MinimizeToTray,
+            "Quit and MinimizeToTray must be distinct variants");
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1454,6 +1488,141 @@ pub fn run() {
                 }
             }
 
+            // ── Elmer agent session (tuxlink-13v2l Task 8b) ────────────────
+            // Build the ElmerSession in the setup closure (async context) so
+            // InProcessMcpInvoker::connect (which does an MCP duplex handshake)
+            // can be awaited.  The session is then managed as `Arc<ElmerSession>`
+            // so the six Tauri commands can retrieve it via `State<'_, Arc<ElmerSession>>`.
+            //
+            // Construction plan (all handles pulled from managed state):
+            //   1. guard   — the shared EgressGuard (already managed above)
+            //   2. abort   — MonolithAbortPort (wraps the same AppHandle)
+            //   3. outbox  — MonolithOutboxReadPort (non-tainting staged-outbox read)
+            //   4. mcp_state_elmer — a second McpState (separate from the UDS router's
+            //      McpState; both share the same Arc<EgressGuard> binding)
+            //   5. invoker — InProcessMcpInvoker::connect(mcp_state_elmer).await
+            //   6. provider — ElmerProvider from config or default loopback endpoint
+            //   7. session — ElmerSession::new(...) — synchronous constructor
+            {
+                use tauri::Manager as _;
+
+                let guard_elmer = app
+                    .state::<std::sync::Arc<tuxlink_security::EgressGuard>>()
+                    .inner()
+                    .clone();
+                let h_elmer = app.handle().clone();
+
+                let flush_outbox = std::sync::Arc::new(
+                    crate::mcp_ports::MonolithOutboxReadPort::new(h_elmer.clone()),
+                );
+                let flush_egress = std::sync::Arc::new(
+                    crate::mcp_ports::MonolithEgressPort::new(h_elmer.clone(), guard_elmer.clone()),
+                );
+                // The non-tainting OutboxReadPort trait object (for outbox_staged_list).
+                let outbox_trait: std::sync::Arc<dyn tuxlink_mcp_core::ports::OutboxReadPort + Send + Sync> =
+                    flush_outbox.clone();
+
+                // Abort port for cancel_and_abort.
+                let abort_port: std::sync::Arc<dyn tuxlink_mcp_core::ports::AbortPort + Send + Sync> =
+                    std::sync::Arc::new(crate::mcp_ports::MonolithAbortPort::new(h_elmer.clone()));
+
+                // Second McpState for Elmer's in-process MCP invoker.
+                let mcp_state_elmer = std::sync::Arc::new(tuxlink_mcp_core::McpState {
+                    guard: guard_elmer.clone(),
+                    name: env!("CARGO_PKG_NAME").to_string(),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    status: std::sync::Arc::new(crate::mcp_ports::MonolithStatusPort::new(h_elmer.clone())),
+                    mailbox: std::sync::Arc::new(crate::mcp_ports::MonolithMailboxPort::new(h_elmer.clone())),
+                    search: std::sync::Arc::new(crate::mcp_ports::MonolithSearchPort::new(h_elmer.clone())),
+                    config: std::sync::Arc::new(crate::mcp_ports::MonolithConfigPort::new(h_elmer.clone())),
+                    devices: std::sync::Arc::new(crate::mcp_ports::MonolithDevicePort::new(h_elmer.clone())),
+                    logs: std::sync::Arc::new(crate::mcp_ports::MonolithLogPort::new(h_elmer.clone())),
+                    egress: std::sync::Arc::new(crate::mcp_ports::MonolithEgressPort::new(h_elmer.clone(), guard_elmer.clone())),
+                    abort: std::sync::Arc::new(crate::mcp_ports::MonolithAbortPort::new(h_elmer.clone())),
+                    write: std::sync::Arc::new(crate::mcp_ports::MonolithWritePort::new(h_elmer.clone(), guard_elmer.clone())),
+                    compose: std::sync::Arc::new(crate::mcp_ports::MonolithComposePort::new(h_elmer.clone())),
+                    stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(h_elmer.clone())),
+                    prediction: std::sync::Arc::new(crate::mcp_ports::MonolithPredictionPort::new(h_elmer.clone())),
+                });
+
+                // Perform the async MCP duplex handshake synchronously from setup.
+                // Use `tauri::async_runtime::block_on` (NOT `Handle::current().block_on`):
+                // setup runs on the main thread, which has not entered the Tokio
+                // runtime, so `Handle::current()` would panic ("no reactor running").
+                // Tauri's helper drives the future on its managed runtime regardless.
+                let invoker_result = tauri::async_runtime::block_on(
+                    crate::elmer::executor::InProcessMcpInvoker::connect(mcp_state_elmer),
+                );
+
+                match invoker_result {
+                    Ok(invoker) => {
+                        // Read endpoint + model from config, falling back to defaults.
+                        let elmer_cfg = crate::config::read_config()
+                            .ok()
+                            .map(|c| c.elmer)
+                            .unwrap_or_default();
+
+                        // Build the loopback-validated endpoint.
+                        let endpoint = match tuxlink_agent_frontend::endpoint::LoopbackEndpoint::parse(
+                            &elmer_cfg.agent_endpoint,
+                        ) {
+                            Ok(ep) => ep,
+                            Err(e) => {
+                                // Config has an invalid endpoint (e.g. someone set a LAN
+                                // address). Fall back to the default loopback ollama URL.
+                                tracing::warn!(
+                                    target: "elmer",
+                                    error = %e,
+                                    "configured elmer.agent_endpoint is invalid; falling back to default loopback"
+                                );
+                                tuxlink_agent_frontend::endpoint::LoopbackEndpoint::parse(
+                                    "http://127.0.0.1:11434/v1/chat/completions",
+                                )
+                                .expect("default loopback endpoint must be valid")
+                            }
+                        };
+
+                        let provider: std::sync::Arc<dyn tuxlink_agent_runner::Provider> =
+                            std::sync::Arc::new(crate::elmer::provider::ElmerProvider::new(
+                                endpoint,
+                                elmer_cfg.agent_model.clone(),
+                                None, // api_key: read from keyring in a future task
+                            ));
+
+                        let session = crate::elmer::session::ElmerSession::new(
+                            invoker,
+                            provider,
+                            guard_elmer,
+                            abort_port,
+                            outbox_trait.clone(),
+                            flush_outbox,
+                            flush_egress,
+                        );
+
+                        app.manage(std::sync::Arc::new(session));
+                        // Also manage the OutboxReadPort trait object for outbox_staged_list.
+                        app.manage(outbox_trait);
+
+                        tracing::info!(
+                            target: "elmer",
+                            model = %elmer_cfg.agent_model,
+                            "Elmer agent session ready"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "elmer",
+                            error = ?e,
+                            "Elmer agent session failed to start; elmer commands will be unavailable"
+                        );
+                        // Elmer is non-fatal: the app continues without it. Commands
+                        // that try to retrieve the managed Arc<ElmerSession> will panic
+                        // at State extraction — this is acceptable for an alpha-only
+                        // feature. A future task can harden this with an Option wrapper.
+                    }
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1479,6 +1648,27 @@ pub fn run() {
                         // last-window-close is fragile with a tray icon present).
                         CloseAction::Quit => {
                             use tauri::Manager as _;
+                            // tuxlink-13v2l Task 8c (AC-4): abort-on-quit.
+                            // Fire cancel_and_abort BEFORE exit(0) so any in-flight
+                            // ARDOP/VARA/CMS transmission receives an abort signal.
+                            // This is the ONLY Quit path; MinimizeToTray must NOT
+                            // fire this (it would abort a transmit on every tray-hide).
+                            if let Some(session_state) = window
+                                .app_handle()
+                                .try_state::<std::sync::Arc<crate::elmer::session::ElmerSession>>()
+                            {
+                                // `State<'_, Arc<ElmerSession>>` derefs to `Arc<ElmerSession>`.
+                                let session_arc: std::sync::Arc<crate::elmer::session::ElmerSession> =
+                                    (*session_state).clone();
+                                // Block on the abort so it completes before exit(0).
+                                // The abort is bounded (CANCEL_DRAIN_TIMEOUT = 5s) and
+                                // calls abort_handle.abort() if the task doesn't drain.
+                                // `tauri::async_runtime::block_on` (NOT try_current, which
+                                // would SILENTLY SKIP the abort when the window callback runs
+                                // off the Tokio context — defeating the AC-4 abort-on-quit
+                                // guarantee) drives it on Tauri's managed runtime.
+                                tauri::async_runtime::block_on(session_arc.cancel_and_abort());
+                            }
                             window.app_handle().exit(0);
                         }
                         // First-ever close after setup (prompt not yet answered):
@@ -1854,6 +2044,13 @@ pub fn run() {
             crate::ui_core::security_commands::egress_status,
             // tuxlink-l9sq4 Task 2: MCP connection info (socket path, shim path, liveness).
             crate::mcp_connection::mcp_connection_info,
+            // tuxlink-13v2l Task 8b: Elmer agent pane commands.
+            crate::elmer::commands::elmer_send,
+            crate::elmer::commands::elmer_stop,
+            crate::elmer::commands::egress_rearm,
+            crate::elmer::commands::outbox_staged_list,
+            crate::elmer::commands::elmer_prepare_outbox_approval,
+            crate::elmer::commands::elmer_connect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -69,6 +69,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.13", features = ["json", "multipart", "stream", "gzip", "form"] }  # tuxlink-z5f: dropped "blocking" — PatClient is async to avoid runtime-drop panic in #[tokio::test] contexts. tuxlink-xipa Codex P1 #1: "stream" added for forms::updater::download_archive chunked size enforcement. tuxlink-k61j: "gzip" — TileServer-GL/nginx serve tiles with Content-Encoding: gzip; the tile client must decompress so the image magic-byte check sees the real image, not gzip bytes. tuxlink-vfb3: "form" — reqwest 0.13 moved RequestBuilder::form() behind this feature (was default in 0.12); the CMS account API posts x-www-form-urlencoded.
 tokio = { version = "1", features = ["full"] }
+# Cooperative cancellation (CancellationToken) for the Elmer agent loop + session.
+tokio-util = "0.7"
 nix = { version = "0.31", features = ["signal", "process", "fs"] }  # "fs" (tuxlink-ndi4): statvfs free-space pre-flight before a region-pack download
 thiserror = "2"            # NEW — for ConfigValidationError + ConfigReadError + ConfigWriteError
 tempfile = "3"             # PROMOTED from [dev-dependencies] below

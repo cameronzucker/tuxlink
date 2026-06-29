@@ -10,5 +10,8 @@
 //! - Task 8 (`pane`): full Tauri command surface.
 
 pub mod approval;
+pub mod commands;
+pub mod events;
 pub mod executor;
+pub mod provider;
 pub mod session;

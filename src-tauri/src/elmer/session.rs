@@ -82,39 +82,17 @@ use crate::elmer::executor::InProcessMcpInvoker;
 use crate::mcp_ports::{approval_gated_flush, FlushError};
 
 // ---------------------------------------------------------------------------
-// EventSink + ElmerEvent forward-reference
+// EventSink + ElmerEvent — re-export from events.rs (Task 8b migration done)
 //
-// Task 8b will define `src/elmer/events.rs` with the canonical `ElmerEvent`
-// enum.  For now the placeholder lives here so `EventSink` compiles and the
-// pane build can proceed without that file.
-//
-// Migration plan for Task 8b:
-//   1. Create `src/elmer/events.rs`; move `ElmerEvent` there with real variants.
-//   2. In this file, replace the enum definition with:
-//        use crate::elmer::events::ElmerEvent;
-//   3. Keep the `EventSink` type alias — only the import source changes.
+// Task 8b created `src/elmer/events.rs` with the canonical ElmerEvent enum.
+// The placeholder that lived here has been removed; we now re-export from
+// the canonical location so all existing callers of `ElmerEvent` / `EventSink`
+// in this file continue to compile unchanged.
 // ---------------------------------------------------------------------------
 
-/// Placeholder for the full event enum (Task 8b).
-///
-/// When Task 8b ships, this moves to `src/elmer/events.rs` and gains the real
-/// variants (TurnStart, Chip, Outcome, Error, …).
-#[allow(dead_code)]
-pub enum ElmerEvent {
-    /// A text token arrived from the model (streaming).
-    Chip(String),
-    /// The run produced a terminal outcome.
-    Outcome(RunOutcome),
-}
+pub use crate::elmer::events::ElmerEvent;
 
 /// Cheap cloneable function pointer for emitting [`ElmerEvent`]s to the pane.
-///
-/// The brief specifies:
-/// ```text
-/// pub type EventSink = Arc<dyn Fn(crate::elmer::events::ElmerEvent) + Send + Sync>;
-/// ```
-/// Once events.rs exists, the `ElmerEvent` path updates automatically via the
-/// import alias above.
 pub type EventSink = Arc<dyn Fn(ElmerEvent) + Send + Sync>;
 
 // ---------------------------------------------------------------------------
