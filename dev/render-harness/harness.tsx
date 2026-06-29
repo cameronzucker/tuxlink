@@ -13,6 +13,10 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '../../src/App.css';
+// AppShell.css carries the ribbon's `.layout-b .dashboard .dash-*` rules; without
+// it (and the `.layout-b` wrapper below) DashboardRibbon renders unstyled. Only
+// this file is needed — StatusBar.css has no dash-* rules and compactShell.css is
+// narrow-viewport overrides that would distort the desktop ribbon snapshot.
 import '../../src/shell/AppShell.css';
 import { RequestCenter } from '../../src/request/RequestCenter';
 import { DashboardRibbon } from '../../src/shell/DashboardRibbon';
