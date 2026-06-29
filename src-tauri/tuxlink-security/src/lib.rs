@@ -117,6 +117,19 @@ impl EgressGuard {
         self.inner.lock().unwrap().tainted = false;
     }
 
+    /// Atomically clear taint AND set a fresh arm deadline in one locked act.
+    /// The ONLY sanctioned re-enable-after-taint path; the caller (egress_rearm)
+    /// pairs it with dropping the tainted conversation. Clearing taint without
+    /// replacing the deadline would reopen egress against a stale-but-live arm.
+    pub fn quarantine_and_rearm(&self, duration_secs: u64) -> u64 {
+        let now = (self.now_unix)();
+        let deadline = now.saturating_add(duration_secs);
+        let mut g = self.inner.lock().unwrap();
+        g.tainted = false;
+        g.armed_until = Some(deadline);
+        deadline
+    }
+
     pub fn is_tainted(&self) -> bool {
         self.inner.lock().unwrap().tainted
     }
@@ -464,5 +477,31 @@ mod tests {
         assert_eq!(o.res, Ok(42));
         assert!(o.ran, "Operator op must run regardless of state");
         assert_eq!(o.audits, vec![(true, None)]);
+    }
+
+    // --- quarantine_and_rearm ---------------------------------------------
+
+    #[test]
+    fn quarantine_and_rearm_sets_clean_taint_and_fresh_deadline_atomically() {
+        let g = EgressGuard::with_clock(|| 1_000);
+        g.arm(300); g.taint();
+        assert!(g.authorize(EgressAuthority::Agent).is_err());
+        let deadline = g.quarantine_and_rearm(60);
+        assert_eq!(deadline, 1_060);
+        assert!(!g.is_tainted());
+        assert!(g.authorize(EgressAuthority::Agent).is_ok());
+    }
+    #[test]
+    fn quarantine_and_rearm_replaces_not_extends_old_deadline() {
+        let g = EgressGuard::with_clock(|| 1_000);
+        g.arm(10_000); g.taint();
+        assert_eq!(g.quarantine_and_rearm(60), 1_060); // not 11_000
+    }
+    #[test]
+    fn plain_arm_still_does_not_clear_taint() {
+        let g = EgressGuard::with_clock(|| 1_000);
+        g.taint(); g.arm(300);
+        assert!(g.is_tainted());
+        assert!(g.authorize(EgressAuthority::Agent).is_err());
     }
 }
