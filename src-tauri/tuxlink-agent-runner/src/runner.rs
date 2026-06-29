@@ -17,15 +17,20 @@ use crate::traits::{EgressStatus, Provider, ProviderError, ToolInvoker};
 use crate::types::{CallAuthority, Limits, ModelTurn, RunOutcome, ToolCall, ToolOutcome, ToolSpec};
 use crate::validate;
 
-/// Run the bounded agent loop to completion.
+/// Run the bounded agent loop to completion, using a pre-built conversation.
 ///
-/// * `user_msg` seeds the conversation.
+/// **Contract:** the caller MUST append the initiating `Message::User` via
+/// [`Conversation::push_user`] BEFORE calling this function. This function does
+/// NOT call `Conversation::new` — it drives the loop from whatever state the
+/// conversation is already in, enabling multi-turn / resumed sessions.
+///
+/// * `conversation` is the running transcript (mutated in place).
 /// * `provider` produces model turns; `invoker` executes tool calls.
 /// * `status` is an observed (read-only) egress snapshot — purely informational.
 /// * `limits` bound turns / per-turn time / malformed retries.
 /// * `cancel` cooperatively aborts the loop (COR-2).
-pub async fn run(
-    user_msg: impl Into<String>,
+pub async fn run_with_conversation(
+    conversation: &mut Conversation,
     provider: &dyn Provider,
     invoker: &dyn ToolInvoker,
     status: EgressStatus,
@@ -37,7 +42,6 @@ pub async fn run(
     // not dead.
     let _ = status;
 
-    let mut conversation = Conversation::new(user_msg);
     let tools: Vec<ToolSpec> = invoker.tools().to_vec();
 
     let mut tool_turns: u32 = 0;
@@ -52,7 +56,7 @@ pub async fn run(
         // COR-1: a per-turn wall-clock timeout. Exhaustion → NeedsOperator.
         let turn = match tokio::time::timeout(
             limits.per_turn_timeout,
-            provider.turn(&conversation, &tools),
+            provider.turn(conversation, &tools),
         )
         .await
         {
@@ -113,6 +117,12 @@ pub async fn run(
                         .invoke(call, CallAuthority::Agent, &cancel)
                         .await;
 
+                    // A Cancelled outcome is terminal: surface immediately without
+                    // pushing into the conversation (the session is being torn down).
+                    if let ToolOutcome::Cancelled(_) = &outcome {
+                        return RunOutcome::Cancelled;
+                    }
+
                     // A denial is terminal: the security layer refused egress.
                     if let ToolOutcome::Denied(reason) = &outcome {
                         conversation.push_outcome(&call.name, &outcome);
@@ -124,6 +134,25 @@ pub async fn run(
             }
         }
     }
+}
+
+/// Run the bounded agent loop to completion.
+///
+/// * `user_msg` seeds the conversation.
+/// * `provider` produces model turns; `invoker` executes tool calls.
+/// * `status` is an observed (read-only) egress snapshot — purely informational.
+/// * `limits` bound turns / per-turn time / malformed retries.
+/// * `cancel` cooperatively aborts the loop (COR-2).
+pub async fn run(
+    user_msg: impl Into<String>,
+    provider: &dyn Provider,
+    invoker: &dyn ToolInvoker,
+    status: EgressStatus,
+    limits: Limits,
+    cancel: CancellationToken,
+) -> RunOutcome {
+    let mut conversation = Conversation::new(user_msg);
+    run_with_conversation(&mut conversation, provider, invoker, status, limits, cancel).await
 }
 
 /// Map a [`ProviderError`] onto a terminal outcome. The loop cannot make
