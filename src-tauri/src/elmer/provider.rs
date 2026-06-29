@@ -161,7 +161,7 @@ mod tests {
     /// A `;PQ` token inside a `User` message is redacted before the turn.
     #[test]
     fn user_message_redacts_secure_login_token() {
-        let msg = Message::User("Connect to CMS ;PQ23753528 and check mail".into());
+        let msg = Message::User("Connect to CMS ;PQ: 23753528 and check mail".into());
         let redacted = redact_message(&msg);
         match redacted {
             Message::User(text) => {
@@ -177,7 +177,7 @@ mod tests {
     /// A `;PR` token inside an `Assistant` message is redacted.
     #[test]
     fn assistant_message_redacts_secure_login_token() {
-        let msg = Message::Assistant("I see ;PR72768415 in the session log".into());
+        let msg = Message::Assistant("I see ;PR: 72768415 in the session log".into());
         let redacted = redact_message(&msg);
         match redacted {
             Message::Assistant(text) => {
@@ -201,7 +201,7 @@ mod tests {
         let msg = Message::ToolResult {
             name: "cms_connect".into(),
             ok: true,
-            content: "[C:B2F ;PQ23753528 AUTH OK]".into(),
+            content: "[C:B2F ;PQ: 23753528 AUTH OK]".into(),
         };
         let redacted = redact_message(&msg);
         match redacted {
@@ -222,7 +222,7 @@ mod tests {
             name: "message_send".into(),
             args: json!({
                 "to": "W1AW@winlink.org",
-                "body": "Password is ;PQ98765432"
+                "body": "Password is ;PQ: 98765432"
             }),
         });
         let redacted = redact_message(&msg);
@@ -266,7 +266,7 @@ mod tests {
     /// Nested JSON arrays have their string leaves redacted.
     #[test]
     fn nested_json_array_string_leaves_are_redacted() {
-        let val = json!(["safe", ";PQ11223344", 42]);
+        let val = json!(["safe", ";PQ: 11223344", 42]);
         let redacted = redact_json_value(&val);
         let arr = redacted.as_array().unwrap();
         assert_eq!(arr[0], "safe");

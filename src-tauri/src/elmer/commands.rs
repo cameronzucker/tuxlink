@@ -296,9 +296,24 @@ mod security_gate_tests {
     /// This is a compile-time grep gate: if the literal appears in elmer/* or
     /// in the approval_gated_flush section, someone has directly minted Operator
     /// authority inside the agent path, bypassing the security boundary.
+    /// Production code only: drop the `#[cfg(test)]` module (whose `.contains()`
+    /// needles + assert messages would self-trip the gate) AND strip `//` comment
+    /// lines (the module doc comment documents these same invariants verbatim).
+    /// A forbidden construct in actual CODE never lives in a comment, so this is
+    /// a sound — and non-self-tripping — approximation.
+    fn production_src(s: &str) -> String {
+        s.split("#[cfg(test)]")
+            .next()
+            .unwrap_or(s)
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn no_operator_authority_in_elmer_or_flush() {
-        // Grep the elmer source files for EgressAuthority::Operator.
+        // Grep the elmer PRODUCTION source for EgressAuthority::Operator.
         let elmer_src = [
             include_str!("commands.rs"),
             include_str!("events.rs"),
@@ -310,7 +325,7 @@ mod security_gate_tests {
         ];
         for (i, src) in elmer_src.iter().enumerate() {
             assert!(
-                !src.contains("EgressAuthority::Operator"),
+                !production_src(src).contains("EgressAuthority::Operator"),
                 "EgressAuthority::Operator found in elmer source #{i} — AC-8 violation"
             );
         }
@@ -359,11 +374,11 @@ mod security_gate_tests {
         ];
         for (i, src) in elmer_src.iter().enumerate() {
             assert!(
-                !src.contains("clear_taint("),
+                !production_src(src).contains("clear_taint("),
                 "`clear_taint(` found in elmer source #{i} (not session.rs) — AC-9 violation"
             );
             assert!(
-                !src.contains("quarantine_and_rearm("),
+                !production_src(src).contains("quarantine_and_rearm("),
                 "`quarantine_and_rearm(` found in elmer source #{i} (not session.rs) — AC-9 violation"
             );
         }
@@ -381,7 +396,7 @@ mod security_gate_tests {
         // Neither the type name "Conversation" nor "Vec<Message>" should appear
         // as a Tauri command parameter type.
         assert!(
-            !commands_src.contains("Vec<Message>"),
+            !production_src(commands_src).contains("Vec<Message>"),
             "`Vec<Message>` found in commands.rs — AC-5 violation: agent transcript must not be operator-supplied"
         );
         // "Conversation" as a parameter type — the struct name alone is a proxy.
@@ -390,7 +405,7 @@ mod security_gate_tests {
         // We check for `State<'_, Conversation>` and `conversation: Conversation`
         // patterns:
         assert!(
-            !commands_src.contains(": Conversation)") && !commands_src.contains(": Conversation,"),
+            !production_src(commands_src).contains(": Conversation)") && !production_src(commands_src).contains(": Conversation,"),
             "`Conversation` found as a command parameter type in commands.rs — AC-5 violation"
         );
     }
