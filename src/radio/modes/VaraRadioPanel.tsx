@@ -671,34 +671,11 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             Tune…
           </button>
         </div>
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-primary"
-          data-testid="vara-send-receive-btn"
-          disabled={
-            busy ||
-            exchanging ||
-            status.state !== 'open' ||
-            target.trim() === '' ||
-            varaListener.armed
-          }
-          onClick={onSendReceive}
-          title={
-            status.state !== 'open'
-              ? 'Open Session first — Send/Receive needs an open VARA transport (press Start)'
-              : varaListener.armed
-                ? 'Disarm the listener first — it owns the VARA transport while armed'
-                : target.trim() === ''
-                  ? 'Enter a target RMS gateway call sign'
-                  : 'Connect to the target and exchange Winlink mail (transmits)'
-          }
-        >
-          {exchanging
-            ? 'Exchanging…'
-            : target.trim()
-              ? `Send / Receive (${target.trim()})`
-              : 'Send / Receive'}
-        </button>
+        {/* tuxlink-n95sr #3: Send/Receive moved OUT of the Connect section into
+            the action row below, mirroring ARDOP's control model exactly — the
+            action row toggles Start ⇄ (Send/Receive + Stop), so Start and
+            Send/Receive are never both visible. Operator decision: ARDOP and
+            VARA must not diverge on connect-control UX. */}
         {/* tuxlink-p6iq: a VISIBLE closed-state hint (not just the button's hover
             title) so the manual-target path is never a silent dead-end. Find-a-
             Station "Use →" auto-opens the transport; an operator who instead
@@ -775,32 +752,67 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
 
       <SessionLogSection entries={logEntries} onClear={clearLog} />
 
+      {/* tuxlink-n95sr #3: action row mirrors ARDOP's toggle EXACTLY. When the
+          transport is closed, ONLY Start renders; once open, Start is replaced
+          by Send/Receive + Stop. Start and Send/Receive are never both present
+          — a state machine that toggles which buttons render, not a disabled
+          toggle. Operator decision: no UX divergence between ARDOP and VARA. */}
       <section className="radio-panel-sec radio-panel-act">
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-primary"
-          data-testid="vara-start-btn"
-          disabled={busy || isOpen}
-          onClick={onStartClick}
-          title={
-            isOpen
-              ? 'Already open — Stop first to reconnect'
-              : platformBlocked
-                ? 'VARA cannot run on this host (aarch64); point host at a remote VARA instance to use it from here'
-                : 'Open TCP transport to VARA (does not transmit)'
-          }
-        >
-          {busy && !isOpen ? 'Starting…' : 'Start'}
-        </button>
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-bad"
-          data-testid="vara-stop-btn"
-          disabled={busy || !isOpen}
-          onClick={onStopClick}
-        >
-          {busy && isOpen ? 'Stopping…' : 'Stop'}
-        </button>
+        {!isOpen && (
+          <button
+            type="button"
+            className="radio-panel-btn radio-panel-btn-primary"
+            data-testid="vara-start-btn"
+            disabled={busy}
+            onClick={onStartClick}
+            title={
+              isOpen
+                ? 'Already open — Stop first to reconnect'
+                : platformBlocked
+                  ? 'VARA cannot run on this host (aarch64); point host at a remote VARA instance to use it from here'
+                  : 'Open TCP transport to VARA (does not transmit)'
+            }
+          >
+            {busy ? 'Starting…' : 'Start'}
+          </button>
+        )}
+        {isOpen && (
+          <>
+            <button
+              type="button"
+              className="radio-panel-btn radio-panel-btn-primary"
+              data-testid="vara-send-receive-btn"
+              disabled={
+                busy ||
+                exchanging ||
+                status.state !== 'open' ||
+                target.trim() === '' ||
+                varaListener.armed
+              }
+              onClick={onSendReceive}
+              title={
+                status.state !== 'open'
+                  ? 'Open Session first — Send/Receive needs an open VARA transport (press Start)'
+                  : varaListener.armed
+                    ? 'Disarm the listener first — it owns the VARA transport while armed'
+                    : target.trim() === ''
+                      ? 'Enter a target RMS gateway call sign'
+                      : 'Connect to the target and exchange Winlink mail (transmits)'
+              }
+            >
+              {exchanging ? 'Exchanging…' : 'Send / Receive'}
+            </button>
+            <button
+              type="button"
+              className="radio-panel-btn radio-panel-btn-bad"
+              data-testid="vara-stop-btn"
+              disabled={busy}
+              onClick={onStopClick}
+            >
+              {busy ? 'Stopping…' : 'Stop'}
+            </button>
+          </>
+        )}
         {actionError && (
           <p className="radio-panel-error" role="alert" data-testid="vara-action-error">
             {actionError}

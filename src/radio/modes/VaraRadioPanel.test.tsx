@@ -167,22 +167,30 @@ describe('<VaraRadioPanel>', () => {
     });
   });
 
-  it('disables Start when transport is already open', async () => {
+  // tuxlink-n95sr #3: the action row now mirrors ARDOP — Start is REPLACED by
+  // Send/Receive + Stop when the transport is open (not merely disabled). The
+  // old "Start is disabled while open" intent becomes "Start is not present
+  // while open."
+  it('hides Start when transport is already open', async () => {
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
       makeInvoke({ vara_status: openStatus }),
     );
     renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
-      expect(screen.getByTestId('vara-start-btn')).toBeDisabled();
+      expect(screen.queryByTestId('vara-start-btn')).toBeNull();
     });
   });
 
-  it('disables Stop when transport is closed', async () => {
+  // tuxlink-n95sr #3: Stop only renders when the transport is open (ARDOP
+  // toggle parity). The old "Stop is disabled while closed" intent becomes
+  // "Stop is not present while closed" — Start is the sole control then.
+  it('hides Stop when transport is closed', async () => {
     renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
-      expect(screen.getByTestId('vara-stop-btn')).toBeDisabled();
+      expect(screen.getByTestId('vara-start-btn')).toBeInTheDocument();
     });
+    expect(screen.queryByTestId('vara-stop-btn')).toBeNull();
   });
 
   it('invokes vara_open_session on Start click and updates status', async () => {
@@ -686,7 +694,10 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
       invokeSpy.mockImplementation(makeInvoke()); // closed by default
       renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
-      await screen.findByTestId('vara-send-receive-btn');
+      // tuxlink-n95sr #3: closed ⇒ Send/Receive is NOT rendered (ARDOP toggle
+      // parity); anchor the pre-prefill hydration wait on Start, which IS the
+      // sole action while closed.
+      await screen.findByTestId('vara-start-btn');
       await act(async () => {
         emitGatewayPrefill(dial);
       });
@@ -703,7 +714,9 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
       invokeSpy.mockImplementation(makeInvoke({ vara_open_session: openStatus }));
       renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
-      await screen.findByTestId('vara-send-receive-btn');
+      // tuxlink-n95sr #3: starts closed ⇒ anchor on Start; after the prefill
+      // auto-opens the transport, Send/Receive renders and enables.
+      await screen.findByTestId('vara-start-btn');
       await act(async () => {
         emitGatewayPrefill(dial);
       });
@@ -717,7 +730,8 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
       invokeSpy.mockImplementation(makeInvoke({ vara_open_session: new Error('connection refused') }));
       renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
-      await screen.findByTestId('vara-send-receive-btn');
+      // tuxlink-n95sr #3: closed ⇒ Send/Receive absent; anchor on Start.
+      await screen.findByTestId('vara-start-btn');
       await act(async () => {
         emitGatewayPrefill(dial);
       });
@@ -733,7 +747,9 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
       invokeSpy.mockImplementation(makeInvoke({ vara_status: openStatus }));
       renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
-      await waitFor(() => expect(screen.getByTestId('vara-start-btn')).toBeDisabled()); // open
+      // tuxlink-n95sr #3: open ⇒ Start is replaced by Send/Receive (not just
+      // disabled). Use Send/Receive's presence as the "transport open" anchor.
+      await waitFor(() => expect(screen.getByTestId('vara-send-receive-btn')).toBeInTheDocument()); // open
       invokeSpy.mockClear();
       await act(async () => {
         emitGatewayPrefill(dial);
@@ -747,7 +763,9 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
       invokeSpy.mockImplementation(makeInvoke({ vara_open_session: openStatus }));
       renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
-      await screen.findByTestId('vara-send-receive-btn');
+      // tuxlink-n95sr #3: starts closed ⇒ anchor on Start; Send/Receive appears
+      // after the prefill auto-opens the transport.
+      await screen.findByTestId('vara-start-btn');
       await act(async () => {
         emitGatewayPrefill(dial);
       });
@@ -769,7 +787,9 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       await act(async () => {
         emitGatewayPrefill(dial);
       });
-      await waitFor(() => expect(screen.getByTestId('vara-start-btn')).toBeDisabled()); // open
+      // tuxlink-n95sr #3: open ⇒ Start is replaced by Send/Receive. Anchor on
+      // Send/Receive's presence to confirm the transport reported open.
+      await waitFor(() => expect(screen.getByTestId('vara-send-receive-btn')).toBeInTheDocument()); // open
       await act(async () => {});
       expect(invokeSpy).not.toHaveBeenCalledWith('vara_open_session', expect.anything());
     });
@@ -789,11 +809,14 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
     await waitFor(() => expect(screen.queryByTestId('vara-transport-hint')).toBeNull());
   });
 
-  it('disables Send/Receive until the session is Open AND a target is present', async () => {
+  it('hides Send/Receive while closed, then disables it until Open AND a target is present', async () => {
     const core = await import('@tauri-apps/api/core');
 
-    // Session CLOSED: even WITH a target typed, Send/Receive stays disabled —
-    // the exchange needs an open transport.
+    // tuxlink-n95sr #3: ARDOP toggle parity — Send/Receive does NOT render while
+    // the transport is closed (Start is the sole action then). The old "disabled
+    // despite a typed target while closed" intent becomes "not present while
+    // closed": typing a target cannot conjure the button before Start opens the
+    // transport.
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
       makeInvoke({ vara_status: closedStatus }),
     );
@@ -803,10 +826,9 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
     await act(async () => {
       fireEvent.change(closedTarget, { target: { value: 'W7RPT-10' } });
     });
-    // Stays disabled despite a non-empty target (session is closed).
-    await waitFor(() =>
-      expect((screen.getByTestId('vara-send-receive-btn') as HTMLButtonElement).disabled).toBe(true),
-    );
+    // Not present despite a non-empty target (session is closed → Start only).
+    expect(screen.queryByTestId('vara-send-receive-btn')).toBeNull();
+    expect(screen.getByTestId('vara-start-btn')).toBeInTheDocument();
     unmount();
 
     // tuxlink-ypz3 (3a): phase 1's typed target persisted to
