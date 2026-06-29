@@ -28,6 +28,7 @@
 import { memo, useState, useRef, useEffect, type KeyboardEvent } from 'react';
 import { useElmer, type ElmerItem, type ElmerPhase } from './useElmer';
 import type { EgressStatusDto } from '../security/egressTypes';
+import './ElmerPane.css';
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -125,11 +126,14 @@ export interface ElmerPaneProps {
   egressStatus?: EgressStatusDto;
   /** Called when the operator requests a fresh session (clears taint + rearms). */
   onRearm?: (durationSecs: number) => void;
+  /** Close the pane (AppShell sets elmerOpen=false). */
+  onClose?: () => void;
 }
 
 export const ElmerPane = memo(function ElmerPane({
   egressStatus: _egressStatus,
   onRearm: _onRearm,
+  onClose,
 }: ElmerPaneProps) {
   const { items, phase, lastOutcome, send, stop } = useElmer();
   const [input, setInput] = useState('');
@@ -163,7 +167,24 @@ export const ElmerPane = memo(function ElmerPane({
   const isOffline = phase === 'offline';
 
   return (
-    <div className="elmer-pane" data-testid="elmer-pane">
+    <aside className="elmer-pane" data-testid="elmer-pane" aria-label="Elmer assistant">
+      {/* Header: title + close */}
+      <div className="elmer-header">
+        <span className="elmer-header-title">Elmer</span>
+        <span className="elmer-header-sub">AI assistant</span>
+        <span className="elmer-header-spacer" />
+        <button
+          type="button"
+          className="elmer-close-button"
+          data-testid="elmer-close"
+          aria-label="Close Elmer"
+          title="Close"
+          onClick={() => onClose?.()}
+        >
+          ×
+        </button>
+      </div>
+
       {/* Message list */}
       <div className="elmer-messages" data-testid="elmer-messages" role="log" aria-live="polite">
         {items.map((item) => (
@@ -248,6 +269,6 @@ export const ElmerPane = memo(function ElmerPane({
       <div className="elmer-footer" data-testid="elmer-footer">
         Elmer can be wrong or misled by message content — check the actual message before you send.
       </div>
-    </div>
+    </aside>
   );
 });
