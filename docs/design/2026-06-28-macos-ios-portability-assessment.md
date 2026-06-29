@@ -795,7 +795,7 @@ This empirically establishes that **every dependency compiles on macOS** — `ke
 
 The frontend (`pnpm build` = `tsc && vite build`) does **not** build on a default macOS checkout, for two distinct reasons:
 
-1. **pnpm-11 build-script allowlist drift (papercut).** `package.json`'s `pnpm.onlyBuiltDependencies: ["esbuild"]` is **ignored by pnpm 11**, which reads the allowlist from `pnpm-workspace.yaml`. Symptom: `ERR_PNPM_IGNORED_BUILDS: esbuild`, and pnpm's pre-run deps-check then fails `pnpm build`. The `@esbuild/darwin-arm64` binary itself *is* installed (via esbuild's optional dep). **Fix:** add `onlyBuiltDependencies: [esbuild]` to `pnpm-workspace.yaml` (done in this worktree) and re-install / `pnpm rebuild esbuild`. This is OS-agnostic (a pnpm-version migration) and should be fixed for Linux/CI too.
+1. **pnpm-11 build-script allowlist drift (papercut, pnpm-11-only).** `package.json`'s `pnpm.onlyBuiltDependencies: ["esbuild"]` is **ignored by pnpm 11**, which reads the allowlist from `pnpm-workspace.yaml`. Symptom: `ERR_PNPM_IGNORED_BUILDS: esbuild`, and pnpm's pre-run deps-check then fails `pnpm build`. The `@esbuild/darwin-arm64` binary itself *is* installed (via esbuild's optional dep). **This only affects pnpm 11** — CI uses **pnpm 10**, which reads the `package.json` allowlist natively and never hits the gate. A `pnpm-workspace.yaml` workaround was tried locally but **reverted** (a pnpm-11 artifact that risks pnpm-10 behavior, and pnpm 11 is coupled to a Node ≥22 bump — see §V.12). The clean fix is a deliberate pnpm 10→11 migration (separate change).
 
 2. **macOS case-insensitivity bug (real portability defect).** With the toolchain working, `vite build` fails:
 
@@ -810,7 +810,7 @@ The frontend (`pnpm build` = `tsc && vite build`) does **not** build on a defaul
 
 After the §V.6 fixes landed on `feat/macos-build-assessment`, the full macOS path was exercised and **works start-to-finish**:
 
-- **Frontend builds.** The `weatherGlyph.ts` → `weatherGlyphData.ts` rename resolves the §V.6 case collision; `tsc` is clean, `vite build` ✓, `vitest` 10/10. The pnpm-11 gate is cleared by `pnpm approve-builds --all`, which records `allowBuilds: { esbuild: true }` in `pnpm-workspace.yaml` — the `onlyBuiltDependencies` list alone did **not** clear a stale ignored-build state — after which `pnpm build` passes.
+- **Frontend builds.** The `weatherGlyph.ts` → `weatherGlyphData.ts` rename resolves the §V.6 case collision; `tsc` is clean, `vite build` ✓, `vitest` 10/10. (On the local **pnpm 11** the esbuild build-script gate was cleared with `pnpm approve-builds --all` — a pnpm-11-only step; CI's **pnpm 10** has no such gate. The local `pnpm-workspace.yaml` workaround was reverted — see §V.12.)
 - **Keyring → native Keychain.** `keyring` is split per-target: macOS uses `apple-native` (security-framework / Keychain), Linux keeps `sync-secret-service`. `cargo check` confirms `security-framework` enters the macOS dep graph and `secret-service` is excluded.
 - **Full debug build + LINK.** `pnpm tauri dev` ran `cargo run` to completion — `Finished dev profile … in 57.18s` (warm dep cache), then `Running target/debug/tuxlink`. The link step (which `cargo check` does not exercise) succeeds on macOS.
 - **App launch + runtime + clean exit.** The window opened and **rendered its UI** (operator-confirmed), the process ran stably (~150 MB RSS, ~4% CPU), logged no panics, and **exited cleanly (code 0)** on close. The only runtime log lines were benign and non-macOS-specific: a `gpsd` connection-refused retry (no GPS attached; self-labeled normal) and a Vite resolve warning for the dev-only `dev/perf-harness/harness.tsx` (imports `maplibre-gl`, not an app dependency).
@@ -831,7 +831,7 @@ xcode-select --install                                                     # Xco
 brew install pkgconf libheif libde265
 # 3. pnpm 11 build-script approval (one-time; clears ERR_PNPM_IGNORED_BUILDS)
 pnpm install --frozen-lockfile
-pnpm approve-builds --all          # records allowBuilds: { esbuild: true } in pnpm-workspace.yaml
+pnpm approve-builds --all          # ONLY needed on pnpm 11; CI uses pnpm 10 (no gate)
 # 4. statvfs cfg-split, keyring apple-native split, and WeatherGlyph rename are
 #    already committed on feat/macos-build-assessment (§V.4, §V.7, §V.9)
 # 5. Build + run
@@ -911,15 +911,17 @@ Tuxlink exposes an MCP server for "Connect an AI agent": the **real router** liv
 | Layer | Result on macOS |
 |---|---|
 | **clippy** — `cargo clippy --bin tuxlink -- -D warnings` | ✅ **clean** (no lint warnings on the shipping binary; macOS would pass a `-D warnings` CI gate) |
-| **Frontend — `vitest run`** | ✅ **3320/3320 pass** under **Node 24 LTS** (also verified on Node 20). ❌ 501 failures under the host's default **Node 26.3.0** — purely environmental (jsdom `localStorage` undefined + undici `AbortSignal`-realm mismatch), in files unrelated to any change, **not** a macOS or code issue. Verified band: **20 ✅ · 24 ✅ · 26 ❌**. |
+| **Frontend — `vitest run`** | ✅ **3320/3320 pass** under **Node 20 and Node 24** (tested locally). ❌ 501 failures under the host's default **Node 26.3.0** — purely environmental (jsdom `localStorage` undefined + undici `AbortSignal`-realm mismatch), in files unrelated to any change, **not** a macOS or code issue. Verified band: **20 ✅ · 24 ✅ · 26 ❌**. (CI runs Node 20 + pnpm 10.) |
 | **Rust lib unit tests — `cargo test --lib`** | ✅ **2615/2615 pass** (was 2614/1-fail; see fix below) |
 | Rust integration tests (`tests/`), `--all-targets`, examples/benches | ⏸ not run — some are Linux-specific (e.g. the D-Bus `wizard_integration_test` is `#[ignore]`); deferred. The release build + link + `--bin` clippy + lib tests already give strong Rust-side confidence. |
 
 **The one Rust failure was a test artifact, not a bug.** `logging::state_dir::tests::resolves_under_xdg_state_home` asserted `resolved.starts_with(tmp.path())`, but `resolve()` returns a **canonical** path and on macOS the tempdir lives under `/var/folders/…` where `/var` symlinks to `/private/var` — so the canonical result is prefixed `/private/var/…` and the naive `starts_with` failed. The production `resolve()` is correct (canonicalizing is intended); fixed the test to compare against `tmp.path().canonicalize()` (a no-op on Linux, where `/tmp` isn't symlinked). Now 2615/2615.
 
-**Node-version pin (fixed).** The repo previously pinned no Node version, and the host's default Node 26 silently broke 501 tests (jsdom/undici realm issues at ≥26). The prior CI Node (20) is EOL, so the project now **targets Node 24 LTS**: added `.nvmrc` (`24`) + `package.json` `engines.node` (`>=22 <25` — drops EOL 20, excludes the broken ≥25), and bumped CI (`ci.yml` / `ect-build.yml` / `release.yml`) from `20`→`24`. `fnm use` / `nvm use` now picks 24 via `.nvmrc`, so the Node-26 trap can't recur. (Verified band: **20 ✅ · 24 ✅ · 26 ❌**; 25 untested/odd-release, excluded.)
+**Node-version finding (decision deferred to the maintainer).** The host's default Node 26 silently breaks 501 tests (jsdom/undici realm issues at ≥26); Node 20 ✅ and Node 24 ✅. An earlier revision of this branch bumped CI to Node 24 and added `.nvmrc`/`engines` — **that was reverted.** The Node version is a deliberate maintainer choice (the conservative pin supports building on/for older machines), so **CI stays on Node 20 + pnpm 10.** The breakage is recorded as a *recommendation* to pick a supported LTS deliberately, not imposed here.
 
-**Net:** macOS test + lint health is strong — Rust lib **2615/2615**, frontend **3320/3320** (Node 24 LTS), clippy **clean**. The Node target is now pinned (24) so the host's bleeding-edge Node 26 can't silently break the suite.
+> **Crucial coupling — pnpm 11 ⇒ Node ≥22.** Per pnpm's [compatibility table](https://pnpm.io/installation), **pnpm 11 dropped Node 20** (it supports 22/24/26); pnpm 10 supports 18–26. So a pnpm 10→11 upgrade is **only viable if Node also moves to ≥22** — while Node is held at 20 for older-machine support, pnpm must stay at 10. (If that older-machine concern is glibc-floor-based, Node 22's floor may match Node 20's; worth verifying before any bump.) This is why pnpm modernization is a *separate, Node-coupled* decision, not part of this branch.
+
+**Net:** macOS test + lint health is strong — Rust lib **2615/2615**, frontend **3320/3320** (verified on Node 20 and 24 locally), clippy **clean**. CI remains **Node 20 + pnpm 10**; the Node/pnpm-version choice is left to the maintainer (see the finding above).
 
 ---
 
