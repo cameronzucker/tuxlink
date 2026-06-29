@@ -1,10 +1,10 @@
 //! d3zwe — headless terminal frontend over `tuxlink-agent-runner` (Elmer spine).
 //!
 //! Wires the two REAL adapters the loop crate leaves abstract — the
-//! loopback-enforced [`openai::OpenAiProvider`] (SEC-5) and the rmcp-over-UDS
-//! [`uds::UdsToolInvoker`] (relays denials, never arms) — and drives the bounded
-//! agent loop ([`tuxlink_agent_runner::run`]) one-shot or in a REPL, printing the
-//! transcript + outcome.
+//! loopback-enforced [`tuxlink_agent_frontend::provider::OpenAiProvider`] (SEC-5)
+//! and the rmcp-over-UDS [`uds::UdsToolInvoker`] (relays denials, never arms) —
+//! and drives the bounded agent loop ([`tuxlink_agent_runner::run`]) one-shot or
+//! in a REPL, printing the transcript + outcome.
 //!
 //! Ctrl-C cancels the in-flight run via a [`CancellationToken`]; if the run was
 //! cancelled while a gated egress tool may have been in flight, a best-effort
@@ -14,11 +14,10 @@
 //! The live model + socket run is the operator's N305 trial — NOT a CI test. The
 //! decision logic (URL validation, response mapping, arg parsing, denial
 //! classification, transcript rendering) is all in pure, unit-tested helpers in
-//! the sibling modules.
+//! `tuxlink-agent-frontend` (shared with the Elmer pane) and the local `print`
+//! module.
 
 mod cli;
-mod endpoint;
-mod openai;
 mod print;
 mod uds;
 
@@ -29,9 +28,10 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use tuxlink_agent_runner::{run, EgressStatus, Limits, RunOutcome, ToolInvoker};
+use tuxlink_agent_frontend::endpoint::validate_endpoint;
+use tuxlink_agent_frontend::provider::OpenAiProvider;
 
 use crate::cli::{Args, ParseOutcome};
-use crate::openai::OpenAiProvider;
 use crate::uds::{UdsToolInvoker, ABORT_TOOLS};
 
 #[tokio::main]
@@ -61,7 +61,7 @@ async fn main() -> ExitCode {
 async fn real_main(args: Args) -> Result<(), String> {
     // SEC-5: validate the endpoint BEFORE building any client. The endpoint comes
     // only from the CLI/config here — never from a tool result.
-    let endpoint = endpoint::validate_endpoint(&args.endpoint, args.allow_remote)
+    let endpoint = validate_endpoint(&args.endpoint, args.allow_remote)
         .map_err(|e| e.to_string())?;
 
     // The model adapter. An API key, if any, is read from the environment and

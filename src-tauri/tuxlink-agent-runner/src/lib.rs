@@ -48,7 +48,7 @@ mod validate;
 
 pub use conversation::{Conversation, Message};
 pub use fakes::{RecordedCall, RecordingInvoker, ScriptedProvider, ScriptedTurn};
-pub use runner::run;
+pub use runner::{run, run_with_conversation};
 pub use traits::{EgressStatus, Provider, ProviderError, ToolInvoker};
 pub use types::{
     CallAuthority, Limits, ModelTurn, RunOutcome, ToolCall, ToolOutcome, ToolSpec,
@@ -574,5 +574,28 @@ mod acceptance_tests {
         )
         .await;
         assert!(matches!(outcome, RunOutcome::NeedsOperator(_)));
+    }
+
+    // --- run_with_conversation / ToolOutcome::Cancelled -------------------
+
+    #[tokio::test]
+    async fn run_with_conversation_appends_to_existing_context() {
+        let mut convo = Conversation::from_messages(vec![Message::User("first".into()), Message::Assistant("ok".into())]);
+        convo.push_user("second");
+        let provider = ScriptedProvider::from_scripted(vec![ScriptedTurn::Turn(ModelTurn::Text("done".into()))]);
+        let invoker = RecordingInvoker::new(vec![], vec![]);
+        let out = run_with_conversation(&mut convo, &provider, &invoker, EgressStatus::default(), Limits::default(), CancellationToken::new()).await;
+        assert!(matches!(out, RunOutcome::Completed(t) if t == "done"));
+        assert!(convo.messages().len() >= 3);
+    }
+
+    #[tokio::test]
+    async fn cancelled_tool_outcome_terminates_run_as_cancelled() {
+        let provider = ScriptedProvider::from_scripted(vec![ScriptedTurn::Turn(ModelTurn::ToolCalls(vec![ToolCall{name:"x".into(),args:serde_json::json!({})}]))]);
+        let invoker = RecordingInvoker::new(
+            vec![ToolSpec{name:"x".into(),json_schema:serde_json::json!({"type":"object"})}],
+            vec![ToolOutcome::Cancelled("aborted".into())]);
+        let out = run("go", &provider, &invoker, EgressStatus::default(), Limits::default(), CancellationToken::new()).await;
+        assert!(matches!(out, RunOutcome::Cancelled));
     }
 }

@@ -1061,6 +1061,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
+ "tuxlink-agent-frontend",
  "tuxlink-agent-runner",
  "url",
 ]
@@ -6816,6 +6817,8 @@ dependencies = [
  "tracing-test",
  "tux-rig",
  "tuxlink",
+ "tuxlink-agent-frontend",
+ "tuxlink-agent-runner",
  "tuxlink-mcp-core",
  "tuxlink-security",
  "urlencoding",
@@ -6825,6 +6828,21 @@ dependencies = [
  "webp",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "tuxlink-agent-frontend"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tuxlink-agent-runner",
+ "url",
 ]
 
 [[package]]

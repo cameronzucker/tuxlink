@@ -194,6 +194,22 @@ pub fn validate_endpoint(raw: &str, allow_remote: bool) -> Result<Url, EndpointE
     }
 }
 
+/// A pre-validated loopback-only endpoint URL.
+///
+/// Wraps a [`Url`] that has been accepted by [`validate_endpoint`] with
+/// `allow_remote = false`. Callers that only ever talk to a local model shim
+/// (the common case) construct this instead of calling `validate_endpoint`
+/// directly to make the loopback constraint explicit in the type.
+pub struct LoopbackEndpoint(pub Url);
+
+impl LoopbackEndpoint {
+    /// Parse and validate `raw` as a loopback-only endpoint (SEC-5,
+    /// `allow_remote = false`).
+    pub fn parse(raw: &str) -> Result<Self, EndpointError> {
+        validate_endpoint(raw, false).map(LoopbackEndpoint)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,5 +355,17 @@ mod tests {
             let host = url.host().unwrap();
             assert_eq!(classify_host(&host), want, "host of {raw}");
         }
+    }
+
+    #[test]
+    fn loopback_endpoint_parse_accepts_loopback() {
+        let ep = LoopbackEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions");
+        assert!(ep.is_ok());
+    }
+
+    #[test]
+    fn loopback_endpoint_parse_rejects_remote() {
+        let err = LoopbackEndpoint::parse("https://api.openai.com/v1/chat/completions");
+        assert!(err.is_err());
     }
 }
