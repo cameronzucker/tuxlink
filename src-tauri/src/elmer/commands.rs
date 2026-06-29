@@ -184,8 +184,11 @@ pub async fn elmer_send(
 /// Fires the cancellation token + three ungated abort calls before awaiting
 /// the run's terminus. Returns immediately after the abort cycle completes.
 #[tauri::command]
-pub async fn elmer_stop(session: State<'_, Arc<ElmerSession>>) {
+pub async fn elmer_stop(session: State<'_, Arc<ElmerSession>>) -> Result<(), String> {
+    // Tauri requires an async command with a reference input (State<'_, _>) to
+    // return a Result. The abort cycle is infallible; surface Ok.
     session.cancel_and_abort().await;
+    Ok(())
 }
 
 /// Rearm the egress guard and reset the session (AC-10).

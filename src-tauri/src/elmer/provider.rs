@@ -17,8 +17,6 @@
 //! the URL is loopback-only (`127.0.0.0/8` / `::1` / `localhost`); any other
 //! host is rejected at construction time.
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use serde_json::Value;
 
