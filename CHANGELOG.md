@@ -31,6 +31,42 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.79.0](https://github.com/cameronzucker/tuxlink/compare/v0.78.0...v0.79.0) (2026-06-29)
+
+
+### Features
+
+* **agent-runner:** run_with_conversation multi-turn entry; cancelled-tool -&gt; Cancelled ([f1af10f](https://github.com/cameronzucker/tuxlink/commit/f1af10f80d3a464c11bf973a45a5e17e5b1dd36a))
+* **agent-runner:** ToolOutcome::Cancelled + Conversation::{from_messages,push_user} ([582ad0a](https://github.com/cameronzucker/tuxlink/commit/582ad0a10753adfa4ba45e3c2b2fc95ab790f176))
+* **design-system:** add control/sizing scale tokens to :root (tuxlink-9q6ly) ([f67a37e](https://github.com/cameronzucker/tuxlink/commit/f67a37e7731de3007d1a09020f0dc645bfc40711))
+* **design-system:** add shared control-class layer (additive, unused) (tuxlink-9q6ly) ([7d59a26](https://github.com/cameronzucker/tuxlink/commit/7d59a267a62ffb97b024e1cc9991d88b029414f3))
+* **elmer:** ElmerSession — single-flight, atomic rearm, abort-first, staging freeze ([24d5bf4](https://github.com/cameronzucker/tuxlink/commit/24d5bf4219b17cec154ca05c599bab37d6e3d43c))
+* **elmer:** in-process MCP invoker (router dispatch, egress tools withheld) ([e719bf0](https://github.com/cameronzucker/tuxlink/commit/e719bf0acb789e4672b3acde27b22f95ed96269d))
+* **elmer:** non-tainting outbox read + scoped digest-gated flush (M2 backend) ([e4c65e0](https://github.com/cameronzucker/tuxlink/commit/e4c65e089f1f9efe972276c8dcc3db9bbf864744))
+* **elmer:** React pane — chat, tool chips, approval manifest, re-arm, menu entry ([611d109](https://github.com/cameronzucker/tuxlink/commit/611d109e4e19a11a017d76a4464f4968219dc7c2))
+* **elmer:** Tauri commands, redacting provider, abort-on-quit wiring (reachable) ([b401420](https://github.com/cameronzucker/tuxlink/commit/b4014205fa0a04b8abc278b8feb2888ed9aded06))
+* **security:** atomic quarantine_and_rearm (clear taint + fresh TTL in one act) ([6e13da9](https://github.com/cameronzucker/tuxlink/commit/6e13da903a0a7a698145cd2d0ea6ccbb9e0b0cb0))
+
+
+### Bug Fixes
+
+* **config:** add elmer field to all remaining main-Config literals ([f8f278b](https://github.com/cameronzucker/tuxlink/commit/f8f278ba63ee448614c014cc78b5c9e2d1ad3174))
+* **config:** remove stray elmer insertion before the ui_commands position literal ([872d3c8](https://github.com/cameronzucker/tuxlink/commit/872d3c85c084ad8d63ba57462b49c7d6ed0ed53b))
+* **elmer:** correct RunOutcome variants + add elmer field to Config test literals ([02b0032](https://github.com/cameronzucker/tuxlink/commit/02b00325b2bffc8fea9be0a3be447c4334ccb228))
+* **elmer:** derive Debug on LoopbackEndpoint; share in_transmit as Arc&lt;AtomicBool&gt; ([9fa9198](https://github.com/cameronzucker/tuxlink/commit/9fa9198145a227d23132e272121f38a064111069))
+* **elmer:** elmer_stop returns Result; drop unused Arc import in provider ([04dc0bb](https://github.com/cameronzucker/tuxlink/commit/04dc0bb2453eddaccf110a1ad6c5c7a4cfe28104))
+* **mcp-core:** link tempfile under the test-support feature ([3d283ee](https://github.com/cameronzucker/tuxlink/commit/3d283eefb2a0c57c4e745724694d6aa5d15a01a3))
+* **shell:** stop the APRS ribbon item shrinking (residual squish) ([96ea13e](https://github.com/cameronzucker/tuxlink/commit/96ea13e6ee44983902a0eb3d5713cd26872d5b2c))
+* **vara:** free the modem on a failed dial — branch cleanup like ARDOP B3 (tuxlink-n95sr [#2](https://github.com/cameronzucker/tuxlink/issues/2)) ([02b5557](https://github.com/cameronzucker/tuxlink/commit/02b55577752c08fda6fb6d0bedcaf7033f361bea))
+* **vara:** mirror ARDOP's action-row control model — one state machine, plain label (tuxlink-n95sr [#3](https://github.com/cameronzucker/tuxlink/issues/3)) ([a6a8eb1](https://github.com/cameronzucker/tuxlink/commit/a6a8eb10a305df4735fb95285fb6efbabd715cec))
+* **vara:** route send/receive failure to the session log, not an inline error (tuxlink-n95sr [#1](https://github.com/cameronzucker/tuxlink/issues/1)) ([15a109f](https://github.com/cameronzucker/tuxlink/commit/15a109f28bc26195bfae3b068c7e4b379ff55e21))
+
+
+### Refactors
+
+* **agent-frontend:** extract reusable model-frontend lib crate from d3zwe ([2a569be](https://github.com/cameronzucker/tuxlink/commit/2a569be685339a4699148845fd673787435951a3))
+* **design-system:** migrate dashboard ribbon dash-* onto scale tokens (pilot) (tuxlink-9q6ly) ([816e3e5](https://github.com/cameronzucker/tuxlink/commit/816e3e52458723dd64280cbe2ca0bd2b05a1f659))
+
 ## [0.78.0](https://github.com/cameronzucker/tuxlink/compare/v0.77.0...v0.78.0) (2026-06-28)
 
 
