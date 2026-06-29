@@ -22,13 +22,12 @@
 //! in [`UdsToolInvoker`]'s async methods. The behavior that decides outcomes —
 //! classifying a call error as a denial vs an operational failure, extracting a
 //! tool result's text, and resolving the default socket path — lives in PURE
-//! functions ([`classify_call_error`], [`default_socket_path`]) that are
-//! unit-tested with no live socket. The live round-trip is the N305 trial.
+//! functions (see [`tuxlink_agent_frontend::mcp_client`] + [`default_socket_path`])
+//! that are unit-tested with no live socket. The live round-trip is the N305 trial.
 
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use serde_json::{Map, Value};
 use tokio::net::UnixStream;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -37,6 +36,9 @@ use rmcp::model::CallToolRequestParam;
 use rmcp::service::{RoleClient, RunningService, ServiceExt};
 
 use tuxlink_agent_runner::{CallAuthority, ToolCall, ToolInvoker, ToolOutcome, ToolSpec};
+use tuxlink_agent_frontend::mcp_client::{
+    classify_call_error, list_tools_as_specs, map_call_result,
+};
 
 /// The ungated abort tools, by transport. On a cancel during a gated egress
 /// tool, the frontend best-effort calls the matching one. They are NEVER gated
@@ -69,12 +71,9 @@ impl UdsToolInvoker {
             .await
             .map_err(|e| ConnectError::Handshake(e.to_string()))?;
 
-        let listed = client
-            .list_all_tools()
+        let tools = list_tools_as_specs(&client)
             .await
             .map_err(|e| ConnectError::ListTools(e.to_string()))?;
-
-        let tools = listed.iter().map(tool_spec_from_rmcp).collect();
 
         Ok(Self {
             client: Mutex::new(client),
@@ -146,75 +145,9 @@ impl ToolInvoker for UdsToolInvoker {
         };
 
         match result {
-            Ok(call_result) => {
-                // A tool that ran. The server signals an OPERATIONAL failure via
-                // CallToolResult.is_error == Some(true) (distinct from an
-                // authorization denial, which arrives as an Err below). Surface
-                // the result text either way; the runner re-prompts on an error
-                // text but treats a denial as terminal.
-                let text = extract_result_text(&call_result);
-                if call_result.is_error.unwrap_or(false) {
-                    ToolOutcome::InvalidArgs(text)
-                } else {
-                    // The server already curated + redacted this content; parse
-                    // it as JSON when possible, else wrap the raw text. (Matched
-                    // explicitly rather than `unwrap_or` so `text` is not moved
-                    // while still borrowed by the parse.)
-                    let value = match serde_json::from_str::<Value>(&text) {
-                        Ok(v) => v,
-                        Err(_) => Value::String(text),
-                    };
-                    ToolOutcome::Ok(value)
-                }
-            }
+            Ok(call_result) => map_call_result(call_result),
             Err(err) => classify_call_error(&err.to_string()),
         }
-    }
-}
-
-/// Map an rmcp `call_tool` error string onto a [`ToolOutcome`].
-///
-/// An authorization denial (the server's `egress_err` / `write_err` emit
-/// "not authorized to transmit/write ..." via `ErrorData::invalid_request`)
-/// becomes [`ToolOutcome::Denied`] — terminal, relayed verbatim, NEVER retried
-/// or worked around with an arm attempt. Any other error (transport, server
-/// fault) is a non-denial that the runner can re-prompt on, surfaced as
-/// [`ToolOutcome::InvalidArgs`] carrying the detail.
-pub fn classify_call_error(message: &str) -> ToolOutcome {
-    let lowered = message.to_ascii_lowercase();
-    let is_denial = lowered.contains("not authorized")
-        || lowered.contains("tainted")
-        || lowered.contains("must arm")
-        || lowered.contains("armed send")
-        || lowered.contains("re-arm");
-    if is_denial {
-        ToolOutcome::Denied(message.to_string())
-    } else {
-        ToolOutcome::InvalidArgs(message.to_string())
-    }
-}
-
-/// Extract the concatenated text of a tool result's content blocks. The Tuxlink
-/// tools pack a single JSON text content (`Content::json`), but be defensive
-/// about multiple / non-text blocks.
-fn extract_result_text(result: &rmcp::model::CallToolResult) -> String {
-    let mut out = String::new();
-    for content in &result.content {
-        if let Some(text) = content.as_text() {
-            out.push_str(&text.text);
-        }
-    }
-    out
-}
-
-/// Build a runner [`ToolSpec`] from an rmcp `Tool`. The rmcp `input_schema` is
-/// an `Arc<Map<String, Value>>`; the runner's schema is a plain JSON object
-/// `Value`, so wrap the map.
-fn tool_spec_from_rmcp(tool: &rmcp::model::Tool) -> ToolSpec {
-    let schema: Map<String, Value> = (*tool.input_schema).clone();
-    ToolSpec {
-        name: tool.name.to_string(),
-        json_schema: Value::Object(schema),
     }
 }
 

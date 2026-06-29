@@ -37,6 +37,7 @@ path = "src/main.rs"
 
 [dependencies]
 tuxlink-agent-runner = { path = "../tuxlink-agent-runner" }
+tuxlink-agent-frontend = { path = "../tuxlink-agent-frontend" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

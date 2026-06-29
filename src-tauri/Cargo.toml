@@ -5,7 +5,7 @@
 # app, and `default-run = "tuxlink"` is unchanged. The sibling xtask/ and tools/
 # crates are OUTSIDE src-tauri and are not pulled into this workspace.
 [workspace]
-members = [".", "tuxlink-security", "tuxlink-mcp-core", "tuxlink-mcp", "tuxlink-mcp-testserver", "tux-rig", "tuxlink-agent-runner", "d3zwe"]
+members = [".", "tuxlink-security", "tuxlink-mcp-core", "tuxlink-mcp", "tuxlink-mcp-testserver", "tux-rig", "tuxlink-agent-runner", "tuxlink-agent-frontend", "d3zwe"]
 default-members = ["."]
 
 [package]
@@ -141,6 +141,8 @@ mini_sbc = "0.1.7"        # NEW (tuxlink-vgvn) — pure-Rust SBC DECODER for the
 tuxlink-security = { path = "tuxlink-security" }
 tuxlink-mcp-core = { path = "tuxlink-mcp-core" }
 tux-rig = { path = "tux-rig" }
+tuxlink-agent-runner = { path = "tuxlink-agent-runner" }
+tuxlink-agent-frontend = { path = "tuxlink-agent-frontend" }
 
 # tuxlink-cumx / G8 — faithful PDF export drives the live form's WebKitGTK view
 # via WebKitPrintOperation. Both crates are already in the build (transitive via

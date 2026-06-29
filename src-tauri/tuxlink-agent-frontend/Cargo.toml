@@ -1,0 +1,51 @@
+# tuxlink-agent-frontend — shared model-adapter + MCP-client helpers for the
+# Elmer assistant spine.
+#
+# This lib crate holds the REUSABLE pieces that d3zwe (the headless terminal
+# frontend) and the Tauri monolith (the Elmer pane, Task B1-B4) both need:
+#
+#   * `endpoint`  — SEC-5 loopback/metadata enforcement for the model endpoint URL.
+#   * `provider`  — `OpenAiProvider`: an `OpenAI`-compatible chat-completions
+#     adapter that implements `tuxlink_agent_runner::Provider`.
+#   * `mcp_client` — transport-agnostic rmcp helpers: `tool_spec_from_rmcp`,
+#     `classify_call_error`, `extract_result_text`, `map_call_result`,
+#     `list_tools_as_specs`.
+#
+# d3zwe keeps only its UDS-specific wiring (`UdsToolInvoker`, `ConnectError`,
+# `default_socket_path`, `ABORT_TOOLS`); the monolith will supply its own
+# transport and reuse the helpers here.
+#
+# Acyclic dep chain: tuxlink-agent-frontend → tuxlink-agent-runner (runner loop
+# types/traits only; no Tauri, no tuxlink-security).
+[package]
+name = "tuxlink-agent-frontend"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+# Runner types: Provider, ToolInvoker, ToolSpec, ToolOutcome, etc.
+tuxlink-agent-runner = { path = "../tuxlink-agent-runner" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+
+# EndpointError uses thiserror; same "1" the monolith already pins.
+thiserror = "1"
+
+# URL parsing + SEC-5 host classification.
+url = "2"
+
+# HTTP client for OpenAiProvider (same 0.13 the lockfile already resolves).
+reqwest = { version = "0.13", features = ["json"] }
+
+# rmcp client types: Tool, CallToolResult, RunningService<RoleClient, ()>,
+# ServiceError, ServiceExt.  `client` + `transport-async-rw` match d3zwe's
+# feature set (no new major, same lockfile resolution).
+rmcp = { version = "0.8", features = ["client", "transport-async-rw"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
