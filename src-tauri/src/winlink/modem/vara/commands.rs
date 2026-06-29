@@ -1516,8 +1516,12 @@ const VARA_DISCONNECT_DEADLINE: Duration = Duration::from_secs(5);
 ///    for the `CONNECTED` event (bounded by [`VARA_CONNECT_DEADLINE`]).
 /// 4. **Run the B2F exchange** over the data socket via
 ///    [`crate::winlink_backend::run_vara_b2f_exchange`].
-/// 5. **Send `DISCONNECT`** + drop the transport (best-effort; the
-///    session ends in `Closed` regardless).
+/// 5. **Clean up, branched on the outcome** (tuxlink-n95sr #2, mirrors ARDOP's
+///    [`finish_vara_b2f_exchange`]): a CONNECT-class failure (the ARQ link never
+///    came up) is terminal — drop the transport + reset the session to `Closed`
+///    so it is not silently re-armable; a success or mid-EXCHANGE failure
+///    best-effort link-disconnects + re-installs the transport so the open
+///    session survives for a retry / listener re-arm.
 ///
 /// # Signature (Codex Phase 3-4 boundary P2 #2 — tuxlink-u1r7)
 ///
@@ -1660,45 +1664,28 @@ pub async fn modem_vara_b2f_exchange(
         qsy_candidates,
     );
 
-    // Always clear the exchange marker — install_transport_if_generation_matches
-    // also clears it as a belt-and-suspenders measure, but explicit here so
-    // the marker is gone before the wind-down DISCONNECT (operator can read
-    // `exchange == None` as soon as the b2f code path returns).
+    // Always clear the exchange marker before cleanup (operator can read
+    // `exchange == None` as soon as the b2f path returns; the install-back path
+    // inside `finish_vara_b2f_exchange` also clears it as belt-and-suspenders).
     session.end_exchange();
 
-    // ─── Always link-disconnect + install transport back ─────────────
-    // Best-effort cmd-port `DISCONNECT` + bounded wait for the
-    // `Disconnected` event tears down the ARQ link (NOT the modem). The
-    // session must remain Open afterwards so the operator can retry
-    // Send/Receive (or a listener re-arm) without re-opening — per spec
-    // §2's "outbound dial is within-session" rule. ARDOP's
-    // `modem_ardop_b2f_exchange` follows the same pattern via
-    // `transport.disconnect(5s)` + `install_transport_if_generation_matches`.
-    let _ = vara_dial_disconnect(&mut transport);
-
-    // tuxlink-0iqi + tuxlink-pdnw: guarded install-back. Stale snapshot
-    // (close intervened during the exchange) → drop the transport
-    // explicitly; the session is already in a Closed posture from
-    // `vara_close_session_inner` and a fresh open will spawn a new
-    // transport. Fresh snapshot → restore the session to Open with the
-    // SAME active intent + transport kind so the listener can re-arm
-    // (Codex P1 #2 — replaces the prior `vara_stop_session_inner` call
-    // that wrongly forced Closed).
-    if let Err(dropped) = session.install_transport_if_generation_matches(
+    // ─── Branch cleanup on the outcome (tuxlink-n95sr #2) ─────────────
+    // A CONNECT-class failure is terminal — drop the transport + reset the
+    // session to Closed so it is NOT silently re-armable ("session restarts on
+    // failure"). A success or mid-EXCHANGE failure keeps the open session for a
+    // retry / listener re-arm. Mirrors ARDOP's `finish_b2f_exchange`.
+    let result = finish_vara_b2f_exchange(
+        session.inner(),
         transport,
         close_gen_snapshot,
         snapshot_bound_host,
         snapshot_bound_cmd_port,
         snapshot_intent,
         snapshot_kind,
-    ) {
-        // Explicit drop — the session was closed since we took the
-        // transport, so re-installing would defeat the close. Letting
-        // the transport fall out of scope here is the correct behavior.
-        drop(dropped);
-    }
+        outcome,
+    );
 
-    match &outcome {
+    match &result {
         Ok(()) => emit_vara_log(
             &app,
             &log,
@@ -1713,7 +1700,85 @@ pub async fn modem_vara_b2f_exchange(
         ),
     }
 
-    outcome
+    result
+}
+
+/// Outcome of a VARA connect→B2F attempt (tuxlink-n95sr #2). Mirrors ARDOP's
+/// `ExchangeOutcome`: distinguishes a CONNECT-class failure (no candidate
+/// reached `CONNECTED` — the ARQ link never came up; terminal, free the modem)
+/// from a mid-EXCHANGE failure (a candidate connected but the B2F exchange
+/// faulted — keep the open session for a retry). [`finish_vara_b2f_exchange`]
+/// branches cleanup on it.
+enum VaraExchangeOutcome {
+    /// CONNECT + the full B2F exchange completed.
+    Completed,
+    /// No candidate reached `CONNECTED` (or setup failed before the dial) — the
+    /// ARQ link never came up.
+    ConnectFailed(String),
+    /// A candidate connected but the B2F exchange itself failed.
+    ExchangeFailed(String),
+}
+
+/// Post-exchange cleanup, branched on the outcome (tuxlink-n95sr #2). Mirrors
+/// ARDOP's `finish_b2f_exchange`.
+///
+/// - **CONNECT-class failure** (`ConnectFailed`): terminal. DROP the failed
+///   transport (closes the VARA TCP sockets) and reset the session to `Closed`
+///   via [`vara_stop_session_inner`] so it is NOT silently re-armable — the bug
+///   where a failed dial left the session "restarting" / never freed the modem.
+///   No link-disconnect: there is no live ARQ link to tear down. The reset is
+///   guarded on the close generation — if an operator Close intervened while the
+///   dial was blocked, the (possibly re-opened) session is left alone; either
+///   way the failed transport is dropped, never re-installed.
+/// - **Success or mid-EXCHANGE failure** (`Completed` / `ExchangeFailed`):
+///   best-effort link-disconnect (link-only) + guarded re-install so the open
+///   session + any listener arming survive for a retry (spec §2 "outbound dial
+///   is within-session"). Guarded (tuxlink-pdnw): a stale generation drops the
+///   transport instead of restoring it into a closed session.
+///
+/// Returns the flat `Result` the command surfaces (and logs).
+#[allow(clippy::too_many_arguments)]
+fn finish_vara_b2f_exchange(
+    session: &std::sync::Arc<VaraSession>,
+    mut transport: VaraTransport,
+    close_gen_snapshot: u64,
+    snapshot_bound_host: Option<String>,
+    snapshot_bound_cmd_port: Option<u16>,
+    snapshot_intent: Option<SessionIntent>,
+    snapshot_kind: Option<TransportKind>,
+    outcome: VaraExchangeOutcome,
+) -> Result<(), String> {
+    match outcome {
+        VaraExchangeOutcome::ConnectFailed(msg) => {
+            // Link never came up → terminal. Drop our failed transport and reset
+            // the session to Closed (guarded on the close generation).
+            drop(transport);
+            if session.current_close_generation() == close_gen_snapshot {
+                let _ = vara_stop_session_inner(session);
+            }
+            Err(msg)
+        }
+        other => {
+            // Link was up (success or mid-EXCHANGE failure): tear down the ARQ
+            // LINK only + guarded re-install so the open session survives.
+            let _ = vara_dial_disconnect(&mut transport);
+            if let Err(dropped) = session.install_transport_if_generation_matches(
+                transport,
+                close_gen_snapshot,
+                snapshot_bound_host,
+                snapshot_bound_cmd_port,
+                snapshot_intent,
+                snapshot_kind,
+            ) {
+                drop(dropped);
+            }
+            match other {
+                VaraExchangeOutcome::Completed => Ok(()),
+                VaraExchangeOutcome::ExchangeFailed(msg) => Err(msg),
+                VaraExchangeOutcome::ConnectFailed(_) => unreachable!("handled above"),
+            }
+        }
+    }
 }
 
 /// Inner helper for [`modem_vara_b2f_exchange`]: sends `CONNECT
@@ -1739,27 +1804,46 @@ fn run_vara_b2f_with_transport(
     intent: SessionIntent,
     freq_hz: Option<u64>,
     qsy_candidates: Option<Vec<DialCandidate>>,
-) -> Result<(), String> {
-    // Mailbox lives at <app_data_dir>/native-mbox (per `bootstrap::install_native`).
-    let mbox_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("could not resolve app data dir: {e}"))?
-        .join("native-mbox");
-    let mailbox = crate::native_mailbox::Mailbox::new(mbox_dir);
+) -> VaraExchangeOutcome {
+    // tuxlink-n95sr #2: every early return BELOW (setup + the candidate walk) is
+    // a CONNECT-class failure — the ARQ link never came up — so it maps to
+    // `VaraExchangeOutcome::ConnectFailed`, which the caller treats as terminal
+    // (frees the modem). Only a failure AFTER `run_vara_b2f_exchange` begins is a
+    // mid-EXCHANGE failure (`ExchangeFailed`, keeps the session Open for retry).
+    // Mirror of ARDOP's `run_ardop_connect_b2f_with_transport` → `ExchangeOutcome`.
 
-    let cfg = config::read_config().map_err(|e| format!("read config failed: {e}"))?;
+    // Mailbox lives at <app_data_dir>/native-mbox (per `bootstrap::install_native`).
+    let app_data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            return VaraExchangeOutcome::ConnectFailed(format!(
+                "could not resolve app data dir: {e}"
+            ))
+        }
+    };
+    let mailbox = crate::native_mailbox::Mailbox::new(app_data_dir.join("native-mbox"));
+
+    let cfg = match config::read_config() {
+        Ok(c) => c,
+        Err(e) => return VaraExchangeOutcome::ConnectFailed(format!("read config failed: {e}")),
+    };
 
     // tuxlink-0063 (Phase 3, Task 3.7): the on-air station ID comes from the
     // authenticated active SessionIdentity, not from `config.identity.active_full`.
     // Both the VARA CONNECT cmd-port MYCALL (on-air station ID) and the B2F
     // exchange callsign must come from the session — neither may use config.
-    let session_id = app
-        .state::<crate::app_backend::BackendState>()
-        .current()
-        .ok_or_else(|| "VARA B2F: backend offline — cannot resolve active identity".to_string())?
-        .active_identity()
-        .map_err(|e| e.to_string())?;
+    let backend_current = match app.state::<crate::app_backend::BackendState>().current() {
+        Some(c) => c,
+        None => {
+            return VaraExchangeOutcome::ConnectFailed(
+                "VARA B2F: backend offline — cannot resolve active identity".to_string(),
+            )
+        }
+    };
+    let session_id = match backend_current.active_identity() {
+        Ok(id) => id,
+        Err(e) => return VaraExchangeOutcome::ConnectFailed(e.to_string()),
+    };
 
     let mycall = session_id.mycall().as_str().to_uppercase();
 
@@ -1879,9 +1963,10 @@ fn run_vara_b2f_with_transport(
     });
 
     if outcome.is_none() {
-        // No candidate connected. Surface the last useful error.
-        return Err(
-            last_err.unwrap_or_else(|| "VARA CONNECT failed for all candidates".to_string())
+        // No candidate connected — CONNECT-class failure (terminal). Surface the
+        // last useful error; the caller frees the modem (tuxlink-n95sr #2).
+        return VaraExchangeOutcome::ConnectFailed(
+            last_err.unwrap_or_else(|| "VARA CONNECT failed for all candidates".to_string()),
         );
     }
 
@@ -1913,7 +1998,10 @@ fn run_vara_b2f_with_transport(
     };
 
     // ─── Run the B2F exchange over the data socket ───────────────────
-    crate::winlink_backend::run_vara_b2f_exchange(
+    // Past here the ARQ link is UP: any failure is a mid-EXCHANGE failure
+    // (`ExchangeFailed`) — the caller keeps the session Open for a retry — NOT a
+    // terminal connect failure (tuxlink-n95sr #2).
+    match crate::winlink_backend::run_vara_b2f_exchange(
         transport,
         target,
         intent,
@@ -1922,8 +2010,10 @@ fn run_vara_b2f_with_transport(
         &mailbox,
         Some(&arbiter),
         Some(&progress),
-    )
-    .map_err(|e| format!("VARA B2F exchange failed: {e}"))
+    ) {
+        Ok(()) => VaraExchangeOutcome::Completed,
+        Err(e) => VaraExchangeOutcome::ExchangeFailed(format!("VARA B2F exchange failed: {e}")),
+    }
 }
 
 /// Build the ordered dial-candidate list for a VARA exchange.
@@ -2428,6 +2518,144 @@ mod tests {
         drop(session);
         cmd_handle.join().unwrap();
         data_handle.join().unwrap();
+    }
+
+    // ── tuxlink-n95sr #2: finish_vara_b2f_exchange branches cleanup on the
+    //    outcome — a CONNECT-class failure FREES the modem (session Closed,
+    //    transport NOT re-installed → not silently re-armable) while a
+    //    mid-EXCHANGE failure KEEPS the open session for a retry. Mirrors
+    //    ARDOP's finish_b2f_exchange. Asserts the post-failure STATE + transport
+    //    disposition, not just the returned Err (the test-gap the ARDOP
+    //    session-restart bug-hunt explicitly called out). ──────────────────
+    fn loopback_vara_transport(
+        write_disconnected: bool,
+    ) -> (VaraTransport, u16, std::thread::JoinHandle<()>, std::thread::JoinHandle<()>) {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+        // The cmd acceptor optionally emits a `DISCONNECTED\r` so a post-exchange
+        // `vara_dial_disconnect` (the mid-EXCHANGE-failure path) returns promptly
+        // instead of waiting out the 5 s deadline against a silent peer.
+        let cmd_handle = thread::spawn(move || {
+            if let Ok((mut c, _)) = cmd_l.accept() {
+                if write_disconnected {
+                    let _ = c.write_all(b"DISCONNECTED\r");
+                    let _ = c.flush();
+                }
+                thread::sleep(Duration::from_millis(500));
+            }
+        });
+        let data_handle = thread::spawn(move || {
+            let _ = data_l.accept();
+            thread::sleep(Duration::from_millis(500));
+        });
+        let cfg = VaraConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            connect_timeout: Duration::from_secs(2),
+            read_timeout: Some(Duration::from_millis(100)),
+        };
+        let transport = VaraTransport::connect(cfg).expect("connect must succeed");
+        (transport, cmd_port, cmd_handle, data_handle)
+    }
+
+    fn open_vara_session(transport: VaraTransport, cmd_port: u16) -> Arc<VaraSession> {
+        let session = Arc::new(VaraSession::new());
+        {
+            let mut guard = session.inner.lock().unwrap();
+            guard.transport = Some(transport);
+            guard.status = VaraStatus {
+                state: VaraState::Open,
+                last_error: None,
+                bound_host: Some("127.0.0.1".into()),
+                bound_cmd_port: Some(cmd_port),
+                listener_armed: false,
+                exchange: None,
+                transport_owner: TransportOwner::None,
+                active_intent: None,
+                active_transport_kind: None,
+            };
+        }
+        session
+    }
+
+    #[test]
+    fn finish_vara_b2f_connect_failure_frees_modem_not_re_armable() {
+        let (transport, cmd_port, ch, dh) = loopback_vara_transport(false);
+        let session = open_vara_session(transport, cmd_port);
+        // Mirror the command: snapshot the close-gen BEFORE the take, then take
+        // the transport (the dial's claim on it).
+        let gen = session.current_close_generation();
+        let taken = session.take_transport().expect("transport installed");
+
+        let r = finish_vara_b2f_exchange(
+            &session,
+            taken,
+            gen,
+            Some("127.0.0.1".into()),
+            Some(cmd_port),
+            None,
+            None,
+            VaraExchangeOutcome::ConnectFailed(
+                "VARA disconnected before CONNECTED (modem may have rejected the dial)".into(),
+            ),
+        );
+
+        assert!(r.is_err(), "a connect failure surfaces an Err");
+        assert_eq!(
+            session.snapshot().state,
+            VaraState::Closed,
+            "connect failure must leave the session Closed (modem freed)"
+        );
+        assert!(
+            session.take_transport().is_none(),
+            "connect failure must NOT re-install the transport (the tuxlink-n95sr #2 fix)"
+        );
+
+        drop(session);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn finish_vara_b2f_mid_exchange_failure_keeps_open_session() {
+        let (transport, cmd_port, ch, dh) = loopback_vara_transport(true);
+        let session = open_vara_session(transport, cmd_port);
+        let gen = session.current_close_generation();
+        let taken = session.take_transport().expect("transport installed");
+
+        let r = finish_vara_b2f_exchange(
+            &session,
+            taken,
+            gen,
+            Some("127.0.0.1".into()),
+            Some(cmd_port),
+            None,
+            None,
+            VaraExchangeOutcome::ExchangeFailed("VARA B2F exchange failed: boom".into()),
+        );
+
+        assert!(r.is_err(), "a mid-exchange failure surfaces an Err");
+        assert_eq!(
+            session.snapshot().state,
+            VaraState::Open,
+            "mid-exchange failure must keep the session Open for retry"
+        );
+        assert!(
+            session.take_transport().is_some(),
+            "mid-exchange failure must re-install the transport"
+        );
+
+        drop(session);
+        ch.join().unwrap();
+        dh.join().unwrap();
     }
 
     // ── tuxlink-0ye6 Task 4.1: VaraSession::abort_in_flight ──────────────
