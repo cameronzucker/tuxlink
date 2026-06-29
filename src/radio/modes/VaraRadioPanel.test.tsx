@@ -942,10 +942,15 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       fireEvent.change(target, { target: { value: 'W7RPT-10' } });
     });
     fireEvent.click(screen.getByTestId('vara-send-receive-btn'));
-    // The error surfaces, but NO `failed` attempt is recorded (it never went on-air).
+    // tuxlink-n95sr: send/receive failures surface in the SESSION LOG (backend
+    // Error line), NOT an inline panel element — parity with ARDOP. Wait for the
+    // exchange attempt to have run (the sync anchor that used to be the inline
+    // error), then assert no inline error rendered…
     await waitFor(() =>
-      expect(screen.getByTestId('vara-action-error')).toHaveTextContent('session not open'),
+      expect(invokeSpy.mock.calls.some(([c]) => c === 'modem_vara_b2f_exchange')).toBe(true),
     );
+    expect(screen.queryByTestId('vara-action-error')).toBeNull();
+    // …and NO `failed` attempt is recorded (it never went on-air).
     expect(
       findRecordCalls(invokeSpy).filter(([, a]) => (a as { outcome: string }).outcome === 'failed'),
     ).toHaveLength(0);

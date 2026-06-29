@@ -443,7 +443,11 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
       void recordAttempt(dial, 'reached', tsLocal());
     } catch (e) {
       const msg = String(e);
-      setActionError(`Send/Receive failed: ${msg}`);
+      // tuxlink-n95sr: the send/receive failure is surfaced in the SESSION LOG
+      // by the backend (emit_vara_log Error line, vara/commands.rs), matching
+      // ARDOP (tuxlink-nnjz). Errors belong in the log, not a separate inline
+      // action-error element below it — so do NOT setActionError here.
+      console.debug('VARA send/receive failed (surfaced in session log):', e);
       // Codex 2026-06-10 P2 #2: a pre-air ownership failure (the transport was
       // never available — the backend's take_transport returned None, e.g. the
       // listener consumer holds it, or a stale-status race) NEVER transmitted,
