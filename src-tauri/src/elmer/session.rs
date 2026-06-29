@@ -628,7 +628,9 @@ mod tests {
         pub aborted_ardop: AtomicBool,
         pub aborted_vara: AtomicBool,
         /// Flipped true by a blocking tool when it is actively executing.
-        pub in_transmit: AtomicBool,
+        /// `Arc` so the same atomic can be shared with the `ParkingToolInvoker`
+        /// (which takes `Arc<AtomicBool>`), not just read through `Arc<Probes>`.
+        pub in_transmit: Arc<AtomicBool>,
     }
 
     impl Probes {
@@ -637,7 +639,7 @@ mod tests {
                 aborted_cms: AtomicBool::new(false),
                 aborted_ardop: AtomicBool::new(false),
                 aborted_vara: AtomicBool::new(false),
-                in_transmit: AtomicBool::new(false),
+                in_transmit: Arc::new(AtomicBool::new(false)),
             })
         }
         fn in_transmit(&self) -> bool { self.in_transmit.load(Ordering::SeqCst) }
