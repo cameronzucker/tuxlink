@@ -49,6 +49,8 @@ export interface MenuHandlers {
   /** Open the Connect an AI agent modal — per-agent MCP copy-paste connect
    *  commands (tuxlink-l9sq4). */
   openConnectAgent: () => void;
+  /** Open the Elmer agent pane (tuxlink-13v2l). */
+  openElmer: () => void;
   /** Open the inline Catalog Builder panel (tuxlink-a2gd) — location-aware
    *  station finder (direct /listings poll) + by-message info-category requests. */
   openCatalogBuilder: () => void;
@@ -112,6 +114,9 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     // tuxlink-l9sq4: Tools → Connect an AI agent opens the ConnectAgentModal.
     case 'menu:tools:connect_agent':
       h.openConnectAgent(); return;
+    // tuxlink-13v2l: Tools → Elmer opens the Elmer agent pane.
+    case 'menu:tools:elmer':
+      h.openElmer(); return;
   }
   if (id.startsWith('menu:view:scheme:')) {
     const scheme = id.slice('menu:view:scheme:'.length);

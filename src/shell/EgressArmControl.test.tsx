@@ -181,6 +181,84 @@ describe('<EgressArmControl> — tainted actions (in popover)', () => {
   });
 });
 
+// AC-10: re-arm affordance in the LOCKED branch (Task 9).
+describe('<EgressArmControl> — re-arm affordance (LOCKED → fresh session)', () => {
+  it('LOCKED renders "Start a fresh authorized session" button, not "restart Tuxlink" text', () => {
+    render(
+      <EgressArmControl
+        status={makeStatus({ tainted: true })}
+        onArm={vi.fn()}
+        onDisarm={vi.fn()}
+        onRearm={vi.fn()}
+      />,
+    );
+    openPopover();
+    // The re-arm start label is present
+    expect(screen.getByTestId('egress-rearm-start')).toBeTruthy();
+    // The old "restart Tuxlink" prose must NOT appear
+    expect(screen.queryByText(/restart Tuxlink/i)).toBeNull();
+  });
+
+  it('LOCKED renders duration presets inside the re-arm section', () => {
+    render(
+      <EgressArmControl
+        status={makeStatus({ tainted: true })}
+        onArm={vi.fn()}
+        onDisarm={vi.fn()}
+        onRearm={vi.fn()}
+      />,
+    );
+    openPopover();
+    expect(screen.getByTestId('egress-rearm-presets')).toBeTruthy();
+  });
+
+  it('clicking a re-arm preset calls onRearm with the chosen duration', () => {
+    const onRearm = vi.fn();
+    render(
+      <EgressArmControl
+        status={makeStatus({ tainted: true })}
+        onArm={vi.fn()}
+        onDisarm={vi.fn()}
+        onRearm={onRearm}
+      />,
+    );
+    openPopover();
+    // 15 min = 900 s
+    fireEvent.click(screen.getByTestId('egress-rearm-900'));
+    expect(onRearm).toHaveBeenCalledWith(900);
+  });
+
+  it('clicking a 1-hour re-arm preset calls onRearm(3600)', () => {
+    const onRearm = vi.fn();
+    render(
+      <EgressArmControl
+        status={makeStatus({ tainted: true })}
+        onArm={vi.fn()}
+        onDisarm={vi.fn()}
+        onRearm={onRearm}
+      />,
+    );
+    openPopover();
+    fireEvent.click(screen.getByTestId('egress-rearm-3600'));
+    expect(onRearm).toHaveBeenCalledWith(3600);
+  });
+
+  it('renders the consequence line about chat being cleared', () => {
+    render(
+      <EgressArmControl
+        status={makeStatus({ tainted: true })}
+        onArm={vi.fn()}
+        onDisarm={vi.fn()}
+        onRearm={vi.fn()}
+      />,
+    );
+    openPopover();
+    expect(screen.getByTestId('egress-rearm-consequence').textContent).toContain(
+      'Anything Elmer staged in your Outbox is kept',
+    );
+  });
+});
+
 describe('<EgressArmControl> — error surfacing (in popover)', () => {
   it('renders the error message inside the popover', () => {
     render(
