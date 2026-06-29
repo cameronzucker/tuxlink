@@ -911,15 +911,15 @@ Tuxlink exposes an MCP server for "Connect an AI agent": the **real router** liv
 | Layer | Result on macOS |
 |---|---|
 | **clippy** — `cargo clippy --bin tuxlink -- -D warnings` | ✅ **clean** (no lint warnings on the shipping binary; macOS would pass a `-D warnings` CI gate) |
-| **Frontend — `vitest run`** | ✅ **3320/3320 pass** under **Node 20** (the project's CI target). ❌ 501 failures under the host's default **Node 26.3.0** — but purely environmental (jsdom `localStorage` undefined + undici `AbortSignal`-realm mismatch), in files unrelated to any change, **not** a macOS or code issue. |
+| **Frontend — `vitest run`** | ✅ **3320/3320 pass** under **Node 24 LTS** (also verified on Node 20). ❌ 501 failures under the host's default **Node 26.3.0** — purely environmental (jsdom `localStorage` undefined + undici `AbortSignal`-realm mismatch), in files unrelated to any change, **not** a macOS or code issue. Verified band: **20 ✅ · 24 ✅ · 26 ❌**. |
 | **Rust lib unit tests — `cargo test --lib`** | ✅ **2615/2615 pass** (was 2614/1-fail; see fix below) |
 | Rust integration tests (`tests/`), `--all-targets`, examples/benches | ⏸ not run — some are Linux-specific (e.g. the D-Bus `wizard_integration_test` is `#[ignore]`); deferred. The release build + link + `--bin` clippy + lib tests already give strong Rust-side confidence. |
 
 **The one Rust failure was a test artifact, not a bug.** `logging::state_dir::tests::resolves_under_xdg_state_home` asserted `resolved.starts_with(tmp.path())`, but `resolve()` returns a **canonical** path and on macOS the tempdir lives under `/var/folders/…` where `/var` symlinks to `/private/var` — so the canonical result is prefixed `/private/var/…` and the naive `starts_with` failed. The production `resolve()` is correct (canonicalizing is intended); fixed the test to compare against `tmp.path().canonicalize()` (a no-op on Linux, where `/tmp` isn't symlinked). Now 2615/2615.
 
-**Node-version caveat (worth a repo fix).** The repo pins no Node version (no `engines`, no `.nvmrc`), yet the suite only passes on Node 20 (CI's version); the host's Node 26 breaks 501 tests via jsdom/undici realm issues. macOS (and any) dev should use Node 20 — `fnm use 20`. Recommend adding an `.nvmrc`/`engines` pin so the supported Node is explicit.
+**Node-version pin (fixed).** The repo previously pinned no Node version, and the host's default Node 26 silently broke 501 tests (jsdom/undici realm issues at ≥26). The prior CI Node (20) is EOL, so the project now **targets Node 24 LTS**: added `.nvmrc` (`24`) + `package.json` `engines.node` (`>=22 <25` — drops EOL 20, excludes the broken ≥25), and bumped CI (`ci.yml` / `ect-build.yml` / `release.yml`) from `20`→`24`. `fnm use` / `nvm use` now picks 24 via `.nvmrc`, so the Node-26 trap can't recur. (Verified band: **20 ✅ · 24 ✅ · 26 ❌**; 25 untested/odd-release, excluded.)
 
-**Net:** macOS test + lint health is strong — Rust lib **2615/2615**, frontend **3320/3320** (Node 20), clippy **clean**. The only gotcha is using the project's Node 20 rather than the host's bleeding-edge Node 26.
+**Net:** macOS test + lint health is strong — Rust lib **2615/2615**, frontend **3320/3320** (Node 24 LTS), clippy **clean**. The Node target is now pinned (24) so the host's bleeding-edge Node 26 can't silently break the suite.
 
 ---
 
