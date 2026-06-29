@@ -1694,6 +1694,8 @@ export function AppShell() {
             busy: egressArm.busy,
             error: egressArm.error,
           }}
+          onOpenElmer={() => setElmerOpen((o) => !o)}
+          elmerOpen={elmerOpen}
         />
       </div>
 

@@ -432,3 +432,27 @@ describe('<DashboardRibbon> — Agent-send chip is compact (tuxlink-yfezs)', () 
     expect(screen.getByTestId('egress-presets')).toBeTruthy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Elmer launcher — global entry point, co-located with the Agent-send arm chip
+// (operator-approved IA: ribbon button, not a contextual dock tab or a rail).
+// ---------------------------------------------------------------------------
+
+describe('<DashboardRibbon> — Elmer launcher', () => {
+  it('renders an Elmer launcher and calls onOpenElmer on click', () => {
+    const onOpenElmer = vi.fn();
+    render(<DashboardRibbon data={makeData()} onOpenElmer={onOpenElmer} />);
+    fireEvent.click(screen.getByTestId('ribbon-elmer-launcher'));
+    expect(onOpenElmer).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not render the launcher when onOpenElmer is omitted', () => {
+    render(<DashboardRibbon data={makeData()} />);
+    expect(screen.queryByTestId('ribbon-elmer-launcher')).toBeNull();
+  });
+
+  it('reflects the open state via aria-pressed', () => {
+    render(<DashboardRibbon data={makeData()} onOpenElmer={vi.fn()} elmerOpen />);
+    expect(screen.getByTestId('ribbon-elmer-launcher')).toHaveAttribute('aria-pressed', 'true');
+  });
+});

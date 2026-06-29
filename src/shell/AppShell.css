@@ -390,6 +390,46 @@
   cursor: default;
   opacity: 0.7;
 }
+
+/* Elmer launcher — compact ribbon button beside the Agent-send arm chip. */
+.layout-b .dashboard .dash-elmer-launcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong, var(--border));
+  background: var(--surface-2, transparent);
+  color: var(--text, #cbd5e1);
+}
+.layout-b .dashboard .dash-elmer-launcher .dash-elmer-icon {
+  color: var(--accent, var(--accent-teal));
+  font-size: 13px;
+  line-height: 1;
+}
+.layout-b .dashboard .dash-elmer-launcher:hover {
+  border-color: var(--accent, var(--accent-teal));
+}
+.layout-b .dashboard .dash-elmer-launcher.is-open {
+  background: var(--accent, var(--accent-teal));
+  border-color: var(--accent, var(--accent-teal));
+  color: var(--accent-fg, #0b0f14);
+}
+.layout-b .dashboard .dash-elmer-launcher.is-open .dash-elmer-icon {
+  color: var(--accent-fg, #0b0f14);
+}
+/* Tainted: the assistant has read untrusted content — send authority is locked
+   until a fresh re-arm. Tint matches the arm chip's LOCKED treatment. */
+.layout-b .dashboard .dash-elmer-launcher.is-locked {
+  border-color: var(--accent-amber, var(--accent-danger));
+}
+.layout-b .dashboard .dash-elmer-launcher.is-locked .dash-elmer-icon {
+  color: var(--accent-amber, var(--accent-danger));
+}
 .layout-b .dashboard .dash-aprs-state {
   font-variant-numeric: tabular-nums;
 }

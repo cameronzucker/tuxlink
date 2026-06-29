@@ -124,13 +124,20 @@ export interface DashboardRibbonProps {
     busy?: boolean;
     error?: string | null;
   };
+  /** Toggle the Elmer assistant drawer. When omitted, the launcher is not
+   *  rendered (keeps prop-free consumers/tests unchanged). Co-located with the
+   *  Agent-send arm chip — the assistant + its send authority as one unit. */
+  onOpenElmer?: () => void;
+  /** Whether the Elmer drawer is currently open (drives the launcher's
+   *  aria-pressed / active state). */
+  elmerOpen?: boolean;
 }
 
 // tuxlink-djnl: React.memo so 2s status-poll renders (now reference-stable
 // via useStatusData's useMemo) and other shell-level renders skip the ribbon
 // when its props haven't changed. The 1s clock tick already lives inside the
 // scoped ClockCell subtree, so a memo'd ribbon stays still while time advances.
-export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, reviewInbound, onReviewInboundChange, aprs, identities, activeIdentity, onSwitchIdentity, egress }: DashboardRibbonProps) {
+export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, reviewInbound, onReviewInboundChange, aprs, identities, activeIdentity, onSwitchIdentity, egress, onOpenElmer, elmerOpen }: DashboardRibbonProps) {
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Task 14 (tuxlink-c79g, spec §4.3 + Codex P1 #4): after a grid commit or a
   // source flip resolves, invalidate the config_read query so the source chip
@@ -337,6 +344,26 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
             busy={egress.busy}
             error={egress.error}
           />
+        </>
+      )}
+
+      {/* Elmer launcher — global entry point, co-located with the Agent-send
+          arm chip (the assistant + its send authority as one unit). Toggles the
+          drawer; aria-pressed reflects open state; a LOCKED tint when tainted. */}
+      {onOpenElmer && (
+        <>
+          <div className="dash-divider" />
+          <button
+            type="button"
+            className={`dash-elmer-launcher${elmerOpen ? ' is-open' : ''}${egress?.status.tainted ? ' is-locked' : ''}`}
+            data-testid="ribbon-elmer-launcher"
+            aria-pressed={!!elmerOpen}
+            title="Elmer — AI assistant"
+            onClick={onOpenElmer}
+          >
+            <span className="dash-elmer-icon" aria-hidden="true">✦</span>
+            <span className="dash-elmer-label">Elmer</span>
+          </button>
         </>
       )}
 
