@@ -104,6 +104,7 @@ mod tests {
     #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn base_config(gps_state: GpsState, grid: Option<&str>) -> Config {
         Config {
+            elmer: crate::config::ElmerConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: crate::config::default_cms_host() },

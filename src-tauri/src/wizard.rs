@@ -177,6 +177,7 @@ pub async fn persist_cms_impl(
     // Step 3: Build the new Config struct in memory (no disk write yet).
     // Per spec §3.6: CMS path hardcodes connect_to_cms=true; NO password material.
     let new_config = crate::config::Config {
+        elmer: crate::config::ElmerConfig::default(),
         schema_version: crate::config::CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: crate::config::ConnectConfig {
@@ -421,6 +422,7 @@ pub async fn persist_offline_impl(
     //   privacy defaults per Principle 7 (GPS on, FourCharGrid broadcast precision)
     //   pat_mbo_address = null (not used in offline path)
     let new_config = crate::config::Config {
+        elmer: crate::config::ElmerConfig::default(),
         schema_version: crate::config::CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: crate::config::ConnectConfig {

@@ -2945,6 +2945,7 @@ mod tests {
         // because `deserialize_optional_nonempty_string` would otherwise
         // map "   " to None at the serde layer.
         let cfg = Config {
+            elmer: crate::config::ElmerConfig::default(),
             schema_version: crate::config::CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: crate::config::ConnectConfig {
@@ -3663,6 +3664,7 @@ mod tests {
     #[allow(deprecated)] // pat_mbo_address: deprecated field still in the struct
     fn test_config() -> Config {
         Config {
+            elmer: crate::config::ElmerConfig::default(),
             schema_version: crate::config::CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: crate::config::ConnectConfig {

@@ -9062,6 +9062,7 @@ hw:CARD=Device,DEV=0
     #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn cms_config_fixture() -> Config {
         Config {
+            elmer: crate::config::ElmerConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -9395,6 +9396,7 @@ hw:CARD=Device,DEV=0
             PositionPrecision, PrivacyConfig, CONFIG_SCHEMA_VERSION,
         };
         let cfg = Config {
+            elmer: crate::config::ElmerConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -10796,8 +10798,10 @@ hw:CARD=Device,DEV=0
     // Helpers for position_status DTO unit tests.
     #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn make_config_for_position_status(gps_state: GpsState, grid: Option<&str>) -> config::Config {
+        elmer: crate::config::ElmerConfig::default(),
         use crate::config::{ConnectConfig, CmsTransport, IdentityConfig, PrivacyConfig, CONFIG_SCHEMA_VERSION};
         config::Config {
+            elmer: crate::config::ElmerConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: config::default_cms_host() },
