@@ -363,9 +363,18 @@
    ribbon rather than a bespoke slider. Click starts/stops listening + opens the
    APRS panel; the dot is BACKEND TRUTH (reuses .dash-status-dot: green=listening,
    .connecting=amber pulse, .idle=faint off). */
+/* The APRS item is the widest optional middle item (dot + state word +
+   unread badge). The base .dash-item is shrinkable (min-width:0), so when the
+   row is even slightly tight APRS becomes the shrink sink and its content
+   compresses while fixed-slot siblings (Connection) and pinned items
+   (Connect/Abort) stay intact. Size it to content and don't shrink. */
+.layout-b .dashboard .dash-aprs {
+  flex: 0 0 auto;
+}
 .layout-b .dashboard .dash-aprs-control {
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
