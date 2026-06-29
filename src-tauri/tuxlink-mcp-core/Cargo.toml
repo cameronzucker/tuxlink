@@ -32,7 +32,7 @@ libc = "0.2"
 # Phase 3.2: object-safe async port traits + a typed PortError enum. Both are
 # pulled in by the monolith already, so they resolve to the same versions.
 async-trait = "0.1"
-thiserror = "1"
+thiserror = "2"
 # Optional: only linked when `test-support` is enabled. The test_support module
 # (exposed under that feature) builds MockWrite over a tempdir; under the crate's
 # own `#[cfg(test)]` the [dev-dependencies] tempfile covers it, and under a
