@@ -615,7 +615,7 @@ mod tests {
 
     use tuxlink_agent_runner::{
         Conversation, EgressStatus, Limits, ModelTurn, RecordingInvoker, RunOutcome,
-        ScriptedProvider, ScriptedTurn, ToolCall, ToolOutcome, ToolSpec,
+        ScriptedProvider, ToolCall, ToolOutcome, ToolSpec,
     };
     use tuxlink_mcp_core::ports::{PortError, StagedRecordDto};
 
