@@ -37,9 +37,22 @@ impl Conversation {
         }
     }
 
+    /// Build a transcript from an existing message slice (multi-turn / resumed
+    /// sessions). The caller is responsible for the initial content; no turn is
+    /// appended here.
+    pub fn from_messages(messages: Vec<Message>) -> Self {
+        Self { messages }
+    }
+
     /// Read-only view of the transcript.
     pub fn messages(&self) -> &[Message] {
         &self.messages
+    }
+
+    /// Append a user turn. Used by `run_with_conversation` callers to seed the
+    /// new user message before handing the conversation to the loop.
+    pub fn push_user(&mut self, text: impl Into<String>) {
+        self.messages.push(Message::User(text.into()));
     }
 
     /// Append an assistant text turn.
@@ -72,6 +85,12 @@ impl Conversation {
 
     /// Convenience: append the outcome of an invoked tool, choosing the ok/error
     /// channel based on the variant.
+    ///
+    /// Note: callers must NOT pass a `Cancelled` outcome here — the runner returns
+    /// `RunOutcome::Cancelled` before reaching this call on a cancelled tool.
+    /// This arm is present to satisfy exhaustive-match under `-D warnings`; it
+    /// surfaces the cancellation reason as a tool error in the unlikely event it
+    /// is called anyway.
     pub fn push_outcome(&mut self, name: &str, outcome: &ToolOutcome) {
         match outcome {
             ToolOutcome::Ok(value) => self.push_tool_result(name, value.to_string()),
@@ -81,6 +100,7 @@ impl Conversation {
             ToolOutcome::InvalidArgs(detail) => {
                 self.push_tool_error(name, format!("invalid arguments: {detail}"))
             }
+            ToolOutcome::Cancelled(c) => self.push_tool_error(name, c),
         }
     }
 
@@ -92,5 +112,29 @@ impl Conversation {
     /// Whether the transcript is empty.
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ToolOutcome;
+
+    #[test]
+    fn tool_outcome_has_cancelled_variant() {
+        let _ = ToolOutcome::Cancelled("x".into());
+    }
+
+    #[test]
+    fn from_messages_roundtrips() {
+        let m = vec![Message::User("hi".into()), Message::Assistant("yo".into())];
+        assert_eq!(Conversation::from_messages(m.clone()).messages(), m.as_slice());
+    }
+
+    #[test]
+    fn push_user_appends_user_turn() {
+        let mut c = Conversation::from_messages(vec![]);
+        c.push_user("hello");
+        assert!(matches!(c.messages().last(), Some(Message::User(s)) if s == "hello"));
     }
 }

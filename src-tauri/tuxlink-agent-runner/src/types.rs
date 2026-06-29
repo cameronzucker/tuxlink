@@ -75,6 +75,11 @@ impl ToolCall {
 /// `Denied` is the relay of an authority/taint refusal from below the MCP
 /// boundary (the runner does not decide it — the security layer does). The loop
 /// treats a `Denied` as terminal: it surfaces a [`RunOutcome::ToolDenied`].
+///
+/// `Cancelled` signals that the invoker observed cooperative cancellation mid-call
+/// (e.g. the CancellationToken fired before or during dispatch). The runner treats
+/// it as terminal and returns [`RunOutcome::Cancelled`] without pushing the outcome
+/// into the conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolOutcome {
     /// The tool ran and produced a (already-curated) JSON result.
@@ -85,6 +90,10 @@ pub enum ToolOutcome {
     /// The invoker itself rejected the arguments (a second line of defence
     /// behind the loop's own schema check). Carries the validation detail.
     InvalidArgs(String),
+    /// The invocation was cooperatively cancelled before or during execution.
+    /// Carries a short reason for logging. The runner does NOT push this into
+    /// the conversation — it returns [`RunOutcome::Cancelled`] immediately.
+    Cancelled(String),
 }
 
 /// A turn the model produced: either a final text answer, or one-or-more tool
