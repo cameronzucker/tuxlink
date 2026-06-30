@@ -201,10 +201,31 @@ struct ToolFunction<'a> {
     parameters: &'a Value,
 }
 
+/// System prompt injected at the front of every Elmer request. Provides
+/// station-context framing so the model never asks the operator for information
+/// (such as location) that Tuxlink already exposes through its tools.
+const ELMER_SYSTEM_PROMPT: &str = "\
+You are Elmer, an AI assistant embedded in Tuxlink — a Winlink and amateur-radio \
+station application — helping the licensed operator who is running this app. \
+You have read-only tools that report the operator's OWN station state: their \
+location/grid (position_status), rig, modem, mailbox, nearby stations, \
+propagation and solar/space-weather. \
+When a request depends on the operator's location or station context, CALL the \
+appropriate tool to get it — never ask the operator for information Tuxlink \
+already has (for example, never ask 'what is your location?'; call \
+position_status). \
+Be concise and practical. \
+You cannot transmit or send anything without the operator explicitly arming \
+send in the UI.";
+
 /// Build the chat-completions request body from the transcript + tool surface.
 /// Pure — no IO. Exposed for unit testing the message + tools shaping.
 pub fn build_request_body(model: &str, conversation: &Conversation, tools: &[ToolSpec]) -> Value {
-    let messages: Vec<Value> = conversation.messages().iter().map(render_message).collect();
+    let system_message =
+        serde_json::json!({ "role": "system", "content": ELMER_SYSTEM_PROMPT });
+    let mut messages: Vec<Value> = Vec::with_capacity(conversation.messages().len() + 1);
+    messages.push(system_message);
+    messages.extend(conversation.messages().iter().map(render_message));
 
     let tool_entries: Vec<ToolEntry> = tools
         .iter()
@@ -678,13 +699,39 @@ mod tests {
 
     // --- request assembly -------------------------------------------------
 
+    /// The first message in every request MUST be the Elmer system prompt.
+    /// The conversation messages follow it, shifted by one index.
+    #[test]
+    fn request_body_first_message_is_system_prompt() {
+        let convo = Conversation::new("where am I?");
+        let body = build_request_body("local-model", &convo, &[]);
+        assert_eq!(
+            body["messages"][0]["role"], "system",
+            "messages[0] must be the system prompt"
+        );
+        let system_content = body["messages"][0]["content"].as_str().unwrap_or("");
+        assert!(
+            system_content.contains("position_status"),
+            "system prompt must mention position_status so the model calls it for location questions; got: {system_content:?}"
+        );
+        assert!(
+            system_content.contains("operator"),
+            "system prompt must reference the operator; got: {system_content:?}"
+        );
+        // The conversation's first user message is now at index 1.
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"], "where am I?");
+    }
+
     #[test]
     fn request_body_includes_model_and_tools() {
         let convo = Conversation::new("find a station near DM79");
         let body = build_request_body("local-model", &convo, &[echo_tool()]);
         assert_eq!(body["model"], "local-model");
-        assert_eq!(body["messages"][0]["role"], "user");
-        assert_eq!(body["messages"][0]["content"], "find a station near DM79");
+        // messages[0] is the system prompt; the first user message is at index 1.
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"], "find a station near DM79");
         assert_eq!(body["tools"][0]["type"], "function");
         assert_eq!(body["tools"][0]["function"]["name"], "echo");
         // The schema is passed through verbatim as `parameters`.

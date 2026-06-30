@@ -137,7 +137,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "position_status",
-        description = "Report the current position fix status and grid square (precision-reduced). Read-only."
+        description = "Report THE OPERATOR'S current station location — their Maidenhead grid square (precision-reduced to ~4 chars for privacy) and GPS fix status. Call this to answer 'where am I', 'what's near me', or any location-relative question — do NOT ask the operator for their location; Tuxlink already knows it. Read-only."
     )]
     pub async fn position_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.position_status().await.map_err(port_err)?;
