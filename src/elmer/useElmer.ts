@@ -190,6 +190,13 @@ export function useElmer(): UseElmer {
   // The listeners are set up once on mount and torn down on unmount. Tauri's
   // `listen` returns an `UnlistenFn`; we collect them and call all on cleanup.
   useEffect(() => {
+    // `cancelled` guards the async listener setup against the effect being torn
+    // down before the `listen()` promises resolve (React StrictMode's
+    // mount→unmount→mount, a Vite HMR re-run, or a fast unmount). Without it the
+    // cleanup runs while `unlisteners` is still empty, the handlers register
+    // AFTER cleanup, and a listener set leaks every cycle — so each EV_TURN /
+    // EV_CHIP fires N times and the response renders N times (tuxlink-hn5k6).
+    let cancelled = false;
     const unlisteners: (() => void)[] = [];
 
     const setupListeners = async () => {
@@ -220,12 +227,21 @@ export function useElmer(): UseElmer {
         running.current = false;
       });
 
+      if (cancelled) {
+        // Cleanup already ran (or is about to) — tear these down now so they
+        // don't outlive the effect and double-handle events on the next mount.
+        unTurn();
+        unChip();
+        unOutcome();
+        return;
+      }
       unlisteners.push(unTurn, unChip, unOutcome);
     };
 
     void setupListeners();
 
     return () => {
+      cancelled = true;
       for (const unlisten of unlisteners) {
         unlisten();
       }
