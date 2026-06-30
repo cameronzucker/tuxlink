@@ -66,6 +66,14 @@ pub enum ElmerEvent {
         /// Named `outcome_kind` (not `kind`) to avoid a serde name collision with
         /// the internally-tagged enum's `"kind"` discriminant field.  TypeScript
         /// receives this as `event.payload.outcomeKind` (camelCase rename).
+        ///
+        /// The explicit `rename` is REQUIRED: `rename_all = "camelCase"` on an
+        /// enum renames the variant tags, NOT the fields inside struct variants
+        /// (that needs `rename_all_fields`). Without this, the field shipped as
+        /// snake_case `outcome_kind`, the frontend's `payload.outcomeKind` was
+        /// `undefined`, and every run fell through to the `'error'` phase —
+        /// rendering the answer text in an error callout (the "raw box").
+        #[serde(rename = "outcomeKind")]
         outcome_kind: String,
         /// Detail string (operator-facing, already redacted at the session layer).
         detail: String,
@@ -87,6 +95,12 @@ pub enum ElmerEvent {
         ///
         /// Named `delta_kind` (not `kind`) to avoid collision with the serde
         /// `tag = "kind"` discriminant.  TypeScript receives this as `"deltaKind"`.
+        ///
+        /// The explicit `rename` is REQUIRED — see the `outcome_kind` note above:
+        /// enum-level `rename_all` does not reach struct-variant fields, so
+        /// without this the field would ship as snake_case `delta_kind` and the
+        /// frontend's `payload.deltaKind` would be `undefined`.
+        #[serde(rename = "deltaKind")]
         delta_kind: String,
         /// The incremental text chunk for this delta event.
         chunk: String,
@@ -151,5 +165,26 @@ mod tests {
         assert_eq!(json["kind"], "delta");
         assert_eq!(json["deltaKind"], "reasoning");
         assert_eq!(json["chunk"], "thinking…");
+    }
+
+    /// `ElmerEvent::Outcome` must ship its `_kind` field as the camelCase
+    /// `outcomeKind` the frontend reads. Regression guard: when the rename was
+    /// missing the field shipped snake_case, `payload.outcomeKind` was undefined,
+    /// and every run fell through to the `'error'` phase (rendering the answer in
+    /// an error callout). This test would have caught that.
+    #[test]
+    fn outcome_serializes_with_camelcase_outcome_kind() {
+        let event = ElmerEvent::Outcome {
+            outcome_kind: "done".to_string(),
+            detail: "the answer".to_string(),
+        };
+        let json: serde_json::Value = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "outcome");
+        assert_eq!(json["outcomeKind"], "done", "frontend reads payload.outcomeKind");
+        assert!(
+            json.get("outcome_kind").is_none(),
+            "must NOT ship snake_case outcome_kind"
+        );
+        assert_eq!(json["detail"], "the answer");
     }
 }
