@@ -5,6 +5,39 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-06-30 — Elmer tiered model-access onboarding (tuxlink-wpqwy, PR #984)
+
+Keyless-audience model picker as Elmer's first-run surface, executed via
+subagent-driven-development from the revision-2 plan (frontend T8b–T11, then Rust
+T3/T4/T5, then T12 smoke). Agent `bayou-cedar-delta`.
+
+- **Frontend (186 vitest green, typecheck clean):** ModelTilePicker as the
+  onboarding surface with chat gated until onboarded + gear-reopen (T8b); guided
+  GetKeyCard with masked entry, hardcoded-keyPageUrl open, sanity validation, and
+  per-tile remount so unsaved keys don't carry across providers (T9, T11); typed
+  429 recovery callout + Switch-provider→paygo that returns to chat on save/cancel
+  (T10); honest per-tier framing + provider footer indicator (T10); #981
+  credential-seam regressions ported to the tile flow + Anthropic origin (T11).
+- **Rust (CI-verified — Pi can't cold-compile):** `onboarded` sentinel with a
+  migration (`onboarded || !is_default()`, `is_default` counting the flag so
+  default-content saves persist it) so existing users aren't bounced to the
+  picker (T3); `elmer_key_status_for_origins` — statuses only, MCP-denied (T4);
+  typed 429 → `rateLimited` outcome (camelCase, matching the shipped FE; the
+  plan's `rate_limited` was stale) across `ProviderError`/`RunOutcome`/
+  `DetectError`, both turn and detect paths (T5). Each new field/variant carries a
+  serde wire-shape test pinning the on-wire literal.
+- **Review:** per-task spec+quality reviews caught a Critical stranded-picker bug
+  (rate-limit switch never returned to chat), a non-exhaustive d3zwe match, and
+  several weakened tests; final whole-branch review = READY TO MERGE. Codex adrev
+  found 4 P2 — 3 fixed (real-path detect 429, path-tight shell allowlist,
+  primary-flow key-status fetch); the 4th (picker as the settings surface) is a
+  deferred operator design-conformance decision.
+- **Smoke:** WebKitGTK render harness (new `elmer` view) at 392px + 700px.
+  Operator drives reachability manually in a converged R2 build in lieu of the
+  agent wire-walk.
+
+---
+
 ## 2026-06-15 — Link/transport config persistence remediation (tuxlink-hoi1)
 
 Radio link/transport config did not persist across app restart — the physical
