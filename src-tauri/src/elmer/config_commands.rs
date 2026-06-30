@@ -705,6 +705,16 @@ where
         return Err(DetectError::Auth { provider: models_host });
     }
 
+    // 429 — provider is temporarily throttling; typed variant so callers can
+    // distinguish rate-limiting from other server errors.  Classified here in
+    // detect_inner BEFORE the generic non-2xx branch so a real HTTP 429 during
+    // Detect surfaces as RateLimited, not "server error: HTTP 429".
+    // map_models_response carries the same check as belt-and-suspenders for
+    // callers that go through the pure mapping function directly.
+    if status == 429 {
+        return Err(DetectError::RateLimited);
+    }
+
     // Other non-2xx — do NOT echo the body.
     if !(200u16..300).contains(&status) {
         return Err(DetectError::Status(status));
@@ -1903,6 +1913,52 @@ mod tests {
                 }
                 other => panic!("expected Auth, got: {other:?}"),
             }
+        }
+
+        /// 429 from the server maps to `DetectError::RateLimited` via the
+        /// production detect_inner path (Step 5), NOT to the generic
+        /// `Status(429)`.
+        ///
+        /// This covers the production seam: detect_inner classifies non-2xx
+        /// responses BEFORE delegating to map_models_response (which only sees
+        /// 2xx bodies).  Without the 429 branch in detect_inner a real HTTP
+        /// 429 would fall through to `Status(429)` and surface as
+        /// "server error: HTTP 429" — an untyped error — instead of the
+        /// dedicated RateLimited variant the UI uses to offer the
+        /// "Switch provider" flow.
+        #[tokio::test]
+        async fn detect_maps_429_to_rate_limited() {
+            let mut server = mockito::Server::new_async().await;
+            let server_url = server.url();
+
+            let _m = server
+                .mock("GET", "/v1/models")
+                .with_status(429)
+                .with_body("Too Many Requests")
+                .create_async()
+                .await;
+
+            let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+            let endpoint_str = format!("{server_url}/v1/chat/completions");
+
+            let result = detect_inner(
+                endpoint_str,
+                KeySource::None,
+                &kr,
+                no_dns_resolver(),
+            )
+            .await;
+
+            _m.assert_async().await;
+            assert!(
+                matches!(result, Err(DetectError::RateLimited)),
+                "detect_inner: 429 must map to RateLimited (not Status(429)); got: {result:?}"
+            );
+            // Belt-and-suspenders: must NOT fall through to generic Status(429).
+            assert!(
+                !matches!(result, Err(DetectError::Status(429))),
+                "detect_inner: 429 must NOT produce Status(429); got: {result:?}"
+            );
         }
 
         /// A connection-refused (dead loopback port) maps to NoServer.

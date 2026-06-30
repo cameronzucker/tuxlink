@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window. tuxlink-ng3: custom HTML chrome (decorations:false) needs the window-manipulation commands the native titlebar used to perform — minimize/toggle-maximize/close (controls), start-dragging (data-tauri-drag-region), start-resize-dragging (borderless resize handles), is-maximized (control icon state). Shell:open is scoped to winlink.org + tuxlink repo for smart auth-failure diagnostics banner, report-issue action, AboutDialog, plus the four Elmer provider key-page URLs (Gemini/Groq/Anthropic/OpenAI) for the model-access get-a-key flow (tuxlink-wpqwy). All entries are path-tight hardcoded constants; the renderer only ever opens a constant mapped from a preset id, never a config-derived URL.",
+  "description": "Capability for the main window. tuxlink-ng3: custom HTML chrome (decorations:false) needs the window-manipulation commands the native titlebar used to perform — minimize/toggle-maximize/close (controls), start-dragging (data-tauri-drag-region), start-resize-dragging (borderless resize handles), is-maximized (control icon state). Shell:open is scoped to winlink.org + tuxlink repo for smart auth-failure diagnostics banner, report-issue action, AboutDialog, plus the four Elmer provider key-page URLs (Gemini/Groq/Anthropic/OpenAI) for the model-access get-a-key flow (tuxlink-wpqwy). All provider entries are path-tight exact-URL constants matching exactly the URLs opened by GetKeyCard (elmerModelConfig.ts keyPageUrl); no domain-wide wildcards. The renderer only ever opens a constant mapped from a preset id, never a config-derived URL.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -19,10 +19,10 @@
         { "url": "https://winlink.org/**" },
         { "url": "https://www.winlink.org/**" },
         { "url": "https://github.com/cameronzucker/tuxlink/**" },
-        { "url": "https://aistudio.google.com/**" },
-        { "url": "https://console.groq.com/**" },
-        { "url": "https://console.anthropic.com/**" },
-        { "url": "https://platform.openai.com/**" }
+        { "url": "https://aistudio.google.com/apikey" },
+        { "url": "https://console.groq.com/keys" },
+        { "url": "https://console.anthropic.com/settings/keys" },
+        { "url": "https://platform.openai.com/api-keys" }
       ]
     }
   ]

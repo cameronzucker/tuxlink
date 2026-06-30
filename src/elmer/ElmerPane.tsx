@@ -969,6 +969,16 @@ export const ElmerPane = memo(function ElmerPane({
   // on mount and the disclosure open don't double-call it.
   const configReadCalledRef = useRef(false);
 
+  // Derived: true when the operator has NOT yet completed setup (onboarded=false).
+  // Declared here (before any useEffect that closes over it) so it is in-scope in
+  // the deps arrays below.  The original declaration lived later in the component;
+  // this hoist does not change semantics — modelConfig and modelConfigState are both
+  // available from useElmer() above.
+  const notOnboarded =
+    modelConfigState === 'loaded' &&
+    modelConfig !== null &&
+    !modelConfig.onboarded;
+
   // G3: Eagerly load config on mount so the empty-state "Connect a model"
   // button can be shown without the operator needing to open the disclosure first.
   useEffect(() => {
@@ -978,13 +988,31 @@ export const ElmerPane = memo(function ElmerPane({
     }
   }, [configRead]);
 
-  // T8b: When the model section opens (advancedOpen + counter bump), fetch
-  // keyStatusForOrigins ONCE for all known preset origins. This drives the
-  // per-tile "key saved" badge in ModelTilePicker without per-keystroke fetches.
-  // The openCounter ensures that re-opening the section (gear-reopen, F6) re-
-  // fetches fresh status — not just the initial open.
+  // T8b: Fetch keyStatusForOrigins whenever the tile picker is visible.
+  //
+  // Original gate: only when advancedOpen + openCounter > 0 (gear disclosure open).
+  // Fix (tuxlink-wpqwy codex-adrev): the picker is ALSO shown during first-run
+  // (notOnboarded=true) and 429-recovery (switchProviderFocusTier !== null) — both
+  // render ModelTilePicker WITHOUT opening the advanced disclosure.  Without this
+  // broadened gate, keyStatusByOrigin stays {} and the per-tile "key saved" badges
+  // never populate during onboarding or 429-switch, defeating T4.
+  //
+  // OR-condition: fire whenever the picker is visible for any reason.
+  //   advancedOpen          → gear disclosure (existing F6-reopen path, openCounter)
+  //   notOnboarded          → first-run tile picker in the chat area
+  //   switchProviderFocusTier !== null → 429-recovery picker
+  //
+  // The openCounter dependency is kept so that gear-reopen (F6) re-fetches on
+  // every toggle, and the existing F6 reopen test (renders with expandModel=true
+  // + onboarded=true, asserts fetch fires on advancedOpen toggle) still passes.
   useEffect(() => {
-    if (!advancedOpen || openCounter === 0) return;
+    const pickerVisible = advancedOpen || notOnboarded || switchProviderFocusTier !== null;
+    if (!pickerVisible) return;
+    // For the advancedOpen path, maintain the openCounter guard so that the effect
+    // is not triggered before the counter is bumped (initial mount with the
+    // disclosure closed produces openCounter=0 and advancedOpen=false, so the
+    // pickerVisible check above already short-circuits in that case).
+    if (advancedOpen && openCounter === 0) return;
     const origins = PRESETS
       .filter((p) => p.endpoint)
       .map((p) => {
@@ -997,7 +1025,7 @@ export const ElmerPane = memo(function ElmerPane({
       // Backend not yet implemented (lands in Task 4) — fall back to empty map.
       setKeyStatusByOrigin({});
     });
-  }, [advancedOpen, openCounter]);
+  }, [advancedOpen, openCounter, notOnboarded, switchProviderFocusTier]);
 
   // phase 2b — true while a streamed turn is in flight (live buffers non-empty),
   // before EV_TURN finalizes and clears them. Drives the transient streaming
@@ -1012,15 +1040,6 @@ export const ElmerPane = memo(function ElmerPane({
       listEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [items, streamingAnswer, streamingReasoning]);
-
-  // T8b: Replaces the old `hasNoModelConfigured` derivation (agentModel empty
-  // check). The picker is the first-run surface — shown when config is loaded and
-  // the operator has NOT yet completed setup (onboarded=false). The old
-  // items.length===0 coupling is dropped: the picker replaces the list entirely.
-  const notOnboarded =
-    modelConfigState === 'loaded' &&
-    modelConfig !== null &&
-    !modelConfig.onboarded;
 
   const handleSend = () => {
     const msg = input.trim();

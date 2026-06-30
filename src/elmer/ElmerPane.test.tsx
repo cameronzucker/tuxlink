@@ -1967,6 +1967,69 @@ describe('<ElmerPane> T8b — gear reopens picker after mount (F6 reopen)', () =
 });
 
 // ---------------------------------------------------------------------------
+// T8b — Fix: keyStatusForOrigins fires on first-run render (notOnboarded=true)
+// ---------------------------------------------------------------------------
+// Regression guard for the production-seam bug found in codex adversarial review:
+// the original effect gate was `if (!advancedOpen || openCounter === 0) return`
+// which skipped the fetch during first-run (onboarded=false) and 429-recovery
+// (switchProviderFocusTier !== null) because those flows show the picker WITHOUT
+// opening the gear disclosure.  The fix ORs in notOnboarded and
+// switchProviderFocusTier so the badges populate in those flows too.
+describe('<ElmerPane> T8b — not-onboarded: elmer_key_status_for_origins fires without advancedOpen', () => {
+  it('first-run render (onboarded=false, advancedOpen=false) still invokes elmer_key_status_for_origins', async () => {
+    // Track how many times elmer_key_status_for_origins is called.
+    const statusCalls: unknown[][] = [];
+    mockInvoke.mockImplementation(async (cmd?: string, args?: unknown) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: '',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: false,
+      };
+      if (cmd === 'elmer_key_status_for_origins') {
+        statusCalls.push([args]);
+        return {};
+      }
+      if (cmd === 'elmer_send') return undefined;
+      if (cmd === 'elmer_stop') return undefined;
+      if (cmd === 'elmer_config_set') return undefined;
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    // Render without expandModel — advancedOpen starts false.
+    render(<ElmerPane />);
+
+    // The tile picker renders in the first-run flow (onboarded=false).
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+    });
+
+    // elmer_key_status_for_origins MUST have been called to populate badges.
+    // Before the fix this assertion fails because the effect returned early
+    // (`!advancedOpen` was true and the notOnboarded branch did not exist).
+    await waitFor(() => {
+      expect(statusCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    // Cleanup mock to avoid bleed into subsequent tests.
+    mockInvoke.mockReset();
+    mockInvoke.mockImplementation(async (cmd?: string, _args?: unknown) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: true,
+      };
+      if (cmd === 'elmer_key_status_for_origins') return {};
+      return undefined;
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // T10 (a) — rateLimited phase: distinct callout + Switch provider → picker at paygo
 // ---------------------------------------------------------------------------
 
