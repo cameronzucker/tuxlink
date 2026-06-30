@@ -511,6 +511,9 @@ export interface ElmerPaneProps {
   egressError?: string | null;
   /** Close the pane (AppShell sets elmerOpen=false). */
   onClose?: () => void;
+  /** When true on mount, open the Model section disclosure so the operator
+   *  lands directly on the endpoint/model picker (tuxlink-1wi5w). */
+  expandModel?: boolean;
 }
 
 export const ElmerPane = memo(function ElmerPane({
@@ -521,6 +524,7 @@ export const ElmerPane = memo(function ElmerPane({
   egressBusy,
   egressError,
   onClose,
+  expandModel,
 }: ElmerPaneProps) {
   const {
     items,
@@ -536,7 +540,9 @@ export const ElmerPane = memo(function ElmerPane({
     detectState,
   } = useElmer();
   const [input, setInput] = useState('');
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // tuxlink-1wi5w: when expandModel is true, open the Model section on mount
+  // so the operator lands directly on the endpoint/model picker.
+  const [advancedOpen, setAdvancedOpen] = useState(() => expandModel === true);
   const listEndRef = useRef<HTMLDivElement>(null);
   // Ref to track whether configRead has been called, so the eager-load
   // on mount and the disclosure open don't double-call it.

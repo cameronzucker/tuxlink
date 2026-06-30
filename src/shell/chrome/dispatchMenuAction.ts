@@ -51,6 +51,10 @@ export interface MenuHandlers {
   openConnectAgent: () => void;
   /** Open the Elmer agent pane (tuxlink-13v2l). */
   openElmer: () => void;
+  /** Open the Elmer agent pane with the Model section expanded
+   *  (tuxlink-1wi5w). Distinct from openElmer so AppShell can set the
+   *  expandModel flag independently of a plain Elmer open. */
+  openElmerModel: () => void;
   /** Open the inline Catalog Builder panel (tuxlink-a2gd) — location-aware
    *  station finder (direct /listings poll) + by-message info-category requests. */
   openCatalogBuilder: () => void;
@@ -117,6 +121,10 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     // tuxlink-13v2l: Tools → Elmer opens the Elmer agent pane.
     case 'menu:tools:elmer':
       h.openElmer(); return;
+    // tuxlink-1wi5w: Tools → Set up Elmer's model… opens the Elmer pane with
+    // the Model section expanded. connect_agent / ConnectAgentModal are UNCHANGED.
+    case 'menu:tools:elmer_model':
+      h.openElmerModel(); return;
   }
   if (id.startsWith('menu:view:scheme:')) {
     const scheme = id.slice('menu:view:scheme:'.length);

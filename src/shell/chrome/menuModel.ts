@@ -105,6 +105,10 @@ export const MENU_TREE: TopMenu[] = [
     // Tools → Elmer — opens the in-app assistant pane (local-model agent loop
     // over the MCP tools, arm/taint enforced). bd tuxlink-13v2l.
     { id: 'menu:tools:elmer', label: 'Elmer (AI assistant)…' },
+    // tuxlink-1wi5w: Tools → Set up Elmer's model… — opens the Elmer pane
+    // with the Model section expanded so the operator lands directly on the
+    // endpoint/model picker. Purely additive; does NOT touch connect_agent.
+    { id: 'menu:tools:elmer_model', label: "Set up Elmer's model…" },
     // tuxlink-esb65: the disabled "Templates" stub was removed — it was leftover
     // menu scaffolding for a Tools-level forms browser that never landed there.
     // The Standard Forms library (wle-forms/Standard_Forms) ships and is reached

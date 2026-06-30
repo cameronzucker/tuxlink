@@ -903,6 +903,25 @@ describe('<ElmerPane> G3 — detect_zero_models_remedy', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// H1 — expandModel prop: opens Model section disclosure on mount
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> H1 — expand_model_prop_opens_model_section', () => {
+  it('renders with the Model section disclosure open when expandModel=true', async () => {
+    render(<ElmerPane expandModel />);
+    // The advanced body must be present without the operator clicking the toggle.
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-advanced-body')).toBeTruthy();
+    });
+  });
+
+  it('disclosure is closed by default when expandModel is not set', () => {
+    render(<ElmerPane />);
+    expect(screen.queryByTestId('elmer-advanced-body')).toBeNull();
+  });
+});
+
 describe('<ElmerPane> G3 — model_change_drops_attribution_marker', () => {
   it('configSet changing model mid-conversation inserts an attribution marker before the next turn', async () => {
     // Start with llama3 config.
