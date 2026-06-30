@@ -37,6 +37,12 @@ const grid = params.has('grid') ? params.get('grid') : 'CN87';
 const view = (params.get('view') ?? 'home') as
   | 'home' | 'browse' | 'grib' | 'ribbon'
   | 'radio-ardop' | 'radio-vara' | 'radio-telnet';
+// ?running=1 drives a connected modem / open VARA transport so the running-state
+// footers render: ARDOP/VARA `Send/Receive` (primary) + the red `Stop`
+// (`radio-panel-btn-bad`) button. Without it the fixture pins state to STOPPED, so
+// ONLY the `Start` button is reachable and a footer review covers half the button
+// set (the tuxlink-ppnui review gap). Telnet renders Start+Stop unconditionally.
+const running = params.get('running') === '1';
 
 // Representative catalog: zone forecast + radar for CN87uo (Seattle), EASTPAC
 // marine entries, propagation, and gateway lists — enough categories that the
@@ -77,15 +83,27 @@ const RESPONSES: Record<string, unknown> = {
   //     disconnected/empty state; action calls (cms_connect, modem_*_connect,
   //     vara_open_session, config_set_*, favorite_*, identity_*) fire only on
   //     click and may reject harmlessly. ModemStatus uses the STOPPED shape. ---
-  modem_get_status: {
-    state: 'stopped', peer: null, mode: null, widthHz: null, pttBackend: null,
-    snDb: null, vuDbfs: null, throughputBps: null,
-    bytesRx: 0, bytesTx: 0, uptimeSec: 0,
-    arqFlags: { busy: false, rx: false, tx: false },
-    lastError: null, quality: null, rigFreqHz: null,
-  },
+  modem_get_status: running
+    ? {
+        // Connected (ISS) so `!isStopped` → Send/Receive + red Stop + Open WebGUI
+        // render, and the SIGNAL sparklines have real samples to draw.
+        state: 'connected-iss', peer: 'W7RMS', mode: 'ARQ', widthHz: 500, pttBackend: 'cat',
+        snDb: 12, vuDbfs: -18, throughputBps: 480,
+        bytesRx: 4096, bytesTx: 2048, uptimeSec: 42,
+        arqFlags: { busy: true, rx: false, tx: true },
+        lastError: null, quality: 88, rigFreqHz: 14105000,
+      }
+    : {
+        state: 'stopped', peer: null, mode: null, widthHz: null, pttBackend: null,
+        snDb: null, vuDbfs: null, throughputBps: null,
+        bytesRx: 0, bytesTx: 0, uptimeSec: 0,
+        arqFlags: { busy: false, rx: false, tx: false },
+        lastError: null, quality: null, rigFreqHz: null,
+      },
   platform_info: { arch: 'aarch64', os: 'linux', varaSupported: true },
-  vara_status: { state: 'closed', lastError: null, boundHost: null, boundCmdPort: null },
+  vara_status: running
+    ? { state: 'open', lastError: null, boundHost: '127.0.0.1', boundCmdPort: 8300 }
+    : { state: 'closed', lastError: null, boundHost: null, boundCmdPort: null },
   config_get_vara: { host: '127.0.0.1', cmd_port: 8300, data_port: 8301, bandwidth_hz: null },
   // Representative ArdopFullConfig so the default-open Radio & audio section
   // renders real values (an empty {} makes String(c.cmd_port) print "undefined").
@@ -146,6 +164,12 @@ const ribbonData: StatusBarData = {
   state: { label: 'Idle', tone: 'idle' },
   connection: 'Idle · CMS-SSL',
   position_source: 'Gps',
+  // GPS has a usable fix. Without this, GridEdit shows source=Gps && !gpsReady →
+  // the verbose "GPS no fix · broadcasting fallback ▸ Set manually" affordance
+  // (the widest-case grid cell, tuxlink-813d), which overflowed the cell and
+  // jumbled the ribbon snapshot. A GPS-with-fix station is the realistic default
+  // for this audience and keeps the radius-review render clean (tuxlink-ppnui).
+  gpsReady: true,
 };
 
 const queryClient = new QueryClient();
@@ -162,7 +186,26 @@ createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
     {view === 'ribbon' ? (
       <div className="layout-b">
-        <DashboardRibbon
+        {/* The real app wraps DashboardRibbon in `.ribbon-with-search` beside a
+            `.search-zone` (flex 0 1 560px). That wrapper is what gives `.dashboard`
+            its true `flex:1 1 auto; min-width:0` context (AppShell.css:204) so its
+            cells shrink + ellipsize. Mounting `.dashboard` bare under `.layout-b`
+            (the prior harness) gave it the FULL window width with the default
+            `min-width:auto`, so the flex items couldn't shrink and the
+            GPS-fallback / clock / connection cells overlapped — reproduced as
+            jumbled text in the review snapshots. Reproduce the wrapper so the
+            snapshot reflects the shipped layout (tuxlink-ppnui). The `<SearchBar>`
+            itself isn't needed for layout fidelity — only its flex basis is. */}
+        <div className="ribbon-with-search">
+          <div className="search-zone">
+            <input
+              className="harness-search-stub"
+              placeholder="Search mail…"
+              readOnly
+              style={{ width: '100%', background: 'transparent', border: 0, color: 'inherit' }}
+            />
+          </div>
+          <DashboardRibbon
           data={ribbonData}
           onConnect={() => undefined}
           connecting={ribbonConnecting}
@@ -180,7 +223,8 @@ createRoot(document.getElementById('root')!).render(
           }}
           onOpenElmer={() => undefined}
           elmerOpen={false}
-        />
+          />
+        </div>
       </div>
     ) : view.startsWith('radio-') ? (
       <div className="layout-b">
