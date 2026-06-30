@@ -983,10 +983,6 @@
   color: var(--text);
 }
 
-.get-key-open-btn {
-  /* Inherits .elmer-save-btn; no overrides needed. */
-}
-
 .get-key-input-row {
   display: flex;
   align-items: center;

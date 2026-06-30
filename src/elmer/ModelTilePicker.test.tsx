@@ -130,26 +130,57 @@ describe('ModelTilePicker', () => {
     expect(screen.getByTestId('elmer-model-form')).toBeTruthy();
   });
 
-  it('pre-fills the target provider default model when switching to localOllama (no keyPageUrl → plain summary)', () => {
-    // Task 9: cloud tiles (openai, anthropic, gemini, groq) now render GetKeyCard
-    // instead of the plain elmer-tile-model-input summary. The model pre-fill is
-    // visible in the plain summary only for local tiles. localOllama has no keyPageUrl,
-    // so it still renders the model-input + Save summary — use it to assert pre-fill.
-    // (The nextModelForPreset logic itself is tested in elmerModelConfig.test.ts.)
+  it('switching to a cloud tile pre-fills the preset defaultModel and GetKeyCard Save carries it through onSave', async () => {
+    // This is the non-vacuous integration test for the handleTileSelect →
+    // nextModelForPreset → GetKeyCard → onSave seam.
+    //
+    // Start on OpenAI (gpt-4o-mini). Switch to Anthropic. nextModelForPreset sees
+    // currentModel === outgoingDefault ('gpt-4o-mini') → returns 'claude-haiku-4-5'.
+    // The picker sets model state to 'claude-haiku-4-5' and renders GetKeyCard with
+    // agentModel='claude-haiku-4-5'. When the user saves a valid key, onSave must
+    // receive agentEndpoint=Anthropic's endpoint AND agentModel='claude-haiku-4-5'.
+    //
+    // Fails if nextModelForPreset is broken, if agentModel is not passed to GetKeyCard,
+    // or if GetKeyCard ignores it in the onSave call.
+    const onSave = vi.fn(async () => {});
     render(
       <ModelTilePicker
         {...baseProps({
-          initialEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
-          initialModel: '', // no model set for local (auto-detect)
+          onSave,
+          initialEndpoint: 'https://api.openai.com/v1/chat/completions',
+          initialModel: 'gpt-4o-mini',
         })}
       />,
-    ); // localOllama selected
-    // Verify localOllama shows the plain summary (no keyPageUrl).
-    expect(screen.getByTestId('elmer-tile-model-input')).toBeTruthy();
-    // Switch to another local endpoint — stays on localOllama showing the model input.
-    // The tile stays selected and the model input is still visible.
-    const modelInput = screen.getByTestId('elmer-tile-model-input') as HTMLInputElement;
-    expect(modelInput.value).toBe('');
+    );
+
+    // Select Anthropic tile → triggers handleTileSelect → nextModelForPreset → model='claude-haiku-4-5'
+    fireEvent.click(screen.getByTestId('elmer-tile-anthropic'));
+
+    // GetKeyCard must now be visible (Anthropic has a keyPageUrl).
+    expect(screen.getByTestId('get-key-card')).toBeTruthy();
+
+    // Type a valid key (≥20 chars, alphanumeric/hyphen/underscore).
+    const keyInput = screen.getByTestId('get-key-input') as HTMLInputElement;
+    fireEvent.change(keyInput, { target: { value: 'sk-ant-test-key-12345678' } });
+
+    // Save must NOT be disabled (validation passes).
+    const saveBtn = screen.getByTestId('get-key-save') as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(false);
+
+    // Click Save and await the async chain.
+    fireEvent.click(saveBtn);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The critical assertion: model carried through is the Anthropic default, not the
+    // prior OpenAI model. If nextModelForPreset or agentModel wiring is broken, this fails.
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentEndpoint: 'https://api.anthropic.com/v1/chat/completions',
+        agentModel: 'claude-haiku-4-5',
+        key: { action: 'set', value: 'sk-ant-test-key-12345678' },
+      }),
+    );
   });
 
   it('calls onSave with the working endpoint and model via the plain summary (localOllama — no keyPageUrl)', async () => {
