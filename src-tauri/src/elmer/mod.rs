@@ -14,5 +14,6 @@ pub mod commands;
 pub mod events;
 pub mod executor;
 pub mod keyring;
+pub mod model_config_state;
 pub mod provider;
 pub mod session;
