@@ -486,7 +486,7 @@ mod tests {
         let result = ElmerProvider::new_vetted(ep, "llama3".into(), None).await;
         assert!(
             result.is_ok(),
-            "new_vetted must succeed for a loopback IP-literal endpoint; got {result:?}"
+            "new_vetted must succeed for a loopback IP-literal endpoint (build returned Err)"
         );
     }
 
@@ -511,7 +511,7 @@ mod tests {
         .await;
         assert!(
             result.is_ok(),
-            "new_vetted must succeed for a public endpoint resolving to a public IP; got {result:?}"
+            "new_vetted must succeed for a public endpoint resolving to a public IP (build returned Err)"
         );
     }
 
@@ -537,8 +537,7 @@ mod tests {
         .await;
         assert!(
             matches!(result, Err(EgressError::HostDenied(_))),
-            "new_vetted must propagate EgressError::HostDenied when the resolver \
-             returns a forbidden IP; got {result:?}"
+            "new_vetted must propagate EgressError::HostDenied when the resolver returns a forbidden IP"
         );
     }
 }

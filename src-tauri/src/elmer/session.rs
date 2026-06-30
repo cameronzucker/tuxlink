@@ -1421,7 +1421,12 @@ mod tests {
             &keyring,
         )
         .await;
-        let reason = result.expect_err("unreadable keyring must yield Err, not a keyless send");
+        // `expect_err` would require the Ok type (`Arc<dyn Provider>`) to be
+        // `Debug`, which it is not; match instead.
+        let reason = match result {
+            Ok(_) => panic!("unreadable keyring must yield Err, not a keyless send"),
+            Err(reason) => reason,
+        };
         assert!(
             reason.contains("keyring"),
             "reason must mention the keyring so the operator can fix it; got {reason:?}"
@@ -1435,7 +1440,11 @@ mod tests {
         // read (parse is step 1; the read is gated behind a valid endpoint).
         let keyring = panicking_keyring();
         let result = build_turn_provider_from_parts("not a url", "gpt-4o", &keyring).await;
-        let reason = result.expect_err("invalid endpoint must yield Err, not a panic");
+        // Match rather than `expect_err` (Ok type `Arc<dyn Provider>` is not `Debug`).
+        let reason = match result {
+            Ok(_) => panic!("invalid endpoint must yield Err, not a panic"),
+            Err(reason) => reason,
+        };
         assert!(
             reason.contains("endpoint invalid"),
             "reason must flag the invalid endpoint; got {reason:?}"
