@@ -184,12 +184,13 @@ function OutcomeCallout({ phase, detail }: { phase: ElmerPhase; detail: string }
 // ---------------------------------------------------------------------------
 
 interface ModelFormProps {
-  onSave: (args: { agentEndpoint: string; agentModel: string; key: SetKey }) => Promise<void>;
+  onSave: (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number }) => Promise<void>;
   onDetect: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
   detectState: import('./useElmer').DetectState;
   initialEndpoint: string;
   initialModel: string;
   initialKeyStatus: import('./elmerModelConfig').KeyStatus;
+  initialTurnTimeoutSecs: number;
 }
 
 function ModelForm({
@@ -199,9 +200,11 @@ function ModelForm({
   initialEndpoint,
   initialModel,
   initialKeyStatus,
+  initialTurnTimeoutSecs,
 }: ModelFormProps) {
   const [endpoint, setEndpoint] = useState(initialEndpoint);
   const [model, setModel] = useState(initialModel);
+  const [turnTimeoutSecs, setTurnTimeoutSecs] = useState(() => initialTurnTimeoutSecs);
 
   // Key affordance state.
   // - keyStatus 'present': show [Replace] [Remove]; after Remove flag clearPending.
@@ -359,12 +362,14 @@ function ModelForm({
   }, [endpointIsLoopback, endpoint, keyAffordanceOrigin, keyStatus, replaceMode, newKeyValue, absentKeyValue, clearPending]);
 
   const handleSave = useCallback(async () => {
+    const timeout = Number.isFinite(turnTimeoutSecs) ? Math.round(turnTimeoutSecs) : 900;
     await onSave({
       agentEndpoint: endpoint,
       agentModel: model,
       key: buildSetKey(),
+      agentTurnTimeoutSecs: timeout,
     });
-  }, [onSave, endpoint, model, buildSetKey]);
+  }, [onSave, endpoint, model, buildSetKey, turnTimeoutSecs]);
 
   const handleDetect = useCallback(async () => {
     await onDetect({
@@ -513,6 +518,33 @@ function ModelForm({
           >
             {detectState.status === 'detecting' ? 'Detecting…' : 'Detect'}
           </button>
+        </div>
+      </div>
+
+      {/* Per-turn timeout */}
+      <div className="elmer-form-row">
+        <label className="elmer-form-label" htmlFor="elmer-turn-timeout-input">
+          Per-turn timeout (seconds)
+        </label>
+        <div className="elmer-model-row">
+          <input
+            id="elmer-turn-timeout-input"
+            type="number"
+            className="elmer-form-input"
+            data-testid="elmer-turn-timeout-input"
+            value={turnTimeoutSecs}
+            min={30}
+            max={3600}
+            step={30}
+            onChange={(e) => {
+              const raw = e.target.value;
+              const parsed = parseInt(raw, 10);
+              setTurnTimeoutSecs(Number.isNaN(parsed) ? 900 : parsed);
+            }}
+          />
+          <span className="elmer-save-hint" style={{ marginLeft: '0.5em' }}>
+            ≈ {Math.round(turnTimeoutSecs / 60)} min
+          </span>
         </div>
       </div>
 
@@ -817,6 +849,7 @@ export const ElmerPane = memo(function ElmerPane({
                 initialEndpoint={modelConfig.agentEndpoint}
                 initialModel={modelConfig.agentModel}
                 initialKeyStatus={modelConfig.keyStatus}
+                initialTurnTimeoutSecs={modelConfig.agentTurnTimeoutSecs ?? 900}
               />
             )}
           </div>

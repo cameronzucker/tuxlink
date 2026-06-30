@@ -1621,6 +1621,10 @@ pub fn run() {
                             crate::elmer::model_config_state::ElmerModelConfigState::new(
                                 warm_endpoint_url,
                                 model_string.clone(),
+                                // Seed the live per-turn timeout from the saved
+                                // (or default 900) config so the first turn uses
+                                // the operator's value (tuxlink-1wi5w).
+                                elmer_cfg.agent_turn_timeout_secs,
                             ),
                         );
                         app.manage(std::sync::Arc::clone(&model_config));

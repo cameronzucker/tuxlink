@@ -39,6 +39,7 @@ const mockInvoke = vi.fn(async (cmd?: string, _args?: unknown) => {
     agentEndpoint: 'https://api.openai.com/v1/chat/completions',
     agentModel: 'gpt-4o',
     keyStatus: 'absent',
+    agentTurnTimeoutSecs: 900,
   };
   if (cmd === 'elmer_config_set') return undefined;
   if (cmd === 'elmer_detect_models') return [];
@@ -368,6 +369,7 @@ describe('<ElmerPane> G2 — form_renders_fields_from_config_read', () => {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -399,6 +401,7 @@ describe('<ElmerPane> G2 — preset_fills_endpoint_by_origin', () => {
         agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
         agentModel: 'llama3',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -420,6 +423,7 @@ describe('<ElmerPane> G2 — preset_fills_endpoint_by_origin', () => {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -442,6 +446,7 @@ describe('<ElmerPane> G2 — key_field_hidden_for_loopback', () => {
         agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
         agentModel: 'llama3',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -463,6 +468,7 @@ describe('<ElmerPane> G2 — key_field_shown_for_remote_absent', () => {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -482,6 +488,7 @@ describe('<ElmerPane> G2 — key_stored_shows_replace_remove_not_password', () =
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -515,6 +522,7 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -547,6 +555,7 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -582,6 +591,7 @@ describe('<ElmerPane> G2 — remove_commits_clear', () => {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -612,6 +622,7 @@ describe('<ElmerPane> G2 — detect_populates_dropdown', () => {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -646,6 +657,7 @@ describe('<ElmerPane> G2 — detect_failure_shows_inline_reason', () => {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -673,6 +685,7 @@ describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => 
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -710,6 +723,7 @@ describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => 
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -745,6 +759,7 @@ describe('<ElmerPane> G3 — empty_state_button_expands_model_section', () => {
         agentEndpoint: '',
         agentModel: '',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -765,6 +780,7 @@ describe('<ElmerPane> G3 — empty_state_button_expands_model_section', () => {
         agentEndpoint: '',
         agentModel: '',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -792,6 +808,7 @@ describe('<ElmerPane> G3 — detect_remedy_loopback_offline', () => {
         agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
         agentModel: 'llama3',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -822,6 +839,7 @@ describe('<ElmerPane> G3 — detect_remedy_remote_transport', () => {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -850,6 +868,7 @@ describe('<ElmerPane> G3 — detect_remedy_auth', () => {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -879,6 +898,7 @@ describe('<ElmerPane> G3 — detect_zero_models_remedy', () => {
         agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
         agentModel: 'llama3',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -930,6 +950,7 @@ describe('<ElmerPane> G3 — model_change_drops_attribution_marker', () => {
         agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
         agentModel: 'llama3',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -983,6 +1004,7 @@ describe('<ElmerPane> credential-seam — editing_endpoint_to_new_origin_resets_
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -1034,6 +1056,7 @@ describe('<ElmerPane> credential-seam — editing_endpoint_to_new_origin_resets_
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -1093,6 +1116,7 @@ describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -1130,6 +1154,7 @@ describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -1170,6 +1195,7 @@ describe('<ElmerPane> credential-seam — detect_uses_usestored_when_key_present
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
       };
       return undefined;
     });
@@ -1220,5 +1246,80 @@ describe('<ElmerPane> — model selection persists across collapse/re-expand (co
       expect(cmds).toContain('elmer_config_set');
       expect(cmds).toContain('elmer_config_read');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-turn timeout input tests
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> — turn_timeout_input_renders_from_config', () => {
+  it('config_read returning agentTurnTimeoutSecs=600 seeds the timeout input to 600', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 600,
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    const timeoutInput = screen.getByTestId('elmer-turn-timeout-input') as HTMLInputElement;
+    expect(timeoutInput).toBeTruthy();
+    expect(Number(timeoutInput.value)).toBe(600);
+  });
+});
+
+describe('<ElmerPane> — save_includes_turn_timeout', () => {
+  it('changing the timeout input to 1200 and clicking Save sends agentTurnTimeoutSecs: 1200 in the payload', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Change the timeout input value.
+    const timeoutInput = screen.getByTestId('elmer-turn-timeout-input');
+    fireEvent.change(timeoutInput, { target: { value: '1200' } });
+
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const setCall = calls.find((c) => c[0] === 'elmer_config_set');
+      expect(setCall).toBeTruthy();
+      const args = setCall![1] as { agentTurnTimeoutSecs: number };
+      expect(args.agentTurnTimeoutSecs).toBe(1200);
+    });
+  });
+});
+
+describe('<ElmerPane> — turn_timeout_minutes_hint', () => {
+  it('a timeout of 900 seconds shows a "15 min" hint', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // The hint text should contain "15 min".
+    const form = screen.getByTestId('elmer-model-form');
+    expect(form.textContent).toContain('15 min');
   });
 });

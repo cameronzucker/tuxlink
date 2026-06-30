@@ -7,8 +7,8 @@
  *   - listen(EV_CHIP)                 → streams tool-call status chips.
  *   - listen(EV_OUTCOME)              → terminal outcome (done/cancelled/error…).
  *   - invoke('elmer_stop')            → abort-first cancel of the in-flight run.
- *   - invoke('elmer_config_read')     → reads {agentEndpoint, agentModel, keyStatus} (G2).
- *   - invoke('elmer_config_set', ...) → saves {agentEndpoint, agentModel, key:SetKey} (G2).
+ *   - invoke('elmer_config_read')     → reads {agentEndpoint, agentModel, keyStatus, agentTurnTimeoutSecs} (G2).
+ *   - invoke('elmer_config_set', ...) → saves {agentEndpoint, agentModel, key:SetKey, agentTurnTimeoutSecs} (G2).
  *   - invoke('elmer_detect_models', ...) → returns string[] of available model ids (G2).
  *
  * AC-11: the hook accumulates turn + chip events into a typed message list that
@@ -155,7 +155,7 @@ export interface UseElmer {
   configRead: () => Promise<void>;
   /** G2+G3: Save the model config. When agentModel changes mid-conversation,
    *  drops a model attribution marker into the transcript before the next turn. */
-  configSet: (args: { agentEndpoint: string; agentModel: string; key: SetKey }) => Promise<void>;
+  configSet: (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number }) => Promise<void>;
   /** G2: Detect available models for the given endpoint. */
   detectModels: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
   /** G2: Current detection state. */
@@ -277,7 +277,7 @@ export function useElmer(): UseElmer {
   // G2+G3: configSet — save model config to backend.
   // On a model change mid-conversation, inserts an attribution marker into the
   // transcript so the operator can tell which model produced the next turn (G3).
-  const configSet = useCallback(async (args: { agentEndpoint: string; agentModel: string; key: SetKey }) => {
+  const configSet = useCallback(async (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number }) => {
     await invoke('elmer_config_set', args);
 
     // G3: If the model changed from the last active model, drop a marker.

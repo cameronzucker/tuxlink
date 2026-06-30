@@ -28,6 +28,8 @@ export interface ConfigReadDto {
   agentEndpoint: string;
   agentModel: string;
   keyStatus: KeyStatus;
+  /** Per-turn timeout in seconds. Valid range [30, 3600]; default 900 (15 min). */
+  agentTurnTimeoutSecs: number;
 }
 
 /**

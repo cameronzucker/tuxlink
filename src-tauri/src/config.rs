@@ -1484,6 +1484,29 @@ pub struct ElmerConfig {
     ///
     /// Default: `"llama3"` (the most common locally-hosted Ollama model name).
     pub agent_model: String,
+    /// Per-turn wall-clock timeout for one Elmer agent turn, in SECONDS
+    /// (tuxlink-1wi5w). Replaces the former hardcoded 15-minute ceiling in
+    /// `elmer/session.rs`. Large local models (e.g. `gpt-oss-120b` on a modest
+    /// backend) routinely need minutes per turn, so the operator can raise or
+    /// lower this from the Elmer Model form; `elmer_config_set` clamps the
+    /// requested value to `[30, 3600]` seconds (0.5–60 min) before persisting,
+    /// and the live-applied per-turn build (`ElmerSession::send`) reads the
+    /// clamped value off the model-config snapshot.
+    ///
+    /// Default: `900` (15 minutes — the prior hardcoded value).
+    /// `#[serde(default = "default_agent_turn_timeout_secs")]` migrates configs
+    /// that predate this field (absent → `900`). `ElmerConfig` carries no
+    /// `deny_unknown_fields`, so this additive field is backward- AND
+    /// forward-compatible without a `CONFIG_SCHEMA_VERSION` bump.
+    #[serde(default = "default_agent_turn_timeout_secs")]
+    pub agent_turn_timeout_secs: u32,
+}
+
+/// Serde default for [`ElmerConfig::agent_turn_timeout_secs`]: `900` seconds
+/// (15 minutes — the prior hardcoded per-turn ceiling). A free fn because
+/// serde's `default = "..."` takes a path and `u32`'s own `Default` is `0`.
+fn default_agent_turn_timeout_secs() -> u32 {
+    900
 }
 
 impl Default for ElmerConfig {
@@ -1491,6 +1514,7 @@ impl Default for ElmerConfig {
         Self {
             agent_endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
             agent_model: "llama3".into(),
+            agent_turn_timeout_secs: default_agent_turn_timeout_secs(),
         }
     }
 }
@@ -1501,7 +1525,9 @@ impl ElmerConfig {
     /// file clean for operators who have not customized the Elmer endpoint.
     pub fn is_default(&self) -> bool {
         let d = ElmerConfig::default();
-        self.agent_endpoint == d.agent_endpoint && self.agent_model == d.agent_model
+        self.agent_endpoint == d.agent_endpoint
+            && self.agent_model == d.agent_model
+            && self.agent_turn_timeout_secs == d.agent_turn_timeout_secs
     }
 }
 
