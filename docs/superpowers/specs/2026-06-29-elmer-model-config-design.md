@@ -192,3 +192,151 @@ Detect → elmer_detect_models(endpoint, key) → GET /v1/models → ids → dro
   placeholder; empty state.
 - `src/shell/chrome/menuModel.ts` + `menuModel.test.ts` — the new menu id.
 - `src/shell/AppShell.tsx` — menu action → open drawer + expand Model.
+
+---
+
+# Revision 2 — Adversarial-review hardening (2026-06-29)
+
+Incorporates the 5-lens adversarial review (Codex + SSRF + credential + live-apply + UX;
+raw + dispositions in `dev/adversarial/2026-06-29-elmer-model-config-*.md`). All findings are
+ADOPTED except the cleartext-`http` note (operator decision: **no note** — see §F). The arm/taint
+**transmit** gate is untouched throughout. These sections supersede the corresponding parts above.
+
+## R2.1 — Shared `AgentEndpoint` egress policy (replaces §Backend.1)
+
+This is **socket-layer hygiene, not provider-choice framing** — the distinction drawn by the
+project's own `docs/pitfalls/implementation-pitfalls.md` **SSRF-1** ("no-added-safeguards governs
+UX; it does NOT override socket-layer egress hygiene"). The operator still reaches any real host
+they type; only attacker-controlled redirects/rebinds/metadata-literals are refused.
+
+`AgentEndpoint::parse(&str) -> Result<AgentEndpoint, EndpointError>`:
+- **`http`/`https` only** (preserve the existing `UnsupportedScheme` rejection + test).
+- **Reject URL userinfo** (`http://user:pass@host` → error) — prevents creds in logs/error strings.
+- Expose `is_loopback()` (drives the "no key field for loopback" UX) and `origin()` (for the
+  origin-keyed keyring, R2.2).
+
+`build_vetted_client(&AgentEndpoint) -> reqwest::Client`, used by BOTH `elmer_detect_models` and
+the per-turn provider (replace the bare `reqwest::Client::new()` at `provider.rs:47`):
+- **`redirect::Policy::none()`** — a `302 → 169.254.169.254` (cloud metadata) or `→ localhost:adminport`
+  otherwise carries the conversation; a 3xx becomes a hard error ("endpoint returned a redirect; not
+  followed").
+- **`.no_proxy()`**, a connect timeout (~10 s; the overall turn timeout stays generous for slow models).
+- **Fetch-time resolved-IP gate** (the SSRF-1 `build_vetted_client` pattern already in
+  `src-tauri/.../tiles/fetch.rs` — reuse the infra, but with Elmer's permit-set, NOT the tiles
+  default-deny-public): resolve the host, then **refuse** if any resolved IP is loopback (unless the
+  endpoint was loopback by literal), link-local/metadata (`169.254.0.0/16`, `fe80::/10`, IPv4-mapped
+  forms), multicast, or unspecified; **permit** public + RFC1918 (the operator may run a LAN model
+  server). **Pin** the connection to the vetted IP so DNS can't rebind between resolve and connect.
+- The DNS-rebind IP-pin is the one heavier item: ship it, or if plan reviewers judge it heavy for
+  alpha, ship redirect + metadata-literal + scheme + userinfo now and **file the IP-pin as a tracked
+  bd follow-up** — do not silently drop (per the original `endpoint.rs:54-59` trigger condition).
+
+Rename `LoopbackEndpoint` → `AgentEndpoint`; update `ElmerProvider::new`'s signature + the
+agent-frontend crate seam.
+
+## R2.2 — Credential model (replaces §Backend.3-4 + the form's key field)
+
+- **`ApiKey(String)` newtype** with manual `Debug`/`Display` → `<redacted>` (type-based redaction —
+  the only thing that catches a key embedded in a free-form `error`/`message` string, which the
+  field-name redaction sink structurally cannot).
+- **The key NEVER round-trips to the renderer.** `elmer_config_read()` returns
+  `{ agent_endpoint, agent_model, key_status: KeyStatus }` where
+  `KeyStatus = Present | Absent | Unreadable` (fail-closed 3-state, mirroring the identity module's
+  `activation_secret_status`; a **locked** keyring must read `Unreadable`, never `Absent`).
+- `elmer_detect_models({ agent_endpoint, key_source: KeySource })`,
+  `KeySource = UseStored | Inline(ApiKey) | None`. `UseStored` → backend reads the keyring itself
+  (renderer passes a discriminant, not the secret); `Inline` only for the just-typed-not-yet-saved
+  flow. `#[instrument(skip(key_source))]`; **value-scrub** the just-sent key out of any upstream
+  error body before it becomes an error string; 401/403 → fixed "check the API key" reason (never
+  echo the body).
+- `elmer_config_set({ agent_endpoint, agent_model, key: SetKey })`,
+  `SetKey = Keep | Set(ApiKey) | Clear`. `Set("")` is a **validation error** (never write an empty
+  credential). **Transactional:** on `Set`, write the keyring **first**; if it fails, persist
+  **nothing** ("couldn't save the key — nothing was changed"). No half-commit.
+- **Origin-keyed keyring account** `elmer-agent-api-key::<origin>` so a provider switch can't reuse a
+  foreign key (OpenAI→Ollama→OpenRouter with `Keep` otherwise sends the stale OpenAI key to
+  OpenRouter). Switching to a loopback/keyless config does not send a stored key.
+- `Clear` is idempotent (`NoEntry → Ok`, matching `service.rs`).
+- `#[instrument(skip(...))]` on `elmer_config_set` too; a test asserts the key never appears in a
+  captured `LoggedEvent` for either command.
+
+## R2.3 — Live-apply seam (replaces §Backend.5)
+
+"Per session" is meaningless (one `ElmerSession` for process life) — the seam is **per-turn**.
+- Build the provider at `send()` entry from **one atomic snapshot** of `{config, key}` read under the
+  run loop's lock (or a managed `ElmerModelConfigState` async lock); move the owned `Arc<dyn Provider>`
+  into the spawned turn. The build returns `Result` → `RunOutcome::NeedsOperator("…check Connect an
+  AI Agent settings")` on failure (mirror the existing startup fallback; **never panic**).
+- `elmer_config_set` persists config+keyring **under the same lock** → the config/key pair is atomic
+  w.r.t. turns (closes the endpoint-A + key-B torn read that would send a key to the wrong endpoint).
+  Changes apply to the **next** turn; an in-flight turn keeps its snapshot.
+- Read the keyring only when `!is_loopback`; keep the blocking keyring call in the pre-spawn /
+  `spawn_blocking` section.
+- **AC-7 provider contract reword** (`provider.rs:11-18` + tests `:316-344`, an unlisted touch-item):
+  keep "endpoint never from a **tool result**" (the real SSRF guard); drop "no command supplies an
+  endpoint" (now intentionally false — the operator supplies it via `elmer_config_set`).
+
+## R2.4 — MCP boundary (new)
+
+`elmer_config_read` / `elmer_config_set` / `elmer_detect_models` are **Tauri UI commands only,
+never MCP tools** — a model-reachable config-mutation tool would let prompt-injection rewrite its own
+endpoint = exfil sink. **Document factually** (not as a warning): a cloud endpoint receives Elmer's
+conversation + tool outputs; ungated *staging* tools (compose/forms/GRIB) remain reachable but still
+cannot **send** (the arm/taint gate). This is existing, accepted behavior.
+
+## R2.5 — Prompt-injection regression suite (new testing requirement)
+
+Borrow the method (an adversarial vector corpus) from MS Agent-Governance-Toolkit's PromptDefense
+**17-vector taxonomy** — NOT its dependency (we gate deterministically; we do not lint the system
+prompt). Build a corpus of hostile **inbound-message** payloads exercising the vectors that hit our
+surface — `indirect-injection`, `encoding-injection` (base64/unicode-smuggled), `least-agency /
+goal-hijack`, `data-protection` (system-prompt/key leak) — and assert the **deterministic invariants
+hold under injection**:
+1. No config mutation: the model tool list contains no `elmer_config_*`; injection cannot change
+   `agent_endpoint`/`agent_model`/the key (structurally — R2.4).
+2. Withheld egress tools stay unreachable (re-assert `executor.rs:50` after this feature lands).
+3. No transmit without an operator arm; staging tools reachable-but-cannot-send.
+4. No secret leak: system prompt / API key never echoed back through tool-result or error handling.
+This operationalizes the review's MCP-boundary finding and maps to the OWASP Agentic Top 10
+categories the toolkit enumerates.
+
+## R2.6 — Operator UX (augments §Design / §Error handling)
+
+- **Empty state is a `"Connect a model"` button** that expands the Model section **in place** (not a
+  sentence pointing at a separate menu — chicken-and-egg).
+- **Detect failures carry remedies, not labels**, keyed off loopback/preset: loopback refused →
+  "the local AI server (Ollama) may not be running — start it, then Detect again"; remote transport →
+  "check this device's internet"; 401/403 → "re-enter the key for <provider>".
+- **Key affordance: `Key stored 🔒 [Replace] [Remove]`**, not a `••••`-seeded field (touch-and-clear
+  silently wipes a key the operator can never re-read). `Replace` reveals an empty input committing as
+  `Set` only on non-empty; `Remove` is the explicit `Clear`. Destruction is never inferred from
+  emptiness.
+- **Preset inference by `origin()`, not exact URL**; selecting a preset must not clobber a
+  hand-edited endpoint without confirmation.
+- **Per-turn model attribution:** on a mid-conversation model change, drop an inline
+  "— now using `<model>` —" marker styled like the ground-truth tool chips.
+- **Detect URL derivation:** replace a trailing `/chat/completions` with `/models`, **preserving the
+  path prefix** (`/api/v1/chat/completions` → `/api/v1/models`); validate both URLs through R2.1.
+- POLISH: "✓ 0 models" on an empty Ollama → a "pull a model" remedy, not a green check; soft
+  provider/model-mismatch hint; prefer **one** menu door + the in-context button, or differentiate by
+  verb ("Set up Elmer's model…" vs "Open Elmer chat…").
+
+## R2.F — Cleartext `http` note: NO NOTE (operator decision, 2026-06-29)
+
+Held at zero notes. Loopback `http` (the common Ollama case) never had an exposure — the bytes don't
+leave the machine. The only residual case is a *non-loopback* `http` endpoint **with** a key, which
+is the operator's explicit choice; R2.1's `redirect::Policy::none()` + userinfo rejection already stop
+the key reaching an attacker-controlled target, leaving only passive eavesdrop on the operator's own
+plaintext route — theirs to accept.
+
+## R2.7 — Touch-list additions
+
+- `src-tauri/tuxlink-agent-frontend/src/endpoint.rs` — `AgentEndpoint` + egress policy (or a new
+  `egress.rs`); reuse the `build_vetted_client` IP-gate infra from the tiles fetch path.
+- `src-tauri/tuxlink-agent-frontend/src/provider.rs` — `build_vetted_client`, `ApiKey` newtype,
+  value-scrub of error bodies, AC-7 doc/tests reword.
+- `src-tauri/src/elmer/` + `lib.rs` — `KeySource`/`KeyStatus`/`SetKey`, origin-keyed keyring,
+  transactional set, snapshot-at-turn provider build under the lock, `#[instrument(skip)]`, the
+  config commands (Tauri-only), the MCP-boundary regression test, the prompt-injection corpus.
+- Redaction: `ApiKey` type-redaction + the bearer-header rule (the field-name sink alone is
+  insufficient).
