@@ -843,3 +843,120 @@
   font-size: 0.85em;
   color: var(--text-2, var(--text-muted));
 }
+
+/* ---------------------------------------------------------------------------
+ * ModelTilePicker — tiered, single-column model surface (Task 8a, F1/F4).
+ *
+ * LAYOUT-1 (implementation-pitfalls §4): the picker renders INSIDE the
+ * `.elmer-messages` flex region — Elmer's own scrollable column — NOT as a
+ * direct child of the `.panes` CSS grid. It therefore needs NO explicit
+ * `grid-column`; it flows in the flex column and scrolls with the message list.
+ *
+ * The real drawer is ~392px (min(420px, 92vw)), so the picker is SINGLE COLUMN:
+ * tier sections stack, and tiles within a tier stack one-per-row. No horizontal
+ * scroll at 392px.
+ * ------------------------------------------------------------------------- */
+
+.elmer-tile-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.elmer-tier {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.elmer-tier-header {
+  margin: 0;
+  font-size: var(--type-micro, 0.72rem);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim, var(--text-faint));
+}
+
+/* Single column: each tile occupies a full row. */
+.elmer-tier-tiles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.elmer-tile {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  text-align: left;
+  background: var(--surface-2, var(--surface-1));
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: var(--radius-control, 6px);
+  color: var(--text);
+  font-size: var(--type-control, 0.9rem);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.elmer-tile:hover {
+  border-color: var(--accent);
+}
+
+.elmer-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.elmer-tile--selected {
+  border-color: var(--accent);
+  background: var(--accent-soft, var(--surface-3));
+}
+
+.elmer-tile-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.elmer-tile-badge {
+  flex: 0 0 auto;
+  font-size: var(--type-micro, 0.7rem);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 2px 6px;
+  border-radius: var(--radius-control, 6px);
+  white-space: nowrap;
+}
+
+.elmer-tile-badge--recommended {
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.elmer-tile-badge--keysaved {
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 60%, transparent);
+}
+
+.elmer-tile-editor {
+  display: flex;
+  flex-direction: column;
+}
+
+.elmer-tile-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.elmer-tile-endpoint {
+  color: var(--text-dim, var(--text-faint));
+  font-family: var(--mono, ui-monospace, monospace);
+  word-break: break-all;
+}
