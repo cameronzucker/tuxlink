@@ -363,3 +363,215 @@
   color: var(--text-faint, var(--text-dim));
   font-size: 11px;
 }
+
+/* ── Model form (G2, R2.6) ──────────────────────────────────────────────── */
+.elmer-model-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 4px;
+  /* Keep within the drawer reading width — no full-width stretch. */
+  max-width: 360px;
+}
+
+.elmer-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.elmer-form-label {
+  font-size: 11px;
+  color: var(--text-faint, var(--text-dim));
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.elmer-form-select,
+.elmer-form-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 6px;
+  background: var(--surface-sunken, var(--bg));
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.elmer-form-select:focus,
+.elmer-form-input:focus {
+  outline: none;
+  border-color: var(--accent, var(--accent-teal));
+}
+
+.elmer-form-input--mono {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+}
+
+/* Key affordance row */
+.elmer-form-row--key {
+  gap: 4px;
+}
+
+.elmer-key-stored {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.elmer-key-stored-label {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.elmer-key-stored-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.elmer-key-action-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 5px;
+  background: var(--surface-2, var(--surface-1));
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.elmer-key-action-btn:hover {
+  background: var(--surface-hover, var(--surface-3));
+}
+
+.elmer-key-action-btn--danger {
+  color: var(--accent-danger, var(--text));
+}
+
+.elmer-key-action-btn--danger:hover {
+  border-color: var(--accent-danger, var(--border-strong));
+}
+
+.elmer-key-replace-input {
+  margin-top: 2px;
+}
+
+.elmer-key-clear-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.elmer-key-clear-label {
+  font-size: 12px;
+  color: var(--accent-danger, var(--text-faint));
+  font-style: italic;
+}
+
+.elmer-key-unreadable {
+  font-size: 11px;
+  color: var(--text-faint, var(--text-dim));
+  font-style: italic;
+}
+
+/* Model row with Detect button */
+.elmer-model-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.elmer-model-row .elmer-form-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.elmer-detect-btn {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 6px;
+  background: var(--surface-2, var(--surface-1));
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.elmer-detect-btn:hover:not(:disabled) {
+  border-color: var(--accent, var(--border-strong));
+}
+
+.elmer-detect-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Detect results */
+.elmer-detect-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.elmer-detect-count {
+  font-size: 11px;
+  color: var(--success, var(--text));
+}
+
+.elmer-detect-zero {
+  font-size: 11px;
+  color: var(--text-faint, var(--text-dim));
+  font-style: italic;
+}
+
+.elmer-detect-error {
+  font-size: 11px;
+  color: var(--accent-danger, var(--text));
+  padding: 4px 6px;
+  border: 1px solid var(--accent-danger, var(--border));
+  border-radius: 5px;
+  background: var(--surface-2, var(--surface-1));
+}
+
+/* Save & use row */
+.elmer-form-save-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.elmer-save-btn {
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  border: 1px solid var(--accent, var(--accent-teal));
+  border-radius: 7px;
+  background: var(--accent, var(--accent-teal));
+  color: var(--accent-fg, #fff);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.elmer-save-btn:hover {
+  opacity: 0.9;
+}
+
+.elmer-save-hint {
+  font-size: 11px;
+  color: var(--text-faint, var(--text-dim));
+}
+
+/* Loading/error states for the advanced section */
+.elmer-advanced-loading,
+.elmer-advanced-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-faint, var(--text-dim));
+  font-style: italic;
+}

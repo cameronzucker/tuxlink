@@ -25,10 +25,12 @@
  *   - running       → "Elmer is thinking…" indicator.
  */
 
-import { memo, useState, useRef, useEffect, type KeyboardEvent } from 'react';
+import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
 import { useElmer, type ElmerItem, type ElmerPhase } from './useElmer';
 import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
+import { PRESETS, inferPreset, isLoopback } from './elmerModelConfig';
+import type { SetKey, KeySource } from './elmerModelConfig';
 import './ElmerPane.css';
 
 // ---------------------------------------------------------------------------
@@ -119,6 +121,317 @@ function OutcomeCallout({ phase, detail }: { phase: ElmerPhase; detail: string }
 }
 
 // ---------------------------------------------------------------------------
+// ModelForm — the Model form (R2.6, G2)
+// ---------------------------------------------------------------------------
+
+interface ModelFormProps {
+  onSave: (args: { agentEndpoint: string; agentModel: string; key: SetKey }) => Promise<void>;
+  onDetect: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
+  detectState: import('./useElmer').DetectState;
+  initialEndpoint: string;
+  initialModel: string;
+  initialKeyStatus: import('./elmerModelConfig').KeyStatus;
+}
+
+function ModelForm({
+  onSave,
+  onDetect,
+  detectState,
+  initialEndpoint,
+  initialModel,
+  initialKeyStatus,
+}: ModelFormProps) {
+  const [endpoint, setEndpoint] = useState(initialEndpoint);
+  const [model, setModel] = useState(initialModel);
+
+  // Key affordance state.
+  // - keyStatus 'present': show [Replace] [Remove]; after Remove flag clearPending.
+  //   After Replace, show an empty input. Empty on save → keep; non-empty → set.
+  // - keyStatus 'absent' (non-loopback): show empty input. Non-empty → set; empty → keep.
+  // - keyStatus 'unreadable': show quiet message.
+  // - loopback endpoint: hide key section entirely.
+  const [keyStatus] = useState(initialKeyStatus);
+  const [replaceMode, setReplaceMode] = useState(false);
+  const [newKeyValue, setNewKeyValue] = useState('');
+  const [clearPending, setClearPending] = useState(false);
+
+  // For absent key input.
+  const [absentKeyValue, setAbsentKeyValue] = useState('');
+
+  // Determine the current provider preset from the endpoint.
+  const currentPreset = inferPreset(endpoint);
+  const endpointIsLoopback = isLoopback(endpoint);
+
+  // Handle provider preset selection.
+  // GUARD: if the endpoint has been hand-edited (its value doesn't match any known
+  // preset's canonical endpoint), confirm before overwriting (R2.6).
+  // "Hand-edited" means: the endpoint differs from what the current inferred preset
+  // would have filled. An endpoint that exactly matches a known preset default is
+  // NOT considered hand-edited — switching presets replaces it freely.
+  const handlePresetChange = useCallback((presetId: string) => {
+    const preset = PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+
+    // 'custom' preset has no fixed endpoint — selecting it doesn't overwrite.
+    if (presetId === 'custom') return;
+
+    // Determine if the current endpoint is a known-preset canonical value
+    // (i.e., the user hasn't hand-edited it beyond a preset default).
+    const endpointMatchesAPresetDefault = PRESETS.some(
+      (p) => p.endpoint && p.endpoint === endpoint,
+    );
+    const endpointIsEmpty = !endpoint;
+
+    // Only show the confirm guard if the endpoint is non-empty AND was hand-edited
+    // (i.e., it doesn't exactly match any preset's canonical endpoint).
+    const isDirty = !endpointIsEmpty && !endpointMatchesAPresetDefault;
+
+    if (isDirty) {
+      const proceed = window.confirm(
+        `Replace the current endpoint with the ${preset.label} default?`,
+      );
+      if (!proceed) return;
+    }
+
+    setEndpoint(preset.endpoint);
+  }, [endpoint]);
+
+  // Build the SetKey payload for the Save action.
+  const buildSetKey = useCallback((): SetKey => {
+    if (clearPending) {
+      return { action: 'clear' };
+    }
+    if (keyStatus === 'present') {
+      if (replaceMode && newKeyValue) {
+        return { action: 'set', value: newKeyValue };
+      }
+      // Replace mode with empty value → keep.
+      return { action: 'keep' };
+    }
+    if (keyStatus === 'absent') {
+      if (absentKeyValue) {
+        return { action: 'set', value: absentKeyValue };
+      }
+      return { action: 'keep' };
+    }
+    // unreadable / other → keep.
+    return { action: 'keep' };
+  }, [clearPending, keyStatus, replaceMode, newKeyValue, absentKeyValue]);
+
+  // Build KeySource for detect call.
+  const buildKeySource = useCallback((): KeySource => {
+    if (endpointIsLoopback) {
+      return { source: 'none' };
+    }
+    if (keyStatus === 'present' || keyStatus === 'absent') {
+      return { source: 'useStored' };
+    }
+    return { source: 'none' };
+  }, [endpointIsLoopback, keyStatus]);
+
+  const handleSave = useCallback(async () => {
+    await onSave({
+      agentEndpoint: endpoint,
+      agentModel: model,
+      key: buildSetKey(),
+    });
+  }, [onSave, endpoint, model, buildSetKey]);
+
+  const handleDetect = useCallback(async () => {
+    await onDetect({
+      agentEndpoint: endpoint,
+      keySource: buildKeySource(),
+    });
+  }, [onDetect, endpoint, buildKeySource]);
+
+  const handleDetectedModelSelect = useCallback((selectedModel: string) => {
+    setModel(selectedModel);
+  }, []);
+
+  return (
+    <div className="elmer-model-form" data-testid="elmer-model-form">
+      {/* Provider preset select */}
+      <div className="elmer-form-row">
+        <label className="elmer-form-label" htmlFor="elmer-provider-select">
+          Provider
+        </label>
+        <select
+          id="elmer-provider-select"
+          className="elmer-form-select"
+          data-testid="elmer-provider-select"
+          value={currentPreset}
+          onChange={(e) => handlePresetChange(e.target.value)}
+        >
+          {PRESETS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Endpoint input */}
+      <div className="elmer-form-row">
+        <label className="elmer-form-label" htmlFor="elmer-endpoint-input">
+          Endpoint
+        </label>
+        <input
+          id="elmer-endpoint-input"
+          type="text"
+          className="elmer-form-input elmer-form-input--mono"
+          data-testid="elmer-endpoint-input"
+          value={endpoint}
+          onChange={(e) => setEndpoint(e.target.value)}
+          spellCheck={false}
+          autoComplete="off"
+        />
+      </div>
+
+      {/* API key affordance (hidden for loopback) */}
+      {!endpointIsLoopback && (
+        <div className="elmer-form-row elmer-form-row--key" data-testid="elmer-key-section">
+          <span className="elmer-form-label">API key</span>
+          {keyStatus === 'present' && !clearPending ? (
+            <div className="elmer-key-stored">
+              <span className="elmer-key-stored-label">Key stored 🔒</span>
+              {replaceMode ? (
+                <input
+                  type="text"
+                  className="elmer-form-input elmer-form-input--mono elmer-key-replace-input"
+                  data-testid="elmer-key-replace-input"
+                  placeholder="Paste new key…"
+                  value={newKeyValue}
+                  onChange={(e) => setNewKeyValue(e.target.value)}
+                  autoComplete="off"
+                  autoFocus
+                />
+              ) : (
+                <div className="elmer-key-stored-actions">
+                  <button
+                    type="button"
+                    className="elmer-key-action-btn"
+                    data-testid="elmer-key-replace-btn"
+                    onClick={() => setReplaceMode(true)}
+                  >
+                    Replace
+                  </button>
+                  <button
+                    type="button"
+                    className="elmer-key-action-btn elmer-key-action-btn--danger"
+                    data-testid="elmer-key-remove-btn"
+                    onClick={() => setClearPending(true)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : keyStatus === 'present' && clearPending ? (
+            <div className="elmer-key-clear-pending">
+              <span className="elmer-key-clear-label">Key will be removed on save</span>
+              <button
+                type="button"
+                className="elmer-key-action-btn"
+                data-testid="elmer-key-remove-btn"
+                onClick={() => setClearPending(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : keyStatus === 'absent' ? (
+            <input
+              type="text"
+              className="elmer-form-input elmer-form-input--mono"
+              data-testid="elmer-key-input"
+              placeholder="API key (optional)"
+              value={absentKeyValue}
+              onChange={(e) => setAbsentKeyValue(e.target.value)}
+              autoComplete="off"
+            />
+          ) : keyStatus === 'unreadable' ? (
+            <span className="elmer-key-unreadable" data-testid="elmer-key-unreadable">
+              Could not read the saved key (keyring locked)
+            </span>
+          ) : null}
+        </div>
+      )}
+
+      {/* Model input + Detect button */}
+      <div className="elmer-form-row">
+        <label className="elmer-form-label" htmlFor="elmer-model-input">
+          Model
+        </label>
+        <div className="elmer-model-row">
+          <input
+            id="elmer-model-input"
+            type="text"
+            className="elmer-form-input elmer-form-input--mono"
+            data-testid="elmer-model-input"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            spellCheck={false}
+            autoComplete="off"
+          />
+          <button
+            type="button"
+            className="elmer-detect-btn"
+            data-testid="elmer-detect-btn"
+            disabled={detectState.status === 'detecting'}
+            onClick={handleDetect}
+          >
+            {detectState.status === 'detecting' ? 'Detecting…' : 'Detect'}
+          </button>
+        </div>
+      </div>
+
+      {/* Detect results */}
+      {detectState.status === 'success' && detectState.models.length > 0 && (
+        <div className="elmer-detect-results">
+          <span className="elmer-detect-count">
+            ✓ {detectState.models.length} model{detectState.models.length !== 1 ? 's' : ''} detected
+          </span>
+          <select
+            className="elmer-form-select"
+            data-testid="elmer-detected-models-select"
+            value={model}
+            onChange={(e) => handleDetectedModelSelect(e.target.value)}
+          >
+            {detectState.models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {detectState.status === 'success' && detectState.models.length === 0 && (
+        <div className="elmer-detect-zero" data-testid="elmer-detect-zero">
+          No models found at this endpoint.
+        </div>
+      )}
+      {detectState.status === 'error' && (
+        <div className="elmer-detect-error" data-testid="elmer-detect-error">
+          {detectState.reason || 'Could not detect models. Check the endpoint and key.'}
+        </div>
+      )}
+
+      {/* Save & use */}
+      <div className="elmer-form-save-row">
+        <button
+          type="button"
+          className="elmer-save-btn"
+          data-testid="elmer-save-btn"
+          onClick={() => { void handleSave(); }}
+        >
+          Save &amp; use
+        </button>
+        <span className="elmer-save-hint">Applies to your next message — no restart.</span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main pane
 // ---------------------------------------------------------------------------
 
@@ -150,7 +463,19 @@ export const ElmerPane = memo(function ElmerPane({
   egressError,
   onClose,
 }: ElmerPaneProps) {
-  const { items, phase, lastOutcome, send, stop } = useElmer();
+  const {
+    items,
+    phase,
+    lastOutcome,
+    send,
+    stop,
+    modelConfig,
+    modelConfigState,
+    configRead,
+    configSet,
+    detectModels,
+    detectState,
+  } = useElmer();
   const [input, setInput] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const listEndRef = useRef<HTMLDivElement>(null);
@@ -282,17 +607,35 @@ export const ElmerPane = memo(function ElmerPane({
           className="elmer-advanced-toggle"
           data-testid="elmer-advanced-toggle"
           aria-expanded={advancedOpen}
-          onClick={() => setAdvancedOpen((o) => !o)}
+          onClick={() => {
+            const next = !advancedOpen;
+            setAdvancedOpen(next);
+            // Load config the first time the disclosure is opened.
+            if (next && modelConfigState === 'idle') {
+              void configRead();
+            }
+          }}
         >
           {advancedOpen ? '▴' : '▾'} Endpoint / model
         </button>
         {advancedOpen && (
           <div className="elmer-advanced-body" data-testid="elmer-advanced-body">
-            {/* Endpoint + model configuration lives here (populated when
-                the relevant Tauri commands are wired; placeholder for now). */}
-            <p className="elmer-advanced-placeholder">
-              Endpoint and model settings are configured in Settings → Elmer.
-            </p>
+            {modelConfigState === 'loading' && (
+              <p className="elmer-advanced-loading">Loading…</p>
+            )}
+            {modelConfigState === 'error' && (
+              <p className="elmer-advanced-error">Could not load config.</p>
+            )}
+            {modelConfigState === 'loaded' && modelConfig && (
+              <ModelForm
+                onSave={configSet}
+                onDetect={detectModels}
+                detectState={detectState}
+                initialEndpoint={modelConfig.agentEndpoint}
+                initialModel={modelConfig.agentModel}
+                initialKeyStatus={modelConfig.keyStatus}
+              />
+            )}
           </div>
         )}
       </div>

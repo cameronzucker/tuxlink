@@ -1,5 +1,5 @@
 /**
- * useElmer — state + actions for the Elmer agent pane (AC-11, AC-14).
+ * useElmer — state + actions for the Elmer agent pane (AC-11, AC-14, G2).
  *
  * Wires:
  *   - invoke('elmer_send', { msg })    → sends a user message; runs the agent.
@@ -7,6 +7,9 @@
  *   - listen(EV_CHIP)                 → streams tool-call status chips.
  *   - listen(EV_OUTCOME)              → terminal outcome (done/cancelled/error…).
  *   - invoke('elmer_stop')            → abort-first cancel of the in-flight run.
+ *   - invoke('elmer_config_read')     → reads {agentEndpoint, agentModel, keyStatus} (G2).
+ *   - invoke('elmer_config_set', ...) → saves {agentEndpoint, agentModel, key:SetKey} (G2).
+ *   - invoke('elmer_detect_models', ...) → returns string[] of available model ids (G2).
  *
  * AC-11: the hook accumulates turn + chip events into a typed message list that
  * ElmerPane renders as bubbles (turns) and chips (tool calls). It does NOT
@@ -25,6 +28,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import type { ConfigReadDto, SetKey, KeySource } from './elmerModelConfig';
 import {
   EV_CHIP,
   EV_OUTCOME,
@@ -108,6 +112,20 @@ function outcomeKindToPhase(outcomeKind: string): ElmerPhase {
 // Hook
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Model-config state (G2)
+// ---------------------------------------------------------------------------
+
+/** Loading state for the model-config form (G2). */
+export type ModelConfigLoadState = 'idle' | 'loading' | 'loaded' | 'error';
+
+/** Detection state for the Detect button (G2). */
+export type DetectState =
+  | { status: 'idle' }
+  | { status: 'detecting' }
+  | { status: 'success'; models: string[] }
+  | { status: 'error'; reason: string };
+
 export interface UseElmer {
   /** Ordered list of turn/chip items in this conversation. */
   items: ElmerItem[];
@@ -119,6 +137,18 @@ export interface UseElmer {
   send: (msg: string) => void;
   /** Stop the in-flight run (abort-first cancel). */
   stop: () => void;
+  /** G2: Loaded model config (null while loading/error). */
+  modelConfig: ConfigReadDto | null;
+  /** G2: Load state for model config. */
+  modelConfigState: ModelConfigLoadState;
+  /** G2: Load the model config from the backend. */
+  configRead: () => Promise<void>;
+  /** G2: Save the model config. */
+  configSet: (args: { agentEndpoint: string; agentModel: string; key: SetKey }) => Promise<void>;
+  /** G2: Detect available models for the given endpoint. */
+  detectModels: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
+  /** G2: Current detection state. */
+  detectState: DetectState;
 }
 
 let _nextId = 0;
@@ -132,6 +162,11 @@ export function useElmer(): UseElmer {
   const [lastOutcome, setLastOutcome] = useState<ElmerOutcome | null>(null);
   // Guard against launching a second send while one is running.
   const running = useRef(false);
+
+  // G2: Model-config state.
+  const [modelConfig, setModelConfig] = useState<ConfigReadDto | null>(null);
+  const [modelConfigState, setModelConfigState] = useState<ModelConfigLoadState>('idle');
+  const [detectState, setDetectState] = useState<DetectState>({ status: 'idle' });
 
   // Subscribe to all three Elmer event channels for the lifetime of the hook.
   // The listeners are set up once on mount and torn down on unmount. Tauri's
@@ -202,5 +237,46 @@ export function useElmer(): UseElmer {
     void invoke('elmer_stop');
   }, []);
 
-  return { items, phase, lastOutcome, send, stop };
+  // G2: configRead — load model config from backend.
+  const configRead = useCallback(async () => {
+    setModelConfigState('loading');
+    try {
+      const dto = await invoke<ConfigReadDto>('elmer_config_read');
+      setModelConfig(dto);
+      setModelConfigState('loaded');
+    } catch {
+      setModelConfigState('error');
+    }
+  }, []);
+
+  // G2: configSet — save model config to backend.
+  const configSet = useCallback(async (args: { agentEndpoint: string; agentModel: string; key: SetKey }) => {
+    await invoke('elmer_config_set', args);
+  }, []);
+
+  // G2: detectModels — detect available models for the given endpoint.
+  const detectModels = useCallback(async (args: { agentEndpoint: string; keySource: KeySource }) => {
+    setDetectState({ status: 'detecting' });
+    try {
+      const models = await invoke<string[]>('elmer_detect_models', args);
+      setDetectState({ status: 'success', models });
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err);
+      setDetectState({ status: 'error', reason });
+    }
+  }, []);
+
+  return {
+    items,
+    phase,
+    lastOutcome,
+    send,
+    stop,
+    modelConfig,
+    modelConfigState,
+    configRead,
+    configSet,
+    detectModels,
+    detectState,
+  };
 }
