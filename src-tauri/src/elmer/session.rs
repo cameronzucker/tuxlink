@@ -392,13 +392,18 @@ impl ElmerSession {
             armed: self.guard.armed_remaining() > 0,
             tainted: self.guard.is_tainted(),
         };
-        // Per-turn wall-clock timeout. The agent-runner default (120s) is too
-        // short for large local models (e.g. gpt-oss-120b on a modest backend),
-        // which routinely need minutes per turn. 15 min unblocks slow local
-        // inference. TODO(tuxlink-1wi5w follow-up): make this operator-adjustable
-        // from the Elmer Model form (a per-turn-timeout field on ElmerConfig).
+        // Per-turn wall-clock timeout (tuxlink-1wi5w). The agent-runner default
+        // (120s) is too short for large local models (e.g. gpt-oss-120b on a
+        // modest backend), which routinely need minutes per turn. The operator
+        // sets this from the Elmer Model form; `elmer_config_set` clamps the
+        // value to [30, 3600] seconds before it ever reaches the snapshot, so
+        // this read is an already-validated quantity. The read is a quick
+        // snapshot clone (NOT held across the provider build above — the timeout
+        // need not be atomic with the {endpoint, model, key} triple), so a
+        // live-applied change takes effect on the NEXT turn.
+        let turn_timeout_secs = self.model_config.snapshot().await.turn_timeout_secs;
         let limits = Limits {
-            per_turn_timeout: Duration::from_secs(15 * 60),
+            per_turn_timeout: Duration::from_secs(turn_timeout_secs as u64),
             ..Limits::default()
         };
 

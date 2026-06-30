@@ -235,6 +235,32 @@ pub struct ConfigReadDto {
     pub agent_endpoint: String,
     pub agent_model: String,
     pub key_status: KeyStatus,
+    /// Per-turn wall-clock timeout in SECONDS (tuxlink-1wi5w). Serialized as
+    /// `agentTurnTimeoutSecs` on the boundary. Read off the live model-config
+    /// snapshot, so it reflects any in-session `elmer_config_set` advance
+    /// (already clamped to `[30, 3600]`).
+    pub agent_turn_timeout_secs: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Turn-timeout clamp bounds (tuxlink-1wi5w)
+// ---------------------------------------------------------------------------
+
+/// Minimum operator-settable per-turn timeout (seconds) = 0.5 min.
+pub const MIN_TURN_TIMEOUT_SECS: u32 = 30;
+/// Maximum operator-settable per-turn timeout (seconds) = 60 min.
+pub const MAX_TURN_TIMEOUT_SECS: u32 = 3600;
+
+/// Clamp a requested per-turn timeout into `[MIN_TURN_TIMEOUT_SECS,
+/// MAX_TURN_TIMEOUT_SECS]` (tuxlink-1wi5w).
+///
+/// Per the pinned contract a value below 30 or above 3600 is NOT rejected —
+/// it is clamped into range and used. This keeps the boundary lenient (a UI
+/// that sends `0` from an empty field, or an out-of-range value, still yields a
+/// usable timeout) while guaranteeing the runtime never builds a degenerate
+/// (sub-second) or unbounded-feeling (>1h) per-turn ceiling.
+pub fn clamp_turn_timeout_secs(requested: u32) -> u32 {
+    requested.clamp(MIN_TURN_TIMEOUT_SECS, MAX_TURN_TIMEOUT_SECS)
 }
 
 // ---------------------------------------------------------------------------
@@ -270,10 +296,15 @@ pub struct ConfigReadDto {
 pub async fn config_set_inner(
     agent_endpoint: String,
     agent_model: String,
+    agent_turn_timeout_secs: u32,
     key: SetKey,
     state: &ElmerModelConfigState,
     keyring: &ElmerKeyring,
 ) -> Result<(), String> {
+    // Clamp the requested per-turn timeout into [30, 3600] (tuxlink-1wi5w).
+    // Out-of-range values are clamped, NOT rejected (pinned contract).
+    let turn_timeout_secs = clamp_turn_timeout_secs(agent_turn_timeout_secs);
+
     // Step 1: acquire lock — held across the whole transaction.
     let mut guard = state.lock().await;
 
@@ -309,12 +340,14 @@ pub async fn config_set_inner(
         .map_err(|e| format!("couldn't read config before saving: {e}"))?;
     config.elmer.agent_endpoint = agent_endpoint.clone();
     config.elmer.agent_model = agent_model.clone();
+    config.elmer.agent_turn_timeout_secs = turn_timeout_secs;
     crate::config::write_config_atomic(&config)
         .map_err(|e| format!("couldn't save config: {e}"))?;
 
     // Step 5: advance in-memory snapshot (still under lock).
     guard.endpoint = agent_endpoint;
     guard.model = agent_model;
+    guard.turn_timeout_secs = turn_timeout_secs;
     // Lock is released here when `guard` drops.
 
     Ok(())
@@ -379,6 +412,7 @@ pub async fn config_read_inner(
         agent_endpoint: snapshot.endpoint,
         agent_model: snapshot.model,
         key_status,
+        agent_turn_timeout_secs: snapshot.turn_timeout_secs,
     })
 }
 
@@ -670,11 +704,20 @@ pub async fn elmer_config_read(
 pub async fn elmer_config_set(
     agent_endpoint: String,
     agent_model: String,
+    agent_turn_timeout_secs: u32,
     key: SetKey,
     state: State<'_, Arc<ElmerModelConfigState>>,
     keyring: State<'_, Arc<ElmerKeyring>>,
 ) -> Result<(), String> {
-    config_set_inner(agent_endpoint, agent_model, key, &state, &keyring).await
+    config_set_inner(
+        agent_endpoint,
+        agent_model,
+        agent_turn_timeout_secs,
+        key,
+        &state,
+        &keyring,
+    )
+    .await
 }
 
 /// Probe the `/v1/models` endpoint derived from `agent_endpoint` and return the
@@ -736,7 +779,8 @@ mod tests {
     const VALID_ORIGIN: &str = "https://api.openai.com";
 
     fn valid_state() -> ElmerModelConfigState {
-        ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into())
+        // 900 = the default 15-min per-turn timeout (tuxlink-1wi5w).
+        ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into(), 900)
     }
 
     // -----------------------------------------------------------------------
@@ -851,6 +895,7 @@ mod tests {
         let result = config_set_inner(
             VALID_ENDPOINT.into(),
             VALID_MODEL.into(),
+            900,
             SetKey::Keep,
             &state,
             &kr,
@@ -882,6 +927,7 @@ mod tests {
         let result = config_set_inner(
             VALID_ENDPOINT.into(),
             VALID_MODEL.into(),
+            900,
             SetKey::Set { value: "sk-x".into() },
             &state,
             &kr,
@@ -908,6 +954,7 @@ mod tests {
         let result = config_set_inner(
             VALID_ENDPOINT.into(),
             VALID_MODEL.into(),
+            900,
             SetKey::Set { value: "".into() },
             &state,
             &kr,
@@ -917,6 +964,120 @@ mod tests {
         assert!(result.is_err(), "empty key must be rejected");
         // Nothing should have been written to the keyring.
         assert_eq!(kr.status(VALID_ORIGIN), KeyStatus::Absent);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: clamp_turn_timeout_secs (pure)
+    // -----------------------------------------------------------------------
+
+    /// The clamp helper bounds the requested timeout into [30, 3600], NEVER
+    /// rejecting an out-of-range value (tuxlink-1wi5w pinned contract).
+    #[test]
+    fn clamp_turn_timeout_bounds_into_range() {
+        // Below the floor → clamped up to 30.
+        assert_eq!(clamp_turn_timeout_secs(0), 30);
+        assert_eq!(clamp_turn_timeout_secs(5), 30);
+        assert_eq!(clamp_turn_timeout_secs(29), 30);
+        // At the bounds → unchanged.
+        assert_eq!(clamp_turn_timeout_secs(30), 30);
+        assert_eq!(clamp_turn_timeout_secs(3600), 3600);
+        // In range → unchanged.
+        assert_eq!(clamp_turn_timeout_secs(600), 600);
+        assert_eq!(clamp_turn_timeout_secs(900), 900);
+        // Above the ceiling → clamped down to 3600.
+        assert_eq!(clamp_turn_timeout_secs(5000), 3600);
+        assert_eq!(clamp_turn_timeout_secs(u32::MAX), 3600);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: set_persists_and_clamps_turn_timeout
+    // -----------------------------------------------------------------------
+
+    /// `config_set_inner` clamps the requested per-turn timeout into [30, 3600]
+    /// and persists+advances the clamped value into BOTH the in-memory snapshot
+    /// and the config file (tuxlink-1wi5w). A below-floor request clamps up, an
+    /// above-ceiling request clamps down, and an in-range request is stored
+    /// verbatim. The snapshot value is what the send-path reads to build the
+    /// per-turn `Limits`.
+    #[tokio::test]
+    #[serial]
+    async fn set_persists_and_clamps_turn_timeout() {
+        // Each sub-case uses a fresh temp config dir + a fresh state seeded at
+        // the default 900 so the assertion isolates the write under test.
+        async fn run_case(requested: u32, expected: u32) {
+            let kr = ElmerKeyring::with_memory_keyring();
+            let state = valid_state();
+            let tmp = TempConfigDir::new();
+
+            let dir_path = tmp.path().to_str().unwrap().to_string();
+            std::env::set_var("TUXLINK_CONFIG_DIR", &dir_path);
+            let result = config_set_inner(
+                VALID_ENDPOINT.into(),
+                VALID_MODEL.into(),
+                requested,
+                SetKey::Keep,
+                &state,
+                &kr,
+            )
+            .await;
+            let on_disk = crate::config::read_config().map(|c| c.elmer.agent_turn_timeout_secs);
+            std::env::remove_var("TUXLINK_CONFIG_DIR");
+
+            assert!(result.is_ok(), "set must succeed for {requested}: {result:?}");
+
+            // In-memory snapshot carries the clamped value (the send-path read).
+            let snap = state.snapshot().await;
+            assert_eq!(
+                snap.turn_timeout_secs, expected,
+                "snapshot timeout for requested {requested} must clamp to {expected}"
+            );
+
+            // Persisted config file carries the same clamped value.
+            assert_eq!(
+                on_disk.expect("config must read back"),
+                expected,
+                "persisted timeout for requested {requested} must clamp to {expected}"
+            );
+        }
+
+        run_case(5, 30).await; // below floor → 30
+        run_case(5000, 3600).await; // above ceiling → 3600
+        run_case(600, 600).await; // in range → verbatim
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: read_returns_turn_timeout_from_snapshot
+    // -----------------------------------------------------------------------
+
+    /// `config_read_inner` surfaces the live snapshot's per-turn timeout in the
+    /// DTO (tuxlink-1wi5w). The state is seeded at a non-default value to prove
+    /// the DTO reflects the snapshot, not a hardcoded default.
+    #[tokio::test]
+    async fn read_returns_turn_timeout_from_snapshot() {
+        let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+        // Loopback endpoint so the read skips the keyring; timeout seeded to 240.
+        let state = ElmerModelConfigState::new(
+            "http://127.0.0.1:11434/v1/chat/completions".into(),
+            "llama3".into(),
+            240,
+        );
+
+        let dto = config_read_inner(&state, &kr)
+            .await
+            .expect("config_read_inner must succeed");
+
+        assert_eq!(
+            dto.agent_turn_timeout_secs, 240,
+            "DTO timeout must reflect the snapshot value"
+        );
+
+        // The boundary field name is camelCase `agentTurnTimeoutSecs`.
+        let json = serde_json::to_value(&dto).expect("serialize DTO");
+        assert_eq!(
+            json.get("agentTurnTimeoutSecs").and_then(|v| v.as_u64()),
+            Some(240),
+            "DTO must serialize the timeout as `agentTurnTimeoutSecs`; got: {json}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -940,6 +1101,7 @@ mod tests {
         let result = config_set_inner(
             VALID_ENDPOINT.into(),
             VALID_MODEL.into(),
+            900,
             SetKey::Clear,
             &state,
             &kr,
@@ -969,6 +1131,7 @@ mod tests {
         let result = config_set_inner(
             "not a url".into(),
             VALID_MODEL.into(),
+            900,
             SetKey::Set { value: "sk-injected".into() },
             &state,
             &kr,
@@ -1003,6 +1166,7 @@ mod tests {
         let result = config_set_inner(
             VALID_ENDPOINT.into(),
             "gpt-new".into(),
+            900,
             SetKey::Set { value: "sk-never-stored".into() },
             &state,
             &kr,
@@ -1169,6 +1333,7 @@ mod tests {
                 let r = config_set_inner(
                     VALID_ENDPOINT.into(),
                     VALID_MODEL.into(),
+                    900,
                     SetKey::Set { value: SECRET.into() },
                     &state,
                     &kr,
@@ -1723,7 +1888,7 @@ mod tests {
         // Ollama-style loopback endpoint: no port reachability needed;
         // config_read_inner reads the snapshot only.
         let loopback_ep = "http://127.0.0.1:11434/v1/chat/completions";
-        let state = ElmerModelConfigState::new(loopback_ep.into(), "llama3".into());
+        let state = ElmerModelConfigState::new(loopback_ep.into(), "llama3".into(), 900);
 
         let dto = config_read_inner(&state, &kr)
             .await

@@ -34,6 +34,12 @@ use tokio::sync::{Mutex, MutexGuard};
 pub struct ModelConfigSnapshot {
     pub endpoint: String,
     pub model: String,
+    /// Live-applied per-turn wall-clock timeout, in SECONDS (tuxlink-1wi5w).
+    /// `ElmerSession::send` reads this off the snapshot to build the run
+    /// `Limits`, so an `elmer_config_set` that advances this value takes effect
+    /// on the NEXT turn. Always already clamped to `[30, 3600]` by
+    /// `config_set_inner` before it reaches the snapshot.
+    pub turn_timeout_secs: u32,
 }
 
 /// Guards the `{endpoint, model}` pair so reads and writes are atomic.
@@ -50,10 +56,15 @@ pub struct ElmerModelConfigState {
 // ---------------------------------------------------------------------------
 
 impl ElmerModelConfigState {
-    /// Create a new state guard with an initial `{endpoint, model}`.
-    pub fn new(endpoint: String, model: String) -> Self {
+    /// Create a new state guard with an initial `{endpoint, model,
+    /// turn_timeout_secs}`.
+    pub fn new(endpoint: String, model: String, turn_timeout_secs: u32) -> Self {
         Self {
-            inner: Mutex::new(ModelConfigSnapshot { endpoint, model }),
+            inner: Mutex::new(ModelConfigSnapshot {
+                endpoint,
+                model,
+                turn_timeout_secs,
+            }),
         }
     }
 
@@ -65,11 +76,12 @@ impl ElmerModelConfigState {
         self.inner.lock().await.clone()
     }
 
-    /// Atomically replace the stored `{endpoint, model}` pair.
-    pub async fn set(&self, endpoint: String, model: String) {
+    /// Atomically replace the stored `{endpoint, model, turn_timeout_secs}`.
+    pub async fn set(&self, endpoint: String, model: String, turn_timeout_secs: u32) {
         let mut guard = self.inner.lock().await;
         guard.endpoint = endpoint;
         guard.model = model;
+        guard.turn_timeout_secs = turn_timeout_secs;
     }
 
     /// Acquire the underlying mutex guard for a transactional write.
@@ -102,12 +114,14 @@ mod tests {
         let state = ElmerModelConfigState::new(
             "http://127.0.0.1:11434/v1/chat/completions".to_owned(),
             "llama3".to_owned(),
+            900,
         );
 
         let snap = state.snapshot().await;
 
         assert_eq!(snap.endpoint, "http://127.0.0.1:11434/v1/chat/completions");
         assert_eq!(snap.model, "llama3");
+        assert_eq!(snap.turn_timeout_secs, 900);
     }
 
     // -----------------------------------------------------------------------
@@ -120,18 +134,21 @@ mod tests {
         let state = ElmerModelConfigState::new(
             "http://127.0.0.1:11434/v1/chat/completions".to_owned(),
             "llama3".to_owned(),
+            900,
         );
 
         state
             .set(
                 "https://api.openai.com/v1/chat/completions".to_owned(),
                 "gpt-4o".to_owned(),
+                120,
             )
             .await;
 
         let snap = state.snapshot().await;
         assert_eq!(snap.endpoint, "https://api.openai.com/v1/chat/completions");
         assert_eq!(snap.model, "gpt-4o");
+        assert_eq!(snap.turn_timeout_secs, 120);
     }
 
     // -----------------------------------------------------------------------
@@ -164,6 +181,7 @@ mod tests {
         let state = Arc::new(ElmerModelConfigState::new(
             OLD_ENDPOINT.to_owned(),
             OLD_MODEL.to_owned(),
+            900,
         ));
 
         // A barrier of 2 holds both tasks until both have reached wait().
@@ -175,7 +193,7 @@ mod tests {
         let handle_a = tokio::spawn(async move {
             barrier_a.wait().await;
             state_a
-                .set(NEW_ENDPOINT.to_owned(), NEW_MODEL.to_owned())
+                .set(NEW_ENDPOINT.to_owned(), NEW_MODEL.to_owned(), 900)
                 .await;
         });
 
@@ -220,17 +238,20 @@ mod tests {
         let state = ElmerModelConfigState::new(
             "http://127.0.0.1:11434/v1/chat/completions".to_owned(),
             "llama3".to_owned(),
+            900,
         );
 
         {
             let mut guard = state.lock().await;
             guard.endpoint = "https://api.openai.com/v1/chat/completions".to_owned();
             guard.model = "gpt-4o".to_owned();
+            guard.turn_timeout_secs = 600;
             // guard dropped here, releasing the lock
         }
 
         let snap = state.snapshot().await;
         assert_eq!(snap.endpoint, "https://api.openai.com/v1/chat/completions");
         assert_eq!(snap.model, "gpt-4o");
+        assert_eq!(snap.turn_timeout_secs, 600);
     }
 }
