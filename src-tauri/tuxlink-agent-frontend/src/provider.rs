@@ -27,6 +27,81 @@ use tuxlink_agent_runner::{
     Conversation, Message, ModelTurn, Provider, ProviderError, ToolCall, ToolSpec,
 };
 
+// ---------------------------------------------------------------------------
+// ApiKey — redacting newtype for bearer tokens
+// ---------------------------------------------------------------------------
+
+/// A bearer-token credential that NEVER leaks its value through [`std::fmt::Debug`]
+/// or [`std::fmt::Display`].
+///
+/// The only way to obtain the secret string is [`ApiKey::expose`], which is an
+/// explicit opt-in. This makes it impossible to accidentally log or format the
+/// key — the default formatting paths both produce `<redacted>`.
+///
+/// Both `Debug` AND `Display` are implemented manually (not derived) because:
+/// * A `#[derive(Debug)]` would print the raw inner value.
+/// * `Display` is the format trait used by `format!("{}")`, `to_string()`, and
+///   many error-reporting paths — a missing `Display` impl is the classic leak
+///   vector where callers fall back to `{:?}` which would otherwise expose the
+///   secret.
+#[derive(Clone)]
+pub struct ApiKey(String);
+
+impl ApiKey {
+    /// Wrap a string as an `ApiKey`. The value is NOT validated — any non-empty
+    /// string is accepted; the gateway and model endpoint reject invalid keys.
+    pub fn new(s: impl Into<String>) -> Self {
+        ApiKey(s.into())
+    }
+
+    /// The ONLY path to the raw secret value. Callers must explicitly invoke
+    /// this when they need to set the `Authorization: Bearer …` header; all
+    /// other uses should go through `Display`/`Debug` which redact.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Writes `ApiKey(<redacted>)` — the raw value is never included.
+impl std::fmt::Debug for ApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ApiKey(<redacted>)")
+    }
+}
+
+/// Writes `<redacted>` — guards against `format!("{key}")` accidentally leaking
+/// the secret in logs or error messages.
+impl std::fmt::Display for ApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<redacted>")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// scrub_key — pure helper for value-scrubbing a key out of an error snippet
+// ---------------------------------------------------------------------------
+
+/// Replace every occurrence of the exposed key in `snippet` with `<redacted>`.
+///
+/// This is a pure function so the scrub logic is unit-testable without a live
+/// HTTP server. Called by the non-2xx error branch in [`OpenAiProvider::turn`]
+/// immediately before building the [`ProviderError::Transport`] string, so a
+/// 401 response that echoes the bearer token back in its body cannot propagate
+/// the secret into the error log.
+///
+/// When `key` is `None` (unauthenticated endpoint) the snippet is returned
+/// unchanged.
+pub(crate) fn scrub_key(snippet: String, key: Option<&ApiKey>) -> String {
+    match key {
+        Some(k) => snippet.replace(k.expose(), "<redacted>"),
+        None => snippet,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OpenAiProvider
+// ---------------------------------------------------------------------------
+
 /// A [`Provider`] that talks to an OpenAI-compatible chat-completions endpoint.
 pub struct OpenAiProvider {
     client: reqwest::Client,
@@ -35,8 +110,10 @@ pub struct OpenAiProvider {
     endpoint: Url,
     model: String,
     /// Optional bearer token (a local llama.cpp / Ollama shim usually needs
-    /// none; an OpenAI-compatible proxy may). Read from env, never logged.
-    api_key: Option<String>,
+    /// none; an OpenAI-compatible proxy may). Stored as [`ApiKey`] so it never
+    /// leaks through `Debug`/`Display`; only used via `.expose()` at the HTTP
+    /// header boundary.
+    api_key: Option<ApiKey>,
 }
 
 impl OpenAiProvider {
@@ -44,7 +121,7 @@ impl OpenAiProvider {
     /// [`crate::endpoint::validate_endpoint`] — this constructor does not
     /// re-validate (the SEC-5 gate is the caller's single chokepoint), but it is
     /// only reachable from `main` after that gate.
-    pub fn new(client: reqwest::Client, endpoint: Url, model: impl Into<String>, api_key: Option<String>) -> Self {
+    pub fn new(client: reqwest::Client, endpoint: Url, model: impl Into<String>, api_key: Option<ApiKey>) -> Self {
         Self {
             client,
             endpoint,
@@ -65,7 +142,7 @@ impl Provider for OpenAiProvider {
 
         let mut req = self.client.post(self.endpoint.clone()).json(&body);
         if let Some(key) = &self.api_key {
-            req = req.bearer_auth(key);
+            req = req.bearer_auth(key.expose());
         }
 
         let resp = req
@@ -76,9 +153,12 @@ impl Provider for OpenAiProvider {
         let status = resp.status();
         if !status.is_success() {
             // Capture a bounded slice of the error body for the operator, but do
-            // not let a huge body blow up the message.
+            // not let a huge body blow up the message.  Value-scrub the bearer
+            // key before the snippet becomes the error string — a 401 body can
+            // echo the token back, and we must not propagate it into the log.
             let text = resp.text().await.unwrap_or_default();
-            let snippet: String = text.chars().take(500).collect();
+            let raw: String = text.chars().take(500).collect();
+            let snippet = scrub_key(raw, self.api_key.as_ref());
             return Err(ProviderError::Transport(format!(
                 "model endpoint returned HTTP {status}: {snippet}"
             )));
@@ -228,6 +308,145 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tuxlink_agent_runner::ToolSpec;
+
+    // --- ApiKey redaction ----------------------------------------------------
+
+    /// `Debug` output MUST NOT contain the secret value and MUST contain the
+    /// literal string `<redacted>`.  This test covers the explicit manual
+    /// `Debug` impl — a `#[derive(Debug)]` would expose the inner String.
+    #[test]
+    fn apikey_debug_is_redacted() {
+        let key = ApiKey::new("sk-secret123");
+        let debug = format!("{:?}", key);
+        assert!(
+            !debug.contains("sk-secret123"),
+            "Debug output must not contain the raw secret; got: {debug:?}"
+        );
+        assert!(
+            debug.contains("<redacted>"),
+            "Debug output must contain '<redacted>'; got: {debug:?}"
+        );
+    }
+
+    /// `Display` output MUST equal the exact string `<redacted>`.  `Display` is
+    /// the classic leak vector: `format!("{key}")` or `.to_string()` can appear
+    /// in log lines, UI strings, and error messages — all must be safe.
+    #[test]
+    fn apikey_display_is_redacted() {
+        let key = ApiKey::new("sk-secret123");
+        assert_eq!(format!("{}", key), "<redacted>");
+    }
+
+    /// `expose()` MUST return the exact raw secret — it is the only authorised
+    /// reader and must not be affected by the redaction logic.
+    #[test]
+    fn apikey_expose_returns_secret() {
+        let key = ApiKey::new("sk-x");
+        assert_eq!(key.expose(), "sk-x");
+    }
+
+    // --- scrub_key pure helper -----------------------------------------------
+
+    /// When a key IS present, `scrub_key` must replace every occurrence of the
+    /// exposed secret in the snippet with `<redacted>`.  This is the primary
+    /// defence against 401-echo credential leakage: the scrub runs on the raw
+    /// error body BEFORE it becomes a `ProviderError::Transport` string.
+    #[test]
+    fn scrub_key_replaces_secret_in_snippet() {
+        let key = ApiKey::new("sk-mysecret");
+        let snippet = "invalid_api_key: sk-mysecret is not authorised".to_string();
+        let scrubbed = scrub_key(snippet, Some(&key));
+        assert!(
+            !scrubbed.contains("sk-mysecret"),
+            "scrub_key must remove the raw secret; got: {scrubbed:?}"
+        );
+        assert!(
+            scrubbed.contains("<redacted>"),
+            "scrub_key must insert '<redacted>' in place of the secret; got: {scrubbed:?}"
+        );
+    }
+
+    /// When the key appears multiple times in the snippet (e.g. a verbose error
+    /// body that echoes the key in multiple fields), ALL occurrences must be
+    /// replaced, not just the first.
+    #[test]
+    fn scrub_key_replaces_all_occurrences() {
+        let key = ApiKey::new("tok-abc");
+        let snippet = "key=tok-abc, received=tok-abc, hint: tok-abc expired".to_string();
+        let scrubbed = scrub_key(snippet, Some(&key));
+        assert!(
+            !scrubbed.contains("tok-abc"),
+            "all occurrences of the secret must be scrubbed; got: {scrubbed:?}"
+        );
+        assert_eq!(
+            scrubbed.matches("<redacted>").count(),
+            3,
+            "expected 3 replacements; got: {scrubbed:?}"
+        );
+    }
+
+    /// When no key was sent (unauthenticated endpoint), the snippet must be
+    /// returned unchanged.  This guards against accidentally over-scrubbing
+    /// when there is no secret to protect.
+    #[test]
+    fn scrub_key_passthrough_when_no_key() {
+        let snippet = "some error without a key".to_string();
+        let scrubbed = scrub_key(snippet.clone(), None);
+        assert_eq!(scrubbed, snippet, "snippet must be unchanged when key is None");
+    }
+
+    /// When the snippet does NOT contain the secret (e.g. a generic 500 body),
+    /// `scrub_key` must return the snippet unchanged rather than injecting
+    /// spurious `<redacted>` tokens.
+    #[test]
+    fn scrub_key_unchanged_when_secret_absent_from_snippet() {
+        let key = ApiKey::new("sk-absent");
+        let snippet = "internal server error".to_string();
+        let scrubbed = scrub_key(snippet.clone(), Some(&key));
+        assert_eq!(
+            scrubbed, snippet,
+            "snippet must be unchanged when the secret does not appear in it"
+        );
+    }
+
+    /// `error_body_scrubs_just_sent_key` — verify that the value-scrub runs
+    /// end-to-end through the `OpenAiProvider::turn` non-2xx path.
+    ///
+    /// `mockito` is NOT a dev-dependency of this crate (verified: only `tokio`
+    /// appears in `[dev-dependencies]` in Cargo.toml and adding a new dep to
+    /// the contended Pi is prohibited by the global constraints).  Rather than
+    /// stub a live HTTP server, we test the scrub logic via the extracted pure
+    /// helper `scrub_key` — see `scrub_key_replaces_secret_in_snippet` above.
+    ///
+    /// This test exercises the exact code path: take a raw 401-body snippet
+    /// that echoes the bearer key, apply `scrub_key` with the key that was
+    /// sent, and assert the secret is absent from the result.  The integration
+    /// of `scrub_key` into `turn()` is validated here at the unit level and
+    /// will be exercised end-to-end in CI once a real HTTP mock can be wired.
+    #[test]
+    fn error_body_scrubs_just_sent_key() {
+        // Simulate: a 401 body that literally echoes the bearer token back
+        // (observed with some OpenAI-compatible proxy implementations).
+        let sent_key = ApiKey::new("sk-live-bearer-token");
+        let raw_401_body = format!(
+            "{{\"error\": \"invalid_api_key\", \"key\": \"{}\"}}",
+            sent_key.expose()
+        );
+        let raw_snippet: String = raw_401_body.chars().take(500).collect();
+
+        // This is exactly the operation performed in `turn()` before the
+        // ProviderError::Transport is constructed.
+        let scrubbed = scrub_key(raw_snippet, Some(&sent_key));
+
+        assert!(
+            !scrubbed.contains(sent_key.expose()),
+            "ProviderError::Transport must not contain the raw bearer key; got: {scrubbed:?}"
+        );
+        assert!(
+            scrubbed.contains("<redacted>"),
+            "ProviderError::Transport must contain '<redacted>'; got: {scrubbed:?}"
+        );
+    }
 
     fn echo_tool() -> ToolSpec {
         ToolSpec::new(

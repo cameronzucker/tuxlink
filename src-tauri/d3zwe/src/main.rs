@@ -29,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 
 use tuxlink_agent_runner::{run, EgressStatus, Limits, RunOutcome, ToolInvoker};
 use tuxlink_agent_frontend::endpoint::validate_endpoint;
-use tuxlink_agent_frontend::provider::OpenAiProvider;
+use tuxlink_agent_frontend::provider::{ApiKey, OpenAiProvider};
 
 use crate::cli::{Args, ParseOutcome};
 use crate::uds::{UdsToolInvoker, ABORT_TOOLS};
@@ -66,7 +66,10 @@ async fn real_main(args: Args) -> Result<(), String> {
 
     // The model adapter. An API key, if any, is read from the environment and
     // never logged. A local llama.cpp/Ollama shim usually needs none.
-    let api_key = std::env::var("D3ZWE_API_KEY").ok().filter(|k| !k.is_empty());
+    let api_key = std::env::var("D3ZWE_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .map(ApiKey::new);
     let http = reqwest::Client::builder()
         .build()
         .map_err(|e| format!("could not build HTTP client: {e}"))?;

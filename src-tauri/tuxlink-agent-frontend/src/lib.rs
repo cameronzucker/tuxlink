@@ -23,3 +23,6 @@ pub mod egress;
 pub mod endpoint;
 pub mod mcp_client;
 pub mod provider;
+
+// Convenience re-exports for crate consumers.
+pub use provider::ApiKey;

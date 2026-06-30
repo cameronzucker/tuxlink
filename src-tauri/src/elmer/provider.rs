@@ -22,7 +22,7 @@ use serde_json::Value;
 
 use tuxlink_agent_frontend::{
     endpoint::LoopbackEndpoint,
-    provider::OpenAiProvider,
+    provider::{ApiKey, OpenAiProvider},
 };
 use tuxlink_agent_runner::{
     Conversation, Message, ModelTurn, Provider, ProviderError, ToolCall, ToolSpec,
@@ -49,7 +49,7 @@ impl ElmerProvider {
     /// * `api_key` — optional bearer token (usually `None` for local ollama/llama.cpp).
     pub fn new(endpoint: LoopbackEndpoint, model: String, api_key: Option<String>) -> Self {
         let client = reqwest::Client::new();
-        let inner = OpenAiProvider::new(client, endpoint.0, model, api_key);
+        let inner = OpenAiProvider::new(client, endpoint.0, model, api_key.map(ApiKey::new));
         Self { inner }
     }
 }
