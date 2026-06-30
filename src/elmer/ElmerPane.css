@@ -392,6 +392,69 @@
   font-style: normal;
 }
 
+/* ── Streaming bubble (phase 2b) ────────────────────────────────────────────
+ * Transient live render of a streamed turn: plain-text answer + blinking cursor,
+ * with an auto-collapsing "Thinking…" reasoning section above. Replaced at
+ * finalize by the committed (markdown) assistant item. */
+.elmer-streaming-answer {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+/* Blinking caret trailing the live answer text. */
+.elmer-streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--accent, var(--accent-teal));
+  animation: elmer-blink 1s step-end infinite;
+}
+@keyframes elmer-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+
+/* ── Reasoning disclosure — live (streaming bubble) + committed item ─────────
+ * Muted, smaller, monospace-ish to read as a secondary "thinking" trace. */
+.elmer-reasoning {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-self: stretch;
+}
+.elmer-reasoning-toggle {
+  align-self: flex-start;
+  padding: 1px 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-faint, var(--text-dim));
+  font: inherit;
+  font-size: 11px;
+  font-style: italic;
+  cursor: pointer;
+}
+.elmer-reasoning-toggle:hover {
+  color: var(--text-2, var(--text-muted));
+}
+/* Live (streaming) toggle is a non-interactive label — no hover affordance. */
+.elmer-reasoning-toggle--live {
+  cursor: default;
+}
+.elmer-reasoning-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 4px 8px;
+  border-left: 2px solid var(--border-strong, var(--border));
+  background: var(--surface-sunken, var(--surface-2));
+  border-radius: 0 4px 4px 0;
+  color: var(--text-2, var(--text-muted));
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 /* Terminal-outcome callouts. */
 .elmer-outcome {
   border: 1px solid var(--border);
