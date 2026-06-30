@@ -280,6 +280,14 @@ export function useElmer(): UseElmer {
         setLastOutcome(outcome);
         setPhase(outcomeKindToPhase(payload.outcomeKind));
         running.current = false;
+        // A streamed turn that is cancelled, times out, or errors emits NO
+        // finalizing EV_TURN, so the EV_TURN clear above never runs and a partial
+        // live bubble would linger after the run ended. Clear the transient
+        // streaming buffers on every terminal outcome too. On a clean 'done' the
+        // EV_TURN handler already cleared them, so this is a harmless no-op.
+        streamingReasoningRef.current = '';
+        setStreamingAnswer('');
+        setStreamingReasoning('');
       });
 
       if (cancelled) {

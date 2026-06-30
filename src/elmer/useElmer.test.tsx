@@ -40,8 +40,8 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(() => Promise.resolve()) }));
 
 import { useElmer } from './useElmer';
-import { EV_DELTA, EV_TURN } from './elmerEvents';
-import type { ElmerDeltaPayload, ElmerTurnPayload } from './elmerEvents';
+import { EV_DELTA, EV_OUTCOME, EV_TURN } from './elmerEvents';
+import type { ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
 
 // setupListeners() awaits each listen() sequentially, so resolving the pending
 // batch only unblocks the NEXT listen() call. Loop, draining + flushing
@@ -159,5 +159,25 @@ describe('useElmer streaming (phase 2b)', () => {
     expect(committed.reasoning).toBeUndefined();
     expect(result.current.streamingAnswer).toBe('');
     expect(result.current.streamingReasoning).toBe('');
+  });
+
+  it('a terminal outcome WITHOUT a finalizing EV_TURN (cancel/error mid-stream) clears the live buffers', async () => {
+    const { result } = renderHook(() => useElmer());
+    await resolveAllListens();
+
+    // A streamed turn is in flight: reasoning + answer have accumulated.
+    await dispatch<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'reasoning', chunk: 'Half a thought' });
+    await dispatch<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'Half an ans' });
+    expect(result.current.streamingAnswer).toBe('Half an ans');
+    expect(result.current.streamingReasoning).toBe('Half a thought');
+
+    // The run is cancelled mid-stream → EV_OUTCOME fires with NO preceding EV_TURN.
+    await dispatch<ElmerOutcomePayload>(EV_OUTCOME, { kind: 'outcome', outcomeKind: 'cancelled', detail: '' });
+
+    // The transient live bubble must not linger after the run ended.
+    expect(result.current.streamingAnswer).toBe('');
+    expect(result.current.streamingReasoning).toBe('');
+    // No partial item was committed (the answer never finalized).
+    expect(result.current.items.filter((i) => i.kind === 'turn')).toHaveLength(0);
   });
 });
