@@ -28,6 +28,10 @@ import { DashboardRibbon } from '../../src/shell/DashboardRibbon';
 import { ArdopRadioPanel } from '../../src/radio/modes/ArdopRadioPanel';
 import { VaraRadioPanel } from '../../src/radio/modes/VaraRadioPanel';
 import { TelnetRadioPanel } from '../../src/radio/modes/TelnetRadioPanel';
+// Elmer model-access picker (tuxlink-wpqwy): mount ElmerPane with an
+// onboarded=false config shim so the ModelTilePicker renders as the first-run
+// surface (tier headers, tiles, GetKeyCard) for the WebKitGTK layout smoke.
+import { ElmerPane } from '../../src/elmer/ElmerPane';
 import type { RadioPanelMode } from '../../src/radio/types';
 import type { CatalogEntry } from '../../src/catalog/types';
 import type { StatusBarData } from '../../src/shell/useStatus';
@@ -36,7 +40,8 @@ const params = new URLSearchParams(location.search);
 const grid = params.has('grid') ? params.get('grid') : 'CN87';
 const view = (params.get('view') ?? 'home') as
   | 'home' | 'browse' | 'grib' | 'ribbon'
-  | 'radio-ardop' | 'radio-vara' | 'radio-telnet';
+  | 'radio-ardop' | 'radio-vara' | 'radio-telnet'
+  | 'elmer';
 // ?running=1 drives a connected modem / open VARA transport so the running-state
 // footers render: ARDOP/VARA `Send/Receive` (primary) + the red `Stop`
 // (`radio-panel-btn-bad`) button. Without it the fixture pins state to STOPPED, so
@@ -76,6 +81,17 @@ const RESPONSES: Record<string, unknown> = {
   },
   catalog_list: CATALOG,
   catalog_send_inquiry: 'MID-TEST-0001',
+  // Elmer model-access picker (tuxlink-wpqwy): onboarded=false → ElmerPane shows
+  // the ModelTilePicker as the first-run surface. key-status map empty (no saved
+  // keys) so no badges; the layout smoke is about tiers/tiles/no-h-scroll.
+  elmer_config_read: {
+    agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+    agentModel: '',
+    keyStatus: 'absent',
+    agentTurnTimeoutSecs: 900,
+    onboarded: false,
+  },
+  elmer_key_status_for_origins: {},
   // DashboardRibbon's GridEdit write paths:
   config_set_grid: grid,
   position_set_source: null,
@@ -237,6 +253,14 @@ createRoot(document.getElementById('root')!).render(
           )}
           {view === 'radio-telnet' && <TelnetRadioPanel onClose={() => undefined} />}
         </div>
+      </div>
+    ) : view === 'elmer' ? (
+      // ElmerPane renders the ModelTilePicker in place of the message list when
+      // the (shimmed) config reports onboarded=false. Mount it full-viewport so
+      // the single-column min(420px,92vw) layout + the picker's scroll-within-
+      // .elmer-messages behavior render as shipped for the narrow-width smoke.
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <ElmerPane onClose={() => undefined} />
       </div>
     ) : (
       <RequestCenter initialView={view} onClose={() => undefined} />
