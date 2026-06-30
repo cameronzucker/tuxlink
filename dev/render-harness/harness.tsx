@@ -138,11 +138,33 @@ const queryClient = new QueryClient();
 // `.panes--with-dock`, the wrapper that places it in the 4th grid column).
 const VARA_MODE: RadioPanelMode = { kind: 'vara-hf', intent: 'cms' };
 
+// Drive the ribbon's connecting state via ?connecting=1 so the Abort control
+// (rendered only while connecting) can be snapshotted for the token diff.
+const ribbonConnecting = params.get('connecting') === '1';
+
 createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
     {view === 'ribbon' ? (
       <div className="layout-b">
-        <DashboardRibbon data={ribbonData} onConnect={() => undefined} />
+        <DashboardRibbon
+          data={ribbonData}
+          onConnect={() => undefined}
+          connecting={ribbonConnecting}
+          onAbort={() => undefined}
+          // Render the full set of non-enumerated dash-* controls (tuxlink-zj9se
+          // migration targets): the Review|Download seg, the APRS control + unread
+          // badge, and the merged Elmer×Agent-send chip in its armed state.
+          reviewInbound={true}
+          onReviewInboundChange={() => undefined}
+          aprs={{ listening: true, unread: 3, onOpen: () => undefined }}
+          egress={{
+            status: { armed: true, armedRemainingSecs: 540, tainted: false },
+            onArm: () => undefined,
+            onDisarm: () => undefined,
+          }}
+          onOpenElmer={() => undefined}
+          elmerOpen={false}
+        />
       </div>
     ) : view.startsWith('radio-') ? (
       <div className="layout-b">
