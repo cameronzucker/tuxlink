@@ -12,20 +12,20 @@
 .radio-panel-info {
   margin: 0;
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: var(--type-control);
   line-height: 1.5;
   color: var(--text-secondary, #cbd5e1);
   background: var(--surface-info, rgba(59, 130, 246, 0.08));
   border-left: 3px solid var(--accent-info, #3b82f6);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
 }
 
 .radio-panel-info code {
   font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
-  font-size: 11px;
+  font-size: var(--type-meta);
   padding: 1px 4px;
   background: var(--surface-code, rgba(148, 163, 184, 0.15));
-  border-radius: 3px;
+  border-radius: var(--radius-control);
 }
 
 /* Compact variant — single-line inline notice. Used for the platform-block
@@ -36,6 +36,6 @@
 .radio-panel-info-compact {
   margin: 4px 12px 0;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: var(--type-meta);
   line-height: 1.4;
 }

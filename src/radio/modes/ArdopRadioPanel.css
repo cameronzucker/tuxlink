@@ -39,11 +39,11 @@
   font-family: ui-monospace, monospace;
   /* Was 10.5 px in legacy ArdopDock.css; bumped to 12 px to match the
      P2-standardized 12-13 px radio-panel scale. */
-  font-size: 12px;
+  font-size: var(--type-control);
   padding: 6px 4px;
   text-align: center;
   border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   color: var(--text-faint, #94a3b8);
   letter-spacing: 0.02em;
   font-weight: 500;
@@ -86,7 +86,7 @@
 
 .ardop-meter-k {
   /* Was 9.5 px in legacy; bumped to 12 px for legibility. */
-  font-size: 12px;
+  font-size: var(--type-control);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-faint, #94a3b8);
@@ -95,7 +95,7 @@
 .ardop-meter-v {
   /* Was 13 px in legacy; the value is the at-a-glance read — bump to
      14 px for readability without dominating the panel. */
-  font-size: 14px;
+  font-size: var(--type-body);
   font-family: ui-monospace, monospace;
   color: var(--text, #cbd5e1);
   font-weight: 600;
@@ -109,12 +109,12 @@
 .ardop-stats {
   /* Was 10.5 px in legacy ArdopDock; bumped to 12 px so the operator
      can read the peer/mode/width line without leaning in. */
-  font-size: 12px;
+  font-size: var(--type-control);
   line-height: 1.7;
   padding: 8px 10px;
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   margin: 8px 0 0;
   /* Operator smoke 2026-05-31 round 3: a `<pre>` with `white-space: pre`
      does NOT wrap, so long peer call signs, long mode names, or the
@@ -164,11 +164,11 @@
   flex: 0 0 auto;
   margin-left: 4px;
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.10);
-  font-size: 12px;
+  font-size: var(--type-control);
   line-height: 1.4;
   cursor: pointer;
 }
