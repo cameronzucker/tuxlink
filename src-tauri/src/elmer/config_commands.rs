@@ -1,13 +1,16 @@
-//! Tauri commands for Elmer model-config read/write.
+//! Tauri commands for Elmer model-config read/write and model detection.
 //!
 //! # Overview
 //!
-//! Two Tauri-only commands are exposed here:
+//! Three Tauri-only commands are exposed here:
 //!
 //! - [`elmer_config_read`] — returns `{agent_endpoint, agent_model, key_status}`.
 //!   **Never returns the key value.**
 //! - [`elmer_config_set`] — transactional write: endpoint validation → key action →
 //!   config-file write → in-memory snapshot advance, all under the model-config lock.
+//! - [`elmer_detect_models`] — probes `<derived-models-url>` through the vetted
+//!   egress client and returns the list of available model IDs, or a typed short
+//!   reason string on failure.  **Never echoes an upstream body or the key.**
 //!
 //! # Registration
 //!
@@ -26,10 +29,27 @@
 //! # Inner-helper pattern (testability)
 //!
 //! The `#[tauri::command]` wrappers simply forward `State<'_, Arc<T>> → &T` and
-//! delegate to `config_set_inner` / `config_read_inner`.  Tests call the inner
-//! helpers directly with concrete `&ElmerModelConfigState` / `&ElmerKeyring`
-//! references — no Tauri `State` machinery needed.
+//! delegate to `config_set_inner` / `config_read_inner` / `detect_inner`.  Tests
+//! call the inner helpers directly with concrete references — no Tauri `State`
+//! machinery needed.
+//!
+//! # Detect-URL derivation (pinned convention)
+//!
+//! [`derive_models_url`] implements the pinned convention: if the configured
+//! endpoint path ends with `/chat/completions`, replace that suffix with `/models`
+//! (preserving any prefix, e.g. `/api/v1/chat/completions` → `/api/v1/models`).
+//! Otherwise fall back to `<origin>/v1/models` (the OpenAI-standard path).  The
+//! derived URL is re-validated through [`AgentEndpoint::parse`] before use.
+//!
+//! # Value-scrub (defence-in-depth)
+//!
+//! Any error string produced by the detect path is scrubbed of the just-sent key
+//! via [`scrub_detect_key`] before being returned to the renderer, so a 401 body
+//! that echoes the bearer cannot leak even if downstream mapping code changes.
+//! `tuxlink_agent_frontend::provider::scrub_key` is `pub(crate)` there and not
+//! re-exported; the local inline here is intentionally equivalent.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +57,7 @@ use tauri::State;
 use tracing::instrument;
 
 use tuxlink_agent_frontend::{
+    egress::{build_vetted_client, EgressError},
     endpoint::AgentEndpoint,
     provider::ApiKey,
 };
@@ -51,6 +72,77 @@ use crate::elmer::{
 // ---------------------------------------------------------------------------
 
 pub use crate::elmer::keyring::KeyStatus as KeyStatusDto;
+
+// ---------------------------------------------------------------------------
+// KeySource — how the caller supplies the API key for detect
+// ---------------------------------------------------------------------------
+
+/// How the caller supplies the API key for [`elmer_detect_models`].
+///
+/// Deserializes as `{ "source": "useStored" | "inline" | "none", "value"?: string }`.
+///
+/// `ApiKey` does not implement `Deserialize` (it is intentionally opaque), so
+/// `Inline` carries a plain `String` at the boundary; `detect_inner` wraps it
+/// in `ApiKey::new` at the point of use, mirroring `SetKey::Set`.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "source", rename_all = "camelCase")]
+pub enum KeySource {
+    /// Read the key from the keyring for the derived endpoint origin.
+    UseStored,
+    /// Use the supplied key value (never touches the keyring).
+    Inline {
+        #[serde(rename = "value")]
+        value: String,
+    },
+    /// No key — probe without authentication.
+    None,
+}
+
+// ---------------------------------------------------------------------------
+// DetectError — typed failure reasons for elmer_detect_models
+// ---------------------------------------------------------------------------
+
+/// Typed failure reasons for [`elmer_detect_models`].
+///
+/// Serialised as a SHORT human-readable string via [`DetectError::to_reason`] —
+/// NEVER an upstream body or the raw key value.
+#[derive(Debug)]
+pub enum DetectError {
+    /// No server listening at the derived URL (transport / connection error).
+    NoServer { host: String },
+    /// 401 or 403 — the key was rejected.  Fixed reason; body is NEVER echoed.
+    Auth { provider: String },
+    /// An unexpected non-2xx HTTP status (not 401/403).
+    Status(u16),
+    /// A transport or network error not caused by "no server".
+    Network(String),
+    /// The derived models URL failed `AgentEndpoint::parse`.
+    BadUrl(String),
+    /// The `/v1/models` response contained an empty `data` array.
+    ZeroModels,
+}
+
+impl DetectError {
+    /// Convert to the short typed string that is returned to the renderer.
+    ///
+    /// These strings are the UI-visible reason text.  They MUST NOT contain the
+    /// API key, the upstream response body, or any other secret.
+    pub fn to_reason(&self) -> String {
+        match self {
+            DetectError::NoServer { host } => {
+                format!("no server: could not connect to {host}")
+            }
+            DetectError::Auth { provider } => {
+                // FIXED reason — the body is never read or echoed here.
+                format!("auth error: check the API key for {provider}")
+            }
+            DetectError::Status(code) => format!("server error: HTTP {code}"),
+            DetectError::Network(msg) => format!("network error: {msg}"),
+            DetectError::BadUrl(msg) => format!("bad URL: {msg}"),
+            DetectError::ZeroModels => "no models: the server returned an empty model list".into(),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // SetKey — the three possible key operations
@@ -205,6 +297,245 @@ pub async fn config_read_inner(
 }
 
 // ---------------------------------------------------------------------------
+// derive_models_url — pinned detect-URL derivation (pure, testable)
+// ---------------------------------------------------------------------------
+
+/// Derive the `/v1/models` URL from a configured endpoint string.
+///
+/// # Pinned convention
+///
+/// 1. Parse the endpoint via `AgentEndpoint::parse` (rejects invalid URLs,
+///    metadata ranges, credentials-in-URL).
+/// 2. Inspect the URL path:
+///    - If it ends with `/chat/completions`, replace ONLY that suffix with
+///      `/models`, preserving any prefix
+///      (`/api/v1/chat/completions` → `/api/v1/models`).
+///    - Otherwise use `<origin>/v1/models` (the OpenAI-standard path).
+/// 3. Re-validate the derived URL through `AgentEndpoint::parse` so it goes
+///    through the egress gate like any other endpoint.
+///
+/// Returns a validated `AgentEndpoint` for the models URL, or a [`DetectError`]
+/// if either parse step fails.
+///
+/// This is a pure function — no I/O, no network.  Both branches are unit-tested
+/// explicitly (see `tests::detect::derive_models_url_*`).
+pub fn derive_models_url(agent_endpoint: &str) -> Result<AgentEndpoint, DetectError> {
+    // Step 1: parse the configured endpoint to access origin + path.
+    let ep = AgentEndpoint::parse(agent_endpoint)
+        .map_err(|e| DetectError::BadUrl(e.to_string()))?;
+
+    let origin = ep.origin();
+    let path = ep.url().path();
+
+    // Step 2: derive the models path.
+    const CHAT_COMPLETIONS: &str = "/chat/completions";
+    let models_url = if path.ends_with(CHAT_COMPLETIONS) {
+        // Replace the trailing /chat/completions with /models, keeping any prefix.
+        let prefix = &path[..path.len() - CHAT_COMPLETIONS.len()];
+        format!("{origin}{prefix}/models")
+    } else {
+        // Fallback: OpenAI-standard <origin>/v1/models.
+        format!("{origin}/v1/models")
+    };
+
+    // Step 3: re-validate through the egress gate.
+    AgentEndpoint::parse(&models_url)
+        .map_err(|e| DetectError::BadUrl(format!("derived models URL rejected: {e}")))
+}
+
+// ---------------------------------------------------------------------------
+// scrub_detect_key — inline value-scrub for detect error strings
+// ---------------------------------------------------------------------------
+
+/// Scrub every occurrence of `key.expose()` from `snippet` and return the
+/// cleaned string.
+///
+/// `tuxlink_agent_frontend::provider::scrub_key` implements the same logic but
+/// is `pub(crate)` there and therefore not accessible here.  This local copy is
+/// intentionally equivalent and covers the detect error path.
+///
+/// When `key` is `None` (unauthenticated probe) the snippet is returned
+/// unchanged.
+fn scrub_detect_key(snippet: String, key: Option<&ApiKey>) -> String {
+    match key {
+        Some(k) if !k.expose().is_empty() => snippet.replace(k.expose(), "<redacted>"),
+        _ => snippet,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// map_models_response — pure response→result mapping (testable without network)
+// ---------------------------------------------------------------------------
+
+/// Map an HTTP status + response body to `Ok(Vec<String>)` or a [`DetectError`].
+///
+/// This is a pure function extracted from `detect_inner` so the response-mapping
+/// logic can be unit-tested directly (the actual HTTP GET is correct-by-inspection
+/// for D2 — the same pattern used in A3 and D1 for command delegation).
+///
+/// ## Contract
+///
+/// - **200 + valid `{data:[{id},…]}` JSON** → `Ok(ids)`.
+/// - **200 + `data: []`** → `Err(DetectError::ZeroModels)`.
+/// - **401 or 403** → `Err(DetectError::Auth{provider})`.  The `body` parameter
+///   is NEVER included in the reason string — the FIXED text is "check the API
+///   key for `<provider>`".  `key` is also NEVER echoed.
+/// - **Other non-2xx** → `Err(DetectError::Status(code))`.
+/// - **200 + non-JSON / wrong shape** → `Err(DetectError::Network(...))`.
+///
+/// # Value-scrub
+///
+/// The `key` parameter is passed only so that any error string produced by the
+/// JSON-parse branch can be scrubbed of the bearer value.  The 401/403 branch
+/// never reads `body` at all — it uses the fixed reason text.
+pub fn map_models_response(
+    status: u16,
+    body: &str,
+    provider: &str,
+    key: Option<&ApiKey>,
+) -> Result<Vec<String>, DetectError> {
+    if status == 401 || status == 403 {
+        // FIXED reason — body is NEVER read or echoed.
+        return Err(DetectError::Auth {
+            provider: provider.to_string(),
+        });
+    }
+    if !(200..300).contains(&status) {
+        return Err(DetectError::Status(status));
+    }
+    // 2xx: parse the OpenAI `/v1/models` shape `{data:[{id:string},…]}`.
+    let parsed: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| {
+            let msg = scrub_detect_key(format!("response is not JSON: {e}"), key);
+            DetectError::Network(msg)
+        })?;
+
+    let data = parsed
+        .get("data")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            let msg = scrub_detect_key("response missing `data` array".into(), key);
+            DetectError::Network(msg)
+        })?;
+
+    if data.is_empty() {
+        return Err(DetectError::ZeroModels);
+    }
+
+    let ids: Vec<String> = data
+        .iter()
+        .filter_map(|entry| {
+            entry.get("id").and_then(|v| v.as_str()).map(String::from)
+        })
+        .collect();
+
+    if ids.is_empty() {
+        // data array had entries but none had an `id` string field.
+        return Err(DetectError::ZeroModels);
+    }
+
+    Ok(ids)
+}
+
+// ---------------------------------------------------------------------------
+// detect_inner — testable core of elmer_detect_models
+// ---------------------------------------------------------------------------
+
+/// System resolver: resolve `host:port` to a list of `SocketAddr` via the
+/// platform resolver (Tokio async DNS).  Mirrors `elmer::provider::system_resolver`.
+async fn detect_system_resolver(host: &str, port: u16) -> std::io::Result<Vec<SocketAddr>> {
+    let target = format!("{host}:{port}");
+    tokio::net::lookup_host(target).await.map(|it| it.collect())
+}
+
+/// Core of `elmer_detect_models` with injectable resolver seam.
+///
+/// Separated from the Tauri command wrapper so tests can inject a loopback
+/// resolver and point at a mockito server without real DNS or real egress.
+///
+/// The production caller ([`elmer_detect_models`]) injects
+/// [`detect_system_resolver`]; tests inject a fixed resolver.
+pub(crate) async fn detect_inner<R, Fut>(
+    agent_endpoint: String,
+    key_source: KeySource,
+    keyring: &ElmerKeyring,
+    resolve: R,
+) -> Result<Vec<String>, DetectError>
+where
+    R: Fn(String, u16) -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
+{
+    // Step 1: derive and validate the models URL.
+    let models_ep = derive_models_url(&agent_endpoint)?;
+    let origin = models_ep.origin();
+    // Extract strings from `models_ep` before the egress gate consumes it via
+    // reference: `build_vetted_client` takes `&models_ep` so `models_ep` is not
+    // moved, but we need owned strings for the error closures and the GET call.
+    let models_host = models_ep.url().host_str().unwrap_or("unknown").to_string();
+    let models_url_str = models_ep.url().to_string();
+
+    // Step 2: build the vetted egress client.
+    let client = {
+        // Clone `models_host` into the closure so the outer binding remains
+        // available after `map_err` completes.
+        let h = models_host.clone();
+        build_vetted_client(&models_ep, resolve).await.map_err(|e| match e {
+            EgressError::HostDenied(msg) => DetectError::BadUrl(msg),
+            EgressError::BadUrl(msg) => DetectError::BadUrl(msg),
+            EgressError::Network(msg) => {
+                DetectError::NoServer { host: format!("{h}: {msg}") }
+            }
+            EgressError::Redirect => {
+                DetectError::NoServer { host: format!("{h}: redirect on connect") }
+            }
+        })?
+    };
+
+    // Step 3: resolve the key.
+    let key: Option<ApiKey> = match key_source {
+        KeySource::UseStored => keyring.read(&origin).unwrap_or(None),
+        KeySource::Inline { value } => {
+            if value.is_empty() {
+                Option::None
+            } else {
+                Some(ApiKey::new(value))
+            }
+        }
+        KeySource::None => Option::None,
+    };
+
+    // Step 4: issue the GET request.
+    let mut req = client.get(&models_url_str);
+    if let Some(ref k) = key {
+        req = req.bearer_auth(k.expose());
+    }
+
+    let resp = req.send().await.map_err(|e| {
+        // Transport error — "no server" at the host.  Clone `models_host` into
+        // the closure; `key` is moved into the error-scrub call below.
+        let msg = scrub_detect_key(e.to_string(), key.as_ref());
+        DetectError::NoServer { host: format!("{models_host}: {msg}") }
+    })?;
+
+    // Step 5: map the response.
+    let status = resp.status().as_u16();
+
+    // 401/403 — do NOT read the body; map to fixed Auth reason.
+    if status == 401 || status == 403 {
+        return Err(DetectError::Auth { provider: models_host });
+    }
+
+    // Other non-2xx — do NOT echo the body.
+    if !(200u16..300).contains(&status) {
+        return Err(DetectError::Status(status));
+    }
+
+    // 2xx: read and parse the body.  Scrub the key out of any parse-error string.
+    let body = resp.text().await.unwrap_or_default();
+    map_models_response(status, &body, &models_host, key.as_ref())
+}
+
+// ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
@@ -234,6 +565,40 @@ pub async fn elmer_config_set(
     keyring: State<'_, Arc<ElmerKeyring>>,
 ) -> Result<(), String> {
     config_set_inner(agent_endpoint, agent_model, key, &state, &keyring).await
+}
+
+/// Probe the `/v1/models` endpoint derived from `agent_endpoint` and return the
+/// list of available model IDs.
+///
+/// The derive URL convention:
+/// - If the configured path ends with `/chat/completions`, replace that suffix
+///   with `/models` (preserving any prefix).
+/// - Otherwise fall back to `<origin>/v1/models`.
+///
+/// The response is mapped to a typed short reason string on failure — the
+/// upstream body and the API key are NEVER echoed back.
+///
+/// # Key resolution
+///
+/// `key_source` controls how the bearer token is selected:
+/// - `UseStored` — read from keyring for the derived endpoint origin.
+/// - `Inline(value)` — use the supplied value directly.
+/// - `None` — probe without authentication.
+#[instrument(skip(key_source, keyring))]
+#[tauri::command]
+pub async fn elmer_detect_models(
+    agent_endpoint: String,
+    key_source: KeySource,
+    keyring: State<'_, Arc<ElmerKeyring>>,
+) -> Result<Vec<String>, String> {
+    detect_inner(
+        agent_endpoint,
+        key_source,
+        &keyring,
+        |host, port| async move { detect_system_resolver(&host, port).await },
+    )
+    .await
+    .map_err(|e| e.to_reason())
 }
 
 // ---------------------------------------------------------------------------
@@ -702,4 +1067,381 @@ mod tests {
             );
         }
     }
+
+    // =======================================================================
+    // D2 tests — derive_models_url, map_models_response, detect_inner
+    // =======================================================================
+
+    mod detect {
+        use super::*;
+        // `ElmerKeyring`, `ApiKey`, `KeySource`, `DetectError`, `derive_models_url`,
+        // `map_models_response`, `detect_inner` all come through `use super::*`.
+        // `SocketAddr` is from std; `mockito` is in [dev-dependencies].
+        use std::net::SocketAddr;
+
+        // -------------------------------------------------------------------
+        // Pure helper: derive_models_url
+        // -------------------------------------------------------------------
+
+        /// derive_models_url replaces /chat/completions suffix with /models,
+        /// preserving any path prefix.
+        ///
+        /// Tests BOTH the suffix-replace branch AND the fallback branch
+        /// explicitly, as required by the brief.
+        #[test]
+        fn derive_models_url_preserves_prefix() {
+            // /api/v1/chat/completions → /api/v1/models
+            let ep = derive_models_url("https://api.openai.com/api/v1/chat/completions")
+                .expect("must derive OK");
+            assert_eq!(
+                ep.url().path(),
+                "/api/v1/models",
+                "/api/v1/chat/completions must yield /api/v1/models"
+            );
+
+            // /v1/chat/completions → /v1/models
+            let ep2 = derive_models_url("http://127.0.0.1:11434/v1/chat/completions")
+                .expect("must derive OK");
+            assert_eq!(
+                ep2.url().path(),
+                "/v1/models",
+                "/v1/chat/completions must yield /v1/models"
+            );
+        }
+
+        /// derive_models_url falls back to <origin>/v1/models when the path
+        /// does NOT end with /chat/completions.
+        #[test]
+        fn derive_models_url_no_chat_completions_fallback() {
+            // A bare custom path — must not append /models to the custom path;
+            // must use the OpenAI-standard <origin>/v1/models.
+            let ep = derive_models_url("https://api.openai.com/custom/path")
+                .expect("must derive OK");
+            assert_eq!(
+                ep.url().path(),
+                "/v1/models",
+                "non-chat-completions path must fall back to /v1/models"
+            );
+            assert_eq!(
+                ep.origin(),
+                "https://api.openai.com",
+                "origin must be preserved"
+            );
+        }
+
+        /// derive_models_url with a loopback endpoint (no /chat/completions) also
+        /// falls back to <origin>/v1/models correctly.
+        #[test]
+        fn derive_models_url_loopback_fallback() {
+            let ep = derive_models_url("http://127.0.0.1:11434/some/custom")
+                .expect("must derive OK");
+            assert_eq!(ep.url().path(), "/v1/models");
+            assert_eq!(ep.origin(), "http://127.0.0.1:11434");
+        }
+
+        /// derive_models_url rejects an invalid endpoint string.
+        #[test]
+        fn derive_models_url_rejects_invalid() {
+            let err = derive_models_url("not a url");
+            assert!(
+                matches!(err, Err(DetectError::BadUrl(_))),
+                "invalid endpoint must yield BadUrl, got: {err:?}"
+            );
+        }
+
+        // -------------------------------------------------------------------
+        // Pure helper: map_models_response
+        // -------------------------------------------------------------------
+
+        /// 200 with a valid `{data:[{id},…]}` body returns Ok(ids).
+        #[test]
+        fn map_models_response_200_ok() {
+            let body = r#"{"data":[{"id":"gpt-4o"},{"id":"gpt-4o-mini"}]}"#;
+            let result = map_models_response(200, body, "api.openai.com", None);
+            assert_eq!(
+                result.unwrap(),
+                vec!["gpt-4o", "gpt-4o-mini"],
+                "200 with valid data must parse to model IDs"
+            );
+        }
+
+        /// 200 with `data: []` returns ZeroModels.
+        #[test]
+        fn map_models_response_200_empty_data_is_zero_models() {
+            let body = r#"{"data":[]}"#;
+            let result = map_models_response(200, body, "api.openai.com", None);
+            assert!(
+                matches!(result, Err(DetectError::ZeroModels)),
+                "empty data array must yield ZeroModels, got: {result:?}"
+            );
+        }
+
+        /// 401 with a body that contains the bearer token returns Auth — NEVER
+        /// echoes the body or the key.
+        #[test]
+        fn map_models_response_401_auth_no_body_echo() {
+            let secret = "sk-super-secret";
+            let key = ApiKey::new(secret);
+            // A 401 body that echoes the key — must not appear in the error.
+            let body = format!("Unauthorized: Bearer {secret} is invalid");
+            let result = map_models_response(401, &body, "api.openai.com", Some(&key));
+
+            match result {
+                Err(DetectError::Auth { provider }) => {
+                    let reason = DetectError::Auth {
+                        provider: provider.clone(),
+                    }
+                    .to_reason();
+                    assert!(
+                        !reason.contains(secret),
+                        "reason must NOT contain the key; got: {reason:?}"
+                    );
+                    assert!(
+                        !reason.contains("Unauthorized"),
+                        "reason must NOT echo the body; got: {reason:?}"
+                    );
+                    assert!(
+                        reason.contains("check the API key"),
+                        "reason must mention 'check the API key'; got: {reason:?}"
+                    );
+                }
+                other => panic!("expected Auth, got: {other:?}"),
+            }
+        }
+
+        /// 403 maps to Auth (same as 401).
+        #[test]
+        fn map_models_response_403_auth() {
+            let result = map_models_response(403, "forbidden", "api.openai.com", None);
+            assert!(
+                matches!(result, Err(DetectError::Auth { .. })),
+                "403 must map to Auth, got: {result:?}"
+            );
+        }
+
+        /// 500 maps to Status(500).
+        #[test]
+        fn map_models_response_500_status() {
+            let result = map_models_response(500, "internal error", "api.openai.com", None);
+            assert!(
+                matches!(result, Err(DetectError::Status(500))),
+                "500 must map to Status(500), got: {result:?}"
+            );
+        }
+
+        // -------------------------------------------------------------------
+        // Key-source resolution via detect_inner
+        //
+        // mockito IS a dev-dep (verified in Cargo.toml: `mockito = "1.5"`).
+        // These tests use mockito to drive the actual HTTP path end-to-end.
+        //
+        // Note on the egress gate: build_vetted_client enforces the SSRF
+        // policy.  mockito binds to 127.0.0.1 (an IP literal), so the egress
+        // gate takes the IP-literal branch — it calls `elmer_ip_is_permitted`
+        // directly and does NOT invoke the injected resolver.  We pass a
+        // dummy never-called resolver because the generic signature requires
+        // one.  The gate permits loopback literals because is_loopback() is
+        // true on the derived 127.0.0.1 endpoint.
+        // -------------------------------------------------------------------
+
+        /// Dummy resolver — never called for IP-literal (127.x.x.x) endpoints.
+        fn no_dns_resolver(
+        ) -> impl Fn(String, u16) -> std::future::Ready<std::io::Result<Vec<SocketAddr>>> {
+            |_host: String, _port: u16| {
+                std::future::ready(Err(std::io::Error::other("no DNS in test")))
+            }
+        }
+
+        /// UseStored reads the key from the keyring and sends it as the bearer.
+        ///
+        /// The mockito server asserts the exact Authorization header value, so if
+        /// detect_inner fails to forward the stored key the mock assertion fails.
+        #[tokio::test]
+        async fn detect_use_stored_reads_keyring() {
+            let mut server = mockito::Server::new_async().await;
+            let server_url = server.url();
+            let secret = "sk-stored-key";
+
+            let _m = server
+                .mock("GET", "/v1/models")
+                .match_header("authorization", format!("Bearer {secret}").as_str())
+                .with_status(200)
+                .with_body(r#"{"data":[{"id":"gpt-4o"}]}"#)
+                .create_async()
+                .await;
+
+            let kr = ElmerKeyring::with_memory_keyring();
+            // The stored endpoint uses the mockito server URL + /v1/chat/completions.
+            // origin() is the scheme+host+port part that becomes the keyring key.
+            let endpoint_str = format!("{server_url}/v1/chat/completions");
+            let ep = AgentEndpoint::parse(&endpoint_str).expect("must parse");
+            let origin = ep.origin();
+            kr.set(&origin, &ApiKey::new(secret)).expect("pre-store");
+
+            let result = detect_inner(
+                endpoint_str,
+                KeySource::UseStored,
+                &kr,
+                no_dns_resolver(),
+            )
+            .await;
+
+            _m.assert_async().await;
+            assert_eq!(result.unwrap(), vec!["gpt-4o"]);
+        }
+
+        /// Inline key does not touch the keyring (empty keyring, key provided inline).
+        #[tokio::test]
+        async fn detect_inline_does_not_touch_keyring() {
+            let mut server = mockito::Server::new_async().await;
+            let server_url = server.url();
+            let secret = "sk-inline-key";
+
+            let _m = server
+                .mock("GET", "/v1/models")
+                .match_header("authorization", format!("Bearer {secret}").as_str())
+                .with_status(200)
+                .with_body(r#"{"data":[{"id":"text-ada-001"}]}"#)
+                .create_async()
+                .await;
+
+            // Empty keyring — UseStored would find nothing and probe unauthenticated.
+            let kr = ElmerKeyring::with_memory_keyring();
+            let endpoint_str = format!("{server_url}/v1/chat/completions");
+
+            let result = detect_inner(
+                endpoint_str,
+                KeySource::Inline { value: secret.into() },
+                &kr,
+                no_dns_resolver(),
+            )
+            .await;
+
+            _m.assert_async().await;
+            assert_eq!(result.unwrap(), vec!["text-ada-001"]);
+        }
+
+        /// 401 from the server maps to Auth — the fixed reason is returned, not
+        /// the body, and the reason does NOT contain the sent key.
+        #[tokio::test]
+        async fn detect_maps_401_to_auth_no_body_echo() {
+            let mut server = mockito::Server::new_async().await;
+            let server_url = server.url();
+            let secret = "sk-rejected-key";
+
+            // The server echoes the bearer in the 401 body (adversarial).
+            let body = format!("Bearer {secret} is invalid");
+            let _m = server
+                .mock("GET", "/v1/models")
+                .with_status(401)
+                .with_body(&body)
+                .create_async()
+                .await;
+
+            let kr = ElmerKeyring::with_memory_keyring();
+            let endpoint_str = format!("{server_url}/v1/chat/completions");
+
+            let result = detect_inner(
+                endpoint_str,
+                KeySource::Inline { value: secret.into() },
+                &kr,
+                no_dns_resolver(),
+            )
+            .await;
+
+            _m.assert_async().await;
+            match result {
+                Err(DetectError::Auth { provider }) => {
+                    let reason = DetectError::Auth { provider }.to_reason();
+                    // The FIXED reason is used; body must not appear.
+                    assert!(
+                        reason.contains("check the API key"),
+                        "reason must say 'check the API key'; got: {reason:?}"
+                    );
+                    // Key must not appear in the reason either.
+                    assert!(
+                        !reason.contains(secret),
+                        "reason must NOT contain the key; got: {reason:?}"
+                    );
+                }
+                other => panic!("expected Auth, got: {other:?}"),
+            }
+        }
+
+        /// A connection-refused (dead loopback port) maps to NoServer.
+        ///
+        /// Port 1 is traditionally reserved; nothing listens on it on a Pi.
+        /// Since the endpoint is an IP literal (127.0.0.1:1), the egress gate
+        /// takes the IP-literal branch (no DNS, no resolver call) and the client
+        /// attempts to connect directly to port 1 — which is refused.
+        #[tokio::test]
+        async fn detect_maps_connection_refused_to_no_server() {
+            let kr = ElmerKeyring::with_memory_keyring();
+            // Endpoint on port 1 — connection will be refused (nothing listens).
+            let result = detect_inner(
+                "http://127.0.0.1:1/v1/chat/completions".into(),
+                KeySource::None,
+                &kr,
+                // Resolver is never called for an IP-literal endpoint; supply a
+                // dummy that would always fail if it were called.
+                |_host: String, _port: u16| async move {
+                    Err(std::io::Error::other("should not be called"))
+                },
+            )
+            .await;
+
+            assert!(
+                matches!(result, Err(DetectError::NoServer { .. })),
+                "connection refused must map to NoServer, got: {result:?}"
+            );
+        }
+
+        /// 200 with valid data parses model IDs correctly.
+        #[tokio::test]
+        async fn detect_parses_model_ids() {
+            let mut server = mockito::Server::new_async().await;
+            let server_url = server.url();
+
+            let _m = server
+                .mock("GET", "/v1/models")
+                .with_status(200)
+                .with_body(r#"{"data":[{"id":"gpt-4o"},{"id":"gpt-4o-mini"}]}"#)
+                .create_async()
+                .await;
+
+            let kr = ElmerKeyring::with_memory_keyring();
+            let endpoint_str = format!("{server_url}/v1/chat/completions");
+
+            let result = detect_inner(endpoint_str, KeySource::None, &kr, no_dns_resolver()).await;
+
+            _m.assert_async().await;
+            assert_eq!(result.unwrap(), vec!["gpt-4o", "gpt-4o-mini"]);
+        }
+
+        /// 200 with `data: []` maps to ZeroModels.
+        #[tokio::test]
+        async fn detect_empty_data_is_zero_models() {
+            let mut server = mockito::Server::new_async().await;
+            let server_url = server.url();
+
+            let _m = server
+                .mock("GET", "/v1/models")
+                .with_status(200)
+                .with_body(r#"{"data":[]}"#)
+                .create_async()
+                .await;
+
+            let kr = ElmerKeyring::with_memory_keyring();
+            let endpoint_str = format!("{server_url}/v1/chat/completions");
+
+            let result = detect_inner(endpoint_str, KeySource::None, &kr, no_dns_resolver()).await;
+
+            _m.assert_async().await;
+            let reason = result.unwrap_err().to_reason();
+            assert!(
+                reason.contains("no models") || reason.contains("empty model list"),
+                "ZeroModels reason must mention empty list; got: {reason:?}"
+            );
+        }
+    } // mod detect
 }
