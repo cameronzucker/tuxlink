@@ -206,4 +206,34 @@ describe('ModelTilePicker', () => {
       }),
     );
   });
+
+  it('switching cloud tiles remounts GetKeyCard so an unsaved key typed for the first tile does not carry over to the second tile (T11 fix)', () => {
+    // Regression guard for the React component-reuse defect: without key={selectedPreset.id}
+    // on GetKeyCard, React reconciles the same instance across tile switches, preserving
+    // rawKey state from the previous tile. The operator could then save the stale key value
+    // to the new provider's origin without noticing.
+    //
+    // With key={selectedPreset.id}, switching tiles forces a full remount of GetKeyCard,
+    // resetting rawKey to '' and the reveal toggle + validation error to their initial states.
+    //
+    // This test must FAIL without the key prop and PASS with it.
+    render(<ModelTilePicker {...baseProps()} />);
+
+    // Select the Gemini tile — it has a keyPageUrl so GetKeyCard renders.
+    fireEvent.click(screen.getByTestId('elmer-tile-gemini'));
+    expect(screen.getByTestId('get-key-card')).toBeTruthy();
+
+    // Type a key into the Gemini GetKeyCard input — do NOT save it.
+    const geminiKeyInput = screen.getByTestId('get-key-input') as HTMLInputElement;
+    fireEvent.change(geminiKeyInput, { target: { value: 'AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ12' } });
+    expect(geminiKeyInput.value).toBe('AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ12');
+
+    // Now switch to the Groq tile — also a cloud tile with a keyPageUrl.
+    fireEvent.click(screen.getByTestId('elmer-tile-groq'));
+    expect(screen.getByTestId('get-key-card')).toBeTruthy();
+
+    // The key input must be EMPTY — the stale Gemini key must not carry over.
+    const groqKeyInput = screen.getByTestId('get-key-input') as HTMLInputElement;
+    expect(groqKeyInput.value).toBe('');
+  });
 });

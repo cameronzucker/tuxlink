@@ -233,6 +233,7 @@ export function ModelTilePicker({
         ) : selectedPreset?.keyPageUrl ? (
           <>
             <GetKeyCard
+              key={selectedPreset.id}
               preset={selectedPreset}
               onSave={onSave}
               agentModel={model}
