@@ -139,6 +139,16 @@ pub fn elmer_ip_is_permitted(addr: IpAddr, allow_loopback: bool) -> bool {
     match canonical {
         IpAddr::V4(v4) => {
             let octets = v4.octets();
+            // Deny 0.0.0.0/8 "this network" — these are never legitimate model
+            // endpoints. `is_unspecified()` above already catches 0.0.0.0 exactly,
+            // but 0.0.0.1 through 0.255.255.255 would otherwise fall through to
+            // the permit. The tiles SSRF gate denies this entire /8; match it.
+            // The `to_canonical()` call at the top of this function collapses
+            // `::ffff:0.0.0.1` to V4 before we arrive here, so mapped forms
+            // are caught by this same check.
+            if octets[0] == 0 {
+                return false;
+            }
             // Deny IPv4 link-local 169.254.0.0/16 — the cloud-metadata range
             // (169.254.169.254 is the canonical SSRF target).
             if octets[0] == 169 && octets[1] == 254 {
@@ -319,6 +329,37 @@ mod tests {
                 "{s} should be denied (SSRF-magnet range)"
             );
         }
+    }
+
+    /// 0.0.0.0/8 "this network" addresses are never legitimate model endpoints.
+    /// `is_unspecified()` covers only the exact address 0.0.0.0; addresses like
+    /// 0.0.0.1 and 0.255.255.255 in the same /8 must also be denied. The
+    /// `to_canonical()` call ensures `::ffff:0.0.0.1` (IPv4-mapped) collapses
+    /// to V4 and is caught by the same octets[0] == 0 check.
+    #[test]
+    fn refuses_zero_network() {
+        // Non-zero host in 0.0.0.0/8 — was previously permitted (SSRF gap).
+        assert!(
+            !elmer_ip_is_permitted(ip("0.0.0.1"), false),
+            "0.0.0.1 is in 0.0.0.0/8 and must be denied"
+        );
+        // Top of the /8.
+        assert!(
+            !elmer_ip_is_permitted(ip("0.255.255.255"), false),
+            "0.255.255.255 is in 0.0.0.0/8 and must be denied"
+        );
+        // IPv4-mapped form: `to_canonical()` collapses this to V4 before the
+        // octets check, so the /8 deny must also catch the mapped variant.
+        assert!(
+            !elmer_ip_is_permitted(ip("::ffff:0.0.0.1"), false),
+            "::ffff:0.0.0.1 must canonicalize to 0.0.0.1 (V4) and be denied"
+        );
+        // Confirm `0.0.0.0` itself remains denied (covered by is_unspecified,
+        // but explicit here for completeness alongside the /8 tests).
+        assert!(
+            !elmer_ip_is_permitted(ip("0.0.0.0"), false),
+            "0.0.0.0 (unspecified) must remain denied"
+        );
     }
 
     #[test]

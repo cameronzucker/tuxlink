@@ -98,6 +98,18 @@ pub(crate) fn scrub_key(snippet: String, key: Option<&ApiKey>) -> String {
     }
 }
 
+/// Scrub the key out of `text`, THEN cap to `max` chars. Order matters: capping
+/// before scrubbing would let a key straddling the boundary leak a prefix.
+///
+/// This is the correct order for the non-2xx error-body path in
+/// [`OpenAiProvider::turn`]: scrub the full body first so a key that straddles
+/// the `max`-char boundary cannot leave a partial bearer-token prefix in the
+/// resulting snippet. Exposed as `pub(crate)` so it is unit-testable from the
+/// same `#[cfg(test)]` module.
+pub(crate) fn redact_and_cap(text: String, key: Option<&ApiKey>, max: usize) -> String {
+    scrub_key(text, key).chars().take(max).collect()
+}
+
 // ---------------------------------------------------------------------------
 // OpenAiProvider
 // ---------------------------------------------------------------------------
@@ -154,11 +166,11 @@ impl Provider for OpenAiProvider {
         if !status.is_success() {
             // Capture a bounded slice of the error body for the operator, but do
             // not let a huge body blow up the message.  Value-scrub the bearer
-            // key before the snippet becomes the error string — a 401 body can
-            // echo the token back, and we must not propagate it into the log.
+            // key BEFORE capping — capping first would let a key that straddles
+            // the boundary leave a partial prefix in the snippet.
+            // `redact_and_cap` enforces scrub-then-cap in the correct order.
             let text = resp.text().await.unwrap_or_default();
-            let raw: String = text.chars().take(500).collect();
-            let snippet = scrub_key(raw, self.api_key.as_ref());
+            let snippet = redact_and_cap(text, self.api_key.as_ref(), 500);
             return Err(ProviderError::Transport(format!(
                 "model endpoint returned HTTP {status}: {snippet}"
             )));
@@ -445,6 +457,79 @@ mod tests {
         assert!(
             scrubbed.contains("<redacted>"),
             "ProviderError::Transport must contain '<redacted>'; got: {scrubbed:?}"
+        );
+    }
+
+    // --- redact_and_cap: scrub-before-cap order-dependency tests -------------
+
+    /// THE BOUNDARY-STRADDLE REGRESSION GUARD.
+    ///
+    /// If the key starts at character 490 in a 510-char body and we cap first
+    /// (at 500 chars), the snippet contains a 10-char PREFIX of the key, which
+    /// `scrub_key` cannot match (it's looking for the full key). `redact_and_cap`
+    /// scrubs the FULL body first, so even a key that straddles the boundary is
+    /// fully replaced before any truncation happens.
+    #[test]
+    fn redact_and_cap_scrubs_before_capping() {
+        let key = ApiKey::new("sk-boundary-key-secret");
+        // Place the key at position 490 in a > 500-char string.
+        // After a take(500) the raw snippet would contain only the first 10 chars
+        // of the 22-char key, which scrub_key cannot match — this is the bug.
+        let padding: String = "A".repeat(490);
+        let text = format!("{}{}", padding, key.expose());
+        assert!(
+            text.len() > 500,
+            "test precondition: text ({} chars) must exceed 500-char cap",
+            text.len()
+        );
+
+        let result = redact_and_cap(text, Some(&key), 500);
+
+        // The key prefix (first 8 chars) must NOT appear in the result.
+        let key_prefix = &key.expose()[..8];
+        assert!(
+            !result.contains(key_prefix),
+            "redact_and_cap must not leak a key prefix straddling the cap boundary; \
+             got result: {result:?} (prefix checked: {key_prefix:?})"
+        );
+        // The full key must not appear either.
+        assert!(
+            !result.contains(key.expose()),
+            "redact_and_cap must not leak the full key; got: {result:?}"
+        );
+        // The scrub placeholder must be present.
+        assert!(
+            result.contains("<redacted>"),
+            "redact_and_cap must insert '<redacted>' where the key was; got: {result:?}"
+        );
+    }
+
+    /// Verify the cap is honoured: a long key-free string is truncated to ≤ max.
+    #[test]
+    fn redact_and_cap_caps_length() {
+        let long_text: String = "X".repeat(2000);
+        let result = redact_and_cap(long_text, None, 500);
+        assert!(
+            result.len() <= 500,
+            "redact_and_cap must cap the result to ≤ 500 chars; got {} chars",
+            result.len()
+        );
+    }
+
+    /// When key is None, the result must be capped but content otherwise unchanged.
+    #[test]
+    fn redact_and_cap_none_key_passthrough_capped() {
+        let text: String = "B".repeat(1000);
+        let result = redact_and_cap(text, None, 500);
+        assert!(
+            result.len() <= 500,
+            "result must be capped; got {} chars",
+            result.len()
+        );
+        // Content must be entirely 'B' — no spurious <redacted> tokens.
+        assert!(
+            result.chars().all(|c| c == 'B'),
+            "no content mutation expected when key is None; got: {result:?}"
         );
     }
 
