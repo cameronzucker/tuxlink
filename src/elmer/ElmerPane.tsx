@@ -516,14 +516,20 @@ function ModelForm({
     if (clearPending) {
       return { action: 'clear' };
     }
-    if (keyStatus === 'present') {
+    // Use effectiveKeyStatus (origin-aware), NOT the stale mount-only keyStatus.
+    // On an inter-provider switch the form renders the 'absent' key input off
+    // effectiveKeyStatus, so the operator types their new key into
+    // `absentKeyValue`. Reading raw keyStatus here would take the 'present'
+    // branch, IGNORE that value, and send `keep` — leaving the new provider with
+    // NO key → 401 on the next message (the reported inter-provider bug).
+    if (effectiveKeyStatus === 'present') {
       if (replaceMode && newKeyValue) {
         return { action: 'set', value: newKeyValue };
       }
       // Replace mode with empty value → keep.
       return { action: 'keep' };
     }
-    if (keyStatus === 'absent') {
+    if (effectiveKeyStatus === 'absent') {
       if (absentKeyValue) {
         return { action: 'set', value: absentKeyValue };
       }
@@ -531,7 +537,7 @@ function ModelForm({
     }
     // unreadable / other → keep.
     return { action: 'keep' };
-  }, [clearPending, keyStatus, replaceMode, newKeyValue, absentKeyValue]);
+  }, [clearPending, effectiveKeyStatus, replaceMode, newKeyValue, absentKeyValue]);
 
   // Build KeySource for detect call.
   //
@@ -572,14 +578,30 @@ function ModelForm({
     return { source: 'none' };
   }, [endpointIsLoopback, endpoint, keyAffordanceOrigin, keyStatus, replaceMode, newKeyValue, absentKeyValue, clearPending]);
 
+  // Save status — surfaces the result of `elmer_config_set` instead of the
+  // previous `void handleSave()` swallow. A rejecting config_set (e.g. an empty
+  // key, an unparseable endpoint, a keyring/config-write failure) used to fail
+  // SILENTLY: the form kept showing the new selection while the backend never
+  // changed, so the next message ran the old model with no error. Now the
+  // operator sees why a save failed, and gets a confirmation when it succeeds.
+  const [saveState, setSaveState] = useState<{ kind: 'idle' } | { kind: 'ok'; model: string } | { kind: 'error'; message: string }>(
+    { kind: 'idle' },
+  );
+
   const handleSave = useCallback(async () => {
     const timeout = Number.isFinite(turnTimeoutSecs) ? Math.round(turnTimeoutSecs) : 900;
-    await onSave({
-      agentEndpoint: endpoint,
-      agentModel: model,
-      key: buildSetKey(),
-      agentTurnTimeoutSecs: timeout,
-    });
+    setSaveState({ kind: 'idle' });
+    try {
+      await onSave({
+        agentEndpoint: endpoint,
+        agentModel: model,
+        key: buildSetKey(),
+        agentTurnTimeoutSecs: timeout,
+      });
+      setSaveState({ kind: 'ok', model });
+    } catch (e) {
+      setSaveState({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
+    }
   }, [onSave, endpoint, model, buildSetKey, turnTimeoutSecs]);
 
   const handleDetect = useCallback(async () => {
@@ -802,6 +824,16 @@ function ModelForm({
         </button>
         <span className="elmer-save-hint">Applies to your next message — no restart.</span>
       </div>
+      {saveState.kind === 'error' && (
+        <div className="elmer-save-error" data-testid="elmer-save-error" role="alert">
+          Couldn’t save: {saveState.message}
+        </div>
+      )}
+      {saveState.kind === 'ok' && (
+        <div className="elmer-save-ok" data-testid="elmer-save-ok" role="status">
+          Saved — Elmer will use <strong>{saveState.model}</strong> on your next message.
+        </div>
+      )}
     </div>
   );
 }

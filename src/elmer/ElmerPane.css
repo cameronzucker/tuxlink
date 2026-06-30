@@ -830,3 +830,16 @@
   align-self: center;
   font-size: 11px;
 }
+
+/* Save result feedback (model-config) — replaces the prior silent void-swallow:
+   a rejecting elmer_config_set now shows why; a success confirms the active model. */
+.elmer-save-error {
+  margin-top: 6px;
+  font-size: 0.85em;
+  color: var(--danger, #ff6b6b);
+}
+.elmer-save-ok {
+  margin-top: 6px;
+  font-size: 0.85em;
+  color: var(--text-2, var(--text-muted));
+}
