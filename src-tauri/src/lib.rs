@@ -2142,6 +2142,10 @@ pub fn run() {
             crate::elmer::commands::outbox_staged_list,
             crate::elmer::commands::elmer_prepare_outbox_approval,
             crate::elmer::commands::elmer_connect,
+            // R2.4: Tauri-only UI commands, never MCP tools (a model-reachable config-mutation tool = exfil sink); see elmer/injection_tests.rs (F1) for the boundary regression test.
+            crate::elmer::config_commands::elmer_config_read,
+            crate::elmer::config_commands::elmer_config_set,
+            crate::elmer::config_commands::elmer_detect_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
