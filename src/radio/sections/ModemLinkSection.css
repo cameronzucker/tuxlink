@@ -18,13 +18,13 @@
 .radio-panel-segmented button {
   min-width: 0;
   padding: 4px 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   text-align: center;
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.10);
   font-family: ui-monospace, monospace;
-  font-size: 11px;
+  font-size: var(--type-meta);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
@@ -48,11 +48,11 @@
   flex: 0 0 auto;
   margin-left: 4px;
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.10);
-  font-size: 12px;
+  font-size: var(--type-control);
   line-height: 1.4;
   cursor: pointer;
 }
@@ -64,7 +64,7 @@
 .modem-link-help {
   margin: -2px 0 8px 80px;
   color: var(--text-faint, #94a3b8);
-  font-size: 12px;
+  font-size: var(--type-control);
   line-height: 1.35;
 }
 

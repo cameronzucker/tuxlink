@@ -19,7 +19,7 @@
   background: var(--surface, #0f1218);
   border-left: 1px solid var(--border, #2a3140);
   color: var(--text, #cbd5e1);
-  font-size: 13px;
+  font-size: var(--type-body);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -69,12 +69,12 @@
      family by default) instead of the general accent (orange family) —
      keeps the radio dock identifiable across themes. */
   color: var(--modem-accent, #4ade80);
-  font-size: 14px;
+  font-size: var(--type-body);
   letter-spacing: 0.02em;
 }
 
 .radio-panel-sub {
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--text-faint, #94a3b8);
   margin-left: auto;
   font-family: ui-monospace, monospace;
@@ -85,8 +85,8 @@
   border: 1px solid var(--border);
   color: var(--text-dim, #94a3b8);
   padding: 4px 9px;
-  border-radius: 3px;
-  font-size: 13px;
+  border-radius: var(--radius-control);
+  font-size: var(--type-body);
   cursor: pointer;
   line-height: 1;
 }
@@ -131,11 +131,11 @@
   justify-content: center;
   min-height: 32px;
   padding: 5px 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--modem-accent-soft);
   color: var(--modem-accent);
   border: 1px solid color-mix(in srgb, var(--modem-accent) 35%, transparent);
-  font-size: 12px;
+  font-size: var(--type-control);
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
@@ -169,7 +169,7 @@
 }
 .radio-panel-sec h5 {
   margin: 0 0 8px;
-  font-size: 11px;
+  font-size: var(--type-meta);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-faint, #94a3b8);
@@ -180,7 +180,7 @@
 }
 .radio-panel-sec h5 .live {
   margin-left: auto;
-  font-size: 10px;
+  font-size: var(--type-micro);
   color: var(--success, #4ade80);
   letter-spacing: 0;
   text-transform: none;
@@ -195,20 +195,20 @@
   gap: 8px;
   align-items: center;
   margin-bottom: 6px;
-  font-size: 13px;
+  font-size: var(--type-body);
 }
 .radio-panel-readonly {
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 5px 8px;
-  font-size: 13px;
+  font-size: var(--type-body);
   color: var(--text, #cbd5e1);
   font-family: ui-monospace, monospace;
 }
 .radio-panel-mono {
   font-family: ui-monospace, monospace;
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--text-faint, #94a3b8);
   line-height: 1.5;
 }
@@ -229,7 +229,7 @@
   gap: 8px;
   align-items: center;
   margin-bottom: 6px;
-  font-size: 13px;
+  font-size: var(--type-body);
   min-width: 0;
 }
 .radio-panel-input-row > span {
@@ -238,9 +238,9 @@
 .radio-panel-input {
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 5px 8px;
-  font-size: 13px;
+  font-size: var(--type-body);
   color: var(--text, #cbd5e1);
   font-family: ui-monospace, monospace;
   width: 100%;
@@ -297,8 +297,8 @@ select.radio-panel-input option {
   border: 1px solid var(--border);
   color: var(--text-dim, #94a3b8);
   padding: 3px 8px;
-  font-size: 12px;
-  border-radius: 12px;
+  font-size: var(--type-control);
+  border-radius: var(--radius-pill);
   cursor: pointer;
   font-family: ui-monospace, monospace;
 }
@@ -327,12 +327,12 @@ select.radio-panel-input option {
   gap: 2px;
 }
 .radio-panel-radio-label {
-  font-size: 13px;
+  font-size: var(--type-body);
   color: var(--text, #cbd5e1);
   font-weight: 500;
 }
 .radio-panel-radio-help {
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-faint, #94a3b8);
   line-height: 1.4;
 }
@@ -344,13 +344,12 @@ select.radio-panel-input option {
 }
 .radio-panel-btn {
   padding: 8px 14px;
-  border-radius: 3px;
-  font-size: 13px;
+  border-radius: var(--radius-control);
+  font-size: var(--type-body);
   font-weight: 500;
   text-align: center;
   cursor: pointer;
   border: 1px solid;
-  flex: 1;
 }
 /* Small secondary/ghost button (compact actions: detect device, browse, manage).
    Used STANDALONE (not with .radio-panel-btn), and was previously defined NOWHERE
@@ -359,8 +358,8 @@ select.radio-panel-input option {
    Now carries the dark-UI ghost style with an accent hover, matching the family. */
 .radio-panel-btn-sm {
   padding: 4px 10px;
-  border-radius: 3px;
-  font-size: 12px;
+  border-radius: var(--radius-control);
+  font-size: var(--type-control);
   font-weight: 500;
   cursor: pointer;
   background: transparent;

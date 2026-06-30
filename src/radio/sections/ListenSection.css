@@ -17,7 +17,7 @@
 .expander {
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-panel);
   overflow: hidden;
 }
 
@@ -31,7 +31,7 @@
   padding: 8px 10px;
   background: var(--surface-2);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--type-control);
   user-select: none;
   color: var(--text, #cbd5e1);
   list-style: none;
@@ -41,7 +41,7 @@
 }
 .expander-summary::before {
   content: '▶';
-  font-size: 9px;
+  font-size: var(--type-micro);
   color: var(--text-faint, #5d6975);
   transition: transform 0.15s;
 }
@@ -65,7 +65,7 @@
 .expander-count {
   margin-left: auto;
   color: var(--text-faint, #5d6975);
-  font-size: 11px;
+  font-size: var(--type-meta);
   font-family: var(--mono, monospace);
 }
 
@@ -77,8 +77,8 @@
   align-items: center;
   gap: 6px;
   padding: 3px 8px;
-  border-radius: 12px;
-  font-size: 11px;
+  border-radius: var(--radius-pill);
+  font-size: var(--type-meta);
   font-family: var(--mono, monospace);
   border: 1px solid;
 }
@@ -101,8 +101,8 @@
   display: inline-flex;
   align-items: center;
   padding: 3px 8px;
-  border-radius: 12px;
-  font-size: 11px;
+  border-radius: var(--radius-pill);
+  font-size: var(--type-meta);
   font-family: var(--mono, monospace);
   background: var(--surface-2, #131a22);
   color: var(--text, #cbd5e1);
@@ -115,7 +115,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--text-dim, #94a0ad);
 }
 
@@ -128,7 +128,7 @@
   cursor: pointer;
   margin-left: 4px;
   padding: 0 2px;
-  font-size: 12px;
+  font-size: var(--type-control);
 }
 .radio-panel-chip-x:hover {
   color: var(--error, #ee6b6b);
@@ -143,7 +143,7 @@
    places. Re-use the existing radio-panel-radio-help styling without
    forcing the operator-confusing "radio-" prefix. */
 .radio-panel-help {
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-faint, #94a3b8);
   line-height: 1.4;
   margin: 0;
@@ -179,7 +179,7 @@
 }
 .po-mesh-dot {
   flex: none;
-  font-size: 11px;
+  font-size: var(--type-meta);
   line-height: 1;
 }
 .po-mesh-dot-up {
@@ -198,12 +198,12 @@
 .po-mesh-endpoint {
   flex: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--fg-dim, #9aa7b4);
 }
 .po-mesh-rtt {
   flex: none;
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--fg-faint, #6b7782);
   min-width: 36px;
   text-align: right;

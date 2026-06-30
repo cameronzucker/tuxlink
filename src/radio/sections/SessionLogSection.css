@@ -32,11 +32,11 @@
 
 .session-log-section .log-scroll {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--type-control);
   line-height: 1.55;
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 8px 10px;
   flex: 1;
   min-height: 0;
@@ -58,7 +58,7 @@
 
 .session-log-section .log-ts {
   color: var(--text-faint, #64748b);
-  font-size: 11px;
+  font-size: var(--type-meta);
   padding-top: 1px;
   white-space: nowrap;
 }
@@ -100,7 +100,7 @@
   display: flex;
   gap: 10px;
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--type-control);
   align-items: center;
 }
 .session-log-section .log-controls label {
@@ -120,7 +120,7 @@
   cursor: pointer;
   margin-left: auto;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--type-control);
 }
 .session-log-section .log-copy:hover {
   text-decoration: underline;
@@ -133,7 +133,7 @@
   color: var(--text-dim, #94a3b8);
   cursor: pointer;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--type-control);
 }
 .session-log-section .log-clear:hover {
   color: var(--error, #f87171);

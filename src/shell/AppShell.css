@@ -326,12 +326,12 @@
 }
 .layout-b .dashboard .connect-button {
   font: inherit;
-  font-size: 12px;
+  font-size: var(--type-control);
   font-weight: 600;
   color: var(--bg);
   background: var(--accent);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   padding: 6px 16px;
   cursor: pointer;
 }
@@ -346,12 +346,12 @@
    the disabled "Connecting…" button while a connect is in flight. */
 .layout-b .dashboard .abort-button {
   font: inherit;
-  font-size: 12px;
+  font-size: var(--type-control);
   font-weight: 600;
   color: var(--error, #e5534b);
   background: transparent;
   border: 1px solid var(--error, #e5534b);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   padding: 5px 14px;
   cursor: pointer;
 }
@@ -376,7 +376,7 @@
   align-items: center;
   white-space: nowrap;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--type-control);
   cursor: pointer;
   background: transparent;
   border: none;
@@ -402,18 +402,18 @@
   flex: 0 0 auto;
   white-space: nowrap;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--type-control);
   cursor: pointer;
   height: 24px;
   padding: 0 10px;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--border-strong, var(--border));
   background: var(--surface-2, transparent);
   color: var(--text, #cbd5e1);
 }
 .layout-b .dashboard .dash-elmer-agent .dash-elmer-agent-spark {
   color: var(--accent, var(--accent-teal));
-  font-size: 13px;
+  font-size: var(--type-body);
   line-height: 1;
 }
 .layout-b .dashboard .dash-elmer-agent .dash-elmer-agent-label {
@@ -421,7 +421,7 @@
 }
 .layout-b .dashboard .dash-elmer-agent .dash-elmer-agent-cd {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-dim, var(--text-faint));
   font-variant-numeric: tabular-nums;
 }
@@ -465,9 +465,9 @@
   margin-left: 6px;
   background: var(--modem-accent, #4ade80);
   color: var(--bg, #0d1318);
-  font-size: 10px;
+  font-size: var(--type-micro);
   font-weight: 700;
-  border-radius: 9px;
+  border-radius: var(--radius-pill);
   padding: 0 5px;
 }
 /* Egress ARM surface (MCP phase 3.6) — the operator arms/disarms agent
@@ -482,9 +482,9 @@
   padding: 0 10px;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--type-control);
   cursor: pointer;
 }
 .layout-b .dashboard .dash-egress-chip:hover,
@@ -496,7 +496,7 @@
 }
 .layout-b .dashboard .dash-egress-caret {
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: var(--type-micro);
 }
 .layout-b .dashboard .dash-egress-state {
   font-family: var(--mono);
@@ -517,21 +517,21 @@
   min-width: 240px;
   background: var(--bg);
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
   padding: 13px 14px 14px;
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--text);
 }
 .egress-arm-popover .egress-pop-title {
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.6px;
   margin-bottom: 10px;
 }
 .egress-arm-popover .egress-arm-label {
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-dim);
   margin-bottom: 7px;
 }
@@ -542,10 +542,10 @@
 .egress-arm-popover .egress-arm-button {
   flex: 1;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--type-control);
   padding: 7px 0;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
@@ -556,11 +556,11 @@
 }
 .egress-arm-popover .egress-disarm-button {
   width: 100%;
-  font-size: 12px;
+  font-size: var(--type-control);
   font-weight: 600;
   padding: 8px 0;
   border: 1px solid var(--error);
-  border-radius: 6px;
+  border-radius: var(--radius-panel);
   background: transparent;
   color: var(--error);
   cursor: pointer;
@@ -571,20 +571,20 @@
   cursor: default;
 }
 .egress-arm-popover .egress-pop-help {
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-faint);
   line-height: 1.45;
   margin-top: 10px;
 }
 .egress-arm-popover .dash-egress-locked {
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--error);
   line-height: 1.4;
 }
 .egress-arm-popover .dash-egress-error {
   margin-top: 10px;
   color: var(--error);
-  font-size: 11px;
+  font-size: var(--type-meta);
 }
 
 /* "On connect" segmented control — Review | Download all (tuxlink-pmp5). Inline
@@ -593,12 +593,12 @@
 .layout-b .dashboard .seg {
   display: inline-flex;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   overflow: hidden;
 }
 .layout-b .dashboard .seg button {
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--type-meta);
   font-weight: 600;
   padding: 4px 10px;
   /* Keep each segment on one line — "Download all" must not wrap into a tall,
@@ -808,7 +808,7 @@
    field. Link-styled like .dash-set-manually for ribbon consistency. */
 .layout-b .dashboard .dash-grid-pick-map {
   font-family: var(--sans);
-  font-size: 10px;
+  font-size: var(--type-micro);
   color: var(--accent);
   background: none;
   border: none;
@@ -824,7 +824,7 @@
 .layout-b .dashboard .dash-grid-pick-map:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 
 @keyframes tux-pulse {

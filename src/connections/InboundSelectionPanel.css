@@ -14,7 +14,7 @@
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
   width: min(560px, 92vw);
   max-height: 82vh;
   display: flex;
@@ -29,10 +29,10 @@
 }
 .inbound-selection__header h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--type-heading);
 }
 .inbound-selection__countdown {
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
@@ -55,14 +55,14 @@
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--type-control);
   cursor: pointer;
 }
 .inbound-selection__count {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--text-dim);
 }
 .inbound-selection__list {
@@ -79,7 +79,7 @@
   align-items: center;
   padding: 6px 16px;
   border-bottom: 1px solid var(--border);
-  font-size: 13px;
+  font-size: var(--type-body);
 }
 .inbound-selection__row label {
   display: flex;
@@ -114,7 +114,7 @@
   grid-template-columns: auto minmax(4em, 9em) minmax(0, 1fr) auto auto auto;
   gap: 10px;
   padding: 4px 16px;
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-dim);
   border-bottom: 1px solid var(--border);
 }
@@ -139,14 +139,14 @@
 }
 .inbound-selection__disposition legend {
   padding: 0;
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--text-dim);
 }
 .inbound-selection__disposition label {
   display: flex;
   gap: 4px;
   align-items: center;
-  font-size: 13px;
+  font-size: var(--type-body);
   cursor: pointer;
 }
 .inbound-selection__go {
@@ -154,7 +154,7 @@
   background: var(--accent);
   color: #fff;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-panel);
   padding: 8px 12px;
   cursor: pointer;
 }

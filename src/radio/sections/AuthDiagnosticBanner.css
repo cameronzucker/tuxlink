@@ -21,7 +21,7 @@
   background: color-mix(in srgb, var(--error) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--error) 28%, transparent);
   border-left: 3px solid var(--error);
-  border-radius: 6px;
+  border-radius: var(--radius-panel);
   padding: 10px 12px;
   box-sizing: border-box;
   min-width: 0;
@@ -100,7 +100,7 @@
 
 /* Title text */
 .diag-title {
-  font-size: 13px;
+  font-size: var(--type-body);
   font-weight: 600;
   flex: 1;
   line-height: 1.35;
@@ -137,7 +137,7 @@
 
 /* Body paragraph text */
 .diag-body {
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--text-dim, #94a3b8);
   margin: 4px 0 8px;
   line-height: 1.45;
@@ -154,8 +154,8 @@
 /* Button base styles */
 .diag-btn {
   padding: 4px 9px;
-  border-radius: 3px;
-  font-size: 11px;
+  border-radius: var(--radius-control);
+  font-size: var(--type-meta);
   font-weight: 500;
   font-family: var(--sans);
   cursor: pointer;
@@ -224,7 +224,7 @@
 
 /* Toggle control for expanding/collapsing raw content */
 .diag-raw-toggle {
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-faint);
   cursor: pointer;
   user-select: none;
@@ -250,11 +250,11 @@
 /* Expanded raw content box (wire response or structured events) */
 .diag-raw-content {
   font-family: ui-monospace, monospace;
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-dim, #94a3b8);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 6px 8px;
   margin-top: 4px;
   word-break: break-all;
@@ -273,7 +273,7 @@
   gap: 6px;
   padding: 8px;
   background: var(--surface-2);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   box-sizing: border-box;
 }
 
@@ -287,9 +287,9 @@
   border: 1px solid var(--border-strong);
   color: var(--text);
   padding: 5px 8px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   font-family: ui-monospace, monospace;
-  font-size: 12px;
+  font-size: var(--type-control);
   flex: 1;
   min-width: 0;
   box-sizing: border-box;
@@ -307,7 +307,7 @@
 
 /* Helpful hint text inside form sections */
 .diag-help {
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-faint);
   margin: 0;
   line-height: 1.4;
@@ -319,13 +319,13 @@
   grid-template-columns: 72px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--type-control);
   min-width: 0;
 }
 
 .diag-form .row-input > span {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--type-control);
   flex-shrink: 0;
 }
 
