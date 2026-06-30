@@ -23,8 +23,8 @@
 //! 1. `op_lock.try_lock()` — takes `op_lock` (or rejects non-blocking).
 //!    `op_lock` is held for the rest of `send`, but it is a **Tokio** async mutex,
 //!    so the tokio runtime can yield while it is held — no thread deadlock.
-//! 1a. `build_turn_provider().await` (Task E2): takes the **model-config**
-//!    `tokio::sync::Mutex` (a *separate* lock from `inner`), holds it across the
+//!    `build_turn_provider().await` (Task E2) runs next: it takes the
+//!    **model-config** `tokio::sync::Mutex` (a *separate* lock from `inner`), holds it across the
 //!    `{parse endpoint, spawn_blocking key read, new_vetted}` build, then drops
 //!    it.  The `inner` std-`Mutex` is NOT held here — the no-`.await`-under-`inner`
 //!    invariant is untouched.  On `Err` this returns `NeedsOperator` WITHOUT

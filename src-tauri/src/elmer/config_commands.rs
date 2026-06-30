@@ -140,6 +140,10 @@ pub enum DetectError {
     BadUrl(String),
     /// The `/v1/models` response contained an empty `data` array.
     ZeroModels,
+    /// `KeySource::UseStored` was requested but the keyring backend returned a
+    /// non-`NoEntry` error (locked / unavailable daemon).  NEVER collapses to a
+    /// keyless probe — that would silently send an unauthenticated request.
+    UnreadableKey,
 }
 
 impl DetectError {
@@ -160,6 +164,11 @@ impl DetectError {
             DetectError::Network(msg) => format!("network error: {msg}"),
             DetectError::BadUrl(msg) => format!("bad URL: {msg}"),
             DetectError::ZeroModels => "no models: the server returned an empty model list".into(),
+            DetectError::UnreadableKey => {
+                "the saved key couldn't be read (keyring locked) \
+                 — check Connect an AI Agent settings"
+                    .into()
+            }
         }
     }
 }
@@ -317,21 +326,55 @@ pub async fn config_set_inner(
 /// **fail-closed** presence check on the keyring — the key value is NEVER
 /// returned or logged.
 ///
+/// # Loopback shortcut
+///
+/// Loopback endpoints (ollama / llama.cpp shims) never carry a key.  The key
+/// field is hidden in the UI for loopback, so `key_status` is always
+/// [`KeyStatus::Absent`] for them.  More importantly, calling the keyring for a
+/// loopback endpoint is wasteful and wrong: a locked / unavailable D-Bus daemon
+/// would needlessly return `Unreadable` for an endpoint that cannot have a key.
+/// The guard mirrors `build_turn_provider_from_parts` in `session.rs`.
+///
+/// # Blocking I/O
+///
+/// `ElmerKeyring::status` calls `keyring::Entry::get_password`, a blocking
+/// D-Bus round-trip.  Running it directly on the async task thread parks the
+/// thread inside the Tokio executor and blocks any other task waiting on that
+/// thread.  The call is moved to `tokio::task::spawn_blocking` so the executor
+/// can yield while the D-Bus round-trip completes.
+///
 /// # Errors
 ///
 /// Returns a `String` error only when the in-memory endpoint fails validation
 /// (this should not happen in practice because `config_set_inner` validates
 /// before persisting, but the defensive parse is the only way to call
-/// `endpoint.origin()` without a stored `Url`).
+/// `endpoint.is_loopback()` + `endpoint.origin()` without a stored `Url`).
 pub async fn config_read_inner(
     state: &ElmerModelConfigState,
-    keyring: &ElmerKeyring,
+    keyring: &Arc<ElmerKeyring>,
 ) -> Result<ConfigReadDto, String> {
     let snapshot = state.snapshot().await;
     let endpoint =
         AgentEndpoint::parse(&snapshot.endpoint).map_err(|e| e.to_string())?;
-    let origin = endpoint.origin();
-    let key_status = keyring.status(&origin);
+
+    let key_status = if endpoint.is_loopback() {
+        // Loopback endpoints never carry a key; skip the keyring entirely.
+        // A locked / unavailable keyring must not report Unreadable for an
+        // endpoint that the UI never shows a key field for.
+        KeyStatus::Absent
+    } else {
+        let origin = endpoint.origin();
+        let keyring = Arc::clone(keyring);
+        // `keyring.status` is a blocking D-Bus call; run it off the async
+        // reactor via spawn_blocking.  `spawn_blocking` requires `'static`,
+        // hence the owned `origin` string and cloned `Arc`.
+        tokio::task::spawn_blocking(move || keyring.status(&origin))
+            .await
+            // JoinError (the blocking task panicked) maps to Unreadable —
+            // fail-closed: never report Absent when the keyring is broken.
+            .unwrap_or(KeyStatus::Unreadable)
+    };
+
     Ok(ConfigReadDto {
         agent_endpoint: snapshot.endpoint,
         agent_model: snapshot.model,
@@ -372,9 +415,8 @@ pub fn derive_models_url(agent_endpoint: &str) -> Result<AgentEndpoint, DetectEr
 
     // Step 2: derive the models path.
     const CHAT_COMPLETIONS: &str = "/chat/completions";
-    let models_url = if path.ends_with(CHAT_COMPLETIONS) {
+    let models_url = if let Some(prefix) = path.strip_suffix(CHAT_COMPLETIONS) {
         // Replace the trailing /chat/completions with /models, keeping any prefix.
-        let prefix = &path[..path.len() - CHAT_COMPLETIONS.len()];
         format!("{origin}{prefix}/models")
     } else {
         // Fallback: OpenAI-standard <origin>/v1/models.
@@ -501,7 +543,7 @@ async fn detect_system_resolver(host: &str, port: u16) -> std::io::Result<Vec<So
 pub(crate) async fn detect_inner<R, Fut>(
     agent_endpoint: String,
     key_source: KeySource,
-    keyring: &ElmerKeyring,
+    keyring: &Arc<ElmerKeyring>,
     resolve: R,
 ) -> Result<Vec<String>, DetectError>
 where
@@ -535,8 +577,31 @@ where
     };
 
     // Step 3: resolve the key.
+    //
+    // `UseStored` reads the keyring via `spawn_blocking` (keyring::Entry
+    // calls D-Bus — a blocking round-trip that must not run on the async
+    // reactor thread).  On a backend error (Err from `keyring.read`) the
+    // function FAILS CLOSED with `DetectError::UnreadableKey` — never
+    // collapses to a keyless probe, because silently sending an
+    // unauthenticated request to a cloud provider is worse than reporting
+    // the error.  `Ok(None)` (NoEntry — no key stored) remains a legitimate
+    // keyless probe.
     let key: Option<ApiKey> = match key_source {
-        KeySource::UseStored => keyring.read(&origin).unwrap_or(None),
+        KeySource::UseStored => {
+            let kr = Arc::clone(keyring);
+            let origin_owned = origin.clone();
+            let read = tokio::task::spawn_blocking(move || kr.read(&origin_owned))
+                .await
+                // JoinError (blocking task panicked) → fail-closed.
+                .map_err(|_| DetectError::UnreadableKey)?;
+            match read {
+                Ok(Some(k)) => Some(k),
+                Ok(None) => Option::None, // No key stored — keyless probe is fine.
+                // Backend error (locked / unavailable keyring) → fail-closed.
+                // NEVER collapses to None (which would silently send keyless).
+                Err(_) => return Err(DetectError::UnreadableKey),
+            }
+        }
         KeySource::Inline { value } => {
             if value.is_empty() {
                 Option::None
@@ -591,7 +656,9 @@ pub async fn elmer_config_read(
     state: State<'_, Arc<ElmerModelConfigState>>,
     keyring: State<'_, Arc<ElmerKeyring>>,
 ) -> Result<ConfigReadDto, String> {
-    config_read_inner(&state, &keyring).await
+    // Dereference `State<'_, Arc<T>>` to `Arc<T>` by cloning so that
+    // `config_read_inner` can move the Arc into the `spawn_blocking` closure.
+    config_read_inner(&state, &Arc::clone(&keyring)).await
 }
 
 /// Write the Elmer model configuration.
@@ -637,7 +704,9 @@ pub async fn elmer_detect_models(
     detect_inner(
         agent_endpoint,
         key_source,
-        &keyring,
+        // Clone the Arc so detect_inner can move it into the spawn_blocking
+        // closure for UseStored key reads.
+        &Arc::clone(&keyring),
         |host, port| async move { detect_system_resolver(&host, port).await },
     )
     .await
@@ -963,7 +1032,7 @@ mod tests {
     /// and the DTO serialized to JSON must NOT contain the key string.
     #[tokio::test]
     async fn read_returns_status_not_value() {
-        let kr = ElmerKeyring::with_memory_keyring();
+        let kr = Arc::new(ElmerKeyring::with_memory_keyring());
         kr.set(VALID_ORIGIN, &ApiKey::new("sk-super-secret"))
             .expect("pre-store");
 
@@ -993,7 +1062,7 @@ mod tests {
     /// A failing (locked) keyring produces key_status == Unreadable, not Absent.
     #[tokio::test]
     async fn read_locked_keyring_is_unreadable() {
-        let kr = failing_keyring();
+        let kr = Arc::new(failing_keyring());
         let state = valid_state();
 
         let dto = config_read_inner(&state, &kr)
@@ -1397,7 +1466,7 @@ mod tests {
                 .create_async()
                 .await;
 
-            let kr = ElmerKeyring::with_memory_keyring();
+            let kr = Arc::new(ElmerKeyring::with_memory_keyring());
             // The stored endpoint uses the mockito server URL + /v1/chat/completions.
             // origin() is the scheme+host+port part that becomes the keyring key.
             let endpoint_str = format!("{server_url}/v1/chat/completions");
@@ -1433,7 +1502,7 @@ mod tests {
                 .await;
 
             // Empty keyring — UseStored would find nothing and probe unauthenticated.
-            let kr = ElmerKeyring::with_memory_keyring();
+            let kr = Arc::new(ElmerKeyring::with_memory_keyring());
             let endpoint_str = format!("{server_url}/v1/chat/completions");
 
             let result = detect_inner(
@@ -1465,7 +1534,7 @@ mod tests {
                 .create_async()
                 .await;
 
-            let kr = ElmerKeyring::with_memory_keyring();
+            let kr = Arc::new(ElmerKeyring::with_memory_keyring());
             let endpoint_str = format!("{server_url}/v1/chat/completions");
 
             let result = detect_inner(
@@ -1503,7 +1572,7 @@ mod tests {
         /// attempts to connect directly to port 1 — which is refused.
         #[tokio::test]
         async fn detect_maps_connection_refused_to_no_server() {
-            let kr = ElmerKeyring::with_memory_keyring();
+            let kr = Arc::new(ElmerKeyring::with_memory_keyring());
             // Endpoint on port 1 — connection will be refused (nothing listens).
             let result = detect_inner(
                 "http://127.0.0.1:1/v1/chat/completions".into(),
@@ -1536,7 +1605,7 @@ mod tests {
                 .create_async()
                 .await;
 
-            let kr = ElmerKeyring::with_memory_keyring();
+            let kr = Arc::new(ElmerKeyring::with_memory_keyring());
             let endpoint_str = format!("{server_url}/v1/chat/completions");
 
             let result = detect_inner(endpoint_str, KeySource::None, &kr, no_dns_resolver()).await;
@@ -1558,7 +1627,7 @@ mod tests {
                 .create_async()
                 .await;
 
-            let kr = ElmerKeyring::with_memory_keyring();
+            let kr = Arc::new(ElmerKeyring::with_memory_keyring());
             let endpoint_str = format!("{server_url}/v1/chat/completions");
 
             let result = detect_inner(endpoint_str, KeySource::None, &kr, no_dns_resolver()).await;
@@ -1570,5 +1639,102 @@ mod tests {
                 "ZeroModels reason must mention empty list; got: {reason:?}"
             );
         }
+        // -------------------------------------------------------------------
+        // FIX 1 test: UseStored with an unreadable keyring must FAIL CLOSED
+        // -------------------------------------------------------------------
+
+        /// `KeySource::UseStored` + a locked/unavailable keyring must return
+        /// `Err(DetectError::UnreadableKey)`, NOT perform a keyless probe.
+        ///
+        /// Prior to the fix, `keyring.read(&origin).unwrap_or(None)` on a
+        /// backend error silently produced `None`, causing a keyless GET to a
+        /// cloud provider with no bearer token.  The fixed path uses
+        /// `spawn_blocking` and fails closed on any `Err` from `keyring.read`.
+        ///
+        /// This test uses `FailingEntry` (PlatformFailure on `get_password`),
+        /// which is the same fake used in `set_keyring_failure_is_transactional`
+        /// above.
+        ///
+        /// # Why mockito here?
+        ///
+        /// `detect_inner` Step 2 (`build_vetted_client`) must succeed BEFORE Step 3
+        /// (key read) is reached.  For a loopback IP-literal endpoint mockito binds
+        /// to, the egress gate takes the direct-IP branch and skips the resolver —
+        /// so `no_dns_resolver` is safe here.  The mock server needs no response
+        /// spec because `detect_inner` returns before issuing any GET (the key read
+        /// in Step 3 fails first).
+        #[tokio::test]
+        async fn detect_use_stored_unreadable_keyring_is_error() {
+            // Bind a mockito server so build_vetted_client (Step 2) can succeed
+            // for the IP-literal loopback endpoint, letting us reach Step 3.
+            let server = mockito::Server::new_async().await;
+            let server_url = server.url();
+            let endpoint_str = format!("{server_url}/v1/chat/completions");
+
+            // failing_keyring() is visible via `use super::*`.
+            let kr = Arc::new(failing_keyring());
+
+            let result = detect_inner(
+                endpoint_str,
+                KeySource::UseStored,
+                &kr,
+                no_dns_resolver(),
+            )
+            .await;
+
+            assert!(
+                matches!(result, Err(DetectError::UnreadableKey)),
+                "UseStored + locked keyring must be UnreadableKey (fail-closed), \
+                 not a keyless probe; got: {result:?}"
+            );
+
+            // Confirm the to_reason() string mentions "keyring".
+            let reason = DetectError::UnreadableKey.to_reason();
+            assert!(
+                reason.contains("keyring"),
+                "UnreadableKey reason must mention 'keyring'; got: {reason:?}"
+            );
+        }
     } // mod detect
+
+    // -----------------------------------------------------------------------
+    // FIX 2 test: config_read_inner loopback skips the keyring entirely
+    // -----------------------------------------------------------------------
+
+    /// `config_read_inner` with a loopback endpoint must return
+    /// `key_status == Absent` WITHOUT consulting the keyring.
+    ///
+    /// We use `failing_keyring()` (PlatformFailure on any read) as the
+    /// injected keyring.  If `config_read_inner` calls the keyring for a
+    /// loopback endpoint, it would return `Unreadable` — not `Absent`.
+    /// Receiving `Absent` proves the keyring was never touched.
+    ///
+    /// This mirrors `build_turn_provider_loopback_no_keyring_read` in
+    /// `session.rs`, which uses the same technique to prove the `!is_loopback`
+    /// guard is in place.
+    #[tokio::test]
+    async fn config_read_loopback_skips_keyring() {
+        // A panicking / failing keyring — any call to it returns Unreadable.
+        // If the loopback guard is missing and the keyring IS consulted, the
+        // test will receive Unreadable and the assertion below will fail,
+        // proving the regression.
+        let kr = Arc::new(failing_keyring());
+
+        // Ollama-style loopback endpoint: no port reachability needed;
+        // config_read_inner reads the snapshot only.
+        let loopback_ep = "http://127.0.0.1:11434/v1/chat/completions";
+        let state = ElmerModelConfigState::new(loopback_ep.into(), "llama3".into());
+
+        let dto = config_read_inner(&state, &kr)
+            .await
+            .expect("config_read_inner must succeed for loopback even with failing keyring");
+
+        assert_eq!(
+            dto.key_status,
+            KeyStatus::Absent,
+            "loopback endpoint must yield Absent without consulting the keyring; \
+             got {:?} — the loopback guard is missing or the keyring was called",
+            dto.key_status,
+        );
+    }
 }
