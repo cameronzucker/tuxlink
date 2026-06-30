@@ -781,6 +781,103 @@ pub async fn elmer_detect_models(
 }
 
 // ---------------------------------------------------------------------------
+// elmer_key_status_for_origins — batch key-status query (T4, tuxlink-wpqwy)
+// ---------------------------------------------------------------------------
+
+/// Type alias for the per-origin key-status map.
+///
+/// Serialises as `Record<string, KeyStatus>` on the Tauri boundary — exactly
+/// the `KeyStatusByOrigin` TypeScript type the tile picker reads.
+///
+/// Keys are origin strings in `scheme://host[:port]` form (no trailing slash,
+/// no path), matching what `AgentEndpoint::origin()` / `new URL(e).origin`
+/// produce.  See the origin-matching note in [`key_status_for_origins_inner`].
+pub type KeyStatusByOrigin = std::collections::HashMap<String, KeyStatus>;
+
+/// Pure inner implementation of `elmer_key_status_for_origins`.
+///
+/// Iterates `origins`, calls [`ElmerKeyring::status`] for each, and returns a
+/// [`KeyStatusByOrigin`] map.  The keyring's fail-closed contract applies:
+/// `Unreadable` is NEVER collapsed to `Absent` — a backend error (locked keyring,
+/// unavailable daemon) must not cause the tile picker to hide a "key saved" badge
+/// that should be shown.
+///
+/// # Origin-matching contract
+///
+/// The keyring stores keys under an account derived via
+/// `elmer_key_account(origin)` where `origin` comes from
+/// `AgentEndpoint::parse(endpoint).origin()`.  On the TypeScript side,
+/// `ElmerPane` derives the same origins via `new URL(preset.endpoint).origin`.
+///
+/// Both the Rust `url` crate's `Url::origin().ascii_serialization()` and the
+/// Web URL API's `URL.prototype.origin` apply the SAME normalisation:
+///   - default ports (http:80, https:443) are omitted.
+///   - the host is lowercased.
+///   - path, query, fragment are stripped.
+///
+/// The frontend therefore sends origin strings that are ALREADY in the same
+/// normalised form the keyring stores under, so no re-normalisation is needed
+/// here.  If that invariant ever breaks (new frontend code that hand-rolls
+/// origins), this inner function is the place to add a parse + `.origin()` step.
+///
+/// This inner function is `pub(crate)` so that it is directly callable from tests
+/// without Tauri `State` machinery.
+pub(crate) fn key_status_for_origins_inner(
+    keyring: &ElmerKeyring,
+    origins: &[String],
+) -> KeyStatusByOrigin {
+    origins
+        .iter()
+        .map(|origin| (origin.clone(), keyring.status(origin)))
+        .collect()
+}
+
+/// Batch key-status query for multiple endpoint origins.
+///
+/// Returns a `HashMap<String, KeyStatus>` (serialises to `Record<string,
+/// KeyStatus>` — the `KeyStatusByOrigin` TS type) with one entry per supplied
+/// origin.  Status values are the three-state fail-closed result from
+/// [`ElmerKeyring::status`]: `"present"`, `"absent"`, or `"unreadable"`.
+///
+/// **Never returns key values.**  The origin strings in the request are used
+/// solely to locate keyring entries; the values are thrown away and only the
+/// three-state status is returned.
+///
+/// # Wire contract
+///
+/// Command name:   `elmer_key_status_for_origins`
+/// Argument key:   `origins` (array of origin strings)
+/// Return value:   `Record<string, KeyStatus>` (`KeyStatusByOrigin`)
+///
+/// The TS wrapper in `useElmer.ts`:
+/// ```ts
+/// invoke<KeyStatusByOrigin>('elmer_key_status_for_origins', { origins })
+/// ```
+///
+/// # Blocking I/O
+///
+/// `ElmerKeyring::status` is a blocking D-Bus round-trip (one per origin).  All
+/// status calls are moved to a `tokio::task::spawn_blocking` closure so the async
+/// reactor thread is not parked during the keyring calls.  This mirrors the
+/// pattern in [`config_read_inner`].
+///
+/// # Errors
+///
+/// Returns `Err(String)` if the `spawn_blocking` task panics.  In that case the
+/// command returns an error to the renderer rather than a partial map.
+#[tauri::command]
+pub async fn elmer_key_status_for_origins(
+    origins: Vec<String>,
+    keyring: State<'_, Arc<ElmerKeyring>>,
+) -> Result<KeyStatusByOrigin, String> {
+    let kr = Arc::clone(&keyring);
+    tokio::task::spawn_blocking(move || key_status_for_origins_inner(&kr, &origins))
+        .await
+        // JoinError (the blocking task panicked) → surface as Err.
+        .map_err(|e| format!("key_status_for_origins panicked: {e}"))
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -2124,6 +2221,159 @@ mod tests {
             dto.onboarded,
             "DTO must report onboarded==true after saving with default-content config \
              (persistence fix: onboarded flag must survive even when content==factory defaults)"
+        );
+    }
+
+    // =======================================================================
+    // T4 tests — elmer_key_status_for_origins / key_status_for_origins_inner
+    // =======================================================================
+
+    // -----------------------------------------------------------------------
+    // Test: key_status_present_and_absent
+    // -----------------------------------------------------------------------
+
+    /// Seeding a key for origin A and nothing for origin B produces Present for
+    /// A and Absent for B.  The VALUE of the key is never included in the
+    /// returned map (only the status — Present, not the secret string).
+    #[test]
+    fn key_status_present_and_absent() {
+        let kr = ElmerKeyring::with_memory_keyring();
+        let origin_a = "https://api.openai.com".to_string();
+        let origin_b = "https://api.anthropic.com".to_string();
+
+        // Seed a key for origin A only.
+        kr.set(&origin_a, &ApiKey::new("sk-test"))
+            .expect("set key for origin A");
+
+        let origins = vec![origin_a.clone(), origin_b.clone()];
+        let result = key_status_for_origins_inner(&kr, &origins);
+
+        assert_eq!(
+            result.get(&origin_a),
+            Some(&KeyStatus::Present),
+            "origin A must be Present after setting a key"
+        );
+        assert_eq!(
+            result.get(&origin_b),
+            Some(&KeyStatus::Absent),
+            "origin B must be Absent (no key was set)"
+        );
+
+        // Confirm neither entry carries a value — the map contains KeyStatus, not strings.
+        // This is guaranteed by the type: HashMap<String, KeyStatus>.
+        assert_eq!(result.len(), 2, "result must have one entry per origin");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: key_status_unreadable_on_backend_error
+    // -----------------------------------------------------------------------
+
+    /// A failing (locked / unavailable) keyring must yield Unreadable for every
+    /// origin — NEVER Absent.  This is the fail-closed guarantee: a false Absent
+    /// would hide the "key saved" badge on a tile whose key is actually stored.
+    #[test]
+    fn key_status_unreadable_on_backend_error() {
+        let kr = failing_keyring();
+        let origins = vec![
+            "https://api.openai.com".to_string(),
+            "https://api.anthropic.com".to_string(),
+        ];
+
+        let result = key_status_for_origins_inner(&kr, &origins);
+
+        for origin in &origins {
+            assert_eq!(
+                result.get(origin),
+                Some(&KeyStatus::Unreadable),
+                "a backend error MUST be Unreadable for {origin:?}, never Absent — \
+                 false Absent would silently hide a stored key's badge"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: key_status_empty_origins
+    // -----------------------------------------------------------------------
+
+    /// An empty origins slice returns an empty map without error.
+    #[test]
+    fn key_status_empty_origins() {
+        let kr = ElmerKeyring::with_memory_keyring();
+        let result = key_status_for_origins_inner(&kr, &[]);
+        assert!(
+            result.is_empty(),
+            "empty origins must produce an empty map; got: {result:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: key_status_serde_wire_shape (raw-box guard)
+    // -----------------------------------------------------------------------
+
+    /// Asserts the EXACT serde literals for each `KeyStatus` variant AND for a
+    /// `HashMap<String, KeyStatus>` (the `KeyStatusByOrigin` wire shape the TS
+    /// side reads).
+    ///
+    /// This is the cross-language contract guard: the TypeScript `KeyStatus` union
+    /// is `'present' | 'absent' | 'unreadable'` and `KeyStatusByOrigin` is
+    /// `Record<string, KeyStatus>`.  If the serde rename ever drifts, the tile
+    /// picker silently stops showing badges.
+    ///
+    /// `KeyStatus` uses `#[serde(rename_all = "camelCase")]`.  For single-word
+    /// PascalCase variants (`Present`, `Absent`, `Unreadable`) camelCase
+    /// serialization yields the SAME string as lowercase (`present`, `absent`,
+    /// `unreadable`), which is what the TS union expects.
+    #[test]
+    fn key_status_serde_wire_shape() {
+        // --- Per-variant literal assertions ---
+        assert_eq!(
+            serde_json::to_string(&KeyStatus::Present).expect("serialize Present"),
+            r#""present""#,
+            "KeyStatus::Present must serialize to the exact literal \"present\""
+        );
+        assert_eq!(
+            serde_json::to_string(&KeyStatus::Absent).expect("serialize Absent"),
+            r#""absent""#,
+            "KeyStatus::Absent must serialize to the exact literal \"absent\""
+        );
+        assert_eq!(
+            serde_json::to_string(&KeyStatus::Unreadable).expect("serialize Unreadable"),
+            r#""unreadable""#,
+            "KeyStatus::Unreadable must serialize to the exact literal \"unreadable\""
+        );
+
+        // --- KeyStatusByOrigin map wire shape ---
+        //
+        // A HashMap<String, KeyStatus> must serialize as a JSON object keyed by
+        // origin with lowercase-literal values — the `Record<string, KeyStatus>`
+        // that the TS tile picker reads.
+        let mut map = std::collections::HashMap::new();
+        map.insert("https://api.openai.com".to_string(), KeyStatus::Present);
+        map.insert("https://api.anthropic.com".to_string(), KeyStatus::Absent);
+        map.insert("https://generativelanguage.googleapis.com".to_string(), KeyStatus::Unreadable);
+
+        let json_value =
+            serde_json::to_value(&map).expect("serialize KeyStatusByOrigin map");
+
+        assert!(
+            json_value.is_object(),
+            "KeyStatusByOrigin must serialize as a JSON object; got: {json_value}"
+        );
+
+        assert_eq!(
+            json_value.get("https://api.openai.com").and_then(|v| v.as_str()),
+            Some("present"),
+            "openai origin must map to literal \"present\""
+        );
+        assert_eq!(
+            json_value.get("https://api.anthropic.com").and_then(|v| v.as_str()),
+            Some("absent"),
+            "anthropic origin must map to literal \"absent\""
+        );
+        assert_eq!(
+            json_value.get("https://generativelanguage.googleapis.com").and_then(|v| v.as_str()),
+            Some("unreadable"),
+            "gemini origin must map to literal \"unreadable\""
         );
     }
 }

@@ -2150,6 +2150,8 @@ pub fn run() {
             crate::elmer::config_commands::elmer_config_read,
             crate::elmer::config_commands::elmer_config_set,
             crate::elmer::config_commands::elmer_detect_models,
+            // T4: batch key-status query — statuses only, never key values.
+            crate::elmer::config_commands::elmer_key_status_for_origins,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
