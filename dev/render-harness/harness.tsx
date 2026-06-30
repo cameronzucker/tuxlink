@@ -20,12 +20,23 @@ import '../../src/App.css';
 import '../../src/shell/AppShell.css';
 import { RequestCenter } from '../../src/request/RequestCenter';
 import { DashboardRibbon } from '../../src/shell/DashboardRibbon';
+// Radio panes (tuxlink-zj9se): mount each pane standalone in the dock layout so
+// its CSS (RadioPanel.css + per-mode + section CSS, imported by the components
+// themselves) renders in the real WebKitGTK engine for the token-migration
+// before/after diff. The panes default to disconnected/empty state under the
+// shim; deeper live-data sections degrade gracefully (null/STOPPED defaults).
+import { ArdopRadioPanel } from '../../src/radio/modes/ArdopRadioPanel';
+import { VaraRadioPanel } from '../../src/radio/modes/VaraRadioPanel';
+import { TelnetRadioPanel } from '../../src/radio/modes/TelnetRadioPanel';
+import type { RadioPanelMode } from '../../src/radio/types';
 import type { CatalogEntry } from '../../src/catalog/types';
 import type { StatusBarData } from '../../src/shell/useStatus';
 
 const params = new URLSearchParams(location.search);
 const grid = params.has('grid') ? params.get('grid') : 'CN87';
-const view = (params.get('view') ?? 'home') as 'home' | 'browse' | 'grib' | 'ribbon';
+const view = (params.get('view') ?? 'home') as
+  | 'home' | 'browse' | 'grib' | 'ribbon'
+  | 'radio-ardop' | 'radio-vara' | 'radio-telnet';
 
 // Representative catalog: zone forecast + radar for CN87uo (Seattle), EASTPAC
 // marine entries, propagation, and gateway lists — enough categories that the
@@ -50,12 +61,55 @@ const CATALOG: CatalogEntry[] = [
 ];
 
 const RESPONSES: Record<string, unknown> = {
-  config_read: { grid, review_inbound_before_download: false },
+  config_read: {
+    grid,
+    review_inbound_before_download: false,
+    // Telnet pane reads host + transport from config_read.
+    host: 'cms.winlink.org',
+    transport: 'CmsSsl',
+  },
   catalog_list: CATALOG,
   catalog_send_inquiry: 'MID-TEST-0001',
   // DashboardRibbon's GridEdit write paths:
   config_set_grid: grid,
   position_set_source: null,
+  // --- Radio-pane mount-time reads (tuxlink-zj9se). Representative
+  //     disconnected/empty state; action calls (cms_connect, modem_*_connect,
+  //     vara_open_session, config_set_*, favorite_*, identity_*) fire only on
+  //     click and may reject harmlessly. ModemStatus uses the STOPPED shape. ---
+  modem_get_status: {
+    state: 'stopped', peer: null, mode: null, widthHz: null, pttBackend: null,
+    snDb: null, vuDbfs: null, throughputBps: null,
+    bytesRx: 0, bytesTx: 0, uptimeSec: 0,
+    arqFlags: { busy: false, rx: false, tx: false },
+    lastError: null, quality: null, rigFreqHz: null,
+  },
+  platform_info: { arch: 'aarch64', os: 'linux', varaSupported: true },
+  vara_status: { state: 'closed', lastError: null, boundHost: null, boundCmdPort: null },
+  config_get_vara: { host: '127.0.0.1', cmd_port: 8300, data_port: 8301, bandwidth_hz: null },
+  config_get_ardop: {},
+  config_get_rig: {},
+  ardop_list_audio_devices: [],
+  packet_list_serial_devices: [],
+  identity_active: null,
+  identity_list: [],
+  // favorites_read returns the whole StationsFile (object, NOT an array) — the
+  // hook does data?.favorites.filter(...), so .favorites must exist.
+  favorites_read: { schema_version: 1, favorites: [], log: [] },
+  favorites_recents: [],
+  session_log_snapshot: [],
+  // Tauri event API: listen() routes through invoke('plugin:event|listen') and
+  // resolves to an event id; unlisten through 'plugin:event|unlisten'. Resolve
+  // both so useModemStatus's listen() effect settles (the stream never emits, so
+  // the modem holds its STOPPED default — a valid disconnected render).
+  'plugin:event|listen': 0,
+  'plugin:event|unlisten': null,
+  // AllowedStationsEditor fetches the allow-list on mount (per transport). Default
+  // allow_all=true (project convention allowed-stations-default-true).
+  ardop_allowed_stations_get: { allow_all: true, callsigns: [], ips: [] },
+  vara_allowed_stations_get: { allow_all: true, callsigns: [], ips: [] },
+  packet_allowed_stations_get: { allow_all: true, callsigns: [], ips: [] },
+  telnet_allowed_stations_get: { allow_all: true, callsigns: [], ips: [] },
 };
 
 // Tauri v2 routes invoke() through window.__TAURI_INTERNALS__.invoke(cmd, args).
@@ -80,11 +134,27 @@ const ribbonData: StatusBarData = {
 
 const queryClient = new QueryClient();
 
+// Radio panes mount inside the dock layout (`.radio-panel` is a direct child of
+// `.panes--with-dock`, the wrapper that places it in the 4th grid column).
+const VARA_MODE: RadioPanelMode = { kind: 'vara-hf', intent: 'cms' };
+
 createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
     {view === 'ribbon' ? (
       <div className="layout-b">
         <DashboardRibbon data={ribbonData} onConnect={() => undefined} />
+      </div>
+    ) : view.startsWith('radio-') ? (
+      <div className="layout-b">
+        <div className="panes panes--with-dock">
+          {view === 'radio-ardop' && (
+            <ArdopRadioPanel onClose={() => undefined} onFindGateway={() => undefined} />
+          )}
+          {view === 'radio-vara' && (
+            <VaraRadioPanel mode={VARA_MODE} onClose={() => undefined} onFindGateway={() => undefined} />
+          )}
+          {view === 'radio-telnet' && <TelnetRadioPanel onClose={() => undefined} />}
+        </div>
       </div>
     ) : (
       <RequestCenter initialView={view} onClose={() => undefined} />
