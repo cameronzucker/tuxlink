@@ -719,6 +719,30 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
     expect(screen.queryByTestId('elmer-save-ok')).toBeNull();
   });
 
+  it("selecting 'Custom…' clears the endpoint and STICKS on Custom (not a no-op)", async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions', // OpenAI preset
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
+      };
+      return undefined;
+    });
+    await renderAndOpen();
+
+    const providerSelect = screen.getByTestId('elmer-provider-select') as HTMLSelectElement;
+    const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
+    // Starts on the inferred OpenAI preset.
+    expect(providerSelect.value).toBe('openai');
+
+    // Select Custom… — previously a no-op that snapped back; now clears + sticks.
+    fireEvent.change(providerSelect, { target: { value: 'custom' } });
+
+    expect(endpointInput.value).toBe('');
+    expect(providerSelect.value).toBe('custom');
+  });
+
   it('Replace + type value + Save → key:{action:set,value}', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {

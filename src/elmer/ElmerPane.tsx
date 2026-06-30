@@ -415,6 +415,8 @@ function ModelForm({
 }: ModelFormProps) {
   const [endpoint, setEndpoint] = useState(initialEndpoint);
   const [model, setModel] = useState(initialModel);
+  // Focused when the operator picks 'Custom…' so they can type their endpoint.
+  const endpointInputRef = useRef<HTMLInputElement>(null);
   const [turnTimeoutSecs, setTurnTimeoutSecs] = useState(() => initialTurnTimeoutSecs);
 
   // Key affordance state.
@@ -487,8 +489,16 @@ function ModelForm({
     const preset = PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
 
-    // 'custom' preset has no fixed endpoint — selecting it doesn't overwrite.
-    if (presetId === 'custom') return;
+    // 'Custom…' means "I'll enter my own endpoint." Clear the preset endpoint so
+    // inferPreset('') resolves to 'custom' (the controlled <select> sticks on
+    // Custom instead of snapping back to the inferred preset) and focus the
+    // endpoint input so the operator can type. Previously this early-returned,
+    // leaving the select to snap back — so Custom looked unselectable/broken.
+    if (presetId === 'custom') {
+      setEndpoint('');
+      endpointInputRef.current?.focus();
+      return;
+    }
 
     // Determine if the current endpoint is a known-preset canonical value
     // (i.e., the user hasn't hand-edited it beyond a preset default).
@@ -644,6 +654,7 @@ function ModelForm({
         </label>
         <input
           id="elmer-endpoint-input"
+          ref={endpointInputRef}
           type="text"
           className="elmer-form-input elmer-form-input--mono"
           data-testid="elmer-endpoint-input"
